@@ -65,7 +65,10 @@ public:
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
-        discardLegacyTerrainCacheForMode(legacyHeightmapCacheMode);
+        normalizeContentOwnedTerrainInputs(
+            contentProvider,
+            legacyTerrainProvider,
+            legacyHeightmapCacheMode);
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
             loadRequests,
             makeContext(
@@ -108,7 +111,9 @@ public:
         EnsureTileChildrenFn&& ensureTileChildren,
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        discardLegacyTerrainCacheForMode(legacyHeightmapCacheMode);
+        normalizeContentOwnedTerrainInputs(
+            contentProvider,
+            legacyHeightmapCacheMode);
         return TilesetContentLifecycleCoordinator::processPendingUploads(
             makeUploadContext(
                 contentProvider,
@@ -131,6 +136,33 @@ public:
     }
 
 private:
+    static bool contentProviderOwnsTerrainQuadtree(
+        const TilesetContentProvider* contentProvider) {
+        return contentProvider && contentProvider->providesTerrainQuadtree();
+    }
+
+    void normalizeContentOwnedTerrainInputs(
+        const TilesetContentProvider* contentProvider,
+        TerrainProvider*& legacyTerrainProvider,
+        LegacyHeightmapTerrainCacheMode& legacyHeightmapCacheMode) {
+        if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
+            legacyTerrainProvider = nullptr;
+            legacyHeightmapCacheMode =
+                LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly;
+        }
+        discardLegacyTerrainCacheForMode(legacyHeightmapCacheMode);
+    }
+
+    void normalizeContentOwnedTerrainInputs(
+        const TilesetContentProvider* contentProvider,
+        LegacyHeightmapTerrainCacheMode& legacyHeightmapCacheMode) {
+        if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
+            legacyHeightmapCacheMode =
+                LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly;
+        }
+        discardLegacyTerrainCacheForMode(legacyHeightmapCacheMode);
+    }
+
     TilesetContentLifecycleContext makeContext(
         TerrainProvider* legacyTerrainProvider,
         TilesetContentProvider* contentProvider,

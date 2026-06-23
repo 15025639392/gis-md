@@ -8,6 +8,7 @@
 #include "TileTerminalLoadCommitter.h"
 #include "TileTerrainUploadCommitter.h"
 #include "TilesetTile.h"
+#include "../content/GltfContentProvider.h"
 
 #include <memory>
 #include <string>
@@ -23,6 +24,14 @@ class RenderDevice;
 
 class TilePendingLoadCommitCoordinator {
 public:
+    static bool shouldDiscardLegacyHeightmapTerrainAdapter(
+        const TilesetContentProvider* contentProvider,
+        TileLoadDomain domain) {
+        return domain == TileLoadDomain::HeightmapTerrainAdapter &&
+               contentProvider &&
+               contentProvider->providesTerrainQuadtree();
+    }
+
     static void captureInitialBoundingVolumes(
         TilesetTile& tile,
         TileLoadResultMetadata& metadata) {
@@ -244,6 +253,14 @@ public:
         EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
+        if (shouldDiscardLegacyHeightmapTerrainAdapter(
+                contentProvider,
+                upload.domain)) {
+            TilePendingUploadCompletion::eraseUpload(
+                lifecycle,
+                upload.cacheKey);
+            return;
+        }
         if (isContentLoadDomain(upload.domain)) {
             commitContentUpload(
                 upload,

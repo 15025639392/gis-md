@@ -10,6 +10,7 @@
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
+#include "earth_engine/tiling/TilePendingUploadFrameProcessor.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -1876,6 +1877,134 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(tile.content.renderContent.hasGltfModel());
     EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(
+    TilePendingLoadCommitCoordinatorTest,
+    ContentOwnedTerrainProviderDiscardsLegacyHeightmapUpload) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    const std::string cacheKey = "stale-heightmap-upload";
+    TilesetTile tile(key, Rectangle::fromDegrees(-180.0, -90.0, 0.0, 0.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
+    PendingTileLoad upload{TileLoadDomain::HeightmapTerrainAdapter,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::createRenderableHeightmapTerrain(std::move(heightmap))};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+            upload.key,
+            upload.cacheKey,
+            upload.group,
+            upload.priority,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    RecordingTerrainContentProvider contentProvider;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    bool meshEnsured = false;
+    bool gltfEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        &contentProvider,
+        nullptr,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&meshEnsured](TilesetTile&) { meshEnsured = true; },
+        [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(terrainCache.empty());
+    EXPECT_FALSE(meshEnsured);
+    EXPECT_FALSE(gltfEnsured);
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(
+    TilePendingLoadCommitCoordinatorTest,
+    ContentOwnedTerrainProviderIgnoresLegacyHeightmapTerminalResult) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    const std::string cacheKey = "stale-heightmap-terminal";
+    TilesetTile tile(key, Rectangle::fromDegrees(-180.0, -90.0, 0.0, 0.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{
+            TileLoadDomain::HeightmapTerrainAdapter,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadStatus::RetryLater});
+    }
+
+    RecordingTerrainContentProvider contentProvider;
+    std::vector<ActivatedRasterOverlay*> rasterOverlays;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    bool childrenEnsured = false;
+    bool meshEnsured = false;
+    bool gltfEnsured = false;
+    bool resourcesDirty = false;
+
+    const bool changed = TilePendingUploadFrameProcessor::process(
+        TilePendingUploadFrameProcessorInput{
+            lifecycle,
+            budget,
+            &contentProvider,
+            nullptr,
+            nullptr,
+            rasterOverlays,
+            terrainCache,
+            emptyContentRegistry,
+            false,
+            false},
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&meshEnsured](TilesetTile&) { meshEnsured = true; },
+        [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(changed);
+    EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_FALSE(meshEnsured);
+    EXPECT_FALSE(gltfEnsured);
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
 
