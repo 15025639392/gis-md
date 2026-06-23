@@ -98,8 +98,6 @@ public:
             std::move(content.gltfModel),
             std::move(content.metadata),
             content.contentTransform);
-        result.content.quantizedMeshAvailabilityUpdates =
-            std::move(content.quantizedMeshAvailabilityUpdates);
         return result;
     }
 

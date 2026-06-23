@@ -691,6 +691,34 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     GltfTerrainUpsampleDoesNotPropagateAvailabilityUpdatesLikeCesiumNative) {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
+    TilesetTile child(
+        childKey,
+        Rectangle::fromDegrees(-180.0, -90.0, -90.0, 0.0),
+        &parent);
+    parent.children.push_back(&child);
+    child.content.markTerrainAvailabilityUpsample();
+
+    installQuantizedMeshTerrainContent(
+        parent,
+        makeQuantizedMeshBytes(Vec3::zero(), Vec3::zero()));
+
+    std::optional<TileLoadResult> childLoad =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+
+    ASSERT_TRUE(childLoad.has_value());
+    EXPECT_TRUE(childLoad->content.hasGltfTerrainPayload());
+    EXPECT_TRUE(childLoad->content.quantizedMeshAvailabilityUpdates.empty());
+    EXPECT_FALSE(
+        childLoad->content.quantizedMeshAvailabilityUpdatesApplied);
+}
+
+TEST(TilesetQuantizedMeshTest,
      RasterDetailGltfUpsampleRequiresParentMoreDetailMappingLikeCesiumNative) {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
