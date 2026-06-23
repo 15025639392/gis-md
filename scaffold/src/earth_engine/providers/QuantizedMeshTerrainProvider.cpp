@@ -11,6 +11,7 @@
 #include "../core/geodesy/WebMercatorProjection.h"
 #include "../content/QuantizedMeshContentLoader.h"
 #include "../terrain/QuantizedMeshParser.h"
+#include "../tiling/TileQuadtreeChildKeys.h"
 #include "../tiling/TileSelectionRootPolicy.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -650,32 +651,11 @@ bool isCesiumSuccessfulHttpStatus(int statusCode) {
 }
 
 std::vector<TileKey> quadtreeChildren(const TileKey& key) {
-    const int childZ = key.z + 1;
-    const std::optional<int> childX = doubledTileCoordinate(key.x);
-    const std::optional<int> childY = doubledTileCoordinate(key.y);
-    if (!childX || !childY || childZ < key.z) {
-        return {};
-    }
-
     std::vector<TileKey> children;
-    children.reserve(4);
-    const bool yDown = key.schemeId == "XYZ-WebMercator" ||
-                       key.schemeId == "OpenGlobus-Earth";
-    for (int row = 0; row < 2; ++row) {
-        const int dy = yDown ? 1 - row : row;
-        for (int dx = 0; dx < 2; ++dx) {
-            if (*childX > std::numeric_limits<int>::max() - dx ||
-                *childY > std::numeric_limits<int>::max() - dy) {
-                continue;
-            }
-            TileKey childKey{
-                key.schemeId,
-                childZ,
-                *childX + dx,
-                *childY + dy};
-            if (isTileInLayerRange(childKey, key.schemeId)) {
-                children.push_back(childKey);
-            }
+    for (const TileKey& childKey :
+         TileQuadtreeChildKeys::terrainChildren(key)) {
+        if (isTileInLayerRange(childKey, key.schemeId)) {
+            children.push_back(childKey);
         }
     }
     return children;

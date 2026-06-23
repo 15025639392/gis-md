@@ -3,6 +3,7 @@
 #include "TileKey.h"
 #include "TileBoundsMetrics.h"
 #include "TileBoundingVolume.h"
+#include "TileQuadtreeChildKeys.h"
 #include "TileTerrainHeightRangePolicy.h"
 #include "TilesetTile.h"
 #include "../core/math/Rectangle.h"
@@ -57,10 +58,6 @@ struct TileChildMaterializer {
             return false;
         }
 
-        const int childZ = parent.key.z + 1;
-        const int childX = parent.key.x * 2;
-        const int childY = parent.key.y * 2;
-
         struct ChildAvailability {
             TileKey key;
             TileAvailabilityState state = TileAvailabilityState::NotAvailable;
@@ -68,26 +65,11 @@ struct TileChildMaterializer {
         std::vector<ChildAvailability> children;
         children.reserve(4);
         bool anyChildAvailable = false;
-        const bool yDown = terrainSchemeYDirectionDown(parent.key.schemeId);
-        for (int row = 0; row < 2; ++row) {
-            const int dy = yDown ? 1 - row : row;
-            for (int dx = 0; dx < 2; ++dx) {
-                TileKey childKey{
-                    parent.key.schemeId,
-                    childZ,
-                    childX + dx,
-                    childY + dy};
-                if (parent.key.schemeId == "Geographic-TMS") {
-                    if (isOutOfRangeGeographicTmsChild(childKey)) {
-                        continue;
-                    }
-                }
-                const TileAvailabilityState state =
-                    availabilityState(childKey);
-                anyChildAvailable |=
-                    state == TileAvailabilityState::Available;
-                children.push_back(ChildAvailability{childKey, state});
-            }
+        for (const TileKey& childKey :
+             TileQuadtreeChildKeys::terrainChildren(parent.key)) {
+            const TileAvailabilityState state = availabilityState(childKey);
+            anyChildAvailable |= state == TileAvailabilityState::Available;
+            children.push_back(ChildAvailability{childKey, state});
         }
 
         // cesium-native LayerJsonTerrainLoader::createTileChildrenImpl:
@@ -165,11 +147,6 @@ struct TileChildMaterializer {
             defaultGeometricError,
             std::forward<EnsureTileFn>(ensureTile),
             pPrepRenderer);
-    }
-
-    static bool terrainSchemeYDirectionDown(const std::string& schemeId) {
-        return schemeId == "XYZ-WebMercator" ||
-               schemeId == "OpenGlobus-Earth";
     }
 
     template <typename EnsureTileFn>
@@ -316,65 +293,22 @@ struct TileChildMaterializer {
             return false;
         }
 
-        const int childZ = tile.key.z + 1;
-        const int childX = tile.key.x * 2;
-        const int childY = tile.key.y * 2;
-        for (int dy = 0; dy < 2; ++dy) {
-            for (int dx = 0; dx < 2; ++dx) {
-                TileKey childKey{
-                    tile.key.schemeId,
-                    childZ,
-                    childX + dx,
-                    childY + dy};
-                if (tile.key.schemeId == "Geographic-TMS") {
-                    if (isOutOfRangeGeographicTmsChild(childKey)) {
-                        continue;
-                    }
-                }
-                if (options.cachedHeightmapCanRefine &&
-                    isTerrainCached(cacheKey(childKey))) {
-                    return true;
-                }
-                if (options.hasTerrainQuadtree &&
-                    availabilityState(childKey) ==
-                        TileAvailabilityState::Available) {
-                    return true;
-                }
+        for (const TileKey& childKey :
+             TileQuadtreeChildKeys::terrainChildren(tile.key)) {
+            if (options.cachedHeightmapCanRefine &&
+                isTerrainCached(cacheKey(childKey))) {
+                return true;
+            }
+            if (options.hasTerrainQuadtree &&
+                availabilityState(childKey) ==
+                    TileAvailabilityState::Available) {
+                return true;
             }
         }
         return false;
     }
 
 private:
-    static bool isOutOfRangeGeographicTmsChild(const TileKey& key) {
-        if (key.x < 0 || key.y < 0) {
-            return true;
-        }
-        const std::optional<int64_t> xCount =
-            geographicTmsXCount64(key.z);
-        const std::optional<int64_t> yCount =
-            geographicTmsYCount64(key.z);
-        if (!xCount || !yCount) {
-            return true;
-        }
-        return static_cast<int64_t>(key.x) >= *xCount ||
-               static_cast<int64_t>(key.y) >= *yCount;
-    }
-
-    static std::optional<int64_t> geographicTmsXCount64(int z) {
-        if (z < 0 || z + 1 >= 63) {
-            return std::nullopt;
-        }
-        return int64_t{1} << (z + 1);
-    }
-
-    static std::optional<int64_t> geographicTmsYCount64(int z) {
-        if (z < 0 || z >= 63) {
-            return std::nullopt;
-        }
-        return int64_t{1} << z;
-    }
-
     static bool canRepresentTileCoordinate(int64_t value) {
         return value >= static_cast<int64_t>(std::numeric_limits<int>::min()) &&
                value <= static_cast<int64_t>(std::numeric_limits<int>::max());
