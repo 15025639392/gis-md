@@ -60,7 +60,7 @@ Tileset Tileset::createLegacyTerrainForTests(
     RenderDevice* device,
     TilesetOptions options) {
     return Tileset(
-        ProviderOwnership{std::move(terrainProvider), nullptr},
+        ProviderOwnership{std::move(terrainProvider), nullptr, true},
         std::move(tileScheme),
         std::move(rasterOverlays),
         device,
@@ -84,9 +84,11 @@ Tileset::Tileset(ProviderOwnership providers,
                  RenderDevice* device,
                  TilesetOptions options)
     : heightmapTerrainProvider_(
-          contentProviderOwnsTerrainQuadtree(providers.contentProvider.get())
-              ? std::unique_ptr<TerrainProvider>{}
-              : std::move(providers.heightmapTerrainProvider)),
+          providers.allowHeightmapSurfacePathForTests &&
+                  !contentProviderOwnsTerrainQuadtree(
+                      providers.contentProvider.get())
+              ? std::move(providers.heightmapTerrainProvider)
+              : std::unique_ptr<TerrainProvider>{}),
       contentProvider_(std::move(providers.contentProvider)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),

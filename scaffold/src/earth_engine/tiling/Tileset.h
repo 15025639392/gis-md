@@ -133,6 +133,7 @@ private:
     struct ProviderOwnership {
         std::unique_ptr<TerrainProvider> heightmapTerrainProvider;
         std::unique_ptr<TilesetContentProvider> contentProvider;
+        bool allowHeightmapSurfacePathForTests = false;
     };
 
     friend struct TilesetTestAccess;

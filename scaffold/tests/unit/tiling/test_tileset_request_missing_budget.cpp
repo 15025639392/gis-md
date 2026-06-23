@@ -286,7 +286,7 @@ struct TilesetTestAccess {
     }
 
     static bool hasLegacyTerrainProvider(const Tileset& tileset) {
-        return tileset.legacyTerrainProvider_ != nullptr;
+        return tileset.heightmapTerrainProvider_ != nullptr;
     }
 };
 } // namespace earth_engine

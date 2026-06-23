@@ -59,7 +59,8 @@ struct TilesetTestAccess {
             new Tileset(
                 Tileset::ProviderOwnership{
                     std::move(legacyTerrainProvider),
-                    nullptr},
+                    nullptr,
+                    true},
                 std::move(scheme),
                 {},
                 nullptr,

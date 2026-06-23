@@ -171,7 +171,8 @@ struct TilesetTestAccess {
             new Tileset(
                 Tileset::ProviderOwnership{
                     std::move(terrainProvider),
-                    nullptr},
+                    nullptr,
+                    true},
                 std::move(scheme),
                 std::move(overlays),
                 device,
