@@ -29,6 +29,12 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     diagnostics.terrainSurfaceCommandsSubmitted = 6;
     diagnostics.globeFallbackCommands = 7;
     diagnostics.globeFallbackMaskedTerrainEntries = 8;
+    diagnostics.frameLoadProgressPercentage = 75.0;
+    diagnostics.frameProgressLoadingCount = 3;
+    diagnostics.frameProgressTotalCount = 12;
+    diagnostics.frameMappedRasterTileLoadingCount = 2;
+    diagnostics.frameMappedRasterTileCount = 5;
+    diagnostics.rasterOverlayTilesLoading = 4;
 
     const std::string line =
         minimal_globe_demo::buildRenderEntryDiagnosticsLine(diagnostics);
@@ -40,6 +46,10 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     EXPECT_NE(std::string::npos, line.find("fallback 3"));
     EXPECT_NE(std::string::npos, line.find("prep 4/5"));
     EXPECT_NE(std::string::npos, line.find("surface/globe/masked 6/7/8"));
+    EXPECT_NE(std::string::npos, line.find("load 75%"));
+    EXPECT_NE(std::string::npos, line.find("work 3/12"));
+    EXPECT_NE(std::string::npos, line.find("mapped 2/5"));
+    EXPECT_NE(std::string::npos, line.find("rasterLoad 4"));
 }
 
 TEST(MinimalGlobeDiagnosticsTest, SummaryReportsRenderEntryReasonCounts) {

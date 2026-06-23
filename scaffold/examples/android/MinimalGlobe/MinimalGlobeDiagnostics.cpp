@@ -56,6 +56,13 @@ std::string buildRenderEntryDiagnosticsLine(const Diagnostics& diagnostics) {
         << diagnostics.terrainSurfaceCommandsSubmitted
         << "/" << diagnostics.globeFallbackCommands
         << "/" << diagnostics.globeFallbackMaskedTerrainEntries
+        << "  load " << static_cast<int>(
+               diagnostics.frameLoadProgressPercentage)
+        << "% work " << diagnostics.frameProgressLoadingCount
+        << "/" << diagnostics.frameProgressTotalCount
+        << " mapped " << diagnostics.frameMappedRasterTileLoadingCount
+        << "/" << diagnostics.frameMappedRasterTileCount
+        << " rasterLoad " << diagnostics.rasterOverlayTilesLoading
         << "\n";
     return out.str();
 }
