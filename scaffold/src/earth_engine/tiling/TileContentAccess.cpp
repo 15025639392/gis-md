@@ -29,15 +29,6 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
     return true;
 }
 
-const TerrainProvider* effectiveLegacyTerrainProvider(
-    const TerrainProvider* legacyTerrainProvider,
-    const TilesetContentProvider* contentProvider) {
-    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
-        return nullptr;
-    }
-    return legacyTerrainProvider;
-}
-
 } // namespace
 
 TileContentAccess::TileContentAccess(
@@ -49,13 +40,13 @@ TileContentAccess::TileContentAccess(
     size_t rasterOverlayCount)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
-      legacyTerrainProvider_(
-          effectiveLegacyTerrainProvider(
-              legacyTerrainProvider,
-              contentProvider)),
       contentProvider_(contentProvider),
       contentLifecycle_(contentLifecycle),
-      rasterOverlayCount_(rasterOverlayCount) {}
+      rasterOverlayCount_(rasterOverlayCount) {
+    if (!contentProviderOwnsTerrainQuadtree()) {
+        legacyTerrainProvider_ = legacyTerrainProvider;
+    }
+}
 
 TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
     return tileRegistry_.ensureTile(
@@ -67,8 +58,6 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
 
 void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key)) {
-        const bool contentProviderOwnsTerrainQuadtree =
-            contentProvider_ && contentProvider_->providesTerrainQuadtree();
         for (const TileKey& childKey :
              TileSelectionRootPolicy::levelZeroTerrainRoots(
                  tile.key.schemeId)) {
@@ -85,7 +74,7 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,
                 tile);
-            if (contentProviderOwnsTerrainQuadtree &&
+            if (contentProviderOwnsTerrainQuadtree() &&
                 !child->content.renderContent.hasGltfContent() &&
                 (child->content.renderContent.hasRenderableTerrainContent() ||
                  child->content.renderContent.hasRetainedHeightmap() ||
@@ -103,19 +92,17 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
         return;
     }
 
-    const bool contentProviderOwnsTerrainQuadtree =
-        contentProvider_ && contentProvider_->providesTerrainQuadtree();
     TileChildFrameMaterializer::ensureChildren(
         TileChildFrameMaterializeInput{
             tile,
-            contentProvider_ && !contentProviderOwnsTerrainQuadtree
+            contentProvider_ && !contentProviderOwnsTerrainQuadtree()
                 ? contentProvider_->childTiles(tile.key)
                 : std::vector<TileKey>{},
             tileScheme_.maxZoom(),
             hasTerrainQuadtree(),
             isAvailabilityBoundaryTile(tile) &&
                 !hasResolvedAvailabilityBoundaryContent(tile),
-            contentProviderOwnsTerrainQuadtree},
+            contentProviderOwnsTerrainQuadtree()},
         [this](const TileKey& key) {
             return ensureTile(key);
         },
@@ -131,16 +118,29 @@ bool TileContentAccess::hasResolvedAvailabilityBoundaryContent(
 
 bool TileContentAccess::isAvailabilityBoundaryTile(
     const TilesetTile& tile) const {
-    if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
-        return contentProvider_->isTerrainAvailabilityBoundaryLevel(
-            tile.key.z);
+    if (contentProviderOwnsTerrainQuadtree()) {
+        return contentTerrainAvailabilityBoundaryTile(tile);
     }
+    return legacyAvailabilityBoundaryTile(tile);
+}
+
+bool TileContentAccess::contentProviderOwnsTerrainQuadtree() const {
+    return contentProvider_ && contentProvider_->providesTerrainQuadtree();
+}
+
+bool TileContentAccess::legacyAvailabilityBoundaryTile(
+    const TilesetTile& tile) const {
     return legacyTerrainProvider_ &&
            legacyTerrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
 }
 
+bool TileContentAccess::contentTerrainAvailabilityBoundaryTile(
+    const TilesetTile& tile) const {
+    return contentProvider_->isTerrainAvailabilityBoundaryLevel(tile.key.z);
+}
+
 bool TileContentAccess::hasTerrainQuadtree() const {
-    return (contentProvider_ && contentProvider_->providesTerrainQuadtree()) ||
+    return contentProviderOwnsTerrainQuadtree() ||
            legacyTerrainProvider_ != nullptr;
 }
 
@@ -149,7 +149,7 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
         return true;
     }
 
-    if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
+    if (contentProviderOwnsTerrainQuadtree()) {
         return TileRefinementAvailabilityResolver::canRefineContentTerrain(
             tile,
             *contentProvider_,
@@ -182,12 +182,22 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
 
 TileAvailabilityState TileContentAccess::availabilityState(
     const TileKey& key) const {
-    if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
-        return contentProvider_->terrainAvailabilityState(key);
+    if (contentProviderOwnsTerrainQuadtree()) {
+        return contentTerrainAvailabilityState(key);
     }
+    return legacyAvailabilityState(key);
+}
+
+TileAvailabilityState TileContentAccess::legacyAvailabilityState(
+    const TileKey& key) const {
     return legacyTerrainProvider_
         ? legacyTerrainProvider_->availabilityState(key)
         : TileAvailabilityState::NotAvailable;
+}
+
+TileAvailabilityState TileContentAccess::contentTerrainAvailabilityState(
+    const TileKey& key) const {
+    return contentProvider_->terrainAvailabilityState(key);
 }
 
 } // namespace earth_engine

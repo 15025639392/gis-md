@@ -30,8 +30,14 @@ public:
     bool canRefine(const TilesetTile& tile) const;
 
 private:
+    bool contentProviderOwnsTerrainQuadtree() const;
     bool hasTerrainQuadtree() const;
+    bool legacyAvailabilityBoundaryTile(const TilesetTile& tile) const;
+    bool contentTerrainAvailabilityBoundaryTile(const TilesetTile& tile) const;
     TileAvailabilityState availabilityState(const TileKey& key) const;
+    TileAvailabilityState legacyAvailabilityState(const TileKey& key) const;
+    TileAvailabilityState contentTerrainAvailabilityState(
+        const TileKey& key) const;
 
     TilesetTileRegistry& tileRegistry_;
     const TileScheme& tileScheme_;
