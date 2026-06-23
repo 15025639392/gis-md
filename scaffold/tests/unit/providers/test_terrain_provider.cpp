@@ -1146,6 +1146,15 @@ TEST(QuantizedMeshTerrainProviderTest,
     ASSERT_EQ(1u, roots.size());
     EXPECT_EQ((TileKey{"XYZ-WebMercator", -1, 0, 0}), roots.front());
 
+    const auto virtualRootMetadata = provider.tileMetadata(roots.front());
+    ASSERT_TRUE(virtualRootMetadata.has_value());
+    EXPECT_EQ(WebMercatorProjection::maximumGlobeRectangle(),
+              virtualRootMetadata->bounds);
+    ASSERT_TRUE(virtualRootMetadata->boundingVolume.has_value());
+    EXPECT_EQ(WebMercatorProjection::maximumGlobeRectangle(),
+              virtualRootMetadata->boundingVolume->region);
+    EXPECT_TRUE(virtualRootMetadata->unconditionallyRefine);
+
     const std::vector<TileKey> levelZeroChildren =
         provider.childTiles(roots.front());
     ASSERT_EQ(1u, levelZeroChildren.size());

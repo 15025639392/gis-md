@@ -396,6 +396,13 @@ Rectangle terrainContentRectangle(const TileKey& key,
     return geographicTmsRectangle(key);
 }
 
+Rectangle terrainRootRectangle(const std::string& schemeId) {
+    if (schemeId == "XYZ-WebMercator") {
+        return WebMercatorProjection::maximumGlobeRectangle();
+    }
+    return Rectangle::MAXIMUM;
+}
+
 RasterOverlayProjection rasterOverlayProjectionForTerrainScheme(
     const std::string& schemeId) {
     if (schemeId == "XYZ-WebMercator") {
@@ -1303,7 +1310,7 @@ QuantizedMeshTerrainProvider::tileMetadata(const TileKey& key) const {
         key.schemeId == schemeId_) {
         TilesetContentTileMetadata metadata;
         metadata.key = key;
-        metadata.bounds = Rectangle::MAXIMUM;
+        metadata.bounds = terrainRootRectangle(schemeId_);
         metadata.hasExplicitBounds = true;
         metadata.boundingVolume = TileBoundingVolume::fromRegion(
             metadata.bounds,
