@@ -40,6 +40,7 @@ struct TilesetTile {
     std::optional<TileBoundingVolume> contentBoundingVolume;
     std::optional<TileBoundingVolume> initialBoundingVolume;
     std::optional<TileBoundingVolume> initialContentBoundingVolume;
+    bool contentProviderTerrainQuadtreeTile = false;
 
     // ---- Tree structure (cesium-native parent/child) ----
     // DIFF from cesium-native: children are raw pointers, ownership is in
@@ -149,6 +150,12 @@ struct TilesetTile {
                content.contentKind == TileContentKind::Render &&
                content.renderContent.hasRenderableTerrainContent() &&
                content.renderContent.isRenderContentReady();
+    }
+
+    bool waitsForContentTerrainRasterDetails() const {
+        return contentProviderTerrainQuadtreeTile &&
+               !(content.contentKind == TileContentKind::Render &&
+                 content.renderContent.hasRasterOverlayDetailsContent());
     }
 
     bool hasSurfaceDrawable() const {

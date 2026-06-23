@@ -57,6 +57,8 @@ RenderContentRasterOverlayStateUpdater::update(
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
         tile.content.renderContent.hasRasterOverlayDetailsContent();
+    const bool waitForContentTerrainDetails =
+        tile.waitsForContentTerrainRasterDetails();
     static const RasterOverlayDetails emptyOverlayDetails;
     const RasterOverlayDetails& overlayDetails = hasRenderContentDetails
         ? tile.content.renderContent.rasterOverlayDetails()
@@ -86,7 +88,7 @@ RenderContentRasterOverlayStateUpdater::update(
             ? overlayDetails.findRectangleForOverlayProjection(projection)
             : nullptr;
         const std::optional<Rectangle> boundingVolumeRectangle =
-            hasRenderContentDetails
+            hasRenderContentDetails || waitForContentTerrainDetails
                 ? std::nullopt
                 : projectedBoundingVolumeRectangle(tile, projection);
         const Rectangle& rasterTargetRectangle = geometryRectangle
@@ -110,7 +112,7 @@ RenderContentRasterOverlayStateUpdater::update(
                 tile.rasterOverlayState.missingProjections(),
                 tile.parent,
                 i,
-                hasRenderContentDetails,
+                hasRenderContentDetails || waitForContentTerrainDetails,
                 boundingVolumeRectangle);
         if (tile.rasterOverlayState.hasMissingProjections()) {
             action.unloadTileContent = true;

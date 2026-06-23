@@ -2,11 +2,16 @@
 
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/content/EllipsoidTerrainContentProvider.h"
 #include "earth_engine/content/QuantizedMeshContentLoader.h"
+#include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
+#include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
@@ -16,9 +21,11 @@
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileSelectionRootPolicy.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/SurfaceTile.h"
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/Tileset.h"
 
 #include <cmath>
@@ -1195,6 +1202,82 @@ TEST(TilesetQuantizedMeshTest,
             root->children[i]->content.isTerrainAvailabilityUpsample());
     }
     EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *root));
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainRasterPrefetchWaitsForGltfOverlayDetails) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    auto provider = std::make_unique<SparseContentTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        overlays,
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    ASSERT_TRUE(root->contentProviderTerrainQuadtreeTile);
+    ASSERT_FALSE(root->content.renderContent.hasGltfContent());
+
+    FrameResourceBudgetConfig budgetConfig;
+    budgetConfig.maxRasterNetworkRequestsPerFrame = 64;
+    budgetConfig.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, budgetConfig);
+
+    TileRasterOverlayPrefetcher::prefetch(
+        *root,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    RasterOverlayTileProvider* rasterProvider = activated.getTileProvider();
+    ASSERT_NE(nullptr, rasterProvider);
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mapped);
+    ASSERT_NE(nullptr, mapped->getLoadingTile());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Placeholder,
+              mapped->getLoadingTile()->getState());
+    EXPECT_EQ(0, rasterProvider->getCachedTileCount());
+    EXPECT_TRUE(root->rasterOverlayState.missingProjections().empty());
+
+    installQuantizedMeshTerrainContent(
+        *root,
+        makeQuantizedMeshBytes(Vec3::zero(), Vec3::zero()),
+        RasterOverlayProjection::WebMercator);
+
+    budget.beginFrame(2, budgetConfig);
+    TileRasterOverlayPrefetcher::prefetch(
+        *root,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    mapped = root->rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mapped);
+    ASSERT_NE(nullptr, mapped->getLoadingTile());
+    EXPECT_NE(RasterOverlayTile::LoadState::Placeholder,
+              mapped->getLoadingTile()->getState());
+    EXPECT_EQ(1, rasterProvider->getCachedTileCount());
+    EXPECT_EQ(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            root->bounds),
+        mapped->getLoadingTile()->getRectangle());
 }
 
 TEST(TilesetQuantizedMeshTest,
