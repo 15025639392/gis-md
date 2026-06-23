@@ -1403,7 +1403,7 @@ TEST(SceneFrameStateTest, SurfaceCommandIgnoresOverflowingNoSkirtRange) {
     EXPECT_EQ(0, command.surfaceSkirtIndexCount);
 }
 
-TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
+TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
     DummyRenderDevice device;
     Scene scene;
     ASSERT_TRUE(scene.setRenderDevice(&device));
@@ -1432,10 +1432,9 @@ TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
     TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
     ASSERT_NE(root, nullptr);
 
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *root,
+        makeFlatGeographicTerrainGltfModel(root->bounds, 0.0));
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -1459,14 +1458,16 @@ TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesPlanned, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedPlanned, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesAncestorFallback, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSynchronousPrep, 1);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSynchronousPrep, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferredPrep, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDrawn, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesMissed, 0);
-    EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 1);
-    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
-    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
+    EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
+    EXPECT_EQ(scene.diagnostics().renderGltfPrimitives, 1);
+    EXPECT_EQ(scene.diagnostics().terrainRenderContentCommands, 1);
+    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 1);
+    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 1);
 }
 
 TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {
