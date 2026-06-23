@@ -1414,6 +1414,10 @@ TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
     ASSERT_EQ(1u, direct.sourceTiles.sourceKeys.size());
     EXPECT_EQ(sourceKey, direct.sourceTiles.sourceKeys.front());
     EXPECT_EQ(sourceBounds, direct.sourceTiles.sourceBounds);
+    EXPECT_EQ(sourceKey.x, direct.sourceTiles.minX);
+    EXPECT_EQ(sourceKey.y, direct.sourceTiles.minY);
+    EXPECT_EQ(sourceKey.x, direct.sourceTiles.maxX);
+    EXPECT_EQ(sourceKey.y, direct.sourceTiles.maxY);
 
     const Rectangle westHalf(
         sourceBounds.west(),
@@ -1435,6 +1439,8 @@ TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
     EXPECT_TRUE(composed.sourceTiles.sourceBounds.equalsEpsilon(
         westHalf,
         1e-12));
+    EXPECT_LE(composed.sourceTiles.minX, composed.sourceTiles.maxX);
+    EXPECT_LE(composed.sourceTiles.minY, composed.sourceTiles.maxY);
 }
 
 TEST(RasterOverlayLifecycleTest,
@@ -1469,6 +1475,10 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_TRUE(mapping.sourceTiles.sourceBounds.equalsEpsilon(
         spanningFourTiles,
         1e-12));
+    EXPECT_EQ(centerKey.x - 1, mapping.sourceTiles.minX);
+    EXPECT_EQ(centerKey.y, mapping.sourceTiles.minY);
+    EXPECT_EQ(centerKey.x, mapping.sourceTiles.maxX);
+    EXPECT_EQ(centerKey.y + 1, mapping.sourceTiles.maxY);
     ASSERT_EQ(4u, mapping.sourceTiles.sourceKeys.size());
 
     const std::vector<TileKey> expectedKeys = {

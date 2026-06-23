@@ -1973,7 +1973,11 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     RasterSourceTileMapping sourceTiles{
         sourcePlan.sourceZoom,
         *sourceBounds,
-        sourcePlan.sourceKeys};
+        sourcePlan.sourceKeys,
+        sourcePlan.minX,
+        sourcePlan.minY,
+        sourcePlan.maxX,
+        sourcePlan.maxY};
 
     if (sourcePlan.sourceKeys.size() == 1) {
         const TileKey& sourceKey = sourcePlan.sourceKeys.front();
@@ -2123,19 +2127,19 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     }
 
     const TileKey& key = tile.getTileID();
-    QuadtreeSourcePlan sourcePlan;
-    sourcePlan.sourceZoom = key.z;
-    sourcePlan.minX = key.x;
-    sourcePlan.minY = key.y;
-    sourcePlan.maxX = key.x;
-    sourcePlan.maxY = key.y;
-    sourcePlan.sourceKeys.push_back(key);
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
-    return loadMappedTile(
+    return loadSourceTileList(
         tile,
-        std::move(sourcePlan),
+        RasterSourceTileMapping{
+            key.z,
+            targetBounds,
+            {key},
+            key.x,
+            key.y,
+            key.x,
+            key.y},
         targetBounds,
         tileCacheKey(key),
         budget);
@@ -2177,18 +2181,17 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
-    QuadtreeSourcePlan sourcePlan;
-    Rectangle sourceBounds;
+    RasterSourceTileMapping sourceTiles;
     if (tile.hasCompositeSourcePlan() &&
         tile.getCompositeSourceBounds().computeIntersection(
             coverageRectangle_)) {
-        sourcePlan.sourceZoom = tile.getSourceZoom();
-        sourcePlan.sourceKeys = tile.getCompositeSourceKeys();
-        sourcePlan.minX = tile.getCompositeSourceMinX();
-        sourcePlan.minY = tile.getCompositeSourceMinY();
-        sourcePlan.maxX = tile.getCompositeSourceMaxX();
-        sourcePlan.maxY = tile.getCompositeSourceMaxY();
-        sourceBounds = tile.getCompositeSourceBounds();
+        sourceTiles.sourceZoom = tile.getSourceZoom();
+        sourceTiles.sourceBounds = tile.getCompositeSourceBounds();
+        sourceTiles.sourceKeys = tile.getCompositeSourceKeys();
+        sourceTiles.minX = tile.getCompositeSourceMinX();
+        sourceTiles.minY = tile.getCompositeSourceMinY();
+        sourceTiles.maxX = tile.getCompositeSourceMaxX();
+        sourceTiles.maxY = tile.getCompositeSourceMaxY();
     } else {
         const std::optional<Rectangle> mappedSourceBounds =
             mapGeometryBoundsToImageryCoverage(
@@ -2202,13 +2205,12 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
             tile.setState(RasterOverlayTile::LoadState::Failed);
             return false;
         }
-        sourceBounds = *mappedSourceBounds;
-        sourcePlan = buildQuadtreeSourcePlan(
+        QuadtreeSourcePlan sourcePlan = buildQuadtreeSourcePlan(
             scheme_,
             provider_,
             textureUploader_.get(),
             targetBounds,
-            sourceBounds,
+            *mappedSourceBounds,
             tile.getTargetScreenPixelsX(),
             tile.getTargetScreenPixelsY(),
             maximumScreenSpaceError_,
@@ -2217,16 +2219,24 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
             getMaximumLevel());
         tile.setCompositeSourcePlan(
             sourcePlan.sourceZoom,
-            sourceBounds,
+            *mappedSourceBounds,
             sourcePlan.sourceKeys,
             sourcePlan.minX,
             sourcePlan.minY,
             sourcePlan.maxX,
             sourcePlan.maxY);
+        sourceTiles = RasterSourceTileMapping{
+            sourcePlan.sourceZoom,
+            *mappedSourceBounds,
+            sourcePlan.sourceKeys,
+            sourcePlan.minX,
+            sourcePlan.minY,
+            sourcePlan.maxX,
+            sourcePlan.maxY};
     }
 
-    if (sourcePlan.empty()) {
-        logAndroidRasterPipeline("empty-plan", ck, 0, sourcePlan.sourceZoom);
+    if (sourceTiles.empty()) {
+        logAndroidRasterPipeline("empty-plan", ck, 0, sourceTiles.sourceZoom);
         tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
         tile.setState(RasterOverlayTile::LoadState::Failed);
         return false;
@@ -2234,17 +2244,41 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     logAndroidRasterPipeline(
         "start",
         ck,
-        static_cast<int>(sourcePlan.sourceKeys.size()),
-        sourcePlan.sourceZoom);
-    return loadMappedTile(
+        static_cast<int>(sourceTiles.sourceKeys.size()),
+        sourceTiles.sourceZoom);
+    return loadSourceTileList(
         tile,
-        std::move(sourcePlan),
-        sourceBounds,
+        std::move(sourceTiles),
+        targetBounds,
         ck,
         budget);
 }
 
-bool RasterOverlayTileProvider::loadMappedTile(
+bool RasterOverlayTileProvider::loadSourceTileList(
+    RasterOverlayTile& tile,
+    RasterSourceTileMapping sourceTiles,
+    const Rectangle& targetBounds,
+    const std::string& cacheKey,
+    FrameResourceBudget* budget) {
+    QuadtreeSourcePlan sourcePlan;
+    sourcePlan.sourceZoom = sourceTiles.sourceZoom;
+    sourcePlan.minX = sourceTiles.minX;
+    sourcePlan.minY = sourceTiles.minY;
+    sourcePlan.maxX = sourceTiles.maxX;
+    sourcePlan.maxY = sourceTiles.maxY;
+    sourcePlan.sourceKeys = std::move(sourceTiles.sourceKeys);
+    const Rectangle composeBounds =
+        sourceTiles.sourceBounds.isEmpty() ? targetBounds
+                                           : sourceTiles.sourceBounds;
+    return loadMappedSourceImages(
+        tile,
+        std::move(sourcePlan),
+        composeBounds,
+        cacheKey,
+        budget);
+}
+
+bool RasterOverlayTileProvider::loadMappedSourceImages(
     RasterOverlayTile& tile,
     QuadtreeSourcePlan sourcePlan,
     const Rectangle& targetBounds,
@@ -2362,14 +2396,14 @@ bool RasterOverlayTileProvider::loadMappedTile(
             state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
-    issueCompositeSourceRequests(
+    issueMappedSourceRequests(
         request,
         budget);
 
     return true;
 }
 
-int RasterOverlayTileProvider::issueCompositeSourceRequests(
+int RasterOverlayTileProvider::issueMappedSourceRequests(
     const std::shared_ptr<QuadtreeSourceRequest>& request,
     FrameResourceBudget* budget) {
     if (!request || request->isComplete()) {

@@ -76,6 +76,10 @@ public:
         int sourceZoom = 0;
         Rectangle sourceBounds = Rectangle::MAXIMUM;
         std::vector<TileKey> sourceKeys;
+        int minX = 0;
+        int minY = 0;
+        int maxX = 0;
+        int maxY = 0;
 
         bool empty() const { return sourceKeys.empty(); }
     };
@@ -267,18 +271,23 @@ private:
         int minimumLevel,
         int maximumLevel);
 
-    bool loadMappedTile(RasterOverlayTile& tile,
-                        QuadtreeSourcePlan sourcePlan,
-                        const Rectangle& targetBounds,
-                        const std::string& cacheKey,
-                        FrameResourceBudget* budget);
+    bool loadSourceTileList(RasterOverlayTile& tile,
+                            RasterSourceTileMapping sourceTiles,
+                            const Rectangle& targetBounds,
+                            const std::string& cacheKey,
+                            FrameResourceBudget* budget);
+    bool loadMappedSourceImages(RasterOverlayTile& tile,
+                                QuadtreeSourcePlan sourcePlan,
+                                const Rectangle& targetBounds,
+                                const std::string& cacheKey,
+                                FrameResourceBudget* budget);
     void refreshSourceAssetDepot();
 
     /// Internal: load a composite raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its geometry rectangle.
     bool loadCompositeTile(RasterOverlayTile& tile,
                            FrameResourceBudget* budget = nullptr);
-    int issueCompositeSourceRequests(
+    int issueMappedSourceRequests(
         const std::shared_ptr<QuadtreeSourceRequest>& request,
         FrameResourceBudget* budget);
 
