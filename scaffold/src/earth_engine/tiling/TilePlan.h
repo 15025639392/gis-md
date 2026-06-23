@@ -137,6 +137,11 @@ struct TilePlan {
     std::vector<TileTransition> tileTransitions;
     std::vector<TileRenderEntry> renderEntries;
     std::vector<std::string> frameCredits;
+    int frameMappedRasterTileCount = 0;
+    int frameMappedRasterTileLoadingCount = 0;
+    int frameProgressTotalCount = 0;
+    int frameProgressLoadingCount = 0;
+    double frameLoadProgressPercentage = 100.0;
     std::vector<TileSelectionRecord> selectionRecords;
     int renderingNodeCount = 0;
     int walkthroughNodeCount = 0;

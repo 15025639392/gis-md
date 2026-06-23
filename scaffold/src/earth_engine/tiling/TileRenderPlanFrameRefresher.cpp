@@ -11,6 +11,7 @@
 #include "../providers/RasterOverlayTileProvider.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace earth_engine {
 
@@ -93,6 +94,80 @@ void refreshFrameCredits(TilePlan& tilePlan,
     }
 }
 
+bool containsTileKey(const std::vector<TileKey>& keys, const TileKey& key) {
+    return std::find(keys.begin(), keys.end(), key) != keys.end();
+}
+
+void collectMappedRasterProgress(const TilesetTile& tile,
+                                 TilePlan& tilePlan) {
+    tile.rasterOverlayState.forEachMapping(
+        [&tilePlan](const RasterMappedToTilesetTile* mapping) {
+            if (!mapping) {
+                return;
+            }
+
+            ++tilePlan.frameMappedRasterTileCount;
+            if (mapping->getState() !=
+                RasterMappedToTilesetTile::State::Attached) {
+                ++tilePlan.frameMappedRasterTileLoadingCount;
+            }
+        });
+}
+
+int baseProgressTotalCount(const TilePlan& tilePlan) {
+    const int selectedTraversalCount =
+        tilePlan.renderingNodeCount +
+        tilePlan.walkthroughNodeCount +
+        tilePlan.notRenderingNodeCount;
+    if (selectedTraversalCount > 0) {
+        return selectedTraversalCount;
+    }
+
+    return static_cast<int>(
+        tilePlan.visibleTiles.size() + tilePlan.tilesFadingOut.size());
+}
+
+void refreshFrameProgress(TilePlan& tilePlan,
+                          TileContentAccess& contentAccess) {
+    tilePlan.frameMappedRasterTileCount = 0;
+    tilePlan.frameMappedRasterTileLoadingCount = 0;
+
+    std::vector<TileKey> visitedTiles;
+    visitedTiles.reserve(tilePlan.renderEntries.size() * 2);
+    for (const TileRenderEntry& entry : tilePlan.renderEntries) {
+        if (!containsTileKey(visitedTiles, entry.selectedKey)) {
+            visitedTiles.push_back(entry.selectedKey);
+            if (TilesetTile* selectedTile =
+                    contentAccess.ensureTile(entry.selectedKey)) {
+                collectMappedRasterProgress(*selectedTile, tilePlan);
+            }
+        }
+
+        if (entry.renderKey != entry.selectedKey &&
+            !containsTileKey(visitedTiles, entry.renderKey)) {
+            visitedTiles.push_back(entry.renderKey);
+            if (TilesetTile* renderTile =
+                    contentAccess.ensureTile(entry.renderKey)) {
+                collectMappedRasterProgress(*renderTile, tilePlan);
+            }
+        }
+    }
+
+    tilePlan.frameProgressTotalCount =
+        baseProgressTotalCount(tilePlan) + tilePlan.frameMappedRasterTileCount;
+    tilePlan.frameProgressLoadingCount =
+        tilePlan.frameMappedRasterTileLoadingCount;
+    tilePlan.frameLoadProgressPercentage =
+        tilePlan.frameProgressLoadingCount == 0 ||
+                tilePlan.frameProgressTotalCount <= 0
+            ? 100.0
+            : 100.0 *
+                  static_cast<double>(
+                      tilePlan.frameProgressTotalCount -
+                      tilePlan.frameProgressLoadingCount) /
+                  static_cast<double>(tilePlan.frameProgressTotalCount);
+}
+
 } // namespace
 
 void TileRenderPlanFrameRefresher::refresh(
@@ -118,6 +193,7 @@ void TileRenderPlanFrameRefresher::refresh(
                    tile.content.renderContent.isGltfRenderReady();
         });
     refreshFrameCredits(tilePlan, rasterOverlays, contentAccess);
+    refreshFrameProgress(tilePlan, contentAccess);
 }
 
 } // namespace earth_engine
