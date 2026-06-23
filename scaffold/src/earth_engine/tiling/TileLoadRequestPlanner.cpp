@@ -26,7 +26,7 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
     }
 
     if (snapshot.terrainAlreadyCached ||
-        !snapshot.terrainProviderSupportsTile) {
+        !snapshot.legacyTerrainProviderSupportsTile) {
         return TileLoadRequestKind::Skip;
     }
     return TileLoadRequestKind::Terrain;

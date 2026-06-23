@@ -103,7 +103,7 @@ private:
         snapshot.contentProviderOwnsTerrainQuadtree =
             input.contentProvider &&
             input.contentProvider->providesTerrainQuadtree();
-        snapshot.terrainProviderSupportsTile =
+        snapshot.legacyTerrainProviderSupportsTile =
             !snapshot.contentProviderOwnsTerrainQuadtree &&
             !TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
             terrainProvider &&

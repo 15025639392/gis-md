@@ -21125,7 +21125,7 @@ void testTileLoadRequestDispatcherPassesNetworkPriority() {
 
 void testTileLoadRequestPlannerClassifiesRequestKinds() {
     TileLoadRequestSnapshot snapshot;
-    snapshot.terrainProviderSupportsTile = true;
+    snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Terrain,
           "TileLoadRequestPlanner: requestable terrain tile loads terrain");
@@ -21144,7 +21144,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::Unloaded;
-    snapshot.terrainProviderSupportsTile = true;
+    snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Terrain,
           "TileLoadRequestPlanner: unloaded terrain tile remains requestable");
@@ -21163,7 +21163,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
           "TileLoadRequestPlanner: upsampled tile uses local terrain upload path");
 
     snapshot = TileLoadRequestSnapshot{};
-    snapshot.terrainProviderSupportsTile = true;
+    snapshot.legacyTerrainProviderSupportsTile = true;
     snapshot.terrainAlreadyCached = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
@@ -21172,7 +21172,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::ContentLoading;
-    snapshot.terrainProviderSupportsTile = true;
+    snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: already loading tile is skipped");
@@ -21190,7 +21190,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
-    snapshot.terrainProviderSupportsTile = true;
+    snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Terrain,
           "TileLoadRequestPlanner: temporarily failed terrain tile remains retryable");
@@ -21493,7 +21493,7 @@ void testTileLoadSchedulerBlocksTerrainFanoutOverInflightCapacity() {
                TilesetTile*& tileState) {
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -21609,7 +21609,7 @@ void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
                 planned = true;
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 snapshot.terrainAlreadyCached = true;
                 return snapshot;
             },
@@ -21769,7 +21769,7 @@ void testTileLoadSchedulerContinuesAfterUpsampleSourceWait() {
                     snapshot.upsampledFromParent = true;
                 } else {
                     tileState = nullptr;
-                    snapshot.terrainProviderSupportsTile = true;
+                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },
@@ -22396,7 +22396,7 @@ void testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning() {
                             TileLoadStatus::RetryLater});
                 }
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -22556,7 +22556,7 @@ void testTileLoadSchedulerStopsAfterTerrainDispatchBudgetBlock() {
                 plannedKeys.push_back(key.x);
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -22670,7 +22670,7 @@ void testTileLoadSchedulerContentThenTerrainShareDispatchBudget() {
                 if (key.schemeId == "content") {
                     snapshot.contentProviderSupportsTile = true;
                 } else {
-                    snapshot.terrainProviderSupportsTile = true;
+                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },
@@ -22790,7 +22790,7 @@ void testTileLoadSchedulerTerrainThenContentShareDispatchBudget() {
                 if (key.schemeId == "content") {
                     snapshot.contentProviderSupportsTile = true;
                 } else {
-                    snapshot.terrainProviderSupportsTile = true;
+                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },

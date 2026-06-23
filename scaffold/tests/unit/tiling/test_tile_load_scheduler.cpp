@@ -443,7 +443,7 @@ TEST(TileLoadSchedulerTest, BlocksTerrainFanoutOverInflightCapacity) {
                TilesetTile*& tileState) {
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -491,7 +491,7 @@ TEST(TileLoadSchedulerTest, ExplicitContentProviderUsesContentRequestPath) {
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.contentProviderSupportsTile = true;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -606,7 +606,7 @@ TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
                TilesetTile*& tileState) {
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -873,7 +873,7 @@ TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
                 planned = true;
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 snapshot.terrainAlreadyCached = true;
                 return snapshot;
             },
@@ -1003,7 +1003,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
                     snapshot.upsampledFromParent = true;
                 } else {
                     tileState = nullptr;
-                    snapshot.terrainProviderSupportsTile = true;
+                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },
@@ -1600,7 +1600,7 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
                             TileLoadStatus::RetryLater});
                 }
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -1722,7 +1722,7 @@ TEST(TileLoadSchedulerTest, StopsAfterTerrainDispatchBudgetBlock) {
                 plannedKeys.push_back(key.x);
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainProviderSupportsTile = true;
+                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -1791,7 +1791,7 @@ TEST(TileLoadSchedulerTest, ContentThenTerrainShareDispatchBudget) {
                 if (key.schemeId == "content") {
                     snapshot.contentProviderSupportsTile = true;
                 } else {
-                    snapshot.terrainProviderSupportsTile = true;
+                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },
@@ -1865,7 +1865,7 @@ TEST(TileLoadSchedulerTest, TerrainThenContentShareDispatchBudget) {
                 if (key.schemeId == "content") {
                     snapshot.contentProviderSupportsTile = true;
                 } else {
-                    snapshot.terrainProviderSupportsTile = true;
+                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },

@@ -16,7 +16,7 @@ struct TileLoadRequestSnapshot {
     bool upsampledFromParent = false;
     bool contentProviderSupportsTile = false;
     bool contentProviderOwnsTerrainQuadtree = false;
-    bool terrainProviderSupportsTile = false;
+    bool legacyTerrainProviderSupportsTile = false;
     bool terrainAlreadyCached = false;
     bool hasRenderContent = false;
     TileLoadState loadState = TileLoadState::Unloaded;
