@@ -142,6 +142,10 @@ private:
                                                                : -1;
         }
 
+        if (tile.content.isRasterDetailUpsample()) {
+            return -1;
+        }
+
         const int geographic =
             model.rasterOverlayDetails.textureCoordinateIDForProjection(
                 RasterOverlayProjection::Geographic);

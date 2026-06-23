@@ -28666,7 +28666,7 @@ void testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion() {
         childKey,
         Rectangle::fromDegrees(0.0, -10.0, 10.0, 0.0),
         &parent);
-    child.content.markRasterDetailUpsample();
+    child.content.markTerrainAvailabilityUpsample();
 
     const Rectangle tightContent =
         Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0);
@@ -28704,7 +28704,7 @@ void testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion() {
               std::abs(childModel->rasterOverlayDetails.boundingRegion
                            .maximumHeight -
                        33.0) < 1e-12,
-          "Tileset: glTF terrain upsample derives raster details from parent model region");
+          "Tileset: glTF terrain availability upsample derives raster details from parent model region");
 }
 
 void testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent() {
