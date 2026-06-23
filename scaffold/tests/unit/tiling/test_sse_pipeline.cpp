@@ -19869,14 +19869,16 @@ void testTileLoadRequestDispatcherSkipsEmptyCacheKeys() {
             [&issued]() { issued = true; });
 
     const TileLoadDispatchResult upsampleResult =
-        TileLoadRequestDispatcher::queueUpsampledTerrain(
+        TileLoadRequestDispatcher::queueUpsampledLoad(
             mutex,
             requestState,
             pendingLoads,
             key,
             "",
             TileLoadPriorityGroup::Normal,
-            0.0);
+            0.0,
+            TileLoadDomain::Terrain,
+            TileLoadResult::createRenderable());
 
     check(terrainResult == TileLoadDispatchResult::Skipped &&
               contentResult == TileLoadDispatchResult::Skipped &&
@@ -20338,14 +20340,16 @@ void testTileLoadRequestDispatcherRejectsRequestsDuringDestroy() {
             0.0,
             [&issued]() { issued = true; });
     const TileLoadDispatchResult upsampleResult =
-        TileLoadRequestDispatcher::queueUpsampledTerrain(
+        TileLoadRequestDispatcher::queueUpsampledLoad(
             lifecycle.mutex(),
             lifecycle.requestState(),
             lifecycle.pendingLoads(),
             key,
             "destroy-upsample",
             TileLoadPriorityGroup::Normal,
-            0.0);
+            0.0,
+            TileLoadDomain::Terrain,
+            TileLoadResult::createRenderable());
 
     check(terrainResult == TileLoadDispatchResult::Destroying &&
               contentResult == TileLoadDispatchResult::Destroying &&
@@ -20996,14 +21000,16 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
     }
 
     const TileLoadDispatchResult result =
-        TileLoadRequestDispatcher::queueUpsampledTerrain(
+        TileLoadRequestDispatcher::queueUpsampledLoad(
             mutex,
             requestState,
             pendingLoads,
             key,
             "shared-cache-key",
             TileLoadPriorityGroup::Normal,
-            0.0);
+            0.0,
+            TileLoadDomain::Terrain,
+            TileLoadResult::createRenderable());
 
     check(result == TileLoadDispatchResult::Skipped,
           "TileLoadRequestDispatcher: pending cache key suppresses upsampled terrain enqueue");
@@ -21023,14 +21029,16 @@ void testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhaust
     const TileKey key{"test", 0, 0, 0};
 
     const TileLoadDispatchResult result =
-        TileLoadRequestDispatcher::queueUpsampledTerrain(
+        TileLoadRequestDispatcher::queueUpsampledLoad(
             mutex,
             requestState,
             pendingLoads,
             key,
             "upsample-blocked",
             TileLoadPriorityGroup::Urgent,
-            100.0);
+            100.0,
+            TileLoadDomain::Terrain,
+            TileLoadResult::createRenderable());
 
     check(result == TileLoadDispatchResult::Issued,
           "TileLoadRequestDispatcher: exhausted network budget does not block local upsampled terrain enqueue");

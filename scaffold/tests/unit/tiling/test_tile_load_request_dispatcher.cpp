@@ -502,14 +502,16 @@ TEST(TileLoadRequestDispatcherTest, SkipsEmptyCacheKeys) {
             [&issued]() { issued = true; });
 
     TileLoadDispatchResult upsampleResult =
-        TileLoadRequestDispatcher::queueUpsampledTerrain(
+        TileLoadRequestDispatcher::queueUpsampledLoad(
             mutex,
             requestState,
             pendingLoads,
             key,
             "",
             TileLoadPriorityGroup::Normal,
-            0.0);
+            0.0,
+            TileLoadDomain::Terrain,
+            TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, terrainResult);
     EXPECT_EQ(TileLoadDispatchResult::Skipped, contentResult);
@@ -972,14 +974,16 @@ TEST(TileLoadRequestDispatcherTest, RejectsRequestsDuringDestroy) {
             0.0,
             [&issued]() { issued = true; });
     TileLoadDispatchResult upsampleResult =
-        TileLoadRequestDispatcher::queueUpsampledTerrain(
+        TileLoadRequestDispatcher::queueUpsampledLoad(
             lifecycle.mutex(),
             lifecycle.requestState(),
             lifecycle.pendingLoads(),
             key,
             "destroy-upsample",
             TileLoadPriorityGroup::Normal,
-            0.0);
+            0.0,
+            TileLoadDomain::Terrain,
+            TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Destroying, terrainResult);
     EXPECT_EQ(TileLoadDispatchResult::Destroying, contentResult);
@@ -1502,14 +1506,16 @@ TEST(TileLoadRequestDispatcherTest,
     }
 
     TileLoadDispatchResult result =
-        TileLoadRequestDispatcher::queueUpsampledTerrain(
+        TileLoadRequestDispatcher::queueUpsampledLoad(
             mutex,
             requestState,
             pendingLoads,
             key,
             "shared-cache-key",
             TileLoadPriorityGroup::Normal,
-            0.0);
+            0.0,
+            TileLoadDomain::Terrain,
+            TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
     EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
@@ -1528,19 +1534,46 @@ TEST(TileLoadRequestDispatcherTest,
     const TileKey key{"test", 0, 0, 0};
 
     TileLoadDispatchResult result =
-        TileLoadRequestDispatcher::queueUpsampledTerrain(
+        TileLoadRequestDispatcher::queueUpsampledLoad(
             mutex,
             requestState,
             pendingLoads,
             key,
             "upsample-blocked",
             TileLoadPriorityGroup::Urgent,
-            100.0);
+            100.0,
+            TileLoadDomain::Terrain,
+            TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
     EXPECT_EQ(0u, budget.networkRequestsIssued());
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     QueuesUpsampledContentInContentDomainExplicitly) {
+    std::mutex mutex;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    const TileKey key{"test", 1, 0, 0};
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::queueUpsampledLoad(
+            mutex,
+            requestState,
+            pendingLoads,
+            key,
+            "content-upsample",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            TileLoadDomain::Content,
+            TileLoadResult::createRenderableTerrain());
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.contentUploadCount());
 }
 
 TEST(TileLoadRequestDispatcherTest, PassesNetworkPriority) {

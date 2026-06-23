@@ -109,7 +109,7 @@ public:
                     upsampleResult = std::move(*gltfUpsample);
                 }
                 const TileLoadDispatchResult dispatchResult =
-                    TileLoadRequestDispatcher::queueUpsampledTerrain(
+                    TileLoadRequestDispatcher::queueUpsampledLoad(
                         input.lifecycle.mutex(),
                         input.lifecycle.requestState(),
                         input.lifecycle.pendingLoads(),

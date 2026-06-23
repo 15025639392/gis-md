@@ -4,7 +4,7 @@
 
 namespace earth_engine {
 
-TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
+TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledLoad(
     std::mutex& mutex,
     TilePendingRequestState& requestState,
     TilePendingLoadQueue& pendingLoads,

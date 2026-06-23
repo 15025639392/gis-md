@@ -25,7 +25,7 @@ enum class TileLoadDispatchResult {
 
 class TileLoadRequestDispatcher {
 public:
-    static TileLoadDispatchResult queueUpsampledTerrain(
+    static TileLoadDispatchResult queueUpsampledLoad(
         std::mutex& mutex,
         TilePendingRequestState& requestState,
         TilePendingLoadQueue& pendingLoads,
@@ -33,8 +33,8 @@ public:
         const std::string& cacheKey,
         TileLoadPriorityGroup group,
         double priority,
-        TileLoadDomain domain = TileLoadDomain::Terrain,
-        TileLoadResult result = TileLoadResult::createRenderable());
+        TileLoadDomain domain,
+        TileLoadResult result);
 
     template <typename OnIssuedFn>
     static TileLoadDispatchResult requestContent(
