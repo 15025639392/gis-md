@@ -174,6 +174,9 @@ public:
     }
     void clearRetainedHeightmap() {
         surface_.heightmap.reset();
+        if (!surface_.mesh && !gltfModel) {
+            clearTerrainHeightRange();
+        }
     }
     void setMeshReady(bool ready) {
         surface_.meshReady = ready;

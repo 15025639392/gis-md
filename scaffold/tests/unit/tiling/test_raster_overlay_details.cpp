@@ -196,6 +196,41 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsTest,
+     ClearingOnlyRetainedHeightmapDropsOrphanTerrainHeightRange) {
+    TileRenderContentState renderContent;
+    renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
+    renderContent.setTerrainHeightRange(11.0, 22.0);
+    ASSERT_TRUE(renderContent.hasRetainedHeightmap());
+    ASSERT_TRUE(renderContent.hasTerrainHeightRange());
+
+    renderContent.clearRetainedHeightmap();
+
+    EXPECT_FALSE(renderContent.hasRetainedHeightmap());
+    EXPECT_FALSE(renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(0.0, renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(0.0, renderContent.terrainMaximumHeight());
+}
+
+TEST(RasterOverlayDetailsTest,
+     ClearingRetainedHeightmapKeepsSurfaceMeshTerrainHeightRange) {
+    TileRenderContentState renderContent;
+    renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
+    renderContent.setTerrainHeightRange(11.0, 22.0);
+    ASSERT_TRUE(renderContent.hasSurfaceMesh());
+    ASSERT_TRUE(renderContent.hasRetainedHeightmap());
+    ASSERT_TRUE(renderContent.hasTerrainHeightRange());
+
+    renderContent.clearRetainedHeightmap();
+
+    EXPECT_TRUE(renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(renderContent.hasRetainedHeightmap());
+    EXPECT_TRUE(renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(11.0, renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(22.0, renderContent.terrainMaximumHeight());
+}
+
+TEST(RasterOverlayDetailsTest,
      MergeAppendsProjectionSlotsLikeCesiumNative) {
     RasterOverlayDetails first;
     const Rectangle firstRectangle(0.0, 1.0, 2.0, 3.0);
