@@ -13,6 +13,7 @@ struct TileChildFrameMaterializeInput {
     int maxZoom = 0;
     bool hasTerrainQuadtree = false;
     bool isAvailabilityBoundaryWaitingForContent = false;
+    bool contentProviderOwnsTerrainQuadtree = false;
 };
 
 class TileChildFrameMaterializer {
@@ -47,7 +48,8 @@ public:
             input.tile,
             input.maxZoom,
             availabilityState,
-            ensureTile);
+            ensureTile,
+            input.contentProviderOwnsTerrainQuadtree);
     }
 };
 

@@ -45,7 +45,8 @@ struct TileChildMaterializer {
         TilesetTile& parent,
         int maxZoom,
         AvailabilityFn&& availabilityState,
-        EnsureTileFn&& ensureTile) {
+        EnsureTileFn&& ensureTile,
+        bool clearTerrainAvailabilityUpsampleContent = false) {
         if (parent.key.z >= maxZoom ||
             parent.content.isTerrainAvailabilityUpsample()) {
             return false;
@@ -116,13 +117,28 @@ struct TileChildMaterializer {
 
             const bool upsampled =
                 childInfo.state != TileAvailabilityState::Available;
+            const bool hasStaleUpsampledContent =
+                clearTerrainAvailabilityUpsampleContent &&
+                upsampled &&
+                (child->content.renderContent.hasRenderableTerrainContent() ||
+                 child->content.renderContent.hasRetainedHeightmap() ||
+                 child->content.renderContent.isRenderContentReady() ||
+                 child->rasterOverlayState.mappingCount() > 0 ||
+                 child->rasterOverlayState.hasMissingProjections());
             if (child->content.isTerrainAvailabilityUpsample() != upsampled ||
-                child->content.isRasterDetailUpsample()) {
+                child->content.isRasterDetailUpsample() ||
+                hasStaleUpsampledContent) {
                 child->content.renderContent.clearRenderContent();
+                child->rasterOverlayState.releaseAndClearReferences(nullptr);
                 if (upsampled) {
                     child->content.markTerrainAvailabilityUpsample();
                 } else {
                     child->content.clearUpsampleKind();
+                }
+                if (!child->content.renderContent.isRenderContentReady()) {
+                    TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
+                        *child,
+                        parent);
                 }
                 changed = true;
             }

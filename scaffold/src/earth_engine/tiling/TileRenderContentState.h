@@ -399,6 +399,7 @@ public:
 
     void clearRenderContent() {
         clearSurfaceMeshResources();
+        surface_.heightmap.reset();
         gltfModel.reset();
         gltfContentTransform = Mat4::identity();
         gltfTextureResources.clear();

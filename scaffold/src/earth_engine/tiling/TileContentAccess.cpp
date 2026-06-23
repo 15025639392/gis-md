@@ -87,7 +87,8 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
             tileScheme_.maxZoom(),
             hasTerrainQuadtree(),
             isAvailabilityBoundaryTile(tile) &&
-                !hasResolvedAvailabilityBoundaryContent(tile)},
+                !hasResolvedAvailabilityBoundaryContent(tile),
+            contentProviderOwnsTerrainQuadtree},
         [this](const TileKey& key) {
             return ensureTile(key);
         },

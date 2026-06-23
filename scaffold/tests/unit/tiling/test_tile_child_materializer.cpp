@@ -451,7 +451,8 @@ TEST(TileChildMaterializerTest, NonRootUnavailableTerrainSiblingsBecomeUpsampled
                 ? TileAvailabilityState::Available
                 : TileAvailabilityState::NotAvailable;
         },
-        ensure);
+        ensure,
+        true);
 
     ASSERT_TRUE(changed);
     ASSERT_EQ(4u, parent.children.size());
@@ -557,7 +558,8 @@ TEST(TileChildMaterializerTest,
                 ? TileAvailabilityState::Available
                 : TileAvailabilityState::NotAvailable;
         },
-        ensure);
+        ensure,
+        true);
 
     EXPECT_TRUE(changed);
     ASSERT_EQ(4u, parent.children.size());
@@ -603,7 +605,8 @@ TEST(TileChildMaterializerTest,
                 ? TileAvailabilityState::Available
                 : TileAvailabilityState::NotAvailable;
         },
-        ensure);
+        ensure,
+        true);
 
     EXPECT_TRUE(changed);
     ASSERT_EQ(4u, parent.children.size());
@@ -612,6 +615,80 @@ TEST(TileChildMaterializerTest,
     EXPECT_FALSE(staleRasterChild->content.renderContent.hasGltfModel());
     EXPECT_FALSE(staleRasterChild->content.renderContent.hasGltfResources());
     EXPECT_FALSE(staleRasterChild->content.renderContent.isRenderContentReady());
+}
+
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityUpsampleRemainsContentlessLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+    parent.content.renderContent.setTerrainHeightRange(-12.0, 34.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    TilesetTile* staleUpsampledChild =
+        ensure(TileKey{"Geographic-TMS", 2, 3, 0});
+    ASSERT_NE(nullptr, staleUpsampledChild);
+    staleUpsampledChild->content.markTerrainAvailabilityUpsample();
+    staleUpsampledChild->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    staleUpsampledChild->content.renderContent.setMeshReady(true);
+    staleUpsampledChild->content.renderContent.setRetainedHeightmap(
+        std::make_unique<DecodedHeightmap>());
+    staleUpsampledChild->content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    staleUpsampledChild->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    staleUpsampledChild->content.renderContent.markRenderContentReady();
+    staleUpsampledChild->rasterOverlayState.ensureMapping(0);
+    staleUpsampledChild->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection{});
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure,
+        true);
+
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ(staleUpsampledChild, parent.children[1]);
+    EXPECT_TRUE(staleUpsampledChild->content.isTerrainAvailabilityUpsample());
+    EXPECT_FALSE(
+        staleUpsampledChild->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(
+        staleUpsampledChild->content.renderContent.hasRetainedHeightmap());
+    EXPECT_FALSE(staleUpsampledChild->content.renderContent.hasGltfModel());
+    EXPECT_FALSE(
+        staleUpsampledChild->content.renderContent.hasGltfResources());
+    EXPECT_FALSE(
+        staleUpsampledChild->content.renderContent.isRenderContentReady());
+    EXPECT_EQ(0u, staleUpsampledChild->rasterOverlayState.mappingCount());
+    EXPECT_FALSE(
+        staleUpsampledChild->rasterOverlayState.hasMissingProjections());
+    EXPECT_TRUE(
+        staleUpsampledChild->content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(
+        -12.0,
+        staleUpsampledChild->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        34.0,
+        staleUpsampledChild->content.renderContent.terrainMaximumHeight());
 }
 
 TEST(TileChildMaterializerTest,
