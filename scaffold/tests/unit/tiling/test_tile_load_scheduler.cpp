@@ -6,6 +6,7 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileLoadScheduler.h"
+#include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
 #include "earth_engine/tiling/TilesetTile.h"
 
 #include <array>
@@ -1033,6 +1034,49 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
     EXPECT_EQ(markedLevels.front(), loadableTerrainKey.z);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
     EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+}
+
+TEST(TileLoadSchedulerTest,
+     GltfTerrainUpsampleSourcePreparationQueuesDirectParentLikeCesiumNative) {
+    TilesetTile grandparent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, -90.0, 0.0),
+        &grandparent);
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 2, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, -135.0, -45.0),
+        &parent);
+    grandparent.children.push_back(&parent);
+    parent.children.push_back(&child);
+    child.content.upsampledFromParent = true;
+
+    grandparent.content.renderContent.prepareGltfContent(
+        makeSchedulerQuadTerrainGltfModel(grandparent.bounds),
+        Mat4::identity());
+    grandparent.content.renderContent.setTerrainRenderContent(true);
+    grandparent.markRenderContentDone();
+
+    std::vector<TileKey> queuedKeys;
+    bool ensured = false;
+    const bool ready = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        12.0,
+        [&ensured](TilesetTile&) {
+            ensured = true;
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    EXPECT_FALSE(ready);
+    EXPECT_FALSE(ensured);
+    ASSERT_EQ(1u, queuedKeys.size());
+    EXPECT_EQ(parent.key, queuedKeys.front());
 }
 
 TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {

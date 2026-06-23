@@ -13,6 +13,20 @@ public:
         const TilesetTile& tile,
         bool allowUnloadingSource = false,
         bool allowGltfTerrainSource = false) {
+        const TilesetTile* parent = tile.parent;
+        if (allowGltfTerrainSource && parent) {
+            const bool parentStateReady =
+                parent->content.loadState == TileLoadState::Done ||
+                (allowUnloadingSource &&
+                 parent->content.loadState == TileLoadState::Unloading);
+            if (parentStateReady &&
+                parent->content.contentKind == TileContentKind::Render &&
+                parent->content.renderContent.isTerrainRenderContent() &&
+                parent->content.renderContent.hasGltfContent()) {
+                return parent;
+            }
+        }
+
         const TilesetTile* ancestor = tile.parent;
         while (ancestor) {
             const bool sourceStateReady =
@@ -21,11 +35,8 @@ public:
                  ancestor->content.loadState == TileLoadState::Unloading);
             if (sourceStateReady &&
                 ancestor->content.contentKind == TileContentKind::Render &&
-                ((ancestor->content.renderContent.hasTerrainMesh() &&
-                  ancestor->content.renderContent.isSurfaceMeshReady()) ||
-                 (allowGltfTerrainSource &&
-                  ancestor->content.renderContent.isTerrainRenderContent() &&
-                  ancestor->content.renderContent.hasGltfContent()))) {
+                ancestor->content.renderContent.hasTerrainMesh() &&
+                ancestor->content.renderContent.isSurfaceMeshReady()) {
                 return ancestor;
             }
             ancestor = ancestor->parent;
