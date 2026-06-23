@@ -402,11 +402,8 @@ TEST(
         activated.ensureTileProvider(nullptr);
     rasterProvider->setReady(true);
 
-    auto terrainProvider = std::make_unique<DiagnosticTerrainProvider>();
-    auto terrainScheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::move(terrainProvider),
-        std::move(terrainScheme),
+        TileScheme::createGeographicTMS(),
         {&activated},
         nullptr,
         TilesetOptions{});
@@ -454,9 +451,9 @@ TEST(
     EXPECT_EQ(
         doneDiag.rasterProviderRequests.maximumTransportActiveRequests,
         11);
-    EXPECT_EQ(doneDiag.rasterOverlayTilesLoading, 0);
+    EXPECT_EQ(doneDiag.rasterOverlayTilesLoading, 1);
     EXPECT_EQ(doneDiag.rasterSourceRequestsInFlight, 0);
-    EXPECT_EQ(doneDiag.rasterPendingUploads, 0);
+    EXPECT_EQ(doneDiag.rasterPendingUploads, 1);
 }
 
 TEST(
@@ -475,11 +472,8 @@ TEST(
         activated.ensureTileProvider(nullptr);
     rasterProvider->setReady(true);
 
-    auto terrainProvider = std::make_unique<DiagnosticTerrainProvider>();
-    auto terrainScheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::move(terrainProvider),
-        std::move(terrainScheme),
+        TileScheme::createGeographicTMS(),
         {&activated},
         nullptr,
         TilesetOptions{});
