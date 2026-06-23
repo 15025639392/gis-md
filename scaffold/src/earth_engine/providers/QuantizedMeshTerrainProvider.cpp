@@ -2071,17 +2071,16 @@ QuantizedMeshTerrainProvider::parseAvailabilityUpdatesFromMetadataRequests(
     std::vector<QuantizedMeshAvailabilityUpdate> updates;
     updates.reserve(availabilityRequests.size());
     for (size_t i = 0; i < availabilityRequests.size(); ++i) {
-        if (i >= metadataBodies.size() || metadataBodies[i].empty()) {
-            continue;
-        }
         QuantizedMeshAvailabilityUpdate update;
         update.layerIndex =
             static_cast<int>(availabilityRequests[i].layerIndex);
         update.subtreeKey = availabilityRequests[i].subtreeKey;
-        update.metadataAvailability =
-            QuantizedMeshParser::parseMetadataAvailability(
-                metadataBodies[i].data(),
-                metadataBodies[i].size());
+        if (i < metadataBodies.size() && !metadataBodies[i].empty()) {
+            update.metadataAvailability =
+                QuantizedMeshParser::parseMetadataAvailability(
+                    metadataBodies[i].data(),
+                    metadataBodies[i].size());
+        }
         updates.push_back(std::move(update));
     }
     return updates;
