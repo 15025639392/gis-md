@@ -18,6 +18,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -768,7 +769,16 @@ TEST(TilesetQuantizedMeshTest,
     TilesetTestAccess::ensureTileChildren(tileset, *root);
 
     ASSERT_EQ(4u, root->children.size());
-    TilesetTile* upsampledChild = root->children[1];
+    const auto childIt = std::find_if(
+        root->children.begin(),
+        root->children.end(),
+        [](const TilesetTile* child) {
+            return child &&
+                   child->key ==
+                       TileKey{"XYZ-WebMercator", 1, 1, 0};
+        });
+    ASSERT_NE(root->children.end(), childIt);
+    TilesetTile* upsampledChild = *childIt;
     ASSERT_NE(nullptr, upsampledChild);
     ASSERT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 0}), upsampledChild->key);
     ASSERT_TRUE(upsampledChild->content.isTerrainAvailabilityUpsample());

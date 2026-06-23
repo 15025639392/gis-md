@@ -63,7 +63,9 @@ struct TileChildMaterializer {
         std::vector<ChildAvailability> children;
         children.reserve(4);
         bool anyChildAvailable = false;
-        for (int dy = 0; dy < 2; ++dy) {
+        const bool yDown = terrainSchemeYDirectionDown(parent.key.schemeId);
+        for (int row = 0; row < 2; ++row) {
+            const int dy = yDown ? 1 - row : row;
             for (int dx = 0; dx < 2; ++dx) {
                 TileKey childKey{
                     parent.key.schemeId,
@@ -159,6 +161,11 @@ struct TileChildMaterializer {
             subdivisionRectangle.center(),
             defaultGeometricError,
             std::forward<EnsureTileFn>(ensureTile));
+    }
+
+    static bool terrainSchemeYDirectionDown(const std::string& schemeId) {
+        return schemeId == "XYZ-WebMercator" ||
+               schemeId == "OpenGlobus-Earth";
     }
 
     template <typename EnsureTileFn>

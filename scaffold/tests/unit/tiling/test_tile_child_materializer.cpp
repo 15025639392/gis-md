@@ -800,6 +800,60 @@ TEST(TileChildMaterializerTest, NonRootGeographicTerrainChildrenPreserveBounds) 
     EXPECT_TRUE(ne->content.upsampledFromParent);
 }
 
+TEST(TileChildMaterializerTest,
+     WebMercatorTerrainChildrenPreserveCesiumNativeSouthFirstOrder) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey parentKey{"XYZ-WebMercator", 0, 0, 0};
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        2,
+        [](const TileKey& key) {
+            return key.x == 0 && key.y == 1
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure);
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+
+    const TilesetTile* sw = parent.children[0];
+    const TilesetTile* se = parent.children[1];
+    const TilesetTile* nw = parent.children[2];
+    const TilesetTile* ne = parent.children[3];
+    ASSERT_NE(nullptr, sw);
+    ASSERT_NE(nullptr, se);
+    ASSERT_NE(nullptr, nw);
+    ASSERT_NE(nullptr, ne);
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 0, 1}), sw->key);
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 1}), se->key);
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 0, 0}), nw->key);
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 0}), ne->key);
+    EXPECT_FALSE(sw->content.upsampledFromParent);
+    EXPECT_TRUE(se->content.upsampledFromParent);
+    EXPECT_TRUE(nw->content.upsampledFromParent);
+    EXPECT_TRUE(ne->content.upsampledFromParent);
+    EXPECT_LE(sw->bounds.north(), nw->bounds.south());
+    EXPECT_LE(se->bounds.north(), ne->bounds.south());
+}
+
 TEST(TileChildMaterializerTest, RasterUpsampledChildrenSplitSubdivisionAndRemainStable) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
