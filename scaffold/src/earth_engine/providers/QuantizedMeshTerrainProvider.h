@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -137,8 +138,12 @@ private:
 
         static int rootTileCountX(const std::string& schemeId);
         static int rootTileCountY(const std::string& schemeId);
-        static int tileCountXAtLevel(const std::string& schemeId, int level);
-        static int tileCountYAtLevel(const std::string& schemeId, int level);
+        static uint64_t tileCountXAtLevel(
+            const std::string& schemeId,
+            int level);
+        static uint64_t tileCountYAtLevel(
+            const std::string& schemeId,
+            int level);
         static Rectangle availabilityTileRectangle(
             const std::string& schemeId,
             int level,

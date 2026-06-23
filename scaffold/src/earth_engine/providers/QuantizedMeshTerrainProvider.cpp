@@ -637,19 +637,39 @@ bool isTileInLayerRange(const TileKey& key, const std::string& schemeId) {
            static_cast<double>(key.y) < yTiles;
 }
 
+std::optional<int> doubledTileCoordinate(int coordinate) {
+    if (coordinate < 0 ||
+        coordinate > std::numeric_limits<int>::max() / 2) {
+        return std::nullopt;
+    }
+    return coordinate * 2;
+}
+
 bool isCesiumSuccessfulHttpStatus(int statusCode) {
     return statusCode == 0 || (statusCode >= 200 && statusCode < 300);
 }
 
 std::vector<TileKey> quadtreeChildren(const TileKey& key) {
     const int childZ = key.z + 1;
-    const int childX = key.x * 2;
-    const int childY = key.y * 2;
+    const std::optional<int> childX = doubledTileCoordinate(key.x);
+    const std::optional<int> childY = doubledTileCoordinate(key.y);
+    if (!childX || !childY || childZ < key.z) {
+        return {};
+    }
+
     std::vector<TileKey> children;
     children.reserve(4);
     for (int dy = 0; dy < 2; ++dy) {
         for (int dx = 0; dx < 2; ++dx) {
-            TileKey childKey{key.schemeId, childZ, childX + dx, childY + dy};
+            if (*childX > std::numeric_limits<int>::max() - dx ||
+                *childY > std::numeric_limits<int>::max() - dy) {
+                continue;
+            }
+            TileKey childKey{
+                key.schemeId,
+                childZ,
+                *childX + dx,
+                *childY + dy};
             if (isTileInLayerRange(childKey, key.schemeId)) {
                 children.push_back(childKey);
             }
@@ -668,12 +688,30 @@ int QuantizedMeshTerrainProvider::TileRectangleAvailability::rootTileCountY(cons
     return 1;
 }
 
-int QuantizedMeshTerrainProvider::TileRectangleAvailability::tileCountXAtLevel(const std::string& schemeId, int level) {
-    return TileRectangleAvailability::rootTileCountX(schemeId) << level;
+uint64_t QuantizedMeshTerrainProvider::TileRectangleAvailability::
+    tileCountXAtLevel(const std::string& schemeId, int level) {
+    if (level < 0) {
+        return 0;
+    }
+    const uint64_t root = static_cast<uint64_t>(
+        TileRectangleAvailability::rootTileCountX(schemeId));
+    if (level >= 63 || root > (std::numeric_limits<uint64_t>::max() >> level)) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    return root << level;
 }
 
-int QuantizedMeshTerrainProvider::TileRectangleAvailability::tileCountYAtLevel(const std::string& schemeId, int level) {
-    return TileRectangleAvailability::rootTileCountY(schemeId) << level;
+uint64_t QuantizedMeshTerrainProvider::TileRectangleAvailability::
+    tileCountYAtLevel(const std::string& schemeId, int level) {
+    if (level < 0) {
+        return 0;
+    }
+    const uint64_t root = static_cast<uint64_t>(
+        TileRectangleAvailability::rootTileCountY(schemeId));
+    if (level >= 63 || root > (std::numeric_limits<uint64_t>::max() >> level)) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    return root << level;
 }
 
 Rectangle QuantizedMeshTerrainProvider::TileRectangleAvailability::availabilityTileRectangle(const std::string& schemeId,
@@ -684,6 +722,9 @@ Rectangle QuantizedMeshTerrainProvider::TileRectangleAvailability::availabilityT
         TileRectangleAvailability::tileCountXAtLevel(schemeId, level));
     const double yTiles = static_cast<double>(
         TileRectangleAvailability::tileCountYAtLevel(schemeId, level));
+    if (xTiles <= 0.0 || yTiles <= 0.0) {
+        return Rectangle(0.0, 0.0, 0.0, 0.0);
+    }
     const double tileX = static_cast<double>(x);
     const double tileY = static_cast<double>(y);
     return Rectangle(
@@ -731,8 +772,15 @@ void QuantizedMeshTerrainProvider::TileRectangleAvailability::createNodeChildren
     if (node.ll) return;
 
     const int childLevel = node.key.z + 1;
-    const uint32_t childX = static_cast<uint32_t>(node.key.x * 2);
-    const uint32_t childY = static_cast<uint32_t>(node.key.y * 2);
+    const std::optional<int> childXInt = doubledTileCoordinate(node.key.x);
+    const std::optional<int> childYInt = doubledTileCoordinate(node.key.y);
+    if (!childXInt || !childYInt || childLevel < node.key.z ||
+        *childXInt > std::numeric_limits<int>::max() - 1 ||
+        *childYInt > std::numeric_limits<int>::max() - 1) {
+        return;
+    }
+    const uint32_t childX = static_cast<uint32_t>(*childXInt);
+    const uint32_t childY = static_cast<uint32_t>(*childYInt);
     const TileKey llKey{schemeId,
                         childLevel,
                         static_cast<int>(childX),

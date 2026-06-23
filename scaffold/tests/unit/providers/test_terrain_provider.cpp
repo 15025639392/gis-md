@@ -3594,6 +3594,57 @@ TEST(QuantizedMeshTerrainProviderTest, AvailabilityUint32EdgeDoesNotOverflowLike
     EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     DeepAvailabilityChildrenKeepRepresentableIdsLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    provider.setZoomRange(0, 31);
+    provider.addAvailabilityRects(
+        31,
+        {TileAvailabilityRect{
+            2147483646u,
+            2147483646u,
+            2147483646u,
+            2147483646u}});
+
+    const TileKey parent{"Geographic-TMS", 30, 1073741823, 1073741823};
+    const std::vector<TileKey> children = provider.childTiles(parent);
+
+    ASSERT_EQ(4u, children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 2147483646, 2147483646}),
+              children[0]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 2147483647, 2147483646}),
+              children[1]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 2147483646, 2147483647}),
+              children[2]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 2147483647, 2147483647}),
+              children[3]);
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(children[0]));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(children[1]));
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     DeepAvailabilityChildrenDoNotWrapUnrepresentableIds) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    provider.setZoomRange(0, 31);
+    provider.addAvailabilityRects(
+        31,
+        {TileAvailabilityRect{
+            2147483646u,
+            0u,
+            2147483646u,
+            0u}});
+
+    const TileKey parent{"Geographic-TMS", 30, 1073741824, 0};
+    EXPECT_TRUE(provider.childTiles(parent).empty());
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(
+                  TileKey{"Geographic-TMS", 31, 0, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, NonInt32MetadataAvailabilityIsIgnoredLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
