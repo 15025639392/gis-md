@@ -158,12 +158,20 @@ struct TileRenderPlanFinalizer {
 private:
     static bool canBuildRenderEntryDirectly(const TilesetTile& tile) {
         return tile.content.renderContent.hasGltfContent() ||
-               tile.hasSurfaceDrawable();
+               hasRenderableSurfaceForPlan(tile);
     }
 
     static bool needsSurfaceGeometryPrep(const TilesetTile& tile) {
         return !tile.content.renderContent.hasGltfContent() &&
-               !tile.hasSurfaceDrawable();
+               !hasRenderableSurfaceForPlan(tile);
+    }
+
+    static bool hasRenderableSurfaceForPlan(const TilesetTile& tile) {
+        if (tile.contentProviderTerrainQuadtreeTile &&
+            !tile.content.renderContent.hasGltfContent()) {
+            return false;
+        }
+        return tile.hasSurfaceDrawable();
     }
 
     static std::optional<std::array<float, 4>> clipUvForDescendantBounds(
@@ -217,6 +225,10 @@ private:
         for (TilesetTile* ancestor = tile.parent;
              ancestor;
              ancestor = ancestor->parent) {
+            if (ancestor->contentProviderTerrainQuadtreeTile &&
+                !ancestor->content.renderContent.hasGltfContent()) {
+                continue;
+            }
             if (isFallbackRenderable(*ancestor)) {
                 return ancestor;
             }

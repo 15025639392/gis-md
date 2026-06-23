@@ -233,6 +233,97 @@ TEST(
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
 }
 
+TEST(
+    TileRenderPlanFinalizerTest,
+    ContentProviderTerrainSurfaceResidueDoesNotBuildDirectEntry) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{});
+    root.contentProviderTerrainQuadtreeTile = true;
+    root.markRenderContentDone();
+    root.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+    ASSERT_TRUE(root.hasSurfaceDrawable());
+    ASSERT_FALSE(root.content.renderContent.hasGltfContent());
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&root](const TileKey& key) -> TilesetTile* {
+            return key == root.key ? &root : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, rootKey);
+    EXPECT_EQ(entry.renderKey, rootKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::SynchronousPrep);
+    EXPECT_TRUE(entry.allowSynchronousMeshPrep);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    ContentProviderTerrainSurfaceResidueIsNotAncestorFallback) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 1, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+    parent.contentProviderTerrainQuadtreeTile = true;
+    parent.markRenderContentDone();
+    parent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+    ASSERT_TRUE(parent.hasSurfaceDrawable());
+    ASSERT_FALSE(parent.content.renderContent.hasGltfContent());
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, childKey);
+    EXPECT_EQ(entry.renderKey, childKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::SynchronousPrep);
+    EXPECT_FALSE(entry.usesAncestorFallback);
+    EXPECT_FALSE(entry.surfaceClipEnabled);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
+}
+
 TEST(TileRenderPlanFinalizerTest, CountsRootPrepOnceToAvoidBlankFrame) {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
