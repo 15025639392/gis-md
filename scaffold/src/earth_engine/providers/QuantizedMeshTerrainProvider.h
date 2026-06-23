@@ -239,7 +239,7 @@ private:
         std::optional<QuantizedMeshAvailabilityUpdate>
             currentTileAvailabilityUpdate = std::nullopt) const;
     void resetFallbackLayerFromFields();
-    void syncLegacyFieldsFromPrimaryLayer();
+    void syncPublicStateFromLayers();
     void handleAsyncTileBody(
         const TileKey& key,
         int contentLayerIndex,

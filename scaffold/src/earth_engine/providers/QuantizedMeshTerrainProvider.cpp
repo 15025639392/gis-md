@@ -1079,33 +1079,33 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJsonUrl(
 bool QuantizedMeshTerrainProvider::configureFromLayerJson(
     const std::string& layerJson,
     const std::string& layerJsonUrl) {
-    const auto oldLayers = layers_;
-    const auto oldUrlTemplate = urlTemplate_;
-    const auto oldAttribution = attribution_;
-    const auto oldLayerJsonUrl = layerJsonUrl_;
-    const auto oldSchemeId = schemeId_;
-    const auto oldVersion = version_;
-    const auto oldExtensionsToRequest = extensionsToRequest_;
-    const auto oldAvailabilityRanges = availabilityRanges_;
-    const auto oldLoadedSubtrees = loadedSubtrees_;
-    const bool oldHasAvailability = hasAvailability_;
-    const int oldAvailabilityLevels = availabilityLevels_;
-    const int oldMinZoom = minZoom_;
-    const int oldMaxZoom = maxZoom_;
+    const auto previousLayers = layers_;
+    const auto previousUrlTemplate = urlTemplate_;
+    const auto previousAttribution = attribution_;
+    const auto previousLayerJsonUrl = layerJsonUrl_;
+    const auto previousSchemeId = schemeId_;
+    const auto previousVersion = version_;
+    const auto previousExtensionsToRequest = extensionsToRequest_;
+    const auto previousAvailabilityRanges = availabilityRanges_;
+    const auto previousLoadedSubtrees = loadedSubtrees_;
+    const bool previousHasAvailability = hasAvailability_;
+    const int previousAvailabilityLevels = availabilityLevels_;
+    const int previousMinZoom = minZoom_;
+    const int previousMaxZoom = maxZoom_;
     const auto restorePreviousState = [&]() {
-        layers_ = oldLayers;
-        urlTemplate_ = oldUrlTemplate;
-        attribution_ = oldAttribution;
-        layerJsonUrl_ = oldLayerJsonUrl;
-        schemeId_ = oldSchemeId;
-        version_ = oldVersion;
-        extensionsToRequest_ = oldExtensionsToRequest;
-        availabilityRanges_ = oldAvailabilityRanges;
-        loadedSubtrees_ = oldLoadedSubtrees;
-        hasAvailability_ = oldHasAvailability;
-        availabilityLevels_ = oldAvailabilityLevels;
-        minZoom_ = oldMinZoom;
-        maxZoom_ = oldMaxZoom;
+        layers_ = previousLayers;
+        urlTemplate_ = previousUrlTemplate;
+        attribution_ = previousAttribution;
+        layerJsonUrl_ = previousLayerJsonUrl;
+        schemeId_ = previousSchemeId;
+        version_ = previousVersion;
+        extensionsToRequest_ = previousExtensionsToRequest;
+        availabilityRanges_ = previousAvailabilityRanges;
+        loadedSubtrees_ = previousLoadedSubtrees;
+        hasAvailability_ = previousHasAvailability;
+        availabilityLevels_ = previousAvailabilityLevels;
+        minZoom_ = previousMinZoom;
+        maxZoom_ = previousMaxZoom;
     };
 
     try {
@@ -1123,7 +1123,7 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
             restorePreviousState();
             return false;
         }
-        syncLegacyFieldsFromPrimaryLayer();
+        syncPublicStateFromLayers();
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
             "layer.json OK: url=%s z=%d-%d layers=%zu ranges=%zu",
@@ -1265,9 +1265,11 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
     }
 }
 
-void QuantizedMeshTerrainProvider::syncLegacyFieldsFromPrimaryLayer() {
+void QuantizedMeshTerrainProvider::syncPublicStateFromLayers() {
     if (layers_.empty()) return;
 
+    // Public accessors expose the active LayerJson terrain state while the
+    // authoritative content/availability model remains in layers_.
     const LayerConfig& primary = layers_.front();
     urlTemplate_ = primary.urlTemplate;
     layerJsonUrl_ = primary.layerJsonUrl;
@@ -2149,7 +2151,7 @@ void QuantizedMeshTerrainProvider::addAvailabilityRects(
     if (level < 0) return;
     if (layers_.empty()) return;
     addAvailabilityRectsToLayer(layers_.front(), level, rects);
-    syncLegacyFieldsFromPrimaryLayer();
+    syncPublicStateFromLayers();
 }
 
 void QuantizedMeshTerrainProvider::addAvailabilityRectsToLayer(
@@ -2195,7 +2197,7 @@ void QuantizedMeshTerrainProvider::markSubtreeLoaded(
     if (subtreeLevel < 0) return;
     if (layers_.empty()) return;
     markSubtreeLoadedInLayer(layers_.front(), subtreeLevel, mortonIndex);
-    syncLegacyFieldsFromPrimaryLayer();
+    syncPublicStateFromLayers();
 }
 
 void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
@@ -2229,7 +2231,7 @@ void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
             mortonEncode2D(static_cast<uint32_t>(update.subtreeKey.x),
                            static_cast<uint32_t>(update.subtreeKey.y)));
     }
-    syncLegacyFieldsFromPrimaryLayer();
+    syncPublicStateFromLayers();
 }
 
 bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const {
