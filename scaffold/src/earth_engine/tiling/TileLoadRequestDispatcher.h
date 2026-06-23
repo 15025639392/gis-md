@@ -104,6 +104,8 @@ public:
                                 std::move(result));
                         if (loadResult.content.hasGltfTerrainPayload() &&
                             !loadResult.content
+                                 .quantizedMeshAvailabilityUpdatesApplied &&
+                            !loadResult.content
                                  .quantizedMeshAvailabilityUpdates.empty() &&
                             provider.providesTerrainQuadtree()) {
                             provider.applyTerrainAvailabilityUpdates(
