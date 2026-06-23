@@ -2332,7 +2332,7 @@ void testRasterOverlayProviderCompositeTile() {
         projectForProvider(provider, geometryBounds), 512.0, 512.0).tile;
     check(compositeTile != nullptr,
           "RasterOverlayTileProvider: composite tile is created");
-    check(compositeTile && compositeTile->isCompositeTile(),
+    check(compositeTile && compositeTile->isMappedRasterTile(),
           "RasterOverlayTileProvider: composite tile uses composite source path");
     check(compositeTile &&
               compositeTile->getRectangle() ==
@@ -2341,7 +2341,7 @@ void testRasterOverlayProviderCompositeTile() {
     check(compositeTile && !compositeTile->getCacheKey().empty() &&
               compositeTile->getCacheKey().find("composite/") == 0,
           "RasterOverlayTileProvider: composite tile uses composite cache key");
-    check(compositeTile && compositeTile->getSourceZoom() == 3,
+    check(compositeTile && compositeTile->getMappedSourceZoom() == 3,
           "RasterOverlayTileProvider: source zoom follows target screen pixels");
     check(compositeTile && compositeTile->getTargetScreenPixelsX() == 512.0 &&
               compositeTile->getTargetScreenPixelsY() == 512.0,
@@ -2367,7 +2367,7 @@ void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
     auto mappedTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     check(mappedTile != nullptr,
           "RasterOverlayTileProvider: exact provider rectangle creates a tile");
-    check(mappedTile && !mappedTile->isCompositeTile(),
+    check(mappedTile && !mappedTile->isMappedRasterTile(),
           "RasterOverlayTileProvider: exact provider rectangle uses direct quadtree tile");
     check(mappedTile && mappedTile->getTileID() == key,
           "RasterOverlayTileProvider: direct fast path preserves quadtree key");
@@ -2571,7 +2571,7 @@ void testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches() {
     budget.beginFrame(1, config);
 
     check(compositeTile &&
-              compositeTile->getSourceZoom() == 5 &&
+              compositeTile->getMappedSourceZoom() == 5 &&
               provider.loadTileThrottled(*compositeTile, &budget) &&
               imagery.pendingRequests.size() == 16,
           "RasterOverlayTileProvider: quadtree source range trims Cesium-native tile-edge touches");
@@ -2602,7 +2602,7 @@ void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
     RasterOverlayTileProvider::TilePtr compositeTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, outsideCoverageBounds), 512.0, 512.0).tile;
 
-    check(compositeTile && compositeTile->isCompositeTile(),
+    check(compositeTile && compositeTile->isMappedRasterTile(),
           "RasterOverlayTileProvider: base imagery outside coverage creates a clamped composite tile like cesium-native");
 
     FrameResourceBudgetConfig config;
@@ -2654,7 +2654,7 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     }
 
     const int tileCountX =
-        imageryScheme->tileCountX(compositeTile->getSourceZoom());
+        imageryScheme->tileCountX(compositeTile->getMappedSourceZoom());
     bool onlyDatelineEdgeColumns = true;
     bool hasWesternEdge = false;
     bool hasEasternEdge = false;
@@ -2666,7 +2666,7 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
         hasEasternEdge = hasEasternEdge || easternEdge;
         onlyDatelineEdgeColumns =
             onlyDatelineEdgeColumns &&
-            request.key.z == compositeTile->getSourceZoom() &&
+            request.key.z == compositeTile->getMappedSourceZoom() &&
             (westernEdge || easternEdge);
     }
     check(onlyDatelineEdgeColumns && hasWesternEdge && hasEasternEdge,
@@ -2740,7 +2740,7 @@ void testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    check(compositeTile && compositeTile->isCompositeTile() &&
+    check(compositeTile && compositeTile->isMappedRasterTile() &&
               provider.loadTileThrottled(*compositeTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: failed-source fixture starts composite source requests");
@@ -2946,8 +2946,8 @@ void testRasterOverlayCompositeTilesShareSourceInFlight() {
     FrameResourceBudget eastBudget;
     eastBudget.beginFrame(2, config);
 
-    check(westComposite && westComposite->isCompositeTile() &&
-              eastComposite && eastComposite->isCompositeTile() &&
+    check(westComposite && westComposite->isMappedRasterTile() &&
+              eastComposite && eastComposite->isMappedRasterTile() &&
               provider.loadTileThrottled(*westComposite, &westBudget) &&
               provider.loadTileThrottled(*eastComposite, &eastBudget),
           "RasterOverlayTileProvider: overlapping composite fixtures start loading");
@@ -2955,7 +2955,7 @@ void testRasterOverlayCompositeTilesShareSourceInFlight() {
         return;
     }
 
-    check(westComposite->getSourceZoom() == eastComposite->getSourceZoom() &&
+    check(westComposite->getMappedSourceZoom() == eastComposite->getMappedSourceZoom() &&
               westBudget.rasterNetworkRequestsIssued() == 12 &&
               eastBudget.rasterNetworkRequestsIssued() == 4 &&
               imagery.pendingRequests.size() == 16,
@@ -2991,7 +2991,7 @@ void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
     RasterOverlayTileProvider::TilePtr compositeTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 131072.0, 131072.0).tile;
 
-    check(compositeTile && compositeTile->getSourceZoom() == 5,
+    check(compositeTile && compositeTile->getMappedSourceZoom() == 5,
           "RasterOverlayTileProvider: quadtree source zoom is reduced until combined texture fits like cesium-native");
 }
 
@@ -3202,7 +3202,7 @@ void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
     check(remapped == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: provider-ready placeholder remaps to loading real tile");
     check(mapped.getLoadingTile() != nullptr &&
-              mapped.getLoadingTile()->isCompositeTile() &&
+              mapped.getLoadingTile()->isMappedRasterTile() &&
               mapped.getLoadingTile()->getRectangle() ==
                   projectForProvider(provider, preciseRectangle),
           "RasterMappedToTilesetTile: remapped placeholder requests precise rectangle");

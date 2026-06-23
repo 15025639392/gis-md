@@ -1998,7 +1998,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
         existing->second->lastUsedFrame = frameNumber_;
-        existing->second->setCompositeSourcePlan(
+        existing->second->setMappedSourceList(
             sourcePlan.sourceZoom,
             *sourceBounds,
             sourcePlan.sourceKeys,
@@ -2019,7 +2019,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     auto tile = std::make_shared<RasterOverlayTile>(
         *this, representativeKey, providerGeometryBounds, ck);
     tile->setMaxZoom(getMaximumLevel());
-    tile->setCompositeSourcePlan(
+    tile->setMappedSourceList(
         sourcePlan.sourceZoom,
         *sourceBounds,
         sourcePlan.sourceKeys,
@@ -2107,8 +2107,8 @@ int RasterOverlayTileProvider::getPendingUploadCount() const {
 
 bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
                                          FrameResourceBudget* budget) {
-    if (tile.isCompositeTile()) {
-        return loadCompositeTile(tile, budget);
+    if (tile.isMappedRasterTile()) {
+        return loadMappedRasterTile(tile, budget);
     }
 
     // cesium-native ActivatedRasterOverlay::doLoad: only Unloaded tiles start
@@ -2148,7 +2148,7 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
 bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
                                                   FrameResourceBudget* budget) {
     // cesium-native: loadTileThrottled only starts Unloaded tiles. Once a
-    // composite tile is Loading, its source dependencies are already attached
+    // mapped raster tile is Loading, its source dependencies are already attached
     // to provider-level source tile assets and do not need per-frame pumping.
     if (tile.getState() != RasterOverlayTile::LoadState::Unloaded) {
         return true;
@@ -2161,8 +2161,9 @@ bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
     return loadTile(tile, budget);
 }
 
-bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
-                                                  FrameResourceBudget* budget) {
+bool RasterOverlayTileProvider::loadMappedRasterTile(
+    RasterOverlayTile& tile,
+    FrameResourceBudget* budget) {
     auto loadState = tile.getState();
     switch (loadState) {
         case RasterOverlayTile::LoadState::Unloaded:
@@ -2182,16 +2183,16 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
     RasterSourceTileMapping sourceTiles;
-    if (tile.hasCompositeSourcePlan() &&
-        tile.getCompositeSourceBounds().computeIntersection(
+    if (tile.hasMappedSourceList() &&
+        tile.getMappedSourceBounds().computeIntersection(
             coverageRectangle_)) {
-        sourceTiles.sourceZoom = tile.getSourceZoom();
-        sourceTiles.sourceBounds = tile.getCompositeSourceBounds();
-        sourceTiles.sourceKeys = tile.getCompositeSourceKeys();
-        sourceTiles.minX = tile.getCompositeSourceMinX();
-        sourceTiles.minY = tile.getCompositeSourceMinY();
-        sourceTiles.maxX = tile.getCompositeSourceMaxX();
-        sourceTiles.maxY = tile.getCompositeSourceMaxY();
+        sourceTiles.sourceZoom = tile.getMappedSourceZoom();
+        sourceTiles.sourceBounds = tile.getMappedSourceBounds();
+        sourceTiles.sourceKeys = tile.getMappedSourceKeys();
+        sourceTiles.minX = tile.getMappedSourceMinX();
+        sourceTiles.minY = tile.getMappedSourceMinY();
+        sourceTiles.maxX = tile.getMappedSourceMaxX();
+        sourceTiles.maxY = tile.getMappedSourceMaxY();
     } else {
         const std::optional<Rectangle> mappedSourceBounds =
             mapGeometryBoundsToImageryCoverage(
@@ -2217,7 +2218,7 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
             maximumTextureSize_,
             getMinimumLevel(),
             getMaximumLevel());
-        tile.setCompositeSourcePlan(
+        tile.setMappedSourceList(
             sourcePlan.sourceZoom,
             *mappedSourceBounds,
             sourcePlan.sourceKeys,
@@ -2313,7 +2314,7 @@ bool RasterOverlayTileProvider::loadMappedSourceImages(
         return estimated;
     };
     const int estimatedNewSourceRequests = estimateNewSourceRequests();
-    if (!tile.isCompositeTile() && estimatedNewSourceRequests > 0 &&
+    if (!tile.isMappedRasterTile() && estimatedNewSourceRequests > 0 &&
         availableRasterRequestSlots(
             budget,
             asyncState_->activeRasterSourceRequests.load(
@@ -2570,7 +2571,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             // on mobile, generating mipmaps for every composite image is
             // expensive main-thread work without improving the current
             // selected tile.
-            const bool generateMipmaps = !tile.isCompositeTile();
+            const bool generateMipmaps = !tile.isMappedRasterTile();
             RasterTextureUploadOptions uploadOptions;
             uploadOptions.generateMipmaps = generateMipmaps;
             auto tex = textureUploader_
@@ -2589,7 +2590,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             (void)uploadMs;
 #endif
             const int sourceLevel =
-                tile.isCompositeTile() ? tile.getSourceZoom() : tile.getTileID().z;
+                tile.isMappedRasterTile() ? tile.getMappedSourceZoom() : tile.getTileID().z;
             const RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
                 upload.moreDetailAvailable !=
                         RasterOverlayTile::MoreDetailAvailable::Unknown
@@ -2614,7 +2615,7 @@ int RasterOverlayTileProvider::processPendingUploads(
                     uploadMs,
                     uploadImage->width,
                     uploadImage->height,
-                    tile.isCompositeTile() ? 1 : 0,
+                    tile.isMappedRasterTile() ? 1 : 0,
                     generateMipmaps ? 1 : 0,
                     tile.getCacheKey().c_str());
             }

@@ -120,44 +120,44 @@ public:
     int getMaxZoom() const { return maxZoom_; }
     void setMaxZoom(int maxZoom) { maxZoom_ = maxZoom; }
 
-    /// Provider-internal composite tile: this tile is not one source quadtree
-    /// tile. It represents the image produced by mapping a geometry rectangle
-    /// to one or more provider quadtree source tiles.
-    bool isCompositeTile() const { return compositeTile_; }
-    int getSourceZoom() const { return sourceZoom_; }
-    void setCompositeTileSourceLevel(int sourceZoom) {
-        compositeTile_ = true;
-        sourceZoom_ = sourceZoom;
+    /// Provider-internal mapped raster tile: this tile is not one source
+    /// quadtree tile. It represents the image produced by mapping a geometry
+    /// rectangle to one or more provider quadtree source tiles.
+    bool isMappedRasterTile() const { return mappedRasterTile_; }
+    int getMappedSourceZoom() const { return mappedSourceZoom_; }
+    void setMappedRasterTileSourceZoom(int sourceZoom) {
+        mappedRasterTile_ = true;
+        mappedSourceZoom_ = sourceZoom;
     }
-    void setCompositeSourcePlan(int sourceZoom,
-                                const Rectangle& sourceBounds,
-                                std::vector<TileKey> sourceKeys,
-                                int minX,
-                                int minY,
-                                int maxX,
-                                int maxY) {
-        compositeTile_ = true;
-        sourceZoom_ = sourceZoom;
-        compositeSourceBounds_ = sourceBounds;
-        compositeSourceKeys_ = std::move(sourceKeys);
-        compositeSourceMinX_ = minX;
-        compositeSourceMinY_ = minY;
-        compositeSourceMaxX_ = maxX;
-        compositeSourceMaxY_ = maxY;
+    void setMappedSourceList(int sourceZoom,
+                             const Rectangle& sourceBounds,
+                             std::vector<TileKey> sourceKeys,
+                             int minX,
+                             int minY,
+                             int maxX,
+                             int maxY) {
+        mappedRasterTile_ = true;
+        mappedSourceZoom_ = sourceZoom;
+        mappedSourceBounds_ = sourceBounds;
+        mappedSourceKeys_ = std::move(sourceKeys);
+        mappedSourceMinX_ = minX;
+        mappedSourceMinY_ = minY;
+        mappedSourceMaxX_ = maxX;
+        mappedSourceMaxY_ = maxY;
     }
-    bool hasCompositeSourcePlan() const {
-        return compositeTile_ && !compositeSourceKeys_.empty();
+    bool hasMappedSourceList() const {
+        return mappedRasterTile_ && !mappedSourceKeys_.empty();
     }
-    const Rectangle& getCompositeSourceBounds() const {
-        return compositeSourceBounds_;
+    const Rectangle& getMappedSourceBounds() const {
+        return mappedSourceBounds_;
     }
-    const std::vector<TileKey>& getCompositeSourceKeys() const {
-        return compositeSourceKeys_;
+    const std::vector<TileKey>& getMappedSourceKeys() const {
+        return mappedSourceKeys_;
     }
-    int getCompositeSourceMinX() const { return compositeSourceMinX_; }
-    int getCompositeSourceMinY() const { return compositeSourceMinY_; }
-    int getCompositeSourceMaxX() const { return compositeSourceMaxX_; }
-    int getCompositeSourceMaxY() const { return compositeSourceMaxY_; }
+    int getMappedSourceMinX() const { return mappedSourceMinX_; }
+    int getMappedSourceMinY() const { return mappedSourceMinY_; }
+    int getMappedSourceMaxX() const { return mappedSourceMaxX_; }
+    int getMappedSourceMaxY() const { return mappedSourceMaxY_; }
 
     /// For imagery atlas: UV offset/scale within the atlas texture.
     float getAtlasOffsetU() const { return atlasOffsetU_; }
@@ -179,14 +179,14 @@ private:
     void* rendererResources_ = nullptr;
     int maxZoom_ = 22;
     MoreDetailAvailable moreDetailAvailable_ = MoreDetailAvailable::Unknown;
-    bool compositeTile_ = false;
-    int sourceZoom_ = 0;
-    Rectangle compositeSourceBounds_ = Rectangle::MAXIMUM;
-    std::vector<TileKey> compositeSourceKeys_;
-    int compositeSourceMinX_ = 0;
-    int compositeSourceMinY_ = 0;
-    int compositeSourceMaxX_ = 0;
-    int compositeSourceMaxY_ = 0;
+    bool mappedRasterTile_ = false;
+    int mappedSourceZoom_ = 0;
+    Rectangle mappedSourceBounds_ = Rectangle::MAXIMUM;
+    std::vector<TileKey> mappedSourceKeys_;
+    int mappedSourceMinX_ = 0;
+    int mappedSourceMinY_ = 0;
+    int mappedSourceMaxX_ = 0;
+    int mappedSourceMaxY_ = 0;
     double targetScreenPixelsX_ = 256.0;
     double targetScreenPixelsY_ = 256.0;
     float atlasOffsetU_ = 0.0f, atlasOffsetV_ = 0.0f;

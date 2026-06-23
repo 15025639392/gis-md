@@ -585,26 +585,26 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomFollowsCesiumTargetScreenPixe
 
     auto matchingTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, z3Bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, matchingTile);
-    EXPECT_FALSE(matchingTile->isCompositeTile());
+    EXPECT_FALSE(matchingTile->isMappedRasterTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), matchingTile->getTileID());
 
     auto widerTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, z3Bounds), 1024.0, 256.0).tile;
     ASSERT_NE(nullptr, widerTile);
-    EXPECT_TRUE(widerTile->isCompositeTile());
-    EXPECT_EQ(4, widerTile->getSourceZoom());
+    EXPECT_TRUE(widerTile->isMappedRasterTile());
+    EXPECT_EQ(4, widerTile->getMappedSourceZoom());
 
     imagery.minZoomValue = 5;
     RasterOverlayTileProvider minClampedProvider(imagery, *scheme, nullptr);
     auto minClampedTile = minClampedProvider.mapRasterTilesToGeometryTile(projectForProvider(minClampedProvider, z3Bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, minClampedTile);
-    EXPECT_EQ(5, minClampedTile->getSourceZoom());
+    EXPECT_EQ(5, minClampedTile->getMappedSourceZoom());
 
     imagery.minZoomValue = 0;
     imagery.maxZoomValue = 3;
     RasterOverlayTileProvider maxClampedProvider(imagery, *scheme, nullptr);
     auto maxClampedTile = maxClampedProvider.mapRasterTilesToGeometryTile(projectForProvider(maxClampedProvider, z3Bounds), 1024.0, 256.0).tile;
     ASSERT_NE(nullptr, maxClampedTile);
-    EXPECT_FALSE(maxClampedTile->isCompositeTile());
+    EXPECT_FALSE(maxClampedTile->isMappedRasterTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxClampedTile->getTileID());
 }
 
@@ -628,7 +628,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayLevelRange) {
     minProvider.setOwner(&minOverlay);
     auto minTile = minProvider.mapRasterTilesToGeometryTile(projectForProvider(minProvider, z3Bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, minTile);
-    EXPECT_EQ(5, minTile->getSourceZoom());
+    EXPECT_EQ(5, minTile->getMappedSourceZoom());
 
     options.minimumZoom = 0;
     options.maximumZoom = 3;
@@ -644,7 +644,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayLevelRange) {
     maxProvider.setOwner(&maxOverlay);
     auto maxTile = maxProvider.mapRasterTilesToGeometryTile(projectForProvider(maxProvider, z3Bounds), 1024.0, 256.0).tile;
     ASSERT_NE(nullptr, maxTile);
-    EXPECT_FALSE(maxTile->isCompositeTile());
+    EXPECT_FALSE(maxTile->isMappedRasterTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxTile->getTileID());
 }
 
@@ -718,8 +718,8 @@ TEST(RasterOverlayLifecycleTest,
             1024.0,
             1024.0);
     ASSERT_NE(nullptr, secondMapping.tile);
-    EXPECT_EQ(3, secondMapping.tile->isCompositeTile()
-                     ? secondMapping.tile->getSourceZoom()
+    EXPECT_EQ(3, secondMapping.tile->isMappedRasterTile()
+                     ? secondMapping.tile->getMappedSourceZoom()
                      : secondMapping.tile->getTileID().z);
 }
 
@@ -903,7 +903,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePla
     auto outsideTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, outside), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, outsideTile);
-    EXPECT_TRUE(outsideTile->isCompositeTile());
+    EXPECT_TRUE(outsideTile->isMappedRasterTile());
     EXPECT_TRUE(provider.loadTileThrottled(*outsideTile, nullptr));
 
     ASSERT_FALSE(imagery.requestedKeys.empty());
@@ -928,7 +928,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePla
         512.0,
         512.0).tile;
     ASSERT_NE(nullptr, tile);
-    EXPECT_TRUE(tile->isCompositeTile());
+    EXPECT_TRUE(tile->isMappedRasterTile());
     EXPECT_TRUE(overlappingProvider.loadTileThrottled(*tile, nullptr));
 
     ASSERT_FALSE(overlappingImagery.requestedKeys.empty());
@@ -956,7 +956,7 @@ TEST(RasterOverlayLifecycleTest,
                          1024.0,
                          1024.0).tile;
     ASSERT_NE(nullptr, tile);
-    ASSERT_TRUE(tile->isCompositeTile());
+    ASSERT_TRUE(tile->isMappedRasterTile());
     EXPECT_TRUE(provider.loadTile(*tile));
 
     ASSERT_EQ(1u, imagery.requestedKeys.size());
@@ -977,7 +977,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageMissClampsToNearestCoverageEdg
     auto tile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, outsideCoverage), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, tile);
-    EXPECT_TRUE(tile->isCompositeTile());
+    EXPECT_TRUE(tile->isMappedRasterTile());
     EXPECT_TRUE(provider.loadTile(*tile));
     ASSERT_FALSE(imagery.requestedKeys.empty());
     for (const TileKey& requested : imagery.requestedKeys) {
@@ -1029,7 +1029,7 @@ TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampli
     auto rectangleMappedTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceBounds), 8.0, 8.0).tile;
 
     ASSERT_NE(nullptr, rectangleMappedTile);
-    EXPECT_FALSE(rectangleMappedTile->isCompositeTile());
+    EXPECT_FALSE(rectangleMappedTile->isMappedRasterTile());
     EXPECT_EQ(sourceKey, rectangleMappedTile->getTileID());
     EXPECT_EQ(projectForProvider(provider, sourceBounds),
               rectangleMappedTile->getRectangle());
@@ -1071,7 +1071,7 @@ TEST(RasterOverlayLifecycleTest, WebMercatorBoundarySlopUsesProjectedGeometrySpa
                           .tile;
 
     ASSERT_NE(nullptr, mappedTile);
-    ASSERT_TRUE(mappedTile->isCompositeTile());
+    ASSERT_TRUE(mappedTile->isMappedRasterTile());
     ASSERT_TRUE(provider.loadTile(*mappedTile));
     ASSERT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
@@ -1107,7 +1107,7 @@ TEST(RasterOverlayLifecycleTest, CompositeProviderLoadStoresComposedRectangleLik
                              .tile;
 
     ASSERT_NE(nullptr, compositeTile);
-    ASSERT_TRUE(compositeTile->isCompositeTile());
+    ASSERT_TRUE(compositeTile->isMappedRasterTile());
     ASSERT_TRUE(provider.loadTile(*compositeTile));
     ASSERT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
@@ -1173,7 +1173,7 @@ TEST(
             true);
     EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, initial);
     ASSERT_NE(nullptr, mapped.getLoadingTile());
-    ASSERT_TRUE(mapped.getLoadingTile()->isCompositeTile());
+    ASSERT_TRUE(mapped.getLoadingTile()->isMappedRasterTile());
 
     ASSERT_TRUE(provider.loadTile(*mapped.getLoadingTile()));
     ASSERT_EQ(1u, imagery.requestedKeys.size());
@@ -1324,7 +1324,7 @@ TEST(RasterOverlayLifecycleTest, LargeAreaUsesRootTileLikeCesiumNative) {
 
     ASSERT_NE(nullptr, mapping.tile);
     EXPECT_TRUE(mapping.directTile);
-    EXPECT_FALSE(mapping.tile->isCompositeTile());
+    EXPECT_FALSE(mapping.tile->isMappedRasterTile());
     EXPECT_EQ(rootKey, mapping.tile->getTileID());
 
     ASSERT_TRUE(provider.loadTile(*mapping.tile));
@@ -1354,7 +1354,7 @@ TEST(RasterOverlayLifecycleTest, DirectExactSourceUploadUsesSharedSourceAssetLik
     auto tile = provider.getTile(sourceKey);
 
     ASSERT_NE(nullptr, tile);
-    EXPECT_FALSE(tile->isCompositeTile());
+    EXPECT_FALSE(tile->isMappedRasterTile());
 
     ASSERT_TRUE(provider.loadTile(*tile));
     ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
@@ -1408,7 +1408,7 @@ TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
 
     ASSERT_NE(nullptr, direct.tile);
     EXPECT_TRUE(direct.directTile);
-    EXPECT_FALSE(direct.tile->isCompositeTile());
+    EXPECT_FALSE(direct.tile->isMappedRasterTile());
     EXPECT_EQ(sourceKey, direct.tile->getTileID());
     EXPECT_EQ(sourceKey.z, direct.sourceTiles.sourceZoom);
     ASSERT_EQ(1u, direct.sourceTiles.sourceKeys.size());
@@ -1432,8 +1432,8 @@ TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
 
     ASSERT_NE(nullptr, composed.tile);
     EXPECT_FALSE(composed.directTile);
-    EXPECT_TRUE(composed.tile->isCompositeTile());
-    EXPECT_EQ(composed.tile->getSourceZoom(),
+    EXPECT_TRUE(composed.tile->isMappedRasterTile());
+    EXPECT_EQ(composed.tile->getMappedSourceZoom(),
               composed.sourceTiles.sourceZoom);
     EXPECT_FALSE(composed.sourceTiles.empty());
     EXPECT_TRUE(composed.sourceTiles.sourceBounds.equalsEpsilon(
@@ -1470,7 +1470,7 @@ TEST(RasterOverlayLifecycleTest,
 
     ASSERT_NE(nullptr, mapping.tile);
     EXPECT_FALSE(mapping.directTile);
-    EXPECT_TRUE(mapping.tile->isCompositeTile());
+    EXPECT_TRUE(mapping.tile->isMappedRasterTile());
     EXPECT_EQ(expectedLevel, mapping.sourceTiles.sourceZoom);
     EXPECT_TRUE(mapping.sourceTiles.sourceBounds.equalsEpsilon(
         spanningFourTiles,
@@ -1519,12 +1519,12 @@ TEST(
             512.0);
 
     ASSERT_NE(nullptr, mapping.tile);
-    ASSERT_TRUE(mapping.tile->isCompositeTile());
+    ASSERT_TRUE(mapping.tile->isMappedRasterTile());
     ASSERT_FALSE(mapping.sourceTiles.empty());
     const std::vector<TileKey> expectedSourceKeys =
         mapping.sourceTiles.sourceKeys;
-    EXPECT_EQ(expectedSourceKeys, mapping.tile->getCompositeSourceKeys());
-    EXPECT_TRUE(mapping.tile->getCompositeSourceBounds().equalsEpsilon(
+    EXPECT_EQ(expectedSourceKeys, mapping.tile->getMappedSourceKeys());
+    EXPECT_TRUE(mapping.tile->getMappedSourceBounds().equalsEpsilon(
         mapping.sourceTiles.sourceBounds,
         1e-12));
 
@@ -1554,8 +1554,8 @@ TEST(RasterOverlayLifecycleTest, DirectFastPathDoesNotRunForPartialRectangle) {
 
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    EXPECT_TRUE(compositeTile->isCompositeTile());
-    EXPECT_EQ(sourceKey.z, compositeTile->getSourceZoom());
+    EXPECT_TRUE(compositeTile->isMappedRasterTile());
+    EXPECT_EQ(sourceKey.z, compositeTile->getMappedSourceZoom());
 }
 
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceRangeTrimsTileEdgeTouchesLikeCesiumNative) {
@@ -1569,7 +1569,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceRangeTrimsTileEdgeTouchesLikeCesi
         TileKey{scheme->id(), 3, 2, 3});
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    EXPECT_EQ(5, compositeTile->getSourceZoom());
+    EXPECT_EQ(5, compositeTile->getMappedSourceZoom());
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
@@ -1602,7 +1602,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceRangeTrimsSouthUpTileEdgeTouchesL
         TileKey{scheme->id(), 3, 2, 3});
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    EXPECT_EQ(5, compositeTile->getSourceZoom());
+    EXPECT_EQ(5, compositeTile->getMappedSourceZoom());
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
@@ -1700,11 +1700,11 @@ TEST(RasterOverlayLifecycleTest, CompositeTileKeepsGeometryBoundsAndTargetPixels
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, geometryBounds), 512.0, 512.0).tile;
 
     ASSERT_NE(nullptr, compositeTile);
-    EXPECT_TRUE(compositeTile->isCompositeTile());
+    EXPECT_TRUE(compositeTile->isMappedRasterTile());
     EXPECT_EQ(projectForProvider(provider, geometryBounds),
               compositeTile->getRectangle());
     EXPECT_EQ(0u, compositeTile->getCacheKey().find("composite/"));
-    EXPECT_EQ(3, compositeTile->getSourceZoom());
+    EXPECT_EQ(3, compositeTile->getMappedSourceZoom());
     EXPECT_EQ(512.0, compositeTile->getTargetScreenPixelsX());
     EXPECT_EQ(512.0, compositeTile->getTargetScreenPixelsY());
 }
@@ -1725,7 +1725,7 @@ TEST(RasterOverlayLifecycleTest,
                               512.0)
                           .tile;
     ASSERT_NE(nullptr, directTile);
-    ASSERT_FALSE(directTile->isCompositeTile());
+    ASSERT_FALSE(directTile->isMappedRasterTile());
 
     const TileKey geometryKey{geometryScheme->id(), 2, 4, 2};
     const Rectangle geometryBounds =
@@ -1738,7 +1738,7 @@ TEST(RasterOverlayLifecycleTest,
                               .tile;
 
     ASSERT_NE(nullptr, firstComposite);
-    ASSERT_TRUE(firstComposite->isCompositeTile());
+    ASSERT_TRUE(firstComposite->isMappedRasterTile());
     const std::string firstCompositeKey = firstComposite->getCacheKey();
     EXPECT_EQ(2, provider.getCachedTileCount());
 
@@ -1756,7 +1756,7 @@ TEST(RasterOverlayLifecycleTest,
                                .tile;
 
     ASSERT_NE(nullptr, secondComposite);
-    ASSERT_TRUE(secondComposite->isCompositeTile());
+    ASSERT_TRUE(secondComposite->isMappedRasterTile());
     EXPECT_NE(firstComposite.get(), secondComposite.get());
     EXPECT_NE(firstCompositeKey, secondComposite->getCacheKey());
     EXPECT_EQ(2, provider.getCachedTileCount());
@@ -1774,7 +1774,7 @@ TEST(RasterOverlayLifecycleTest,
     auto mappedTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, bounds), 512.0, 512.0).tile;
 
     ASSERT_NE(nullptr, mappedTile);
-    EXPECT_FALSE(mappedTile->isCompositeTile());
+    EXPECT_FALSE(mappedTile->isMappedRasterTile());
     EXPECT_EQ(key, mappedTile->getTileID());
     EXPECT_EQ(projectForProvider(provider, bounds), mappedTile->getRectangle());
     EXPECT_EQ("XYZ-WebMercator/3/4/2", mappedTile->getCacheKey());
@@ -1783,7 +1783,7 @@ TEST(RasterOverlayLifecycleTest,
     auto directTile = provider.getTile(key);
     ASSERT_NE(nullptr, directTile);
     EXPECT_EQ(directTile, mappedTile);
-    EXPECT_FALSE(directTile->isCompositeTile());
+    EXPECT_FALSE(directTile->isMappedRasterTile());
 }
 
 TEST(RasterOverlayLifecycleTest,
@@ -1800,14 +1800,14 @@ TEST(RasterOverlayLifecycleTest,
     auto mappedTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, bounds), 512.0, 512.0).tile;
 
     ASSERT_NE(nullptr, mappedTile);
-    EXPECT_FALSE(mappedTile->isCompositeTile());
+    EXPECT_FALSE(mappedTile->isMappedRasterTile());
     EXPECT_NE(0u, mappedTile->getCacheKey().find("composite/"));
     EXPECT_EQ(1, provider.getCachedTileCount());
 
     auto directTile = provider.getTile(mappedTile->getTileID());
     ASSERT_NE(nullptr, directTile);
     EXPECT_EQ(directTile, mappedTile);
-    EXPECT_FALSE(directTile->isCompositeTile());
+    EXPECT_FALSE(directTile->isMappedRasterTile());
 }
 
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayMaximumTextureSize) {
@@ -1826,7 +1826,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayMaximumTexture
         std::move(defaultUploader));
     auto defaultTile = defaultProvider.mapRasterTilesToGeometryTile(projectForProvider(defaultProvider, rootBounds), 131072.0, 131072.0).tile;
     ASSERT_NE(nullptr, defaultTile);
-    EXPECT_EQ(3, defaultTile->getSourceZoom());
+    EXPECT_EQ(3, defaultTile->getMappedSourceZoom());
 
     auto constrainedUploader = std::make_unique<CountingRasterUploader>();
     constrainedUploader->maxTextureSizeValue = 2048;
@@ -1838,7 +1838,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayMaximumTexture
     auto constrainedTile =
         constrainedProvider.mapRasterTilesToGeometryTile(projectForProvider(constrainedProvider, rootBounds), 131072.0, 131072.0).tile;
     ASSERT_NE(nullptr, constrainedTile);
-    EXPECT_FALSE(constrainedTile->isCompositeTile());
+    EXPECT_FALSE(constrainedTile->isMappedRasterTile());
     EXPECT_EQ((TileKey{scheme->id(), 0, 0, 0}), constrainedTile->getTileID());
 
     auto ownedImagery = std::make_unique<ConfigurableImageryProvider>();
@@ -1860,7 +1860,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayMaximumTexture
     EXPECT_EQ(256, ownerProvider.getMaximumTextureSize());
     auto ownerTile = ownerProvider.mapRasterTilesToGeometryTile(projectForProvider(ownerProvider, rootBounds), 131072.0, 131072.0).tile;
     ASSERT_NE(nullptr, ownerTile);
-    EXPECT_FALSE(ownerTile->isCompositeTile());
+    EXPECT_FALSE(ownerTile->isMappedRasterTile());
     EXPECT_EQ((TileKey{scheme->id(), 0, 0, 0}), ownerTile->getTileID());
 }
 
@@ -1876,7 +1876,7 @@ TEST(RasterOverlayLifecycleTest,
     const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
     auto tile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, tile);
-    EXPECT_FALSE(tile->isCompositeTile());
+    EXPECT_FALSE(tile->isMappedRasterTile());
     EXPECT_EQ(rootKey, tile->getTileID());
     EXPECT_EQ("XYZ-WebMercator/0/0/0", tile->getCacheKey());
 
@@ -1918,7 +1918,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceFailureFallsBackToParentTile) {
 
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, tileBounds), 1024.0, 1024.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    EXPECT_EQ(expectedSourceZoom, compositeTile->getSourceZoom());
+    EXPECT_EQ(expectedSourceZoom, compositeTile->getMappedSourceZoom());
 
     ASSERT_TRUE(provider.loadTile(*compositeTile));
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
@@ -1998,7 +1998,7 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNa
 
     auto westTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, westTile);
-    EXPECT_EQ(sourceKey.z, westTile->getSourceZoom());
+    EXPECT_EQ(sourceKey.z, westTile->getMappedSourceZoom());
     ASSERT_TRUE(provider.loadTile(*westTile));
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
     EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
@@ -2006,7 +2006,7 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNa
 
     auto eastTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, eastHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, eastTile);
-    EXPECT_EQ(sourceKey.z, eastTile->getSourceZoom());
+    EXPECT_EQ(sourceKey.z, eastTile->getMappedSourceZoom());
     ASSERT_TRUE(provider.loadTile(*eastTile));
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
 
@@ -2041,7 +2041,7 @@ TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiu
             128.0)
             .tile;
     ASSERT_NE(nullptr, firstTile);
-    ASSERT_TRUE(firstTile->isCompositeTile());
+    ASSERT_TRUE(firstTile->isMappedRasterTile());
 
     ASSERT_TRUE(provider.loadTile(*firstTile));
     ASSERT_EQ(1u, imagery.requestedKeys.size());
@@ -2056,7 +2056,7 @@ TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiu
             128.0)
             .tile;
     ASSERT_NE(nullptr, secondTile);
-    ASSERT_TRUE(secondTile->isCompositeTile());
+    ASSERT_TRUE(secondTile->isMappedRasterTile());
 
     ASSERT_TRUE(provider.loadTile(*secondTile));
     ASSERT_EQ(2u, imagery.requestedKeys.size());
@@ -2155,7 +2155,7 @@ TEST(RasterOverlayLifecycleTest,
             128.0)
             .tile;
     ASSERT_NE(nullptr, firstTile);
-    ASSERT_TRUE(firstTile->isCompositeTile());
+    ASSERT_TRUE(firstTile->isMappedRasterTile());
 
     ASSERT_TRUE(provider.loadTile(*firstTile));
     ASSERT_EQ(1u, imagery.requestedKeys.size());
@@ -2174,7 +2174,7 @@ TEST(RasterOverlayLifecycleTest,
             128.0)
             .tile;
     ASSERT_NE(nullptr, secondTile);
-    ASSERT_TRUE(secondTile->isCompositeTile());
+    ASSERT_TRUE(secondTile->isMappedRasterTile());
 
     ASSERT_TRUE(provider.loadTile(*secondTile));
     ASSERT_EQ(2u, imagery.requestedKeys.size());
@@ -2208,8 +2208,8 @@ TEST(RasterOverlayLifecycleTest,
     ASSERT_NE(nullptr, first);
     ASSERT_NE(nullptr, second);
     EXPECT_EQ(first.get(), second.get());
-    EXPECT_TRUE(first->isCompositeTile());
-    EXPECT_TRUE(second->isCompositeTile());
+    EXPECT_TRUE(first->isMappedRasterTile());
+    EXPECT_TRUE(second->isMappedRasterTile());
     EXPECT_EQ(first->getCacheKey(), second->getCacheKey());
 
     ASSERT_TRUE(provider.loadTile(*first));
@@ -2296,8 +2296,8 @@ TEST(
             512.0);
     ASSERT_NE(nullptr, westMapping.tile);
     ASSERT_NE(nullptr, eastMapping.tile);
-    ASSERT_TRUE(westMapping.tile->isCompositeTile());
-    ASSERT_TRUE(eastMapping.tile->isCompositeTile());
+    ASSERT_TRUE(westMapping.tile->isMappedRasterTile());
+    ASSERT_TRUE(eastMapping.tile->isMappedRasterTile());
     ASSERT_EQ(1u, westMapping.sourceTiles.sourceKeys.size());
     ASSERT_EQ(1u, eastMapping.sourceTiles.sourceKeys.size());
     EXPECT_EQ(sourceKey, westMapping.sourceTiles.sourceKeys.front());
@@ -2382,7 +2382,7 @@ TEST(RasterOverlayLifecycleTest,
     ASSERT_NE(nullptr, directTile);
 
     EXPECT_EQ(directTile.get(), compositeTile.get());
-    EXPECT_FALSE(compositeTile->isCompositeTile());
+    EXPECT_FALSE(compositeTile->isMappedRasterTile());
     EXPECT_EQ(sourceKey, compositeTile->getTileID());
     EXPECT_EQ(1, provider.getCachedTileCount());
 }
@@ -2853,7 +2853,7 @@ TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumN
 
     auto directTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, directTile);
-    EXPECT_FALSE(directTile->isCompositeTile());
+    EXPECT_FALSE(directTile->isMappedRasterTile());
     EXPECT_EQ(key, directTile->getTileID());
 
     ASSERT_TRUE(provider.loadTile(*directTile));
@@ -2895,7 +2895,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageMixesSourceLevelsAfterFailureLike
 
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, tileBounds), 1024.0, 1024.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    EXPECT_EQ(expectedSourceZoom, compositeTile->getSourceZoom());
+    EXPECT_EQ(expectedSourceZoom, compositeTile->getMappedSourceZoom());
 
     ASSERT_TRUE(provider.loadTile(*compositeTile));
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
@@ -2954,7 +2954,7 @@ TEST(RasterOverlayLifecycleTest, SourcePlanRequestsUnsupportedChildForParentFall
             512.0)
         .tile;
     ASSERT_NE(nullptr, compositeTile);
-    EXPECT_EQ(expectedSourceZoom, compositeTile->getSourceZoom());
+    EXPECT_EQ(expectedSourceZoom, compositeTile->getMappedSourceZoom());
 
     ASSERT_TRUE(provider.loadTile(*compositeTile));
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
@@ -3003,8 +3003,8 @@ TEST(RasterOverlayLifecycleTest, CompositeTileWithOnlyAncestorFallbackLoadsWitho
             1024.0)
         .tile;
     ASSERT_NE(nullptr, compositeTile);
-    ASSERT_TRUE(compositeTile->isCompositeTile());
-    const int sourceZoom = compositeTile->getSourceZoom();
+    ASSERT_TRUE(compositeTile->isMappedRasterTile());
+    const int sourceZoom = compositeTile->getMappedSourceZoom();
     ASSERT_GT(sourceZoom, 0);
     imagery.failAtOrAboveLevel = sourceZoom;
 
@@ -3041,7 +3041,7 @@ TEST(RasterOverlayLifecycleTest, CompositeTileWithAllSourcesFailedLoadsWithoutTe
             1024.0)
         .tile;
     ASSERT_NE(nullptr, compositeTile);
-    ASSERT_TRUE(compositeTile->isCompositeTile());
+    ASSERT_TRUE(compositeTile->isMappedRasterTile());
 
     ASSERT_TRUE(provider.loadTile(*compositeTile));
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
@@ -3085,7 +3085,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceFailureDoesNotFallbackBelowOverla
 
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, tileBounds), 1024.0, 1024.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    EXPECT_EQ(expectedSourceZoom, compositeTile->getSourceZoom());
+    EXPECT_EQ(expectedSourceZoom, compositeTile->getMappedSourceZoom());
 
     EXPECT_TRUE(provider.loadTile(*compositeTile));
 
@@ -3125,8 +3125,8 @@ TEST(RasterOverlayLifecycleTest, CompositeTilesShareInFlightSourceTileLikeCesium
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, eastHalf), 128.0, 128.0).tile;
     ASSERT_NE(nullptr, firstTile);
     ASSERT_NE(nullptr, secondTile);
-    ASSERT_TRUE(firstTile->isCompositeTile());
-    ASSERT_TRUE(secondTile->isCompositeTile());
+    ASSERT_TRUE(firstTile->isMappedRasterTile());
+    ASSERT_TRUE(secondTile->isMappedRasterTile());
 
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 1;
@@ -3186,7 +3186,7 @@ TEST(RasterOverlayLifecycleTest, FailedSourceTileIsSharedLikeCesiumNativeDepot) 
             128.0)
             .tile;
     ASSERT_NE(nullptr, firstTile);
-    ASSERT_TRUE(firstTile->isCompositeTile());
+    ASSERT_TRUE(firstTile->isMappedRasterTile());
 
     FrameResourceBudgetConfig firstConfig;
     firstConfig.maxNetworkRequestsPerFrame = 1;
@@ -3220,7 +3220,7 @@ TEST(RasterOverlayLifecycleTest, FailedSourceTileIsSharedLikeCesiumNativeDepot) 
             128.0)
             .tile;
     ASSERT_NE(nullptr, secondTile);
-    ASSERT_TRUE(secondTile->isCompositeTile());
+    ASSERT_TRUE(secondTile->isMappedRasterTile());
 
     FrameResourceBudgetConfig blockedConfig;
     blockedConfig.maxNetworkRequestsPerFrame = 0;
@@ -3258,7 +3258,7 @@ TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail
 
     auto tile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, tile);
-    EXPECT_FALSE(tile->isCompositeTile());
+    EXPECT_FALSE(tile->isMappedRasterTile());
     EXPECT_EQ(key, tile->getTileID());
 
     ASSERT_TRUE(provider.loadTile(*tile));
@@ -3293,7 +3293,7 @@ TEST(RasterOverlayLifecycleTest, FailedRasterTilesLoadEmptyLikeCesiumNative) {
         scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    ASSERT_TRUE(compositeTile->isCompositeTile());
+    ASSERT_TRUE(compositeTile->isMappedRasterTile());
     EXPECT_TRUE(provider.loadTileThrottled(*compositeTile, nullptr));
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
@@ -3317,7 +3317,7 @@ TEST(RasterOverlayLifecycleTest, RectangleLoadClampsCoverageChangedAfterTileCrea
         scheme->tileToRectangle(TileKey{scheme->id(), 2, 0, 0});
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, initialBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    ASSERT_TRUE(compositeTile->isCompositeTile());
+    ASSERT_TRUE(compositeTile->isMappedRasterTile());
 
     provider.setCoverageRectangle(
         scheme->tileToRectangle(TileKey{scheme->id(), 2, 3, 3}));
@@ -3469,7 +3469,7 @@ TEST(RasterOverlayLifecycleTest, DirectTileLoadConsumesRasterSourceBudget) {
 
     auto tile = provider.getTile(TileKey{scheme->id(), 1, 0, 0});
     ASSERT_NE(nullptr, tile);
-    ASSERT_FALSE(tile->isCompositeTile());
+    ASSERT_FALSE(tile->isMappedRasterTile());
 
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 1;
@@ -3544,7 +3544,7 @@ TEST(RasterOverlayLifecycleTest, CompositeRectangleIssuesCompleteFanoutAfterStar
         scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    ASSERT_TRUE(compositeTile->isCompositeTile());
+    ASSERT_TRUE(compositeTile->isMappedRasterTile());
 
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 1;
@@ -3575,7 +3575,7 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
         1024.0)
         .tile;
     ASSERT_NE(nullptr, firstTile);
-    ASSERT_TRUE(firstTile->isCompositeTile());
+    ASSERT_TRUE(firstTile->isMappedRasterTile());
 
     FrameResourceBudgetConfig firstConfig;
     firstConfig.maxNetworkRequestsPerFrame = 1;
@@ -3597,7 +3597,7 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
         8.0)
         .tile;
     ASSERT_NE(nullptr, secondTile);
-    ASSERT_TRUE(secondTile->isCompositeTile());
+    ASSERT_TRUE(secondTile->isMappedRasterTile());
 
     FrameResourceBudgetConfig blockedConfig;
     blockedConfig.maxNetworkRequestsPerFrame = 1;
@@ -3626,7 +3626,7 @@ TEST(RasterOverlayLifecycleTest, LoadingRectangleIssuesSourceFanoutOnceLikeCesiu
         1024.0,
         1024.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    ASSERT_TRUE(compositeTile->isCompositeTile());
+    ASSERT_TRUE(compositeTile->isMappedRasterTile());
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 2;
@@ -3667,7 +3667,7 @@ TEST(RasterOverlayLifecycleTest, FrameBudgetSeparatesRasterFanoutFromTerrainBudg
         scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
     auto compositeTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, compositeTile);
-    ASSERT_TRUE(compositeTile->isCompositeTile());
+    ASSERT_TRUE(compositeTile->isMappedRasterTile());
 
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 1;
@@ -3755,7 +3755,7 @@ TEST(RasterOverlayLifecycleTest, PlaceholderRemapsWhenProviderBecomesReadyLikeCe
         missing);
 
     ASSERT_NE(nullptr, mapped.getLoadingTile());
-    EXPECT_TRUE(mapped.getLoadingTile()->isCompositeTile());
+    EXPECT_TRUE(mapped.getLoadingTile()->isMappedRasterTile());
     EXPECT_EQ(projectForProvider(provider, preciseRectangle),
               mapped.getLoadingTile()->getRectangle());
     EXPECT_EQ(0, mapped.getTextureCoordinateID());
@@ -3785,7 +3785,7 @@ TEST(RasterOverlayLifecycleTest, RenderContentDetailsRectangleMapsRealTileLikeCe
         missing);
 
     ASSERT_NE(nullptr, mapped.getLoadingTile());
-    EXPECT_TRUE(mapped.getLoadingTile()->isCompositeTile());
+    EXPECT_TRUE(mapped.getLoadingTile()->isMappedRasterTile());
     EXPECT_EQ(projectForProvider(provider, preciseRectangle),
               mapped.getLoadingTile()->getRectangle());
     EXPECT_EQ(0, mapped.getTextureCoordinateID());
@@ -3830,7 +3830,7 @@ TEST(RasterOverlayLifecycleTest, RenderContentDetailsAlignedRectangleMapsDirectT
         missing);
 
     ASSERT_NE(nullptr, mapped.getLoadingTile());
-    EXPECT_FALSE(mapped.getLoadingTile()->isCompositeTile());
+    EXPECT_FALSE(mapped.getLoadingTile()->isMappedRasterTile());
     EXPECT_EQ(imageryKey, mapped.getLoadingTile()->getTileID());
     EXPECT_EQ(projectForProvider(provider, preciseRectangle),
               mapped.getLoadingTile()->getRectangle());

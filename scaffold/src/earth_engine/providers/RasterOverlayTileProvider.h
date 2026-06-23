@@ -283,10 +283,10 @@ private:
                                 FrameResourceBudget* budget);
     void refreshSourceAssetDepot();
 
-    /// Internal: load a composite raster tile by combining the provider's
+    /// Internal: load a mapped raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its geometry rectangle.
-    bool loadCompositeTile(RasterOverlayTile& tile,
-                           FrameResourceBudget* budget = nullptr);
+    bool loadMappedRasterTile(RasterOverlayTile& tile,
+                              FrameResourceBudget* budget = nullptr);
     int issueMappedSourceRequests(
         const std::shared_ptr<QuadtreeSourceRequest>& request,
         FrameResourceBudget* budget);
