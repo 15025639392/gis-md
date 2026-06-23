@@ -100,19 +100,14 @@ public:
                     !hasTerrainContentSource) {
                     continue;
                 }
-                const TileLoadDomain upsampleDomain = hasTerrainContentSource
-                    ? TileLoadDomain::TerrainContent
-                    : TileLoadDomain::HeightmapTerrainAdapter;
-                TileLoadResult upsampleResult =
-                    TileLoadResult::createRenderable();
-                if (hasTerrainContentSource) {
-                    std::optional<TileLoadResult> gltfUpsample =
-                        TileGltfTerrainUpsampledChildMaterializer::
-                            createLoadResult(*tileState);
-                    if (!gltfUpsample) {
-                        continue;
-                    }
-                    upsampleResult = std::move(*gltfUpsample);
+                if (!hasTerrainContentSource) {
+                    continue;
+                }
+                std::optional<TileLoadResult> gltfUpsample =
+                    TileGltfTerrainUpsampledChildMaterializer::
+                        createLoadResult(*tileState);
+                if (!gltfUpsample) {
+                    continue;
                 }
                 const TileLoadDispatchResult dispatchResult =
                     TileLoadRequestDispatcher::queueUpsampledLoad(
@@ -123,8 +118,8 @@ public:
                         cacheKey,
                         request.group,
                         request.priority,
-                        upsampleDomain,
-                        std::move(upsampleResult));
+                        TileLoadDomain::TerrainContent,
+                        std::move(*gltfUpsample));
                 if (shouldStopAfterDispatch(dispatchResult)) {
                     break;
                 }

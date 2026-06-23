@@ -622,7 +622,8 @@ TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
     EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
 }
 
-TEST(TileLoadSchedulerTest, QueuesUpsampledTerrainWhenNetworkInflightIsFull) {
+TEST(TileLoadSchedulerTest,
+     UpsampledTerrainWithoutGltfSourceDoesNotQueueLegacyTerrainUpload) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -672,11 +673,12 @@ TEST(TileLoadSchedulerTest, QueuesUpsampledTerrainWhenNetworkInflightIsFull) {
             },
             [&marked](const TileKey&) { marked = true; });
 
-    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.issued, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_TRUE(prepared);
-    EXPECT_TRUE(marked);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 1u);
+    EXPECT_FALSE(marked);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
 
     {
@@ -946,7 +948,8 @@ TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
     }
 }
 
-TEST(TileLoadSchedulerTest, SortsAndQueuesUpsampledTerrain) {
+TEST(TileLoadSchedulerTest,
+     SortsUpsampledTerrainButDoesNotQueueLegacyDomainWithoutGltfSource) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -1001,12 +1004,13 @@ TEST(TileLoadSchedulerTest, SortsAndQueuesUpsampledTerrain) {
             });
 
     ASSERT_EQ(prepareOrder.size(), 2u);
-    EXPECT_EQ(outcome.issued, 2u);
+    EXPECT_EQ(outcome.issued, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(prepareOrder[0], urgentKey.x);
     EXPECT_EQ(prepareOrder[1], normalKey.x);
-    EXPECT_EQ(markedOrder, prepareOrder);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 2u);
+    EXPECT_TRUE(markedOrder.empty());
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
 }
 
 TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
@@ -1182,14 +1186,14 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
 
     ASSERT_EQ(plannedColumns.size(), 2u);
     ASSERT_EQ(preparedColumns.size(), 1u);
-    ASSERT_EQ(markedColumns.size(), 1u);
-    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_TRUE(markedColumns.empty());
+    EXPECT_EQ(outcome.issued, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(plannedColumns[0], missingTileStateKey.x);
     EXPECT_EQ(plannedColumns[1], readyUpsampleKey.x);
     EXPECT_EQ(preparedColumns.front(), readyUpsampleKey.x);
-    EXPECT_EQ(markedColumns.front(), readyUpsampleKey.x);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 1u);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
 }
 
 TEST(TileLoadSchedulerTest, SkipsEmptyUpsampledCacheKey) {

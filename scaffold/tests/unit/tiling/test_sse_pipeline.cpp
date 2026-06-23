@@ -22036,12 +22036,13 @@ void testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull() {
             },
             [&marked](const TileKey&) { marked = true; });
 
-    check(outcome.issued == 1 && !outcome.blockedByInflight,
-          "TileLoadScheduler: upsampled terrain is not blocked by full network inflight capacity");
-    check(prepared && marked &&
-              lifecycle.counts().terrainUploads == 1 &&
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: upsampled terrain without glTF source is not blocked by full network inflight capacity");
+    check(prepared && !marked &&
+              lifecycle.counts().terrainUploads == 0 &&
+              lifecycle.counts().gltfTerrainUploads == 0 &&
               lifecycle.pendingRequestCount() == 1,
-          "TileLoadScheduler: upsampled terrain queues local upload without issuing network request");
+          "TileLoadScheduler: upsampled terrain without glTF source waits instead of queuing legacy upload");
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -22159,16 +22160,17 @@ void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
                 markedOrder.push_back(key.x);
             });
 
-    check(outcome.issued == 2 && !outcome.blockedByInflight,
-          "TileLoadScheduler: upsampled requests are issued");
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: upsampled requests without glTF sources are not issued");
     check(prepareOrder.size() == 2 &&
               prepareOrder[0] == urgentKey.x &&
               prepareOrder[1] == normalKey.x,
           "TileLoadScheduler: scheduler applies shared priority ordering");
-    check(markedOrder == prepareOrder,
-          "TileLoadScheduler: issued upsampled requests mark loading in order");
-    check(lifecycle.counts().terrainUploads == 2,
-          "TileLoadScheduler: upsampled requests enter pending upload queue");
+    check(markedOrder.empty(),
+          "TileLoadScheduler: upsampled requests without glTF sources do not mark loading");
+    check(lifecycle.counts().terrainUploads == 0 &&
+              lifecycle.counts().gltfTerrainUploads == 0,
+          "TileLoadScheduler: upsampled requests without glTF sources do not enter pending upload queue");
 }
 
 void testTileLoadSchedulerContinuesAfterUpsampleSourceWait() {
@@ -22329,7 +22331,7 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
                 markedColumns.push_back(key.x);
             });
 
-    check(outcome.issued == 1 && !outcome.blockedByInflight,
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: missing upsample tile state does not block later request");
     check(plannedColumns.size() == 2 &&
               plannedColumns[0] == missingTileStateKey.x &&
@@ -22337,10 +22339,10 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
               preparedColumns.size() == 1 &&
               preparedColumns.front() == readyUpsampleKey.x,
           "TileLoadScheduler: missing upsample tile state skips source preparation");
-    check(markedColumns.size() == 1 &&
-              markedColumns.front() == readyUpsampleKey.x &&
-              lifecycle.counts().terrainUploads == 1,
-          "TileLoadScheduler: later upsampled tile still enters local upload queue");
+    check(markedColumns.empty() &&
+              lifecycle.counts().terrainUploads == 0 &&
+              lifecycle.counts().gltfTerrainUploads == 0,
+          "TileLoadScheduler: later upsampled tile without glTF source does not enter legacy upload queue");
 }
 
 void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
@@ -27558,19 +27560,14 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
           "Tileset: upsampled child waits for main-thread upsample finish before becoming renderable");
 
     TilesetTestAccess::requestMissingTile(tileset, se->key);
-    check(se->content.loadState == TileLoadState::ContentLoading &&
-              tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
+    check(se->content.loadState == TileLoadState::Unloaded &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 0 &&
+              tileset.loadDiagnostics().pendingGltfTerrainUploads == 0 &&
               rawProvider->requestCount == 0,
-          "Tileset: upsampled child enters local main-thread queue without terrain provider request");
-
-    TilesetTestAccess::processPendingUploads(tileset);
-    check(se->content.renderContent.isMeshReady() &&
-              se->content.renderContent.hasSurfaceMesh() &&
-              !se->content.renderContent.surfaceMesh()->vertices.empty(),
-          "Tileset: upsampled child builds mesh from parent render mesh");
-    check(se->content.loadState == TileLoadState::Done &&
-              TilesetTestAccess::isTileRenderable(tileset, *se),
-          "Tileset: upsampled child is renderable after parent-mesh upsample finishes");
+          "Tileset: upsampled child without glTF source waits instead of queuing legacy terrain upload");
+    check(!se->content.renderContent.hasSurfaceMesh() &&
+              !TilesetTestAccess::isTileRenderable(tileset, *se),
+          "Tileset: upsampled child no longer builds a legacy mesh from parent render mesh");
 }
 
 void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
@@ -28523,19 +28520,13 @@ void testTilesetUpsampledChildFinalizesContentLoadedParent() {
           "Tileset: content-loaded-parent child is marked as upsampled terrain");
 
     TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
-    check(root->content.loadState == TileLoadState::Done &&
-              root->content.renderContent.isMeshReady() &&
-              upsampledChild->content.loadState == TileLoadState::ContentLoading &&
-              tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
+    check(upsampledChild->content.loadState == TileLoadState::Unloaded &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 0 &&
+              tileset.loadDiagnostics().pendingGltfTerrainUploads == 0 &&
               rawProvider->requestCount == 0,
-          "Tileset: upsampled child finalizes ContentLoaded parent before local upsample");
-
-    TilesetTestAccess::processPendingUploads(tileset);
-    check(upsampledChild->content.loadState == TileLoadState::Done &&
-              upsampledChild->content.renderContent.isMeshReady() &&
-              upsampledChild->content.renderContent.hasSurfaceMesh() &&
-              TilesetTestAccess::isTileRenderable(tileset, *upsampledChild),
-          "Tileset: upsampled child becomes renderable after finalized-parent upsample");
+          "Tileset: upsampled child without glTF source does not finalize ContentLoaded parent for legacy upsample");
+    check(!TilesetTestAccess::isTileRenderable(tileset, *upsampledChild),
+          "Tileset: upsampled child remains non-renderable until a glTF terrain source exists");
 }
 
 void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
@@ -29449,34 +29440,25 @@ void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
     TilesetTile* child = root->children.front();
     child->content.upsampledFromParent = true;
     TilesetTestAccess::requestMissingTile(tileset, child->key);
-    check(child->content.loadState == TileLoadState::ContentLoading &&
-              tileset.loadDiagnostics().pendingTerrainUploads == 1,
-          "Tileset: upsample child has a pending main-thread upload before parent unload");
+    check(child->content.loadState == TileLoadState::Unloaded &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 0 &&
+              tileset.loadDiagnostics().pendingGltfTerrainUploads == 0,
+          "Tileset: upsample child without glTF source does not create a pending legacy upload before parent unload");
 
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     const int64_t bytesBeforeUnload = tileset.totalBytesUsed();
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
 
-    check(root->content.loadState == TileLoadState::Unloading &&
-              root->content.contentKind == TileContentKind::Render &&
-              root->content.renderContent.isMeshReady() &&
-              root->content.renderContent.hasSurfaceMesh(),
-          "Tileset: upsample child loading moves parent into Unloading while keeping source content");
-    check(root->content.renderContent.surfaceVertexBuffer() == nullptr &&
-              root->content.renderContent.surfaceIndexBuffer() == nullptr,
-          "Tileset: upsample-protected parent releases main-thread render resources first");
+    check(root->content.loadState == TileLoadState::Unloaded &&
+              root->content.contentKind == TileContentKind::Unknown &&
+              !root->content.renderContent.isMeshReady() &&
+              !root->content.renderContent.hasSurfaceMesh(),
+          "Tileset: parent unload is not protected by removed legacy upsample work");
     check(tileset.totalBytesUsed() < bytesBeforeUnload,
-          "Tileset: partial Unloading updates byte accounting after render-resource release");
-    check(tileset.loadDiagnostics().unloadQueueTiles == 1,
-          "Tileset: upsample-protected parent remains queued for a later unload retry");
-
-    TilesetTestAccess::processPendingUploads(tileset);
-    check(child->content.loadState == TileLoadState::Done &&
-              child->content.contentKind == TileContentKind::Render &&
-              child->content.renderContent.isMeshReady() &&
-              child->content.renderContent.hasSurfaceMesh(),
-          "Tileset: pending upsample child can finish from an Unloading parent source");
+          "Tileset: full unload updates byte accounting after removed legacy upsample protection");
+    check(tileset.loadDiagnostics().unloadQueueTiles == 0,
+          "Tileset: parent leaves unload queue immediately without pending legacy upsample child");
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
 
     check(root->content.loadState == TileLoadState::Unloaded &&
