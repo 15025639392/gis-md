@@ -517,7 +517,6 @@ TEST(SceneFrameStateTest, OcclusionCallbackFeedsPrimaryAndAdditionalTilesets) {
 
     auto makeTileset = []() {
         return std::make_unique<Tileset>(
-            std::unique_ptr<TerrainProvider>{},
             TileScheme::createGeographicTMS(),
             std::vector<ActivatedRasterOverlay*>{},
             nullptr,
@@ -567,7 +566,6 @@ TEST(
     const TileKey eastRoot{"Geographic-TMS", 0, 1, 0};
 
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         nullptr,
@@ -589,7 +587,6 @@ TEST(
     EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
 
     auto contentTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         nullptr,
@@ -619,7 +616,6 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
@@ -633,7 +629,6 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     scene.setTileset(std::move(terrainTileset));
 
     auto contentTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
@@ -707,7 +702,6 @@ TEST(SceneFrameStateTest, GltfTerrainCountsAsTerrainRenderContent) {
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
@@ -758,7 +752,6 @@ TEST(SceneFrameStateTest, DiagnosticsExposeTerrainRenderEntryFallbackReasons) {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -877,7 +870,6 @@ TEST(SceneFrameStateTest, RenderPlanKeepsSurfaceBeforeBaseRasterIsDrawable) {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -922,7 +914,6 @@ TEST(SceneFrameStateTest, RenderPlanKeepsSurfaceBeforeBaseRasterIsDrawable) {
 
 TEST(SceneFrameStateTest, PresentationTraceCopiesRenderEntryPassFailures) {
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -957,7 +948,6 @@ TEST(SceneFrameStateTest, PresentationTraceCopiesRenderEntryPassFailures) {
 
 TEST(SceneFrameStateTest, PresentationTraceExposesFadingRenderEntry) {
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1006,7 +996,6 @@ TEST(SceneFrameStateTest, PresentationTraceExposesFadingRenderEntry) {
 
 TEST(SceneFrameStateTest, PresentationTraceExposesAdditiveSelectedEntries) {
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1073,7 +1062,6 @@ TEST(SceneFrameStateTest, ClippedFallbackCommandsUseSelectedChildStableKeys) {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -1156,7 +1144,6 @@ TEST(SceneFrameStateTest, SurfaceCommandUsesNoSkirtTerrainIndexRange) {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -1235,7 +1222,6 @@ TEST(SceneFrameStateTest, SurfaceCommandSkipsExplicitMeshMissingIndexBuffer) {
         Vec3::unitZ());
 
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
@@ -1299,7 +1285,6 @@ TEST(SceneFrameStateTest, SurfaceCommandIgnoresOverflowingNoSkirtRange) {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -1377,7 +1362,6 @@ TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -1444,7 +1428,6 @@ TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -1511,7 +1494,6 @@ TEST(SceneFrameStateTest, SortsTransparentGltfByCameraDepth) {
     scene.camera().lookAt(cameraPosition, target, Vec3::unitZ());
 
     auto contentTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
