@@ -25276,6 +25276,60 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
           "TileRenderPlanFrameRefresher: drawable base raster restores surface render entry");
 }
 
+void testTileRenderPlanFrameRefresherCollectsReadyRasterCredits() {
+    InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
+        std::move(scheme),
+        {&baseActivated},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "TileRenderPlanFrameRefresher: credit fixture creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "TileRenderPlanFrameRefresher: credit fixture maps base imagery");
+    if (!rootRaster) return;
+
+    rootRaster->setCredits({"Imagery credit", "Imagery credit"});
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+
+    const TilePlan& plan = tileset.tilePlan();
+    check(plan.renderEntries.size() == 1,
+          "TileRenderPlanFrameRefresher: credit fixture has one render entry");
+    check(plan.frameCredits.size() == 1 &&
+              plan.frameCredits.front() == "Imagery credit",
+          "TileRenderPlanFrameRefresher: ready mapped raster credits are aggregated once per frame like cesium-native");
+}
+
 void testPresentationTraceRecordsDeterministicCameraState() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -27751,6 +27805,7 @@ int main() {
     testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder();
     testTilesetAncestorFallbackIsClippedToMissingChild();
     testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster();
+    testTileRenderPlanFrameRefresherCollectsReadyRasterCredits();
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
     testPresentationTraceCopiesRenderEntryPassFailures();

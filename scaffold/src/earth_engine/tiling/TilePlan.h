@@ -136,6 +136,7 @@ struct TilePlan {
     std::vector<TileTransition> tilesFadingOut;
     std::vector<TileTransition> tileTransitions;
     std::vector<TileRenderEntry> renderEntries;
+    std::vector<std::string> frameCredits;
     std::vector<TileSelectionRecord> selectionRecords;
     int renderingNodeCount = 0;
     int walkthroughNodeCount = 0;
