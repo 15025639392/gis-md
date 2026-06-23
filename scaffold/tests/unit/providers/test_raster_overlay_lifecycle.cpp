@@ -3361,6 +3361,7 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
     RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(0, 3);
 
     const TileKey westChild{scheme->id(), 3, 2, 2};
     const TileKey eastChild{scheme->id(), 3, 3, 2};
@@ -3413,6 +3414,25 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
     EXPECT_EQ(nullptr, westTile->getTexture());
     EXPECT_EQ(nullptr, eastTile->getTexture());
+    EXPECT_FALSE(provider.hasPendingWork());
+
+    const size_t requestsAfterConcurrentFallback = imagery.requestedKeys.size();
+    const Rectangle eastInner(
+        eastBounds.west() + eastBounds.width() * 0.25,
+        eastBounds.south() + eastBounds.height() * 0.25,
+        eastBounds.east() - eastBounds.width() * 0.25,
+        eastBounds.north() - eastBounds.height() * 0.25);
+    auto repeatedEastTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, eastInner),
+        256.0,
+        512.0).tile;
+    ASSERT_NE(nullptr, repeatedEastTile);
+    ASSERT_TRUE(provider.loadTile(*repeatedEastTile));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(requestsAfterConcurrentFallback, imagery.requestedKeys.size());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              repeatedEastTile->getState());
+    EXPECT_EQ(nullptr, repeatedEastTile->getTexture());
     EXPECT_FALSE(provider.hasPendingWork());
 }
 

@@ -1421,6 +1421,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         originalKey,
                         ancestorFallback);
                     if (cached) {
+                        self->cacheSource(originalKey, source);
                         auto originalCompleted =
                             std::make_shared<SourceTileAsset>(
                                 self->sourceAssetFromResult(source));
