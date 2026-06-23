@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileGltfTerrainUpsampledChildMaterializer.h"
 #include "TileSurfaceMeshResolutionPolicy.h"
 #include "TileSurfaceMeshSourceResolver.h"
 #include "TileSurfaceRenderContentCoordinator.h"

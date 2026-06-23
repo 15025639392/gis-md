@@ -1,7 +1,6 @@
 #pragma once
 
 #include "DecodedHeightmapSampler.h"
-#include "TileGltfTerrainUpsampledChildMaterializer.h"
 #include "TileSurface.h"
 #include "TileSurfaceMeshResolutionPolicy.h"
 #include "TilesetTile.h"
@@ -39,8 +38,7 @@ public:
             resolution.markDone = false;
         }
 
-        if (shouldDeferToGltfTerrainUpsample(tile, hasOwnTerrain)) {
-            resolution.markDone = false;
+        if (!useHeightmapSurfacePath && !hasOwnTerrain) {
             return resolution;
         }
 
@@ -61,14 +59,6 @@ public:
     }
 
 private:
-    static bool shouldDeferToGltfTerrainUpsample(const TilesetTile& tile,
-                                                 bool hasOwnTerrain) {
-        return !hasOwnTerrain &&
-            tile.content.derivesTerrainFromParent() &&
-            TileGltfTerrainUpsampledChildMaterializer::findGltfTerrainSource(
-                tile) != nullptr;
-    }
-
     template <typename FindUpsampleSourceFn,
               typename EnsureAncestorMeshFn>
     static void resolveAncestorUpsample(
