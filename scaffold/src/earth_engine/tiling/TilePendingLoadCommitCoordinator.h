@@ -2,6 +2,7 @@
 
 #include "TileContentUploadCommitter.h"
 #include "TileEmptyContentRegistry.h"
+#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
 #include "TilePendingUploadCompletion.h"
@@ -26,10 +27,13 @@ class TilePendingLoadCommitCoordinator {
 public:
     static bool shouldDiscardLegacyHeightmapTerrainAdapter(
         const TilesetContentProvider* contentProvider,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         TileLoadDomain domain) {
         return domain == TileLoadDomain::HeightmapTerrainAdapter &&
-               contentProvider &&
-               contentProvider->providesTerrainQuadtree();
+               (legacyHeightmapCacheMode ==
+                    LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly ||
+                (contentProvider &&
+                 contentProvider->providesTerrainQuadtree()));
     }
 
     static void captureInitialBoundingVolumes(
@@ -212,6 +216,7 @@ public:
     static void commitTerminalResult(
         PendingTileLoad& result,
         TilesetContentProvider* contentProvider,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
@@ -219,6 +224,7 @@ public:
         MarkResourcesDirtyFn&& markResourcesDirty) {
         if (shouldDiscardLegacyHeightmapTerrainAdapter(
                 contentProvider,
+                legacyHeightmapCacheMode,
                 result.domain)) {
             return;
         }
@@ -247,6 +253,7 @@ public:
     static void commitUpload(
         PendingTileLoad& upload,
         TilesetContentProvider* contentProvider,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -261,6 +268,7 @@ public:
         MarkResourcesDirtyFn&& markResourcesDirty) {
         if (shouldDiscardLegacyHeightmapTerrainAdapter(
                 contentProvider,
+                legacyHeightmapCacheMode,
                 upload.domain)) {
             TilePendingUploadCompletion::eraseUpload(
                 lifecycle,

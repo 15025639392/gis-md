@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileEmptyContentRegistry.h"
+#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileLoadLifecycle.h"
 #include "TilePendingLoadCommitCoordinator.h"
 #include "TilePendingLoadProcessor.h"
@@ -29,6 +30,8 @@ struct TilePendingUploadFrameProcessorInput {
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
+        LegacyHeightmapTerrainCacheMode::Include;
     TileEmptyContentRegistry& emptyContentRegistry;
     bool interactionActive = false;
     bool resourceSmoothingActive = false;
@@ -52,6 +55,7 @@ public:
             TilePendingLoadCommitCoordinator::commitTerminalResult(
                 result,
                 input.contentProvider,
+                input.legacyHeightmapCacheMode,
                 input.emptyContentRegistry,
                 input.pPrepRenderer,
                 ensureTile,
@@ -63,6 +67,7 @@ public:
             TilePendingLoadCommitCoordinator::commitUpload(
                 upload,
                 input.contentProvider,
+                input.legacyHeightmapCacheMode,
                 input.device,
                 input.pPrepRenderer,
                 input.rasterOverlays,

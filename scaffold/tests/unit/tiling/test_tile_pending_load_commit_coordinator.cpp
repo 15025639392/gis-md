@@ -325,6 +325,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TilePendingLoadCommitCoordinator::commitTerminalResult(
             result,
             nullptr,
+            LegacyHeightmapTerrainCacheMode::Include,
             emptyContentRegistry,
             nullptr,
             [&tile](const TileKey&) -> TilesetTile* { return &tile; },
@@ -364,6 +365,44 @@ TEST(
     TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         &contentProvider,
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
+}
+
+TEST(
+    TilePendingLoadCommitCoordinatorTest,
+    ContentOwnedTerrainModeDiscardsLegacyHeightmapTerminalWithoutProvider) {
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    const std::string cacheKey = "mode-stale-heightmap-terminal";
+    TilesetTile tile(key, Rectangle::fromDegrees(-180.0, -90.0, 0.0, 0.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    PendingTileLoad result{
+        TileLoadDomain::HeightmapTerrainAdapter,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
+        result,
+        nullptr,
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
         emptyContentRegistry,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
@@ -784,6 +823,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         &provider,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -868,6 +908,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         &provider,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -957,6 +998,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1045,6 +1087,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1138,6 +1181,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         rasterOverlays,
@@ -1235,6 +1279,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         rasterOverlays,
@@ -1323,6 +1368,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1404,6 +1450,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1475,6 +1522,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1620,6 +1668,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1743,6 +1792,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1817,6 +1867,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1891,6 +1942,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         &contentProvider,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -1963,6 +2015,7 @@ TEST(
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         &contentProvider,
+        LegacyHeightmapTerrainCacheMode::Include,
         nullptr,
         nullptr,
         {},
@@ -2027,6 +2080,7 @@ TEST(
             nullptr,
             rasterOverlays,
             terrainCache,
+            LegacyHeightmapTerrainCacheMode::Include,
             emptyContentRegistry,
             false,
             false},
@@ -2042,6 +2096,71 @@ TEST(
     EXPECT_FALSE(meshEnsured);
     EXPECT_FALSE(gltfEnsured);
     EXPECT_FALSE(resourcesDirty);
+    EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(
+    TilePendingLoadCommitCoordinatorTest,
+    ContentOwnedTerrainModeDiscardsLegacyHeightmapUploadWithoutProvider) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    const std::string cacheKey = "mode-stale-heightmap-upload";
+    TilesetTile tile(key, Rectangle::fromDegrees(-180.0, -90.0, 0.0, 0.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
+    PendingTileLoad upload{TileLoadDomain::HeightmapTerrainAdapter,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::createRenderableHeightmapTerrain(std::move(heightmap))};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+            upload.key,
+            upload.cacheKey,
+            upload.group,
+            upload.priority,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    bool meshEnsured = false;
+    bool gltfEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
+        nullptr,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&meshEnsured](TilesetTile&) { meshEnsured = true; },
+        [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(terrainCache.empty());
+    EXPECT_FALSE(meshEnsured);
+    EXPECT_FALSE(gltfEnsured);
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }

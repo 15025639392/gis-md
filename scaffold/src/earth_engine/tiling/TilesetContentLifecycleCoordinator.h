@@ -132,6 +132,7 @@ public:
                 context.pPrepRenderer,
                 context.rasterOverlays,
                 context.terrainCache,
+                context.legacyHeightmapCacheMode,
                 context.emptyContentRegistry,
                 interactionActive,
                 resourceSmoothingActive},
