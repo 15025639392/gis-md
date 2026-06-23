@@ -771,6 +771,55 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     GltfTerrainRasterOverlayDetailsWinOverLegacySurfaceResidue) {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
+    auto staleSurface = std::make_unique<SurfaceTileMesh>();
+    const Rectangle staleRectangle =
+        Rectangle::fromDegrees(-40.0, -30.0, -20.0, -10.0);
+    staleSurface->rasterOverlayDetails.setGeographicRectangle(staleRectangle);
+    tile.content.renderContent.setSurfaceMesh(std::move(staleSurface));
+
+    auto model = std::make_unique<GltfModel>();
+    const Rectangle contentRectangle =
+        Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0);
+    model->rasterOverlayDetails.setGeographicRectangle(contentRectangle);
+    tile.content.renderContent.setGltfContent(std::move(model));
+    ASSERT_TRUE(tile.content.renderContent.hasSurfaceMesh());
+    ASSERT_TRUE(tile.content.renderContent.hasGltfModel());
+
+    const RasterOverlayDetails& readDetails =
+        tile.content.renderContent.rasterOverlayDetails();
+    const Rectangle* readRectangle =
+        readDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, readRectangle);
+    EXPECT_EQ(contentRectangle, *readRectangle);
+
+    RasterOverlayDetails* mutableDetails =
+        tile.content.renderContent.mutableRasterOverlayDetails();
+    ASSERT_NE(nullptr, mutableDetails);
+    const Rectangle updatedRectangle =
+        Rectangle::fromDegrees(5.0, 6.0, 7.0, 8.0);
+    mutableDetails->setGeographicRectangle(updatedRectangle);
+
+    const Rectangle* updatedContentRectangle =
+        tile.content.renderContent.gltfContent()
+            ->rasterOverlayDetails.findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, updatedContentRectangle);
+    EXPECT_EQ(updatedRectangle, *updatedContentRectangle);
+
+    const Rectangle* staleSurfaceRectangle =
+        tile.content.renderContent.surfaceMesh()
+            ->rasterOverlayDetails.findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, staleSurfaceRectangle);
+    EXPECT_EQ(staleRectangle, *staleSurfaceRectangle);
+}
+
+TEST(TilesetQuantizedMeshTest,
      ContentTerrainProviderDiscardsHeightmapTerrainCacheDuringFrameRuntime) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");

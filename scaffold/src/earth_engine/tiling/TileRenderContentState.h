@@ -216,20 +216,20 @@ public:
     }
     const RasterOverlayDetails& rasterOverlayDetails() const {
         static const RasterOverlayDetails emptyDetails;
-        if (surface_.mesh) {
-            return surface_.mesh->rasterOverlayDetails;
-        }
         if (gltfModel) {
             return gltfModel->rasterOverlayDetails;
+        }
+        if (surface_.mesh) {
+            return surface_.mesh->rasterOverlayDetails;
         }
         return emptyDetails;
     }
     RasterOverlayDetails* mutableRasterOverlayDetails() {
-        if (surface_.mesh) {
-            return &surface_.mesh->rasterOverlayDetails;
-        }
         if (gltfModel) {
             return &gltfModel->rasterOverlayDetails;
+        }
+        if (surface_.mesh) {
+            return &surface_.mesh->rasterOverlayDetails;
         }
         return nullptr;
     }
