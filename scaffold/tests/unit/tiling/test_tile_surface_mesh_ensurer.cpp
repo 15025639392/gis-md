@@ -182,3 +182,38 @@ TEST(TileSurfaceMeshEnsurerTest,
     EXPECT_EQ(2u, resourceRevision);
     EXPECT_TRUE(cache.cacheBytesDirty());
 }
+
+TEST(TileSurfaceMeshEnsurerTest,
+     ContentTerrainManagerPreparationClearsOrphanRasterState) {
+    TileContentLifecycleManager lifecycle;
+    TileContentCacheManager cache;
+    uint64_t resourceRevision = 1;
+    TileContentResourceInvalidator invalidator(resourceRevision, cache);
+    TileLoadQueue loadQueue;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    TileMeshPreparationManager manager(
+        lifecycle,
+        invalidator,
+        loadQueue,
+        true,
+        false,
+        nullptr,
+        overlays);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0));
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::Geographic);
+    ASSERT_FALSE(tile.content.renderContent.hasRasterOverlayDetailsContent());
+    ASSERT_EQ(1u, tile.rasterOverlayState.mappingCount());
+    ASSERT_TRUE(tile.rasterOverlayState.hasMissingProjections());
+
+    manager.prepareRenderableTile(tile);
+
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_FALSE(tile.rasterOverlayState.hasMissingProjections());
+    EXPECT_EQ(2u, resourceRevision);
+    EXPECT_TRUE(cache.cacheBytesDirty());
+}
