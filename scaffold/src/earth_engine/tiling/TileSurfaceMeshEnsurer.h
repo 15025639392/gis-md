@@ -16,8 +16,6 @@ struct TileSurfaceMeshEnsureInput {
     DecodedHeightmap* ownHeightmap = nullptr;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
-    bool allowEllipsoidFallbackWithoutTerrain = true;
-    bool allowLegacySurfaceUpsample = true;
     TileMeshLegacyHeightmapMode legacyHeightmapMode =
         TileMeshLegacyHeightmapMode::Include;
 };
@@ -77,18 +75,12 @@ public:
             return TileSurfaceMeshEnsureResult{};
         }
 
-        const bool contentOwnedTerrainOnly =
-            input.legacyHeightmapMode ==
-            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly;
         TileSurfaceMeshResolution resolution =
             TileSurfaceMeshSourceResolver::resolve(
                 tile,
                 ownHeightmap,
                 input.hasTerrainQuadtree,
-                input.allowEllipsoidFallbackWithoutTerrain &&
-                    !contentOwnedTerrainOnly,
-                input.allowLegacySurfaceUpsample &&
-                    !contentOwnedTerrainOnly,
+                input.legacyHeightmapMode,
                 findUpsampleSource,
                 ensureAncestorMesh);
         if (!tile.content.renderContent.hasSurfaceMesh()) {

@@ -9,7 +9,7 @@
 using namespace earth_engine;
 
 TEST(TileSurfaceMeshEnsurerTest,
-     ContentOwnedTerrainModeOverridesLegacyFallbackFlags) {
+     ContentOwnedTerrainModeRejectsLegacyFallbacks) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -32,8 +32,6 @@ TEST(TileSurfaceMeshEnsurerTest,
                 child,
                 nullptr,
                 nullptr,
-                true,
-                true,
                 true,
                 TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly},
             [](const TileKey&, DecodedHeightmap*) {},
@@ -78,8 +76,6 @@ TEST(TileSurfaceMeshEnsurerTest,
                 child,
                 nullptr,
                 nullptr,
-                true,
-                false,
                 true,
                 TileMeshLegacyHeightmapMode::Include},
             [](const TileKey&, DecodedHeightmap*) {},

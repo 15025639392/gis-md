@@ -12060,8 +12060,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             fallbackTile,
             nullptr,
             false,
-            true,
-            true,
+            TileMeshLegacyHeightmapMode::Include,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
@@ -12080,8 +12079,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             contentTerrainFallbackTile,
             nullptr,
             true,
-            false,
-            false,
+            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
@@ -12108,8 +12106,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             upsampleChild,
             nullptr,
             true,
-            false,
-            true,
+            TileMeshLegacyHeightmapMode::Include,
             [&upsampleParent](const TilesetTile&, bool)
                 -> const TilesetTile* {
                 return &upsampleParent;
@@ -12144,8 +12141,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             contentOwnedUpsampleChild,
             nullptr,
             true,
-            false,
-            false,
+            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly,
             [&contentOwnedLegacyParent](const TilesetTile&, bool)
                 -> const TilesetTile* {
                 return &contentOwnedLegacyParent;
@@ -12179,8 +12175,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             gltfChild,
             nullptr,
             true,
-            false,
-            false,
+            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
@@ -12203,8 +12198,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                 nullptr,
                 nullptr,
                 true,
-                false,
-                false},
+                TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly},
             [&gltfEnsureIngested](const TileKey&, DecodedHeightmap*) {
                 gltfEnsureIngested = true;
             },

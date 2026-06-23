@@ -74,9 +74,6 @@ public:
                     ownHeightmap,
                     input.device,
                     input.hasTerrainQuadtree,
-                    !input.hasTerrainQuadtree ||
-                        useLegacyHeightmapTerrainCache,
-                    useLegacyHeightmapTerrainCache,
                     input.legacyHeightmapMode},
                 ingestAvailability,
                 findUpsampleSource,

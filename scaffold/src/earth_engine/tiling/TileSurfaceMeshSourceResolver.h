@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DecodedHeightmapSampler.h"
+#include "TileMeshLegacyHeightmapMode.h"
 #include "TileGltfTerrainUpsampledChildMaterializer.h"
 #include "TileSurface.h"
 #include "TileSurfaceMeshResolutionPolicy.h"
@@ -23,18 +24,24 @@ public:
         TilesetTile& tile,
         DecodedHeightmap* ownHeightmap,
         bool hasTerrainQuadtree,
-        bool allowEllipsoidFallbackWithoutTerrain,
-        bool allowLegacySurfaceUpsample,
+        TileMeshLegacyHeightmapMode legacyHeightmapMode,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh) {
         const bool hasOwnTerrain = ownHeightmap != nullptr;
+        const bool contentOwnedTerrainOnly =
+            legacyHeightmapMode ==
+            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly;
+        const bool useLegacyHeightmapSurface =
+            !contentOwnedTerrainOnly;
+        const bool allowEllipsoidFallbackWithoutTerrain =
+            !hasTerrainQuadtree || useLegacyHeightmapSurface;
         TileSurfaceMeshResolution resolution =
             TileSurfaceMeshResolution::forContext(
                 hasOwnTerrain,
                 tile.content.derivesTerrainFromParent(),
                 hasTerrainQuadtree);
         if (tile.content.derivesTerrainFromParent() &&
-            !allowLegacySurfaceUpsample) {
+            !useLegacyHeightmapSurface) {
             resolution.markDone = false;
         }
 
@@ -46,7 +53,7 @@ public:
         resolveAncestorUpsample(
             tile,
             hasOwnTerrain,
-            allowLegacySurfaceUpsample,
+            useLegacyHeightmapSurface,
             findUpsampleSource,
             ensureAncestorMesh,
             resolution);
