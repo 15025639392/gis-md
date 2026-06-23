@@ -37,6 +37,22 @@ bool hasProjectionRectangle(const RasterOverlayDetails& details,
            !details.rasterOverlayRectangles[index].isEmpty();
 }
 
+bool contributesToComputedBounds(const GltfPrimitive& primitive,
+                                 size_t vertexIndex) {
+    if (!primitive.skirtMetadata) {
+        return true;
+    }
+    const SkirtMetadata& skirt = *primitive.skirtMetadata;
+    const size_t begin = skirt.noSkirtVerticesBegin;
+    const size_t count = skirt.noSkirtVerticesCount;
+    if (count == 0 ||
+        begin >= primitive.vertices.size() ||
+        count > primitive.vertices.size() - begin) {
+        return true;
+    }
+    return vertexIndex >= begin && vertexIndex < begin + count;
+}
+
 Vec3 worldPositionForVertex(const TileRenderContentState& renderContent,
                             const GltfModel& model,
                             const GltfPrimitive& primitive,
@@ -143,7 +159,11 @@ computeTightModelBoundingRegion(const TileRenderContentState& renderContent) {
     double minimumHeight = 0.0;
     double maximumHeight = 0.0;
     for (const GltfPrimitive& primitive : model->primitives) {
-        for (const SurfaceVertex& vertex : primitive.vertices) {
+        for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+            if (!contributesToComputedBounds(primitive, i)) {
+                continue;
+            }
+            const SurfaceVertex& vertex = primitive.vertices[i];
             const Vec3 worldPosition =
                 worldPositionForVertex(
                     renderContent,

@@ -96,6 +96,39 @@ std::unique_ptr<GltfModel> makeContentTransformTerrainQuadModel(
     return model;
 }
 
+std::unique_ptr<GltfModel> makeTerrainQuadModelWithSkirt(
+    const Rectangle& rectangle,
+    double skirtHeight) {
+    auto model = makeTerrainQuadModel(rectangle);
+    GltfPrimitive& primitive = model->primitives.front();
+
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Cartographic skirtCartographic = Cartographic::fromRadians(
+        rectangle.west(),
+        rectangle.south(),
+        -skirtHeight);
+    SurfaceVertex skirtVertex;
+    skirtVertex.positionEcef =
+        ellipsoid.cartographicToCartesian(skirtCartographic);
+    skirtVertex.normalEcef =
+        ellipsoid.geodeticSurfaceNormal(skirtVertex.positionEcef);
+    primitive.vertices.push_back(skirtVertex);
+    primitive.indices = {0, 1, 2, 0, 2, 3, 0, 4, 1};
+
+    SkirtMetadata skirt;
+    skirt.noSkirtIndicesBegin = 0;
+    skirt.noSkirtIndicesCount = 6;
+    skirt.noSkirtVerticesBegin = 0;
+    skirt.noSkirtVerticesCount = 4;
+    skirt.meshCenter = Vec3::zero();
+    skirt.skirtWestHeight = skirtHeight;
+    skirt.skirtSouthHeight = skirtHeight;
+    skirt.skirtEastHeight = skirtHeight;
+    skirt.skirtNorthHeight = skirtHeight;
+    primitive.skirtMetadata = skirt;
+    return model;
+}
+
 void prepareTerrainQuadRenderContent(TileRenderContentState& renderContent,
                                      const Rectangle& rectangle,
                                      RasterOverlayDetails details = {}) {
@@ -620,6 +653,37 @@ TEST(RasterOverlayDetailsGeneratorTest,
     ASSERT_EQ(1u, model->primitives.size());
     const GltfPrimitive& primitive = model->primitives.front();
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     ModelBoundsGenerationExcludesSkirtVerticesFromComputedRegionLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    auto quadModel = makeTerrainQuadModelWithSkirt(modelRegion, 750.0);
+    renderContent.prepareGltfContent(std::move(quadModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    const bool generated = TileRasterOverlayDetailsGenerator::
+        ensureProjectionDetailsFromModelBounds(
+            renderContent,
+            RasterOverlayProjection::Geographic);
+
+    ASSERT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    expectRectangleNear(modelRegion, details.boundingRegion.rectangle);
+    EXPECT_NEAR(0.0, details.boundingRegion.minimumHeight, 1e-6);
+    EXPECT_NEAR(0.0, details.boundingRegion.maximumHeight, 1e-6);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
+    ASSERT_EQ(5u, primitive.vertices.size());
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][4][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][4][1], 1e-6f);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
