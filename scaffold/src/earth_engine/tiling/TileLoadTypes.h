@@ -76,12 +76,6 @@ struct TileLoadResult {
         return loadResult;
     }
 
-    static TileLoadResult createRenderable() {
-        TileLoadResult loadResult;
-        loadResult.status = TileLoadStatus::Renderable;
-        return loadResult;
-    }
-
     static TileLoadResult createRenderableGltfTerrain(
         std::unique_ptr<GltfModel> model,
         TileLoadResultMetadata metadata = {},

@@ -19780,7 +19780,11 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadDomain::TerrainContent,
-            TileLoadResult::createRenderable());
+            [] {
+                TileLoadResult result;
+                result.status = TileLoadStatus::Renderable;
+                return result;
+            }());
 
     check(result == TileLoadDispatchResult::Skipped,
           "TileLoadRequestDispatcher: pending cache key suppresses upsampled terrain enqueue");
@@ -19809,7 +19813,11 @@ void testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhaust
             TileLoadPriorityGroup::Urgent,
             100.0,
             TileLoadDomain::TerrainContent,
-            TileLoadResult::createRenderable());
+            [] {
+                TileLoadResult result;
+                result.status = TileLoadStatus::Renderable;
+                return result;
+            }());
 
     check(result == TileLoadDispatchResult::Skipped,
           "TileLoadRequestDispatcher: local upsampled terrain without glTF payload is rejected");

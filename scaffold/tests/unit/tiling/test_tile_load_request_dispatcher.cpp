@@ -12,6 +12,16 @@
 
 using namespace earth_engine;
 
+namespace {
+
+TileLoadResult makeMalformedRenderableWithoutPayloadForTest() {
+    TileLoadResult result;
+    result.status = TileLoadStatus::Renderable;
+    return result;
+}
+
+} // namespace
+
 class DispatcherBudgetTerrainProvider final : public TerrainProvider {
 public:
     std::string id() const override { return "dispatcher-budget"; }
@@ -499,7 +509,7 @@ TEST(TileLoadRequestDispatcherTest,
         normalizedGltf.content.quantizedMeshAvailabilityUpdates.size());
 
     TileLoadResult renderableWithoutPayload =
-        TileLoadResult::createRenderable();
+        makeMalformedRenderableWithoutPayloadForTest();
     EXPECT_FALSE(renderableWithoutPayload.shouldUpload());
 
     auto directGltfModel = std::make_unique<GltfModel>();
@@ -722,7 +732,7 @@ TEST(TileLoadRequestDispatcherTest,
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadDomain::TerrainContent,
-            TileLoadResult::createRenderable());
+            makeMalformedRenderableWithoutPayloadForTest());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
     EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
@@ -960,7 +970,7 @@ TEST(TileLoadRequestDispatcherTest,
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadDomain::TerrainContent,
-            TileLoadResult::createRenderable());
+            makeMalformedRenderableWithoutPayloadForTest());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
     EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
@@ -988,7 +998,7 @@ TEST(TileLoadRequestDispatcherTest,
             TileLoadPriorityGroup::Urgent,
             100.0,
             TileLoadDomain::TerrainContent,
-            TileLoadResult::createRenderable());
+            makeMalformedRenderableWithoutPayloadForTest());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
     EXPECT_TRUE(requestState.empty());
