@@ -836,6 +836,50 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     ContentTerrainEnsureTileClearsNonTerrainGltfRasterResidue) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    auto ordinaryModel = std::make_unique<GltfModel>();
+    ordinaryModel->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0),
+        -5.0,
+        5.0);
+    root->content.renderContent.prepareGltfContent(
+        std::move(ordinaryModel),
+        Mat4::identity());
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::Done;
+    root->rasterOverlayState.ensureMapping(0);
+    root->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+    ASSERT_TRUE(root->content.renderContent.hasGltfContent());
+    ASSERT_FALSE(root->content.renderContent.isTerrainRenderContent());
+    ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
+    ASSERT_TRUE(root->rasterOverlayState.hasMissingProjections());
+
+    TilesetTile* ensuredAgain = TilesetTestAccess::ensureTile(
+        tileset,
+        rootKey);
+
+    ASSERT_EQ(root, ensuredAgain);
+    EXPECT_FALSE(root->content.renderContent.hasGltfContent());
+    EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
+    EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
+}
+
+TEST(TilesetQuantizedMeshTest,
      GltfTerrainContentReplacesLegacySurfaceResidue) {
     TilesetTile tile(
         TileKey{"Geographic-TMS", 0, 0, 0},

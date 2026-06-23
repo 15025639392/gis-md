@@ -36,7 +36,8 @@ const HeightmapTerrainCache& emptyHeightmapTerrainCache() {
 }
 
 bool clearContentTerrainLegacyResidue(TilesetTile& tile) {
-    if (tile.content.renderContent.hasGltfContent()) {
+    if (tile.content.renderContent.hasGltfContent() &&
+        tile.content.renderContent.isTerrainRenderContent()) {
         return false;
     }
 
