@@ -79,9 +79,6 @@ ClipVertex interpolate(const ClipVertex& a,
     out.vertex.normalEcef =
         a.vertex.normalEcef +
         (b.vertex.normalEcef - a.vertex.normalEcef) * t;
-    if (out.vertex.normalEcef.lengthSquared() > 0.0) {
-        out.vertex.normalEcef = out.vertex.normalEcef.normalized();
-    }
     out.vertex.uv = {
         static_cast<float>(a.vertex.uv[0] +
                            (b.vertex.uv[0] - a.vertex.uv[0]) * t),

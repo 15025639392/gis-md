@@ -568,6 +568,39 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
+     InterpolatesTriangleNormalWithoutCpuRenormalizationLikeCesiumNative) {
+    GltfModel parent = makeParentModel();
+    GltfPrimitive& parentPrimitive = parent.primitives.front();
+    parentPrimitive.skirtMetadata.reset();
+    parentPrimitive.vertices[0].normalEcef = Vec3(1.0, 0.0, 0.0);
+    parentPrimitive.vertices[1].normalEcef = Vec3(0.0, 1.0, 0.0);
+    parentPrimitive.vertices[2].normalEcef = Vec3(0.0, 0.0, 1.0);
+    parentPrimitive.vertices[3].normalEcef = Vec3(1.0, 1.0, 1.0);
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& primitive = upsampled->primitives.front();
+
+    bool foundEastMidpoint = false;
+    for (const SurfaceVertex& vertex : primitive.vertices) {
+        if (std::abs(vertex.uv[0] - 0.5f) < 1e-6f &&
+            std::abs(vertex.uv[1]) < 1e-6f) {
+            foundEastMidpoint = true;
+            EXPECT_NEAR(0.5, vertex.normalEcef.x(), 1e-12);
+            EXPECT_NEAR(0.5, vertex.normalEcef.y(), 1e-12);
+            EXPECT_NEAR(0.0, vertex.normalEcef.z(), 1e-12);
+            EXPECT_NEAR(std::sqrt(0.5), vertex.normalEcef.length(), 1e-12);
+        }
+    }
+    EXPECT_TRUE(foundEastMidpoint);
+}
+
+TEST(GltfTerrainUpsamplerTest,
     PreservesTriangleFeatureMetadataWhenClippingLikeCesiumNative) {
     GltfModel parent = makeParentModel();
     GltfPrimitive& parentPrimitive = parent.primitives.front();
