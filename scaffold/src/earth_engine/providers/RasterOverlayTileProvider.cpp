@@ -784,6 +784,24 @@ std::string sourceCacheKey(uint64_t epoch, const TileKey& key) {
     return "epoch/" + std::to_string(epoch) + "/" + sourceCacheKey(key);
 }
 
+std::unique_ptr<TileScheme> createAsyncSchemeSnapshot(
+    const TileScheme& scheme) {
+    const std::string id = scheme.id();
+    if (id == "XYZ-WebMercator") {
+        return TileScheme::createXYZWebMercator();
+    }
+    if (id == "TMS-WebMercator") {
+        return TileScheme::createTMS();
+    }
+    if (id == "OpenGlobus-Earth") {
+        return TileScheme::createOpenGlobusEarth();
+    }
+    if (id == "Geographic-TMS") {
+        return TileScheme::createGeographicTMS();
+    }
+    return nullptr;
+}
+
 struct RasterSourceResult {
     TileKey key;
     Rectangle bounds;
@@ -1626,7 +1644,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                              bool emptyWhenOnlyAncestorFallback,
                              MappedSourceLoadSuccess success,
                              MappedSourceLoadFailure failure)
-        : scheme(tileScheme)
+        : scheme(createAsyncSchemeSnapshot(tileScheme))
         , state(std::move(asyncState))
         , depot(std::move(sourceDepot))
         , sourceTiles(std::move(sourceTileMapping))
@@ -1727,6 +1745,10 @@ private:
             onFailure();
             return;
         }
+        if (!scheme) {
+            onFailure();
+            return;
+        }
         state->activeRasterComposeTasks.fetch_add(
             1,
             std::memory_order_relaxed);
@@ -1734,6 +1756,19 @@ private:
             AsyncSystem::pool().enqueue(
                 [self,
                  completedSources = std::move(completedSources)]() mutable {
+                    bool completedTileLoad = false;
+                    const auto finishAbandonedTileLoad = [&self,
+                                                           &completedTileLoad]() {
+                        if (completedTileLoad ||
+                            self->state->alive.load(
+                                std::memory_order_acquire)) {
+                            return;
+                        }
+                        decrementActiveRasterTileLoads(
+                            self->state->activeRasterTileLoads);
+                        completedTileLoad = true;
+                        self->state->resolveDestructionIfComplete();
+                    };
                     const auto finishCompose = [&self]() {
                         self->state->activeRasterComposeTasks.fetch_sub(
                             1,
@@ -1743,7 +1778,7 @@ private:
                     try {
                         CompositeImageResult composed =
                             composeMappedSourceImageSet(
-                                self->scheme,
+                                *self->scheme,
                                 self->targetBounds,
                                 self->sourceTiles.sourceZoom,
                                 std::move(completedSources),
@@ -1752,6 +1787,7 @@ private:
                         if (composed.image) {
                             if (self->state->alive.load(
                                     std::memory_order_acquire)) {
+                                completedTileLoad = true;
                                 self->onSuccess(
                                     std::move(composed.image),
                                     nullptr,
@@ -1763,15 +1799,19 @@ private:
                         } else {
                             if (self->state->alive.load(
                                     std::memory_order_acquire)) {
+                                completedTileLoad = true;
                                 self->onFailure();
                             }
                         }
+                        finishAbandonedTileLoad();
                         finishCompose();
                     } catch (...) {
                         if (self->state->alive.load(
                                 std::memory_order_acquire)) {
+                            completedTileLoad = true;
                             self->onFailure();
                         }
+                        finishAbandonedTileLoad();
                         finishCompose();
                     }
                 });
@@ -1784,7 +1824,7 @@ private:
         }
     }
 
-    const TileScheme& scheme;
+    std::unique_ptr<TileScheme> scheme;
     std::shared_ptr<ProviderAsyncState> state;
     std::shared_ptr<QuadtreeSourceAssetDepot> depot;
     RasterSourceTileMapping sourceTiles;
@@ -1861,10 +1901,6 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
 
 RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     asyncState_->alive.store(false, std::memory_order_release);
-    while (asyncState_->activeRasterComposeTasks.load(
-               std::memory_order_acquire) > 0) {
-        std::this_thread::yield();
-    }
     size_t abandonedUploads = 0;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);

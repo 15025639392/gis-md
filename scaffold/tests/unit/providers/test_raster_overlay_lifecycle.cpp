@@ -7,6 +7,7 @@
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
@@ -23,6 +24,7 @@
 #include "earth_engine/tiling/TileScheme.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -3308,6 +3310,107 @@ TEST(RasterOverlayLifecycleTest,
         std::future_status::timeout,
         destroyed.wait_for(std::chrono::milliseconds(0)));
     imagery.completeNext();
+    EXPECT_EQ(
+        std::future_status::ready,
+        destroyed.wait_for(std::chrono::seconds(1)));
+}
+
+TEST(RasterOverlayLifecycleTest,
+     ProviderDestructionDoesNotBlockWaitingForQueuedComposeLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const size_t workerCount = AsyncSystem::pool().threadCount();
+    ASSERT_GT(workerCount, 0u);
+
+    std::promise<void> releaseWorkersPromise;
+    std::shared_future<void> releaseWorkers =
+        releaseWorkersPromise.get_future().share();
+    struct WorkerReleaseGuard {
+        std::promise<void>& promise;
+        bool released = false;
+        ~WorkerReleaseGuard() {
+            if (!released) {
+                promise.set_value();
+            }
+        }
+        void release() {
+            if (!released) {
+                promise.set_value();
+                released = true;
+            }
+        }
+    } releaseGuard{releaseWorkersPromise};
+    std::atomic<size_t> startedWorkers{0};
+    std::vector<std::future<void>> blockers;
+    blockers.reserve(workerCount);
+    for (size_t i = 0; i < workerCount; ++i) {
+        blockers.push_back(AsyncSystem::pool().enqueue(
+            [releaseWorkers, &startedWorkers]() {
+                startedWorkers.fetch_add(1, std::memory_order_release);
+                releaseWorkers.wait();
+            }));
+    }
+    for (int attempt = 0; attempt < 200 &&
+         startedWorkers.load(std::memory_order_acquire) < workerCount;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_EQ(workerCount, startedWorkers.load(std::memory_order_acquire));
+
+    DeferredImageryProvider imagery;
+    std::shared_future<void> destroyed;
+    {
+        auto provider = std::make_unique<RasterOverlayTileProvider>(
+            imagery,
+            *scheme);
+        provider->setReady(true);
+        provider->setLevelRange(8, 8);
+
+        const TileKey centerKey =
+            scheme->positionToTile(0.1, 0.2, 8);
+        const Rectangle centerBounds = scheme->tileToRectangle(centerKey);
+        const Rectangle spanningFourTiles(
+            centerBounds.west() - centerBounds.width() * 0.5,
+            centerBounds.south() - centerBounds.height() * 0.5,
+            centerBounds.west() + centerBounds.width() * 0.5,
+            centerBounds.south() + centerBounds.height() * 0.5);
+        RasterOverlayTileProvider::RasterTileMapping mapping =
+            provider->mapRasterTilesToGeometryTile(
+                projectForProvider(*provider, spanningFourTiles),
+                1024.0,
+                1024.0);
+
+        ASSERT_NE(nullptr, mapping.tile);
+        ASSERT_TRUE(mapping.tile->isMappedRasterTile());
+        ASSERT_EQ(4u, mapping.sourceTiles.sourceKeys.size());
+        ASSERT_TRUE(provider->loadTile(*mapping.tile));
+        ASSERT_EQ(4u, imagery.pending.size());
+
+        destroyed = provider->getAsyncDestructionCompleteEvent();
+        for (int i = 0; i < 4; ++i) {
+            imagery.completeNext();
+        }
+        EXPECT_EQ(
+            std::future_status::timeout,
+            destroyed.wait_for(std::chrono::milliseconds(0)));
+
+        const auto beforeDestroy = std::chrono::steady_clock::now();
+        provider.reset();
+        const auto destroyElapsed =
+            std::chrono::steady_clock::now() - beforeDestroy;
+        EXPECT_LT(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                destroyElapsed)
+                .count(),
+            100);
+    }
+
+    EXPECT_EQ(
+        std::future_status::timeout,
+        destroyed.wait_for(std::chrono::milliseconds(0)));
+    releaseGuard.release();
+    for (auto& blocker : blockers) {
+        blocker.get();
+    }
     EXPECT_EQ(
         std::future_status::ready,
         destroyed.wait_for(std::chrono::seconds(1)));
