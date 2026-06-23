@@ -1505,11 +1505,6 @@ private:
             return;
         }
 
-        if (completedSources.empty()) {
-            onFailure();
-            return;
-        }
-
         const bool haveAnyUsefulImageData =
             !returnEmptyForAncestorOnly ||
             std::any_of(

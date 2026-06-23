@@ -2635,7 +2635,7 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
           "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
 }
 
-void testRasterOverlayCompositeWithFailedSourcesStaysTerminal() {
+void testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2679,8 +2679,11 @@ void testRasterOverlayCompositeWithFailedSourcesStaysTerminal() {
     uploadBudget.beginFrame(2, config);
     provider.processPendingUploads(false, &uploadBudget);
 
-    check(compositeTile->getState() == RasterOverlayTile::LoadState::Failed,
-          "RasterOverlayTileProvider: all-failed composite sources stay terminal instead of masquerading as empty imagery");
+    check(compositeTile->getState() == RasterOverlayTile::LoadState::Loaded &&
+              compositeTile->getTexture() == nullptr &&
+              compositeTile->isMoreDetailAvailable() ==
+                  RasterOverlayTile::MoreDetailAvailable::No,
+          "RasterOverlayTileProvider: all-failed composite sources load empty imagery like cesium-native");
 }
 
 void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
@@ -29410,7 +29413,7 @@ int main() {
     testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss();
     testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian();
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
-    testRasterOverlayCompositeWithFailedSourcesStaysTerminal();
+    testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayDirectTileJoinsCompositeSourceInFlight();
     testRasterOverlayCompositeTilesShareSourceInFlight();
