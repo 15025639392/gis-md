@@ -1366,6 +1366,27 @@ TEST(TilesetQuantizedMeshTest,
         childLoad->content.metadata.rasterOverlayDetails
             ->textureCoordinateIDForProjection(
                 RasterOverlayProjection::WebMercator));
+    ASSERT_TRUE(childLoad->content.metadata.updatedBoundingVolume.has_value());
+    EXPECT_EQ(
+        childModel.rasterOverlayDetails.boundingRegion.rectangle,
+        childLoad->content.metadata.updatedBoundingVolume->region);
+    EXPECT_NEAR(
+        childModel.rasterOverlayDetails.boundingRegion.minimumHeight,
+        childLoad->content.metadata.updatedBoundingVolume->minimumHeight,
+        1e-12);
+    EXPECT_NEAR(
+        childModel.rasterOverlayDetails.boundingRegion.maximumHeight,
+        childLoad->content.metadata.updatedBoundingVolume->maximumHeight,
+        1e-12);
+    ASSERT_TRUE(childLoad->content.metadata.terrainHeightRange.has_value());
+    EXPECT_NEAR(
+        childModel.rasterOverlayDetails.boundingRegion.minimumHeight,
+        childLoad->content.metadata.terrainHeightRange->first,
+        1e-12);
+    EXPECT_NEAR(
+        childModel.rasterOverlayDetails.boundingRegion.maximumHeight,
+        childLoad->content.metadata.terrainHeightRange->second,
+        1e-12);
 }
 
 TEST(TilesetQuantizedMeshTest,
@@ -1511,6 +1532,38 @@ TEST(TilesetQuantizedMeshTest,
         completeDetails.textureCoordinateIDForProjection(
             RasterOverlayProjection::WebMercator),
         mapped.getTextureCoordinateID());
+
+    std::optional<TileLoadResult> positiveChildLoad =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+    ASSERT_TRUE(positiveChildLoad.has_value());
+    ASSERT_NE(nullptr, positiveChildLoad->content.gltfModel);
+    const GltfModel& positiveChildModel =
+        *positiveChildLoad->content.gltfModel;
+    ASSERT_TRUE(
+        positiveChildLoad->content.metadata.updatedBoundingVolume.has_value());
+    EXPECT_EQ(
+        positiveChildModel.rasterOverlayDetails.boundingRegion.rectangle,
+        positiveChildLoad->content.metadata.updatedBoundingVolume->region);
+    EXPECT_NEAR(
+        positiveChildModel.rasterOverlayDetails.boundingRegion.minimumHeight,
+        positiveChildLoad->content.metadata.updatedBoundingVolume
+            ->minimumHeight,
+        1e-12);
+    EXPECT_NEAR(
+        positiveChildModel.rasterOverlayDetails.boundingRegion.maximumHeight,
+        positiveChildLoad->content.metadata.updatedBoundingVolume
+            ->maximumHeight,
+        1e-12);
+    ASSERT_TRUE(
+        positiveChildLoad->content.metadata.terrainHeightRange.has_value());
+    EXPECT_NEAR(
+        positiveChildModel.rasterOverlayDetails.boundingRegion.minimumHeight,
+        positiveChildLoad->content.metadata.terrainHeightRange->first,
+        1e-12);
+    EXPECT_NEAR(
+        positiveChildModel.rasterOverlayDetails.boundingRegion.maximumHeight,
+        positiveChildLoad->content.metadata.terrainHeightRange->second,
+        1e-12);
 
     GltfModel* parentModel =
         parent.content.renderContent.gltfContent();

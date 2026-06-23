@@ -40,8 +40,22 @@ public:
             return std::nullopt;
         }
 
+        TileLoadResultMetadata metadata;
+        const auto& region = childModel->rasterOverlayDetails.boundingRegion;
+        const Rectangle boundingRectangle = region.rectangle.isEmpty()
+            ? tile.bounds
+            : region.rectangle;
+        metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
+            boundingRectangle,
+            region.minimumHeight,
+            region.maximumHeight);
+        metadata.rasterOverlayDetails = childModel->rasterOverlayDetails;
+        metadata.terrainHeightRange = {
+            region.minimumHeight,
+            region.maximumHeight};
         return TileLoadResult::createRenderableGltfTerrain(
-            std::move(childModel));
+            std::move(childModel),
+            std::move(metadata));
     }
 
     static bool canCreateLoadResult(const TilesetTile& tile) {
