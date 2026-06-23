@@ -80,9 +80,7 @@ void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
 
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
-            tile,
-            device_,
-            hasTerrainQuadtree_},
+            tile},
         markDirty);
 }
 

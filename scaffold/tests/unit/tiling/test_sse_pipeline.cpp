@@ -12135,9 +12135,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     bool frameResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
-            gltfFrameTile,
-            nullptr,
-            true},
+            gltfFrameTile},
         [&frameResourcesDirty]() {
             frameResourcesDirty = true;
         });
@@ -12161,9 +12159,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     bool gltfStaleResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
-            gltfWithStaleHeightmapSurface,
-            nullptr,
-            true},
+            gltfWithStaleHeightmapSurface},
         [&gltfStaleResourcesDirty]() {
             gltfStaleResourcesDirty = true;
         });
@@ -12186,9 +12182,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     bool staleResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
-            staleHeightmapSurfaceTile,
-            nullptr,
-            true},
+            staleHeightmapSurfaceTile},
         [&staleResourcesDirty]() {
             staleResourcesDirty = true;
         });

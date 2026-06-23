@@ -23,8 +23,6 @@ struct TileHeightmapMeshFrameEnsureInput {
 
 struct TileContentTerrainMeshFrameEnsureInput {
     TilesetTile& tile;
-    RenderDevice* device = nullptr;
-    bool hasTerrainQuadtree = true;
 };
 
 class TileMeshFrameEnsurer {
@@ -65,9 +63,6 @@ public:
     static void ensureContentTerrain(
         const TileContentTerrainMeshFrameEnsureInput& input,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        (void)input.device;
-        (void)input.hasTerrainQuadtree;
-
         TilesetTile& tile = input.tile;
         const bool hasHeightmapSurfaceResidue =
             tile.content.renderContent.hasSurfaceMesh() ||
