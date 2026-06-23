@@ -20,15 +20,21 @@
 namespace earth_engine {
 namespace {
 
-bool hasProjection(const RasterOverlayDetails& details,
-                   RasterOverlayProjection projection) {
-    for (RasterOverlayProjection existingProjection :
-         details.rasterOverlayProjections) {
-        if (existingProjection == projection) {
-            return true;
+std::optional<size_t> findProjectionIndex(
+    const RasterOverlayDetails& details,
+    RasterOverlayProjection projection) {
+    for (size_t i = 0; i < details.rasterOverlayProjections.size(); ++i) {
+        if (details.rasterOverlayProjections[i] == projection) {
+            return i;
         }
     }
-    return false;
+    return std::nullopt;
+}
+
+bool hasProjectionRectangle(const RasterOverlayDetails& details,
+                            size_t index) {
+    return index < details.rasterOverlayRectangles.size() &&
+           !details.rasterOverlayRectangles[index].isEmpty();
 }
 
 Vec3 projectPositionForOverlay(const Cartographic& cartographic,
@@ -212,9 +218,13 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     }
     const size_t textureCoordinateIndex =
         details->rasterOverlayProjections.size();
-    if (hasProjection(*details, projection)) {
+    const std::optional<size_t> existingIndex =
+        findProjectionIndex(*details, projection);
+    if (existingIndex && hasProjectionRectangle(*details, *existingIndex)) {
         return false;
     }
+    const size_t targetTextureCoordinateIndex =
+        existingIndex.value_or(textureCoordinateIndex);
     if (boundingVolume.kind != TileBoundingVolumeKind::Region) {
         return false;
     }
@@ -225,7 +235,7 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
             renderContent,
             projection,
             projectedRectangle,
-            textureCoordinateIndex)) {
+            targetTextureCoordinateIndex)) {
         return false;
     }
 

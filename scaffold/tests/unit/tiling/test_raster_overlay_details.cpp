@@ -163,14 +163,16 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
-     RegionGenerationSkipsExistingProjectionSlotLikeCesiumNative) {
+     RegionGenerationFillsExistingProjectionSlotWithoutRectangle) {
     TileRenderContentState renderContent;
     RasterOverlayDetails existingDetails;
     existingDetails.rasterOverlayProjections.push_back(
         RasterOverlayProjection::Geographic);
-    prepareGltfRenderContent(renderContent, std::move(existingDetails));
-
     const Rectangle region = Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    prepareTerrainQuadRenderContent(
+        renderContent,
+        region,
+        std::move(existingDetails));
     const TileBoundingVolume boundingRegion =
         TileBoundingVolume::fromRegion(region, -25.0, 125.0);
 
@@ -180,15 +182,16 @@ TEST(RasterOverlayDetailsGeneratorTest,
             boundingRegion,
             RasterOverlayProjection::Geographic);
 
-    EXPECT_FALSE(generated);
+    EXPECT_TRUE(generated);
     const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
     ASSERT_EQ(1u, details.rasterOverlayProjections.size());
-    EXPECT_TRUE(details.rasterOverlayRectangles.empty());
-    EXPECT_EQ(-1, details.textureCoordinateIDForProjection(
-                     RasterOverlayProjection::Geographic));
-    EXPECT_TRUE(details.boundingRegion.rectangle.isEmpty());
-    EXPECT_GT(details.boundingRegion.minimumHeight,
-              details.boundingRegion.maximumHeight);
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(region, details.rasterOverlayRectangles[0]);
+    EXPECT_EQ(0, details.textureCoordinateIDForProjection(
+                    RasterOverlayProjection::Geographic));
+    expectRectangleNear(region, details.boundingRegion.rectangle);
+    EXPECT_NEAR(0.0, details.boundingRegion.minimumHeight, 1e-6);
+    EXPECT_NEAR(0.0, details.boundingRegion.maximumHeight, 1e-6);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
