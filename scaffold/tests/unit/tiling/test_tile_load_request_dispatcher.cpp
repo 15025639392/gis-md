@@ -1027,6 +1027,31 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(upload->content().hasGltfTerrainPayload());
 }
 
+TEST(TileLoadRequestDispatcherTest,
+     TerrainContentUpsampleRejectsRenderableResultWithoutGltfPayload) {
+    std::mutex mutex;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    const TileKey key{"test", 1, 0, 0};
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::queueUpsampledLoad(
+            mutex,
+            requestState,
+            pendingLoads,
+            key,
+            "empty-gltf-terrain-upsample",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadDomain::TerrainContent,
+            TileLoadResult::createRenderable());
+
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
+    EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
+    EXPECT_FALSE(pendingLoads.containsCacheKey(
+        "empty-gltf-terrain-upsample"));
+}
+
 TEST(TileLoadRequestDispatcherTest, DropsCancelledTerrainUploadCallback) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
