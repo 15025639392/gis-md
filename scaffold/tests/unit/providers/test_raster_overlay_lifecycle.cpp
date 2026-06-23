@@ -6265,6 +6265,101 @@ TEST(RasterOverlayLifecycleTest, CompositeImageUsesLargestSourceChannelCountLike
 }
 
 TEST(RasterOverlayLifecycleTest,
+     CompositeImageUsesLargestBytesPerChannelLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey key{scheme->id(), 1, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(key);
+
+    auto image = std::make_unique<DecodedImage>();
+    image->width = 1;
+    image->height = 1;
+    image->channels = 1;
+    image->bytesPerChannel = 2;
+    image->pixels = {0x34, 0x12};
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
+    sources.push_back({
+        key,
+        bounds,
+        std::move(image),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+
+    auto result =
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+            *scheme,
+            bounds,
+            1,
+            std::move(sources),
+            1);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(3, result.image->channels);
+    EXPECT_EQ(2, result.image->bytesPerChannel);
+    ASSERT_EQ(6u, result.image->pixels.size());
+    EXPECT_EQ(0x34, result.image->pixels[0]);
+    EXPECT_EQ(0x12, result.image->pixels[1]);
+    EXPECT_EQ(0x34, result.image->pixels[2]);
+    EXPECT_EQ(0x12, result.image->pixels[3]);
+    EXPECT_EQ(0x34, result.image->pixels[4]);
+    EXPECT_EQ(0x12, result.image->pixels[5]);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     CompositeImageClearsWiderTargetChannelBytesWhenNarrowerSourceOverwrites) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey key{scheme->id(), 1, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(key);
+
+    auto wideImage = std::make_unique<DecodedImage>();
+    wideImage->width = 1;
+    wideImage->height = 1;
+    wideImage->channels = 3;
+    wideImage->bytesPerChannel = 2;
+    wideImage->pixels = {0x01, 0x80, 0x02, 0x80, 0x03, 0x80};
+
+    auto narrowImage = std::make_unique<DecodedImage>();
+    narrowImage->width = 1;
+    narrowImage->height = 1;
+    narrowImage->channels = 3;
+    narrowImage->bytesPerChannel = 1;
+    narrowImage->pixels = {0x11, 0x22, 0x33};
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
+    sources.push_back({
+        key,
+        bounds,
+        std::move(wideImage),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+    sources.push_back({
+        key,
+        bounds,
+        std::move(narrowImage),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+
+    auto result =
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+            *scheme,
+            bounds,
+            1,
+            std::move(sources),
+            1);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(3, result.image->channels);
+    EXPECT_EQ(2, result.image->bytesPerChannel);
+    ASSERT_EQ(6u, result.image->pixels.size());
+    EXPECT_EQ(0x11, result.image->pixels[0]);
+    EXPECT_EQ(0x00, result.image->pixels[1]);
+    EXPECT_EQ(0x22, result.image->pixels[2]);
+    EXPECT_EQ(0x00, result.image->pixels[3]);
+    EXPECT_EQ(0x33, result.image->pixels[4]);
+    EXPECT_EQ(0x00, result.image->pixels[5]);
+}
+
+TEST(RasterOverlayLifecycleTest,
      CompositeImageDoesNotClampMeasuredOutputLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     const TileKey westKey{scheme->id(), 2, 0, 1};

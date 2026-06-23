@@ -14,7 +14,7 @@ int RenderDeviceRasterTextureUploader::maxTextureSize() const {
 std::unique_ptr<Texture> RenderDeviceRasterTextureUploader::uploadRasterTexture(
     const DecodedImage& image,
     const RasterTextureUploadOptions& options) {
-    if (!device_ || image.pixels.empty()) {
+    if (!device_ || image.pixels.empty() || image.bytesPerChannel != 1) {
         return nullptr;
     }
 

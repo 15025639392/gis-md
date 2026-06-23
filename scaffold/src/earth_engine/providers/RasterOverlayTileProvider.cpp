@@ -522,13 +522,15 @@ bool shouldClampOutsideCoverage(const RasterOverlay* owner) {
 }
 
 bool isDecodedImageUploadable(const DecodedImage& image) {
-    if (image.width <= 0 || image.height <= 0 || image.channels <= 0) {
+    if (image.width <= 0 || image.height <= 0 || image.channels <= 0 ||
+        image.bytesPerChannel <= 0) {
         return false;
     }
     const int64_t requiredBytes =
         static_cast<int64_t>(image.width) *
         static_cast<int64_t>(image.height) *
-        static_cast<int64_t>(image.channels);
+        static_cast<int64_t>(image.channels) *
+        static_cast<int64_t>(image.bytesPerChannel);
     return requiredBytes > 0 &&
            image.pixels.size() >= static_cast<size_t>(requiredBytes);
 }
@@ -829,6 +831,7 @@ struct CombinedImageMeasurements {
     int width = 0;
     int height = 0;
     int channels = 0;
+    int bytesPerChannel = 1;
 };
 
 PixelRectangle computePixelRectangle(
@@ -876,9 +879,12 @@ CombinedImageMeasurements measureCombinedImage(
     double projectedHeightPerPixel) {
     std::optional<Rectangle> combinedBounds;
     int channels = 0;
+    int bytesPerChannel = 1;
     for (const RasterSourceResult& source : sources) {
         if (source.image) {
             channels = std::max(channels, source.image->channels);
+            bytesPerChannel =
+                std::max(bytesPerChannel, source.image->bytesPerChannel);
         }
         const Rectangle sourceSubset =
             source.sourceSubset.value_or(source.bounds);
@@ -948,7 +954,12 @@ CombinedImageMeasurements measureCombinedImage(
         kPixelTolerance));
     width = std::max(1, width);
     height = std::max(1, height);
-    return CombinedImageMeasurements{*combinedBounds, width, height, channels};
+    return CombinedImageMeasurements{
+        *combinedBounds,
+        width,
+        height,
+        channels,
+        bytesPerChannel};
 }
 
 void blitImage(DecodedImage& target,
@@ -998,22 +1009,47 @@ void blitImage(DecodedImage& target,
                 (static_cast<size_t>(sy) *
                      static_cast<size_t>(source.width) +
                  static_cast<size_t>(sx)) *
-                static_cast<size_t>(source.channels);
+                static_cast<size_t>(source.channels) *
+                static_cast<size_t>(source.bytesPerChannel);
             const size_t dstIndex =
                 (static_cast<size_t>(dy) *
                      static_cast<size_t>(target.width) +
                  static_cast<size_t>(dx)) *
-                static_cast<size_t>(target.channels);
-            target.pixels[dstIndex + 0] = source.pixels[srcIndex + 0];
-            target.pixels[dstIndex + 1] =
-                source.channels > 1 ? source.pixels[srcIndex + 1]
-                                    : source.pixels[srcIndex + 0];
-            target.pixels[dstIndex + 2] =
-                source.channels > 2 ? source.pixels[srcIndex + 2]
-                                    : source.pixels[srcIndex + 0];
+                static_cast<size_t>(target.channels) *
+                static_cast<size_t>(target.bytesPerChannel);
+            const size_t sourceStride =
+                static_cast<size_t>(source.bytesPerChannel);
+            const size_t targetStride =
+                static_cast<size_t>(target.bytesPerChannel);
+            const int copyBytes =
+                std::min(source.bytesPerChannel, target.bytesPerChannel);
+            auto copyChannel = [&](int targetChannel, int sourceChannel) {
+                const size_t sourceOffset =
+                    srcIndex +
+                    static_cast<size_t>(sourceChannel) * sourceStride;
+                const size_t targetOffset =
+                    dstIndex +
+                    static_cast<size_t>(targetChannel) * targetStride;
+                std::fill_n(target.pixels.data() + targetOffset,
+                            targetStride,
+                            0);
+                std::copy_n(source.pixels.data() + sourceOffset,
+                            copyBytes,
+                            target.pixels.data() + targetOffset);
+            };
+            copyChannel(0, 0);
+            copyChannel(1, source.channels > 1 ? 1 : 0);
+            copyChannel(2, source.channels > 2 ? 2 : 0);
             if (target.channels >= 4) {
-                target.pixels[dstIndex + 3] =
-                    source.channels >= 4 ? source.pixels[srcIndex + 3] : 255;
+                if (source.channels >= 4) {
+                    copyChannel(3, 3);
+                } else {
+                    const size_t alphaOffset =
+                        dstIndex + 3u * targetStride;
+                    std::fill_n(target.pixels.data() + alphaOffset,
+                                targetStride,
+                                0xFF);
+                }
             }
         }
     }
@@ -1085,9 +1121,11 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     output->width = measurements.width;
     output->height = measurements.height;
     output->channels = measurements.channels;
+    output->bytesPerChannel = measurements.bytesPerChannel;
     output->pixels.resize(static_cast<size_t>(output->width) *
                           static_cast<size_t>(output->height) *
-                          static_cast<size_t>(output->channels),
+                          static_cast<size_t>(output->channels) *
+                          static_cast<size_t>(output->bytesPerChannel),
                           0);
 
     for (const RasterSourceResult& source : sources) {

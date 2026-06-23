@@ -14,8 +14,9 @@ namespace earth_engine {
 struct DecodedImage {
     int width = 0;
     int height = 0;
-    int channels = 0;           // 3 (RGB) or 4 (RGBA)
-    std::vector<uint8_t> pixels; // RGBA or RGB (row-major)
+    int channels = 0;           // 1 (R), 3 (RGB), or 4 (RGBA)
+    int bytesPerChannel = 1;
+    std::vector<uint8_t> pixels; // row-major channel bytes
 };
 
 /// 设备信息
