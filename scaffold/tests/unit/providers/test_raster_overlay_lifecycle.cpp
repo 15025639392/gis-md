@@ -28,6 +28,7 @@
 #include <memory>
 #include <deque>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -340,6 +341,35 @@ public:
         return nullptr;
     }
 
+    std::vector<TileKey> requestedKeys;
+};
+
+class ThrowOnceImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "throw-once"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 10; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        if (throwNext) {
+            throwNext = false;
+            throw std::runtime_error("simulated raster source failure");
+        }
+        callback(key, makeImage(256, 256, static_cast<uint8_t>(key.z)));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    bool throwNext = true;
     std::vector<TileKey> requestedKeys;
 };
 
@@ -2721,6 +2751,59 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, provider.getCachedSourceTileBytes());
     ASSERT_EQ(3u, imagery.requestedKeys.size());
     EXPECT_EQ(firstSourceKey, imagery.requestedKeys.back());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     SourceTileDepotRetriesRequestExceptionsLikeCesiumNativeSharedAssetDepot) {
+    ThrowOnceImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle firstPatch(
+        sourceBounds.west() + sourceBounds.width() * 0.10,
+        sourceBounds.south() + sourceBounds.height() * 0.10,
+        sourceBounds.west() + sourceBounds.width() * 0.30,
+        sourceBounds.south() + sourceBounds.height() * 0.30);
+    const Rectangle secondPatch(
+        sourceBounds.west() + sourceBounds.width() * 0.60,
+        sourceBounds.south() + sourceBounds.height() * 0.60,
+        sourceBounds.west() + sourceBounds.width() * 0.80,
+        sourceBounds.south() + sourceBounds.height() * 0.80);
+
+    auto failingTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, firstPatch),
+        64.0,
+        64.0).tile;
+    ASSERT_NE(nullptr, failingTile);
+    ASSERT_TRUE(provider.loadTile(*failingTile));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              failingTile->getState());
+    EXPECT_EQ(nullptr, failingTile->getTexture());
+    EXPECT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
+    EXPECT_EQ(0, provider.getCachedSourceTileCount());
+    EXPECT_EQ(0, uploaderPtr->uploadCount);
+
+    auto retryTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, secondPatch),
+        64.0,
+        64.0).tile;
+    ASSERT_NE(nullptr, retryTile);
+    ASSERT_TRUE(provider.loadTile(*retryTile));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+
+    EXPECT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              retryTile->getState());
+    EXPECT_EQ(1, provider.getCachedSourceTileCount());
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
 }
 
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksAreCachedByRequestedTileLikeCesiumNative) {

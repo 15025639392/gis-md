@@ -1253,9 +1253,9 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
 
         onSourceIssued();
         CancellationToken token;
-        provider.requestTile(
-            requestedKey,
-            token,
+        const std::vector<TileKey> exceptionInFlightKeys =
+            fallbackInFlightKeys;
+        auto callback =
             [self,
              requestedKey,
              originalKey,
@@ -1345,7 +1345,20 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 for (const TileKey& key : fallbackInFlightKeys) {
                     self->finishInFlightSource(key, failed);
                 }
-            });
+            };
+        try {
+            provider.requestTile(
+                requestedKey,
+                token,
+                std::move(callback));
+        } catch (...) {
+            onSourceFailed();
+            onSourceFinished();
+            finishInFlightSource(originalKey, nullptr);
+            for (const TileKey& key : exceptionInFlightKeys) {
+                finishInFlightSource(key, nullptr);
+            }
+        }
     }
 
 private:
