@@ -313,6 +313,18 @@ int availableRasterRequestSlots(FrameResourceBudget* budget,
     return static_cast<int>(std::min(frameSlots, inflightSlots));
 }
 
+bool hasRasterInflightCapacity(FrameResourceBudget* budget,
+                               uint32_t currentInflight,
+                               int estimatedFanout) {
+    if (!budget) {
+        return true;
+    }
+    return budget->hasNetworkInflightCapacity(
+        FrameResourceLane::RasterRequest,
+        currentInflight,
+        estimatedFanout);
+}
+
 bool isWebMercatorScheme(const TileScheme& scheme) {
     const std::string id = scheme.id();
     return id == "XYZ-WebMercator" ||
@@ -2198,11 +2210,19 @@ bool RasterOverlayTileProvider::loadMappedTile(
         return estimated;
     };
     const int estimatedNewSourceRequests = estimateNewSourceRequests();
-    const int availableSourceSlots = availableRasterRequestSlots(
-        budget,
-        asyncState_->activeRasterSourceRequests.load(
-            std::memory_order_relaxed));
-    if (estimatedNewSourceRequests > 0 && availableSourceSlots <= 0) {
+    if (!tile.isCompositeTile() && estimatedNewSourceRequests > 0 &&
+        availableRasterRequestSlots(
+            budget,
+            asyncState_->activeRasterSourceRequests.load(
+                std::memory_order_relaxed)) <= 0) {
+        return false;
+    }
+    if (estimatedNewSourceRequests > 0 &&
+        !hasRasterInflightCapacity(
+            budget,
+            asyncState_->activeRasterSourceRequests.load(
+                std::memory_order_relaxed),
+            estimatedNewSourceRequests)) {
         return false;
     }
 
@@ -2269,16 +2289,10 @@ bool RasterOverlayTileProvider::loadMappedTile(
             state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
-    if (estimatedNewSourceRequests == 0) {
-        issueCompositeSourceRequest(
-            request,
-            std::numeric_limits<int>::max(),
-            nullptr);
-    }
-    if (!request->isComplete() && !request->isFullyIssued()) {
-        pendingSourceRequests_.push_back(request);
-        pumpCompositeSourceRequests(budget);
-    }
+    issueCompositeSourceRequest(
+        request,
+        std::numeric_limits<int>::max(),
+        budget);
 
     return true;
 }

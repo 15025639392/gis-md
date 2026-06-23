@@ -2455,8 +2455,8 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
     config.maxRasterNetworkRequestsPerFrame = 4;
-    config.maxNetworkInflight = 4;
-    config.maxRasterNetworkInflight = 4;
+    config.maxNetworkInflight = 64;
+    config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
@@ -2464,13 +2464,16 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
               provider.loadTileThrottled(*compositeTile, &budget) &&
               compositeTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
-              imagery.pendingRequests.size() == 4,
-          "RasterOverlayTileProvider: oversized quadtree source batch respects raster source frame budget");
-    check(budget.rasterNetworkRequestsIssued() == 4,
-          "RasterOverlayTileProvider: frame budget accounts each issued raster source tile");
+              imagery.pendingRequests.size() > 4,
+          "RasterOverlayTileProvider: oversized quadtree source batch issues complete fanout like cesium-native");
+    check(budget.rasterNetworkRequestsIssued() == 0,
+          "RasterOverlayTileProvider: oversized composite fanout is not split by frame request budget");
 
+    FrameResourceBudgetConfig secondConfig = config;
+    secondConfig.maxNetworkInflight = 4;
+    secondConfig.maxRasterNetworkInflight = 4;
     FrameResourceBudget secondBudget;
-    secondBudget.beginFrame(2, config);
+    secondBudget.beginFrame(2, secondConfig);
     const Rectangle independentSourceBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 5, 3});
     RasterOverlayTileProvider::TilePtr secondComposite =
