@@ -35,13 +35,11 @@ void TileContentCacheManager::eraseTileIndexState(
     TileContentLifecycleManager& lifecycle,
     TileLoadQueue& loadQueue,
     bool includeHeightmapTerrainCache) {
-    HeightmapTerrainCache* terrainCache =
-        includeHeightmapTerrainCache ? &lifecycle.heightmapTerrainCache()
-                                     : nullptr;
+    (void)includeHeightmapTerrainCache;
     TileIndexState::eraseCacheKeyState(
         cacheKey,
         unloadQueue_,
-        terrainCache,
+        &lifecycle.heightmapTerrainCache(),
         lifecycle.emptyContentRegistry(),
         loadQueue,
         lifecycle.loadLifecycle(),
@@ -55,13 +53,11 @@ TileCacheUnloadContentResult TileContentCacheManager::unloadTileContent(
     TileContentLifecycleManager& lifecycle,
     IPrepareRendererResources* pPrepRenderer,
     bool includeHeightmapTerrainCache) {
-    HeightmapTerrainCache* terrainCache =
-        includeHeightmapTerrainCache ? &lifecycle.heightmapTerrainCache()
-                                     : nullptr;
+    (void)includeHeightmapTerrainCache;
     return TileContentUnloadCoordinator::unloadContent(
         tile,
         TileCacheKey::forTile(tile.key),
-        terrainCache,
+        &lifecycle.heightmapTerrainCache(),
         lifecycle.emptyContentRegistry(),
         pPrepRenderer);
 }
