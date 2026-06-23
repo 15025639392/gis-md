@@ -778,6 +778,59 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     ContentTerrainEnsureTileClearsLegacyResidueBeforeRasterPrefetch) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    auto staleSurface = std::make_unique<SurfaceTileMesh>();
+    staleSurface->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0),
+        -5.0,
+        5.0);
+    root->content.renderContent.setSurfaceMesh(std::move(staleSurface));
+    root->content.renderContent.setRetainedHeightmap(
+        makeFlatHeightmap(42.0f));
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+    root->rasterOverlayState.ensureMapping(0);
+    root->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+
+    ASSERT_TRUE(root->canPrepareRasterOverlays());
+    ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
+    ASSERT_TRUE(root->content.renderContent.hasRetainedHeightmap());
+    ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
+    ASSERT_TRUE(root->rasterOverlayState.hasMissingProjections());
+
+    TilesetTile* ensuredAgain = TilesetTestAccess::ensureTile(
+        tileset,
+        rootKey);
+
+    ASSERT_EQ(root, ensuredAgain);
+    EXPECT_FALSE(root->canPrepareRasterOverlays());
+    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
+    EXPECT_FALSE(root->content.renderContent.isRenderContentReady());
+    EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
+    EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
+    EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
+}
+
+TEST(TilesetQuantizedMeshTest,
      GltfTerrainContentReplacesLegacySurfaceResidue) {
     TilesetTile tile(
         TileKey{"Geographic-TMS", 0, 0, 0},

@@ -35,6 +35,26 @@ const HeightmapTerrainCache& emptyHeightmapTerrainCache() {
     return empty;
 }
 
+bool clearContentTerrainLegacyResidue(TilesetTile& tile) {
+    if (tile.content.renderContent.hasGltfContent()) {
+        return false;
+    }
+
+    const bool hasLegacyResidue =
+        tile.content.renderContent.hasRenderableTerrainContent() ||
+        tile.content.renderContent.hasRetainedHeightmap() ||
+        tile.content.renderContent.isRenderContentReady() ||
+        tile.rasterOverlayState.mappingCount() > 0 ||
+        tile.rasterOverlayState.hasMissingProjections();
+    if (!hasLegacyResidue) {
+        return false;
+    }
+
+    tile.content.renderContent.clearRenderContent();
+    tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+    return true;
+}
+
 } // namespace
 
 TileContentAccess TileContentAccess::forContentTerrain(
@@ -103,11 +123,15 @@ TileContentAccess::TileContentAccess(
       rasterOverlayCount_(rasterOverlayCount) {}
 
 TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
-    return tileRegistry_.ensureTile(
+    TilesetTile* tile = tileRegistry_.ensureTile(
         key,
         tileScheme_,
         contentProvider_,
         rasterOverlayCount_);
+    if (tile && contentProviderOwnsTerrainQuadtree()) {
+        clearContentTerrainLegacyResidue(*tile);
+    }
+    return tile;
 }
 
 void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
@@ -128,18 +152,12 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,
                 tile);
-            if (contentProviderOwnsTerrainQuadtree() &&
-                !child->content.renderContent.hasGltfContent() &&
-                (child->content.renderContent.hasRenderableTerrainContent() ||
-                 child->content.renderContent.hasRetainedHeightmap() ||
-                 child->content.renderContent.isRenderContentReady() ||
-                 child->rasterOverlayState.mappingCount() > 0 ||
-                 child->rasterOverlayState.hasMissingProjections())) {
-                child->content.renderContent.clearRenderContent();
-                child->rasterOverlayState.releaseAndClearReferences(nullptr);
-                TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
-                    *child,
-                    tile);
+            if (contentProviderOwnsTerrainQuadtree()) {
+                if (clearContentTerrainLegacyResidue(*child)) {
+                    TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
+                        *child,
+                        tile);
+                }
             }
             linkChildIfMissing(tile, *child);
         }
