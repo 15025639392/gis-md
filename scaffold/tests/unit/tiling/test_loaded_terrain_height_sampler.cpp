@@ -213,7 +213,7 @@ TEST(LoadedTerrainHeightSamplerTest, UsesBestLoadedTerrainTile) {
             terrainCache,
             longitude,
             latitude,
-            LoadedTerrainHeightCacheMode::IncludeLegacyHeightmap),
+            true),
         1e-6f);
 }
 
@@ -240,7 +240,7 @@ TEST(LoadedTerrainHeightSamplerTest, FallsBackToLoadedAncestorTerrain) {
             terrainCache,
             longitude,
             latitude,
-            LoadedTerrainHeightCacheMode::IncludeLegacyHeightmap),
+            true),
         1e-6f);
 }
 
@@ -268,7 +268,7 @@ TEST(LoadedTerrainHeightSamplerTest, SamplesLoadedGltfTerrainTile) {
             terrainCache,
             longitude,
             latitude,
-            LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly),
+            false),
         1e-4f);
 }
 
@@ -298,7 +298,7 @@ TEST(LoadedTerrainHeightSamplerTest,
             terrainCache,
             longitude,
             latitude,
-            LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly),
+            false),
         1e-4f);
 }
 
@@ -327,7 +327,7 @@ TEST(LoadedTerrainHeightSamplerTest,
             terrainCache,
             longitude,
             latitude,
-            LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly),
+            false),
         1e-4f);
 }
 
@@ -362,7 +362,7 @@ TEST(LoadedTerrainHeightSamplerTest,
             terrainCache,
             longitude,
             latitude,
-            LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly),
+            false),
         1e-4f);
 }
 
@@ -395,7 +395,7 @@ TEST(LoadedTerrainHeightSamplerTest,
             terrainCache,
             longitude,
             latitude,
-            LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly),
+            false),
         1e-4f);
 }
 
@@ -428,7 +428,7 @@ TEST(LoadedTerrainHeightSamplerTest,
             terrainCache,
             longitude,
             latitude,
-            LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly),
+            false),
         1e-4f);
 }
 
@@ -468,13 +468,13 @@ TEST(LoadedTerrainHeightSamplerTest,
         terrainCache,
         longitude,
         latitude,
-        LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly);
+        false);
     const float bakedHeight = LoadedTerrainHeightSampler::sampleHeight(
         bakedTiles,
         terrainCache,
         longitude,
         latitude,
-        LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly);
+        false);
 
     EXPECT_GT(transformedHeight, 17.5f);
     EXPECT_NEAR(transformedHeight, bakedHeight, 1e-4f);

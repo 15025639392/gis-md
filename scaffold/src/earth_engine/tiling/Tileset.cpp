@@ -56,13 +56,6 @@ TerrainProvider* effectiveLegacyTerrainProvider(
     return terrainProvider;
 }
 
-LoadedTerrainHeightCacheMode loadedTerrainHeightCacheModeFor(
-    const TilesetContentProvider* contentProvider) {
-    return contentProviderOwnsTerrainQuadtree(contentProvider)
-        ? LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly
-        : LoadedTerrainHeightCacheMode::IncludeLegacyHeightmap;
-}
-
 } // namespace
 
 Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
@@ -309,7 +302,7 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
         contentLifecycle_.legacyTerrainCache(),
         lngRad,
         latRad,
-        loadedTerrainHeightCacheModeFor(contentProvider_.get()));
+        !contentProviderOwnsTerrainQuadtree(contentProvider_.get()));
 }
 
 void Tileset::update(
