@@ -1487,13 +1487,7 @@ TEST(RasterOverlayLifecycleTest,
         TileKey{scheme->id(), expectedLevel, centerKey.x, centerKey.y},
         TileKey{scheme->id(), expectedLevel, centerKey.x, centerKey.y + 1},
     };
-    for (const TileKey& expectedKey : expectedKeys) {
-        EXPECT_NE(
-            mapping.sourceTiles.sourceKeys.end(),
-            std::find(mapping.sourceTiles.sourceKeys.begin(),
-                      mapping.sourceTiles.sourceKeys.end(),
-                      expectedKey));
-    }
+    EXPECT_EQ(expectedKeys, mapping.sourceTiles.sourceKeys);
 }
 
 TEST(RasterOverlayLifecycleTest,

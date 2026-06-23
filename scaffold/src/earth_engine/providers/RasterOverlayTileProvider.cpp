@@ -1098,8 +1098,8 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
     plan.sourceKeys.reserve(
         static_cast<size_t>(std::max(0, coverage.count())));
     for (const TileRange& coveredRange : coverage.ranges) {
-        for (int y = coveredRange.minY; y <= coveredRange.maxY; ++y) {
-            for (int x = coveredRange.minX; x <= coveredRange.maxX; ++x) {
+        for (int x = coveredRange.minX; x <= coveredRange.maxX; ++x) {
+            for (int y = coveredRange.minY; y <= coveredRange.maxY; ++y) {
                 TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
                 if (matchesProviderQuadtreeRange(provider, sourceKey) &&
                     rectanglesOverlapWithArea(
@@ -1117,8 +1117,8 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
         const int maxX = std::min(maxTileX, range.maxX + 1);
         const int minY = std::max(0, range.minY - 1);
         const int maxY = std::min(maxTileY, range.maxY + 1);
-        for (int y = minY; y <= maxY; ++y) {
-            for (int x = minX; x <= maxX; ++x) {
+        for (int x = minX; x <= maxX; ++x) {
+            for (int y = minY; y <= maxY; ++y) {
                 TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
                 if (matchesProviderQuadtreeRange(provider, sourceKey) &&
                     rectanglesOverlapWithArea(
