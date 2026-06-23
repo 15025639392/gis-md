@@ -152,7 +152,7 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
-    ContentOwnedTerrainUnloadErasesHeightmapTerrainCache) {
+    RenderContentUnloadErasesRetainedHeightmapTerrainCache) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -293,7 +293,7 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
-    ContentOwnedTerrainEraseIndexStateErasesHeightmapTerrainCache) {
+    EraseIndexStateErasesRetainedHeightmapTerrainCache) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     TileLoadQueue loadQueue;

@@ -142,34 +142,6 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
     EXPECT_FALSE(manager.hasPendingWork());
 }
 
-TEST(TileContentLifecycleManagerTest, KeepsHeightmapTerrainCacheWhenNotDiscarding) {
-    TileContentLifecycleManager manager;
-    auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
-    cachedHeightmap->tileSize = 2;
-    cachedHeightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    manager.heightmapTerrainCache()["terrain"] = std::move(cachedHeightmap);
-
-    manager.discardHeightmapTerrainCache(false);
-
-    ASSERT_NE(manager.heightmapTerrainCache().end(),
-              manager.heightmapTerrainCache().find("terrain"));
-    EXPECT_TRUE(manager.heightmapTerrainCache().at("terrain")->valid());
-}
-
-TEST(
-    TileContentLifecycleManagerTest,
-    DiscardHeightmapTerrainCacheClearsCache) {
-    TileContentLifecycleManager manager;
-    auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
-    cachedHeightmap->tileSize = 2;
-    cachedHeightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    manager.heightmapTerrainCache()["terrain"] = std::move(cachedHeightmap);
-
-    manager.discardHeightmapTerrainCache(true);
-
-    EXPECT_TRUE(manager.heightmapTerrainCache().empty());
-}
-
 TEST(
     TileContentLifecycleManagerTest,
     ContentOwnedTerrainRequestClearsHeightmapTerrainCache) {

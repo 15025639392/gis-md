@@ -44,7 +44,6 @@ public:
     int pendingRequests() const;
     bool hasPendingWork() const;
     void shutdown();
-    void discardHeightmapTerrainCache(bool discard);
 
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(
