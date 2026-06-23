@@ -672,11 +672,12 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
         &device,
         TilesetOptions{});
     Tileset* terrainRaw = terrainTileset.get();
-    TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(123.0f));
+    TilesetTile* terrainRoot =
+        TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    ASSERT_NE(terrainRoot, nullptr);
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *terrainRoot,
+        makeFlatGeographicTerrainGltfModel(terrainRoot->bounds, 123.0));
     scene.setTileset(std::move(terrainTileset));
 
     auto contentTileset = std::make_unique<Tileset>(
@@ -709,11 +710,19 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
             return cmd.kind == RenderCommandKind::GltfPrimitive &&
                    cmd.terrainRenderContent;
         });
+    const bool submittedNonTerrainGltf = std::any_of(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive &&
+                   !cmd.terrainRenderContent;
+        });
     EXPECT_TRUE(submittedGltf);
-    EXPECT_FALSE(submittedTerrainGltf);
+    EXPECT_TRUE(submittedTerrainGltf);
+    EXPECT_TRUE(submittedNonTerrainGltf);
     EXPECT_GT(scene.diagnostics().renderGltfPrimitives, 0);
-    EXPECT_EQ(scene.diagnostics().terrainSurfaceMeshes, 3);
-    EXPECT_EQ(scene.diagnostics().terrainRenderContentCommands, 3);
+    EXPECT_EQ(scene.diagnostics().terrainSurfaceMeshes, 2);
+    EXPECT_GT(scene.diagnostics().terrainRenderContentCommands, 0);
     EXPECT_EQ(scene.diagnostics().contentTilesets, 1);
     EXPECT_GT(scene.diagnostics().contentVisibleTiles, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderEntriesPlanned, 0);
