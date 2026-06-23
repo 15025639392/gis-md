@@ -202,6 +202,11 @@ public:
         surface_.terrainMinimumHeight = minimumHeight;
         surface_.terrainMaximumHeight = maximumHeight;
     }
+    void clearTerrainHeightRange() {
+        surface_.hasTerrainHeightRange = false;
+        surface_.terrainMinimumHeight = 0.0;
+        surface_.terrainMaximumHeight = 0.0;
+    }
     void setHorizonOcclusionPoint(const Vec3& point) {
         surface_.horizonOcclusionPoint = point;
     }
@@ -401,6 +406,7 @@ public:
         surface_.meshReady = false;
         surface_.surfaceDrawable = false;
         surface_.surfaceSource = SurfaceDrawableSource::None;
+        clearTerrainHeightRange();
     }
 
     void clearRenderContent() {
@@ -420,6 +426,7 @@ public:
         surface_.mesh.reset();
         surface_.horizonOcclusionPoint.reset();
         surface_.meshReady = false;
+        clearTerrainHeightRange();
         releaseGpuResources();
         terrainRenderContent_ = false;
         if (model && model->preferredLocalOriginEcef.has_value()) {
@@ -446,6 +453,7 @@ public:
             surface_.heightmap.reset();
             surface_.surfaceDrawable = false;
             surface_.localOrigin = Vec3::zero();
+            clearTerrainHeightRange();
             return;
         }
         if (surface_.surfaceSource == SurfaceDrawableSource::GltfContent) {

@@ -759,11 +759,13 @@ TEST(TilesetQuantizedMeshTest,
         std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.setRetainedHeightmap(
         makeFlatHeightmap(5678.0f));
+    root->content.renderContent.setTerrainHeightRange(123.0, 456.0);
     root->rasterOverlayState.ensureMapping(0);
     root->rasterOverlayState.missingProjections().push_back(
         RasterOverlayProjection::WebMercator);
     ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
     ASSERT_TRUE(root->content.renderContent.hasRetainedHeightmap());
+    ASSERT_TRUE(root->content.renderContent.hasTerrainHeightRange());
     ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
     ASSERT_TRUE(root->rasterOverlayState.hasMissingProjections());
 
@@ -771,6 +773,9 @@ TEST(TilesetQuantizedMeshTest,
 
     EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
+    EXPECT_FALSE(root->content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(0.0, root->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(0.0, root->content.renderContent.terrainMaximumHeight());
     EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
     EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
     EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());

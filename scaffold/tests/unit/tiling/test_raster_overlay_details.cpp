@@ -173,6 +173,8 @@ TEST(RasterOverlayDetailsTest,
     renderContent.setSurfaceSource(SurfaceDrawableSource::GltfContent);
     renderContent.setMeshReady(true);
     renderContent.setSurfaceLocalOrigin(Vec3(1.0, 2.0, 3.0));
+    renderContent.setTerrainHeightRange(10.0, 20.0);
+    ASSERT_TRUE(renderContent.hasTerrainHeightRange());
 
     renderContent.clearGltfContent();
 
@@ -183,6 +185,9 @@ TEST(RasterOverlayDetailsTest,
     EXPECT_FALSE(renderContent.hasRetainedHeightmap());
     EXPECT_FALSE(renderContent.isSurfaceDrawable());
     EXPECT_FALSE(renderContent.isSurfaceMeshReady());
+    EXPECT_FALSE(renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(0.0, renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(0.0, renderContent.terrainMaximumHeight());
     EXPECT_EQ(SurfaceDrawableSource::None,
               renderContent.currentSurfaceSource());
     EXPECT_EQ(Vec3::zero(), renderContent.renderLocalOrigin());
