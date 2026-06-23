@@ -2542,10 +2542,10 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               mappedRasterTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
-              imagery.pendingRequests.size() > 4,
-          "RasterOverlayTileProvider: oversized quadtree source batch issues complete fanout like cesium-native");
-    check(budget.rasterNetworkRequestsIssued() == 0,
-          "RasterOverlayTileProvider: oversized mapped raster fanout is not split by frame request budget");
+              imagery.pendingRequests.size() == 4,
+          "RasterOverlayTileProvider: oversized quadtree source batch starts with budgeted fanout like cesium-native");
+    check(budget.rasterNetworkRequestsIssued() == 4,
+          "RasterOverlayTileProvider: oversized mapped raster fanout is split by frame request budget");
 
     FrameResourceBudgetConfig secondConfig = config;
     secondConfig.maxNetworkInflight = 4;

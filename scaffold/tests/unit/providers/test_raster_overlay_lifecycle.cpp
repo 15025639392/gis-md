@@ -4264,7 +4264,8 @@ TEST(RasterOverlayLifecycleTest, NonUnloadedRasterTilesDoNotConsumeRequestBudget
               failedTile->getState());
 }
 
-TEST(RasterOverlayLifecycleTest, MappedRasterRectangleIssuesCompleteFanoutAfterStartLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest,
+     MappedRasterRectangleIssuesBudgetedFanoutAfterStartLikeCesiumNative) {
     ImmediateImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -4284,9 +4285,9 @@ TEST(RasterOverlayLifecycleTest, MappedRasterRectangleIssuesCompleteFanoutAfterS
     budget.beginFrame(1, config);
 
     EXPECT_TRUE(provider.loadTileThrottled(*mappedRasterTile, &budget));
-    EXPECT_EQ(4, imagery.requestCount);
-    EXPECT_EQ(0u, budget.networkRequestsIssued());
-    EXPECT_EQ(0u, budget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(1, imagery.requestCount);
+    EXPECT_EQ(1u, budget.networkRequestsIssued());
+    EXPECT_EQ(1u, budget.rasterNetworkRequestsIssued());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
               mappedRasterTile->getState());
 }
@@ -4315,8 +4316,8 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
     firstBudget.beginFrame(1, firstConfig);
 
     ASSERT_TRUE(provider.loadTileThrottled(*firstTile, &firstBudget));
-    EXPECT_EQ(4u, imagery.pending.size());
-    EXPECT_EQ(0u, firstBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(1u, firstBudget.rasterNetworkRequestsIssued());
 
     const Rectangle quadrantBounds =
         scheme->tileToRectangle(TileKey{scheme->id(), 1, 0, 0});
@@ -4337,7 +4338,7 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
     blockedBudget.beginFrame(2, blockedConfig);
 
     EXPECT_FALSE(provider.loadTileThrottled(*secondTile, &blockedBudget));
-    EXPECT_EQ(4u, imagery.pending.size());
+    EXPECT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(0u, blockedBudget.rasterNetworkRequestsIssued());
     EXPECT_EQ(RasterOverlayTile::LoadState::Unloaded,
               secondTile->getState());
@@ -4345,7 +4346,8 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
               firstTile->getState());
 }
 
-TEST(RasterOverlayLifecycleTest, LoadingRectangleIssuesSourceFanoutOnceLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest,
+     LoadingRectangleIssuesRemainingSourceFanoutAcrossFramesLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -4367,8 +4369,8 @@ TEST(RasterOverlayLifecycleTest, LoadingRectangleIssuesSourceFanoutOnceLikeCesiu
     EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
               mappedRasterTile->getState());
     const size_t firstBatchSize = imagery.pending.size();
-    EXPECT_EQ(4u, firstBatchSize);
-    EXPECT_EQ(0u, firstBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(2u, firstBatchSize);
+    EXPECT_EQ(2u, firstBudget.rasterNetworkRequestsIssued());
     EXPECT_TRUE(provider.hasPendingWork());
 
     while (!imagery.pending.empty()) {
@@ -4376,15 +4378,21 @@ TEST(RasterOverlayLifecycleTest, LoadingRectangleIssuesSourceFanoutOnceLikeCesiu
     }
     EXPECT_TRUE(imagery.pending.empty());
     EXPECT_EQ(0, provider.getActiveRasterSourceRequests());
-    EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
     EXPECT_TRUE(provider.hasPendingWork());
 
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, config);
 
+    EXPECT_TRUE(provider.loadTileThrottled(*mappedRasterTile, &secondBudget));
+    EXPECT_EQ(2u, imagery.pending.size());
+    EXPECT_EQ(2u, secondBudget.rasterNetworkRequestsIssued());
+    while (!imagery.pending.empty()) {
+        imagery.completeNext();
+    }
+    EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
     EXPECT_EQ(1, provider.processPendingUploads(false, &secondBudget));
     EXPECT_TRUE(imagery.pending.empty());
-    EXPECT_EQ(0u, secondBudget.rasterNetworkRequestsIssued());
 }
 
 TEST(RasterOverlayLifecycleTest, FrameBudgetSeparatesRasterFanoutFromTerrainBudget) {

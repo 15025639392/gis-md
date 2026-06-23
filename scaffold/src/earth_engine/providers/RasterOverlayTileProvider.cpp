@@ -1560,6 +1560,17 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         }
     }
 
+    bool wouldIssueNewRequest(const TileKey& originalKey) const {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const std::string key = depotCacheKey(originalKey);
+        auto cached = cache.find(key);
+        if (cached != cache.end() &&
+            (cached->second.image || cached->second.terminalFailure)) {
+            return false;
+        }
+        return inFlight.find(key) == inFlight.end();
+    }
+
 private:
     RasterSourceResult rasterSourceResultFromAsset(
         const InFlightSourceTileAsset::Result& cached,
@@ -1759,18 +1770,33 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         sources.reserve(sourceTiles.sourceKeys.size());
     }
 
-    int issueAll(const std::function<void()>& onSourceIssued,
-                 const std::function<void()>& onSourceFinished,
-                 const std::function<void()>& onSourceFailed) {
+    int issueSome(int maxNewRequests,
+                  const std::function<void()>& onSourceIssued,
+                  const std::function<void()>& onSourceFinished,
+                  const std::function<void()>& onSourceFailed) {
         auto issued = std::make_shared<int>(0);
         std::vector<TileKey> sourceKeys;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (completed || sourceSetIssued) {
+            if (completed ||
+                nextSourceIndex >= sourceTiles.sourceKeys.size()) {
                 return 0;
             }
-            sourceSetIssued = true;
-            sourceKeys = sourceTiles.sourceKeys;
+            int remainingNewRequests = maxNewRequests;
+            while (nextSourceIndex < sourceTiles.sourceKeys.size()) {
+                const TileKey& sourceKey =
+                    sourceTiles.sourceKeys[nextSourceIndex];
+                const bool needsNewRequest =
+                    depot->wouldIssueNewRequest(sourceKey);
+                if (needsNewRequest && remainingNewRequests <= 0) {
+                    break;
+                }
+                if (needsNewRequest) {
+                    --remainingNewRequests;
+                }
+                sourceKeys.push_back(sourceKey);
+                ++nextSourceIndex;
+            }
         }
         for (const TileKey& sourceKey : sourceKeys) {
             auto self = shared_from_this();
@@ -1792,9 +1818,22 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         return *issued;
     }
 
+    bool hasUnissuedSources() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return !completed && nextSourceIndex < sourceTiles.sourceKeys.size();
+    }
+
     bool isComplete() const {
         std::lock_guard<std::mutex> lock(mutex);
         return completed;
+    }
+
+    void markAbandoned() {
+        std::lock_guard<std::mutex> lock(mutex);
+        completed = true;
+        remaining = 0;
+        nextSourceIndex = sourceTiles.sourceKeys.size();
+        sources.clear();
     }
 
 private:
@@ -1802,6 +1841,9 @@ private:
         bool finished = false;
         {
             std::lock_guard<std::mutex> lock(mutex);
+            if (completed) {
+                return;
+            }
             if (isResolvedRasterSourceResult(source)) {
                 sources.push_back(std::move(source));
             }
@@ -1942,7 +1984,7 @@ private:
     MappedSourceLoadFailure onFailure;
     mutable std::mutex mutex;
     int remaining = 0;
-    bool sourceSetIssued = false;
+    size_t nextSourceIndex = 0;
     bool completed = false;
     std::vector<RasterSourceResult> sources;
 };
@@ -2009,11 +2051,22 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
 RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     asyncState_->alive.store(false, std::memory_order_release);
     size_t abandonedUploads = 0;
+    std::vector<std::shared_ptr<MappedSourceImageSet>> abandonedSourceSets;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         abandonedUploads = asyncState_->pendingUploads.size();
         asyncState_->pendingUploads.clear();
+        for (auto& [_, sourceSet] : asyncState_->activeMappedSourceSets) {
+            if (sourceSet) {
+                abandonedSourceSets.push_back(std::move(sourceSet));
+            }
+        }
+        asyncState_->activeMappedSourceSets.clear();
         asyncState_->inFlightRequests.clear();
+    }
+    for (const auto& sourceSet : abandonedSourceSets) {
+        sourceSet->markAbandoned();
+        decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
     }
     for (size_t i = 0; i < abandonedUploads; ++i) {
         decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
@@ -2494,8 +2547,25 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
 bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
                                                   FrameResourceBudget* budget) {
     // cesium-native: loadTileThrottled only starts Unloaded tiles. Once a
-    // mapped raster tile is Loading, its source dependencies are already attached
-    // to provider-level source tile assets and do not need per-frame pumping.
+    // mapped raster tile is Loading, it may still have unissued source futures
+    // waiting for raster request budget. Keep pumping those shared source
+    // assets so large rectangle compositions converge over multiple frames.
+    if (tile.isMappedRasterTile() &&
+        tile.getState() == RasterOverlayTile::LoadState::Loading) {
+        std::shared_ptr<MappedSourceImageSet> sourceSet;
+        {
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
+            auto it = asyncState_->activeMappedSourceSets.find(
+                tile.getCacheKey());
+            if (it != asyncState_->activeMappedSourceSets.end()) {
+                sourceSet = it->second;
+            }
+        }
+        if (sourceSet && sourceSet->hasUnissuedSources()) {
+            issueMappedSourceImageSet(sourceSet, budget);
+        }
+        return true;
+    }
     if (tile.getState() != RasterOverlayTile::LoadState::Unloaded) {
         return true;
     }
@@ -2653,14 +2723,15 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         return estimated;
     };
     const int estimatedNewSourceRequests = estimateNewSourceRequests();
-    if (!tile.isMappedRasterTile() && estimatedNewSourceRequests > 0 &&
-        availableRasterRequestSlots(
-            budget,
-            asyncState_->activeRasterSourceRequests.load(
-                std::memory_order_relaxed)) <= 0) {
+    const int availableSourceRequestSlots = availableRasterRequestSlots(
+        budget,
+        asyncState_->activeRasterSourceRequests.load(
+            std::memory_order_relaxed));
+    if (estimatedNewSourceRequests > 0 &&
+        availableSourceRequestSlots <= 0) {
         return false;
     }
-    if (estimatedNewSourceRequests > 0 &&
+    if (!tile.isMappedRasterTile() && estimatedNewSourceRequests > 0 &&
         !hasRasterInflightCapacity(
             budget,
             asyncState_->activeRasterSourceRequests.load(
@@ -2711,6 +2782,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::vector<std::string> credits) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
+            state->activeMappedSourceSets.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
                 decrementActiveRasterTileLoads(
                     state->activeRasterTileLoads);
@@ -2743,6 +2815,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::vector<std::string> diagnostics) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
+            state->activeMappedSourceSets.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
                 decrementActiveRasterTileLoads(
                     state->activeRasterTileLoads);
@@ -2774,9 +2847,12 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
-    issueMappedSourceImageSet(
-        sourceSet,
-        budget);
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        asyncState_->activeMappedSourceSets[cacheKey] = sourceSet;
+    }
+
+    issueMappedSourceImageSet(sourceSet, budget);
 
     return true;
 }
@@ -2828,8 +2904,13 @@ int RasterOverlayTileProvider::issueMappedSourceImageSet(
             std::memory_order_relaxed);
     };
 
+    const int maxToIssue = availableRasterRequestSlots(
+        budget,
+        state->activeRasterSourceRequests.load(
+            std::memory_order_relaxed));
     const int newlyIssued =
-        sourceSet->issueAll(
+        sourceSet->issueSome(
+            maxToIssue,
             onSourceIssued,
             onSourceFinished,
             onSourceFailed);
