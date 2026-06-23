@@ -307,6 +307,35 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsTest,
+     ExactEqualityCoversProjectionSlotsAndBoundingRegion) {
+    RasterOverlayDetails first;
+    const Rectangle rectangle = Rectangle::fromDegrees(-10.0, -5.0, 10.0, 5.0);
+    first.setGeographicRectangle(rectangle, -20.0, 30.0);
+    first.rasterOverlayInvertedVCoordinates = {true};
+
+    RasterOverlayDetails same = first;
+    EXPECT_TRUE(first.equalsExact(same));
+
+    RasterOverlayDetails differentProjection = first;
+    differentProjection.rasterOverlayProjections = {
+        RasterOverlayProjection::WebMercator};
+    EXPECT_FALSE(first.equalsExact(differentProjection));
+
+    RasterOverlayDetails differentRectangle = first;
+    differentRectangle.rasterOverlayRectangles = {
+        Rectangle::fromDegrees(-9.0, -5.0, 10.0, 5.0)};
+    EXPECT_FALSE(first.equalsExact(differentRectangle));
+
+    RasterOverlayDetails differentInvertedV = first;
+    differentInvertedV.rasterOverlayInvertedVCoordinates = {false};
+    EXPECT_FALSE(first.equalsExact(differentInvertedV));
+
+    RasterOverlayDetails differentRegion = first;
+    differentRegion.boundingRegion.maximumHeight = 31.0;
+    EXPECT_FALSE(first.equalsExact(differentRegion));
+}
+
+TEST(RasterOverlayDetailsTest,
      RenderTerrainDoesNotDuplicateIdenticalModelAndMetadataDetails) {
     auto model = std::make_unique<GltfModel>();
     const Rectangle rectangle = Rectangle::fromDegrees(-10.0, -5.0, 10.0, 5.0);

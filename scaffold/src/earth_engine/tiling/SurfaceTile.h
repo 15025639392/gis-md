@@ -97,6 +97,18 @@ struct RasterOverlayDetails {
 
     bool empty() const { return rasterOverlayRectangles.empty(); }
 
+    bool equalsExact(const RasterOverlayDetails& other) const {
+        return rasterOverlayProjections == other.rasterOverlayProjections &&
+               rasterOverlayRectangles == other.rasterOverlayRectangles &&
+               rasterOverlayInvertedVCoordinates ==
+                   other.rasterOverlayInvertedVCoordinates &&
+               boundingRegion.rectangle == other.boundingRegion.rectangle &&
+               boundingRegion.minimumHeight ==
+                   other.boundingRegion.minimumHeight &&
+               boundingRegion.maximumHeight ==
+                   other.boundingRegion.maximumHeight;
+    }
+
     const Rectangle* findRectangleForOverlayProjection(
         RasterOverlayProjection projection) const {
         for (size_t i = 0; i < rasterOverlayProjections.size(); ++i) {
