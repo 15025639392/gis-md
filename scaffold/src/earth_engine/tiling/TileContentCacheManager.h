@@ -47,16 +47,12 @@ public:
     void eraseTileIndexState(
         const std::string& cacheKey,
         TileContentLifecycleManager& lifecycle,
-        TileLoadQueue& loadQueue,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
-            LegacyHeightmapTerrainCacheMode::Include);
+        TileLoadQueue& loadQueue);
 
     TileCacheUnloadContentResult unloadTileContent(
         TilesetTile& tile,
         TileContentLifecycleManager& lifecycle,
-        IPrepareRendererResources* pPrepRenderer,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
-            LegacyHeightmapTerrainCacheMode::Include);
+        IPrepareRendererResources* pPrepRenderer);
 
     template <typename ClearChildrenFn>
     void unloadCachedBytes(
@@ -86,15 +82,11 @@ public:
                         return TileCacheKey::forTile(key);
                     });
             },
-            [this,
-             &lifecycle,
-             pPrepRenderer,
-             legacyHeightmapCacheMode](TilesetTile& tile) {
+            [this, &lifecycle, pPrepRenderer](TilesetTile& tile) {
                 return unloadTileContent(
                     tile,
                     lifecycle,
-                    pPrepRenderer,
-                    legacyHeightmapCacheMode);
+                    pPrepRenderer);
             },
             [this](const std::string& key) {
                 markIneligibleForUnloading(key);

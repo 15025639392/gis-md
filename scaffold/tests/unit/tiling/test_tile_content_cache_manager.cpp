@@ -173,8 +173,7 @@ TEST(
         manager.unloadTileContent(
             *tileRaw,
             lifecycle,
-            nullptr,
-            LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly);
+            nullptr);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
     EXPECT_EQ(lifecycle.legacyTerrainCache().find(cacheKey),
@@ -203,8 +202,7 @@ TEST(
         manager.unloadTileContent(
             *tile,
             lifecycle,
-            nullptr,
-            LegacyHeightmapTerrainCacheMode::Include);
+            nullptr);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
     EXPECT_EQ(TileLoadState::Unloaded, tileRaw->content.loadState);
@@ -333,8 +331,7 @@ TEST(
     manager.eraseTileIndexState(
         cacheKey,
         lifecycle,
-        loadQueue,
-        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly);
+        loadQueue);
 
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
     EXPECT_EQ(lifecycle.legacyTerrainCache().find(cacheKey),
