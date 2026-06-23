@@ -11,6 +11,7 @@
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
+#include "earth_engine/tiling/TileRefinementAvailabilityResolver.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
@@ -280,6 +281,38 @@ public:
     std::vector<std::pair<TileKey, TileAvailabilityState>> availability;
     std::vector<std::pair<TileKey, std::vector<TileKey>>> legacyChildTiles;
     int boundaryLevel = -1;
+};
+
+class AlwaysAvailableLegacyTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "always-available-legacy"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 20; }
+    int tileSize() const override { return 256; }
+
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        return key.schemeId == schemeId() ? TileAvailabilityState::Available
+                                          : TileAvailabilityState::NotAvailable;
+    }
+
+    std::string buildUrl(const TileKey& key) const override {
+        return std::to_string(key.z) + "/" + std::to_string(key.x) + "/" +
+               std::to_string(key.y) + ".terrain";
+    }
+
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TerrainCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal)
+        override {
+        callback(key, TerrainTileLoadResult::failed());
+    }
+
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
 };
 
 SelectorView makeSelectorView(
@@ -2387,4 +2420,34 @@ TEST(
     EXPECT_FALSE(TilesetTestAccess::canRefine(tileset, *root));
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_TRUE(root->children.empty());
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    ContentTerrainQuadtreeIgnoresContradictingLegacyAvailability) {
+    TerrainQuadtreeContentProvider contentProvider;
+    AlwaysAvailableLegacyTerrainProvider legacyTerrainProvider;
+    auto tileScheme = TileScheme::createGeographicTMS();
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        legacyTerrainCache;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile root(
+        rootKey,
+        tileScheme->tileToRectangle(rootKey));
+    root.geometricError = 100.0;
+    setLoadedTerrainGltfContent(root);
+
+    const bool canRefine = TileRefinementAvailabilityResolver::canRefine(
+        root,
+        &contentProvider,
+        &legacyTerrainProvider,
+        *tileScheme,
+        legacyTerrainCache,
+        [](const TileKey& key) { return TileCacheKey::forTile(key); },
+        [](const TilesetTile&) { return false; },
+        [](const TilesetTile& tile) {
+            return tile.content.renderContent.hasRenderableTerrainContent();
+        });
+
+    EXPECT_FALSE(canRefine);
 }
