@@ -46,6 +46,8 @@ public:
 private:
     static size_t countDomain(const std::deque<PendingTileLoad>& loads,
                               TileLoadDomain domain);
+    static size_t countTerrainDomain(
+        const std::deque<PendingTileLoad>& loads);
 
     std::unordered_set<std::string> uploadKeys_;
     std::deque<PendingTileLoad> uploads_;

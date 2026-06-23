@@ -184,8 +184,27 @@ struct TileLoadResult {
 
 enum class TileLoadDomain {
     LegacyTerrain,
+    GltfTerrain,
     Content
 };
+
+inline bool isLegacyTerrainLoadDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::LegacyTerrain;
+}
+
+inline bool isGltfTerrainLoadDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::GltfTerrain;
+}
+
+inline bool isTerrainLoadDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::LegacyTerrain ||
+           domain == TileLoadDomain::GltfTerrain;
+}
+
+inline bool isContentLoadDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::Content ||
+           domain == TileLoadDomain::GltfTerrain;
+}
 
 struct PendingTileLoad {
     PendingTileLoad() = default;

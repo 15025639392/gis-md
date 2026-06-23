@@ -215,7 +215,7 @@ public:
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (result.domain == TileLoadDomain::Content) {
+        if (isContentLoadDomain(result.domain)) {
             commitContentTerminalResult(
                 result,
                 emptyContentRegistry,
@@ -252,7 +252,7 @@ public:
         EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (upload.domain == TileLoadDomain::Content) {
+        if (isContentLoadDomain(upload.domain)) {
             commitContentUpload(
                 upload,
                 contentProvider,

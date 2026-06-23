@@ -9,7 +9,7 @@ namespace earth_engine {
 namespace {
 
 FrameResourceLane uploadLaneForDomain(TileLoadDomain domain) {
-    return domain == TileLoadDomain::Content
+    return isContentLoadDomain(domain) && !isGltfTerrainLoadDomain(domain)
                ? FrameResourceLane::ContentFinalize
                : FrameResourceLane::TerrainFinalize;
 }
@@ -126,11 +126,11 @@ size_t TilePendingLoadQueue::terminalResultCount() const {
 }
 
 size_t TilePendingLoadQueue::terrainUploadCount() const {
-    return countDomain(uploads_, TileLoadDomain::LegacyTerrain);
+    return countTerrainDomain(uploads_);
 }
 
 size_t TilePendingLoadQueue::terrainTerminalResultCount() const {
-    return countDomain(terminalResults_, TileLoadDomain::LegacyTerrain);
+    return countTerrainDomain(terminalResults_);
 }
 
 size_t TilePendingLoadQueue::contentUploadCount() const {
@@ -207,6 +207,16 @@ size_t TilePendingLoadQueue::countDomain(
         loads.end(),
         [domain](const PendingTileLoad& load) {
             return load.domain == domain;
+        }));
+}
+
+size_t TilePendingLoadQueue::countTerrainDomain(
+    const std::deque<PendingTileLoad>& loads) {
+    return static_cast<size_t>(std::count_if(
+        loads.begin(),
+        loads.end(),
+        [](const PendingTileLoad& load) {
+            return isTerrainLoadDomain(load.domain);
         }));
 }
 

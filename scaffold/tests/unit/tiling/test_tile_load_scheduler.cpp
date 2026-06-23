@@ -807,8 +807,8 @@ TEST(TileLoadSchedulerTest,
     EXPECT_TRUE(marked);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(legacyProvider.requestCount, 0);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
-    EXPECT_EQ(lifecycle.counts().contentUploads, 1u);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 1u);
+    EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
 
     PendingLoadFinalizeContext finalizeContext{false, budget};
     std::optional<PendingTileLoad> pending;
@@ -819,7 +819,7 @@ TEST(TileLoadSchedulerTest,
                 finalizeContext);
     }
     ASSERT_TRUE(pending.has_value());
-    EXPECT_EQ(pending->domain, TileLoadDomain::Content);
+    EXPECT_EQ(pending->domain, TileLoadDomain::GltfTerrain);
     EXPECT_EQ(pending->result.status, TileLoadStatus::Renderable);
     EXPECT_TRUE(pending->content().hasGltfTerrainPayload());
     ASSERT_NE(pending->content().gltfModel, nullptr);

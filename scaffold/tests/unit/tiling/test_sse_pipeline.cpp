@@ -23120,8 +23120,9 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
               contentKey,
               makeTriangleGltfModel()),
           "Tileset: higher-priority content upload can complete second");
-    check(tileset.loadDiagnostics().pendingContentUploads == 2,
-          "Tileset: content-owned terrain/content uploads wait on main thread");
+    check(tileset.loadDiagnostics().pendingContentUploads == 0 &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 2,
+          "Tileset: terrain-owned glTF uploads are tracked in terrain domain");
 
     TilesetTestAccess::processPendingUploads(tileset);
 
@@ -23135,11 +23136,12 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
               contentTile->content.contentKind == TileContentKind::Render &&
               contentTile->content.renderContent.hasGltfModel() &&
               contentTile->content.renderContent.hasGltfPrimitiveResources(),
-          "Tileset: global main-thread budget processes higher-priority content first");
+          "Tileset: global main-thread budget processes higher-priority terrain-owned glTF first");
     check(terrainTile &&
               terrainTile->content.loadState == TileLoadState::ContentLoading &&
-              diag.pendingContentUploads == 1,
-          "Tileset: lower-priority content-owned terrain waits under the same upload budget");
+              diag.pendingTerrainUploads == 1 &&
+              diag.pendingContentUploads == 0,
+          "Tileset: lower-priority content-owned glTF terrain waits in terrain upload budget");
 }
 
 void testTilesetFrameResourceBudgetLimitsWorkerRequests() {
@@ -28186,10 +28188,10 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
 
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
-              tileset.loadDiagnostics().pendingContentUploads == 1 &&
-              tileset.loadDiagnostics().pendingTerrainUploads == 0 &&
+              tileset.loadDiagnostics().pendingContentUploads == 0 &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
               rawProvider->requestCount == 0,
-          "Tileset: glTF-parent child enters local content upload without provider request");
+          "Tileset: glTF-parent child enters local glTF terrain upload without provider request");
 
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =
@@ -28365,10 +28367,10 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     TilesetTile* child = root->children[2];
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
-              tileset.loadDiagnostics().pendingContentUploads == 1 &&
-              tileset.loadDiagnostics().pendingTerrainUploads == 0 &&
+              tileset.loadDiagnostics().pendingContentUploads == 0 &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
               rawProvider->requestCount == 0,
-          "Tileset: WebMercator glTF-parent child queues local content upsample");
+          "Tileset: WebMercator glTF-parent child queues local glTF terrain upsample");
 
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =

@@ -75,6 +75,10 @@ public:
         }
 
         onIssued();
+        const TileLoadDomain domain =
+            provider.providesTerrainQuadtree()
+                ? TileLoadDomain::GltfTerrain
+                : TileLoadDomain::Content;
         provider.requestTileContent(
             key,
             token,
@@ -86,13 +90,14 @@ public:
              key,
              token,
              group,
-             priority](const TileKey&, TileContentLoadResult result) mutable {
+             priority,
+             domain](const TileKey&, TileContentLoadResult result) mutable {
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
                         enqueueCompletedLoadResult(
                             pendingLoads,
-                            TileLoadDomain::Content,
+                            domain,
                             key,
                             cacheKey,
                             group,
