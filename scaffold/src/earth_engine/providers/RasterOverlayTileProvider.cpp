@@ -703,6 +703,7 @@ struct LoadedSourceImage {
     std::optional<Rectangle> sourceSubset;
     RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
         RasterOverlayTile::MoreDetailAvailable::Unknown;
+    bool terminalFailure = false;
 };
 
 struct PixelRectangle {
@@ -1136,6 +1137,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                           scheme.tileToRectangle(originalKey))
                     : it->second.sourceSubset;
                 source.moreDetailAvailable = it->second.moreDetailAvailable;
+                source.terminalFailure = it->second.terminalFailure;
                 cachedSource = std::move(source);
             }
         }
@@ -1293,7 +1295,7 @@ private:
         const InFlightSourceTileAsset::Result& cached,
         const TileKey& originalKey,
         bool ancestorFallback) const {
-        if (!cached || !cached->image) {
+        if (!cached) {
             return LoadedSourceImage{};
         }
         LoadedSourceImage source;
@@ -1304,6 +1306,7 @@ private:
             ? std::optional<Rectangle>(scheme.tileToRectangle(originalKey))
             : cached->sourceSubset;
         source.moreDetailAvailable = cached->moreDetailAvailable;
+        source.terminalFailure = cached->terminalFailure;
         return source;
     }
 
@@ -1507,7 +1510,7 @@ private:
         bool finished = false;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (source.image) {
+            if (source.image || source.terminalFailure) {
                 sources.push_back(std::move(source));
             }
             --remaining;
@@ -1662,7 +1665,8 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             source.bounds,
             std::shared_ptr<const DecodedImage>(std::move(source.image)),
             source.sourceSubset,
-            source.moreDetailAvailable});
+            source.moreDetailAvailable,
+            false});
     }
     if (!haveAnyUsefulImageData) {
         CompositeImageResult result;
