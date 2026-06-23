@@ -30,6 +30,10 @@ public:
             tile.children.size() >= 4) {
             return false;
         }
+        if (tile.content.renderContent.isTerrainRenderContent() &&
+            !tile.content.renderContent.hasGltfContent()) {
+            return false;
+        }
 
         const RasterOverlayDetails& details =
             tile.content.renderContent.rasterOverlayDetails();

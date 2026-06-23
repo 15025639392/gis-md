@@ -1412,6 +1412,42 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
+     TerrainRasterUpsampleRequiresGltfRenderContentLikeCesiumNative) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    parent.geometricError = 100.0;
+
+    RasterMappedToTilesetTile& mapped =
+        addMoreDetailRasterMapping(parent, provider);
+    ASSERT_TRUE(mapped.isMoreDetailAvailable());
+    ASSERT_TRUE(parent.content.renderContent.hasSurfaceMesh());
+    parent.content.renderContent.setTerrainRenderContent(true);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    EXPECT_FALSE(TileRasterUpsampledChildMaterializer::materialize(
+        parent,
+        100.0,
+        ensure));
+    EXPECT_TRUE(parent.children.empty());
+    EXPECT_TRUE(tiles.empty());
+}
+
+TEST(TileChildMaterializerTest,
      RasterUpsampledChildrenUseOverlayCenterWithinContentUnionLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto overlayScheme = TileScheme::createXYZWebMercator();
