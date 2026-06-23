@@ -124,7 +124,7 @@ TEST(
 
     EXPECT_EQ(snapshot.networkRequestsIssued, 10);
     EXPECT_EQ(snapshot.networkRequestsLimit, 26);
-    EXPECT_EQ(snapshot.terrainContentNetworkRequestsIssued, 1);
+    EXPECT_EQ(snapshot.terrainContentNetworkRequestsIssued, 3);
     EXPECT_EQ(snapshot.terrainContentNetworkRequestsLimit, 26);
     EXPECT_EQ(snapshot.contentNetworkRequestsIssued, 2);
     EXPECT_EQ(snapshot.contentNetworkRequestsLimit, 26);

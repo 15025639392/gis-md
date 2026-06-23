@@ -183,7 +183,7 @@ TEST(
 
     EXPECT_EQ(diag.resourceBudget.frameNumber, 42u);
     EXPECT_EQ(diag.resourceBudget.networkRequestsIssued, 4u);
-    EXPECT_EQ(diag.resourceBudget.terrainContentNetworkRequestsIssued, 1u);
+    EXPECT_EQ(diag.resourceBudget.terrainContentNetworkRequestsIssued, 2u);
     EXPECT_EQ(diag.resourceBudget.rasterNetworkRequestsIssued, 2u);
     EXPECT_EQ(diag.resourceBudget.mainThreadFinalizesUsed, 1u);
     EXPECT_EQ(diag.resourceBudget.terminalStateTransitionsUsed, 1u);

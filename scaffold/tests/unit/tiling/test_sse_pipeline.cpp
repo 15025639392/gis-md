@@ -12632,14 +12632,14 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
           "TileLoadDiagnostics: counts unload queue, tile states, content kinds, and missing projections");
     check(diag.resourceBudget.frameNumber == 42 &&
               diag.resourceBudget.networkRequestsIssued == 4 &&
-              diag.resourceBudget.terrainContentNetworkRequestsIssued == 1 &&
+              diag.resourceBudget.terrainContentNetworkRequestsIssued == 2 &&
               diag.resourceBudget.contentNetworkRequestsIssued == 1 &&
               diag.resourceBudget.rasterNetworkRequestsIssued == 2 &&
               diag.resourceBudget.mainThreadFinalizesUsed == 1 &&
               diag.resourceBudget.terminalStateTransitionsUsed == 1 &&
               diag.resourceBudget.rasterUploadsUsed == 1 &&
               diag.resourceBudget.maxTerrainContentNetworkRequestsPerFrame == 3 &&
-              diag.resourceBudget.maxContentNetworkRequestsPerFrame == 10 &&
+              diag.resourceBudget.maxContentNetworkRequestsPerFrame == 3 &&
               diag.resourceBudget.maxRasterNetworkRequestsPerFrame == 4 &&
               diag.resourceBudget.maxContentNetworkInflight == 20 &&
               diag.resourceBudget.maxMainThreadFinalizesPerFrame == 2 &&
@@ -15726,8 +15726,8 @@ void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
     child.children.push_back(&grandchild);
     grandchild.content.upsampledFromParent = true;
     grandchild.content.loadState = TileLoadState::ContentLoading;
-    check(TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent),
-          "TileUnloadPolicy: deeper upsampled descendants protect source ancestors");
+    check(!TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent),
+          "TileUnloadPolicy: deeper upsampled descendants do not protect non-source ancestors");
 
     parent.content.renderContent.setSurfaceDrawable(true);
     parent.selectionFrameState.completeRenderable = true;
@@ -21468,7 +21468,7 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
 
     check(snapshot.networkRequestsIssued == 10 &&
               snapshot.networkRequestsLimit == 26 &&
-              snapshot.terrainContentNetworkRequestsIssued == 1 &&
+              snapshot.terrainContentNetworkRequestsIssued == 3 &&
               snapshot.terrainContentNetworkRequestsLimit == 26 &&
               snapshot.contentNetworkRequestsIssued == 2 &&
               snapshot.contentNetworkRequestsLimit == 26 &&

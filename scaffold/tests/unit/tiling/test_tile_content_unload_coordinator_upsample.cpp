@@ -99,7 +99,7 @@ TEST(
 
 TEST(
     TileContentUnloadCoordinatorUpsampleTest,
-    NestedProtectedUpsampleSourceKeepsAncestorContent) {
+    NestedUpsampleDoesNotProtectNonSourceAncestorContent) {
     ProtectedSourceFixture fixture;
     TilesetTile grandchild{
         TileKey{"test", 2, 0, 0},
@@ -113,11 +113,10 @@ TEST(
 
     const TileCacheUnloadContentResult result = fixture.unloadParent();
 
-    EXPECT_EQ(result, TileCacheUnloadContentResult::Keep);
-    EXPECT_EQ(fixture.parent.content.contentKind, TileContentKind::Render);
-    EXPECT_EQ(fixture.parent.content.loadState, TileLoadState::Unloading);
-    EXPECT_TRUE(fixture.parent.content.renderContent.hasSurfaceMesh());
-    EXPECT_FALSE(fixture.parent.content.renderContent.isSurfaceDrawable());
-    EXPECT_NE(fixture.terrainCache.find(fixture.cacheKey),
+    EXPECT_EQ(result, TileCacheUnloadContentResult::Remove);
+    EXPECT_EQ(fixture.parent.content.contentKind, TileContentKind::Unknown);
+    EXPECT_EQ(fixture.parent.content.loadState, TileLoadState::Unloaded);
+    EXPECT_FALSE(fixture.parent.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(fixture.terrainCache.find(fixture.cacheKey),
               fixture.terrainCache.end());
 }

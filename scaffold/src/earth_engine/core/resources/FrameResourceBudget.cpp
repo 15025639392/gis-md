@@ -28,7 +28,7 @@ bool FrameResourceBudget::canIssue(FrameResourceLane lane,
                        positiveUnits(estimatedFanout) <=
                    networkRequestLimit(lane);
         case FrameResourceLane::ContentRequest:
-            return contentNetworkRequestsIssued_ +
+            return terrainContentNetworkRequestsIssued_ +
                        positiveUnits(estimatedFanout) <=
                    networkRequestLimit(lane);
         case FrameResourceLane::RasterRequest:
@@ -57,6 +57,8 @@ bool FrameResourceBudget::tryIssue(FrameResourceLane lane,
             break;
         case FrameResourceLane::ContentRequest:
             contentNetworkRequestsIssued_ += positiveUnits(estimatedFanout);
+            terrainContentNetworkRequestsIssued_ +=
+                positiveUnits(estimatedFanout);
             networkRequestsIssued_ += positiveUnits(estimatedFanout);
             break;
         case FrameResourceLane::RasterRequest:
@@ -200,7 +202,9 @@ uint32_t FrameResourceBudget::networkRequestLimit(FrameResourceLane lane) const 
                        ? config_.maxTerrainContentNetworkRequestsPerFrame
                        : config_.maxNetworkRequestsPerFrame;
         case FrameResourceLane::ContentRequest:
-            return config_.maxNetworkRequestsPerFrame;
+            return config_.maxTerrainContentNetworkRequestsPerFrame > 0
+                       ? config_.maxTerrainContentNetworkRequestsPerFrame
+                       : config_.maxNetworkRequestsPerFrame;
         case FrameResourceLane::RasterRequest:
             return config_.maxRasterNetworkRequestsPerFrame > 0
                        ? config_.maxRasterNetworkRequestsPerFrame
@@ -221,7 +225,9 @@ uint32_t FrameResourceBudget::networkInflightLimit(FrameResourceLane lane) const
                        ? config_.maxTerrainContentNetworkInflight
                        : config_.maxNetworkInflight;
         case FrameResourceLane::ContentRequest:
-            return config_.maxNetworkInflight;
+            return config_.maxTerrainContentNetworkInflight > 0
+                       ? config_.maxTerrainContentNetworkInflight
+                       : config_.maxNetworkInflight;
         case FrameResourceLane::RasterRequest:
             return config_.maxRasterNetworkInflight > 0
                        ? config_.maxRasterNetworkInflight

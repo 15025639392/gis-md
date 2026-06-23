@@ -35,9 +35,6 @@ bool TileUnloadPolicy::hasContentLoadingUpsampledDescendant(
             child->content.loadState == TileLoadState::ContentLoading) {
             return true;
         }
-        if (hasContentLoadingUpsampledDescendant(*child)) {
-            return true;
-        }
     }
     return false;
 }
