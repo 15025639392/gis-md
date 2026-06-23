@@ -257,7 +257,6 @@ private:
     bool loadMappedTile(RasterOverlayTile& tile,
                         QuadtreeSourcePlan sourcePlan,
                         const Rectangle& targetBounds,
-                        const Rectangle& outputBounds,
                         const std::string& cacheKey,
                         FrameResourceBudget* budget);
     void refreshSourceAssetDepot();

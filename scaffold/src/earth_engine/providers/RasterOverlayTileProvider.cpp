@@ -1393,7 +1393,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
                           std::shared_ptr<QuadtreeSourceAssetDepot> sourceDepot,
                           QuadtreeSourcePlan plan,
                           Rectangle bounds,
-                          Rectangle outputRectangle,
+                          RasterOverlayProjection outputProjection,
                           int maximumSourceLevel,
                           bool emptyWhenOnlyAncestorFallback,
                           CompositeRequestSuccess success,
@@ -1402,7 +1402,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
         , depot(std::move(sourceDepot))
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
-        , outputBounds(outputRectangle)
+        , projection(outputProjection)
         , maximumLevel(maximumSourceLevel)
         , returnEmptyForAncestorOnly(emptyWhenOnlyAncestorFallback)
         , onSuccess(std::move(success))
@@ -1494,7 +1494,7 @@ private:
             onSuccess(
                 nullptr,
                 source.image,
-                outputBounds,
+                projectGeographicToProvider(source.bounds, projection),
                 moreDetailAvailable);
             return;
         }
@@ -1532,7 +1532,7 @@ private:
             onSuccess(
                 std::move(composed.image),
                 nullptr,
-                outputBounds,
+                projectGeographicToProvider(composed.rectangle, projection),
                 composed.moreDetailAvailable);
         } else {
             onFailure();
@@ -1543,7 +1543,7 @@ private:
     std::shared_ptr<QuadtreeSourceAssetDepot> depot;
     QuadtreeSourcePlan sourcePlan;
     Rectangle targetBounds;
-    Rectangle outputBounds;
+    RasterOverlayProjection projection;
     int maximumLevel = 0;
     bool returnEmptyForAncestorOnly = false;
     CompositeRequestSuccess onSuccess;
@@ -2015,7 +2015,6 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
         tile,
         std::move(sourcePlan),
         targetBounds,
-        outputBounds,
         tileCacheKey(key),
         budget);
 }
@@ -2096,7 +2095,6 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
         tile,
         std::move(sourcePlan),
         *sourceBounds,
-        outputBounds,
         ck,
         budget);
 }
@@ -2105,7 +2103,6 @@ bool RasterOverlayTileProvider::loadMappedTile(
     RasterOverlayTile& tile,
     QuadtreeSourcePlan sourcePlan,
     const Rectangle& targetBounds,
-    const Rectangle& outputBounds,
     const std::string& cacheKey,
     FrameResourceBudget* budget) {
     if (cacheKey.empty()) return false;
@@ -2166,7 +2163,7 @@ bool RasterOverlayTileProvider::loadMappedTile(
         sourceAssetDepot_,
         sourcePlan,
         targetBounds,
-        outputBounds,
+        projection_,
         getMaximumLevel(),
         returnEmptyForAncestorOnly,
         [state, cacheKey](std::unique_ptr<DecodedImage> composed,

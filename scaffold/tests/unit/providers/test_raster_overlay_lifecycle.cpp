@@ -988,6 +988,61 @@ TEST(RasterOverlayLifecycleTest, WebMercatorBoundarySlopUsesProjectedGeometrySpa
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
 }
 
+TEST(RasterOverlayLifecycleTest, CompositeProviderLoadStoresComposedRectangleLikeCesiumNative) {
+    RecordingImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 1};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle coveredNorthHalf(
+        sourceBounds.west(),
+        sourceBounds.south() + sourceBounds.height() * 0.5,
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    RasterOverlay::Options options;
+    options.coverageRectangle = coveredNorthHalf;
+    RasterOverlay overlay(
+        std::make_unique<NullImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    provider.setOwner(&overlay);
+
+    auto compositeTile = provider
+                             .mapRasterTilesToGeometryTile(
+                                 projectForProvider(provider, sourceBounds),
+                                 512.0,
+                                 512.0)
+                             .tile;
+
+    ASSERT_NE(nullptr, compositeTile);
+    ASSERT_TRUE(compositeTile->isCompositeTile());
+    ASSERT_TRUE(provider.loadTile(*compositeTile));
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
+    sources.push_back({
+        sourceKey,
+        sourceBounds,
+        makeImage(256, 256, 80),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Yes});
+    auto expected = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+        *scheme,
+        coveredNorthHalf,
+        sourceKey.z,
+        std::move(sources),
+        provider.getMaximumLevel());
+    ASSERT_NE(nullptr, expected.image);
+    EXPECT_TRUE(compositeTile->getRectangle().equalsEpsilon(
+        projectForProvider(provider, expected.rectangle),
+        1e-7));
+}
+
 TEST(RasterOverlayLifecycleTest, LargeAreaUsesRootTileLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
