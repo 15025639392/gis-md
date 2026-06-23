@@ -12,7 +12,7 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
 
     if (snapshot.upsampledFromParent) {
         if (snapshot.contentProviderOwnsTerrainQuadtree) {
-            return TileLoadRequestKind::GltfTerrainUpsample;
+            return TileLoadRequestKind::TerrainContentUpsample;
         }
         return TileLoadRequestKind::UpsampledTerrain;
     }
@@ -32,7 +32,7 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
         !snapshot.legacyTerrainProviderSupportsTile) {
         return TileLoadRequestKind::Skip;
     }
-    return TileLoadRequestKind::LegacyHeightmapTerrain;
+    return TileLoadRequestKind::HeightmapTerrainAdapter;
 }
 
 } // namespace earth_engine

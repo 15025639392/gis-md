@@ -274,7 +274,7 @@ public:
     }
 };
 
-class SyncGltfTerrainAvailabilityContentProvider final
+class SyncTerrainContentAvailabilityContentProvider final
     : public TilesetContentProvider {
 public:
     std::string id() const override {
@@ -579,7 +579,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsEmptyCacheKeys) {
             "",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyHeightmapTerrain,
+            TileLoadDomain::HeightmapTerrainAdapter,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, terrainResult);
@@ -691,7 +691,7 @@ TEST(TileLoadRequestDispatcherTest,
 
     auto pending = pendingLoads.takeHighestPriorityTerminalResult(budget);
     ASSERT_TRUE(pending.has_value());
-    EXPECT_EQ(TileLoadDomain::LegacyHeightmapTerrain, pending->domain);
+    EXPECT_EQ(TileLoadDomain::HeightmapTerrainAdapter, pending->domain);
     EXPECT_EQ(TileLoadStatus::Empty, pending->result.status);
     EXPECT_FALSE(
         pending->content().metadata.updatedBoundingVolume.has_value());
@@ -778,7 +778,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     TerrainResultIsHeightmapOnlyAndGltfTerrainUsesContentResult) {
+     TerrainResultIsHeightmapOnlyAndTerrainContentUsesContentResult) {
     auto gltfModel = std::make_unique<GltfModel>();
     GltfModel* rawGltfModel = gltfModel.get();
     TileContentLoadResult contentResult =
@@ -837,31 +837,31 @@ TEST(TileLoadRequestDispatcherTest,
             -10.0,
             20.0);
     const Mat4 directTransform = Mat4::translation(Vec3{1.0, 2.0, 3.0});
-    TileLoadResult directGltfTerrain =
+    TileLoadResult directTerrainContent =
         TileLoadResult::createRenderableGltfTerrain(
             std::move(directGltfModel),
             directMetadata,
             directTransform);
-    EXPECT_TRUE(directGltfTerrain.shouldUpload());
-    EXPECT_TRUE(directGltfTerrain.content.hasGltfTerrainPayload());
+    EXPECT_TRUE(directTerrainContent.shouldUpload());
+    EXPECT_TRUE(directTerrainContent.content.hasGltfTerrainPayload());
     EXPECT_EQ(TerrainTilePayloadKind::None,
-              directGltfTerrain.content.terrainPayloadKind);
-    EXPECT_EQ(nullptr, directGltfTerrain.content.heightmap);
-    EXPECT_EQ(rawDirectGltfModel, directGltfTerrain.content.gltfModel.get());
-    EXPECT_EQ(directTransform, directGltfTerrain.content.contentTransform);
+              directTerrainContent.content.terrainPayloadKind);
+    EXPECT_EQ(nullptr, directTerrainContent.content.heightmap);
+    EXPECT_EQ(rawDirectGltfModel, directTerrainContent.content.gltfModel.get());
+    EXPECT_EQ(directTransform, directTerrainContent.content.contentTransform);
     ASSERT_TRUE(
-        directGltfTerrain.content.metadata.updatedBoundingVolume.has_value());
+        directTerrainContent.content.metadata.updatedBoundingVolume.has_value());
     const TileBoundingVolume& committedVolume =
-        *directGltfTerrain.content.metadata.updatedBoundingVolume;
+        *directTerrainContent.content.metadata.updatedBoundingVolume;
     EXPECT_EQ(TileBoundingVolumeKind::Region, committedVolume.kind);
     EXPECT_EQ(directMetadata.updatedBoundingVolume->region,
               committedVolume.region);
     EXPECT_DOUBLE_EQ(-10.0, committedVolume.minimumHeight);
     EXPECT_DOUBLE_EQ(20.0, committedVolume.maximumHeight);
     ASSERT_TRUE(
-        directGltfTerrain.content.metadata.rasterOverlayDetails.has_value());
+        directTerrainContent.content.metadata.rasterOverlayDetails.has_value());
     const Rectangle* inheritedRasterRectangle =
-        directGltfTerrain.content.metadata.rasterOverlayDetails
+        directTerrainContent.content.metadata.rasterOverlayDetails
             ->findRectangleForOverlayProjection(
                 RasterOverlayProjection::Geographic);
     ASSERT_NE(nullptr, inheritedRasterRectangle);
@@ -876,14 +876,14 @@ TEST(TileLoadRequestDispatcherTest,
     explicitMetadata.rasterOverlayDetails.emplace();
     explicitMetadata.rasterOverlayDetails->setGeographicRectangle(
         explicitRasterRectangle);
-    TileLoadResult explicitGltfTerrain =
+    TileLoadResult explicitTerrainContent =
         TileLoadResult::createRenderableGltfTerrain(
             std::move(explicitModel),
             explicitMetadata);
     ASSERT_TRUE(
-        explicitGltfTerrain.content.metadata.rasterOverlayDetails.has_value());
+        explicitTerrainContent.content.metadata.rasterOverlayDetails.has_value());
     const Rectangle* explicitCommittedRectangle =
-        explicitGltfTerrain.content.metadata.rasterOverlayDetails
+        explicitTerrainContent.content.metadata.rasterOverlayDetails
             ->findRectangleForOverlayProjection(
                 RasterOverlayProjection::Geographic);
     ASSERT_NE(nullptr, explicitCommittedRectangle);
@@ -895,7 +895,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     GltfTerrainAvailabilityAppliesWhenLoadResultQueuesUploadLikeCesiumNative) {
+     TerrainContentAvailabilityAppliesWhenLoadResultQueuesUploadLikeCesiumNative) {
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
@@ -904,7 +904,7 @@ TEST(TileLoadRequestDispatcherTest,
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
     const TileKey key{"Geographic-TMS", 3, 1, 1};
-    SyncGltfTerrainAvailabilityContentProvider provider;
+    SyncTerrainContentAvailabilityContentProvider provider;
     bool issued = false;
 
     TileLoadDispatchResult result =
@@ -965,7 +965,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     TerrainContentProviderQueuesGltfTerrainDomain) {
+     TerrainContentProviderQueuesTerrainContentDomain) {
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
@@ -1001,7 +1001,7 @@ TEST(TileLoadRequestDispatcherTest,
     std::optional<PendingTileLoad> upload =
         pendingLoads.takeHighestPriorityUpload(false, budget);
     ASSERT_TRUE(upload.has_value());
-    EXPECT_EQ(TileLoadDomain::GltfTerrain, upload->domain);
+    EXPECT_EQ(TileLoadDomain::TerrainContent, upload->domain);
     EXPECT_TRUE(upload->content().hasGltfTerrainPayload());
 }
 
@@ -1196,7 +1196,7 @@ TEST(TileLoadRequestDispatcherTest, RejectsRequestsDuringDestroy) {
             "destroy-upsample",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyHeightmapTerrain,
+            TileLoadDomain::HeightmapTerrainAdapter,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Destroying, terrainResult);
@@ -1562,7 +1562,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingUploadKeys) {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             "terrain-upload-pending",
             TileLoadPriorityGroup::Normal,
@@ -1634,7 +1634,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsClaimedUploadKeys) {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             "terrain-upload-claimed",
             TileLoadPriorityGroup::Normal,
@@ -1711,7 +1711,7 @@ TEST(TileLoadRequestDispatcherTest,
         std::lock_guard<std::mutex> lock(mutex);
         pendingLoads.addTerminalResult(
             PendingTileLoad{
-                TileLoadDomain::LegacyHeightmapTerrain,
+                TileLoadDomain::HeightmapTerrainAdapter,
                 key,
                 "shared-cache-key",
                 TileLoadPriorityGroup::Normal,
@@ -1728,7 +1728,7 @@ TEST(TileLoadRequestDispatcherTest,
             "shared-cache-key",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyHeightmapTerrain,
+            TileLoadDomain::HeightmapTerrainAdapter,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
@@ -1756,7 +1756,7 @@ TEST(TileLoadRequestDispatcherTest,
             "upsample-blocked",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileLoadDomain::LegacyHeightmapTerrain,
+            TileLoadDomain::HeightmapTerrainAdapter,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);

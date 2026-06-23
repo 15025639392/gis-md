@@ -80,7 +80,7 @@ public:
             }
 
             if (requestKind == TileLoadRequestKind::UpsampledTerrain ||
-                requestKind == TileLoadRequestKind::GltfTerrainUpsample) {
+                requestKind == TileLoadRequestKind::TerrainContentUpsample) {
                 if (!tileState ||
                     !prepareUpsampleSourceTile(
                         *tileState,
@@ -88,20 +88,20 @@ public:
                     continue;
                 }
 
-                const bool needsGltfTerrainUpsample =
-                    requestKind == TileLoadRequestKind::GltfTerrainUpsample;
-                const bool hasGltfTerrainSource =
+                const bool needsTerrainContentUpsample =
+                    requestKind == TileLoadRequestKind::TerrainContentUpsample;
+                const bool hasTerrainContentSource =
                     TileGltfTerrainUpsampledChildMaterializer::
                         findGltfTerrainSource(*tileState) != nullptr;
-                if (needsGltfTerrainUpsample && !hasGltfTerrainSource) {
+                if (needsTerrainContentUpsample && !hasTerrainContentSource) {
                     continue;
                 }
-                const TileLoadDomain upsampleDomain = hasGltfTerrainSource
-                    ? TileLoadDomain::GltfTerrain
-                    : TileLoadDomain::LegacyHeightmapTerrain;
+                const TileLoadDomain upsampleDomain = hasTerrainContentSource
+                    ? TileLoadDomain::TerrainContent
+                    : TileLoadDomain::HeightmapTerrainAdapter;
                 TileLoadResult upsampleResult =
                     TileLoadResult::createRenderable();
-                if (hasGltfTerrainSource) {
+                if (hasTerrainContentSource) {
                     std::optional<TileLoadResult> gltfUpsample =
                         TileGltfTerrainUpsampledChildMaterializer::
                             createLoadResult(*tileState);
@@ -173,7 +173,7 @@ public:
                 continue;
             }
 
-            if (requestKind != TileLoadRequestKind::LegacyHeightmapTerrain ||
+            if (requestKind != TileLoadRequestKind::HeightmapTerrainAdapter ||
                 !input.legacyTerrainProvider) {
                 continue;
             }

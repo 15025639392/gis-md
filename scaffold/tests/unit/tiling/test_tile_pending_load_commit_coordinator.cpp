@@ -86,7 +86,7 @@ TileLoadResultMetadata makeBoundingVolumeMetadata(
     return metadata;
 }
 
-TileLoadResult makeGltfTerrainContentResult(
+TileLoadResult makeTerrainContentContentResult(
     std::unique_ptr<GltfModel> model,
     TileLoadResultMetadata metadata = {}) {
     TileContentLoadResult contentResult =
@@ -164,7 +164,7 @@ void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
 
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-    PendingTileLoad result{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad result{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -198,7 +198,7 @@ void expectTerrainTerminalIgnoresMetadata(TileLoadStatus status,
             Rectangle(0.1, 0.2, 0.3, 0.4),
             -10.0,
             20.0));
-    PendingTileLoad pending{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad pending{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -261,7 +261,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert("missing-terrain");
     emptyContentRegistry.insert("missing-content");
-    PendingTileLoad terrainResult{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad terrainResult{TileLoadDomain::HeightmapTerrainAdapter,
         terrainKey,
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
@@ -297,7 +297,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     GltfTerrainTerminalResultsUseTerrainSemanticsLikeCesiumNative) {
+     TerrainContentTerminalResultsUseTerrainSemanticsLikeCesiumNative) {
     for (const auto& [status, expectedLoadState] :
          std::array<std::pair<TileLoadStatus, TileLoadState>, 2>{
              std::pair{TileLoadStatus::RetryLater,
@@ -313,7 +313,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
         TileEmptyContentRegistry emptyContentRegistry;
         emptyContentRegistry.insert(cacheKey);
-        PendingTileLoad result{TileLoadDomain::GltfTerrain,
+        PendingTileLoad result{TileLoadDomain::TerrainContent,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -388,7 +388,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileLoadResult result = TileLoadResult::createTerminal(
         TileLoadStatus::Empty,
         makeBoundingVolumeMetadata(updatedRectangle, -30.0, 60.0));
-    PendingTileLoad pending{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad pending{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -537,7 +537,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    PendingTileLoad terrainUpload{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad terrainUpload{TileLoadDomain::HeightmapTerrainAdapter,
         TileKey{"test", 0, 0, 0},
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
@@ -551,13 +551,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             terrainUpload.key,
             terrainUpload.cacheKey,
             terrainUpload.group,
             terrainUpload.priority,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             contentUpload.key,
             contentUpload.cacheKey,
             contentUpload.group,
@@ -573,7 +573,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitHeightmapTerrainAdapterUpload(
         terrainUpload,
         nullptr,
         {},
@@ -677,7 +677,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentDomainGltfTerrainAppliesAvailabilityAndKeepsTerrainMarker) {
+     ContentDomainTerrainContentAppliesAvailabilityAndKeepsTerrainMarker) {
     const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
     const TileKey availableChildKey{"Geographic-TMS", 3, 0, 0};
     const TileKey unavailableSiblingKey{"Geographic-TMS", 3, 1, 0};
@@ -780,7 +780,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentDomainGltfTerrainUploadAppliesContentAvailabilityUpdates) {
+     ContentDomainTerrainContentUploadAppliesContentAvailabilityUpdates) {
     RecordingTerrainContentProvider provider;
 
     QuantizedMeshAvailabilityUpdate update;
@@ -869,7 +869,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadAppliesGltfTerrainUpdatedBoundingVolumeToTile) {
+     ContentUploadAppliesTerrainContentUpdatedBoundingVolumeToTile) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
@@ -894,7 +894,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(
+        makeTerrainContentContentResult(
             std::move(model),
             std::move(metadata))};
 
@@ -958,7 +958,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadAppliesGltfTerrainRasterOverlayDetailsLikeTileLoadResult) {
+     ContentUploadAppliesTerrainContentRasterOverlayDetailsLikeTileLoadResult) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
@@ -982,7 +982,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(
+        makeTerrainContentContentResult(
             std::move(model),
             std::move(metadata))};
 
@@ -993,7 +993,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1068,7 +1068,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(
+        makeTerrainContentContentResult(
             std::make_unique<GltfModel>(),
             std::move(metadata))};
 
@@ -1163,7 +1163,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(
+        makeTerrainContentContentResult(
             std::make_unique<GltfModel>(),
             std::move(metadata))};
 
@@ -1240,7 +1240,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadCompletesGltfTerrainResourcesWithoutSurfaceMesh) {
+     ContentUploadCompletesTerrainContentResourcesWithoutSurfaceMesh) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain";
     TilesetTile tile(key, Rectangle{});
@@ -1259,7 +1259,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(
+        makeTerrainContentContentResult(
             std::move(model),
             std::move(metadata))};
 
@@ -1330,7 +1330,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadRejectsIncompleteGltfTerrainRenderResources) {
+     ContentUploadRejectsIncompleteTerrainContentRenderResources) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:incomplete-gltf-terrain";
     TilesetTile tile(key, Rectangle{});
@@ -1342,7 +1342,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(std::move(model))};
+        makeTerrainContentContentResult(std::move(model))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -1397,7 +1397,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentDomainGltfTerrainUploadUsesContentLifecycleLikeCesiumNative) {
+     ContentDomainTerrainContentUploadUsesContentLifecycleLikeCesiumNative) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain-content-domain";
     TilesetTile tile(key, Rectangle{});
@@ -1413,7 +1413,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(std::move(model), std::move(metadata))};
+        makeTerrainContentContentResult(std::move(model), std::move(metadata))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -1485,7 +1485,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
 
-    PendingTileLoad upload{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad upload{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -1515,7 +1515,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     int ensureMeshCalls = 0;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitHeightmapTerrainAdapterUpload(
         upload,
         nullptr,
         {},
@@ -1538,7 +1538,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadWithoutPayloadDoesNotMaterializeGltfTerrainUpsample) {
+     ContentUploadWithoutPayloadDoesNotMaterializeTerrainContentUpsample) {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
     const std::string cacheKey = "test:gltf-upsample-without-payload";
@@ -1667,7 +1667,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     GltfTerrainDomainUploadUsesContentLifecycleWithoutLegacyMeshPath) {
+     TerrainContentDomainUploadUsesContentLifecycleWithoutLegacyMeshPath) {
     const TileKey key{"Geographic-TMS", 2, 0, 0};
     const std::string cacheKey = "gltf-terrain-domain-content-upload";
     TilesetTile tile(key, Rectangle{});
@@ -1676,12 +1676,12 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto model = std::make_unique<GltfModel>();
     const GltfModel* rawModel = model.get();
     PendingTileLoad upload{
-        TileLoadDomain::GltfTerrain,
+        TileLoadDomain::TerrainContent,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(std::move(model))};
+        makeTerrainContentContentResult(std::move(model))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -1691,7 +1691,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addUpload(PendingTileLoad{
-            TileLoadDomain::GltfTerrain,
+            TileLoadDomain::TerrainContent,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1740,7 +1740,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadClearsLegacyHeightmapTerrainCacheForSameKey) {
+     ContentUploadClearsHeightmapTerrainAdapterCacheForSameKey) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -1809,7 +1809,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentOwnedTerrainUploadClearsStaleLegacyHeightmapTerrainCacheLikeCesiumNative) {
+     ContentOwnedTerrainUploadClearsStaleHeightmapTerrainAdapterCacheLikeCesiumNative) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -1826,7 +1826,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        makeGltfTerrainContentResult(
+        makeTerrainContentContentResult(
             makeCommitCoordinatorQuadTerrainGltfModel(tile.bounds))};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -1984,7 +1984,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     heightmap->tileSize = 2;
     heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
 
-    PendingTileLoad upload{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad upload{TileLoadDomain::HeightmapTerrainAdapter,
         terrainKey,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -1992,7 +1992,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult::createRenderableHeightmapTerrain(std::move(heightmap))};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             upload.key,
             upload.cacheKey,
             upload.group,
@@ -2022,7 +2022,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     bool meshEnsured = false;
     bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitHeightmapTerrainAdapterUpload(
         upload,
         nullptr,
         {},

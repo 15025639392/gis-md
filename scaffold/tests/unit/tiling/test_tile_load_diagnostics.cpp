@@ -60,20 +60,20 @@ TEST(
         lifecycle.requestState().beginContentRequest(
             "content-request",
             contentToken);
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             TileKey{"test", 1, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 TileKey{"test", 1, 0, 1},
                 "terrain-terminal",
                 TileLoadPriorityGroup::Urgent,
                 0.0,
                 TileLoadStatus::Empty});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{
-            TileLoadDomain::GltfTerrain,
+            TileLoadDomain::TerrainContent,
             TileKey{"test", 1, 0, 2},
             "gltf-terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -81,7 +81,7 @@ TEST(
             TileLoadResult::createRenderableGltfTerrain(
                 std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{
-            TileLoadDomain::GltfTerrain,
+            TileLoadDomain::TerrainContent,
             TileKey{"test", 1, 0, 3},
             "gltf-terrain-terminal",
             TileLoadPriorityGroup::Normal,
@@ -168,8 +168,8 @@ TEST(
     EXPECT_EQ(diag.pendingTerrainRequests, 1);
     EXPECT_EQ(diag.pendingTerrainUploads, 1);
     EXPECT_EQ(diag.pendingTerrainTerminalResults, 1);
-    EXPECT_EQ(diag.pendingGltfTerrainUploads, 1);
-    EXPECT_EQ(diag.pendingGltfTerrainTerminalResults, 1);
+    EXPECT_EQ(diag.pendingTerrainContentUploads, 1);
+    EXPECT_EQ(diag.pendingTerrainContentTerminalResults, 1);
     EXPECT_EQ(diag.pendingContentRequests, 1);
     EXPECT_EQ(diag.pendingContentUploads, 1);
     EXPECT_EQ(diag.pendingContentTerminalResults, 1);

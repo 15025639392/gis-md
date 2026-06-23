@@ -126,21 +126,21 @@ size_t TilePendingLoadQueue::terminalResultCount() const {
 }
 
 size_t TilePendingLoadQueue::terrainUploadCount() const {
-    return countDomain(uploads_, TileLoadDomain::LegacyHeightmapTerrain);
+    return countDomain(uploads_, TileLoadDomain::HeightmapTerrainAdapter);
 }
 
 size_t TilePendingLoadQueue::terrainTerminalResultCount() const {
     return countDomain(
         terminalResults_,
-        TileLoadDomain::LegacyHeightmapTerrain);
+        TileLoadDomain::HeightmapTerrainAdapter);
 }
 
 size_t TilePendingLoadQueue::gltfTerrainUploadCount() const {
-    return countDomain(uploads_, TileLoadDomain::GltfTerrain);
+    return countDomain(uploads_, TileLoadDomain::TerrainContent);
 }
 
 size_t TilePendingLoadQueue::gltfTerrainTerminalResultCount() const {
-    return countDomain(terminalResults_, TileLoadDomain::GltfTerrain);
+    return countDomain(terminalResults_, TileLoadDomain::TerrainContent);
 }
 
 size_t TilePendingLoadQueue::contentUploadCount() const {

@@ -9,7 +9,7 @@ TEST(TileLoadRequestPlannerTest, ClassifiesBasicRequestKinds) {
     snapshot.legacyTerrainProviderSupportsTile = true;
 
     EXPECT_EQ(
-        TileLoadRequestKind::LegacyHeightmapTerrain,
+        TileLoadRequestKind::HeightmapTerrainAdapter,
         TileLoadRequestPlanner::classify(snapshot));
 
     snapshot.contentProviderSupportsTile = true;
@@ -49,7 +49,7 @@ TEST(TileLoadRequestPlannerTest, ClassifiesUnloadedTilesAsRequestable) {
     snapshot.legacyTerrainProviderSupportsTile = true;
 
     EXPECT_EQ(
-        TileLoadRequestKind::LegacyHeightmapTerrain,
+        TileLoadRequestKind::HeightmapTerrainAdapter,
         TileLoadRequestPlanner::classify(snapshot));
 
     snapshot.contentProviderSupportsTile = true;
@@ -102,7 +102,7 @@ TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainUpsampleUsesGltfPath) {
     snapshot.terrainAlreadyCached = true;
 
     EXPECT_EQ(
-        TileLoadRequestKind::GltfTerrainUpsample,
+        TileLoadRequestKind::TerrainContentUpsample,
         TileLoadRequestPlanner::classify(snapshot));
 }
 
@@ -134,7 +134,7 @@ TEST(TileLoadRequestPlannerTest, ClassifiesTemporarilyFailedTilesAsRetryable) {
     snapshot.legacyTerrainProviderSupportsTile = true;
 
     EXPECT_EQ(
-        TileLoadRequestKind::LegacyHeightmapTerrain,
+        TileLoadRequestKind::HeightmapTerrainAdapter,
         TileLoadRequestPlanner::classify(snapshot));
 
     snapshot.contentProviderSupportsTile = true;

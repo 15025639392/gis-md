@@ -573,13 +573,13 @@ TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
     const TileKey requestKey{"test", 1, 2, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             firstUploadKey,
             cacheKeyForTile(firstUploadKey),
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             secondUploadKey,
             cacheKeyForTile(secondUploadKey),
             TileLoadPriorityGroup::Normal,
@@ -821,7 +821,7 @@ TEST(TileLoadSchedulerTest,
                 finalizeContext);
     }
     ASSERT_TRUE(pending.has_value());
-    EXPECT_EQ(pending->domain, TileLoadDomain::GltfTerrain);
+    EXPECT_EQ(pending->domain, TileLoadDomain::TerrainContent);
     EXPECT_EQ(pending->result.status, TileLoadStatus::Renderable);
     EXPECT_TRUE(pending->content().hasGltfTerrainPayload());
     ASSERT_NE(pending->content().gltfModel, nullptr);
@@ -1209,7 +1209,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -1268,7 +1268,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingUploadBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1322,7 +1322,7 @@ TEST(TileLoadSchedulerTest, SkipsClaimedUploadBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1641,7 +1641,7 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
                 tileState = nullptr;
                 {
                     std::lock_guard<std::mutex> lock(lifecycle.mutex());
-                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                             key,
                             cacheKey,
                             TileLoadPriorityGroup::Normal,

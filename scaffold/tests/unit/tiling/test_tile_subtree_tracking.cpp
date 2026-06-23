@@ -195,7 +195,7 @@ TEST(TileSubtreeWorkTracker, FindsAndClearsTerrainLifecycleWork) {
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 child.key,
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,

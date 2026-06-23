@@ -77,7 +77,7 @@ public:
         onIssued();
         const TileLoadDomain domain =
             provider.providesTerrainQuadtree()
-                ? TileLoadDomain::GltfTerrain
+                ? TileLoadDomain::TerrainContent
                 : TileLoadDomain::Content;
         provider.requestTileContent(
             key,
@@ -186,7 +186,7 @@ public:
                                 std::move(result));
                         enqueueCompletedLoadResult(
                             pendingLoads,
-                            TileLoadDomain::LegacyHeightmapTerrain,
+                            TileLoadDomain::HeightmapTerrainAdapter,
                             key,
                             cacheKey,
                             group,

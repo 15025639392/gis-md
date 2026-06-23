@@ -11252,13 +11252,13 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     lifecycle.requestState().beginTerrainRequest(
         erasedCacheKey,
         CancellationToken{});
-    lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         erasedKey,
         erasedCacheKey,
         TileLoadPriorityGroup::Normal,
         10.0,
             TileLoadResult::createRenderableTerrain()});
-    lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         keptKey,
         keptCacheKey,
         TileLoadPriorityGroup::Normal,
@@ -11319,7 +11319,7 @@ void testTileIndexStateErasesTerminalResults() {
     TileLoadLifecycle lifecycle;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 erasedKey,
                 erasedCacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -12770,7 +12770,7 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
         lifecycle.requestState().beginContentRequest(
             "content-request",
             contentToken);
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             TileKey{"test", 1, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -13353,7 +13353,7 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
           "TileContentUploadPolicy: glTF upload replaces terrain and old render resources");
 }
 
-void testContentUploadGeneratesGltfTerrainActiveRasterOverlayProjectionDetails() {
+void testContentUploadGeneratesTerrainContentActiveRasterOverlayProjectionDetails() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -13559,7 +13559,7 @@ void testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails() {
           "TileContentUploadCommitter: raster overlay details use effective content bounding volume like cesium-native");
 }
 
-void testContentUploadPreparesGltfTerrainRenderContent() {
+void testContentUploadPreparesTerrainContentRenderContent() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -13621,7 +13621,7 @@ void testContentUploadPreparesGltfTerrainRenderContent() {
           "TileContentUploadCommitter: content-domain glTF terrain upload uses unified render content and overlay details");
 }
 
-void testContentTileLoadResultCarriesGltfTerrainModel() {
+void testContentTileLoadResultCarriesTerrainContentModel() {
     auto model = makeTriangleGltfModel();
     GltfModel* rawModel = model.get();
     const Rectangle contentRectangle =
@@ -13961,7 +13961,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    PendingTileLoad terrainUpload{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad terrainUpload{TileLoadDomain::HeightmapTerrainAdapter,
         TileKey{"test", 0, 0, 0},
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
@@ -13975,7 +13975,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             terrainUpload.key,
             terrainUpload.cacheKey,
             terrainUpload.group,
@@ -13995,7 +13995,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     const std::vector<ActivatedRasterOverlay*> rasterOverlays;
     bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitHeightmapTerrainAdapterUpload(
         terrainUpload,
         nullptr,
         rasterOverlays,
@@ -14086,7 +14086,7 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert("missing-terrain");
     emptyContentRegistry.insert("missing-content");
-    PendingTileLoad terrainResult{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad terrainResult{TileLoadDomain::HeightmapTerrainAdapter,
         terrainKey,
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
@@ -14196,7 +14196,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
 
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-    PendingTileLoad result{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad result{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -14226,7 +14226,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
 
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-    PendingTileLoad result{TileLoadDomain::LegacyHeightmapTerrain,
+    PendingTileLoad result{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -16486,7 +16486,7 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 child.key,
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -18518,7 +18518,7 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
@@ -18548,13 +18548,13 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
     FrameResourceBudget budget;
     budget.beginFrame(2, config);
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         normalKey,
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
@@ -18563,7 +18563,7 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
 
     std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(true, budget);
-    check(first && first->domain == TileLoadDomain::LegacyHeightmapTerrain,
+    check(first && first->domain == TileLoadDomain::HeightmapTerrainAdapter,
           "TilePendingLoadQueue: interaction still allows urgent terrain upload");
     check(first &&
               first->cacheKey == "urgent",
@@ -18617,13 +18617,13 @@ void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         firstKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
@@ -18667,13 +18667,13 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         lowKey,
         "low",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::Failed});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         highKey,
         "high",
         TileLoadPriorityGroup::Urgent,
@@ -18693,7 +18693,7 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
           "TilePendingLoadQueue: terminal results share priority across terrain and content");
     std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityTerminalResult(budget);
-    check(second && second->domain == TileLoadDomain::LegacyHeightmapTerrain &&
+    check(second && second->domain == TileLoadDomain::HeightmapTerrainAdapter &&
                             second->cacheKey == "high",
           "TilePendingLoadQueue: shared terminal priority falls back to terrain");
     check(queue.terrainTerminalResultCount() == 1 &&
@@ -18710,13 +18710,13 @@ void testTilePendingLoadQueueDeduplicatesTerminalResultsByKind() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         firstKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
         TileLoadStatus::RetryLater});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         secondKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Urgent,
@@ -18760,13 +18760,13 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
@@ -18812,7 +18812,7 @@ void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
     FrameResourceBudget blockedBudget;
     blockedBudget.beginFrame(1, blockedConfig);
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         "terminal",
         TileLoadPriorityGroup::Urgent,
@@ -18831,7 +18831,7 @@ void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
     retryBudget.beginFrame(2, retryConfig);
     std::optional<PendingTileLoad> retry =
         queue.takeHighestPriorityTerminalResult(retryBudget);
-    check(retry && retry->domain == TileLoadDomain::LegacyHeightmapTerrain &&
+    check(retry && retry->domain == TileLoadDomain::HeightmapTerrainAdapter &&
                             retry->cacheKey == "terminal",
           "TilePendingLoadQueue: terminal result blocked by previous frame budget remains retryable");
 }
@@ -18840,7 +18840,7 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -18852,7 +18852,7 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
         TileLoadPriorityGroup::Urgent,
         0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -18882,7 +18882,7 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
     const TileKey terrainTerminalKey{"test", 1, 0, 1};
     const TileKey contentTerminalKey{"test", 1, 1, 1};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         terrainUploadKey,
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
@@ -18894,7 +18894,7 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         terrainTerminalKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
@@ -18932,7 +18932,7 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 terrainKey,
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -18944,7 +18944,7 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
                 TileLoadPriorityGroup::Urgent,
                 0.0,
                 TileLoadStatus::Empty});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             terrainKey,
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -19003,13 +19003,13 @@ void testTilePendingLoadProcessorBudgetsTerminalResults() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 firstKey,
                 "first-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
                 TileLoadStatus::RetryLater});
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 secondKey,
                 "second-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -19050,7 +19050,7 @@ void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 terminalKey,
                 "terminal",
                 TileLoadPriorityGroup::Urgent,
@@ -19102,13 +19102,13 @@ void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() 
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 firstKey,
                 "first-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
                 TileLoadStatus::RetryLater});
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 secondKey,
                 "second-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -19156,7 +19156,7 @@ void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 terminalKey,
                 "terminal",
                 TileLoadPriorityGroup::Urgent,
@@ -19208,13 +19208,13 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 terminalKey,
                 "terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
                 TileLoadStatus::RetryLater});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             uploadKey,
             "upload",
             TileLoadPriorityGroup::Normal,
@@ -19256,13 +19256,13 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             normalKey,
             "normal",
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             urgentKey,
             "urgent",
             TileLoadPriorityGroup::Urgent,
@@ -19298,7 +19298,7 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             TileKey{"test", 1, 0, 0},
             "terrain",
             TileLoadPriorityGroup::Normal,
@@ -19340,7 +19340,7 @@ void testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds() {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             TileKey{"test", 1, 0, 0},
             "shared",
             TileLoadPriorityGroup::Normal,
@@ -19376,7 +19376,7 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             TileKey{"test", 1, 0, 0},
             "terrain",
             TileLoadPriorityGroup::Normal,
@@ -19384,7 +19384,7 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
             TileLoadResult::createRenderableTerrain()});
         std::optional<PendingTileLoad> upload =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
-        check(upload && upload->domain == TileLoadDomain::LegacyHeightmapTerrain,
+        check(upload && upload->domain == TileLoadDomain::HeightmapTerrainAdapter,
               "TilePendingUploadCompletion: claimed-upload test dequeues upload payload");
     }
 
@@ -19457,7 +19457,7 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
           "TilePendingRequestState: empty cache keys are rejected without side effects");
 
     TilePendingLoadQueue pendingLoads;
-    pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         "",
         TileLoadPriorityGroup::Normal,
@@ -19469,7 +19469,7 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+    pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
         key,
         "",
         TileLoadPriorityGroup::Normal,
@@ -19680,7 +19680,7 @@ void testTileLoadLifecycleCancelErasesPendingUploads() {
     const TileKey contentKey{"test", 0, 1, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             terrainKey,
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -19714,7 +19714,7 @@ void testTileLoadLifecycleCancelErasesClaimedUploads() {
     const TileKey contentKey{"test", 0, 1, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             terrainKey,
             "terrain-upload",
             TileLoadPriorityGroup::Urgent,
@@ -19785,7 +19785,7 @@ void testTileLoadLifecycleCancelErasesTerminalResults() {
     const TileKey contentKey{"test", 0, 1, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 terrainKey,
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -19857,7 +19857,7 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
                   "terrain",
                   token),
               "TileLoadLifecycle: starts request before destroy");
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             TileKey{"test", 0, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -19902,7 +19902,7 @@ void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
     TileLoadLifecycle lifecycle;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             TileKey{"test", 0, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -20040,7 +20040,7 @@ void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
-        manager.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        manager.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 TileKey{"test", 0, 0, 0},
                 "terrain-upload",
                 TileLoadPriorityGroup::Normal,
@@ -20262,7 +20262,7 @@ void testTileLoadRequestDispatcherSkipsEmptyCacheKeys() {
             "",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyHeightmapTerrain,
+            TileLoadDomain::HeightmapTerrainAdapter,
             TileLoadResult::createRenderable());
 
     check(terrainResult == TileLoadDispatchResult::Skipped &&
@@ -20733,7 +20733,7 @@ void testTileLoadRequestDispatcherRejectsRequestsDuringDestroy() {
             "destroy-upsample",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyHeightmapTerrain,
+            TileLoadDomain::HeightmapTerrainAdapter,
             TileLoadResult::createRenderable());
 
     check(terrainResult == TileLoadDispatchResult::Destroying &&
@@ -21184,7 +21184,7 @@ void testTileLoadRequestDispatcherSkipsPendingUploadKeys() {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             "terrain-upload-pending",
             TileLoadPriorityGroup::Normal,
@@ -21302,7 +21302,7 @@ void testTileLoadRequestDispatcherSkipsClaimedUploadKeys() {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             "terrain-upload-claimed",
             TileLoadPriorityGroup::Normal,
@@ -21376,7 +21376,7 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 key,
                 "shared-cache-key",
                 TileLoadPriorityGroup::Normal,
@@ -21393,7 +21393,7 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
             "shared-cache-key",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyHeightmapTerrain,
+            TileLoadDomain::HeightmapTerrainAdapter,
             TileLoadResult::createRenderable());
 
     check(result == TileLoadDispatchResult::Skipped,
@@ -21422,7 +21422,7 @@ void testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhaust
             "upsample-blocked",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileLoadDomain::LegacyHeightmapTerrain,
+            TileLoadDomain::HeightmapTerrainAdapter,
             TileLoadResult::createRenderable());
 
     check(result == TileLoadDispatchResult::Issued,
@@ -21527,7 +21527,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     TileLoadRequestSnapshot snapshot;
     snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::LegacyHeightmapTerrain,
+              TileLoadRequestKind::HeightmapTerrainAdapter,
           "TileLoadRequestPlanner: requestable terrain tile loads terrain");
 
     snapshot.contentProviderSupportsTile = true;
@@ -21546,7 +21546,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot.loadState = TileLoadState::Unloaded;
     snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::LegacyHeightmapTerrain,
+              TileLoadRequestKind::HeightmapTerrainAdapter,
           "TileLoadRequestPlanner: unloaded terrain tile remains requestable");
 
     snapshot.contentProviderSupportsTile = true;
@@ -21592,7 +21592,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot.loadState = TileLoadState::FailedTemporarily;
     snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::LegacyHeightmapTerrain,
+              TileLoadRequestKind::HeightmapTerrainAdapter,
           "TileLoadRequestPlanner: temporarily failed terrain tile remains retryable");
 
     snapshot.contentProviderSupportsTile = true;
@@ -22329,7 +22329,7 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
     const std::string cacheKey = testCacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -22387,7 +22387,7 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
     const std::string cacheKey = testCacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -22438,7 +22438,7 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
     const std::string cacheKey = testCacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -22788,7 +22788,7 @@ void testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning() {
                 tileState = nullptr;
                 {
                     std::lock_guard<std::mutex> lock(lifecycle.mutex());
-                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
+                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
                             key,
                             cacheKey,
                             TileLoadPriorityGroup::Normal,
@@ -26336,7 +26336,7 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
           "Scene: terrain sampling is still owned by primary tileset after render");
 }
 
-void testSceneGltfTerrainCountsAsTerrainRenderContent() {
+void testSceneTerrainContentCountsAsTerrainRenderContent() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
@@ -28827,7 +28827,7 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
           "Tileset: WebMercator terrain availability upsample uses terrain projection like cesium-native");
 }
 
-void testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion() {
+void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
     TilesetTile parent(
@@ -28878,7 +28878,7 @@ void testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion() {
           "Tileset: glTF terrain availability upsample derives raster details from parent model region");
 }
 
-void testGltfTerrainUpsamplePropagatesInvertedVCoordinate() {
+void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile parent(
@@ -28938,7 +28938,7 @@ void testGltfTerrainUpsamplePropagatesInvertedVCoordinate() {
           "Tileset: glTF terrain upsample propagates inverted V coordinate like cesium-native");
 }
 
-void testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent() {
+void testTerrainContentUpsampleRejectsOrdinaryGltfContentParent() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
     TilesetTile parent(
@@ -28966,7 +28966,7 @@ void testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent() {
           "Tileset: ordinary glTF content parent is not a terrain upsample source");
 }
 
-void testGltfTerrainUpsampleRequiresRasterOverlayProjectionDetails() {
+void testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
     TilesetTile parent(
@@ -29637,12 +29637,12 @@ int main() {
     testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates();
     testTileTerminalLoadCommitterWritesEmptyRegistryActions();
     testTileContentUploadPolicyPreparesGltfRenderContent();
-    testContentUploadGeneratesGltfTerrainActiveRasterOverlayProjectionDetails();
+    testContentUploadGeneratesTerrainContentActiveRasterOverlayProjectionDetails();
     testContentUploadGeneratesTerrainRasterOverlayProjectionDetails();
     testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf();
     testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails();
-    testContentUploadPreparesGltfTerrainRenderContent();
-    testContentTileLoadResultCarriesGltfTerrainModel();
+    testContentUploadPreparesTerrainContentRenderContent();
+    testContentTileLoadResultCarriesTerrainContentModel();
     testGltfRenderContentProvidesRasterOverlayDetails();
     testTileContentUploadPolicyAppliesTileLoadResultFields();
     testTileLoadResultPreservesInitialBoundingVolumes();
@@ -29873,7 +29873,7 @@ int main() {
     testSceneFrameStateBuilderPopulatesPerFrameState();
     testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets();
     testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain();
-    testSceneGltfTerrainCountsAsTerrainRenderContent();
+    testSceneTerrainContentCountsAsTerrainRenderContent();
     testSceneDiagnosticsExposeTerrainRenderEntryReasons();
     testSceneDiagnosticsExposeTerrainSynchronousPrepReason();
     testSceneDiagnosticsRejectImageryOnlyAncestorFallback();
@@ -29919,10 +29919,10 @@ int main() {
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
     testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
-    testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion();
-    testGltfTerrainUpsamplePropagatesInvertedVCoordinate();
-    testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent();
-    testGltfTerrainUpsampleRequiresRasterOverlayProjectionDetails();
+    testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
+    testTerrainContentUpsamplePropagatesInvertedVCoordinate();
+    testTerrainContentUpsampleRejectsOrdinaryGltfContentParent();
+    testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails();
     testTilesetClearChildrenErasesFlatMapDescendants();
     testTilesetClearChildrenErasesClaimedUploadDescendantWork();
     testTilesetClearChildrenIgnoresStaleTerrainCallback();

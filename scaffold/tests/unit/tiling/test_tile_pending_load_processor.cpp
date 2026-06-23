@@ -18,7 +18,7 @@ PendingTileLoad terrainTerminal(
     double priority = 0.0,
     TileLoadStatus status = TileLoadStatus::RetryLater) {
     return PendingTileLoad{
-        TileLoadDomain::LegacyHeightmapTerrain,
+        TileLoadDomain::HeightmapTerrainAdapter,
         key,
         std::move(cacheKey),
         group,
@@ -47,7 +47,7 @@ PendingTileLoad terrainUpload(
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal,
     double priority = 0.0) {
     return PendingTileLoad{
-        TileLoadDomain::LegacyHeightmapTerrain,
+        TileLoadDomain::HeightmapTerrainAdapter,
         key,
         std::move(cacheKey),
         group,
@@ -78,7 +78,7 @@ PendingTileLoad gltfTerrainUpload(
         TileContentLoadResult::render(std::make_unique<GltfModel>());
     content.terrainRenderContent = true;
     return PendingTileLoad{
-        TileLoadDomain::GltfTerrain,
+        TileLoadDomain::TerrainContent,
         key,
         std::move(cacheKey),
         group,
@@ -89,7 +89,7 @@ PendingTileLoad gltfTerrainUpload(
 std::string labelFor(const char* prefix, const PendingTileLoad& load) {
     return std::string(prefix) +
            (load.domain == TileLoadDomain::Content ? ":content:" :
-            load.domain == TileLoadDomain::GltfTerrain ? ":gltf-terrain:"
+            load.domain == TileLoadDomain::TerrainContent ? ":gltf-terrain:"
                                                        : ":terrain:") +
            load.cacheKey;
 }
@@ -150,7 +150,7 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalThenBudgetedUploads) {
     EXPECT_EQ(0u, counts.contentUploads);
 }
 
-TEST(TilePendingLoadProcessorTest, GltfTerrainUsesContentFinalizeLane) {
+TEST(TilePendingLoadProcessorTest, TerrainContentUsesContentFinalizeLane) {
     TileLoadLifecycle lifecycle;
     const TileKey key{"test", 1, 0, 0};
 

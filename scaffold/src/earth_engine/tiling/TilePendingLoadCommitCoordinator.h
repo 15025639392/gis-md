@@ -89,7 +89,7 @@ public:
     template <typename EnsureTileFn,
               typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
-    static void commitLegacyHeightmapTerrainUpload(
+    static void commitHeightmapTerrainAdapterUpload(
         PendingTileLoad& upload,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -102,7 +102,7 @@ public:
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TileLoadedContent& content = upload.content();
-        const bool hadLegacyHeightmapTerrainPayload =
+        const bool hadHeightmapTerrainAdapterPayload =
             content.terrainPayloadKind == TerrainTilePayloadKind::LegacyHeightmap &&
             content.heightmap != nullptr;
         TileTerrainUploadCommitter::cacheTerrainPayload(
@@ -112,15 +112,15 @@ public:
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
             captureInitialBoundingVolumes(*tile, content.metadata);
-            const bool uploadsLegacyHeightmapTerrain =
+            const bool uploadsHeightmapTerrainAdapter =
                 content.terrainPayloadKind ==
                     TerrainTilePayloadKind::LegacyHeightmap &&
-                hadLegacyHeightmapTerrainPayload;
+                hadHeightmapTerrainAdapterPayload;
             const bool uploadsParentUpsampledTerrain =
-                !uploadsLegacyHeightmapTerrain &&
+                !uploadsHeightmapTerrainAdapter &&
                 tile->content.derivesTerrainFromParent();
             const bool uploadsTerrainPayload =
-                uploadsLegacyHeightmapTerrain ||
+                uploadsHeightmapTerrainAdapter ||
                 uploadsParentUpsampledTerrain;
             if (uploadsTerrainPayload) {
                 TileTerrainUploadCommitter::prepareTerrainRenderContent(
@@ -129,7 +129,7 @@ public:
                     rasterOverlays,
                     device);
             }
-            if ((uploadsLegacyHeightmapTerrain ||
+            if ((uploadsHeightmapTerrainAdapter ||
                  uploadsParentUpsampledTerrain) &&
                 !resourceSmoothingActive &&
                 !tile->content.renderContent.hasSurfaceMesh()) {
@@ -261,7 +261,7 @@ public:
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
         } else {
-            commitLegacyHeightmapTerrainUpload(
+            commitHeightmapTerrainAdapterUpload(
                 upload,
                 device,
                 rasterOverlays,

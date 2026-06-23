@@ -184,27 +184,22 @@ struct TileLoadResult {
 };
 
 enum class TileLoadDomain {
-    LegacyHeightmapTerrain,
-    GltfTerrain,
+    HeightmapTerrainAdapter,
+    TerrainContent,
     Content
 };
 
-inline bool isLegacyHeightmapTerrainLoadDomain(TileLoadDomain domain) {
-    return domain == TileLoadDomain::LegacyHeightmapTerrain;
+inline bool isHeightmapTerrainAdapterLoadDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::HeightmapTerrainAdapter;
 }
 
-inline bool isGltfTerrainLoadDomain(TileLoadDomain domain) {
-    return domain == TileLoadDomain::GltfTerrain;
-}
-
-inline bool isTerrainLoadDomain(TileLoadDomain domain) {
-    return domain == TileLoadDomain::LegacyHeightmapTerrain ||
-           domain == TileLoadDomain::GltfTerrain;
+inline bool isTerrainContentLoadDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::TerrainContent;
 }
 
 inline bool isContentLoadDomain(TileLoadDomain domain) {
     return domain == TileLoadDomain::Content ||
-           domain == TileLoadDomain::GltfTerrain;
+           domain == TileLoadDomain::TerrainContent;
 }
 
 struct PendingTileLoad {
@@ -243,7 +238,7 @@ struct PendingTileLoad {
         return result.content;
     }
 
-    TileLoadDomain domain = TileLoadDomain::LegacyHeightmapTerrain;
+    TileLoadDomain domain = TileLoadDomain::Content;
     TileKey key;
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
