@@ -185,7 +185,8 @@ public:
     int processPendingUploads(bool interactionActive,
                               FrameResourceBudget* budget = nullptr);
 
-    /// True while HTTP requests or main-thread texture uploads are outstanding.
+    /// True while HTTP requests, queued raster source fanout, or main-thread
+    /// texture uploads are outstanding.
     bool hasPendingWork() const;
 
     /// Monotonic state revision. Increments when raster tile load state or GPU

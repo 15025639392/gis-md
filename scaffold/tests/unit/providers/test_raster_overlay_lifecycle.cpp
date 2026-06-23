@@ -2981,12 +2981,20 @@ TEST(RasterOverlayLifecycleTest, LoadingRectanglePumpsSourcesAcrossFramesWithinB
     const size_t firstBatchSize = imagery.pending.size();
     EXPECT_EQ(2u, firstBatchSize);
     EXPECT_EQ(firstBatchSize, firstBudget.rasterNetworkRequestsIssued());
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    imagery.completeNext();
+    imagery.completeNext();
+    EXPECT_TRUE(imagery.pending.empty());
+    EXPECT_EQ(0, provider.getActiveRasterSourceRequests());
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_TRUE(provider.hasPendingWork());
 
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, config);
 
     EXPECT_EQ(0, provider.processPendingUploads(false, &secondBudget));
-    EXPECT_EQ(firstBatchSize + 2u, imagery.pending.size());
+    EXPECT_EQ(2u, imagery.pending.size());
     EXPECT_EQ(2u, secondBudget.rasterNetworkRequestsIssued());
 }
 

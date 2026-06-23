@@ -2484,6 +2484,7 @@ bool RasterOverlayTileProvider::hasPendingWork() const {
     return !asyncState_->pendingUploads.empty() ||
            !asyncState_->inFlightRequests.empty() ||
            !asyncState_->sourceTileDepotInFlight.empty() ||
+           !pendingSourceRequests_.empty() ||
            asyncState_->activeRasterSourceRequests.load(
                std::memory_order_relaxed) > 0;
 }
