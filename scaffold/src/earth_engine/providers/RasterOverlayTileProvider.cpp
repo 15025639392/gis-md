@@ -1535,9 +1535,19 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         } catch (...) {
             onSourceFailed();
             onSourceFinished();
-            finishInFlightSource(originalKey, nullptr);
+            SourceTileAsset failed;
+            failed.key = originalKey;
+            failed.bounds = scheme.tileToRectangle(originalKey);
+            failed.moreDetailAvailable =
+                RasterOverlayTile::MoreDetailAvailable::No;
+            failed.diagnostics.push_back(
+                "Raster source tile request threw before completion");
+            failed.terminalFailure = true;
+            auto transientFailure =
+                std::make_shared<SourceTileAsset>(std::move(failed));
+            finishInFlightSource(originalKey, transientFailure);
             for (const TileKey& key : exceptionInFlightKeys) {
-                finishInFlightSource(key, nullptr);
+                finishInFlightSource(key, transientFailure);
             }
         }
     }

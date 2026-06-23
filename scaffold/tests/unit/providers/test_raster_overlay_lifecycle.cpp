@@ -3113,10 +3113,14 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               failingTile->getState());
     EXPECT_EQ(nullptr, failingTile->getTexture());
+    ASSERT_EQ(1u, failingTile->loadDiagnostics().size());
+    EXPECT_EQ("Raster source tile request threw before completion",
+              failingTile->loadDiagnostics().front());
     EXPECT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
     EXPECT_EQ(0, provider.getCachedSourceTileCount());
     EXPECT_EQ(0, uploaderPtr->uploadCount);
+    EXPECT_FALSE(provider.hasPendingWork());
 
     auto retryTile = provider.mapRasterTilesToGeometryTile(
         projectForProvider(provider, secondPatch),
@@ -3132,6 +3136,8 @@ TEST(RasterOverlayLifecycleTest,
               retryTile->getState());
     EXPECT_EQ(1, provider.getCachedSourceTileCount());
     EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_TRUE(retryTile->loadDiagnostics().empty());
+    EXPECT_FALSE(provider.hasPendingWork());
 }
 
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksAreCachedByRequestedTileLikeCesiumNative) {
