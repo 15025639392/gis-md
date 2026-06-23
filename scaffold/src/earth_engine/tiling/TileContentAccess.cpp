@@ -13,6 +13,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <cassert>
 
 namespace earth_engine {
 
@@ -51,6 +52,21 @@ TileContentAccess TileContentAccess::forContentTerrain(
         rasterOverlayCount);
 }
 
+TileContentAccess TileContentAccess::forNoTerrain(
+    TilesetTileRegistry& tileRegistry,
+    const TileScheme& tileScheme,
+    const TilesetContentProvider* contentProvider,
+    size_t rasterOverlayCount) {
+    return TileContentAccess(
+        tileRegistry,
+        tileScheme,
+        nullptr,
+        contentProvider,
+        nullptr,
+        TerrainOwnership::None,
+        rasterOverlayCount);
+}
+
 TileContentAccess TileContentAccess::forLegacyTerrain(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
@@ -58,13 +74,15 @@ TileContentAccess TileContentAccess::forLegacyTerrain(
     const TilesetContentProvider* contentProvider,
     const HeightmapTerrainCache& heightmapTerrainCache,
     size_t rasterOverlayCount) {
+    assert(legacyTerrainProvider &&
+           "forLegacyTerrain is only for the migration-only TerrainProvider path");
     return TileContentAccess(
         tileRegistry,
         tileScheme,
         legacyTerrainProvider,
         contentProvider,
         &heightmapTerrainCache,
-        TerrainOwnership::LegacyOrNone,
+        TerrainOwnership::Legacy,
         rasterOverlayCount);
 }
 
@@ -177,7 +195,7 @@ bool TileContentAccess::contentTerrainAvailabilityBoundaryTile(
 
 bool TileContentAccess::hasTerrainQuadtree() const {
     return contentProviderOwnsTerrainQuadtree() ||
-           legacyTerrainProvider_ != nullptr;
+           terrainOwnership_ == TerrainOwnership::Legacy;
 }
 
 bool TileContentAccess::canRefine(const TilesetTile& tile) const {

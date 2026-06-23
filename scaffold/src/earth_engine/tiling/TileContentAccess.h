@@ -23,6 +23,12 @@ public:
         const TilesetContentProvider& contentProvider,
         size_t rasterOverlayCount);
 
+    static TileContentAccess forNoTerrain(
+        TilesetTileRegistry& tileRegistry,
+        const TileScheme& tileScheme,
+        const TilesetContentProvider* contentProvider,
+        size_t rasterOverlayCount);
+
     static TileContentAccess forLegacyTerrain(
         TilesetTileRegistry& tileRegistry,
         const TileScheme& tileScheme,
@@ -39,7 +45,8 @@ public:
 
 private:
     enum class TerrainOwnership {
-        LegacyOrNone,
+        None,
+        Legacy,
         ContentProvider,
     };
 
@@ -65,7 +72,7 @@ private:
     const TerrainProvider* legacyTerrainProvider_ = nullptr;
     const TilesetContentProvider* contentProvider_ = nullptr;
     const HeightmapTerrainCache* heightmapTerrainCache_ = nullptr;
-    TerrainOwnership terrainOwnership_ = TerrainOwnership::LegacyOrNone;
+    TerrainOwnership terrainOwnership_ = TerrainOwnership::None;
     size_t rasterOverlayCount_ = 0;
 };
 

@@ -90,13 +90,11 @@ struct GeographicRootFixture {
     std::unique_ptr<TileScheme> scheme = TileScheme::createGeographicTMS();
     TileContentLifecycleManager lifecycle;
     TileContentAccess contentAccess =
-        TileContentAccess::forLegacyTerrain(
-        registry,
-        *scheme,
-        nullptr,
-        nullptr,
-        lifecycle.heightmapTerrainCache(),
-        2);
+        TileContentAccess::forNoTerrain(
+            registry,
+            *scheme,
+            nullptr,
+            2);
 };
 
 struct WebMercatorRootFixture {
@@ -104,13 +102,11 @@ struct WebMercatorRootFixture {
     std::unique_ptr<TileScheme> scheme = TileScheme::createXYZWebMercator();
     TileContentLifecycleManager lifecycle;
     TileContentAccess contentAccess =
-        TileContentAccess::forLegacyTerrain(
-        registry,
-        *scheme,
-        nullptr,
-        nullptr,
-        lifecycle.heightmapTerrainCache(),
-        1);
+        TileContentAccess::forNoTerrain(
+            registry,
+            *scheme,
+            nullptr,
+            1);
 };
 
 struct ContentOwnedGeographicRootFixture {
