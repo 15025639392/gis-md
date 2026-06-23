@@ -206,6 +206,30 @@ public:
     std::vector<TileKey> requestedKeys;
 };
 
+class RecordingImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "recording"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 18; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        callback(key, makeImage(tileWidth(), tileHeight(), 80));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    std::vector<TileKey> requestedKeys;
+};
+
 class MalformedImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "malformed"; }
@@ -932,6 +956,36 @@ TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampli
     EXPECT_EQ(3, uploaderPtr->lastUpload.channels);
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               rectangleMappedTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest, WebMercatorBoundarySlopUsesProjectedGeometrySpanLikeCesiumNative) {
+    RecordingImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 1};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle projectedBounds =
+        projectForProvider(provider, sourceBounds);
+    const double projectedSlop = projectedBounds.height() / 512.0;
+    const Rectangle barelyCrossingSouthEdge(
+        projectedBounds.west(),
+        projectedBounds.south() - projectedSlop * 0.75,
+        projectedBounds.east(),
+        projectedBounds.north());
+
+    auto mappedTile = provider
+                          .mapRasterTilesToGeometryTile(
+                              barelyCrossingSouthEdge,
+                              512.0,
+                              512.0)
+                          .tile;
+
+    ASSERT_NE(nullptr, mappedTile);
+    ASSERT_TRUE(mappedTile->isCompositeTile());
+    ASSERT_TRUE(provider.loadTile(*mappedTile));
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
 }
 
 TEST(RasterOverlayLifecycleTest, LargeAreaUsesRootTileLikeCesiumNative) {

@@ -40,6 +40,8 @@ constexpr double kTwoPi = 2.0 * kPi;
 constexpr double kMaxWebMercatorLat = 1.4844222297453324;
 constexpr double kPixelTolerance = 0.01;
 
+double webMercatorY(double latRad);
+
 #ifdef __ANDROID__
 void logAndroidRasterPipeline(const char* stage,
                               const std::string& cacheKey,
@@ -205,8 +207,22 @@ TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
     // cesium-native QuadtreeRasterOverlayTileProvider excludes tiles that only
     // touch a geometry rectangle along a tile edge, using 1/512 of the geometry
     // span as the edge tolerance.
+    const bool projectedWebMercator = scheme.crsProfile() == "EPSG:3857";
+    auto projectedY = [projectedWebMercator](double latitude) {
+        return projectedWebMercator ? webMercatorY(latitude) : latitude;
+    };
+    auto projectedSouthEdge = [&projectedY](const Rectangle& rectangle) {
+        return projectedY(rectangle.south());
+    };
+    auto projectedNorthEdge = [&projectedY](const Rectangle& rectangle) {
+        return projectedY(rectangle.north());
+    };
+
+    const double geometrySouth = projectedSouthEdge(geometryBounds);
+    const double geometryNorth = projectedNorthEdge(geometryBounds);
     const double veryCloseX = std::max(1e-12, geometryBounds.width()) / 512.0;
-    const double veryCloseY = std::max(1e-12, geometryBounds.height()) / 512.0;
+    const double veryCloseY =
+        std::max(1e-12, std::abs(geometryNorth - geometrySouth)) / 512.0;
 
     const Rectangle westTile = scheme.tileToRectangle(
         TileKey{scheme.id(), zoom, range.minX, range.minY});
@@ -226,28 +242,28 @@ TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
     if (yDown) {
         const Rectangle northTile = scheme.tileToRectangle(
             TileKey{scheme.id(), zoom, range.minX, range.minY});
-        if (std::abs(northTile.south() - geometryBounds.north()) < veryCloseY &&
+        if (std::abs(projectedSouthEdge(northTile) - geometryNorth) < veryCloseY &&
             range.minY < range.maxY) {
             ++range.minY;
         }
 
         const Rectangle southTile = scheme.tileToRectangle(
             TileKey{scheme.id(), zoom, range.maxX, range.maxY});
-        if (std::abs(southTile.north() - geometryBounds.south()) < veryCloseY &&
+        if (std::abs(projectedNorthEdge(southTile) - geometrySouth) < veryCloseY &&
             range.maxY > range.minY) {
             --range.maxY;
         }
     } else {
         const Rectangle southTile = scheme.tileToRectangle(
             TileKey{scheme.id(), zoom, range.minX, range.minY});
-        if (std::abs(southTile.north() - geometryBounds.south()) < veryCloseY &&
+        if (std::abs(projectedNorthEdge(southTile) - geometrySouth) < veryCloseY &&
             range.minY < range.maxY) {
             ++range.minY;
         }
 
         const Rectangle northTile = scheme.tileToRectangle(
             TileKey{scheme.id(), zoom, range.maxX, range.maxY});
-        if (std::abs(northTile.south() - geometryBounds.north()) < veryCloseY &&
+        if (std::abs(projectedSouthEdge(northTile) - geometryNorth) < veryCloseY &&
             range.maxY > range.minY) {
             --range.maxY;
         }
