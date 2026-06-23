@@ -659,4 +659,35 @@ TEST(TilesetQuantizedMeshTest,
                 RasterOverlayProjection::WebMercator));
 }
 
+TEST(TilesetQuantizedMeshTest,
+     GltfTerrainUpsampleRequiresDirectParentContentLikeCesiumNative) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey parentKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey grandchildKey{"Geographic-TMS", 2, 0, 0};
+    TilesetTile root(
+        rootKey,
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
+    TilesetTile parent(
+        parentKey,
+        Rectangle::fromDegrees(-180.0, -90.0, -90.0, 0.0),
+        &root);
+    TilesetTile grandchild(
+        grandchildKey,
+        Rectangle::fromDegrees(-180.0, -90.0, -135.0, -45.0),
+        &parent);
+    parent.children.push_back(&grandchild);
+    root.children.push_back(&parent);
+    grandchild.content.markTerrainAvailabilityUpsample();
+
+    installQuantizedMeshTerrainContent(
+        root,
+        makeQuantizedMeshBytes(Vec3::zero(), Vec3::zero()));
+
+    std::optional<TileLoadResult> childLoad =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(
+            grandchild);
+
+    EXPECT_FALSE(childLoad.has_value());
+}
+
 } // namespace

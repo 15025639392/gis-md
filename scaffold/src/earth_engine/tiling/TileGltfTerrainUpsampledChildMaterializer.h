@@ -16,20 +16,19 @@ namespace earth_engine {
 class TileGltfTerrainUpsampledChildMaterializer {
 public:
     static const TilesetTile* findGltfTerrainSource(const TilesetTile& tile) {
-        const TilesetTile* ancestor = tile.parent;
-        while (ancestor) {
-            const bool sourceStateReady =
-                ancestor->content.loadState == TileLoadState::Done ||
-                ancestor->content.loadState == TileLoadState::Unloading;
-            if (sourceStateReady &&
-                ancestor->content.contentKind == TileContentKind::Render &&
-                ancestor->content.renderContent.isTerrainRenderContent() &&
-                ancestor->content.renderContent.hasGltfContent()) {
-                return ancestor;
-            }
-            ancestor = ancestor->parent;
+        const TilesetTile* parent = tile.parent;
+        if (!parent) {
+            return nullptr;
         }
-        return nullptr;
+        const bool sourceStateReady =
+            parent->content.loadState == TileLoadState::Done ||
+            parent->content.loadState == TileLoadState::Unloading;
+        return sourceStateReady &&
+                parent->content.contentKind == TileContentKind::Render &&
+                parent->content.renderContent.isTerrainRenderContent() &&
+                parent->content.renderContent.hasGltfContent()
+            ? parent
+            : nullptr;
     }
 
     static bool materialize(TilesetTile& tile,
