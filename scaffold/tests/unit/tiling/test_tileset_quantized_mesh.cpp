@@ -25,8 +25,33 @@ using namespace earth_engine;
 
 namespace earth_engine {
 struct TilesetTestAccess {
+    static std::unique_ptr<Tileset> makeTilesetWithLegacyAndContentTerrain(
+        std::unique_ptr<TerrainProvider> legacyTerrainProvider,
+        std::unique_ptr<TilesetContentProvider> contentProvider,
+        std::unique_ptr<TileScheme> scheme) {
+        return std::unique_ptr<Tileset>(
+            new Tileset(
+                Tileset::ProviderOwnership{
+                    std::move(legacyTerrainProvider),
+                    std::move(contentProvider)},
+                std::move(scheme),
+                {},
+                nullptr,
+                TilesetOptions{}));
+    }
+
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
+    }
+
+    static TileLoadRequestOutcome requestMissingContent(
+        Tileset& tileset,
+        const TileKey& key) {
+        return tileset.requestMissingContent(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Normal,
+                1.0}});
     }
 
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
@@ -209,6 +234,7 @@ public:
         CancellationToken,
         ContentCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
         callback(key, TileContentLoadResult::retryLater());
     }
 
@@ -217,8 +243,53 @@ public:
         return TileContentLoadResult::failed();
     }
 
+    int requestCount = 0;
+
 private:
     std::string schemeId_;
+};
+
+std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters);
+
+class CountingLegacyTerrainProvider final : public TerrainProvider {
+public:
+    explicit CountingLegacyTerrainProvider(
+        std::shared_ptr<int> destroyedCounter)
+        : destroyedCounter_(std::move(destroyedCounter)) {}
+
+    ~CountingLegacyTerrainProvider() override {
+        if (destroyedCounter_) {
+            ++(*destroyedCounter_);
+        }
+    }
+
+    std::string id() const override { return "legacy-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 10; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TerrainCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        callback(
+            key,
+            TerrainTileLoadResult::successWithHeightmap(
+                makeFlatHeightmap(9876.0f)));
+    }
+
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*, size_t) override {
+        return makeFlatHeightmap(9876.0f);
+    }
+
+    int requestCount = 0;
+
+private:
+    std::shared_ptr<int> destroyedCounter_;
 };
 
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
@@ -371,6 +442,44 @@ TEST(TilesetQuantizedMeshTest,
 
     EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
     EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainProviderOwnsQuadtreeAndDropsLegacyProvider) {
+    auto legacyDestroyed = std::make_shared<int>(0);
+    auto legacyProvider =
+        std::make_unique<CountingLegacyTerrainProvider>(legacyDestroyed);
+    auto contentProvider = std::make_unique<SparseContentTerrainProvider>();
+    SparseContentTerrainProvider* contentProviderPtr = contentProvider.get();
+
+    std::unique_ptr<Tileset> tileset =
+        TilesetTestAccess::makeTilesetWithLegacyAndContentTerrain(
+            std::move(legacyProvider),
+            std::move(contentProvider),
+            TileScheme::createGeographicTMS());
+
+    ASSERT_NE(nullptr, tileset);
+    EXPECT_EQ(1, *legacyDestroyed);
+    EXPECT_EQ(0, tileset->cachedTerrainTiles());
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    TilesetTestAccess::putTerrainCache(
+        *tileset,
+        rootKey,
+        makeFlatHeightmap(7777.0f));
+
+    EXPECT_EQ(0, tileset->cachedTerrainTiles());
+    const TileLoadRequestOutcome outcome =
+        TilesetTestAccess::requestMissingContent(*tileset, rootKey);
+    EXPECT_EQ(1u, outcome.issued);
+    EXPECT_EQ(1, contentProviderPtr->requestCount);
+
+    TilesetTestAccess::ensureTileMesh(*tileset, *root);
+    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
 }
 
