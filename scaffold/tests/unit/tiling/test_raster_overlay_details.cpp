@@ -7,10 +7,14 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Rectangle.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileRasterOverlayDetailsGenerator.h"
 #include "earth_engine/tiling/TileRenderContentState.h"
+#include "earth_engine/tiling/TileScheme.h"
 
 using namespace earth_engine;
 
@@ -502,6 +506,59 @@ TEST(RasterOverlayDetailsGeneratorTest,
     const double wrongV =
         (localOnlyProjected.y() - projected.south()) / projected.height();
     EXPECT_GT(std::abs(wrongV - primitive.vertexTexCoords[0][2][1]), 1e-3);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     ActiveOverlayGenerationUsesModelBoundsWhenContentVolumeIsNotRegion) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    prepareTerrainQuadRenderContent(renderContent, modelRegion);
+
+    RasterOverlay::Options options{};
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    ActivatedRasterOverlay activated(*overlay);
+    ASSERT_NE(nullptr, activated.ensureTileProvider(nullptr));
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    const TileBoundingVolume sphere = TileBoundingVolume::fromSphere(
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(
+                modelRegion.west() + modelRegion.width() * 0.5,
+                modelRegion.south() + modelRegion.height() * 0.5,
+                0.0)),
+        1000.0);
+
+    const int generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays(
+            renderContent,
+            &sphere,
+            overlays,
+            nullptr);
+
+    EXPECT_EQ(1, generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(RasterOverlayProjection::WebMercator,
+              details.rasterOverlayProjections[0]);
+    EXPECT_EQ(0, details.textureCoordinateIDForProjection(
+                     RasterOverlayProjection::WebMercator));
+    expectRectangleNear(modelRegion, details.boundingRegion.rectangle);
+
+    const Rectangle projected = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        modelRegion);
+    EXPECT_EQ(projected, details.rasterOverlayRectangles[0]);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
