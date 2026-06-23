@@ -4514,6 +4514,81 @@ private:
     std::vector<TileKey> keys_;
 };
 
+class ManualTerrainQuadtreeContentProvider final : public TilesetContentProvider {
+public:
+    struct PendingRequest {
+        TileKey key;
+        ContentCallback callback;
+    };
+
+    explicit ManualTerrainQuadtreeContentProvider(TileKey rootKey)
+        : rootKey_(std::move(rootKey)) {}
+
+    std::string id() const override {
+        return "manual-terrain-quadtree-content";
+    }
+
+    bool supportsTile(const TileKey& key) const override {
+        return key == rootKey_ ||
+               terrainAvailabilityState(key) == TileAvailabilityState::Available;
+    }
+
+    std::vector<TileKey> rootTiles() const override {
+        return {rootKey_};
+    }
+
+    bool providesTerrainQuadtree() const override {
+        return true;
+    }
+
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey& key) const override {
+        return std::find(availableKeys.begin(), availableKeys.end(), key) !=
+                       availableKeys.end()
+                   ? TileAvailabilityState::Available
+                   : TileAvailabilityState::NotAvailable;
+    }
+
+    bool isTerrainAvailabilityBoundaryLevel(int level) const override {
+        return level % metadataAvailabilityLevels == 0;
+    }
+
+    void requestTileContent(const TileKey& key,
+                            CancellationToken,
+                            ContentCallback callback,
+                            HttpRequestPriority = HttpRequestPriority::Normal) override {
+        pendingRequests.push_back(PendingRequest{key, std::move(callback)});
+    }
+
+    bool completeWithEmpty(const TileKey& key) {
+        auto it = std::find_if(
+            pendingRequests.begin(),
+            pendingRequests.end(),
+            [&key](const PendingRequest& request) {
+                return request.key == key;
+            });
+        if (it == pendingRequests.end()) {
+            return false;
+        }
+
+        ContentCallback callback = std::move(it->callback);
+        pendingRequests.erase(it);
+        callback(key, TileContentLoadResult::empty());
+        return true;
+    }
+
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    std::vector<TileKey> availableKeys;
+    std::vector<PendingRequest> pendingRequests;
+    int metadataAvailabilityLevels = 1;
+
+private:
+    TileKey rootKey_;
+};
+
 class SelectionTreeContentProvider final : public TilesetContentProvider {
 public:
     SelectionTreeContentProvider(
@@ -10029,6 +10104,70 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(rawProvider->requestCount == 2,
           "Tileset: RetryLater content remains retryable");
+}
+
+void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey availableChildKey{"Geographic-TMS", 1, 0, 0};
+    auto contentProvider =
+        std::make_unique<ManualTerrainQuadtreeContentProvider>(rootKey);
+    ManualTerrainQuadtreeContentProvider* rawProvider =
+        contentProvider.get();
+    rawProvider->availableKeys = {availableChildKey};
+    rawProvider->metadataAvailabilityLevels = 1;
+
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: terrain availability boundary root tile is created");
+    if (!root) return;
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    check(root->content.loadState == TileLoadState::ContentLoading &&
+              rawProvider->pendingRequests.size() == 1,
+          "Tileset: availability boundary content is loading before children");
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.empty(),
+          "Tileset: availability boundary waits for content before child creation like cesium-native");
+
+    check(rawProvider->completeWithEmpty(rootKey),
+          "Tileset: availability boundary content completes");
+    TilesetTestAccess::processPendingUploads(tileset);
+    check(root->content.loadState == TileLoadState::Done,
+          "Tileset: availability boundary content reaches resolved state");
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: resolved availability boundary creates all four children like cesium-native");
+
+    const std::array<TileKey, 4> expectedChildren = {{
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        TileKey{"Geographic-TMS", 1, 0, 1},
+        TileKey{"Geographic-TMS", 1, 1, 1}}};
+    for (size_t i = 0; i < expectedChildren.size(); ++i) {
+        check(i < root->children.size() &&
+                  root->children[i] &&
+                  root->children[i]->key == expectedChildren[i],
+              "Tileset: availability boundary children preserve cesium-native SW/SE/NW/NE order");
+    }
+
+    check(root->children.front() &&
+              !root->children.front()->content.isTerrainAvailabilityUpsample(),
+          "Tileset: available boundary child remains a real terrain tile");
+    for (size_t i = 1; i < root->children.size(); ++i) {
+        check(root->children[i] &&
+                  root->children[i]->content.isTerrainAvailabilityUpsample(),
+              "Tileset: unavailable boundary siblings become upsampled nodes");
+    }
 }
 
 void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
@@ -29368,6 +29507,7 @@ int main() {
     testTilesetRetryLaterRemainsRetryable();
     testTilesetCancelledRemainsRetryable();
     testTilesetContentRetryLaterMaterializesLatentChildren();
+    testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren();
     testTilesetContentCancelledMaterializesLatentChildrenAndRetries();
     testTilesetContentFailedMaterializesLatentChildrenWithoutRetry();
     testTilesetCacheUnloadFailedUnknownPreservesChildren();
