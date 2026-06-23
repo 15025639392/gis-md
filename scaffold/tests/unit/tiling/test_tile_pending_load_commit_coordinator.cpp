@@ -604,6 +604,12 @@ TEST(
 
     ASSERT_EQ(1u, contentProvider.appliedUpdates.size());
     EXPECT_EQ(3, contentProvider.appliedUpdates[0].layerIndex);
+    EXPECT_TRUE(content.quantizedMeshAvailabilityUpdatesApplied);
+
+    TileContentUploadCommitter::applyAvailabilityUpdates(
+        &contentProvider,
+        content);
+    EXPECT_EQ(1u, contentProvider.appliedUpdates.size());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

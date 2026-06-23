@@ -34,7 +34,7 @@ std::optional<TileBoundingVolume> effectiveContentBoundingVolumeForLoad(
 
 void TileContentUploadCommitter::applyAvailabilityUpdates(
     TilesetContentProvider* contentProvider,
-    const TileLoadedContent& content) {
+    TileLoadedContent& content) {
     if (!content.hasGltfTerrainPayload() ||
         content.quantizedMeshAvailabilityUpdatesApplied ||
         content.quantizedMeshAvailabilityUpdates.empty()) {
@@ -44,6 +44,7 @@ void TileContentUploadCommitter::applyAvailabilityUpdates(
     if (contentProvider && contentProvider->providesTerrainQuadtree()) {
         contentProvider->applyTerrainAvailabilityUpdates(
             content.quantizedMeshAvailabilityUpdates);
+        content.quantizedMeshAvailabilityUpdatesApplied = true;
     }
 }
 
