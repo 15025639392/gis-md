@@ -786,14 +786,14 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(3, provider->getMaximumLevel());
 
     EXPECT_EQ(nullptr, provider->getTile(firstKey));
-    RasterOverlayTileProvider::RasterTileMapping clampedFirstMapping =
+    RasterOverlayTileProvider::RasterTileMapping outsideAnnotationMapping =
         provider->mapRasterTilesToGeometryTile(
             projectForProvider(*provider, firstBounds),
             1024.0,
             1024.0);
-    ASSERT_NE(nullptr, clampedFirstMapping.tile);
-    EXPECT_TRUE(clampedFirstMapping.tile->isMappedRasterTile());
-    EXPECT_FALSE(clampedFirstMapping.directTile);
+    EXPECT_EQ(nullptr, outsideAnnotationMapping.tile);
+    EXPECT_FALSE(outsideAnnotationMapping.directTile);
+    EXPECT_TRUE(outsideAnnotationMapping.sourceTiles.empty());
     EXPECT_EQ(nullptr, provider->getTile(firstKey));
 
     RasterOverlayTileProvider::RasterTileMapping secondMapping =
@@ -1073,7 +1073,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageMissClampsToNearestCoverageEdg
 }
 
 TEST(RasterOverlayLifecycleTest,
-     NonBaseOverlayCoverageMissClampsLikeCesiumNativeCurrentImplementation) {
+     NonBaseOverlayCoverageMissSkipsTileInsteadOfStretchingEdgeTexels) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -1098,15 +1098,11 @@ TEST(RasterOverlayLifecycleTest,
             projectForProvider(provider, outsideCoverage),
             512.0,
             512.0);
-    ASSERT_NE(nullptr, mapping.tile);
-    EXPECT_TRUE(mapping.tile->isMappedRasterTile());
+    EXPECT_EQ(nullptr, mapping.tile);
     EXPECT_FALSE(mapping.directTile);
-    ASSERT_TRUE(provider.loadTile(*mapping.tile));
-    ASSERT_FALSE(imagery.requestedKeys.empty());
-    for (const TileKey& requested : imagery.requestedKeys) {
-        EXPECT_TRUE(scheme->tileToRectangle(requested).intersects(coverage));
-    }
-    EXPECT_EQ(1, provider.getCachedTileCount());
+    EXPECT_TRUE(mapping.sourceTiles.empty());
+    EXPECT_TRUE(imagery.requestedKeys.empty());
+    EXPECT_EQ(0, provider.getCachedTileCount());
 }
 
 TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampling) {
