@@ -926,6 +926,7 @@ TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
               provider.buildUrl(TileKey{"Geographic-TMS", 12, 6487, 2685}));
     EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}));
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 12, 6487, 2685}));
+    EXPECT_TRUE(provider.childTiles(TileKey{"Geographic-TMS", 0, 0, 0}).empty());
 }
 
 TEST(QuantizedMeshTerrainProviderTest, EmptyAvailabilityKeepsOnlyRootsLikeCesiumNative) {

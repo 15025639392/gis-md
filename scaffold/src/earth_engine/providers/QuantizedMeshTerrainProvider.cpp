@@ -1351,7 +1351,15 @@ QuantizedMeshTerrainProvider::childTiles(const TileKey& key) const {
     if (!isTileInLayerRange(key, schemeId_) || key.z >= maxZoom_) {
         return {};
     }
-    return quadtreeChildren(key);
+    std::vector<TileKey> children = quadtreeChildren(key);
+    const bool anyChildAvailable = std::any_of(
+        children.begin(),
+        children.end(),
+        [this](const TileKey& child) {
+            return availabilityState(child) ==
+                   TileAvailabilityState::Available;
+        });
+    return anyChildAvailable ? children : std::vector<TileKey>{};
 }
 
 void QuantizedMeshTerrainProvider::resetFallbackLayerFromFields() {
