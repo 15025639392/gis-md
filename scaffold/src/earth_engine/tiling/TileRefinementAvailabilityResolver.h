@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileChildMaterializer.h"
 #include "TileKey.h"
 #include "TileScheme.h"
@@ -29,6 +30,7 @@ public:
         const std::unordered_map<
             std::string,
             std::unique_ptr<DecodedHeightmap>>& terrainCache,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         CacheKeyFn&& cacheKey,
         IsAvailabilityBoundaryFn&& isAvailabilityBoundary,
         HasLoadedTerrainContentFn&& hasLoadedTerrainContent) {
@@ -41,7 +43,7 @@ public:
                 ? contentProvider->childTiles(tile.key)
                 : std::vector<TileKey>{};
         const bool legacyHeightmapCacheCanRefine =
-            !contentProviderOwnsTerrainQuadtree;
+            legacyHeightmapCacheMode == LegacyHeightmapTerrainCacheMode::Include;
 
         return TileChildMaterializer::canRefine(
             tile,

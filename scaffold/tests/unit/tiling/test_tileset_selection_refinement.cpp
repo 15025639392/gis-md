@@ -2427,6 +2427,47 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
+    RefinementLegacyCacheModeControlsHeightmapCacheUse) {
+    TerrainQuadtreeContentProvider contentProvider;
+    auto tileScheme = TileScheme::createGeographicTMS();
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        legacyTerrainCache;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey cachedLegacyChildKey{"Geographic-TMS", 1, 0, 0};
+    legacyTerrainCache[TileCacheKey::forTile(cachedLegacyChildKey)] =
+        std::make_unique<DecodedHeightmap>();
+    TilesetTile root(
+        rootKey,
+        tileScheme->tileToRectangle(rootKey));
+    root.geometricError = 100.0;
+    setLoadedTerrainGltfContent(root);
+
+    auto canRefineWithMode =
+        [&](LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
+            return TileRefinementAvailabilityResolver::canRefine(
+                root,
+                &contentProvider,
+                nullptr,
+                *tileScheme,
+                legacyTerrainCache,
+                legacyHeightmapCacheMode,
+                [](const TileKey& key) {
+                    return TileCacheKey::forTile(key);
+                },
+                [](const TilesetTile&) { return false; },
+                [](const TilesetTile& tile) {
+                    return tile.content.renderContent
+                        .hasRenderableTerrainContent();
+                });
+        };
+
+    EXPECT_TRUE(canRefineWithMode(LegacyHeightmapTerrainCacheMode::Include));
+    EXPECT_FALSE(canRefineWithMode(
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly));
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
     ContentTerrainQuadtreeIgnoresContradictingLegacyAvailability) {
     TerrainQuadtreeContentProvider contentProvider;
     AlwaysAvailableLegacyTerrainProvider legacyTerrainProvider;
@@ -2446,6 +2487,7 @@ TEST(
         &legacyTerrainProvider,
         *tileScheme,
         legacyTerrainCache,
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
         [](const TileKey& key) { return TileCacheKey::forTile(key); },
         [](const TilesetTile&) { return false; },
         [](const TilesetTile& tile) {
@@ -2479,6 +2521,7 @@ TEST(
         &legacyTerrainProvider,
         *tileScheme,
         legacyTerrainCache,
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
         [](const TileKey& key) { return TileCacheKey::forTile(key); },
         [](const TilesetTile&) { return false; },
         [](const TilesetTile& tile) {
