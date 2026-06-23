@@ -73,17 +73,22 @@ public:
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        ensureSurface(
-            input.tile,
-            nullptr,
-            input.device,
-            input.hasTerrainQuadtree,
-            false,
-            std::forward<IngestAvailabilityFn>(ingestAvailability),
-            std::forward<FindUpsampleSourceFn>(findUpsampleSource),
-            std::forward<EnsureAncestorMeshFn>(ensureAncestorMesh),
-            std::forward<IsCompleteRenderableFn>(isCompleteRenderable),
-            std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+        (void)ingestAvailability;
+        (void)findUpsampleSource;
+        (void)ensureAncestorMesh;
+        (void)isCompleteRenderable;
+        (void)input.device;
+        (void)input.hasTerrainQuadtree;
+
+        TilesetTile& tile = input.tile;
+        const bool hasHeightmapSurfaceResidue =
+            tile.content.renderContent.hasSurfaceMesh() ||
+            tile.content.renderContent.hasRetainedHeightmap();
+        if (hasHeightmapSurfaceResidue) {
+            tile.content.renderContent.clearSurfaceMeshResources();
+            tile.content.renderContent.clearRetainedHeightmap();
+            markResourcesDirty();
+        }
     }
 
 private:

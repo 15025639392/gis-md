@@ -16,6 +16,7 @@
 #include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileSelectionRootPolicy.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/Tileset.h"
 
 #include <cmath>
@@ -563,6 +564,36 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
     EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
+    EXPECT_NE(root->content.loadState, TileLoadState::Done);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainMeshPreparationClearsLegacySurfaceResidueOnly) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    root->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    root->content.renderContent.setRetainedHeightmap(
+        makeFlatHeightmap(5678.0f));
+    ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
+    ASSERT_TRUE(root->content.renderContent.hasRetainedHeightmap());
+
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+
+    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
+    EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
     EXPECT_NE(root->content.loadState, TileLoadState::Done);
 }
 
