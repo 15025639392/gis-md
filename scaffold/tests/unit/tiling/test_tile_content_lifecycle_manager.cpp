@@ -172,10 +172,9 @@ TEST(
 
 TEST(
     TileContentLifecycleManagerTest,
-    ContentOwnedTerrainProviderNormalizesLegacyInputsBeforeRequest) {
+    ContentOwnedTerrainRequestClearsLegacyHeightmapCache) {
     TileContentLifecycleManager manager;
     LifecycleTerrainContentProvider contentProvider;
-    LifecycleLegacyTerrainProvider legacyTerrainProvider;
     std::vector<ActivatedRasterOverlay*> rasterOverlays;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
@@ -188,7 +187,6 @@ TEST(
             TileKey{"test", 0, 0, 0},
             TileLoadPriorityGroup::Normal,
             1.0}},
-        &legacyTerrainProvider,
         &contentProvider,
         nullptr,
         rasterOverlays,
@@ -204,7 +202,6 @@ TEST(
 
     EXPECT_EQ(1u, outcome.issued);
     EXPECT_EQ(1, contentProvider.requestCount);
-    EXPECT_EQ(0, legacyTerrainProvider.requestCount);
     EXPECT_TRUE(manager.legacyTerrainCache().empty());
     EXPECT_EQ(1u, manager.loadLifecycle().pendingLoads()
                       .terminalResultCount());

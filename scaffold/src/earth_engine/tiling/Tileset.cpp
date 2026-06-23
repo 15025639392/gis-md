@@ -226,7 +226,6 @@ Tileset::makeContentRuntimeRequestFrame() const {
     TileContentRuntimeRequestFrame frame{
         rasterOverlays_,
         tileRegistry_.tiles()};
-    frame.legacyTerrainProvider = effectiveLegacyTerrainProvider();
     frame.contentProvider = contentProvider_.get();
     frame.device = device_;
     frame.frameNumber = frameNumber_;

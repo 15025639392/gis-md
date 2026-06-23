@@ -24,7 +24,6 @@ TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
     FrameResourceBudget* budget) {
     return lifecycle_.requestMissingTiles(
         loadRequests,
-        frame.legacyTerrainProvider,
         frame.contentProvider,
         frame.device,
         frame.rasterOverlays,

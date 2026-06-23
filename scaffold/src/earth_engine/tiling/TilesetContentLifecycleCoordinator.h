@@ -11,7 +11,6 @@
 
 #include "../content/GltfContentProvider.h"
 #include "../core/resources/FrameResourceBudget.h"
-#include "../providers/TerrainProvider.h"
 #include "../renderer/RenderDevice.h"
 
 #include <memory>
@@ -26,7 +25,6 @@ class IPrepareRendererResources;
 
 struct TilesetContentLifecycleContext {
     TileLoadLifecycle& loadLifecycle;
-    TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;

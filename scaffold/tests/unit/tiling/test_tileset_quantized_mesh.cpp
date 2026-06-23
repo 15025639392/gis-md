@@ -57,9 +57,9 @@ struct TilesetTestAccess {
                 1.0}});
     }
 
-    static bool requestFrameHasLegacyTerrainProvider(const Tileset& tileset) {
-        return tileset.makeContentRuntimeRequestFrame()
-            .legacyTerrainProvider != nullptr;
+    static TilesetContentProvider* requestFrameContentProvider(
+        const Tileset& tileset) {
+        return tileset.makeContentRuntimeRequestFrame().contentProvider;
     }
 
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
@@ -330,8 +330,9 @@ SelectorView makeSelectorView(
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainProviderRequestFrameDropsLegacyProvider) {
+     ContentTerrainProviderRequestFrameCarriesOnlyContentProvider) {
     auto contentProvider = std::make_unique<SparseContentTerrainProvider>();
+    SparseContentTerrainProvider* rawContentProvider = contentProvider.get();
     Tileset contentTerrainTileset(
         TileScheme::createGeographicTMS(),
         {},
@@ -339,9 +340,9 @@ TEST(TilesetQuantizedMeshTest,
         TilesetOptions{},
         std::move(contentProvider));
 
-    EXPECT_FALSE(
-        TilesetTestAccess::requestFrameHasLegacyTerrainProvider(
-            contentTerrainTileset));
+    EXPECT_EQ(rawContentProvider,
+              TilesetTestAccess::requestFrameContentProvider(
+                  contentTerrainTileset));
 
     auto legacyTerrainProvider =
         std::make_unique<CountingLegacyTerrainProvider>(nullptr);
@@ -352,9 +353,9 @@ TEST(TilesetQuantizedMeshTest,
         nullptr,
         TilesetOptions{});
 
-    EXPECT_TRUE(
-        TilesetTestAccess::requestFrameHasLegacyTerrainProvider(
-            legacyTerrainTileset));
+    EXPECT_EQ(nullptr,
+              TilesetTestAccess::requestFrameContentProvider(
+                  legacyTerrainTileset));
 }
 
 TEST(TilesetQuantizedMeshTest,

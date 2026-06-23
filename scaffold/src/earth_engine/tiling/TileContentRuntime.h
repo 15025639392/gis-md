@@ -14,7 +14,6 @@ class FrameResourceBudget;
 class ActivatedRasterOverlay;
 class IPrepareRendererResources;
 class RenderDevice;
-class TerrainProvider;
 class TileContentAccess;
 class TileContentLifecycleManager;
 class TileContentResourceInvalidator;
@@ -26,7 +25,6 @@ struct TileContentRuntimeRequestFrame {
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
         tiles;
-    TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
     uint64_t frameNumber = 0;

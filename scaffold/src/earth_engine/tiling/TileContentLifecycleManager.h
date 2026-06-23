@@ -48,7 +48,6 @@ public:
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(
         const std::vector<TileLoadRequest>& loadRequests,
-        TerrainProvider* legacyTerrainProvider,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -62,13 +61,12 @@ public:
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
-        normalizeContentOwnedTerrainInputs(
-            contentProvider,
-            legacyTerrainProvider);
+        if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
+            legacyTerrainCache_.clear();
+        }
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
             loadRequests,
             makeContext(
-                legacyTerrainProvider,
                 contentProvider,
                 device,
                 rasterOverlays,
@@ -128,17 +126,7 @@ private:
         return contentProvider && contentProvider->providesTerrainQuadtree();
     }
 
-    void normalizeContentOwnedTerrainInputs(
-        const TilesetContentProvider* contentProvider,
-        TerrainProvider*& legacyTerrainProvider) {
-        if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
-            legacyTerrainProvider = nullptr;
-            legacyTerrainCache_.clear();
-        }
-    }
-
     TilesetContentLifecycleContext makeContext(
-        TerrainProvider* legacyTerrainProvider,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -151,7 +139,6 @@ private:
         uint32_t smoothedMainThreadUploadLimit) {
         return TilesetContentLifecycleContext{
             loadLifecycle_,
-            legacyTerrainProvider,
             contentProvider,
             device,
             rasterOverlays,
