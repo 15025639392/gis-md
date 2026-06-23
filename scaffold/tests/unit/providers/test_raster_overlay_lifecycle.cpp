@@ -934,6 +934,42 @@ TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampli
               rectangleMappedTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, LargeAreaUsesRootTileLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey rootKey{scheme->id(), 0, 0, 0};
+    const Rectangle worldBounds = scheme->tileToRectangle(rootKey);
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, worldBounds),
+            256.0,
+            256.0);
+
+    ASSERT_NE(nullptr, mapping.tile);
+    EXPECT_TRUE(mapping.directTile);
+    EXPECT_FALSE(mapping.tile->isCompositeTile());
+    EXPECT_EQ(rootKey, mapping.tile->getTileID());
+
+    ASSERT_TRUE(provider.loadTile(*mapping.tile));
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(rootKey, imagery.requestedKeys.front());
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              mapping.tile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
+              mapping.tile->isMoreDetailAvailable());
+    ASSERT_FALSE(uploaderPtr->lastUpload.pixels.empty());
+    EXPECT_TRUE(std::all_of(
+        uploaderPtr->lastUpload.pixels.begin(),
+        uploaderPtr->lastUpload.pixels.end(),
+        [](uint8_t value) { return value == 0 || value == 255; }));
+}
+
 TEST(RasterOverlayLifecycleTest, DirectExactSourceUploadUsesSharedSourceAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
