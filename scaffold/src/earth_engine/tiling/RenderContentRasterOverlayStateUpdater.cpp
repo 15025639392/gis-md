@@ -23,6 +23,12 @@ std::optional<Rectangle> projectedBoundingVolumeRectangle(
         projectEffectiveContentBoundingVolumeRectangle(tile, projection);
 }
 
+bool doneTileCannotHoldRasterOverlays(const TilesetTile& tile) {
+    return tile.content.loadState == TileLoadState::Done &&
+           (tile.content.contentKind != TileContentKind::Render ||
+            !tile.content.renderContent.hasRenderableTerrainContent());
+}
+
 } // namespace
 
 RenderContentRasterOverlayUpdateAction
@@ -35,6 +41,11 @@ RenderContentRasterOverlayStateUpdater::update(
     double maximumScreenSpaceError,
     FrameResourceBudget& frameResourceBudget) {
     RenderContentRasterOverlayUpdateAction action;
+
+    if (doneTileCannotHoldRasterOverlays(tile)) {
+        tile.rasterOverlayState.releaseAndClearReferences(&renderer);
+        return action;
+    }
 
     tile.rasterOverlayState.synchronizeMappingIdentity(
         TileRasterOverlaySignature::mappingIdentity(rasterOverlays),
