@@ -90,11 +90,6 @@ class Tileset {
 public:
     using OcclusionCallback = TileOcclusionCallback;
 
-    Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
-            std::unique_ptr<TileScheme> tileScheme,
-            std::vector<ActivatedRasterOverlay*> rasterOverlays,
-            RenderDevice* device,
-            TilesetOptions options);
     Tileset(std::unique_ptr<TileScheme> tileScheme,
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,
@@ -145,6 +140,11 @@ private:
     friend class TilesetUpdateFrameRuntime;
 
     Tileset(ProviderOwnership providers,
+            std::unique_ptr<TileScheme> tileScheme,
+            std::vector<ActivatedRasterOverlay*> rasterOverlays,
+            RenderDevice* device,
+            TilesetOptions options);
+    Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
             std::unique_ptr<TileScheme> tileScheme,
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,

@@ -40,6 +40,20 @@ using namespace earth_engine;
 
 namespace earth_engine {
 struct TilesetTestAccess {
+    static Tileset makeLegacyTerrainTileset(
+        std::unique_ptr<TerrainProvider> terrainProvider,
+        std::unique_ptr<TileScheme> scheme,
+        std::vector<ActivatedRasterOverlay*> overlays = {},
+        RenderDevice* device = nullptr,
+        TilesetOptions options = {}) {
+        return Tileset(
+            std::move(terrainProvider),
+            std::move(scheme),
+            std::move(overlays),
+            device,
+            std::move(options));
+    }
+
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
     }
@@ -948,7 +962,7 @@ TEST(
     auto provider = std::make_unique<ManualCompletionTerrainProvider>();
     provider->maximumTransportActiveRequests = 11;
     ManualCompletionTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1504,7 +1518,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     LoadDiagnosticsExposeNativeLifecycleStates) {
     auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1605,7 +1619,7 @@ TEST(
     UpsampledChildQueuesParentUntilSourceReady) {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1637,7 +1651,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     TerrainAvailabilityBoundaryUsesProviderContract) {
     auto provider = std::make_unique<ContractTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1660,7 +1674,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     ClearChildrenErasesFlatMapDescendants) {
     auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1696,7 +1710,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     ClearChildrenErasesClaimedUploadDescendantWork) {
     auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1771,7 +1785,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     UnloadKeepsParentWithReferencedDescendant) {
     auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1806,7 +1820,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     UnloadQueueIgnoresUnloadedUnknownTiles) {
     auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1830,7 +1844,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     UnloadRenderContentPreservesLoadedChildren) {
     auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1887,7 +1901,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     UnloadExternalContentClearsChildren) {
     auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},
@@ -1929,7 +1943,7 @@ TEST(
     TilesetRequestMissingBudgetTest,
     DirectExternalContentUnloadClearsChildrenAfterReferencesRelease) {
     auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset(
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
         std::move(provider),
         TileScheme::createGeographicTMS(),
         {},

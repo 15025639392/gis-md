@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -31,34 +31,30 @@ struct TilesetTestAccess {
 
 namespace {
 
-class ManualCompletionTerrainProvider final : public TerrainProvider {
+class ManualCompletionContentProvider final : public TilesetContentProvider {
 public:
     struct PendingRequest {
         TileKey key;
-        TerrainCallback callback;
+        ContentCallback callback;
     };
 
-    std::string id() const override { return "manual-lifecycle-terrain"; }
-    std::string schemeId() const override { return "Geographic-TMS"; }
-    int minZoom() const override { return 0; }
-    int maxZoom() const override { return 1; }
-    int tileSize() const override { return 2; }
+    explicit ManualCompletionContentProvider(TileKey key)
+        : key_(std::move(key)) {}
 
-    std::string buildUrl(const TileKey&) const override {
-        return "memory://manual-lifecycle-terrain";
+    std::string id() const override { return "manual-lifecycle-content"; }
+    bool supportsTile(const TileKey& key) const override {
+        return key == key_;
     }
 
-    void requestTile(
+    void requestTileContent(
         const TileKey& key,
         CancellationToken,
-        TerrainCallback callback,
+        ContentCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
 
-    bool completeWithHeightmap(
-        const TileKey& key,
-        std::unique_ptr<DecodedHeightmap> heightmap) {
+    bool completeWithEmpty(const TileKey& key) {
         auto it = std::find_if(
             pendingRequests.begin(),
             pendingRequests.end(),
@@ -69,45 +65,36 @@ public:
             return false;
         }
 
-        TerrainCallback callback = std::move(it->callback);
+        ContentCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
-        callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
+        callback(key, TileContentLoadResult::empty());
         return true;
     }
 
-    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
-        override {
-        return nullptr;
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
     }
 
+    TileKey key_;
     std::vector<PendingRequest> pendingRequests;
 };
 
-std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->tileSize = 2;
-    heightmap->heights = {heightMeters, heightMeters, heightMeters, heightMeters};
-    heightmap->minHeight = heightMeters;
-    heightmap->maxHeight = heightMeters;
-    return heightmap;
-}
-
 } // namespace
 
-TEST(TilesetLifecycleTest, DestructorWaitsForPendingTerrainCallbacks) {
-    const TileKey key{"Geographic-TMS", 1, 0, 0};
+TEST(TilesetLifecycleTest, DestructorWaitsForPendingContentCallbacks) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
     std::atomic<bool> completionCalled{false};
     std::thread completer;
 
     {
-        auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-        ManualCompletionTerrainProvider* rawProvider = provider.get();
+        auto provider = std::make_unique<ManualCompletionContentProvider>(key);
+        ManualCompletionContentProvider* rawProvider = provider.get();
         Tileset tileset(
-            std::move(provider),
             TileScheme::createGeographicTMS(),
             {},
             nullptr,
-            TilesetOptions{});
+            TilesetOptions{},
+            std::move(provider));
 
         TilesetTestAccess::ensureTile(tileset, key);
         TilesetTestAccess::requestMissingTile(tileset, key);
@@ -116,9 +103,7 @@ TEST(TilesetLifecycleTest, DestructorWaitsForPendingTerrainCallbacks) {
         completer = std::thread([rawProvider, key, &completionCalled]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             completionCalled.store(
-                rawProvider->completeWithHeightmap(
-                    key,
-                    makeFlatHeightmap(3.0f)),
+                rawProvider->completeWithEmpty(key),
                 std::memory_order_release);
         });
     }
