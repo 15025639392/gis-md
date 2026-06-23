@@ -17,7 +17,7 @@ TEST(TilePendingUploadCompletionTest, ClaimedUploadCountsAsWork) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             TileKey{"test", 1, 0, 0},
             "terrain",
             TileLoadPriorityGroup::Normal,
@@ -27,7 +27,7 @@ TEST(TilePendingUploadCompletionTest, ClaimedUploadCountsAsWork) {
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
 
         ASSERT_TRUE(upload.has_value());
-        EXPECT_EQ(TileLoadDomain::HeightmapTerrainAdapter, upload->domain);
+        EXPECT_EQ(TileLoadDomain::TerrainContent, upload->domain);
     }
 
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("terrain"));
@@ -48,7 +48,7 @@ TEST(TilePendingUploadCompletionTest, ErasesUploadKeys) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             TileKey{"test", 1, 0, 0},
             "terrain",
             TileLoadPriorityGroup::Normal,
@@ -93,7 +93,7 @@ TEST(TilePendingUploadCompletionTest, RejectsDuplicateUploadKeyAcrossKinds) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             TileKey{"test", 1, 0, 0},
             "shared",
             TileLoadPriorityGroup::Normal,

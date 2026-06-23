@@ -289,9 +289,6 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
         snapshot.visibleTiles = static_cast<int>(plan.visibleTiles.size());
         snapshot.terrainCachedTiles = tileset.cachedTerrainTiles();
         snapshot.pendingTerrainRequests = loadDiag.pendingTerrainRequests;
-        snapshot.pendingTerrainUploads = loadDiag.pendingTerrainUploads;
-        snapshot.pendingTerrainTerminalResults =
-            loadDiag.pendingTerrainTerminalResults;
         snapshot.pendingGltfTerrainUploads =
             loadDiag.pendingGltfTerrainUploads;
         snapshot.pendingGltfTerrainTerminalResults =
@@ -388,13 +385,6 @@ void SceneTilesetDiagnosticsSnapshot::add(
     pendingTerrainRequests = next.pendingTerrainRequests != 0
                                  ? next.pendingTerrainRequests
                                  : pendingTerrainRequests;
-    pendingTerrainUploads = next.pendingTerrainUploads != 0
-                                ? next.pendingTerrainUploads
-                                : pendingTerrainUploads;
-    pendingTerrainTerminalResults =
-        next.pendingTerrainTerminalResults != 0
-            ? next.pendingTerrainTerminalResults
-            : pendingTerrainTerminalResults;
     pendingGltfTerrainUploads += next.pendingGltfTerrainUploads;
     pendingGltfTerrainTerminalResults +=
         next.pendingGltfTerrainTerminalResults;
@@ -522,8 +512,6 @@ void SceneTilesetDiagnosticsSnapshot::applyTo(Diagnostics& diag) const {
     diag.loadQueueNormalRequests += loadQueueNormalRequests;
     diag.loadQueueUrgentRequests += loadQueueUrgentRequests;
     diag.pendingTerrainRequests = pendingTerrainRequests;
-    diag.pendingTerrainUploads = pendingTerrainUploads;
-    diag.pendingTerrainTerminalResults = pendingTerrainTerminalResults;
     diag.pendingGltfTerrainUploads += pendingGltfTerrainUploads;
     diag.pendingGltfTerrainTerminalResults +=
         pendingGltfTerrainTerminalResults;
@@ -616,8 +604,6 @@ void SceneTilesetDiagnostics::reset(Diagnostics& diag) {
     diag.loadQueueUrgentRequests = 0;
     resetResourceBudgetDiagnostics(diag);
     diag.pendingTerrainRequests = 0;
-    diag.pendingTerrainUploads = 0;
-    diag.pendingTerrainTerminalResults = 0;
     diag.pendingGltfTerrainUploads = 0;
     diag.pendingGltfTerrainTerminalResults = 0;
     diag.pendingContentRequests = 0;

@@ -25,17 +25,6 @@ class RenderDevice;
 
 class TilePendingLoadCommitCoordinator {
 public:
-    static bool shouldDiscardLegacyHeightmapTerrainAdapter(
-        const TilesetContentProvider* contentProvider,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
-        TileLoadDomain domain) {
-        return domain == TileLoadDomain::HeightmapTerrainAdapter &&
-               (legacyHeightmapCacheMode ==
-                    LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly ||
-                (contentProvider &&
-                 contentProvider->providesTerrainQuadtree()));
-    }
-
     static void captureInitialBoundingVolumes(
         TilesetTile& tile,
         TileLoadResultMetadata& metadata) {
@@ -100,80 +89,6 @@ public:
     }
 
     template <typename EnsureTileFn,
-              typename EnsureTileMeshFn,
-              typename MarkResourcesDirtyFn>
-    static void commitLegacyHeightmapTerrainAdapterUpload(
-        PendingTileLoad& upload,
-        RenderDevice* device,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        std::unordered_map<
-            std::string,
-            std::unique_ptr<DecodedHeightmap>>& heightmapTerrainAdapterCache,
-        TileLoadLifecycle& lifecycle,
-        bool resourceSmoothingActive,
-        EnsureTileFn&& ensureTile,
-        EnsureTileMeshFn&& ensureTileMesh,
-        MarkResourcesDirtyFn&& markResourcesDirty) {
-        TileLoadedContent& content = upload.content();
-        const bool hadHeightmapTerrainAdapterPayload =
-            content.terrainPayloadKind == TerrainTilePayloadKind::LegacyHeightmap &&
-            content.heightmap != nullptr;
-        TilesetTile* tile = ensureTile(upload.key);
-        if (tile && tile->content.isRasterDetailUpsample()) {
-            TilePendingUploadCompletion::eraseUpload(
-                lifecycle,
-                upload.cacheKey);
-            return;
-        }
-
-        TileTerrainUploadCommitter::cacheTerrainPayload(
-            upload.cacheKey,
-            content,
-            heightmapTerrainAdapterCache);
-
-        if (tile) {
-            captureInitialBoundingVolumes(*tile, content.metadata);
-            const bool uploadsHeightmapTerrainAdapter =
-                content.terrainPayloadKind ==
-                    TerrainTilePayloadKind::LegacyHeightmap &&
-                hadHeightmapTerrainAdapterPayload;
-            const bool uploadsParentUpsampledTerrain =
-                !uploadsHeightmapTerrainAdapter &&
-                tile->content.derivesTerrainFromParent();
-            const bool uploadsTerrainPayload =
-                uploadsHeightmapTerrainAdapter ||
-                uploadsParentUpsampledTerrain;
-            if (uploadsTerrainPayload) {
-                TileTerrainUploadCommitter::prepareTerrainRenderContent(
-                    *tile,
-                    std::move(content),
-                    rasterOverlays,
-                    device);
-            }
-            if ((uploadsHeightmapTerrainAdapter ||
-                 uploadsParentUpsampledTerrain) &&
-                !resourceSmoothingActive &&
-                !tile->content.renderContent.hasSurfaceMesh()) {
-                ensureTileMesh(*tile);
-            }
-            const bool resourcesReady = uploadsTerrainPayload &&
-                (resourceSmoothingActive ||
-                 tile->content.renderContent.hasSurfaceMesh());
-            const TileTerrainUploadCommitAction action =
-                TileTerrainUploadCommitter::finishTerrainResourcePreparation(
-                    *tile,
-                    resourcesReady);
-            if (action.resourcesDirty) {
-                markResourcesDirty();
-            }
-        }
-
-        TilePendingUploadCompletion::eraseUpload(
-            lifecycle,
-            upload.cacheKey);
-    }
-
-    template <typename EnsureTileFn,
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
     static void commitContentUpload(
@@ -223,20 +138,11 @@ public:
               typename MarkResourcesDirtyFn>
     static void commitTerminalResult(
         PendingTileLoad& result,
-        TilesetContentProvider* contentProvider,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (shouldDiscardLegacyHeightmapTerrainAdapter(
-                contentProvider,
-                legacyHeightmapCacheMode,
-                result.domain)) {
-            emptyContentRegistry.erase(result.cacheKey);
-            return;
-        }
         if (result.domain == TileLoadDomain::Content) {
             commitContentTerminalResult(
                 result,
@@ -256,57 +162,28 @@ public:
     }
 
     template <typename EnsureTileFn,
-              typename EnsureTileMeshFn,
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
     static void commitUpload(
         PendingTileLoad& upload,
         TilesetContentProvider* contentProvider,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        std::unordered_map<
-            std::string,
-            std::unique_ptr<DecodedHeightmap>>& heightmapTerrainAdapterCache,
         TileLoadLifecycle& lifecycle,
-        bool resourceSmoothingActive,
         EnsureTileFn&& ensureTile,
-        EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (shouldDiscardLegacyHeightmapTerrainAdapter(
-                contentProvider,
-                legacyHeightmapCacheMode,
-                upload.domain)) {
-            TilePendingUploadCompletion::eraseUpload(
-                lifecycle,
-                upload.cacheKey);
-            return;
-        }
-        if (isContentLoadDomain(upload.domain)) {
-            commitContentUpload(
-                upload,
-                contentProvider,
-                device,
-                pPrepRenderer,
-                rasterOverlays,
-                lifecycle,
-                std::forward<EnsureTileFn>(ensureTile),
-                std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
-                std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
-        } else {
-            commitLegacyHeightmapTerrainAdapterUpload(
-                upload,
-                device,
-                rasterOverlays,
-                heightmapTerrainAdapterCache,
-                lifecycle,
-                resourceSmoothingActive,
-                std::forward<EnsureTileFn>(ensureTile),
-                std::forward<EnsureTileMeshFn>(ensureTileMesh),
-                std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
-        }
+        commitContentUpload(
+            upload,
+            contentProvider,
+            device,
+            pPrepRenderer,
+            rasterOverlays,
+            lifecycle,
+            std::forward<EnsureTileFn>(ensureTile),
+            std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
+            std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
     }
 };
 

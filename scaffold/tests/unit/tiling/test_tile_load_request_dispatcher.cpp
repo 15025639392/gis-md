@@ -719,7 +719,6 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(provider.callbackSawIssued);
     EXPECT_TRUE(requestState.empty());
-    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
     EXPECT_EQ(1u, pendingLoads.gltfTerrainUploadCount());
     EXPECT_EQ(0u, pendingLoads.contentUploadCount());
 
@@ -967,7 +966,7 @@ TEST(TileLoadRequestDispatcherTest,
         std::lock_guard<std::mutex> lock(mutex);
         pendingLoads.addTerminalResult(
             PendingTileLoad{
-                TileLoadDomain::HeightmapTerrainAdapter,
+                TileLoadDomain::TerrainContent,
                 key,
                 "shared-cache-key",
                 TileLoadPriorityGroup::Normal,
@@ -984,16 +983,16 @@ TEST(TileLoadRequestDispatcherTest,
             "shared-cache-key",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::HeightmapTerrainAdapter,
+            TileLoadDomain::TerrainContent,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
-    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
-    EXPECT_EQ(1u, pendingLoads.terrainTerminalResultCount());
+    EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.gltfTerrainTerminalResultCount());
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     QueuesUpsampledTerrainWhenNetworkBudgetExhausted) {
+     RejectsUpsampledTerrainContentWithoutGltfPayloadWhenNetworkBudgetExhausted) {
     std::mutex mutex;
     TilePendingRequestState requestState;
     TilePendingLoadQueue pendingLoads;
@@ -1012,12 +1011,12 @@ TEST(TileLoadRequestDispatcherTest,
             "upsample-blocked",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileLoadDomain::HeightmapTerrainAdapter,
+            TileLoadDomain::TerrainContent,
             TileLoadResult::createRenderable());
 
-    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
     EXPECT_TRUE(requestState.empty());
-    EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
     EXPECT_EQ(0u, budget.networkRequestsIssued());
 }
 
@@ -1042,6 +1041,6 @@ TEST(TileLoadRequestDispatcherTest,
 
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(requestState.empty());
-    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
     EXPECT_EQ(1u, pendingLoads.contentUploadCount());
 }

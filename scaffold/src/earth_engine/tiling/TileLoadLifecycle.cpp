@@ -49,9 +49,6 @@ TileLoadLifecycleCounts TileLoadLifecycle::counts() const {
     std::lock_guard<std::mutex> lock(mutex_);
     TileLoadLifecycleCounts result;
     result.requests = requestState_.counts();
-    result.terrainUploads = pendingLoads_.terrainUploadCount();
-    result.terrainTerminalResults =
-        pendingLoads_.terrainTerminalResultCount();
     result.gltfTerrainUploads = pendingLoads_.gltfTerrainUploadCount();
     result.gltfTerrainTerminalResults =
         pendingLoads_.gltfTerrainTerminalResultCount();

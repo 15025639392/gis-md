@@ -58,14 +58,12 @@ public:
 
     template <typename EnsureTileFn,
               typename EnsureTileChildrenFn,
-              typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
     static TileUpdateUploadRunResult runContentLifecycle(
         TileUpdateUploadRunInput input,
         TilesetContentUploadContext contentContext,
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
-        EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         return run(
             input,
@@ -79,7 +77,6 @@ public:
                     budget,
                     ensureTile,
                     ensureTileChildren,
-                    ensureTileMesh,
                     markResourcesDirty);
             },
             markResourcesDirty);

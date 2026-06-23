@@ -217,7 +217,7 @@ TEST(TileMissingRequestSchedulerTest, DoesNotRetryLegacyTerrainAfterEmptyMarkerC
     outcome = requestOnce();
     EXPECT_EQ(outcome.issued, 0u);
     EXPECT_EQ(provider.requestCount, 0);
-    EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainTerminalResults, 0u);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::FailedTemporarily);
 }
 
@@ -360,7 +360,7 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileWithoutGltfSourceDoesNotQueue
     EXPECT_EQ(outcome.issued, 0u);
     EXPECT_TRUE(prepared);
     EXPECT_EQ(provider.requestCount, 0);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::Unloaded);
 }
 
@@ -410,5 +410,5 @@ TEST(TileMissingRequestSchedulerTest, VirtualTerrainRootNeverRequestsProvider) {
 
     EXPECT_EQ(outcome.issued, 0u);
     EXPECT_EQ(provider.requestCount, 0);
-    EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainTerminalResults, 0u);
 }

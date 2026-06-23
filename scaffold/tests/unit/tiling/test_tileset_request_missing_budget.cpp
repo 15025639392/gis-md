@@ -692,50 +692,6 @@ public:
 
 };
 
-class ExplicitPastMaxZoomTerrainProvider final : public TerrainProvider {
-public:
-    explicit ExplicitPastMaxZoomTerrainProvider(
-        std::shared_ptr<std::vector<TileKey>> requestedKeys)
-        : requestedKeys_(std::move(requestedKeys)) {}
-
-    std::string id() const override { return "explicit-past-maxzoom-terrain"; }
-    std::string schemeId() const override { return "Geographic-TMS"; }
-    int minZoom() const override { return 0; }
-    int maxZoom() const override { return 1; }
-    int tileSize() const override { return 2; }
-
-    TileAvailabilityState availabilityState(const TileKey& key) const override {
-        if (key.schemeId != schemeId()) {
-            return TileAvailabilityState::NotAvailable;
-        }
-        if (key.z == 2 && key.x == 0 && key.y == 0) {
-            return TileAvailabilityState::Available;
-        }
-        return TerrainProvider::availabilityState(key);
-    }
-
-    std::string buildUrl(const TileKey&) const override {
-        return "memory://explicit-past-maxzoom-terrain";
-    }
-
-    void requestTile(
-        const TileKey& key,
-        CancellationToken,
-        TerrainCallback callback,
-        HttpRequestPriority = HttpRequestPriority::Normal) override {
-        requestedKeys_->push_back(key);
-        callback(key, TerrainTileLoadResult::retryLater());
-    }
-
-    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
-        override {
-        return nullptr;
-    }
-
-private:
-    std::shared_ptr<std::vector<TileKey>> requestedKeys_;
-};
-
 class DummyBuffer final : public Buffer {
 public:
     explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
@@ -891,105 +847,6 @@ SelectorView makeSelectorView(
 } // namespace
 
 TEST(TilesetRequestMissingBudgetTest,
-     FrameResourceBudgetLimitsWorkerRequestsByPriority) {
-    TilesetOptions options;
-    options.maximumSimultaneousTileLoads = 2;
-
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        options);
-
-    const TileKey lowPriorityKey{"Geographic-TMS", 1, 0, 0};
-    const TileKey highPriorityKey{"Geographic-TMS", 1, 1, 0};
-    TilesetTestAccess::ensureTile(tileset, lowPriorityKey);
-    TilesetTestAccess::ensureTile(tileset, highPriorityKey);
-
-    FrameResourceBudgetConfig config;
-    config.maxNetworkRequestsPerFrame = 1;
-    config.maxNetworkInflight = 2;
-    FrameResourceBudget budget;
-    budget.beginFrame(1, config);
-
-    TileLoadRequestOutcome outcome =
-        TilesetTestAccess::requestMissingTilesWithBudget(
-            tileset,
-            budget,
-            lowPriorityKey,
-            highPriorityKey);
-
-    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
-    EXPECT_EQ(rawProvider->pendingRequests.front().key, highPriorityKey);
-    EXPECT_EQ(outcome.issued, 1u);
-    EXPECT_FALSE(outcome.blockedByInflight);
-    EXPECT_EQ(budget.networkRequestsIssued(), 1u);
-
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        highPriorityKey,
-        makeFlatHeightmap(2.0f)));
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    FrameResourceBudgetLimitsMainThreadFinalizesByPriority) {
-    TilesetOptions options;
-    options.maximumSimultaneousTileLoads = 2;
-    options.mainThreadLoadingTimeLimit = 0.0;
-
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        options);
-
-    const TileKey lowPriorityKey{"Geographic-TMS", 1, 0, 0};
-    const TileKey highPriorityKey{"Geographic-TMS", 1, 1, 0};
-    TilesetTestAccess::ensureTile(tileset, lowPriorityKey);
-    TilesetTestAccess::ensureTile(tileset, highPriorityKey);
-    TilesetTestAccess::requestMissingTilesWithPriorities(
-        tileset,
-        lowPriorityKey,
-        100.0,
-        highPriorityKey,
-        1.0);
-
-    ASSERT_EQ(rawProvider->pendingRequests.size(), 2u);
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        lowPriorityKey,
-        makeFlatHeightmap(1.0f)));
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        highPriorityKey,
-        makeFlatHeightmap(2.0f)));
-
-    FrameResourceBudgetConfig config;
-    config.maxMainThreadFinalizesPerFrame = 1;
-    FrameResourceBudget budget;
-    budget.beginFrame(1, config);
-    TilesetTestAccess::processPendingUploadsWithBudget(tileset, budget);
-
-    TilesetTile* lowPriorityTile =
-        TilesetTestAccess::findTile(tileset, lowPriorityKey);
-    TilesetTile* highPriorityTile =
-        TilesetTestAccess::findTile(tileset, highPriorityKey);
-    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
-    ASSERT_NE(highPriorityTile, nullptr);
-    EXPECT_EQ(highPriorityTile->content.loadState, TileLoadState::Done);
-    EXPECT_EQ(highPriorityTile->content.contentKind, TileContentKind::Render);
-    ASSERT_NE(lowPriorityTile, nullptr);
-    EXPECT_EQ(
-        lowPriorityTile->content.loadState,
-        TileLoadState::ContentLoading);
-    EXPECT_EQ(diagnostics.pendingTerrainUploads, 1);
-}
-
-TEST(TilesetRequestMissingBudgetTest,
      MainThreadUploadBudgetIsGlobalAcrossContentKinds) {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -1029,7 +886,7 @@ TEST(TilesetRequestMissingBudgetTest,
     EXPECT_TRUE(rawContentProvider->completeWithModel(
         highPriorityContentKey,
         makeTriangleGltfModel()));
-    EXPECT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 0);
+    EXPECT_EQ(tileset.loadDiagnostics().pendingGltfTerrainUploads, 0);
     EXPECT_EQ(tileset.loadDiagnostics().pendingContentUploads, 2);
 
     TilesetTestAccess::processPendingUploads(tileset);
@@ -1055,7 +912,7 @@ TEST(TilesetRequestMissingBudgetTest,
     EXPECT_EQ(
         lowPriorityContentTile->content.loadState,
         TileLoadState::ContentLoading);
-    EXPECT_EQ(diagnostics.pendingTerrainUploads, 0);
+    EXPECT_EQ(diagnostics.pendingGltfTerrainUploads, 0);
     EXPECT_EQ(diagnostics.pendingContentUploads, 1);
 }
 
@@ -1771,7 +1628,7 @@ TEST(
     const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
 
     EXPECT_EQ(upsampledChild->content.loadState, TileLoadState::Unloaded);
-    EXPECT_EQ(diagnostics.pendingTerrainUploads, 0);
+    EXPECT_EQ(diagnostics.pendingGltfTerrainUploads, 0);
     EXPECT_EQ(rawProvider->requestCount, 0);
     EXPECT_EQ(diagnostics.loadQueueUrgentRequests, 1);
     EXPECT_EQ(diagnostics.loadQueueNormalRequests, 0);
@@ -1798,52 +1655,6 @@ TEST(
     root->content.loadState = TileLoadState::Done;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(root->children.size(), 4u);
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    UpsampledChildFinalizesContentLoadedParent) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    SparseTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    ASSERT_NE(root, nullptr);
-
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(33.0f));
-    root->content.loadState = TileLoadState::ContentLoaded;
-    root->content.contentKind = TileContentKind::Render;
-
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    ASSERT_EQ(root->children.size(), 4u);
-    ASSERT_NE(root->children[1], nullptr);
-
-    TilesetTile* upsampledChild = root->children[1];
-    ASSERT_TRUE(upsampledChild->content.upsampledFromParent);
-
-    TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
-
-    EXPECT_EQ(root->content.loadState, TileLoadState::Done);
-    EXPECT_TRUE(root->content.renderContent.isMeshReady());
-    EXPECT_EQ(upsampledChild->content.loadState, TileLoadState::ContentLoading);
-    EXPECT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 1);
-    EXPECT_EQ(rawProvider->requestCount, 0);
-
-    TilesetTestAccess::processPendingUploads(tileset);
-
-    EXPECT_EQ(upsampledChild->content.loadState, TileLoadState::Done);
-    EXPECT_TRUE(upsampledChild->content.renderContent.isMeshReady());
-    EXPECT_TRUE(upsampledChild->content.renderContent.hasSurfaceMesh());
-    EXPECT_TRUE(TilesetTestAccess::isTileRenderable(tileset, *upsampledChild));
 }
 
 TEST(
@@ -1916,49 +1727,6 @@ TEST(
     EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
     EXPECT_FALSE(TilesetTestAccess::loadQueueContainsAny(tileset, childKey));
     EXPECT_FALSE(TilesetTestAccess::containsPendingWorkFor(tileset, childKey));
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    ClearChildrenIgnoresStaleTerrainCallback) {
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    ASSERT_NE(root, nullptr);
-
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(1.0f));
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    ASSERT_FALSE(root->children.empty());
-    ASSERT_NE(root->children.front(), nullptr);
-
-    const TileKey childKey = root->children.front()->key;
-    TilesetTestAccess::requestMissingTile(tileset, childKey);
-    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
-
-    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
-    ASSERT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
-
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        childKey,
-        makeFlatHeightmap(2.0f)));
-    TilesetTestAccess::processPendingUploads(tileset);
-
-    EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
-    EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, childKey));
-    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
-    EXPECT_EQ(diagnostics.pendingTerrainTotal(), 0);
-    EXPECT_EQ(diagnostics.pendingContentTotal(), 0);
 }
 
 TEST(
@@ -2057,125 +1825,6 @@ TEST(
     root->content.loadState = TileLoadState::Done;
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 1);
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    UnloadRenderContentIgnoresIndependentChildLoading) {
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    ASSERT_NE(root, nullptr);
-
-    auto rootHeightmap = makeFlatHeightmap(1.0f);
-    rootHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        std::move(rootHeightmap));
-    root->content.contentKind = TileContentKind::Render;
-    root->content.loadState = TileLoadState::Done;
-    root->content.renderContent.setMeshReady(true);
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    ASSERT_FALSE(root->children.empty());
-    ASSERT_NE(root->children.front(), nullptr);
-
-    const TileKey childKey = root->children.front()->key;
-    TilesetTestAccess::requestMissingTile(tileset, childKey);
-    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
-
-    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
-    TilesetTestAccess::updateTotalBytesUsed(tileset);
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
-    TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
-    TilesetTile* childAfter = TilesetTestAccess::findTile(tileset, childKey);
-    ASSERT_EQ(rootAfter, root);
-    EXPECT_EQ(rootAfter->content.loadState, TileLoadState::Unloaded);
-    EXPECT_EQ(rootAfter->content.contentKind, TileContentKind::Unknown);
-    ASSERT_NE(childAfter, nullptr);
-    EXPECT_EQ(childAfter->content.loadState, TileLoadState::ContentLoading);
-    EXPECT_EQ(rawProvider->pendingRequests.size(), 1u);
-
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        childKey,
-        makeFlatHeightmap(2.0f)));
-    TilesetTestAccess::processPendingUploads(tileset);
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    UnloadRenderContentWaitsForUpsampledChildLoading) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    ASSERT_NE(root, nullptr);
-
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(1.0f));
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    ASSERT_EQ(root->content.loadState, TileLoadState::Done);
-    ASSERT_EQ(root->content.contentKind, TileContentKind::Render);
-    ASSERT_TRUE(root->content.renderContent.isMeshReady());
-    ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(256),
-        std::make_unique<DummyBuffer>(96));
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    ASSERT_FALSE(root->children.empty());
-    ASSERT_NE(root->children.front(), nullptr);
-
-    TilesetTile* child = root->children.front();
-    child->content.upsampledFromParent = true;
-    TilesetTestAccess::requestMissingTile(tileset, child->key);
-    ASSERT_EQ(child->content.loadState, TileLoadState::ContentLoading);
-    ASSERT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 1);
-
-    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
-    TilesetTestAccess::updateTotalBytesUsed(tileset);
-    const int64_t bytesBeforeUnload = tileset.totalBytesUsed();
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
-    EXPECT_EQ(root->content.loadState, TileLoadState::Unloading);
-    EXPECT_EQ(root->content.contentKind, TileContentKind::Render);
-    EXPECT_TRUE(root->content.renderContent.isMeshReady());
-    EXPECT_TRUE(root->content.renderContent.hasSurfaceMesh());
-    EXPECT_EQ(root->content.renderContent.surfaceVertexBuffer(), nullptr);
-    EXPECT_EQ(root->content.renderContent.surfaceIndexBuffer(), nullptr);
-    EXPECT_LT(tileset.totalBytesUsed(), bytesBeforeUnload);
-    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 1);
-
-    TilesetTestAccess::processPendingUploads(tileset);
-
-    EXPECT_EQ(child->content.loadState, TileLoadState::Done);
-    EXPECT_EQ(child->content.contentKind, TileContentKind::Render);
-    EXPECT_TRUE(child->content.renderContent.isMeshReady());
-    EXPECT_TRUE(child->content.renderContent.hasSurfaceMesh());
-
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
-    EXPECT_EQ(root->content.loadState, TileLoadState::Unloaded);
-    EXPECT_EQ(root->content.contentKind, TileContentKind::Unknown);
-    EXPECT_FALSE(root->content.renderContent.isMeshReady());
-    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
-    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 0);
 }
 
 TEST(
@@ -2323,120 +1972,4 @@ TEST(
     EXPECT_EQ(rootAfter->content.loadState, TileLoadState::Unloaded);
     EXPECT_EQ(rootAfter->content.contentKind, TileContentKind::Unknown);
     EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    FrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests) {
-    TilesetOptions options;
-    options.maximumSimultaneousTileLoads = 2;
-
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        options);
-
-    const TileKey lowPriorityKey{"Geographic-TMS", 1, 0, 0};
-    const TileKey highPriorityKey{"Geographic-TMS", 1, 1, 0};
-    TilesetTestAccess::ensureTile(tileset, lowPriorityKey);
-    TilesetTestAccess::ensureTile(tileset, highPriorityKey);
-
-    FrameResourceBudgetConfig config;
-    config.maxNetworkRequestsPerFrame = 1;
-    config.maxTerrainContentNetworkRequestsPerFrame = 1;
-    config.maxRasterNetworkRequestsPerFrame = 4;
-    config.maxNetworkInflight = 2;
-    config.maxTerrainContentNetworkInflight = 2;
-    config.maxRasterNetworkInflight = 4;
-    FrameResourceBudget budget;
-    budget.beginFrame(1, config);
-
-    ASSERT_TRUE(budget.tryIssue(
-        FrameResourceLane::RasterRequest,
-        FrameResourcePriority::Normal,
-        4));
-
-    TileLoadRequestOutcome outcome =
-        TilesetTestAccess::requestMissingTilesWithBudget(
-            tileset,
-            budget,
-            lowPriorityKey,
-            highPriorityKey);
-
-    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
-    EXPECT_EQ(rawProvider->pendingRequests.front().key, highPriorityKey);
-    EXPECT_EQ(outcome.issued, 1u);
-    EXPECT_FALSE(outcome.blockedByInflight);
-    EXPECT_EQ(budget.rasterNetworkRequestsIssued(), 4u);
-    EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 1u);
-    EXPECT_EQ(budget.networkRequestsIssued(), 5u);
-
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        highPriorityKey,
-        makeFlatHeightmap(2.0f)));
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    PendingMainThreadUploadsDoNotConsumeWorkerSlots) {
-    TilesetOptions options;
-    options.maximumSimultaneousTileLoads = 2;
-    options.mainThreadLoadingTimeLimit = 1.0e-12;
-
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawProvider = provider.get();
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        options);
-
-    const TileKey firstKey{"Geographic-TMS", 1, 0, 0};
-    const TileKey secondKey{"Geographic-TMS", 1, 1, 0};
-    const TileKey thirdKey{"Geographic-TMS", 1, 2, 0};
-
-    TilesetTestAccess::requestMissingTile(tileset, firstKey);
-    TilesetTestAccess::requestMissingTile(tileset, secondKey);
-    ASSERT_EQ(rawProvider->pendingRequests.size(), 2u);
-
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        firstKey,
-        makeFlatHeightmap(1.0f)));
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        secondKey,
-        makeFlatHeightmap(2.0f)));
-    EXPECT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 2);
-
-    TilesetTestAccess::requestMissingTile(tileset, thirdKey);
-    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
-    EXPECT_EQ(rawProvider->pendingRequests.front().key, thirdKey);
-
-    EXPECT_TRUE(rawProvider->completeWithHeightmap(
-        thirdKey,
-        makeFlatHeightmap(3.0f)));
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    RequestsExplicitTerrainAvailabilityPastProviderMaxzoomLikeCesiumNative) {
-    auto requestedKeys = std::make_shared<std::vector<TileKey>>();
-    auto provider =
-        std::make_unique<ExplicitPastMaxZoomTerrainProvider>(requestedKeys);
-    Tileset tileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
-
-    const TileKey explicitKey{"Geographic-TMS", 2, 0, 0};
-    TilesetTestAccess::requestMissingTile(tileset, explicitKey);
-
-    ASSERT_EQ(1u, requestedKeys->size());
-    EXPECT_EQ(explicitKey, requestedKeys->front());
 }

@@ -91,7 +91,6 @@ public:
 
     template <typename EnsureTileFn,
               typename EnsureTileChildrenFn,
-              typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
     bool processPendingUploads(
         TilesetContentProvider* contentProvider,
@@ -109,7 +108,6 @@ public:
         FrameResourceBudget* budget,
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
-        EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         normalizeContentOwnedTerrainInputs(
             contentProvider,
@@ -131,7 +129,6 @@ public:
             budget,
             std::forward<EnsureTileFn>(ensureTile),
             std::forward<EnsureTileChildrenFn>(ensureTileChildren),
-            std::forward<EnsureTileMeshFn>(ensureTileMesh),
             std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
     }
 

@@ -18,7 +18,7 @@ PendingTileLoad terrainTerminal(
     double priority = 0.0,
     TileLoadStatus status = TileLoadStatus::RetryLater) {
     return PendingTileLoad{
-        TileLoadDomain::HeightmapTerrainAdapter,
+        TileLoadDomain::TerrainContent,
         key,
         std::move(cacheKey),
         group,
@@ -47,7 +47,7 @@ PendingTileLoad terrainUpload(
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal,
     double priority = 0.0) {
     return PendingTileLoad{
-        TileLoadDomain::HeightmapTerrainAdapter,
+        TileLoadDomain::TerrainContent,
         key,
         std::move(cacheKey),
         group,
@@ -141,11 +141,11 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalThenBudgetedUploads) {
     ASSERT_TRUE(changed);
     ASSERT_EQ(3u, events.size());
     EXPECT_EQ("terminal:content:content-terminal", events[0]);
-    EXPECT_EQ("terminal:terrain:terrain-terminal", events[1]);
+    EXPECT_EQ("terminal:gltf-terrain:terrain-terminal", events[1]);
     EXPECT_EQ("upload:content:content-upload", events[2]);
 
     const TileLoadLifecycleCounts counts = lifecycle.counts();
-    EXPECT_EQ(1u, counts.terrainUploads);
+    EXPECT_EQ(1u, counts.gltfTerrainUploads);
     EXPECT_EQ(0u, counts.contentUploads);
 }
 
@@ -190,7 +190,7 @@ TEST(TilePendingLoadProcessorTest, TerrainContentUsesContentFinalizeLane) {
     EXPECT_EQ(FrameResourceLane::ContentFinalize, elapsedLanes[0]);
 
     const TileLoadLifecycleCounts counts = lifecycle.counts();
-    EXPECT_EQ(0u, counts.terrainUploads);
+    EXPECT_EQ(0u, counts.gltfTerrainUploads);
     EXPECT_EQ(0u, counts.contentUploads);
     EXPECT_EQ(0u, counts.gltfTerrainUploads);
 }
@@ -233,7 +233,7 @@ TEST(TilePendingLoadProcessorTest, FinalizeBudgetPreservesUploadPriority) {
     ASSERT_TRUE(changed);
     ASSERT_EQ(1u, events.size());
     EXPECT_EQ("high-priority", events[0]);
-    EXPECT_EQ(1u, lifecycle.counts().terrainUploads);
+    EXPECT_EQ(1u, lifecycle.counts().gltfTerrainUploads);
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("low-priority"));
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("high-priority"));
 }
@@ -273,7 +273,7 @@ TEST(TilePendingLoadProcessorTest, BudgetsTerminalResults) {
     ASSERT_TRUE(changed);
     ASSERT_EQ(1u, events.size());
     EXPECT_EQ("first-terminal", events[0]);
-    EXPECT_EQ(1u, lifecycle.counts().terrainTerminalResults);
+    EXPECT_EQ(1u, lifecycle.counts().gltfTerrainTerminalResults);
 }
 
 TEST(TilePendingLoadProcessorTest, ReportsUnchangedWhenBudgetBlocksAllWork) {
@@ -319,7 +319,7 @@ TEST(TilePendingLoadProcessorTest, ReportsUnchangedWhenBudgetBlocksAllWork) {
     const TileLoadLifecycleCounts counts = lifecycle.counts();
     EXPECT_FALSE(changed);
     EXPECT_TRUE(events.empty());
-    EXPECT_EQ(1u, counts.terrainTerminalResults);
+    EXPECT_EQ(1u, counts.gltfTerrainTerminalResults);
     EXPECT_EQ(1u, counts.contentUploads);
 }
 
@@ -361,6 +361,6 @@ TEST(TilePendingLoadProcessorTest, InteractionFiltersNonUrgentUploads) {
     ASSERT_TRUE(changed);
     ASSERT_EQ(1u, events.size());
     EXPECT_EQ("urgent", events[0]);
-    EXPECT_EQ(1u, lifecycle.counts().terrainUploads);
+    EXPECT_EQ(1u, lifecycle.counts().gltfTerrainUploads);
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("normal"));
 }

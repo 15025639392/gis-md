@@ -60,13 +60,13 @@ TEST(
         lifecycle.requestState().beginContentRequest(
             "content-request",
             contentToken);
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             TileKey{"test", 1, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
                 TileKey{"test", 1, 0, 1},
                 "terrain-terminal",
                 TileLoadPriorityGroup::Urgent,
@@ -166,10 +166,8 @@ TEST(
     EXPECT_EQ(diag.loadQueueTotal(), 3);
 
     EXPECT_EQ(diag.pendingTerrainRequests, 1);
-    EXPECT_EQ(diag.pendingTerrainUploads, 1);
-    EXPECT_EQ(diag.pendingTerrainTerminalResults, 1);
-    EXPECT_EQ(diag.pendingTerrainContentUploads, 1);
-    EXPECT_EQ(diag.pendingTerrainContentTerminalResults, 1);
+    EXPECT_EQ(diag.pendingGltfTerrainUploads, 2);
+    EXPECT_EQ(diag.pendingGltfTerrainTerminalResults, 2);
     EXPECT_EQ(diag.pendingContentRequests, 1);
     EXPECT_EQ(diag.pendingContentUploads, 1);
     EXPECT_EQ(diag.pendingContentTerminalResults, 1);
@@ -185,7 +183,7 @@ TEST(
 
     EXPECT_EQ(diag.resourceBudget.frameNumber, 42u);
     EXPECT_EQ(diag.resourceBudget.networkRequestsIssued, 4u);
-    EXPECT_EQ(diag.resourceBudget.terrainContentNetworkRequestsIssued, 2u);
+    EXPECT_EQ(diag.resourceBudget.terrainContentNetworkRequestsIssued, 1u);
     EXPECT_EQ(diag.resourceBudget.rasterNetworkRequestsIssued, 2u);
     EXPECT_EQ(diag.resourceBudget.mainThreadFinalizesUsed, 1u);
     EXPECT_EQ(diag.resourceBudget.terminalStateTransitionsUsed, 1u);

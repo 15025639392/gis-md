@@ -71,9 +71,6 @@ bool TileContentRuntime::processPendingUploads(
         [this](TilesetTile& tile) {
             contentAccess_.ensureTileChildren(tile);
         },
-        [this](TilesetTile& tile) {
-            meshPreparation_.ensureTileMesh(tile);
-        },
         [this]() {
             markResourcesDirty();
         });

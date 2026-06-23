@@ -30,8 +30,6 @@ public:
     bool hasWork() const;
     size_t uploadCount() const;
     size_t terminalResultCount() const;
-    size_t terrainUploadCount() const;
-    size_t terrainTerminalResultCount() const;
     size_t gltfTerrainUploadCount() const;
     size_t gltfTerrainTerminalResultCount() const;
     size_t contentUploadCount() const;

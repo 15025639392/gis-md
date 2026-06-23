@@ -9,7 +9,7 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
     const TileKey terrainKey{"test", 1, 0, 0};
     const TileKey contentKey{"test", 1, 1, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
@@ -33,7 +33,7 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
     ASSERT_TRUE(first.has_value());
     EXPECT_EQ(TileLoadDomain::Content, first->domain);
     EXPECT_EQ(0u, queue.contentUploadCount());
-    EXPECT_EQ(1u, queue.terrainUploadCount());
+    EXPECT_EQ(1u, queue.gltfTerrainUploadCount());
 }
 
 TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
@@ -41,13 +41,13 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
     const TileKey normalKey{"test", 1, 0, 0};
     const TileKey urgentKey{"test", 1, 1, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         normalKey,
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
@@ -63,14 +63,14 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
         queue.takeHighestPriorityUpload(true, budget);
 
     ASSERT_TRUE(first.has_value());
-    EXPECT_EQ(TileLoadDomain::HeightmapTerrainAdapter, first->domain);
+    EXPECT_EQ(TileLoadDomain::TerrainContent, first->domain);
     EXPECT_EQ("urgent", first->cacheKey);
 
     std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityUpload(true, budget);
 
     EXPECT_FALSE(second.has_value());
-    EXPECT_EQ(1u, queue.terrainUploadCount());
+    EXPECT_EQ(1u, queue.gltfTerrainUploadCount());
     EXPECT_TRUE(queue.containsCacheKey("normal"));
 }
 
@@ -116,13 +116,13 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
     const TileKey firstKey{"test", 1, 0, 0};
     const TileKey secondKey{"test", 1, 1, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         firstKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
@@ -141,7 +141,7 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
         100.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
-    EXPECT_EQ(1u, queue.terrainUploadCount());
+    EXPECT_EQ(1u, queue.gltfTerrainUploadCount());
     EXPECT_EQ(1u, queue.contentUploadCount());
 
     FrameResourceBudgetConfig config;
@@ -167,13 +167,13 @@ TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
     const TileKey highKey{"test", 1, 1, 0};
     const TileKey contentKey{"test", 1, 1, 1};
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         lowKey,
         "low",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::Failed});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         highKey,
         "high",
         TileLoadPriorityGroup::Urgent,
@@ -202,9 +202,9 @@ TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
         queue.takeHighestPriorityTerminalResult(budget);
 
     ASSERT_TRUE(second.has_value());
-    EXPECT_EQ(TileLoadDomain::HeightmapTerrainAdapter, second->domain);
+    EXPECT_EQ(TileLoadDomain::TerrainContent, second->domain);
     EXPECT_EQ("high", second->cacheKey);
-    EXPECT_EQ(1u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(1u, queue.gltfTerrainTerminalResultCount());
     EXPECT_EQ(0u, queue.contentTerminalResultCount());
 }
 
@@ -213,13 +213,13 @@ TEST(TilePendingLoadQueueTest, DeduplicatesTerminalResultsByKind) {
     const TileKey firstKey{"test", 1, 0, 0};
     const TileKey secondKey{"test", 1, 1, 0};
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         firstKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
         TileLoadStatus::RetryLater});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         secondKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Urgent,
@@ -238,7 +238,7 @@ TEST(TilePendingLoadQueueTest, DeduplicatesTerminalResultsByKind) {
         100.0,
         TileLoadStatus::Cancelled});
 
-    EXPECT_EQ(1u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(1u, queue.gltfTerrainTerminalResultCount());
     EXPECT_EQ(1u, queue.contentTerminalResultCount());
 
     FrameResourceBudgetConfig config;
@@ -263,13 +263,13 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
     const TileKey terrainKey{"test", 1, 0, 0};
     const TileKey contentKey{"test", 1, 1, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
@@ -288,8 +288,8 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
         100.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
-    EXPECT_EQ(1u, queue.terrainUploadCount());
-    EXPECT_EQ(0u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(1u, queue.gltfTerrainUploadCount());
+    EXPECT_EQ(0u, queue.gltfTerrainTerminalResultCount());
     EXPECT_EQ(0u, queue.contentUploadCount());
     EXPECT_EQ(1u, queue.contentTerminalResultCount());
 
@@ -318,7 +318,7 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         key,
         "terminal",
         TileLoadPriorityGroup::Urgent,
@@ -334,7 +334,7 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
         queue.takeHighestPriorityTerminalResult(blockedBudget);
 
     EXPECT_FALSE(blocked.has_value());
-    EXPECT_EQ(1u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(1u, queue.gltfTerrainTerminalResultCount());
     EXPECT_TRUE(queue.containsCacheKey("terminal"));
 
     FrameResourceBudgetConfig retryConfig;
@@ -346,16 +346,16 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
         queue.takeHighestPriorityTerminalResult(retryBudget);
 
     ASSERT_TRUE(retry.has_value());
-    EXPECT_EQ(TileLoadDomain::HeightmapTerrainAdapter, retry->domain);
+    EXPECT_EQ(TileLoadDomain::TerrainContent, retry->domain);
     EXPECT_EQ("terminal", retry->cacheKey);
-    EXPECT_EQ(0u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(0u, queue.gltfTerrainTerminalResultCount());
 }
 
 TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -367,7 +367,7 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
         TileLoadPriorityGroup::Urgent,
         0.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -381,9 +381,9 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
         TileLoadStatus::Failed});
 
     EXPECT_FALSE(queue.hasWork());
-    EXPECT_EQ(0u, queue.terrainUploadCount());
+    EXPECT_EQ(0u, queue.gltfTerrainUploadCount());
     EXPECT_EQ(0u, queue.contentUploadCount());
-    EXPECT_EQ(0u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(0u, queue.gltfTerrainTerminalResultCount());
     EXPECT_EQ(0u, queue.contentTerminalResultCount());
     EXPECT_FALSE(queue.containsCacheKey(""));
 }
@@ -395,7 +395,7 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
     const TileKey terrainTerminalKey{"test", 1, 0, 1};
     const TileKey contentTerminalKey{"test", 1, 1, 1};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainUploadKey,
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
@@ -407,7 +407,7 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainTerminalKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
@@ -426,8 +426,8 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
     EXPECT_TRUE(queue.containsCacheKey("content-upload"));
     EXPECT_TRUE(queue.containsCacheKey("terrain-terminal"));
     EXPECT_TRUE(queue.containsCacheKey("content-terminal"));
-    EXPECT_EQ(1u, queue.terrainUploadCount());
+    EXPECT_EQ(1u, queue.gltfTerrainUploadCount());
     EXPECT_EQ(1u, queue.contentUploadCount());
-    EXPECT_EQ(1u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(1u, queue.gltfTerrainTerminalResultCount());
     EXPECT_EQ(1u, queue.contentTerminalResultCount());
 }

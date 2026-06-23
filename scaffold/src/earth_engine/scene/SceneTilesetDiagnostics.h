@@ -67,8 +67,6 @@ struct SceneTilesetDiagnosticsSnapshot {
     int loadQueueNormalRequests = 0;
     int loadQueueUrgentRequests = 0;
     int pendingTerrainRequests = 0;
-    int pendingTerrainUploads = 0;
-    int pendingTerrainTerminalResults = 0;
     int pendingGltfTerrainUploads = 0;
     int pendingGltfTerrainTerminalResults = 0;
     int pendingContentRequests = 0;

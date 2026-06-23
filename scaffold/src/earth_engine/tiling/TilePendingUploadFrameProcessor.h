@@ -41,21 +41,17 @@ class TilePendingUploadFrameProcessor {
 public:
     template <typename EnsureTileFn,
               typename EnsureTileChildrenFn,
-              typename EnsureTileMeshFn,
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
     static bool process(
         TilePendingUploadFrameProcessorInput input,
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
-        EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         auto processTerminalResult = [&](PendingTileLoad& result) {
             TilePendingLoadCommitCoordinator::commitTerminalResult(
                 result,
-                input.contentProvider,
-                input.legacyHeightmapCacheMode,
                 input.emptyContentRegistry,
                 input.pPrepRenderer,
                 ensureTile,
@@ -67,15 +63,11 @@ public:
             TilePendingLoadCommitCoordinator::commitUpload(
                 upload,
                 input.contentProvider,
-                input.legacyHeightmapCacheMode,
                 input.device,
                 input.pPrepRenderer,
                 input.rasterOverlays,
-                input.terrainCache,
                 input.loadLifecycle,
-                input.resourceSmoothingActive,
                 ensureTile,
-                ensureTileMesh,
                 ensureGltfResources,
                 markResourcesDirty);
         };

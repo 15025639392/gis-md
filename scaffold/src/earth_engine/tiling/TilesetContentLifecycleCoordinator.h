@@ -99,7 +99,6 @@ public:
 
     template <typename EnsureTileFn,
               typename EnsureTileChildrenFn,
-              typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
     static bool processPendingUploads(
         TilesetContentUploadContext context,
@@ -108,7 +107,6 @@ public:
         FrameResourceBudget* budget,
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
-        EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         FrameResourceBudget localBudget;
         if (!budget) {
@@ -134,10 +132,9 @@ public:
                 context.legacyHeightmapCacheMode,
                 context.emptyContentRegistry,
                 interactionActive,
-                resourceSmoothingActive},
+            resourceSmoothingActive},
             ensureTile,
             ensureTileChildren,
-            ensureTileMesh,
             [&](TilesetTile& tile) {
                 GltfRenderResourcePreparer::prepare(
                     tile,

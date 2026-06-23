@@ -178,14 +178,9 @@ struct TileLoadResult {
 };
 
 enum class TileLoadDomain {
-    HeightmapTerrainAdapter,
     TerrainContent,
     Content
 };
-
-inline bool isHeightmapTerrainAdapterLoadDomain(TileLoadDomain domain) {
-    return domain == TileLoadDomain::HeightmapTerrainAdapter;
-}
 
 inline bool isTerrainContentLoadDomain(TileLoadDomain domain) {
     return domain == TileLoadDomain::TerrainContent;

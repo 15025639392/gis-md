@@ -564,13 +564,13 @@ TEST(TileLoadSchedulerTest, PendingUploadsRemainIndependentWhenLegacyTerrainIsIg
     const TileKey requestKey{"test", 1, 2, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             firstUploadKey,
             cacheKeyForTile(firstUploadKey),
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             secondUploadKey,
             cacheKeyForTile(secondUploadKey),
             TileLoadPriorityGroup::Normal,
@@ -607,7 +607,7 @@ TEST(TileLoadSchedulerTest, PendingUploadsRemainIndependentWhenLegacyTerrainIsIg
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_FALSE(marked);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 2u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 2u);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 0u);
 }
 
@@ -665,7 +665,7 @@ TEST(TileLoadSchedulerTest,
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_TRUE(prepared);
     EXPECT_FALSE(marked);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
 
@@ -728,7 +728,7 @@ TEST(TileLoadSchedulerTest,
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_TRUE(prepared);
     EXPECT_FALSE(marked);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 0u);
     EXPECT_EQ(provider.requestCount, 0);
@@ -796,7 +796,6 @@ TEST(TileLoadSchedulerTest,
     EXPECT_TRUE(marked);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(legacyProvider.requestCount, 0);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 1u);
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
 
@@ -990,7 +989,7 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(prepareOrder[0], urgentKey.x);
     EXPECT_EQ(prepareOrder[1], normalKey.x);
     EXPECT_TRUE(markedOrder.empty());
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
 }
 
@@ -1062,7 +1061,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
     EXPECT_EQ(preparedLevels.front(), waitingUpsampleKey.z);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 0u);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
 }
 
 TEST(TileLoadSchedulerTest,
@@ -1169,7 +1168,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
     EXPECT_EQ(plannedColumns[0], missingTileStateKey.x);
     EXPECT_EQ(plannedColumns[1], readyUpsampleKey.x);
     EXPECT_EQ(preparedColumns.front(), readyUpsampleKey.x);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
 }
 
@@ -1236,7 +1235,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -1279,7 +1278,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_FALSE(prepared);
     EXPECT_FALSE(marked);
-    EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 1u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainTerminalResults, 1u);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey("unexpected"));
 }
 
@@ -1294,7 +1293,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingUploadBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1347,7 +1346,7 @@ TEST(TileLoadSchedulerTest, SkipsClaimedUploadBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1660,7 +1659,7 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
                 tileState = nullptr;
                 {
                     std::lock_guard<std::mutex> lock(lifecycle.mutex());
-                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
                             key,
                             cacheKey,
                             TileLoadPriorityGroup::Normal,
@@ -1679,7 +1678,7 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
     EXPECT_TRUE(planned);
     EXPECT_FALSE(marked);
     EXPECT_EQ(provider.requestCount, 0);
-    EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 1u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainTerminalResults, 1u);
 }
 
 TEST(TileLoadSchedulerTest, StopsAfterDispatchBudgetBlock) {

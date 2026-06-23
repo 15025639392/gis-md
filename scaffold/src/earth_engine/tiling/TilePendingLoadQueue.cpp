@@ -125,16 +125,6 @@ size_t TilePendingLoadQueue::terminalResultCount() const {
     return terminalResults_.size();
 }
 
-size_t TilePendingLoadQueue::terrainUploadCount() const {
-    return countDomain(uploads_, TileLoadDomain::HeightmapTerrainAdapter);
-}
-
-size_t TilePendingLoadQueue::terrainTerminalResultCount() const {
-    return countDomain(
-        terminalResults_,
-        TileLoadDomain::HeightmapTerrainAdapter);
-}
-
 size_t TilePendingLoadQueue::gltfTerrainUploadCount() const {
     return countDomain(uploads_, TileLoadDomain::TerrainContent);
 }
