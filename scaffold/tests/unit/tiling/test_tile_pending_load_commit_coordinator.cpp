@@ -573,7 +573,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitHeightmapTerrainAdapterUpload(
+    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainAdapterUpload(
         terrainUpload,
         nullptr,
         {},
@@ -1514,7 +1514,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     int ensureMeshCalls = 0;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitHeightmapTerrainAdapterUpload(
+    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainAdapterUpload(
         upload,
         nullptr,
         {},
@@ -2021,7 +2021,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     bool meshEnsured = false;
     bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitHeightmapTerrainAdapterUpload(
+    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainAdapterUpload(
         upload,
         nullptr,
         {},

@@ -13995,7 +13995,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     const std::vector<ActivatedRasterOverlay*> rasterOverlays;
     bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitHeightmapTerrainAdapterUpload(
+    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainAdapterUpload(
         terrainUpload,
         nullptr,
         rasterOverlays,

@@ -89,13 +89,13 @@ public:
     template <typename EnsureTileFn,
               typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
-    static void commitHeightmapTerrainAdapterUpload(
+    static void commitLegacyHeightmapTerrainAdapterUpload(
         PendingTileLoad& upload,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
-            std::unique_ptr<DecodedHeightmap>>& legacyTerrainCache,
+            std::unique_ptr<DecodedHeightmap>>& heightmapTerrainAdapterCache,
         TileLoadLifecycle& lifecycle,
         bool resourceSmoothingActive,
         EnsureTileFn&& ensureTile,
@@ -108,7 +108,7 @@ public:
         TileTerrainUploadCommitter::cacheTerrainPayload(
             upload.cacheKey,
             content,
-            legacyTerrainCache);
+            heightmapTerrainAdapterCache);
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
             captureInitialBoundingVolumes(*tile, content.metadata);
@@ -237,7 +237,7 @@ public:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
-            std::unique_ptr<DecodedHeightmap>>& legacyTerrainCache,
+            std::unique_ptr<DecodedHeightmap>>& heightmapTerrainAdapterCache,
         TileLoadLifecycle& lifecycle,
         bool resourceSmoothingActive,
         EnsureTileFn&& ensureTile,
@@ -256,11 +256,11 @@ public:
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
         } else {
-            commitHeightmapTerrainAdapterUpload(
+            commitLegacyHeightmapTerrainAdapterUpload(
                 upload,
                 device,
                 rasterOverlays,
-                legacyTerrainCache,
+                heightmapTerrainAdapterCache,
                 lifecycle,
                 resourceSmoothingActive,
                 std::forward<EnsureTileFn>(ensureTile),
