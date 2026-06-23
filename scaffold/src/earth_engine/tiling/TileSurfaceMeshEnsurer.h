@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileMeshLegacyHeightmapMode.h"
 #include "TileSurfaceMeshResolutionPolicy.h"
 #include "TileSurfaceMeshSourceResolver.h"
 #include "TileSurfaceRenderContentCoordinator.h"
@@ -17,6 +18,8 @@ struct TileSurfaceMeshEnsureInput {
     bool hasTerrainQuadtree = false;
     bool allowEllipsoidFallbackWithoutTerrain = true;
     bool allowLegacySurfaceUpsample = true;
+    TileMeshLegacyHeightmapMode legacyHeightmapMode =
+        TileMeshLegacyHeightmapMode::Include;
 };
 
 struct TileSurfaceMeshEnsureResult {
@@ -74,13 +77,18 @@ public:
             return TileSurfaceMeshEnsureResult{};
         }
 
+        const bool contentOwnedTerrainOnly =
+            input.legacyHeightmapMode ==
+            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly;
         TileSurfaceMeshResolution resolution =
             TileSurfaceMeshSourceResolver::resolve(
                 tile,
                 ownHeightmap,
                 input.hasTerrainQuadtree,
-                input.allowEllipsoidFallbackWithoutTerrain,
-                input.allowLegacySurfaceUpsample,
+                input.allowEllipsoidFallbackWithoutTerrain &&
+                    !contentOwnedTerrainOnly,
+                input.allowLegacySurfaceUpsample &&
+                    !contentOwnedTerrainOnly,
                 findUpsampleSource,
                 ensureAncestorMesh);
         if (!tile.content.renderContent.hasSurfaceMesh()) {

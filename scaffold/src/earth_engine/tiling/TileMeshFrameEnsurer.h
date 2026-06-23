@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileMeshLegacyHeightmapMode.h"
 #include "TileSurfaceMeshEnsurer.h"
 
 #include <memory>
@@ -12,11 +13,6 @@ struct DecodedHeightmap;
 class RenderDevice;
 struct TileKey;
 struct TilesetTile;
-
-enum class TileMeshLegacyHeightmapMode {
-    Include,
-    ContentOwnedTerrainOnly
-};
 
 struct TileMeshFrameEnsureInput {
     TilesetTile& tile;
@@ -80,7 +76,8 @@ public:
                     input.hasTerrainQuadtree,
                     !input.hasTerrainQuadtree ||
                         useLegacyHeightmapTerrainCache,
-                    useLegacyHeightmapTerrainCache},
+                    useLegacyHeightmapTerrainCache,
+                    input.legacyHeightmapMode},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,
