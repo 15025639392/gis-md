@@ -2154,9 +2154,8 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
     EXPECT_EQ(0, requestDiag.activeWorkerBlockingRequests);
     EXPECT_EQ(0, requestDiag.peakWorkerBlockingRequests);
 
-    provider.applyAvailabilityUpdates(
-        completed.quantizedMeshAvailabilityUpdates);
-
+    ASSERT_FALSE(completed.quantizedMeshAvailabilityUpdates.empty());
+    EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdatesApplied);
     EXPECT_TRUE(provider.supportsTile(parentOnlyChild));
     EXPECT_EQ(parentBase + "/parentTiles/1/2/0.terrain",
               provider.buildUrl(parentOnlyChild));
@@ -2717,8 +2716,7 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(rootKey,
               firstCompleted.quantizedMeshAvailabilityUpdates[1].subtreeKey);
 
-    provider.applyAvailabilityUpdates(
-        firstCompleted.quantizedMeshAvailabilityUpdates);
+    EXPECT_TRUE(firstCompleted.quantizedMeshAvailabilityUpdatesApplied);
     EXPECT_EQ(1, provider.estimatedRequestFanout(rootKey));
     EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}));
     EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 2, 0}));
@@ -2951,8 +2949,7 @@ TEST(QuantizedMeshTerrainProviderTest,
         completed.quantizedMeshAvailabilityUpdates[1]
             .metadataAvailability.empty());
 
-    provider.applyAvailabilityUpdates(
-        completed.quantizedMeshAvailabilityUpdates);
+    EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdatesApplied);
     EXPECT_EQ(TileAvailabilityState::Available,
               provider.availabilityState(childAvailableKey));
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
@@ -3059,8 +3056,7 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(parentTile,
               completed.quantizedMeshAvailabilityUpdates[0].subtreeKey);
 
-    provider.applyAvailabilityUpdates(
-        completed.quantizedMeshAvailabilityUpdates);
+    EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdatesApplied);
 
     const std::string parentBase =
         "file://" + (root / "parent").generic_string();

@@ -48,6 +48,7 @@ struct TileContentLoadResult {
     bool terrainRenderContent = false;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
+    bool quantizedMeshAvailabilityUpdatesApplied = false;
 
     static TileContentLoadResult render(std::unique_ptr<GltfModel> model) {
         TileContentLoadResult result;
