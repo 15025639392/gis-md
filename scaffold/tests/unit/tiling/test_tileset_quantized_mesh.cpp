@@ -101,7 +101,7 @@ struct TilesetTestAccess {
     }
 
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
-        tileset.meshPreparation_.ensureTileMesh(tile);
+        tileset.meshPreparation_.prepareRenderableTile(tile);
     }
 
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {

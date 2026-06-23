@@ -1,6 +1,11 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/tiling/TileSurface.h"
+#include "earth_engine/tiling/TileContentCacheManager.h"
+#include "earth_engine/tiling/TileContentLifecycleManager.h"
+#include "earth_engine/tiling/TileContentResourceInvalidator.h"
+#include "earth_engine/tiling/TileLoadQueue.h"
+#include "earth_engine/tiling/TileMeshPreparationManager.h"
 #include "earth_engine/tiling/TileSurfaceMeshEnsurer.h"
 #include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
 
@@ -140,4 +145,40 @@ TEST(TileSurfaceMeshEnsurerTest,
                   false,
                   true,
                   true));
+}
+
+TEST(TileSurfaceMeshEnsurerTest,
+     ContentTerrainManagerPreparationOnlyClearsLegacyResidue) {
+    TileContentLifecycleManager lifecycle;
+    TileContentCacheManager cache;
+    uint64_t resourceRevision = 1;
+    TileContentResourceInvalidator invalidator(resourceRevision, cache);
+    TileLoadQueue loadQueue;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    TileMeshPreparationManager manager(
+        lifecycle,
+        invalidator,
+        loadQueue,
+        true,
+        false,
+        nullptr,
+        overlays);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0));
+    tile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(tile.bounds, 4)));
+    auto retainedHeightmap = std::make_unique<DecodedHeightmap>();
+    retainedHeightmap->heights.resize(4, 12.0f);
+    tile.content.renderContent.setRetainedHeightmap(
+        std::move(retainedHeightmap));
+
+    manager.prepareRenderableTile(tile);
+
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(tile.content.renderContent.hasRetainedHeightmap());
+    EXPECT_EQ(2u, resourceRevision);
+    EXPECT_TRUE(cache.cacheBytesDirty());
 }

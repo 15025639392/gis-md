@@ -26,7 +26,9 @@ public:
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
 
-    void ensureTileMesh(TilesetTile& tile);
+    void prepareRenderableTile(TilesetTile& tile);
+    void prepareContentTerrainFrame(TilesetTile& tile);
+    void ensureLegacySurfaceMesh(TilesetTile& tile);
     bool prepareUpsampleSourceTile(
         TilesetTile& tile,
         double priority);
