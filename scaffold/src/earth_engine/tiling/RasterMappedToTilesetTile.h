@@ -103,7 +103,8 @@ public:
 
     /// Compute UV translation/scale from geometry↔imagery rectangles.
     void computeTranslationAndScale(const Rectangle& geometryBounds,
-                                    const Rectangle& imageryBounds);
+                                    const Rectangle& imageryBounds,
+                                    bool invertedVCoordinate = false);
 
     // ── Accessors (aligned with cesium-native naming) ──
 

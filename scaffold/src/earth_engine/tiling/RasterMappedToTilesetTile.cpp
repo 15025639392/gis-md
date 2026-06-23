@@ -94,14 +94,21 @@ std::shared_ptr<RasterOverlayTile> findParentTileOverlayPreferLoading(
 const Rectangle* findRectangleForProjection(
     const RasterOverlayDetails& overlayDetails,
     RasterOverlayProjection projection,
-    int32_t* textureCoordinateID = nullptr) {
+    int32_t* textureCoordinateID = nullptr,
+    bool* invertedV = nullptr) {
     for (size_t i = 0; i < overlayDetails.rasterOverlayProjections.size(); ++i) {
         if (overlayDetails.rasterOverlayProjections[i] == projection &&
             i < overlayDetails.rasterOverlayRectangles.size() &&
             !overlayDetails.rasterOverlayRectangles[i].isEmpty()) {
-            if (textureCoordinateID) {
-                *textureCoordinateID = static_cast<int32_t>(i);
-            }
+                if (textureCoordinateID) {
+                    *textureCoordinateID = static_cast<int32_t>(i);
+                }
+                if (invertedV) {
+                    *invertedV =
+                        i < overlayDetails
+                                .rasterOverlayInvertedVCoordinates.size() &&
+                        overlayDetails.rasterOverlayInvertedVCoordinates[i];
+                }
             return &overlayDetails.rasterOverlayRectangles[i];
         }
     }
@@ -190,16 +197,20 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
 
     const RasterOverlayProjection projection = tileProvider.getProjection();
     int32_t readyTextureCoordinateID = textureCoordinateID_;
+    bool readyInvertedV = false;
     const Rectangle* geometryRectangle = hasRenderContentDetails
         ? findRectangleForProjection(
               overlayDetails,
               projection,
-              &readyTextureCoordinateID)
+              &readyTextureCoordinateID,
+              &readyInvertedV)
         : nullptr;
     const Rectangle* mappingRectangle = geometryRectangle;
+    bool mappingRectangleInvertedV = readyInvertedV;
     if (!mappingRectangle && !hasRenderContentDetails &&
         boundingVolumeRectangle && !boundingVolumeRectangle->isEmpty()) {
         mappingRectangle = &*boundingVolumeRectangle;
+        mappingRectangleInvertedV = false;
     }
 
     // cesium-native RasterOverlayCollection::updateTileOverlays:
@@ -299,7 +310,9 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 // Compute UV transform from the tile's bounds
                 if (mappingRectangle) {
                     computeTranslationAndScale(
-                        *mappingRectangle, _pReadyTile->getRectangle());
+                        *mappingRectangle,
+                        _pReadyTile->getRectangle(),
+                        mappingRectangleInvertedV);
                 }
             }
         } else if (loadState == RasterOverlayTile::LoadState::Failed) {
@@ -340,7 +353,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 if (mappingRectangle) {
                     computeTranslationAndScale(
                         *mappingRectangle,
-                        _pReadyTile->getRectangle());
+                        _pReadyTile->getRectangle(),
+                        mappingRectangleInvertedV);
                 }
             }
         }
@@ -461,7 +475,8 @@ bool RasterMappedToTilesetTile::loadThrottled(
 
 void RasterMappedToTilesetTile::computeTranslationAndScale(
     const Rectangle& geometryBounds,
-    const Rectangle& imageryBounds) {
+    const Rectangle& imageryBounds,
+    bool invertedVCoordinate) {
     if (imageryBounds.isEmpty()) {
         offsetU_ = 0.0f;
         offsetV_ = 0.0f;
@@ -472,8 +487,9 @@ void RasterMappedToTilesetTile::computeTranslationAndScale(
 
     const TileTextureWindow nativeUv = TileSurface::computeTranslationAndScale(
         geometryBounds, imageryBounds);
-    TileTextureWindow uv =
-        TileSurface::textureWindowForNorthWestUv(nativeUv);
+    TileTextureWindow uv = invertedVCoordinate
+        ? nativeUv
+        : TileSurface::textureWindowForNorthWestUv(nativeUv);
     offsetU_ = uv.offsetU;
     offsetV_ = uv.offsetV;
     scaleU_ = uv.scaleU;

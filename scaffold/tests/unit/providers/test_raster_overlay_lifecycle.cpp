@@ -1224,6 +1224,89 @@ TEST(
     EXPECT_NEAR(expectedWindow.scaleV, mapped.getScaleV(), 1e-6f);
 }
 
+TEST(
+    RasterOverlayLifecycleTest,
+    CompositeClippedRectangleAttachHonorsInvertedVOverlayDetails) {
+    RecordingImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 1};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle coveredNorthHalf(
+        sourceBounds.west(),
+        sourceBounds.south() + sourceBounds.height() * 0.5,
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    RasterOverlay::Options options;
+    options.coverageRectangle = coveredNorthHalf;
+    RasterOverlay overlay(
+        std::make_unique<NullImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    provider.setOwner(&overlay);
+
+    RasterOverlayDetails details = makeProviderDetails(*scheme, sourceBounds);
+    details.rasterOverlayInvertedVCoordinates = {true};
+    RasterMappedToTilesetTile mapped;
+    std::vector<RasterOverlayProjection> missing;
+    ASSERT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            sourceKey,
+            details,
+            512.0,
+            512.0,
+            provider,
+            nullptr,
+            missing,
+            nullptr,
+            0,
+            true));
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+
+    ASSERT_TRUE(provider.loadTile(*mapped.getLoadingTile()));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    ASSERT_EQ(RasterOverlayTile::LoadState::Loaded,
+              mapped.getLoadingTile()->getState());
+
+    const Rectangle composedRectangle = mapped.getLoadingTile()->getRectangle();
+    RecordingPrepareRendererResources recorder;
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Yes,
+        mapped.update(
+            sourceKey,
+            details,
+            512.0,
+            512.0,
+            provider,
+            &recorder,
+            missing,
+            nullptr,
+            0,
+            true));
+
+    ASSERT_EQ(1, recorder.attachCount);
+    const TileTextureWindow expectedWindow =
+        TileSurface::computeTranslationAndScale(
+            details.rasterOverlayRectangles.front(),
+            composedRectangle);
+    EXPECT_NEAR(expectedWindow.offsetU,
+                recorder.lastTranslationU,
+                1e-6f);
+    EXPECT_NEAR(expectedWindow.offsetV,
+                recorder.lastTranslationV,
+                1e-6f);
+    EXPECT_NEAR(expectedWindow.scaleU, recorder.lastScaleU, 1e-6f);
+    EXPECT_NEAR(expectedWindow.scaleV, recorder.lastScaleV, 1e-6f);
+    EXPECT_NEAR(expectedWindow.offsetU, mapped.getTranslationU(), 1e-6f);
+    EXPECT_NEAR(expectedWindow.offsetV, mapped.getTranslationV(), 1e-6f);
+    EXPECT_NEAR(expectedWindow.scaleU, mapped.getScaleU(), 1e-6f);
+    EXPECT_NEAR(expectedWindow.scaleV, mapped.getScaleV(), 1e-6f);
+}
+
 TEST(RasterOverlayLifecycleTest, LargeAreaUsesRootTileLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
