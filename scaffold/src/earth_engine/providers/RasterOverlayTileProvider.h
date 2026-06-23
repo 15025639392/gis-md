@@ -270,9 +270,8 @@ private:
     /// quadtree imagery tiles that overlap its geometry rectangle.
     bool loadCompositeTile(RasterOverlayTile& tile,
                            FrameResourceBudget* budget = nullptr);
-    int issueCompositeSourceRequest(
+    int issueCompositeSourceRequests(
         const std::shared_ptr<QuadtreeSourceRequest>& request,
-        int maxNewSourceRequests,
         FrameResourceBudget* budget);
 
     /// Tile cache key from TileKey.

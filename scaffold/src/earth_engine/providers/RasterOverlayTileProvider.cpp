@@ -1433,15 +1433,11 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
         sources.reserve(sourcePlan.sourceKeys.size());
     }
 
-    int issueSome(int maxNewSourceRequests,
-                  const std::function<void()>& onSourceIssued,
-                  const std::function<void()>& onSourceFinished,
-                  const std::function<void()>& onSourceFailed) {
-        if (maxNewSourceRequests <= 0) {
-            return 0;
-        }
+    int issueAll(const std::function<void()>& onSourceIssued,
+                 const std::function<void()>& onSourceFinished,
+                 const std::function<void()>& onSourceFailed) {
         auto issued = std::make_shared<int>(0);
-        while (!isComplete() && *issued < maxNewSourceRequests) {
+        while (!isComplete()) {
             TileKey sourceKey;
             {
                 std::lock_guard<std::mutex> lock(mutex);
@@ -2284,19 +2280,17 @@ bool RasterOverlayTileProvider::loadMappedTile(
             state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
-    issueCompositeSourceRequest(
+    issueCompositeSourceRequests(
         request,
-        std::numeric_limits<int>::max(),
         budget);
 
     return true;
 }
 
-int RasterOverlayTileProvider::issueCompositeSourceRequest(
+int RasterOverlayTileProvider::issueCompositeSourceRequests(
     const std::shared_ptr<QuadtreeSourceRequest>& request,
-    int maxNewSourceRequests,
     FrameResourceBudget* budget) {
-    if (!request || request->isComplete() || maxNewSourceRequests <= 0) {
+    if (!request || request->isComplete()) {
         return 0;
     }
     std::shared_ptr<ProviderAsyncState> state = asyncState_;
@@ -2340,8 +2334,7 @@ int RasterOverlayTileProvider::issueCompositeSourceRequest(
     };
 
     const int newlyIssued =
-        request->issueSome(
-            maxNewSourceRequests,
+        request->issueAll(
             onSourceIssued,
             onSourceFinished,
             onSourceFailed);
