@@ -531,7 +531,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainUpload(
         terrainUpload,
         nullptr,
         {},
@@ -1445,7 +1445,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     int ensureMeshCalls = 0;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainUpload(
         upload,
         nullptr,
         {},
@@ -1593,6 +1593,79 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
     EXPECT_FALSE(gltfEnsured);
     EXPECT_FALSE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     GltfTerrainDomainUploadUsesContentLifecycleWithoutLegacyMeshPath) {
+    const TileKey key{"Geographic-TMS", 2, 0, 0};
+    const std::string cacheKey = "gltf-terrain-domain-content-upload";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    auto model = std::make_unique<GltfModel>();
+    const GltfModel* rawModel = model.get();
+    PendingTileLoad upload{
+        TileLoadDomain::GltfTerrain,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeGltfTerrainContentResult(std::move(model))};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::GltfTerrain,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    int ensureMeshCalls = 0;
+    int ensureGltfCalls = 0;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
+        [&ensureGltfCalls](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            ++ensureGltfCalls;
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(terrainCache.empty());
+    EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
+    EXPECT_EQ(0, ensureMeshCalls);
+    EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
 
@@ -1883,7 +1956,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     bool meshEnsured = false;
     bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainUpload(
         upload,
         nullptr,
         {},

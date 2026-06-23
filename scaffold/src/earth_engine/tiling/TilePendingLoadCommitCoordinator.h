@@ -89,7 +89,7 @@ public:
     template <typename EnsureTileFn,
               typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
-    static void commitTerrainUpload(
+    static void commitLegacyHeightmapTerrainUpload(
         PendingTileLoad& upload,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -265,7 +265,7 @@ public:
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
         } else {
-            commitTerrainUpload(
+            commitLegacyHeightmapTerrainUpload(
                 upload,
                 device,
                 rasterOverlays,
