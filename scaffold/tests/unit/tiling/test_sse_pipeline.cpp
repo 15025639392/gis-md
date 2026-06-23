@@ -2630,6 +2630,47 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
           "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
 }
 
+void testRasterOverlayCompositeWithFailedSourcesStaysTerminal() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setLevelRange(1, 1);
+
+    const Rectangle geometryBounds =
+        Rectangle::fromDegrees(-180.0, -60.0, 180.0, 60.0);
+    RasterOverlayTileProvider::TilePtr compositeTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, geometryBounds),
+            512.0,
+            512.0).tile;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(compositeTile && compositeTile->isCompositeTile() &&
+              provider.loadTileThrottled(*compositeTile, &budget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: failed-source fixture starts composite source requests");
+    if (!compositeTile || imagery.pendingRequests.empty()) {
+        return;
+    }
+
+    const auto pendingRequests = imagery.pendingRequests;
+    for (const auto& request : pendingRequests) {
+        request.callback(request.key, nullptr);
+    }
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(2, config);
+    provider.processPendingUploads(false, &uploadBudget);
+
+    check(compositeTile->getState() == RasterOverlayTile::LoadState::Failed,
+          "RasterOverlayTileProvider: all-failed composite sources stay terminal instead of masquerading as empty imagery");
+}
+
 void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -29073,6 +29114,7 @@ int main() {
     testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss();
     testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian();
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
+    testRasterOverlayCompositeWithFailedSourcesStaysTerminal();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayDirectTileJoinsCompositeSourceInFlight();
     testRasterOverlayCompositeTilesShareSourceInFlight();
