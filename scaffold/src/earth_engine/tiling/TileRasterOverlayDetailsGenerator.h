@@ -29,6 +29,10 @@ public:
         const TileBoundingVolume& boundingVolume,
         RasterOverlayProjection projection);
 
+    static bool ensureProjectionDetailsFromModelBounds(
+        TileRenderContentState& renderContent,
+        RasterOverlayProjection projection);
+
     static int ensureProjectionDetailsFromActiveOverlays(
         TileRenderContentState& renderContent,
         const TileBoundingVolume* boundingVolume,

@@ -253,16 +253,54 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     return true;
 }
 
+bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromModelBounds(
+    TileRenderContentState& renderContent,
+    RasterOverlayProjection projection) {
+    RasterOverlayDetails* details =
+        renderContent.mutableRasterOverlayDetails();
+    if (!details) {
+        return false;
+    }
+    const size_t textureCoordinateIndex =
+        details->rasterOverlayProjections.size();
+    const std::optional<size_t> existingIndex =
+        findProjectionIndex(*details, projection);
+    if (existingIndex && hasProjectionRectangle(*details, *existingIndex)) {
+        return false;
+    }
+
+    const std::optional<BoundingRegionBuilder::BoundingRegion> tightRegion =
+        computeTightModelBoundingRegion(renderContent);
+    if (!tightRegion) {
+        return false;
+    }
+
+    const size_t targetTextureCoordinateIndex =
+        existingIndex.value_or(textureCoordinateIndex);
+    const Rectangle projectedRectangle =
+        projectRegionRectangle(tightRegion->rectangle, projection);
+    if (!writeGltfOverlayTexCoords(
+            renderContent,
+            projection,
+            projectedRectangle,
+            targetTextureCoordinateIndex)) {
+        return false;
+    }
+
+    RasterOverlayDetails generated;
+    generated.rasterOverlayProjections = {projection};
+    generated.rasterOverlayRectangles = {projectedRectangle};
+    generated.rasterOverlayInvertedVCoordinates = {false};
+    generated.boundingRegion = *tightRegion;
+    details->merge(generated);
+    return true;
+}
+
 int TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays(
     TileRenderContentState& renderContent,
     const TileBoundingVolume* boundingVolume,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device) {
-    if (!boundingVolume ||
-        boundingVolume->kind != TileBoundingVolumeKind::Region) {
-        return 0;
-    }
-
     int generated = 0;
     for (ActivatedRasterOverlay* activeOverlay : rasterOverlays) {
         if (!activeOverlay || !activeOverlay->visible()) {
@@ -273,10 +311,18 @@ int TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays
         if (!provider || !provider->isReady()) {
             continue;
         }
-        if (ensureProjectionDetailsFromRegion(
-                renderContent,
-                *boundingVolume,
-                provider->getProjection())) {
+        const RasterOverlayProjection projection = provider->getProjection();
+        const bool generatedDetails =
+            boundingVolume &&
+                boundingVolume->kind == TileBoundingVolumeKind::Region
+            ? ensureProjectionDetailsFromRegion(
+                  renderContent,
+                  *boundingVolume,
+                  projection)
+            : ensureProjectionDetailsFromModelBounds(
+                  renderContent,
+                  projection);
+        if (generatedDetails) {
             ++generated;
         }
     }

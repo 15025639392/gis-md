@@ -380,6 +380,131 @@ TEST(RasterOverlayDetailsGeneratorTest,
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
+     ModelBoundsGenerationWritesGltfOverlayTexCoordsLikeCesiumNativeNullRegion) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    auto quadModel = makeTerrainQuadModel(modelRegion);
+    renderContent.prepareGltfContent(std::move(quadModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    const bool generated = TileRasterOverlayDetailsGenerator::
+        ensureProjectionDetailsFromModelBounds(
+            renderContent,
+            RasterOverlayProjection::Geographic);
+
+    ASSERT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(RasterOverlayProjection::Geographic,
+              details.rasterOverlayProjections[0]);
+    expectRectangleNear(modelRegion, details.rasterOverlayRectangles[0]);
+    expectRectangleNear(modelRegion, details.boundingRegion.rectangle);
+    EXPECT_NEAR(0.0, details.boundingRegion.minimumHeight, 1e-6);
+    EXPECT_NEAR(0.0, details.boundingRegion.maximumHeight, 1e-6);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     ModelBoundsGenerationFillsExistingProjectionSlotWithoutRectangle) {
+    TileRenderContentState renderContent;
+    RasterOverlayDetails existingDetails;
+    existingDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    prepareTerrainQuadRenderContent(
+        renderContent,
+        modelRegion,
+        std::move(existingDetails));
+
+    const bool generated = TileRasterOverlayDetailsGenerator::
+        ensureProjectionDetailsFromModelBounds(
+            renderContent,
+            RasterOverlayProjection::Geographic);
+
+    EXPECT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(0, details.textureCoordinateIDForProjection(
+                    RasterOverlayProjection::Geographic));
+    expectRectangleNear(modelRegion, details.rasterOverlayRectangles[0]);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    EXPECT_TRUE(primitive.vertexTexCoords[1].empty());
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     ModelBoundsGenerationProjectsWebMercatorFromRtcWorldPositions) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    auto quadModel = makeRtcTerrainQuadModel(modelRegion);
+    renderContent.prepareGltfContent(std::move(quadModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+    const Rectangle projected = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        modelRegion);
+
+    const bool generated = TileRasterOverlayDetailsGenerator::
+        ensureProjectionDetailsFromModelBounds(
+            renderContent,
+            RasterOverlayProjection::WebMercator);
+
+    ASSERT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(RasterOverlayProjection::WebMercator,
+              details.rasterOverlayProjections[0]);
+    EXPECT_EQ(projected, details.rasterOverlayRectangles[0]);
+    expectRectangleNear(modelRegion, details.boundingRegion.rectangle);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
+
+    const Cartographic localOnlyCartographic =
+        Ellipsoid::WGS84().cartesianToCartographic(
+            primitive.vertices[2].positionEcef);
+    const Vec3 localOnlyProjected = projectPosition(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        localOnlyCartographic);
+    const double wrongV =
+        (localOnlyProjected.y() - projected.south()) / projected.height();
+    EXPECT_GT(std::abs(wrongV - primitive.vertexTexCoords[0][2][1]), 1e-3);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
      RegionGenerationUsesLooseRectangleForUvButTightModelBoundingRegion) {
     TileRenderContentState renderContent;
     const Rectangle modelRegion =
