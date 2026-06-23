@@ -4,6 +4,7 @@
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
+#include "../core/math/MathUtils.h"
 #include "../terrain/QuantizedMeshParser.h"
 
 #include <algorithm>
@@ -190,15 +191,46 @@ void rewriteTerrainProjectionTexCoords(GltfModel& model,
             }
             const Vec3 projected =
                 projectPosition(webMercator, *cartographic);
+            Vec3 adjustedProjected = projected;
+            double longitude = cartographic->longitude();
+            if (std::abs(std::abs(longitude) - MathUtils::OnePi) <
+                    MathUtils::Epsilon5 &&
+                (adjustedProjected.x() < projectedRectangle->west() ||
+                 adjustedProjected.x() > projectedRectangle->east() ||
+                 adjustedProjected.y() < projectedRectangle->south() ||
+                 adjustedProjected.y() > projectedRectangle->north())) {
+                const double testLongitude = longitude < 0.0
+                    ? longitude + MathUtils::TwoPi
+                    : longitude - MathUtils::TwoPi;
+                const Vec3 alternateProjected = projectPosition(
+                    webMercator,
+                    Cartographic::fromRadians(
+                        testLongitude,
+                        cartographic->latitude(),
+                        cartographic->height()));
+                const double distance = projectedRectangle
+                    ->computeSignedDistance(
+                        adjustedProjected.x(),
+                        adjustedProjected.y());
+                const double alternateDistance = projectedRectangle
+                    ->computeSignedDistance(
+                        alternateProjected.x(),
+                        alternateProjected.y());
+                if (alternateDistance < distance) {
+                    adjustedProjected = alternateProjected;
+                }
+            }
             texCoords[i] = {
                 static_cast<float>(
                     std::clamp(
-                        (projected.x() - projectedRectangle->west()) / width,
+                        (adjustedProjected.x() -
+                         projectedRectangle->west()) / width,
                         0.0,
                         1.0)),
                 static_cast<float>(
                     std::clamp(
-                        (projected.y() - projectedRectangle->south()) /
+                        (adjustedProjected.y() -
+                         projectedRectangle->south()) /
                             height,
                         0.0,
                         1.0))};

@@ -3,6 +3,7 @@
 #include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -86,13 +87,16 @@ Rectangle rootRectangle() {
 
 QuantizedMeshContentLoadResult loadQuantizedMeshContent(
     const std::vector<uint8_t>& bytes,
-    const Rectangle& rectangle = rootRectangle()) {
+    const Rectangle& rectangle = rootRectangle(),
+    RasterOverlayProjection terrainProjection =
+        RasterOverlayProjection::Geographic) {
     return QuantizedMeshContentLoader::load(
         bytes.data(),
         bytes.size(),
         rectangle,
         false,
-        {});
+        {},
+        terrainProjection);
 }
 
 } // namespace
@@ -251,4 +255,52 @@ TEST(QuantizedMeshContentLoaderVertexDecodeTest,
     EXPECT_NEAR(bounds.west(), nw.longitude(), 1e-8);
     EXPECT_NEAR(bounds.north(), nw.latitude(), 1e-8);
     EXPECT_NEAR(minimumHeight, nw.height(), 1e-3);
+}
+
+TEST(QuantizedMeshContentLoaderVertexDecodeTest,
+     WebMercatorOverlayUvKeepsEastAntimeridianLikeCesiumNative) {
+    const Rectangle bounds(
+        MathUtils::OnePi - 1e-8,
+        -0.1,
+        MathUtils::OnePi,
+        0.1);
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(
+            bytes,
+            bounds,
+            RasterOverlayProjection::WebMercator);
+
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    ASSERT_GE(primitive.vertexTexCoords[0].size(), 2u);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+}
+
+TEST(QuantizedMeshContentLoaderVertexDecodeTest,
+     WebMercatorOverlayUvKeepsWestAntimeridianLikeCesiumNative) {
+    const Rectangle bounds(
+        -MathUtils::OnePi,
+        -0.1,
+        -MathUtils::OnePi + 1e-8,
+        0.1);
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(
+            bytes,
+            bounds,
+            RasterOverlayProjection::WebMercator);
+
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    ASSERT_GE(primitive.vertexTexCoords[0].size(), 3u);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
 }
