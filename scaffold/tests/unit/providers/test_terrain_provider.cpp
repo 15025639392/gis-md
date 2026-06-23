@@ -4015,6 +4015,44 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidMetadataAvailabilityUpdateLayerDoe
     EXPECT_FALSE(provider.isSubtreeLoaded(0, 0));
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     InvalidMetadataAvailabilitySubtreeDoesNotMutateState) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(childKey));
+
+    QuantizedMeshAvailabilityUpdate wrongScheme;
+    wrongScheme.layerIndex = 0;
+    wrongScheme.subtreeKey = TileKey{"XYZ-WebMercator", 0, 0, 0};
+    wrongScheme.metadataAvailability = {{0, 0, 0, 0, 0}};
+
+    QuantizedMeshAvailabilityUpdate nonBoundary;
+    nonBoundary.layerIndex = 0;
+    nonBoundary.subtreeKey = TileKey{"Geographic-TMS", 1, 0, 0};
+    nonBoundary.metadataAvailability = {{0, 0, 0, 0, 0}};
+
+    provider.applyAvailabilityUpdates({wrongScheme, nonBoundary});
+
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(childKey));
+    EXPECT_FALSE(provider.isSubtreeLoaded(0, 0));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, NormalizesDotSlashRelativeTileTemplate) {
     QuantizedMeshTerrainProvider provider("https://example.com/fallback/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({

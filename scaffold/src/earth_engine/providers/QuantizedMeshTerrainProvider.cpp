@@ -2275,6 +2275,10 @@ void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
         if (layer.availabilityLevels <= 0) {
             continue;
         }
+        if (!isTileInLayerRange(update.subtreeKey, layer.schemeId) ||
+            update.subtreeKey.z % layer.availabilityLevels != 0) {
+            continue;
+        }
         for (const auto& r : update.metadataAvailability) {
             const int absLevel =
                 update.subtreeKey.z + 1 + static_cast<int>(r[0]);

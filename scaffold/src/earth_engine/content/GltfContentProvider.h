@@ -50,6 +50,24 @@ struct TileContentLoadResult {
         quantizedMeshAvailabilityUpdates;
     bool quantizedMeshAvailabilityUpdatesApplied = false;
 
+    static bool sameBoundingRegion(
+        const BoundingRegionBuilder::BoundingRegion& lhs,
+        const BoundingRegionBuilder::BoundingRegion& rhs) {
+        return lhs.rectangle == rhs.rectangle &&
+               lhs.minimumHeight == rhs.minimumHeight &&
+               lhs.maximumHeight == rhs.maximumHeight;
+    }
+
+    static bool sameRasterOverlayDetails(
+        const RasterOverlayDetails& lhs,
+        const RasterOverlayDetails& rhs) {
+        return lhs.rasterOverlayProjections == rhs.rasterOverlayProjections &&
+               lhs.rasterOverlayRectangles == rhs.rasterOverlayRectangles &&
+               lhs.rasterOverlayInvertedVCoordinates ==
+                   rhs.rasterOverlayInvertedVCoordinates &&
+               sameBoundingRegion(lhs.boundingRegion, rhs.boundingRegion);
+    }
+
     static TileContentLoadResult render(std::unique_ptr<GltfModel> model) {
         TileContentLoadResult result;
         result.status = model ? TileLoadStatus::Renderable
@@ -71,8 +89,12 @@ struct TileContentLoadResult {
                 metadata.rasterOverlayDetails =
                     result.gltfModel->rasterOverlayDetails;
             } else if (metadata.rasterOverlayDetails && result.gltfModel) {
-                result.gltfModel->rasterOverlayDetails.merge(
-                    *metadata.rasterOverlayDetails);
+                if (!sameRasterOverlayDetails(
+                        result.gltfModel->rasterOverlayDetails,
+                        *metadata.rasterOverlayDetails)) {
+                    result.gltfModel->rasterOverlayDetails.merge(
+                        *metadata.rasterOverlayDetails);
+                }
             }
             result.metadata = std::move(metadata);
             result.contentTransform = contentTransform;
