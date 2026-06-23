@@ -130,7 +130,7 @@ private:
             tile.bounds,
             ownHeightmap ? 64 : 16);
         resolution.source = ownHeightmap
-            ? SurfaceDrawableSource::LegacyHeightmapTerrain
+            ? SurfaceDrawableSource::HeightmapTerrain
             : SurfaceDrawableSource::EllipsoidFallback;
 
         if (ownHeightmap && ownHeightmap->valid()) {

@@ -16,7 +16,7 @@ namespace earth_engine {
 
 enum class SurfaceDrawableSource {
     None,
-    LegacyHeightmapTerrain,
+    HeightmapTerrain,
     AncestorUpsample,
     EllipsoidFallback,
     GltfContent
@@ -157,10 +157,10 @@ public:
     bool isSurfaceSource(SurfaceDrawableSource source) const {
         return surface_.surfaceSource == source;
     }
-    bool needsLegacyHeightmapSurfaceReplacement(bool hasOwnTerrain) const {
+    bool needsHeightmapSurfaceReplacement(bool hasOwnTerrain) const {
         return surface_.meshReady &&
                hasOwnTerrain &&
-               surface_.surfaceSource != SurfaceDrawableSource::LegacyHeightmapTerrain;
+               surface_.surfaceSource != SurfaceDrawableSource::HeightmapTerrain;
     }
     void setSurfaceMesh(std::unique_ptr<SurfaceTileMesh> surfaceMesh) {
         surface_.horizonOcclusionPoint.reset();
