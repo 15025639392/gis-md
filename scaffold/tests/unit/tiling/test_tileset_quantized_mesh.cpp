@@ -171,20 +171,26 @@ void installQuantizedMeshTerrainContent(TilesetTile& tile,
     tile.content.loadState = TileLoadState::Done;
 }
 
-class SparseTerrainProvider final : public TerrainProvider {
+class SparseContentTerrainProvider final : public TilesetContentProvider {
 public:
-    explicit SparseTerrainProvider(
+    explicit SparseContentTerrainProvider(
         std::string scheme = "Geographic-TMS")
         : schemeId_(std::move(scheme)) {}
 
     std::string id() const override { return "sparse-terrain"; }
-    std::string schemeId() const override { return schemeId_; }
-    int minZoom() const override { return 0; }
-    int maxZoom() const override { return 4; }
-    int tileSize() const override { return 2; }
+    bool providesTerrainQuadtree() const override { return true; }
 
-    TileAvailabilityState availabilityState(const TileKey& key) const override {
-        if (key.schemeId != schemeId()) {
+    bool supportsTile(const TileKey& key) const override {
+        return terrainAvailabilityState(key) == TileAvailabilityState::Available;
+    }
+
+    std::vector<TileKey> rootTiles() const override {
+        return {TileKey{schemeId_, 0, 0, 0}};
+    }
+
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey& key) const override {
+        if (key.schemeId != schemeId_) {
             return TileAvailabilityState::NotAvailable;
         }
         if (key.z == 0) {
@@ -196,20 +202,17 @@ public:
         return TileAvailabilityState::NotAvailable;
     }
 
-    std::string buildUrl(const TileKey&) const override {
-        return "memory://sparse";
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TileContentLoadResult::retryLater());
     }
 
-    void requestTile(const TileKey&,
-                     CancellationToken,
-                     TerrainCallback callback,
-                     HttpRequestPriority = HttpRequestPriority::Normal) override {
-        callback(TileKey{}, TerrainTileLoadResult::retryLater());
-    }
-
-    std::unique_ptr<DecodedHeightmap> decodeTile(
+    TileContentLoadResult decodeContent(
         const uint8_t*, size_t) override {
-        return nullptr;
+        return TileContentLoadResult::failed();
     }
 
 private:
@@ -533,13 +536,13 @@ TEST(TilesetQuantizedMeshTest,
 
 TEST(TilesetQuantizedMeshTest,
      ChildrenInheritParentHeaderHeightRangeLikeCesiumNative) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto provider = std::make_unique<SparseContentTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider),
-                    std::move(scheme),
+    Tileset tileset(std::move(scheme),
                     {},
                     nullptr,
-                    TilesetOptions{});
+                    TilesetOptions{},
+                    std::move(provider));
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -586,14 +589,14 @@ TEST(TilesetQuantizedMeshTest,
 
 TEST(TilesetQuantizedMeshTest,
      ContentTerrainAvailabilityUpsamplePreservesRasterOverlayProjectionUvLikeCesiumNative) {
-    auto provider = std::make_unique<SparseTerrainProvider>(
+    auto provider = std::make_unique<SparseContentTerrainProvider>(
         "XYZ-WebMercator");
     auto scheme = TileScheme::createXYZWebMercator();
-    Tileset tileset(std::move(provider),
-                    std::move(scheme),
+    Tileset tileset(std::move(scheme),
                     {},
                     nullptr,
-                    TilesetOptions{});
+                    TilesetOptions{},
+                    std::move(provider));
 
     const TileKey rootKey{"XYZ-WebMercator", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
