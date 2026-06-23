@@ -73,9 +73,18 @@ public:
             RasterOverlayTile::MoreDetailAvailable::No;
     };
 
+    struct RasterSourceTileMapping {
+        int sourceZoom = 0;
+        Rectangle sourceBounds = Rectangle::MAXIMUM;
+        std::vector<TileKey> sourceKeys;
+
+        bool empty() const { return sourceKeys.empty(); }
+    };
+
     struct RasterTileMapping {
         TilePtr tile;
         bool directTile = false;
+        RasterSourceTileMapping sourceTiles;
     };
 
     static CompositeImageResult composeQuadtreeSourceImagesWithDetails(

@@ -1916,7 +1916,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     double targetScreenPixelsX,
     double targetScreenPixelsY) {
     if (!ready_) {
-        return {getPlaceholderTile(), false};
+        return {getPlaceholderTile(), false, {}};
     }
 
     const Rectangle geometryBounds =
@@ -1927,7 +1927,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
             coverageRectangle_,
             shouldClampOutsideCoverage(owner_));
     if (!sourceBounds) {
-        return {nullptr, false};
+        return {nullptr, false, {}};
     }
 
     QuadtreeSourcePlan sourcePlan = buildQuadtreeSourcePlan(
@@ -1944,8 +1944,13 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
         getMaximumLevel());
 
     if (sourcePlan.empty()) {
-        return {getPlaceholderTile(), false};
+        return {getPlaceholderTile(), false, {}};
     }
+
+    RasterSourceTileMapping sourceTiles{
+        sourcePlan.sourceZoom,
+        *sourceBounds,
+        sourcePlan.sourceKeys};
 
     if (sourcePlan.sourceKeys.size() == 1) {
         const TileKey& sourceKey = sourcePlan.sourceKeys.front();
@@ -1954,7 +1959,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
                                                sourceTileBounds) &&
             rectanglesEqualForDirectRasterTile(*sourceBounds,
                                                sourceTileBounds)) {
-            return {getTile(sourceKey), true};
+            return {getTile(sourceKey), true, std::move(sourceTiles)};
         }
     }
 
@@ -1968,7 +1973,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
         existing->second->lastUsedFrame = frameNumber_;
         compositeSourcePlans_[ck] =
             CompositeSourcePlanCacheEntry{std::move(sourcePlan), *sourceBounds};
-        return {existing->second, false};
+        return {existing->second, false, std::move(sourceTiles)};
     }
 
     const double centerLng =
@@ -1987,7 +1992,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     tiles_[ck] = tile;
     compositeSourcePlans_[ck] =
         CompositeSourcePlanCacheEntry{std::move(sourcePlan), *sourceBounds};
-    return {tile, false};
+    return {tile, false, std::move(sourceTiles)};
 }
 
 RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::resolveTile(

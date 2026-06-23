@@ -1227,6 +1227,10 @@ TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
     EXPECT_TRUE(direct.directTile);
     EXPECT_FALSE(direct.tile->isCompositeTile());
     EXPECT_EQ(sourceKey, direct.tile->getTileID());
+    EXPECT_EQ(sourceKey.z, direct.sourceTiles.sourceZoom);
+    ASSERT_EQ(1u, direct.sourceTiles.sourceKeys.size());
+    EXPECT_EQ(sourceKey, direct.sourceTiles.sourceKeys.front());
+    EXPECT_EQ(sourceBounds, direct.sourceTiles.sourceBounds);
 
     const Rectangle westHalf(
         sourceBounds.west(),
@@ -1242,6 +1246,61 @@ TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
     ASSERT_NE(nullptr, composed.tile);
     EXPECT_FALSE(composed.directTile);
     EXPECT_TRUE(composed.tile->isCompositeTile());
+    EXPECT_EQ(composed.tile->getSourceZoom(),
+              composed.sourceTiles.sourceZoom);
+    EXPECT_FALSE(composed.sourceTiles.empty());
+    EXPECT_TRUE(composed.sourceTiles.sourceBounds.equalsEpsilon(
+        westHalf,
+        1e-12));
+}
+
+TEST(RasterOverlayLifecycleTest,
+     MappingExposesMultipleImagerySourceTilesLikeCesiumNative) {
+    RgbImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(8, 8);
+
+    const int expectedLevel = 8;
+    const TileKey centerKey =
+        scheme->positionToTile(0.1, 0.2, expectedLevel);
+    const Rectangle centerBounds = scheme->tileToRectangle(centerKey);
+    const double cornerLng = centerBounds.west();
+    const double cornerLat = centerBounds.south();
+    const Rectangle spanningFourTiles(
+        cornerLng - centerBounds.width() * 0.5,
+        cornerLat - centerBounds.height() * 0.5,
+        cornerLng + centerBounds.width() * 0.5,
+        cornerLat + centerBounds.height() * 0.5);
+
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, spanningFourTiles),
+            static_cast<double>(imagery.tileWidth() * 4),
+            static_cast<double>(imagery.tileHeight() * 4));
+
+    ASSERT_NE(nullptr, mapping.tile);
+    EXPECT_FALSE(mapping.directTile);
+    EXPECT_TRUE(mapping.tile->isCompositeTile());
+    EXPECT_EQ(expectedLevel, mapping.sourceTiles.sourceZoom);
+    EXPECT_TRUE(mapping.sourceTiles.sourceBounds.equalsEpsilon(
+        spanningFourTiles,
+        1e-12));
+    ASSERT_EQ(4u, mapping.sourceTiles.sourceKeys.size());
+
+    const std::vector<TileKey> expectedKeys = {
+        TileKey{scheme->id(), expectedLevel, centerKey.x - 1, centerKey.y},
+        TileKey{scheme->id(), expectedLevel, centerKey.x - 1, centerKey.y + 1},
+        TileKey{scheme->id(), expectedLevel, centerKey.x, centerKey.y},
+        TileKey{scheme->id(), expectedLevel, centerKey.x, centerKey.y + 1},
+    };
+    for (const TileKey& expectedKey : expectedKeys) {
+        EXPECT_NE(
+            mapping.sourceTiles.sourceKeys.end(),
+            std::find(mapping.sourceTiles.sourceKeys.begin(),
+                      mapping.sourceTiles.sourceKeys.end(),
+                      expectedKey));
+    }
 }
 
 TEST(RasterOverlayLifecycleTest, DirectFastPathDoesNotRunForPartialRectangle) {
