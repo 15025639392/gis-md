@@ -274,7 +274,6 @@ private:
         const std::shared_ptr<QuadtreeSourceRequest>& request,
         int maxNewSourceRequests,
         FrameResourceBudget* budget);
-    int pumpCompositeSourceRequests(FrameResourceBudget* budget);
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;
@@ -290,8 +289,6 @@ private:
 
     /// All cached tiles retained by this provider (key → shared_ptr).
     std::unordered_map<std::string, TilePtr> tiles_;
-    std::deque<std::shared_ptr<QuadtreeSourceRequest>>
-        pendingSourceRequests_;
 
     /// cesium-native: shared placeholder tile returned when provider is not ready.
     TilePtr placeholderTile_;

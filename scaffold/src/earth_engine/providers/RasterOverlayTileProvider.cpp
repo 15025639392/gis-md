@@ -1474,11 +1474,6 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
         return completed;
     }
 
-    bool isFullyIssued() const {
-        std::lock_guard<std::mutex> lock(mutex);
-        return nextSourceIndex >= sourcePlan.sourceKeys.size();
-    }
-
 private:
     void finishOneSource(LoadedSourceImage&& source) {
         bool finished = false;
@@ -2359,39 +2354,6 @@ int RasterOverlayTileProvider::issueCompositeSourceRequest(
     return newlyIssued;
 }
 
-int RasterOverlayTileProvider::pumpCompositeSourceRequests(
-    FrameResourceBudget* budget) {
-    if (pendingSourceRequests_.empty()) {
-        return 0;
-    }
-
-    std::shared_ptr<ProviderAsyncState> state = asyncState_;
-    int issued = 0;
-    for (auto it = pendingSourceRequests_.begin();
-         it != pendingSourceRequests_.end();) {
-        if (!*it || (*it)->isComplete()) {
-            it = pendingSourceRequests_.erase(it);
-            continue;
-        }
-        const int slots = availableRasterRequestSlots(
-            budget,
-            state->activeRasterSourceRequests.load(
-                std::memory_order_relaxed));
-        if (slots <= 0) {
-            break;
-        }
-        const int newlyIssued =
-            issueCompositeSourceRequest(*it, slots, budget);
-        issued += newlyIssued;
-        if ((*it)->isComplete() || (*it)->isFullyIssued()) {
-            it = pendingSourceRequests_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    return issued;
-}
-
 int RasterOverlayTileProvider::processPendingUploads(
     bool interactionActive,
     FrameResourceBudget* budget) {
@@ -2407,7 +2369,6 @@ int RasterOverlayTileProvider::processPendingUploads(
         localBudget.beginFrame(frameNumber_, config);
         budget = &localBudget;
     }
-    pumpCompositeSourceRequests(budget);
 
     int processed = 0;
     while (true) {
@@ -2554,7 +2515,6 @@ bool RasterOverlayTileProvider::hasPendingWork() const {
     return !asyncState_->pendingUploads.empty() ||
            !asyncState_->inFlightRequests.empty() ||
            !asyncState_->sourceTileDepotInFlight.empty() ||
-           !pendingSourceRequests_.empty() ||
            asyncState_->activeRasterComposeTasks.load(
                std::memory_order_relaxed) > 0 ||
            asyncState_->activeRasterSourceRequests.load(
