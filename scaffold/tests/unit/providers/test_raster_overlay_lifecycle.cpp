@@ -189,6 +189,7 @@ public:
     int tileWidth() const override { return 2; }
     int tileHeight() const override { return 2; }
     std::string buildUrl(const TileKey&) const override { return {}; }
+    std::string attribution() const override { return attributionValue; }
     void requestTile(const TileKey& key,
                      CancellationToken,
                      TileCallback callback,
@@ -202,6 +203,7 @@ public:
     }
 
     int requestCount = 0;
+    std::string attributionValue;
 };
 
 class RgbImageryProvider final : public ImageryProvider {
@@ -1135,6 +1137,53 @@ TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampli
     EXPECT_EQ(3, uploaderPtr->lastUpload.channels);
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               rectangleMappedTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     DirectRasterTileCarriesProviderAttributionAsTileCredit) {
+    ImmediateImageryProvider imagery;
+    imagery.attributionValue = "Imagery credit";
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey key{scheme->id(), 2, 1, 1};
+    auto tile = provider.getTile(key);
+    ASSERT_NE(nullptr, tile);
+
+    ASSERT_TRUE(provider.loadTile(*tile));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+    ASSERT_EQ(1u, tile->credits().size());
+    EXPECT_EQ("Imagery credit", tile->credits().front());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     MappedRasterTileMergesSourceAttributionCreditsLikeCesiumNative) {
+    ImmediateImageryProvider imagery;
+    imagery.attributionValue = "Imagery credit";
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const Rectangle geometryBounds =
+        Rectangle::fromDegrees(-180.0, -85.0, 180.0, 85.0);
+    auto mapping = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, geometryBounds),
+        1024.0,
+        1024.0);
+    ASSERT_NE(nullptr, mapping.tile);
+    ASSERT_TRUE(mapping.tile->isMappedRasterTile());
+    EXPECT_FALSE(mapping.directTile);
+
+    ASSERT_TRUE(provider.loadTile(*mapping.tile));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              mapping.tile->getState());
+    ASSERT_EQ(1u, mapping.tile->credits().size());
+    EXPECT_EQ("Imagery credit", mapping.tile->credits().front());
 }
 
 TEST(RasterOverlayLifecycleTest, WebMercatorBoundarySlopUsesProjectedGeometrySpanLikeCesiumNative) {

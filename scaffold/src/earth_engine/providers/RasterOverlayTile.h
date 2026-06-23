@@ -124,6 +124,11 @@ public:
     void clearLoadDiagnostics() {
         loadDiagnostics_.clear();
     }
+    const std::vector<std::string>& credits() const { return credits_; }
+    void setCredits(std::vector<std::string> credits) {
+        credits_ = std::move(credits);
+    }
+    void clearCredits() { credits_.clear(); }
 
     /// The maximum zoom level for the tile scheme.
     int getMaxZoom() const { return maxZoom_; }
@@ -189,6 +194,7 @@ private:
     int maxZoom_ = 22;
     MoreDetailAvailable moreDetailAvailable_ = MoreDetailAvailable::Unknown;
     std::vector<std::string> loadDiagnostics_;
+    std::vector<std::string> credits_;
     bool mappedRasterTile_ = false;
     int mappedSourceZoom_ = 0;
     Rectangle mappedSourceBounds_ = Rectangle::MAXIMUM;

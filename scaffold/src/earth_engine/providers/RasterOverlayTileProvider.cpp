@@ -812,11 +812,25 @@ struct RasterSourceResult {
     RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
         RasterOverlayTile::MoreDetailAvailable::Unknown;
     std::vector<std::string> diagnostics;
+    std::vector<std::string> credits;
     bool terminalFailure = false;
 };
 
 bool isResolvedRasterSourceResult(const RasterSourceResult& source) {
     return source.image || source.terminalFailure;
+}
+
+void appendUniqueCredits(std::vector<std::string>& target,
+                         const std::vector<std::string>& credits) {
+    for (const std::string& credit : credits) {
+        if (credit.empty()) {
+            continue;
+        }
+        if (std::find(target.begin(), target.end(), credit) ==
+            target.end()) {
+            target.push_back(credit);
+        }
+    }
 }
 
 struct PixelRectangle {
@@ -1063,11 +1077,13 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     int maximumSourceZoom) {
     (void)sourceZoom;
     std::vector<std::string> diagnostics;
+    std::vector<std::string> credits;
     for (RasterSourceResult& source : sources) {
         diagnostics.insert(
             diagnostics.end(),
             std::make_move_iterator(source.diagnostics.begin()),
             std::make_move_iterator(source.diagnostics.end()));
+        appendUniqueCredits(credits, source.credits);
     }
     sources.erase(
         std::remove_if(sources.begin(), sources.end(),
@@ -1079,6 +1095,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     if (sources.empty()) {
         RasterOverlayTileProvider::CompositeImageResult result;
         result.diagnostics = std::move(diagnostics);
+        result.credits = std::move(credits);
         return result;
     }
     double projectedWidthPerPixel = std::numeric_limits<double>::max();
@@ -1097,6 +1114,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
         !std::isfinite(projectedHeightPerPixel)) {
         RasterOverlayTileProvider::CompositeImageResult result;
         result.diagnostics = std::move(diagnostics);
+        result.credits = std::move(credits);
         return result;
     }
 
@@ -1113,6 +1131,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
         result.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Yes;
         result.diagnostics = std::move(diagnostics);
+        result.credits = std::move(credits);
         return result;
     }
     measurements.channels = std::max(3, measurements.channels);
@@ -1159,6 +1178,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
             ? RasterOverlayTile::MoreDetailAvailable::Yes
             : RasterOverlayTile::MoreDetailAvailable::No;
     result.diagnostics = std::move(diagnostics);
+    result.credits = std::move(credits);
     return result;
 }
 
@@ -1167,6 +1187,7 @@ using MappedSourceLoadSuccess =
                        std::shared_ptr<const DecodedImage>,
                        Rectangle,
                        RasterOverlayTile::MoreDetailAvailable,
+                       std::vector<std::string>,
                        std::vector<std::string>)>;
 using MappedSourceLoadFailure = std::function<void(std::vector<std::string>)>;
 
@@ -1195,6 +1216,7 @@ RasterOverlayTileProvider::CompositeImageResult composeMappedSourceImageSet(
                 result.diagnostics.end(),
                 std::make_move_iterator(source.diagnostics.begin()),
                 std::make_move_iterator(source.diagnostics.end()));
+            appendUniqueCredits(result.credits, source.credits);
         }
         return result;
     }
@@ -1443,6 +1465,11 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         loadedKey.z < self->maximumLevel
                             ? RasterOverlayTile::MoreDetailAvailable::Yes
                             : RasterOverlayTile::MoreDetailAvailable::No;
+                    const std::string attribution =
+                        self->provider.attribution();
+                    if (!attribution.empty()) {
+                        source.credits.push_back(attribution);
+                    }
                     self->cacheSource(originalKey, source);
                     auto completed = std::make_shared<SourceTileAsset>(
                         self->sourceAssetFromResult(source));
@@ -1457,6 +1484,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         directSource.moreDetailAvailable =
                             source.moreDetailAvailable;
                         directSource.diagnostics = source.diagnostics;
+                        directSource.credits = source.credits;
                         self->cacheSource(loadedKey, directSource);
                         directCompleted = std::make_shared<SourceTileAsset>(
                             self->sourceAssetFromResult(directSource));
@@ -1531,6 +1559,7 @@ private:
             : cached->sourceSubset;
         source.moreDetailAvailable = cached->moreDetailAvailable;
         source.diagnostics = cached->diagnostics;
+        source.credits = cached->credits;
         source.terminalFailure = cached->terminalFailure;
         return source;
     }
@@ -1547,6 +1576,7 @@ private:
         cached.sourceSubset = source.sourceSubset;
         cached.moreDetailAvailable = source.moreDetailAvailable;
         cached.diagnostics = source.diagnostics;
+        cached.credits = source.credits;
         return cached;
     }
 
@@ -1776,7 +1806,8 @@ private:
                 source.image,
                 projectGeographicToProvider(source.bounds, projection),
                 moreDetailAvailable,
-                std::move(source.diagnostics));
+                std::move(source.diagnostics),
+                std::move(source.credits));
             return;
         }
 
@@ -1835,7 +1866,8 @@ private:
                                         composed.rectangle,
                                         self->projection),
                                     composed.moreDetailAvailable,
-                                    std::move(composed.diagnostics));
+                                    std::move(composed.diagnostics),
+                                    std::move(composed.credits));
                             }
                         } else {
                             if (self->state->alive.load(
@@ -1903,6 +1935,7 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             source.sourceSubset,
             source.moreDetailAvailable,
             std::move(source.diagnostics),
+            std::move(source.credits),
             false});
     }
     if (!haveAnyUsefulImageData) {
@@ -2639,7 +2672,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::shared_ptr<const DecodedImage> sharedImage,
             Rectangle rectangle,
             RasterOverlayTile::MoreDetailAvailable moreDetailAvailable,
-            std::vector<std::string> diagnostics) {
+            std::vector<std::string> diagnostics,
+            std::vector<std::string> credits) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
@@ -2667,7 +2701,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                  std::move(sharedImage),
                  rectangle,
                  moreDetailAvailable,
-                 std::move(diagnostics)});
+                 std::move(diagnostics),
+                 std::move(credits)});
         },
         [state, cacheKey, tileWeak, requestSourceDepotEpoch](
             std::vector<std::string> diagnostics) {
@@ -2847,6 +2882,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (emptyImage) {
             for (const TilePtr& target : targetTiles) {
                 target->setLoadDiagnostics(upload.diagnostics);
+                target->setCredits(upload.credits);
                 target->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 target->setRectangle(upload.rectangle);
@@ -2863,6 +2899,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (!uploadImage || !isDecodedImageUploadable(*uploadImage)) {
             for (const TilePtr& target : targetTiles) {
                 target->setLoadDiagnostics(upload.diagnostics);
+                target->setCredits(upload.credits);
                 target->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 target->setState(RasterOverlayTile::LoadState::Failed);
@@ -2895,6 +2932,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             uploadMs = perf::nowMs() - uploadStartMs;
             if (!tex) {
                 tile.setLoadDiagnostics(upload.diagnostics);
+                tile.setCredits(upload.credits);
                 tile.setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 tile.setState(RasterOverlayTile::LoadState::Failed);
@@ -2914,6 +2952,7 @@ int RasterOverlayTileProvider::processPendingUploads(
                            : RasterOverlayTile::MoreDetailAvailable::No);
             tile.setMoreDetailAvailable(moreDetailAvailable);
             tile.setLoadDiagnostics(upload.diagnostics);
+            tile.setCredits(upload.credits);
             tile.setRectangle(upload.rectangle);
             // cesium-native: transfer texture ownership to the tile.
             // The tile owns its texture; no external cache needed.

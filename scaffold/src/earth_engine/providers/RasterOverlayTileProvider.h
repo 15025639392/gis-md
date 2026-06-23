@@ -80,6 +80,7 @@ public:
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
         std::vector<std::string> diagnostics;
+        std::vector<std::string> credits;
     };
 
     struct CompositeImageResult {
@@ -88,6 +89,7 @@ public:
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
         std::vector<std::string> diagnostics;
+        std::vector<std::string> credits;
     };
 
     struct RasterSourceTileMapping {
@@ -348,6 +350,7 @@ private:
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
         std::vector<std::string> diagnostics;
+        std::vector<std::string> credits;
     };
 
     /// Provider-level source imagery depot, matching cesium-native
@@ -362,6 +365,7 @@ private:
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
         std::vector<std::string> diagnostics;
+        std::vector<std::string> credits;
         bool terminalFailure = false;
         int64_t sizeBytes = 0;
         uint64_t generation = 0;
