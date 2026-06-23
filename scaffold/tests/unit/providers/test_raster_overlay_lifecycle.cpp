@@ -2176,14 +2176,24 @@ TEST(
                                 imagery.requestedKeys.end(),
                                 sourceKey)));
     ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
+    EXPECT_EQ(1, provider.getActiveRasterSourceRequests());
+    ProviderRequestDiagnostics activeDiagnostics =
+        provider.requestDiagnostics();
+    EXPECT_EQ(1, activeDiagnostics.activeExternalResourceBlockingRequests);
 
     imagery.completeNext();
+    EXPECT_EQ(0, provider.getActiveRasterSourceRequests());
 
     EXPECT_EQ(2, processPendingUploadsUntil(provider, 2));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               westMapping.tile->getState());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               eastMapping.tile->getState());
+    ProviderRequestDiagnostics completedDiagnostics =
+        provider.requestDiagnostics();
+    EXPECT_EQ(0, completedDiagnostics.activeExternalResourceBlockingRequests);
+    EXPECT_EQ(1, completedDiagnostics.externalResourceRequestsStarted);
+    EXPECT_EQ(1, completedDiagnostics.externalResourceRequestsCompleted);
 }
 
 TEST(RasterOverlayLifecycleTest, DirectAndCompositeTilesShareProviderSourceTileAssetLikeCesiumNative) {
