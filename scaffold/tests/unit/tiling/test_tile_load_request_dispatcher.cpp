@@ -584,6 +584,13 @@ TEST(TileLoadRequestDispatcherTest,
                 RasterOverlayProjection::Geographic);
     ASSERT_NE(nullptr, explicitCommittedRectangle);
     EXPECT_EQ(explicitRasterRectangle, *explicitCommittedRectangle);
+    ASSERT_NE(nullptr, explicitTerrainContent.content.gltfModel);
+    const Rectangle* explicitModelRectangle =
+        explicitTerrainContent.content.gltfModel->rasterOverlayDetails
+            .findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, explicitModelRectangle);
+    EXPECT_EQ(explicitRasterRectangle, *explicitModelRectangle);
 
     TileLoadResult contentGltf = TileLoadResult::fromContentResult(
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
