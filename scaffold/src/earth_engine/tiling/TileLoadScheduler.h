@@ -90,10 +90,14 @@ public:
 
                 const bool needsTerrainContentUpsample =
                     requestKind == TileLoadRequestKind::TerrainContentUpsample;
+                const bool needsRasterDetailUpsample =
+                    tileState->content.isRasterDetailUpsample();
                 const bool hasTerrainContentSource =
                     TileGltfTerrainUpsampledChildMaterializer::
-                        findGltfTerrainSource(*tileState) != nullptr;
-                if (needsTerrainContentUpsample && !hasTerrainContentSource) {
+                        canCreateLoadResult(*tileState);
+                if ((needsTerrainContentUpsample ||
+                     needsRasterDetailUpsample) &&
+                    !hasTerrainContentSource) {
                     continue;
                 }
                 const TileLoadDomain upsampleDomain = hasTerrainContentSource

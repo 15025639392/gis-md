@@ -28735,6 +28735,101 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
           "Tileset: WebMercator glTF-parent derives child projection overlay details from parent");
 }
 
+void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(provider),
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: stale raster-detail upsample root tile is created");
+    if (!root) return;
+
+    auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
+    const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
+        root->bounds;
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[1] =
+        parentWebMercatorOverlay;
+    parentModel->rasterOverlayDetails.boundingRegion = {
+        root->bounds,
+        -8.0,
+        45.0};
+    RasterOverlayDetails completeDetails =
+        parentModel->rasterOverlayDetails;
+    root->content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->markRenderContentDone();
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: stale raster-detail upsample setup creates children");
+    if (root->children.empty() || !root->children.front()) return;
+
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    DebugImageryProvider imagery;
+    RasterOverlayTileProvider rasterProvider(
+        imagery,
+        *imageryScheme,
+        nullptr);
+    RasterMappedToTilesetTile& mapped =
+        root->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        root->key,
+        completeDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    if (!loadingTile) return;
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    mapped.update(
+        root->key,
+        completeDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    check(mapped.isMoreDetailAvailable() &&
+              mapped.getTextureCoordinateID() == 1,
+          "Tileset: stale raster-detail upsample fixture has ready more-detail raster");
+
+    TilesetTile* child = root->children.front();
+    child->content.markRasterDetailUpsample();
+    GltfModel* currentParentModel = root->content.renderContent.gltfContent();
+    if (!currentParentModel) return;
+    currentParentModel->rasterOverlayDetails = RasterOverlayDetails{};
+
+    TilesetTestAccess::requestMissingTile(tileset, child->key);
+    const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
+    check(child->content.loadState == TileLoadState::Unloaded &&
+              diag.pendingContentUploads == 0 &&
+              diag.pendingTerrainUploads == 0 &&
+              diag.pendingGltfTerrainUploads == 0 &&
+              rawProvider->requestCount == 0,
+          "Tileset: raster-detail glTF upsample waits for current parent projection details without legacy fallback");
+}
+
 void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail() {
     const TileKey parentKey{"TMS-WebMercator", 0, 0, 0};
     const TileKey childKey{"TMS-WebMercator", 1, 0, 1};
@@ -29893,6 +29988,7 @@ int main() {
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
     testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
+    testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails();
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
     testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
     testTerrainContentUpsamplePropagatesInvertedVCoordinate();

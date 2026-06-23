@@ -44,6 +44,26 @@ public:
             std::move(childModel));
     }
 
+    static bool canCreateLoadResult(const TilesetTile& tile) {
+        if (!tile.content.derivesTerrainFromParent()) {
+            return false;
+        }
+
+        const TilesetTile* source = findGltfTerrainSource(tile);
+        if (!source) {
+            return false;
+        }
+
+        const GltfModel* parentModel =
+            source->content.renderContent.gltfModelForRead();
+        if (!parentModel) {
+            return false;
+        }
+
+        return chooseUpsampleTextureCoordinate(*parentModel, *source, tile) >=
+               0;
+    }
+
 private:
     static std::unique_ptr<GltfModel> createUpsampledModel(
         TilesetTile& tile) {
