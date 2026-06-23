@@ -6,7 +6,6 @@
 #include "TileLoadPriorityPolicy.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../content/GltfContentProvider.h"
-#include "../providers/TerrainProvider.h"
 #include "../threading/CancellationToken.h"
 
 #include <condition_variable>
@@ -124,80 +123,6 @@ public:
                             std::move(loadResult));
                     }
                     requestState.completeContentRequest(cacheKey);
-                }
-                condition.notify_all();
-            },
-            toHttpPriority(group));
-        return TileLoadDispatchResult::Issued;
-    }
-
-    template <typename OnIssuedFn>
-    static TileLoadDispatchResult requestTerrain(
-        std::mutex& mutex,
-        std::condition_variable& condition,
-        TilePendingRequestState& requestState,
-        TilePendingLoadQueue& pendingLoads,
-        FrameResourceBudget& budget,
-        TerrainProvider& provider,
-        const TileKey& key,
-        const std::string& cacheKey,
-        TileLoadPriorityGroup group,
-        double priority,
-        OnIssuedFn&& onIssued) {
-        CancellationToken token;
-        const int estimatedFanout = provider.estimatedRequestFanout(key);
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            if (requestState.destroying()) {
-                return TileLoadDispatchResult::Destroying;
-            }
-            if (cacheKey.empty()) {
-                return TileLoadDispatchResult::Skipped;
-            }
-            if (requestState.contains(cacheKey) ||
-                pendingLoads.containsCacheKey(cacheKey)) {
-                return TileLoadDispatchResult::Skipped;
-            }
-            if (!budget.tryIssue(
-                    FrameResourceLane::TerrainRequest,
-                    TileLoadPriorityPolicy::toFramePriority(group),
-                    estimatedFanout)) {
-                return TileLoadDispatchResult::Blocked;
-            }
-            if (!requestState.beginTerrainRequest(cacheKey, token)) {
-                return TileLoadDispatchResult::Skipped;
-            }
-        }
-
-        onIssued();
-        provider.requestTile(
-            key,
-            token,
-            [&mutex,
-             &condition,
-             &requestState,
-             &pendingLoads,
-             cacheKey,
-             key,
-             token,
-             group,
-             priority](const TileKey&, TerrainTileLoadResult result) mutable {
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    if (!requestState.destroying() && !token.isCancelled()) {
-                        TileLoadResult loadResult =
-                            TileLoadResult::fromTerrainResult(
-                                std::move(result));
-                        enqueueCompletedLoadResult(
-                            pendingLoads,
-                            TileLoadDomain::HeightmapTerrainAdapter,
-                            key,
-                            cacheKey,
-                            group,
-                            priority,
-                            std::move(loadResult));
-                    }
-                    requestState.completeTerrainRequest(cacheKey);
                 }
                 condition.notify_all();
             },
