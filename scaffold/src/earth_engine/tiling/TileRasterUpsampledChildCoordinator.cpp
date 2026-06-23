@@ -32,14 +32,16 @@ TileRasterUpsampledChildCoordinator::TileRasterUpsampledChildCoordinator(
       resourceInvalidator_(resourceInvalidator) {}
 
 void TileRasterUpsampledChildCoordinator::createRasterOverlayUpsampledChildren(
-    TilesetTile& tile) {
+    TilesetTile& tile,
+    IPrepareRendererResources* pPrepRenderer) {
     const bool changed =
         TileRasterUpsampledChildMaterializer::materialize(
             tile,
             cesiumTerrainGeometricError(tile.bounds),
             [this](const TileKey& key) {
                 return contentAccess_.ensureTile(key);
-            });
+            },
+            pPrepRenderer);
     if (changed) {
         markResourcesDirty();
     }

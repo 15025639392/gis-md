@@ -15,6 +15,8 @@
 
 namespace earth_engine {
 
+class IPrepareRendererResources;
+
 struct TileRefinementAvailabilityOptions {
     bool hasExistingChildren = false;
     bool hasContentChildren = false;
@@ -154,13 +156,15 @@ struct TileChildMaterializer {
         TilesetTile& parent,
         const Rectangle& subdivisionRectangle,
         double defaultGeometricError,
-        EnsureTileFn&& ensureTile) {
+        EnsureTileFn&& ensureTile,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
         return materializeRasterUpsampledChildren(
             parent,
             subdivisionRectangle,
             subdivisionRectangle.center(),
             defaultGeometricError,
-            std::forward<EnsureTileFn>(ensureTile));
+            std::forward<EnsureTileFn>(ensureTile),
+            pPrepRenderer);
     }
 
     static bool terrainSchemeYDirectionDown(const std::string& schemeId) {
@@ -174,7 +178,8 @@ struct TileChildMaterializer {
         const Rectangle& subdivisionRectangle,
         const std::pair<double, double>& subdivisionCenter,
         double defaultGeometricError,
-        EnsureTileFn&& ensureTile) {
+        EnsureTileFn&& ensureTile,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
         if (parent.children.size() >= 4) {
             const bool canRefreshRasterUpsampledChildren =
                 parent.children.size() == 4 &&
@@ -262,7 +267,8 @@ struct TileChildMaterializer {
             child->refine = TileRefine::Replace;
             if (!wasRasterDetailUpsample || childGeometryChanged) {
                 child->content.renderContent.clearRenderContent();
-                child->rasterOverlayState.releaseAndClearReferences(nullptr);
+                child->rasterOverlayState.releaseAndClearReferences(
+                    pPrepRenderer);
             }
             child->content.markRasterDetailUpsample();
             child->unconditionallyRefine = false;

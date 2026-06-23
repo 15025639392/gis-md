@@ -15,7 +15,9 @@
 #include "earth_engine/tiling/TileChildMaterializer.h"
 #include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/renderer/IPrepareRendererResources.h"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -34,6 +36,45 @@ public:
 private:
     int width_ = 0;
     int height_ = 0;
+};
+
+class RecordingPrepareRendererResources final
+    : public IPrepareRendererResources {
+public:
+    void attachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex,
+        std::shared_ptr<const RasterOverlayTile> rasterTile,
+        Texture* texture,
+        float translationU,
+        float translationV,
+        float scaleU,
+        float scaleV) override {
+        ++attachCount;
+        lastGeometryKey = geometryKey;
+        lastOverlayIndex = overlayIndex;
+        lastRasterTile = std::move(rasterTile);
+        lastTexture = texture;
+        lastUv = {translationU, translationV, scaleU, scaleV};
+    }
+
+    void detachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex) noexcept override {
+        ++detachCount;
+        lastDetachedGeometryKey = geometryKey;
+        lastDetachedOverlayIndex = overlayIndex;
+    }
+
+    int attachCount = 0;
+    int detachCount = 0;
+    TileKey lastGeometryKey;
+    TileKey lastDetachedGeometryKey;
+    int32_t lastOverlayIndex = -1;
+    int32_t lastDetachedOverlayIndex = -1;
+    std::shared_ptr<const RasterOverlayTile> lastRasterTile;
+    Texture* lastTexture = nullptr;
+    std::array<float, 4> lastUv{0.0f, 0.0f, 1.0f, 1.0f};
 };
 
 std::string cacheKeyFor(const TileKey& key) {
@@ -920,6 +961,9 @@ TEST(TileChildMaterializerTest, RasterUpsampledChildrenSplitSubdivisionAndRemain
 
 TEST(TileChildMaterializerTest,
      RasterUpsampledChildrenRefreshWhenSubdivisionChanges) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
@@ -950,9 +994,34 @@ TEST(TileChildMaterializerTest,
         std::make_unique<SurfaceTileMesh>());
     sw->content.renderContent.setMeshReady(true);
     sw->content.renderContent.markRenderContentReady();
-    sw->rasterOverlayState.ensureMapping(0);
+    sw->content.renderContent.mutableRasterOverlayDetails()
+        ->setGeographicRectangle(sw->bounds);
+    RasterMappedToTilesetTile& mapped =
+        sw->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        sw->key,
+        sw->content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missingProjections);
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    mapped.getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(4, 4));
+    RecordingPrepareRendererResources prep;
+    mapped.update(
+        sw->key,
+        sw->content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        provider,
+        &prep,
+        missingProjections);
     ASSERT_TRUE(sw->content.renderContent.hasSurfaceMesh());
     ASSERT_EQ(1u, sw->rasterOverlayState.mappingCount());
+    ASSERT_EQ(1, prep.attachCount);
 
     const Rectangle tighterSubdivision =
         Rectangle::fromDegrees(-16.0, -8.0, -2.0, 8.0);
@@ -960,7 +1029,8 @@ TEST(TileChildMaterializerTest,
         parent,
         tighterSubdivision,
         200.0,
-        ensure));
+        ensure,
+        &prep));
 
     ASSERT_EQ(4u, parent.children.size());
     EXPECT_EQ(sw, parent.children[0]);
@@ -971,6 +1041,9 @@ TEST(TileChildMaterializerTest,
     EXPECT_FALSE(sw->content.renderContent.isMeshReady());
     EXPECT_FALSE(sw->content.renderContent.isRenderContentReady());
     EXPECT_EQ(0u, sw->rasterOverlayState.mappingCount());
+    EXPECT_EQ(1, prep.detachCount);
+    EXPECT_EQ(sw->key, prep.lastDetachedGeometryKey);
+    EXPECT_EQ(0, prep.lastDetachedOverlayIndex);
     EXPECT_TRUE(sw->content.renderContent.hasTerrainHeightRange());
     EXPECT_DOUBLE_EQ(-5.0, sw->content.renderContent.terrainMinimumHeight());
     EXPECT_DOUBLE_EQ(25.0, sw->content.renderContent.terrainMaximumHeight());

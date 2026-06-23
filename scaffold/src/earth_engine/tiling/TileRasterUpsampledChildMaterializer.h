@@ -16,13 +16,16 @@
 
 namespace earth_engine {
 
+class IPrepareRendererResources;
+
 class TileRasterUpsampledChildMaterializer {
 public:
     template <typename EnsureTileFn>
     static bool materialize(
         TilesetTile& tile,
         double defaultGeometricError,
-        EnsureTileFn&& ensureTile) {
+        EnsureTileFn&& ensureTile,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
         if (!tile.content.renderContent.hasRenderableTerrainContent() ||
             tile.children.size() >= 4) {
             return false;
@@ -80,7 +83,8 @@ public:
             subdivisionRectangle,
             subdivisionCenter,
             defaultGeometricError,
-            ensureTile);
+            ensureTile,
+            pPrepRenderer);
     }
 
 private:

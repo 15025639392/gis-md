@@ -65,9 +65,10 @@ void TileRenderCommandManager::buildTileDrawCommand(
         [this, &renderer](TilesetTile& unloadTile) {
             cacheOwnership_.unloadTileContent(unloadTile, &renderer);
         },
-        [this](TilesetTile& upsampleTile) {
+        [this, &renderer](TilesetTile& upsampleTile) {
             rasterUpsampledChildren_.createRasterOverlayUpsampledChildren(
-                upsampleTile);
+                upsampleTile,
+                &renderer);
         });
 }
 

@@ -4,6 +4,7 @@ namespace earth_engine {
 
 class TileContentAccess;
 class TileContentResourceInvalidator;
+class IPrepareRendererResources;
 struct TilesetTile;
 
 class TileRasterUpsampledChildCoordinator {
@@ -12,7 +13,9 @@ public:
         TileContentAccess& contentAccess,
         TileContentResourceInvalidator& resourceInvalidator);
 
-    void createRasterOverlayUpsampledChildren(TilesetTile& tile);
+    void createRasterOverlayUpsampledChildren(
+        TilesetTile& tile,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
 
 private:
     void markResourcesDirty();
