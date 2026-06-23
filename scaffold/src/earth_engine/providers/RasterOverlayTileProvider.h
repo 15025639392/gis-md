@@ -347,6 +347,7 @@ private:
         Rectangle rectangle;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
+        std::vector<std::string> diagnostics;
     };
 
     /// Provider-level source imagery depot, matching cesium-native

@@ -1166,8 +1166,9 @@ using MappedSourceLoadSuccess =
     std::function<void(std::unique_ptr<DecodedImage>,
                        std::shared_ptr<const DecodedImage>,
                        Rectangle,
-                       RasterOverlayTile::MoreDetailAvailable)>;
-using MappedSourceLoadFailure = std::function<void()>;
+                       RasterOverlayTile::MoreDetailAvailable,
+                       std::vector<std::string>)>;
+using MappedSourceLoadFailure = std::function<void(std::vector<std::string>)>;
 
 RasterOverlayTileProvider::CompositeImageResult composeMappedSourceImageSet(
     const TileScheme& scheme,
@@ -1774,17 +1775,18 @@ private:
                 nullptr,
                 source.image,
                 projectGeographicToProvider(source.bounds, projection),
-                moreDetailAvailable);
+                moreDetailAvailable,
+                std::move(source.diagnostics));
             return;
         }
 
         auto self = shared_from_this();
         if (!state->alive.load(std::memory_order_acquire)) {
-            onFailure();
+            onFailure({});
             return;
         }
         if (!scheme) {
-            onFailure();
+            onFailure({});
             return;
         }
         state->activeRasterComposeTasks.fetch_add(
@@ -1832,13 +1834,15 @@ private:
                                     projectGeographicToProvider(
                                         composed.rectangle,
                                         self->projection),
-                                    composed.moreDetailAvailable);
+                                    composed.moreDetailAvailable,
+                                    std::move(composed.diagnostics));
                             }
                         } else {
                             if (self->state->alive.load(
                                     std::memory_order_acquire)) {
                                 completedTileLoad = true;
-                                self->onFailure();
+                                self->onFailure(
+                                    std::move(composed.diagnostics));
                             }
                         }
                         finishAbandonedTileLoad();
@@ -1847,7 +1851,7 @@ private:
                         if (self->state->alive.load(
                                 std::memory_order_acquire)) {
                             completedTileLoad = true;
-                            self->onFailure();
+                            self->onFailure({});
                         }
                         finishAbandonedTileLoad();
                         finishCompose();
@@ -1858,7 +1862,7 @@ private:
                 1,
                 std::memory_order_relaxed);
             state->resolveDestructionIfComplete();
-            onFailure();
+            onFailure({});
         }
     }
 
@@ -2634,7 +2638,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::unique_ptr<DecodedImage> composed,
             std::shared_ptr<const DecodedImage> sharedImage,
             Rectangle rectangle,
-            RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
+            RasterOverlayTile::MoreDetailAvailable moreDetailAvailable,
+            std::vector<std::string> diagnostics) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
@@ -2661,9 +2666,11 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                  std::move(composed),
                  std::move(sharedImage),
                  rectangle,
-                 moreDetailAvailable});
+                 moreDetailAvailable,
+                 std::move(diagnostics)});
         },
-        [state, cacheKey, tileWeak, requestSourceDepotEpoch]() {
+        [state, cacheKey, tileWeak, requestSourceDepotEpoch](
+            std::vector<std::string> diagnostics) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
@@ -2686,6 +2693,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             }
             logAndroidRasterPipeline("compose-failed", cacheKey, 0, 0);
             if (auto tile = tileWeak.lock()) {
+                tile->setLoadDiagnostics(std::move(diagnostics));
                 tile->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 tile->setState(RasterOverlayTile::LoadState::Failed);
@@ -2838,6 +2846,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             uploadImage->pixels.empty();
         if (emptyImage) {
             for (const TilePtr& target : targetTiles) {
+                target->setLoadDiagnostics(upload.diagnostics);
                 target->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 target->setRectangle(upload.rectangle);
@@ -2853,6 +2862,7 @@ int RasterOverlayTileProvider::processPendingUploads(
 
         if (!uploadImage || !isDecodedImageUploadable(*uploadImage)) {
             for (const TilePtr& target : targetTiles) {
+                target->setLoadDiagnostics(upload.diagnostics);
                 target->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 target->setState(RasterOverlayTile::LoadState::Failed);
@@ -2884,6 +2894,7 @@ int RasterOverlayTileProvider::processPendingUploads(
                 : nullptr;
             uploadMs = perf::nowMs() - uploadStartMs;
             if (!tex) {
+                tile.setLoadDiagnostics(upload.diagnostics);
                 tile.setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 tile.setState(RasterOverlayTile::LoadState::Failed);
@@ -2902,6 +2913,7 @@ int RasterOverlayTileProvider::processPendingUploads(
                            ? RasterOverlayTile::MoreDetailAvailable::Yes
                            : RasterOverlayTile::MoreDetailAvailable::No);
             tile.setMoreDetailAvailable(moreDetailAvailable);
+            tile.setLoadDiagnostics(upload.diagnostics);
             tile.setRectangle(upload.rectangle);
             // cesium-native: transfer texture ownership to the tile.
             // The tile owns its texture; no external cache needed.

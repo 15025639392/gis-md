@@ -3830,6 +3830,13 @@ TEST(RasterOverlayLifecycleTest, FailedRasterTilesLoadEmptyLikeCesiumNative) {
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               mappedRasterTile->getState());
     EXPECT_EQ(nullptr, mappedRasterTile->getTexture());
+    ASSERT_FALSE(mappedRasterTile->loadDiagnostics().empty());
+    EXPECT_NE(
+        std::find(
+            mappedRasterTile->loadDiagnostics().begin(),
+            mappedRasterTile->loadDiagnostics().end(),
+            "Raster source tile failed after exhausting parent fallback"),
+        mappedRasterTile->loadDiagnostics().end());
     const int failedMappedRasterRequests = imagery.requestCount;
 
     EXPECT_TRUE(provider.loadTileThrottled(*mappedRasterTile, nullptr));

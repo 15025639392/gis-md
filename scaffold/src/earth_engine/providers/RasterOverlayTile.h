@@ -115,6 +115,15 @@ public:
     void setMoreDetailAvailable(MoreDetailAvailable moreDetailAvailable) {
         moreDetailAvailable_ = moreDetailAvailable;
     }
+    const std::vector<std::string>& loadDiagnostics() const {
+        return loadDiagnostics_;
+    }
+    void setLoadDiagnostics(std::vector<std::string> diagnostics) {
+        loadDiagnostics_ = std::move(diagnostics);
+    }
+    void clearLoadDiagnostics() {
+        loadDiagnostics_.clear();
+    }
 
     /// The maximum zoom level for the tile scheme.
     int getMaxZoom() const { return maxZoom_; }
@@ -179,6 +188,7 @@ private:
     void* rendererResources_ = nullptr;
     int maxZoom_ = 22;
     MoreDetailAvailable moreDetailAvailable_ = MoreDetailAvailable::Unknown;
+    std::vector<std::string> loadDiagnostics_;
     bool mappedRasterTile_ = false;
     int mappedSourceZoom_ = 0;
     Rectangle mappedSourceBounds_ = Rectangle::MAXIMUM;
