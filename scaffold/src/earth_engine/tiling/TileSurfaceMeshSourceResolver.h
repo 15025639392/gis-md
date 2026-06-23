@@ -23,19 +23,19 @@ public:
         TilesetTile& tile,
         DecodedHeightmap* ownHeightmap,
         bool hasTerrainQuadtree,
-        bool allowLegacyHeightmapSurface,
+        bool useHeightmapSurfacePath,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh) {
         const bool hasOwnTerrain = ownHeightmap != nullptr;
         const bool allowEllipsoidFallbackWithoutTerrain =
-            !hasTerrainQuadtree || allowLegacyHeightmapSurface;
+            !hasTerrainQuadtree || useHeightmapSurfacePath;
         TileSurfaceMeshResolution resolution =
             TileSurfaceMeshResolution::forContext(
                 hasOwnTerrain,
                 tile.content.derivesTerrainFromParent(),
                 hasTerrainQuadtree);
         if (tile.content.derivesTerrainFromParent() &&
-            !allowLegacyHeightmapSurface) {
+            !useHeightmapSurfacePath) {
             resolution.markDone = false;
         }
 
@@ -47,7 +47,7 @@ public:
         resolveAncestorUpsample(
             tile,
             hasOwnTerrain,
-            allowLegacyHeightmapSurface,
+            useHeightmapSurfacePath,
             findUpsampleSource,
             ensureAncestorMesh,
             resolution);
@@ -74,14 +74,14 @@ private:
     static void resolveAncestorUpsample(
         TilesetTile& tile,
         bool hasOwnTerrain,
-        bool allowLegacySurfaceUpsample,
+        bool useHeightmapSurfaceUpsample,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         TileSurfaceMeshResolution& resolution) {
         if (tile.content.renderContent.hasSurfaceMesh() || hasOwnTerrain) {
             return;
         }
-        if (!allowLegacySurfaceUpsample) {
+        if (!useHeightmapSurfaceUpsample) {
             return;
         }
 

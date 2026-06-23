@@ -15,7 +15,7 @@ struct TileSurfaceMeshEnsureInput {
     DecodedHeightmap* ownHeightmap = nullptr;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
-    bool allowLegacyHeightmapSurface = true;
+    bool useHeightmapSurfacePath = true;
 };
 
 struct TileSurfaceMeshEnsureResult {
@@ -78,7 +78,7 @@ public:
                 tile,
                 ownHeightmap,
                 input.hasTerrainQuadtree,
-                input.allowLegacyHeightmapSurface,
+                input.useHeightmapSurfacePath,
                 findUpsampleSource,
                 ensureAncestorMesh);
         if (!tile.content.renderContent.hasSurfaceMesh()) {

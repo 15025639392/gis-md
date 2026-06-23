@@ -13,7 +13,7 @@ public:
         const TilesetTile& tile,
         bool allowUnloadingSource = false,
         bool allowGltfTerrainSource = false,
-        bool allowLegacySurfaceSource = true) {
+        bool useHeightmapSurfacePath = true) {
         if (tile.content.isRasterDetailUpsample()) {
             return findDirectGltfTerrainParent(tile, allowUnloadingSource);
         }
@@ -32,7 +32,7 @@ public:
             }
         }
 
-        if (!allowLegacySurfaceSource) {
+        if (!useHeightmapSurfacePath) {
             return nullptr;
         }
 
@@ -71,7 +71,7 @@ public:
     static bool prepareSourceTile(
         TilesetTile& tile,
         double priority,
-        bool allowLegacySurfaceSource,
+        bool useHeightmapSurfacePath,
         EnsureTileMeshFn&& ensureTileMesh,
         QueueTileLoadFn&& queueTileLoad) {
         if (tile.content.isRasterDetailUpsample()) {
@@ -85,7 +85,7 @@ public:
         if (findSourceTile(tile,
                            false,
                            true,
-                           allowLegacySurfaceSource)) {
+                           useHeightmapSurfacePath)) {
             return true;
         }
 
@@ -99,7 +99,7 @@ public:
                 if (findSourceTile(tile,
                                    false,
                                    true,
-                                   allowLegacySurfaceSource)) {
+                                   useHeightmapSurfacePath)) {
                     return true;
                 }
             }

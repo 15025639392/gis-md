@@ -19,7 +19,7 @@ struct TileMeshFrameEnsureInput {
         terrainCache;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
-    bool allowLegacyHeightmapSurface = true;
+    bool useHeightmapSurfacePath = true;
 };
 
 class TileMeshFrameEnsurer {
@@ -40,12 +40,12 @@ public:
         MarkResourcesDirtyFn&& markResourcesDirty) {
         const bool contentTerrainQuadtreeOwnsSurface =
             input.hasTerrainQuadtree &&
-            !input.allowLegacyHeightmapSurface;
-        const bool hasLegacySurfaceResidue =
+            !input.useHeightmapSurfacePath;
+        const bool hasHeightmapSurfaceResidue =
             contentTerrainQuadtreeOwnsSurface &&
             (input.tile.content.renderContent.hasSurfaceMesh() ||
              input.tile.content.renderContent.hasRetainedHeightmap());
-        if (hasLegacySurfaceResidue) {
+        if (hasHeightmapSurfaceResidue) {
             input.tile.content.renderContent.clearSurfaceMeshResources();
             input.tile.content.renderContent.clearRetainedHeightmap();
             markResourcesDirty();
@@ -55,7 +55,7 @@ public:
             return;
         }
 
-        auto it = input.allowLegacyHeightmapSurface
+        auto it = input.useHeightmapSurfacePath
             ? input.terrainCache.find(terrainCacheKey(input.tile.key))
             : input.terrainCache.end();
         const bool hasOwnTerrain =
@@ -70,7 +70,7 @@ public:
                     ownHeightmap,
                     input.device,
                     input.hasTerrainQuadtree,
-                    input.allowLegacyHeightmapSurface},
+                    input.useHeightmapSurfacePath},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,

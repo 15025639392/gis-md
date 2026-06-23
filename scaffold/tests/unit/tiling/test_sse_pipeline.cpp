@@ -11996,25 +11996,25 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
           "TileMeshFrameEnsurer: glTF terrain render content skips terrain cache and SurfaceMesh frame path");
 
-    TilesetTile gltfWithStaleLegacySurface(
+    TilesetTile gltfWithStaleHeightmapSurface(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    gltfWithStaleLegacySurface.content.renderContent.prepareGltfContent(
-        makeQuadTerrainGltfModel(gltfWithStaleLegacySurface.bounds),
+    gltfWithStaleHeightmapSurface.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(gltfWithStaleHeightmapSurface.bounds),
         Mat4::identity());
-    gltfWithStaleLegacySurface.content.renderContent.setSurfaceMesh(
+    gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
-    gltfWithStaleLegacySurface.content.renderContent.setMeshReady(true);
-    gltfWithStaleLegacySurface.content.renderContent.setSurfaceSource(
+    gltfWithStaleHeightmapSurface.content.renderContent.setMeshReady(true);
+    gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceSource(
         SurfaceDrawableSource::HeightmapTerrain);
-    gltfWithStaleLegacySurface.content.renderContent.setRetainedHeightmap(
+    gltfWithStaleHeightmapSurface.content.renderContent.setRetainedHeightmap(
         makeFlatHeightmap(77.0f));
     bool gltfStaleCacheKeyComputed = false;
     bool gltfStaleSurfacePathTouched = false;
     bool gltfStaleResourcesDirty = false;
     TileMeshFrameEnsurer::ensure(
         TileMeshFrameEnsureInput{
-            gltfWithStaleLegacySurface,
+            gltfWithStaleHeightmapSurface,
             frameTerrainCache,
             nullptr,
             true,
@@ -12044,27 +12044,27 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     check(!gltfStaleCacheKeyComputed &&
               !gltfStaleSurfacePathTouched &&
               gltfStaleResourcesDirty &&
-              gltfWithStaleLegacySurface.content.renderContent.hasGltfContent() &&
-              !gltfWithStaleLegacySurface.content.renderContent.hasSurfaceMesh() &&
-              !gltfWithStaleLegacySurface.content.renderContent.hasRetainedHeightmap(),
-          "TileMeshFrameEnsurer: glTF terrain clears stale legacy surface residue before bypassing SurfaceMesh path");
+              gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
+              !gltfWithStaleHeightmapSurface.content.renderContent.hasSurfaceMesh() &&
+              !gltfWithStaleHeightmapSurface.content.renderContent.hasRetainedHeightmap(),
+          "TileMeshFrameEnsurer: glTF terrain clears stale heightmap surface residue before bypassing SurfaceMesh path");
 
-    TilesetTile staleLegacySurfaceTile(
+    TilesetTile staleHeightmapSurfaceTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    staleLegacySurfaceTile.content.renderContent.setSurfaceMesh(
+    staleHeightmapSurfaceTile.content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
-    staleLegacySurfaceTile.content.renderContent.setMeshReady(true);
-    staleLegacySurfaceTile.content.renderContent.setSurfaceSource(
+    staleHeightmapSurfaceTile.content.renderContent.setMeshReady(true);
+    staleHeightmapSurfaceTile.content.renderContent.setSurfaceSource(
         SurfaceDrawableSource::HeightmapTerrain);
-    staleLegacySurfaceTile.content.renderContent.setRetainedHeightmap(
+    staleHeightmapSurfaceTile.content.renderContent.setRetainedHeightmap(
         makeFlatHeightmap(42.0f));
     bool staleCacheKeyComputed = false;
     bool staleSurfacePathTouched = false;
     bool staleResourcesDirty = false;
     TileMeshFrameEnsurer::ensure(
         TileMeshFrameEnsureInput{
-            staleLegacySurfaceTile,
+            staleHeightmapSurfaceTile,
             frameTerrainCache,
             nullptr,
             true,
@@ -12094,9 +12094,9 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     check(!staleCacheKeyComputed &&
               !staleSurfacePathTouched &&
               staleResourcesDirty &&
-              !staleLegacySurfaceTile.content.renderContent.hasSurfaceMesh() &&
-              !staleLegacySurfaceTile.content.renderContent.hasRetainedHeightmap(),
-          "TileMeshFrameEnsurer: content terrain quadtree clears stale legacy heightmap surface residue");
+              !staleHeightmapSurfaceTile.content.renderContent.hasSurfaceMesh() &&
+              !staleHeightmapSurfaceTile.content.renderContent.hasRetainedHeightmap(),
+          "TileMeshFrameEnsurer: content terrain quadtree clears stale heightmap surface residue");
 }
 
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {

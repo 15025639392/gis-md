@@ -95,7 +95,7 @@ TEST(TileSurfaceMeshEnsurerTest,
 }
 
 TEST(TileSurfaceMeshEnsurerTest,
-     ContentOwnedUpsampleSourceRejectsLegacySurfaceMeshAncestor) {
+     ContentOwnedUpsampleSourceRejectsHeightmapSurfaceMeshAncestor) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -119,7 +119,7 @@ TEST(TileSurfaceMeshEnsurerTest,
 }
 
 TEST(TileSurfaceMeshEnsurerTest,
-     LegacyUpsampleSourceStillAcceptsSurfaceMeshAncestor) {
+     HeightmapSurfacePathStillAcceptsSurfaceMeshAncestor) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
