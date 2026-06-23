@@ -52,6 +52,9 @@ TileLoadLifecycleCounts TileLoadLifecycle::counts() const {
     result.terrainUploads = pendingLoads_.terrainUploadCount();
     result.terrainTerminalResults =
         pendingLoads_.terrainTerminalResultCount();
+    result.gltfTerrainUploads = pendingLoads_.gltfTerrainUploadCount();
+    result.gltfTerrainTerminalResults =
+        pendingLoads_.gltfTerrainTerminalResultCount();
     result.contentUploads = pendingLoads_.contentUploadCount();
     result.contentTerminalResults =
         pendingLoads_.contentTerminalResultCount();

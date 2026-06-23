@@ -807,7 +807,8 @@ TEST(TileLoadSchedulerTest,
     EXPECT_TRUE(marked);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(legacyProvider.requestCount, 0);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 1u);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 1u);
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
 
     PendingLoadFinalizeContext finalizeContext{false, budget};

@@ -32,6 +32,8 @@ public:
     size_t terminalResultCount() const;
     size_t terrainUploadCount() const;
     size_t terrainTerminalResultCount() const;
+    size_t gltfTerrainUploadCount() const;
+    size_t gltfTerrainTerminalResultCount() const;
     size_t contentUploadCount() const;
     size_t contentTerminalResultCount() const;
 
@@ -46,9 +48,6 @@ public:
 private:
     static size_t countDomain(const std::deque<PendingTileLoad>& loads,
                               TileLoadDomain domain);
-    static size_t countTerrainDomain(
-        const std::deque<PendingTileLoad>& loads);
-
     std::unordered_set<std::string> uploadKeys_;
     std::deque<PendingTileLoad> uploads_;
     std::deque<PendingTileLoad> terminalResults_;

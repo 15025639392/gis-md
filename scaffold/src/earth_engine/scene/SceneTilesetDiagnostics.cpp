@@ -265,6 +265,10 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
         snapshot.pendingTerrainUploads = loadDiag.pendingTerrainUploads;
         snapshot.pendingTerrainTerminalResults =
             loadDiag.pendingTerrainTerminalResults;
+        snapshot.pendingGltfTerrainUploads =
+            loadDiag.pendingGltfTerrainUploads;
+        snapshot.pendingGltfTerrainTerminalResults =
+            loadDiag.pendingGltfTerrainTerminalResults;
         snapshot.minVisibleZoom = plan.minVisibleZoom;
         snapshot.maxVisibleZoom = plan.maxVisibleZoom;
         snapshot.lodSizePixels = plan.lodSizePixels;
@@ -364,6 +368,9 @@ void SceneTilesetDiagnosticsSnapshot::add(
         next.pendingTerrainTerminalResults != 0
             ? next.pendingTerrainTerminalResults
             : pendingTerrainTerminalResults;
+    pendingGltfTerrainUploads += next.pendingGltfTerrainUploads;
+    pendingGltfTerrainTerminalResults +=
+        next.pendingGltfTerrainTerminalResults;
     pendingContentRequests += next.pendingContentRequests;
     pendingContentUploads += next.pendingContentUploads;
     pendingContentTerminalResults += next.pendingContentTerminalResults;
@@ -490,6 +497,9 @@ void SceneTilesetDiagnosticsSnapshot::applyTo(Diagnostics& diag) const {
     diag.pendingTerrainRequests = pendingTerrainRequests;
     diag.pendingTerrainUploads = pendingTerrainUploads;
     diag.pendingTerrainTerminalResults = pendingTerrainTerminalResults;
+    diag.pendingGltfTerrainUploads += pendingGltfTerrainUploads;
+    diag.pendingGltfTerrainTerminalResults +=
+        pendingGltfTerrainTerminalResults;
     diag.pendingContentRequests += pendingContentRequests;
     diag.pendingContentUploads += pendingContentUploads;
     diag.pendingContentTerminalResults += pendingContentTerminalResults;
@@ -581,6 +591,8 @@ void SceneTilesetDiagnostics::reset(Diagnostics& diag) {
     diag.pendingTerrainRequests = 0;
     diag.pendingTerrainUploads = 0;
     diag.pendingTerrainTerminalResults = 0;
+    diag.pendingGltfTerrainUploads = 0;
+    diag.pendingGltfTerrainTerminalResults = 0;
     diag.pendingContentRequests = 0;
     diag.pendingContentUploads = 0;
     diag.pendingContentTerminalResults = 0;

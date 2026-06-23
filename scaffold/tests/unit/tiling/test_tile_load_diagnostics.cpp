@@ -72,6 +72,21 @@ TEST(
                 TileLoadPriorityGroup::Urgent,
                 0.0,
                 TileLoadStatus::Empty});
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::GltfTerrain,
+            TileKey{"test", 1, 0, 2},
+            "gltf-terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableGltfTerrain(
+                std::make_unique<GltfModel>())});
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{
+            TileLoadDomain::GltfTerrain,
+            TileKey{"test", 1, 0, 3},
+            "gltf-terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 1, 0},
             "content-upload",
@@ -153,10 +168,12 @@ TEST(
     EXPECT_EQ(diag.pendingTerrainRequests, 1);
     EXPECT_EQ(diag.pendingTerrainUploads, 1);
     EXPECT_EQ(diag.pendingTerrainTerminalResults, 1);
+    EXPECT_EQ(diag.pendingGltfTerrainUploads, 1);
+    EXPECT_EQ(diag.pendingGltfTerrainTerminalResults, 1);
     EXPECT_EQ(diag.pendingContentRequests, 1);
     EXPECT_EQ(diag.pendingContentUploads, 1);
     EXPECT_EQ(diag.pendingContentTerminalResults, 1);
-    EXPECT_EQ(diag.pendingTerrainTotal(), 3);
+    EXPECT_EQ(diag.pendingTerrainTotal(), 5);
     EXPECT_EQ(diag.pendingContentTotal(), 3);
 
     EXPECT_EQ(diag.unloadQueueTiles, 2);

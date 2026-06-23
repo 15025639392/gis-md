@@ -734,6 +734,7 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(provider.callbackSawIssued);
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
     EXPECT_EQ(0u, pendingLoads.contentUploadCount());
     EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
 }
@@ -919,7 +920,8 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(provider.callbackSawIssued);
     EXPECT_TRUE(requestState.empty());
-    EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.gltfTerrainUploadCount());
     EXPECT_EQ(0u, pendingLoads.contentUploadCount());
 
     std::optional<PendingTileLoad> upload =

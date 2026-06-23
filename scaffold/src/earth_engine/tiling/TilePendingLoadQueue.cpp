@@ -9,7 +9,7 @@ namespace earth_engine {
 namespace {
 
 FrameResourceLane uploadLaneForDomain(TileLoadDomain domain) {
-    return isContentLoadDomain(domain) && !isGltfTerrainLoadDomain(domain)
+    return isContentLoadDomain(domain)
                ? FrameResourceLane::ContentFinalize
                : FrameResourceLane::TerrainFinalize;
 }
@@ -126,11 +126,21 @@ size_t TilePendingLoadQueue::terminalResultCount() const {
 }
 
 size_t TilePendingLoadQueue::terrainUploadCount() const {
-    return countTerrainDomain(uploads_);
+    return countDomain(uploads_, TileLoadDomain::LegacyHeightmapTerrain);
 }
 
 size_t TilePendingLoadQueue::terrainTerminalResultCount() const {
-    return countTerrainDomain(terminalResults_);
+    return countDomain(
+        terminalResults_,
+        TileLoadDomain::LegacyHeightmapTerrain);
+}
+
+size_t TilePendingLoadQueue::gltfTerrainUploadCount() const {
+    return countDomain(uploads_, TileLoadDomain::GltfTerrain);
+}
+
+size_t TilePendingLoadQueue::gltfTerrainTerminalResultCount() const {
+    return countDomain(terminalResults_, TileLoadDomain::GltfTerrain);
 }
 
 size_t TilePendingLoadQueue::contentUploadCount() const {
@@ -207,16 +217,6 @@ size_t TilePendingLoadQueue::countDomain(
         loads.end(),
         [domain](const PendingTileLoad& load) {
             return load.domain == domain;
-        }));
-}
-
-size_t TilePendingLoadQueue::countTerrainDomain(
-    const std::deque<PendingTileLoad>& loads) {
-    return static_cast<size_t>(std::count_if(
-        loads.begin(),
-        loads.end(),
-        [](const PendingTileLoad& load) {
-            return isTerrainLoadDomain(load.domain);
         }));
 }
 

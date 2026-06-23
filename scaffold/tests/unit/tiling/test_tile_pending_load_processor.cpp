@@ -2,6 +2,7 @@
 
 #include "earth_engine/tiling/TilePendingLoadProcessor.h"
 
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -68,9 +69,28 @@ PendingTileLoad contentUpload(
         TileLoadResult::fromContentResult(TileContentLoadResult::failed())};
 }
 
+PendingTileLoad gltfTerrainUpload(
+    const TileKey& key,
+    std::string cacheKey,
+    TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal,
+    double priority = 0.0) {
+    TileContentLoadResult content =
+        TileContentLoadResult::render(std::make_unique<GltfModel>());
+    content.terrainRenderContent = true;
+    return PendingTileLoad{
+        TileLoadDomain::GltfTerrain,
+        key,
+        std::move(cacheKey),
+        group,
+        priority,
+        TileLoadResult::fromContentResult(std::move(content))};
+}
+
 std::string labelFor(const char* prefix, const PendingTileLoad& load) {
     return std::string(prefix) +
-           (load.domain == TileLoadDomain::Content ? ":content:" : ":terrain:") +
+           (load.domain == TileLoadDomain::Content ? ":content:" :
+            load.domain == TileLoadDomain::GltfTerrain ? ":gltf-terrain:"
+                                                       : ":terrain:") +
            load.cacheKey;
 }
 
@@ -128,6 +148,52 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalThenBudgetedUploads) {
     const TileLoadLifecycleCounts counts = lifecycle.counts();
     EXPECT_EQ(1u, counts.terrainUploads);
     EXPECT_EQ(0u, counts.contentUploads);
+}
+
+TEST(TilePendingLoadProcessorTest, GltfTerrainUsesContentFinalizeLane) {
+    TileLoadLifecycle lifecycle;
+    const TileKey key{"test", 1, 0, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(
+            gltfTerrainUpload(key, "gltf-terrain-upload"));
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<FrameResourceLane> elapsedLanes;
+    std::vector<std::string> events;
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                false,
+                [&elapsedLanes](FrameResourceLane lane) {
+                    elapsedLanes.push_back(lane);
+                    return std::optional<double>{0.25};
+                }},
+            [&events](PendingTileLoad& load) {
+                events.push_back(labelFor("terminal", load));
+            },
+            [&events](PendingTileLoad& load) {
+                events.push_back(labelFor("upload", load));
+            });
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(1u, events.size());
+    EXPECT_EQ("upload:gltf-terrain:gltf-terrain-upload", events[0]);
+    ASSERT_EQ(1u, elapsedLanes.size());
+    EXPECT_EQ(FrameResourceLane::ContentFinalize, elapsedLanes[0]);
+
+    const TileLoadLifecycleCounts counts = lifecycle.counts();
+    EXPECT_EQ(0u, counts.terrainUploads);
+    EXPECT_EQ(0u, counts.contentUploads);
+    EXPECT_EQ(0u, counts.gltfTerrainUploads);
 }
 
 TEST(TilePendingLoadProcessorTest, FinalizeBudgetPreservesUploadPriority) {

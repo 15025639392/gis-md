@@ -53,6 +53,8 @@ struct Diagnostics {
     int pendingTerrainRequests = 0;
     int pendingTerrainUploads = 0;
     int pendingTerrainTerminalResults = 0;
+    int pendingGltfTerrainUploads = 0;
+    int pendingGltfTerrainTerminalResults = 0;
     int terrainProviderRequestsStarted = 0;
     int terrainProviderRequestsCompleted = 0;
     int terrainProviderActiveWorkerBlockingRequests = 0;

@@ -17,6 +17,8 @@ int TilesetLoadDiagnostics::loadQueueTotal() const {
 int TilesetLoadDiagnostics::pendingTerrainTotal() const {
     return pendingTerrainRequests +
            pendingTerrainUploads +
+           pendingGltfTerrainUploads +
+           pendingGltfTerrainTerminalResults +
            pendingTerrainTerminalResults;
 }
 
@@ -58,6 +60,10 @@ TilesetLoadDiagnostics TileLoadDiagnosticsCollector::collect(
         static_cast<int>(lifecycleCounts.terrainUploads);
     diag.pendingTerrainTerminalResults =
         static_cast<int>(lifecycleCounts.terrainTerminalResults);
+    diag.pendingGltfTerrainUploads =
+        static_cast<int>(lifecycleCounts.gltfTerrainUploads);
+    diag.pendingGltfTerrainTerminalResults =
+        static_cast<int>(lifecycleCounts.gltfTerrainTerminalResults);
     diag.pendingContentRequests =
         static_cast<int>(requestCounts.contentRequests);
     diag.pendingContentUploads =

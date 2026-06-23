@@ -71,7 +71,7 @@ public:
             processUpload(*finalize);
             changed = true;
             const FrameResourceLane finalizeLane =
-                finalize->domain == TileLoadDomain::Content
+                isContentLoadDomain(finalize->domain)
                     ? FrameResourceLane::ContentFinalize
                     : FrameResourceLane::TerrainFinalize;
             const std::optional<double> overrideElapsed =

@@ -21,6 +21,8 @@ struct TilesetLoadDiagnostics {
     int pendingTerrainRequests = 0;
     int pendingTerrainUploads = 0;
     int pendingTerrainTerminalResults = 0;
+    int pendingGltfTerrainUploads = 0;
+    int pendingGltfTerrainTerminalResults = 0;
     int pendingContentRequests = 0;
     int pendingContentUploads = 0;
     int pendingContentTerminalResults = 0;

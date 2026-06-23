@@ -14,6 +14,8 @@ struct TileLoadLifecycleCounts {
     PendingRequestCounts requests;
     size_t terrainUploads = 0;
     size_t terrainTerminalResults = 0;
+    size_t gltfTerrainUploads = 0;
+    size_t gltfTerrainTerminalResults = 0;
     size_t contentUploads = 0;
     size_t contentTerminalResults = 0;
 };
