@@ -1,6 +1,7 @@
 #include "TileLoadResultMetadataApplicator.h"
 
 #include "RasterMappedToTilesetTile.h"
+#include "TileRasterOverlayDetailsGenerator.h"
 #include "TileRenderContentState.h"
 #include "TilesetTile.h"
 
@@ -18,9 +19,15 @@ bool isDefaultLooseRegion(const TilesetTile& tile) {
 }
 
 bool hasValidBoundingRegion(const RasterOverlayDetails& details) {
-    return !details.boundingRegion.rectangle.isEmpty() &&
-           details.boundingRegion.minimumHeight <=
-               details.boundingRegion.maximumHeight;
+    const auto& region = details.boundingRegion;
+    return !region.rectangle.isEmpty() &&
+           region.minimumHeight <= region.maximumHeight;
+}
+
+bool hasValidBoundingRegion(
+    const BoundingRegionBuilder::BoundingRegion& region) {
+    return !region.rectangle.isEmpty() &&
+           region.minimumHeight <= region.maximumHeight;
 }
 
 } // namespace
@@ -56,6 +63,19 @@ void TileLoadResultMetadataApplicator::apply(
             region.rectangle,
             region.minimumHeight,
             region.maximumHeight);
+    } else if (!metadata.updatedBoundingVolume && isDefaultLooseRegion(tile)) {
+        const std::optional<BoundingRegionBuilder::BoundingRegion>
+            tightRegion = TileRasterOverlayDetailsGenerator::
+                computeTightModelBoundingRegion(tile.content.renderContent);
+        if (tightRegion && hasValidBoundingRegion(*tightRegion)) {
+            if (!tile.initialBoundingVolume && tile.boundingVolume) {
+                tile.initialBoundingVolume = *tile.boundingVolume;
+            }
+            metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
+                tightRegion->rectangle,
+                tightRegion->minimumHeight,
+                tightRegion->maximumHeight);
+        }
     }
 
     if (metadata.updatedBoundingVolume) {

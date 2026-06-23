@@ -178,8 +178,27 @@ bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
     return true;
 }
 
+} // namespace
+
+Rectangle TileRasterOverlayDetailsGenerator::projectRegionRectangle(
+    const Rectangle& rectangle,
+    RasterOverlayProjection projection) {
+    const Rectangle splitRectangle =
+        rectangle.splitAtAntimeridian().first;
+    switch (projection) {
+        case RasterOverlayProjection::Geographic:
+            return splitRectangle;
+        case RasterOverlayProjection::WebMercator:
+            return projectRectangleSimple(
+                WebMercatorProjection(Ellipsoid::WGS84()),
+                splitRectangle);
+    }
+    return splitRectangle;
+}
+
 std::optional<BoundingRegionBuilder::BoundingRegion>
-computeTightModelBoundingRegion(const TileRenderContentState& renderContent) {
+TileRasterOverlayDetailsGenerator::computeTightModelBoundingRegion(
+    const TileRenderContentState& renderContent) {
     const GltfModel* model = renderContent.gltfModelForRead();
     if (!model) {
         return std::nullopt;
@@ -214,24 +233,6 @@ computeTightModelBoundingRegion(const TileRenderContentState& renderContent) {
         return std::nullopt;
     }
     return builder.toRegion();
-}
-
-} // namespace
-
-Rectangle TileRasterOverlayDetailsGenerator::projectRegionRectangle(
-    const Rectangle& rectangle,
-    RasterOverlayProjection projection) {
-    const Rectangle splitRectangle =
-        rectangle.splitAtAntimeridian().first;
-    switch (projection) {
-        case RasterOverlayProjection::Geographic:
-            return splitRectangle;
-        case RasterOverlayProjection::WebMercator:
-            return projectRectangleSimple(
-                WebMercatorProjection(Ellipsoid::WGS84()),
-                splitRectangle);
-    }
-    return splitRectangle;
 }
 
 std::optional<Rectangle>

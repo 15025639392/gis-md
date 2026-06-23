@@ -5,6 +5,7 @@
 #include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
@@ -121,6 +122,40 @@ std::unique_ptr<GltfModel> makeCommitCoordinatorQuadTerrainGltfModel(
     primitive.indices = {0, 1, 2, 1, 3, 2};
     model->primitives.push_back(std::move(primitive));
     model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
+std::unique_ptr<GltfModel> makeCartographicQuadTerrainGltfModel(
+    const Rectangle& rectangle,
+    double minimumHeight,
+    double maximumHeight) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const std::array<Cartographic, 4> corners = {
+        Cartographic::fromRadians(
+            rectangle.west(),
+            rectangle.south(),
+            minimumHeight),
+        Cartographic::fromRadians(
+            rectangle.east(),
+            rectangle.south(),
+            minimumHeight),
+        Cartographic::fromRadians(
+            rectangle.east(),
+            rectangle.north(),
+            maximumHeight),
+        Cartographic::fromRadians(
+            rectangle.west(),
+            rectangle.north(),
+            maximumHeight)};
+    for (const Cartographic& corner : corners) {
+        SurfaceVertex vertex;
+        vertex.positionEcef = ellipsoid.cartographicToCartesian(corner);
+        primitive.vertices.push_back(vertex);
+    }
+    primitive.indices = {0, 1, 2, 0, 2, 3};
+    model->primitives.push_back(std::move(primitive));
     return model;
 }
 
@@ -1025,6 +1060,83 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     ASSERT_NE(nullptr, tile.content.renderContent.horizonOcclusionPoint());
     EXPECT_EQ(Vec3(1.0, 2.0, 3.0),
               *tile.content.renderContent.horizonOcclusionPoint());
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentUploadTightensLooseGltfTerrainBoundsWithoutRasterOverlays) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:gltf-terrain-tight-bounds";
+    const Rectangle looseRectangle = Rectangle::MAXIMUM;
+    TilesetTile tile(key, looseRectangle);
+    tile.content.loadState = TileLoadState::ContentLoading;
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(looseRectangle, -1000.0, 9000.0);
+
+    const Rectangle modelRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    auto model = makeCartographicQuadTerrainGltfModel(
+        modelRectangle,
+        -25.0,
+        125.0);
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeTerrainContentContentResult(std::move(model))};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    bool resourcesDirty = false;
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        {},
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_TRUE(tile.initialBoundingVolume.has_value());
+    EXPECT_EQ(looseRectangle, tile.initialBoundingVolume->region);
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Region, tile.boundingVolume->kind);
+    EXPECT_TRUE(tile.boundingVolume->region.equalsEpsilon(
+        modelRectangle,
+        1e-12));
+    EXPECT_NEAR(-25.0, tile.boundingVolume->minimumHeight, 1e-5);
+    EXPECT_NEAR(125.0, tile.boundingVolume->maximumHeight, 1e-5);
+    EXPECT_TRUE(tile.content.renderContent.hasTerrainHeightRange());
+    EXPECT_NEAR(-25.0,
+                tile.content.renderContent.terrainMinimumHeight(),
+                1e-5);
+    EXPECT_NEAR(125.0,
+                tile.content.renderContent.terrainMaximumHeight(),
+                1e-5);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }

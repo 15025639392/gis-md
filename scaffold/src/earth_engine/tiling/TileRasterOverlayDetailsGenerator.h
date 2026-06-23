@@ -24,6 +24,10 @@ public:
         const TilesetTile& tile,
         RasterOverlayProjection projection);
 
+    static std::optional<BoundingRegionBuilder::BoundingRegion>
+    computeTightModelBoundingRegion(
+        const TileRenderContentState& renderContent);
+
     static bool ensureProjectionDetailsFromRegion(
         TileRenderContentState& renderContent,
         const TileBoundingVolume& boundingVolume,
