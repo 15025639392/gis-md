@@ -1212,6 +1212,38 @@ TEST(QuantizedMeshTerrainProviderTest, WebMercatorPartialAvailabilityUsesOneByOn
               provider.availabilityState(TileKey{"XYZ-WebMercator", 1, 0, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     WebMercatorChildTilesUseRuntimeYDownOrderLikeCesiumNativeTerrainPath) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.com/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "available": [
+        [{"startX":0,"startY":0,"endX":0,"endY":0}],
+        [{"startX":0,"startY":1,"endX":0,"endY":1}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    const std::vector<TileKey> children =
+        provider.childTiles(TileKey{"XYZ-WebMercator", 0, 0, 0});
+
+    ASSERT_EQ(4u, children.size());
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 0, 1}), children[0]);
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 1}), children[1]);
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 0, 0}), children[2]);
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 0}), children[3]);
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(children[0]));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(children[1]));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, NonStringProjectionDefaultsToGeographicLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.com/fallback/{z}/{x}/{y}.terrain");

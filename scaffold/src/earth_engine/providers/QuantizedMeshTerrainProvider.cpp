@@ -659,7 +659,10 @@ std::vector<TileKey> quadtreeChildren(const TileKey& key) {
 
     std::vector<TileKey> children;
     children.reserve(4);
-    for (int dy = 0; dy < 2; ++dy) {
+    const bool yDown = key.schemeId == "XYZ-WebMercator" ||
+                       key.schemeId == "OpenGlobus-Earth";
+    for (int row = 0; row < 2; ++row) {
+        const int dy = yDown ? 1 - row : row;
         for (int dx = 0; dx < 2; ++dx) {
             if (*childX > std::numeric_limits<int>::max() - dx ||
                 *childY > std::numeric_limits<int>::max() - dy) {
