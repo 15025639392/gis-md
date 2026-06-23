@@ -10954,13 +10954,13 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     lifecycle.requestState().beginTerrainRequest(
         erasedCacheKey,
         CancellationToken{});
-    lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         erasedKey,
         erasedCacheKey,
         TileLoadPriorityGroup::Normal,
         10.0,
             TileLoadResult::createRenderableTerrain()});
-    lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         keptKey,
         keptCacheKey,
         TileLoadPriorityGroup::Normal,
@@ -11021,7 +11021,7 @@ void testTileIndexStateErasesTerminalResults() {
     TileLoadLifecycle lifecycle;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 erasedKey,
                 erasedCacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -12370,7 +12370,7 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
         lifecycle.requestState().beginContentRequest(
             "content-request",
             contentToken);
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             TileKey{"test", 1, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -13561,7 +13561,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    PendingTileLoad terrainUpload{TileLoadDomain::Terrain,
+    PendingTileLoad terrainUpload{TileLoadDomain::LegacyTerrain,
         TileKey{"test", 0, 0, 0},
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
@@ -13575,7 +13575,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             terrainUpload.key,
             terrainUpload.cacheKey,
             terrainUpload.group,
@@ -13686,7 +13686,7 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert("missing-terrain");
     emptyContentRegistry.insert("missing-content");
-    PendingTileLoad terrainResult{TileLoadDomain::Terrain,
+    PendingTileLoad terrainResult{TileLoadDomain::LegacyTerrain,
         terrainKey,
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
@@ -13796,7 +13796,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
 
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-    PendingTileLoad result{TileLoadDomain::Terrain,
+    PendingTileLoad result{TileLoadDomain::LegacyTerrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -13826,7 +13826,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
 
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-    PendingTileLoad result{TileLoadDomain::Terrain,
+    PendingTileLoad result{TileLoadDomain::LegacyTerrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -16086,7 +16086,7 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 child.key,
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -18118,7 +18118,7 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
@@ -18148,13 +18148,13 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
     FrameResourceBudget budget;
     budget.beginFrame(2, config);
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         normalKey,
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
@@ -18163,7 +18163,7 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
 
     std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(true, budget);
-    check(first && first->domain == TileLoadDomain::Terrain,
+    check(first && first->domain == TileLoadDomain::LegacyTerrain,
           "TilePendingLoadQueue: interaction still allows urgent terrain upload");
     check(first &&
               first->cacheKey == "urgent",
@@ -18217,13 +18217,13 @@ void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         firstKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
@@ -18267,13 +18267,13 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         lowKey,
         "low",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::Failed});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         highKey,
         "high",
         TileLoadPriorityGroup::Urgent,
@@ -18293,7 +18293,7 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
           "TilePendingLoadQueue: terminal results share priority across terrain and content");
     std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityTerminalResult(budget);
-    check(second && second->domain == TileLoadDomain::Terrain &&
+    check(second && second->domain == TileLoadDomain::LegacyTerrain &&
                             second->cacheKey == "high",
           "TilePendingLoadQueue: shared terminal priority falls back to terrain");
     check(queue.terrainTerminalResultCount() == 1 &&
@@ -18310,13 +18310,13 @@ void testTilePendingLoadQueueDeduplicatesTerminalResultsByKind() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         firstKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
         TileLoadStatus::RetryLater});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         secondKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Urgent,
@@ -18360,13 +18360,13 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
@@ -18412,7 +18412,7 @@ void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
     FrameResourceBudget blockedBudget;
     blockedBudget.beginFrame(1, blockedConfig);
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         key,
         "terminal",
         TileLoadPriorityGroup::Urgent,
@@ -18431,7 +18431,7 @@ void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
     retryBudget.beginFrame(2, retryConfig);
     std::optional<PendingTileLoad> retry =
         queue.takeHighestPriorityTerminalResult(retryBudget);
-    check(retry && retry->domain == TileLoadDomain::Terrain &&
+    check(retry && retry->domain == TileLoadDomain::LegacyTerrain &&
                             retry->cacheKey == "terminal",
           "TilePendingLoadQueue: terminal result blocked by previous frame budget remains retryable");
 }
@@ -18440,7 +18440,7 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -18452,7 +18452,7 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
         TileLoadPriorityGroup::Urgent,
         0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -18482,7 +18482,7 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
     const TileKey terrainTerminalKey{"test", 1, 0, 1};
     const TileKey contentTerminalKey{"test", 1, 1, 1};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainUploadKey,
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
@@ -18494,7 +18494,7 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainTerminalKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
@@ -18532,7 +18532,7 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 terrainKey,
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -18544,7 +18544,7 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
                 TileLoadPriorityGroup::Urgent,
                 0.0,
                 TileLoadStatus::Empty});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             terrainKey,
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -18603,13 +18603,13 @@ void testTilePendingLoadProcessorBudgetsTerminalResults() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 firstKey,
                 "first-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
                 TileLoadStatus::RetryLater});
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 secondKey,
                 "second-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -18650,7 +18650,7 @@ void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 terminalKey,
                 "terminal",
                 TileLoadPriorityGroup::Urgent,
@@ -18702,13 +18702,13 @@ void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() 
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 firstKey,
                 "first-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
                 TileLoadStatus::RetryLater});
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 secondKey,
                 "second-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -18756,7 +18756,7 @@ void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 terminalKey,
                 "terminal",
                 TileLoadPriorityGroup::Urgent,
@@ -18808,13 +18808,13 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 terminalKey,
                 "terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
                 TileLoadStatus::RetryLater});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             uploadKey,
             "upload",
             TileLoadPriorityGroup::Normal,
@@ -18856,13 +18856,13 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             normalKey,
             "normal",
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             urgentKey,
             "urgent",
             TileLoadPriorityGroup::Urgent,
@@ -18898,7 +18898,7 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             TileKey{"test", 1, 0, 0},
             "terrain",
             TileLoadPriorityGroup::Normal,
@@ -18940,7 +18940,7 @@ void testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds() {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             TileKey{"test", 1, 0, 0},
             "shared",
             TileLoadPriorityGroup::Normal,
@@ -18976,7 +18976,7 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             TileKey{"test", 1, 0, 0},
             "terrain",
             TileLoadPriorityGroup::Normal,
@@ -18984,7 +18984,7 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
             TileLoadResult::createRenderableTerrain()});
         std::optional<PendingTileLoad> upload =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
-        check(upload && upload->domain == TileLoadDomain::Terrain,
+        check(upload && upload->domain == TileLoadDomain::LegacyTerrain,
               "TilePendingUploadCompletion: claimed-upload test dequeues upload payload");
     }
 
@@ -19057,7 +19057,7 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
           "TilePendingRequestState: empty cache keys are rejected without side effects");
 
     TilePendingLoadQueue pendingLoads;
-    pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         key,
         "",
         TileLoadPriorityGroup::Normal,
@@ -19069,7 +19069,7 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         key,
         "",
         TileLoadPriorityGroup::Normal,
@@ -19280,7 +19280,7 @@ void testTileLoadLifecycleCancelErasesPendingUploads() {
     const TileKey contentKey{"test", 0, 1, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             terrainKey,
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -19314,7 +19314,7 @@ void testTileLoadLifecycleCancelErasesClaimedUploads() {
     const TileKey contentKey{"test", 0, 1, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             terrainKey,
             "terrain-upload",
             TileLoadPriorityGroup::Urgent,
@@ -19385,7 +19385,7 @@ void testTileLoadLifecycleCancelErasesTerminalResults() {
     const TileKey contentKey{"test", 0, 1, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 terrainKey,
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -19457,7 +19457,7 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
                   "terrain",
                   token),
               "TileLoadLifecycle: starts request before destroy");
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             TileKey{"test", 0, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -19502,7 +19502,7 @@ void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
     TileLoadLifecycle lifecycle;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             TileKey{"test", 0, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -19640,7 +19640,7 @@ void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
-        manager.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        manager.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 TileKey{"test", 0, 0, 0},
                 "terrain-upload",
                 TileLoadPriorityGroup::Normal,
@@ -19862,7 +19862,7 @@ void testTileLoadRequestDispatcherSkipsEmptyCacheKeys() {
             "",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::Terrain,
+            TileLoadDomain::LegacyTerrain,
             TileLoadResult::createRenderable());
 
     check(terrainResult == TileLoadDispatchResult::Skipped &&
@@ -20333,7 +20333,7 @@ void testTileLoadRequestDispatcherRejectsRequestsDuringDestroy() {
             "destroy-upsample",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::Terrain,
+            TileLoadDomain::LegacyTerrain,
             TileLoadResult::createRenderable());
 
     check(terrainResult == TileLoadDispatchResult::Destroying &&
@@ -20784,7 +20784,7 @@ void testTileLoadRequestDispatcherSkipsPendingUploadKeys() {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             key,
             "terrain-upload-pending",
             TileLoadPriorityGroup::Normal,
@@ -20902,7 +20902,7 @@ void testTileLoadRequestDispatcherSkipsClaimedUploadKeys() {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             key,
             "terrain-upload-claimed",
             TileLoadPriorityGroup::Normal,
@@ -20976,7 +20976,7 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 key,
                 "shared-cache-key",
                 TileLoadPriorityGroup::Normal,
@@ -20993,7 +20993,7 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
             "shared-cache-key",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::Terrain,
+            TileLoadDomain::LegacyTerrain,
             TileLoadResult::createRenderable());
 
     check(result == TileLoadDispatchResult::Skipped,
@@ -21022,7 +21022,7 @@ void testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhaust
             "upsample-blocked",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileLoadDomain::Terrain,
+            TileLoadDomain::LegacyTerrain,
             TileLoadResult::createRenderable());
 
     check(result == TileLoadDispatchResult::Issued,
@@ -21127,7 +21127,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     TileLoadRequestSnapshot snapshot;
     snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::Terrain,
+              TileLoadRequestKind::LegacyTerrain,
           "TileLoadRequestPlanner: requestable terrain tile loads terrain");
 
     snapshot.contentProviderSupportsTile = true;
@@ -21146,7 +21146,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot.loadState = TileLoadState::Unloaded;
     snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::Terrain,
+              TileLoadRequestKind::LegacyTerrain,
           "TileLoadRequestPlanner: unloaded terrain tile remains requestable");
 
     snapshot.contentProviderSupportsTile = true;
@@ -21192,7 +21192,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot.loadState = TileLoadState::FailedTemporarily;
     snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::Terrain,
+              TileLoadRequestKind::LegacyTerrain,
           "TileLoadRequestPlanner: temporarily failed terrain tile remains retryable");
 
     snapshot.contentProviderSupportsTile = true;
@@ -21929,7 +21929,7 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
     const std::string cacheKey = testCacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -21987,7 +21987,7 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
     const std::string cacheKey = testCacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -22038,7 +22038,7 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
     const std::string cacheKey = testCacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -22388,7 +22388,7 @@ void testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning() {
                 tileState = nullptr;
                 {
                     std::lock_guard<std::mutex> lock(lifecycle.mutex());
-                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                             key,
                             cacheKey,
                             TileLoadPriorityGroup::Normal,

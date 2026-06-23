@@ -17,7 +17,7 @@ PendingTileLoad terrainTerminal(
     double priority = 0.0,
     TileLoadStatus status = TileLoadStatus::RetryLater) {
     return PendingTileLoad{
-        TileLoadDomain::Terrain,
+        TileLoadDomain::LegacyTerrain,
         key,
         std::move(cacheKey),
         group,
@@ -46,7 +46,7 @@ PendingTileLoad terrainUpload(
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal,
     double priority = 0.0) {
     return PendingTileLoad{
-        TileLoadDomain::Terrain,
+        TileLoadDomain::LegacyTerrain,
         key,
         std::move(cacheKey),
         group,

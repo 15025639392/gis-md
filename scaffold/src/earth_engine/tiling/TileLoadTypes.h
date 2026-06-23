@@ -183,7 +183,7 @@ struct TileLoadResult {
 };
 
 enum class TileLoadDomain {
-    Terrain,
+    LegacyTerrain,
     Content
 };
 
@@ -223,7 +223,7 @@ struct PendingTileLoad {
         return result.content;
     }
 
-    TileLoadDomain domain = TileLoadDomain::Terrain;
+    TileLoadDomain domain = TileLoadDomain::LegacyTerrain;
     TileKey key;
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;

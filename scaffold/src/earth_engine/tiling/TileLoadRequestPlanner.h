@@ -8,7 +8,7 @@ enum class TileLoadRequestKind {
     Skip,
     UpsampledTerrain,
     Content,
-    Terrain
+    LegacyTerrain
 };
 
 struct TileLoadRequestSnapshot {

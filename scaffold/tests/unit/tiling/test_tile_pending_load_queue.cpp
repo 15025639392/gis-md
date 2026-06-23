@@ -9,7 +9,7 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
     const TileKey terrainKey{"test", 1, 0, 0};
     const TileKey contentKey{"test", 1, 1, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
@@ -41,13 +41,13 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
     const TileKey normalKey{"test", 1, 0, 0};
     const TileKey urgentKey{"test", 1, 1, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         normalKey,
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
@@ -63,7 +63,7 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
         queue.takeHighestPriorityUpload(true, budget);
 
     ASSERT_TRUE(first.has_value());
-    EXPECT_EQ(TileLoadDomain::Terrain, first->domain);
+    EXPECT_EQ(TileLoadDomain::LegacyTerrain, first->domain);
     EXPECT_EQ("urgent", first->cacheKey);
 
     std::optional<PendingTileLoad> second =
@@ -116,13 +116,13 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
     const TileKey firstKey{"test", 1, 0, 0};
     const TileKey secondKey{"test", 1, 1, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         firstKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
@@ -167,13 +167,13 @@ TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
     const TileKey highKey{"test", 1, 1, 0};
     const TileKey contentKey{"test", 1, 1, 1};
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         lowKey,
         "low",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::Failed});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         highKey,
         "high",
         TileLoadPriorityGroup::Urgent,
@@ -202,7 +202,7 @@ TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
         queue.takeHighestPriorityTerminalResult(budget);
 
     ASSERT_TRUE(second.has_value());
-    EXPECT_EQ(TileLoadDomain::Terrain, second->domain);
+    EXPECT_EQ(TileLoadDomain::LegacyTerrain, second->domain);
     EXPECT_EQ("high", second->cacheKey);
     EXPECT_EQ(1u, queue.terrainTerminalResultCount());
     EXPECT_EQ(0u, queue.contentTerminalResultCount());
@@ -213,13 +213,13 @@ TEST(TilePendingLoadQueueTest, DeduplicatesTerminalResultsByKind) {
     const TileKey firstKey{"test", 1, 0, 0};
     const TileKey secondKey{"test", 1, 1, 0};
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         firstKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
         TileLoadStatus::RetryLater});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         secondKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Urgent,
@@ -263,13 +263,13 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
     const TileKey terrainKey{"test", 1, 0, 0};
     const TileKey contentKey{"test", 1, 1, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
@@ -318,7 +318,7 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         key,
         "terminal",
         TileLoadPriorityGroup::Urgent,
@@ -346,7 +346,7 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
         queue.takeHighestPriorityTerminalResult(retryBudget);
 
     ASSERT_TRUE(retry.has_value());
-    EXPECT_EQ(TileLoadDomain::Terrain, retry->domain);
+    EXPECT_EQ(TileLoadDomain::LegacyTerrain, retry->domain);
     EXPECT_EQ("terminal", retry->cacheKey);
     EXPECT_EQ(0u, queue.terrainTerminalResultCount());
 }
@@ -355,7 +355,7 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -367,7 +367,7 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
         TileLoadPriorityGroup::Urgent,
         0.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -395,7 +395,7 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
     const TileKey terrainTerminalKey{"test", 1, 0, 1};
     const TileKey contentTerminalKey{"test", 1, 1, 1};
 
-    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainUploadKey,
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
@@ -407,7 +407,7 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
         terrainTerminalKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,

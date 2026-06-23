@@ -126,11 +126,11 @@ size_t TilePendingLoadQueue::terminalResultCount() const {
 }
 
 size_t TilePendingLoadQueue::terrainUploadCount() const {
-    return countDomain(uploads_, TileLoadDomain::Terrain);
+    return countDomain(uploads_, TileLoadDomain::LegacyTerrain);
 }
 
 size_t TilePendingLoadQueue::terrainTerminalResultCount() const {
-    return countDomain(terminalResults_, TileLoadDomain::Terrain);
+    return countDomain(terminalResults_, TileLoadDomain::LegacyTerrain);
 }
 
 size_t TilePendingLoadQueue::contentUploadCount() const {

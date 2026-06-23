@@ -572,13 +572,13 @@ TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
     const TileKey requestKey{"test", 1, 2, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             firstUploadKey,
             cacheKeyForTile(firstUploadKey),
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             secondUploadKey,
             cacheKeyForTile(secondUploadKey),
             TileLoadPriorityGroup::Normal,
@@ -686,7 +686,7 @@ TEST(TileLoadSchedulerTest, QueuesUpsampledTerrainWhenNetworkInflightIsFull) {
 }
 
 TEST(TileLoadSchedulerTest,
-     ContentTerrainUpsampleWithoutGltfSourceDoesNotUseTerrainDomain) {
+     ContentTerrainQuadtreeUpsampleWithoutGltfSourceNeverQueuesLegacyDomain) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -700,6 +700,7 @@ TEST(TileLoadSchedulerTest,
     TilesetTile child(childKey, Rectangle{}, &parent);
     child.content.upsampledFromParent = true;
     TerrainQuadtreeContentProvider provider;
+    FanoutTerrainProvider legacyProvider;
     bool prepared = false;
     bool marked = false;
 
@@ -712,7 +713,7 @@ TEST(TileLoadSchedulerTest,
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
+                &legacyProvider,
                 &provider},
             cacheKeyForTile,
             [&child](
@@ -741,6 +742,7 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 0u);
     EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(legacyProvider.requestCount, 0);
 }
 
 TEST(TileLoadSchedulerTest,
@@ -765,6 +767,7 @@ TEST(TileLoadSchedulerTest,
     parent.markRenderContentDone();
 
     TerrainQuadtreeContentProvider provider;
+    FanoutTerrainProvider legacyProvider;
     bool prepared = false;
     bool marked = false;
 
@@ -777,7 +780,7 @@ TEST(TileLoadSchedulerTest,
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
+                &legacyProvider,
                 &provider},
             cacheKeyForTile,
             [&child](
@@ -803,6 +806,7 @@ TEST(TileLoadSchedulerTest,
     EXPECT_TRUE(prepared);
     EXPECT_TRUE(marked);
     EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(legacyProvider.requestCount, 0);
     EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().contentUploads, 1u);
 
@@ -1160,7 +1164,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -1219,7 +1223,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingUploadBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1273,7 +1277,7 @@ TEST(TileLoadSchedulerTest, SkipsClaimedUploadBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1592,7 +1596,7 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
                 tileState = nullptr;
                 {
                     std::lock_guard<std::mutex> lock(lifecycle.mutex());
-                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                             key,
                             cacheKey,
                             TileLoadPriorityGroup::Normal,

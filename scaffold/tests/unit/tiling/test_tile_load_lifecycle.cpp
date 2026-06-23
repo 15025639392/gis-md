@@ -81,7 +81,7 @@ TEST(TileLoadLifecycleTest, CancelErasesPendingUploads) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             terrainKey,
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -116,7 +116,7 @@ TEST(TileLoadLifecycleTest, CancelErasesClaimedUploads) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             terrainKey,
             "terrain-upload",
             TileLoadPriorityGroup::Urgent,
@@ -186,7 +186,7 @@ TEST(TileLoadLifecycleTest, CancelErasesTerminalResults) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
                 terrainKey,
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
@@ -256,7 +256,7 @@ TEST(TileLoadLifecycleTest, DestroyWithoutRequestsReturnsImmediately) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             TileKey{"test", 0, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
@@ -320,7 +320,7 @@ TEST(TileLoadLifecycleTest, DestroyCancelsAndWaitsForCallbacks) {
         ASSERT_TRUE(lifecycle.requestState().beginTerrainRequest(
             "terrain",
             token));
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
             TileKey{"test", 0, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,

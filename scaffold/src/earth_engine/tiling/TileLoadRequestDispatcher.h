@@ -167,7 +167,7 @@ public:
                                 std::move(result));
                         enqueueCompletedLoadResult(
                             pendingLoads,
-                            TileLoadDomain::Terrain,
+                            TileLoadDomain::LegacyTerrain,
                             key,
                             cacheKey,
                             group,

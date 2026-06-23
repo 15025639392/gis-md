@@ -29,7 +29,7 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
         !snapshot.legacyTerrainProviderSupportsTile) {
         return TileLoadRequestKind::Skip;
     }
-    return TileLoadRequestKind::Terrain;
+    return TileLoadRequestKind::LegacyTerrain;
 }
 
 } // namespace earth_engine

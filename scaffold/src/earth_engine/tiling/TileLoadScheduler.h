@@ -96,7 +96,7 @@ public:
                 }
                 const TileLoadDomain upsampleDomain = hasGltfTerrainSource
                     ? TileLoadDomain::Content
-                    : TileLoadDomain::Terrain;
+                    : TileLoadDomain::LegacyTerrain;
                 TileLoadResult upsampleResult =
                     TileLoadResult::createRenderable();
                 if (hasGltfTerrainSource) {
@@ -171,7 +171,7 @@ public:
                 continue;
             }
 
-            if (requestKind != TileLoadRequestKind::Terrain ||
+            if (requestKind != TileLoadRequestKind::LegacyTerrain ||
                 !input.legacyTerrainProvider) {
                 continue;
             }
