@@ -999,6 +999,10 @@ using CompositeRequestSuccess =
                        RasterOverlayTile::MoreDetailAvailable)>;
 using CompositeRequestFailure = std::function<void()>;
 
+bool isCompositeCacheKey(const std::string& cacheKey) {
+    return cacheKey.rfind("composite/", 0) == 0;
+}
+
 } // namespace
 
 RasterOverlayTileProvider::QuadtreeSourcePlan
@@ -1833,7 +1837,7 @@ void RasterOverlayTileProvider::invalidateCompositeTileCache() {
     ++compositeTileEpoch_;
     compositeSourcePlans_.clear();
     for (auto it = tiles_.begin(); it != tiles_.end();) {
-        if (it->first.rfind("composite/", 0) == 0 &&
+        if (isCompositeCacheKey(it->first) &&
             it->second &&
             it->second->getState() !=
                 RasterOverlayTile::LoadState::Loading) {
@@ -2268,10 +2272,11 @@ bool RasterOverlayTileProvider::loadMappedTile(
         projection_,
         getMaximumLevel(),
         returnEmptyForAncestorOnly,
-        [state, cacheKey](std::unique_ptr<DecodedImage> composed,
-                          std::shared_ptr<const DecodedImage> sharedImage,
-                          Rectangle rectangle,
-                          RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
+        [state, cacheKey](
+            std::unique_ptr<DecodedImage> composed,
+            std::shared_ptr<const DecodedImage> sharedImage,
+            Rectangle rectangle,
+            RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
@@ -2584,7 +2589,13 @@ void RasterOverlayTileProvider::trimUnusedTiles() {
         bool inFlight = false;
         {
             std::lock_guard<std::mutex> lock(asyncState_->mutex);
-            inFlight = asyncState_->inFlightRequests.count(it->first) > 0;
+            inFlight = asyncState_->inFlightRequests.count(it->first) > 0 ||
+                std::any_of(
+                    asyncState_->pendingUploads.begin(),
+                    asyncState_->pendingUploads.end(),
+                    [&it](const PendingUpload& upload) {
+                        return upload.cacheKey == it->first;
+                    });
         }
         const bool retainedOutsideProvider = it->second.use_count() > 1;
         if (age > kRetainedUnusedFrames && !inFlight &&

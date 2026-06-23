@@ -1354,6 +1354,35 @@ TEST(RasterOverlayLifecycleTest, DirectTileCacheRetainsRecentAndMarkedTiles) {
     EXPECT_EQ(0, provider.getCachedTileCount());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     PendingRasterUploadRetainsProviderTileLikeCesiumNativeFuture) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey key{scheme->id(), 2, 1, 1};
+    RasterOverlayTileProvider::TilePtr tile = provider.getTile(key);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_GE(waitForPendingUploadCount(provider, 1), 1);
+    tile.reset();
+
+    provider.setFrameNumber(200);
+    provider.trimUnusedTiles();
+
+    EXPECT_EQ(1, provider.getCachedTileCount());
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+
+    RasterOverlayTileProvider::TilePtr loaded = provider.getTile(key);
+    ASSERT_NE(nullptr, loaded);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, loaded->getState());
+    EXPECT_NE(nullptr, loaded->getTexture());
+    EXPECT_EQ(0, provider.getThrottledTilesCurrentlyLoading());
+}
+
 TEST(RasterOverlayLifecycleTest, DefaultMaximumLevelMatchesCesiumNativeUrlTemplate) {
     XYZImageryProvider imagery("https://example.invalid/{z}/{x}/{y}.png");
     auto scheme = TileScheme::createXYZWebMercator();
