@@ -54,13 +54,20 @@ public:
         if (textureCoordinateIndex < 0) {
             return false;
         }
+        const bool hasInvertedVCoordinate =
+            parentModel->rasterOverlayDetails
+                .rasterOverlayInvertedVCoordinates.size() >
+                    static_cast<size_t>(textureCoordinateIndex) &&
+            parentModel->rasterOverlayDetails
+                .rasterOverlayInvertedVCoordinates[
+                    static_cast<size_t>(textureCoordinateIndex)];
 
         std::unique_ptr<GltfModel> childModel =
             GltfTerrainUpsampler::upsampleForRasterOverlay(
                 *parentModel,
                 UpsampledQuadtreeNode{tile.key},
                 textureCoordinateIndex,
-                false);
+                hasInvertedVCoordinate);
         if (!childModel) {
             return false;
         }

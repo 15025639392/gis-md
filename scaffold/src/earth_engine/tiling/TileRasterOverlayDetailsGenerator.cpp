@@ -232,6 +232,7 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     RasterOverlayDetails generated;
     generated.rasterOverlayProjections = {projection};
     generated.rasterOverlayRectangles = {projectedRectangle};
+    generated.rasterOverlayInvertedVCoordinates = {false};
     generated.boundingRegion =
         computeTightModelBoundingRegion(renderContent)
             .value_or(BoundingRegionBuilder::BoundingRegion{

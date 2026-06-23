@@ -100,15 +100,19 @@ TEST(RasterOverlayDetailsTest, MergeAppendsProjectionRectanglesLikeCesiumNative)
     RasterOverlayDetails second;
     const Rectangle secondRectangle(4.0, 5.0, 6.0, 7.0);
     second.setGeographicRectangle(secondRectangle, -30.0, 40.0);
+    second.rasterOverlayInvertedVCoordinates = {true};
 
     first.merge(second);
 
     ASSERT_EQ(2u, first.rasterOverlayProjections.size());
     ASSERT_EQ(2u, first.rasterOverlayRectangles.size());
+    ASSERT_EQ(2u, first.rasterOverlayInvertedVCoordinates.size());
     EXPECT_EQ(RasterOverlayProjection::Geographic,
               first.rasterOverlayProjections[0]);
     EXPECT_EQ(RasterOverlayProjection::Geographic,
               first.rasterOverlayProjections[1]);
+    EXPECT_FALSE(first.rasterOverlayInvertedVCoordinates[0]);
+    EXPECT_TRUE(first.rasterOverlayInvertedVCoordinates[1]);
     EXPECT_DOUBLE_EQ(firstRectangle.west(),
                      first.rasterOverlayRectangles[0].west());
     EXPECT_DOUBLE_EQ(secondRectangle.west(),
@@ -136,6 +140,8 @@ TEST(RasterOverlayDetailsTest,
     EXPECT_EQ(rectangle, details.boundingRegion.rectangle);
     EXPECT_DOUBLE_EQ(-123.0, details.boundingRegion.minimumHeight);
     EXPECT_DOUBLE_EQ(456.0, details.boundingRegion.maximumHeight);
+    EXPECT_FALSE(details.hasInvertedVCoordinateForProjection(
+        RasterOverlayProjection::Geographic));
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,

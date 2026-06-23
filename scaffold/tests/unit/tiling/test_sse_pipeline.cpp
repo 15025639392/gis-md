@@ -28878,6 +28878,66 @@ void testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion() {
           "Tileset: glTF terrain availability upsample derives raster details from parent model region");
 }
 
+void testGltfTerrainUpsamplePropagatesInvertedVCoordinate() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle{-MathUtils::OnePi, -MathUtils::PiOverTwo, 0.0, 0.0});
+    TilesetTile child(
+        childKey,
+        Rectangle{-MathUtils::OnePi, -MathUtils::PiOverTwo,
+                  -MathUtils::PiOverTwo, 0.0},
+        &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
+    for (GltfPrimitive& primitive : parentModel->primitives) {
+        for (SurfaceVertex& vertex : primitive.vertices) {
+            vertex.uv[1] = 1.0f - vertex.uv[1];
+        }
+        for (auto& texCoord : primitive.vertexTexCoords[0]) {
+            texCoord[1] = 1.0f - texCoord[1];
+        }
+    }
+    parentModel->rasterOverlayDetails.rasterOverlayInvertedVCoordinates = {
+        true};
+    parent.content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    TileLoadedContent content;
+    const bool materialized =
+        TileGltfTerrainUpsampledChildMaterializer::materialize(
+            child,
+            content);
+    const GltfModel* childModel = content.gltfModel.get();
+
+    bool clippedWithInvertedV = true;
+    if (childModel && !childModel->primitives.empty()) {
+        for (const GltfPrimitive& primitive : childModel->primitives) {
+            for (const SurfaceVertex& vertex : primitive.vertices) {
+                clippedWithInvertedV =
+                    clippedWithInvertedV &&
+                    vertex.uv[0] <= 0.5f + 1e-6f &&
+                    vertex.uv[1] >= 0.5f - 1e-6f;
+            }
+        }
+    } else {
+        clippedWithInvertedV = false;
+    }
+
+    check(materialized &&
+              childModel != nullptr &&
+              clippedWithInvertedV &&
+              childModel->rasterOverlayDetails
+                  .hasInvertedVCoordinateForProjection(
+                      RasterOverlayProjection::Geographic),
+          "Tileset: glTF terrain upsample propagates inverted V coordinate like cesium-native");
+}
+
 void testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
@@ -29860,6 +29920,7 @@ int main() {
     testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
     testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion();
+    testGltfTerrainUpsamplePropagatesInvertedVCoordinate();
     testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent();
     testGltfTerrainUpsampleRequiresRasterOverlayProjectionDetails();
     testTilesetClearChildrenErasesFlatMapDescendants();

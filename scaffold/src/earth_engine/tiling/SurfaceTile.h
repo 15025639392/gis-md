@@ -81,6 +81,10 @@ struct RasterOverlayDetails {
     /// Index-aligned with rasterOverlayProjections.
     std::vector<Rectangle> rasterOverlayRectangles;
 
+    /// Whether each projection's V texture coordinate is inverted.
+    /// Index-aligned with rasterOverlayProjections.
+    std::vector<bool> rasterOverlayInvertedVCoordinates;
+
     /// cesium-native RasterOverlayDetails::boundingRegion equivalent.
     /// This is the precise content region covered by the generated overlay
     /// texture coordinates, in geographic radians/meters.
@@ -115,11 +119,23 @@ struct RasterOverlayDetails {
         return -1;
     }
 
+    bool hasInvertedVCoordinateForProjection(
+        RasterOverlayProjection projection) const {
+        const int32_t textureCoordinateID =
+            textureCoordinateIDForProjection(projection);
+        return textureCoordinateID >= 0 &&
+               static_cast<size_t>(textureCoordinateID) <
+                   rasterOverlayInvertedVCoordinates.size() &&
+               rasterOverlayInvertedVCoordinates[
+                   static_cast<size_t>(textureCoordinateID)];
+    }
+
     void setGeographicRectangle(const Rectangle& rectangle,
                                 double minimumHeight = 0.0,
                                 double maximumHeight = 0.0) {
         rasterOverlayProjections = {RasterOverlayProjection::Geographic};
         rasterOverlayRectangles = {rectangle};
+        rasterOverlayInvertedVCoordinates = {false};
         boundingRegion = {rectangle, minimumHeight, maximumHeight};
     }
 
@@ -127,6 +143,10 @@ struct RasterOverlayDetails {
         while (rasterOverlayRectangles.size() <
                rasterOverlayProjections.size()) {
             rasterOverlayRectangles.push_back(Rectangle::EMPTY);
+        }
+        while (rasterOverlayInvertedVCoordinates.size() <
+               rasterOverlayProjections.size()) {
+            rasterOverlayInvertedVCoordinates.push_back(false);
         }
         rasterOverlayProjections.insert(
             rasterOverlayProjections.end(),
@@ -136,6 +156,12 @@ struct RasterOverlayDetails {
             rasterOverlayRectangles.end(),
             other.rasterOverlayRectangles.begin(),
             other.rasterOverlayRectangles.end());
+        for (size_t i = 0; i < other.rasterOverlayProjections.size(); ++i) {
+            rasterOverlayInvertedVCoordinates.push_back(
+                i < other.rasterOverlayInvertedVCoordinates.size()
+                    ? other.rasterOverlayInvertedVCoordinates[i]
+                    : false);
+        }
         const bool hasRegion = boundingRegion.minimumHeight <=
                                boundingRegion.maximumHeight;
         const bool otherHasRegion = other.boundingRegion.minimumHeight <=

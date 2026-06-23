@@ -125,6 +125,7 @@ RasterOverlayDetails makeRasterOverlayDetails(
     RasterOverlayProjection terrainProjection) {
     RasterOverlayDetails details;
     details.rasterOverlayProjections = {terrainProjection};
+    details.rasterOverlayInvertedVCoordinates = {false};
     if (terrainProjection == RasterOverlayProjection::WebMercator) {
         details.rasterOverlayRectangles = {
             projectRectangleSimple(

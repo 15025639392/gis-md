@@ -29,6 +29,12 @@ public:
 
         childDetails.rasterOverlayProjections =
             parentDetails.rasterOverlayProjections;
+        childDetails.rasterOverlayInvertedVCoordinates =
+            parentDetails.rasterOverlayInvertedVCoordinates;
+        while (childDetails.rasterOverlayInvertedVCoordinates.size() <
+               childDetails.rasterOverlayProjections.size()) {
+            childDetails.rasterOverlayInvertedVCoordinates.push_back(false);
+        }
         childDetails.rasterOverlayRectangles.reserve(
             parentDetails.rasterOverlayProjections.size());
 
