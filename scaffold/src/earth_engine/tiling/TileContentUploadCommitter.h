@@ -28,7 +28,8 @@ struct TileContentUploadCommitter {
         IPrepareRendererResources* pPrepRenderer = nullptr);
     static TileContentUploadCommitAction finishRenderResourcePreparation(
         TilesetTile& tile,
-        bool resourcesReady);
+        bool resourcesReady,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
 };
 
 } // namespace earth_engine

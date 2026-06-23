@@ -822,6 +822,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(loadResult.content));
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+    ASSERT_EQ(1u, tile.rasterOverlayState.mappingCount());
+    ASSERT_TRUE(tile.rasterOverlayState.hasMissingProjections());
     ASSERT_TRUE(tile.boundingVolume.has_value());
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
     ASSERT_TRUE(tile.contentBoundingVolume.has_value());
@@ -836,6 +841,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_FALSE(tile.rasterOverlayState.hasMissingProjections());
     ASSERT_TRUE(tile.boundingVolume.has_value());
     EXPECT_EQ(originalRectangle, tile.boundingVolume->region);
     EXPECT_DOUBLE_EQ(-100.0, tile.boundingVolume->minimumHeight);

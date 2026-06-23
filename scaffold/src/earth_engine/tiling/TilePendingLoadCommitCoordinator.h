@@ -121,7 +121,8 @@ public:
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
                 *tile,
-                tile->content.renderContent.isRenderContentReady());
+                tile->content.renderContent.isRenderContentReady(),
+                pPrepRenderer);
         if (action.resourcesDirty) {
             markResourcesDirty();
         }

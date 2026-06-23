@@ -88,9 +88,11 @@ void TileContentUploadCommitter::prepareRenderContent(
 TileContentUploadCommitAction
 TileContentUploadCommitter::finishRenderResourcePreparation(
     TilesetTile& tile,
-    bool resourcesReady) {
+    bool resourcesReady,
+    IPrepareRendererResources* pPrepRenderer) {
     if (!resourcesReady) {
         restoreInitialBoundingVolumesAfterResourceFailure(tile);
+        tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
         TileContentUploadPolicy::markGltfRenderResourcesFailed(tile);
     }
     return TileContentUploadCommitAction{true};
