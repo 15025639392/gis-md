@@ -168,7 +168,7 @@ private:
         const TilesetTile& tile) const;
     TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
 
-    std::unique_ptr<TerrainProvider> terrainProvider_;
+    std::unique_ptr<TerrainProvider> legacyTerrainProvider_;
     std::unique_ptr<TilesetContentProvider> contentProvider_;
     std::unique_ptr<TileScheme> tileScheme_;
     std::vector<ActivatedRasterOverlay*> rasterOverlays_;

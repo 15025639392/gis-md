@@ -81,7 +81,7 @@ Tileset::Tileset(ProviderOwnership providers,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,
                  TilesetOptions options)
-    : terrainProvider_(std::move(providers.legacyTerrainProvider)),
+    : legacyTerrainProvider_(std::move(providers.legacyTerrainProvider)),
       contentProvider_(std::move(providers.contentProvider)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),
@@ -91,7 +91,7 @@ Tileset::Tileset(ProviderOwnership providers,
           tileRegistry_,
           *tileScheme_,
           ::earth_engine::effectiveLegacyTerrainProvider(
-              terrainProvider_.get(),
+              legacyTerrainProvider_.get(),
               contentProvider_.get()),
           contentProvider_.get(),
           contentLifecycle_,
@@ -108,7 +108,7 @@ Tileset::Tileset(ProviderOwnership providers,
           options_.maximumCachedBytes,
           options_.tileCacheUnloadTimeLimit,
           ::earth_engine::effectiveLegacyTerrainProvider(
-              terrainProvider_.get(),
+              legacyTerrainProvider_.get(),
               contentProvider_.get()) != nullptr),
       rasterUpsampledChildren_(
           contentAccess_,
@@ -118,10 +118,10 @@ Tileset::Tileset(ProviderOwnership providers,
           resourceInvalidator_,
           loadQueue_,
           providerHasTerrainQuadtree(
-              terrainProvider_.get(),
+              legacyTerrainProvider_.get(),
               contentProvider_.get()),
           ::earth_engine::effectiveLegacyTerrainProvider(
-              terrainProvider_.get(),
+              legacyTerrainProvider_.get(),
               contentProvider_.get()) != nullptr,
           device_,
           rasterOverlays_),
@@ -162,7 +162,7 @@ Tileset::Tileset(
 
 bool Tileset::hasTerrainQuadtree() const {
     return providerHasTerrainQuadtree(
-        terrainProvider_.get(),
+        legacyTerrainProvider_.get(),
         contentProvider_.get());
 }
 
@@ -213,7 +213,7 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
 
 TerrainProvider* Tileset::effectiveLegacyTerrainProvider() const {
     return earth_engine::effectiveLegacyTerrainProvider(
-        terrainProvider_.get(),
+        legacyTerrainProvider_.get(),
         contentProvider_.get());
 }
 
