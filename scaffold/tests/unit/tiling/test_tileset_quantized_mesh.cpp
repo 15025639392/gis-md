@@ -9,6 +9,8 @@
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/platform/bridge/PlatformBridge.h"
+#include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
@@ -22,9 +24,13 @@
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 using namespace earth_engine;
@@ -72,6 +78,15 @@ struct TilesetTestAccess {
                 key,
                 TileLoadPriorityGroup::Normal,
                 1.0}});
+    }
+
+    static bool processPendingLoads(Tileset& tileset) {
+        return tileset.processPendingLoads(false, false, nullptr);
+    }
+
+    static TileLoadLifecycleCounts contentLoadLifecycleCounts(
+        const Tileset& tileset) {
+        return tileset.contentLifecycle_.loadLifecycle().counts();
     }
 
     static TilesetContentProvider* requestFrameContentProvider(
@@ -152,7 +167,8 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     const Vec3& boundingSphereCenterEcef,
     const Vec3& tileCenterEcef,
     float minimumHeight = 0.0f,
-    float maximumHeight = 100.0f) {
+    float maximumHeight = 100.0f,
+    const Vec3& horizonOcclusionPoint = Vec3::zero()) {
     std::vector<uint8_t> bytes;
 
     appendPod<double>(bytes, tileCenterEcef.x());
@@ -164,9 +180,9 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     appendPod<double>(bytes, boundingSphereCenterEcef.y());
     appendPod<double>(bytes, boundingSphereCenterEcef.z());
     appendPod<double>(bytes, 0.0);
-    appendPod<double>(bytes, 0.0);
-    appendPod<double>(bytes, 0.0);
-    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, horizonOcclusionPoint.x());
+    appendPod<double>(bytes, horizonOcclusionPoint.y());
+    appendPod<double>(bytes, horizonOcclusionPoint.z());
     appendPod<uint32_t>(bytes, 3);
 
     const uint16_t u[] = {
@@ -196,6 +212,162 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
 
     return bytes;
 }
+
+class NoopHttpRequest final : public HttpRequest {
+public:
+    void cancel() override {}
+};
+
+class DummyBuffer final : public Buffer {
+public:
+    explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
+    size_t size() const override { return byteSize_; }
+
+private:
+    size_t byteSize_ = 0;
+};
+
+class DummyTexture final : public Texture {
+public:
+    DummyTexture(int width, int height) : width_(width), height_(height) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+};
+
+class DummyShaderProgram final : public ShaderProgram {};
+
+class QueuedContentPlatformBridge final : public PlatformBridge {
+public:
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string& url,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions options = {}) override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            pending_.push_back(PendingRequest{
+                url,
+                std::move(options.headers),
+                std::move(callback)});
+        }
+        cv_.notify_all();
+        return std::make_unique<NoopHttpRequest>();
+    }
+
+    std::string cacheDirectory() const override { return {}; }
+    std::string documentsDirectory() const override { return {}; }
+
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+    bool waitUntilPendingCount(size_t count) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return pending_.size() >= count; });
+    }
+
+    bool completeNext(int statusCode, std::vector<uint8_t> body = {}) {
+        std::function<void(int, std::vector<uint8_t>)> callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (pending_.empty()) {
+                return false;
+            }
+            callback = std::move(pending_.front().callback);
+            pending_.erase(pending_.begin());
+        }
+        std::thread(
+            [callback = std::move(callback),
+             statusCode,
+             body = std::move(body)]() mutable {
+                callback(statusCode, std::move(body));
+            }).detach();
+        return true;
+    }
+
+    std::string pendingUrl(size_t index) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (index >= pending_.size()) {
+            return {};
+        }
+        return pending_[index].url;
+    }
+
+private:
+    struct PendingRequest {
+        std::string url;
+        std::vector<HttpRequestOptions::Header> headers;
+        std::function<void(int, std::vector<uint8_t>)> callback;
+    };
+
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::vector<PendingRequest> pending_;
+};
+
+class DummyRenderDevice final : public RenderDevice {
+public:
+    Backend backendType() const override { return Backend::OpenGLES; }
+    int maxTextureSize() const override { return 4096; }
+    int maxDrawBuffers() const override { return 4; }
+    bool supportsFloatTextures() const override { return true; }
+    bool supportsInstancing() const override { return true; }
+    std::string rendererString() const override { return "DummyRenderDevice"; }
+
+    std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override {
+        return std::make_unique<DummyTexture>(desc.width, desc.height);
+    }
+
+    bool updateTextureRegion(Texture*,
+                             int,
+                             int,
+                             int,
+                             int,
+                             const uint8_t*,
+                             size_t) override {
+        return false;
+    }
+
+    std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
+        return std::make_unique<DummyBuffer>(desc.size);
+    }
+
+    bool updateBuffer(Buffer*, size_t, const void*, size_t) override {
+        return false;
+    }
+
+    std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
+        return std::make_unique<DummyShaderProgram>();
+    }
+
+    std::unique_ptr<Framebuffer> createFramebuffer(
+        const FramebufferDesc&) override {
+        return nullptr;
+    }
+
+    void beginFrame() override {}
+    void submit(const RenderCommandList&) override {}
+    void endFrame() override {}
+    void onSurfaceCreated() override {}
+    void onSurfaceChanged(int, int) override {}
+    void onSurfaceDestroyed() override {}
+};
 
 void installQuantizedMeshTerrainContent(TilesetTile& tile,
                                         const std::vector<uint8_t>& bytes,
@@ -703,6 +875,115 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
+}
+
+TEST(TilesetQuantizedMeshTest,
+     QuantizedMeshProviderLoadResultMetadataReachesTileLifecycle) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
+    QueuedContentPlatformBridge bridge;
+    provider->setPlatformBridge(&bridge);
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey key{"Geographic-TMS", 2, 1, 1};
+    TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(tile->boundingVolume.has_value());
+    const TileBoundingVolume initialVolume = *tile->boundingVolume;
+
+    const TileLoadRequestOutcome outcome =
+        TilesetTestAccess::requestMissingContent(tileset, key);
+    EXPECT_EQ(1u, outcome.issued);
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_EQ(
+        "https://example.invalid/terrain/2/1/1.terrain",
+        bridge.pendingUrl(0));
+
+    constexpr float minimumHeight = -321.0f;
+    constexpr float maximumHeight = 2048.0f;
+    const Vec3 horizonOcclusionPoint(0.25, -0.5, 0.75);
+    ASSERT_TRUE(bridge.completeNext(
+        200,
+        makeQuantizedMeshBytes(
+            Vec3(1234.0, -4567.0, 890.0),
+            Vec3(-100.0, 200.0, 300.0),
+            minimumHeight,
+            maximumHeight,
+            horizonOcclusionPoint)));
+
+    bool processedPendingLoad = false;
+    for (int i = 0; i < 50; ++i) {
+        const TileLoadLifecycleCounts counts =
+            TilesetTestAccess::contentLoadLifecycleCounts(tileset);
+        if (counts.gltfTerrainUploads > 0) {
+            processedPendingLoad =
+                TilesetTestAccess::processPendingLoads(tileset);
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(processedPendingLoad);
+
+    EXPECT_EQ(TileLoadState::Done, tile->content.loadState);
+    EXPECT_EQ(TileContentKind::Render, tile->content.contentKind);
+    EXPECT_TRUE(tile->content.renderContent.isTerrainRenderContent());
+    ASSERT_NE(nullptr, tile->content.renderContent.gltfContent());
+    EXPECT_FALSE(tile->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(tile->content.renderContent.hasRetainedHeightmap());
+    EXPECT_TRUE(tile->content.renderContent.hasGltfResources());
+
+    ASSERT_TRUE(tile->initialBoundingVolume.has_value());
+    EXPECT_EQ(initialVolume.region, tile->initialBoundingVolume->region);
+    EXPECT_NEAR(initialVolume.minimumHeight,
+                tile->initialBoundingVolume->minimumHeight,
+                1e-6);
+    EXPECT_NEAR(initialVolume.maximumHeight,
+                tile->initialBoundingVolume->maximumHeight,
+                1e-6);
+
+    ASSERT_TRUE(tile->boundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Region, tile->boundingVolume->kind);
+    EXPECT_EQ(tile->bounds, tile->boundingVolume->region);
+    EXPECT_NEAR(minimumHeight,
+                tile->boundingVolume->minimumHeight,
+                1e-6);
+    EXPECT_NEAR(maximumHeight,
+                tile->boundingVolume->maximumHeight,
+                1e-6);
+    EXPECT_FALSE(tile->contentBoundingVolume.has_value());
+
+    EXPECT_TRUE(tile->content.renderContent.hasTerrainHeightRange());
+    EXPECT_NEAR(minimumHeight,
+                tile->content.renderContent.terrainMinimumHeight(),
+                1e-6);
+    EXPECT_NEAR(maximumHeight,
+                tile->content.renderContent.terrainMaximumHeight(),
+                1e-6);
+
+    const Vec3* appliedHorizon =
+        tile->content.renderContent.horizonOcclusionPoint();
+    ASSERT_NE(nullptr, appliedHorizon);
+    EXPECT_NEAR(horizonOcclusionPoint.x(), appliedHorizon->x(), 1e-12);
+    EXPECT_NEAR(horizonOcclusionPoint.y(), appliedHorizon->y(), 1e-12);
+    EXPECT_NEAR(horizonOcclusionPoint.z(), appliedHorizon->z(), 1e-12);
+
+    const RasterOverlayDetails& details =
+        tile->content.renderContent.rasterOverlayDetails();
+    EXPECT_EQ(tile->bounds, details.boundingRegion.rectangle);
+    EXPECT_NEAR(minimumHeight, details.boundingRegion.minimumHeight, 1e-6);
+    EXPECT_NEAR(maximumHeight, details.boundingRegion.maximumHeight, 1e-6);
+    const Rectangle* geographicRectangle =
+        details.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, geographicRectangle);
+    EXPECT_EQ(tile->bounds, *geographicRectangle);
 }
 
 TEST(TilesetQuantizedMeshTest,
