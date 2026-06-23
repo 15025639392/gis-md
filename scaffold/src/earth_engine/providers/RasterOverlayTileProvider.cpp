@@ -87,7 +87,7 @@ bool uploadAllowedDuringInteraction(
     if (!image) {
         return true;
     }
-    if (cacheKey.rfind("composite/", 0) == 0) {
+    if (cacheKey.rfind("mapped-raster/", 0) == 0) {
         return false;
     }
     if (image->width > kInteractionRasterUploadMaxDimension ||
@@ -648,10 +648,10 @@ int chooseQuadtreeSourceZoom(const TileScheme& scheme,
     return zoom;
 }
 
-std::string compositeTileCacheKey(const TileScheme& scheme,
-                                  const Rectangle& rectangle,
-                                  int sourceZoom,
-                                  uint64_t epoch) {
+std::string mappedRasterTileCacheKey(const TileScheme& scheme,
+                                     const Rectangle& rectangle,
+                                     int sourceZoom,
+                                     uint64_t epoch) {
     char bounds[256];
     std::snprintf(bounds,
                   sizeof(bounds),
@@ -660,7 +660,7 @@ std::string compositeTileCacheKey(const TileScheme& scheme,
                   rectangle.south(),
                   rectangle.east(),
                   rectangle.north());
-    return "composite/epoch/" + std::to_string(epoch) + "/" +
+    return "mapped-raster/epoch/" + std::to_string(epoch) + "/" +
            scheme.id() + "/srcz/" +
            std::to_string(sourceZoom) + "/" + bounds;
 }
@@ -1004,8 +1004,8 @@ using CompositeRequestSuccess =
                        RasterOverlayTile::MoreDetailAvailable)>;
 using CompositeRequestFailure = std::function<void()>;
 
-bool isCompositeCacheKey(const std::string& cacheKey) {
-    return cacheKey.rfind("composite/", 0) == 0;
+bool isMappedRasterCacheKey(const std::string& cacheKey) {
+    return cacheKey.rfind("mapped-raster/", 0) == 0;
 }
 
 } // namespace
@@ -1760,7 +1760,7 @@ void RasterOverlayTileProvider::setCoverageRectangle(
     coverageRectangle_ = coverageRectangle;
     invalidateSourceAssetDepotCache();
     for (auto it = tiles_.begin(); it != tiles_.end();) {
-        if (it->first.rfind("composite/", 0) == 0 || !it->second) {
+        if (it->first.rfind("mapped-raster/", 0) == 0 || !it->second) {
             ++it;
             continue;
         }
@@ -1779,7 +1779,7 @@ void RasterOverlayTileProvider::setCoverageRectangle(
             ++it;
         }
     }
-    invalidateCompositeTileCache();
+    invalidateMappedRasterTileCache();
 }
 
 void RasterOverlayTileProvider::setMaximumScreenSpaceError(
@@ -1790,7 +1790,7 @@ void RasterOverlayTileProvider::setMaximumScreenSpaceError(
         return;
     }
     maximumScreenSpaceError_ = nextMaximumScreenSpaceError;
-    invalidateCompositeTileCache();
+    invalidateMappedRasterTileCache();
 }
 
 void RasterOverlayTileProvider::setMaximumTextureSize(int maximumTextureSize) {
@@ -1800,7 +1800,7 @@ void RasterOverlayTileProvider::setMaximumTextureSize(int maximumTextureSize) {
         return;
     }
     maximumTextureSize_ = nextMaximumTextureSize;
-    invalidateCompositeTileCache();
+    invalidateMappedRasterTileCache();
 }
 
 void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) {
@@ -1840,7 +1840,7 @@ void RasterOverlayTileProvider::setLevelRange(int minimumLevel,
     }
     minimumLevel_ = nextMinimumLevel;
     maximumLevel_ = nextMaximumLevel;
-    invalidateCompositeTileCache();
+    invalidateMappedRasterTileCache();
     invalidateSourceAssetDepotCache();
 }
 
@@ -1857,10 +1857,10 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
         getMaximumLevel());
 }
 
-void RasterOverlayTileProvider::invalidateCompositeTileCache() {
-    ++compositeTileEpoch_;
+void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
+    ++mappedRasterTileEpoch_;
     for (auto it = tiles_.begin(); it != tiles_.end();) {
-        if (isCompositeCacheKey(it->first) &&
+        if (isMappedRasterCacheKey(it->first) &&
             it->second &&
             it->second->getState() !=
                 RasterOverlayTile::LoadState::Loading) {
@@ -1990,11 +1990,11 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
         }
     }
 
-    const std::string ck = compositeTileCacheKey(
+    const std::string ck = mappedRasterTileCacheKey(
         scheme_,
         providerGeometryBounds,
         sourcePlan.sourceZoom,
-        compositeTileEpoch_);
+        mappedRasterTileEpoch_);
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
         existing->second->lastUsedFrame = frameNumber_;

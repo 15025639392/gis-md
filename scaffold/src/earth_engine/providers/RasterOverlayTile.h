@@ -66,8 +66,8 @@ public:
     /// The tile's quadtree key.
     const TileKey& getTileID() const { return key_; }
 
-    /// Provider cache key. Real quadtree tiles use scheme/z/x/y. Composite
-    /// tiles use a key derived from geometry bounds and selected source level.
+    /// Provider cache key. Real quadtree tiles use scheme/z/x/y. Mapped
+    /// raster tiles use a key derived from geometry bounds and source level.
     const std::string& getCacheKey() const { return cacheKey_; }
 
     /// The geographic rectangle covered by this tile.

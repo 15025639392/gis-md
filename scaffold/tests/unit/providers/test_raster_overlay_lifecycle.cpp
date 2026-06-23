@@ -1703,7 +1703,7 @@ TEST(RasterOverlayLifecycleTest, CompositeTileKeepsGeometryBoundsAndTargetPixels
     EXPECT_TRUE(compositeTile->isMappedRasterTile());
     EXPECT_EQ(projectForProvider(provider, geometryBounds),
               compositeTile->getRectangle());
-    EXPECT_EQ(0u, compositeTile->getCacheKey().find("composite/"));
+    EXPECT_EQ(0u, compositeTile->getCacheKey().find("mapped-raster/"));
     EXPECT_EQ(3, compositeTile->getMappedSourceZoom());
     EXPECT_EQ(512.0, compositeTile->getTargetScreenPixelsX());
     EXPECT_EQ(512.0, compositeTile->getTargetScreenPixelsY());
@@ -1801,7 +1801,7 @@ TEST(RasterOverlayLifecycleTest,
 
     ASSERT_NE(nullptr, mappedTile);
     EXPECT_FALSE(mappedTile->isMappedRasterTile());
-    EXPECT_NE(0u, mappedTile->getCacheKey().find("composite/"));
+    EXPECT_NE(0u, mappedTile->getCacheKey().find("mapped-raster/"));
     EXPECT_EQ(1, provider.getCachedTileCount());
 
     auto directTile = provider.getTile(mappedTile->getTileID());

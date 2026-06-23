@@ -120,7 +120,7 @@ struct RenderCommand {
     int surfaceNoSkirtIndexCount = 0;
     int surfaceSkirtIndexCount = 0;
     int surfaceBaseRasterState = 0;
-    int surfaceBaseIsCompositeTile = 0;
+    int surfaceBaseIsMappedRasterTile = 0;
 
     // glTF raster overlays use _CESIUMOVERLAY_n attributes and separate
     // material texture slots, so they cannot reuse surface overlay samplers.

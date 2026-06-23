@@ -140,7 +140,7 @@ void SurfaceTileDrawCommandBuilder::build(
         }
         surfaceCommand.surfaceBaseRasterState =
             static_cast<int>(baseBinding.tile->getState());
-        surfaceCommand.surfaceBaseIsCompositeTile =
+        surfaceCommand.surfaceBaseIsMappedRasterTile =
             baseBinding.tile->isMappedRasterTile() ? 1 : 0;
     }
     surfaceCommand.surfaceTileUv = baseBinding.tile

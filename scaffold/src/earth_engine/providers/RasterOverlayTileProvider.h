@@ -293,7 +293,7 @@ private:
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;
-    void invalidateCompositeTileCache();
+    void invalidateMappedRasterTileCache();
     void invalidateSourceAssetDepotCache();
 
     ImageryProvider& provider_;
@@ -375,7 +375,7 @@ private:
     /// Monotonic frame counter, updated by trimUnusedTiles.
     /// Used to stamp lastUsedFrame on tiles in getTile().
     uint64_t frameNumber_ = 0;
-    uint64_t compositeTileEpoch_ = 0;
+    uint64_t mappedRasterTileEpoch_ = 0;
     double maximumScreenSpaceError_ = 2.0;
     int maximumTextureSize_ = 2048;
     int minimumLevel_ = 0;

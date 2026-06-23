@@ -182,8 +182,8 @@ void populateCommandTrace(const RenderCommandList& renderCommands,
             command.surfaceSkirtIndexCount;
         commandTrace.surfaceBaseRasterState =
             command.surfaceBaseRasterState;
-        commandTrace.surfaceBaseIsCompositeTile =
-            command.surfaceBaseIsCompositeTile;
+        commandTrace.surfaceBaseIsMappedRasterTile =
+            command.surfaceBaseIsMappedRasterTile;
         commandTrace.surfaceOverlayTextureCount =
             command.surfaceOverlayTextureCount;
         commandTrace.surfaceClipEnabled = command.surfaceClipEnabled;

@@ -2339,8 +2339,8 @@ void testRasterOverlayProviderCompositeTile() {
                   projectForProvider(provider, geometryBounds),
           "RasterOverlayTileProvider: composite tile keeps geometry bounds");
     check(compositeTile && !compositeTile->getCacheKey().empty() &&
-              compositeTile->getCacheKey().find("composite/") == 0,
-          "RasterOverlayTileProvider: composite tile uses composite cache key");
+              compositeTile->getCacheKey().find("mapped-raster/") == 0,
+          "RasterOverlayTileProvider: mapped raster tile uses mapped cache key");
     check(compositeTile && compositeTile->getMappedSourceZoom() == 3,
           "RasterOverlayTileProvider: source zoom follows target screen pixels");
     check(compositeTile && compositeTile->getTargetScreenPixelsX() == 512.0 &&
