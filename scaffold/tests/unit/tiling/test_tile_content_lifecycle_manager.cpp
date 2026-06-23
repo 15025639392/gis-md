@@ -168,6 +168,7 @@ TEST(
         0.0,
         0.0,
         1,
+        false,
         nullptr,
         [](TilesetTile&, double) { return false; },
         [](const TileKey&) -> TilesetTile* { return nullptr; });
@@ -177,6 +178,42 @@ TEST(
     EXPECT_TRUE(manager.heightmapTerrainCache().empty());
     EXPECT_EQ(1u, manager.loadLifecycle().pendingLoads()
                       .terminalResultCount());
+}
+
+TEST(
+    TileContentLifecycleManagerTest,
+    RequestWithoutHeightmapSurfacePathIgnoresStaleHeightmapTerrainCache) {
+    TileContentLifecycleManager manager;
+    LifecycleTerrainContentProvider contentProvider;
+    std::vector<ActivatedRasterOverlay*> rasterOverlays;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto staleHeightmap = std::make_unique<DecodedHeightmap>();
+    staleHeightmap->tileSize = 2;
+    staleHeightmap->heights = {1.0f, 1.0f, 1.0f, 1.0f};
+    manager.heightmapTerrainCache()["test/0/0/0"] = std::move(staleHeightmap);
+
+    const TileLoadRequestOutcome outcome = manager.requestMissingTiles(
+        {TileLoadRequest{
+            TileKey{"test", 0, 0, 0},
+            TileLoadPriorityGroup::Normal,
+            1.0}},
+        &contentProvider,
+        nullptr,
+        rasterOverlays,
+        tiles,
+        1,
+        20,
+        0.0,
+        0.0,
+        1,
+        false,
+        nullptr,
+        [](TilesetTile&, double) { return false; },
+        [](const TileKey&) -> TilesetTile* { return nullptr; });
+
+    EXPECT_EQ(1u, outcome.issued);
+    EXPECT_EQ(1, contentProvider.requestCount);
+    EXPECT_TRUE(manager.heightmapTerrainCache().empty());
 }
 
 TEST(TileContentLifecycleManagerTest, ShutdownClearsClaimedUploadWork) {

@@ -33,6 +33,7 @@ TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
         frame.mainThreadLoadingTimeLimit,
         frame.currentFrameTimeSeconds,
         frame.smoothedMainThreadUploadLimit,
+        frame.useHeightmapSurfacePath,
         budget,
         [this](TilesetTile& tile, double priority) {
             return meshPreparation_.prepareUpsampleSourceTile(

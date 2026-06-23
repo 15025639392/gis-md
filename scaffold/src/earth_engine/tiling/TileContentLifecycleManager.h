@@ -58,6 +58,7 @@ public:
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
         uint32_t smoothedMainThreadUploadLimit,
+        bool useHeightmapSurfacePath,
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
@@ -75,7 +76,8 @@ public:
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
                 currentFrameTimeSeconds,
-                smoothedMainThreadUploadLimit),
+                smoothedMainThreadUploadLimit,
+                useHeightmapSurfacePath),
             budget,
             std::forward<PrepareUpsampleSourceTileFn>(
                 prepareUpsampleSourceTile),
@@ -136,14 +138,15 @@ private:
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
-        uint32_t smoothedMainThreadUploadLimit) {
+        uint32_t smoothedMainThreadUploadLimit,
+        bool useHeightmapSurfacePath) {
         return TilesetContentLifecycleContext{
             loadLifecycle_,
             contentProvider,
             device,
             rasterOverlays,
             tiles,
-            heightmapTerrainCache_,
+            useHeightmapSurfacePath ? &heightmapTerrainCache_ : nullptr,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,

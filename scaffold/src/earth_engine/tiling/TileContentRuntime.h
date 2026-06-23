@@ -27,6 +27,7 @@ struct TileContentRuntimeRequestFrame {
         tiles;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
+    bool useHeightmapSurfacePath = false;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 0;
     double mainThreadLoadingTimeLimit = 0.0;

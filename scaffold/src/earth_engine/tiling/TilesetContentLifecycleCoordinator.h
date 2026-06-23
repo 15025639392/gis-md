@@ -29,8 +29,8 @@ struct TilesetContentLifecycleContext {
     RenderDevice* device = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-        terrainCache;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>*
+        terrainCache = nullptr;
     TileEmptyContentRegistry& emptyContentRegistry;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 20;

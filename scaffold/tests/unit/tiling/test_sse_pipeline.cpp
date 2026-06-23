@@ -21043,7 +21043,7 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
                 budget,
                 &provider,
                 tiles,
-                terrainCache,
+                &terrainCache,
                 emptyContentRegistry},
             testCacheKeyForTile,
             [](TilesetTile&, double) { return false; },

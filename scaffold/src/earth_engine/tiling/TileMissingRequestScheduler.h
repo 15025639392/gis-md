@@ -20,8 +20,8 @@ struct TileMissingRequestSchedulerInput {
     FrameResourceBudget& budget;
     TilesetContentProvider* contentProvider = nullptr;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
-    const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-        terrainCache;
+    const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>*
+        terrainCache = nullptr;
     const TileEmptyContentRegistry& emptyContentRegistry;
 };
 
@@ -88,7 +88,8 @@ private:
             input.contentProvider->providesTerrainQuadtree();
         snapshot.terrainAlreadyCached =
             !snapshot.contentProviderOwnsTerrainQuadtree &&
-            input.terrainCache.count(cacheKey) > 0;
+            input.terrainCache &&
+            input.terrainCache->count(cacheKey) > 0;
         snapshot.hasRenderContent =
             outTileState &&
             outTileState->content.contentKind == TileContentKind::Render &&
