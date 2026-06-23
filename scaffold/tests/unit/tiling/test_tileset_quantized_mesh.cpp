@@ -811,6 +811,34 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     ContentTerrainProviderDiscardsHeightmapTerrainCacheDuringUploadRuntime) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(2468.0f));
+    ASSERT_TRUE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
+
+    EXPECT_FALSE(TilesetTestAccess::processPendingLoads(tileset));
+
+    EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
+    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
+}
+
+TEST(TilesetQuantizedMeshTest,
      NoTerrainTilesetIgnoresHeightmapTerrainCacheLikeCesiumNativeContentPath) {
     Tileset tileset(
         TileScheme::createGeographicTMS(),

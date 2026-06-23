@@ -103,6 +103,9 @@ public:
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
+        if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
+            heightmapTerrainCache_.clear();
+        }
         return TilesetContentLifecycleCoordinator::processPendingUploads(
             makeUploadContext(
                 contentProvider,
