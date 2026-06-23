@@ -42,6 +42,19 @@ public:
             return;
         }
 
+        const bool contentTerrainQuadtreeOwnsSurface =
+            input.hasTerrainQuadtree &&
+            !input.useLegacyHeightmapTerrainCache;
+        const bool hasLegacySurfaceResidue =
+            contentTerrainQuadtreeOwnsSurface &&
+            (input.tile.content.renderContent.hasSurfaceMesh() ||
+             input.tile.content.renderContent.hasRetainedHeightmap());
+        if (hasLegacySurfaceResidue) {
+            input.tile.content.renderContent.clearSurfaceMeshResources();
+            input.tile.content.renderContent.clearRetainedHeightmap();
+            markResourcesDirty();
+        }
+
         auto it = input.useLegacyHeightmapTerrainCache
             ? input.terrainCache.find(terrainCacheKey(input.tile.key))
             : input.terrainCache.end();

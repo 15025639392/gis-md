@@ -11972,6 +11972,55 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !frameResourcesDirty &&
               !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
           "TileMeshFrameEnsurer: glTF terrain render content skips terrain cache and SurfaceMesh frame path");
+
+    TilesetTile staleLegacySurfaceTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    staleLegacySurfaceTile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    staleLegacySurfaceTile.content.renderContent.setMeshReady(true);
+    staleLegacySurfaceTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::LegacyHeightmapTerrain);
+    staleLegacySurfaceTile.content.renderContent.setRetainedHeightmap(
+        makeFlatHeightmap(42.0f));
+    bool staleCacheKeyComputed = false;
+    bool staleSurfacePathTouched = false;
+    bool staleResourcesDirty = false;
+    TileMeshFrameEnsurer::ensure(
+        TileMeshFrameEnsureInput{
+            staleLegacySurfaceTile,
+            frameTerrainCache,
+            nullptr,
+            true,
+            false},
+        [&staleCacheKeyComputed](const TileKey&) {
+            staleCacheKeyComputed = true;
+            return std::string("unexpected-content-terrain-cache-key");
+        },
+        [&staleSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
+            staleSurfacePathTouched = true;
+        },
+        [&staleSurfacePathTouched](const TilesetTile&, bool)
+            -> const TilesetTile* {
+            staleSurfacePathTouched = true;
+            return nullptr;
+        },
+        [&staleSurfacePathTouched](TilesetTile&) {
+            staleSurfacePathTouched = true;
+        },
+        [&staleSurfacePathTouched](const TilesetTile&) {
+            staleSurfacePathTouched = true;
+            return false;
+        },
+        [&staleResourcesDirty]() {
+            staleResourcesDirty = true;
+        });
+    check(!staleCacheKeyComputed &&
+              !staleSurfacePathTouched &&
+              staleResourcesDirty &&
+              !staleLegacySurfaceTile.content.renderContent.hasSurfaceMesh() &&
+              !staleLegacySurfaceTile.content.renderContent.hasRetainedHeightmap(),
+          "TileMeshFrameEnsurer: content terrain quadtree clears stale legacy heightmap surface residue");
 }
 
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
