@@ -100,8 +100,8 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
             << "/" << command.surfaceMeshIndexCount
             << ",base=real"
             << ",rs=" << command.surfaceBaseRasterState;
-        if (command.surfaceBaseIsCompositeTile) {
-            out << ",comp";
+        if (command.surfaceBaseIsMappedRasterTile) {
+            out << ",mapped";
         }
         if (command.surfaceSkirtIndexCount > 0) {
             out << ",skirt-" << command.surfaceSkirtIndexCount;
