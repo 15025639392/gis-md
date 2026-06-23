@@ -309,7 +309,6 @@ void runUnconditionallyRefinedChildIsNotSelected(TilesetOptions options) {
             {rootKey, {childKey}},
             {childKey, {grandchildKey}}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -392,7 +391,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -472,7 +470,6 @@ TEST(
             {rootKey, {externalKey}},
             {externalKey, {renderKey}}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -554,7 +551,6 @@ TEST(
             {rootKey, childKeys},
             {failedChildKey, {grandchildKey}}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -693,7 +689,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -775,7 +770,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -846,7 +840,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -911,7 +904,6 @@ TEST(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -963,7 +955,6 @@ TEST(
                     std::vector<TileKey>{rootKey},
                     std::vector<std::pair<TileKey, std::vector<TileKey>>>{});
             Tileset tileset(
-                std::unique_ptr<TerrainProvider>{},
                 TileScheme::createGeographicTMS(),
                 {},
                 nullptr,
@@ -1029,7 +1020,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1091,7 +1081,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1193,7 +1182,6 @@ TEST(
             std::vector<std::pair<TileKey, std::vector<TileKey>>>{
                 {rootKey, childKeys}});
         Tileset tileset(
-            std::unique_ptr<TerrainProvider>{},
             TileScheme::createGeographicTMS(),
             {},
             nullptr,
@@ -1250,7 +1238,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1350,7 +1337,6 @@ TEST(
             std::vector<std::pair<TileKey, std::vector<TileKey>>>{
                 {rootKey, childKeys}});
         Tileset tileset(
-            std::unique_ptr<TerrainProvider>{},
             TileScheme::createGeographicTMS(),
             {},
             nullptr,
@@ -1423,7 +1409,6 @@ TEST(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1467,7 +1452,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1552,7 +1536,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1629,7 +1612,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1710,7 +1692,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1786,7 +1767,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1862,7 +1842,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1919,7 +1898,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1976,7 +1954,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -2039,7 +2016,6 @@ TEST(
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, childKeys}});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -2112,7 +2088,6 @@ TEST(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{});
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
