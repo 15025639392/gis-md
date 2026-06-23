@@ -59,36 +59,30 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
                  RenderDevice* device,
                  TilesetOptions options)
     : Tileset(
-          AdoptProvidersTag{},
-          std::move(terrainProvider),
+          ProviderOwnership{std::move(terrainProvider), nullptr},
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,
-          std::move(options),
-          nullptr) {}
+          std::move(options)) {}
 
 Tileset::Tileset(std::unique_ptr<TileScheme> tileScheme,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,
                  TilesetOptions options)
     : Tileset(
-          AdoptProvidersTag{},
-          std::unique_ptr<TerrainProvider>{},
+          ProviderOwnership{nullptr, nullptr},
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,
-          std::move(options),
-          nullptr) {}
+          std::move(options)) {}
 
-Tileset::Tileset(AdoptProvidersTag,
-                 std::unique_ptr<TerrainProvider> terrainProvider,
+Tileset::Tileset(ProviderOwnership providers,
                  std::unique_ptr<TileScheme> tileScheme,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,
-                 TilesetOptions options,
-                 std::unique_ptr<TilesetContentProvider> contentProvider)
-    : terrainProvider_(std::move(terrainProvider)),
-      contentProvider_(std::move(contentProvider)),
+                 TilesetOptions options)
+    : terrainProvider_(std::move(providers.legacyTerrainProvider)),
+      contentProvider_(std::move(providers.contentProvider)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),
       device_(device),
@@ -160,13 +154,11 @@ Tileset::Tileset(
     TilesetOptions options,
     std::unique_ptr<TilesetContentProvider> contentProvider)
     : Tileset(
-          AdoptProvidersTag{},
-          std::unique_ptr<TerrainProvider>{},
+          ProviderOwnership{nullptr, std::move(contentProvider)},
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,
-          std::move(options),
-          std::move(contentProvider)) {}
+          std::move(options)) {}
 
 bool Tileset::hasTerrainQuadtree() const {
     return providerHasTerrainQuadtree(

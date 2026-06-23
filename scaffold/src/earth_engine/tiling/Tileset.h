@@ -135,19 +135,20 @@ public:
     void clearOcclusionCallback();
 
 private:
-    struct AdoptProvidersTag {};
+    struct ProviderOwnership {
+        std::unique_ptr<TerrainProvider> legacyTerrainProvider;
+        std::unique_ptr<TilesetContentProvider> contentProvider;
+    };
 
     friend struct TilesetTestAccess;
     friend class TilesetSelectionFrameFacade;
     friend class TilesetUpdateFrameRuntime;
 
-    Tileset(AdoptProvidersTag,
-            std::unique_ptr<TerrainProvider> terrainProvider,
+    Tileset(ProviderOwnership providers,
             std::unique_ptr<TileScheme> tileScheme,
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,
-            TilesetOptions options,
-            std::unique_ptr<TilesetContentProvider> contentProvider);
+            TilesetOptions options);
 
     TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame() const;
     TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame(
