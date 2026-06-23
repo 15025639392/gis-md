@@ -153,7 +153,7 @@ struct TilesetTestAccess {
         std::vector<ActivatedRasterOverlay*> overlays = {},
         RenderDevice* device = nullptr,
         TilesetOptions options = {}) {
-        return Tileset(
+        return Tileset::createLegacyTerrainForTests(
             std::move(terrainProvider),
             std::move(scheme),
             std::move(overlays),
@@ -169,7 +169,9 @@ struct TilesetTestAccess {
         TilesetOptions options = {}) {
         return std::unique_ptr<Tileset>(
             new Tileset(
-                std::move(terrainProvider),
+                Tileset::ProviderOwnership{
+                    std::move(terrainProvider),
+                    nullptr},
                 std::move(scheme),
                 std::move(overlays),
                 device,

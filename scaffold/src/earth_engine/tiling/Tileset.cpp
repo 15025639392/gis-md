@@ -53,17 +53,19 @@ bool usesLegacyTerrainSurfacePath(const TerrainProvider* terrainProvider) {
 
 } // namespace
 
-Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
-                 std::unique_ptr<TileScheme> tileScheme,
-                 std::vector<ActivatedRasterOverlay*> rasterOverlays,
-                 RenderDevice* device,
-                 TilesetOptions options)
-    : Tileset(
-          ProviderOwnership{std::move(terrainProvider), nullptr},
-          std::move(tileScheme),
-          std::move(rasterOverlays),
-          device,
-          std::move(options)) {}
+Tileset Tileset::createLegacyTerrainForTests(
+    std::unique_ptr<TerrainProvider> terrainProvider,
+    std::unique_ptr<TileScheme> tileScheme,
+    std::vector<ActivatedRasterOverlay*> rasterOverlays,
+    RenderDevice* device,
+    TilesetOptions options) {
+    return Tileset(
+        ProviderOwnership{std::move(terrainProvider), nullptr},
+        std::move(tileScheme),
+        std::move(rasterOverlays),
+        device,
+        std::move(options));
+}
 
 Tileset::Tileset(std::unique_ptr<TileScheme> tileScheme,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
