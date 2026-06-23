@@ -179,6 +179,12 @@ TEST(
     SceneTilesetDiagnosticsSnapshot snapshot;
     snapshot.resourceBudget.networkRequestsIssued = 20;
     snapshot.resourceBudget.networkRequestsLimit = 30;
+    snapshot.resourceBudget.terrainContentNetworkRequestsIssued = 2;
+    snapshot.resourceBudget.terrainContentNetworkRequestsLimit = 3;
+    snapshot.resourceBudget.contentNetworkRequestsIssued = 5;
+    snapshot.resourceBudget.contentNetworkRequestsLimit = 7;
+    snapshot.resourceBudget.rasterNetworkRequestsIssued = 11;
+    snapshot.resourceBudget.rasterNetworkRequestsLimit = 13;
     snapshot.resourceBudget.mainThreadElapsedMs = 1.5;
     snapshot.resourceBudget.mainThreadTimeLimitMs = 4.0;
     snapshot.resourceBudget.interactionActive = true;
@@ -201,6 +207,12 @@ TEST(
     EXPECT_EQ(
         diagnostics.budgetNetworkRequestsLimit,
         std::numeric_limits<int>::max());
+    EXPECT_EQ(diagnostics.budgetTerrainContentNetworkRequestsIssued, 2);
+    EXPECT_EQ(diagnostics.budgetTerrainContentNetworkRequestsLimit, 3);
+    EXPECT_EQ(diagnostics.budgetContentNetworkRequestsIssued, 5);
+    EXPECT_EQ(diagnostics.budgetContentNetworkRequestsLimit, 7);
+    EXPECT_EQ(diagnostics.budgetRasterNetworkRequestsIssued, 11);
+    EXPECT_EQ(diagnostics.budgetRasterNetworkRequestsLimit, 13);
     EXPECT_DOUBLE_EQ(diagnostics.budgetMainThreadElapsedMs, 3.75);
     EXPECT_DOUBLE_EQ(diagnostics.budgetMainThreadTimeLimitMs, 4.0);
     EXPECT_TRUE(diagnostics.budgetInteractionActive);

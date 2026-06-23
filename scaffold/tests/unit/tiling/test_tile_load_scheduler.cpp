@@ -1837,7 +1837,7 @@ TEST(TileLoadSchedulerTest, StopsAfterTerrainDispatchBudgetBlock) {
     EXPECT_EQ(markedKeys[0], firstKey.x);
 }
 
-TEST(TileLoadSchedulerTest, ContentThenTerrainShareDispatchBudget) {
+TEST(TileLoadSchedulerTest, ContentThenTerrainUseSeparateDispatchBudgets) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -1898,20 +1898,23 @@ TEST(TileLoadSchedulerTest, ContentThenTerrainShareDispatchBudget) {
                     key.schemeId + ":" + std::to_string(key.x));
             });
 
-    ASSERT_EQ(plannedKeys.size(), 2u);
-    ASSERT_EQ(markedKeys.size(), 1u);
-    EXPECT_EQ(outcome.issued, 1u);
+    ASSERT_EQ(plannedKeys.size(), 3u);
+    ASSERT_EQ(markedKeys.size(), 2u);
+    EXPECT_EQ(outcome.issued, 2u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(contentProvider.requestCount, 1);
-    EXPECT_EQ(terrainProvider.requestCount, 0);
+    EXPECT_EQ(terrainProvider.requestCount, 1);
     EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 1u);
-    EXPECT_EQ(budget.networkRequestsIssued(), 1u);
+    EXPECT_EQ(budget.contentNetworkRequestsIssued(), 1u);
+    EXPECT_EQ(budget.networkRequestsIssued(), 2u);
     EXPECT_EQ(plannedKeys[0], "content:0");
     EXPECT_EQ(plannedKeys[1], "test:1");
+    EXPECT_EQ(plannedKeys[2], "test:2");
     EXPECT_EQ(markedKeys[0], "content:0");
+    EXPECT_EQ(markedKeys[1], "test:1");
 }
 
-TEST(TileLoadSchedulerTest, TerrainThenContentShareDispatchBudget) {
+TEST(TileLoadSchedulerTest, TerrainThenContentUseSeparateDispatchBudgets) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -1972,15 +1975,19 @@ TEST(TileLoadSchedulerTest, TerrainThenContentShareDispatchBudget) {
                     key.schemeId + ":" + std::to_string(key.x));
             });
 
-    ASSERT_EQ(plannedKeys.size(), 2u);
-    ASSERT_EQ(markedKeys.size(), 1u);
-    EXPECT_EQ(outcome.issued, 1u);
+    ASSERT_EQ(plannedKeys.size(), 3u);
+    ASSERT_EQ(markedKeys.size(), 3u);
+    EXPECT_EQ(outcome.issued, 3u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(terrainProvider.requestCount, 1);
-    EXPECT_EQ(contentProvider.requestCount, 0);
+    EXPECT_EQ(contentProvider.requestCount, 2);
     EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 1u);
-    EXPECT_EQ(budget.networkRequestsIssued(), 1u);
+    EXPECT_EQ(budget.contentNetworkRequestsIssued(), 2u);
+    EXPECT_EQ(budget.networkRequestsIssued(), 3u);
     EXPECT_EQ(plannedKeys[0], "test:0");
     EXPECT_EQ(plannedKeys[1], "content:1");
+    EXPECT_EQ(plannedKeys[2], "content:2");
     EXPECT_EQ(markedKeys[0], "test:0");
+    EXPECT_EQ(markedKeys[1], "content:1");
+    EXPECT_EQ(markedKeys[2], "content:2");
 }
