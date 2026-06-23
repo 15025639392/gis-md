@@ -373,6 +373,12 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                                       TileCallback callback,
                                       HttpRequestPriority priority) {
     std::string url = buildUrl(key);
+    if (url.empty()) {
+        requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+        requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+        callback(key, nullptr);
+        return;
+    }
     if (platformBridge_) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         if (token.isCancelled()) {

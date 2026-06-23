@@ -4224,6 +4224,28 @@ TEST(XYZImageryProviderTest, PlaceholdersAreCaseInsensitiveLikeCesiumNative) {
               provider.buildUrl(TileKey{"XYZ-WebMercator", 3, 1, 2}));
 }
 
+TEST(XYZImageryProviderTest, EmptyTileUrlFailsWithoutBridgeRequestLikeCesiumNative) {
+    XYZImageryProvider provider("");
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    bool called = false;
+    bool loaded = true;
+    provider.requestTile(
+        TileKey{"XYZ-WebMercator", 0, 0, 0},
+        CancellationToken{},
+        [&](const TileKey&, std::unique_ptr<DecodedImage> image) {
+            called = true;
+            loaded = image != nullptr;
+        });
+
+    EXPECT_TRUE(called);
+    EXPECT_FALSE(loaded);
+    EXPECT_EQ(0u, bridge.pendingCount());
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsStarted);
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
+}
+
 TEST(XYZImageryProviderTest, OpenGlobusGroupedYMapsUrlLocalYAndExposesGroup) {
     XYZImageryProvider provider(
         "https://example.com/{tileGroup}/{z}/{x}/{y}?gy={groupedY}");
