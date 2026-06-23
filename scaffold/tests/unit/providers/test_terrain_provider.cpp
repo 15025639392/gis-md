@@ -2108,6 +2108,7 @@ TEST(
     EXPECT_EQ(TileAvailabilityState::Unknown,
               provider.availabilityState(parentOnlyChild));
     EXPECT_FALSE(provider.supportsTile(parentOnlyChild));
+    EXPECT_EQ("", provider.buildUrl(parentOnlyChild));
 
     QuantizedMeshAvailabilityUpdate update;
     update.layerIndex = 1;

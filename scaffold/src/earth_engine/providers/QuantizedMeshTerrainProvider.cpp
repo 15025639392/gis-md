@@ -1613,6 +1613,10 @@ std::string QuantizedMeshTerrainProvider::buildUrlForLayer(
 }
 
 std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
+    if (availabilityState(key) == TileAvailabilityState::Unknown) {
+        return {};
+    }
+
     if (!layers_.empty()) {
         const LayerConfig* layer = firstAvailableLayer(key);
         if (layer) {
