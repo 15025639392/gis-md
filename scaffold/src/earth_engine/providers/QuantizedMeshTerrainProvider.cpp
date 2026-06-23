@@ -2230,8 +2230,20 @@ bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const 
 }
 
 TileContentLoadResult QuantizedMeshTerrainProvider::decodeContent(
-    const uint8_t*, size_t) {
-    return TileContentLoadResult::failed();
+    const uint8_t* data,
+    size_t size) {
+    const std::vector<TileKey> roots =
+        TileSelectionRootPolicy::levelZeroTerrainRoots(schemeId_);
+    if (roots.empty()) {
+        return TileContentLoadResult::failed();
+    }
+    return QuantizedMeshContentLoader::loadTileContent(
+        data,
+        size,
+        terrainContentRectangle(roots.front(), schemeId_),
+        waterMaskEnabled_,
+        {},
+        rasterOverlayProjectionForTerrainScheme(schemeId_));
 }
 
 } // namespace earth_engine

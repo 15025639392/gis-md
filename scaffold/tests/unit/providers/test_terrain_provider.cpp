@@ -554,6 +554,56 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
+     DecodeContentProducesGltfTerrainLoadResult) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+
+    constexpr float minimumHeight = -25.0f;
+    constexpr float maximumHeight = 125.0f;
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(minimumHeight, maximumHeight);
+
+    TileContentLoadResult result =
+        provider.decodeContent(bytes.data(), bytes.size());
+
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+    EXPECT_TRUE(result.terrainRenderContent);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_TRUE(result.metadata.updatedBoundingVolume.has_value());
+    const TileKey westRoot{"Geographic-TMS", 0, 0, 0};
+    auto scheme = TileScheme::createGeographicTMS();
+    EXPECT_EQ(scheme->tileToRectangle(westRoot),
+              result.metadata.updatedBoundingVolume->region);
+    ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
+    const Rectangle* rectangle =
+        result.metadata.rasterOverlayDetails
+            ->findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, rectangle);
+    EXPECT_EQ(scheme->tileToRectangle(westRoot), *rectangle);
+    EXPECT_NEAR(minimumHeight,
+                result.metadata.updatedBoundingVolume->minimumHeight,
+                1e-6);
+    EXPECT_NEAR(maximumHeight,
+                result.metadata.updatedBoundingVolume->maximumHeight,
+                1e-6);
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     DecodeContentRejectsInvalidQuantizedMesh) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+
+    const std::vector<uint8_t> invalidBytes{1, 2, 3, 4};
+    TileContentLoadResult result =
+        provider.decodeContent(invalidBytes.data(), invalidBytes.size());
+
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
+    EXPECT_FALSE(result.terrainRenderContent);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
      WebMercatorRequestTileContentUsesProjectedLayerRectangleLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
