@@ -28,6 +28,9 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
       includeHeightmapTerrainCache_(includeHeightmapTerrainCache) {}
 
 void TileCacheOwnershipManager::updateTotalBytesUsed() {
+    if (!includeHeightmapTerrainCache_) {
+        contentLifecycle_.heightmapTerrainCache().clear();
+    }
     contentCache_.updateTotalBytesUsed(
         tiles_,
         contentLifecycle_,

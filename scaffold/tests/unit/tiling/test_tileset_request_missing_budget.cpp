@@ -1242,6 +1242,7 @@ TEST(
 
     EXPECT_EQ(tileset.totalBytesUsed(), 0);
     EXPECT_EQ(tileset.cachedTerrainTiles(), 0);
+    EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, key));
 
     Diagnostics sceneDiagnostics;
     SceneTilesetDiagnostics::reset(sceneDiagnostics);
