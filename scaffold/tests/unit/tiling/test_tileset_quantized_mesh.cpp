@@ -62,6 +62,11 @@ struct TilesetTestAccess {
         return tileset.makeContentRuntimeRequestFrame().contentProvider;
     }
 
+    static TerrainProvider* effectiveLegacyTerrainProvider(
+        const Tileset& tileset) {
+        return tileset.effectiveLegacyTerrainProvider();
+    }
+
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
         tileset.meshPreparation_.ensureTileMesh(tile);
     }
@@ -498,6 +503,8 @@ TEST(TilesetQuantizedMeshTest,
 
     ASSERT_NE(nullptr, tileset);
     EXPECT_EQ(1, *legacyDestroyed);
+    EXPECT_EQ(nullptr,
+              TilesetTestAccess::effectiveLegacyTerrainProvider(*tileset));
     EXPECT_EQ(0, tileset->cachedTerrainTiles());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};

@@ -47,15 +47,6 @@ bool contentProviderOwnsTerrainQuadtree(
     return contentProvider && contentProvider->providesTerrainQuadtree();
 }
 
-TerrainProvider* effectiveLegacyTerrainProvider(
-    TerrainProvider* terrainProvider,
-    const TilesetContentProvider* contentProvider) {
-    if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
-        return nullptr;
-    }
-    return terrainProvider;
-}
-
 } // namespace
 
 Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
@@ -98,9 +89,7 @@ Tileset::Tileset(ProviderOwnership providers,
       contentAccess_(
           tileRegistry_,
           *tileScheme_,
-          ::earth_engine::effectiveLegacyTerrainProvider(
-              legacyTerrainProvider_.get(),
-              contentProvider_.get()),
+          legacyTerrainProvider_.get(),
           contentProvider_.get(),
           contentLifecycle_,
           rasterOverlays_.size()),
@@ -216,9 +205,7 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
 }
 
 TerrainProvider* Tileset::effectiveLegacyTerrainProvider() const {
-    return earth_engine::effectiveLegacyTerrainProvider(
-        legacyTerrainProvider_.get(),
-        contentProvider_.get());
+    return legacyTerrainProvider_.get();
 }
 
 TileContentRuntimeRequestFrame
