@@ -181,7 +181,7 @@ int Tileset::cachedTerrainTiles() const {
     if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
         return 0;
     }
-    return static_cast<int>(contentLifecycle_.terrainCache().size());
+    return static_cast<int>(contentLifecycle_.legacyTerrainCache().size());
 }
 
 int64_t Tileset::totalBytesUsed() const {
@@ -295,7 +295,7 @@ TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {
 float Tileset::sampleHeight(double lngRad, double latRad) const {
     return LoadedTerrainHeightSampler::sampleHeight(
         tileRegistry_.tiles(),
-        contentLifecycle_.terrainCache(),
+        contentLifecycle_.legacyTerrainCache(),
         lngRad,
         latRad,
         !(contentProvider_ && contentProvider_->providesTerrainQuadtree()));

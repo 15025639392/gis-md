@@ -14,7 +14,7 @@ void TileContentCacheManager::updateTotalBytesUsed(
     totalBytesUsed_ = includeLegacyHeightmapTerrainCache
         ? TileCacheMetrics::estimateTotalBytes(
               tiles,
-              lifecycle.terrainCache())
+              lifecycle.legacyTerrainCache())
         : TileCacheMetrics::estimateTotalBytes(tiles, {});
 }
 
@@ -37,7 +37,7 @@ void TileContentCacheManager::eraseTileIndexState(
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         ignoredTerrainCache;
     auto& terrainCache = includeLegacyHeightmapTerrainCache
-        ? lifecycle.terrainCache()
+        ? lifecycle.legacyTerrainCache()
         : ignoredTerrainCache;
     TileIndexState::eraseCacheKeyState(
         cacheKey,
@@ -59,7 +59,7 @@ TileCacheUnloadContentResult TileContentCacheManager::unloadTileContent(
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         ignoredTerrainCache;
     auto& terrainCache = includeLegacyHeightmapTerrainCache
-        ? lifecycle.terrainCache()
+        ? lifecycle.legacyTerrainCache()
         : ignoredTerrainCache;
     return TileContentUnloadCoordinator::unloadContent(
         tile,

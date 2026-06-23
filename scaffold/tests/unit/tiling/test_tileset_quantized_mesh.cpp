@@ -41,14 +41,14 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.terrainCache()[TileCacheKey::forTile(key)] =
+        tileset.contentLifecycle_.legacyTerrainCache()[TileCacheKey::forTile(key)] =
             std::move(heightmap);
     }
 
     static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
-        return tileset.contentLifecycle_.terrainCache().find(
+        return tileset.contentLifecycle_.legacyTerrainCache().find(
                    TileCacheKey::forTile(key)) !=
-            tileset.contentLifecycle_.terrainCache().end();
+            tileset.contentLifecycle_.legacyTerrainCache().end();
     }
 
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {

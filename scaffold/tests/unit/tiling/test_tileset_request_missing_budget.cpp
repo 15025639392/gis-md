@@ -87,7 +87,7 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.terrainCache()[
+        tileset.contentLifecycle_.legacyTerrainCache()[
             terrainCacheKey(tileset, key)] =
             std::move(heightmap);
     }
@@ -99,7 +99,7 @@ struct TilesetTestAccess {
     }
 
     static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
-        return tileset.contentLifecycle_.terrainCache().count(
+        return tileset.contentLifecycle_.legacyTerrainCache().count(
                    terrainCacheKey(tileset, key)) > 0;
     }
 

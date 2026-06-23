@@ -25,12 +25,12 @@ public:
     const TileLoadLifecycle& loadLifecycle() const { return loadLifecycle_; }
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-    terrainCache() {
-        return terrainCache_;
+    legacyTerrainCache() {
+        return legacyTerrainCache_;
     }
     const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-    terrainCache() const {
-        return terrainCache_;
+    legacyTerrainCache() const {
+        return legacyTerrainCache_;
     }
 
     TileEmptyContentRegistry& emptyContentRegistry() {
@@ -145,7 +145,7 @@ private:
             device,
             rasterOverlays,
             tiles,
-            terrainCache_,
+            legacyTerrainCache_,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,
@@ -170,7 +170,7 @@ private:
             device,
             pPrepRenderer,
             rasterOverlays,
-            terrainCache_,
+            legacyTerrainCache_,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,
@@ -181,7 +181,7 @@ private:
 
     TileLoadLifecycle loadLifecycle_;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache_;
+        legacyTerrainCache_;
     TileEmptyContentRegistry emptyContentRegistry_;
 };
 

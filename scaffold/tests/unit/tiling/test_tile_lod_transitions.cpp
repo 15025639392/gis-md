@@ -28,7 +28,7 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.terrainCache()[terrainCacheKey(key)] =
+        tileset.contentLifecycle_.legacyTerrainCache()[terrainCacheKey(key)] =
             std::move(heightmap);
     }
 

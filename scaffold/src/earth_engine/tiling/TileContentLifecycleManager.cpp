@@ -19,7 +19,7 @@ void TileContentLifecycleManager::
     discardLegacyTerrainCacheIfOwnedByContentProvider(
         const TilesetContentProvider* contentProvider) {
     if (contentProvider && contentProvider->providesTerrainQuadtree()) {
-        terrainCache_.clear();
+        legacyTerrainCache_.clear();
     }
 }
 
