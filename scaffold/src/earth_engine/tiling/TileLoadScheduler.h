@@ -142,10 +142,14 @@ public:
                 }
                 const int estimatedFanout =
                     input.contentProvider->estimatedRequestFanout(requestKey);
+                const FrameResourceLane requestLane =
+                    input.contentProvider->providesTerrainQuadtree()
+                        ? FrameResourceLane::TerrainRequest
+                        : FrameResourceLane::ContentRequest;
                 {
                     std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                     if (!input.budget.hasNetworkInflightCapacity(
-                            FrameResourceLane::ContentRequest,
+                            requestLane,
                             static_cast<uint32_t>(
                                 input.lifecycle
                                     .requestState()

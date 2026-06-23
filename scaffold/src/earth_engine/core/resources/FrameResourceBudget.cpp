@@ -11,6 +11,7 @@ void FrameResourceBudget::beginFrame(
     config_ = config;
     networkRequestsIssued_ = 0;
     terrainContentNetworkRequestsIssued_ = 0;
+    contentNetworkRequestsIssued_ = 0;
     rasterNetworkRequestsIssued_ = 0;
     mainThreadFinalizesUsed_ = 0;
     terminalStateTransitionsUsed_ = 0;
@@ -23,8 +24,11 @@ bool FrameResourceBudget::canIssue(FrameResourceLane lane,
                                    int estimatedFanout) const {
     switch (lane) {
         case FrameResourceLane::TerrainRequest:
-        case FrameResourceLane::ContentRequest:
             return terrainContentNetworkRequestsIssued_ +
+                       positiveUnits(estimatedFanout) <=
+                   networkRequestLimit(lane);
+        case FrameResourceLane::ContentRequest:
+            return contentNetworkRequestsIssued_ +
                        positiveUnits(estimatedFanout) <=
                    networkRequestLimit(lane);
         case FrameResourceLane::RasterRequest:
@@ -47,8 +51,12 @@ bool FrameResourceBudget::tryIssue(FrameResourceLane lane,
     }
     switch (lane) {
         case FrameResourceLane::TerrainRequest:
+            terrainContentNetworkRequestsIssued_ +=
+                positiveUnits(estimatedFanout);
+            networkRequestsIssued_ += positiveUnits(estimatedFanout);
+            break;
         case FrameResourceLane::ContentRequest:
-            terrainContentNetworkRequestsIssued_ += positiveUnits(estimatedFanout);
+            contentNetworkRequestsIssued_ += positiveUnits(estimatedFanout);
             networkRequestsIssued_ += positiveUnits(estimatedFanout);
             break;
         case FrameResourceLane::RasterRequest:
@@ -149,6 +157,7 @@ FrameResourceBudgetSnapshot FrameResourceBudget::snapshot() const {
     snapshot.networkRequestsIssued = networkRequestsIssued_;
     snapshot.terrainContentNetworkRequestsIssued =
         terrainContentNetworkRequestsIssued_;
+    snapshot.contentNetworkRequestsIssued = contentNetworkRequestsIssued_;
     snapshot.rasterNetworkRequestsIssued = rasterNetworkRequestsIssued_;
     snapshot.mainThreadFinalizesUsed = mainThreadFinalizesUsed_;
     snapshot.terminalStateTransitionsUsed = terminalStateTransitionsUsed_;
@@ -157,11 +166,15 @@ FrameResourceBudgetSnapshot FrameResourceBudget::snapshot() const {
         config_.maxNetworkRequestsPerFrame;
     snapshot.maxTerrainContentNetworkRequestsPerFrame =
         networkRequestLimit(FrameResourceLane::TerrainRequest);
+    snapshot.maxContentNetworkRequestsPerFrame =
+        networkRequestLimit(FrameResourceLane::ContentRequest);
     snapshot.maxRasterNetworkRequestsPerFrame =
         networkRequestLimit(FrameResourceLane::RasterRequest);
     snapshot.maxNetworkInflight = config_.maxNetworkInflight;
     snapshot.maxTerrainContentNetworkInflight =
         networkInflightLimit(FrameResourceLane::TerrainRequest);
+    snapshot.maxContentNetworkInflight =
+        networkInflightLimit(FrameResourceLane::ContentRequest);
     snapshot.maxRasterNetworkInflight =
         networkInflightLimit(FrameResourceLane::RasterRequest);
     snapshot.maxMainThreadFinalizesPerFrame =
@@ -183,10 +196,11 @@ uint32_t FrameResourceBudget::positiveUnits(int estimatedUnits) {
 uint32_t FrameResourceBudget::networkRequestLimit(FrameResourceLane lane) const {
     switch (lane) {
         case FrameResourceLane::TerrainRequest:
-        case FrameResourceLane::ContentRequest:
             return config_.maxTerrainContentNetworkRequestsPerFrame > 0
                        ? config_.maxTerrainContentNetworkRequestsPerFrame
                        : config_.maxNetworkRequestsPerFrame;
+        case FrameResourceLane::ContentRequest:
+            return config_.maxNetworkRequestsPerFrame;
         case FrameResourceLane::RasterRequest:
             return config_.maxRasterNetworkRequestsPerFrame > 0
                        ? config_.maxRasterNetworkRequestsPerFrame
@@ -203,10 +217,11 @@ uint32_t FrameResourceBudget::networkRequestLimit(FrameResourceLane lane) const 
 uint32_t FrameResourceBudget::networkInflightLimit(FrameResourceLane lane) const {
     switch (lane) {
         case FrameResourceLane::TerrainRequest:
-        case FrameResourceLane::ContentRequest:
             return config_.maxTerrainContentNetworkInflight > 0
                        ? config_.maxTerrainContentNetworkInflight
                        : config_.maxNetworkInflight;
+        case FrameResourceLane::ContentRequest:
+            return config_.maxNetworkInflight;
         case FrameResourceLane::RasterRequest:
             return config_.maxRasterNetworkInflight > 0
                        ? config_.maxRasterNetworkInflight

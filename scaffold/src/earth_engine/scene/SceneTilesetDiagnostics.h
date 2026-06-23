@@ -32,10 +32,13 @@ struct SceneFrameResourceBudgetDiagnosticsSnapshot {
     int networkRequestsLimit = 0;
     int terrainContentNetworkRequestsIssued = 0;
     int terrainContentNetworkRequestsLimit = 0;
+    int contentNetworkRequestsIssued = 0;
+    int contentNetworkRequestsLimit = 0;
     int rasterNetworkRequestsIssued = 0;
     int rasterNetworkRequestsLimit = 0;
     int networkInflightLimit = 0;
     int terrainContentNetworkInflightLimit = 0;
+    int contentNetworkInflightLimit = 0;
     int rasterNetworkInflightLimit = 0;
     int mainThreadFinalizesUsed = 0;
     int mainThreadFinalizesLimit = 0;

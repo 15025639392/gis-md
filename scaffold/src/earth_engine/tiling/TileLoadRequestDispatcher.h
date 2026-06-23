@@ -51,6 +51,10 @@ public:
         OnIssuedFn&& onIssued) {
         CancellationToken token;
         const int estimatedFanout = provider.estimatedRequestFanout(key);
+        const FrameResourceLane requestLane =
+            provider.providesTerrainQuadtree()
+                ? FrameResourceLane::TerrainRequest
+                : FrameResourceLane::ContentRequest;
         {
             std::lock_guard<std::mutex> lock(mutex);
             if (requestState.destroying()) {
@@ -64,7 +68,7 @@ public:
                 return TileLoadDispatchResult::Skipped;
             }
             if (!budget.tryIssue(
-                    FrameResourceLane::ContentRequest,
+                    requestLane,
                     TileLoadPriorityPolicy::toFramePriority(group),
                     estimatedFanout)) {
                 return TileLoadDispatchResult::Blocked;

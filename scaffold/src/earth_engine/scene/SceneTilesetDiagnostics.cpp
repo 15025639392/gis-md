@@ -51,10 +51,13 @@ void resetResourceBudgetDiagnostics(Diagnostics& diag) {
     diag.budgetNetworkRequestsLimit = 0;
     diag.budgetTerrainContentNetworkRequestsIssued = 0;
     diag.budgetTerrainContentNetworkRequestsLimit = 0;
+    diag.budgetContentNetworkRequestsIssued = 0;
+    diag.budgetContentNetworkRequestsLimit = 0;
     diag.budgetRasterNetworkRequestsIssued = 0;
     diag.budgetRasterNetworkRequestsLimit = 0;
     diag.budgetNetworkInflightLimit = 0;
     diag.budgetTerrainContentNetworkInflightLimit = 0;
+    diag.budgetContentNetworkInflightLimit = 0;
     diag.budgetRasterNetworkInflightLimit = 0;
     diag.budgetMainThreadFinalizesUsed = 0;
     diag.budgetMainThreadFinalizesLimit = 0;
@@ -79,6 +82,10 @@ void applyResourceBudgetSnapshot(
                   budget.terrainContentNetworkRequestsIssued);
     addSaturating(diag.budgetTerrainContentNetworkRequestsLimit,
                   budget.terrainContentNetworkRequestsLimit);
+    addSaturating(diag.budgetContentNetworkRequestsIssued,
+                  budget.contentNetworkRequestsIssued);
+    addSaturating(diag.budgetContentNetworkRequestsLimit,
+                  budget.contentNetworkRequestsLimit);
     addSaturating(diag.budgetRasterNetworkRequestsIssued,
                   budget.rasterNetworkRequestsIssued);
     addSaturating(diag.budgetRasterNetworkRequestsLimit,
@@ -87,6 +94,8 @@ void applyResourceBudgetSnapshot(
                   budget.networkInflightLimit);
     addSaturating(diag.budgetTerrainContentNetworkInflightLimit,
                   budget.terrainContentNetworkInflightLimit);
+    addSaturating(diag.budgetContentNetworkInflightLimit,
+                  budget.contentNetworkInflightLimit);
     addSaturating(diag.budgetRasterNetworkInflightLimit,
                   budget.rasterNetworkInflightLimit);
     addSaturating(diag.budgetMainThreadFinalizesUsed,
@@ -198,6 +207,10 @@ SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
         toDiagnosticInt(budget.terrainContentNetworkRequestsIssued);
     snapshot.terrainContentNetworkRequestsLimit =
         toDiagnosticInt(budget.maxTerrainContentNetworkRequestsPerFrame);
+    snapshot.contentNetworkRequestsIssued =
+        toDiagnosticInt(budget.contentNetworkRequestsIssued);
+    snapshot.contentNetworkRequestsLimit =
+        toDiagnosticInt(budget.maxContentNetworkRequestsPerFrame);
     snapshot.rasterNetworkRequestsIssued =
         toDiagnosticInt(budget.rasterNetworkRequestsIssued);
     snapshot.rasterNetworkRequestsLimit =
@@ -205,6 +218,8 @@ SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
     snapshot.networkInflightLimit = toDiagnosticInt(budget.maxNetworkInflight);
     snapshot.terrainContentNetworkInflightLimit =
         toDiagnosticInt(budget.maxTerrainContentNetworkInflight);
+    snapshot.contentNetworkInflightLimit =
+        toDiagnosticInt(budget.maxContentNetworkInflight);
     snapshot.rasterNetworkInflightLimit =
         toDiagnosticInt(budget.maxRasterNetworkInflight);
     snapshot.mainThreadFinalizesUsed =
@@ -233,12 +248,18 @@ void SceneFrameResourceBudgetDiagnosticsSnapshot::add(
                   next.terrainContentNetworkRequestsIssued);
     addSaturating(terrainContentNetworkRequestsLimit,
                   next.terrainContentNetworkRequestsLimit);
+    addSaturating(contentNetworkRequestsIssued,
+                  next.contentNetworkRequestsIssued);
+    addSaturating(contentNetworkRequestsLimit,
+                  next.contentNetworkRequestsLimit);
     addSaturating(rasterNetworkRequestsIssued,
                   next.rasterNetworkRequestsIssued);
     addSaturating(rasterNetworkRequestsLimit, next.rasterNetworkRequestsLimit);
     addSaturating(networkInflightLimit, next.networkInflightLimit);
     addSaturating(terrainContentNetworkInflightLimit,
                   next.terrainContentNetworkInflightLimit);
+    addSaturating(contentNetworkInflightLimit,
+                  next.contentNetworkInflightLimit);
     addSaturating(rasterNetworkInflightLimit,
                   next.rasterNetworkInflightLimit);
     addSaturating(mainThreadFinalizesUsed, next.mainThreadFinalizesUsed);

@@ -12861,13 +12861,16 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
           "TileLoadDiagnostics: counts unload queue, tile states, content kinds, and missing projections");
     check(diag.resourceBudget.frameNumber == 42 &&
               diag.resourceBudget.networkRequestsIssued == 4 &&
-              diag.resourceBudget.terrainContentNetworkRequestsIssued == 2 &&
+              diag.resourceBudget.terrainContentNetworkRequestsIssued == 1 &&
+              diag.resourceBudget.contentNetworkRequestsIssued == 1 &&
               diag.resourceBudget.rasterNetworkRequestsIssued == 2 &&
               diag.resourceBudget.mainThreadFinalizesUsed == 1 &&
               diag.resourceBudget.terminalStateTransitionsUsed == 1 &&
               diag.resourceBudget.rasterUploadsUsed == 1 &&
               diag.resourceBudget.maxTerrainContentNetworkRequestsPerFrame == 3 &&
+              diag.resourceBudget.maxContentNetworkRequestsPerFrame == 10 &&
               diag.resourceBudget.maxRasterNetworkRequestsPerFrame == 4 &&
+              diag.resourceBudget.maxContentNetworkInflight == 20 &&
               diag.resourceBudget.maxMainThreadFinalizesPerFrame == 2 &&
               diag.resourceBudget.maxTerminalStateTransitionsPerFrame == 5 &&
               diag.resourceBudget.maxRasterUploadsPerFrame == 6 &&
@@ -23049,7 +23052,7 @@ void testTileLoadSchedulerStopsAfterTerrainDispatchBudgetBlock() {
           "TileLoadScheduler: terrain dispatch budget block stops before later request planning");
 }
 
-void testTileLoadSchedulerContentThenTerrainShareDispatchBudget() {
+void testTileLoadSchedulerContentThenTerrainUseSeparateDispatchBudgets() {
     class DeferredContentProvider final : public TilesetContentProvider {
     public:
         std::string id() const override {
@@ -23154,22 +23157,24 @@ void testTileLoadSchedulerContentThenTerrainShareDispatchBudget() {
                                      std::to_string(key.x));
             });
 
-    check(outcome.issued == 1 && !outcome.blockedByInflight,
-          "TileLoadScheduler: content and terrain share dispatch request budget without reporting inflight block");
+    check(outcome.issued == 2 && !outcome.blockedByInflight,
+          "TileLoadScheduler: content and terrain use separate dispatch request budgets without reporting inflight block");
     check(contentProvider.requestCount == 1 &&
-              terrainProvider.requestCount == 0 &&
+              terrainProvider.requestCount == 1 &&
               budget.terrainContentNetworkRequestsIssued() == 1 &&
-              budget.networkRequestsIssued() == 1,
-          "TileLoadScheduler: content request consumes the shared terrain/content network lane");
-    check(plannedKeys.size() == 2 &&
+              budget.networkRequestsIssued() == 2,
+          "TileLoadScheduler: ordinary content request does not consume the terrain network lane");
+    check(plannedKeys.size() == 3 &&
               plannedKeys[0] == "content:0" &&
               plannedKeys[1] == "test:1" &&
-              markedKeys.size() == 1 &&
-              markedKeys[0] == "content:0",
-          "TileLoadScheduler: shared dispatch budget block stops before lower-priority planning");
+              plannedKeys[2] == "test:2" &&
+              markedKeys.size() == 2 &&
+              markedKeys[0] == "content:0" &&
+              markedKeys[1] == "test:1",
+          "TileLoadScheduler: exhausted terrain budget blocks only later terrain planning");
 }
 
-void testTileLoadSchedulerTerrainThenContentShareDispatchBudget() {
+void testTileLoadSchedulerTerrainThenContentUseSeparateDispatchBudgets() {
     class DeferredContentProvider final : public TilesetContentProvider {
     public:
         std::string id() const override {
@@ -23274,19 +23279,22 @@ void testTileLoadSchedulerTerrainThenContentShareDispatchBudget() {
                                      std::to_string(key.x));
             });
 
-    check(outcome.issued == 1 && !outcome.blockedByInflight,
-          "TileLoadScheduler: terrain and content share dispatch request budget without reporting inflight block");
+    check(outcome.issued == 3 && !outcome.blockedByInflight,
+          "TileLoadScheduler: terrain and content use separate dispatch request budgets without reporting inflight block");
     check(terrainProvider.requestCount == 1 &&
-              contentProvider.requestCount == 0 &&
+              contentProvider.requestCount == 2 &&
               budget.terrainContentNetworkRequestsIssued() == 1 &&
-              budget.networkRequestsIssued() == 1,
-          "TileLoadScheduler: terrain request consumes the shared terrain/content network lane");
-    check(plannedKeys.size() == 2 &&
+              budget.networkRequestsIssued() == 3,
+          "TileLoadScheduler: terrain request does not consume the ordinary content network lane");
+    check(plannedKeys.size() == 3 &&
               plannedKeys[0] == "test:0" &&
               plannedKeys[1] == "content:1" &&
-              markedKeys.size() == 1 &&
-              markedKeys[0] == "test:0",
-          "TileLoadScheduler: terrain-first shared budget block stops before lower-priority planning");
+              plannedKeys[2] == "content:2" &&
+              markedKeys.size() == 3 &&
+              markedKeys[0] == "test:0" &&
+              markedKeys[1] == "content:1" &&
+              markedKeys[2] == "content:2",
+          "TileLoadScheduler: content planning continues after terrain budget use");
 }
 
 void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
@@ -23914,13 +23922,16 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
 
     check(snapshot.networkRequestsIssued == 10 &&
               snapshot.networkRequestsLimit == 26 &&
-              snapshot.terrainContentNetworkRequestsIssued == 3 &&
+              snapshot.terrainContentNetworkRequestsIssued == 1 &&
               snapshot.terrainContentNetworkRequestsLimit == 26 &&
+              snapshot.contentNetworkRequestsIssued == 2 &&
+              snapshot.contentNetworkRequestsLimit == 26 &&
               snapshot.rasterNetworkRequestsIssued == 7 &&
               snapshot.rasterNetworkRequestsLimit == 44,
-          "SceneFrameResourceBudgetDiagnosticsSnapshot: separates terrain/content and raster network budget lanes");
+          "SceneFrameResourceBudgetDiagnosticsSnapshot: separates terrain, content, and raster network budget lanes");
     check(snapshot.networkInflightLimit == 14 &&
               snapshot.terrainContentNetworkInflightLimit == 14 &&
+              snapshot.contentNetworkInflightLimit == 14 &&
               snapshot.rasterNetworkInflightLimit == 23,
           "SceneFrameResourceBudgetDiagnosticsSnapshot: separates issue and inflight network budget lanes");
     check(snapshot.mainThreadFinalizesUsed == 1 &&
@@ -30119,8 +30130,8 @@ int main() {
     testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning();
     testTileLoadSchedulerStopsAfterDispatchBudgetBlock();
     testTileLoadSchedulerStopsAfterTerrainDispatchBudgetBlock();
-    testTileLoadSchedulerContentThenTerrainShareDispatchBudget();
-    testTileLoadSchedulerTerrainThenContentShareDispatchBudget();
+    testTileLoadSchedulerContentThenTerrainUseSeparateDispatchBudgets();
+    testTileLoadSchedulerTerrainThenContentUseSeparateDispatchBudgets();
     testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared();
     testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();

@@ -44,15 +44,18 @@ struct FrameResourceBudgetSnapshot {
     uint64_t frameNumber = 0;
     uint32_t networkRequestsIssued = 0;
     uint32_t terrainContentNetworkRequestsIssued = 0;
+    uint32_t contentNetworkRequestsIssued = 0;
     uint32_t rasterNetworkRequestsIssued = 0;
     uint32_t mainThreadFinalizesUsed = 0;
     uint32_t terminalStateTransitionsUsed = 0;
     uint32_t rasterUploadsUsed = 0;
     uint32_t maxNetworkRequestsPerFrame = 0;
     uint32_t maxTerrainContentNetworkRequestsPerFrame = 0;
+    uint32_t maxContentNetworkRequestsPerFrame = 0;
     uint32_t maxRasterNetworkRequestsPerFrame = 0;
     uint32_t maxNetworkInflight = 0;
     uint32_t maxTerrainContentNetworkInflight = 0;
+    uint32_t maxContentNetworkInflight = 0;
     uint32_t maxRasterNetworkInflight = 0;
     uint32_t maxMainThreadFinalizesPerFrame = 0;
     uint32_t maxTerminalStateTransitionsPerFrame = 0;
@@ -95,6 +98,9 @@ public:
     uint32_t terrainContentNetworkRequestsIssued() const {
         return terrainContentNetworkRequestsIssued_;
     }
+    uint32_t contentNetworkRequestsIssued() const {
+        return contentNetworkRequestsIssued_;
+    }
     uint32_t rasterNetworkRequestsIssued() const {
         return rasterNetworkRequestsIssued_;
     }
@@ -111,6 +117,7 @@ private:
     FrameResourceBudgetConfig config_;
     uint32_t networkRequestsIssued_ = 0;
     uint32_t terrainContentNetworkRequestsIssued_ = 0;
+    uint32_t contentNetworkRequestsIssued_ = 0;
     uint32_t rasterNetworkRequestsIssued_ = 0;
     uint32_t mainThreadFinalizesUsed_ = 0;
     uint32_t terminalStateTransitionsUsed_ = 0;
