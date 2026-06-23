@@ -29,6 +29,15 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
     return true;
 }
 
+const TerrainProvider* effectiveLegacyTerrainProvider(
+    const TerrainProvider* legacyTerrainProvider,
+    const TilesetContentProvider* contentProvider) {
+    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
+        return nullptr;
+    }
+    return legacyTerrainProvider;
+}
+
 } // namespace
 
 TileContentAccess::TileContentAccess(
@@ -40,7 +49,10 @@ TileContentAccess::TileContentAccess(
     size_t rasterOverlayCount)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
-      legacyTerrainProvider_(legacyTerrainProvider),
+      legacyTerrainProvider_(
+          effectiveLegacyTerrainProvider(
+              legacyTerrainProvider,
+              contentProvider)),
       contentProvider_(contentProvider),
       contentLifecycle_(contentLifecycle),
       rasterOverlayCount_(rasterOverlayCount) {}
