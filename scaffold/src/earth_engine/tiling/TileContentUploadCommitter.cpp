@@ -30,6 +30,17 @@ std::optional<TileBoundingVolume> effectiveContentBoundingVolumeForLoad(
     return std::nullopt;
 }
 
+void restoreInitialBoundingVolumesAfterResourceFailure(TilesetTile& tile) {
+    if (tile.initialBoundingVolume) {
+        tile.boundingVolume = tile.initialBoundingVolume;
+    }
+    if (tile.initialContentBoundingVolume) {
+        tile.contentBoundingVolume = tile.initialContentBoundingVolume;
+    } else {
+        tile.contentBoundingVolume.reset();
+    }
+}
+
 } // namespace
 
 void TileContentUploadCommitter::applyAvailabilityUpdates(
@@ -79,6 +90,7 @@ TileContentUploadCommitter::finishRenderResourcePreparation(
     TilesetTile& tile,
     bool resourcesReady) {
     if (!resourcesReady) {
+        restoreInitialBoundingVolumesAfterResourceFailure(tile);
         TileContentUploadPolicy::markGltfRenderResourcesFailed(tile);
     }
     return TileContentUploadCommitAction{true};

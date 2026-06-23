@@ -792,6 +792,61 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     FailedGltfResourcePreparationRestoresPreUploadBoundingVolumes) {
+    const TileKey key{"test", 0, 0, 0};
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    const Rectangle originalRectangle =
+        Rectangle::fromDegrees(-20.0, -10.0, 20.0, 10.0);
+    const Rectangle originalContentRectangle =
+        Rectangle::fromDegrees(-18.0, -8.0, 18.0, 8.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(originalRectangle, -100.0, 100.0);
+    tile.contentBoundingVolume =
+        TileBoundingVolume::fromRegion(originalContentRectangle, -50.0, 50.0);
+
+    const Rectangle updatedRectangle =
+        Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0);
+    const Rectangle updatedContentRectangle =
+        Rectangle::fromDegrees(1.5, 2.5, 2.5, 3.5);
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedRectangle, 10.0, 20.0);
+    metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedContentRectangle, 12.0, 18.0);
+    TileLoadResult loadResult = makeTerrainContentContentResult(
+        std::make_unique<GltfModel>(),
+        std::move(metadata));
+
+    TileContentUploadCommitter::prepareRenderContent(
+        tile,
+        std::move(loadResult.content));
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(updatedContentRectangle, tile.contentBoundingVolume->region);
+
+    TileContentUploadCommitAction action =
+        TileContentUploadCommitter::finishRenderResourcePreparation(
+            tile,
+            false);
+
+    EXPECT_TRUE(action.resourcesDirty);
+    EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_EQ(originalRectangle, tile.boundingVolume->region);
+    EXPECT_DOUBLE_EQ(-100.0, tile.boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(100.0, tile.boundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(originalContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(-50.0, tile.contentBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(50.0, tile.contentBoundingVolume->maximumHeight);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentUploadGeneratesRasterDetailsFromUpdatedBoundsBeforeTileContentBounds) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain-updated-bounds";
