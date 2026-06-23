@@ -1995,6 +1995,14 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
         existing->second->lastUsedFrame = frameNumber_;
+        existing->second->setCompositeSourcePlan(
+            sourcePlan.sourceZoom,
+            *sourceBounds,
+            sourcePlan.sourceKeys,
+            sourcePlan.minX,
+            sourcePlan.minY,
+            sourcePlan.maxX,
+            sourcePlan.maxY);
         compositeSourcePlans_[ck] =
             CompositeSourcePlanCacheEntry{std::move(sourcePlan), *sourceBounds};
         return {existing->second, false, std::move(sourceTiles)};
@@ -2010,7 +2018,14 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     auto tile = std::make_shared<RasterOverlayTile>(
         *this, representativeKey, providerGeometryBounds, ck);
     tile->setMaxZoom(getMaximumLevel());
-    tile->setCompositeTileSourceLevel(sourcePlan.sourceZoom);
+    tile->setCompositeSourcePlan(
+        sourcePlan.sourceZoom,
+        *sourceBounds,
+        sourcePlan.sourceKeys,
+        sourcePlan.minX,
+        sourcePlan.minY,
+        sourcePlan.maxX,
+        sourcePlan.maxY);
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
     tiles_[ck] = tile;
@@ -2169,10 +2184,28 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
         unprojectProviderToGeographic(outputBounds, projection_);
     QuadtreeSourcePlan sourcePlan;
     Rectangle sourceBounds;
-    auto cachedPlan = compositeSourcePlans_.find(ck);
-    if (cachedPlan != compositeSourcePlans_.end()) {
+    if (tile.hasCompositeSourcePlan() &&
+        tile.getCompositeSourceBounds().computeIntersection(
+            coverageRectangle_)) {
+        sourcePlan.sourceZoom = tile.getSourceZoom();
+        sourcePlan.sourceKeys = tile.getCompositeSourceKeys();
+        sourcePlan.minX = tile.getCompositeSourceMinX();
+        sourcePlan.minY = tile.getCompositeSourceMinY();
+        sourcePlan.maxX = tile.getCompositeSourceMaxX();
+        sourcePlan.maxY = tile.getCompositeSourceMaxY();
+        sourceBounds = tile.getCompositeSourceBounds();
+    } else if (auto cachedPlan = compositeSourcePlans_.find(ck);
+               cachedPlan != compositeSourcePlans_.end()) {
         sourcePlan = cachedPlan->second.sourcePlan;
         sourceBounds = cachedPlan->second.sourceBounds;
+        tile.setCompositeSourcePlan(
+            sourcePlan.sourceZoom,
+            sourceBounds,
+            sourcePlan.sourceKeys,
+            sourcePlan.minX,
+            sourcePlan.minY,
+            sourcePlan.maxX,
+            sourcePlan.maxY);
     } else {
         const std::optional<Rectangle> mappedSourceBounds =
             mapGeometryBoundsToImageryCoverage(
@@ -2201,6 +2234,14 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
             getMaximumLevel());
         compositeSourcePlans_[ck] =
             CompositeSourcePlanCacheEntry{sourcePlan, sourceBounds};
+        tile.setCompositeSourcePlan(
+            sourcePlan.sourceZoom,
+            sourceBounds,
+            sourcePlan.sourceKeys,
+            sourcePlan.minX,
+            sourcePlan.minY,
+            sourcePlan.maxX,
+            sourcePlan.maxY);
     }
 
     if (sourcePlan.empty()) {

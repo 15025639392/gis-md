@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace earth_engine {
 
@@ -128,6 +129,35 @@ public:
         compositeTile_ = true;
         sourceZoom_ = sourceZoom;
     }
+    void setCompositeSourcePlan(int sourceZoom,
+                                const Rectangle& sourceBounds,
+                                std::vector<TileKey> sourceKeys,
+                                int minX,
+                                int minY,
+                                int maxX,
+                                int maxY) {
+        compositeTile_ = true;
+        sourceZoom_ = sourceZoom;
+        compositeSourceBounds_ = sourceBounds;
+        compositeSourceKeys_ = std::move(sourceKeys);
+        compositeSourceMinX_ = minX;
+        compositeSourceMinY_ = minY;
+        compositeSourceMaxX_ = maxX;
+        compositeSourceMaxY_ = maxY;
+    }
+    bool hasCompositeSourcePlan() const {
+        return compositeTile_ && !compositeSourceKeys_.empty();
+    }
+    const Rectangle& getCompositeSourceBounds() const {
+        return compositeSourceBounds_;
+    }
+    const std::vector<TileKey>& getCompositeSourceKeys() const {
+        return compositeSourceKeys_;
+    }
+    int getCompositeSourceMinX() const { return compositeSourceMinX_; }
+    int getCompositeSourceMinY() const { return compositeSourceMinY_; }
+    int getCompositeSourceMaxX() const { return compositeSourceMaxX_; }
+    int getCompositeSourceMaxY() const { return compositeSourceMaxY_; }
 
     /// For imagery atlas: UV offset/scale within the atlas texture.
     float getAtlasOffsetU() const { return atlasOffsetU_; }
@@ -151,6 +181,12 @@ private:
     MoreDetailAvailable moreDetailAvailable_ = MoreDetailAvailable::Unknown;
     bool compositeTile_ = false;
     int sourceZoom_ = 0;
+    Rectangle compositeSourceBounds_ = Rectangle::MAXIMUM;
+    std::vector<TileKey> compositeSourceKeys_;
+    int compositeSourceMinX_ = 0;
+    int compositeSourceMinY_ = 0;
+    int compositeSourceMaxX_ = 0;
+    int compositeSourceMaxY_ = 0;
     double targetScreenPixelsX_ = 256.0;
     double targetScreenPixelsY_ = 256.0;
     float atlasOffsetU_ = 0.0f, atlasOffsetV_ = 0.0f;

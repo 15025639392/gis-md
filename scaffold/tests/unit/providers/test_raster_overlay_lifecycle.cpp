@@ -1486,6 +1486,49 @@ TEST(RasterOverlayLifecycleTest,
     }
 }
 
+TEST(
+    RasterOverlayLifecycleTest,
+    CompositeTileCarriesMappedSourceListForLoadLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(5, 5);
+
+    const TileKey sourceKey{scheme->id(), 5, 10, 12};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, westHalf),
+            256.0,
+            512.0);
+
+    ASSERT_NE(nullptr, mapping.tile);
+    ASSERT_TRUE(mapping.tile->isCompositeTile());
+    ASSERT_FALSE(mapping.sourceTiles.empty());
+    const std::vector<TileKey> expectedSourceKeys =
+        mapping.sourceTiles.sourceKeys;
+    EXPECT_EQ(expectedSourceKeys, mapping.tile->getCompositeSourceKeys());
+    EXPECT_TRUE(mapping.tile->getCompositeSourceBounds().equalsEpsilon(
+        mapping.sourceTiles.sourceBounds,
+        1e-12));
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_TRUE(provider.loadTileThrottled(*mapping.tile, &budget));
+    EXPECT_EQ(expectedSourceKeys, imagery.requestedKeys);
+    EXPECT_EQ(expectedSourceKeys.size(), budget.rasterNetworkRequestsIssued());
+}
+
 TEST(RasterOverlayLifecycleTest, DirectFastPathDoesNotRunForPartialRectangle) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
