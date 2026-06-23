@@ -43,6 +43,20 @@ struct TilesetTestAccess {
                 TilesetOptions{}));
     }
 
+    static std::unique_ptr<Tileset> makeLegacyOnlyTilesetForMigrationTest(
+        std::unique_ptr<TerrainProvider> legacyTerrainProvider,
+        std::unique_ptr<TileScheme> scheme) {
+        return std::unique_ptr<Tileset>(
+            new Tileset(
+                Tileset::ProviderOwnership{
+                    std::move(legacyTerrainProvider),
+                    nullptr},
+                std::move(scheme),
+                {},
+                nullptr,
+                TilesetOptions{}));
+    }
+
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
     }
@@ -351,16 +365,14 @@ TEST(TilesetQuantizedMeshTest,
 
     auto legacyTerrainProvider =
         std::make_unique<CountingLegacyTerrainProvider>(nullptr);
-    Tileset legacyTerrainTileset(
-        std::move(legacyTerrainProvider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    std::unique_ptr<Tileset> legacyTerrainTileset =
+        TilesetTestAccess::makeLegacyOnlyTilesetForMigrationTest(
+            std::move(legacyTerrainProvider),
+            TileScheme::createGeographicTMS());
 
     EXPECT_EQ(nullptr,
               TilesetTestAccess::requestFrameContentProvider(
-                  legacyTerrainTileset));
+                  *legacyTerrainTileset));
 }
 
 TEST(TilesetQuantizedMeshTest,
