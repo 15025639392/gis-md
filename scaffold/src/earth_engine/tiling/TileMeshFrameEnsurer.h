@@ -13,13 +13,19 @@ class RenderDevice;
 struct TileKey;
 struct TilesetTile;
 
+enum class TileMeshLegacyHeightmapMode {
+    Include,
+    ContentOwnedTerrainOnly
+};
+
 struct TileMeshFrameEnsureInput {
     TilesetTile& tile;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
-    bool useLegacyHeightmapTerrainCache = true;
+    TileMeshLegacyHeightmapMode legacyHeightmapMode =
+        TileMeshLegacyHeightmapMode::Include;
 };
 
 class TileMeshFrameEnsurer {
@@ -38,9 +44,11 @@ public:
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
+        const bool useLegacyHeightmapTerrainCache =
+            input.legacyHeightmapMode == TileMeshLegacyHeightmapMode::Include;
         const bool contentTerrainQuadtreeOwnsSurface =
             input.hasTerrainQuadtree &&
-            !input.useLegacyHeightmapTerrainCache;
+            !useLegacyHeightmapTerrainCache;
         const bool hasLegacySurfaceResidue =
             contentTerrainQuadtreeOwnsSurface &&
             (input.tile.content.renderContent.hasSurfaceMesh() ||
@@ -55,7 +63,7 @@ public:
             return;
         }
 
-        auto it = input.useLegacyHeightmapTerrainCache
+        auto it = useLegacyHeightmapTerrainCache
             ? input.terrainCache.find(terrainCacheKey(input.tile.key))
             : input.terrainCache.end();
         const bool hasOwnTerrain =
@@ -71,8 +79,8 @@ public:
                     input.device,
                     input.hasTerrainQuadtree,
                     !input.hasTerrainQuadtree ||
-                        input.useLegacyHeightmapTerrainCache,
-                    input.useLegacyHeightmapTerrainCache},
+                        useLegacyHeightmapTerrainCache,
+                    useLegacyHeightmapTerrainCache},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,

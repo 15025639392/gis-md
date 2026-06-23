@@ -17,14 +17,14 @@ TileMeshPreparationManager::TileMeshPreparationManager(
     TileContentResourceInvalidator& resourceInvalidator,
     TileLoadQueue& loadQueue,
     bool hasTerrainQuadtree,
-    bool useLegacyHeightmapTerrainCache,
+    TileMeshLegacyHeightmapMode legacyHeightmapMode,
     RenderDevice* device,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays)
     : contentLifecycle_(contentLifecycle),
       resourceInvalidator_(resourceInvalidator),
       loadQueue_(loadQueue),
       hasTerrainQuadtree_(hasTerrainQuadtree),
-      useLegacyHeightmapTerrainCache_(useLegacyHeightmapTerrainCache),
+      legacyHeightmapMode_(legacyHeightmapMode),
       device_(device),
       rasterOverlays_(rasterOverlays) {}
 
@@ -35,7 +35,7 @@ void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
             contentLifecycle_.legacyTerrainCache(),
             device_,
             hasTerrainQuadtree_,
-            useLegacyHeightmapTerrainCache_},
+            legacyHeightmapMode_},
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
         },

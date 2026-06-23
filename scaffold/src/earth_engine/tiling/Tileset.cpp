@@ -128,7 +128,9 @@ Tileset::Tileset(ProviderOwnership providers,
               contentProvider_.get()),
           ::earth_engine::effectiveLegacyTerrainProvider(
               legacyTerrainProvider_.get(),
-              contentProvider_.get()) != nullptr,
+              contentProvider_.get()) != nullptr
+              ? TileMeshLegacyHeightmapMode::Include
+              : TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly,
           device_,
           rasterOverlays_),
       contentRuntime_(

@@ -12293,7 +12293,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             frameTerrainCache,
             nullptr,
             true,
-            false},
+            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly},
         [&gltfStaleCacheKeyComputed](const TileKey&) {
             gltfStaleCacheKeyComputed = true;
             return std::string("unexpected-gltf-stale-cache-key");
@@ -12343,7 +12343,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             frameTerrainCache,
             nullptr,
             true,
-            false},
+            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly},
         [&staleCacheKeyComputed](const TileKey&) {
             staleCacheKeyComputed = true;
             return std::string("unexpected-content-terrain-cache-key");
