@@ -217,6 +217,10 @@ bool TileContentAccess::hasTerrainQuadtree() const {
            terrainOwnership_ == TerrainOwnership::HeightmapSurface;
 }
 
+bool TileContentAccess::usesHeightmapSurfacePath() const {
+    return terrainOwnership_ == TerrainOwnership::HeightmapSurface;
+}
+
 bool TileContentAccess::canRefine(const TilesetTile& tile) const {
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key)) {
         return true;

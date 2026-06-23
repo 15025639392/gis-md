@@ -236,8 +236,6 @@ Tileset::makeContentRuntimeRequestFrame() const {
         tileRegistry_.tiles()};
     frame.contentProvider = contentProvider_.get();
     frame.device = device_;
-    frame.useHeightmapSurfacePath =
-        usesHeightmapTerrainSurfacePath(heightmapTerrainProvider_.get());
     frame.frameNumber = frameNumber_;
     frame.maximumSimultaneousTileLoads =
         options_.maximumSimultaneousTileLoads;

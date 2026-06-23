@@ -42,6 +42,7 @@ public:
     bool hasResolvedAvailabilityBoundaryContent(const TilesetTile& tile) const;
     bool isAvailabilityBoundaryTile(const TilesetTile& tile) const;
     bool canRefine(const TilesetTile& tile) const;
+    bool usesHeightmapSurfacePath() const;
 
 private:
     enum class TerrainOwnership {
