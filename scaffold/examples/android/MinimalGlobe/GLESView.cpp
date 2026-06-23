@@ -537,7 +537,7 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
         "LoadQ: %d pre, %d norm, %d urgent  |  Terrain pending: %d req, %d upload, %d terminal\n"
         "Content pending: %d req, %d upload, %d terminal\n"
-        "Budget: net %d/%d, tc %d/%d, raster %d/%d\n"
+        "Budget: net %d/%d, tc %d/%d, content %d/%d, raster %d/%d\n"
         "Main budget: fin %d/%d, term %d/%d, rasUp %d/%d, %.1f/%.1f ms, mode %c/%c\n"
         "Provider: terr %d/%d wb %d/%d | cont %d/%d wb %d/%d ext %d/%d | rast %d/%d wb %d/%d\n"
         "Transport limit: terrain %d, content %d, raster %d\n"
@@ -593,6 +593,8 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         diag.budgetNetworkRequestsLimit,
         diag.budgetTerrainContentNetworkRequestsIssued,
         diag.budgetTerrainContentNetworkRequestsLimit,
+        diag.budgetContentNetworkRequestsIssued,
+        diag.budgetContentNetworkRequestsLimit,
         diag.budgetRasterNetworkRequestsIssued,
         diag.budgetRasterNetworkRequestsLimit,
         diag.budgetMainThreadFinalizesUsed,

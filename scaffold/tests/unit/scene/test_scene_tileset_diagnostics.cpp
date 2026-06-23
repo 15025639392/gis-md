@@ -124,12 +124,15 @@ TEST(
 
     EXPECT_EQ(snapshot.networkRequestsIssued, 10);
     EXPECT_EQ(snapshot.networkRequestsLimit, 26);
-    EXPECT_EQ(snapshot.terrainContentNetworkRequestsIssued, 3);
+    EXPECT_EQ(snapshot.terrainContentNetworkRequestsIssued, 1);
     EXPECT_EQ(snapshot.terrainContentNetworkRequestsLimit, 26);
+    EXPECT_EQ(snapshot.contentNetworkRequestsIssued, 2);
+    EXPECT_EQ(snapshot.contentNetworkRequestsLimit, 26);
     EXPECT_EQ(snapshot.rasterNetworkRequestsIssued, 7);
     EXPECT_EQ(snapshot.rasterNetworkRequestsLimit, 44);
     EXPECT_EQ(snapshot.networkInflightLimit, 14);
     EXPECT_EQ(snapshot.terrainContentNetworkInflightLimit, 14);
+    EXPECT_EQ(snapshot.contentNetworkInflightLimit, 14);
     EXPECT_EQ(snapshot.rasterNetworkInflightLimit, 23);
     EXPECT_EQ(snapshot.mainThreadFinalizesUsed, 1);
     EXPECT_EQ(snapshot.mainThreadFinalizesLimit, 5);
