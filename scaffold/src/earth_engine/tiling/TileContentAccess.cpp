@@ -137,9 +137,12 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
 
 void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key)) {
-        for (const TileKey& childKey :
-             TileSelectionRootPolicy::levelZeroTerrainRoots(
-                 tile.key.schemeId)) {
+        const std::vector<TileKey> childKeys =
+            contentProviderOwnsTerrainQuadtree() && contentProvider_
+                ? contentProvider_->childTiles(tile.key)
+                : TileSelectionRootPolicy::levelZeroTerrainRoots(
+                      tile.key.schemeId);
+        for (const TileKey& childKey : childKeys) {
             TilesetTile* child = ensureTile(childKey);
             if (!child) {
                 continue;

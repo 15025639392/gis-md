@@ -23,6 +23,14 @@ class ContentOwnedTerrainProvider final : public TilesetContentProvider {
 public:
     std::string id() const override { return "content-owned-terrain"; }
     bool supportsTile(const TileKey&) const override { return true; }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        if (key == TileSelectionRootPolicy::virtualTerrainRootKey(
+                       "Geographic-TMS")) {
+            return TileSelectionRootPolicy::levelZeroTerrainRoots(
+                "Geographic-TMS");
+        }
+        return {};
+    }
     bool providesTerrainQuadtree() const override { return true; }
     TileAvailabilityState terrainAvailabilityState(
         const TileKey&) const override {
@@ -49,6 +57,13 @@ public:
             TileSelectionRootPolicy::virtualTerrainRootKey(
                 "XYZ-WebMercator")};
     }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        if (key == TileSelectionRootPolicy::virtualTerrainRootKey(
+                       "XYZ-WebMercator")) {
+            return {TileKey{"XYZ-WebMercator", 0, 0, 0}};
+        }
+        return {};
+    }
     std::optional<TilesetContentTileMetadata> tileMetadata(
         const TileKey& key) const override {
         if (!TileSelectionRootPolicy::isVirtualTerrainRoot(key) ||
@@ -69,6 +84,36 @@ public:
         metadata.refine = TileRefine::Replace;
         metadata.unconditionallyRefine = true;
         return metadata;
+    }
+    bool providesTerrainQuadtree() const override { return true; }
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey&) const override {
+        return TileAvailabilityState::Available;
+    }
+    void requestTileContent(const TileKey&,
+                            CancellationToken,
+                            ContentCallback,
+                            HttpRequestPriority =
+                                HttpRequestPriority::Normal) override {}
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+};
+
+class ProviderOrderedRootTerrainProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override {
+        return "provider-ordered-root-terrain";
+    }
+    bool supportsTile(const TileKey&) const override { return true; }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        if (key == TileSelectionRootPolicy::virtualTerrainRootKey(
+                       "Geographic-TMS")) {
+            return {
+                TileKey{"Geographic-TMS", 0, 1, 0},
+                TileKey{"Geographic-TMS", 0, 0, 0}};
+        }
+        return {};
     }
     bool providesTerrainQuadtree() const override { return true; }
     TileAvailabilityState terrainAvailabilityState(
@@ -132,6 +177,18 @@ struct ContentOwnedWebMercatorRootFixture {
         *scheme,
         provider,
         1);
+};
+
+struct ProviderOrderedRootFixture {
+    TilesetTileRegistry registry;
+    std::unique_ptr<TileScheme> scheme = TileScheme::createGeographicTMS();
+    ProviderOrderedRootTerrainProvider provider;
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(
+            registry,
+            *scheme,
+            provider,
+            2);
 };
 
 } // namespace
@@ -300,6 +357,24 @@ TEST(TileSelectionRootPolicyTest, VirtualGeographicRootLinksLevelZeroDataTiles) 
 }
 
 TEST(TileSelectionRootPolicyTest,
+     ContentOwnedVirtualRootUsesProviderChildrenLikeLayerJsonTerrainLoader) {
+    ProviderOrderedRootFixture fixture;
+    TilesetTile* root = fixture.contentAccess.ensureTile(
+        TileSelectionRootPolicy::virtualTerrainRootKey("Geographic-TMS"));
+    ASSERT_NE(nullptr, root);
+
+    fixture.contentAccess.ensureTileChildren(*root);
+
+    ASSERT_EQ(2u, root->children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 0, 1, 0}),
+              root->children[0]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 0, 0, 0}),
+              root->children[1]->key);
+    EXPECT_EQ(root, root->children[0]->parent);
+    EXPECT_EQ(root, root->children[1]->parent);
+}
+
+TEST(TileSelectionRootPolicyTest,
      ContentOwnedVirtualRootClearsLegacyResidueFromLevelZeroTiles) {
     ContentOwnedGeographicRootFixture fixture;
     const TileKey levelZeroKey{"Geographic-TMS", 0, 1, 0};
@@ -345,6 +420,7 @@ TEST(TileSelectionRootPolicyTest,
     levelZero->content.renderContent.prepareGltfContent(
         std::make_unique<GltfModel>(),
         Mat4::identity());
+    levelZero->content.renderContent.setTerrainRenderContent(true);
     levelZero->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     levelZero->content.renderContent.markRenderContentReady();
