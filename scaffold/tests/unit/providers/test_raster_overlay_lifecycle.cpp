@@ -4184,6 +4184,81 @@ TEST(RasterOverlayLifecycleTest, PrefetchRecordsMissingProjectionForContentReloa
 }
 
 TEST(RasterOverlayLifecycleTest,
+     MissingProjectionPlaceholderRemapsAfterContentReloadLikeCesiumNative) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    model->rasterOverlayDetails.rasterOverlayRectangles.push_back(tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.geometricError = 100.0;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    budget.beginFrame(1, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mapped);
+    ASSERT_NE(nullptr, mapped->getLoadingTile());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Placeholder,
+              mapped->getLoadingTile()->getState());
+    EXPECT_EQ(1, mapped->getTextureCoordinateID());
+    ASSERT_EQ(1u, tile.rasterOverlayState.missingProjections().size());
+
+    RasterOverlayDetails* reloadedDetails =
+        tile.content.renderContent.mutableRasterOverlayDetails();
+    ASSERT_NE(nullptr, reloadedDetails);
+    reloadedDetails->rasterOverlayProjections.push_back(
+        RasterOverlayProjection::WebMercator);
+    const Rectangle reloadedRectangle =
+        projectForProvider(overlay->getTileScheme(), tile.bounds);
+    reloadedDetails->rasterOverlayRectangles.push_back(reloadedRectangle);
+
+    budget.beginFrame(2, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
+    ASSERT_NE(nullptr, mapped->getLoadingTile());
+    EXPECT_NE(activated.getTileProvider()->getPlaceholderTile().get(),
+              mapped->getLoadingTile());
+    EXPECT_TRUE(mapped->getLoadingTile()->isMappedRasterTile());
+    EXPECT_EQ(reloadedRectangle, mapped->getLoadingTile()->getRectangle());
+    EXPECT_EQ(1, mapped->getTextureCoordinateID());
+    EXPECT_EQ(1, activated.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest,
      PrefetchUsesOrdinaryGltfRasterOverlayDetailsLikeCesiumNativeRenderContent) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
