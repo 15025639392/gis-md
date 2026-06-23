@@ -2694,6 +2694,49 @@ TEST(QuantizedMeshTerrainProviderTest, UnknownMetadataTileDoesNotRequestContentL
     EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
 }
 
+TEST(QuantizedMeshTerrainProviderTest, EmptyTileUrlFailsWithoutBridgeRequestLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider("");
+    provider.setZoomRange(0, 2);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    EXPECT_TRUE(provider.supportsTile(rootKey));
+    EXPECT_EQ("", provider.buildUrl(rootKey));
+
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
+
+    provider.requestTileContent(
+        rootKey,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Failed, completed.status);
+    EXPECT_EQ(0u, bridge.pendingCount());
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsStarted);
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsFailed);
+}
+
 TEST(QuantizedMeshTerrainProviderTest,
      LoadedCurrentAndUnderlyingMetadataSubtreesSkipDuplicateRequestsLikeCesiumNative) {
     const std::filesystem::path root =
