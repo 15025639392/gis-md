@@ -81,6 +81,10 @@ public:
         int maxX = 0;
         int maxY = 0;
 
+        int budgetUnits() const {
+            return static_cast<int>(sourceKeys.size());
+        }
+
         bool empty() const { return sourceKeys.empty(); }
     };
 
@@ -276,11 +280,11 @@ private:
                             const Rectangle& targetBounds,
                             const std::string& cacheKey,
                             FrameResourceBudget* budget);
-    bool loadMappedSourceImages(RasterOverlayTile& tile,
-                                QuadtreeSourcePlan sourcePlan,
-                                const Rectangle& targetBounds,
-                                const std::string& cacheKey,
-                                FrameResourceBudget* budget);
+    bool loadSourceImageSet(RasterOverlayTile& tile,
+                            RasterSourceTileMapping sourceTiles,
+                            const Rectangle& targetBounds,
+                            const std::string& cacheKey,
+                            FrameResourceBudget* budget);
     void refreshSourceAssetDepot();
 
     /// Internal: load a mapped raster tile by combining the provider's

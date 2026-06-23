@@ -1501,7 +1501,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                              std::shared_ptr<ProviderAsyncState> asyncState,
                              std::shared_ptr<QuadtreeSourceAssetDepot>
                                  sourceDepot,
-                             QuadtreeSourcePlan plan,
+                             RasterSourceTileMapping sourceTileMapping,
                              Rectangle bounds,
                              RasterOverlayProjection outputProjection,
                              int maximumSourceLevel,
@@ -1511,15 +1511,15 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         : scheme(tileScheme)
         , state(std::move(asyncState))
         , depot(std::move(sourceDepot))
-        , sourcePlan(std::move(plan))
+        , sourceTiles(std::move(sourceTileMapping))
         , targetBounds(bounds)
         , projection(outputProjection)
         , maximumLevel(maximumSourceLevel)
         , returnEmptyForAncestorOnly(emptyWhenOnlyAncestorFallback)
         , onSuccess(std::move(success))
         , onFailure(std::move(failure))
-        , remaining(sourcePlan.budgetUnits()) {
-        sources.reserve(sourcePlan.sourceKeys.size());
+        , remaining(sourceTiles.budgetUnits()) {
+        sources.reserve(sourceTiles.sourceKeys.size());
     }
 
     int issueAll(const std::function<void()>& onSourceIssued,
@@ -1533,7 +1533,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                 return 0;
             }
             sourceSetIssued = true;
-            sourceKeys = sourcePlan.sourceKeys;
+            sourceKeys = sourceTiles.sourceKeys;
         }
         for (const TileKey& sourceKey : sourceKeys) {
             auto self = shared_from_this();
@@ -1582,7 +1582,7 @@ private:
         }
 
         if (completedSources.size() == 1 &&
-            sourcePlan.sourceKeys.size() == 1 &&
+            sourceTiles.sourceKeys.size() == 1 &&
             completedSources.front().image &&
             !completedSources.front().sourceSubset.has_value() &&
             rectanglesEqualForDirectRasterTile(
@@ -1626,7 +1626,7 @@ private:
                             composeMappedSourceImageSet(
                                 self->scheme,
                                 self->targetBounds,
-                                self->sourcePlan.sourceZoom,
+                                self->sourceTiles.sourceZoom,
                                 std::move(completedSources),
                                 self->maximumLevel,
                                 self->returnEmptyForAncestorOnly);
@@ -1667,7 +1667,7 @@ private:
     const TileScheme& scheme;
     std::shared_ptr<ProviderAsyncState> state;
     std::shared_ptr<QuadtreeSourceAssetDepot> depot;
-    QuadtreeSourcePlan sourcePlan;
+    RasterSourceTileMapping sourceTiles;
     Rectangle targetBounds;
     RasterOverlayProjection projection;
     int maximumLevel = 0;
@@ -2292,27 +2292,20 @@ bool RasterOverlayTileProvider::loadSourceTileList(
     const Rectangle& targetBounds,
     const std::string& cacheKey,
     FrameResourceBudget* budget) {
-    QuadtreeSourcePlan sourcePlan;
-    sourcePlan.sourceZoom = sourceTiles.sourceZoom;
-    sourcePlan.minX = sourceTiles.minX;
-    sourcePlan.minY = sourceTiles.minY;
-    sourcePlan.maxX = sourceTiles.maxX;
-    sourcePlan.maxY = sourceTiles.maxY;
-    sourcePlan.sourceKeys = std::move(sourceTiles.sourceKeys);
     const Rectangle composeBounds =
         sourceTiles.sourceBounds.isEmpty() ? targetBounds
                                            : sourceTiles.sourceBounds;
-    return loadMappedSourceImages(
+    return loadSourceImageSet(
         tile,
-        std::move(sourcePlan),
+        std::move(sourceTiles),
         composeBounds,
         cacheKey,
         budget);
 }
 
-bool RasterOverlayTileProvider::loadMappedSourceImages(
+bool RasterOverlayTileProvider::loadSourceImageSet(
     RasterOverlayTile& tile,
-    QuadtreeSourcePlan sourcePlan,
+    RasterSourceTileMapping sourceTiles,
     const Rectangle& targetBounds,
     const std::string& cacheKey,
     FrameResourceBudget* budget) {
@@ -2325,7 +2318,7 @@ bool RasterOverlayTileProvider::loadMappedSourceImages(
     auto estimateNewSourceRequests = [&]() {
         int estimated = 0;
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        for (const TileKey& sourceKey : sourcePlan.sourceKeys) {
+        for (const TileKey& sourceKey : sourceTiles.sourceKeys) {
             const std::string sourceKeyString =
                 sourceCacheKey(
                     asyncState_->sourceTileDepotEpoch,
@@ -2384,7 +2377,7 @@ bool RasterOverlayTileProvider::loadMappedSourceImages(
         scheme_,
         state,
         sourceAssetDepot_,
-        sourcePlan,
+        std::move(sourceTiles),
         targetBounds,
         projection_,
         getMaximumLevel(),
