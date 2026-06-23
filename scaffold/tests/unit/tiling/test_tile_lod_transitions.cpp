@@ -110,7 +110,6 @@ Tileset makeTransitionTileset() {
     options.lodTransitionLength = 1.0f;
 
     return Tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,

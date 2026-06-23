@@ -96,7 +96,6 @@ std::pair<double, double> tileCenter(
 
 Tileset makeHeightSamplingTileset() {
     return Tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,

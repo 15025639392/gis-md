@@ -37,7 +37,6 @@ struct TilesetTestAccess {
 
 TEST(TileSoftwareOcclusionTest, DefaultTilesetOcclusionCullsFarSideTile) {
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,

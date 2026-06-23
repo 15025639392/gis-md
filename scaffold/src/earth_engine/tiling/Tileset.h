@@ -98,6 +98,10 @@ public:
     Tileset(std::unique_ptr<TileScheme> tileScheme,
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,
+            TilesetOptions options);
+    Tileset(std::unique_ptr<TileScheme> tileScheme,
+            std::vector<ActivatedRasterOverlay*> rasterOverlays,
+            RenderDevice* device,
             TilesetOptions options,
             std::unique_ptr<TilesetContentProvider> contentProvider);
     ~Tileset();
