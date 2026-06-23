@@ -492,6 +492,38 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
+     ReusesSharedOriginalTriangleVerticesLikeCesiumNative) {
+    GltfModel parent;
+    GltfPrimitive primitive;
+    primitive.vertices = {
+        vertex(0.0, 0.0, 0.1, 0.1),
+        vertex(1.0, 0.0, 0.4, 0.1),
+        vertex(0.0, 1.0, 0.1, 0.4),
+        vertex(1.0, 1.0, 0.4, 0.4)};
+    primitive.vertexTexCoords[0] = {
+        {0.1f, 0.1f},
+        {0.4f, 0.1f},
+        {0.1f, 0.4f},
+        {0.4f, 0.4f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    parent.primitives.push_back(std::move(primitive));
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& out = upsampled->primitives.front();
+    EXPECT_EQ(GltfPrimitiveMode::Triangles, out.primitiveMode);
+    ASSERT_EQ(4u, out.vertices.size());
+    ASSERT_EQ(6u, out.indices.size());
+    EXPECT_EQ((std::vector<uint32_t>{0, 1, 2, 1, 3, 2}), out.indices);
+}
+
+TEST(GltfTerrainUpsamplerTest,
      InterpolatesTriangleVertexColorAndTangentLikeCesiumNative) {
     GltfModel parent = makeParentModel();
     GltfPrimitive& parentPrimitive = parent.primitives.front();

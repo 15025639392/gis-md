@@ -14,6 +14,7 @@ namespace {
 
 struct ClipVertex {
     SurfaceVertex vertex;
+    int32_t sourceIndex = -1;
     std::array<std::array<float, 2>, kGltfMaxTexCoordSets> texCoords{};
     std::array<bool, kGltfMaxTexCoordSets> hasTexCoord{};
     std::array<float, 4> color{};
@@ -65,6 +66,7 @@ ClipVertex interpolate(const ClipVertex& a,
                        double t) {
     t = std::clamp(t, 0.0, 1.0);
     ClipVertex out;
+    out.sourceIndex = -1;
     out.vertex.positionEcef =
         a.vertex.positionEcef +
         (b.vertex.positionEcef - a.vertex.positionEcef) * t;
@@ -181,6 +183,7 @@ std::vector<ClipVertex> makeTriangle(const GltfPrimitive& primitive,
     triangle.reserve(3);
     for (uint32_t index : {ia, ib, ic}) {
         ClipVertex vertex;
+        vertex.sourceIndex = static_cast<int32_t>(index);
         vertex.vertex = primitive.vertices[index];
         for (size_t set = 0; set < kGltfMaxTexCoordSets; ++set) {
             if (primitive.vertexTexCoords[set].size() ==
@@ -212,7 +215,8 @@ std::vector<ClipVertex> makeTriangle(const GltfPrimitive& primitive,
 
 void appendPolygon(GltfPrimitive& output,
                    const std::vector<ClipVertex>& polygon,
-                   int textureCoordinateIndex) {
+                   int textureCoordinateIndex,
+                   std::vector<uint32_t>& sourceVertexMap) {
     if (polygon.size() < 3) return;
     double area = 0.0;
     for (size_t i = 0; i < polygon.size(); ++i) {
@@ -223,31 +227,49 @@ void appendPolygon(GltfPrimitive& output,
                 static_cast<double>(b[0]) * static_cast<double>(a[1]);
     }
     if (std::abs(area) <= 1e-12) return;
-    const uint32_t base = static_cast<uint32_t>(output.vertices.size());
+    std::vector<uint32_t> polygonIndices;
+    polygonIndices.reserve(polygon.size());
     for (const ClipVertex& vertex : polygon) {
-        output.vertices.push_back(vertex.vertex);
-        for (size_t set = 0; set < kGltfMaxTexCoordSets; ++set) {
-            if (vertex.hasTexCoord[set]) {
-                output.vertexTexCoords[set].push_back(vertex.texCoords[set]);
+        uint32_t index = std::numeric_limits<uint32_t>::max();
+        if (vertex.sourceIndex >= 0 &&
+            static_cast<size_t>(vertex.sourceIndex) <
+                sourceVertexMap.size()) {
+            index = sourceVertexMap[static_cast<size_t>(vertex.sourceIndex)];
+        }
+        if (index == std::numeric_limits<uint32_t>::max()) {
+            index = static_cast<uint32_t>(output.vertices.size());
+            output.vertices.push_back(vertex.vertex);
+            for (size_t set = 0; set < kGltfMaxTexCoordSets; ++set) {
+                if (vertex.hasTexCoord[set]) {
+                    output.vertexTexCoords[set].push_back(
+                        vertex.texCoords[set]);
+                }
+            }
+            if (vertex.hasColor) {
+                output.vertexColors.push_back(vertex.color);
+            }
+            if (vertex.hasTangent) {
+                output.vertexTangents.push_back(vertex.tangent);
+            }
+            if (vertex.hasFeatureId) {
+                output.featureIds.push_back(vertex.featureId);
+            }
+            if (vertex.hasFeatureProperties) {
+                output.featureProperties.push_back(vertex.featureProperties);
+            }
+            if (vertex.sourceIndex >= 0 &&
+                static_cast<size_t>(vertex.sourceIndex) <
+                    sourceVertexMap.size()) {
+                sourceVertexMap[static_cast<size_t>(vertex.sourceIndex)] =
+                    index;
             }
         }
-        if (vertex.hasColor) {
-            output.vertexColors.push_back(vertex.color);
-        }
-        if (vertex.hasTangent) {
-            output.vertexTangents.push_back(vertex.tangent);
-        }
-        if (vertex.hasFeatureId) {
-            output.featureIds.push_back(vertex.featureId);
-        }
-        if (vertex.hasFeatureProperties) {
-            output.featureProperties.push_back(vertex.featureProperties);
-        }
+        polygonIndices.push_back(index);
     }
     for (uint32_t i = 1; i + 1 < polygon.size(); ++i) {
-        output.indices.push_back(base);
-        output.indices.push_back(base + i);
-        output.indices.push_back(base + i + 1);
+        output.indices.push_back(polygonIndices[0]);
+        output.indices.push_back(polygonIndices[i]);
+        output.indices.push_back(polygonIndices[i + 1]);
     }
 }
 
@@ -656,6 +678,9 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
         return false;
     }
     const uint32_t indexEnd = indexBegin + indexCount;
+    std::vector<uint32_t> sourceVertexMap(
+        parent.vertices.size(),
+        std::numeric_limits<uint32_t>::max());
 
     auto sourceIndex = [&](uint32_t i) {
         return hasExplicitIndices ? parent.indices[i] : i;
@@ -680,7 +705,11 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
             textureCoordinateIndex,
             keepGreaterV,
             0.5);
-        appendPolygon(output, polygon, textureCoordinateIndex);
+        appendPolygon(
+            output,
+            polygon,
+            textureCoordinateIndex,
+            sourceVertexMap);
     };
 
     if (parent.primitiveMode == GltfPrimitiveMode::Triangles) {
