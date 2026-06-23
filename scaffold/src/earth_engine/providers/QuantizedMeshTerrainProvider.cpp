@@ -1573,6 +1573,27 @@ std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
     return {};
 }
 
+TileContentLoadResult QuantizedMeshTerrainProvider::loadQuantizedMeshTileContent(
+    const TileKey& key,
+    const uint8_t* data,
+    size_t size,
+    bool enableWaterMask,
+    const std::vector<QuantizedMeshMetadataContent>& metadata,
+    std::optional<QuantizedMeshAvailabilityUpdate>
+        currentTileAvailabilityUpdate) const {
+    const LayerConfig* contentLayer = firstAvailableLayer(key);
+    const std::string contentSchemeId =
+        contentLayer ? contentLayer->schemeId : schemeId_;
+    return QuantizedMeshContentLoader::loadTileContent(
+        data,
+        size,
+        terrainContentRectangle(key, contentSchemeId),
+        enableWaterMask,
+        metadata,
+        rasterOverlayProjectionForTerrainScheme(contentSchemeId),
+        std::move(currentTileAvailabilityUpdate));
+}
+
 void QuantizedMeshTerrainProvider::requestTileContent(
     const TileKey& key,
     CancellationToken token,
@@ -2060,19 +2081,13 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 metadata.push_back(item);
             }
 
-            const std::string contentSchemeId =
-                contentLayerIndex >= 0 &&
-                        static_cast<size_t>(contentLayerIndex) < layers_.size()
-                    ? layers_[static_cast<size_t>(contentLayerIndex)].schemeId
-                    : schemeId_;
             TileContentLoadResult result =
-                QuantizedMeshContentLoader::loadTileContent(
+                loadQuantizedMeshTileContent(
+                    key,
                     body->data(),
                     body->size(),
-                    terrainContentRectangle(key, contentSchemeId),
                     waterMaskEnabled_,
                     metadata,
-                    rasterOverlayProjectionForTerrainScheme(contentSchemeId),
                     std::move(currentTileAvailabilityUpdate));
             if (result.status == TileLoadStatus::Failed) {
                 applyAvailabilityUpdates(sideEffectAvailabilityUpdates);
@@ -2246,21 +2261,26 @@ bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const 
     return false;
 }
 
-TileContentLoadResult QuantizedMeshTerrainProvider::decodeContent(
+TileContentLoadResult QuantizedMeshTerrainProvider::decodeTileContent(
+    const TileKey& key,
     const uint8_t* data,
-    size_t size) {
-    const std::vector<TileKey> roots =
-        TileSelectionRootPolicy::levelZeroTerrainRoots(schemeId_);
-    if (roots.empty()) {
+    size_t size) const {
+    if (!supportsTile(key)) {
         return TileContentLoadResult::failed();
     }
-    return QuantizedMeshContentLoader::loadTileContent(
+
+    return loadQuantizedMeshTileContent(
+        key,
         data,
         size,
-        terrainContentRectangle(roots.front(), schemeId_),
         waterMaskEnabled_,
-        {},
-        rasterOverlayProjectionForTerrainScheme(schemeId_));
+        {});
+}
+
+TileContentLoadResult QuantizedMeshTerrainProvider::decodeContent(
+    const uint8_t*,
+    size_t) {
+    return TileContentLoadResult::failed();
 }
 
 } // namespace earth_engine

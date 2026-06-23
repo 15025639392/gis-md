@@ -554,7 +554,7 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     DecodeContentProducesGltfTerrainLoadResult) {
+     DecodeTileContentUsesRequestedTileRectangle) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
 
@@ -563,16 +563,17 @@ TEST(QuantizedMeshTerrainProviderTest,
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(minimumHeight, maximumHeight);
 
+    const TileKey requestedKey{"Geographic-TMS", 2, 2, 1};
     TileContentLoadResult result =
-        provider.decodeContent(bytes.data(), bytes.size());
+        provider.decodeTileContent(
+            requestedKey, bytes.data(), bytes.size());
 
     EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     EXPECT_TRUE(result.terrainRenderContent);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_TRUE(result.metadata.updatedBoundingVolume.has_value());
-    const TileKey westRoot{"Geographic-TMS", 0, 0, 0};
     auto scheme = TileScheme::createGeographicTMS();
-    EXPECT_EQ(scheme->tileToRectangle(westRoot),
+    EXPECT_EQ(scheme->tileToRectangle(requestedKey),
               result.metadata.updatedBoundingVolume->region);
     ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
     const Rectangle* rectangle =
@@ -580,7 +581,7 @@ TEST(QuantizedMeshTerrainProviderTest,
             ->findRectangleForOverlayProjection(
                 RasterOverlayProjection::Geographic);
     ASSERT_NE(nullptr, rectangle);
-    EXPECT_EQ(scheme->tileToRectangle(westRoot), *rectangle);
+    EXPECT_EQ(scheme->tileToRectangle(requestedKey), *rectangle);
     EXPECT_NEAR(minimumHeight,
                 result.metadata.updatedBoundingVolume->minimumHeight,
                 1e-6);
@@ -590,14 +591,29 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     DecodeContentRejectsInvalidQuantizedMesh) {
+     DecodeContentWithoutTileKeyIsRejected) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+    TileContentLoadResult result =
+        provider.decodeContent(bytes.data(), bytes.size());
+
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
+    EXPECT_FALSE(result.terrainRenderContent);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     DecodeTileContentRejectsInvalidQuantizedMesh) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
 
     const std::vector<uint8_t> invalidBytes{1, 2, 3, 4};
-    TileContentLoadResult result =
-        provider.decodeContent(invalidBytes.data(), invalidBytes.size());
-
+    const TileContentLoadResult result = provider.decodeTileContent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        invalidBytes.data(),
+        invalidBytes.size());
     EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_FALSE(result.terrainRenderContent);
     EXPECT_EQ(nullptr, result.gltfModel);
@@ -678,7 +694,7 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     DecodeContentIncludesRasterOverlayDetailsForTerrainTileLikeCesiumNative) {
+     RequestTileContentIncludesRasterOverlayDetailsForTerrainTileLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
     QueuedStatusPlatformBridge bridge;

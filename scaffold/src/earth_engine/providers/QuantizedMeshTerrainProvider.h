@@ -15,6 +15,7 @@
 namespace earth_engine {
 
 class PlatformBridge;
+struct QuantizedMeshMetadataContent;
 
 /// Content provider for the quantized-mesh-1.0 format.
 /// Parses binary tiles into first-class glTF terrain load results.
@@ -92,6 +93,9 @@ public:
                             ContentCallback callback,
                             HttpRequestPriority priority =
                                 HttpRequestPriority::Normal) override;
+    TileContentLoadResult decodeTileContent(const TileKey& key,
+                                            const uint8_t* data,
+                                            size_t size) const;
     TileContentLoadResult decodeContent(const uint8_t* data,
                                         size_t size) override;
 
@@ -231,6 +235,14 @@ private:
         const std::vector<TileAvailabilityRect>& rects);
     std::string buildUrlForLayer(const LayerConfig& layer,
                                  const TileKey& key) const;
+    TileContentLoadResult loadQuantizedMeshTileContent(
+        const TileKey& key,
+        const uint8_t* data,
+        size_t size,
+        bool enableWaterMask,
+        const std::vector<QuantizedMeshMetadataContent>& metadata,
+        std::optional<QuantizedMeshAvailabilityUpdate>
+            currentTileAvailabilityUpdate = std::nullopt) const;
     void resetFallbackLayerFromFields();
     void syncLegacyFieldsFromPrimaryLayer();
     void handleAsyncTileBody(
