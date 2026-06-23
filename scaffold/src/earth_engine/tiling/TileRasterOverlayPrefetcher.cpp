@@ -103,40 +103,9 @@ void TileRasterOverlayPrefetcher::prefetch(
                 ? tile.rasterOverlayState.missingProjections()
                 : localMissingProjections;
 
-        RasterOverlayTile* loadingTile = mapped.getLoadingTile();
-        if (loadingTile &&
-            loadingTile->getState() !=
-                RasterOverlayTile::LoadState::Placeholder) {
-            if (loadingTile->getState() ==
-                    RasterOverlayTile::LoadState::Loading &&
-                mapped.getReadyTile() != nullptr) {
-                mapped.loadThrottled(*activeProvider, &frameResourceBudget);
-                continue;
-            }
-            if (loadingTile->getState() ==
-                    RasterOverlayTile::LoadState::Unloaded ||
-                loadingTile->getState() ==
-                    RasterOverlayTile::LoadState::Loading) {
-                mapped.update(
-                    tile.key,
-                    overlayDetails,
-                    rasterScreenPixels.x,
-                    rasterScreenPixels.y,
-                    *activeProvider,
-                    nullptr,
-                    missingProjections,
-                    tile.parent,
-                    i,
-                    hasRenderContentDetails,
-                    boundingVolumeRectangle);
-                mapped.loadThrottled(*activeProvider, &frameResourceBudget);
-                continue;
-            }
-        }
-        if (!loadingTile && mapped.getReadyTile()) {
-            continue;
-        }
-
+        // cesium-native updates RasterMappedTo3DTile before giving any
+        // throttled raster request another chance to run. Keep that order so
+        // loaded/failed/stale tiles are consumed before request fanout.
         mapped.update(
             tile.key,
             overlayDetails,
@@ -149,7 +118,13 @@ void TileRasterOverlayPrefetcher::prefetch(
             i,
             hasRenderContentDetails,
             boundingVolumeRectangle);
-        mapped.loadThrottled(*activeProvider, &frameResourceBudget);
+
+        RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+        if (loadingTile &&
+            loadingTile->getState() !=
+                RasterOverlayTile::LoadState::Placeholder) {
+            mapped.loadThrottled(*activeProvider, &frameResourceBudget);
+        }
     }
 }
 
