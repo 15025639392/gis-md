@@ -112,7 +112,7 @@ void TileRasterOverlayPrefetcher::prefetch(
             rasterScreenPixels.x,
             rasterScreenPixels.y,
             *activeProvider,
-            nullptr,
+            pPrepRenderer,
             missingProjections,
             tile.parent,
             i,
