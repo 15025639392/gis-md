@@ -1022,6 +1022,37 @@ using MappedSourceLoadSuccess =
                        RasterOverlayTile::MoreDetailAvailable)>;
 using MappedSourceLoadFailure = std::function<void()>;
 
+RasterOverlayTileProvider::CompositeImageResult composeMappedSourceImageSet(
+    const TileScheme& scheme,
+    const Rectangle& targetBounds,
+    int sourceZoom,
+    std::vector<RasterSourceResult>&& sources,
+    int maximumSourceZoom,
+    bool emptyWhenOnlyAncestorFallback) {
+    const bool haveAnyUsefulImageData =
+        !emptyWhenOnlyAncestorFallback ||
+        std::any_of(sources.begin(),
+                    sources.end(),
+                    [](const RasterSourceResult& source) {
+                        return source.image &&
+                               !source.sourceSubset.has_value();
+                    });
+    if (!haveAnyUsefulImageData) {
+        RasterOverlayTileProvider::CompositeImageResult result;
+        result.image = std::make_unique<DecodedImage>();
+        result.moreDetailAvailable =
+            RasterOverlayTile::MoreDetailAvailable::No;
+        return result;
+    }
+
+    return combineQuadtreeSourceImages(
+        scheme,
+        targetBounds,
+        sourceZoom,
+        std::move(sources),
+        maximumSourceZoom);
+}
+
 bool isMappedRasterCacheKey(const std::string& cacheKey) {
     return cacheKey.rfind("mapped-raster/", 0) == 0;
 }
@@ -1591,35 +1622,14 @@ private:
                             std::memory_order_relaxed);
                     };
                     try {
-                        const bool haveAnyUsefulImageData =
-                            !self->returnEmptyForAncestorOnly ||
-                            std::any_of(
-                                completedSources.begin(),
-                                completedSources.end(),
-                                [](const RasterSourceResult& source) {
-                                    return source.image &&
-                                           !source.sourceSubset.has_value();
-                                });
-                        if (!haveAnyUsefulImageData) {
-                            if (self->state->alive.load(
-                                    std::memory_order_acquire)) {
-                                self->onSuccess(
-                                    std::make_unique<DecodedImage>(),
-                                    nullptr,
-                                    Rectangle(),
-                                    RasterOverlayTile::MoreDetailAvailable::No);
-                            }
-                            finishCompose();
-                            return;
-                        }
-
                         CompositeImageResult composed =
-                            combineQuadtreeSourceImages(
+                            composeMappedSourceImageSet(
                                 self->scheme,
                                 self->targetBounds,
                                 self->sourcePlan.sourceZoom,
                                 std::move(completedSources),
-                                self->maximumLevel);
+                                self->maximumLevel,
+                                self->returnEmptyForAncestorOnly);
                         if (composed.image) {
                             if (self->state->alive.load(
                                     std::memory_order_acquire)) {
