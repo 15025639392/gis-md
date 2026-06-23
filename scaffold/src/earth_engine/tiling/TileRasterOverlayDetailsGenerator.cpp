@@ -9,6 +9,7 @@
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
+#include "../core/math/MathUtils.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
 
@@ -88,6 +89,38 @@ Vec3 projectPositionForOverlay(const Cartographic& cartographic,
         cartographic.height());
 }
 
+Vec3 projectPositionForOverlayClosestToRectangle(
+    const Cartographic& cartographic,
+    RasterOverlayProjection projection,
+    const Rectangle& rectangle) {
+    Vec3 projected = projectPositionForOverlay(cartographic, projection);
+    const double longitude = cartographic.longitude();
+    if (std::abs(std::abs(longitude) - MathUtils::OnePi) >=
+            MathUtils::Epsilon5 ||
+        (projected.x() >= rectangle.west() &&
+         projected.x() <= rectangle.east() &&
+         projected.y() >= rectangle.south() &&
+         projected.y() <= rectangle.north())) {
+        return projected;
+    }
+
+    const double alternateLongitude = longitude < 0.0
+        ? longitude + MathUtils::TwoPi
+        : longitude - MathUtils::TwoPi;
+    const Cartographic alternate = Cartographic::fromRadians(
+        alternateLongitude,
+        cartographic.latitude(),
+        cartographic.height());
+    const Vec3 alternateProjected =
+        projectPositionForOverlay(alternate, projection);
+    const double distance =
+        rectangle.computeSignedDistance(projected.x(), projected.y());
+    const double alternateDistance = rectangle.computeSignedDistance(
+        alternateProjected.x(),
+        alternateProjected.y());
+    return alternateDistance < distance ? alternateProjected : projected;
+}
+
 bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
                                RasterOverlayProjection projection,
                                const Rectangle& projectedRectangle,
@@ -124,8 +157,10 @@ bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
                 texCoords.push_back({0.0f, 0.0f});
                 continue;
             }
-            const Vec3 projected =
-                projectPositionForOverlay(*cartographic, projection);
+            const Vec3 projected = projectPositionForOverlayClosestToRectangle(
+                *cartographic,
+                projection,
+                projectedRectangle);
             texCoords.push_back({
                 static_cast<float>(
                     std::clamp(
@@ -151,13 +186,8 @@ computeTightModelBoundingRegion(const TileRenderContentState& renderContent) {
     }
 
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    BoundingRegionBuilder builder;
     bool hasPosition = false;
-    double west = 0.0;
-    double south = 0.0;
-    double east = 0.0;
-    double north = 0.0;
-    double minimumHeight = 0.0;
-    double maximumHeight = 0.0;
     for (const GltfPrimitive& primitive : model->primitives) {
         for (size_t i = 0; i < primitive.vertices.size(); ++i) {
             if (!contributesToComputedBounds(primitive, i)) {
@@ -175,29 +205,15 @@ computeTightModelBoundingRegion(const TileRenderContentState& renderContent) {
             if (!cartographic) {
                 continue;
             }
-            if (!hasPosition) {
-                west = east = cartographic->longitude();
-                south = north = cartographic->latitude();
-                minimumHeight = maximumHeight = cartographic->height();
-                hasPosition = true;
-                continue;
-            }
-            west = std::min(west, cartographic->longitude());
-            south = std::min(south, cartographic->latitude());
-            east = std::max(east, cartographic->longitude());
-            north = std::max(north, cartographic->latitude());
-            minimumHeight = std::min(minimumHeight, cartographic->height());
-            maximumHeight = std::max(maximumHeight, cartographic->height());
+            hasPosition =
+                builder.expandToIncludePosition(*cartographic) || hasPosition;
         }
     }
 
     if (!hasPosition) {
         return std::nullopt;
     }
-    return BoundingRegionBuilder::BoundingRegion{
-        Rectangle(west, south, east, north),
-        minimumHeight,
-        maximumHeight};
+    return builder.toRegion();
 }
 
 } // namespace
@@ -205,15 +221,17 @@ computeTightModelBoundingRegion(const TileRenderContentState& renderContent) {
 Rectangle TileRasterOverlayDetailsGenerator::projectRegionRectangle(
     const Rectangle& rectangle,
     RasterOverlayProjection projection) {
+    const Rectangle splitRectangle =
+        rectangle.splitAtAntimeridian().first;
     switch (projection) {
         case RasterOverlayProjection::Geographic:
-            return rectangle;
+            return splitRectangle;
         case RasterOverlayProjection::WebMercator:
             return projectRectangleSimple(
                 WebMercatorProjection(Ellipsoid::WGS84()),
-                rectangle);
+                splitRectangle);
     }
-    return rectangle;
+    return splitRectangle;
 }
 
 std::optional<Rectangle>

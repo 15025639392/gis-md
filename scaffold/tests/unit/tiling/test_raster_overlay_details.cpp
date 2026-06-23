@@ -741,3 +741,84 @@ TEST(RasterOverlayDetailsGeneratorTest,
         primitive.vertexTexCoords[0][2][1],
         1e-6f);
 }
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     RegionGenerationSplitsAntimeridianNoiseAndWrapsUvLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    const Rectangle noisyAntimeridianRegion(
+        MathUtils::OnePi - 1e-8,
+        -0.1,
+        -MathUtils::OnePi + 1e-8,
+        0.1);
+    auto quadModel = makeTerrainQuadModel(noisyAntimeridianRegion);
+    renderContent.prepareGltfContent(std::move(quadModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    const TileBoundingVolume boundingRegion =
+        TileBoundingVolume::fromRegion(noisyAntimeridianRegion, -25.0, 125.0);
+
+    const bool generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
+            renderContent,
+            boundingRegion,
+            RasterOverlayProjection::Geographic);
+
+    ASSERT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    const Rectangle expectedSplit(
+        -MathUtils::OnePi,
+        -0.1,
+        -MathUtils::OnePi + 1e-8,
+        0.1);
+    expectRectangleNear(expectedSplit, details.rasterOverlayRectangles[0]);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    ASSERT_GE(primitive.vertexTexCoords[0].size(), 2u);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     ModelBoundsGenerationUsesAntimeridianBuilderLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    const Rectangle noisyAntimeridianRegion(
+        MathUtils::OnePi - 1e-8,
+        -0.1,
+        -MathUtils::OnePi + 1e-8,
+        0.1);
+    auto quadModel = makeTerrainQuadModel(noisyAntimeridianRegion);
+    renderContent.prepareGltfContent(std::move(quadModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    const bool generated = TileRasterOverlayDetailsGenerator::
+        ensureProjectionDetailsFromModelBounds(
+            renderContent,
+            RasterOverlayProjection::Geographic);
+
+    ASSERT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_TRUE(details.boundingRegion.rectangle.crossesAntimeridian());
+    EXPECT_FALSE(details.boundingRegion.rectangle.contains(0.0, 0.0));
+
+    const Rectangle expectedSplit(
+        -MathUtils::OnePi,
+        -0.1,
+        -MathUtils::OnePi + 1e-8,
+        0.1);
+    expectRectangleNear(expectedSplit, details.rasterOverlayRectangles[0]);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    ASSERT_GE(primitive.vertexTexCoords[0].size(), 2u);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
+}
