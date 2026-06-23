@@ -462,7 +462,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TileLoadedContent content;
     content.heightmap = std::move(heightmap);
-    content.terrainPayloadKind = TerrainTilePayloadKind::LegacyHeightmap;
+    content.terrainRenderContent = true;
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;

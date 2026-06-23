@@ -30,15 +30,8 @@ struct TileLoadedContent {
     static TileLoadedContent fromTerrainResult(
         TerrainTileLoadResult&& result) {
         TileLoadedContent content;
-        content.terrainPayloadKind = result.payloadKind;
-        switch (result.payloadKind) {
-            case TerrainTilePayloadKind::LegacyHeightmap:
-                content.heightmap = std::move(result.heightmap);
-                content.terrainRenderContent = content.heightmap != nullptr;
-                break;
-            case TerrainTilePayloadKind::None:
-                break;
-        }
+        content.heightmap = std::move(result.heightmap);
+        content.terrainRenderContent = content.heightmap != nullptr;
         return content;
     }
 
@@ -56,7 +49,6 @@ struct TileLoadedContent {
 
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<GltfModel> gltfModel;
-    TerrainTilePayloadKind terrainPayloadKind = TerrainTilePayloadKind::None;
     bool terrainRenderContent = false;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
@@ -65,7 +57,7 @@ struct TileLoadedContent {
     bool quantizedMeshAvailabilityUpdatesApplied = false;
 
     bool hasTerrainPayload() const {
-        return terrainPayloadKind != TerrainTilePayloadKind::None ||
+        return heightmap != nullptr ||
                terrainRenderContent;
     }
 
@@ -74,13 +66,7 @@ struct TileLoadedContent {
     }
 
     bool hasRenderablePayload() const {
-        switch (terrainPayloadKind) {
-            case TerrainTilePayloadKind::LegacyHeightmap:
-                return heightmap != nullptr;
-            case TerrainTilePayloadKind::None:
-                return gltfModel != nullptr;
-        }
-        return false;
+        return heightmap != nullptr || gltfModel != nullptr;
     }
 };
 
@@ -122,8 +108,7 @@ struct TileLoadResult {
             std::move(metadata));
         loadResult.content.heightmap = std::move(heightmap);
         if (loadResult.content.heightmap) {
-            loadResult.content.terrainPayloadKind =
-                TerrainTilePayloadKind::LegacyHeightmap;
+            loadResult.content.terrainRenderContent = true;
         }
         return loadResult;
     }

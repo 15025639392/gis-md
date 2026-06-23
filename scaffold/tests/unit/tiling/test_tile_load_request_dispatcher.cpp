@@ -492,8 +492,6 @@ TEST(TileLoadRequestDispatcherTest,
 
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedGltf.status);
     EXPECT_TRUE(normalizedGltf.shouldUpload());
-    EXPECT_EQ(TerrainTilePayloadKind::None,
-              normalizedGltf.content.terrainPayloadKind);
     EXPECT_TRUE(normalizedGltf.content.terrainRenderContent);
     EXPECT_EQ(nullptr, normalizedGltf.content.heightmap);
     EXPECT_EQ(rawGltfModel, normalizedGltf.content.gltfModel.get());
@@ -511,8 +509,6 @@ TEST(TileLoadRequestDispatcherTest,
 
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedHeightmap.status);
     EXPECT_TRUE(normalizedHeightmap.shouldUpload());
-    EXPECT_EQ(TerrainTilePayloadKind::LegacyHeightmap,
-              normalizedHeightmap.content.terrainPayloadKind);
     EXPECT_TRUE(normalizedHeightmap.content.terrainRenderContent);
     EXPECT_EQ(rawHeightmap, normalizedHeightmap.content.heightmap.get());
     EXPECT_EQ(nullptr, normalizedHeightmap.content.gltfModel);
@@ -545,8 +541,6 @@ TEST(TileLoadRequestDispatcherTest,
             directTransform);
     EXPECT_TRUE(directTerrainContent.shouldUpload());
     EXPECT_TRUE(directTerrainContent.content.hasGltfTerrainPayload());
-    EXPECT_EQ(TerrainTilePayloadKind::None,
-              directTerrainContent.content.terrainPayloadKind);
     EXPECT_EQ(nullptr, directTerrainContent.content.heightmap);
     EXPECT_EQ(rawDirectGltfModel, directTerrainContent.content.gltfModel.get());
     EXPECT_EQ(directTransform, directTerrainContent.content.contentTransform);

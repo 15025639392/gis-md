@@ -29,8 +29,7 @@ struct TileTerrainUploadCommitter {
         std::unordered_map<
             std::string,
             std::unique_ptr<DecodedHeightmap>>& terrainCache) {
-        if (content.terrainPayloadKind == TerrainTilePayloadKind::LegacyHeightmap &&
-            content.heightmap) {
+        if (content.heightmap) {
             terrainCache[cacheKey] = std::move(content.heightmap);
         }
     }
