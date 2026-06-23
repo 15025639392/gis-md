@@ -2123,6 +2123,66 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotUsesRuntimeSubTileCacheBudget) {
     EXPECT_EQ(sourceKey, imagery.requestedKeys[2]);
 }
 
+TEST(RasterOverlayLifecycleTest,
+     TerminalFailureSourceAssetsRespectSubTileCacheBudget) {
+    AlwaysFailingImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(3, 3);
+    provider.setSubTileCacheBytes(1);
+
+    const TileKey firstSourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle firstBounds = scheme->tileToRectangle(firstSourceKey);
+    const Rectangle firstWestHalf(
+        firstBounds.west(),
+        firstBounds.south(),
+        firstBounds.west() + firstBounds.width() * 0.5,
+        firstBounds.north());
+    const Rectangle firstEastHalf(
+        firstBounds.west() + firstBounds.width() * 0.5,
+        firstBounds.south(),
+        firstBounds.east(),
+        firstBounds.north());
+    const TileKey secondSourceKey{scheme->id(), 3, 4, 3};
+    const Rectangle secondBounds = scheme->tileToRectangle(secondSourceKey);
+
+    auto firstTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, firstWestHalf),
+        128.0,
+        128.0).tile;
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.getCachedSourceTileCount());
+    EXPECT_EQ(1, provider.getCachedSourceTileBytes());
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(firstSourceKey, imagery.requestedKeys.back());
+
+    auto secondTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, secondBounds),
+        128.0,
+        128.0).tile;
+    ASSERT_NE(nullptr, secondTile);
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.getCachedSourceTileCount());
+    EXPECT_EQ(1, provider.getCachedSourceTileBytes());
+    ASSERT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(secondSourceKey, imagery.requestedKeys.back());
+
+    auto firstAgainTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, firstEastHalf),
+        128.0,
+        128.0).tile;
+    ASSERT_NE(nullptr, firstAgainTile);
+    ASSERT_TRUE(provider.loadTile(*firstAgainTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.getCachedSourceTileCount());
+    EXPECT_EQ(1, provider.getCachedSourceTileBytes());
+    ASSERT_EQ(3u, imagery.requestedKeys.size());
+    EXPECT_EQ(firstSourceKey, imagery.requestedKeys.back());
+}
+
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksAreCachedByRequestedTileLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

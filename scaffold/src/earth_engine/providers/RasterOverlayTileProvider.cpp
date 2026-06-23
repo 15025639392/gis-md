@@ -1283,6 +1283,7 @@ private:
         failed.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
         failed.terminalFailure = true;
+        failed.sizeBytes = 1;
 
         auto cached = std::make_shared<SourceTileAsset>(failed);
         std::lock_guard<std::mutex> lock(cacheMutex);
@@ -1302,6 +1303,7 @@ private:
             cacheBytes -= existing->second.sizeBytes;
         }
         failed.generation = ++cacheGeneration;
+        cacheBytes += failed.sizeBytes;
         cacheLru.emplace_back(key, failed.generation);
         cache[key] = failed;
         pruneCacheToBudget(cacheBudgetBytes);
