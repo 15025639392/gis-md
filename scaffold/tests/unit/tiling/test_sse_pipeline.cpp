@@ -1274,6 +1274,42 @@ std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     return model;
 }
 
+std::unique_ptr<GltfModel> makeFlatGeographicTerrainGltfModel(
+    const Rectangle& rectangle,
+    double heightMeters) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.west(),
+            rectangle.south(),
+            heightMeters));
+    primitive.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.east(),
+            rectangle.south(),
+            heightMeters));
+    primitive.vertices[2].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.west(),
+            rectangle.north(),
+            heightMeters));
+    primitive.vertices[3].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.east(),
+            rectangle.north(),
+            heightMeters));
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.primitiveMode = GltfPrimitiveMode::Triangles;
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.baseVertices = primitive.vertices;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 std::unique_ptr<GltfModel> makeWebMercatorQuadTerrainGltfModel(
     const Rectangle& rectangle) {
     auto model = makeQuadTerrainGltfModel(rectangle);
@@ -24769,45 +24805,76 @@ void testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height() {
 }
 
 void testTilesetSampleHeightUsesBestLoadedTerrainTile() {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
-    TilesetTestAccess::ensureTile(tileset, rootKey);
-    TilesetTestAccess::ensureTile(tileset, childKey);
-    TilesetTestAccess::putTerrainCache(
-        tileset, rootKey, makeFlatHeightmap(10.0f));
-    TilesetTestAccess::putTerrainCache(
-        tileset, childKey, makeFlatHeightmap(42.0f));
+    auto provider = std::make_unique<ManualCompletionContentProvider>(
+        std::vector<TileKey>{rootKey, childKey});
+    provider->ownsTerrainQuadtree = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
 
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    check(root != nullptr && child != nullptr,
+          "Tileset: sampleHeight glTF terrain tiles are created");
+    if (!root || !child) return;
+    const Rectangle rootBounds = tileset.tileScheme().tileToRectangle(rootKey);
     const Rectangle childBounds = tileset.tileScheme().tileToRectangle(childKey);
+    root->content.renderContent.prepareGltfContent(
+        makeFlatGeographicTerrainGltfModel(rootBounds, 10.0),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->markRenderContentDone();
+    child->content.renderContent.prepareGltfContent(
+        makeFlatGeographicTerrainGltfModel(childBounds, 42.0),
+        Mat4::identity());
+    child->content.renderContent.setTerrainRenderContent(true);
+    child->markRenderContentDone();
+
     const double lng = (childBounds.west() + childBounds.east()) * 0.5;
     const double lat = (childBounds.south() + childBounds.north()) * 0.5;
 
     check(std::abs(tileset.sampleHeight(lng, lat) - 42.0f) < 1e-6f,
-          "Tileset: sampleHeight uses the most detailed loaded terrain tile");
+          "Tileset: sampleHeight uses the most detailed loaded glTF terrain tile");
 }
 
 void testTilesetSampleHeightFallsBackToLoadedAncestorTerrain() {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
-    TilesetTestAccess::ensureTile(tileset, rootKey);
-    TilesetTestAccess::ensureTile(tileset, childKey);
-    TilesetTestAccess::putTerrainCache(
-        tileset, rootKey, makeFlatHeightmap(123.0f));
+    auto provider = std::make_unique<ManualCompletionContentProvider>(
+        std::vector<TileKey>{rootKey, childKey});
+    provider->ownsTerrainQuadtree = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
 
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr &&
+              TilesetTestAccess::ensureTile(tileset, childKey) != nullptr,
+          "Tileset: sampleHeight glTF ancestor fallback tiles are created");
+    if (!root) return;
+    const Rectangle rootBounds = tileset.tileScheme().tileToRectangle(rootKey);
     const Rectangle childBounds = tileset.tileScheme().tileToRectangle(childKey);
+    root->content.renderContent.prepareGltfContent(
+        makeFlatGeographicTerrainGltfModel(rootBounds, 123.0),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->markRenderContentDone();
+
     const double lng = (childBounds.west() + childBounds.east()) * 0.5;
     const double lat = (childBounds.south() + childBounds.north()) * 0.5;
 
     check(std::abs(tileset.sampleHeight(lng, lat) - 123.0f) < 1e-6f,
-          "Tileset: sampleHeight falls back to a loaded ancestor terrain tile");
+          "Tileset: sampleHeight falls back to a loaded glTF ancestor terrain tile");
 }
 
 void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
