@@ -281,6 +281,10 @@ private:
         std::shared_ptr<std::vector<uint8_t>> body,
         int statusCode,
         std::vector<std::vector<uint8_t>> metadataBodies);
+    std::vector<QuantizedMeshAvailabilityUpdate>
+    parseAvailabilityUpdatesFromMetadataRequests(
+        const std::vector<LayerAvailabilityRequest>& availabilityRequests,
+        const std::vector<std::vector<uint8_t>>& metadataBodies) const;
     std::vector<LayerConfig> layers_;
     std::string urlTemplate_;
     std::string attribution_;

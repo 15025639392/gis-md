@@ -10,6 +10,7 @@
 #include "../core/geodesy/QuadtreeGeometricError.h"
 #include "../core/geodesy/WebMercatorProjection.h"
 #include "../content/QuantizedMeshContentLoader.h"
+#include "../terrain/QuantizedMeshParser.h"
 #include "../tiling/TileSelectionRootPolicy.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -1986,12 +1987,18 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
          statusCode,
          metadataBodies = std::move(metadataBodies)]() mutable {
             RequestCompletionGuard completion{requestsCompleted_};
+            const std::vector<QuantizedMeshAvailabilityUpdate>
+                sideEffectAvailabilityUpdates =
+                    parseAvailabilityUpdatesFromMetadataRequests(
+                        *availabilityRequests,
+                        metadataBodies);
             if (token->isCancelled()) {
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::cancelled());
                 return;
             }
             if (!isCesiumSuccessfulHttpStatus(statusCode) || body->empty()) {
+                applyAvailabilityUpdates(sideEffectAvailabilityUpdates);
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::failed());
                 return;
@@ -2046,6 +2053,7 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     rasterOverlayProjectionForTerrainScheme(contentSchemeId),
                     std::move(currentTileAvailabilityUpdate));
             if (result.status == TileLoadStatus::Failed) {
+                applyAvailabilityUpdates(sideEffectAvailabilityUpdates);
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::failed());
                 return;
@@ -2054,6 +2062,29 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
             completion.complete();
             (*callback)(key, std::move(result));
         });
+}
+
+std::vector<QuantizedMeshAvailabilityUpdate>
+QuantizedMeshTerrainProvider::parseAvailabilityUpdatesFromMetadataRequests(
+    const std::vector<LayerAvailabilityRequest>& availabilityRequests,
+    const std::vector<std::vector<uint8_t>>& metadataBodies) const {
+    std::vector<QuantizedMeshAvailabilityUpdate> updates;
+    updates.reserve(availabilityRequests.size());
+    for (size_t i = 0; i < availabilityRequests.size(); ++i) {
+        if (i >= metadataBodies.size() || metadataBodies[i].empty()) {
+            continue;
+        }
+        QuantizedMeshAvailabilityUpdate update;
+        update.layerIndex =
+            static_cast<int>(availabilityRequests[i].layerIndex);
+        update.subtreeKey = availabilityRequests[i].subtreeKey;
+        update.metadataAvailability =
+            QuantizedMeshParser::parseMetadataAvailability(
+                metadataBodies[i].data(),
+                metadataBodies[i].size());
+        updates.push_back(std::move(update));
+    }
+    return updates;
 }
 
 ProviderRequestDiagnostics
