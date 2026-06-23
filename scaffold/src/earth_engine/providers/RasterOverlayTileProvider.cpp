@@ -1859,7 +1859,6 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
 
 void RasterOverlayTileProvider::invalidateCompositeTileCache() {
     ++compositeTileEpoch_;
-    compositeSourcePlans_.clear();
     for (auto it = tiles_.begin(); it != tiles_.end();) {
         if (isCompositeCacheKey(it->first) &&
             it->second &&
@@ -2003,8 +2002,6 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
             sourcePlan.minY,
             sourcePlan.maxX,
             sourcePlan.maxY);
-        compositeSourcePlans_[ck] =
-            CompositeSourcePlanCacheEntry{std::move(sourcePlan), *sourceBounds};
         return {existing->second, false, std::move(sourceTiles)};
     }
 
@@ -2029,8 +2026,6 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
     tiles_[ck] = tile;
-    compositeSourcePlans_[ck] =
-        CompositeSourcePlanCacheEntry{std::move(sourcePlan), *sourceBounds};
     return {tile, false, std::move(sourceTiles)};
 }
 
@@ -2194,18 +2189,6 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
         sourcePlan.maxX = tile.getCompositeSourceMaxX();
         sourcePlan.maxY = tile.getCompositeSourceMaxY();
         sourceBounds = tile.getCompositeSourceBounds();
-    } else if (auto cachedPlan = compositeSourcePlans_.find(ck);
-               cachedPlan != compositeSourcePlans_.end()) {
-        sourcePlan = cachedPlan->second.sourcePlan;
-        sourceBounds = cachedPlan->second.sourceBounds;
-        tile.setCompositeSourcePlan(
-            sourcePlan.sourceZoom,
-            sourceBounds,
-            sourcePlan.sourceKeys,
-            sourcePlan.minX,
-            sourcePlan.minY,
-            sourcePlan.maxX,
-            sourcePlan.maxY);
     } else {
         const std::optional<Rectangle> mappedSourceBounds =
             mapGeometryBoundsToImageryCoverage(
@@ -2232,8 +2215,6 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
             maximumTextureSize_,
             getMinimumLevel(),
             getMaximumLevel());
-        compositeSourcePlans_[ck] =
-            CompositeSourcePlanCacheEntry{sourcePlan, sourceBounds};
         tile.setCompositeSourcePlan(
             sourcePlan.sourceZoom,
             sourceBounds,
@@ -2668,7 +2649,6 @@ void RasterOverlayTileProvider::trimUnusedTiles() {
         const bool retainedOutsideProvider = it->second.use_count() > 1;
         if (age > kRetainedUnusedFrames && !inFlight &&
             !retainedOutsideProvider) {
-            compositeSourcePlans_.erase(it->first);
             it = tiles_.erase(it);
         } else {
             ++it;
