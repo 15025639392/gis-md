@@ -2318,7 +2318,7 @@ void testBoundingSpherePlaneBoundaryMatchesCesiumNative() {
           "BoundingSphere: positive tangent plane is inside like cesium-native");
 }
 
-void testRasterOverlayProviderCompositeTile() {
+void testRasterOverlayProviderMappedRasterTile() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     auto geometryScheme = TileScheme::createGeographicTMS();
@@ -2328,30 +2328,30 @@ void testRasterOverlayProviderCompositeTile() {
     Rectangle geometryBounds = geometryScheme->tileToRectangle(geometryKey);
 
     provider.setFrameNumber(1);
-    auto compositeTile = provider.mapRasterTilesToGeometryTile(
+    auto mappedRasterTile = provider.mapRasterTilesToGeometryTile(
         projectForProvider(provider, geometryBounds), 512.0, 512.0).tile;
-    check(compositeTile != nullptr,
-          "RasterOverlayTileProvider: composite tile is created");
-    check(compositeTile && compositeTile->isMappedRasterTile(),
-          "RasterOverlayTileProvider: composite tile uses composite source path");
-    check(compositeTile &&
-              compositeTile->getRectangle() ==
+    check(mappedRasterTile != nullptr,
+          "RasterOverlayTileProvider: mapped raster tile is created");
+    check(mappedRasterTile && mappedRasterTile->isMappedRasterTile(),
+          "RasterOverlayTileProvider: mapped raster tile uses mapped source path");
+    check(mappedRasterTile &&
+              mappedRasterTile->getRectangle() ==
                   projectForProvider(provider, geometryBounds),
-          "RasterOverlayTileProvider: composite tile keeps geometry bounds");
-    check(compositeTile && !compositeTile->getCacheKey().empty() &&
-              compositeTile->getCacheKey().find("mapped-raster/") == 0,
+          "RasterOverlayTileProvider: mapped raster tile keeps geometry bounds");
+    check(mappedRasterTile && !mappedRasterTile->getCacheKey().empty() &&
+              mappedRasterTile->getCacheKey().find("mapped-raster/") == 0,
           "RasterOverlayTileProvider: mapped raster tile uses mapped cache key");
-    check(compositeTile && compositeTile->getMappedSourceZoom() == 3,
+    check(mappedRasterTile && mappedRasterTile->getMappedSourceZoom() == 3,
           "RasterOverlayTileProvider: source zoom follows target screen pixels");
-    check(compositeTile && compositeTile->getTargetScreenPixelsX() == 512.0 &&
-              compositeTile->getTargetScreenPixelsY() == 512.0,
+    check(mappedRasterTile && mappedRasterTile->getTargetScreenPixelsX() == 512.0 &&
+              mappedRasterTile->getTargetScreenPixelsY() == 512.0,
           "RasterOverlayTileProvider: target screen pixels are retained");
 
     provider.setFrameNumber(122);
-    provider.markUsed(*compositeTile);
+    provider.markUsed(*mappedRasterTile);
     provider.trimUnusedTiles();
     check(provider.getCachedTileCount() == 1,
-          "RasterOverlayTileProvider: markUsed(tile) retains composite tile");
+          "RasterOverlayTileProvider: markUsed(tile) retains mapped raster tile");
 }
 
 void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
@@ -2447,7 +2447,7 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
 
     const Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
@@ -2461,9 +2461,9 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
     FrameResourceBudget firstFrameBudget;
     firstFrameBudget.beginFrame(1, config);
 
-    check(compositeTile &&
-              provider.loadTileThrottled(*compositeTile, &firstFrameBudget) &&
-              compositeTile->getState() ==
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &firstFrameBudget) &&
+              mappedRasterTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
               firstFrameBudget.rasterNetworkRequestsIssued() > 2 &&
               imagery.pendingRequests.size() ==
@@ -2483,11 +2483,11 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
     const size_t firstBatchSize = imagery.pendingRequests.size();
-    check(compositeTile &&
-              provider.loadTileThrottled(*compositeTile, &secondFrameBudget) &&
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &secondFrameBudget) &&
               imagery.pendingRequests.size() == firstBatchSize &&
               secondFrameBudget.rasterNetworkRequestsIssued() == 0,
-          "RasterOverlayTileProvider: loading composite tiles do not pump source requests on later frames");
+          "RasterOverlayTileProvider: loading mapped raster tiles do not pump source requests on later frames");
 
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {
@@ -2512,7 +2512,7 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
 
     const Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
@@ -2526,14 +2526,14 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    check(compositeTile &&
-              provider.loadTileThrottled(*compositeTile, &budget) &&
-              compositeTile->getState() ==
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+              mappedRasterTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
               imagery.pendingRequests.size() > 4,
           "RasterOverlayTileProvider: oversized quadtree source batch issues complete fanout like cesium-native");
     check(budget.rasterNetworkRequestsIssued() == 0,
-          "RasterOverlayTileProvider: oversized composite fanout is not split by frame request budget");
+          "RasterOverlayTileProvider: oversized mapped raster fanout is not split by frame request budget");
 
     FrameResourceBudgetConfig secondConfig = config;
     secondConfig.maxNetworkInflight = 4;
@@ -2542,14 +2542,14 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
     secondBudget.beginFrame(2, secondConfig);
     const Rectangle independentSourceBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 5, 3});
-    RasterOverlayTileProvider::TilePtr secondComposite =
+    RasterOverlayTileProvider::TilePtr secondMappedRaster =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, independentSourceBounds),
             512.0,
             512.0).tile;
     const size_t firstBatchSize = imagery.pendingRequests.size();
-    check(secondComposite &&
-              !provider.loadTileThrottled(*secondComposite, &secondBudget) &&
+    check(secondMappedRaster &&
+              !provider.loadTileThrottled(*secondMappedRaster, &secondBudget) &&
               imagery.pendingRequests.size() == firstBatchSize,
           "RasterOverlayTileProvider: oversized raster batch still respects inflight pressure for later loads");
 }
@@ -2561,7 +2561,7 @@ void testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches() {
 
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
 
     FrameResourceBudgetConfig config;
@@ -2570,9 +2570,9 @@ void testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    check(compositeTile &&
-              compositeTile->getMappedSourceZoom() == 5 &&
-              provider.loadTileThrottled(*compositeTile, &budget) &&
+    check(mappedRasterTile &&
+              mappedRasterTile->getMappedSourceZoom() == 5 &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               imagery.pendingRequests.size() == 16,
           "RasterOverlayTileProvider: quadtree source range trims Cesium-native tile-edge touches");
 
@@ -2599,11 +2599,11 @@ void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
         TileKey{"XYZ-WebMercator", 3, 2, 5});
     provider.setCoverageRectangle(coverageBounds);
 
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, outsideCoverageBounds), 512.0, 512.0).tile;
 
-    check(compositeTile && compositeTile->isMappedRasterTile(),
-          "RasterOverlayTileProvider: base imagery outside coverage creates a clamped composite tile like cesium-native");
+    check(mappedRasterTile && mappedRasterTile->isMappedRasterTile(),
+          "RasterOverlayTileProvider: base imagery outside coverage creates a clamped mapped raster tile like cesium-native");
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
@@ -2611,8 +2611,8 @@ void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    check(compositeTile &&
-              provider.loadTileThrottled(*compositeTile, &budget) &&
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: clamped coverage miss issues edge source requests");
 
@@ -2631,7 +2631,7 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
 
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(
                 provider,
@@ -2645,16 +2645,16 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    check(compositeTile &&
-              provider.loadTileThrottled(*compositeTile, &budget) &&
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
-          "RasterOverlayTileProvider: antimeridian composite starts source requests");
-    if (!compositeTile || imagery.pendingRequests.empty()) {
+          "RasterOverlayTileProvider: antimeridian mapped raster starts source requests");
+    if (!mappedRasterTile || imagery.pendingRequests.empty()) {
         return;
     }
 
     const int tileCountX =
-        imageryScheme->tileCountX(compositeTile->getMappedSourceZoom());
+        imageryScheme->tileCountX(mappedRasterTile->getMappedSourceZoom());
     bool onlyDatelineEdgeColumns = true;
     bool hasWesternEdge = false;
     bool hasEasternEdge = false;
@@ -2666,7 +2666,7 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
         hasEasternEdge = hasEasternEdge || easternEdge;
         onlyDatelineEdgeColumns =
             onlyDatelineEdgeColumns &&
-            request.key.z == compositeTile->getMappedSourceZoom() &&
+            request.key.z == mappedRasterTile->getMappedSourceZoom() &&
             (westernEdge || easternEdge);
     }
     check(onlyDatelineEdgeColumns && hasWesternEdge && hasEasternEdge,
@@ -2680,7 +2680,7 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
 
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
 
     FrameResourceBudgetConfig config;
@@ -2689,8 +2689,8 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    check(compositeTile &&
-              provider.loadTileThrottled(*compositeTile, &budget) &&
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               imagery.pendingRequests.size() == 16,
           "RasterOverlayTileProvider: parent-fallback fixture starts with source tile requests");
     if (imagery.pendingRequests.empty()) return;
@@ -2719,7 +2719,7 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
           "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
 }
 
-void testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
+void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2727,7 +2727,7 @@ void testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
 
     const Rectangle geometryBounds =
         Rectangle::fromDegrees(-180.0, -60.0, 180.0, 60.0);
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, geometryBounds),
             512.0,
@@ -2740,11 +2740,11 @@ void testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    check(compositeTile && compositeTile->isMappedRasterTile() &&
-              provider.loadTileThrottled(*compositeTile, &budget) &&
+    check(mappedRasterTile && mappedRasterTile->isMappedRasterTile() &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
-          "RasterOverlayTileProvider: failed-source fixture starts composite source requests");
-    if (!compositeTile || imagery.pendingRequests.empty()) {
+          "RasterOverlayTileProvider: failed-source fixture starts mapped source requests");
+    if (!mappedRasterTile || imagery.pendingRequests.empty()) {
         return;
     }
 
@@ -2763,17 +2763,17 @@ void testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
     uploadBudget.beginFrame(2, config);
     processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
 
-    check(compositeTile->getState() == RasterOverlayTile::LoadState::Loaded &&
-              compositeTile->getTexture() == nullptr &&
-              compositeTile->isMoreDetailAvailable() ==
+    check(mappedRasterTile->getState() == RasterOverlayTile::LoadState::Loaded &&
+              mappedRasterTile->getTexture() == nullptr &&
+              mappedRasterTile->isMoreDetailAvailable() ==
                   RasterOverlayTile::MoreDetailAvailable::No,
-          "RasterOverlayTileProvider: all-failed composite sources load empty imagery like cesium-native");
-    check(provider.loadTileThrottled(*compositeTile, &uploadBudget) &&
+          "RasterOverlayTileProvider: all-failed mapped sources load empty imagery like cesium-native");
+    check(provider.loadTileThrottled(*mappedRasterTile, &uploadBudget) &&
               provider.requestDiagnostics().externalResourceRequestsFailed ==
                   failedDiag.externalResourceRequestsFailed &&
               provider.requestDiagnostics().externalResourceRequestsCompleted ==
                   failedDiag.externalResourceRequestsCompleted,
-          "RasterOverlayTileProvider: loaded failed-source composite does not replay terminal source requests");
+          "RasterOverlayTileProvider: loaded failed-source mapped raster does not replay terminal source requests");
 }
 
 void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
@@ -2787,7 +2787,7 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
 
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
 
     FrameResourceBudgetConfig config;
@@ -2797,8 +2797,8 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    check(compositeTile &&
-              provider.loadTileThrottled(*compositeTile, &budget) &&
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: fallback-share fixture starts child source requests");
     if (imagery.pendingRequests.empty()) return;
@@ -2841,7 +2841,7 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
           "RasterOverlayTileProvider: direct parent waiter keeps a valid rectangle");
 }
 
-void testRasterOverlayDirectTileJoinsCompositeSourceInFlight() {
+void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<SlowRasterTextureUploader>();
@@ -2852,7 +2852,7 @@ void testRasterOverlayDirectTileJoinsCompositeSourceInFlight() {
 
     Rectangle broadBounds =
         Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0);
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, broadBounds),
             1024.0,
@@ -2862,13 +2862,13 @@ void testRasterOverlayDirectTileJoinsCompositeSourceInFlight() {
     config.maxRasterNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkInflight = 1024;
     config.maxRasterUploadsPerFrame = 1024;
-    FrameResourceBudget compositeBudget;
-    compositeBudget.beginFrame(1, config);
+    FrameResourceBudget mappedRasterBudget;
+    mappedRasterBudget.beginFrame(1, config);
 
-    check(compositeTile &&
-              provider.loadTileThrottled(*compositeTile, &compositeBudget) &&
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &mappedRasterBudget) &&
               !imagery.pendingRequests.empty(),
-          "RasterOverlayTileProvider: composite source sharing fixture starts source requests");
+          "RasterOverlayTileProvider: mapped source sharing fixture starts source requests");
     if (imagery.pendingRequests.empty()) return;
 
     const TileKey sharedSourceKey = imagery.pendingRequests.front().key;
@@ -2878,7 +2878,7 @@ void testRasterOverlayDirectTileJoinsCompositeSourceInFlight() {
     directBudget.beginFrame(2, config);
     check(directTile &&
               provider.loadTileThrottled(*directTile, &directBudget),
-          "RasterOverlayTileProvider: direct tile joins composite source in-flight");
+          "RasterOverlayTileProvider: direct tile joins mapped source in-flight");
 
     const int matchingRequests =
         static_cast<int>(std::count_if(
@@ -2888,7 +2888,7 @@ void testRasterOverlayDirectTileJoinsCompositeSourceInFlight() {
                 return request.key == sharedSourceKey;
             }));
     check(matchingRequests == 1,
-          "RasterOverlayTileProvider: composite and direct tile share one imagery request like cesium-native SharedAssetDepot");
+          "RasterOverlayTileProvider: mapped raster and direct tile share one imagery request like cesium-native SharedAssetDepot");
 
     imagery.pendingRequests.front().callback(
         sharedSourceKey,
@@ -2898,12 +2898,12 @@ void testRasterOverlayDirectTileJoinsCompositeSourceInFlight() {
     provider.processPendingUploads(false, &uploadBudget);
 
     check(directTile->getState() == RasterOverlayTile::LoadState::Loaded,
-          "RasterOverlayTileProvider: direct tile loads from shared composite source");
+          "RasterOverlayTileProvider: direct tile loads from shared mapped source");
     check(directTile->getTexture() != nullptr,
           "RasterOverlayTileProvider: direct tile receives texture from shared source upload");
 }
 
-void testRasterOverlayCompositeTilesShareSourceInFlight() {
+void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<SlowRasterTextureUploader>();
@@ -2926,12 +2926,12 @@ void testRasterOverlayCompositeTilesShareSourceInFlight() {
             sharedSourceBounds.south(),
             sharedSourceBounds.east(),
             sharedSourceBounds.north());
-    RasterOverlayTileProvider::TilePtr westComposite =
+    RasterOverlayTileProvider::TilePtr westMappedRaster =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, westHalf),
             512.0,
             512.0).tile;
-    RasterOverlayTileProvider::TilePtr eastComposite =
+    RasterOverlayTileProvider::TilePtr eastMappedRaster =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, eastHalf),
             512.0,
@@ -2946,26 +2946,26 @@ void testRasterOverlayCompositeTilesShareSourceInFlight() {
     FrameResourceBudget eastBudget;
     eastBudget.beginFrame(2, config);
 
-    check(westComposite && westComposite->isMappedRasterTile() &&
-              eastComposite && eastComposite->isMappedRasterTile() &&
-              provider.loadTileThrottled(*westComposite, &westBudget) &&
-              provider.loadTileThrottled(*eastComposite, &eastBudget),
-          "RasterOverlayTileProvider: overlapping composite fixtures start loading");
-    if (!westComposite || !eastComposite || imagery.pendingRequests.empty()) {
+    check(westMappedRaster && westMappedRaster->isMappedRasterTile() &&
+              eastMappedRaster && eastMappedRaster->isMappedRasterTile() &&
+              provider.loadTileThrottled(*westMappedRaster, &westBudget) &&
+              provider.loadTileThrottled(*eastMappedRaster, &eastBudget),
+          "RasterOverlayTileProvider: overlapping mapped raster fixtures start loading");
+    if (!westMappedRaster || !eastMappedRaster || imagery.pendingRequests.empty()) {
         return;
     }
 
-    check(westComposite->getMappedSourceZoom() == eastComposite->getMappedSourceZoom() &&
+    check(westMappedRaster->getMappedSourceZoom() == eastMappedRaster->getMappedSourceZoom() &&
               westBudget.rasterNetworkRequestsIssued() == 12 &&
               eastBudget.rasterNetworkRequestsIssued() == 4 &&
               imagery.pendingRequests.size() == 16,
-          "RasterOverlayTileProvider: composite geometry tiles share one source imagery request");
+          "RasterOverlayTileProvider: mapped raster geometry tiles share one source imagery request");
     check(provider.requestDiagnostics().externalResourceRequestsStarted ==
               static_cast<int>(imagery.pendingRequests.size()),
-          "RasterOverlayTileProvider: diagnostics count shared composite source requests once");
+          "RasterOverlayTileProvider: diagnostics count shared mapped source requests once");
     check(provider.requestDiagnostics().peakExternalResourceBlockingRequests ==
               static_cast<int>(imagery.pendingRequests.size()),
-          "RasterOverlayTileProvider: diagnostics keep composite source fanout peak");
+          "RasterOverlayTileProvider: diagnostics keep mapped source fanout peak");
 
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {
@@ -2976,9 +2976,9 @@ void testRasterOverlayCompositeTilesShareSourceInFlight() {
     uploadBudget.beginFrame(3, config);
     processPendingRasterUploadsUntil(provider, 2, &uploadBudget);
 
-    check(westComposite->getState() == RasterOverlayTile::LoadState::Loaded &&
-              eastComposite->getState() == RasterOverlayTile::LoadState::Loaded,
-          "RasterOverlayTileProvider: both composite tiles resolve from shared source assets");
+    check(westMappedRaster->getState() == RasterOverlayTile::LoadState::Loaded &&
+              eastMappedRaster->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: both mapped raster tiles resolve from shared source assets");
 }
 
 void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
@@ -2988,10 +2988,10 @@ void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
 
     const Rectangle rootBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 0, 0, 0});
-    RasterOverlayTileProvider::TilePtr compositeTile =
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 131072.0, 131072.0).tile;
 
-    check(compositeTile && compositeTile->getMappedSourceZoom() == 5,
+    check(mappedRasterTile && mappedRasterTile->getMappedSourceZoom() == 5,
           "RasterOverlayTileProvider: quadtree source zoom is reduced until combined texture fits like cesium-native");
 }
 
@@ -27043,7 +27043,7 @@ int main() {
     testActivatedRasterOverlayBindsProviderOwner();
     testActivatedRasterOverlayExposesPlaceholderBeforeProvider();
     testActivatedRasterOverlayEnsuresProvider();
-    testRasterOverlayProviderCompositeTile();
+    testRasterOverlayProviderMappedRasterTile();
     testRasterOverlayProviderDirectTileForExactProviderRectangle();
     testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch();
     testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative();
@@ -27051,10 +27051,10 @@ int main() {
     testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss();
     testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian();
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
-    testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative();
+    testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
-    testRasterOverlayDirectTileJoinsCompositeSourceInFlight();
-    testRasterOverlayCompositeTilesShareSourceInFlight();
+    testRasterOverlayDirectTileJoinsMappedSourceInFlight();
+    testRasterOverlayMappedRasterTilesShareSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterMappedUsesRenderContentDetailsRectangle();

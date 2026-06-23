@@ -323,7 +323,7 @@ private:
     /// Provider-level source imagery depot, matching cesium-native
     /// SharedAssetDepot ownership. Geometry requests may compose different
     /// output tiles, but the underlying quadtree source tile is shared by
-    /// TileKey here rather than owned by an individual composite request.
+    /// TileKey here rather than owned by an individual mapped source request.
     struct SourceTileAsset {
         TileKey key;
         Rectangle bounds;

@@ -2612,7 +2612,7 @@ int RasterOverlayTileProvider::processPendingUploads(
                 uploadImage->width > 1024 ||
                 uploadImage->height > 1024) {
                 __android_log_print(ANDROID_LOG_INFO, "RasterOverlayTileProvider",
-                    "upload %.2fms size=%dx%d composite=%d mipmap=%d cache=%s",
+                    "upload %.2fms size=%dx%d mapped=%d mipmap=%d cache=%s",
                     uploadMs,
                     uploadImage->width,
                     uploadImage->height,
