@@ -53,7 +53,9 @@ RenderContentRasterOverlayStateUpdater::update(
 
     std::optional<size_t> firstMoreDetailAvailable;
     std::optional<size_t> firstUnknownAvailability;
-    for (size_t i : overlayProcessingOrder) {
+    for (size_t orderIndex = 0; orderIndex < overlayProcessingOrder.size();
+         ++orderIndex) {
+        const size_t i = overlayProcessingOrder[orderIndex];
         if (i >= tile.rasterOverlayState.mappingCount()) {
             continue;
         }
@@ -106,11 +108,11 @@ RenderContentRasterOverlayStateUpdater::update(
         if (moreDetail == RasterMappedToTilesetTile::MoreDetail::Yes &&
             tile.rasterOverlayState.hasReadyMapping(i) &&
             !firstMoreDetailAvailable) {
-            firstMoreDetailAvailable = i;
+            firstMoreDetailAvailable = orderIndex;
         } else if (
             moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown &&
             !firstUnknownAvailability) {
-            firstUnknownAvailability = i;
+            firstUnknownAvailability = orderIndex;
         }
         overlay.loadThrottled(*activeProvider, &frameResourceBudget);
     }

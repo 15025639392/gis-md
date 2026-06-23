@@ -15658,6 +15658,95 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
           "RenderContentRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
 }
 
+void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
+    auto firstOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    auto secondOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay firstActivated(*firstOverlay);
+    ActivatedRasterOverlay secondActivated(*secondOverlay);
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
+                     scheme->tileToRectangle(
+                         TileKey{scheme->id(), 0, 0, 0}));
+    tile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+
+    Renderer renderer(nullptr);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{
+        &firstActivated,
+        &secondActivated};
+    const std::vector<size_t> naturalOrder{0, 1};
+    RenderContentRasterOverlayStateUpdater::update(
+        renderer,
+        tile,
+        overlays,
+        naturalOrder,
+        nullptr,
+        16.0,
+        budget);
+
+    RasterMappedToTilesetTile* firstMapped =
+        tile.rasterOverlayState.mappingAt(0);
+    RasterMappedToTilesetTile* secondMapped =
+        tile.rasterOverlayState.mappingAt(1);
+    RasterOverlayTile* firstTile =
+        firstMapped ? firstMapped->getLoadingTile() : nullptr;
+    RasterOverlayTile* secondTile =
+        secondMapped ? secondMapped->getLoadingTile() : nullptr;
+    check(firstTile && secondTile,
+          "RenderContentRasterOverlayStateUpdater: processing-order fixture maps both overlays");
+    if (!firstTile || !secondTile) return;
+
+    firstTile->setState(RasterOverlayTile::LoadState::Loaded);
+    firstTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    secondTile->setState(RasterOverlayTile::LoadState::Loaded);
+    secondTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Unknown);
+
+    const std::vector<size_t> unknownFirstOrder{1, 0};
+    const RenderContentRasterOverlayUpdateAction blocked =
+        RenderContentRasterOverlayStateUpdater::update(
+            renderer,
+            tile,
+            overlays,
+            unknownFirstOrder,
+            nullptr,
+            16.0,
+            budget);
+    check(!blocked.createRasterOverlayUpsampledChildren,
+          "RenderContentRasterOverlayStateUpdater: earlier Unknown in processing order blocks later more-detail upsample like cesium-native");
+
+    const RenderContentRasterOverlayUpdateAction allowed =
+        RenderContentRasterOverlayStateUpdater::update(
+            renderer,
+            tile,
+            overlays,
+            naturalOrder,
+            nullptr,
+            16.0,
+            budget);
+    check(allowed.createRasterOverlayUpsampledChildren,
+          "RenderContentRasterOverlayStateUpdater: earlier Yes in processing order allows upsample before later Unknown like cesium-native");
+}
+
 void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -28068,6 +28157,7 @@ int main() {
     testTilesetUnloadExternalContentClearsChildren();
     testTilesetDirectExternalContentUnloadClearsChildren();
     testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction();
+    testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder();
     testRasterUpsampledChildrenMaterializeFromGltfRenderContent();
 
     std::cout << "\n=== " << gFailures << " failures ===\n";
