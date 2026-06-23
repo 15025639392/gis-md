@@ -1738,6 +1738,7 @@ private:
                         self->state->activeRasterComposeTasks.fetch_sub(
                             1,
                             std::memory_order_relaxed);
+                        self->state->resolveDestructionIfComplete();
                     };
                     try {
                         CompositeImageResult composed =
@@ -1778,6 +1779,7 @@ private:
             state->activeRasterComposeTasks.fetch_sub(
                 1,
                 std::memory_order_relaxed);
+            state->resolveDestructionIfComplete();
             onFailure();
         }
     }
@@ -1863,6 +1865,32 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
                std::memory_order_acquire) > 0) {
         std::this_thread::yield();
     }
+    size_t abandonedUploads = 0;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        abandonedUploads = asyncState_->pendingUploads.size();
+        asyncState_->pendingUploads.clear();
+        asyncState_->inFlightRequests.clear();
+    }
+    for (size_t i = 0; i < abandonedUploads; ++i) {
+        decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
+    }
+    asyncState_->resolveDestructionIfComplete();
+}
+
+std::shared_future<void>
+RasterOverlayTileProvider::getAsyncDestructionCompleteEvent() {
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->destructionMutex);
+        if (!asyncState_->destructionCompletePromise) {
+            asyncState_->destructionCompletePromise =
+                std::make_shared<std::promise<void>>();
+            asyncState_->destructionCompleteFuture =
+                asyncState_->destructionCompletePromise->get_future().share();
+        }
+    }
+    asyncState_->resolveDestructionIfComplete();
+    return asyncState_->destructionCompleteFuture;
 }
 
 void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
@@ -2522,6 +2550,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             if (!state->alive.load(std::memory_order_acquire)) {
                 decrementActiveRasterTileLoads(
                     state->activeRasterTileLoads);
+                state->resolveDestructionIfComplete();
                 return;
             }
             if (state->sourceTileDepotEpoch != requestSourceDepotEpoch) {
@@ -2532,6 +2561,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                 }
                 decrementActiveRasterTileLoads(
                     state->activeRasterTileLoads);
+                state->resolveDestructionIfComplete();
                 state->revision.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
@@ -2549,6 +2579,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             if (!state->alive.load(std::memory_order_acquire)) {
                 decrementActiveRasterTileLoads(
                     state->activeRasterTileLoads);
+                state->resolveDestructionIfComplete();
                 return;
             }
             if (state->sourceTileDepotEpoch != requestSourceDepotEpoch) {
@@ -2559,6 +2590,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                 }
                 decrementActiveRasterTileLoads(
                     state->activeRasterTileLoads);
+                state->resolveDestructionIfComplete();
                 state->revision.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
@@ -2570,6 +2602,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             }
             decrementActiveRasterTileLoads(
                 state->activeRasterTileLoads);
+            state->resolveDestructionIfComplete();
             state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
@@ -2619,6 +2652,7 @@ int RasterOverlayTileProvider::issueMappedSourceImageSet(
                    std::memory_order_relaxed,
                    std::memory_order_relaxed)) {
         }
+        state->resolveDestructionIfComplete();
     };
     auto onSourceFailed = [state]() {
         state->rasterSourceRequestsFailed.fetch_add(
@@ -2699,6 +2733,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (targetTiles.empty()) {
             decrementActiveRasterTileLoads(
                 asyncState_->activeRasterTileLoads);
+            asyncState_->resolveDestructionIfComplete();
             continue;
         }
 
@@ -2721,6 +2756,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             decrementActiveRasterTileLoads(
                 asyncState_->activeRasterTileLoads);
+            asyncState_->resolveDestructionIfComplete();
             ++processed;
             continue;
         }
@@ -2734,6 +2770,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             decrementActiveRasterTileLoads(
                 asyncState_->activeRasterTileLoads);
+            asyncState_->resolveDestructionIfComplete();
             ++processed;
             continue;
         }
@@ -2801,6 +2838,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
         decrementActiveRasterTileLoads(
             asyncState_->activeRasterTileLoads);
+        asyncState_->resolveDestructionIfComplete();
         ++processed;
     }
     return processed;

@@ -27,6 +27,7 @@
 #include <cmath>
 #include <memory>
 #include <deque>
+#include <future>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -3279,6 +3280,37 @@ TEST(RasterOverlayLifecycleTest, MappedRasterTileWithAllSourcesFailedLoadsWithou
         [](const TileKey& key) {
             return key.z == 0;
         }));
+}
+
+TEST(RasterOverlayLifecycleTest,
+     ProviderDestructionFutureWaitsForLateRasterCallbacksLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    std::shared_future<void> destroyed;
+    {
+        auto provider = std::make_unique<RasterOverlayTileProvider>(
+            imagery,
+            *scheme);
+        provider->setReady(true);
+        RasterOverlayTileProvider::TilePtr tile =
+            provider->getTile(TileKey{"XYZ-WebMercator", 1, 0, 0});
+        ASSERT_NE(nullptr, tile);
+        ASSERT_TRUE(provider->loadTile(*tile));
+        ASSERT_EQ(1u, imagery.pending.size());
+
+        destroyed = provider->getAsyncDestructionCompleteEvent();
+        EXPECT_EQ(
+            std::future_status::timeout,
+            destroyed.wait_for(std::chrono::milliseconds(0)));
+    }
+
+    EXPECT_EQ(
+        std::future_status::timeout,
+        destroyed.wait_for(std::chrono::milliseconds(0)));
+    imagery.completeNext();
+    EXPECT_EQ(
+        std::future_status::ready,
+        destroyed.wait_for(std::chrono::seconds(1)));
 }
 
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceFailureDoesNotFallbackBelowOverlayMinimumLevel) {

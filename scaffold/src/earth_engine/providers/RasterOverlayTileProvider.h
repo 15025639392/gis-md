@@ -21,6 +21,7 @@
 #include <functional>
 #include <atomic>
 #include <cstdint>
+#include <future>
 
 namespace earth_engine {
 
@@ -154,6 +155,7 @@ public:
     /// cesium-native: returns the owner RasterOverlay.
     class RasterOverlay* getOwner() const { return owner_; }
     void setOwner(RasterOverlay* owner);
+    std::shared_future<void> getAsyncDestructionCompleteEvent();
     void applyOwnerOptions();
     const Rectangle& getCoverageRectangle() const { return coverageRectangle_; }
     void setCoverageRectangle(const Rectangle& coverageRectangle);
@@ -394,6 +396,32 @@ private:
         std::atomic<int> rasterSourceRequestsFailed{0};
         std::atomic<uint64_t> revision{0};
         std::atomic<bool> alive{true};
+        mutable std::mutex destructionMutex;
+        std::shared_ptr<std::promise<void>> destructionCompletePromise;
+        std::shared_future<void> destructionCompleteFuture;
+        bool destructionCompleteResolved = false;
+
+        bool hasActiveAsyncWork() const {
+            return activeRasterTileLoads.load(std::memory_order_acquire) > 0 ||
+                   activeRasterSourceRequests.load(std::memory_order_acquire) > 0 ||
+                   activeRasterComposeTasks.load(std::memory_order_acquire) > 0;
+        }
+
+        void resolveDestructionIfComplete() {
+            std::shared_ptr<std::promise<void>> promise;
+            {
+                std::lock_guard<std::mutex> lock(destructionMutex);
+                if (alive.load(std::memory_order_acquire) ||
+                    hasActiveAsyncWork() ||
+                    !destructionCompletePromise ||
+                    destructionCompleteResolved) {
+                    return;
+                }
+                destructionCompleteResolved = true;
+                promise = destructionCompletePromise;
+            }
+            promise->set_value();
+        }
     };
     std::shared_ptr<ProviderAsyncState> asyncState_ =
         std::make_shared<ProviderAsyncState>();
