@@ -25,7 +25,7 @@ public:
         bool& resourceSmoothingActiveForFrame,
         int64_t& maximumCachedBytes,
         double& tileCacheUnloadTimeLimit,
-        bool includeLegacyHeightmapTerrainCache);
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode);
 
     void updateTotalBytesUsed();
     void markEligibleForUnloading(const std::string& key);
@@ -48,7 +48,8 @@ private:
     bool& resourceSmoothingActiveForFrame_;
     int64_t& maximumCachedBytes_;
     double& tileCacheUnloadTimeLimit_;
-    bool includeLegacyHeightmapTerrainCache_ = true;
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode_ =
+        LegacyHeightmapTerrainCacheMode::Include;
 };
 
 } // namespace earth_engine

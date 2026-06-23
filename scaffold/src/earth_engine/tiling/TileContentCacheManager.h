@@ -19,6 +19,11 @@ namespace earth_engine {
 
 class IPrepareRendererResources;
 
+enum class LegacyHeightmapTerrainCacheMode {
+    Include,
+    ContentOwnedTerrainOnly
+};
+
 class TileContentCacheManager {
 public:
     int64_t totalBytesUsed() const { return totalBytesUsed_; }
@@ -34,7 +39,7 @@ public:
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
         const TileContentLifecycleManager& lifecycle,
-        bool includeLegacyHeightmapTerrainCache);
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode);
 
     void markEligibleForUnloading(
         const std::unordered_map<
@@ -47,20 +52,22 @@ public:
         const std::string& cacheKey,
         TileContentLifecycleManager& lifecycle,
         TileLoadQueue& loadQueue,
-        bool includeLegacyHeightmapTerrainCache = true);
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
+            LegacyHeightmapTerrainCacheMode::Include);
 
     TileCacheUnloadContentResult unloadTileContent(
         TilesetTile& tile,
         TileContentLifecycleManager& lifecycle,
         IPrepareRendererResources* pPrepRenderer,
-        bool includeLegacyHeightmapTerrainCache = true);
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
+            LegacyHeightmapTerrainCacheMode::Include);
 
     template <typename ClearChildrenFn>
     void unloadCachedBytes(
         int64_t maximumCachedBytes,
         double unloadTimeLimitMs,
         bool resourceSmoothingActive,
-        bool includeLegacyHeightmapTerrainCache,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
@@ -86,12 +93,12 @@ public:
             [this,
              &lifecycle,
              pPrepRenderer,
-             includeLegacyHeightmapTerrainCache](TilesetTile& tile) {
+             legacyHeightmapCacheMode](TilesetTile& tile) {
                 return unloadTileContent(
                     tile,
                     lifecycle,
                     pPrepRenderer,
-                    includeLegacyHeightmapTerrainCache);
+                    legacyHeightmapCacheMode);
             },
             [this](const std::string& key) {
                 markIneligibleForUnloading(key);
@@ -104,7 +111,7 @@ public:
             updateTotalBytesUsed(
                 tiles,
                 lifecycle,
-                includeLegacyHeightmapTerrainCache);
+                legacyHeightmapCacheMode);
             cacheBytesDirty_ = false;
         }
     }

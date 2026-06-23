@@ -11363,7 +11363,7 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     lifecycle.legacyTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
 
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle, LegacyHeightmapTerrainCacheMode::Include);
     manager.markEligibleForUnloading(tiles, cacheKey);
     check(manager.totalBytesUsed() > 0 &&
               manager.unloadQueue().contains(cacheKey),
@@ -11374,7 +11374,7 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -11457,7 +11457,7 @@ void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
         -1,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -11483,7 +11483,7 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     tiles[cacheKey] = std::move(tile);
     lifecycle.legacyTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
 
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle, LegacyHeightmapTerrainCacheMode::Include);
     const int64_t bytesBeforeUnload = manager.totalBytesUsed();
     manager.cacheBytesDirty() = false;
     manager.markEligibleForUnloading(tiles, cacheKey);
@@ -11492,7 +11492,7 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
         0,
         0.0,
         true,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -11535,7 +11535,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
 
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle, LegacyHeightmapTerrainCacheMode::Include);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
 
@@ -11543,7 +11543,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -11597,7 +11597,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
 
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle, LegacyHeightmapTerrainCacheMode::Include);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
 
@@ -11605,7 +11605,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -11660,7 +11660,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
 
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle, LegacyHeightmapTerrainCacheMode::Include);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
 
@@ -11668,7 +11668,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -11685,7 +11685,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -11738,7 +11738,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
 
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle, LegacyHeightmapTerrainCacheMode::Include);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
 
@@ -11746,7 +11746,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -11764,7 +11764,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,

@@ -113,7 +113,9 @@ Tileset::Tileset(ProviderOwnership providers,
           options_.tileCacheUnloadTimeLimit,
           ::earth_engine::effectiveLegacyTerrainProvider(
               legacyTerrainProvider_.get(),
-              contentProvider_.get()) != nullptr),
+              contentProvider_.get()) != nullptr
+              ? LegacyHeightmapTerrainCacheMode::Include
+              : LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),

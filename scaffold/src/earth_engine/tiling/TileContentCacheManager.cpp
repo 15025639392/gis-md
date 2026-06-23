@@ -10,8 +10,9 @@ void TileContentCacheManager::markResourcesDirty() {
 void TileContentCacheManager::updateTotalBytesUsed(
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     const TileContentLifecycleManager& lifecycle,
-    bool includeLegacyHeightmapTerrainCache) {
-    totalBytesUsed_ = includeLegacyHeightmapTerrainCache
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
+    totalBytesUsed_ =
+        legacyHeightmapCacheMode == LegacyHeightmapTerrainCacheMode::Include
         ? TileCacheMetrics::estimateTotalBytes(
               tiles,
               lifecycle.legacyTerrainCache())
@@ -33,10 +34,11 @@ void TileContentCacheManager::eraseTileIndexState(
     const std::string& cacheKey,
     TileContentLifecycleManager& lifecycle,
     TileLoadQueue& loadQueue,
-    bool includeLegacyHeightmapTerrainCache) {
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         ignoredTerrainCache;
-    auto& terrainCache = includeLegacyHeightmapTerrainCache
+    auto& terrainCache =
+        legacyHeightmapCacheMode == LegacyHeightmapTerrainCacheMode::Include
         ? lifecycle.legacyTerrainCache()
         : ignoredTerrainCache;
     TileIndexState::eraseCacheKeyState(
@@ -55,10 +57,11 @@ TileCacheUnloadContentResult TileContentCacheManager::unloadTileContent(
     TilesetTile& tile,
     TileContentLifecycleManager& lifecycle,
     IPrepareRendererResources* pPrepRenderer,
-    bool includeLegacyHeightmapTerrainCache) {
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         ignoredTerrainCache;
-    auto& terrainCache = includeLegacyHeightmapTerrainCache
+    auto& terrainCache =
+        legacyHeightmapCacheMode == LegacyHeightmapTerrainCacheMode::Include
         ? lifecycle.legacyTerrainCache()
         : ignoredTerrainCache;
     return TileContentUnloadCoordinator::unloadContent(

@@ -17,7 +17,7 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
     bool& resourceSmoothingActiveForFrame,
     int64_t& maximumCachedBytes,
     double& tileCacheUnloadTimeLimit,
-    bool includeLegacyHeightmapTerrainCache)
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode)
     : contentCache_(contentCache),
       contentLifecycle_(contentLifecycle),
       loadQueue_(loadQueue),
@@ -25,13 +25,13 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
       resourceSmoothingActiveForFrame_(resourceSmoothingActiveForFrame),
       maximumCachedBytes_(maximumCachedBytes),
       tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit),
-      includeLegacyHeightmapTerrainCache_(includeLegacyHeightmapTerrainCache) {}
+      legacyHeightmapCacheMode_(legacyHeightmapCacheMode) {}
 
 void TileCacheOwnershipManager::updateTotalBytesUsed() {
     contentCache_.updateTotalBytesUsed(
         tiles_,
         contentLifecycle_,
-        includeLegacyHeightmapTerrainCache_);
+        legacyHeightmapCacheMode_);
 }
 
 void TileCacheOwnershipManager::markEligibleForUnloading(
@@ -49,7 +49,7 @@ void TileCacheOwnershipManager::eraseTileIndexState(const std::string& key) {
         key,
         contentLifecycle_,
         loadQueue_,
-        includeLegacyHeightmapTerrainCache_);
+        legacyHeightmapCacheMode_);
 }
 
 void TileCacheOwnershipManager::clearChildrenRecursively(
@@ -74,7 +74,7 @@ TileCacheUnloadContentResult TileCacheOwnershipManager::unloadTileContent(
         tile,
         contentLifecycle_,
         pPrepRenderer,
-        includeLegacyHeightmapTerrainCache_);
+        legacyHeightmapCacheMode_);
     if (result == TileCacheUnloadContentResult::RemoveAndClearChildren) {
         clearChildrenRecursively(&tile, pPrepRenderer);
     }
@@ -91,7 +91,7 @@ void TileCacheOwnershipManager::unloadCachedBytes(
         maximumCachedBytes,
         tileCacheUnloadTimeLimit_,
         resourceSmoothingActiveForFrame_,
-        includeLegacyHeightmapTerrainCache_,
+        legacyHeightmapCacheMode_,
         tiles_,
         contentLifecycle_,
         pPrepRenderer,

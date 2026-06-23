@@ -47,7 +47,10 @@ struct ExternalSubtreeFixture {
         tiles[rootCacheKey] = std::move(root);
         tiles[childCacheKey] = std::move(child);
 
-        manager.updateTotalBytesUsed(tiles, lifecycle, true);
+        manager.updateTotalBytesUsed(
+            tiles,
+            lifecycle,
+            LegacyHeightmapTerrainCacheMode::Include);
         manager.markEligibleForUnloading(tiles, rootCacheKey);
     }
 
@@ -84,7 +87,7 @@ struct ExternalSubtreeFixture {
             0,
             0.0,
             false,
-            true,
+            LegacyHeightmapTerrainCacheMode::Include,
             tiles,
             lifecycle,
             nullptr,
@@ -114,7 +117,10 @@ TEST(
     lifecycle.legacyTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
 
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(
+        tiles,
+        lifecycle,
+        LegacyHeightmapTerrainCacheMode::Include);
     manager.markEligibleForUnloading(tiles, cacheKey);
 
     EXPECT_GT(manager.totalBytesUsed(), 0);
@@ -125,7 +131,7 @@ TEST(
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -170,7 +176,7 @@ TEST(
             *tileRaw,
             lifecycle,
             nullptr,
-            false);
+            LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
     auto cacheIt = lifecycle.legacyTerrainCache().find(cacheKey);
@@ -202,7 +208,7 @@ TEST(
             *tile,
             lifecycle,
             nullptr,
-            true);
+            LegacyHeightmapTerrainCacheMode::Include);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
     EXPECT_EQ(TileLoadState::Unloaded, tileRaw->content.loadState);
@@ -231,7 +237,7 @@ TEST(
         -1,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         tiles,
         lifecycle,
         nullptr,
@@ -334,7 +340,7 @@ TEST(
         cacheKey,
         lifecycle,
         loadQueue,
-        false);
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly);
 
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
     auto cacheIt = lifecycle.legacyTerrainCache().find(cacheKey);
@@ -358,7 +364,7 @@ TEST(
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         fixture.tiles,
         fixture.lifecycle,
         nullptr,
@@ -388,7 +394,7 @@ TEST(
         0,
         0.0,
         false,
-        true,
+        LegacyHeightmapTerrainCacheMode::Include,
         fixture.tiles,
         fixture.lifecycle,
         nullptr,
