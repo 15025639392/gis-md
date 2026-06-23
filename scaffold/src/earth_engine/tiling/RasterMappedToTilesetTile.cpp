@@ -37,6 +37,18 @@ RasterMappedToTilesetTile::MoreDetail toMappedMoreDetail(
     return RasterMappedToTilesetTile::MoreDetail::Unknown;
 }
 
+RasterMappedToTilesetTile::SourceTileList toMappedSourceTileList(
+    RasterOverlayTileProvider::RasterSourceTileMapping&& sourceTiles) {
+    return RasterMappedToTilesetTile::SourceTileList{
+        sourceTiles.sourceZoom,
+        sourceTiles.sourceBounds,
+        std::move(sourceTiles.sourceKeys),
+        sourceTiles.minX,
+        sourceTiles.minY,
+        sourceTiles.maxX,
+        sourceTiles.maxY};
+}
+
 bool hasSameOverlayOwner(const RasterOverlayTile& candidate,
                          const RasterOverlayTileProvider& provider) {
     const auto* owner = provider.getOwner();
@@ -249,10 +261,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                     targetScreenPixelsX,
                     targetScreenPixelsY);
             _pLoadingTile = mapping.tile;
-            mappedSourceTiles_ = SourceTileList{
-                mapping.sourceTiles.sourceZoom,
-                mapping.sourceTiles.sourceBounds,
-                mapping.sourceTiles.sourceKeys};
+            mappedSourceTiles_ =
+                toMappedSourceTileList(std::move(mapping.sourceTiles));
             directRasterTile_ = mapping.directTile;
             loadingTileSource_ = ReadyTileSource::Real;
         } else if (hasRenderContentDetails) {
@@ -282,10 +292,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                         targetScreenPixelsX,
                         targetScreenPixelsY);
                 _pLoadingTile = mapping.tile;
-                mappedSourceTiles_ = SourceTileList{
-                    mapping.sourceTiles.sourceZoom,
-                    mapping.sourceTiles.sourceBounds,
-                    mapping.sourceTiles.sourceKeys};
+                mappedSourceTiles_ =
+                    toMappedSourceTileList(std::move(mapping.sourceTiles));
                 directRasterTile_ = mapping.directTile;
                 loadingTileSource_ = ReadyTileSource::Real;
             } else {

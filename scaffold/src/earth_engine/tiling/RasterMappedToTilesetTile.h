@@ -64,6 +64,10 @@ public:
         int sourceZoom = 0;
         Rectangle sourceBounds = Rectangle::MAXIMUM;
         std::vector<TileKey> sourceKeys;
+        int minX = 0;
+        int minY = 0;
+        int maxX = 0;
+        int maxY = 0;
 
         bool empty() const { return sourceKeys.empty(); }
     };

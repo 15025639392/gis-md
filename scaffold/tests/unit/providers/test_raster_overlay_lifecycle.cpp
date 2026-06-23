@@ -3795,6 +3795,17 @@ TEST(RasterOverlayLifecycleTest, RenderContentDetailsRectangleMapsRealTileLikeCe
     EXPECT_TRUE(mapped.getMappedSourceTiles().sourceBounds.equalsEpsilon(
         preciseRectangle,
         1e-12));
+    EXPECT_LE(mapped.getMappedSourceTiles().minX,
+              mapped.getMappedSourceTiles().maxX);
+    EXPECT_LE(mapped.getMappedSourceTiles().minY,
+              mapped.getMappedSourceTiles().maxY);
+    for (const TileKey& sourceKey :
+         mapped.getMappedSourceTiles().sourceKeys) {
+        EXPECT_GE(sourceKey.x, mapped.getMappedSourceTiles().minX);
+        EXPECT_LE(sourceKey.x, mapped.getMappedSourceTiles().maxX);
+        EXPECT_GE(sourceKey.y, mapped.getMappedSourceTiles().minY);
+        EXPECT_LE(sourceKey.y, mapped.getMappedSourceTiles().maxY);
+    }
     EXPECT_TRUE(missing.empty());
 }
 
@@ -3830,6 +3841,10 @@ TEST(RasterOverlayLifecycleTest, RenderContentDetailsAlignedRectangleMapsDirectT
     EXPECT_EQ(imageryKey, mapped.getMappedSourceTiles().sourceKeys.front());
     EXPECT_EQ(imageryKey.z, mapped.getMappedSourceTiles().sourceZoom);
     EXPECT_EQ(preciseRectangle, mapped.getMappedSourceTiles().sourceBounds);
+    EXPECT_EQ(imageryKey.x, mapped.getMappedSourceTiles().minX);
+    EXPECT_EQ(imageryKey.y, mapped.getMappedSourceTiles().minY);
+    EXPECT_EQ(imageryKey.x, mapped.getMappedSourceTiles().maxX);
+    EXPECT_EQ(imageryKey.y, mapped.getMappedSourceTiles().maxY);
     EXPECT_TRUE(missing.empty());
     EXPECT_EQ(1, provider.getCachedTileCount());
 }
