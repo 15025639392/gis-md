@@ -79,7 +79,8 @@ public:
                 continue;
             }
 
-            if (requestKind == TileLoadRequestKind::UpsampledTerrain) {
+            if (requestKind == TileLoadRequestKind::UpsampledTerrain ||
+                requestKind == TileLoadRequestKind::GltfTerrainUpsample) {
                 if (!tileState ||
                     !prepareUpsampleSourceTile(
                         *tileState,
@@ -87,11 +88,12 @@ public:
                     continue;
                 }
 
+                const bool needsGltfTerrainUpsample =
+                    requestKind == TileLoadRequestKind::GltfTerrainUpsample;
                 const bool hasGltfTerrainSource =
                     TileGltfTerrainUpsampledChildMaterializer::
                         findGltfTerrainSource(*tileState) != nullptr;
-                if (snapshot.contentProviderOwnsTerrainQuadtree &&
-                    !hasGltfTerrainSource) {
+                if (needsGltfTerrainUpsample && !hasGltfTerrainSource) {
                     continue;
                 }
                 const TileLoadDomain upsampleDomain = hasGltfTerrainSource

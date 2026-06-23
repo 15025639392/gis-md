@@ -92,6 +92,20 @@ TEST(TileLoadRequestPlannerTest, UpsampledTerrainTakesLocalPathBeforeProviderChe
         TileLoadRequestPlanner::classify(snapshot));
 }
 
+TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainUpsampleUsesGltfPath) {
+    TileLoadRequestSnapshot snapshot;
+    snapshot.hasTile = true;
+    snapshot.upsampledFromParent = true;
+    snapshot.contentProviderOwnsTerrainQuadtree = true;
+    snapshot.loadState = TileLoadState::Unloaded;
+    snapshot.legacyTerrainProviderSupportsTile = true;
+    snapshot.terrainAlreadyCached = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::GltfTerrainUpsample,
+        TileLoadRequestPlanner::classify(snapshot));
+}
+
 TEST(TileLoadRequestPlannerTest, SkipsNonRetryableLoadStates) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;

@@ -11,6 +11,9 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
     }
 
     if (snapshot.upsampledFromParent) {
+        if (snapshot.contentProviderOwnsTerrainQuadtree) {
+            return TileLoadRequestKind::GltfTerrainUpsample;
+        }
         return TileLoadRequestKind::UpsampledTerrain;
     }
 

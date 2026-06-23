@@ -7,6 +7,7 @@ namespace earth_engine {
 enum class TileLoadRequestKind {
     Skip,
     UpsampledTerrain,
+    GltfTerrainUpsample,
     Content,
     LegacyHeightmapTerrain
 };
