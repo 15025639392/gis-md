@@ -2826,6 +2826,9 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(parentOnlyKey));
     EXPECT_EQ(1, provider.estimatedRequestFanout(rootKey));
+    EXPECT_EQ(2, provider.requestDiagnostics().requestsStarted);
+    EXPECT_EQ(2, provider.requestDiagnostics().requestsCompleted);
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsFailed);
 
     std::filesystem::remove_all(root);
 }

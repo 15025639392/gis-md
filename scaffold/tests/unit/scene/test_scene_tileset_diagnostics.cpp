@@ -13,22 +13,26 @@ TEST(
     ProviderRequestDiagnostics first;
     first.requestsStarted = 2;
     first.requestsCompleted = 1;
+    first.requestsFailed = 1;
     first.activeWorkerBlockingRequests = 1;
     first.peakWorkerBlockingRequests = 3;
     first.maximumTransportActiveRequests = 8;
     first.externalResourceRequestsStarted = 4;
     first.externalResourceRequestsCompleted = 2;
+    first.externalResourceRequestsFailed = 1;
     first.activeExternalResourceBlockingRequests = 1;
     first.peakExternalResourceBlockingRequests = 5;
 
     ProviderRequestDiagnostics second;
     second.requestsStarted = 5;
     second.requestsCompleted = 4;
+    second.requestsFailed = 2;
     second.activeWorkerBlockingRequests = 2;
     second.peakWorkerBlockingRequests = 2;
     second.maximumTransportActiveRequests = 11;
     second.externalResourceRequestsStarted = 3;
     second.externalResourceRequestsCompleted = 3;
+    second.externalResourceRequestsFailed = 2;
     second.activeExternalResourceBlockingRequests = 2;
     second.peakExternalResourceBlockingRequests = 4;
 
@@ -39,11 +43,13 @@ TEST(
 
     EXPECT_EQ(snapshot.requestsStarted, 7);
     EXPECT_EQ(snapshot.requestsCompleted, 5);
+    EXPECT_EQ(snapshot.requestsFailed, 3);
     EXPECT_EQ(snapshot.activeWorkerBlockingRequests, 3);
     EXPECT_EQ(snapshot.peakWorkerBlockingRequests, 3);
     EXPECT_EQ(snapshot.transportActiveRequestLimit, 11);
     EXPECT_EQ(snapshot.externalResourceRequestsStarted, 7);
     EXPECT_EQ(snapshot.externalResourceRequestsCompleted, 5);
+    EXPECT_EQ(snapshot.externalResourceRequestsFailed, 3);
     EXPECT_EQ(snapshot.activeExternalResourceBlockingRequests, 3);
     EXPECT_EQ(snapshot.peakExternalResourceBlockingRequests, 5);
 }

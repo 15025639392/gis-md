@@ -9,6 +9,7 @@ void ProviderRequestDiagnosticsAggregator::add(
     const ProviderRequestDiagnostics& next) {
     total.requestsStarted += next.requestsStarted;
     total.requestsCompleted += next.requestsCompleted;
+    total.requestsFailed += next.requestsFailed;
     total.activeWorkerBlockingRequests +=
         next.activeWorkerBlockingRequests;
     total.peakWorkerBlockingRequests =
@@ -18,6 +19,8 @@ void ProviderRequestDiagnosticsAggregator::add(
         next.externalResourceRequestsStarted;
     total.externalResourceRequestsCompleted +=
         next.externalResourceRequestsCompleted;
+    total.externalResourceRequestsFailed +=
+        next.externalResourceRequestsFailed;
     total.activeExternalResourceBlockingRequests +=
         next.activeExternalResourceBlockingRequests;
     total.peakExternalResourceBlockingRequests =

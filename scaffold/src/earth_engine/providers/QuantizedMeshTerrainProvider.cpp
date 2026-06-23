@@ -1592,6 +1592,7 @@ void QuantizedMeshTerrainProvider::requestTileContent(
     if (!layers_.empty() && !contentLayer) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+        requestsFailed_.fetch_add(1, std::memory_order_relaxed);
         (*callbackPtr)(key, TileContentLoadResult::failed());
         return;
     }
@@ -1884,6 +1885,9 @@ void QuantizedMeshTerrainProvider::requestSharedMetadataTile(
     auto completeSharedRequest =
         [this, url](int statusCode, std::vector<uint8_t> body) mutable {
             requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+            if (!isCesiumSuccessfulHttpStatus(statusCode)) {
+                requestsFailed_.fetch_add(1, std::memory_order_relaxed);
+            }
             std::vector<InFlightMetadataRequest::Waiter> waiters;
             {
                 std::lock_guard<std::mutex> lock(metadataRequestMutex_);
@@ -1999,6 +2003,7 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
             }
             if (!isCesiumSuccessfulHttpStatus(statusCode) || body->empty()) {
                 applyAvailabilityUpdates(sideEffectAvailabilityUpdates);
+                requestsFailed_.fetch_add(1, std::memory_order_relaxed);
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::failed());
                 return;
@@ -2054,6 +2059,7 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     std::move(currentTileAvailabilityUpdate));
             if (result.status == TileLoadStatus::Failed) {
                 applyAvailabilityUpdates(sideEffectAvailabilityUpdates);
+                requestsFailed_.fetch_add(1, std::memory_order_relaxed);
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::failed());
                 return;
@@ -2092,6 +2098,7 @@ QuantizedMeshTerrainProvider::requestDiagnostics() const {
     diag.requestsStarted = requestsStarted_.load(std::memory_order_relaxed);
     diag.requestsCompleted =
         requestsCompleted_.load(std::memory_order_relaxed);
+    diag.requestsFailed = requestsFailed_.load(std::memory_order_relaxed);
     diag.activeWorkerBlockingRequests =
         activeWorkerBlockingRequests_.load(std::memory_order_relaxed);
     diag.peakWorkerBlockingRequests =

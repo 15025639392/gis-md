@@ -304,6 +304,7 @@ private:
     std::vector<HttpRequestOptions::Header> requestHeaders_;
     std::atomic<int> requestsStarted_{0};
     std::atomic<int> requestsCompleted_{0};
+    std::atomic<int> requestsFailed_{0};
     std::atomic<int> activeWorkerBlockingRequests_{0};
     std::atomic<int> peakWorkerBlockingRequests_{0};
     std::mutex metadataRequestMutex_;

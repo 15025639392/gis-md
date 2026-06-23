@@ -139,6 +139,7 @@ SceneProviderRequestDiagnosticsSnapshot::fromProvider(
     SceneProviderRequestDiagnosticsSnapshot snapshot;
     snapshot.requestsStarted = provider.requestsStarted;
     snapshot.requestsCompleted = provider.requestsCompleted;
+    snapshot.requestsFailed = provider.requestsFailed;
     snapshot.activeWorkerBlockingRequests =
         provider.activeWorkerBlockingRequests;
     snapshot.peakWorkerBlockingRequests =
@@ -149,6 +150,8 @@ SceneProviderRequestDiagnosticsSnapshot::fromProvider(
         provider.externalResourceRequestsStarted;
     snapshot.externalResourceRequestsCompleted =
         provider.externalResourceRequestsCompleted;
+    snapshot.externalResourceRequestsFailed =
+        provider.externalResourceRequestsFailed;
     snapshot.activeExternalResourceBlockingRequests =
         provider.activeExternalResourceBlockingRequests;
     snapshot.peakExternalResourceBlockingRequests =
@@ -160,6 +163,7 @@ void SceneProviderRequestDiagnosticsSnapshot::add(
     const SceneProviderRequestDiagnosticsSnapshot& next) {
     requestsStarted += next.requestsStarted;
     requestsCompleted += next.requestsCompleted;
+    requestsFailed += next.requestsFailed;
     activeWorkerBlockingRequests += next.activeWorkerBlockingRequests;
     peakWorkerBlockingRequests =
         std::max(peakWorkerBlockingRequests,
@@ -173,6 +177,8 @@ void SceneProviderRequestDiagnosticsSnapshot::add(
         next.externalResourceRequestsStarted;
     externalResourceRequestsCompleted +=
         next.externalResourceRequestsCompleted;
+    externalResourceRequestsFailed +=
+        next.externalResourceRequestsFailed;
     activeExternalResourceBlockingRequests +=
         next.activeExternalResourceBlockingRequests;
     peakExternalResourceBlockingRequests =
