@@ -75,6 +75,7 @@ public:
         if (hasHeightmapSurfaceResidue) {
             tile.content.renderContent.clearSurfaceMeshResources();
             tile.content.renderContent.clearRetainedHeightmap();
+            tile.rasterOverlayState.releaseAndClearReferences(nullptr);
             markResourcesDirty();
         }
     }
