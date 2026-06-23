@@ -1359,7 +1359,7 @@ QuantizedMeshTerrainProvider::childTiles(const TileKey& key) const {
         key.schemeId == schemeId_) {
         return TileSelectionRootPolicy::levelZeroTerrainRoots(schemeId_);
     }
-    if (!isTileInLayerRange(key, schemeId_) || key.z >= maxZoom_) {
+    if (!isTileInLayerRange(key, schemeId_)) {
         return {};
     }
     std::vector<TileKey> children = quadtreeChildren(key);

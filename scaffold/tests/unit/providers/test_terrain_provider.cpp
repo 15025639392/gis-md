@@ -3456,6 +3456,45 @@ TEST(QuantizedMeshTerrainProviderTest, LayerJsonMaxzoomDoesNotGateExplicitAvaila
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 3, 0, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, LayerJsonMaxzoomDoesNotStopExplicitAvailabilityChildTilesLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey parentKey{"Geographic-TMS", 1, 0, 0};
+    const std::vector<TileKey> children = provider.childTiles(parentKey);
+
+    ASSERT_EQ(4u, children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 2, 0, 0}), children[0]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 2, 1, 0}), children[1]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 2, 0, 1}), children[2]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 2, 1, 1}), children[3]);
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(children[0]));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(children[1]));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(children[2]));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(children[3]));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, AvailabilityNegativeFieldsDefaultToZeroLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
