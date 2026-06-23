@@ -735,12 +735,15 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(3, provider->getMaximumLevel());
 
     EXPECT_EQ(nullptr, provider->getTile(firstKey));
-    EXPECT_EQ(nullptr,
-              provider->mapRasterTilesToGeometryTile(
-                  projectForProvider(*provider, firstBounds),
-                  1024.0,
-                  1024.0)
-                  .tile);
+    RasterOverlayTileProvider::RasterTileMapping clampedFirstMapping =
+        provider->mapRasterTilesToGeometryTile(
+            projectForProvider(*provider, firstBounds),
+            1024.0,
+            1024.0);
+    ASSERT_NE(nullptr, clampedFirstMapping.tile);
+    EXPECT_TRUE(clampedFirstMapping.tile->isMappedRasterTile());
+    EXPECT_FALSE(clampedFirstMapping.directTile);
+    EXPECT_EQ(nullptr, provider->getTile(firstKey));
 
     RasterOverlayTileProvider::RasterTileMapping secondMapping =
         provider->mapRasterTilesToGeometryTile(
@@ -1019,7 +1022,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageMissClampsToNearestCoverageEdg
 }
 
 TEST(RasterOverlayLifecycleTest,
-     NonBaseOverlayCoverageMissDoesNotClampOrRequestSources) {
+     NonBaseOverlayCoverageMissClampsLikeCesiumNativeCurrentImplementation) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -1044,10 +1047,15 @@ TEST(RasterOverlayLifecycleTest,
             projectForProvider(provider, outsideCoverage),
             512.0,
             512.0);
-    EXPECT_EQ(nullptr, mapping.tile);
+    ASSERT_NE(nullptr, mapping.tile);
+    EXPECT_TRUE(mapping.tile->isMappedRasterTile());
     EXPECT_FALSE(mapping.directTile);
-    EXPECT_TRUE(imagery.requestedKeys.empty());
-    EXPECT_EQ(0, provider.getCachedTileCount());
+    ASSERT_TRUE(provider.loadTile(*mapping.tile));
+    ASSERT_FALSE(imagery.requestedKeys.empty());
+    for (const TileKey& requested : imagery.requestedKeys) {
+        EXPECT_TRUE(scheme->tileToRectangle(requested).intersects(coverage));
+    }
+    EXPECT_EQ(1, provider.getCachedTileCount());
 }
 
 TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampling) {

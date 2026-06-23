@@ -484,9 +484,10 @@ std::optional<Rectangle> mapGeometryBoundsToImageryCoverage(
         return std::nullopt;
     }
 
-    // cesium-native QuadtreeRasterOverlayTileProvider maps base imagery with
-    // no geometry/provider overlap to the nearest coverage edge, allowing edge
-    // texels to stretch rather than dropping the raster tile entirely.
+    // cesium-native QuadtreeRasterOverlayTileProvider currently maps every
+    // overlay with no geometry/provider overlap to the nearest coverage edge.
+    // The source still contains a TODO for base-layer-only behavior, but the
+    // implemented behavior stretches edge texels for all overlay roles.
     double west = 0.0;
     double east = 0.0;
     if (geometryBounds.west() >= coverage.east()) {
@@ -515,7 +516,8 @@ std::optional<Rectangle> mapGeometryBoundsToImageryCoverage(
 }
 
 bool shouldClampOutsideCoverage(const RasterOverlay* owner) {
-    return owner == nullptr || owner->role() == RasterOverlayRole::BaseImagery;
+    (void)owner;
+    return true;
 }
 
 bool isDecodedImageUploadable(const DecodedImage& image) {
