@@ -1739,7 +1739,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentOwnedTerrainUploadDoesNotMutateLegacyHeightmapTerrainCache) {
+     ContentOwnedTerrainUploadClearsStaleLegacyHeightmapTerrainCacheLikeCesiumNative) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -1778,7 +1778,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     cachedHeightmap->maxHeight = 8.0f;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
-    DecodedHeightmap* cachedHeightmapPtr = cachedHeightmap.get();
     terrainCache[cacheKey] = std::move(cachedHeightmap);
 
     RecordingTerrainContentProvider contentProvider;
@@ -1805,10 +1804,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    auto cacheIt = terrainCache.find(cacheKey);
-    ASSERT_NE(terrainCache.end(), cacheIt);
-    EXPECT_EQ(cachedHeightmapPtr, cacheIt->second.get());
-    EXPECT_TRUE(cacheIt->second->valid());
+    EXPECT_EQ(terrainCache.end(), terrainCache.find(cacheKey));
     EXPECT_FALSE(meshEnsured);
     EXPECT_TRUE(gltfEnsured);
     EXPECT_TRUE(resourcesDirty);
