@@ -69,6 +69,18 @@ void logAndroidRasterPipeline(const char*,
                               int) {}
 #endif
 
+void decrementActiveRasterTileLoads(std::atomic<uint32_t>& activeLoads) {
+    uint32_t current = activeLoads.load(
+        std::memory_order_relaxed);
+    while (current > 0 &&
+           !activeLoads.compare_exchange_weak(
+               current,
+               current - 1,
+               std::memory_order_relaxed,
+               std::memory_order_relaxed)) {
+    }
+}
+
 bool uploadAllowedDuringInteraction(
     const std::string& cacheKey,
     const DecodedImage* image) {
@@ -1819,6 +1831,7 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
 
 void RasterOverlayTileProvider::invalidateCompositeTileCache() {
     ++compositeTileEpoch_;
+    compositeSourcePlans_.clear();
     for (auto it = tiles_.begin(); it != tiles_.end();) {
         if (it->first.rfind("composite/", 0) == 0 &&
             it->second &&
@@ -1949,6 +1962,8 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
         existing->second->lastUsedFrame = frameNumber_;
+        compositeSourcePlans_[ck] =
+            CompositeSourcePlanCacheEntry{std::move(sourcePlan), *sourceBounds};
         return {existing->second, false};
     }
 
@@ -1966,6 +1981,8 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
     tiles_[ck] = tile;
+    compositeSourcePlans_[ck] =
+        CompositeSourcePlanCacheEntry{std::move(sourcePlan), *sourceBounds};
     return {tile, false};
 }
 
@@ -2032,13 +2049,8 @@ Texture* RasterOverlayTileProvider::getTexture(const TileKey& key) const {
 }
 
 int RasterOverlayTileProvider::getThrottledTilesCurrentlyLoading() const {
-    int count = 0;
-    for (const auto& [key, tile] : tiles_) {
-        if (tile->getState() == RasterOverlayTile::LoadState::Loading) {
-            ++count;
-        }
-    }
-    return count;
+    return static_cast<int>(
+        asyncState_->activeRasterTileLoads.load(std::memory_order_relaxed));
 }
 
 int RasterOverlayTileProvider::getPendingUploadCount() const {
@@ -2122,30 +2134,41 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
-    const std::optional<Rectangle> sourceBounds =
-        mapGeometryBoundsToImageryCoverage(
+    QuadtreeSourcePlan sourcePlan;
+    Rectangle sourceBounds;
+    auto cachedPlan = compositeSourcePlans_.find(ck);
+    if (cachedPlan != compositeSourcePlans_.end()) {
+        sourcePlan = cachedPlan->second.sourcePlan;
+        sourceBounds = cachedPlan->second.sourceBounds;
+    } else {
+        const std::optional<Rectangle> mappedSourceBounds =
+            mapGeometryBoundsToImageryCoverage(
+                targetBounds,
+                coverageRectangle_,
+                shouldClampOutsideCoverage(owner_));
+        if (!mappedSourceBounds) {
+            logAndroidRasterPipeline("coverage-miss", ck, 0, 0);
+            tile.setMoreDetailAvailable(
+                RasterOverlayTile::MoreDetailAvailable::No);
+            tile.setState(RasterOverlayTile::LoadState::Failed);
+            return false;
+        }
+        sourceBounds = *mappedSourceBounds;
+        sourcePlan = buildQuadtreeSourcePlan(
+            scheme_,
+            provider_,
+            textureUploader_.get(),
             targetBounds,
-            coverageRectangle_,
-            shouldClampOutsideCoverage(owner_));
-    if (!sourceBounds) {
-        logAndroidRasterPipeline("coverage-miss", ck, 0, 0);
-        tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
-        tile.setState(RasterOverlayTile::LoadState::Failed);
-        return false;
+            sourceBounds,
+            tile.getTargetScreenPixelsX(),
+            tile.getTargetScreenPixelsY(),
+            maximumScreenSpaceError_,
+            maximumTextureSize_,
+            getMinimumLevel(),
+            getMaximumLevel());
+        compositeSourcePlans_[ck] =
+            CompositeSourcePlanCacheEntry{sourcePlan, sourceBounds};
     }
-
-    QuadtreeSourcePlan sourcePlan = buildQuadtreeSourcePlan(
-        scheme_,
-        provider_,
-        textureUploader_.get(),
-        targetBounds,
-        *sourceBounds,
-        tile.getTargetScreenPixelsX(),
-        tile.getTargetScreenPixelsY(),
-        maximumScreenSpaceError_,
-        maximumTextureSize_,
-        getMinimumLevel(),
-        getMaximumLevel());
 
     if (sourcePlan.empty()) {
         logAndroidRasterPipeline("empty-plan", ck, 0, sourcePlan.sourceZoom);
@@ -2161,7 +2184,7 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     return loadMappedTile(
         tile,
         std::move(sourcePlan),
-        *sourceBounds,
+        sourceBounds,
         ck,
         budget);
 }
@@ -2218,6 +2241,9 @@ bool RasterOverlayTileProvider::loadMappedTile(
     }
 
     tile.setState(RasterOverlayTile::LoadState::Loading);
+    asyncState_->activeRasterTileLoads.fetch_add(
+        1,
+        std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         asyncState_->inFlightRequests.insert(cacheKey);
@@ -2271,6 +2297,8 @@ bool RasterOverlayTileProvider::loadMappedTile(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 tile->setState(RasterOverlayTile::LoadState::Failed);
             }
+            decrementActiveRasterTileLoads(
+                state->activeRasterTileLoads);
             auto& fr = state->failedTiles[cacheKey];
             if (fr.firstFailTime == 0.0) {
                 fr.firstFailTime = std::chrono::duration<double>(
@@ -2403,7 +2431,11 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (auto it = tiles_.find(upload.cacheKey); it != tiles_.end()) {
             targetTiles.push_back(it->second);
         }
-        if (targetTiles.empty()) continue;
+        if (targetTiles.empty()) {
+            decrementActiveRasterTileLoads(
+                asyncState_->activeRasterTileLoads);
+            continue;
+        }
 
         const DecodedImage* uploadImage = upload.image
             ? upload.image.get()
@@ -2422,6 +2454,8 @@ int RasterOverlayTileProvider::processPendingUploads(
                 target->markLoadedWithoutTexture();
             }
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+            decrementActiveRasterTileLoads(
+                asyncState_->activeRasterTileLoads);
             ++processed;
             continue;
         }
@@ -2433,6 +2467,8 @@ int RasterOverlayTileProvider::processPendingUploads(
                 target->setState(RasterOverlayTile::LoadState::Failed);
             }
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+            decrementActiveRasterTileLoads(
+                asyncState_->activeRasterTileLoads);
             ++processed;
             continue;
         }
@@ -2498,6 +2534,8 @@ int RasterOverlayTileProvider::processPendingUploads(
         }
         budget->recordElapsed(FrameResourceLane::RasterTextureUpload, uploadMs);
         asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+        decrementActiveRasterTileLoads(
+            asyncState_->activeRasterTileLoads);
         ++processed;
     }
     return processed;
@@ -2551,6 +2589,7 @@ void RasterOverlayTileProvider::trimUnusedTiles() {
         const bool retainedOutsideProvider = it->second.use_count() > 1;
         if (age > kRetainedUnusedFrames && !inFlight &&
             !retainedOutsideProvider) {
+            compositeSourcePlans_.erase(it->first);
             it = tiles_.erase(it);
         } else {
             ++it;

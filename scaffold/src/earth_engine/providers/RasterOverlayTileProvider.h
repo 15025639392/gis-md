@@ -245,6 +245,10 @@ private:
 
     struct QuadtreeSourceRequest;
     struct QuadtreeSourceAssetDepot;
+    struct CompositeSourcePlanCacheEntry {
+        QuadtreeSourcePlan sourcePlan;
+        Rectangle sourceBounds;
+    };
 
     static QuadtreeSourcePlan buildQuadtreeSourcePlan(
         const TileScheme& scheme,
@@ -288,6 +292,8 @@ private:
 
     /// All cached tiles retained by this provider (key → shared_ptr).
     std::unordered_map<std::string, TilePtr> tiles_;
+    std::unordered_map<std::string, CompositeSourcePlanCacheEntry>
+        compositeSourcePlans_;
 
     /// cesium-native: shared placeholder tile returned when provider is not ready.
     TilePtr placeholderTile_;
@@ -344,6 +350,7 @@ private:
         uint64_t sourceTileDepotGeneration = 0;
         uint64_t sourceTileDepotEpoch = 0;
         std::unordered_set<std::string> inFlightRequests;
+        std::atomic<uint32_t> activeRasterTileLoads{0};
         std::atomic<uint32_t> activeRasterSourceRequests{0};
         std::atomic<uint32_t> activeRasterComposeTasks{0};
         std::atomic<uint32_t> peakRasterSourceRequests{0};
