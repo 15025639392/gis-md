@@ -274,6 +274,44 @@ public:
     }
 };
 
+class SyncGltfTerrainAvailabilityContentProvider final
+    : public TilesetContentProvider {
+public:
+    std::string id() const override {
+        return "dispatcher-gltf-terrain-availability";
+    }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    void applyTerrainAvailabilityUpdates(
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
+        appliedUpdates.insert(
+            appliedUpdates.end(),
+            updates.begin(),
+            updates.end());
+    }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        auto model = std::make_unique<GltfModel>();
+        TileContentLoadResult result =
+            TileContentLoadResult::render(std::move(model));
+        result.terrainRenderContent = true;
+        QuantizedMeshAvailabilityUpdate update;
+        update.layerIndex = 2;
+        update.subtreeKey = TileKey{"Geographic-TMS", 3, 1, 1};
+        update.metadataAvailability = {{0, 0, 0, 0, 0}};
+        result.quantizedMeshAvailabilityUpdates.push_back(update);
+        callback(key, std::move(result));
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
+};
+
 class DeferredContentProvider final : public TilesetContentProvider {
 public:
     std::string id() const override { return "dispatcher-deferred-content"; }
@@ -854,6 +892,42 @@ TEST(TileLoadRequestDispatcherTest,
     TileLoadResult contentGltf = TileLoadResult::fromContentResult(
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
     EXPECT_TRUE(contentGltf.shouldUpload());
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     GltfTerrainAvailabilityAppliesWhenLoadResultQueuesUploadLikeCesiumNative) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"Geographic-TMS", 3, 1, 1};
+    SyncGltfTerrainAvailabilityContentProvider provider;
+    bool issued = false;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "gltf-terrain-availability",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(issued);
+    EXPECT_EQ(1u, pendingLoads.gltfTerrainUploadCount());
+    ASSERT_EQ(1u, provider.appliedUpdates.size());
+    EXPECT_EQ(2, provider.appliedUpdates.front().layerIndex);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 3, 1, 1}),
+              provider.appliedUpdates.front().subtreeKey);
 }
 
 TEST(TileLoadRequestDispatcherTest,

@@ -62,6 +62,7 @@ struct TileLoadedContent {
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
+    bool quantizedMeshAvailabilityUpdatesApplied = false;
 
     bool hasTerrainPayload() const {
         return terrainPayloadKind != TerrainTilePayloadKind::None ||

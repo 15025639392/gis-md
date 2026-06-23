@@ -91,10 +91,25 @@ public:
              token,
              group,
              priority,
-             domain](const TileKey&, TileContentLoadResult result) mutable {
+             domain,
+             &provider](const TileKey&, TileContentLoadResult result) mutable {
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
+                        TileLoadResult loadResult =
+                            TileLoadResult::fromContentResult(
+                                std::move(result));
+                        if (loadResult.content.hasGltfTerrainPayload() &&
+                            !loadResult.content
+                                 .quantizedMeshAvailabilityUpdates.empty() &&
+                            provider.providesTerrainQuadtree()) {
+                            provider.applyTerrainAvailabilityUpdates(
+                                loadResult.content
+                                    .quantizedMeshAvailabilityUpdates);
+                            loadResult.content
+                                .quantizedMeshAvailabilityUpdatesApplied =
+                                true;
+                        }
                         enqueueCompletedLoadResult(
                             pendingLoads,
                             domain,
@@ -102,8 +117,7 @@ public:
                             cacheKey,
                             group,
                             priority,
-                            TileLoadResult::fromContentResult(
-                                std::move(result)));
+                            std::move(loadResult));
                     }
                     requestState.completeContentRequest(cacheKey);
                 }
