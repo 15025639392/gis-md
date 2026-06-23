@@ -2421,6 +2421,53 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     SharedSourceWaiterAfterProviderDestructionIsIgnored) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto provider = std::make_unique<RasterOverlayTileProvider>(
+        imagery,
+        *scheme,
+        nullptr);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    auto westTile = provider->mapRasterTilesToGeometryTile(
+        projectForProvider(*provider, westHalf),
+        256.0,
+        512.0).tile;
+    auto eastTile = provider->mapRasterTilesToGeometryTile(
+        projectForProvider(*provider, eastHalf),
+        256.0,
+        512.0).tile;
+    ASSERT_NE(nullptr, westTile);
+    ASSERT_NE(nullptr, eastTile);
+
+    ASSERT_TRUE(provider->loadTile(*westTile));
+    ASSERT_TRUE(provider->loadTile(*eastTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+
+    provider.reset();
+    imagery.completeNext();
+
+    EXPECT_TRUE(imagery.pending.empty());
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+}
+
 TEST(RasterOverlayLifecycleTest, SourceTileDepotHonorsSubTileCacheByteBudget) {
     auto ownedImagery = std::make_unique<ParentFallbackImageryProvider>();
     ParentFallbackImageryProvider* imagery = ownedImagery.get();
