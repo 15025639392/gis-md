@@ -81,7 +81,11 @@ Tileset::Tileset(ProviderOwnership providers,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,
                  TilesetOptions options)
-    : legacyTerrainProvider_(std::move(providers.legacyTerrainProvider)),
+    : legacyTerrainProvider_(
+          providers.contentProvider &&
+                  providers.contentProvider->providesTerrainQuadtree()
+              ? std::unique_ptr<TerrainProvider>{}
+              : std::move(providers.legacyTerrainProvider)),
       contentProvider_(std::move(providers.contentProvider)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),

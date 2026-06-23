@@ -258,6 +258,23 @@ struct TilesetTestAccess {
         FrameResourceBudget& budget) {
         tileset.processPendingLoads(false, false, nullptr, &budget);
     }
+
+    static std::unique_ptr<Tileset> makeWithBothTerrainOwners(
+        std::unique_ptr<TerrainProvider> legacyTerrainProvider,
+        std::unique_ptr<TilesetContentProvider> contentProvider) {
+        return std::unique_ptr<Tileset>(new Tileset(
+            Tileset::ProviderOwnership{
+                std::move(legacyTerrainProvider),
+                std::move(contentProvider)},
+            TileScheme::createGeographicTMS(),
+            {},
+            nullptr,
+            TilesetOptions{}));
+    }
+
+    static bool hasLegacyTerrainProvider(const Tileset& tileset) {
+        return tileset.legacyTerrainProvider_ != nullptr;
+    }
 };
 } // namespace earth_engine
 
@@ -560,6 +577,40 @@ public:
 
 private:
     std::vector<TileKey> keys_;
+};
+
+class LifetimeTrackedTerrainProvider final : public TerrainProvider {
+public:
+    explicit LifetimeTrackedTerrainProvider(bool& destroyed)
+        : destroyed_(destroyed) {}
+    ~LifetimeTrackedTerrainProvider() override { destroyed_ = true; }
+
+    std::string id() const override { return "lifetime-tracked-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://lifetime-tracked-terrain";
+    }
+    void requestTile(
+        const TileKey&,
+        CancellationToken,
+        TerrainCallback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {}
+    ProviderRequestDiagnostics requestDiagnostics() const override {
+        ProviderRequestDiagnostics diagnostics;
+        diagnostics.requestsStarted = 99;
+        diagnostics.maximumTransportActiveRequests = 99;
+        return diagnostics;
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+
+private:
+    bool& destroyed_;
 };
 
 class SparseTerrainProvider final : public TerrainProvider {
@@ -1414,6 +1465,38 @@ TEST(
             .contentProviderRequests
             .peakWorkerBlockingRequests,
         0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    ContentTerrainQuadtreeDropsLegacyTerrainOwnerAtConstruction) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    bool legacyDestroyed = false;
+    auto legacyTerrainProvider =
+        std::make_unique<LifetimeTrackedTerrainProvider>(legacyDestroyed);
+    auto contentProvider =
+        std::make_unique<ManualCompletionContentProvider>(key);
+    contentProvider->ownsTerrainQuadtree = true;
+    contentProvider->diagnostics.requestsStarted = 7;
+    contentProvider->diagnostics.maximumTransportActiveRequests = 7;
+
+    std::unique_ptr<Tileset> tileset =
+        TilesetTestAccess::makeWithBothTerrainOwners(
+            std::move(legacyTerrainProvider),
+            std::move(contentProvider));
+
+    EXPECT_TRUE(legacyDestroyed);
+    EXPECT_FALSE(TilesetTestAccess::hasLegacyTerrainProvider(*tileset));
+
+    const TilesetLoadDiagnostics diagnostics = tileset->loadDiagnostics();
+    EXPECT_EQ(diagnostics.terrainProviderRequests.requestsStarted, 0);
+    EXPECT_EQ(
+        diagnostics.terrainProviderRequests.maximumTransportActiveRequests,
+        -1);
+    EXPECT_EQ(diagnostics.contentProviderRequests.requestsStarted, 7);
+    EXPECT_EQ(
+        diagnostics.contentProviderRequests.maximumTransportActiveRequests,
+        7);
 }
 
 TEST(
