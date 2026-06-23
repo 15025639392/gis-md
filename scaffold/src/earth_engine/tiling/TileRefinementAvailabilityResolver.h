@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace earth_engine {
@@ -19,6 +20,35 @@ struct DecodedHeightmap;
 
 class TileRefinementAvailabilityResolver {
 public:
+    template <typename IsAvailabilityBoundaryFn,
+              typename HasLoadedTerrainContentFn>
+    static bool canRefineContentTerrain(
+        const TilesetTile& tile,
+        const TilesetContentProvider& contentProvider,
+        const TileScheme& tileScheme,
+        IsAvailabilityBoundaryFn&& isAvailabilityBoundary,
+        HasLoadedTerrainContentFn&& hasLoadedTerrainContent) {
+        return TileChildMaterializer::canRefine(
+            tile,
+            TileRefinementAvailabilityOptions{
+                !tile.children.empty(),
+                false,
+                false,
+                isAvailabilityBoundary(tile) && !hasLoadedTerrainContent(tile),
+                true,
+                false,
+                tileScheme.maxZoom()},
+            [](const TileKey&) {
+                return std::string{};
+            },
+            [](const std::string&) {
+                return false;
+            },
+            [&contentProvider](const TileKey& key) {
+                return contentProvider.terrainAvailabilityState(key);
+            });
+    }
+
     template <typename CacheKeyFn, typename IsAvailabilityBoundaryFn,
               typename HasLoadedTerrainContentFn>
     static bool canRefine(
@@ -34,14 +64,21 @@ public:
         HasLoadedTerrainContentFn&& hasLoadedTerrainContent) {
         const bool contentProviderOwnsTerrainQuadtree =
             contentProvider && contentProvider->providesTerrainQuadtree();
-        const TerrainProvider* effectiveLegacyTerrainProvider =
-            contentProviderOwnsTerrainQuadtree ? nullptr : legacyTerrainProvider;
+        if (contentProviderOwnsTerrainQuadtree) {
+            return canRefineContentTerrain(
+                tile,
+                *contentProvider,
+                tileScheme,
+                std::forward<IsAvailabilityBoundaryFn>(
+                    isAvailabilityBoundary),
+                std::forward<HasLoadedTerrainContentFn>(
+                    hasLoadedTerrainContent));
+        }
+
         const std::vector<TileKey> contentChildren =
-            contentProvider && !contentProviderOwnsTerrainQuadtree
+            contentProvider
                 ? contentProvider->childTiles(tile.key)
                 : std::vector<TileKey>{};
-        const bool legacyHeightmapCacheCanRefine =
-            !contentProviderOwnsTerrainQuadtree;
 
         return TileChildMaterializer::canRefine(
             tile,
@@ -49,29 +86,18 @@ public:
                 !tile.children.empty(),
                 !contentChildren.empty(),
                 contentProvider &&
-                    !contentProvider->providesTerrainQuadtree() &&
                     contentProvider->supportsTile(tile.key),
                 isAvailabilityBoundary(tile) && !hasLoadedTerrainContent(tile),
-                contentProviderOwnsTerrainQuadtree ||
-                    effectiveLegacyTerrainProvider != nullptr,
-                legacyHeightmapCacheCanRefine,
+                legacyTerrainProvider != nullptr,
+                true,
                 tileScheme.maxZoom()},
             cacheKey,
-            [legacyHeightmapCacheCanRefine, &terrainCache](
-                const std::string& key) {
-                if (!legacyHeightmapCacheCanRefine) {
-                    return false;
-                }
+            [&terrainCache](const std::string& key) {
                 return terrainCache.count(key) > 0;
             },
-            [contentProvider,
-             effectiveLegacyTerrainProvider](const TileKey& key) {
-                if (contentProvider &&
-                    contentProvider->providesTerrainQuadtree()) {
-                    return contentProvider->terrainAvailabilityState(key);
-                }
-                return effectiveLegacyTerrainProvider
-                    ? effectiveLegacyTerrainProvider->availabilityState(key)
+            [legacyTerrainProvider](const TileKey& key) {
+                return legacyTerrainProvider
+                    ? legacyTerrainProvider->availabilityState(key)
                     : TileAvailabilityState::NotAvailable;
             });
     }

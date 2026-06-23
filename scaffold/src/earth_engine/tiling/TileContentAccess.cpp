@@ -149,6 +149,20 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
         return true;
     }
 
+    if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
+        return TileRefinementAvailabilityResolver::canRefineContentTerrain(
+            tile,
+            *contentProvider_,
+            tileScheme_,
+            [this](const TilesetTile& candidate) {
+                return isAvailabilityBoundaryTile(candidate);
+            },
+            [](const TilesetTile& candidate) {
+                return candidate.content.loadState >
+                    TileLoadState::ContentLoading;
+            });
+    }
+
     return TileRefinementAvailabilityResolver::canRefine(
         tile,
         contentProvider_,
