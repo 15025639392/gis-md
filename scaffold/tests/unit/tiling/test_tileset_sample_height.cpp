@@ -207,3 +207,53 @@ TEST(TilesetSampleHeightTest, ContentTerrainQuadtreeSamplesLoadedGltfTerrain) {
 
     EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 17.5f, 1e-4f);
 }
+
+TEST(TilesetSampleHeightTest,
+     ContentTerrainQuadtreeUsesMostDetailedLoadedGltfTerrainTile) {
+    Tileset tileset = makeContentTerrainSamplingTileset();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    ASSERT_NE(root, nullptr);
+    ASSERT_NE(child, nullptr);
+
+    const Rectangle rootBounds = tileset.tileScheme().tileToRectangle(rootKey);
+    const Rectangle childBounds =
+        tileset.tileScheme().tileToRectangle(childKey);
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *root,
+        makeTerrainGltfTriangle(rootBounds, 10.0, 10.0, 10.0));
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *child,
+        makeTerrainGltfTriangle(childBounds, 42.0, 42.0, 42.0));
+
+    const double longitude = childBounds.west() + childBounds.width() * 0.25;
+    const double latitude = childBounds.south() + childBounds.height() * 0.25;
+
+    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 42.0f, 1e-4f);
+}
+
+TEST(TilesetSampleHeightTest,
+     ContentTerrainQuadtreeFallsBackToLoadedGltfAncestorTerrain) {
+    Tileset tileset = makeContentTerrainSamplingTileset();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    ASSERT_NE(TilesetTestAccess::ensureTile(tileset, childKey), nullptr);
+
+    const Rectangle rootBounds = tileset.tileScheme().tileToRectangle(rootKey);
+    const Rectangle childBounds =
+        tileset.tileScheme().tileToRectangle(childKey);
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *root,
+        makeTerrainGltfTriangle(rootBounds, 123.0, 123.0, 123.0));
+
+    const double longitude = childBounds.west() + childBounds.width() * 0.25;
+    const double latitude = childBounds.south() + childBounds.height() * 0.25;
+
+    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 123.0f, 1e-4f);
+}
