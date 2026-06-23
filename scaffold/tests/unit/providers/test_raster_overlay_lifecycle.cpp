@@ -3155,6 +3155,10 @@ TEST(RasterOverlayLifecycleTest, FailedSourceTileIsSharedLikeCesiumNativeDepot) 
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               firstTile->getState());
     EXPECT_EQ(nullptr, firstTile->getTexture());
+    const ProviderRequestDiagnostics firstFailureDiagnostics =
+        provider.requestDiagnostics();
+    EXPECT_EQ(1, firstFailureDiagnostics.externalResourceRequestsFailed);
+    EXPECT_EQ(1, firstFailureDiagnostics.externalResourceRequestsCompleted);
 
     RasterOverlayTileProvider::TilePtr secondTile =
         provider.mapRasterTilesToGeometryTile(
@@ -3182,6 +3186,10 @@ TEST(RasterOverlayLifecycleTest, FailedSourceTileIsSharedLikeCesiumNativeDepot) 
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               secondTile->getState());
     EXPECT_EQ(nullptr, secondTile->getTexture());
+    const ProviderRequestDiagnostics cachedFailureDiagnostics =
+        provider.requestDiagnostics();
+    EXPECT_EQ(1, cachedFailureDiagnostics.externalResourceRequestsFailed);
+    EXPECT_EQ(1, cachedFailureDiagnostics.externalResourceRequestsCompleted);
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail) {

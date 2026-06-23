@@ -696,7 +696,7 @@ std::string sourceCacheKey(uint64_t epoch, const TileKey& key) {
     return "epoch/" + std::to_string(epoch) + "/" + sourceCacheKey(key);
 }
 
-struct LoadedSourceImage {
+struct RasterSourceResult {
     TileKey key;
     Rectangle bounds;
     std::shared_ptr<const DecodedImage> image;
@@ -705,6 +705,10 @@ struct LoadedSourceImage {
         RasterOverlayTile::MoreDetailAvailable::Unknown;
     bool terminalFailure = false;
 };
+
+bool isResolvedRasterSourceResult(const RasterSourceResult& source) {
+    return source.image || source.terminalFailure;
+}
 
 struct PixelRectangle {
     int x = 0;
@@ -760,12 +764,12 @@ PixelRectangle computePixelRectangle(
 CombinedImageMeasurements measureCombinedImage(
     const TileScheme& scheme,
     const Rectangle& targetBounds,
-    const std::vector<LoadedSourceImage>& sources,
+    const std::vector<RasterSourceResult>& sources,
     double projectedWidthPerPixel,
     double projectedHeightPerPixel) {
     std::optional<Rectangle> combinedBounds;
     int channels = 0;
-    for (const LoadedSourceImage& source : sources) {
+    for (const RasterSourceResult& source : sources) {
         if (source.image) {
             channels = std::max(channels, source.image->channels);
         }
@@ -912,12 +916,12 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     const TileScheme& scheme,
     const Rectangle& targetBounds,
     int sourceZoom,
-    std::vector<LoadedSourceImage>&& sources,
+    std::vector<RasterSourceResult>&& sources,
     int maximumSourceZoom) {
     (void)sourceZoom;
     sources.erase(
         std::remove_if(sources.begin(), sources.end(),
-                       [](const LoadedSourceImage& source) {
+                       [](const RasterSourceResult& source) {
                            return !source.image ||
                                   !isRasterCompositeSourceImage(*source.image);
                        }),
@@ -925,7 +929,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     if (sources.empty()) return {};
     double projectedWidthPerPixel = std::numeric_limits<double>::max();
     double projectedHeightPerPixel = std::numeric_limits<double>::max();
-    for (const LoadedSourceImage& source : sources) {
+    for (const RasterSourceResult& source : sources) {
         projectedWidthPerPixel = std::min(
             projectedWidthPerPixel,
             source.bounds.width() / static_cast<double>(source.image->width));
@@ -960,7 +964,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
                           static_cast<size_t>(output->channels),
                           0);
 
-    for (const LoadedSourceImage& source : sources) {
+    for (const RasterSourceResult& source : sources) {
         blitImage(*output,
                   measurements.rectangle,
                   *source.image,
@@ -975,7 +979,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     const bool moreDetailAvailable = std::any_of(
         sources.begin(),
         sources.end(),
-        [maximumSourceZoom](const LoadedSourceImage& source) {
+        [maximumSourceZoom](const RasterSourceResult& source) {
             const RasterOverlayTile::MoreDetailAvailable sourceMoreDetail =
                 source.moreDetailAvailable !=
                         RasterOverlayTile::MoreDetailAvailable::Unknown
@@ -1087,7 +1091,7 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
 
 struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
     : public std::enable_shared_from_this<QuadtreeSourceAssetDepot> {
-    using SourceReady = std::function<void(LoadedSourceImage&&)>;
+    using SourceReady = std::function<void(RasterSourceResult&&)>;
 
     QuadtreeSourceAssetDepot(ImageryProvider& imageryProvider,
                              const TileScheme& tileScheme,
@@ -1117,7 +1121,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         const std::function<void()>& onSourceFailed,
         SourceReady onReady,
         std::vector<TileKey> fallbackInFlightKeys = {}) {
-        std::optional<LoadedSourceImage> cachedSource;
+        std::optional<RasterSourceResult> cachedSource;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
             const std::string originalCacheKey = depotCacheKey(originalKey);
@@ -1128,7 +1132,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             if (it != cache.end() &&
                 (it->second.image || it->second.terminalFailure)) {
                 touchCachedSource(it->first, it->second);
-                LoadedSourceImage source;
+                RasterSourceResult source;
                 source.key = it->second.key;
                 source.bounds = it->second.bounds;
                 source.image = it->second.image;
@@ -1152,7 +1156,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             auto waiter =
                 [self, originalKey, ancestorFallback, onReady](
                     InFlightSourceTileAsset::Result cached) mutable {
-                    onReady(self->loadedSourceFromAsset(
+                    onReady(self->rasterSourceResultFromAsset(
                         cached,
                         originalKey,
                         ancestorFallback));
@@ -1174,7 +1178,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             auto waiter =
                 [self, originalKey, ancestorFallback, onReady](
                     InFlightSourceTileAsset::Result cached) mutable {
-                    onReady(self->loadedSourceFromAsset(
+                    onReady(self->rasterSourceResultFromAsset(
                         cached,
                         originalKey,
                         ancestorFallback));
@@ -1220,7 +1224,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
 
                 if (image) {
                     onSourceFinished();
-                    LoadedSourceImage source;
+                    RasterSourceResult source;
                     source.key = loadedKey;
                     source.bounds = self->scheme.tileToRectangle(loadedKey);
                     source.image =
@@ -1235,11 +1239,11 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                             : RasterOverlayTile::MoreDetailAvailable::No;
                     self->cacheSource(originalKey, source);
                     auto completed = std::make_shared<SourceTileAsset>(
-                        self->cachedSourceFromLoaded(source));
+                        self->sourceAssetFromResult(source));
                     InFlightSourceTileAsset::Result directCompleted =
                         completed;
                     if (loadedKey != originalKey) {
-                        LoadedSourceImage directSource;
+                        RasterSourceResult directSource;
                         directSource.key = loadedKey;
                         directSource.bounds = source.bounds;
                         directSource.image = source.image;
@@ -1248,7 +1252,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                             source.moreDetailAvailable;
                         self->cacheSource(loadedKey, directSource);
                         directCompleted = std::make_shared<SourceTileAsset>(
-                            self->cachedSourceFromLoaded(directSource));
+                            self->sourceAssetFromResult(directSource));
                     }
                     self->finishInFlightSource(originalKey, completed);
                     for (const TileKey& key : fallbackInFlightKeys) {
@@ -1291,14 +1295,14 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
     }
 
 private:
-    LoadedSourceImage loadedSourceFromAsset(
+    RasterSourceResult rasterSourceResultFromAsset(
         const InFlightSourceTileAsset::Result& cached,
         const TileKey& originalKey,
         bool ancestorFallback) const {
         if (!cached) {
-            return LoadedSourceImage{};
+            return RasterSourceResult{};
         }
-        LoadedSourceImage source;
+        RasterSourceResult source;
         source.key = cached->key;
         source.bounds = cached->bounds;
         source.image = cached->image;
@@ -1310,8 +1314,8 @@ private:
         return source;
     }
 
-    SourceTileAsset cachedSourceFromLoaded(
-        const LoadedSourceImage& source) const {
+    SourceTileAsset sourceAssetFromResult(
+        const RasterSourceResult& source) const {
         SourceTileAsset cached;
         cached.key = source.key;
         cached.bounds = source.bounds;
@@ -1377,9 +1381,9 @@ private:
     }
 
     void cacheSource(const TileKey& requestedKey,
-                     const LoadedSourceImage& source) {
+                     const RasterSourceResult& source) {
         if (!source.image) return;
-        SourceTileAsset cached = cachedSourceFromLoaded(source);
+        SourceTileAsset cached = sourceAssetFromResult(source);
         std::lock_guard<std::mutex> lock(cacheMutex);
         if (state->sourceTileDepotEpoch != depotEpoch) {
             return;
@@ -1493,7 +1497,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
                 },
                 onSourceFinished,
                 onSourceFailed,
-                [self](LoadedSourceImage&& source) {
+                [self](RasterSourceResult&& source) {
                     self->finishOneSource(std::move(source));
                 });
         }
@@ -1506,11 +1510,11 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
     }
 
 private:
-    void finishOneSource(LoadedSourceImage&& source) {
+    void finishOneSource(RasterSourceResult&& source) {
         bool finished = false;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (source.image || source.terminalFailure) {
+            if (isResolvedRasterSourceResult(source)) {
                 sources.push_back(std::move(source));
             }
             --remaining;
@@ -1520,7 +1524,7 @@ private:
 
         if (!finished) return;
 
-        std::vector<LoadedSourceImage> completedSources;
+        std::vector<RasterSourceResult> completedSources;
         {
             std::lock_guard<std::mutex> lock(mutex);
             completedSources = std::move(sources);
@@ -1533,7 +1537,7 @@ private:
             rectanglesEqualForDirectRasterTile(
                 targetBounds,
                 completedSources.front().bounds)) {
-            LoadedSourceImage& source = completedSources.front();
+            RasterSourceResult& source = completedSources.front();
             const RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
                 source.moreDetailAvailable !=
                         RasterOverlayTile::MoreDetailAvailable::Unknown
@@ -1572,7 +1576,7 @@ private:
                             std::any_of(
                                 completedSources.begin(),
                                 completedSources.end(),
-                                [](const LoadedSourceImage& source) {
+                                [](const RasterSourceResult& source) {
                                     return source.image &&
                                            !source.sourceSubset.has_value();
                                 });
@@ -1644,7 +1648,7 @@ private:
     size_t nextSourceIndex = 0;
     int remaining = 0;
     bool completed = false;
-    std::vector<LoadedSourceImage> sources;
+    std::vector<RasterSourceResult> sources;
 };
 
 RasterOverlayTileProvider::CompositeImageResult
@@ -1654,13 +1658,13 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
     int sourceZoom,
     std::vector<QuadtreeSourceImage>&& publicSources,
     int maximumSourceZoom) {
-    std::vector<LoadedSourceImage> sources;
+    std::vector<RasterSourceResult> sources;
     sources.reserve(publicSources.size());
     bool haveAnyUsefulImageData = false;
     for (auto& source : publicSources) {
         haveAnyUsefulImageData |=
             source.image != nullptr && !source.sourceSubset.has_value();
-        sources.push_back(LoadedSourceImage{
+        sources.push_back(RasterSourceResult{
             source.key,
             source.bounds,
             std::shared_ptr<const DecodedImage>(std::move(source.image)),

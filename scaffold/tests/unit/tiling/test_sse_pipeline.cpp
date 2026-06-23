@@ -2766,6 +2766,12 @@ void testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
               compositeTile->isMoreDetailAvailable() ==
                   RasterOverlayTile::MoreDetailAvailable::No,
           "RasterOverlayTileProvider: all-failed composite sources load empty imagery like cesium-native");
+    check(provider.loadTileThrottled(*compositeTile, &uploadBudget) &&
+              provider.requestDiagnostics().externalResourceRequestsFailed ==
+                  failedDiag.externalResourceRequestsFailed &&
+              provider.requestDiagnostics().externalResourceRequestsCompleted ==
+                  failedDiag.externalResourceRequestsCompleted,
+          "RasterOverlayTileProvider: loaded failed-source composite does not replay terminal source requests");
 }
 
 void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
