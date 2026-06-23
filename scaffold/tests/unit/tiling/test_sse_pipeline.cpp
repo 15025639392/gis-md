@@ -6150,6 +6150,22 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
 
     const Rectangle geometryRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
+    root->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(geometryRectangle, 4)));
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    root->content.renderContent.setRetainedHeightmap(
+        makeFlatHeightmap(999.0f));
+    check(root->content.renderContent.hasSurfaceMesh() &&
+              root->content.renderContent.hasRetainedHeightmap(),
+          "Tileset: glTF mapped raster fixture starts with stale surface and heightmap residue");
+    if (!root->content.renderContent.hasSurfaceMesh() ||
+        !root->content.renderContent.hasRetainedHeightmap()) {
+        return;
+    }
+
     auto model = makeTexturedTriangleGltfModel();
     model->rasterOverlayDetails.rasterOverlayProjections = {
         RasterOverlayProjection::Geographic,
@@ -6208,6 +6224,9 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     check(cmd.kind == RenderCommandKind::GltfPrimitive &&
               root->content.renderContent.hasGltfModel() &&
               !root->content.renderContent.hasSurfaceMesh() &&
+              !root->content.renderContent.hasRetainedHeightmap() &&
+              root->content.renderContent.surfaceVertexBuffer() == nullptr &&
+              root->content.renderContent.surfaceIndexBuffer() == nullptr &&
               TilesetTestAccess::hasTerrainCache(tileset, rootKey) &&
               cmd.gltfRasterOverlayTextureCount == 1 &&
               cmd.textures.size() >
@@ -6215,7 +6234,7 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
               cmd.textures[0] != nullptr &&
               cmd.textures[kGltfRasterOverlayTextureBase] ==
                   loading->getTexture(),
-          "Tileset: glTF mapped raster ignores stale heightmap cache and uses texture slot 15 without replacing material slot 0");
+          "Tileset: glTF mapped raster clears stale surface residue, ignores stale heightmap cache, and uses texture slot 15 without replacing material slot 0");
     check(cmd.gltfRasterOverlayTexCoordSets[0] == 1.0f &&
               cmd.uniforms.count("u_mappedRasterTexCoordSet0") &&
               cmd.uniforms.at("u_mappedRasterTexCoordSet0").front() == 1.0f,
