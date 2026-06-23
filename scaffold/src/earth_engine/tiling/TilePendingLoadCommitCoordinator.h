@@ -211,7 +211,7 @@ public:
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (isContentLoadDomain(result.domain)) {
+        if (result.domain == TileLoadDomain::Content) {
             commitContentTerminalResult(
                 result,
                 emptyContentRegistry,

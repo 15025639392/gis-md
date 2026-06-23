@@ -297,6 +297,48 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     GltfTerrainTerminalResultsUseTerrainSemanticsLikeCesiumNative) {
+    for (const auto& [status, expectedLoadState] :
+         std::array<std::pair<TileLoadStatus, TileLoadState>, 2>{
+             std::pair{TileLoadStatus::RetryLater,
+                       TileLoadState::FailedTemporarily},
+             std::pair{TileLoadStatus::Failed, TileLoadState::Failed}}) {
+        const TileKey key{"Geographic-TMS", 0, 0, 0};
+        const std::string cacheKey =
+            status == TileLoadStatus::RetryLater
+                ? "gltf-terrain-retry"
+                : "gltf-terrain-failed";
+        TilesetTile tile(key, Rectangle{});
+        tile.content.loadState = TileLoadState::ContentLoading;
+
+        TileEmptyContentRegistry emptyContentRegistry;
+        emptyContentRegistry.insert(cacheKey);
+        PendingTileLoad result{TileLoadDomain::GltfTerrain,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            status};
+        bool childrenEnsured = false;
+        bool resourcesDirty = false;
+
+        TilePendingLoadCommitCoordinator::commitTerminalResult(
+            result,
+            emptyContentRegistry,
+            nullptr,
+            [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+            [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+            [&resourcesDirty]() { resourcesDirty = true; });
+
+        EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+        EXPECT_FALSE(childrenEnsured);
+        EXPECT_TRUE(resourcesDirty);
+        EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+        EXPECT_EQ(expectedLoadState, tile.content.loadState);
+    }
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentEmptyTerminalAppliesTileLoadResultMetadata) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "content-empty";

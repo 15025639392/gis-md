@@ -1980,8 +1980,11 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::resolveTile(
         TileKey key = scheme_.positionToTile(centerLng, centerLat, z);
         TilePtr tile = getTile(key);
 
-        // Check if tile is loaded (has a texture)
-        if (tile && tile->getState() >= RasterOverlayTile::LoadState::Loaded) {
+        // Loaded-without-texture tiles are cover-ready, not drawable fallback
+        // sources. Surface raster binding requires a real texture.
+        if (tile &&
+            tile->getState() >= RasterOverlayTile::LoadState::Loaded &&
+            tile->getTexture()) {
             return tile;
         }
     }

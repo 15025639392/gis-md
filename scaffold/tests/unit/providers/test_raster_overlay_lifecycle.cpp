@@ -3002,6 +3002,26 @@ TEST(RasterOverlayLifecycleTest, DirectTileLoadConsumesRasterSourceBudget) {
               tile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     ResolveTileRequiresDrawableTextureForLoadedFallback) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey key{scheme->id(), 2, 1, 1};
+    const Rectangle bounds = scheme->tileToRectangle(key);
+    auto tile = provider.getTile(key);
+    ASSERT_NE(nullptr, tile);
+
+    tile->markLoadedWithoutTexture();
+
+    EXPECT_EQ(nullptr, provider.resolveTile(bounds, key.z));
+
+    tile->setTexture(std::make_unique<TestTexture>(4, 4));
+
+    EXPECT_EQ(tile, provider.resolveTile(bounds, key.z));
+}
+
 TEST(RasterOverlayLifecycleTest, NonUnloadedRasterTilesDoNotConsumeRequestBudgetLikeCesiumNative) {
     ImmediateImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
