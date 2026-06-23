@@ -12,6 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -77,10 +78,7 @@ struct TileChildMaterializer {
                     childX + dx,
                     childY + dy};
                 if (parent.key.schemeId == "Geographic-TMS") {
-                    if (childKey.x < 0 ||
-                        childKey.x >= geographicTmsXCount(childZ) ||
-                        childKey.y < 0 ||
-                        childKey.y >= geographicTmsYCount(childZ)) {
+                    if (isOutOfRangeGeographicTmsChild(childKey)) {
                         continue;
                     }
                 }
@@ -329,10 +327,7 @@ struct TileChildMaterializer {
                     childX + dx,
                     childY + dy};
                 if (tile.key.schemeId == "Geographic-TMS") {
-                    if (childKey.x < 0 ||
-                        childKey.x >= geographicTmsXCount(childZ) ||
-                        childKey.y < 0 ||
-                        childKey.y >= geographicTmsYCount(childZ)) {
+                    if (isOutOfRangeGeographicTmsChild(childKey)) {
                         continue;
                     }
                 }
@@ -351,12 +346,33 @@ struct TileChildMaterializer {
     }
 
 private:
-    static int geographicTmsXCount(int z) {
-        return 1 << (z + 1);
+    static bool isOutOfRangeGeographicTmsChild(const TileKey& key) {
+        if (key.x < 0 || key.y < 0) {
+            return true;
+        }
+        const std::optional<int64_t> xCount =
+            geographicTmsXCount64(key.z);
+        const std::optional<int64_t> yCount =
+            geographicTmsYCount64(key.z);
+        if (!xCount || !yCount) {
+            return true;
+        }
+        return static_cast<int64_t>(key.x) >= *xCount ||
+               static_cast<int64_t>(key.y) >= *yCount;
     }
 
-    static int geographicTmsYCount(int z) {
-        return 1 << z;
+    static std::optional<int64_t> geographicTmsXCount64(int z) {
+        if (z < 0 || z + 1 >= 63) {
+            return std::nullopt;
+        }
+        return int64_t{1} << (z + 1);
+    }
+
+    static std::optional<int64_t> geographicTmsYCount64(int z) {
+        if (z < 0 || z >= 63) {
+            return std::nullopt;
+        }
+        return int64_t{1} << z;
     }
 
     static bool canRepresentTileCoordinate(int64_t value) {

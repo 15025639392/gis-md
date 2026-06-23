@@ -467,6 +467,56 @@ TEST(TileChildMaterializerTest, MaterializeTerrainChildrenSkipsOutOfRangeGeograp
     EXPECT_TRUE(parent.children.empty());
 }
 
+TEST(TileChildMaterializerTest,
+     MaterializeTerrainChildrenKeepsRepresentableDeepGeographicTmsChildren) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 30, 1073741823, 536870911},
+        Rectangle{});
+    parent.geometricError = 64.0;
+    parent.boundingVolume = TileBoundingVolume::fromRegion(
+        parent.bounds,
+        -10.0,
+        250.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string keyString = cacheKeyFor(key);
+        auto it = tiles.find(keyString);
+        if (it == tiles.end()) {
+            it = tiles
+                     .emplace(
+                         keyString,
+                         std::make_unique<TilesetTile>(key, Rectangle{}))
+                     .first;
+        }
+        return it->second.get();
+    };
+
+    int availabilityChecks = 0;
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        31,
+        [&availabilityChecks](const TileKey& key) {
+            ++availabilityChecks;
+            return key == TileKey{"Geographic-TMS", 31, 2147483647, 1073741823}
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure);
+
+    ASSERT_TRUE(changed);
+    EXPECT_EQ(4, availabilityChecks);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 2147483646, 1073741822}),
+              parent.children[0]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 2147483647, 1073741822}),
+              parent.children[1]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 2147483646, 1073741823}),
+              parent.children[2]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 2147483647, 1073741823}),
+              parent.children[3]->key);
+}
+
 TEST(TileChildMaterializerTest, NonRootUnavailableTerrainSiblingsBecomeUpsampledLikeCesiumNative) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 1, 1, 0},
@@ -1762,6 +1812,34 @@ TEST(TileChildMaterializerTest, CanRefineSkipsOutOfRangeGeographicTmsChildren) {
         }));
     EXPECT_EQ(0, cacheChecks);
     EXPECT_EQ(0, availabilityChecks);
+}
+
+TEST(TileChildMaterializerTest,
+     CanRefineReadsRepresentableDeepGeographicTmsChildren) {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 30, 1073741823, 536870911},
+        Rectangle{});
+    int availabilityChecks = 0;
+
+    EXPECT_TRUE(TileChildMaterializer::canRefine(
+        tile,
+        TileRefinementAvailabilityOptions{
+            false,
+            false,
+            false,
+            false,
+            true,
+            true,
+            31},
+        cacheKeyFor,
+        [](const std::string&) { return false; },
+        [&availabilityChecks](const TileKey& key) {
+            ++availabilityChecks;
+            return key == TileKey{"Geographic-TMS", 31, 2147483647, 1073741823}
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        }));
+    EXPECT_EQ(4, availabilityChecks);
 }
 
 TEST(TileChildMaterializerTest, CanRefineBlocksAvailabilityBoundaryAndTerrainUpsampledTiles) {
