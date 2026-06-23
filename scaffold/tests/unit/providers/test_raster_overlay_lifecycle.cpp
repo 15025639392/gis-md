@@ -2027,6 +2027,65 @@ TEST(RasterOverlayLifecycleTest, ConcurrentCompositeTilesShareProviderSourceTile
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
+TEST(
+    RasterOverlayLifecycleTest,
+    CompositeMappingsWithSharedSourceExposeOneDepotRequestLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    RasterOverlayTileProvider::RasterTileMapping westMapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, westHalf),
+            256.0,
+            512.0);
+    RasterOverlayTileProvider::RasterTileMapping eastMapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, eastHalf),
+            256.0,
+            512.0);
+    ASSERT_NE(nullptr, westMapping.tile);
+    ASSERT_NE(nullptr, eastMapping.tile);
+    ASSERT_TRUE(westMapping.tile->isCompositeTile());
+    ASSERT_TRUE(eastMapping.tile->isCompositeTile());
+    ASSERT_EQ(1u, westMapping.sourceTiles.sourceKeys.size());
+    ASSERT_EQ(1u, eastMapping.sourceTiles.sourceKeys.size());
+    EXPECT_EQ(sourceKey, westMapping.sourceTiles.sourceKeys.front());
+    EXPECT_EQ(sourceKey, eastMapping.sourceTiles.sourceKeys.front());
+    EXPECT_NE(westMapping.tile->getCacheKey(), eastMapping.tile->getCacheKey());
+
+    ASSERT_TRUE(provider.loadTile(*westMapping.tile));
+    ASSERT_TRUE(provider.loadTile(*eastMapping.tile));
+    EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
+    EXPECT_EQ(1, static_cast<int>(
+                     std::count(imagery.requestedKeys.begin(),
+                                imagery.requestedKeys.end(),
+                                sourceKey)));
+    ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
+
+    imagery.completeNext();
+
+    EXPECT_EQ(2, processPendingUploadsUntil(provider, 2));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              westMapping.tile->getState());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              eastMapping.tile->getState());
+}
+
 TEST(RasterOverlayLifecycleTest, DirectAndCompositeTilesShareProviderSourceTileAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
