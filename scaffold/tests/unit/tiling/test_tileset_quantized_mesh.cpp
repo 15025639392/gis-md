@@ -1468,18 +1468,10 @@ TEST(TilesetQuantizedMeshTest,
         childLoad->content.metadata.rasterOverlayDetails
             ->textureCoordinateIDForProjection(
                 RasterOverlayProjection::WebMercator));
-    ASSERT_TRUE(childLoad->content.metadata.updatedBoundingVolume.has_value());
-    EXPECT_EQ(
-        childModel.rasterOverlayDetails.boundingRegion.rectangle,
-        childLoad->content.metadata.updatedBoundingVolume->region);
-    EXPECT_NEAR(
-        childModel.rasterOverlayDetails.boundingRegion.minimumHeight,
-        childLoad->content.metadata.updatedBoundingVolume->minimumHeight,
-        1e-12);
-    EXPECT_NEAR(
-        childModel.rasterOverlayDetails.boundingRegion.maximumHeight,
-        childLoad->content.metadata.updatedBoundingVolume->maximumHeight,
-        1e-12);
+    EXPECT_FALSE(
+        childLoad->content.metadata.updatedBoundingVolume.has_value());
+    EXPECT_FALSE(
+        childLoad->content.metadata.updatedContentBoundingVolume.has_value());
     ASSERT_TRUE(childLoad->content.metadata.terrainHeightRange.has_value());
     EXPECT_NEAR(
         childModel.rasterOverlayDetails.boundingRegion.minimumHeight,
@@ -1641,21 +1633,11 @@ TEST(TilesetQuantizedMeshTest,
     ASSERT_NE(nullptr, positiveChildLoad->content.gltfModel);
     const GltfModel& positiveChildModel =
         *positiveChildLoad->content.gltfModel;
-    ASSERT_TRUE(
+    EXPECT_FALSE(
         positiveChildLoad->content.metadata.updatedBoundingVolume.has_value());
-    EXPECT_EQ(
-        positiveChildModel.rasterOverlayDetails.boundingRegion.rectangle,
-        positiveChildLoad->content.metadata.updatedBoundingVolume->region);
-    EXPECT_NEAR(
-        positiveChildModel.rasterOverlayDetails.boundingRegion.minimumHeight,
-        positiveChildLoad->content.metadata.updatedBoundingVolume
-            ->minimumHeight,
-        1e-12);
-    EXPECT_NEAR(
-        positiveChildModel.rasterOverlayDetails.boundingRegion.maximumHeight,
-        positiveChildLoad->content.metadata.updatedBoundingVolume
-            ->maximumHeight,
-        1e-12);
+    EXPECT_FALSE(
+        positiveChildLoad->content.metadata.updatedContentBoundingVolume
+            .has_value());
     ASSERT_TRUE(
         positiveChildLoad->content.metadata.terrainHeightRange.has_value());
     EXPECT_NEAR(
