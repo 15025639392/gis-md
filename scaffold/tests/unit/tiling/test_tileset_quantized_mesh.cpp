@@ -81,7 +81,7 @@ struct TilesetTestAccess {
 
     static TerrainProvider* effectiveLegacyTerrainProvider(
         const Tileset& tileset) {
-        return tileset.effectiveLegacyTerrainProvider();
+        return tileset.heightmapTerrainProviderForSurfacePath();
     }
 
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {

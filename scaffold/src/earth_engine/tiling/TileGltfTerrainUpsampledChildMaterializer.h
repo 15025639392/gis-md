@@ -142,24 +142,6 @@ private:
     static int chooseUpsampleTextureCoordinate(const GltfModel& model,
                                                const TilesetTile& source,
                                                const TilesetTile& tile) {
-        for (const auto& mapping : source.rasterOverlayState.mappings()) {
-            if (!mapping || !mapping->isMoreDetailAvailable()) {
-                continue;
-            }
-            const RasterOverlayTile* readyTile = mapping->getReadyTile();
-            if (!readyTile) {
-                continue;
-            }
-            const RasterOverlayProjection projection =
-                readyTile->getTileProvider().getProjection();
-            const int detailsTextureCoordinate =
-                model.rasterOverlayDetails.textureCoordinateIDForProjection(
-                    projection);
-            if (modelHasTextureCoordinate(model, detailsTextureCoordinate)) {
-                return detailsTextureCoordinate;
-            }
-        }
-
         if (tile.content.isTerrainAvailabilityUpsample()) {
             const int candidate =
                 model.rasterOverlayDetails.textureCoordinateIDForProjection(
@@ -169,6 +151,25 @@ private:
         }
 
         if (tile.content.isRasterDetailUpsample()) {
+            for (const auto& mapping : source.rasterOverlayState.mappings()) {
+                if (!mapping || !mapping->isMoreDetailAvailable()) {
+                    continue;
+                }
+                const RasterOverlayTile* readyTile = mapping->getReadyTile();
+                if (!readyTile) {
+                    continue;
+                }
+                const RasterOverlayProjection projection =
+                    readyTile->getTileProvider().getProjection();
+                const int detailsTextureCoordinate =
+                    model.rasterOverlayDetails.textureCoordinateIDForProjection(
+                        projection);
+                if (modelHasTextureCoordinate(
+                        model,
+                        detailsTextureCoordinate)) {
+                    return detailsTextureCoordinate;
+                }
+            }
             return -1;
         }
 

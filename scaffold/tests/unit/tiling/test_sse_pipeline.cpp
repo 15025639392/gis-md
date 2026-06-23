@@ -26187,6 +26187,7 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
           "Tileset: WebMercator glTF-parent source mapping marks projection texcoord as more-detail");
 
     TilesetTile* child = root->children[2];
+    child->content.markRasterDetailUpsample();
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
               tileset.loadDiagnostics().pendingContentUploads == 0 &&
@@ -26543,6 +26544,117 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
                            .maximumHeight -
                        42.0) < 1e-12,
           "Tileset: WebMercator terrain availability upsample uses terrain projection like cesium-native");
+}
+
+void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 1, 0};
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    TilesetTile child(childKey, scheme->tileToRectangle(childKey), &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
+    if (parentModel && !parentModel->primitives.empty()) {
+        parentModel->primitives.front().vertexTexCoords[1] = {
+            std::array<float, 2>{1.0f, 0.0f},
+            std::array<float, 2>{0.0f, 0.0f},
+            std::array<float, 2>{1.0f, 1.0f},
+            std::array<float, 2>{0.0f, 1.0f}};
+    }
+    parentModel->rasterOverlayDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::Geographic,
+        RasterOverlayProjection::WebMercator};
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
+        parent.bounds;
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles.push_back(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            parent.bounds));
+    RasterOverlayDetails parentDetails =
+        parentModel->rasterOverlayDetails;
+    parent.content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider rasterProvider(
+        imagery,
+        *imageryScheme,
+        nullptr);
+    RasterMappedToTilesetTile& mapped =
+        parent.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    if (!loadingTile) return;
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    mapped.update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    check(mapped.isMoreDetailAvailable() &&
+              mapped.getTextureCoordinateID() == 1,
+          "Tileset: terrain-availability fixture has WebMercator raster more detail");
+
+    std::optional<TileLoadResult> loadResult =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+    const GltfModel* childModel =
+        loadResult ? loadResult->content.gltfModel.get() : nullptr;
+
+    bool clippedWithGeographicTexcoord = true;
+    bool retainedUnclippedWebMercatorRange = true;
+    if (childModel && !childModel->primitives.empty()) {
+        const GltfPrimitive& primitive = childModel->primitives.front();
+        clippedWithGeographicTexcoord =
+            !primitive.vertexTexCoords[0].empty();
+        retainedUnclippedWebMercatorRange =
+            !primitive.vertexTexCoords[1].empty();
+        for (const auto& texCoord : primitive.vertexTexCoords[0]) {
+            clippedWithGeographicTexcoord =
+                clippedWithGeographicTexcoord &&
+                texCoord[0] >= 0.5f - 1e-6f &&
+                texCoord[0] <= 1.0f + 1e-6f &&
+                texCoord[1] >= 0.0f - 1e-6f &&
+                texCoord[1] <= 0.5f + 1e-6f;
+        }
+        for (const auto& texCoord : primitive.vertexTexCoords[1]) {
+            retainedUnclippedWebMercatorRange =
+                retainedUnclippedWebMercatorRange &&
+                texCoord[0] <= 0.5f + 1e-6f &&
+                texCoord[1] <= 0.5f + 1e-6f;
+        }
+    } else {
+        clippedWithGeographicTexcoord = false;
+        retainedUnclippedWebMercatorRange = false;
+    }
+
+    check(loadResult.has_value() &&
+              loadResult->status == TileLoadStatus::Renderable &&
+              childModel != nullptr &&
+              clippedWithGeographicTexcoord &&
+              retainedUnclippedWebMercatorRange,
+          "Tileset: terrain availability upsample uses terrain projection even when raster more detail is WebMercator");
 }
 
 void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
@@ -27635,6 +27747,7 @@ int main() {
     testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails();
     testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMappingTexcoord();
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
+    testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection();
     testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
     testTerrainContentUpsamplePropagatesInvertedVCoordinate();
     testTerrainContentUpsampleRejectsOrdinaryGltfContentParent();
