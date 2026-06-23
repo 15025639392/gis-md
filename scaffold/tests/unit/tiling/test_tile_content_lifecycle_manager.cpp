@@ -142,15 +142,14 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
     EXPECT_FALSE(manager.hasPendingWork());
 }
 
-TEST(TileContentLifecycleManagerTest, LegacyCacheModeIncludePreservesCache) {
+TEST(TileContentLifecycleManagerTest, KeepsLegacyTerrainCacheWhenNotDiscarding) {
     TileContentLifecycleManager manager;
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
     manager.legacyTerrainCache()["terrain"] = std::move(cachedHeightmap);
 
-    manager.discardLegacyTerrainCacheForMode(
-        LegacyHeightmapTerrainCacheMode::Include);
+    manager.discardLegacyTerrainCache(false);
 
     ASSERT_NE(manager.legacyTerrainCache().end(),
               manager.legacyTerrainCache().find("terrain"));
@@ -159,15 +158,14 @@ TEST(TileContentLifecycleManagerTest, LegacyCacheModeIncludePreservesCache) {
 
 TEST(
     TileContentLifecycleManagerTest,
-    ContentOwnedTerrainModeDiscardsLegacyHeightmapCache) {
+    DiscardLegacyTerrainCacheClearsHeightmapCache) {
     TileContentLifecycleManager manager;
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
     manager.legacyTerrainCache()["terrain"] = std::move(cachedHeightmap);
 
-    manager.discardLegacyTerrainCacheForMode(
-        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly);
+    manager.discardLegacyTerrainCache(true);
 
     EXPECT_TRUE(manager.legacyTerrainCache().empty());
 }

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
@@ -44,8 +43,7 @@ public:
     int pendingRequests() const;
     bool hasPendingWork() const;
     void shutdown();
-    void discardLegacyTerrainCacheForMode(
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode);
+    void discardLegacyTerrainCache(bool discard);
 
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(

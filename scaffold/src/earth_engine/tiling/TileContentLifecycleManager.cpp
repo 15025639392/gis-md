@@ -15,10 +15,8 @@ bool TileContentLifecycleManager::hasPendingWork() const {
     return loadLifecycle_.hasPendingWork();
 }
 
-void TileContentLifecycleManager::discardLegacyTerrainCacheForMode(
-    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
-    if (legacyHeightmapCacheMode ==
-        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly) {
+void TileContentLifecycleManager::discardLegacyTerrainCache(bool discard) {
+    if (discard) {
         legacyTerrainCache_.clear();
     }
 }
