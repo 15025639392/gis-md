@@ -742,7 +742,7 @@ TEST(TileLoadRequestDispatcherTest,
 
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedHeightmap.status);
     EXPECT_TRUE(normalizedHeightmap.shouldUpload());
-    EXPECT_EQ(TerrainTilePayloadKind::Heightmap,
+    EXPECT_EQ(TerrainTilePayloadKind::LegacyHeightmap,
               normalizedHeightmap.content.terrainPayloadKind);
     EXPECT_TRUE(normalizedHeightmap.content.terrainRenderContent);
     EXPECT_EQ(rawHeightmap, normalizedHeightmap.content.heightmap.get());

@@ -54,7 +54,7 @@ struct DecodedHeightmap {
 
 enum class TerrainTilePayloadKind {
     None,
-    Heightmap
+    LegacyHeightmap
 };
 
 struct TerrainTileLoadResult {
@@ -67,7 +67,7 @@ struct TerrainTileLoadResult {
         TerrainTileLoadResult result;
         result.status = hm ? TileLoadStatus::Renderable
                            : TileLoadStatus::Failed;
-        result.payloadKind = hm ? TerrainTilePayloadKind::Heightmap
+        result.payloadKind = hm ? TerrainTilePayloadKind::LegacyHeightmap
                                 : TerrainTilePayloadKind::None;
         result.heightmap = std::move(hm);
         return result;

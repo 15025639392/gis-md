@@ -32,7 +32,7 @@ struct TileLoadedContent {
         TileLoadedContent content;
         content.terrainPayloadKind = result.payloadKind;
         switch (result.payloadKind) {
-            case TerrainTilePayloadKind::Heightmap:
+            case TerrainTilePayloadKind::LegacyHeightmap:
                 content.heightmap = std::move(result.heightmap);
                 content.terrainRenderContent = content.heightmap != nullptr;
                 break;
@@ -74,7 +74,7 @@ struct TileLoadedContent {
 
     bool hasRenderablePayload() const {
         switch (terrainPayloadKind) {
-            case TerrainTilePayloadKind::Heightmap:
+            case TerrainTilePayloadKind::LegacyHeightmap:
                 return heightmap != nullptr;
             case TerrainTilePayloadKind::None:
                 return gltfModel != nullptr;
@@ -122,7 +122,7 @@ struct TileLoadResult {
         loadResult.content.heightmap = std::move(heightmap);
         if (loadResult.content.heightmap) {
             loadResult.content.terrainPayloadKind =
-                TerrainTilePayloadKind::Heightmap;
+                TerrainTilePayloadKind::LegacyHeightmap;
         }
         return loadResult;
     }

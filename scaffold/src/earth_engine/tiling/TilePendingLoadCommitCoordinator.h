@@ -102,8 +102,8 @@ public:
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TileLoadedContent& content = upload.content();
-        const bool hadHeightmapTerrainPayload =
-            content.terrainPayloadKind == TerrainTilePayloadKind::Heightmap &&
+        const bool hadLegacyHeightmapTerrainPayload =
+            content.terrainPayloadKind == TerrainTilePayloadKind::LegacyHeightmap &&
             content.heightmap != nullptr;
         TileTerrainUploadCommitter::cacheTerrainPayload(
             upload.cacheKey,
@@ -112,15 +112,15 @@ public:
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
             captureInitialBoundingVolumes(*tile, content.metadata);
-            const bool uploadsHeightmapTerrain =
+            const bool uploadsLegacyHeightmapTerrain =
                 content.terrainPayloadKind ==
-                    TerrainTilePayloadKind::Heightmap &&
-                hadHeightmapTerrainPayload;
+                    TerrainTilePayloadKind::LegacyHeightmap &&
+                hadLegacyHeightmapTerrainPayload;
             const bool uploadsParentUpsampledTerrain =
-                !uploadsHeightmapTerrain &&
+                !uploadsLegacyHeightmapTerrain &&
                 tile->content.derivesTerrainFromParent();
             const bool uploadsTerrainPayload =
-                uploadsHeightmapTerrain ||
+                uploadsLegacyHeightmapTerrain ||
                 uploadsParentUpsampledTerrain;
             if (uploadsTerrainPayload) {
                 TileTerrainUploadCommitter::prepareTerrainRenderContent(
@@ -129,7 +129,7 @@ public:
                     rasterOverlays,
                     device);
             }
-            if ((uploadsHeightmapTerrain ||
+            if ((uploadsLegacyHeightmapTerrain ||
                  uploadsParentUpsampledTerrain) &&
                 !resourceSmoothingActive &&
                 !tile->content.renderContent.hasSurfaceMesh()) {
