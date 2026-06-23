@@ -66,8 +66,9 @@ GltfModel makeParentModel() {
 
 GltfModel makeParentModelWithNodeRuntime(const Vec3& origin) {
     GltfModel model = makeParentModel();
+    const Mat4 transform = Mat4::translation(origin);
     GltfNodeRuntime rootNode;
-    rootNode.baseLocalTransform = Mat4::translation(origin);
+    rootNode.baseLocalTransform = transform;
     rootNode.localTransform = rootNode.baseLocalTransform;
     rootNode.globalTransform = rootNode.baseLocalTransform;
     rootNode.baseTranslation = {origin.x(), origin.y(), origin.z()};
@@ -82,6 +83,29 @@ GltfModel makeParentModelWithNodeRuntime(const Vec3& origin) {
     primitive.runtime.baseVertices = primitive.vertices;
     for (SurfaceVertex& baseVertex : primitive.runtime.baseVertices) {
         baseVertex.positionEcef = baseVertex.positionEcef - origin;
+    }
+    return model;
+}
+
+GltfModel makeParentModelWithNodeRuntimeTransform(const Mat4& transform) {
+    GltfModel model = makeParentModel();
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = transform;
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    model.nodes.push_back(rootNode);
+    model.sceneRootNodes.push_back(0);
+
+    GltfPrimitive& primitive = model.primitives.front();
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.baseVertices = primitive.vertices;
+    const Mat4 inverseTransform = transform.inverse();
+    for (SurfaceVertex& baseVertex : primitive.runtime.baseVertices) {
+        baseVertex.positionEcef =
+            inverseTransform.transformPoint(baseVertex.positionEcef);
+        baseVertex.normalEcef =
+            inverseTransform.transformVector(baseVertex.normalEcef);
     }
     return model;
 }
@@ -208,6 +232,47 @@ TEST(GltfTerrainUpsamplerTest,
                   1e-9);
         EXPECT_EQ(primitive.vertices[i].normalEcef,
                   primitive.runtime.baseVertices[i].normalEcef);
+    }
+}
+
+TEST(GltfTerrainUpsamplerTest,
+     PreservesNodeLocalRuntimeNormalScaleLikeCesiumNative) {
+    const Mat4 transform =
+        Mat4::translation(Vec3(10.0, 20.0, 30.0)) *
+        Mat4::scale(Vec3(2.0, 3.0, 4.0));
+    GltfModel parent = makeParentModelWithNodeRuntimeTransform(transform);
+    GltfPrimitive& parentPrimitive = parent.primitives.front();
+    parentPrimitive.skirtMetadata.reset();
+    for (SurfaceVertex& vertex : parentPrimitive.vertices) {
+        vertex.normalEcef = Vec3::unitX();
+    }
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& primitive = upsampled->primitives.front();
+    ASSERT_FALSE(primitive.vertices.empty());
+    ASSERT_EQ(primitive.vertices.size(), primitive.runtime.baseVertices.size());
+    const Mat4 inverseTransform = transform.inverse();
+    for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+        const Vec3 expectedNormal =
+            inverseTransform.transformVector(primitive.vertices[i].normalEcef);
+        EXPECT_NEAR(expectedNormal.x(),
+                    primitive.runtime.baseVertices[i].normalEcef.x(),
+                    1e-12);
+        EXPECT_NEAR(expectedNormal.y(),
+                    primitive.runtime.baseVertices[i].normalEcef.y(),
+                    1e-12);
+        EXPECT_NEAR(expectedNormal.z(),
+                    primitive.runtime.baseVertices[i].normalEcef.z(),
+                    1e-12);
+        EXPECT_NEAR(0.5,
+                    primitive.runtime.baseVertices[i].normalEcef.length(),
+                    1e-12);
     }
 }
 

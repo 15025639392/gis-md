@@ -797,8 +797,7 @@ void rebuildRuntimeBaseVerticesForNode(GltfPrimitive& primitive,
             inverseNodeTransform.transformPoint(vertex.positionEcef);
         if (vertex.normalEcef.lengthSquared() > 0.0) {
             vertex.normalEcef =
-                inverseNodeTransform.transformVector(vertex.normalEcef)
-                    .normalized();
+                inverseNodeTransform.transformVector(vertex.normalEcef);
         }
     }
 }
