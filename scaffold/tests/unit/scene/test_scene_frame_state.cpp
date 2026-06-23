@@ -52,6 +52,16 @@ struct TilesetTestAccess {
             std::move(heightmap);
     }
 
+    static void setLoadedGltfTerrainContent(
+        TilesetTile& tile,
+        std::unique_ptr<GltfModel> model) {
+        tile.content.renderContent.prepareGltfContent(
+            std::move(model),
+            Mat4::identity());
+        tile.content.renderContent.setTerrainRenderContent(true);
+        tile.markRenderContentDone();
+    }
+
     static TileOcclusionState checkOcclusion(
         const Tileset& tileset,
         const TilesetTile& tile) {
@@ -241,6 +251,42 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     heightmap->minHeight = heightMeters;
     heightmap->maxHeight = heightMeters;
     return heightmap;
+}
+
+std::unique_ptr<GltfModel> makeFlatGeographicTerrainGltfModel(
+    const Rectangle& rectangle,
+    double heightMeters) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.west(),
+            rectangle.south(),
+            heightMeters));
+    primitive.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.east(),
+            rectangle.south(),
+            heightMeters));
+    primitive.vertices[2].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.west(),
+            rectangle.north(),
+            heightMeters));
+    primitive.vertices[3].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.east(),
+            rectangle.north(),
+            heightMeters));
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.primitiveMode = GltfPrimitiveMode::Triangles;
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.baseVertices = primitive.vertices;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
 }
 
 RasterOverlay::Options makeRasterOverlayOptions() {
@@ -572,16 +618,20 @@ TEST(
         nullptr,
         TilesetOptions{});
     Tileset* terrainRaw = terrainTileset.get();
-    TilesetTestAccess::ensureTile(*terrainRaw, westRoot);
-    TilesetTestAccess::ensureTile(*terrainRaw, eastRoot);
-    TilesetTestAccess::putTerrainCache(
+    TilesetTile* westTile = TilesetTestAccess::ensureTile(
         *terrainRaw,
-        westRoot,
-        makeFlatHeightmap(123.0f));
-    TilesetTestAccess::putTerrainCache(
+        westRoot);
+    TilesetTile* eastTile = TilesetTestAccess::ensureTile(
         *terrainRaw,
-        eastRoot,
-        makeFlatHeightmap(123.0f));
+        eastRoot);
+    ASSERT_NE(westTile, nullptr);
+    ASSERT_NE(eastTile, nullptr);
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *westTile,
+        makeFlatGeographicTerrainGltfModel(westTile->bounds, 123.0));
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *eastTile,
+        makeFlatGeographicTerrainGltfModel(eastTile->bounds, 123.0));
 
     scene.setTileset(std::move(terrainTileset));
     ASSERT_EQ(scene.tileset(), terrainRaw);
