@@ -1496,6 +1496,43 @@ TEST(RasterOverlayLifecycleTest,
     }
 }
 
+TEST(RasterOverlayLifecycleTest,
+     MappedRasterCacheKeyIncludesExplicitSourceTilesLikeCesiumNativeDepot) {
+    RgbImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(8, 8);
+
+    const int expectedLevel = 8;
+    const TileKey centerKey =
+        scheme->positionToTile(0.1, 0.2, expectedLevel);
+    const Rectangle centerBounds = scheme->tileToRectangle(centerKey);
+    const Rectangle spanningFourTiles(
+        centerBounds.west() - centerBounds.width() * 0.5,
+        centerBounds.south() - centerBounds.height() * 0.5,
+        centerBounds.west() + centerBounds.width() * 0.5,
+        centerBounds.south() + centerBounds.height() * 0.5);
+
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, spanningFourTiles),
+            static_cast<double>(imagery.tileWidth() * 4),
+            static_cast<double>(imagery.tileHeight() * 4));
+
+    ASSERT_NE(nullptr, mapping.tile);
+    ASSERT_TRUE(mapping.tile->isMappedRasterTile());
+    const std::string& cacheKey = mapping.tile->getCacheKey();
+    EXPECT_NE(std::string::npos, cacheKey.find("/range/"));
+    EXPECT_NE(std::string::npos, cacheKey.find("/tiles/"));
+    for (const TileKey& sourceKey : mapping.sourceTiles.sourceKeys) {
+        const std::string sourceToken =
+            "/" + std::to_string(sourceKey.z) + "/" +
+            std::to_string(sourceKey.x) + "/" +
+            std::to_string(sourceKey.y);
+        EXPECT_NE(std::string::npos, cacheKey.find(sourceToken));
+    }
+}
+
 TEST(
     RasterOverlayLifecycleTest,
     MappedRasterTileCarriesMappedSourceListForLoadLikeCesiumNative) {

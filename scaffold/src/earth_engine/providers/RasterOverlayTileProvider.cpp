@@ -648,10 +648,7 @@ int chooseQuadtreeSourceZoom(const TileScheme& scheme,
     return zoom;
 }
 
-std::string mappedRasterTileCacheKey(const TileScheme& scheme,
-                                     const Rectangle& rectangle,
-                                     int sourceZoom,
-                                     uint64_t epoch) {
+std::string rectangleCacheKey(const Rectangle& rectangle) {
     char bounds[256];
     std::snprintf(bounds,
                   sizeof(bounds),
@@ -660,9 +657,30 @@ std::string mappedRasterTileCacheKey(const TileScheme& scheme,
                   rectangle.south(),
                   rectangle.east(),
                   rectangle.north());
-    return "mapped-raster/epoch/" + std::to_string(epoch) + "/" +
-           scheme.id() + "/srcz/" +
-           std::to_string(sourceZoom) + "/" + bounds;
+    return bounds;
+}
+
+std::string mappedRasterTileCacheKey(
+    const TileScheme& scheme,
+    const Rectangle& geometryRectangle,
+    const Rectangle& sourceBounds,
+    const RasterOverlayTileProvider::RasterSourceTileMapping& sourceTiles,
+    uint64_t epoch) {
+    std::string key = "mapped-raster/epoch/" + std::to_string(epoch) + "/" +
+                      scheme.id() + "/srcz/" +
+                      std::to_string(sourceTiles.sourceZoom) + "/geom/" +
+                      rectangleCacheKey(geometryRectangle) + "/src/" +
+                      rectangleCacheKey(sourceBounds) + "/range/" +
+                      std::to_string(sourceTiles.minX) + "/" +
+                      std::to_string(sourceTiles.minY) + "/" +
+                      std::to_string(sourceTiles.maxX) + "/" +
+                      std::to_string(sourceTiles.maxY) + "/tiles";
+    for (const TileKey& sourceKey : sourceTiles.sourceKeys) {
+        key += "/" + std::to_string(sourceKey.z) + "/" +
+               std::to_string(sourceKey.x) + "/" +
+               std::to_string(sourceKey.y);
+    }
+    return key;
 }
 
 bool rectanglesEqualForDirectRasterTile(const Rectangle& a,
@@ -1994,7 +2012,8 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     const std::string ck = mappedRasterTileCacheKey(
         scheme_,
         providerGeometryBounds,
-        sourcePlan.sourceZoom,
+        *sourceBounds,
+        sourceTiles,
         mappedRasterTileEpoch_);
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
