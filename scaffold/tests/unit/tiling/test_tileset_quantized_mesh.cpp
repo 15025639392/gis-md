@@ -778,7 +778,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     GltfTerrainRasterOverlayDetailsWinOverLegacySurfaceResidue) {
+     GltfTerrainContentReplacesLegacySurfaceResidue) {
     TilesetTile tile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
@@ -793,7 +793,7 @@ TEST(TilesetQuantizedMeshTest,
         Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0);
     model->rasterOverlayDetails.setGeographicRectangle(contentRectangle);
     tile.content.renderContent.setGltfContent(std::move(model));
-    ASSERT_TRUE(tile.content.renderContent.hasSurfaceMesh());
+    ASSERT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     ASSERT_TRUE(tile.content.renderContent.hasGltfModel());
 
     const RasterOverlayDetails& readDetails =
@@ -817,13 +817,6 @@ TEST(TilesetQuantizedMeshTest,
                 RasterOverlayProjection::Geographic);
     ASSERT_NE(nullptr, updatedContentRectangle);
     EXPECT_EQ(updatedRectangle, *updatedContentRectangle);
-
-    const Rectangle* staleSurfaceRectangle =
-        tile.content.renderContent.surfaceMesh()
-            ->rasterOverlayDetails.findRectangleForOverlayProjection(
-                RasterOverlayProjection::Geographic);
-    ASSERT_NE(nullptr, staleSurfaceRectangle);
-    EXPECT_EQ(staleRectangle, *staleSurfaceRectangle);
 }
 
 TEST(TilesetQuantizedMeshTest,

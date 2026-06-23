@@ -292,8 +292,7 @@ public:
 
     void setGltfContent(std::unique_ptr<GltfModel> model,
                         const Mat4& contentTransform = Mat4::identity()) {
-        gltfModel = std::move(model);
-        gltfContentTransform = contentTransform;
+        prepareGltfContent(std::move(model), contentTransform);
     }
 
     void addGltfTextureResource(std::unique_ptr<Texture> texture) {

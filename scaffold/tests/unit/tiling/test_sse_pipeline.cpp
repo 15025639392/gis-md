@@ -16060,9 +16060,9 @@ void testTileUpsampleSourcePreparerRasterDetailFinalizesDirectGltfParentOnly() {
         std::make_unique<SurfaceTileMesh>());
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::ContentLoaded;
-    parent.content.renderContent.setTerrainRenderContent(true);
     parent.content.renderContent.setGltfContent(
         std::make_unique<GltfModel>());
+    parent.content.renderContent.setTerrainRenderContent(true);
     child.content.markRasterDetailUpsample();
 
     int ensuredMeshes = 0;
