@@ -232,6 +232,10 @@ Tileset::makeContentRuntimeRequestFrame() const {
         tileRegistry_.tiles()};
     frame.legacyTerrainProvider = effectiveLegacyTerrainProvider();
     frame.contentProvider = contentProvider_.get();
+    frame.legacyHeightmapCacheMode =
+        contentProvider_ && contentProvider_->providesTerrainQuadtree()
+        ? LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly
+        : LegacyHeightmapTerrainCacheMode::Include;
     frame.device = device_;
     frame.frameNumber = frameNumber_;
     frame.maximumSimultaneousTileLoads =

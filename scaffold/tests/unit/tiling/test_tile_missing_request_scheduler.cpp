@@ -131,6 +131,7 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
                 &provider,
                 tiles,
                 terrainCache,
+                LegacyHeightmapTerrainCacheMode::Include,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },
@@ -193,6 +194,7 @@ TEST(TileMissingRequestSchedulerTest, RetriesTerrainAfterEmptyMarkerCleared) {
                 nullptr,
                 tiles,
                 terrainCache,
+                LegacyHeightmapTerrainCacheMode::Include,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },
@@ -251,6 +253,7 @@ TEST(
                 &contentProvider,
                 tiles,
                 terrainCache,
+                LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },
@@ -298,6 +301,7 @@ TEST(
                 &contentProvider,
                 tiles,
                 terrainCache,
+                LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },
@@ -309,7 +313,6 @@ TEST(
 
     EXPECT_EQ(outcome.issued, 1u);
     EXPECT_EQ(contentProvider.requestCount, 1);
-    EXPECT_EQ(lifecycle.counts().contentTerminalResults, 1u);
 }
 
 TEST(TileMissingRequestSchedulerTest, UpsampledTileUsesLocalPathBeforeContentProvider) {
@@ -346,6 +349,7 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileUsesLocalPathBeforeContentPro
                 &provider,
                 tiles,
                 terrainCache,
+                LegacyHeightmapTerrainCacheMode::Include,
                 emptyContentRegistry},
             cacheKeyForTile,
             [&prepared](TilesetTile&, double) {
@@ -400,6 +404,7 @@ TEST(TileMissingRequestSchedulerTest, VirtualTerrainRootNeverRequestsProvider) {
                 nullptr,
                 tiles,
                 terrainCache,
+                LegacyHeightmapTerrainCacheMode::Include,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },

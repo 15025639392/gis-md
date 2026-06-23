@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GltfRenderResourcePreparer.h"
+#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileCacheKey.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileFrameBudgetFallback.h"
@@ -33,6 +34,8 @@ struct TilesetContentLifecycleContext {
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
+        LegacyHeightmapTerrainCacheMode::Include;
     TileEmptyContentRegistry& emptyContentRegistry;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 20;
@@ -84,6 +87,7 @@ public:
                 context.contentProvider,
                 context.tiles,
                 context.terrainCache,
+                context.legacyHeightmapCacheMode,
                 context.emptyContentRegistry},
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);

@@ -29,6 +29,7 @@ TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
         frame.device,
         frame.rasterOverlays,
         frame.tiles,
+        frame.legacyHeightmapCacheMode,
         frame.frameNumber,
         frame.maximumSimultaneousTileLoads,
         frame.mainThreadLoadingTimeLimit,

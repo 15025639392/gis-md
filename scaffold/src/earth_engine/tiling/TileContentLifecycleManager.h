@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
@@ -55,6 +56,7 @@ public:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
             tiles,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -72,6 +74,7 @@ public:
                 device,
                 rasterOverlays,
                 tiles,
+                legacyHeightmapCacheMode,
                 frameNumber,
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
@@ -133,6 +136,7 @@ private:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
             tiles,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -146,6 +150,7 @@ private:
             rasterOverlays,
             tiles,
             legacyTerrainCache_,
+            legacyHeightmapCacheMode,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,

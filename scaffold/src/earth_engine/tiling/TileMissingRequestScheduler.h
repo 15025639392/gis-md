@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadScheduler.h"
@@ -25,6 +26,8 @@ struct TileMissingRequestSchedulerInput {
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
     const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
+        LegacyHeightmapTerrainCacheMode::Include;
     const TileEmptyContentRegistry& emptyContentRegistry;
 };
 
@@ -108,7 +111,11 @@ private:
             !TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
             terrainProvider &&
             terrainProvider->supportsTile(key);
+        const bool legacyHeightmapCacheCanSatisfyRequest =
+            input.legacyHeightmapCacheMode ==
+            LegacyHeightmapTerrainCacheMode::Include;
         snapshot.terrainAlreadyCached =
+            legacyHeightmapCacheCanSatisfyRequest &&
             !snapshot.contentProviderOwnsTerrainQuadtree &&
             input.terrainCache.count(cacheKey) > 0;
         snapshot.hasRenderContent =

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileCacheUnloadCoordinator.h"
 #include "TileCacheKey.h"
 #include "TileContentLifecycleManager.h"
@@ -18,11 +19,6 @@
 namespace earth_engine {
 
 class IPrepareRendererResources;
-
-enum class LegacyHeightmapTerrainCacheMode {
-    Include,
-    ContentOwnedTerrainOnly
-};
 
 class TileContentCacheManager {
 public:
