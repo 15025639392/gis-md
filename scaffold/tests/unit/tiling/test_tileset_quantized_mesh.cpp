@@ -54,6 +54,18 @@ struct TilesetTestAccess {
                 1.0}});
     }
 
+    static LegacyHeightmapTerrainCacheMode requestFrameCacheMode(
+        const Tileset& tileset) {
+        return tileset.makeContentRuntimeRequestFrame()
+            .legacyHeightmapCacheMode;
+    }
+
+    static LegacyHeightmapTerrainCacheMode uploadFrameCacheMode(
+        const Tileset& tileset) {
+        return tileset.makeContentRuntimeUploadFrame(nullptr)
+            .legacyHeightmapCacheMode;
+    }
+
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
         tileset.meshPreparation_.ensureTileMesh(tile);
     }
@@ -319,6 +331,40 @@ SelectorView makeSelectorView(
         view.projectionMatrix * camera.viewMatrix());
     view.viewportHeightPixels = viewportHeight;
     return view;
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainProviderDrivesRuntimeFramesWithContentOwnedCacheMode) {
+    auto contentProvider = std::make_unique<SparseContentTerrainProvider>();
+    Tileset contentTerrainTileset(
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    EXPECT_EQ(
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
+        TilesetTestAccess::requestFrameCacheMode(contentTerrainTileset));
+    EXPECT_EQ(
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
+        TilesetTestAccess::uploadFrameCacheMode(contentTerrainTileset));
+
+    auto legacyTerrainProvider =
+        std::make_unique<CountingLegacyTerrainProvider>(nullptr);
+    Tileset legacyTerrainTileset(
+        std::move(legacyTerrainProvider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    EXPECT_EQ(
+        LegacyHeightmapTerrainCacheMode::Include,
+        TilesetTestAccess::requestFrameCacheMode(legacyTerrainTileset));
+    EXPECT_EQ(
+        LegacyHeightmapTerrainCacheMode::Include,
+        TilesetTestAccess::uploadFrameCacheMode(legacyTerrainTileset));
 }
 
 TEST(TilesetQuantizedMeshTest,
