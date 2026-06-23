@@ -5590,7 +5590,6 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -5877,7 +5876,6 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&activated},
         &device,
@@ -5997,7 +5995,6 @@ void testTilesetGltfTangentsUseModelLinearTransform() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6060,7 +6057,6 @@ void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6112,7 +6108,6 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6168,7 +6163,6 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6258,7 +6252,6 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6316,7 +6309,6 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6404,7 +6396,6 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6506,7 +6497,6 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6593,7 +6583,6 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6707,7 +6696,6 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6836,7 +6824,6 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -6948,7 +6935,6 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7006,7 +6992,6 @@ void testTilesetGltfDoubleSidedDisablesCullOnly() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7053,7 +7038,6 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7134,7 +7118,6 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7217,7 +7200,6 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -15556,7 +15538,6 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
 
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&activated},
         &device,
@@ -25873,7 +25854,6 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
           "Scene: primary terrain tileset remains the height sampling source");
 
     auto contentTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
@@ -25968,7 +25948,6 @@ void testSceneGltfTerrainCountsAsTerrainRenderContent() {
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
@@ -26025,7 +26004,6 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -26102,7 +26080,6 @@ void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -26176,7 +26153,6 @@ void testSceneDiagnosticsRejectImageryOnlyAncestorFallback() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -26249,7 +26225,6 @@ void testSceneSortsTransparentGltfByCameraDepth() {
     scene.camera().lookAt(cameraPosition, target, Vec3::unitZ());
 
     auto contentTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
@@ -27222,7 +27197,6 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -27310,7 +27284,6 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -27414,7 +27387,6 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -27510,7 +27482,6 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
 
 void testPresentationTraceCopiesRenderEntryPassFailures() {
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -27560,7 +27531,6 @@ void testPresentationTraceExposesFadingRenderEntry() {
     options.lodTransitionLength = 1.0f;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -27665,7 +27635,6 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -27768,7 +27737,6 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -27831,7 +27799,6 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -27902,7 +27869,6 @@ void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
     InitializedRendererHarness harness;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &harness.device,
@@ -27950,7 +27916,6 @@ void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&baseActivated},
         &harness.device,
