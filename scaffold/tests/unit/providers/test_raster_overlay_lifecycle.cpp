@@ -3413,6 +3413,7 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
     EXPECT_EQ(nullptr, westTile->getTexture());
     EXPECT_EQ(nullptr, eastTile->getTexture());
+    EXPECT_FALSE(provider.hasPendingWork());
 }
 
 TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumNative) {

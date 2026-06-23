@@ -1409,12 +1409,30 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             const std::string fallbackInFlightKey =
                 depotCacheKey(requestedKey);
             auto waiter =
-                [self, originalKey, ancestorFallback, onReady](
+                [self,
+                 originalKey,
+                 ancestorFallback,
+                 onReady,
+                 fallbackInFlightKeys](
                     InFlightSourceTileAsset::Result cached) mutable {
-                    onReady(self->rasterSourceResultFromAsset(
+                    RasterSourceResult source =
+                        self->rasterSourceResultFromAsset(
                         cached,
                         originalKey,
-                        ancestorFallback));
+                        ancestorFallback);
+                    if (cached) {
+                        auto originalCompleted =
+                            std::make_shared<SourceTileAsset>(
+                                self->sourceAssetFromResult(source));
+                        self->finishInFlightSource(
+                            originalKey,
+                            originalCompleted);
+                        for (const TileKey& key : fallbackInFlightKeys) {
+                            self->finishInFlightSource(key, cached);
+                        }
+                    } else {
+                        onReady(std::move(source));
+                    }
                 };
             {
                 std::lock_guard<std::mutex> lock(cacheMutex);
