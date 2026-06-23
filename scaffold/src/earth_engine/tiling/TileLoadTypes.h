@@ -91,6 +91,11 @@ struct TileLoadResult {
     static TileLoadResult fromContentResult(TileContentLoadResult&& result) {
         TileLoadResult loadResult;
         loadResult.status = result.status;
+        if (result.status == TileLoadStatus::Renderable &&
+            result.gltfModel == nullptr) {
+            loadResult.status = TileLoadStatus::Failed;
+            return loadResult;
+        }
         if (isSuccessfulTileLoadStatus(result.status)) {
             loadResult.content = TileLoadedContent::fromContentResult(
                 std::move(result));

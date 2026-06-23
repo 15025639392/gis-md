@@ -521,6 +521,20 @@ TEST(TileLoadRequestDispatcherTest,
         makeMalformedRenderableWithoutPayloadForTest();
     EXPECT_FALSE(renderableWithoutPayload.shouldUpload());
 
+    TileContentLoadResult malformedContentResult;
+    malformedContentResult.status = TileLoadStatus::Renderable;
+    malformedContentResult.metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle::fromDegrees(-1.0, -2.0, 3.0, 4.0),
+            -5.0,
+            6.0);
+    TileLoadResult normalizedMalformed =
+        TileLoadResult::fromContentResult(std::move(malformedContentResult));
+    EXPECT_EQ(TileLoadStatus::Failed, normalizedMalformed.status);
+    EXPECT_FALSE(normalizedMalformed.shouldUpload());
+    EXPECT_FALSE(
+        normalizedMalformed.content.metadata.updatedBoundingVolume.has_value());
+
     auto directGltfModel = std::make_unique<GltfModel>();
     GltfModel* rawDirectGltfModel = directGltfModel.get();
     const Rectangle modelRasterRectangle =
