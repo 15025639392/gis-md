@@ -1464,9 +1464,9 @@ private:
     }
 };
 
-struct RasterOverlayTileProvider::MappedSourceImageRequest
-    : public std::enable_shared_from_this<MappedSourceImageRequest> {
-    MappedSourceImageRequest(const TileScheme& tileScheme,
+struct RasterOverlayTileProvider::MappedSourceImageSet
+    : public std::enable_shared_from_this<MappedSourceImageSet> {
+    MappedSourceImageSet(const TileScheme& tileScheme,
                              std::shared_ptr<ProviderAsyncState> asyncState,
                              std::shared_ptr<QuadtreeSourceAssetDepot>
                                  sourceDepot,
@@ -2370,7 +2370,7 @@ bool RasterOverlayTileProvider::loadMappedSourceImages(
         refreshSourceAssetDepot();
     }
     const bool returnEmptyForAncestorOnly = true;
-    auto request = std::make_shared<MappedSourceImageRequest>(
+    auto sourceSet = std::make_shared<MappedSourceImageSet>(
         scheme_,
         state,
         sourceAssetDepot_,
@@ -2418,17 +2418,17 @@ bool RasterOverlayTileProvider::loadMappedSourceImages(
             state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
-    issueMappedSourceRequests(
-        request,
+    issueMappedSourceImageSet(
+        sourceSet,
         budget);
 
     return true;
 }
 
-int RasterOverlayTileProvider::issueMappedSourceRequests(
-    const std::shared_ptr<MappedSourceImageRequest>& request,
+int RasterOverlayTileProvider::issueMappedSourceImageSet(
+    const std::shared_ptr<MappedSourceImageSet>& sourceSet,
     FrameResourceBudget* budget) {
-    if (!request || request->isComplete()) {
+    if (!sourceSet || sourceSet->isComplete()) {
         return 0;
     }
     std::shared_ptr<ProviderAsyncState> state = asyncState_;
@@ -2472,7 +2472,7 @@ int RasterOverlayTileProvider::issueMappedSourceRequests(
     };
 
     const int newlyIssued =
-        request->issueAll(
+        sourceSet->issueAll(
             onSourceIssued,
             onSourceFinished,
             onSourceFailed);
