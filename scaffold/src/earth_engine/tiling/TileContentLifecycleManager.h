@@ -16,6 +16,9 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class IPrepareRendererResources;
 
+using HeightmapTerrainCache =
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>;
+
 class TileContentLifecycleManager {
 public:
     TileContentLifecycleManager() = default;
@@ -24,12 +27,10 @@ public:
     TileLoadLifecycle& loadLifecycle() { return loadLifecycle_; }
     const TileLoadLifecycle& loadLifecycle() const { return loadLifecycle_; }
 
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-    heightmapTerrainCache() {
+    HeightmapTerrainCache& heightmapTerrainCache() {
         return heightmapTerrainCache_;
     }
-    const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-    heightmapTerrainCache() const {
+    const HeightmapTerrainCache& heightmapTerrainCache() const {
         return heightmapTerrainCache_;
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileKey.h"
+#include "TileContentLifecycleManager.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TilesetTile.h"
 
@@ -16,12 +17,19 @@ class TilesetTileRegistry;
 
 class TileContentAccess {
 public:
-    TileContentAccess(TilesetTileRegistry& tileRegistry,
-                      const TileScheme& tileScheme,
-                      const TerrainProvider* legacyTerrainProvider,
-                      const TilesetContentProvider* contentProvider,
-                      const TileContentLifecycleManager& contentLifecycle,
-                      size_t rasterOverlayCount);
+    static TileContentAccess forContentTerrain(
+        TilesetTileRegistry& tileRegistry,
+        const TileScheme& tileScheme,
+        const TilesetContentProvider& contentProvider,
+        size_t rasterOverlayCount);
+
+    static TileContentAccess forLegacyTerrain(
+        TilesetTileRegistry& tileRegistry,
+        const TileScheme& tileScheme,
+        const TerrainProvider* legacyTerrainProvider,
+        const TilesetContentProvider* contentProvider,
+        const HeightmapTerrainCache& heightmapTerrainCache,
+        size_t rasterOverlayCount);
 
     TilesetTile* ensureTile(const TileKey& key);
     void ensureTileChildren(TilesetTile& tile);
@@ -30,6 +38,19 @@ public:
     bool canRefine(const TilesetTile& tile) const;
 
 private:
+    enum class TerrainOwnership {
+        LegacyOrNone,
+        ContentProvider,
+    };
+
+    TileContentAccess(TilesetTileRegistry& tileRegistry,
+                      const TileScheme& tileScheme,
+                      const TerrainProvider* legacyTerrainProvider,
+                      const TilesetContentProvider* contentProvider,
+                      const HeightmapTerrainCache* heightmapTerrainCache,
+                      TerrainOwnership terrainOwnership,
+                      size_t rasterOverlayCount);
+
     bool contentProviderOwnsTerrainQuadtree() const;
     bool hasTerrainQuadtree() const;
     bool legacyAvailabilityBoundaryTile(const TilesetTile& tile) const;
@@ -43,7 +64,8 @@ private:
     const TileScheme& tileScheme_;
     const TerrainProvider* legacyTerrainProvider_ = nullptr;
     const TilesetContentProvider* contentProvider_ = nullptr;
-    const TileContentLifecycleManager& contentLifecycle_;
+    const HeightmapTerrainCache* heightmapTerrainCache_ = nullptr;
+    TerrainOwnership terrainOwnership_ = TerrainOwnership::LegacyOrNone;
     size_t rasterOverlayCount_ = 0;
 };
 

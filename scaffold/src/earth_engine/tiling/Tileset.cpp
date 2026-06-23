@@ -87,12 +87,19 @@ Tileset::Tileset(ProviderOwnership providers,
       device_(device),
       options_(std::move(options)),
       contentAccess_(
-          tileRegistry_,
-          *tileScheme_,
-          legacyTerrainProvider_.get(),
-          contentProvider_.get(),
-          contentLifecycle_,
-          rasterOverlays_.size()),
+          contentProviderOwnsTerrainQuadtree(contentProvider_.get())
+              ? TileContentAccess::forContentTerrain(
+                    tileRegistry_,
+                    *tileScheme_,
+                    *contentProvider_,
+                    rasterOverlays_.size())
+              : TileContentAccess::forLegacyTerrain(
+                    tileRegistry_,
+                    *tileScheme_,
+                    legacyTerrainProvider_.get(),
+                    contentProvider_.get(),
+                    contentLifecycle_.heightmapTerrainCache(),
+                    rasterOverlays_.size())),
       resourceInvalidator_(
           resourceRevision_,
           contentCache_),

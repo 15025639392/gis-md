@@ -29,24 +29,60 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
     return true;
 }
 
+const HeightmapTerrainCache& emptyHeightmapTerrainCache() {
+    static const HeightmapTerrainCache empty;
+    return empty;
+}
+
 } // namespace
+
+TileContentAccess TileContentAccess::forContentTerrain(
+    TilesetTileRegistry& tileRegistry,
+    const TileScheme& tileScheme,
+    const TilesetContentProvider& contentProvider,
+    size_t rasterOverlayCount) {
+    return TileContentAccess(
+        tileRegistry,
+        tileScheme,
+        nullptr,
+        &contentProvider,
+        nullptr,
+        TerrainOwnership::ContentProvider,
+        rasterOverlayCount);
+}
+
+TileContentAccess TileContentAccess::forLegacyTerrain(
+    TilesetTileRegistry& tileRegistry,
+    const TileScheme& tileScheme,
+    const TerrainProvider* legacyTerrainProvider,
+    const TilesetContentProvider* contentProvider,
+    const HeightmapTerrainCache& heightmapTerrainCache,
+    size_t rasterOverlayCount) {
+    return TileContentAccess(
+        tileRegistry,
+        tileScheme,
+        legacyTerrainProvider,
+        contentProvider,
+        &heightmapTerrainCache,
+        TerrainOwnership::LegacyOrNone,
+        rasterOverlayCount);
+}
 
 TileContentAccess::TileContentAccess(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
     const TerrainProvider* legacyTerrainProvider,
     const TilesetContentProvider* contentProvider,
-    const TileContentLifecycleManager& contentLifecycle,
+    const HeightmapTerrainCache* heightmapTerrainCache,
+    TerrainOwnership terrainOwnership,
     size_t rasterOverlayCount)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
+      legacyTerrainProvider_(legacyTerrainProvider),
       contentProvider_(contentProvider),
-      contentLifecycle_(contentLifecycle),
-      rasterOverlayCount_(rasterOverlayCount) {
-    if (!contentProviderOwnsTerrainQuadtree()) {
-        legacyTerrainProvider_ = legacyTerrainProvider;
-    }
-}
+      heightmapTerrainCache_(heightmapTerrainCache),
+      terrainOwnership_(terrainOwnership),
+      rasterOverlayCount_(rasterOverlayCount) {}
 
 TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
     return tileRegistry_.ensureTile(
@@ -125,7 +161,7 @@ bool TileContentAccess::isAvailabilityBoundaryTile(
 }
 
 bool TileContentAccess::contentProviderOwnsTerrainQuadtree() const {
-    return contentProvider_ && contentProvider_->providesTerrainQuadtree();
+    return terrainOwnership_ == TerrainOwnership::ContentProvider;
 }
 
 bool TileContentAccess::legacyAvailabilityBoundaryTile(
@@ -168,7 +204,8 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
         contentProvider_,
         legacyTerrainProvider_,
         tileScheme_,
-        contentLifecycle_.heightmapTerrainCache(),
+        heightmapTerrainCache_ ? *heightmapTerrainCache_
+                               : emptyHeightmapTerrainCache(),
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
         },
