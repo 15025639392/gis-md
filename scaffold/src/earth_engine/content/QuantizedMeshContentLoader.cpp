@@ -286,4 +286,38 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     return result;
 }
 
+TileContentLoadResult QuantizedMeshContentLoader::toTileContentLoadResult(
+    QuantizedMeshContentLoadResult&& result) {
+    if (!result.success()) {
+        return TileContentLoadResult::failed();
+    }
+
+    TileContentLoadResult contentResult =
+        TileContentLoadResult::render(std::move(result.gltfModel));
+    contentResult.terrainRenderContent = contentResult.gltfModel != nullptr;
+    contentResult.metadata = std::move(result.metadata);
+    contentResult.quantizedMeshAvailabilityUpdates =
+        std::move(result.availabilityUpdates);
+    return contentResult;
+}
+
+TileContentLoadResult QuantizedMeshContentLoader::loadTileContent(
+    const uint8_t* data,
+    size_t size,
+    const Rectangle& tileRectangle,
+    bool enableWaterMask,
+    const std::vector<QuantizedMeshMetadataContent>& metadata,
+    RasterOverlayProjection terrainProjection,
+    std::optional<QuantizedMeshAvailabilityUpdate>
+        currentTileAvailabilityUpdate) {
+    return toTileContentLoadResult(
+        load(data,
+             size,
+             tileRectangle,
+             enableWaterMask,
+             metadata,
+             terrainProjection,
+             std::move(currentTileAvailabilityUpdate)));
+}
+
 } // namespace earth_engine

@@ -244,6 +244,50 @@ TEST(QuantizedMeshContentLoaderTest,
 }
 
 TEST(QuantizedMeshContentLoaderTest,
+     LoadsTileContentResultForUnifiedTerrainLifecycle) {
+    const std::string metadataJson = R"json({
+        "available": [
+            [
+                {"startX": 0, "startY": 0, "endX": 1, "endY": 1}
+            ]
+        ]
+    })json";
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithMetadata(metadataJson, -10.0f, 150.0f);
+    QuantizedMeshAvailabilityUpdate currentTileUpdate;
+    currentTileUpdate.layerIndex = 2;
+    currentTileUpdate.subtreeKey = TileKey{"Geographic-TMS", 1, 0, 0};
+
+    TileContentLoadResult result =
+        QuantizedMeshContentLoader::loadTileContent(
+            bytes.data(),
+            bytes.size(),
+            geographicRootWestRectangle(),
+            false,
+            {},
+            RasterOverlayProjection::Geographic,
+            currentTileUpdate);
+
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+    EXPECT_TRUE(result.terrainRenderContent);
+    ASSERT_NE(nullptr, result.gltfModel);
+    EXPECT_FALSE(result.gltfModel->primitives.empty());
+    ASSERT_TRUE(result.metadata.updatedBoundingVolume.has_value());
+    EXPECT_EQ(geographicRootWestRectangle(),
+              result.metadata.updatedBoundingVolume->region);
+    ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
+    const Rectangle* rasterRectangle =
+        result.metadata.rasterOverlayDetails->findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, rasterRectangle);
+    EXPECT_EQ(geographicRootWestRectangle(), *rasterRectangle);
+    ASSERT_EQ(1u, result.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(2, result.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(currentTileUpdate.subtreeKey,
+              result.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+}
+
+TEST(QuantizedMeshContentLoaderTest,
      LoadsGltfTerrainModelWithoutTerrainProvider) {
     const Vec3 boundingSphereCenter(10.0, 20.0, 30.0);
     const std::vector<uint8_t> bytes =

@@ -146,22 +146,24 @@ void installQuantizedMeshTerrainContent(TilesetTile& tile,
                                         const std::vector<uint8_t>& bytes,
                                         RasterOverlayProjection projection =
                                             RasterOverlayProjection::Geographic) {
-    QuantizedMeshContentLoadResult loadResult =
-        QuantizedMeshContentLoader::load(
+    TileContentLoadResult loadResult =
+        QuantizedMeshContentLoader::loadTileContent(
             bytes.data(),
             bytes.size(),
             tile.bounds,
             false,
             {},
             projection);
-    ASSERT_TRUE(loadResult.success());
+    ASSERT_EQ(TileLoadStatus::Renderable, loadResult.status);
+    ASSERT_NE(nullptr, loadResult.gltfModel);
+    ASSERT_TRUE(loadResult.terrainRenderContent);
 
     TileLoadedContent content;
     content.gltfModel = std::move(loadResult.gltfModel);
-    content.terrainRenderContent = true;
+    content.terrainRenderContent = loadResult.terrainRenderContent;
     content.metadata = std::move(loadResult.metadata);
     content.quantizedMeshAvailabilityUpdates =
-        std::move(loadResult.availabilityUpdates);
+        std::move(loadResult.quantizedMeshAvailabilityUpdates);
     TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(content),

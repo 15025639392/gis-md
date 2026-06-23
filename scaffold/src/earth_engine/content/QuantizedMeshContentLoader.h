@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GltfContentProvider.h"
 #include "GltfModel.h"
 #include "../core/math/Rectangle.h"
 #include "../terrain/QuantizedMeshAvailability.h"
@@ -54,6 +55,20 @@ public:
             RasterOverlayProjection::Geographic,
         std::optional<QuantizedMeshAvailabilityUpdate>
             currentTileAvailabilityUpdate = std::nullopt);
+
+    static TileContentLoadResult loadTileContent(
+        const uint8_t* data,
+        size_t size,
+        const Rectangle& tileRectangle,
+        bool enableWaterMask,
+        const std::vector<QuantizedMeshMetadataContent>& metadata,
+        RasterOverlayProjection terrainProjection =
+            RasterOverlayProjection::Geographic,
+        std::optional<QuantizedMeshAvailabilityUpdate>
+            currentTileAvailabilityUpdate = std::nullopt);
+
+    static TileContentLoadResult toTileContentLoadResult(
+        QuantizedMeshContentLoadResult&& result);
 };
 
 } // namespace earth_engine

@@ -2036,8 +2036,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                         static_cast<size_t>(contentLayerIndex) < layers_.size()
                     ? layers_[static_cast<size_t>(contentLayerIndex)].schemeId
                     : schemeId_;
-            QuantizedMeshContentLoadResult contentResult =
-                QuantizedMeshContentLoader::load(
+            TileContentLoadResult result =
+                QuantizedMeshContentLoader::loadTileContent(
                     body->data(),
                     body->size(),
                     terrainContentRectangle(key, contentSchemeId),
@@ -2045,19 +2045,12 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     metadata,
                     rasterOverlayProjectionForTerrainScheme(contentSchemeId),
                     std::move(currentTileAvailabilityUpdate));
-            if (!contentResult.success()) {
+            if (result.status == TileLoadStatus::Failed) {
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::failed());
                 return;
             }
 
-            TileContentLoadResult result =
-                TileContentLoadResult::render(
-                    std::move(contentResult.gltfModel));
-            result.terrainRenderContent = result.gltfModel != nullptr;
-            result.metadata = std::move(contentResult.metadata);
-            result.quantizedMeshAvailabilityUpdates =
-                std::move(contentResult.availabilityUpdates);
             completion.complete();
             (*callback)(key, std::move(result));
         });
