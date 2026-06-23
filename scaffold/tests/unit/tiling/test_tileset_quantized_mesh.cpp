@@ -4,7 +4,9 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/content/QuantizedMeshContentLoader.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/tiling/TileCacheKey.h"
@@ -890,6 +892,78 @@ TEST(TilesetQuantizedMeshTest,
     installQuantizedMeshTerrainContent(
         parent,
         makeQuantizedMeshBytes(Vec3::zero(), Vec3::zero()));
+
+    std::optional<TileLoadResult> childLoad =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+
+    EXPECT_FALSE(childLoad.has_value());
+}
+
+TEST(TilesetQuantizedMeshTest,
+     RasterDetailGltfUpsampleRequiresCurrentParentProjectionDetailsLikeCesiumNative) {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
+    TilesetTile child(
+        childKey,
+        Rectangle::fromDegrees(-180.0, -90.0, -90.0, 0.0),
+        &parent);
+    parent.children.push_back(&child);
+    child.content.markRasterDetailUpsample();
+
+    installQuantizedMeshTerrainContent(
+        parent,
+        makeQuantizedMeshBytes(Vec3::zero(), Vec3::zero()),
+        RasterOverlayProjection::WebMercator);
+
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider rasterProvider(
+        imagery,
+        *imageryScheme,
+        nullptr);
+
+    RasterOverlayDetails completeDetails =
+        parent.content.renderContent.rasterOverlayDetails();
+    RasterMappedToTilesetTile& mapped =
+        parent.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        parent.key,
+        completeDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    mapped.getLoadingTile()->setState(RasterOverlayTile::LoadState::Loaded);
+    mapped.getLoadingTile()->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    mapped.update(
+        parent.key,
+        completeDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    ASSERT_TRUE(mapped.isMoreDetailAvailable());
+    ASSERT_EQ(
+        completeDetails.textureCoordinateIDForProjection(
+            RasterOverlayProjection::WebMercator),
+        mapped.getTextureCoordinateID());
+
+    GltfModel* parentModel =
+        parent.content.renderContent.gltfContent();
+    ASSERT_NE(nullptr, parentModel);
+    parentModel->rasterOverlayDetails = RasterOverlayDetails{};
 
     std::optional<TileLoadResult> childLoad =
         TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../content/GltfTerrainUpsampler.h"
+#include "../providers/RasterOverlayTile.h"
+#include "../providers/RasterOverlayTileProvider.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TileRasterOverlayDetailsDeriver.h"
 #include "TileLoadTypes.h"
@@ -124,8 +126,18 @@ private:
             if (!mapping || !mapping->isMoreDetailAvailable()) {
                 continue;
             }
+            const RasterOverlayTile* readyTile = mapping->getReadyTile();
+            if (!readyTile) {
+                continue;
+            }
+            const RasterOverlayProjection projection =
+                readyTile->getTileProvider().getProjection();
+            const int detailsTextureCoordinate =
+                model.rasterOverlayDetails.textureCoordinateIDForProjection(
+                    projection);
             const int candidate = mapping->getTextureCoordinateID();
-            if (modelHasTextureCoordinate(model, candidate)) {
+            if (candidate == detailsTextureCoordinate &&
+                modelHasTextureCoordinate(model, candidate)) {
                 return candidate;
             }
         }
