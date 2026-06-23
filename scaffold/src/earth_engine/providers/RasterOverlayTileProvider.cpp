@@ -35,6 +35,7 @@ namespace {
 constexpr uint64_t kRetainedUnusedFrames = 120;
 constexpr int kMaximumCombinedTextureSizeFallback = 2048;
 constexpr size_t kDefaultMaximumRasterUploadsPerFrame = 20;
+constexpr int64_t kMaximumSourcePlanReserve = 1'000'000;
 constexpr int kInteractionRasterUploadMaxDimension = 512;
 constexpr int64_t kInteractionRasterUploadMaxPixels = 512ll * 512ll;
 constexpr double kPi = 3.14159265358979323846264338327950288;
@@ -155,6 +156,25 @@ struct TileRange {
     int width() const { return std::max(0, maxX - minX + 1); }
     int height() const { return std::max(0, maxY - minY + 1); }
     int count() const { return width() * height(); }
+    int64_t width64() const {
+        return std::max<int64_t>(
+            0,
+            static_cast<int64_t>(maxX) - static_cast<int64_t>(minX) + 1);
+    }
+    int64_t height64() const {
+        return std::max<int64_t>(
+            0,
+            static_cast<int64_t>(maxY) - static_cast<int64_t>(minY) + 1);
+    }
+    int64_t count64() const {
+        const int64_t w = width64();
+        const int64_t h = height64();
+        if (w > 0 &&
+            h > std::numeric_limits<int64_t>::max() / w) {
+            return std::numeric_limits<int64_t>::max();
+        }
+        return w * h;
+    }
 };
 
 struct TileCoverage {
@@ -180,6 +200,38 @@ struct TileCoverage {
         int total = 0;
         for (const TileRange& range : ranges) {
             total += range.count();
+        }
+        return total;
+    }
+
+    int64_t width64() const {
+        int64_t total = 0;
+        for (const TileRange& range : ranges) {
+            const int64_t width = range.width64();
+            if (total > std::numeric_limits<int64_t>::max() - width) {
+                return std::numeric_limits<int64_t>::max();
+            }
+            total += width;
+        }
+        return total;
+    }
+
+    int64_t height64() const {
+        int64_t maximum = 0;
+        for (const TileRange& range : ranges) {
+            maximum = std::max(maximum, range.height64());
+        }
+        return maximum;
+    }
+
+    int64_t count64() const {
+        int64_t total = 0;
+        for (const TileRange& range : ranges) {
+            const int64_t count = range.count64();
+            if (total > std::numeric_limits<int64_t>::max() - count) {
+                return std::numeric_limits<int64_t>::max();
+            }
+            total += count;
         }
         return total;
     }
@@ -335,6 +387,17 @@ bool hasRasterInflightCapacity(FrameResourceBudget* budget,
         FrameResourceLane::RasterRequest,
         currentInflight,
         estimatedFanout);
+}
+
+int64_t saturatingPixelSpan(int64_t tiles, int tilePixels) {
+    if (tiles <= 0 || tilePixels <= 0) {
+        return 0;
+    }
+    const int64_t pixels = static_cast<int64_t>(tilePixels);
+    if (tiles > std::numeric_limits<int64_t>::max() / pixels) {
+        return std::numeric_limits<int64_t>::max();
+    }
+    return tiles * pixels;
 }
 
 bool isWebMercatorScheme(const TileScheme& scheme) {
@@ -632,10 +695,14 @@ int chooseQuadtreeSourceZoom(const TileScheme& scheme,
 
     TileCoverage coverage = computeCoverage(scheme, sourceBounds, zoom);
     while (zoom > minZoom) {
-        const int widthPixels =
-            coverage.width() * std::max(1, provider.tileWidth());
-        const int heightPixels =
-            coverage.height() * std::max(1, provider.tileHeight());
+        const int64_t widthPixels =
+            saturatingPixelSpan(
+                coverage.width64(),
+                std::max(1, provider.tileWidth()));
+        const int64_t heightPixels =
+            saturatingPixelSpan(
+                coverage.height64(),
+                std::max(1, provider.tileHeight()));
         if (widthPixels <= maxTextureSize &&
             heightPixels <= maxTextureSize) {
             break;
@@ -1101,7 +1168,9 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
         sourceBounds,
         plan.sourceZoom);
     plan.sourceKeys.reserve(
-        static_cast<size_t>(std::max(0, coverage.count())));
+        static_cast<size_t>(std::min<int64_t>(
+            coverage.count64(),
+            kMaximumSourcePlanReserve)));
     for (const TileRange& coveredRange : coverage.ranges) {
         for (int x = coveredRange.minX; x <= coveredRange.maxX; ++x) {
             for (int y = coveredRange.minY; y <= coveredRange.maxY; ++y) {

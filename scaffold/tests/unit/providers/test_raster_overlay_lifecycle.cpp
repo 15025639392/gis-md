@@ -1997,6 +1997,30 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayMaximumTexture
 }
 
 TEST(RasterOverlayLifecycleTest,
+     DeepQuadtreeSourceZoomTextureLimitDoesNotOverflow) {
+    ConfigurableImageryProvider imagery;
+    imagery.maxZoomValue = 31;
+    imagery.tileWidthValue = 256;
+    imagery.tileHeightValue = 256;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(0, 31);
+    provider.setMaximumTextureSize(256);
+
+    const TileKey rootKey{scheme->id(), 0, 0, 0};
+    const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
+    auto tile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, rootBounds),
+        1.0e12,
+        1.0e12).tile;
+
+    ASSERT_NE(nullptr, tile);
+    EXPECT_FALSE(tile->isMappedRasterTile());
+    EXPECT_EQ(rootKey, tile->getTileID());
+    EXPECT_EQ(1, provider.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest,
      ExactRootRectangleLoadsThroughDirectQuadtreeTileLikeCesiumNative) {
     RgbImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
