@@ -112,6 +112,10 @@ struct TilesetTestAccess {
         tileset.contentAccess_.ensureTileChildren(tile);
     }
 
+    static bool canRefine(Tileset& tileset, const TilesetTile& tile) {
+        return tileset.contentAccess_.canRefine(tile);
+    }
+
     static void putTerrainCache(
         Tileset& tileset,
         const TileKey& key,
@@ -454,6 +458,68 @@ public:
 
 private:
     std::string schemeId_;
+};
+
+class PendingBoundaryContentTerrainProvider final
+    : public TilesetContentProvider {
+public:
+    std::string id() const override { return "pending-boundary-terrain"; }
+    bool providesTerrainQuadtree() const override { return true; }
+
+    std::vector<TileKey> rootTiles() const override {
+        return {rootKey};
+    }
+
+    bool supportsTile(const TileKey& key) const override {
+        return key == rootKey || key == availableChildKey;
+    }
+
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey& key) const override {
+        if (key == rootKey || key == availableChildKey) {
+            return TileAvailabilityState::Available;
+        }
+        if (key.schemeId == rootKey.schemeId && key.z == 1) {
+            return TileAvailabilityState::NotAvailable;
+        }
+        return TileAvailabilityState::NotAvailable;
+    }
+
+    bool isTerrainAvailabilityBoundaryLevel(int level) const override {
+        return level % metadataAvailabilityLevels == 0;
+    }
+
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        pendingKey = key;
+        pendingCallback = std::move(callback);
+    }
+
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    bool completePendingWithEmpty() {
+        if (!pendingCallback || !pendingKey) {
+            return false;
+        }
+        ContentCallback callback = std::move(pendingCallback);
+        TileKey key = *pendingKey;
+        pendingKey.reset();
+        callback(key, TileContentLoadResult::empty());
+        return true;
+    }
+
+    TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TileKey availableChildKey{"Geographic-TMS", 1, 0, 0};
+    int metadataAvailabilityLevels = 1;
+    int requestCount = 0;
+    std::optional<TileKey> pendingKey;
+    ContentCallback pendingCallback;
 };
 
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters);
@@ -1076,6 +1142,59 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
+}
+
+TEST(TilesetQuantizedMeshTest,
+     AvailabilityBoundaryWaitsForContentBeforeChildrenLikeCesiumNative) {
+    auto provider = std::make_unique<PendingBoundaryContentTerrainProvider>();
+    PendingBoundaryContentTerrainProvider* rawProvider = provider.get();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    const TileLoadRequestOutcome outcome =
+        TilesetTestAccess::requestMissingContent(tileset, rootKey);
+    ASSERT_EQ(1u, outcome.issued);
+    ASSERT_EQ(1, rawProvider->requestCount);
+    ASSERT_TRUE(rawProvider->pendingKey.has_value());
+    EXPECT_EQ(TileLoadState::ContentLoading, root->content.loadState);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_TRUE(root->children.empty());
+    EXPECT_FALSE(TilesetTestAccess::canRefine(tileset, *root));
+
+    ASSERT_TRUE(rawProvider->completePendingWithEmpty());
+    EXPECT_TRUE(TilesetTestAccess::processPendingLoads(tileset));
+    EXPECT_EQ(TileLoadState::Done, root->content.loadState);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(4u, root->children.size());
+    const std::array<TileKey, 4> expectedChildren = {{
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        TileKey{"Geographic-TMS", 1, 0, 1},
+        TileKey{"Geographic-TMS", 1, 1, 1}}};
+    for (size_t i = 0; i < expectedChildren.size(); ++i) {
+        ASSERT_NE(nullptr, root->children[i]);
+        EXPECT_EQ(expectedChildren[i], root->children[i]->key);
+        EXPECT_EQ(root, root->children[i]->parent);
+    }
+
+    EXPECT_FALSE(
+        root->children[0]->content.isTerrainAvailabilityUpsample());
+    for (size_t i = 1; i < root->children.size(); ++i) {
+        EXPECT_TRUE(
+            root->children[i]->content.isTerrainAvailabilityUpsample());
+    }
+    EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *root));
 }
 
 TEST(TilesetQuantizedMeshTest,
