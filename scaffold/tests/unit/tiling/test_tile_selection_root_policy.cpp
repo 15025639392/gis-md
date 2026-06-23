@@ -38,6 +38,53 @@ public:
     }
 };
 
+class ContentOwnedWebMercatorTerrainProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override {
+        return "content-owned-web-mercator-terrain";
+    }
+    bool supportsTile(const TileKey&) const override { return true; }
+    std::vector<TileKey> rootTiles() const override {
+        return {
+            TileSelectionRootPolicy::virtualTerrainRootKey(
+                "XYZ-WebMercator")};
+    }
+    std::optional<TilesetContentTileMetadata> tileMetadata(
+        const TileKey& key) const override {
+        if (!TileSelectionRootPolicy::isVirtualTerrainRoot(key) ||
+            key.schemeId != "XYZ-WebMercator") {
+            return std::nullopt;
+        }
+        TilesetContentTileMetadata metadata;
+        metadata.key = key;
+        metadata.bounds = WebMercatorProjection::maximumGlobeRectangle();
+        metadata.hasExplicitBounds = true;
+        metadata.boundingVolume = TileBoundingVolume::fromRegion(
+            metadata.bounds,
+            -1000.0,
+            9000.0);
+        metadata.geometricError = calcLayerJsonTerrainGeometricError(
+            Ellipsoid::WGS84(),
+            metadata.bounds);
+        metadata.refine = TileRefine::Replace;
+        metadata.unconditionallyRefine = true;
+        return metadata;
+    }
+    bool providesTerrainQuadtree() const override { return true; }
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey&) const override {
+        return TileAvailabilityState::Available;
+    }
+    void requestTileContent(const TileKey&,
+                            CancellationToken,
+                            ContentCallback,
+                            HttpRequestPriority =
+                                HttpRequestPriority::Normal) override {}
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+};
+
 struct GeographicRootFixture {
     TilesetTileRegistry registry;
     std::unique_ptr<TileScheme> scheme = TileScheme::createGeographicTMS();
@@ -77,6 +124,18 @@ struct ContentOwnedGeographicRootFixture {
         *scheme,
         provider,
         2);
+};
+
+struct ContentOwnedWebMercatorRootFixture {
+    TilesetTileRegistry registry;
+    std::unique_ptr<TileScheme> scheme = TileScheme::createXYZWebMercator();
+    ContentOwnedWebMercatorTerrainProvider provider;
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(
+        registry,
+        *scheme,
+        provider,
+        1);
 };
 
 } // namespace
@@ -305,6 +364,40 @@ TEST(TileSelectionRootPolicyTest,
     EXPECT_TRUE(levelZero->content.renderContent.hasGltfModel());
     EXPECT_TRUE(levelZero->content.renderContent.isRenderContentReady());
     EXPECT_EQ(existingMapping, levelZero->rasterOverlayState.mappingAt(0));
+}
+
+TEST(
+    TileSelectionRootPolicyTest,
+    ContentOwnedWebMercatorVirtualRootAppliesProviderMetadataOnCreation) {
+    ContentOwnedWebMercatorRootFixture fixture;
+    const TileKey rootKey =
+        TileSelectionRootPolicy::virtualTerrainRootKey("XYZ-WebMercator");
+
+    TilesetTile* root = fixture.contentAccess.ensureTile(rootKey);
+
+    ASSERT_NE(root, nullptr);
+    const Rectangle expectedBounds =
+        WebMercatorProjection::maximumGlobeRectangle();
+    EXPECT_EQ(root->key, rootKey);
+    EXPECT_TRUE(root->unconditionallyRefine);
+    EXPECT_NEAR(root->bounds.west(), expectedBounds.west(), 1e-12);
+    EXPECT_NEAR(root->bounds.south(), expectedBounds.south(), 1e-12);
+    EXPECT_NEAR(root->bounds.east(), expectedBounds.east(), 1e-12);
+    EXPECT_NEAR(root->bounds.north(), expectedBounds.north(), 1e-12);
+    EXPECT_NEAR(
+        root->geometricError,
+        calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), expectedBounds),
+        1e-5);
+    ASSERT_TRUE(root->boundingVolume.has_value());
+    EXPECT_EQ(root->boundingVolume->kind, TileBoundingVolumeKind::Region);
+    EXPECT_NEAR(
+        root->boundingVolume->region.south(),
+        expectedBounds.south(),
+        1e-12);
+    EXPECT_NEAR(
+        root->boundingVolume->region.north(),
+        expectedBounds.north(),
+        1e-12);
 }
 
 TEST(TileSelectionRootPolicyTest, VirtualWebMercatorRootLinksLevelZeroDataTile) {

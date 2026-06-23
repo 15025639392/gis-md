@@ -63,6 +63,9 @@ TilesetTile* TilesetTileRegistry::ensureTile(
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(key)) {
         auto tile = std::make_unique<TilesetTile>(key, Rectangle::MAXIMUM);
         initializeVirtualTerrainRoot(*tile, rasterOverlayCount);
+        if (contentMetadata) {
+            TileCreationPolicy::applyContentMetadata(*tile, *contentMetadata);
+        }
         TilesetTile* raw = tile.get();
         tiles_[ck] = std::move(tile);
         return raw;
