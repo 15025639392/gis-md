@@ -1007,7 +1007,6 @@ TEST(TilesetRequestMissingBudgetTest,
         contentProvider.get();
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1254,7 +1253,6 @@ TEST(
         contentProvider.get();
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1299,7 +1297,6 @@ TEST(
         contentProvider.get();
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,

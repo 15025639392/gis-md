@@ -122,7 +122,6 @@ public:
 
 Tileset makeContentTerrainSamplingTileset() {
     return Tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
