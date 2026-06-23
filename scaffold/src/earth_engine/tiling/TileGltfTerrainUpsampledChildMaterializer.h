@@ -155,10 +155,8 @@ private:
             const int detailsTextureCoordinate =
                 model.rasterOverlayDetails.textureCoordinateIDForProjection(
                     projection);
-            const int candidate = mapping->getTextureCoordinateID();
-            if (candidate == detailsTextureCoordinate &&
-                modelHasTextureCoordinate(model, candidate)) {
-                return candidate;
+            if (modelHasTextureCoordinate(model, detailsTextureCoordinate)) {
+                return detailsTextureCoordinate;
             }
         }
 

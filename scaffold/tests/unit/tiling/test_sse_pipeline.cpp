@@ -26285,6 +26285,122 @@ void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
           "Tileset: raster-detail glTF upsample waits for current parent projection details without legacy fallback");
 }
 
+void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMappingTexcoord() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
+        std::move(provider),
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: stale texcoord raster-detail upsample root tile is created");
+    if (!root) return;
+
+    auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
+    const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
+        root->bounds;
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[1] =
+        parentWebMercatorOverlay;
+    parentModel->rasterOverlayDetails.boundingRegion = {
+        root->bounds,
+        -8.0,
+        45.0};
+    RasterOverlayDetails currentDetails = parentModel->rasterOverlayDetails;
+    RasterOverlayDetails staleMappingDetails = currentDetails;
+    staleMappingDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::WebMercator,
+        RasterOverlayProjection::Geographic};
+    staleMappingDetails.rasterOverlayRectangles = {
+        parentWebMercatorOverlay,
+        root->bounds};
+    staleMappingDetails.rasterOverlayInvertedVCoordinates = {false, false};
+
+    root->content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->markRenderContentDone();
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: stale texcoord raster-detail upsample setup creates children");
+    if (root->children.empty() || !root->children.front()) return;
+
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    DebugImageryProvider imagery;
+    RasterOverlayTileProvider rasterProvider(
+        imagery,
+        *imageryScheme,
+        nullptr);
+    RasterMappedToTilesetTile& mapped =
+        root->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        root->key,
+        staleMappingDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    if (!loadingTile) return;
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    mapped.update(
+        root->key,
+        staleMappingDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    check(mapped.isMoreDetailAvailable() &&
+              mapped.getTextureCoordinateID() == 0,
+          "Tileset: stale texcoord fixture keeps old mapping texcoord id");
+
+    TilesetTile* child = root->children.front();
+    child->content.markRasterDetailUpsample();
+    TilesetTestAccess::requestMissingTile(tileset, child->key);
+    check(child->content.loadState == TileLoadState::ContentLoading &&
+              tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
+              rawProvider->requestCount == 0,
+          "Tileset: raster-detail glTF upsample ignores stale mapping texcoord and queues locally like cesium-native");
+
+    TilesetTestAccess::processPendingUploads(tileset);
+    const GltfModel* childModel =
+        child->content.renderContent.gltfModelForRead();
+    check(child->content.loadState == TileLoadState::Done &&
+              childModel != nullptr &&
+              !child->content.renderContent.hasSurfaceMesh(),
+          "Tileset: raster-detail glTF upsample succeeds from current projection details");
+    if (!childModel || childModel->primitives.empty()) return;
+
+    bool clippedWithCurrentWebMercatorTexcoord = true;
+    for (const auto& texCoord :
+         childModel->primitives.front().vertexTexCoords[1]) {
+        clippedWithCurrentWebMercatorTexcoord =
+            clippedWithCurrentWebMercatorTexcoord &&
+            texCoord[0] <= 0.5f &&
+            texCoord[1] <= 0.5f;
+    }
+    check(clippedWithCurrentWebMercatorTexcoord,
+          "Tileset: raster-detail glTF upsample clips with current parent projection texcoord");
+}
+
 void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail() {
     const TileKey parentKey{"TMS-WebMercator", 0, 0, 0};
     const TileKey childKey{"TMS-WebMercator", 1, 0, 1};
@@ -27450,6 +27566,7 @@ int main() {
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
     testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
     testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails();
+    testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMappingTexcoord();
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
     testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
     testTerrainContentUpsamplePropagatesInvertedVCoordinate();
