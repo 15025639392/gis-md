@@ -221,7 +221,7 @@ TEST(TileContentLifecycleManagerTest, ShutdownClearsClaimedUploadWork) {
                 "terrain-upload",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileLoadResult::createRenderableTerrain()});
+                TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
 
         EXPECT_TRUE(manager.loadLifecycle()
                         .pendingLoads()

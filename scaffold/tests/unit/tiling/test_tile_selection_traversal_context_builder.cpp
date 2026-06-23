@@ -24,13 +24,14 @@ struct TraversalContextFixture {
     TilesetTileRegistry registry;
     std::unique_ptr<TileScheme> scheme = TileScheme::createGeographicTMS();
     TileContentLifecycleManager lifecycle;
-    TileContentAccess contentAccess{
+    TileContentAccess contentAccess =
+        TileContentAccess::forLegacyTerrain(
         registry,
         *scheme,
         nullptr,
         nullptr,
-        lifecycle,
-        0};
+        lifecycle.heightmapTerrainCache(),
+        0);
     TileSelectionTraversalContextBinding binding{
         tilePlan,
         loadQueue,

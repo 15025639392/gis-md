@@ -42,26 +42,28 @@ struct GeographicRootFixture {
     TilesetTileRegistry registry;
     std::unique_ptr<TileScheme> scheme = TileScheme::createGeographicTMS();
     TileContentLifecycleManager lifecycle;
-    TileContentAccess contentAccess{
+    TileContentAccess contentAccess =
+        TileContentAccess::forLegacyTerrain(
         registry,
         *scheme,
         nullptr,
         nullptr,
-        lifecycle,
-        2};
+        lifecycle.heightmapTerrainCache(),
+        2);
 };
 
 struct WebMercatorRootFixture {
     TilesetTileRegistry registry;
     std::unique_ptr<TileScheme> scheme = TileScheme::createXYZWebMercator();
     TileContentLifecycleManager lifecycle;
-    TileContentAccess contentAccess{
+    TileContentAccess contentAccess =
+        TileContentAccess::forLegacyTerrain(
         registry,
         *scheme,
         nullptr,
         nullptr,
-        lifecycle,
-        1};
+        lifecycle.heightmapTerrainCache(),
+        1);
 };
 
 struct ContentOwnedGeographicRootFixture {
@@ -69,13 +71,12 @@ struct ContentOwnedGeographicRootFixture {
     std::unique_ptr<TileScheme> scheme = TileScheme::createGeographicTMS();
     TileContentLifecycleManager lifecycle;
     ContentOwnedTerrainProvider provider;
-    TileContentAccess contentAccess{
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(
         registry,
         *scheme,
-        nullptr,
-        &provider,
-        lifecycle,
-        2};
+        provider,
+        2);
 };
 
 } // namespace

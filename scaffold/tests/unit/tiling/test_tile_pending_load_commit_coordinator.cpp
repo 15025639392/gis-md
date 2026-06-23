@@ -626,7 +626,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -711,7 +711,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -802,7 +802,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -896,7 +896,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -979,7 +979,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -1055,7 +1055,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -1121,7 +1121,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -1188,7 +1188,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::createRenderableTerrain()};
+        TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -1202,7 +1202,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -1320,7 +1320,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());

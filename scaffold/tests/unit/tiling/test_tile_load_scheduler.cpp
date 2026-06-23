@@ -569,13 +569,13 @@ TEST(TileLoadSchedulerTest, PendingUploadsRemainIndependentWhenLegacyTerrainIsIg
             cacheKeyForTile(firstUploadKey),
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             secondUploadKey,
             cacheKeyForTile(secondUploadKey),
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     }
 
     DeferredTerrainProvider provider;
@@ -1297,7 +1297,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingUploadBeforeSnapshot) {
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     }
 
     bool planned = false;
@@ -1350,7 +1350,7 @@ TEST(TileLoadSchedulerTest, SkipsClaimedUploadBeforeSnapshot) {
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());

@@ -10987,13 +10987,13 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
         erasedCacheKey,
         TileLoadPriorityGroup::Normal,
         10.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         keptKey,
         keptCacheKey,
         TileLoadPriorityGroup::Normal,
         1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
@@ -12474,7 +12474,7 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 1, 0},
             "content-upload",
@@ -18208,7 +18208,7 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         contentKey,
         "content",
@@ -18238,13 +18238,13 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
         100.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
 
     std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(true, budget);
@@ -18307,13 +18307,13 @@ void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
         100.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         firstKey,
         "content",
@@ -18450,7 +18450,7 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainKey,
         "terrain",
@@ -18530,7 +18530,7 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         key,
         "",
@@ -18572,7 +18572,7 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
         0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         contentUploadKey,
         "content-upload",
@@ -18634,7 +18634,7 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             contentKey,
             "content-upload",
@@ -18904,7 +18904,7 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
             "upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     }
 
     const bool changed =
@@ -18946,13 +18946,13 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
             "normal",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
             urgentKey,
             "urgent",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     }
 
     const bool changed =
@@ -18988,7 +18988,7 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 1, 0},
             "content",
@@ -19030,7 +19030,7 @@ void testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds() {
             "shared",
             TileLoadPriorityGroup::Normal,
             1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 0, 0},
             "shared",
@@ -19066,7 +19066,7 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         std::optional<PendingTileLoad> upload =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
         check(upload && upload->domain == TileLoadDomain::TerrainContent,
@@ -19147,7 +19147,7 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
         "",
         TileLoadPriorityGroup::Normal,
         0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::Content,
         key,
         "",
@@ -19547,7 +19547,7 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
                 TileKey{"test", 0, 1, 0},
                 "content-terminal",
@@ -19592,7 +19592,7 @@ void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
                 TileKey{"test", 0, 1, 0},
                 "content-terminal",
@@ -19730,7 +19730,7 @@ void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
                 "terrain-upload",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         check(manager.loadLifecycle()
                   .pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
@@ -20489,7 +20489,7 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     }
 
     bool planned = false;
@@ -20539,7 +20539,7 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         check(lifecycle.pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
                   .has_value(),

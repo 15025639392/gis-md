@@ -65,7 +65,7 @@ TEST(
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
                 TileKey{"test", 1, 0, 1},
                 "terrain-terminal",

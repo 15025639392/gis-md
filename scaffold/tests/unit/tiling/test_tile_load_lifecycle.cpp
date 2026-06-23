@@ -261,7 +261,7 @@ TEST(TileLoadLifecycleTest, DestroyWithoutRequestsReturnsImmediately) {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
                 TileKey{"test", 0, 1, 0},
                 "content-terminal",
@@ -325,7 +325,7 @@ TEST(TileLoadLifecycleTest, DestroyCancelsAndWaitsForCallbacks) {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
                 TileKey{"test", 0, 1, 0},
                 "content-terminal",

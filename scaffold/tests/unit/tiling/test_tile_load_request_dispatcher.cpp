@@ -498,8 +498,9 @@ TEST(TileLoadRequestDispatcherTest,
         1u,
         normalizedGltf.content.quantizedMeshAvailabilityUpdates.size());
 
-    TileLoadResult untypedTerrain = TileLoadResult::createRenderableTerrain();
-    EXPECT_FALSE(untypedTerrain.shouldUpload());
+    TileLoadResult renderableWithoutPayload =
+        TileLoadResult::createRenderable();
+    EXPECT_FALSE(renderableWithoutPayload.shouldUpload());
 
     auto directGltfModel = std::make_unique<GltfModel>();
     GltfModel* rawDirectGltfModel = directGltfModel.get();
@@ -1012,7 +1013,8 @@ TEST(TileLoadRequestDispatcherTest,
             TileLoadPriorityGroup::Urgent,
             100.0,
             TileLoadDomain::Content,
-            TileLoadResult::createRenderableTerrain());
+            TileLoadResult::createRenderableGltfTerrain(
+                std::make_unique<GltfModel>()));
 
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(requestState.empty());

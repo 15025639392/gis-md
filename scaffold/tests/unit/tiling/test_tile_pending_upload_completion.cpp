@@ -22,7 +22,7 @@ TEST(TilePendingUploadCompletionTest, ClaimedUploadCountsAsWork) {
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         std::optional<PendingTileLoad> upload =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
 
@@ -53,7 +53,7 @@ TEST(TilePendingUploadCompletionTest, ErasesUploadKeys) {
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 1, 0},
             "content",
@@ -98,7 +98,7 @@ TEST(TilePendingUploadCompletionTest, RejectsDuplicateUploadKeyAcrossKinds) {
             "shared",
             TileLoadPriorityGroup::Normal,
             1.0,
-            TileLoadResult::createRenderableTerrain()});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 0, 0},
             "shared",

@@ -52,7 +52,7 @@ PendingTileLoad terrainUpload(
         std::move(cacheKey),
         group,
         priority,
-        TileLoadResult::createRenderableTerrain()};
+        TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())};
 }
 
 PendingTileLoad contentUpload(
