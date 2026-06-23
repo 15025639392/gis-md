@@ -60,6 +60,23 @@ struct TileContentLoadResult {
         return result;
     }
 
+    static TileContentLoadResult renderTerrain(
+        std::unique_ptr<GltfModel> model,
+        TileLoadResultMetadata metadata = {},
+        Mat4 contentTransform = Mat4::identity()) {
+        TileContentLoadResult result = render(std::move(model));
+        if (result.status == TileLoadStatus::Renderable) {
+            if (!metadata.rasterOverlayDetails && result.gltfModel) {
+                metadata.rasterOverlayDetails =
+                    result.gltfModel->rasterOverlayDetails;
+            }
+            result.metadata = std::move(metadata);
+            result.contentTransform = contentTransform;
+            result.terrainRenderContent = true;
+        }
+        return result;
+    }
+
     static TileContentLoadResult empty() {
         TileContentLoadResult result;
         result.status = TileLoadStatus::Empty;

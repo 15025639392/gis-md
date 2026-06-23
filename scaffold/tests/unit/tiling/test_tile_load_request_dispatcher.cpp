@@ -296,8 +296,7 @@ public:
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         auto model = std::make_unique<GltfModel>();
         TileContentLoadResult result =
-            TileContentLoadResult::render(std::move(model));
-        result.terrainRenderContent = true;
+            TileContentLoadResult::renderTerrain(std::move(model));
         QuantizedMeshAvailabilityUpdate update;
         update.layerIndex = 2;
         update.subtreeKey = TileKey{"Geographic-TMS", 3, 1, 1};
@@ -391,8 +390,8 @@ public:
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         callbackSawIssued = issuedBeforeCallback_;
         TileContentLoadResult result =
-            TileContentLoadResult::render(std::make_unique<GltfModel>());
-        result.terrainRenderContent = true;
+            TileContentLoadResult::renderTerrain(
+                std::make_unique<GltfModel>());
         callback(key, std::move(result));
     }
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
@@ -782,8 +781,7 @@ TEST(TileLoadRequestDispatcherTest,
     auto gltfModel = std::make_unique<GltfModel>();
     GltfModel* rawGltfModel = gltfModel.get();
     TileContentLoadResult contentResult =
-        TileContentLoadResult::render(std::move(gltfModel));
-    contentResult.terrainRenderContent = true;
+        TileContentLoadResult::renderTerrain(std::move(gltfModel));
     contentResult.quantizedMeshAvailabilityUpdates.push_back(
         QuantizedMeshAvailabilityUpdate{});
     TileLoadResult normalizedGltf =
@@ -892,6 +890,30 @@ TEST(TileLoadRequestDispatcherTest,
     TileLoadResult contentGltf = TileLoadResult::fromContentResult(
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
     EXPECT_TRUE(contentGltf.shouldUpload());
+
+    auto contentModel = std::make_unique<GltfModel>();
+    GltfModel* rawContentModel = contentModel.get();
+    const Rectangle contentRasterRectangle =
+        Rectangle::fromDegrees(50.0, 51.0, 52.0, 53.0);
+    contentModel->rasterOverlayDetails.setGeographicRectangle(
+        contentRasterRectangle);
+    const Mat4 contentTransform = Mat4::translation(Vec3{4.0, 5.0, 6.0});
+    TileContentLoadResult terrainContentResult =
+        TileContentLoadResult::renderTerrain(
+            std::move(contentModel),
+            {},
+            contentTransform);
+    EXPECT_EQ(TileLoadStatus::Renderable, terrainContentResult.status);
+    EXPECT_TRUE(terrainContentResult.terrainRenderContent);
+    EXPECT_EQ(rawContentModel, terrainContentResult.gltfModel.get());
+    EXPECT_EQ(contentTransform, terrainContentResult.contentTransform);
+    ASSERT_TRUE(terrainContentResult.metadata.rasterOverlayDetails.has_value());
+    const Rectangle* contentCommittedRectangle =
+        terrainContentResult.metadata.rasterOverlayDetails
+            ->findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, contentCommittedRectangle);
+    EXPECT_EQ(contentRasterRectangle, *contentCommittedRectangle);
 }
 
 TEST(TileLoadRequestDispatcherTest,

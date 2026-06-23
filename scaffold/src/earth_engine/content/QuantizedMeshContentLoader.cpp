@@ -294,9 +294,9 @@ TileContentLoadResult QuantizedMeshContentLoader::toTileContentLoadResult(
     }
 
     TileContentLoadResult contentResult =
-        TileContentLoadResult::render(std::move(result.gltfModel));
-    contentResult.terrainRenderContent = contentResult.gltfModel != nullptr;
-    contentResult.metadata = std::move(result.metadata);
+        TileContentLoadResult::renderTerrain(
+            std::move(result.gltfModel),
+            std::move(result.metadata));
     contentResult.quantizedMeshAvailabilityUpdates =
         std::move(result.availabilityUpdates);
     return contentResult;
