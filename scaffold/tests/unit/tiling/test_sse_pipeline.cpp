@@ -11095,7 +11095,7 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     TileIndexState::eraseCacheKeyState(
         erasedCacheKey,
         unloadQueue,
-        terrainCache,
+        &terrainCache,
         emptyContentRegistry,
         loadQueue,
         lifecycle,
@@ -11152,7 +11152,7 @@ void testTileIndexStateErasesTerminalResults() {
     TileIndexState::eraseCacheKeyState(
         erasedCacheKey,
         unloadQueue,
-        terrainCache,
+        &terrainCache,
         emptyContentRegistry,
         loadQueue,
         lifecycle,
@@ -11243,7 +11243,7 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
               "TileContentCacheManager: erase-index claimed upload test dequeues payload");
     }
 
-    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
+    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue, true);
 
     check(!manager.unloadQueue().contains(cacheKey) &&
               lifecycle.heightmapTerrainCache().find(cacheKey) ==
@@ -14929,7 +14929,7 @@ void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileIndexState::eraseCacheKeyState(
         cacheKey,
         unloadQueue,
-        terrainCache,
+        &terrainCache,
         emptyContentRegistry,
         loadQueue,
         lifecycle,

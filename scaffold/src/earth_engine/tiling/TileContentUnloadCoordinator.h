@@ -24,6 +24,21 @@ public:
             terrainCache,
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer) {
+        return unloadContent(
+            tile,
+            cacheKey,
+            &terrainCache,
+            emptyContentRegistry,
+            pPrepRenderer);
+    }
+
+    static TileCacheUnloadContentResult unloadContent(
+        TilesetTile& tile,
+        const std::string& cacheKey,
+        std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>*
+            terrainCache,
+        TileEmptyContentRegistry& emptyContentRegistry,
+        IPrepareRendererResources* pPrepRenderer) {
         if (tile.content.loadState == TileLoadState::Unloaded) {
             return TileCacheUnloadContentResult::Remove;
         }
@@ -61,7 +76,9 @@ public:
                     return TileCacheUnloadContentResult::Keep;
                 }
                 TileUnloadPolicy::releaseRenderContentResources(tile);
-                terrainCache.erase(cacheKey);
+                if (terrainCache) {
+                    terrainCache->erase(cacheKey);
+                }
                 break;
             case TileContentKind::Empty:
                 break;

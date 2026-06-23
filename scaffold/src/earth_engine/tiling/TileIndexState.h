@@ -38,13 +38,15 @@ struct TileIndexState {
         TileUnloadQueue& unloadQueue,
         std::unordered_map<
             std::string,
-            std::unique_ptr<DecodedHeightmap>>& terrainCache,
+            std::unique_ptr<DecodedHeightmap>>* terrainCache,
         TileEmptyContentRegistry& emptyContentRegistry,
         TileLoadQueue& loadQueue,
         TileLoadLifecycle& loadLifecycle,
         CacheKeyForTileFn&& cacheKeyForTile) {
         markIneligibleForUnloading(unloadQueue, cacheKey);
-        terrainCache.erase(cacheKey);
+        if (terrainCache) {
+            terrainCache->erase(cacheKey);
+        }
         emptyContentRegistry.erase(cacheKey);
         loadQueue.eraseIf([&](const TileLoadRequest& request) {
             return cacheKeyForTile(request.key) == cacheKey;
