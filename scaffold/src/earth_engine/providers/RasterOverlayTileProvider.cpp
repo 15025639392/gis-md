@@ -2377,6 +2377,11 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
     if (!sourceAssetDepot_) {
         refreshSourceAssetDepot();
     }
+    uint64_t requestSourceDepotEpoch = 0;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        requestSourceDepotEpoch = asyncState_->sourceTileDepotEpoch;
+    }
     const bool returnEmptyForAncestorOnly = true;
     auto sourceSet = std::make_shared<MappedSourceImageSet>(
         scheme_,
@@ -2387,7 +2392,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         projection_,
         getMaximumLevel(),
         returnEmptyForAncestorOnly,
-        [state, cacheKey](
+        [state, cacheKey, tileWeak, requestSourceDepotEpoch](
             std::unique_ptr<DecodedImage> composed,
             std::shared_ptr<const DecodedImage> sharedImage,
             Rectangle rectangle,
@@ -2399,6 +2404,17 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                     state->activeRasterTileLoads);
                 return;
             }
+            if (state->sourceTileDepotEpoch != requestSourceDepotEpoch) {
+                if (auto tile = tileWeak.lock()) {
+                    tile->setMoreDetailAvailable(
+                        RasterOverlayTile::MoreDetailAvailable::No);
+                    tile->setState(RasterOverlayTile::LoadState::Failed);
+                }
+                decrementActiveRasterTileLoads(
+                    state->activeRasterTileLoads);
+                state->revision.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
             logAndroidRasterPipeline("composed", cacheKey, 0, 0);
             state->pendingUploads.push_back(
                 {cacheKey,
@@ -2407,12 +2423,23 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                  rectangle,
                  moreDetailAvailable});
         },
-        [state, cacheKey, tileWeak]() {
+        [state, cacheKey, tileWeak, requestSourceDepotEpoch]() {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
                 decrementActiveRasterTileLoads(
                     state->activeRasterTileLoads);
+                return;
+            }
+            if (state->sourceTileDepotEpoch != requestSourceDepotEpoch) {
+                if (auto tile = tileWeak.lock()) {
+                    tile->setMoreDetailAvailable(
+                        RasterOverlayTile::MoreDetailAvailable::No);
+                    tile->setState(RasterOverlayTile::LoadState::Failed);
+                }
+                decrementActiveRasterTileLoads(
+                    state->activeRasterTileLoads);
+                state->revision.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
             logAndroidRasterPipeline("compose-failed", cacheKey, 0, 0);

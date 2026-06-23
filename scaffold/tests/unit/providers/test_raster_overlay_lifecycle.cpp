@@ -838,7 +838,7 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
-     CoverageChangePreventsStaleInFlightSourceFromRepopulatingDepot) {
+     CoverageChangeDiscardsStaleInFlightSourceBeforeUploadLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -854,8 +854,11 @@ TEST(RasterOverlayLifecycleTest,
 
     provider.setCoverageRectangle(scheme->tileToRectangle(secondKey));
     imagery.completeNext();
-    ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
     EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, firstTile->getState());
     EXPECT_EQ(nullptr, provider.getTile(firstKey));
 
     auto secondTile = provider.getTile(secondKey);
@@ -2095,8 +2098,9 @@ TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiu
     ASSERT_EQ(2u, imagery.pending.size());
 
     imagery.completeNext();
-    ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
-    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+    EXPECT_EQ(0, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
               firstTile->getState());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
               secondTile->getState());
@@ -2141,9 +2145,11 @@ TEST(RasterOverlayLifecycleTest,
     provider.setLevelRange(3, 4);
 
     imagery.completeNext();
-    ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
-    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+    EXPECT_EQ(0, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
               staleTile->getState());
+    EXPECT_FALSE(provider.hasPendingWork());
     EXPECT_EQ(0, provider.getCachedSourceTileBytes());
 
     RasterOverlayTileProvider::TilePtr currentTile =
