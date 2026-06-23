@@ -38,10 +38,6 @@ public:
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (input.tile.content.renderContent.hasGltfContent()) {
-            return;
-        }
-
         const bool contentTerrainQuadtreeOwnsSurface =
             input.hasTerrainQuadtree &&
             !input.useLegacyHeightmapTerrainCache;
@@ -53,6 +49,10 @@ public:
             input.tile.content.renderContent.clearSurfaceMeshResources();
             input.tile.content.renderContent.clearRetainedHeightmap();
             markResourcesDirty();
+        }
+
+        if (input.tile.content.renderContent.hasGltfContent()) {
+            return;
         }
 
         auto it = input.useLegacyHeightmapTerrainCache

@@ -12014,6 +12014,59 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
           "TileMeshFrameEnsurer: glTF terrain render content skips terrain cache and SurfaceMesh frame path");
 
+    TilesetTile gltfWithStaleLegacySurface(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    gltfWithStaleLegacySurface.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(gltfWithStaleLegacySurface.bounds),
+        Mat4::identity());
+    gltfWithStaleLegacySurface.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    gltfWithStaleLegacySurface.content.renderContent.setMeshReady(true);
+    gltfWithStaleLegacySurface.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::LegacyHeightmapTerrain);
+    gltfWithStaleLegacySurface.content.renderContent.setRetainedHeightmap(
+        makeFlatHeightmap(77.0f));
+    bool gltfStaleCacheKeyComputed = false;
+    bool gltfStaleSurfacePathTouched = false;
+    bool gltfStaleResourcesDirty = false;
+    TileMeshFrameEnsurer::ensure(
+        TileMeshFrameEnsureInput{
+            gltfWithStaleLegacySurface,
+            frameTerrainCache,
+            nullptr,
+            true,
+            false},
+        [&gltfStaleCacheKeyComputed](const TileKey&) {
+            gltfStaleCacheKeyComputed = true;
+            return std::string("unexpected-gltf-stale-cache-key");
+        },
+        [&gltfStaleSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
+            gltfStaleSurfacePathTouched = true;
+        },
+        [&gltfStaleSurfacePathTouched](const TilesetTile&, bool)
+            -> const TilesetTile* {
+            gltfStaleSurfacePathTouched = true;
+            return nullptr;
+        },
+        [&gltfStaleSurfacePathTouched](TilesetTile&) {
+            gltfStaleSurfacePathTouched = true;
+        },
+        [&gltfStaleSurfacePathTouched](const TilesetTile&) {
+            gltfStaleSurfacePathTouched = true;
+            return false;
+        },
+        [&gltfStaleResourcesDirty]() {
+            gltfStaleResourcesDirty = true;
+        });
+    check(!gltfStaleCacheKeyComputed &&
+              !gltfStaleSurfacePathTouched &&
+              gltfStaleResourcesDirty &&
+              gltfWithStaleLegacySurface.content.renderContent.hasGltfContent() &&
+              !gltfWithStaleLegacySurface.content.renderContent.hasSurfaceMesh() &&
+              !gltfWithStaleLegacySurface.content.renderContent.hasRetainedHeightmap(),
+          "TileMeshFrameEnsurer: glTF terrain clears stale legacy surface residue before bypassing SurfaceMesh path");
+
     TilesetTile staleLegacySurfaceTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
