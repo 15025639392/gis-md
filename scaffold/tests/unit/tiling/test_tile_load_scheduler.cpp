@@ -409,7 +409,7 @@ TEST(TileLoadSchedulerTest, SkipsKnownEmptyContentBeforeInflightBlock) {
     }
 }
 
-TEST(TileLoadSchedulerTest, BlocksTerrainFanoutOverInflightCapacity) {
+TEST(TileLoadSchedulerTest, IgnoresLegacyTerrainFanoutInRuntimeScheduler) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 2;
@@ -452,7 +452,7 @@ TEST(TileLoadSchedulerTest, BlocksTerrainFanoutOverInflightCapacity) {
             [&marked](const TileKey&) { marked = true; });
 
     EXPECT_EQ(outcome.issued, 0u);
-    EXPECT_TRUE(outcome.blockedByInflight);
+    EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_FALSE(marked);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
@@ -561,7 +561,7 @@ TEST(TileLoadSchedulerTest, BlocksContentFanoutOverInflightCapacity) {
     }
 }
 
-TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
+TEST(TileLoadSchedulerTest, PendingUploadsRemainIndependentWhenLegacyTerrainIsIgnored) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 2;
@@ -614,12 +614,12 @@ TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
             [](TilesetTile&, double) { return false; },
             [&marked](const TileKey&) { marked = true; });
 
-    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.issued, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
-    EXPECT_EQ(provider.requestCount, 1);
-    EXPECT_TRUE(marked);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_FALSE(marked);
     EXPECT_EQ(lifecycle.counts().terrainUploads, 2u);
-    EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 0u);
 }
 
 TEST(TileLoadSchedulerTest,
@@ -1075,15 +1075,14 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
 
     ASSERT_EQ(plannedLevels.size(), 2u);
     ASSERT_EQ(preparedLevels.size(), 1u);
-    ASSERT_EQ(markedLevels.size(), 1u);
-    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_TRUE(markedLevels.empty());
+    EXPECT_EQ(outcome.issued, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(plannedLevels[0], waitingUpsampleKey.z);
     EXPECT_EQ(plannedLevels[1], loadableTerrainKey.z);
     EXPECT_EQ(preparedLevels.front(), waitingUpsampleKey.z);
-    EXPECT_EQ(provider.requestCount, 1);
-    EXPECT_EQ(markedLevels.front(), loadableTerrainKey.z);
-    EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 0u);
     EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
 }
 
@@ -1778,7 +1777,7 @@ TEST(TileLoadSchedulerTest, StopsAfterDispatchBudgetBlock) {
     EXPECT_EQ(markedKeys[0], firstKey.x);
 }
 
-TEST(TileLoadSchedulerTest, StopsAfterTerrainDispatchBudgetBlock) {
+TEST(TileLoadSchedulerTest, IgnoresLegacyTerrainRequestsWithoutBudgetBlock) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 1;
@@ -1831,14 +1830,14 @@ TEST(TileLoadSchedulerTest, StopsAfterTerrainDispatchBudgetBlock) {
                 markedKeys.push_back(key.x);
             });
 
-    ASSERT_EQ(plannedKeys.size(), 2u);
-    ASSERT_EQ(markedKeys.size(), 1u);
-    EXPECT_EQ(outcome.issued, 1u);
+    ASSERT_EQ(plannedKeys.size(), 3u);
+    EXPECT_TRUE(markedKeys.empty());
+    EXPECT_EQ(outcome.issued, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
-    EXPECT_EQ(provider.requestCount, 1);
+    EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(plannedKeys[0], firstKey.x);
     EXPECT_EQ(plannedKeys[1], blockedKey.x);
-    EXPECT_EQ(markedKeys[0], firstKey.x);
+    EXPECT_EQ(plannedKeys[2], skippedKey.x);
 }
 
 TEST(TileLoadSchedulerTest, ContentThenTerrainUseSeparateDispatchBudgets) {
@@ -1903,19 +1902,18 @@ TEST(TileLoadSchedulerTest, ContentThenTerrainUseSeparateDispatchBudgets) {
             });
 
     ASSERT_EQ(plannedKeys.size(), 3u);
-    ASSERT_EQ(markedKeys.size(), 2u);
-    EXPECT_EQ(outcome.issued, 2u);
+    ASSERT_EQ(markedKeys.size(), 1u);
+    EXPECT_EQ(outcome.issued, 1u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(contentProvider.requestCount, 1);
-    EXPECT_EQ(terrainProvider.requestCount, 1);
-    EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 1u);
+    EXPECT_EQ(terrainProvider.requestCount, 0);
+    EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 0u);
     EXPECT_EQ(budget.contentNetworkRequestsIssued(), 1u);
-    EXPECT_EQ(budget.networkRequestsIssued(), 2u);
+    EXPECT_EQ(budget.networkRequestsIssued(), 1u);
     EXPECT_EQ(plannedKeys[0], "content:0");
     EXPECT_EQ(plannedKeys[1], "test:1");
     EXPECT_EQ(plannedKeys[2], "test:2");
     EXPECT_EQ(markedKeys[0], "content:0");
-    EXPECT_EQ(markedKeys[1], "test:1");
 }
 
 TEST(TileLoadSchedulerTest, TerrainThenContentUseSeparateDispatchBudgets) {
@@ -1980,18 +1978,17 @@ TEST(TileLoadSchedulerTest, TerrainThenContentUseSeparateDispatchBudgets) {
             });
 
     ASSERT_EQ(plannedKeys.size(), 3u);
-    ASSERT_EQ(markedKeys.size(), 3u);
-    EXPECT_EQ(outcome.issued, 3u);
+    ASSERT_EQ(markedKeys.size(), 2u);
+    EXPECT_EQ(outcome.issued, 2u);
     EXPECT_FALSE(outcome.blockedByInflight);
-    EXPECT_EQ(terrainProvider.requestCount, 1);
+    EXPECT_EQ(terrainProvider.requestCount, 0);
     EXPECT_EQ(contentProvider.requestCount, 2);
-    EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 1u);
+    EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 0u);
     EXPECT_EQ(budget.contentNetworkRequestsIssued(), 2u);
-    EXPECT_EQ(budget.networkRequestsIssued(), 3u);
+    EXPECT_EQ(budget.networkRequestsIssued(), 2u);
     EXPECT_EQ(plannedKeys[0], "test:0");
     EXPECT_EQ(plannedKeys[1], "content:1");
     EXPECT_EQ(plannedKeys[2], "content:2");
-    EXPECT_EQ(markedKeys[0], "test:0");
-    EXPECT_EQ(markedKeys[1], "content:1");
-    EXPECT_EQ(markedKeys[2], "content:2");
+    EXPECT_EQ(markedKeys[0], "content:1");
+    EXPECT_EQ(markedKeys[1], "content:2");
 }

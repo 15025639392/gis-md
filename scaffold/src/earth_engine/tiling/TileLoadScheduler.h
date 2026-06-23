@@ -8,7 +8,6 @@
 #include "TileGltfTerrainUpsampledChildMaterializer.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../content/GltfContentProvider.h"
-#include "../providers/TerrainProvider.h"
 
 #include <cstdint>
 #include <mutex>
@@ -176,50 +175,8 @@ public:
                 continue;
             }
 
-            if (requestKind != TileLoadRequestKind::HeightmapTerrainAdapter ||
-                !input.legacyTerrainProvider) {
+            if (requestKind == TileLoadRequestKind::HeightmapTerrainAdapter) {
                 continue;
-            }
-            if (input.contentProvider &&
-                input.contentProvider->providesTerrainQuadtree()) {
-                continue;
-            }
-
-            {
-                const int estimatedFanout =
-                    input.legacyTerrainProvider->estimatedRequestFanout(
-                        requestKey);
-                std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
-                if (!input.budget.hasNetworkInflightCapacity(
-                        FrameResourceLane::TerrainRequest,
-                        static_cast<uint32_t>(
-                            input.lifecycle
-                                .requestState()
-                                .totalRequestCount()),
-                        estimatedFanout)) {
-                    outcome.blockedByInflight = true;
-                    break;
-                }
-            }
-
-            const TileLoadDispatchResult dispatchResult =
-                TileLoadRequestDispatcher::requestTerrain(
-                    input.lifecycle.mutex(),
-                    input.lifecycle.condition(),
-                    input.lifecycle.requestState(),
-                    input.lifecycle.pendingLoads(),
-                    input.budget,
-                    *input.legacyTerrainProvider,
-                    requestKey,
-                    cacheKey,
-                    request.group,
-                    request.priority,
-                    [&markTileContentLoading, &requestKey, &outcome]() {
-                        markTileContentLoading(requestKey);
-                        ++outcome.issued;
-                    });
-            if (shouldStopAfterDispatch(dispatchResult)) {
-                break;
             }
         }
 
