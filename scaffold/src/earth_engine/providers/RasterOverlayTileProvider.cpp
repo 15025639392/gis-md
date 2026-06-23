@@ -2195,6 +2195,9 @@ bool RasterOverlayTileProvider::loadMappedTile(
         [state, cacheKey, tileWeak]() {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
+            if (!state->alive.load(std::memory_order_acquire)) {
+                return;
+            }
             logAndroidRasterPipeline("compose-failed", cacheKey, 0, 0);
             if (auto tile = tileWeak.lock()) {
                 tile->setMoreDetailAvailable(

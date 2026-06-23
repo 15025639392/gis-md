@@ -363,6 +363,13 @@ public:
             std::move(image));
     }
 
+    void failNext() {
+        ASSERT_FALSE(pending.empty());
+        Pending item = std::move(pending.front());
+        pending.pop_front();
+        item.callback(item.key, nullptr);
+    }
+
     struct Pending {
         TileKey key;
         TileCallback callback;
@@ -798,6 +805,30 @@ TEST(RasterOverlayLifecycleTest,
     ASSERT_TRUE(provider.loadTile(*secondTile));
     EXPECT_EQ(2u, imagery.requestedKeys.size());
     EXPECT_EQ(secondKey, imagery.requestedKeys.back());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     DestroyedProviderIgnoresLateRasterFailureLikeCesiumNativeDepotLifetime) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey key{scheme->id(), 0, 0, 0};
+    std::shared_ptr<RasterOverlayTile> tile;
+
+    {
+        RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+        tile = provider.getTile(key);
+        ASSERT_NE(nullptr, tile);
+        ASSERT_TRUE(provider.loadTile(*tile));
+        ASSERT_EQ(1u, imagery.pending.size());
+        EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+                  tile->getState());
+    }
+
+    imagery.failNext();
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading, tile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Unknown,
+              tile->isMoreDetailAvailable());
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePlan) {
