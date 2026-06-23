@@ -14,6 +14,7 @@
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
+#include "earth_engine/tiling/TileSelectionRootPolicy.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -425,6 +426,61 @@ TEST(TilesetQuantizedMeshTest,
             ->rasterOverlayProjections.front());
     EXPECT_TRUE(result.metadata.updatedBoundingVolume.has_value());
     EXPECT_EQ(0, tileset.cachedTerrainTiles());
+}
+
+TEST(TilesetQuantizedMeshTest,
+     EllipsoidTerrainProviderUsesGeographicTwoRootTerrainScheme) {
+    EllipsoidTerrainContentProvider provider("Geographic-TMS", 1, 4);
+    const TileKey virtualRoot =
+        TileSelectionRootPolicy::virtualTerrainRootKey("Geographic-TMS");
+
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    EXPECT_EQ(virtualRoot, roots.front());
+
+    const std::vector<TileKey> levelZero = provider.childTiles(virtualRoot);
+    ASSERT_EQ(2u, levelZero.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 0, 0, 0}), levelZero[0]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 0, 1, 0}), levelZero[1]);
+
+    for (const TileKey& rootKey : levelZero) {
+        const auto metadata = provider.tileMetadata(rootKey);
+        ASSERT_TRUE(metadata.has_value());
+        ASSERT_TRUE(metadata->parentKey.has_value());
+        EXPECT_EQ(virtualRoot, *metadata->parentKey);
+        EXPECT_EQ(TileAvailabilityState::Available,
+                  provider.terrainAvailabilityState(rootKey));
+
+        bool completed = false;
+        TileContentLoadResult result = TileContentLoadResult::failed();
+        provider.requestTileContent(
+            rootKey,
+            CancellationToken{},
+            [&](const TileKey& completedKey,
+                TileContentLoadResult completedResult) {
+                EXPECT_EQ(rootKey, completedKey);
+                result = std::move(completedResult);
+                completed = true;
+            });
+
+        ASSERT_TRUE(completed);
+        EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+        EXPECT_TRUE(result.terrainRenderContent);
+        ASSERT_NE(nullptr, result.gltfModel);
+        ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
+        ASSERT_EQ(
+            1u,
+            result.metadata.rasterOverlayDetails
+                ->rasterOverlayProjections.size());
+        EXPECT_EQ(
+            RasterOverlayProjection::Geographic,
+            result.metadata.rasterOverlayDetails
+                ->rasterOverlayProjections.front());
+        EXPECT_EQ(
+            metadata->bounds,
+            result.metadata.rasterOverlayDetails
+                ->boundingRegion.rectangle);
+    }
 }
 
 TEST(TilesetQuantizedMeshTest,
