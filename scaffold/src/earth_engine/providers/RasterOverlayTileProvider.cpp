@@ -1495,15 +1495,16 @@ struct RasterOverlayTileProvider::MappedSourceImageRequest
                  const std::function<void()>& onSourceFinished,
                  const std::function<void()>& onSourceFailed) {
         auto issued = std::make_shared<int>(0);
-        while (!isComplete()) {
-            TileKey sourceKey;
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                if (nextSourceIndex >= sourcePlan.sourceKeys.size()) {
-                    break;
-                }
-                sourceKey = sourcePlan.sourceKeys[nextSourceIndex++];
+        std::vector<TileKey> sourceKeys;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (completed || sourceSetIssued) {
+                return 0;
             }
+            sourceSetIssued = true;
+            sourceKeys = sourcePlan.sourceKeys;
+        }
+        for (const TileKey& sourceKey : sourceKeys) {
             auto self = shared_from_this();
             depot->requestSource(
                 sourceKey,
@@ -1664,8 +1665,8 @@ private:
     MappedSourceLoadSuccess onSuccess;
     MappedSourceLoadFailure onFailure;
     mutable std::mutex mutex;
-    size_t nextSourceIndex = 0;
     int remaining = 0;
+    bool sourceSetIssued = false;
     bool completed = false;
     std::vector<RasterSourceResult> sources;
 };
