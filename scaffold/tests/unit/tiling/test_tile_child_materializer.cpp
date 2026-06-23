@@ -1113,7 +1113,7 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
 }
 
 TEST(TileChildMaterializerTest,
-     RasterUpsampledChildrenResetDeepApproximateTileIdLikeCesiumNative) {
+     RasterUpsampledChildrenKeepDeepQuadtreeIdLikeCesiumNative) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 30, 600000000, 600000000},
         Rectangle::fromDegrees(106.0, 29.0, 107.0, 30.0));
@@ -1141,13 +1141,13 @@ TEST(TileChildMaterializerTest,
 
     ASSERT_TRUE(changed);
     ASSERT_EQ(4u, parent.children.size());
-    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 1200000000, 1200000000}),
               parent.children[0]->key);
-    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 0}),
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 1200000001, 1200000000}),
               parent.children[1]->key);
-    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 1}),
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 1200000000, 1200000001}),
               parent.children[2]->key);
-    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 1}),
+    EXPECT_EQ((TileKey{"Geographic-TMS", 31, 1200000001, 1200000001}),
               parent.children[3]->key);
     EXPECT_TRUE(parent.children[0]->bounds.equalsEpsilon(
         Rectangle::fromDegrees(106.0, 29.0, 106.5, 29.5),
@@ -1155,6 +1155,31 @@ TEST(TileChildMaterializerTest,
     EXPECT_TRUE(parent.children[3]->bounds.equalsEpsilon(
         Rectangle::fromDegrees(106.5, 29.5, 107.0, 30.0),
         1e-12));
+}
+
+TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenDoNotAliasRootWhenTileIdWouldOverflow) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 31, 1073741824, 1073741824},
+        Rectangle::fromDegrees(106.0, 29.0, 107.0, 30.0));
+    parent.geometricError = 64.0;
+
+    bool ensureCalled = false;
+    auto ensure = [&ensureCalled](const TileKey&) -> TilesetTile* {
+        ensureCalled = true;
+        return nullptr;
+    };
+
+    const bool changed =
+        TileChildMaterializer::materializeRasterUpsampledChildren(
+            parent,
+            parent.bounds,
+            64.0,
+            ensure);
+
+    EXPECT_FALSE(changed);
+    EXPECT_FALSE(ensureCalled);
+    EXPECT_TRUE(parent.children.empty());
 }
 
 TEST(TileChildMaterializerTest,

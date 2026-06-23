@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -198,15 +200,17 @@ struct TileChildMaterializer {
         const double centerLng = subdivisionCenter.first;
         const double centerLat = subdivisionCenter.second;
 
-        TileKey parentKeyForUpsampledId = parent.key;
-        if (parentKeyForUpsampledId.z >= 30) {
-            parentKeyForUpsampledId.z = 0;
-            parentKeyForUpsampledId.x = 0;
-            parentKeyForUpsampledId.y = 0;
+        const int64_t childZ64 = static_cast<int64_t>(parent.key.z) + 1;
+        const int64_t childX64 = static_cast<int64_t>(parent.key.x) * 2;
+        const int64_t childY64 = static_cast<int64_t>(parent.key.y) * 2;
+        if (!canRepresentTileCoordinate(childZ64) ||
+            !canRepresentTileCoordinate(childX64 + 1) ||
+            !canRepresentTileCoordinate(childY64 + 1)) {
+            return false;
         }
-        const int childZ = parentKeyForUpsampledId.z + 1;
-        const int childX = parentKeyForUpsampledId.x * 2;
-        const int childY = parentKeyForUpsampledId.y * 2;
+        const int childZ = static_cast<int>(childZ64);
+        const int childX = static_cast<int>(childX64);
+        const int childY = static_cast<int>(childY64);
         const std::array<Rectangle, 4> childBounds = {
             Rectangle(
                 subdivisionRectangle.west(),
@@ -353,6 +357,11 @@ private:
 
     static int geographicTmsYCount(int z) {
         return 1 << z;
+    }
+
+    static bool canRepresentTileCoordinate(int64_t value) {
+        return value >= static_cast<int64_t>(std::numeric_limits<int>::min()) &&
+               value <= static_cast<int64_t>(std::numeric_limits<int>::max());
     }
 
     static bool linkChild(TilesetTile& parent, TilesetTile& child) {
