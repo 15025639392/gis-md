@@ -135,7 +135,28 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
             << " zoom=" << terrainTrace->minVisibleZoom
             << "-" << terrainTrace->maxVisibleZoom
             << " lod=" << static_cast<int>(terrainTrace->lodSizePixels)
+            << " load=" << static_cast<int>(
+                   terrainTrace->frameLoadProgressPercentage)
+            << "% work=" << terrainTrace->frameProgressLoadingCount
+            << "/" << terrainTrace->frameProgressTotalCount
+            << " mapped=" << terrainTrace->frameMappedRasterTileLoadingCount
+            << "/" << terrainTrace->frameMappedRasterTileCount
             << "\n";
+        if (!terrainTrace->frameCredits.empty()) {
+            const size_t creditCount =
+                std::min<size_t>(terrainTrace->frameCredits.size(), 3);
+            out << "Credits:";
+            for (size_t i = 0; i < creditCount; ++i) {
+                out << " " << terrainTrace->frameCredits[i];
+                if (i + 1 < creditCount) {
+                    out << ";";
+                }
+            }
+            if (terrainTrace->frameCredits.size() > creditCount) {
+                out << "; ...";
+            }
+            out << "\n";
+        }
         const size_t visibleCount =
             std::min<size_t>(terrainTrace->visibleTiles.size(), 4);
         out << "Visible:";

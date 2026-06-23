@@ -59,6 +59,12 @@ TEST(MinimalGlobeDiagnosticsTest, SummaryReportsRenderEntryReasonCounts) {
     tileset.minVisibleZoom = 1;
     tileset.maxVisibleZoom = 3;
     tileset.lodSizePixels = 16.0;
+    tileset.frameMappedRasterTileCount = 5;
+    tileset.frameMappedRasterTileLoadingCount = 2;
+    tileset.frameProgressTotalCount = 8;
+    tileset.frameProgressLoadingCount = 3;
+    tileset.frameLoadProgressPercentage = 62.5;
+    tileset.frameCredits = {"Imagery A", "Roads B", "Terrain C", "Extra D"};
     trace.tilesets.push_back(tileset);
 
     const std::string summary =
@@ -70,4 +76,10 @@ TEST(MinimalGlobeDiagnosticsTest, SummaryReportsRenderEntryReasonCounts) {
     EXPECT_NE(std::string::npos, summary.find("fallback=2"));
     EXPECT_NE(std::string::npos, summary.find("prepSync=3"));
     EXPECT_NE(std::string::npos, summary.find("prepDeferred=4"));
+    EXPECT_NE(std::string::npos, summary.find("load=62%"));
+    EXPECT_NE(std::string::npos, summary.find("work=3/8"));
+    EXPECT_NE(std::string::npos, summary.find("mapped=2/5"));
+    EXPECT_NE(
+        std::string::npos,
+        summary.find("Credits: Imagery A; Roads B; Terrain C; ..."));
 }
