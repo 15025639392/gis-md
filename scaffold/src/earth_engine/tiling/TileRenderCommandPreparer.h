@@ -91,6 +91,14 @@ public:
             return;
         }
 
+        if (tile.contentProviderTerrainQuadtreeTile &&
+            !tile.content.renderContent.hasGltfContent()) {
+            if (!context.allowSynchronousMeshPrep) {
+                return;
+            }
+            ensureTileMesh(tile);
+        }
+
         if (!tile.content.renderContent.isMeshReady()) {
             if (!context.allowSynchronousMeshPrep) {
                 return;

@@ -113,3 +113,57 @@ TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) 
     EXPECT_TRUE(tile.hasSurfaceDrawable());
     EXPECT_TRUE(commands.empty());
 }
+
+TEST(TileRenderCommandPreparerTest,
+     ContentProviderTerrainRunsCleanupEvenWhenLegacySurfaceReady) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.contentProviderTerrainQuadtreeTile = true;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    tile.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+    ASSERT_TRUE(tile.content.renderContent.isMeshReady());
+    ASSERT_TRUE(tile.hasSurfaceDrawable());
+
+    FrameResourceBudget budget;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    bool ensureMeshCalled = false;
+    bool unloadContentCalled = false;
+    bool upsampleChildrenCalled = false;
+
+    TileRenderCommandPreparer::build(
+        renderer,
+        tile,
+        commands,
+        overlays,
+        nullptr,
+        budget,
+        makeContext(true),
+        [&ensureMeshCalled](TilesetTile& meshTile) {
+            ensureMeshCalled = true;
+            meshTile.content.renderContent.clearSurfaceMeshResources();
+            meshTile.content.loadState = TileLoadState::Unloaded;
+        },
+        [&unloadContentCalled](TilesetTile&) {
+            unloadContentCalled = true;
+        },
+        [&upsampleChildrenCalled](TilesetTile&) {
+            upsampleChildrenCalled = true;
+        });
+
+    EXPECT_TRUE(ensureMeshCalled);
+    EXPECT_FALSE(unloadContentCalled);
+    EXPECT_FALSE(upsampleChildrenCalled);
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(tile.content.renderContent.isMeshReady());
+    EXPECT_FALSE(tile.hasSurfaceDrawable());
+    EXPECT_TRUE(commands.empty());
+}
