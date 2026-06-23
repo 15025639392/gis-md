@@ -4,6 +4,8 @@
 #include "../core/math/MathUtils.h"
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 namespace earth_engine {
@@ -53,7 +55,17 @@ OpenGlobusTileGroup groupForY(int y, int tilesAtZoom) {
 }
 
 int quadtreeTileCount(int rootTiles, int zoom) {
-    return rootTiles << zoom;
+    if (rootTiles <= 0 || zoom < 0) {
+        return 0;
+    }
+    if (zoom >= 63) {
+        return std::numeric_limits<int>::max();
+    }
+    const uint64_t count = static_cast<uint64_t>(rootTiles) << zoom;
+    if (count > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+        return std::numeric_limits<int>::max();
+    }
+    return static_cast<int>(count);
 }
 
 class XYZWebMercatorScheme : public TileScheme {

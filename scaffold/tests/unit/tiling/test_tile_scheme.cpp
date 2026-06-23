@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <limits>
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/core/math/Rectangle.h"
@@ -174,6 +175,16 @@ TEST(TileSchemeCountTest, GeographicTmsUsesTwoByOneRoot) {
     EXPECT_EQ(1, scheme->tileCountY(0));
     EXPECT_EQ(16, scheme->tileCountX(3));
     EXPECT_EQ(8, scheme->tileCountY(3));
+}
+
+TEST(TileSchemeCountTest, DeepQuadtreeCountsSaturateInsteadOfOverflowing) {
+    auto xyz = TileScheme::createXYZWebMercator();
+    auto geographic = TileScheme::createGeographicTMS();
+
+    EXPECT_EQ(std::numeric_limits<int>::max(), xyz->tileCountX(31));
+    EXPECT_EQ(std::numeric_limits<int>::max(), xyz->tileCountY(31));
+    EXPECT_EQ(std::numeric_limits<int>::max(), geographic->tileCountX(30));
+    EXPECT_EQ(std::numeric_limits<int>::max(), geographic->tileCountY(31));
 }
 
 TEST(TileSchemeCountTest, OpenGlobusGroupedSchemeReportsPhysicalYRange) {
