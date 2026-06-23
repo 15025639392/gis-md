@@ -85,7 +85,6 @@ public:
             TileMissingRequestSchedulerInput{
                 context.loadLifecycle,
                 *budget,
-                context.legacyTerrainProvider,
                 context.contentProvider,
                 context.tiles,
                 context.terrainCache,

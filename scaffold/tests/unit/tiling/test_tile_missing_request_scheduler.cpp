@@ -127,7 +127,6 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
             TileMissingRequestSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider,
                 tiles,
                 terrainCache,
@@ -160,7 +159,7 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::ContentLoading);
 }
 
-TEST(TileMissingRequestSchedulerTest, RetriesTerrainAfterEmptyMarkerCleared) {
+TEST(TileMissingRequestSchedulerTest, DoesNotRetryLegacyTerrainAfterEmptyMarkerCleared) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -190,7 +189,6 @@ TEST(TileMissingRequestSchedulerTest, RetriesTerrainAfterEmptyMarkerCleared) {
             TileMissingRequestSchedulerInput{
                 lifecycle,
                 budget,
-                &provider,
                 nullptr,
                 tiles,
                 terrainCache,
@@ -217,10 +215,10 @@ TEST(TileMissingRequestSchedulerTest, RetriesTerrainAfterEmptyMarkerCleared) {
         emptyContentRegistry,
         nullptr);
     outcome = requestOnce();
-    EXPECT_EQ(outcome.issued, 1u);
-    EXPECT_EQ(provider.requestCount, 1);
-    EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 1u);
-    EXPECT_EQ(tileRaw->content.loadState, TileLoadState::ContentLoading);
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 0u);
+    EXPECT_EQ(tileRaw->content.loadState, TileLoadState::FailedTemporarily);
 }
 
 TEST(
@@ -249,7 +247,6 @@ TEST(
             TileMissingRequestSchedulerInput{
                 lifecycle,
                 budget,
-                &terrainProvider,
                 &contentProvider,
                 tiles,
                 terrainCache,
@@ -297,7 +294,6 @@ TEST(
             TileMissingRequestSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &contentProvider,
                 tiles,
                 terrainCache,
@@ -315,7 +311,7 @@ TEST(
     EXPECT_EQ(contentProvider.requestCount, 1);
 }
 
-TEST(TileMissingRequestSchedulerTest, UpsampledTileUsesLocalPathBeforeContentProvider) {
+TEST(TileMissingRequestSchedulerTest, UpsampledTileWithoutGltfSourceDoesNotQueueLegacyUpload) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -345,7 +341,6 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileUsesLocalPathBeforeContentPro
             TileMissingRequestSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider,
                 tiles,
                 terrainCache,
@@ -362,11 +357,11 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileUsesLocalPathBeforeContentPro
                 return it == tiles.end() ? nullptr : it->second.get();
             });
 
-    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.issued, 0u);
     EXPECT_TRUE(prepared);
     EXPECT_EQ(provider.requestCount, 0);
-    EXPECT_EQ(lifecycle.counts().terrainUploads, 1u);
-    EXPECT_EQ(tileRaw->content.loadState, TileLoadState::ContentLoading);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(tileRaw->content.loadState, TileLoadState::Unloaded);
 }
 
 TEST(TileMissingRequestSchedulerTest, VirtualTerrainRootNeverRequestsProvider) {
@@ -400,7 +395,6 @@ TEST(TileMissingRequestSchedulerTest, VirtualTerrainRootNeverRequestsProvider) {
             TileMissingRequestSchedulerInput{
                 lifecycle,
                 budget,
-                &provider,
                 nullptr,
                 tiles,
                 terrainCache,

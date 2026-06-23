@@ -8,8 +8,7 @@ enum class TileLoadRequestKind {
     Skip,
     UpsampledTerrain,
     TerrainContentUpsample,
-    Content,
-    HeightmapTerrainAdapter
+    Content
 };
 
 struct TileLoadRequestSnapshot {
@@ -17,7 +16,6 @@ struct TileLoadRequestSnapshot {
     bool upsampledFromParent = false;
     bool contentProviderSupportsTile = false;
     bool contentProviderOwnsTerrainQuadtree = false;
-    bool legacyTerrainProviderSupportsTile = false;
     bool terrainAlreadyCached = false;
     bool hasRenderContent = false;
     TileLoadState loadState = TileLoadState::Unloaded;

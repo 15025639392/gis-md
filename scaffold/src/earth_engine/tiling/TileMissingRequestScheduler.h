@@ -4,11 +4,9 @@
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadScheduler.h"
-#include "TileSelectionRootPolicy.h"
 #include "TilesetTile.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../content/GltfContentProvider.h"
-#include "../providers/TerrainProvider.h"
 #include "../terrain/TerrainTile.h"
 
 #include <memory>
@@ -21,7 +19,6 @@ namespace earth_engine {
 struct TileMissingRequestSchedulerInput {
     TileLoadLifecycle& loadLifecycle;
     FrameResourceBudget& budget;
-    TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
     const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
@@ -42,14 +39,11 @@ public:
         TerrainCacheKeyFn&& terrainCacheKey,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
-        TerrainProvider* legacyTerrainProvider =
-            effectiveLegacyTerrainProvider(input);
         return TileLoadScheduler::requestMissingTiles(
             loadRequests,
             TileLoadSchedulerInput{
                 input.loadLifecycle,
                 input.budget,
-                legacyTerrainProvider,
                 input.contentProvider},
             terrainCacheKey,
             [&](const TileKey& key,
@@ -57,7 +51,6 @@ public:
                 TilesetTile*& tileState) {
                 return makeSnapshot(
                     input,
-                    legacyTerrainProvider,
                     key,
                     cacheKey,
                     tileState);
@@ -74,18 +67,8 @@ public:
     }
 
 private:
-    static TerrainProvider* effectiveLegacyTerrainProvider(
-        const TileMissingRequestSchedulerInput& input) {
-        if (input.contentProvider &&
-            input.contentProvider->providesTerrainQuadtree()) {
-            return nullptr;
-        }
-        return input.legacyTerrainProvider;
-    }
-
     static TileLoadRequestSnapshot makeSnapshot(
         const TileMissingRequestSchedulerInput& input,
-        const TerrainProvider* terrainProvider,
         const TileKey& key,
         const std::string& cacheKey,
         TilesetTile*& outTileState) {
@@ -106,11 +89,6 @@ private:
         snapshot.contentProviderOwnsTerrainQuadtree =
             input.contentProvider &&
             input.contentProvider->providesTerrainQuadtree();
-        snapshot.legacyTerrainProviderSupportsTile =
-            !snapshot.contentProviderOwnsTerrainQuadtree &&
-            !TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
-            terrainProvider &&
-            terrainProvider->supportsTile(key);
         const bool legacyHeightmapCacheCanSatisfyRequest =
             input.legacyHeightmapCacheMode ==
             LegacyHeightmapTerrainCacheMode::Include;

@@ -222,7 +222,6 @@ TEST(TileLoadSchedulerTest, BlocksContentRequestWhenInflightIsFull) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider},
             cacheKeyForTile,
             [&planned](
@@ -278,7 +277,6 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeInflightBlock) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&planned](
@@ -328,7 +326,6 @@ TEST(TileLoadSchedulerTest, SkipsEmptyCacheKeyBeforeInflightBlock) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             [](const TileKey&) { return std::string{}; },
             [&planned](
@@ -381,7 +378,6 @@ TEST(TileLoadSchedulerTest, SkipsKnownEmptyContentBeforeInflightBlock) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&planned](
@@ -436,7 +432,6 @@ TEST(TileLoadSchedulerTest, IgnoresLegacyTerrainFanoutInRuntimeScheduler) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &provider,
                 nullptr},
             cacheKeyForTile,
             [](const TileKey&,
@@ -444,7 +439,6 @@ TEST(TileLoadSchedulerTest, IgnoresLegacyTerrainFanoutInRuntimeScheduler) {
                TilesetTile*& tileState) {
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -483,7 +477,6 @@ TEST(TileLoadSchedulerTest, ExplicitContentProviderUsesContentRequestPath) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &provider,
                 &provider},
             cacheKeyForTile,
             [](const TileKey&,
@@ -492,7 +485,6 @@ TEST(TileLoadSchedulerTest, ExplicitContentProviderUsesContentRequestPath) {
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.contentProviderSupportsTile = true;
-                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -534,7 +526,6 @@ TEST(TileLoadSchedulerTest, BlocksContentFanoutOverInflightCapacity) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider},
             cacheKeyForTile,
             [](const TileKey&,
@@ -599,7 +590,6 @@ TEST(TileLoadSchedulerTest, PendingUploadsRemainIndependentWhenLegacyTerrainIsIg
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &provider,
                 nullptr},
             cacheKeyForTile,
             [](const TileKey&,
@@ -607,7 +597,6 @@ TEST(TileLoadSchedulerTest, PendingUploadsRemainIndependentWhenLegacyTerrainIsIg
                TilesetTile*& tileState) {
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -653,7 +642,6 @@ TEST(TileLoadSchedulerTest,
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&tile](
@@ -716,7 +704,6 @@ TEST(TileLoadSchedulerTest,
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &legacyProvider,
                 &provider},
             cacheKeyForTile,
             [&child](
@@ -783,7 +770,6 @@ TEST(TileLoadSchedulerTest,
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &legacyProvider,
                 &provider},
             cacheKeyForTile,
             [&child](
@@ -868,7 +854,6 @@ TEST(
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &legacyProvider,
                 &contentProvider},
             cacheKeyForTile,
             [](const TileKey&,
@@ -876,7 +861,6 @@ TEST(
                TilesetTile*& tileState) {
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -918,7 +902,6 @@ TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&planned](
@@ -928,7 +911,6 @@ TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
                 planned = true;
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.legacyTerrainProviderSupportsTile = true;
                 snapshot.terrainAlreadyCached = true;
                 return snapshot;
             },
@@ -981,7 +963,6 @@ TEST(TileLoadSchedulerTest,
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&urgentKey, &normalTile, &urgentTile](
@@ -1045,7 +1026,6 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &provider,
                 nullptr},
             cacheKeyForTile,
             [&waitingUpsampleKey, &waitingTile, &plannedLevels](
@@ -1060,7 +1040,6 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
                     snapshot.upsampledFromParent = true;
                 } else {
                     tileState = nullptr;
-                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },
@@ -1160,7 +1139,6 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&missingTileStateKey, &readyTile, &plannedColumns](
@@ -1218,7 +1196,6 @@ TEST(TileLoadSchedulerTest, SkipsEmptyUpsampledCacheKey) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&tile](
@@ -1279,7 +1256,6 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&tile](
@@ -1338,7 +1314,6 @@ TEST(TileLoadSchedulerTest, SkipsPendingUploadBeforeSnapshot) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&planned](
@@ -1395,7 +1370,6 @@ TEST(TileLoadSchedulerTest, SkipsClaimedUploadBeforeSnapshot) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&planned](
@@ -1450,7 +1424,6 @@ TEST(TileLoadSchedulerTest, SkipsPendingTerminalBeforeSnapshot) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&planned](
@@ -1508,7 +1481,6 @@ TEST(TileLoadSchedulerTest, SkipsInflightRequestBeforeSnapshot) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             cacheKeyForTile,
             [&planned](
@@ -1569,7 +1541,6 @@ TEST(TileLoadSchedulerTest, StopsDuringDestroyBeforePlanning) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             [&cacheKeyRequested](const TileKey&) {
                 cacheKeyRequested = true;
@@ -1624,7 +1595,6 @@ TEST(TileLoadSchedulerTest, SkipsDispatcherDuplicateAfterPlanning) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider},
             cacheKeyForTile,
             [&lifecycle, &planned, &key, &cacheKey](
@@ -1680,7 +1650,6 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &provider,
                 nullptr},
             cacheKeyForTile,
             [&lifecycle, &planned, &key, &cacheKey](
@@ -1699,7 +1668,6 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
                             TileLoadStatus::RetryLater});
                 }
                 TileLoadRequestSnapshot snapshot;
-                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -1748,7 +1716,6 @@ TEST(TileLoadSchedulerTest, StopsAfterDispatchBudgetBlock) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider},
             cacheKeyForTile,
             [&plannedKeys](
@@ -1811,7 +1778,6 @@ TEST(TileLoadSchedulerTest, IgnoresLegacyTerrainRequestsWithoutBudgetBlock) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &provider,
                 nullptr},
             cacheKeyForTile,
             [&plannedKeys](
@@ -1821,7 +1787,6 @@ TEST(TileLoadSchedulerTest, IgnoresLegacyTerrainRequestsWithoutBudgetBlock) {
                 plannedKeys.push_back(key.x);
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.legacyTerrainProviderSupportsTile = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -1876,7 +1841,6 @@ TEST(TileLoadSchedulerTest, ContentThenTerrainUseSeparateDispatchBudgets) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &terrainProvider,
                 &contentProvider},
             cacheKeyForTile,
             [&plannedKeys](
@@ -1890,7 +1854,6 @@ TEST(TileLoadSchedulerTest, ContentThenTerrainUseSeparateDispatchBudgets) {
                 if (key.schemeId == "content") {
                     snapshot.contentProviderSupportsTile = true;
                 } else {
-                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },
@@ -1952,7 +1915,6 @@ TEST(TileLoadSchedulerTest, TerrainThenContentUseSeparateDispatchBudgets) {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                &terrainProvider,
                 &contentProvider},
             cacheKeyForTile,
             [&plannedKeys](
@@ -1966,7 +1928,6 @@ TEST(TileLoadSchedulerTest, TerrainThenContentUseSeparateDispatchBudgets) {
                 if (key.schemeId == "content") {
                     snapshot.contentProviderSupportsTile = true;
                 } else {
-                    snapshot.legacyTerrainProviderSupportsTile = true;
                 }
                 return snapshot;
             },

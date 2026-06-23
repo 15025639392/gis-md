@@ -25,7 +25,6 @@ struct TilesetTile;
 struct TileLoadSchedulerInput {
     TileLoadLifecycle& lifecycle;
     FrameResourceBudget& budget;
-    TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
 };
 
@@ -172,10 +171,6 @@ public:
                 if (shouldStopAfterDispatch(dispatchResult)) {
                     break;
                 }
-                continue;
-            }
-
-            if (requestKind == TileLoadRequestKind::HeightmapTerrainAdapter) {
                 continue;
             }
         }

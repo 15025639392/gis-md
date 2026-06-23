@@ -21333,10 +21333,9 @@ void testTileLoadRequestDispatcherPassesNetworkPriority() {
 
 void testTileLoadRequestPlannerClassifiesRequestKinds() {
     TileLoadRequestSnapshot snapshot;
-    snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::HeightmapTerrainAdapter,
-          "TileLoadRequestPlanner: requestable terrain tile loads terrain");
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: providerless terrain tile does not enter legacy terrain request path");
 
     snapshot.contentProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
@@ -21352,10 +21351,9 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::Unloaded;
-    snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::HeightmapTerrainAdapter,
-          "TileLoadRequestPlanner: unloaded terrain tile remains requestable");
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: unloaded providerless terrain tile is skipped");
 
     snapshot.contentProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
@@ -21371,7 +21369,6 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
           "TileLoadRequestPlanner: upsampled tile uses local terrain upload path");
 
     snapshot = TileLoadRequestSnapshot{};
-    snapshot.legacyTerrainProviderSupportsTile = true;
     snapshot.terrainAlreadyCached = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
@@ -21380,7 +21377,6 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::ContentLoading;
-    snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: already loading tile is skipped");
@@ -21398,10 +21394,9 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
-    snapshot.legacyTerrainProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::HeightmapTerrainAdapter,
-          "TileLoadRequestPlanner: temporarily failed terrain tile remains retryable");
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: temporarily failed providerless terrain tile is skipped");
 
     snapshot.contentProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
@@ -21464,7 +21459,6 @@ void testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider},
             testCacheKeyForTile,
             [&planned](const TileKey&,
@@ -21516,7 +21510,6 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&planned](const TileKey&,
@@ -21564,7 +21557,6 @@ void testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             [](const TileKey&) { return std::string{}; },
             [&planned](const TileKey&,
@@ -21614,7 +21606,6 @@ void testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&planned](const TileKey&,
@@ -21670,7 +21661,6 @@ void testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&tile](const TileKey&,
@@ -21730,7 +21720,6 @@ void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&planned](const TileKey&,
@@ -21739,7 +21728,6 @@ void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
                 planned = true;
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.legacyTerrainProviderSupportsTile = true;
                 snapshot.terrainAlreadyCached = true;
                 return snapshot;
             },
@@ -21790,7 +21778,6 @@ void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&urgentKey,
@@ -21857,7 +21844,6 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&missingTileStateKey,
@@ -21918,7 +21904,6 @@ void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&tile](const TileKey&,
@@ -21976,7 +21961,6 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&tile](const TileKey&,
@@ -22034,7 +22018,6 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&planned](const TileKey&,
@@ -22089,7 +22072,6 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&planned](const TileKey&,
@@ -22143,7 +22125,6 @@ void testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&planned](const TileKey&,
@@ -22197,7 +22178,6 @@ void testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             testCacheKeyForTile,
             [&planned](const TileKey&,
@@ -22254,7 +22234,6 @@ void testTileLoadSchedulerStopsDuringDestroyBeforePlanning() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 nullptr},
             [&cacheKeyRequested](const TileKey&) {
                 cacheKeyRequested = true;
@@ -22323,7 +22302,6 @@ void testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider},
             testCacheKeyForTile,
             [&lifecycle,
@@ -22409,7 +22387,6 @@ void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
             TileLoadSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider},
             testCacheKeyForTile,
             [&plannedKeys](const TileKey& key,
@@ -22487,7 +22464,6 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
             TileMissingRequestSchedulerInput{
                 lifecycle,
                 budget,
-                nullptr,
                 &provider,
                 tiles,
                 terrainCache,

@@ -28,11 +28,10 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
         return TileLoadRequestKind::Skip;
     }
 
-    if (snapshot.terrainAlreadyCached ||
-        !snapshot.legacyTerrainProviderSupportsTile) {
+    if (snapshot.terrainAlreadyCached) {
         return TileLoadRequestKind::Skip;
     }
-    return TileLoadRequestKind::HeightmapTerrainAdapter;
+    return TileLoadRequestKind::Skip;
 }
 
 } // namespace earth_engine

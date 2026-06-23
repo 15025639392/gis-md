@@ -4,12 +4,11 @@
 
 using namespace earth_engine;
 
-TEST(TileLoadRequestPlannerTest, ClassifiesBasicRequestKinds) {
+TEST(TileLoadRequestPlannerTest, SkipsProviderlessTerrainRequests) {
     TileLoadRequestSnapshot snapshot;
-    snapshot.legacyTerrainProviderSupportsTile = true;
 
     EXPECT_EQ(
-        TileLoadRequestKind::HeightmapTerrainAdapter,
+        TileLoadRequestKind::Skip,
         TileLoadRequestPlanner::classify(snapshot));
 
     snapshot.contentProviderSupportsTile = true;
@@ -29,7 +28,6 @@ TEST(TileLoadRequestPlannerTest, ClassifiesBasicRequestKinds) {
 TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainQuadtreeDoesNotFallbackToTerrain) {
     TileLoadRequestSnapshot snapshot;
     snapshot.contentProviderOwnsTerrainQuadtree = true;
-    snapshot.legacyTerrainProviderSupportsTile = true;
 
     EXPECT_EQ(
         TileLoadRequestKind::Skip,
@@ -42,14 +40,13 @@ TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainQuadtreeDoesNotFallbackToTer
         TileLoadRequestPlanner::classify(snapshot));
 }
 
-TEST(TileLoadRequestPlannerTest, ClassifiesUnloadedTilesAsRequestable) {
+TEST(TileLoadRequestPlannerTest, ContentProviderMakesUnloadedTilesRequestable) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::Unloaded;
-    snapshot.legacyTerrainProviderSupportsTile = true;
 
     EXPECT_EQ(
-        TileLoadRequestKind::HeightmapTerrainAdapter,
+        TileLoadRequestKind::Skip,
         TileLoadRequestPlanner::classify(snapshot));
 
     snapshot.contentProviderSupportsTile = true;
@@ -70,7 +67,6 @@ TEST(TileLoadRequestPlannerTest, ClassifiesUpsampledAndCachedTerrain) {
         TileLoadRequestPlanner::classify(snapshot));
 
     snapshot = TileLoadRequestSnapshot{};
-    snapshot.legacyTerrainProviderSupportsTile = true;
     snapshot.terrainAlreadyCached = true;
 
     EXPECT_EQ(
@@ -83,7 +79,6 @@ TEST(TileLoadRequestPlannerTest, UpsampledTerrainTakesLocalPathBeforeProviderChe
     snapshot.hasTile = true;
     snapshot.upsampledFromParent = true;
     snapshot.loadState = TileLoadState::Unloaded;
-    snapshot.legacyTerrainProviderSupportsTile = false;
     snapshot.terrainAlreadyCached = true;
     snapshot.hasRenderContent = true;
 
@@ -98,7 +93,6 @@ TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainUpsampleUsesGltfPath) {
     snapshot.upsampledFromParent = true;
     snapshot.contentProviderOwnsTerrainQuadtree = true;
     snapshot.loadState = TileLoadState::Unloaded;
-    snapshot.legacyTerrainProviderSupportsTile = true;
     snapshot.terrainAlreadyCached = true;
 
     EXPECT_EQ(
@@ -109,7 +103,6 @@ TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainUpsampleUsesGltfPath) {
 TEST(TileLoadRequestPlannerTest, SkipsNonRetryableLoadStates) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
-    snapshot.legacyTerrainProviderSupportsTile = true;
 
     snapshot.loadState = TileLoadState::ContentLoading;
     EXPECT_EQ(
@@ -127,14 +120,13 @@ TEST(TileLoadRequestPlannerTest, SkipsNonRetryableLoadStates) {
         TileLoadRequestPlanner::classify(snapshot));
 }
 
-TEST(TileLoadRequestPlannerTest, ClassifiesTemporarilyFailedTilesAsRetryable) {
+TEST(TileLoadRequestPlannerTest, ContentProviderKeepsTemporarilyFailedTilesRetryable) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
-    snapshot.legacyTerrainProviderSupportsTile = true;
 
     EXPECT_EQ(
-        TileLoadRequestKind::HeightmapTerrainAdapter,
+        TileLoadRequestKind::Skip,
         TileLoadRequestPlanner::classify(snapshot));
 
     snapshot.contentProviderSupportsTile = true;
