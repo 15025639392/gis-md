@@ -2230,6 +2230,57 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
+    AvailabilityMiddleOfSubtreeCreatesChildrenWithoutWaitingLikeCesiumNative) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4,
+      "metadataAvailability": 2
+    })json";
+
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey middleKey{"Geographic-TMS", 1, 0, 0};
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = rootKey;
+    update.metadataAvailability = {
+        {0, 0, 0, 0, 0},
+        {1, 0, 0, 0, 0}};
+    provider->applyAvailabilityUpdates({update});
+
+    Tileset tileset(
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    TilesetTile* middle = TilesetTestAccess::ensureTile(tileset, middleKey);
+    ASSERT_NE(middle, nullptr);
+    setLoadedTerrainGltfContent(*middle);
+
+    for (TileLoadState state : {
+             TileLoadState::Unloaded,
+             TileLoadState::ContentLoading,
+             TileLoadState::FailedTemporarily}) {
+        middle->children.clear();
+        middle->content.loadState = state;
+        TilesetTestAccess::ensureTileChildren(tileset, *middle);
+        EXPECT_EQ(4u, middle->children.size());
+    }
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
     UnderlyingLayerAvailabilityBoundaryWaitsForLoadedTerrainLikeCesiumNative) {
     const std::filesystem::path rootPath =
         std::filesystem::temp_directory_path() /
