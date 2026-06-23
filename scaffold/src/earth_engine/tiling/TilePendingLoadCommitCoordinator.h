@@ -234,6 +234,7 @@ public:
                 contentProvider,
                 legacyHeightmapCacheMode,
                 result.domain)) {
+            emptyContentRegistry.erase(result.cacheKey);
             return;
         }
         if (result.domain == TileLoadDomain::Content) {

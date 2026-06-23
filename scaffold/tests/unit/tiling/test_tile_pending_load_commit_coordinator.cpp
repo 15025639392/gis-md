@@ -372,7 +372,7 @@ TEST(
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(childrenEnsured);
     EXPECT_FALSE(resourcesDirty);
     EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
@@ -409,7 +409,7 @@ TEST(
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(childrenEnsured);
     EXPECT_FALSE(resourcesDirty);
     EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
@@ -2157,7 +2157,7 @@ TEST(
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_TRUE(changed);
-    EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(childrenEnsured);
     EXPECT_FALSE(meshEnsured);
     EXPECT_FALSE(gltfEnsured);
