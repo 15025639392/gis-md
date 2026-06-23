@@ -1112,7 +1112,10 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
             restorePreviousState();
             return false;
         }
-        appendParentLayers(j, layerJsonUrl);
+        if (!appendParentLayers(j, layerJsonUrl)) {
+            restorePreviousState();
+            return false;
+        }
         syncLegacyFieldsFromPrimaryLayer();
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
@@ -1238,7 +1241,7 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
         HttpRequestPriority::Normal,
         requestHeaders_);
     if (bytes.empty()) {
-        return false;
+        return true;
     }
 
     try {
@@ -1249,10 +1252,9 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
         if (!appendLayerFromJson(parent, resolvedUrl, parentSchemeId)) {
             return false;
         }
-        appendParentLayers(parent, resolvedUrl);
-        return true;
+        return appendParentLayers(parent, resolvedUrl);
     } catch (...) {
-        return false;
+        return true;
     }
 }
 
