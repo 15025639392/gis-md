@@ -68,14 +68,9 @@ public:
 
     /// cesium-native: dynamically add availability from QM metadata
     void addAvailabilityRects(int level, const std::vector<TileAvailabilityRect>& rects);
-    void addAvailabilityRectsForTile(
-        const TileKey& subtreeKey,
-        int level,
-        const std::vector<TileAvailabilityRect>& rects);
     /// cesium-native: track loaded subtrees for sparse datasets
     bool isSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex) const;
     void markSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex);
-    void markSubtreeLoadedForTile(const TileKey& subtreeKey);
     int availabilityLevels() const { return availabilityLevels_; }
     bool isAvailabilityBoundaryLevel(int level) const;
     bool isTerrainAvailabilityBoundaryLevel(int level) const override {

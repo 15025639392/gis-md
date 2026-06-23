@@ -2165,16 +2165,6 @@ void QuantizedMeshTerrainProvider::addAvailabilityRectsToLayer(
     }
 }
 
-void QuantizedMeshTerrainProvider::addAvailabilityRectsForTile(
-    const TileKey& subtreeKey,
-    int level,
-    const std::vector<TileAvailabilityRect>& rects) {
-    LayerConfig* layer = firstAvailableLayer(subtreeKey);
-    if (!layer || level < 0) return;
-    addAvailabilityRectsToLayer(*layer, level, rects);
-    syncLegacyFieldsFromPrimaryLayer();
-}
-
 bool QuantizedMeshTerrainProvider::isSubtreeLoaded(
     int subtreeLevel, uint64_t mortonIndex) const {
     if (layers_.empty()) return false;
@@ -2202,18 +2192,6 @@ void QuantizedMeshTerrainProvider::markSubtreeLoaded(
     if (subtreeLevel < 0) return;
     if (layers_.empty()) return;
     markSubtreeLoadedInLayer(layers_.front(), subtreeLevel, mortonIndex);
-    syncLegacyFieldsFromPrimaryLayer();
-}
-
-void QuantizedMeshTerrainProvider::markSubtreeLoadedForTile(
-    const TileKey& subtreeKey) {
-    LayerConfig* layer = firstAvailableLayer(subtreeKey);
-    if (!layer || layer->availabilityLevels <= 0) return;
-    markSubtreeLoadedInLayer(
-        *layer,
-        subtreeKey.z / layer->availabilityLevels,
-        mortonEncode2D(static_cast<uint32_t>(subtreeKey.x),
-                       static_cast<uint32_t>(subtreeKey.y)));
     syncLegacyFieldsFromPrimaryLayer();
 }
 
