@@ -62,7 +62,7 @@ public:
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
-        if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
+        if (!useHeightmapSurfacePath) {
             heightmapTerrainCache_.clear();
         }
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
@@ -97,13 +97,14 @@ public:
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
         uint32_t smoothedMainThreadUploadLimit,
+        bool useHeightmapSurfacePath,
         bool interactionActive,
         bool resourceSmoothingActive,
         FrameResourceBudget* budget,
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
+        if (!useHeightmapSurfacePath) {
             heightmapTerrainCache_.clear();
         }
         return TilesetContentLifecycleCoordinator::processPendingUploads(
@@ -126,11 +127,6 @@ public:
     }
 
 private:
-    static bool contentProviderOwnsTerrainQuadtree(
-        const TilesetContentProvider* contentProvider) {
-        return contentProvider && contentProvider->providesTerrainQuadtree();
-    }
-
     TilesetContentLifecycleContext makeContext(
         TilesetContentProvider* contentProvider,
         RenderDevice* device,

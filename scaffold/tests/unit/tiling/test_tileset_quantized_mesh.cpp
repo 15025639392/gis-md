@@ -1033,6 +1033,9 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
     EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
     EXPECT_TRUE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
+
+    EXPECT_FALSE(TilesetTestAccess::processPendingLoads(tileset));
+    EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
 }
 
 TEST(TilesetQuantizedMeshTest,
