@@ -267,8 +267,6 @@ TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
     IPrepareRendererResources* pPrepRenderer) const {
     TileContentRuntimeUploadFrame frame{rasterOverlays_};
     frame.contentProvider = contentProvider_.get();
-    frame.legacyHeightmapCacheMode =
-        legacyHeightmapCacheModeFor(contentProvider_.get());
     frame.device = device_;
     frame.pPrepRenderer = pPrepRenderer;
     frame.frameNumber = frameNumber_;

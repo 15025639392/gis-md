@@ -2,7 +2,6 @@
 
 #include "TileContentUploadCommitter.h"
 #include "TileEmptyContentRegistry.h"
-#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
 #include "TilePendingUploadCompletion.h"

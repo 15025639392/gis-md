@@ -97,7 +97,6 @@ public:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -109,16 +108,12 @@ public:
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        normalizeContentOwnedTerrainInputs(
-            contentProvider,
-            legacyHeightmapCacheMode);
         return TilesetContentLifecycleCoordinator::processPendingUploads(
             makeUploadContext(
                 contentProvider,
                 device,
                 pPrepRenderer,
                 rasterOverlays,
-                legacyHeightmapCacheMode,
                 frameNumber,
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
@@ -144,16 +139,6 @@ private:
         LegacyHeightmapTerrainCacheMode& legacyHeightmapCacheMode) {
         if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
             legacyTerrainProvider = nullptr;
-            legacyHeightmapCacheMode =
-                LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly;
-        }
-        discardLegacyTerrainCacheForMode(legacyHeightmapCacheMode);
-    }
-
-    void normalizeContentOwnedTerrainInputs(
-        const TilesetContentProvider* contentProvider,
-        LegacyHeightmapTerrainCacheMode& legacyHeightmapCacheMode) {
-        if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
             legacyHeightmapCacheMode =
                 LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly;
         }
@@ -195,7 +180,6 @@ private:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -207,8 +191,6 @@ private:
             device,
             pPrepRenderer,
             rasterOverlays,
-            legacyTerrainCache_,
-            legacyHeightmapCacheMode,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,

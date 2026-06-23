@@ -50,10 +50,6 @@ struct TilesetContentUploadContext {
     RenderDevice* device = nullptr;
     IPrepareRendererResources* pPrepRenderer = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-        terrainCache;
-    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
-        LegacyHeightmapTerrainCacheMode::Include;
     TileEmptyContentRegistry& emptyContentRegistry;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 20;
@@ -128,8 +124,6 @@ public:
                 context.device,
                 context.pPrepRenderer,
                 context.rasterOverlays,
-                context.terrainCache,
-                context.legacyHeightmapCacheMode,
                 context.emptyContentRegistry,
                 interactionActive,
             resourceSmoothingActive},

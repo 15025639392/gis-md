@@ -42,8 +42,6 @@ struct TileContentRuntimeRequestFrame {
 struct TileContentRuntimeUploadFrame {
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     TilesetContentProvider* contentProvider = nullptr;
-    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
-        LegacyHeightmapTerrainCacheMode::Include;
     RenderDevice* device = nullptr;
     IPrepareRendererResources* pPrepRenderer = nullptr;
     uint64_t frameNumber = 0;
