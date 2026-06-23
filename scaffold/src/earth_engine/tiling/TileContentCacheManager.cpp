@@ -10,9 +10,9 @@ void TileContentCacheManager::markResourcesDirty() {
 void TileContentCacheManager::updateTotalBytesUsed(
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     const TileContentLifecycleManager& lifecycle,
-    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
+    bool includeLegacyHeightmapCache) {
     totalBytesUsed_ =
-        legacyHeightmapCacheMode == LegacyHeightmapTerrainCacheMode::Include
+        includeLegacyHeightmapCache
         ? TileCacheMetrics::estimateTotalBytes(
               tiles,
               lifecycle.legacyTerrainCache())

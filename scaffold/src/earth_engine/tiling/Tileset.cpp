@@ -122,9 +122,7 @@ Tileset::Tileset(ProviderOwnership providers,
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
           options_.tileCacheUnloadTimeLimit,
-          contentProviderOwnsTerrainQuadtree(contentProvider_.get())
-              ? LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly
-              : LegacyHeightmapTerrainCacheMode::Include),
+          !contentProviderOwnsTerrainQuadtree(contentProvider_.get())),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),

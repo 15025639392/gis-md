@@ -50,7 +50,7 @@ struct ExternalSubtreeFixture {
         manager.updateTotalBytesUsed(
             tiles,
             lifecycle,
-            LegacyHeightmapTerrainCacheMode::Include);
+            true);
         manager.markEligibleForUnloading(tiles, rootCacheKey);
     }
 
@@ -87,7 +87,7 @@ struct ExternalSubtreeFixture {
             0,
             0.0,
             false,
-            LegacyHeightmapTerrainCacheMode::Include,
+            true,
             tiles,
             lifecycle,
             nullptr,
@@ -120,7 +120,7 @@ TEST(
     manager.updateTotalBytesUsed(
         tiles,
         lifecycle,
-        LegacyHeightmapTerrainCacheMode::Include);
+        true);
     manager.markEligibleForUnloading(tiles, cacheKey);
 
     EXPECT_GT(manager.totalBytesUsed(), 0);
@@ -131,7 +131,7 @@ TEST(
         0,
         0.0,
         false,
-        LegacyHeightmapTerrainCacheMode::Include,
+        true,
         tiles,
         lifecycle,
         nullptr,
@@ -231,7 +231,7 @@ TEST(
         -1,
         0.0,
         false,
-        LegacyHeightmapTerrainCacheMode::Include,
+        true,
         tiles,
         lifecycle,
         nullptr,
@@ -353,7 +353,7 @@ TEST(
         0,
         0.0,
         false,
-        LegacyHeightmapTerrainCacheMode::Include,
+        true,
         fixture.tiles,
         fixture.lifecycle,
         nullptr,
@@ -383,7 +383,7 @@ TEST(
         0,
         0.0,
         false,
-        LegacyHeightmapTerrainCacheMode::Include,
+        true,
         fixture.tiles,
         fixture.lifecycle,
         nullptr,

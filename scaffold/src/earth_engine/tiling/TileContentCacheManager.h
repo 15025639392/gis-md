@@ -1,6 +1,5 @@
 #pragma once
 
-#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileCacheUnloadCoordinator.h"
 #include "TileCacheKey.h"
 #include "TileContentLifecycleManager.h"
@@ -35,7 +34,7 @@ public:
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
         const TileContentLifecycleManager& lifecycle,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode);
+        bool includeLegacyHeightmapCache);
 
     void markEligibleForUnloading(
         const std::unordered_map<
@@ -59,7 +58,7 @@ public:
         int64_t maximumCachedBytes,
         double unloadTimeLimitMs,
         bool resourceSmoothingActive,
-        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
+        bool includeLegacyHeightmapCache,
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
@@ -99,7 +98,7 @@ public:
             updateTotalBytesUsed(
                 tiles,
                 lifecycle,
-                legacyHeightmapCacheMode);
+                includeLegacyHeightmapCache);
             cacheBytesDirty_ = false;
         }
     }
