@@ -303,6 +303,36 @@ TEST(LoadedTerrainHeightSamplerTest,
 }
 
 TEST(LoadedTerrainHeightSamplerTest,
+     GltfTerrainContentTakesPrecedenceOverLegacyHeightmapCache) {
+    auto scheme = TileScheme::createGeographicTMS();
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    putLoadedGltfTerrainTile(
+        tiles,
+        rootKey,
+        bounds,
+        makeTerrainGltfTriangle(bounds, 10.0, 20.0, 30.0));
+    terrainCache.emplace(cacheKeyFor(rootKey), makeFlatHeightmap(321.0f));
+
+    const double longitude = bounds.west() + bounds.width() * 0.25;
+    const double latitude = bounds.south() + bounds.height() * 0.25;
+
+    EXPECT_NEAR(
+        17.5f,
+        LoadedTerrainHeightSampler::sampleHeight(
+            tiles,
+            terrainCache,
+            longitude,
+            latitude,
+            true),
+        1e-4f);
+}
+
+TEST(LoadedTerrainHeightSamplerTest,
      SamplesHighestGltfTerrainSurfaceWithinTileLikeCesiumNative) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;

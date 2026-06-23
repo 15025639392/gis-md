@@ -228,22 +228,6 @@ float LoadedTerrainHeightSampler::sampleHeight(
             continue;
         }
 
-        auto terrainIt = includeHeightmapTerrainCache
-            ? terrainCache.find(cacheKey)
-            : terrainCache.end();
-        if (includeHeightmapTerrainCache &&
-            terrainIt != terrainCache.end() &&
-            terrainIt->second && terrainIt->second->valid()) {
-            commitBestSample(bestSample, LoadedTerrainSample{
-                DecodedHeightmapSampler::sampleHeight(
-                    *terrainIt->second,
-                    tile->bounds,
-                    longitudeRadians,
-                    latitudeRadians),
-                tile->key.z});
-            continue;
-        }
-
         const TileRenderContentState& renderContent =
             tile->content.renderContent;
         if (renderContent.isTerrainRenderContent()) {
@@ -258,8 +242,24 @@ float LoadedTerrainHeightSampler::sampleHeight(
                     commitBestSample(
                         bestSample,
                         LoadedTerrainSample{*gltfHeight, tile->key.z});
+                    continue;
                 }
             }
+        }
+
+        auto terrainIt = includeHeightmapTerrainCache
+            ? terrainCache.find(cacheKey)
+            : terrainCache.end();
+        if (includeHeightmapTerrainCache &&
+            terrainIt != terrainCache.end() &&
+            terrainIt->second && terrainIt->second->valid()) {
+            commitBestSample(bestSample, LoadedTerrainSample{
+                DecodedHeightmapSampler::sampleHeight(
+                    *terrainIt->second,
+                    tile->bounds,
+                    longitudeRadians,
+                    latitudeRadians),
+                tile->key.z});
         }
     }
 

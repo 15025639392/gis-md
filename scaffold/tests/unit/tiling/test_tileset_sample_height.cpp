@@ -13,6 +13,17 @@ using namespace earth_engine;
 
 namespace earth_engine {
 struct TilesetTestAccess {
+    static Tileset makeLegacyTerrainTileset(
+        std::unique_ptr<TerrainProvider> terrainProvider,
+        std::unique_ptr<TileScheme> tileScheme) {
+        return Tileset::createLegacyTerrainForTests(
+            std::move(terrainProvider),
+            std::move(tileScheme),
+            {},
+            nullptr,
+            TilesetOptions{});
+    }
+
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
     }
@@ -94,12 +105,32 @@ std::pair<double, double> tileCenter(
         (bounds.south() + bounds.north()) * 0.5};
 }
 
+class TestLegacyTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "test-legacy-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 24; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        TerrainCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TerrainTileLoadResult::retryLater());
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return {};
+    }
+};
+
 Tileset makeHeightSamplingTileset() {
-    return Tileset(
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    return TilesetTestAccess::makeLegacyTerrainTileset(
+        std::make_unique<TestLegacyTerrainProvider>(),
+        TileScheme::createGeographicTMS());
 }
 
 class ContentTerrainQuadtreeProvider final : public TilesetContentProvider {
