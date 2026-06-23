@@ -81,6 +81,7 @@ std::optional<float> sampleGltfTerrainHeight(
     const Mat4& contentTransform,
     double longitudeRadians,
     double latitudeRadians) {
+    std::optional<float> highestHeight;
     for (const GltfPrimitive& primitive : model.primitives) {
         const std::vector<SurfaceVertex>& vertices = primitive.vertices;
         if (vertices.empty()) {
@@ -154,7 +155,10 @@ std::optional<float> sampleGltfTerrainHeight(
                 for (size_t i = 0; i + 2 < indexCount; i += 3) {
                     std::optional<float> height =
                         samplePrimitiveTriangle(i, i + 1, i + 2, transform);
-                    if (height) return height;
+                    if (height && (!highestHeight ||
+                                   *height > *highestHeight)) {
+                        highestHeight = height;
+                    }
                 }
             } else if (primitive.primitiveMode ==
                        GltfPrimitiveMode::TriangleStrip) {
@@ -171,20 +175,36 @@ std::optional<float> sampleGltfTerrainHeight(
                               i + 1,
                               i + 2,
                               transform);
-                    if (height) return height;
+                    if (height && (!highestHeight ||
+                                   *height > *highestHeight)) {
+                        highestHeight = height;
+                    }
                 }
             } else if (primitive.primitiveMode ==
                        GltfPrimitiveMode::TriangleFan) {
                 for (size_t i = 1; i + 1 < indexCount; ++i) {
                     std::optional<float> height =
                         samplePrimitiveTriangle(0, i, i + 1, transform);
-                    if (height) return height;
+                    if (height && (!highestHeight ||
+                                   *height > *highestHeight)) {
+                        highestHeight = height;
+                    }
                 }
             }
         }
     }
 
-    return std::nullopt;
+    return highestHeight;
+}
+
+void commitBestSample(std::optional<LoadedTerrainSample>& bestSample,
+                      LoadedTerrainSample candidate) {
+    if (!bestSample ||
+        candidate.zoom > bestSample->zoom ||
+        (candidate.zoom == bestSample->zoom &&
+         candidate.height > bestSample->height)) {
+        bestSample = candidate;
+    }
 }
 
 } // namespace
@@ -213,13 +233,13 @@ float LoadedTerrainHeightSampler::sampleHeight(
             : terrainCache.end();
         if (useTerrainCache && terrainIt != terrainCache.end() &&
             terrainIt->second && terrainIt->second->valid()) {
-            bestSample = LoadedTerrainSample{
+            commitBestSample(bestSample, LoadedTerrainSample{
                 DecodedHeightmapSampler::sampleHeight(
                     *terrainIt->second,
                     tile->bounds,
                     longitudeRadians,
                     latitudeRadians),
-                tile->key.z};
+                tile->key.z});
             continue;
         }
 
@@ -234,7 +254,9 @@ float LoadedTerrainHeightSampler::sampleHeight(
                     longitudeRadians,
                     latitudeRadians);
                 if (gltfHeight) {
-                    bestSample = LoadedTerrainSample{*gltfHeight, tile->key.z};
+                    commitBestSample(
+                        bestSample,
+                        LoadedTerrainSample{*gltfHeight, tile->key.z});
                 }
             }
         }
