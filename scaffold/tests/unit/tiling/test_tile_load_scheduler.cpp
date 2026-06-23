@@ -842,6 +842,53 @@ TEST(TileLoadSchedulerTest,
         childBounds);
 }
 
+TEST(
+    TileLoadSchedulerTest,
+    ContentOwnedTerrainProviderSuppressesLegacyTerrainDispatchEvenWithBadSnapshot) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 0, 0, 0};
+    TerrainQuadtreeContentProvider contentProvider;
+    DeferredTerrainProvider legacyProvider;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &legacyProvider,
+                &contentProvider},
+            cacheKeyForTile,
+            [](const TileKey&,
+               const std::string&,
+               TilesetTile*& tileState) {
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.legacyTerrainProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(0u, outcome.issued);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(0, contentProvider.requestCount);
+    EXPECT_EQ(0, legacyProvider.requestCount);
+    EXPECT_FALSE(marked);
+    EXPECT_EQ(0u, lifecycle.pendingRequestCount());
+}
+
 TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;

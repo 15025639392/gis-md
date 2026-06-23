@@ -177,6 +177,10 @@ public:
                 !input.legacyTerrainProvider) {
                 continue;
             }
+            if (input.contentProvider &&
+                input.contentProvider->providesTerrainQuadtree()) {
+                continue;
+            }
 
             {
                 const int estimatedFanout =
