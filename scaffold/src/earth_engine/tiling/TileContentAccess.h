@@ -18,7 +18,7 @@ class TileContentAccess {
 public:
     TileContentAccess(TilesetTileRegistry& tileRegistry,
                       const TileScheme& tileScheme,
-                      const TerrainProvider* terrainProvider,
+                      const TerrainProvider* legacyTerrainProvider,
                       const TilesetContentProvider* contentProvider,
                       const TileContentLifecycleManager& contentLifecycle,
                       size_t rasterOverlayCount);
@@ -35,7 +35,7 @@ private:
 
     TilesetTileRegistry& tileRegistry_;
     const TileScheme& tileScheme_;
-    const TerrainProvider* terrainProvider_ = nullptr;
+    const TerrainProvider* legacyTerrainProvider_ = nullptr;
     const TilesetContentProvider* contentProvider_ = nullptr;
     const TileContentLifecycleManager& contentLifecycle_;
     size_t rasterOverlayCount_ = 0;

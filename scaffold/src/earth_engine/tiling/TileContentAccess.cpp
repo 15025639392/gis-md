@@ -34,13 +34,13 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
 TileContentAccess::TileContentAccess(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TerrainProvider* terrainProvider,
+    const TerrainProvider* legacyTerrainProvider,
     const TilesetContentProvider* contentProvider,
     const TileContentLifecycleManager& contentLifecycle,
     size_t rasterOverlayCount)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
-      terrainProvider_(terrainProvider),
+      legacyTerrainProvider_(legacyTerrainProvider),
       contentProvider_(contentProvider),
       contentLifecycle_(contentLifecycle),
       rasterOverlayCount_(rasterOverlayCount) {}
@@ -107,13 +107,13 @@ bool TileContentAccess::isAvailabilityBoundaryTile(
         return contentProvider_->isTerrainAvailabilityBoundaryLevel(
             tile.key.z);
     }
-    return terrainProvider_ &&
-           terrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
+    return legacyTerrainProvider_ &&
+           legacyTerrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
 }
 
 bool TileContentAccess::hasTerrainQuadtree() const {
     return (contentProvider_ && contentProvider_->providesTerrainQuadtree()) ||
-           terrainProvider_ != nullptr;
+           legacyTerrainProvider_ != nullptr;
 }
 
 bool TileContentAccess::canRefine(const TilesetTile& tile) const {
@@ -124,7 +124,7 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
     return TileRefinementAvailabilityResolver::canRefine(
         tile,
         contentProvider_,
-        terrainProvider_,
+        legacyTerrainProvider_,
         tileScheme_,
         contentLifecycle_.terrainCache(),
         [](const TileKey& key) {
@@ -143,8 +143,8 @@ TileAvailabilityState TileContentAccess::availabilityState(
     if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
         return contentProvider_->terrainAvailabilityState(key);
     }
-    return terrainProvider_
-        ? terrainProvider_->availabilityState(key)
+    return legacyTerrainProvider_
+        ? legacyTerrainProvider_->availabilityState(key)
         : TileAvailabilityState::NotAvailable;
 }
 
