@@ -2178,7 +2178,6 @@ TEST(
     QuantizedMeshTerrainProvider* providerPtr = provider.get();
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -2260,7 +2259,6 @@ TEST(
     QuantizedMeshTerrainProvider* providerPtr = provider.get();
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -2323,7 +2321,6 @@ TEST(
     EXPECT_TRUE(provider->supportsTile(TileKey{"Geographic-TMS", 2, 0, 0}));
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -2356,7 +2353,6 @@ TEST(
          {TileKey{"Geographic-TMS", 1, 1, 1}}});
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -2394,7 +2390,6 @@ TEST(
     auto contentProvider = std::make_unique<TerrainQuadtreeContentProvider>();
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,

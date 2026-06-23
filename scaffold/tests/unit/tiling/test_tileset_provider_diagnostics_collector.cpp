@@ -276,7 +276,6 @@ TEST(
     provider->setPlatformBridge(&bridge);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,

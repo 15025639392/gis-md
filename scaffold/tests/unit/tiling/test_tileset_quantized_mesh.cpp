@@ -285,7 +285,6 @@ TEST(TilesetQuantizedMeshTest,
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -324,7 +323,6 @@ TEST(TilesetQuantizedMeshTest,
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -353,7 +351,6 @@ TEST(TilesetQuantizedMeshTest,
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -395,7 +392,6 @@ TEST(TilesetQuantizedMeshTest,
         "https://example.invalid/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
