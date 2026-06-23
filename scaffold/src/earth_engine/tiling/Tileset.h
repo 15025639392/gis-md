@@ -131,7 +131,7 @@ public:
 
 private:
     struct ProviderOwnership {
-        std::unique_ptr<TerrainProvider> legacyTerrainProvider;
+        std::unique_ptr<TerrainProvider> heightmapTerrainProvider;
         std::unique_ptr<TilesetContentProvider> contentProvider;
     };
 

@@ -86,7 +86,7 @@ Tileset::Tileset(ProviderOwnership providers,
     : heightmapTerrainProvider_(
           contentProviderOwnsTerrainQuadtree(providers.contentProvider.get())
               ? std::unique_ptr<TerrainProvider>{}
-              : std::move(providers.legacyTerrainProvider)),
+              : std::move(providers.heightmapTerrainProvider)),
       contentProvider_(std::move(providers.contentProvider)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),
@@ -100,7 +100,7 @@ Tileset::Tileset(ProviderOwnership providers,
                     *contentProvider_,
                     rasterOverlays_.size())
               : heightmapTerrainProvider_
-                    ? TileContentAccess::forLegacyTerrain(
+                    ? TileContentAccess::forHeightmapTerrainSurfacePath(
                           tileRegistry_,
                           *tileScheme_,
                           heightmapTerrainProvider_.get(),

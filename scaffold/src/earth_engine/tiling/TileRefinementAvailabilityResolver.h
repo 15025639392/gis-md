@@ -54,7 +54,7 @@ public:
     static bool canRefine(
         const TilesetTile& tile,
         const TilesetContentProvider* contentProvider,
-        const TerrainProvider* legacyTerrainProvider,
+        const TerrainProvider* heightmapTerrainProvider,
         const TileScheme& tileScheme,
         const std::unordered_map<
             std::string,
@@ -75,16 +75,16 @@ public:
                 contentProvider &&
                     contentProvider->supportsTile(tile.key),
                 isAvailabilityBoundary(tile) && !hasLoadedTerrainContent(tile),
-                legacyTerrainProvider != nullptr,
+                heightmapTerrainProvider != nullptr,
                 true,
                 tileScheme.maxZoom()},
             cacheKey,
             [&terrainCache](const std::string& key) {
                 return terrainCache.count(key) > 0;
             },
-            [legacyTerrainProvider](const TileKey& key) {
-                return legacyTerrainProvider
-                    ? legacyTerrainProvider->availabilityState(key)
+            [heightmapTerrainProvider](const TileKey& key) {
+                return heightmapTerrainProvider
+                    ? heightmapTerrainProvider->availabilityState(key)
                     : TileAvailabilityState::NotAvailable;
             });
     }

@@ -67,36 +67,36 @@ TileContentAccess TileContentAccess::forNoTerrain(
         rasterOverlayCount);
 }
 
-TileContentAccess TileContentAccess::forLegacyTerrain(
+TileContentAccess TileContentAccess::forHeightmapTerrainSurfacePath(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TerrainProvider* legacyTerrainProvider,
+    const TerrainProvider* heightmapTerrainProvider,
     const TilesetContentProvider* contentProvider,
     const HeightmapTerrainCache& heightmapTerrainCache,
     size_t rasterOverlayCount) {
-    assert(legacyTerrainProvider &&
-           "forLegacyTerrain is only for the migration-only TerrainProvider path");
+    assert(heightmapTerrainProvider &&
+           "forHeightmapTerrainSurfacePath requires a heightmap TerrainProvider");
     return TileContentAccess(
         tileRegistry,
         tileScheme,
-        legacyTerrainProvider,
+        heightmapTerrainProvider,
         contentProvider,
         &heightmapTerrainCache,
-        TerrainOwnership::Legacy,
+        TerrainOwnership::HeightmapSurface,
         rasterOverlayCount);
 }
 
 TileContentAccess::TileContentAccess(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TerrainProvider* legacyTerrainProvider,
+    const TerrainProvider* heightmapTerrainProvider,
     const TilesetContentProvider* contentProvider,
     const HeightmapTerrainCache* heightmapTerrainCache,
     TerrainOwnership terrainOwnership,
     size_t rasterOverlayCount)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
-      legacyTerrainProvider_(legacyTerrainProvider),
+      heightmapTerrainProvider_(heightmapTerrainProvider),
       contentProvider_(contentProvider),
       heightmapTerrainCache_(heightmapTerrainCache),
       terrainOwnership_(terrainOwnership),
@@ -175,17 +175,17 @@ bool TileContentAccess::isAvailabilityBoundaryTile(
     if (contentProviderOwnsTerrainQuadtree()) {
         return contentTerrainAvailabilityBoundaryTile(tile);
     }
-    return legacyAvailabilityBoundaryTile(tile);
+    return heightmapAvailabilityBoundaryTile(tile);
 }
 
 bool TileContentAccess::contentProviderOwnsTerrainQuadtree() const {
     return terrainOwnership_ == TerrainOwnership::ContentProvider;
 }
 
-bool TileContentAccess::legacyAvailabilityBoundaryTile(
+bool TileContentAccess::heightmapAvailabilityBoundaryTile(
     const TilesetTile& tile) const {
-    return legacyTerrainProvider_ &&
-           legacyTerrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
+    return heightmapTerrainProvider_ &&
+           heightmapTerrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
 }
 
 bool TileContentAccess::contentTerrainAvailabilityBoundaryTile(
@@ -195,7 +195,7 @@ bool TileContentAccess::contentTerrainAvailabilityBoundaryTile(
 
 bool TileContentAccess::hasTerrainQuadtree() const {
     return contentProviderOwnsTerrainQuadtree() ||
-           terrainOwnership_ == TerrainOwnership::Legacy;
+           terrainOwnership_ == TerrainOwnership::HeightmapSurface;
 }
 
 bool TileContentAccess::canRefine(const TilesetTile& tile) const {
@@ -220,7 +220,7 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
     return TileRefinementAvailabilityResolver::canRefine(
         tile,
         contentProvider_,
-        legacyTerrainProvider_,
+        heightmapTerrainProvider_,
         tileScheme_,
         heightmapTerrainCache_ ? *heightmapTerrainCache_
                                : emptyHeightmapTerrainCache(),
@@ -240,13 +240,13 @@ TileAvailabilityState TileContentAccess::availabilityState(
     if (contentProviderOwnsTerrainQuadtree()) {
         return contentTerrainAvailabilityState(key);
     }
-    return legacyAvailabilityState(key);
+    return heightmapAvailabilityState(key);
 }
 
-TileAvailabilityState TileContentAccess::legacyAvailabilityState(
+TileAvailabilityState TileContentAccess::heightmapAvailabilityState(
     const TileKey& key) const {
-    return legacyTerrainProvider_
-        ? legacyTerrainProvider_->availabilityState(key)
+    return heightmapTerrainProvider_
+        ? heightmapTerrainProvider_->availabilityState(key)
         : TileAvailabilityState::NotAvailable;
 }
 
