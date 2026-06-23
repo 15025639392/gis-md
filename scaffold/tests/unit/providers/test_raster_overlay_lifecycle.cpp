@@ -3944,6 +3944,117 @@ TEST(RasterOverlayLifecycleTest,
               childMapping.getState());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     PrefetchKeepsLoadingFallbackStableWithoutRemappingLikeCesiumNative) {
+    auto imagery = std::make_unique<DeferredImageryProvider>();
+    DeferredImageryProvider* imageryPtr = imagery.get();
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::move(imagery),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+
+    const TileKey parentKey{overlay->getTileScheme().id(), 2, 1, 1};
+    const TileKey childKey{overlay->getTileScheme().id(), 3, 2, 2};
+    const Rectangle parentBounds =
+        overlay->getTileScheme().tileToRectangle(parentKey);
+    const Rectangle childBounds =
+        overlay->getTileScheme().tileToRectangle(childKey);
+    RasterOverlayDetails parentDetails =
+        makeProviderDetails(overlay->getTileScheme(), parentBounds);
+    RasterOverlayDetails childDetails =
+        makeProviderDetails(overlay->getTileScheme(), childBounds);
+    std::vector<RasterOverlayProjection> missing;
+
+    TilesetTile parentTile(parentKey, parentBounds);
+    RasterMappedToTilesetTile& parentMapping =
+        parentTile.rasterOverlayState.ensureMapping(0);
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentRaster = parentMapping.getLoadingTile();
+    ASSERT_NE(nullptr, parentRaster);
+    parentRaster->setTexture(std::make_unique<TestTexture>(4, 4));
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    ASSERT_EQ(parentRaster, parentMapping.getReadyTile());
+
+    TilesetTile childTile(childKey, childBounds, &parentTile);
+    childTile.geometricError = 100.0;
+    RasterMappedToTilesetTile& childMapping =
+        childTile.rasterOverlayState.ensureMapping(0);
+    childMapping.update(
+        childKey,
+        childDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        &parentTile,
+        0);
+    RasterOverlayTile* childRaster = childMapping.getLoadingTile();
+    ASSERT_NE(nullptr, childRaster);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    budget.beginFrame(1, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        childTile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    ASSERT_EQ(RasterOverlayTile::LoadState::Loading,
+              childRaster->getState());
+    ASSERT_EQ(1u, imageryPtr->requestedKeys.size());
+    ASSERT_EQ(1u, imageryPtr->pending.size());
+    ASSERT_EQ(parentRaster, childMapping.getReadyTile());
+    ASSERT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+              childMapping.getReadyTileSource());
+
+    budget.beginFrame(2, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        childTile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    EXPECT_EQ(childRaster, childMapping.getLoadingTile());
+    EXPECT_EQ(parentRaster, childMapping.getReadyTile());
+    EXPECT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+              childMapping.getReadyTileSource());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+              childRaster->getState());
+    EXPECT_EQ(1u, imageryPtr->requestedKeys.size());
+    EXPECT_EQ(1u, imageryPtr->pending.size());
+}
+
 TEST(RasterOverlayLifecycleTest, EmptyPrefetchClearsRasterOverlayStateLikeCesiumNativeRemove) {
     TilesetTile tile(
         TileKey{"Geographic-TMS", 2, 1, 1},

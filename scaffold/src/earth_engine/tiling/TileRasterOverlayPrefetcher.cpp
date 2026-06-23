@@ -108,6 +108,12 @@ void TileRasterOverlayPrefetcher::prefetch(
             loadingTile->getState() !=
                 RasterOverlayTile::LoadState::Placeholder) {
             if (loadingTile->getState() ==
+                    RasterOverlayTile::LoadState::Loading &&
+                mapped.getReadyTile() != nullptr) {
+                mapped.loadThrottled(*activeProvider, &frameResourceBudget);
+                continue;
+            }
+            if (loadingTile->getState() ==
                     RasterOverlayTile::LoadState::Unloaded ||
                 loadingTile->getState() ==
                     RasterOverlayTile::LoadState::Loading) {
