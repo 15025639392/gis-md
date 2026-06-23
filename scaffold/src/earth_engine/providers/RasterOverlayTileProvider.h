@@ -321,6 +321,7 @@ private:
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;
+    void invalidateDirectRasterTileCache();
     void invalidateMappedRasterTileCache();
     void invalidateSourceAssetDepotCache();
 

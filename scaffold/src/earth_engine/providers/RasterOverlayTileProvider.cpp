@@ -2092,6 +2092,20 @@ void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
     asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
 }
 
+void RasterOverlayTileProvider::invalidateDirectRasterTileCache() {
+    for (auto it = tiles_.begin(); it != tiles_.end();) {
+        if (!isMappedRasterCacheKey(it->first) && it->second) {
+            it->second->setMoreDetailAvailable(
+                RasterOverlayTile::MoreDetailAvailable::No);
+            it->second->setState(RasterOverlayTile::LoadState::Failed);
+            it = tiles_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+}
+
 void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
@@ -2100,6 +2114,7 @@ void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
         asyncState_->sourceTileDepotCacheLru.clear();
         asyncState_->sourceTileDepotCacheBytes = 0;
     }
+    invalidateDirectRasterTileCache();
     refreshSourceAssetDepot();
 }
 

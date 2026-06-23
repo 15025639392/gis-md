@@ -2245,6 +2245,80 @@ TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiu
 }
 
 TEST(RasterOverlayLifecycleTest,
+     LevelRangeChangeRecreatesDirectTileLikeCesiumNativeProviderDepot) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    RasterOverlayTileProvider::TilePtr firstTile =
+        provider.getTile(sourceKey);
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, firstTile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              firstTile->isMoreDetailAvailable());
+    EXPECT_EQ(1, imagery.requestCount);
+
+    provider.setLevelRange(3, 4);
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, firstTile->getState());
+    RasterOverlayTileProvider::TilePtr secondTile =
+        provider.getTile(sourceKey);
+    ASSERT_NE(nullptr, secondTile);
+    EXPECT_NE(firstTile.get(), secondTile.get());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Unloaded,
+              secondTile->getState());
+
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+    ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, secondTile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
+              secondTile->isMoreDetailAvailable());
+    EXPECT_EQ(2, imagery.requestCount);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     LevelRangeChangeDropsStaleDirectInFlightTileLikeCesiumNativeDepot) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    RasterOverlayTileProvider::TilePtr staleTile =
+        provider.getTile(sourceKey);
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(provider.loadTile(*staleTile));
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+              staleTile->getState());
+
+    provider.setLevelRange(3, 4);
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
+              staleTile->getState());
+    RasterOverlayTileProvider::TilePtr currentTile =
+        provider.getTile(sourceKey);
+    ASSERT_NE(nullptr, currentTile);
+    EXPECT_NE(staleTile.get(), currentTile.get());
+
+    imagery.completeNext();
+    EXPECT_EQ(0, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+
+    ASSERT_TRUE(provider.loadTile(*currentTile));
+    EXPECT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
+}
+
+TEST(RasterOverlayLifecycleTest,
      StaleEpochSourceCompletionDoesNotRepopulateCurrentDepotCache) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
