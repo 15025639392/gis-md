@@ -16266,6 +16266,95 @@ void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
           "TileUpsampleSourcePreparer: unloading ancestor is usable only for existing protected work and not for new upsample requests");
 }
 
+void testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent() {
+    TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
+    TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
+    grandparent.children.push_back(&parent);
+    parent.children.push_back(&child);
+
+    grandparent.content.contentKind = TileContentKind::Render;
+    grandparent.content.loadState = TileLoadState::Done;
+    grandparent.content.renderContent.setMeshReady(true);
+    grandparent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    parent.content.loadState = TileLoadState::Failed;
+    parent.content.contentKind = TileContentKind::Unknown;
+    child.content.markRasterDetailUpsample();
+
+    int ensuredMeshes = 0;
+    std::vector<TileKey> queuedKeys;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        13.0,
+        [&ensuredMeshes](TilesetTile&) {
+            ++ensuredMeshes;
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    check(!prepared &&
+              ensuredMeshes == 0 &&
+              queuedKeys.empty() &&
+              TileUpsampleSourcePreparer::findSourceTile(child) == nullptr &&
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  false,
+                  true,
+                  true) == nullptr,
+          "TileUpsampleSourcePreparer: raster-detail upsample does not use legacy ancestor SurfaceMesh sources");
+}
+
+void testTileUpsampleSourcePreparerRasterDetailFinalizesDirectGltfParentOnly() {
+    TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
+    TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
+    grandparent.children.push_back(&parent);
+    parent.children.push_back(&child);
+
+    grandparent.content.contentKind = TileContentKind::Render;
+    grandparent.content.loadState = TileLoadState::Done;
+    grandparent.content.renderContent.setMeshReady(true);
+    grandparent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::ContentLoaded;
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    child.content.markRasterDetailUpsample();
+
+    int ensuredMeshes = 0;
+    std::vector<TileKey> queuedKeys;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        17.0,
+        [&ensuredMeshes, &parent](TilesetTile& tile) {
+            ++ensuredMeshes;
+            check(&tile == &parent,
+                  "TileUpsampleSourcePreparer: raster-detail finalizes only the direct glTF parent");
+            tile.content.loadState = TileLoadState::Done;
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    check(prepared &&
+              ensuredMeshes == 1 &&
+              queuedKeys.empty() &&
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  false,
+                  true,
+                  false) == &parent,
+          "TileUpsampleSourcePreparer: raster-detail upsample prepares the direct glTF terrain parent");
+}
+
 void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
@@ -29388,6 +29477,144 @@ void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
           "Tileset: finished Unloading parent is removed from the unload queue");
 }
 
+void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(provider),
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: raster-detail unload glTF root tile is created");
+    if (!root) return;
+
+    auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
+    const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
+        root->bounds;
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[1] =
+        parentWebMercatorOverlay;
+    parentModel->rasterOverlayDetails.boundingRegion = {
+        root->bounds,
+        -8.0,
+        45.0};
+    const RasterOverlayDetails parentOverlayDetails =
+        parentModel->rasterOverlayDetails;
+    root->content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->markRenderContentDone();
+    root->geometricError = 100.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: raster-detail unload setup creates children");
+    if (root->children.size() < 2 || !root->children[1]) return;
+
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    DebugImageryProvider imagery;
+    RasterOverlayTileProvider rasterProvider(
+        imagery,
+        *imageryScheme,
+        nullptr);
+    RasterMappedToTilesetTile& mapped =
+        root->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        root->key,
+        parentOverlayDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    check(loadingTile != nullptr,
+          "Tileset: raster-detail unload fixture starts raster tile load");
+    if (!loadingTile) return;
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    mapped.update(
+        root->key,
+        parentOverlayDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    check(mapped.isMoreDetailAvailable() &&
+              mapped.getTextureCoordinateID() == 1,
+          "Tileset: raster-detail unload fixture has ready more-detail raster");
+
+    TilesetTile* child = root->children[1];
+    child->content.markRasterDetailUpsample();
+    TilesetTestAccess::requestMissingTile(tileset, child->key);
+    check(child->content.loadState == TileLoadState::ContentLoading &&
+              tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 0 &&
+              rawProvider->requestCount == 0,
+          "Tileset: raster-detail glTF child queues local upsample before parent unload");
+
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    TilesetTestAccess::updateTotalBytesUsed(tileset);
+    const int64_t bytesBeforeUnload = tileset.totalBytesUsed();
+    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+
+    check(root->content.loadState == TileLoadState::Unloading &&
+              root->content.contentKind == TileContentKind::Render &&
+              root->content.renderContent.hasGltfContent() &&
+              root->content.renderContent.isTerrainRenderContent(),
+          "Tileset: raster-detail loading child keeps parent glTF CPU content during protected unload");
+    check(!root->content.renderContent.hasGltfResources(),
+          "Tileset: raster-detail protected parent releases glTF GPU resources first");
+    check(tileset.totalBytesUsed() < bytesBeforeUnload,
+          "Tileset: raster-detail protected unload updates retained byte accounting");
+    check(tileset.loadDiagnostics().unloadQueueTiles == 1,
+          "Tileset: raster-detail protected parent remains queued for retry");
+
+    TilesetTestAccess::processPendingUploads(tileset);
+    const GltfModel* childModel =
+        child->content.renderContent.gltfModelForRead();
+    check(child->content.loadState == TileLoadState::Done &&
+              child->content.contentKind == TileContentKind::Render &&
+              child->content.renderContent.hasGltfContent() &&
+              child->content.renderContent.hasGltfResources() &&
+              !child->content.renderContent.hasSurfaceMesh() &&
+              childModel != nullptr,
+          "Tileset: raster-detail child completes as glTF terrain from protected parent");
+    const Rectangle* childWebMercator = childModel
+        ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
+              RasterOverlayProjection::WebMercator)
+        : nullptr;
+    check(childWebMercator != nullptr &&
+              childModel->rasterOverlayDetails.boundingRegion.rectangle ==
+                  child->bounds,
+          "Tileset: raster-detail child preserves derived raster overlay details after parent protected unload");
+
+    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+    check(root->content.loadState == TileLoadState::Unloaded &&
+              root->content.contentKind == TileContentKind::Unknown &&
+              !root->content.renderContent.hasGltfContent(),
+          "Tileset: raster-detail protected parent finishes unloading after child leaves ContentLoading");
+    check(tileset.loadDiagnostics().unloadQueueTiles == 0,
+          "Tileset: raster-detail parent leaves unload queue after protected work completes");
+}
+
 void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -29772,6 +29999,8 @@ int main() {
     testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor();
     testTileUpsampleSourcePreparerWaitsForLoadingAncestor();
     testTileUpsampleSourcePreparerWaitsForUnloadingAncestor();
+    testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent();
+    testTileUpsampleSourcePreparerRasterDetailFinalizesDirectGltfParentOnly();
     testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded();
     testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear();
     testTileUnloadPolicyFindsQueuedTilesByLoadState();
@@ -30002,6 +30231,7 @@ int main() {
     testTilesetUnloadQueueIgnoresUnloadedUnknownTiles();
     testTilesetUnloadRenderContentIgnoresIndependentChildLoading();
     testTilesetUnloadRenderContentWaitsForUpsampledChildLoading();
+    testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading();
     testTilesetUnloadRenderContentPreservesLoadedChildren();
     testTilesetUnloadExternalContentClearsChildren();
     testTilesetDirectExternalContentUnloadClearsChildren();

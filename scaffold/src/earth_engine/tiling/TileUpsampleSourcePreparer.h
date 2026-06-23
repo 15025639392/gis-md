@@ -14,6 +14,10 @@ public:
         bool allowUnloadingSource = false,
         bool allowGltfTerrainSource = false,
         bool allowLegacySurfaceSource = true) {
+        if (tile.content.isRasterDetailUpsample()) {
+            return findDirectGltfTerrainParent(tile, allowUnloadingSource);
+        }
+
         const TilesetTile* parent = tile.parent;
         if (allowGltfTerrainSource && parent) {
             const bool parentStateReady =
@@ -70,6 +74,14 @@ public:
         bool allowLegacySurfaceSource,
         EnsureTileMeshFn&& ensureTileMesh,
         QueueTileLoadFn&& queueTileLoad) {
+        if (tile.content.isRasterDetailUpsample()) {
+            return prepareRasterDetailSourceTile(
+                tile,
+                priority,
+                std::forward<EnsureTileMeshFn>(ensureTileMesh),
+                std::forward<QueueTileLoadFn>(queueTileLoad));
+        }
+
         if (findSourceTile(tile,
                            false,
                            true,
@@ -105,6 +117,62 @@ public:
                 ancestor->content.loadState == TileLoadState::Unloading) {
                 return false;
             }
+        }
+
+        return false;
+    }
+
+private:
+    static const TilesetTile* findDirectGltfTerrainParent(
+        const TilesetTile& tile,
+        bool allowUnloadingSource) {
+        const TilesetTile* parent = tile.parent;
+        if (!parent) {
+            return nullptr;
+        }
+        const bool parentStateReady =
+            parent->content.loadState == TileLoadState::Done ||
+            (allowUnloadingSource &&
+             parent->content.loadState == TileLoadState::Unloading);
+        return parentStateReady &&
+                parent->content.contentKind == TileContentKind::Render &&
+                parent->content.renderContent.isTerrainRenderContent() &&
+                parent->content.renderContent.hasGltfContent()
+            ? parent
+            : nullptr;
+    }
+
+    template <typename EnsureTileMeshFn, typename QueueTileLoadFn>
+    static bool prepareRasterDetailSourceTile(
+        TilesetTile& tile,
+        double priority,
+        EnsureTileMeshFn&& ensureTileMesh,
+        QueueTileLoadFn&& queueTileLoad) {
+        TilesetTile* parent = tile.parent;
+        if (!parent) {
+            return false;
+        }
+
+        if (findDirectGltfTerrainParent(tile, false)) {
+            return true;
+        }
+
+        if ((parent->content.loadState == TileLoadState::ContentLoaded ||
+             parent->content.loadState == TileLoadState::Done) &&
+            parent->content.contentKind == TileContentKind::Render &&
+            parent->content.renderContent.isTerrainRenderContent() &&
+            parent->content.renderContent.hasGltfContent()) {
+            ensureTileMesh(*parent);
+            return findDirectGltfTerrainParent(tile, false) != nullptr;
+        }
+
+        if (parent->content.loadState == TileLoadState::Unloaded ||
+            parent->content.loadState == TileLoadState::FailedTemporarily) {
+            queueTileLoad(
+                parent->key,
+                TileLoadPriorityGroup::Urgent,
+                priority);
+            return false;
         }
 
         return false;
