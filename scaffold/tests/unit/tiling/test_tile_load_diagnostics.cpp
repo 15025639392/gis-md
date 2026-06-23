@@ -60,13 +60,13 @@ TEST(
         lifecycle.requestState().beginContentRequest(
             "content-request",
             contentToken);
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
             TileKey{"test", 1, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
                 TileKey{"test", 1, 0, 1},
                 "terrain-terminal",
                 TileLoadPriorityGroup::Urgent,

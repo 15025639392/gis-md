@@ -94,7 +94,7 @@ TEST(TileContentLifecycleManagerTest, ShutdownClearsClaimedUploadWork) {
 
     {
         std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
-        manager.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        manager.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
                 TileKey{"test", 0, 0, 0},
                 "terrain-upload",
                 TileLoadPriorityGroup::Normal,

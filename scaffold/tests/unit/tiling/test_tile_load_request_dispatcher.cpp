@@ -541,7 +541,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsEmptyCacheKeys) {
             "",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyTerrain,
+            TileLoadDomain::LegacyHeightmapTerrain,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, terrainResult);
@@ -653,7 +653,7 @@ TEST(TileLoadRequestDispatcherTest,
 
     auto pending = pendingLoads.takeHighestPriorityTerminalResult(budget);
     ASSERT_TRUE(pending.has_value());
-    EXPECT_EQ(TileLoadDomain::LegacyTerrain, pending->domain);
+    EXPECT_EQ(TileLoadDomain::LegacyHeightmapTerrain, pending->domain);
     EXPECT_EQ(TileLoadStatus::Empty, pending->result.status);
     EXPECT_FALSE(
         pending->content().metadata.updatedBoundingVolume.has_value());
@@ -1120,7 +1120,7 @@ TEST(TileLoadRequestDispatcherTest, RejectsRequestsDuringDestroy) {
             "destroy-upsample",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyTerrain,
+            TileLoadDomain::LegacyHeightmapTerrain,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Destroying, terrainResult);
@@ -1486,7 +1486,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingUploadKeys) {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
             key,
             "terrain-upload-pending",
             TileLoadPriorityGroup::Normal,
@@ -1558,7 +1558,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsClaimedUploadKeys) {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
             key,
             "terrain-upload-claimed",
             TileLoadPriorityGroup::Normal,
@@ -1635,7 +1635,7 @@ TEST(TileLoadRequestDispatcherTest,
         std::lock_guard<std::mutex> lock(mutex);
         pendingLoads.addTerminalResult(
             PendingTileLoad{
-                TileLoadDomain::LegacyTerrain,
+                TileLoadDomain::LegacyHeightmapTerrain,
                 key,
                 "shared-cache-key",
                 TileLoadPriorityGroup::Normal,
@@ -1652,7 +1652,7 @@ TEST(TileLoadRequestDispatcherTest,
             "shared-cache-key",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadDomain::LegacyTerrain,
+            TileLoadDomain::LegacyHeightmapTerrain,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
@@ -1680,7 +1680,7 @@ TEST(TileLoadRequestDispatcherTest,
             "upsample-blocked",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileLoadDomain::LegacyTerrain,
+            TileLoadDomain::LegacyHeightmapTerrain,
             TileLoadResult::createRenderable());
 
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);

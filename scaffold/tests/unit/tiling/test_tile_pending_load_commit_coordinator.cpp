@@ -164,7 +164,7 @@ void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
 
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-    PendingTileLoad result{TileLoadDomain::LegacyTerrain,
+    PendingTileLoad result{TileLoadDomain::LegacyHeightmapTerrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -198,7 +198,7 @@ void expectTerrainTerminalIgnoresMetadata(TileLoadStatus status,
             Rectangle(0.1, 0.2, 0.3, 0.4),
             -10.0,
             20.0));
-    PendingTileLoad pending{TileLoadDomain::LegacyTerrain,
+    PendingTileLoad pending{TileLoadDomain::LegacyHeightmapTerrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -261,7 +261,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert("missing-terrain");
     emptyContentRegistry.insert("missing-content");
-    PendingTileLoad terrainResult{TileLoadDomain::LegacyTerrain,
+    PendingTileLoad terrainResult{TileLoadDomain::LegacyHeightmapTerrain,
         terrainKey,
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
@@ -346,7 +346,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileLoadResult result = TileLoadResult::createTerminal(
         TileLoadStatus::Empty,
         makeBoundingVolumeMetadata(updatedRectangle, -30.0, 60.0));
-    PendingTileLoad pending{TileLoadDomain::LegacyTerrain,
+    PendingTileLoad pending{TileLoadDomain::LegacyHeightmapTerrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -495,7 +495,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    PendingTileLoad terrainUpload{TileLoadDomain::LegacyTerrain,
+    PendingTileLoad terrainUpload{TileLoadDomain::LegacyHeightmapTerrain,
         TileKey{"test", 0, 0, 0},
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
@@ -509,13 +509,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
             terrainUpload.key,
             terrainUpload.cacheKey,
             terrainUpload.group,
             terrainUpload.priority,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
             contentUpload.key,
             contentUpload.cacheKey,
             contentUpload.group,
@@ -923,7 +923,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1415,7 +1415,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
 
-    PendingTileLoad upload{TileLoadDomain::LegacyTerrain,
+    PendingTileLoad upload{TileLoadDomain::LegacyHeightmapTerrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -1597,7 +1597,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadClearsLegacyTerrainCacheForSameKey) {
+     ContentUploadClearsLegacyHeightmapTerrainCacheForSameKey) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -1666,7 +1666,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentOwnedTerrainUploadDoesNotMutateLegacyTerrainCache) {
+     ContentOwnedTerrainUploadDoesNotMutateLegacyHeightmapTerrainCache) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -1845,7 +1845,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     heightmap->tileSize = 2;
     heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
 
-    PendingTileLoad upload{TileLoadDomain::LegacyTerrain,
+    PendingTileLoad upload{TileLoadDomain::LegacyHeightmapTerrain,
         terrainKey,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -1853,7 +1853,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult::createRenderableHeightmapTerrain(std::move(heightmap))};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyTerrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::LegacyHeightmapTerrain,
             upload.key,
             upload.cacheKey,
             upload.group,
