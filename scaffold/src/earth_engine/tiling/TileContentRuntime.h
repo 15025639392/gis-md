@@ -1,6 +1,5 @@
 #pragma once
 
-#include "LegacyHeightmapTerrainCacheMode.h"
 #include "TileLoadTypes.h"
 
 #include <cstdint>
@@ -29,8 +28,6 @@ struct TileContentRuntimeRequestFrame {
         tiles;
     TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
-    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
-        LegacyHeightmapTerrainCacheMode::Include;
     RenderDevice* device = nullptr;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 0;

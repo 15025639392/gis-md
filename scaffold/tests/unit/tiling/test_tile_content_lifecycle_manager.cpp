@@ -195,7 +195,6 @@ TEST(
         nullptr,
         rasterOverlays,
         tiles,
-        LegacyHeightmapTerrainCacheMode::Include,
         1,
         20,
         0.0,

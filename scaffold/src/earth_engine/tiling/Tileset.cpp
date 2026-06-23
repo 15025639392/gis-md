@@ -56,13 +56,6 @@ TerrainProvider* effectiveLegacyTerrainProvider(
     return terrainProvider;
 }
 
-LegacyHeightmapTerrainCacheMode legacyHeightmapCacheModeFor(
-    const TilesetContentProvider* contentProvider) {
-    return contentProviderOwnsTerrainQuadtree(contentProvider)
-        ? LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly
-        : LegacyHeightmapTerrainCacheMode::Include;
-}
-
 TileMeshLegacyHeightmapMode tileMeshLegacyHeightmapModeFor(
     const TilesetContentProvider* contentProvider) {
     return contentProviderOwnsTerrainQuadtree(contentProvider)
@@ -136,7 +129,9 @@ Tileset::Tileset(ProviderOwnership providers,
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
           options_.tileCacheUnloadTimeLimit,
-          legacyHeightmapCacheModeFor(contentProvider_.get())),
+          contentProviderOwnsTerrainQuadtree(contentProvider_.get())
+              ? LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly
+              : LegacyHeightmapTerrainCacheMode::Include),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),
@@ -203,8 +198,7 @@ int Tileset::pendingRequests() const {
 }
 
 int Tileset::cachedTerrainTiles() const {
-    if (legacyHeightmapCacheModeFor(contentProvider_.get()) ==
-        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly) {
+    if (contentProviderOwnsTerrainQuadtree(contentProvider_.get())) {
         return 0;
     }
     return static_cast<int>(contentLifecycle_.legacyTerrainCache().size());
@@ -250,8 +244,6 @@ Tileset::makeContentRuntimeRequestFrame() const {
         tileRegistry_.tiles()};
     frame.legacyTerrainProvider = effectiveLegacyTerrainProvider();
     frame.contentProvider = contentProvider_.get();
-    frame.legacyHeightmapCacheMode =
-        legacyHeightmapCacheModeFor(contentProvider_.get());
     frame.device = device_;
     frame.frameNumber = frameNumber_;
     frame.maximumSimultaneousTileLoads =

@@ -21007,7 +21007,6 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
                 &provider,
                 tiles,
                 terrainCache,
-                LegacyHeightmapTerrainCacheMode::Include,
                 emptyContentRegistry},
             testCacheKeyForTile,
             [](TilesetTile&, double) { return false; },

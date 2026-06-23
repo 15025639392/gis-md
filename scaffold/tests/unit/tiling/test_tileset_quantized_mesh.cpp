@@ -57,10 +57,9 @@ struct TilesetTestAccess {
                 1.0}});
     }
 
-    static LegacyHeightmapTerrainCacheMode requestFrameCacheMode(
-        const Tileset& tileset) {
+    static bool requestFrameHasLegacyTerrainProvider(const Tileset& tileset) {
         return tileset.makeContentRuntimeRequestFrame()
-            .legacyHeightmapCacheMode;
+            .legacyTerrainProvider != nullptr;
     }
 
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
@@ -331,7 +330,7 @@ SelectorView makeSelectorView(
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainProviderDrivesRequestFrameWithContentOwnedCacheMode) {
+     ContentTerrainProviderRequestFrameDropsLegacyProvider) {
     auto contentProvider = std::make_unique<SparseContentTerrainProvider>();
     Tileset contentTerrainTileset(
         TileScheme::createGeographicTMS(),
@@ -340,9 +339,9 @@ TEST(TilesetQuantizedMeshTest,
         TilesetOptions{},
         std::move(contentProvider));
 
-    EXPECT_EQ(
-        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly,
-        TilesetTestAccess::requestFrameCacheMode(contentTerrainTileset));
+    EXPECT_FALSE(
+        TilesetTestAccess::requestFrameHasLegacyTerrainProvider(
+            contentTerrainTileset));
 
     auto legacyTerrainProvider =
         std::make_unique<CountingLegacyTerrainProvider>(nullptr);
@@ -353,9 +352,9 @@ TEST(TilesetQuantizedMeshTest,
         nullptr,
         TilesetOptions{});
 
-    EXPECT_EQ(
-        LegacyHeightmapTerrainCacheMode::Include,
-        TilesetTestAccess::requestFrameCacheMode(legacyTerrainTileset));
+    EXPECT_TRUE(
+        TilesetTestAccess::requestFrameHasLegacyTerrainProvider(
+            legacyTerrainTileset));
 }
 
 TEST(TilesetQuantizedMeshTest,
