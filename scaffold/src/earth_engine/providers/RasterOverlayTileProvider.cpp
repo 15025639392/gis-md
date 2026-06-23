@@ -2350,6 +2350,9 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
             sourcePlan.minY,
             sourcePlan.maxX,
             sourcePlan.maxY);
+        existing->second->setTargetScreenPixels(
+            targetScreenPixelsX,
+            targetScreenPixelsY);
         return {existing->second, false, std::move(sourceTiles)};
     }
 

@@ -1880,6 +1880,30 @@ TEST(RasterOverlayLifecycleTest, MappedRasterTileKeepsGeometryBoundsAndTargetPix
 }
 
 TEST(RasterOverlayLifecycleTest,
+     CachedMappedRasterTileRefreshesTargetPixels) {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto geometryScheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    TileKey geometryKey{geometryScheme->id(), 2, 4, 2};
+    Rectangle geometryBounds = geometryScheme->tileToRectangle(geometryKey);
+    auto firstTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, geometryBounds),
+        512.0,
+        512.0).tile;
+    auto refreshedTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, geometryBounds),
+        520.0,
+        516.0).tile;
+
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_EQ(firstTile, refreshedTile);
+    EXPECT_EQ(520.0, refreshedTile->getTargetScreenPixelsX());
+    EXPECT_EQ(516.0, refreshedTile->getTargetScreenPixelsY());
+}
+
+TEST(RasterOverlayLifecycleTest,
      MappedRasterTileCacheInvalidatesWhenSourcePlanConfigurationChanges) {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
