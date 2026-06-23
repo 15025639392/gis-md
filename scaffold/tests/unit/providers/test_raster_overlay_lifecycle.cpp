@@ -3706,6 +3706,8 @@ TEST(RasterOverlayLifecycleTest, NotReadyProviderMapsPlaceholderLikeCesiumNative
     EXPECT_EQ(RasterMappedToTilesetTile::State::Unattached,
               mapped.getState());
     EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::No, moreDetail);
+    EXPECT_TRUE(mapped.getMappedSourceTiles().empty());
+    EXPECT_FALSE(mapped.usesDirectRasterTile());
     EXPECT_TRUE(missing.empty());
 }
 
@@ -3778,6 +3780,11 @@ TEST(RasterOverlayLifecycleTest, RenderContentDetailsRectangleMapsRealTileLikeCe
               mapped.getLoadingTile()->getRectangle());
     EXPECT_EQ(0, mapped.getTextureCoordinateID());
     EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, moreDetail);
+    EXPECT_FALSE(mapped.usesDirectRasterTile());
+    EXPECT_FALSE(mapped.getMappedSourceTiles().empty());
+    EXPECT_TRUE(mapped.getMappedSourceTiles().sourceBounds.equalsEpsilon(
+        preciseRectangle,
+        1e-12));
     EXPECT_TRUE(missing.empty());
 }
 
@@ -3808,6 +3815,11 @@ TEST(RasterOverlayLifecycleTest, RenderContentDetailsAlignedRectangleMapsDirectT
               mapped.getLoadingTile()->getRectangle());
     EXPECT_EQ(0, mapped.getTextureCoordinateID());
     EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, moreDetail);
+    EXPECT_TRUE(mapped.usesDirectRasterTile());
+    ASSERT_EQ(1u, mapped.getMappedSourceTiles().sourceKeys.size());
+    EXPECT_EQ(imageryKey, mapped.getMappedSourceTiles().sourceKeys.front());
+    EXPECT_EQ(imageryKey.z, mapped.getMappedSourceTiles().sourceZoom);
+    EXPECT_EQ(preciseRectangle, mapped.getMappedSourceTiles().sourceBounds);
     EXPECT_TRUE(missing.empty());
     EXPECT_EQ(1, provider.getCachedTileCount());
 }

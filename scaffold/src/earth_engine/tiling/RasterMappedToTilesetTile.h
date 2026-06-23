@@ -60,6 +60,14 @@ public:
         Ancestor = 2
     };
 
+    struct SourceTileList {
+        int sourceZoom = 0;
+        Rectangle sourceBounds = Rectangle::MAXIMUM;
+        std::vector<TileKey> sourceKeys;
+
+        bool empty() const { return sourceKeys.empty(); }
+    };
+
     RasterMappedToTilesetTile();
     ~RasterMappedToTilesetTile();
 
@@ -122,6 +130,10 @@ public:
         return _pReadyTile;
     }
     ReadyTileSource getReadyTileSource() const { return readyTileSource_; }
+    const SourceTileList& getMappedSourceTiles() const {
+        return mappedSourceTiles_;
+    }
+    bool usesDirectRasterTile() const { return directRasterTile_; }
 
     /// Aligned with getTextureCoordinateID().
     /// Returns the raster-overlay texture coordinate index for this projection.
@@ -162,6 +174,8 @@ private:
 
     ReadyTileSource loadingTileSource_ = ReadyTileSource::None;
     ReadyTileSource readyTileSource_ = ReadyTileSource::None;
+    SourceTileList mappedSourceTiles_;
+    bool directRasterTile_ = false;
 
     /// UV transform: rasterUV = geometryUV * scale + offset.
     float offsetU_ = 0.0f, offsetV_ = 0.0f;

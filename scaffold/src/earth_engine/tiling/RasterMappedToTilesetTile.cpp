@@ -235,16 +235,25 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             // so use the overlay placeholder and do not invent a projection.
             textureCoordinateID_ = -1;
             _pLoadingTile = tileProvider.getPlaceholderTile();
+            mappedSourceTiles_ = {};
+            directRasterTile_ = false;
             loadingTileSource_ = ReadyTileSource::None;
         } else if (hasRenderContentDetails && geometryRectangle) {
             // cesium-native mapOverlayToTile:
             // mapRasterTilesToGeometryTile receives the geometry rectangle
             // from TileRenderContent raster details.
             textureCoordinateID_ = readyTextureCoordinateID;
-            _pLoadingTile = tileProvider.mapRasterTilesToGeometryTile(
-                                *geometryRectangle,
-                                targetScreenPixelsX,
-                                targetScreenPixelsY).tile;
+            RasterOverlayTileProvider::RasterTileMapping mapping =
+                tileProvider.mapRasterTilesToGeometryTile(
+                    *geometryRectangle,
+                    targetScreenPixelsX,
+                    targetScreenPixelsY);
+            _pLoadingTile = mapping.tile;
+            mappedSourceTiles_ = SourceTileList{
+                mapping.sourceTiles.sourceZoom,
+                mapping.sourceTiles.sourceBounds,
+                mapping.sourceTiles.sourceKeys};
+            directRasterTile_ = mapping.directTile;
             loadingTileSource_ = ReadyTileSource::Real;
         } else if (hasRenderContentDetails) {
             // Render content is loaded, but it has no texture coordinates for
@@ -259,20 +268,31 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                     missingProjections,
                     projection);
             _pLoadingTile = tileProvider.getPlaceholderTile();
+            mappedSourceTiles_ = {};
+            directRasterTile_ = false;
             loadingTileSource_ = ReadyTileSource::None;
         } else {
             textureCoordinateID_ =
                 addProjectionToList(missingProjections, projection);
             if (boundingVolumeRectangle &&
                 !boundingVolumeRectangle->isEmpty()) {
-                _pLoadingTile = tileProvider.mapRasterTilesToGeometryTile(
-                                    *boundingVolumeRectangle,
-                                    targetScreenPixelsX,
-                                    targetScreenPixelsY).tile;
+                RasterOverlayTileProvider::RasterTileMapping mapping =
+                    tileProvider.mapRasterTilesToGeometryTile(
+                        *boundingVolumeRectangle,
+                        targetScreenPixelsX,
+                        targetScreenPixelsY);
+                _pLoadingTile = mapping.tile;
+                mappedSourceTiles_ = SourceTileList{
+                    mapping.sourceTiles.sourceZoom,
+                    mapping.sourceTiles.sourceBounds,
+                    mapping.sourceTiles.sourceKeys};
+                directRasterTile_ = mapping.directTile;
                 loadingTileSource_ = ReadyTileSource::Real;
             } else {
                 // No precise rectangle yet, so return a placeholder for now.
                 _pLoadingTile = tileProvider.getPlaceholderTile();
+                mappedSourceTiles_ = {};
+                directRasterTile_ = false;
                 loadingTileSource_ = ReadyTileSource::None;
             }
         }
@@ -450,6 +470,8 @@ void RasterMappedToTilesetTile::clearTileOwnershipState() {
     readyTexture_ = nullptr;
     loadingTileSource_ = ReadyTileSource::None;
     readyTileSource_ = ReadyTileSource::None;
+    mappedSourceTiles_ = {};
+    directRasterTile_ = false;
     offsetU_ = 0.0f;
     offsetV_ = 0.0f;
     scaleU_ = 1.0f;
