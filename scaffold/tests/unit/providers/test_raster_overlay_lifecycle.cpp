@@ -5402,7 +5402,7 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesSharedReadyTileAs
     EXPECT_EQ(binding.tile, parentRaster);
 }
 
-TEST(RasterOverlayLifecycleTest, CompositeImageRejectsNoCoverageAndAcceptsFullCoverage) {
+TEST(RasterOverlayLifecycleTest, CompositeImageCompletesNoCoverageLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
@@ -5426,7 +5426,14 @@ TEST(RasterOverlayLifecycleTest, CompositeImageRejectsNoCoverageAndAcceptsFullCo
             2,
             std::move(noCoverage),
             2);
-    EXPECT_EQ(nullptr, noCoverageResult.image);
+    ASSERT_NE(nullptr, noCoverageResult.image);
+    EXPECT_EQ(0, noCoverageResult.image->width);
+    EXPECT_EQ(0, noCoverageResult.image->height);
+    EXPECT_EQ(0, noCoverageResult.image->channels);
+    EXPECT_TRUE(noCoverageResult.image->pixels.empty());
+    EXPECT_EQ(target, noCoverageResult.rectangle);
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
+              noCoverageResult.moreDetailAvailable);
 
     std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> full;
     full.push_back({
