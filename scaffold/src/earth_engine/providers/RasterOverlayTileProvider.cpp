@@ -1207,6 +1207,15 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
              fallbackInFlightKeys = std::move(fallbackInFlightKeys)](
                 const TileKey& loadedKey,
                 std::unique_ptr<DecodedImage> image) mutable {
+                if (!self->state->alive.load(std::memory_order_acquire)) {
+                    onSourceFinished();
+                    self->finishInFlightSource(originalKey, nullptr);
+                    for (const TileKey& key : fallbackInFlightKeys) {
+                        self->finishInFlightSource(key, nullptr);
+                    }
+                    return;
+                }
+
                 if (image) {
                     onSourceFinished();
                     LoadedSourceImage source;
@@ -1250,6 +1259,13 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
                     onSourceFinished();
+                    if (!self->state->alive.load(std::memory_order_acquire)) {
+                        self->finishInFlightSource(originalKey, nullptr);
+                        for (const TileKey& key : fallbackInFlightKeys) {
+                            self->finishInFlightSource(key, nullptr);
+                        }
+                        return;
+                    }
                     self->requestSource(
                         parentKey,
                         originalKey,
