@@ -953,7 +953,7 @@ TEST(TileSurfaceTest, SurfaceResourcePreparerUploadsOnlyMixedWaterMaskTexture) {
     EXPECT_EQ(TextureDesc::Format::RGBA8, device.lastTextureDesc.format);
     EXPECT_EQ(TextureDesc::Wrap::Clamp, device.lastTextureDesc.wrapS);
     EXPECT_EQ(TextureDesc::Wrap::Clamp, device.lastTextureDesc.wrapT);
-    EXPECT_FALSE(device.lastTextureDesc.mipmap);
+    EXPECT_TRUE(device.lastTextureDesc.mipmap);
 
     auto waterOnlyMesh = std::make_unique<SurfaceTileMesh>();
     waterOnlyMesh->vertices = {a, b, c};

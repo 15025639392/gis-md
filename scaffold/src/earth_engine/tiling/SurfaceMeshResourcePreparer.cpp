@@ -101,7 +101,7 @@ void SurfaceMeshResourcePreparer::prepare(TilesetTile& tile,
         waterMaskDesc.format = TextureDesc::Format::RGBA8;
         waterMaskDesc.data = mesh->waterMask.data.data();
         waterMaskDesc.dataSize = mesh->waterMask.data.size();
-        waterMaskDesc.mipmap = false;
+        waterMaskDesc.mipmap = true;
         waterMaskDesc.minFilter = TextureDesc::Filter::Linear;
         waterMaskDesc.magFilter = TextureDesc::Filter::Linear;
         waterMaskDesc.wrapS = TextureDesc::Wrap::Clamp;
