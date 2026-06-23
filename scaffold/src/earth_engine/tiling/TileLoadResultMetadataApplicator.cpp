@@ -30,6 +30,23 @@ bool hasValidBoundingRegion(
            region.minimumHeight <= region.maximumHeight;
 }
 
+bool sameBoundingRegion(
+    const BoundingRegionBuilder::BoundingRegion& lhs,
+    const BoundingRegionBuilder::BoundingRegion& rhs) {
+    return lhs.rectangle == rhs.rectangle &&
+           lhs.minimumHeight == rhs.minimumHeight &&
+           lhs.maximumHeight == rhs.maximumHeight;
+}
+
+bool sameRasterOverlayDetails(const RasterOverlayDetails& lhs,
+                              const RasterOverlayDetails& rhs) {
+    return lhs.rasterOverlayProjections == rhs.rasterOverlayProjections &&
+           lhs.rasterOverlayRectangles == rhs.rasterOverlayRectangles &&
+           lhs.rasterOverlayInvertedVCoordinates ==
+               rhs.rasterOverlayInvertedVCoordinates &&
+           sameBoundingRegion(lhs.boundingRegion, rhs.boundingRegion);
+}
+
 } // namespace
 
 void TileLoadResultMetadataApplicator::apply(
@@ -102,7 +119,11 @@ void TileLoadResultMetadataApplicator::apply(
     if (metadata.rasterOverlayDetails) {
         if (RasterOverlayDetails* details =
                 tile.content.renderContent.mutableRasterOverlayDetails()) {
-            details->merge(*metadata.rasterOverlayDetails);
+            if (!sameRasterOverlayDetails(
+                    *details,
+                    *metadata.rasterOverlayDetails)) {
+                details->merge(*metadata.rasterOverlayDetails);
+            }
         }
     }
     if (metadata.terrainHeightRange) {

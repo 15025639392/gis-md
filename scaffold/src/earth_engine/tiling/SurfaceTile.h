@@ -151,35 +151,16 @@ struct RasterOverlayDetails {
             rasterOverlayInvertedVCoordinates.push_back(false);
         }
         for (size_t i = 0; i < other.rasterOverlayProjections.size(); ++i) {
-            const RasterOverlayProjection projection =
-                other.rasterOverlayProjections[i];
-            const Rectangle rectangle =
+            rasterOverlayProjections.push_back(
+                other.rasterOverlayProjections[i]);
+            rasterOverlayRectangles.push_back(
                 i < other.rasterOverlayRectangles.size()
                     ? other.rasterOverlayRectangles[i]
-                    : Rectangle::EMPTY;
-            const bool invertedV =
+                    : Rectangle::EMPTY);
+            rasterOverlayInvertedVCoordinates.push_back(
                 i < other.rasterOverlayInvertedVCoordinates.size()
                     ? other.rasterOverlayInvertedVCoordinates[i]
-                    : false;
-
-            auto existing = std::find(
-                rasterOverlayProjections.begin(),
-                rasterOverlayProjections.end(),
-                projection);
-            if (existing != rasterOverlayProjections.end()) {
-                const size_t index = static_cast<size_t>(
-                    std::distance(rasterOverlayProjections.begin(),
-                                  existing));
-                if (!rectangle.isEmpty()) {
-                    rasterOverlayRectangles[index] = rectangle;
-                    rasterOverlayInvertedVCoordinates[index] = invertedV;
-                }
-                continue;
-            }
-
-            rasterOverlayProjections.push_back(projection);
-            rasterOverlayRectangles.push_back(rectangle);
-            rasterOverlayInvertedVCoordinates.push_back(invertedV);
+                    : false);
         }
         const bool hasRegion = boundingRegion.minimumHeight <=
                                boundingRegion.maximumHeight;

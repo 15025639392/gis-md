@@ -38,6 +38,51 @@ bool hasProjectionRectangle(const RasterOverlayDetails& details,
            !details.rasterOverlayRectangles[index].isEmpty();
 }
 
+void mergeBoundingRegion(
+    RasterOverlayDetails& details,
+    const BoundingRegionBuilder::BoundingRegion& generatedRegion) {
+    const bool hasRegion = details.boundingRegion.minimumHeight <=
+                           details.boundingRegion.maximumHeight;
+    const bool generatedHasRegion =
+        generatedRegion.minimumHeight <= generatedRegion.maximumHeight;
+    if (hasRegion && generatedHasRegion) {
+        BoundingRegionBuilder builder;
+        builder.expandToIncludeRegion(details.boundingRegion);
+        builder.expandToIncludeRegion(generatedRegion);
+        details.boundingRegion = builder.toRegion();
+    } else if (generatedHasRegion) {
+        details.boundingRegion = generatedRegion;
+    }
+}
+
+void applyGeneratedProjectionDetails(
+    RasterOverlayDetails& details,
+    RasterOverlayProjection projection,
+    const Rectangle& projectedRectangle,
+    const BoundingRegionBuilder::BoundingRegion& generatedRegion,
+    std::optional<size_t> existingIndex) {
+    if (existingIndex) {
+        while (details.rasterOverlayRectangles.size() <= *existingIndex) {
+            details.rasterOverlayRectangles.push_back(Rectangle::EMPTY);
+        }
+        while (details.rasterOverlayInvertedVCoordinates.size() <=
+               *existingIndex) {
+            details.rasterOverlayInvertedVCoordinates.push_back(false);
+        }
+        details.rasterOverlayRectangles[*existingIndex] = projectedRectangle;
+        details.rasterOverlayInvertedVCoordinates[*existingIndex] = false;
+        mergeBoundingRegion(details, generatedRegion);
+        return;
+    }
+
+    RasterOverlayDetails generated;
+    generated.rasterOverlayProjections = {projection};
+    generated.rasterOverlayRectangles = {projectedRectangle};
+    generated.rasterOverlayInvertedVCoordinates = {false};
+    generated.boundingRegion = generatedRegion;
+    details.merge(generated);
+}
+
 bool contributesToComputedBounds(const GltfPrimitive& primitive,
                                  size_t vertexIndex) {
     if (!primitive.skirtMetadata) {
@@ -284,17 +329,16 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
         return false;
     }
 
-    RasterOverlayDetails generated;
-    generated.rasterOverlayProjections = {projection};
-    generated.rasterOverlayRectangles = {projectedRectangle};
-    generated.rasterOverlayInvertedVCoordinates = {false};
-    generated.boundingRegion =
+    applyGeneratedProjectionDetails(
+        *details,
+        projection,
+        projectedRectangle,
         computeTightModelBoundingRegion(renderContent)
             .value_or(BoundingRegionBuilder::BoundingRegion{
                 boundingVolume.region,
                 boundingVolume.minimumHeight,
-                boundingVolume.maximumHeight});
-    details->merge(generated);
+                boundingVolume.maximumHeight}),
+        existingIndex);
     return true;
 }
 
@@ -332,12 +376,12 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromModelBounds(
         return false;
     }
 
-    RasterOverlayDetails generated;
-    generated.rasterOverlayProjections = {projection};
-    generated.rasterOverlayRectangles = {projectedRectangle};
-    generated.rasterOverlayInvertedVCoordinates = {false};
-    generated.boundingRegion = *tightRegion;
-    details->merge(generated);
+    applyGeneratedProjectionDetails(
+        *details,
+        projection,
+        projectedRectangle,
+        *tightRegion,
+        existingIndex);
     return true;
 }
 
