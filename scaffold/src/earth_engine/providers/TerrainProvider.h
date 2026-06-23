@@ -52,14 +52,8 @@ struct DecodedHeightmap {
     bool metadataAvailabilityProcessed = false;
 };
 
-enum class TerrainTilePayloadKind {
-    None,
-    LegacyHeightmap
-};
-
 struct TerrainTileLoadResult {
     TileLoadStatus status = TileLoadStatus::Failed;
-    TerrainTilePayloadKind payloadKind = TerrainTilePayloadKind::None;
     std::unique_ptr<DecodedHeightmap> heightmap;
 
     static TerrainTileLoadResult successWithHeightmap(
@@ -67,8 +61,6 @@ struct TerrainTileLoadResult {
         TerrainTileLoadResult result;
         result.status = hm ? TileLoadStatus::Renderable
                            : TileLoadStatus::Failed;
-        result.payloadKind = hm ? TerrainTilePayloadKind::LegacyHeightmap
-                                : TerrainTilePayloadKind::None;
         result.heightmap = std::move(hm);
         return result;
     }
