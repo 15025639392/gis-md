@@ -250,7 +250,7 @@ TEST(TileSelectionRootPolicyTest, VirtualTerrainRootIsEmptyDoneRefineNode) {
     EXPECT_DOUBLE_EQ(root->boundingVolume->minimumHeight, -1000.0);
     EXPECT_DOUBLE_EQ(root->boundingVolume->maximumHeight, 9000.0);
     EXPECT_FALSE(root->contentBoundingVolume.has_value());
-    EXPECT_EQ(root->rasterOverlayState.mappings().size(), 2u);
+    EXPECT_EQ(root->rasterOverlayState.mappings().size(), 0u);
 }
 
 TEST(TileSelectionRootPolicyTest, VirtualGeographicRootLinksLevelZeroDataTiles) {
@@ -432,5 +432,5 @@ TEST(TileSelectionRootPolicyTest, VirtualWebMercatorRootLinksLevelZeroDataTile) 
     EXPECT_DOUBLE_EQ(root->children[0]->boundingVolume->minimumHeight, -1000.0);
     EXPECT_DOUBLE_EQ(root->children[0]->boundingVolume->maximumHeight, 9000.0);
     EXPECT_FALSE(root->children[0]->contentBoundingVolume.has_value());
-    EXPECT_EQ(root->rasterOverlayState.mappings().size(), 1u);
+    EXPECT_EQ(root->rasterOverlayState.mappings().size(), 0u);
 }

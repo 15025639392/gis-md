@@ -17,8 +17,7 @@ namespace earth_engine {
 
 namespace {
 
-void initializeVirtualTerrainRoot(TilesetTile& tile,
-                                  size_t rasterOverlayCount) {
+void initializeVirtualTerrainRoot(TilesetTile& tile) {
     constexpr double kLooseMinimumHeight = -1000.0;
     constexpr double kLooseMaximumHeight = 9000.0;
 
@@ -32,7 +31,6 @@ void initializeVirtualTerrainRoot(TilesetTile& tile,
         kLooseMinimumHeight,
         kLooseMaximumHeight);
     tile.contentBoundingVolume.reset();
-    tile.rasterOverlayState.ensureMappingSlots(rasterOverlayCount);
     TileTerrainHeightRangePolicy::setTerrainHeightRange(
         tile,
         kLooseMinimumHeight,
@@ -62,7 +60,7 @@ TilesetTile* TilesetTileRegistry::ensureTile(
 
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(key)) {
         auto tile = std::make_unique<TilesetTile>(key, Rectangle::MAXIMUM);
-        initializeVirtualTerrainRoot(*tile, rasterOverlayCount);
+        initializeVirtualTerrainRoot(*tile);
         if (contentMetadata) {
             TileCreationPolicy::applyContentMetadata(*tile, *contentMetadata);
         }
