@@ -173,8 +173,7 @@ TEST(
         manager.unloadTileContent(
             *tileRaw,
             lifecycle,
-            nullptr,
-            true);
+            nullptr);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
     EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
@@ -203,8 +202,7 @@ TEST(
         manager.unloadTileContent(
             *tile,
             lifecycle,
-            nullptr,
-            false);
+            nullptr);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
     EXPECT_EQ(TileLoadState::Unloaded, tileRaw->content.loadState);
@@ -282,7 +280,7 @@ TEST(
                         .has_value());
     }
 
-    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue, true);
+    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
 
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
     EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
@@ -333,8 +331,7 @@ TEST(
     manager.eraseTileIndexState(
         cacheKey,
         lifecycle,
-        loadQueue,
-        true);
+        loadQueue);
 
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
     EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
@@ -366,8 +363,7 @@ TEST(
         manager.unloadTileContent(
             *tileRaw,
             lifecycle,
-            nullptr,
-            false);
+            nullptr);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
     EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
@@ -390,7 +386,7 @@ TEST(
     lifecycle.emptyContentRegistry().insert(cacheKey);
     loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
 
-    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue, false);
+    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
 
     EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
               lifecycle.heightmapTerrainCache().end());

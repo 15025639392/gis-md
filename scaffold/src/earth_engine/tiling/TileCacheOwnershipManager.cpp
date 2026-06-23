@@ -51,8 +51,7 @@ void TileCacheOwnershipManager::eraseTileIndexState(const std::string& key) {
     contentCache_.eraseTileIndexState(
         key,
         contentLifecycle_,
-        loadQueue_,
-        includeHeightmapTerrainCache_);
+        loadQueue_);
 }
 
 void TileCacheOwnershipManager::clearChildrenRecursively(
@@ -76,8 +75,7 @@ TileCacheUnloadContentResult TileCacheOwnershipManager::unloadTileContent(
     const TileCacheUnloadContentResult result = contentCache_.unloadTileContent(
         tile,
         contentLifecycle_,
-        pPrepRenderer,
-        includeHeightmapTerrainCache_);
+        pPrepRenderer);
     if (result == TileCacheUnloadContentResult::RemoveAndClearChildren) {
         clearChildrenRecursively(&tile, pPrepRenderer);
     }
