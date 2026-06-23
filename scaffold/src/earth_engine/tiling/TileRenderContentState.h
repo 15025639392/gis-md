@@ -233,6 +233,10 @@ public:
         }
         return nullptr;
     }
+    const std::vector<std::string>& credits() const {
+        static const std::vector<std::string> emptyCredits;
+        return gltfModel ? gltfModel->credits : emptyCredits;
+    }
     Buffer* surfaceVertexBuffer() const {
         return surface_.gpuVertexBuffer.get();
     }

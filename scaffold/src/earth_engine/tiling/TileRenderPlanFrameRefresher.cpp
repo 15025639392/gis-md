@@ -50,6 +50,13 @@ void collectReadyRasterTileCredits(const TilesetTile& tile,
         });
 }
 
+void collectRenderContentCredits(const TilesetTile& tile,
+                                 std::vector<std::string>& frameCredits) {
+    for (const std::string& credit : tile.content.renderContent.credits()) {
+        appendUniqueCredit(frameCredits, credit);
+    }
+}
+
 void collectRasterOverlayProviderCredits(
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     std::vector<std::string>& frameCredits) {
@@ -80,12 +87,14 @@ void refreshFrameCredits(TilePlan& tilePlan,
     for (const TileRenderEntry& entry : tilePlan.renderEntries) {
         if (TilesetTile* selectedTile =
                 contentAccess.ensureTile(entry.selectedKey)) {
+            collectRenderContentCredits(*selectedTile, tilePlan.frameCredits);
             collectReadyRasterTileCredits(*selectedTile, tilePlan.frameCredits);
         }
 
         if (entry.renderKey != entry.selectedKey) {
             if (TilesetTile* renderTile =
                     contentAccess.ensureTile(entry.renderKey)) {
+                collectRenderContentCredits(*renderTile, tilePlan.frameCredits);
                 collectReadyRasterTileCredits(
                     *renderTile,
                     tilePlan.frameCredits);

@@ -771,6 +771,55 @@ bool validateAsset(const json& doc) {
     return true;
 }
 
+std::string trimAsciiWhitespace(std::string_view value) {
+    size_t begin = 0;
+    while (begin < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[begin]))) {
+        ++begin;
+    }
+
+    size_t end = value.size();
+    while (end > begin &&
+           std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+
+    return std::string(value.substr(begin, end - begin));
+}
+
+std::vector<std::string> parseGltfCopyrightCredits(
+    const std::string& copyright) {
+    std::vector<std::string> credits;
+    size_t start = 0;
+    while (start <= copyright.size()) {
+        const size_t end = copyright.find(';', start);
+        const size_t partEnd =
+            end == std::string::npos ? copyright.size() : end;
+        std::string credit = trimAsciiWhitespace(
+            std::string_view(copyright).substr(start, partEnd - start));
+        if (!credit.empty()) {
+            credits.push_back(std::move(credit));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return credits;
+}
+
+std::vector<std::string> parseGltfCopyrightCredits(const json& doc) {
+    const auto assetIt = doc.find("asset");
+    if (assetIt == doc.end() || !assetIt->is_object()) {
+        return {};
+    }
+    const auto copyrightIt = assetIt->find("copyright");
+    if (copyrightIt == assetIt->end() || !copyrightIt->is_string()) {
+        return {};
+    }
+    return parseGltfCopyrightCredits(copyrightIt->get<std::string>());
+}
+
 bool isSupportedExtensionName(const std::string& name) {
     return isSupportedGltfExtension(name);
 }
@@ -8826,6 +8875,7 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     }
 
     auto model = std::make_unique<GltfModel>();
+    model->credits = parseGltfCopyrightCredits(input->document);
     auto textures = loadTextures(
         input->document,
         buffers,

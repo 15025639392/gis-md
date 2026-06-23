@@ -240,6 +240,7 @@ struct GltfModel {
     std::vector<int> sceneRootNodes;
     std::vector<GltfSkinRuntime> skins;
     std::vector<GltfAnimationRuntime> animations;
+    std::vector<std::string> credits;
     RasterOverlayDetails rasterOverlayDetails;
     WaterMask terrainWaterMask;
     std::optional<size_t> terrainWaterMaskTextureIndex;

@@ -25378,6 +25378,45 @@ void testTileRenderPlanFrameRefresherCollectsProviderRasterCredits() {
           "TileRenderPlanFrameRefresher: provider raster credits are aggregated before tile imagery loads like cesium-native");
 }
 
+void testTileRenderPlanFrameRefresherCollectsRenderContentCredits() {
+    InitializedRendererHarness harness;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
+        std::move(scheme),
+        {},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "TileRenderPlanFrameRefresher: render content credit fixture creates root tile");
+    if (!root) return;
+
+    auto model = std::make_unique<GltfModel>();
+    model->credits = {"Content credit", "Content credit"};
+    root->content.renderContent.setGltfContent(std::move(model));
+    root->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(32),
+        nullptr);
+    root->content.renderContent.setSurfaceDrawable(true);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+
+    const TilePlan& plan = tileset.tilePlan();
+    check(plan.renderEntries.size() == 1,
+          "TileRenderPlanFrameRefresher: render content credit fixture has one render entry");
+    check(plan.frameCredits.size() == 1 &&
+              plan.frameCredits.front() == "Content credit",
+          "TileRenderPlanFrameRefresher: glTF render content credits are aggregated once per frame like cesium-native");
+}
+
 void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27942,6 +27981,7 @@ int main() {
     testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster();
     testTileRenderPlanFrameRefresherCollectsReadyRasterCredits();
     testTileRenderPlanFrameRefresherCollectsProviderRasterCredits();
+    testTileRenderPlanFrameRefresherCollectsRenderContentCredits();
     testTileRenderPlanFrameRefresherCountsMappedRasterProgress();
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();

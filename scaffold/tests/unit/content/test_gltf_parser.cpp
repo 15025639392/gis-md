@@ -133,7 +133,8 @@ std::vector<uint8_t> makeTriangleGlb(
     bool declareMeshQuantization = false,
     NonFiniteTriangleAttribute nonFiniteAttribute =
         NonFiniteTriangleAttribute::None,
-    const std::string& legacyBatchIdSemantic = "_BATCHID") {
+    const std::string& legacyBatchIdSemantic = "_BATCHID",
+    const std::string& copyright = std::string{}) {
     const bool hasColor = colorComponentType != 0;
     if (hasColor && colorType.empty()) {
         colorType = "VEC4";
@@ -364,7 +365,10 @@ std::vector<uint8_t> makeTriangleGlb(
         : "";
     const std::string jsonText =
         std::string("{") +
-        "\"asset\":{\"version\":\"2.0\"}," +
+        "\"asset\":{\"version\":\"2.0\"" +
+        (copyright.empty() ? std::string{} :
+            ",\"copyright\":\"" + copyright + "\"") +
+        "}," +
         extensionDeclarations +
         "\"scene\":0," +
         "\"scenes\":[{\"nodes\":[0]}]," +
@@ -2527,6 +2531,35 @@ TEST(GltfParserTest, ParsesTriangleGlbWithNodeTransform) {
     EXPECT_NEAR(0.0f, first.uv[1], 1e-6f);
     EXPECT_TRUE(model->primitives[0].vertexColors.empty());
     EXPECT_GT(model->byteSize(), 0);
+}
+
+TEST(GltfParserTest, ParsesAssetCopyrightCreditsLikeCesiumNative) {
+    const std::vector<uint8_t> glb = makeTriangleGlb(
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        false,
+        5126,
+        false,
+        0,
+        false,
+        0,
+        false,
+        std::string{},
+        0,
+        std::string{},
+        false,
+        1.0f,
+        false,
+        false,
+        NonFiniteTriangleAttribute::None,
+        "_BATCHID",
+        "Provider A; ; Provider B ;Provider C;");
+    std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(3u, model->credits.size());
+    EXPECT_EQ("Provider A", model->credits[0]);
+    EXPECT_EQ("Provider B", model->credits[1]);
+    EXPECT_EQ("Provider C", model->credits[2]);
 }
 
 TEST(GltfParserTest, RejectsPositionAccessorWithNonFiniteFloat) {
