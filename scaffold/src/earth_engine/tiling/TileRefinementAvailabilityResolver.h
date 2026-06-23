@@ -62,19 +62,6 @@ public:
         CacheKeyFn&& cacheKey,
         IsAvailabilityBoundaryFn&& isAvailabilityBoundary,
         HasLoadedTerrainContentFn&& hasLoadedTerrainContent) {
-        const bool contentProviderOwnsTerrainQuadtree =
-            contentProvider && contentProvider->providesTerrainQuadtree();
-        if (contentProviderOwnsTerrainQuadtree) {
-            return canRefineContentTerrain(
-                tile,
-                *contentProvider,
-                tileScheme,
-                std::forward<IsAvailabilityBoundaryFn>(
-                    isAvailabilityBoundary),
-                std::forward<HasLoadedTerrainContentFn>(
-                    hasLoadedTerrainContent));
-        }
-
         const std::vector<TileKey> contentChildren =
             contentProvider
                 ? contentProvider->childTiles(tile.key)

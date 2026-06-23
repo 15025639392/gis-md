@@ -2427,17 +2427,16 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
-    ResolverInfersHeightmapTerrainCacheUseFromContentProviderKind) {
-    TerrainQuadtreeContentProvider contentProvider;
+    ResolverUsesHeightmapTerrainCacheForNonTerrainContentProvider) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey cachedLegacyChildKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey cachedHeightmapChildKey{"Geographic-TMS", 1, 0, 0};
     SelectionTreeContentProvider nonTerrainContentProvider(
         {rootKey},
-        {{rootKey, {cachedLegacyChildKey}}});
+        {{rootKey, {cachedHeightmapChildKey}}});
     auto tileScheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         heightmapTerrainCache;
-    heightmapTerrainCache[TileCacheKey::forTile(cachedLegacyChildKey)] =
+    heightmapTerrainCache[TileCacheKey::forTile(cachedHeightmapChildKey)] =
         std::make_unique<DecodedHeightmap>();
     TilesetTile root(
         rootKey,
@@ -2464,69 +2463,4 @@ TEST(
         };
 
     EXPECT_TRUE(canRefineWithProvider(&nonTerrainContentProvider));
-    EXPECT_FALSE(canRefineWithProvider(&contentProvider));
-}
-
-TEST(
-    TilesetSelectionRefinementTest,
-    ContentTerrainQuadtreeIgnoresContradictingLegacyAvailability) {
-    TerrainQuadtreeContentProvider contentProvider;
-    AlwaysAvailableLegacyTerrainProvider legacyTerrainProvider;
-    auto tileScheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        heightmapTerrainCache;
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile root(
-        rootKey,
-        tileScheme->tileToRectangle(rootKey));
-    root.geometricError = 100.0;
-    setLoadedTerrainGltfContent(root);
-
-    const bool canRefine = TileRefinementAvailabilityResolver::canRefine(
-        root,
-        &contentProvider,
-        &legacyTerrainProvider,
-        *tileScheme,
-        heightmapTerrainCache,
-        [](const TileKey& key) { return TileCacheKey::forTile(key); },
-        [](const TilesetTile&) { return false; },
-        [](const TilesetTile& tile) {
-            return tile.content.renderContent.hasRenderableTerrainContent();
-        });
-
-    EXPECT_FALSE(canRefine);
-}
-
-TEST(
-    TilesetSelectionRefinementTest,
-    ContentTerrainQuadtreeDoesNotQueryLegacyAvailabilityOrCacheForRefinement) {
-    TerrainQuadtreeContentProvider contentProvider;
-    AlwaysAvailableLegacyTerrainProvider legacyTerrainProvider;
-    auto tileScheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        heightmapTerrainCache;
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey cachedLegacyChildKey{"Geographic-TMS", 1, 0, 0};
-    heightmapTerrainCache[TileCacheKey::forTile(cachedLegacyChildKey)] =
-        std::make_unique<DecodedHeightmap>();
-    TilesetTile root(
-        rootKey,
-        tileScheme->tileToRectangle(rootKey));
-    root.geometricError = 100.0;
-    setLoadedTerrainGltfContent(root);
-
-    const bool canRefine = TileRefinementAvailabilityResolver::canRefine(
-        root,
-        &contentProvider,
-        &legacyTerrainProvider,
-        *tileScheme,
-        heightmapTerrainCache,
-        [](const TileKey& key) { return TileCacheKey::forTile(key); },
-        [](const TilesetTile&) { return false; },
-        [](const TilesetTile& tile) {
-            return tile.content.renderContent.hasRenderableTerrainContent();
-        });
-
-    EXPECT_FALSE(canRefine);
-    EXPECT_EQ(legacyTerrainProvider.availabilityQueryCount, 0);
 }
