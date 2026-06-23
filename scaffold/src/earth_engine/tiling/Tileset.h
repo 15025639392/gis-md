@@ -154,7 +154,7 @@ private:
     TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame() const;
     TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame(
         IPrepareRendererResources* pPrepRenderer) const;
-    TerrainProvider* effectiveLegacyTerrainProvider() const;
+    TerrainProvider* heightmapTerrainProviderForSurfacePath() const;
     bool hasTerrainQuadtree() const;
     TileLoadRequestOutcome requestMissingContent(
         const std::vector<TileLoadRequest>& loadRequests,
@@ -169,7 +169,7 @@ private:
         const TilesetTile& tile) const;
     TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
 
-    std::unique_ptr<TerrainProvider> legacyTerrainProvider_;
+    std::unique_ptr<TerrainProvider> heightmapTerrainProvider_;
     std::unique_ptr<TilesetContentProvider> contentProvider_;
     std::unique_ptr<TileScheme> tileScheme_;
     std::vector<ActivatedRasterOverlay*> rasterOverlays_;

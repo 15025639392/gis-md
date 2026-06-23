@@ -38,7 +38,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.resourceRevision_,
             tileset.options_.maximumSimultaneousTileLoads,
             TilesetProviderDiagnosticsCollector::collect(
-                tileset.effectiveLegacyTerrainProvider(),
+                tileset.heightmapTerrainProviderForSurfacePath(),
                 tileset.contentProvider_.get(),
                 tileset.rasterOverlays_)
                 .maximumTransportActiveRequests(
