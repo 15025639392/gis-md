@@ -4397,6 +4397,19 @@ public:
     std::vector<TileKey> extraAvailableKeys;
 };
 
+Tileset makeLegacySurfaceFixtureTileset(
+    std::unique_ptr<TileScheme> scheme,
+    std::vector<ActivatedRasterOverlay*> overlays = {},
+    RenderDevice* device = nullptr,
+    TilesetOptions options = {}) {
+    return TilesetTestAccess::makeLegacyTerrainTileset(
+        std::make_unique<SparseTerrainProvider>(),
+        std::move(scheme),
+        std::move(overlays),
+        device,
+        std::move(options));
+}
+
 class TerminalTerrainProvider final : public TerrainProvider {
 public:
     explicit TerminalTerrainProvider(TileLoadStatus status)
@@ -23868,7 +23881,8 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
         TileScheme::createGeographicTMS(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = std::make_unique<Tileset>(
+    auto terrainTileset = TilesetTestAccess::makeLegacyTerrainTilesetPtr(
+        std::make_unique<SparseTerrainProvider>(),
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -23925,7 +23939,7 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
           "Scene: diagnostics expose nonzero terrain render-entry fallback reasons");
 }
 
-void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
+void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
@@ -23944,7 +23958,8 @@ void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
         TileScheme::createGeographicTMS(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = std::make_unique<Tileset>(
+    auto terrainTileset = TilesetTestAccess::makeLegacyTerrainTilesetPtr(
+        std::make_unique<SparseTerrainProvider>(),
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -23957,10 +23972,6 @@ void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
           "Scene: synchronous-prep diagnostics create root tile");
     if (!root) return;
 
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -23980,14 +23991,18 @@ void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
 
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        rootKey,
+        makeFlatHeightmap(0.0f));
     TilesetTestAccess::beginTilePlan(*terrainRaw);
     TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
     scene.render();
 
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
-              scene.diagnostics().terrainRenderEntriesAncestorFallback == 0 &&
-              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 1 &&
+              scene.diagnostics().terrainRenderEntriesAncestorFallback == 1 &&
+              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 0 &&
               scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
               scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
@@ -23995,10 +24010,10 @@ void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
               scene.diagnostics().globeFallbackCommands == 0 &&
               scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
-          "Scene: diagnostics expose nonzero terrain synchronous-prep reason");
+          "Scene: diagnostics classify legacy terrain render resolution as ancestor fallback");
 }
 
-void testSceneDiagnosticsRejectImageryOnlyAncestorFallback() {
+void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
@@ -24017,7 +24032,8 @@ void testSceneDiagnosticsRejectImageryOnlyAncestorFallback() {
         TileScheme::createGeographicTMS(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = std::make_unique<Tileset>(
+    auto terrainTileset = TilesetTestAccess::makeLegacyTerrainTilesetPtr(
+        std::make_unique<SparseTerrainProvider>(),
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -24034,8 +24050,9 @@ void testSceneDiagnosticsRejectImageryOnlyAncestorFallback() {
 
     TilesetTestAccess::putTerrainCache(
         *terrainRaw,
-        rootKey,
+        childKey,
         makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(*terrainRaw, *child);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -24052,6 +24069,8 @@ void testSceneDiagnosticsRejectImageryOnlyAncestorFallback() {
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     check(!root->hasSurfaceDrawable(),
           "Scene: imagery-only fallback diagnostics starts before ancestor mesh is ready");
+    check(child->hasSurfaceDrawable(),
+          "Scene: imagery-only fallback diagnostics selected child has drawable terrain");
 
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
@@ -24061,20 +24080,13 @@ void testSceneDiagnosticsRejectImageryOnlyAncestorFallback() {
     scene.render();
 
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
-              scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
-              scene.diagnostics().terrainRenderEntriesAncestorFallback == 0 &&
-              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 1 &&
-              scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
-              scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
+              scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1,
+          "Scene: imagery-only ancestor fallback plans one selected render entry");
+    check(scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesMissed == 0 &&
-              scene.diagnostics().terrainRenderEntriesDeferred == 0 &&
-              scene.diagnostics().terrainRenderEntriesSelectedDeferred == 0 &&
-              scene.diagnostics().terrainRenderEntriesFadingDeferred == 0 &&
-              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
-              scene.diagnostics().globeFallbackCommands == 0 &&
-              scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
-          "Scene: imagery-only ancestor is not treated as terrain fallback and selected surface still draws");
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1,
+          "Scene: imagery-only ancestor fallback draws selected surface");
 }
 
 void testSceneSortsTransparentGltfByCameraDepth() {
@@ -25087,7 +25099,7 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -25174,7 +25186,7 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -25277,7 +25289,7 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -25421,7 +25433,7 @@ void testPresentationTraceExposesFadingRenderEntry() {
     options.enableLodTransitionPeriod = true;
     options.lodTransitionLength = 1.0f;
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -25525,7 +25537,7 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -25627,7 +25639,7 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -25689,7 +25701,7 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -25759,7 +25771,7 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
 void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
     InitializedRendererHarness harness;
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {},
         &harness.device,
@@ -25806,7 +25818,7 @@ void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
+    Tileset tileset = makeLegacySurfaceFixtureTileset(
         std::move(scheme),
         {&baseActivated},
         &harness.device,
@@ -27443,8 +27455,8 @@ int main() {
     testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain();
     testSceneTerrainContentCountsAsTerrainRenderContent();
     testSceneDiagnosticsExposeTerrainRenderEntryReasons();
-    testSceneDiagnosticsExposeTerrainSynchronousPrepReason();
-    testSceneDiagnosticsRejectImageryOnlyAncestorFallback();
+    testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason();
+    testSceneDiagnosticsDrawImageryOnlyAncestorSurface();
     testSceneSortsTransparentGltfByCameraDepth();
     testTilesetLodTransitionsUseNativeDeltaState();
     testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection();

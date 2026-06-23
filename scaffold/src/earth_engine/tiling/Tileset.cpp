@@ -47,6 +47,10 @@ bool contentProviderOwnsTerrainQuadtree(
     return contentProvider && contentProvider->providesTerrainQuadtree();
 }
 
+bool usesLegacyTerrainSurfacePath(const TerrainProvider* terrainProvider) {
+    return terrainProvider != nullptr;
+}
+
 } // namespace
 
 Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
@@ -117,7 +121,7 @@ Tileset::Tileset(ProviderOwnership providers,
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
           options_.tileCacheUnloadTimeLimit,
-          !contentProviderOwnsTerrainQuadtree(contentProvider_.get())),
+          usesLegacyTerrainSurfacePath(legacyTerrainProvider_.get())),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),
@@ -128,7 +132,7 @@ Tileset::Tileset(ProviderOwnership providers,
           providerHasTerrainQuadtree(
               legacyTerrainProvider_.get(),
               contentProvider_.get()),
-          !contentProviderOwnsTerrainQuadtree(contentProvider_.get()),
+          usesLegacyTerrainSurfacePath(legacyTerrainProvider_.get()),
           device_,
           rasterOverlays_),
       contentRuntime_(
@@ -184,7 +188,7 @@ int Tileset::pendingRequests() const {
 }
 
 int Tileset::cachedTerrainTiles() const {
-    if (contentProviderOwnsTerrainQuadtree(contentProvider_.get())) {
+    if (!usesLegacyTerrainSurfacePath(legacyTerrainProvider_.get())) {
         return 0;
     }
     return static_cast<int>(contentLifecycle_.heightmapTerrainCache().size());
@@ -301,7 +305,7 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
         contentLifecycle_.heightmapTerrainCache(),
         lngRad,
         latRad,
-        !contentProviderOwnsTerrainQuadtree(contentProvider_.get()));
+        usesLegacyTerrainSurfacePath(legacyTerrainProvider_.get()));
 }
 
 void Tileset::update(

@@ -608,6 +608,33 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     NoTerrainTilesetIgnoresHeightmapTerrainCacheLikeCesiumNativeContentPath) {
+    Tileset tileset(
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(9876.0f));
+    ASSERT_TRUE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
+
+    EXPECT_EQ(0, tileset.cachedTerrainTiles());
+    EXPECT_FLOAT_EQ(0.0f, tileset.sampleHeight(0.0, 0.0));
+
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
+    EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
+    EXPECT_TRUE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
+}
+
+TEST(TilesetQuantizedMeshTest,
      ContentTerrainProviderOwnsQuadtreeAndDropsLegacyProvider) {
     auto legacyDestroyed = std::make_shared<int>(0);
     auto legacyProvider =

@@ -29,6 +29,16 @@ TileMeshPreparationManager::TileMeshPreparationManager(
       rasterOverlays_(rasterOverlays) {}
 
 void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
+    if (!hasTerrainQuadtree_ && !useHeightmapSurfacePath_) {
+        if (tile.content.renderContent.hasRetainedHeightmap()) {
+            tile.content.renderContent.clearRetainedHeightmap();
+            markResourcesDirty();
+        }
+        if (!tile.content.renderContent.hasSurfaceMesh()) {
+            return;
+        }
+    }
+
     auto ingestAvailability = [](const TileKey&, DecodedHeightmap*) {};
     auto findUpsampleSource =
         [this](const TilesetTile& sourceTile, bool allowUnloadingSource) {
