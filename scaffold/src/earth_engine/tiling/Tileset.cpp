@@ -209,7 +209,7 @@ int Tileset::pendingRequests() const {
     return contentLifecycle_.pendingRequests();
 }
 
-int Tileset::cachedTerrainTiles() const {
+int Tileset::cachedHeightmapTerrainTilesForLegacySurfacePath() const {
     if (!usesHeightmapTerrainSurfacePath(heightmapTerrainProvider_.get())) {
         return 0;
     }

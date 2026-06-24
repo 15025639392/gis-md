@@ -1241,7 +1241,7 @@ TEST(
     TilesetTestAccess::updateTotalBytesUsed(tileset);
 
     EXPECT_EQ(tileset.totalBytesUsed(), 0);
-    EXPECT_EQ(tileset.cachedTerrainTiles(), 0);
+    EXPECT_EQ(tileset.cachedHeightmapTerrainTilesForLegacySurfacePath(), 0);
     EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, key));
 
     Diagnostics sceneDiagnostics;

@@ -650,7 +650,7 @@ TEST(TilesetQuantizedMeshTest,
               TilesetTestAccess::requestFrameContentProvider(tileset));
     EXPECT_EQ(nullptr,
               TilesetTestAccess::effectiveLegacyTerrainProvider(tileset));
-    EXPECT_EQ(0, tileset.cachedTerrainTiles());
+    EXPECT_EQ(0, tileset.cachedHeightmapTerrainTilesForLegacySurfacePath());
 
     const TileKey key{"XYZ-WebMercator", 0, 0, 0};
     bool completed = false;
@@ -679,7 +679,7 @@ TEST(TilesetQuantizedMeshTest,
         result.metadata.rasterOverlayDetails
             ->rasterOverlayProjections.front());
     EXPECT_TRUE(result.metadata.updatedBoundingVolume.has_value());
-    EXPECT_EQ(0, tileset.cachedTerrainTiles());
+    EXPECT_EQ(0, tileset.cachedHeightmapTerrainTilesForLegacySurfacePath());
 }
 
 TEST(TilesetQuantizedMeshTest,
@@ -1163,7 +1163,7 @@ TEST(TilesetQuantizedMeshTest,
     ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
     ASSERT_TRUE(root->rasterOverlayState.hasMissingProjections());
 
-    EXPECT_EQ(0, tileset.cachedTerrainTiles());
+    EXPECT_EQ(0, tileset.cachedHeightmapTerrainTilesForLegacySurfacePath());
     EXPECT_FLOAT_EQ(0.0f, tileset.sampleHeight(0.0, 0.0));
 
     TilesetTestAccess::ensureTileMesh(tileset, *root);
@@ -1196,7 +1196,7 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_EQ(1, *legacyDestroyed);
     EXPECT_EQ(nullptr,
               TilesetTestAccess::effectiveLegacyTerrainProvider(*tileset));
-    EXPECT_EQ(0, tileset->cachedTerrainTiles());
+    EXPECT_EQ(0, tileset->cachedHeightmapTerrainTilesForLegacySurfacePath());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(*tileset, rootKey);
@@ -1206,7 +1206,7 @@ TEST(TilesetQuantizedMeshTest,
         rootKey,
         makeFlatHeightmap(7777.0f));
 
-    EXPECT_EQ(0, tileset->cachedTerrainTiles());
+    EXPECT_EQ(0, tileset->cachedHeightmapTerrainTilesForLegacySurfacePath());
     const TileLoadRequestOutcome outcome =
         TilesetTestAccess::requestMissingContent(*tileset, rootKey);
     EXPECT_EQ(1u, outcome.issued);

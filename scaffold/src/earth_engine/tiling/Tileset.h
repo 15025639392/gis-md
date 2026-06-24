@@ -107,7 +107,7 @@ public:
 
     const TilePlan& tilePlan() const { return tilePlan_; }
     const TileScheme& tileScheme() const { return *tileScheme_; }
-    int cachedTerrainTiles() const;
+    int cachedHeightmapTerrainTilesForLegacySurfacePath() const;
     int pendingRequests() const;
     int64_t totalBytesUsed() const;
     TilesetLoadDiagnostics loadDiagnostics() const;

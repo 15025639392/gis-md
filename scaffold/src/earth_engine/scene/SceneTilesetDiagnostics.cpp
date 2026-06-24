@@ -287,7 +287,8 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
 
     if (terrain) {
         snapshot.visibleTiles = static_cast<int>(plan.visibleTiles.size());
-        snapshot.terrainCachedTiles = tileset.cachedTerrainTiles();
+        snapshot.terrainCachedTiles =
+            tileset.cachedHeightmapTerrainTilesForLegacySurfacePath();
         snapshot.pendingTerrainRequests = loadDiag.pendingTerrainRequests;
         snapshot.pendingGltfTerrainUploads =
             loadDiag.pendingGltfTerrainUploads;
