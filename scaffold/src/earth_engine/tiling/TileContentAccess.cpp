@@ -5,6 +5,7 @@
 #include "TileBoundsMetrics.h"
 #include "TileContentTerrainResiduePolicy.h"
 #include "TileContentLifecycleManager.h"
+#include "TileLoadStatePredicates.h"
 #include "TileRefinementAvailabilityResolver.h"
 #include "TileSelectionRootPolicy.h"
 #include "TileScheme.h"
@@ -174,18 +175,8 @@ TileContentAccess::ensureTileChildren(
 
 bool TileContentAccess::hasResolvedAvailabilityBoundaryContent(
     const TilesetTile& tile) const {
-    switch (tile.content.loadState) {
-    case TileLoadState::ContentLoaded:
-    case TileLoadState::Done:
-    case TileLoadState::Failed:
-        return true;
-    case TileLoadState::Unloading:
-    case TileLoadState::FailedTemporarily:
-    case TileLoadState::Unloaded:
-    case TileLoadState::ContentLoading:
-        return false;
-    }
-    return false;
+    return TileLoadStatePredicates::hasResolvedAvailabilityBoundaryContent(
+        tile.content.loadState);
 }
 
 bool TileContentAccess::isAvailabilityBoundaryTile(

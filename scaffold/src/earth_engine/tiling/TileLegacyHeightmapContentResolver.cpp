@@ -1,6 +1,7 @@
 #include "TileLegacyHeightmapContentResolver.h"
 
 #include "TileCacheKey.h"
+#include "TileLoadStatePredicates.h"
 #include "TileRefinementAvailabilityResolver.h"
 #include "TileScheme.h"
 #include "TilesetTile.h"
@@ -49,7 +50,9 @@ bool TileLegacyHeightmapContentResolver::canRefine(
             return isAvailabilityBoundaryTile(candidate);
         },
         [](const TilesetTile& candidate) {
-            return candidate.content.loadState > TileLoadState::ContentLoading;
+            return TileLoadStatePredicates::
+                hasResolvedAvailabilityBoundaryContent(
+                    candidate.content.loadState);
         });
 }
 

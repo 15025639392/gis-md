@@ -13,6 +13,7 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
+#include "earth_engine/tiling/TileLoadStatePredicates.h"
 #include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TileTerrainHeightRangePolicy.h"
@@ -270,6 +271,7 @@ TEST(TileChildMaterializerTest,
     };
 
     for (TileLoadState waitingState : {
+             TileLoadState::Unloading,
              TileLoadState::FailedTemporarily,
              TileLoadState::Unloaded,
              TileLoadState::ContentLoading}) {
@@ -340,6 +342,28 @@ TEST(TileChildMaterializerTest,
     EXPECT_TRUE(parent.children[1]->content.upsampledFromParent);
     EXPECT_TRUE(parent.children[2]->content.upsampledFromParent);
     EXPECT_TRUE(parent.children[3]->content.upsampledFromParent);
+}
+
+TEST(TileChildMaterializerTest,
+     AvailabilityBoundaryResolvedStatesMatchCesiumNative) {
+    for (TileLoadState waitingState : {
+             TileLoadState::Unloading,
+             TileLoadState::FailedTemporarily,
+             TileLoadState::Unloaded,
+             TileLoadState::ContentLoading}) {
+        EXPECT_FALSE(
+            TileLoadStatePredicates::
+                hasResolvedAvailabilityBoundaryContent(waitingState));
+    }
+
+    for (TileLoadState resolvedState : {
+             TileLoadState::ContentLoaded,
+             TileLoadState::Done,
+             TileLoadState::Failed}) {
+        EXPECT_TRUE(
+            TileLoadStatePredicates::
+                hasResolvedAvailabilityBoundaryContent(resolvedState));
+    }
 }
 
 TEST(TileChildMaterializerTest, NoAvailableTerrainChildrenCreatesNoneLikeCesiumNative) {
