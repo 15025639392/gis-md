@@ -15,6 +15,7 @@
 #include "earth_engine/tiling/TileChildMaterializer.h"
 #include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileTerrainHeightRangePolicy.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
 
 #include <array>
@@ -829,6 +830,56 @@ TEST(TileChildMaterializerTest,
     EXPECT_DOUBLE_EQ(
         2.0,
         readyGltfChild->content.renderContent.terrainMaximumHeight());
+}
+
+TEST(TileChildMaterializerTest,
+     ContentTerrainSurfaceResidueInheritsParentHeightRange) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+    TilesetTile contentTerrainChild(
+        TileKey{"Geographic-TMS", 2, 2, 0},
+        Rectangle{},
+        &parent);
+    TilesetTile legacySurfaceChild(
+        TileKey{"Geographic-TMS", 2, 3, 0},
+        Rectangle{},
+        &parent);
+    parent.children = {&contentTerrainChild, &legacySurfaceChild};
+
+    contentTerrainChild.contentProviderTerrainQuadtreeTile = true;
+    contentTerrainChild.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    contentTerrainChild.content.renderContent.setMeshReady(true);
+    contentTerrainChild.content.renderContent.setTerrainHeightRange(
+        1.0,
+        2.0);
+
+    legacySurfaceChild.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    legacySurfaceChild.content.renderContent.setMeshReady(true);
+    legacySurfaceChild.content.renderContent.setTerrainHeightRange(
+        3.0,
+        4.0);
+
+    TileTerrainHeightRangePolicy::setTerrainHeightRange(
+        parent,
+        -100.0,
+        200.0);
+    TileTerrainHeightRangePolicy::inheritHeightRangeForUnreadyChildren(parent);
+
+    EXPECT_DOUBLE_EQ(
+        -100.0,
+        contentTerrainChild.content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        200.0,
+        contentTerrainChild.content.renderContent.terrainMaximumHeight());
+    EXPECT_DOUBLE_EQ(
+        3.0,
+        legacySurfaceChild.content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        4.0,
+        legacySurfaceChild.content.renderContent.terrainMaximumHeight());
 }
 
 TEST(TileChildMaterializerTest, NonRootGeographicTerrainChildrenPreserveBounds) {

@@ -50,7 +50,7 @@ void TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
 void TileTerrainHeightRangePolicy::inheritHeightRangeForUnreadyChildren(
     TilesetTile& parent) {
     for (TilesetTile* child : parent.children) {
-        if (child && !child->content.renderContent.isRenderContentReady()) {
+        if (child && !child->renderableSnapshot(true).meshReady) {
             inheritTerrainHeightRange(*child, parent);
         }
     }
