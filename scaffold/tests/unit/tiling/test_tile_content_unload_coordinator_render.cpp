@@ -129,7 +129,7 @@ TEST(
 
 TEST(
     TileContentUnloadCoordinatorRenderTest,
-    GltfTerrainUnloadWaitsForLoadingUpsampledDescendantSubtree) {
+    GltfTerrainUnloadDoesNotWaitForNestedUpsampleWork) {
     TilesetTile root(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -168,39 +168,12 @@ TEST(
             emptyContentRegistry,
             nullptr);
 
-    EXPECT_EQ(TileCacheUnloadContentResult::Keep, firstResult);
-    EXPECT_EQ(TileLoadState::Unloading, root.content.loadState);
-    EXPECT_TRUE(root.content.renderContent.hasGltfContent());
-    EXPECT_TRUE(root.content.renderContent.isTerrainRenderContent());
-    EXPECT_FALSE(root.content.renderContent.hasGltfPrimitiveResources());
-    EXPECT_FALSE(root.selectionFrameState.renderable);
-
-    const TileCacheUnloadContentResult secondResult =
-        TileContentUnloadCoordinator::unloadContent(
-            root,
-            cacheKey,
-            terrainCache,
-            emptyContentRegistry,
-            nullptr);
-
-    EXPECT_EQ(TileCacheUnloadContentResult::Keep, secondResult);
-    EXPECT_EQ(TileLoadState::Unloading, root.content.loadState);
-    EXPECT_TRUE(root.content.renderContent.hasGltfContent());
-
-    grandchild.content.loadState = TileLoadState::ContentLoaded;
-
-    const TileCacheUnloadContentResult finalResult =
-        TileContentUnloadCoordinator::unloadContent(
-            root,
-            cacheKey,
-            terrainCache,
-            emptyContentRegistry,
-            nullptr);
-
-    EXPECT_EQ(TileCacheUnloadContentResult::Remove, finalResult);
+    EXPECT_EQ(TileCacheUnloadContentResult::Remove, firstResult);
     EXPECT_EQ(TileLoadState::Unloaded, root.content.loadState);
     EXPECT_FALSE(root.content.renderContent.hasGltfContent());
     EXPECT_FALSE(root.content.renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(root.content.renderContent.hasGltfPrimitiveResources());
+    EXPECT_FALSE(root.selectionFrameState.renderable);
 }
 
 TEST(
