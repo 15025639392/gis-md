@@ -116,3 +116,29 @@ TEST(
     EXPECT_EQ(tile.content.loadState, TileLoadState::Done);
     EXPECT_EQ(tile.referenceCount(), 1);
 }
+
+TEST(
+    TileContentUnloadCoordinatorBasicTest,
+    ReferencedExternalContentKeepsRasterOverlayStateLikeCesiumNative) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::External;
+    tile.content.loadState = TileLoadState::Done;
+    tile.addReference();
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+    UnloadFixture fixture;
+    fixture.emptyContentRegistry.insert(fixture.cacheKey);
+
+    const TileCacheUnloadContentResult result = unload(tile, fixture);
+
+    EXPECT_EQ(result, TileCacheUnloadContentResult::Keep);
+    EXPECT_TRUE(fixture.emptyContentRegistry.contains(fixture.cacheKey));
+    EXPECT_EQ(tile.content.contentKind, TileContentKind::External);
+    EXPECT_EQ(tile.content.loadState, TileLoadState::Done);
+    EXPECT_EQ(tile.referenceCount(), 1);
+    EXPECT_EQ(tile.rasterOverlayState.mappingCount(), 1u);
+    ASSERT_EQ(tile.rasterOverlayState.missingProjections().size(), 1u);
+    EXPECT_EQ(tile.rasterOverlayState.missingProjections().front(),
+              RasterOverlayProjection::WebMercator);
+}
