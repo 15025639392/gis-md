@@ -18,9 +18,6 @@ struct TileContentUploadCommitAction {
 };
 
 struct TileContentUploadCommitter {
-    static void applyAvailabilityUpdates(
-        TilesetContentProvider* contentProvider,
-        TileLoadedContent& content);
     static void prepareRenderContent(
         TilesetTile& tile,
         TileLoadedContent&& content,

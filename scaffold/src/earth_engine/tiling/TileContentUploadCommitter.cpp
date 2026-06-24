@@ -43,22 +43,6 @@ void restoreInitialBoundingVolumesAfterResourceFailure(TilesetTile& tile) {
 
 } // namespace
 
-void TileContentUploadCommitter::applyAvailabilityUpdates(
-    TilesetContentProvider* contentProvider,
-    TileLoadedContent& content) {
-    if (!content.satisfiesContentTerrainPayloadContract() ||
-        content.quantizedMeshAvailabilityUpdatesApplied ||
-        content.quantizedMeshAvailabilityUpdates.empty()) {
-        return;
-    }
-
-    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
-        contentProvider->applyTerrainAvailabilityUpdates(
-            content.quantizedMeshAvailabilityUpdates);
-        content.quantizedMeshAvailabilityUpdatesApplied = true;
-    }
-}
-
 void TileContentUploadCommitter::prepareRenderContent(
     TilesetTile& tile,
     TileLoadedContent&& content,

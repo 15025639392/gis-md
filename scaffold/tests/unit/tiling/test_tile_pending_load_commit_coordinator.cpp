@@ -736,56 +736,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-    ContentUploadCommitterAppliesTerrainAvailabilityToContentProvider) {
-    RecordingTerrainContentProvider contentProvider;
-
-    QuantizedMeshAvailabilityUpdate update;
-    update.layerIndex = 3;
-    update.subtreeKey = TileKey{"Geographic-TMS", 4, 5, 6};
-    update.metadataAvailability = {{0, 1, 2, 3, 4}};
-
-    TileLoadedContent content = TileLoadedContent::fromContentResult(
-        TileContentLoadResult::renderTerrain(
-            makeMinimalTerrainGltfModelForCommitTest()));
-    content.quantizedMeshAvailabilityUpdates.push_back(update);
-
-    TileContentUploadCommitter::applyAvailabilityUpdates(
-        &contentProvider,
-        content);
-
-    ASSERT_EQ(1u, contentProvider.appliedUpdates.size());
-    EXPECT_EQ(3, contentProvider.appliedUpdates[0].layerIndex);
-    EXPECT_TRUE(content.quantizedMeshAvailabilityUpdatesApplied);
-
-    TileContentUploadCommitter::applyAvailabilityUpdates(
-        &contentProvider,
-        content);
-    EXPECT_EQ(1u, contentProvider.appliedUpdates.size());
-}
-
-TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadCommitterSkipsAlreadyAppliedTerrainAvailability) {
-    RecordingTerrainContentProvider contentProvider;
-
-    QuantizedMeshAvailabilityUpdate update;
-    update.layerIndex = 4;
-    update.subtreeKey = TileKey{"Geographic-TMS", 4, 5, 6};
-    update.metadataAvailability = {{0, 1, 2, 3, 4}};
-
-    TileLoadedContent content = TileLoadedContent::fromContentResult(
-        TileContentLoadResult::renderTerrain(
-            makeMinimalTerrainGltfModelForCommitTest()));
-    content.quantizedMeshAvailabilityUpdates.push_back(update);
-    content.quantizedMeshAvailabilityUpdatesApplied = true;
-
-    TileContentUploadCommitter::applyAvailabilityUpdates(
-        &contentProvider,
-        content);
-
-    EXPECT_TRUE(contentProvider.appliedUpdates.empty());
-}
-
-TEST(TilePendingLoadCommitCoordinatorTest,
      ContentDomainTerrainContentAppliesAvailabilityAndKeepsTerrainMarker) {
     const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
     const TileKey availableChildKey{"Geographic-TMS", 3, 0, 0};
