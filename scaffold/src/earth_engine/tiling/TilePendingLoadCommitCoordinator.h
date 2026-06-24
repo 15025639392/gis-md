@@ -36,12 +36,15 @@ public:
         }
     }
 
-    template <typename EnsureTileFn, typename MarkResourcesDirtyFn>
+    template <typename EnsureTileFn,
+              typename EnsureChildrenFn,
+              typename MarkResourcesDirtyFn>
     static void commitTerrainTerminalResult(
         PendingTileLoad& result,
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
+        EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile* tile = ensureTile(result.key);
         if (!tile) return;
@@ -53,6 +56,9 @@ public:
                 std::move(result.result),
                 emptyContentRegistry,
                 pPrepRenderer);
+        if (action.ensureChildren) {
+            ensureChildren(*tile);
+        }
         if (action.resourcesDirty) {
             markResourcesDirty();
         }
@@ -156,6 +162,7 @@ public:
                 emptyContentRegistry,
                 pPrepRenderer,
                 std::forward<EnsureTileFn>(ensureTile),
+                std::forward<EnsureChildrenFn>(ensureChildren),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
         }
     }

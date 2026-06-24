@@ -13699,12 +13699,12 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         emptyContentRegistry,
             nullptr);
     check(!action.markEmptyCacheKey &&
-              !action.ensureChildren &&
+              action.ensureChildren &&
               action.resourcesDirty &&
               !emptyContentRegistry.contains("terrain-failed") &&
               failedTerrainTile.content.contentKind == TileContentKind::Unknown &&
               failedTerrainTile.content.loadState == TileLoadState::Failed,
-          "TileTerminalLoadCommitter: failed terrain clears stale empty registry marker");
+          "TileTerminalLoadCommitter: failed terrain clears stale empty registry marker and keeps child materialization available");
 
     TilesetTile cancelledTerrainTile(TileKey{"test", 0, 6, 0}, Rectangle{});
     emptyContentRegistry.insert("terrain-cancelled");
@@ -13715,14 +13715,14 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         emptyContentRegistry,
             nullptr);
     check(!action.markEmptyCacheKey &&
-              !action.ensureChildren &&
+              action.ensureChildren &&
               action.resourcesDirty &&
               !emptyContentRegistry.contains("terrain-cancelled") &&
               cancelledTerrainTile.content.contentKind ==
                   TileContentKind::Unknown &&
               cancelledTerrainTile.content.loadState ==
                   TileLoadState::FailedTemporarily,
-          "TileTerminalLoadCommitter: cancelled terrain clears stale empty marker as retryable work");
+          "TileTerminalLoadCommitter: cancelled terrain clears stale empty marker and keeps child materialization available");
 }
 
 void testTileContentUploadPolicyPreparesGltfRenderContent() {
@@ -14424,6 +14424,7 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
         emptyContentRegistry,
         nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         contentResult,
@@ -14521,15 +14522,18 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
         0.0,
         TileLoadStatus::RetryLater};
     bool resourcesDirty = false;
+    bool childrenEnsured = false;
 
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         result,
         emptyContentRegistry,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
     check(!emptyContentRegistry.contains(cacheKey) &&
+              childrenEnsured &&
               resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
@@ -14551,15 +14555,18 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
         0.0,
         TileLoadStatus::Cancelled};
     bool resourcesDirty = false;
+    bool childrenEnsured = false;
 
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         result,
         emptyContentRegistry,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
     check(!emptyContentRegistry.contains(cacheKey) &&
+              childrenEnsured &&
               resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,

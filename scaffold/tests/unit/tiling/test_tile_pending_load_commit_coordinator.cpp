@@ -220,6 +220,7 @@ void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
         emptyContentRegistry,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
@@ -254,6 +255,7 @@ void expectTerrainTerminalIgnoresMetadata(TileLoadStatus status,
         emptyContentRegistry,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
         []() {});
 
     EXPECT_FALSE(tile.boundingVolume.has_value());
@@ -298,7 +300,7 @@ void expectContentTerminalIgnoresMetadata(TileLoadStatus status,
 } // namespace
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainContentTerminalResultsUseTerrainSemanticsLikeCesiumNative) {
+     TerrainContentFailedOrRetryTerminalEnsuresChildrenLikeCesiumNative) {
     for (const auto& [status, expectedLoadState] :
          std::array<std::pair<TileLoadStatus, TileLoadState>, 2>{
              std::pair{TileLoadStatus::RetryLater,
@@ -332,7 +334,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             [&resourcesDirty]() { resourcesDirty = true; });
 
         EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
-        EXPECT_FALSE(childrenEnsured);
+        EXPECT_TRUE(childrenEnsured);
         EXPECT_TRUE(resourcesDirty);
         EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
         EXPECT_EQ(expectedLoadState, tile.content.loadState);
