@@ -542,6 +542,7 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedGltf.status);
     EXPECT_TRUE(normalizedGltf.shouldUpload());
     EXPECT_TRUE(normalizedGltf.content.terrainRenderContent);
+    EXPECT_TRUE(normalizedGltf.isRenderableContentTerrain());
     EXPECT_EQ(rawGltfModel, normalizedGltf.content.gltfModel.get());
     EXPECT_EQ(
         1u,
@@ -647,6 +648,25 @@ TEST(TileLoadRequestDispatcherTest,
         TileLoadStatus::Failed,
         normalizedContentGltfForTerrain.status);
     EXPECT_FALSE(normalizedContentGltfForTerrain.shouldUpload());
+    EXPECT_FALSE(normalizedContentGltfForTerrain.isRenderableContentTerrain());
+
+    std::mutex queueMutex;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    TileLoadDispatchResult queuedOrdinaryGltfAsTerrain =
+        TileLoadRequestDispatcher::queueUpsampledLoad(
+            queueMutex,
+            requestState,
+            pendingLoads,
+            TileKey{"Geographic-TMS", 1, 0, 0},
+            "ordinary-gltf-as-terrain",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadDomain::TerrainContent,
+            TileLoadResult::fromContentResult(
+                TileContentLoadResult::render(std::make_unique<GltfModel>())));
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, queuedOrdinaryGltfAsTerrain);
+    EXPECT_FALSE(pendingLoads.hasWork());
 
     auto contentModel = std::make_unique<GltfModel>();
     GltfModel* rawContentModel = contentModel.get();

@@ -48,12 +48,12 @@ struct TileLoadedContent {
         quantizedMeshAvailabilityUpdates;
     bool quantizedMeshAvailabilityUpdatesApplied = false;
 
-    bool hasTerrainPayload() const {
-        return terrainRenderContent;
+    bool satisfiesContentTerrainPayloadContract() const {
+        return terrainRenderContent && gltfModel != nullptr;
     }
 
     bool hasGltfTerrainPayload() const {
-        return terrainRenderContent && gltfModel != nullptr;
+        return satisfiesContentTerrainPayloadContract();
     }
 
     bool hasRenderablePayload() const {
@@ -122,7 +122,7 @@ struct TileLoadResult {
         TileLoadResult&& result) {
         if (domain == TileLoadDomain::TerrainContent &&
             result.status == TileLoadStatus::Renderable &&
-            !result.content.hasGltfTerrainPayload()) {
+            !result.content.satisfiesContentTerrainPayloadContract()) {
             return createTerminal(TileLoadStatus::Failed);
         }
         return std::move(result);
@@ -130,6 +130,11 @@ struct TileLoadResult {
 
     bool hasRenderableContent() const {
         return content.hasRenderablePayload();
+    }
+
+    bool isRenderableContentTerrain() const {
+        return status == TileLoadStatus::Renderable &&
+               content.satisfiesContentTerrainPayloadContract();
     }
 
     bool shouldUpload() const {

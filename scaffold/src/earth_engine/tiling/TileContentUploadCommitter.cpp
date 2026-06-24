@@ -46,7 +46,7 @@ void restoreInitialBoundingVolumesAfterResourceFailure(TilesetTile& tile) {
 void TileContentUploadCommitter::applyAvailabilityUpdates(
     TilesetContentProvider* contentProvider,
     TileLoadedContent& content) {
-    if (!content.hasGltfTerrainPayload() ||
+    if (!content.satisfiesContentTerrainPayloadContract() ||
         content.quantizedMeshAvailabilityUpdatesApplied ||
         content.quantizedMeshAvailabilityUpdates.empty()) {
         return;

@@ -29,7 +29,7 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledLoad(
         domain,
         std::move(result));
     if (domain == TileLoadDomain::TerrainContent &&
-        result.status != TileLoadStatus::Renderable) {
+        !result.isRenderableContentTerrain()) {
         return TileLoadDispatchResult::Skipped;
     }
     pendingLoads.addUpload(

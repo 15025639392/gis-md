@@ -104,7 +104,7 @@ public:
                                 domain,
                                 TileLoadResult::fromContentResult(
                                     std::move(result)));
-                        if (loadResult.content.hasGltfTerrainPayload() &&
+                        if (loadResult.isRenderableContentTerrain() &&
                             !loadResult.content
                                  .quantizedMeshAvailabilityUpdatesApplied &&
                             !loadResult.content
