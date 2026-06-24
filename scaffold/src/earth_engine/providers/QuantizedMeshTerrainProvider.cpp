@@ -250,6 +250,7 @@ void QuantizedMeshTerrainProvider::setRequestHeaders(
 }
 
 void QuantizedMeshTerrainProvider::setZoomRange(int minZ, int maxZ) {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     minZoom_ = std::max(0, minZ);
     maxZoom_ = std::max(0, maxZ);
     if (layers_.size() == 1 && layers_.front().fallbackLayer) {
@@ -1110,6 +1111,7 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJsonUrl(
 bool QuantizedMeshTerrainProvider::configureFromLayerJson(
     const std::string& layerJson,
     const std::string& layerJsonUrl) {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     const auto previousLayers = layers_;
     const auto previousUrlTemplate = urlTemplate_;
     const auto previousAttribution = attribution_;
@@ -1332,6 +1334,7 @@ bool QuantizedMeshTerrainProvider::supportsTile(const TileKey& key) const {
 }
 
 std::vector<TileKey> QuantizedMeshTerrainProvider::rootTiles() const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     return {
         TileSelectionRootPolicy::virtualTerrainRootKey(schemeId_)
     };
@@ -1339,6 +1342,7 @@ std::vector<TileKey> QuantizedMeshTerrainProvider::rootTiles() const {
 
 std::optional<TilesetContentTileMetadata>
 QuantizedMeshTerrainProvider::tileMetadata(const TileKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
         key.schemeId == schemeId_) {
         TilesetContentTileMetadata metadata;
@@ -1386,6 +1390,7 @@ QuantizedMeshTerrainProvider::tileMetadata(const TileKey& key) const {
 
 std::vector<TileKey>
 QuantizedMeshTerrainProvider::childTiles(const TileKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
         key.schemeId == schemeId_) {
         return TileSelectionRootPolicy::levelZeroTerrainRoots(schemeId_);
@@ -1484,6 +1489,7 @@ TileAvailabilityState QuantizedMeshTerrainProvider::availabilityStateInLayer(
 
 TileAvailabilityState QuantizedMeshTerrainProvider::availabilityState(
     const TileKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     bool anyUnknown = false;
     for (const LayerConfig& layer : layers_) {
         const TileAvailabilityState state = availabilityStateInLayer(layer, key);
@@ -1557,6 +1563,7 @@ QuantizedMeshTerrainProvider::collectUnderlyingLayerAvailabilityRequests(
 
 int QuantizedMeshTerrainProvider::estimatedRequestFanout(
     const TileKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (!layers_.empty() && firstAvailableLayerIndex(key) >= layers_.size()) {
         return 0;
     }
@@ -1596,6 +1603,7 @@ std::string QuantizedMeshTerrainProvider::buildUrlForLayer(
 }
 
 std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (availabilityState(key) == TileAvailabilityState::Unknown) {
         return {};
     }
@@ -1618,9 +1626,12 @@ TileContentLoadResult QuantizedMeshTerrainProvider::loadQuantizedMeshTileContent
     const std::vector<QuantizedMeshMetadataContent>& metadata,
     std::optional<QuantizedMeshAvailabilityUpdate>
         currentTileAvailabilityUpdate) const {
-    const LayerConfig* contentLayer = firstAvailableLayer(key);
-    const std::string contentSchemeId =
-        contentLayer ? contentLayer->schemeId : schemeId_;
+    std::string contentSchemeId;
+    {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        const LayerConfig* contentLayer = firstAvailableLayer(key);
+        contentSchemeId = contentLayer ? contentLayer->schemeId : schemeId_;
+    }
     return QuantizedMeshContentLoader::loadTileContent(
         data,
         size,
@@ -1636,27 +1647,33 @@ void QuantizedMeshTerrainProvider::requestTileContent(
     CancellationToken token,
     ContentCallback callback,
     HttpRequestPriority priority) {
-    const size_t contentLayerIndexValue = firstAvailableLayerIndex(key);
-    const bool hasContentLayer =
-        contentLayerIndexValue < layers_.size();
-    const int contentLayerIndex = hasContentLayer
-        ? static_cast<int>(contentLayerIndexValue)
-        : -1;
-    const LayerConfig* contentLayer =
-        hasContentLayer ? &layers_[contentLayerIndexValue] : nullptr;
-    const bool includeCurrentLayerMetadata =
-        contentLayer && contentLayer->availabilityLevels >= 1 &&
-        key.z % contentLayer->availabilityLevels == 0 &&
-        !isSubtreeLoadedInLayer(
-            *contentLayer,
-            key.z / contentLayer->availabilityLevels,
-            mortonEncode2D(static_cast<uint32_t>(key.x),
-                           static_cast<uint32_t>(key.y)));
-    std::string url = contentLayer
-        ? buildUrlForLayer(*contentLayer, key)
-        : buildUrl(key);
-    std::vector<LayerAvailabilityRequest> availabilityRequests =
-        collectUnderlyingLayerAvailabilityRequests(key);
+    int contentLayerIndex = -1;
+    bool includeCurrentLayerMetadata = false;
+    std::string url;
+    std::vector<LayerAvailabilityRequest> availabilityRequests;
+    {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        const size_t contentLayerIndexValue = firstAvailableLayerIndex(key);
+        const bool hasContentLayer =
+            contentLayerIndexValue < layers_.size();
+        contentLayerIndex = hasContentLayer
+            ? static_cast<int>(contentLayerIndexValue)
+            : -1;
+        const LayerConfig* contentLayer =
+            hasContentLayer ? &layers_[contentLayerIndexValue] : nullptr;
+        includeCurrentLayerMetadata =
+            contentLayer && contentLayer->availabilityLevels >= 1 &&
+            key.z % contentLayer->availabilityLevels == 0 &&
+            !isSubtreeLoadedInLayer(
+                *contentLayer,
+                key.z / contentLayer->availabilityLevels,
+                mortonEncode2D(static_cast<uint32_t>(key.x),
+                               static_cast<uint32_t>(key.y)));
+        url = contentLayer
+            ? buildUrlForLayer(*contentLayer, key)
+            : buildUrl(key);
+        availabilityRequests = collectUnderlyingLayerAvailabilityRequests(key);
+    }
     auto availabilityRequestsPtr =
         std::make_shared<std::vector<LayerAvailabilityRequest>>(
             std::move(availabilityRequests));
@@ -1664,7 +1681,7 @@ void QuantizedMeshTerrainProvider::requestTileContent(
     auto callbackPtr =
         std::make_shared<ContentCallback>(std::move(callback));
     auto requestState = std::make_shared<AsyncTileRequestState>();
-    if (!layers_.empty() && !contentLayer) {
+    if (contentLayerIndex < 0) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
         requestsFailed_.fetch_add(1, std::memory_order_relaxed);
@@ -2190,6 +2207,7 @@ QuantizedMeshTerrainProvider::requestDiagnostics() const {
 
 void QuantizedMeshTerrainProvider::addAvailabilityRects(
     int level, const std::vector<TileAvailabilityRect>& rects) {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (level < 0) return;
     if (layers_.empty()) return;
     addAvailabilityRectsToLayer(layers_.front(), level, rects);
@@ -2214,6 +2232,7 @@ void QuantizedMeshTerrainProvider::addAvailabilityRectsToLayer(
 
 bool QuantizedMeshTerrainProvider::isSubtreeLoaded(
     int subtreeLevel, uint64_t mortonIndex) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (layers_.empty()) return false;
     return isSubtreeLoadedInLayer(
         layers_.front(), subtreeLevel, mortonIndex);
@@ -2236,6 +2255,7 @@ void QuantizedMeshTerrainProvider::markSubtreeLoadedInLayer(
 
 void QuantizedMeshTerrainProvider::markSubtreeLoaded(
     int subtreeLevel, uint64_t mortonIndex) {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (subtreeLevel < 0) return;
     if (layers_.empty()) return;
     markSubtreeLoadedInLayer(layers_.front(), subtreeLevel, mortonIndex);
@@ -2244,6 +2264,7 @@ void QuantizedMeshTerrainProvider::markSubtreeLoaded(
 
 void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
     const std::vector<QuantizedMeshAvailabilityUpdate>& updates) {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (updates.empty()) {
         return;
     }
@@ -2281,6 +2302,7 @@ void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
 }
 
 bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     for (const LayerConfig& layer : layers_) {
         if (layer.availabilityLevels > 0 &&
             level % layer.availabilityLevels == 0) {

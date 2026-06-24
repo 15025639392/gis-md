@@ -41,12 +41,24 @@ public:
         const TileKey& key) const override;
     std::vector<TileKey> childTiles(const TileKey& key) const override;
 
-    std::string schemeId() const { return schemeId_; }
+    std::string schemeId() const {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        return schemeId_;
+    }
 
-    int minZoom() const { return minZoom_; }
-    int maxZoom() const { return maxZoom_; }
+    int minZoom() const {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        return minZoom_;
+    }
+    int maxZoom() const {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        return maxZoom_;
+    }
     int tileSize() const { return tileSize_; }
-    std::string attribution() const { return attribution_; }
+    std::string attribution() const {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        return attribution_;
+    }
 
     void setZoomRange(int minZ, int maxZ);
     void setTileSize(int ts) { tileSize_ = ts; }
@@ -56,7 +68,10 @@ public:
     bool configureFromLayerJsonUrl(const std::string& layerJsonUrl);
     bool configureFromLayerJson(const std::string& layerJson,
                                 const std::string& layerJsonUrl);
-    const std::string& urlTemplate() const { return urlTemplate_; }
+    std::string urlTemplate() const {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        return urlTemplate_;
+    }
 
     bool supportsTile(const TileKey& key) const override;
     TileAvailabilityState terrainAvailabilityState(
@@ -72,7 +87,10 @@ public:
     /// cesium-native: track loaded subtrees for sparse datasets
     bool isSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex) const;
     void markSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex);
-    int availabilityLevels() const { return availabilityLevels_; }
+    int availabilityLevels() const {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        return availabilityLevels_;
+    }
     bool isAvailabilityBoundaryLevel(int level) const;
     bool isTerrainAvailabilityBoundaryLevel(int level) const override {
         return isAvailabilityBoundaryLevel(level);
@@ -297,6 +315,7 @@ private:
     parseAvailabilityUpdatesFromMetadataRequests(
         const std::vector<LayerAvailabilityRequest>& availabilityRequests,
         const std::vector<std::vector<uint8_t>>& metadataBodies) const;
+    mutable std::recursive_mutex layersMutex_;
     std::vector<LayerConfig> layers_;
     std::string urlTemplate_;
     std::string attribution_;
