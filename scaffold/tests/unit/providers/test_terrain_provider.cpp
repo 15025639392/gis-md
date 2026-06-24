@@ -2540,6 +2540,11 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
     ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Region,
+              completed.metadata.updatedBoundingVolume->kind);
+    EXPECT_EQ(Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0),
+              completed.metadata.updatedBoundingVolume->region);
+    EXPECT_FALSE(completed.metadata.updatedContentBoundingVolume.has_value());
     EXPECT_NEAR(childMinimumHeight,
                 completed.metadata.updatedBoundingVolume->minimumHeight,
                 1e-6);
