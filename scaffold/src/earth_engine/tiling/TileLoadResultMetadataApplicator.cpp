@@ -4,6 +4,9 @@
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "TileRenderContentState.h"
 #include "TilesetTile.h"
+#include "../core/math/MathUtils.h"
+
+#include <cmath>
 
 namespace earth_engine {
 namespace {
@@ -14,8 +17,10 @@ constexpr double kLooseMaximumHeight = 9000.0;
 bool isDefaultLooseRegion(const TilesetTile& tile) {
     return tile.boundingVolume &&
            tile.boundingVolume->kind == TileBoundingVolumeKind::Region &&
-           tile.boundingVolume->minimumHeight == kLooseMinimumHeight &&
-           tile.boundingVolume->maximumHeight == kLooseMaximumHeight;
+           std::abs(tile.boundingVolume->minimumHeight -
+                    kLooseMinimumHeight) <= MathUtils::Epsilon5 &&
+           std::abs(tile.boundingVolume->maximumHeight -
+                    kLooseMaximumHeight) <= MathUtils::Epsilon5;
 }
 
 bool hasValidBoundingRegion(const RasterOverlayDetails& details) {
