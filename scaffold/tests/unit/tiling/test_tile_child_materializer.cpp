@@ -639,8 +639,13 @@ TEST(TileChildMaterializerTest,
         acceptedChild->bounds,
         3.0,
         4.0);
+    auto acceptedModel = std::make_unique<GltfModel>();
+    acceptedModel->rasterOverlayDetails.setGeographicRectangle(
+        acceptedChild->bounds,
+        1.0,
+        2.0);
     acceptedChild->content.renderContent.setGltfContent(
-        std::make_unique<GltfModel>());
+        std::move(acceptedModel));
     acceptedChild->content.renderContent.setTerrainRenderContent(true);
     ASSERT_TRUE(
         TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
@@ -682,6 +687,68 @@ TEST(TileChildMaterializerTest,
     EXPECT_DOUBLE_EQ(
         34.0,
         acceptedChild->content.renderContent.terrainMaximumHeight());
+}
+
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityMaterializationClearsIncompleteGltfTerrainResidue) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        scheme->tileToRectangle(TileKey{"Geographic-TMS", 1, 1, 0}));
+    parent.geometricError = 80.0;
+    parent.refine = TileRefine::Replace;
+    parent.boundingVolume = TileBoundingVolume::fromRegion(
+        parent.bounds,
+        -12.0,
+        34.0);
+    parent.content.renderContent.setTerrainHeightRange(-12.0, 34.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key))).first;
+        }
+        return it->second.get();
+    };
+
+    TilesetTile* staleChild =
+        ensure(TileKey{"Geographic-TMS", 2, 2, 0});
+    ASSERT_NE(nullptr, staleChild);
+    staleChild->content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    staleChild->content.renderContent.setTerrainRenderContent(true);
+    staleChild->content.renderContent.setGltfResourcesReady(true);
+    staleChild->rasterOverlayState.ensureMapping(0);
+    ASSERT_FALSE(
+        TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
+            *staleChild));
+    ASSERT_TRUE(
+        TileContentTerrainResiduePolicy::hasRejectableResidue(*staleChild));
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure,
+        true);
+
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ(staleChild, parent.children[0]);
+    EXPECT_FALSE(staleChild->content.isTerrainAvailabilityUpsample());
+    EXPECT_FALSE(staleChild->content.renderContent.hasGltfContent());
+    EXPECT_FALSE(staleChild->content.renderContent.isRenderContentReady());
+    EXPECT_EQ(0u, staleChild->rasterOverlayState.mappingCount());
 }
 
 TEST(TileChildMaterializerTest,

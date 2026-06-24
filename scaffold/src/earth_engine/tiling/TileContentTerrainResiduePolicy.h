@@ -7,7 +7,8 @@ namespace earth_engine {
 struct TileContentTerrainResiduePolicy {
     static bool hasAcceptedTerrainContent(const TilesetTile& tile) {
         return tile.content.renderContent.hasGltfContent() &&
-               tile.content.renderContent.isTerrainRenderContent();
+               tile.content.renderContent.isTerrainRenderContent() &&
+               tile.content.renderContent.hasRasterOverlayDetailsContent();
     }
 
     static bool hasRejectableResidue(const TilesetTile& tile) {
