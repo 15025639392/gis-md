@@ -1333,7 +1333,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentDomainTerrainAvailabilityAppliesAtContentLoadedLikeCesiumNative) {
+     TerrainAvailabilityUpdatesWaitForReadyRenderResourcesLikeCesiumNative) {
     RecordingTerrainContentProvider provider;
 
     QuantizedMeshAvailabilityUpdate update;
@@ -1380,6 +1380,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     }
 
     int ensureGltfCalls = 0;
+    bool childrenEnsured = false;
     bool resourcesDirty = false;
 
     TilePendingLoadCommitCoordinator::commitUpload(
@@ -1391,21 +1392,18 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](TilesetTile&) {},
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&ensureGltfCalls](TilesetTile&) {
             ++ensureGltfCalls;
         },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    ASSERT_EQ(1u, provider.appliedUpdates.size());
-    EXPECT_EQ(update.layerIndex, provider.appliedUpdates.front().layerIndex);
-    EXPECT_EQ(update.subtreeKey, provider.appliedUpdates.front().subtreeKey);
-    EXPECT_EQ(update.metadataAvailability,
-              provider.appliedUpdates.front().metadataAvailability);
+    EXPECT_TRUE(provider.appliedUpdates.empty());
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
     EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }

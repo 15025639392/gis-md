@@ -170,13 +170,13 @@ public:
             rasterOverlays,
             device,
             pPrepRenderer);
-        if (!terrainAvailabilityUpdates.empty()) {
-            contentProvider->applyTerrainAvailabilityUpdates(
-                terrainAvailabilityUpdates);
-        }
         ensureGltfResources(*tile);
         const bool renderResourcesReady =
             tile->content.renderContent.isRenderContentReady();
+        if (renderResourcesReady && !terrainAvailabilityUpdates.empty()) {
+            contentProvider->applyTerrainAvailabilityUpdates(
+                terrainAvailabilityUpdates);
+        }
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
                 *tile,
