@@ -1059,6 +1059,50 @@ TEST(RasterOverlayDetailsGeneratorTest,
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
+     ActiveOverlayGenerationSkipsInvisibleOverlayLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    RasterOverlayDetails existingDetails;
+    existingDetails.setGeographicRectangle(modelRegion, -25.0, 125.0);
+    prepareTerrainQuadRenderContent(
+        renderContent,
+        modelRegion,
+        existingDetails);
+
+    RasterOverlay::Options options{};
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    overlay->setVisible(false);
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    const TileBoundingVolume bounds =
+        TileBoundingVolume::fromRegion(modelRegion, -25.0, 125.0);
+    const int generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays(
+            renderContent,
+            &bounds,
+            overlays,
+            nullptr);
+
+    EXPECT_EQ(0, generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    EXPECT_TRUE(details.equalsExact(existingDetails));
+    EXPECT_EQ(nullptr,
+              details.findRectangleForOverlayProjection(
+                  RasterOverlayProjection::WebMercator));
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    EXPECT_TRUE(primitive.vertexTexCoords[1].empty());
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
      ModelBoundsGenerationExcludesSkirtVerticesFromComputedRegionLikeCesiumNative) {
     TileRenderContentState renderContent;
     const Rectangle modelRegion =
