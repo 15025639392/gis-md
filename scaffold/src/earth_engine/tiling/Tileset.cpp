@@ -236,14 +236,15 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
         contentCache_.unloadQueue(),
         tileRegistry_.tiles());
     TilesetProviderDiagnosticsCollector::collect(
-        heightmapTerrainProviderForSurfacePath(),
+        legacyHeightmapTerrainProviderForSurfacePath(),
         contentProvider_.get(),
         rasterOverlays_)
         .applyTo(diagnostics);
     return diagnostics;
 }
 
-TerrainProvider* Tileset::heightmapTerrainProviderForSurfacePath() const {
+const TerrainProvider* Tileset::legacyHeightmapTerrainProviderForSurfacePath()
+    const {
     return heightmapTerrainProvider_.get();
 }
 
