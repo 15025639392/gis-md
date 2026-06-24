@@ -303,12 +303,12 @@ struct TileChildMaterializer {
             return false;
         }
 
-        if (options.isAvailabilityBoundaryWaitingForContent) {
-            return false;
-        }
-
         if (options.hasExistingChildren) {
             return true;
+        }
+
+        if (options.isAvailabilityBoundaryWaitingForContent) {
+            return false;
         }
 
         if (options.hasContentChildren) {

@@ -2394,12 +2394,13 @@ TEST(TileChildMaterializerTest,
     EXPECT_EQ(4, availabilityChecks);
 }
 
-TEST(TileChildMaterializerTest, CanRefineBlocksAvailabilityBoundaryAndTerrainUpsampledTiles) {
+TEST(TileChildMaterializerTest,
+     CanRefineAllowsExistingChildrenAtAvailabilityBoundaryLikeCesiumNative) {
     TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
     TilesetTile existingChild(TileKey{"Geographic-TMS", 1, 0, 0}, Rectangle{});
     tile.children.push_back(&existingChild);
 
-    EXPECT_FALSE(TileChildMaterializer::canRefine(
+    EXPECT_TRUE(TileChildMaterializer::canRefine(
         tile,
         TileRefinementAvailabilityOptions{
             true,
@@ -2412,6 +2413,12 @@ TEST(TileChildMaterializerTest, CanRefineBlocksAvailabilityBoundaryAndTerrainUps
         [](const TileKey&) { return std::string{"child"}; },
         [](const std::string&) { return true; },
         [](const TileKey&) { return TileAvailabilityState::Available; }));
+}
+
+TEST(TileChildMaterializerTest, CanRefineBlocksTerrainUpsampledTiles) {
+    TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+    TilesetTile existingChild(TileKey{"Geographic-TMS", 1, 0, 0}, Rectangle{});
+    tile.children.push_back(&existingChild);
 
     tile.content.upsampledFromParent = true;
     tile.content.rasterUpsampledForMoreDetail = false;
