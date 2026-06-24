@@ -78,7 +78,8 @@ private:
         const bool sourceStateReady =
             child.content.isRasterDetailUpsample()
                 ? source.hasCommittedRenderContent()
-                : source.content.loadState == TileLoadState::Done;
+                : (source.content.loadState == TileLoadState::Done ||
+                   source.content.loadState == TileLoadState::Unloading);
         return sourceStateReady &&
                source.content.renderContent.isTerrainRenderContent() &&
                source.content.renderContent.hasGltfContent();

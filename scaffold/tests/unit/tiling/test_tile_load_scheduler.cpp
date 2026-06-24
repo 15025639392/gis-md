@@ -4,6 +4,7 @@
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileLoadScheduler.h"
 #include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
@@ -825,6 +826,42 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(
         details.boundingRegion.rectangle,
         childBounds);
+}
+
+TEST(
+    TileLoadSchedulerTest,
+    ProtectedUnloadingTerrainSourceCanFinishQueuedUpsampleLikeCesiumNative) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    parent.children.push_back(&child);
+
+    child.content.markTerrainAvailabilityUpsample();
+    child.content.loadState = TileLoadState::ContentLoading;
+    parent.content.renderContent.setGltfContent(
+        makeSchedulerQuadTerrainGltfModel(parentBounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Unloading;
+
+    EXPECT_TRUE(
+        TileGltfTerrainUpsampledChildMaterializer::canCreateLoadResult(
+            child));
+    std::optional<TileLoadResult> result =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(TileLoadStatus::Renderable, result->status);
+    EXPECT_TRUE(result->content.hasGltfTerrainPayload());
+    ASSERT_NE(nullptr, result->content.gltfModel);
+    ASSERT_TRUE(result->content.metadata.rasterOverlayDetails.has_value());
+    EXPECT_EQ(
+        childBounds,
+        result->content.metadata.rasterOverlayDetails->boundingRegion
+            .rectangle);
 }
 
 TEST(

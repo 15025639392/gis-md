@@ -27996,7 +27996,7 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
           "Tileset: glTF terrain availability upsample derives raster details from parent model region");
 }
 
-void testTerrainContentUpsampleWaitsForDoneParentSource() {
+void testTerrainContentUpsampleUsesProtectedUnloadingParentSource() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
     TilesetTile parent(
@@ -28015,11 +28015,14 @@ void testTerrainContentUpsampleWaitsForDoneParentSource() {
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Unloading;
 
+    std::optional<TileLoadResult> unloadingResult =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
     check(TileGltfTerrainUpsampledChildMaterializer::
-              findGltfTerrainSource(child) == nullptr &&
-              !TileGltfTerrainUpsampledChildMaterializer::
-                  createLoadResult(child).has_value(),
-          "Tileset: glTF terrain upsample waits for Done parent instead of using protected Unloading content");
+              findGltfTerrainSource(child) == &parent &&
+              unloadingResult.has_value() &&
+              unloadingResult->status == TileLoadStatus::Renderable &&
+              unloadingResult->content.hasGltfTerrainPayload(),
+          "Tileset: glTF terrain upsample can finish from protected Unloading parent content like cesium-native");
 
     parent.content.loadState = TileLoadState::ContentLoaded;
     check(TileGltfTerrainUpsampledChildMaterializer::
@@ -29104,7 +29107,7 @@ int main() {
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
     testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection();
     testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
-    testTerrainContentUpsampleWaitsForDoneParentSource();
+    testTerrainContentUpsampleUsesProtectedUnloadingParentSource();
     testTerrainContentUpsamplePropagatesInvertedVCoordinate();
     testTerrainContentUpsampleRejectsOrdinaryGltfContentParent();
     testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails();
