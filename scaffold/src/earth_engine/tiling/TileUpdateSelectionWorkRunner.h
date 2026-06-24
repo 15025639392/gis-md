@@ -97,7 +97,12 @@ public:
             input.frameResourceBudget,
             ensureTile,
             nullptr,
-            std::forward<UnloadTileContentFn>(unloadTileContent));
+            std::forward<UnloadTileContentFn>(unloadTileContent),
+            [&input](const TileKey& key,
+                     TileLoadPriorityGroup group,
+                     double priority) {
+                input.loadQueue.queue(key, group, priority);
+            });
         result.prefetchMs = perf::nowMs() - prefetchStartMs;
 
         const double requestStartMs = perf::nowMs();

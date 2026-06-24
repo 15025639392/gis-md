@@ -5356,6 +5356,10 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
         terrainCache;
     TileEmptyContentRegistry emptyContentRegistry;
     bool unloadCalled = false;
+    bool queueReloadCalled = false;
+    TileKey queuedReloadKey;
+    TileLoadPriorityGroup queuedReloadGroup = TileLoadPriorityGroup::Preload;
+    double queuedReloadPriority = 0.0;
 
     TileRasterOverlayFrameProcessor::prefetchSelection(
         plan,
@@ -5377,6 +5381,14 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
                 &terrainCache,
                 emptyContentRegistry,
                 nullptr);
+        },
+        [&](const TileKey& reloadKey,
+            TileLoadPriorityGroup reloadGroup,
+            double reloadPriority) {
+            queueReloadCalled = true;
+            queuedReloadKey = reloadKey;
+            queuedReloadGroup = reloadGroup;
+            queuedReloadPriority = reloadPriority;
         });
 
     check(unloadCalled &&
@@ -5388,6 +5400,11 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
           "TileRasterOverlayFrameProcessor: prefetch reload clears transient missing projection overlay state");
     check(activated.getCachedTileCount() == 0,
           "TileRasterOverlayFrameProcessor: prefetch missing projection does not start raster source requests before reload");
+    check(queueReloadCalled &&
+              queuedReloadKey == key &&
+              queuedReloadGroup == TileLoadPriorityGroup::Normal &&
+              queuedReloadPriority == tile.selectionFrameState.priority,
+          "TileRasterOverlayFrameProcessor: prefetch missing projection queues same-frame content reload");
 }
 
 void testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch() {
@@ -18501,6 +18518,103 @@ void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
           "TileUpdateSelectionWorkRunner: reuse records resource pump activity");
 }
 
+void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    TilesetTile tile(
+        key,
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0));
+    tile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
+            RasterOverlayProjection::Geographic);
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.geometricError = 100.0;
+    tile.selectionFrameState.priority = 3.0;
+
+    TilePlan tilePlan;
+    tilePlan.visibleTiles.push_back(key);
+    TileLoadQueue loadQueue;
+    TileSelectionCounters counters;
+    TileSelectionReuseState reuseState;
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(43, config);
+    FrameState frameState;
+    frameState.frameId = 43;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    bool refreshCalled = false;
+    bool unloadCalled = false;
+    bool requestCalled = false;
+    size_t requestCount = 0;
+    TileKey requestedKey;
+
+    TileUpdateSelectionWorkRunner::run(
+        TileUpdateSelectionWorkInput{
+            tilePlan,
+            loadQueue,
+            counters,
+            reuseState,
+            overlays,
+            budget,
+            nullptr,
+            frameState,
+            1,
+            1,
+            TileSelectionReuseMode::Strict,
+            TileSelectionReuseRejectReason::None,
+            true,
+            16.0},
+        [&]() { refreshCalled = true; },
+        [](const FrameState&) {},
+        [&tile](const TileKey& requestedTile) -> TilesetTile* {
+            return requestedTile == tile.key ? &tile : nullptr;
+        },
+        [&](TilesetTile& unloadTile) {
+            unloadCalled = true;
+            TileContentUnloadCoordinator::unloadContent(
+                unloadTile,
+                TileCacheKey::forTile(unloadTile.key),
+                &terrainCache,
+                emptyContentRegistry,
+                nullptr);
+        },
+        [&](const std::vector<TileLoadRequest>& requests,
+            FrameResourceBudget*) {
+            requestCalled = true;
+            requestCount = requests.size();
+            if (!requests.empty()) {
+                requestedKey = requests.front().key;
+            }
+            TileLoadRequestOutcome outcome;
+            outcome.issued = requests.empty() ? 0 : 1;
+            return outcome;
+        });
+
+    check(refreshCalled && unloadCalled,
+          "TileUpdateSelectionWorkRunner: reused selection prefetch unloads missing-projection content");
+    check(requestCalled && requestCount == 1 && requestedKey == key,
+          "TileUpdateSelectionWorkRunner: prefetch reload queues same-frame missing content request");
+    check(tile.content.loadState == TileLoadState::Unloaded &&
+              tile.rasterOverlayState.mappings().empty() &&
+              tile.rasterOverlayState.missingProjections().empty(),
+          "TileUpdateSelectionWorkRunner: prefetch reload leaves tile ready for content re-request");
+}
+
 void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
     FrameState previousFrame;
     previousFrame.frameId = 10;
@@ -28176,6 +28290,7 @@ int main() {
     testTileFrameDebugLogFormatterReportsReuseMode();
     testTileFrameDebugLogFormatterReportsRenderEntryPassCounts();
     testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse();
+    testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload();
     testTileFrameWorkCoordinatorReselectsDuringActiveInteraction();
     testTilePendingLoadQueueUsesSharedPriorityOrder();
     testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();

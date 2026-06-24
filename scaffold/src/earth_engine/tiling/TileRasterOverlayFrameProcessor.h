@@ -54,7 +54,10 @@ public:
         FrameResourceBudget& frameResourceBudget,
         EnsureTileFn&& ensureTile,
         IPrepareRendererResources* pPrepRenderer = nullptr,
-        const std::function<void(TilesetTile&)>& unloadTileContent = {}) {
+        const std::function<void(TilesetTile&)>& unloadTileContent = {},
+        const std::function<void(const TileKey&,
+                                 TileLoadPriorityGroup,
+                                 double)>& queueReload = {}) {
         struct PrefetchTile {
             TileKey key;
             TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
@@ -92,6 +95,9 @@ public:
                     pPrepRenderer);
                 if (action.unloadTileContent && unloadTileContent) {
                     unloadTileContent(*item.tile);
+                    if (queueReload) {
+                        queueReload(item.key, item.group, item.priority);
+                    }
                     continue;
                 }
             }
@@ -123,6 +129,11 @@ public:
                     pPrepRenderer);
                 if (action.unloadTileContent && unloadTileContent) {
                     unloadTileContent(*tile);
+                    if (queueReload) {
+                        queueReload(request.key,
+                                    request.group,
+                                    request.priority);
+                    }
                     continue;
                 }
             }
