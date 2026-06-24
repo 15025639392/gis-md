@@ -47,14 +47,14 @@ public:
             return TileCacheUnloadContentResult::Keep;
         }
 
+        TileUnloadPolicy::releaseAndClearRasterOverlayReferences(
+            tile,
+            pPrepRenderer);
+
         if (tile.content.contentKind == TileContentKind::External &&
             tile.referenceCount() > 0) {
             return TileCacheUnloadContentResult::Keep;
         }
-
-        TileUnloadPolicy::releaseAndClearRasterOverlayReferences(
-            tile,
-            pPrepRenderer);
 
         TileCacheUnloadContentResult result =
             TileCacheUnloadContentResult::Remove;
