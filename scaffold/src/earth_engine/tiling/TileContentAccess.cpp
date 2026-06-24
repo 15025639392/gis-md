@@ -71,16 +71,16 @@ TileContentAccess TileContentAccess::forNoTerrain(
 TileContentAccess TileContentAccess::forHeightmapTerrainSurfacePath(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TerrainProvider* heightmapTerrainProvider,
+    const TerrainProvider* legacyHeightmapTerrainProvider,
     const TilesetContentProvider* contentProvider,
     const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache,
     size_t rasterOverlayCount) {
-    assert(heightmapTerrainProvider &&
+    assert(legacyHeightmapTerrainProvider &&
            "forHeightmapTerrainSurfacePath requires a heightmap TerrainProvider");
     return TileContentAccess(
         tileRegistry,
         tileScheme,
-        heightmapTerrainProvider,
+        legacyHeightmapTerrainProvider,
         contentProvider,
         &legacyHeightmapTerrainCache,
         TerrainOwnership::HeightmapSurface,
@@ -90,14 +90,14 @@ TileContentAccess TileContentAccess::forHeightmapTerrainSurfacePath(
 TileContentAccess::TileContentAccess(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TerrainProvider* heightmapTerrainProvider,
+    const TerrainProvider* legacyHeightmapTerrainProvider,
     const TilesetContentProvider* contentProvider,
     const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache,
     TerrainOwnership terrainOwnership,
     size_t rasterOverlayCount)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
-      heightmapTerrainProvider_(heightmapTerrainProvider),
+      legacyHeightmapTerrainProvider_(legacyHeightmapTerrainProvider),
       contentProvider_(contentProvider),
       legacyHeightmapTerrainCache_(legacyHeightmapTerrainCache),
       terrainOwnership_(terrainOwnership),
@@ -188,8 +188,9 @@ bool TileContentAccess::contentProviderOwnsTerrainQuadtree() const {
 
 bool TileContentAccess::legacyHeightmapAvailabilityBoundaryTile(
     const TilesetTile& tile) const {
-    return heightmapTerrainProvider_ &&
-           heightmapTerrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
+    return legacyHeightmapTerrainProvider_ &&
+           legacyHeightmapTerrainProvider_->isAvailabilityBoundaryLevel(
+               tile.key.z);
 }
 
 bool TileContentAccess::contentTerrainAvailabilityBoundaryTile(
@@ -230,7 +231,7 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
         canRefineLegacyHeightmapSurfaceOrExternalContent(
         tile,
         contentProvider_,
-        heightmapTerrainProvider_,
+        legacyHeightmapTerrainProvider_,
         tileScheme_,
         legacyHeightmapTerrainCache_ ? *legacyHeightmapTerrainCache_
                                      : emptyLegacyHeightmapTerrainCache(),
@@ -255,8 +256,8 @@ TileAvailabilityState TileContentAccess::availabilityState(
 
 TileAvailabilityState TileContentAccess::legacyHeightmapAvailabilityState(
     const TileKey& key) const {
-    return heightmapTerrainProvider_
-        ? heightmapTerrainProvider_->availabilityState(key)
+    return legacyHeightmapTerrainProvider_
+        ? legacyHeightmapTerrainProvider_->availabilityState(key)
         : TileAvailabilityState::NotAvailable;
 }
 

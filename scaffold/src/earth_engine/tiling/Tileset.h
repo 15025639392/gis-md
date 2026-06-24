@@ -131,7 +131,7 @@ public:
 
 private:
     struct ProviderOwnership {
-        std::unique_ptr<TerrainProvider> heightmapTerrainProvider;
+        std::unique_ptr<TerrainProvider> legacyHeightmapTerrainProvider;
         std::unique_ptr<TilesetContentProvider> contentProvider;
 
         static ProviderOwnership noTerrain();
@@ -175,7 +175,7 @@ private:
         const TilesetTile& tile) const;
     TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
 
-    std::unique_ptr<TerrainProvider> heightmapTerrainProvider_;
+    std::unique_ptr<TerrainProvider> legacyHeightmapTerrainProvider_;
     std::unique_ptr<TilesetContentProvider> contentProvider_;
     std::unique_ptr<TileScheme> tileScheme_;
     std::vector<ActivatedRasterOverlay*> rasterOverlays_;

@@ -54,7 +54,7 @@ public:
     static bool canRefineLegacyHeightmapSurfaceOrExternalContent(
         const TilesetTile& tile,
         const TilesetContentProvider* contentProvider,
-        const TerrainProvider* heightmapTerrainProvider,
+        const TerrainProvider* legacyHeightmapTerrainProvider,
         const TileScheme& tileScheme,
         const std::unordered_map<
             std::string,
@@ -75,16 +75,16 @@ public:
                 contentProvider &&
                     contentProvider->supportsTile(tile.key),
                 isAvailabilityBoundary(tile) && !hasLoadedTerrainContent(tile),
-                heightmapTerrainProvider != nullptr,
+                legacyHeightmapTerrainProvider != nullptr,
                 true,
                 tileScheme.maxZoom()},
             cacheKey,
             [&terrainCache](const std::string& key) {
                 return terrainCache.count(key) > 0;
             },
-            [heightmapTerrainProvider](const TileKey& key) {
-                return heightmapTerrainProvider
-                    ? heightmapTerrainProvider->availabilityState(key)
+            [legacyHeightmapTerrainProvider](const TileKey& key) {
+                return legacyHeightmapTerrainProvider
+                    ? legacyHeightmapTerrainProvider->availabilityState(key)
                     : TileAvailabilityState::NotAvailable;
             });
     }

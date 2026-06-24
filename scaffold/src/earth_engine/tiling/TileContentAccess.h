@@ -32,7 +32,7 @@ public:
     static TileContentAccess forHeightmapTerrainSurfacePath(
         TilesetTileRegistry& tileRegistry,
         const TileScheme& tileScheme,
-        const TerrainProvider* heightmapTerrainProvider,
+        const TerrainProvider* legacyHeightmapTerrainProvider,
         const TilesetContentProvider* contentProvider,
         const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache,
         size_t rasterOverlayCount);
@@ -53,7 +53,7 @@ private:
 
     TileContentAccess(TilesetTileRegistry& tileRegistry,
                       const TileScheme& tileScheme,
-                      const TerrainProvider* heightmapTerrainProvider,
+                      const TerrainProvider* legacyHeightmapTerrainProvider,
                       const TilesetContentProvider* contentProvider,
                       const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache,
                       TerrainOwnership terrainOwnership,
@@ -72,7 +72,7 @@ private:
 
     TilesetTileRegistry& tileRegistry_;
     const TileScheme& tileScheme_;
-    const TerrainProvider* heightmapTerrainProvider_ = nullptr;
+    const TerrainProvider* legacyHeightmapTerrainProvider_ = nullptr;
     const TilesetContentProvider* contentProvider_ = nullptr;
     const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache_ = nullptr;
     TerrainOwnership terrainOwnership_ = TerrainOwnership::None;
