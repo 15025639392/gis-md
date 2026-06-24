@@ -20905,12 +20905,13 @@ void testTileLoadRequestDispatcherRejectsTerrainContentUpsampleWithoutGltfPayloa
                 return result;
             }());
 
-    check(result == TileLoadDispatchResult::Skipped,
-          "TileLoadRequestDispatcher: terrain content upsample without glTF payload is rejected");
+    check(result == TileLoadDispatchResult::Issued,
+          "TileLoadRequestDispatcher: terrain content upsample without glTF payload queues failed terminal");
     check(requestState.empty() &&
               pendingLoads.gltfTerrainUploadCount() == 0 &&
+              pendingLoads.gltfTerrainTerminalResultCount() == 1 &&
               budget.networkRequestsIssued() == 0,
-          "TileLoadRequestDispatcher: rejected terrain content upsample does not issue a network request");
+          "TileLoadRequestDispatcher: failed terrain content upsample terminal does not issue a network request");
 }
 
 void testTileLoadRequestPlannerClassifiesRequestKinds() {

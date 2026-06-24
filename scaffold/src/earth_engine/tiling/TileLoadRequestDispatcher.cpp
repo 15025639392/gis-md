@@ -30,7 +30,15 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledLoad(
         std::move(result));
     if (domain == TileLoadDomain::TerrainContent &&
         !result.isRenderableContentTerrain()) {
-        return TileLoadDispatchResult::Skipped;
+        pendingLoads.addTerminalResult(
+            PendingTileLoad{
+                domain,
+                key,
+                cacheKey,
+                group,
+                priority,
+                std::move(result)});
+        return TileLoadDispatchResult::Issued;
     }
     pendingLoads.addUpload(
         PendingTileLoad{

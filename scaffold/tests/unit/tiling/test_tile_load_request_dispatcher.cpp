@@ -702,8 +702,17 @@ TEST(TileLoadRequestDispatcherTest,
             TileLoadDomain::TerrainContent,
             TileLoadResult::fromContentResult(
                 TileContentLoadResult::render(std::make_unique<GltfModel>())));
-    EXPECT_EQ(TileLoadDispatchResult::Skipped, queuedOrdinaryGltfAsTerrain);
-    EXPECT_FALSE(pendingLoads.hasWork());
+    EXPECT_EQ(TileLoadDispatchResult::Issued, queuedOrdinaryGltfAsTerrain);
+    ASSERT_EQ(1u, pendingLoads.gltfTerrainTerminalResultCount());
+    FrameResourceBudgetConfig ordinaryGltfConfig;
+    FrameResourceBudget ordinaryGltfBudget;
+    ordinaryGltfBudget.beginFrame(1, ordinaryGltfConfig);
+    std::optional<PendingTileLoad> ordinaryGltfTerminal =
+        pendingLoads.takeHighestPriorityTerminalResult(ordinaryGltfBudget);
+    ASSERT_TRUE(ordinaryGltfTerminal.has_value());
+    EXPECT_EQ(TileLoadDomain::TerrainContent, ordinaryGltfTerminal->domain);
+    EXPECT_EQ(TileLoadStatus::Failed, ordinaryGltfTerminal->result.status);
+    EXPECT_FALSE(ordinaryGltfTerminal->content().hasGltfTerrainPayload());
 
     auto contentModel = std::make_unique<GltfModel>();
     GltfModel* rawContentModel = contentModel.get();
@@ -939,7 +948,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     TerrainContentUpsampleRejectsRenderableResultWithoutGltfPayload) {
+     TerrainContentUpsampleQueuesFailedTerminalWithoutGltfPayload) {
     std::mutex mutex;
     TilePendingRequestState requestState;
     TilePendingLoadQueue pendingLoads;
@@ -957,10 +966,21 @@ TEST(TileLoadRequestDispatcherTest,
             TileLoadDomain::TerrainContent,
             makeMalformedRenderableWithoutPayloadForTest());
 
-    EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
-    EXPECT_FALSE(pendingLoads.containsCacheKey(
+    EXPECT_EQ(1u, pendingLoads.gltfTerrainTerminalResultCount());
+    EXPECT_TRUE(pendingLoads.containsCacheKey(
         "empty-gltf-terrain-upsample"));
+
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::optional<PendingTileLoad> terminal =
+        pendingLoads.takeHighestPriorityTerminalResult(budget);
+    ASSERT_TRUE(terminal.has_value());
+    EXPECT_EQ(TileLoadDomain::TerrainContent, terminal->domain);
+    EXPECT_EQ(TileLoadStatus::Failed, terminal->result.status);
+    EXPECT_FALSE(terminal->content().hasGltfTerrainPayload());
 }
 
 TEST(TileLoadRequestDispatcherTest, DropsCancelledContentTerminalCallback) {
@@ -1201,7 +1221,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     RejectsTerrainContentUpsampleWithoutGltfPayloadWhenNetworkBudgetExhausted) {
+     TerrainContentUpsampleTerminalDoesNotConsumeNetworkBudget) {
     std::mutex mutex;
     TilePendingRequestState requestState;
     TilePendingLoadQueue pendingLoads;
@@ -1223,9 +1243,10 @@ TEST(TileLoadRequestDispatcherTest,
             TileLoadDomain::TerrainContent,
             makeMalformedRenderableWithoutPayloadForTest());
 
-    EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.gltfTerrainTerminalResultCount());
     EXPECT_EQ(0u, budget.networkRequestsIssued());
 }
 
