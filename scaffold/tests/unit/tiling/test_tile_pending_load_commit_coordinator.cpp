@@ -400,6 +400,69 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainRetryLaterAvailabilityBoundaryKeepsLatentChildrenRetryable) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+
+    const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
+    TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
+    ASSERT_NE(nullptr, boundary);
+    boundary->content.loadState = TileLoadState::ContentLoading;
+
+    const std::string cacheKey = "terrain-boundary-retry-later";
+    TileEmptyContentRegistry emptyContentRegistry;
+    PendingTileLoad pending{
+        TileLoadDomain::TerrainContent,
+        boundaryKey,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+
+    bool childrenEnsured = false;
+    TileChildFrameMaterializeResult childResult;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        pending,
+        emptyContentRegistry,
+        nullptr,
+        [&contentAccess](const TileKey& key) {
+            return contentAccess.ensureTile(key);
+        },
+        [&contentAccess, &childrenEnsured, &childResult](TilesetTile& tile) {
+            childrenEnsured = true;
+            childResult = contentAccess.ensureTileChildren(tile);
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(childrenEnsured);
+    EXPECT_TRUE(childResult.retryLater);
+    EXPECT_FALSE(childResult.changed);
+    EXPECT_TRUE(boundary->children.empty());
+    EXPECT_EQ(TileLoadState::FailedTemporarily,
+              boundary->content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, boundary->content.contentKind);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerminalFailureReplacesStaleRenderResidueLikeCesiumNative) {
     expectTerminalResultClearsStaleRenderResidue(
         TileLoadDomain::Content,
