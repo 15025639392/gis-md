@@ -561,6 +561,44 @@ TEST(TileChildMaterializerTest, NonRootUnavailableTerrainSiblingsBecomeUpsampled
 }
 
 TEST(TileChildMaterializerTest,
+     TerrainAvailabilityMaterializationClearsStaleUnconditionalRefine) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    TilesetTile* staleChild = ensure(TileKey{"Geographic-TMS", 2, 3, 0});
+    ASSERT_NE(nullptr, staleChild);
+    staleChild->unconditionallyRefine = true;
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure,
+        true);
+
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_FALSE(staleChild->unconditionallyRefine);
+}
+
+TEST(TileChildMaterializerTest,
      TerrainAvailabilityUpgradeClearsStaleUpsampledMesh) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 1, 1, 0},

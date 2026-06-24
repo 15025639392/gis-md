@@ -85,6 +85,7 @@ struct TileChildMaterializer {
         for (const ChildAvailability& childInfo : children) {
             TilesetTile* child = ensureTile(childInfo.key);
             if (!child) continue;
+            child->unconditionallyRefine = false;
             const bool hasAcceptedTerrainContent =
                 TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
                     *child);
