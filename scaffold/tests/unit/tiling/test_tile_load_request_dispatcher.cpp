@@ -329,6 +329,33 @@ public:
     std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
 };
 
+class SyncMalformedTerrainAvailabilityContentProvider final
+    : public TilesetContentProvider {
+public:
+    std::string id() const override {
+        return "dispatcher-malformed-terrain-availability";
+    }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        TileContentLoadResult result =
+            TileContentLoadResult::render(std::make_unique<GltfModel>());
+        QuantizedMeshAvailabilityUpdate update;
+        update.layerIndex = 3;
+        update.subtreeKey = key;
+        update.metadataAvailability = {{0, 0, 0, 0, 0}};
+        result.quantizedMeshAvailabilityUpdates.push_back(update);
+        callback(key, std::move(result));
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+};
+
 class DeferredContentProvider final : public TilesetContentProvider {
 public:
     std::string id() const override { return "dispatcher-deferred-content"; }
@@ -904,6 +931,53 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(TileLoadDomain::TerrainContent, terminal->domain);
     EXPECT_EQ(TileLoadStatus::Failed, terminal->result.status);
     EXPECT_FALSE(terminal->content().hasGltfTerrainPayload());
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     TerrainContentProviderFailedNormalizationKeepsAvailabilityUpdates) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"Geographic-TMS", 3, 2, 1};
+    bool issued = false;
+    SyncMalformedTerrainAvailabilityContentProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "malformed-gltf-terrain-availability",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(issued);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.gltfTerrainTerminalResultCount());
+
+    std::optional<PendingTileLoad> terminal =
+        pendingLoads.takeHighestPriorityTerminalResult(budget);
+    ASSERT_TRUE(terminal.has_value());
+    EXPECT_EQ(TileLoadDomain::TerrainContent, terminal->domain);
+    EXPECT_EQ(TileLoadStatus::Failed, terminal->result.status);
+    ASSERT_EQ(1u, terminal->result.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(
+        3,
+        terminal->result.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(
+        key,
+        terminal->result.quantizedMeshAvailabilityUpdates.front().subtreeKey);
 }
 
 TEST(TileLoadRequestDispatcherTest,

@@ -2577,6 +2577,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         0.0,
         TileLoadResult::fromContentResult(
             TileContentLoadResult::render(std::make_unique<GltfModel>()))};
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 4;
+    update.subtreeKey = key;
+    upload.result.quantizedMeshAvailabilityUpdates.push_back(update);
     ASSERT_EQ(TileLoadStatus::Renderable, upload.result.status);
     ASSERT_FALSE(upload.content().hasGltfTerrainPayload());
 
@@ -2600,13 +2604,14 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     }
 
     TileEmptyContentRegistry emptyContentRegistry;
+    RecordingTerrainContentProvider provider;
     int ensureGltfCalls = 0;
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
-        nullptr,
+        &provider,
         nullptr,
         nullptr,
         {},
@@ -2623,6 +2628,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
     EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    ASSERT_EQ(1u, provider.appliedUpdates.size());
+    EXPECT_EQ(4, provider.appliedUpdates.front().layerIndex);
+    EXPECT_EQ(key, provider.appliedUpdates.front().subtreeKey);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
 

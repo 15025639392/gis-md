@@ -95,6 +95,14 @@ struct TileLoadResult {
         return loadResult;
     }
 
+    static TileLoadResult createFailedPreservingAvailability(
+        TileLoadResult&& result) {
+        TileLoadResult failed = createTerminal(TileLoadStatus::Failed);
+        failed.quantizedMeshAvailabilityUpdates =
+            std::move(result.quantizedMeshAvailabilityUpdates);
+        return failed;
+    }
+
     static TileLoadResult createRenderableGltfTerrain(
         std::unique_ptr<GltfModel> model,
         TileLoadResultMetadata metadata = {},
@@ -131,7 +139,7 @@ struct TileLoadResult {
         TileLoadDomain domain,
         TileLoadResult&& result) {
         if (result.shouldFailUploadForDomain(domain)) {
-            return createTerminal(TileLoadStatus::Failed);
+            return createFailedPreservingAvailability(std::move(result));
         }
         return std::move(result);
     }
