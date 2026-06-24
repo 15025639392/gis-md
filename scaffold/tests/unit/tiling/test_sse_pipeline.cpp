@@ -16197,8 +16197,11 @@ void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
     check(prepared &&
               ensuredMeshes == 0 &&
               queuedKeys.empty() &&
-              TileUpsampleSourcePreparer::findSourceTile(child) ==
-                  &grandparent,
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  false,
+                  false,
+                  true) == &grandparent,
           "TileUpsampleSourcePreparer: permanent failed ancestor is not retried when an older source is ready");
 }
 
@@ -16300,7 +16303,11 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
               ensuredMeshes == 1 &&
               queuedKeys.empty() &&
               parent.content.loadState == TileLoadState::Done &&
-              TileUpsampleSourcePreparer::findSourceTile(child) == &parent,
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  false,
+                  false,
+                  true) == &parent,
           "TileUpsampleSourcePreparer: content-loaded ancestor is finalized before upsample request proceeds");
 }
 
@@ -16364,7 +16371,11 @@ void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
               ensuredMeshes == 0 &&
               queuedKeys.empty() &&
               TileUpsampleSourcePreparer::findSourceTile(child) == nullptr &&
-              TileUpsampleSourcePreparer::findSourceTile(child, true) == &parent,
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  true,
+                  false,
+                  true) == &parent,
           "TileUpsampleSourcePreparer: unloading ancestor is usable only for existing protected work and not for new upsample requests");
 }
 

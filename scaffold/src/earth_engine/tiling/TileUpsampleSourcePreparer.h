@@ -13,7 +13,7 @@ public:
         const TilesetTile& tile,
         bool allowUnloadingSource = false,
         bool allowGltfTerrainSource = false,
-        bool useHeightmapSurfacePath = true) {
+        bool useHeightmapSurfacePath = false) {
         if (tile.content.isRasterDetailUpsample()) {
             return findDirectGltfTerrainParent(tile, allowUnloadingSource);
         }
