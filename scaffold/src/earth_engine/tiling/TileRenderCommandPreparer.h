@@ -93,6 +93,7 @@ public:
 
         if (tile.contentProviderTerrainQuadtreeTile &&
             !tile.content.renderContent.hasGltfContent()) {
+            tile.clearFrameRenderability();
             return;
         }
 

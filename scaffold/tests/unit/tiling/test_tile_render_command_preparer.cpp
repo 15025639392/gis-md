@@ -130,6 +130,8 @@ TEST(TileRenderCommandPreparerTest,
         nullptr);
     ASSERT_TRUE(tile.content.renderContent.isMeshReady());
     ASSERT_TRUE(tile.hasSurfaceDrawable());
+    tile.selectionFrameState.completeRenderable = true;
+    tile.selectionFrameState.renderable = true;
 
     FrameResourceBudget budget;
     std::vector<ActivatedRasterOverlay*> overlays;
@@ -165,5 +167,7 @@ TEST(TileRenderCommandPreparerTest,
     EXPECT_TRUE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_TRUE(tile.content.renderContent.isMeshReady());
     EXPECT_FALSE(tile.renderableSnapshot(true).meshReady);
+    EXPECT_FALSE(tile.selectionFrameState.completeRenderable);
+    EXPECT_FALSE(tile.selectionFrameState.renderable);
     EXPECT_TRUE(commands.empty());
 }
