@@ -217,3 +217,52 @@ TEST(TileSurfaceMeshEnsurerTest,
     EXPECT_EQ(2u, resourceRevision);
     EXPECT_TRUE(cache.cacheBytesDirty());
 }
+
+TEST(TileSurfaceMeshEnsurerTest,
+     ContentTerrainManagerPreparationClearsOrdinaryGltfResidue) {
+    TileContentLifecycleManager lifecycle;
+    TileContentCacheManager cache;
+    uint64_t resourceRevision = 1;
+    TileContentResourceInvalidator invalidator(resourceRevision, cache);
+    TileLoadQueue loadQueue;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    TileMeshPreparationManager manager(
+        lifecycle,
+        invalidator,
+        loadQueue,
+        true,
+        false,
+        nullptr,
+        overlays);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0));
+    auto ordinaryModel = std::make_unique<GltfModel>();
+    ordinaryModel->rasterOverlayDetails.setGeographicRectangle(
+        tile.bounds,
+        -10.0,
+        10.0);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(ordinaryModel),
+        Mat4::identity());
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.setGltfResourcesReady(true);
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.loadState = TileLoadState::Done;
+    tile.rasterOverlayState.ensureMapping(0);
+
+    ASSERT_TRUE(tile.content.renderContent.hasGltfContent());
+    ASSERT_FALSE(tile.content.renderContent.isTerrainRenderContent());
+    ASSERT_TRUE(tile.content.renderContent.isRenderContentReady());
+    ASSERT_EQ(1u, tile.rasterOverlayState.mappingCount());
+
+    manager.prepareRenderableTile(tile);
+
+    EXPECT_FALSE(tile.content.renderContent.hasGltfContent());
+    EXPECT_FALSE(tile.content.renderContent.isRenderContentReady());
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_EQ(2u, resourceRevision);
+    EXPECT_TRUE(cache.cacheBytesDirty());
+}

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileContentTerrainResiduePolicy.h"
 #include "TileSurfaceMeshEnsurer.h"
 
 #include <memory>
@@ -64,20 +65,7 @@ public:
         const TileContentTerrainMeshFrameEnsureInput& input,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile& tile = input.tile;
-        const bool hasRasterOverlayDetailsContent =
-            tile.content.renderContent.hasRasterOverlayDetailsContent();
-        const bool hasHeightmapSurfaceResidue =
-            tile.content.renderContent.hasSurfaceMesh() ||
-            tile.content.renderContent.hasRetainedHeightmap();
-        const bool hasRasterOverlayResidue =
-            !hasRasterOverlayDetailsContent &&
-            (tile.rasterOverlayState.mappingCount() > 0 ||
-             tile.rasterOverlayState.hasMissingProjections());
-        if (hasHeightmapSurfaceResidue || hasRasterOverlayResidue) {
-            tile.content.renderContent
-                .clearSurfaceResiduePreservingContentMetadata();
-            tile.content.renderContent.clearRetainedHeightmap();
-            tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+        if (TileContentTerrainResiduePolicy::clearRejectableResidue(tile)) {
             markResourcesDirty();
         }
     }

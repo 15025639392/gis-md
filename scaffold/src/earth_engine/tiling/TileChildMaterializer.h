@@ -3,6 +3,7 @@
 #include "TileKey.h"
 #include "TileBoundsMetrics.h"
 #include "TileBoundingVolume.h"
+#include "TileContentTerrainResiduePolicy.h"
 #include "TileQuadtreeChildKeys.h"
 #include "TileTerrainHeightRangePolicy.h"
 #include "TilesetTile.h"
@@ -106,11 +107,7 @@ struct TileChildMaterializer {
             const bool hasStaleUpsampledContent =
                 clearTerrainAvailabilityUpsampleContent &&
                 upsampled &&
-                (child->content.renderContent.hasRenderableTerrainContent() ||
-                 child->content.renderContent.hasRetainedHeightmap() ||
-                 child->content.renderContent.isRenderContentReady() ||
-                 child->rasterOverlayState.mappingCount() > 0 ||
-                 child->rasterOverlayState.hasMissingProjections());
+                TileContentTerrainResiduePolicy::hasRejectableResidue(*child);
             if (child->content.isTerrainAvailabilityUpsample() != upsampled ||
                 child->content.isRasterDetailUpsample() ||
                 hasStaleUpsampledContent) {

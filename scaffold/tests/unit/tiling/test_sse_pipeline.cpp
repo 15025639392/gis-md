@@ -12318,6 +12318,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     gltfFrameTile.content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(gltfFrameTile.bounds),
         Mat4::identity());
+    gltfFrameTile.content.renderContent.setTerrainRenderContent(true);
     bool frameResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
@@ -12335,6 +12336,8 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     gltfWithStaleHeightmapSurface.content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(gltfWithStaleHeightmapSurface.bounds),
         Mat4::identity());
+    gltfWithStaleHeightmapSurface.content.renderContent
+        .setTerrainRenderContent(true);
     gltfWithStaleHeightmapSurface.content.renderContent.setTerrainHeightRange(
         -25.0,
         875.0);

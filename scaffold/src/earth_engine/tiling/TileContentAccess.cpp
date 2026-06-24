@@ -3,6 +3,7 @@
 #include "TileCacheKey.h"
 #include "TileChildFrameMaterializer.h"
 #include "TileBoundsMetrics.h"
+#include "TileContentTerrainResiduePolicy.h"
 #include "TileContentLifecycleManager.h"
 #include "TileRefinementAvailabilityResolver.h"
 #include "TileSelectionRootPolicy.h"
@@ -33,27 +34,6 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
 const HeightmapTerrainCache& emptyHeightmapTerrainCache() {
     static const HeightmapTerrainCache empty;
     return empty;
-}
-
-bool clearContentTerrainLegacyResidue(TilesetTile& tile) {
-    if (tile.content.renderContent.hasGltfContent() &&
-        tile.content.renderContent.isTerrainRenderContent()) {
-        return false;
-    }
-
-    const bool hasLegacyResidue =
-        tile.content.renderContent.hasRenderableTerrainContent() ||
-        tile.content.renderContent.hasRetainedHeightmap() ||
-        tile.content.renderContent.isRenderContentReady() ||
-        tile.rasterOverlayState.mappingCount() > 0 ||
-        tile.rasterOverlayState.hasMissingProjections();
-    if (!hasLegacyResidue) {
-        return false;
-    }
-
-    tile.content.renderContent.clearRenderContent();
-    tile.rasterOverlayState.releaseAndClearReferences(nullptr);
-    return true;
 }
 
 } // namespace
@@ -131,7 +111,7 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
         rasterOverlayCount_);
     if (tile && contentProviderOwnsTerrainQuadtree()) {
         tile->contentProviderTerrainQuadtreeTile = true;
-        clearContentTerrainLegacyResidue(*tile);
+        TileContentTerrainResiduePolicy::clearRejectableResidue(*tile);
     }
     return tile;
 }
@@ -158,7 +138,8 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
                 *child,
                 tile);
             if (contentProviderOwnsTerrainQuadtree()) {
-                if (clearContentTerrainLegacyResidue(*child)) {
+                if (TileContentTerrainResiduePolicy::clearRejectableResidue(
+                        *child)) {
                     TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                         *child,
                         tile);
