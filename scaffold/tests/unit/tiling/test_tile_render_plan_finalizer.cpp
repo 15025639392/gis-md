@@ -316,14 +316,9 @@ TEST(
             return tile.hasSurfaceDrawable();
         });
 
-    ASSERT_EQ(plan.renderEntries.size(), 1u);
-    const TileRenderEntry& entry = plan.renderEntries.front();
-    EXPECT_EQ(entry.selectedKey, rootKey);
-    EXPECT_EQ(entry.renderKey, rootKey);
-    EXPECT_EQ(entry.reason, TileRenderEntryReason::SynchronousPrep);
-    EXPECT_TRUE(entry.allowSynchronousMeshPrep);
+    EXPECT_TRUE(plan.renderEntries.empty());
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
-    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
 }
 
 TEST(
@@ -334,6 +329,7 @@ TEST(
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
     parent.contentProviderTerrainQuadtreeTile = true;
+    child.contentProviderTerrainQuadtreeTile = true;
     parent.markRenderContentDone();
     parent.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
@@ -364,15 +360,9 @@ TEST(
             return tile.hasSurfaceDrawable();
         });
 
-    ASSERT_EQ(plan.renderEntries.size(), 1u);
-    const TileRenderEntry& entry = plan.renderEntries.front();
-    EXPECT_EQ(entry.selectedKey, childKey);
-    EXPECT_EQ(entry.renderKey, childKey);
-    EXPECT_EQ(entry.reason, TileRenderEntryReason::SynchronousPrep);
-    EXPECT_FALSE(entry.usesAncestorFallback);
-    EXPECT_FALSE(entry.surfaceClipEnabled);
+    EXPECT_TRUE(plan.renderEntries.empty());
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
-    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
 }
 
 TEST(TileRenderPlanFinalizerTest, CountsRootPrepOnceToAvoidBlankFrame) {

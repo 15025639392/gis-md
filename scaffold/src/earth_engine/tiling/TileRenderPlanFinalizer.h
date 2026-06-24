@@ -70,6 +70,10 @@ struct TileRenderPlanFinalizer {
                     usesAncestorFallback = true;
                 }
             }
+            if (!canBuildRenderEntryDirectly(*commandTile) &&
+                !canAttemptRenderResourcePrep(*commandTile)) {
+                return;
+            }
 
             const std::string selectedCk = cacheKey(selectedTile->key);
             const std::string commandCk = cacheKey(commandTile->key);
@@ -164,8 +168,18 @@ private:
     }
 
     static bool needsSurfaceGeometryPrep(const TilesetTile& tile) {
-        return !tile.content.renderContent.hasGltfContent() &&
+        return canAttemptSurfaceGeometryPrep(tile) &&
                !hasRenderableSurfaceForPlan(tile);
+    }
+
+    static bool canAttemptSurfaceGeometryPrep(const TilesetTile& tile) {
+        return !tile.content.renderContent.hasGltfContent() &&
+               !tile.contentProviderTerrainQuadtreeTile;
+    }
+
+    static bool canAttemptRenderResourcePrep(const TilesetTile& tile) {
+        return tile.content.renderContent.hasGltfContent() ||
+               canAttemptSurfaceGeometryPrep(tile);
     }
 
     static bool hasRenderableSurfaceForPlan(const TilesetTile& tile) {
