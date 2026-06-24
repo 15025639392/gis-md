@@ -16630,6 +16630,95 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
           "RenderContentRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
 }
 
+void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
+                     scheme->tileToRectangle(
+                         TileKey{scheme->id(), 0, 0, 0}));
+    tile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.contentKind = TileContentKind::Render;
+
+    Renderer renderer(nullptr);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> order{0};
+    tile.content.loadState = TileLoadState::Done;
+    RenderContentRasterOverlayStateUpdater::update(
+        renderer,
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget);
+    RasterMappedToTilesetTile* mapped =
+        tile.rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "RenderContentRasterOverlayStateUpdater: done-state gate fixture maps loading raster");
+    if (!mapped || !loadingTile) return;
+
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+
+    tile.content.loadState = TileLoadState::ContentLoaded;
+    const RenderContentRasterOverlayUpdateAction contentLoadedAction =
+        RenderContentRasterOverlayStateUpdater::update(
+            renderer,
+            tile,
+            overlays,
+            order,
+            nullptr,
+            16.0,
+            budget);
+    check(!contentLoadedAction.createRasterOverlayUpsampledChildren,
+          "RenderContentRasterOverlayStateUpdater: ContentLoaded tile does not create raster upsample children before Done like cesium-native");
+
+    tile.content.loadState = TileLoadState::FailedTemporarily;
+    const RenderContentRasterOverlayUpdateAction retryLaterAction =
+        RenderContentRasterOverlayStateUpdater::update(
+            renderer,
+            tile,
+            overlays,
+            order,
+            nullptr,
+            16.0,
+            budget);
+    check(!retryLaterAction.createRasterOverlayUpsampledChildren,
+          "RenderContentRasterOverlayStateUpdater: RetryLater-preserved render content does not create raster children while latent terrain may still resolve");
+
+    tile.content.loadState = TileLoadState::Done;
+    const RenderContentRasterOverlayUpdateAction doneAction =
+        RenderContentRasterOverlayStateUpdater::update(
+            renderer,
+            tile,
+            overlays,
+            order,
+            nullptr,
+            16.0,
+            budget);
+    check(doneAction.createRasterOverlayUpsampledChildren,
+          "RenderContentRasterOverlayStateUpdater: Done tile creates raster upsample children like cesium-native updateDoneState");
+}
+
 void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
     auto firstOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -29606,6 +29695,7 @@ int main() {
     testTilesetUnloadExternalContentClearsChildren();
     testTilesetDirectExternalContentUnloadClearsChildren();
     testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction();
+    testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative();
     testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder();
     testRasterUpsampledChildrenMaterializeFromGltfRenderContent();
 

@@ -119,6 +119,7 @@ RenderContentRasterOverlayStateUpdater::update(
     }
 
     action.createRasterOverlayUpsampledChildren =
+        tile.content.loadState == TileLoadState::Done &&
         firstMoreDetailAvailable &&
         (!firstUnknownAvailability ||
          *firstUnknownAvailability > *firstMoreDetailAvailable);
