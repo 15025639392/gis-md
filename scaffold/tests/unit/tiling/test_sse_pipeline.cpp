@@ -27996,7 +27996,7 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
           "Tileset: glTF terrain availability upsample derives raster details from parent model region");
 }
 
-void testTerrainContentUpsampleAcceptsContentLoadedParentSource() {
+void testTerrainContentUpsampleWaitsForDoneParentSource() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
     TilesetTile parent(
@@ -28023,8 +28023,10 @@ void testTerrainContentUpsampleAcceptsContentLoadedParentSource() {
 
     parent.content.loadState = TileLoadState::ContentLoaded;
     check(TileGltfTerrainUpsampledChildMaterializer::
-              findGltfTerrainSource(child) == &parent,
-          "Tileset: glTF terrain upsample accepts ContentLoaded parent source like cesium-native");
+              findGltfTerrainSource(child) == nullptr &&
+              !TileGltfTerrainUpsampledChildMaterializer::
+                  createLoadResult(child).has_value(),
+          "Tileset: glTF terrain upsample waits for parent Done after ContentLoaded like cesium-native");
 
     parent.content.loadState = TileLoadState::Done;
     check(TileGltfTerrainUpsampledChildMaterializer::
@@ -29102,7 +29104,7 @@ int main() {
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
     testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection();
     testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
-    testTerrainContentUpsampleAcceptsContentLoadedParentSource();
+    testTerrainContentUpsampleWaitsForDoneParentSource();
     testTerrainContentUpsamplePropagatesInvertedVCoordinate();
     testTerrainContentUpsampleRejectsOrdinaryGltfContentParent();
     testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails();

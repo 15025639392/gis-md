@@ -22,15 +22,15 @@ public:
         if (!parent) {
             return nullptr;
         }
-        return isCommittedGltfTerrainSource(*parent)
+        return isCommittedGltfTerrainSource(tile, *parent)
             ? parent
             : nullptr;
     }
 
     static bool isCommittedGltfTerrainSource(const TilesetTile& tile) {
         return tile.hasCommittedRenderContent() &&
-                tile.content.renderContent.isTerrainRenderContent() &&
-                tile.content.renderContent.hasGltfContent();
+               tile.content.renderContent.isTerrainRenderContent() &&
+               tile.content.renderContent.hasGltfContent();
     }
 
     static std::optional<TileLoadResult> createLoadResult(
@@ -72,6 +72,18 @@ public:
     }
 
 private:
+    static bool isCommittedGltfTerrainSource(
+        const TilesetTile& child,
+        const TilesetTile& source) {
+        const bool sourceStateReady =
+            child.content.isRasterDetailUpsample()
+                ? source.hasCommittedRenderContent()
+                : source.content.loadState == TileLoadState::Done;
+        return sourceStateReady &&
+               source.content.renderContent.isTerrainRenderContent() &&
+               source.content.renderContent.hasGltfContent();
+    }
+
     static std::unique_ptr<GltfModel> createUpsampledModel(
         TilesetTile& tile) {
         if (!tile.content.derivesTerrainFromParent()) {
