@@ -60,9 +60,10 @@ struct SkirtMetadata {
 };
 
 /// Water mask from QuantizedMesh extension ID=2.
-/// If both allLand and allWater are false, data is a 256×256 RGBA8 bitmap.
+/// If both allLand and allWater are false, data is a 256x256 R8 bitmap.
+/// Older legacy surface fixtures may still provide RGBA8 data.
 struct WaterMask {
-    std::vector<uint8_t> data;  // 256×256 RGBA8, empty = no mask
+    std::vector<uint8_t> data;  // 256x256 R8 preferred, empty = no mask
     bool allLand = true;
     bool allWater = false;
     double translationX = 0.0;

@@ -93,14 +93,21 @@ void SurfaceMeshResourcePreparer::prepare(TilesetTile& tile,
         indexBuffer = device->createBuffer(ibDesc);
     }
     std::unique_ptr<Texture> waterMaskTexture;
+    constexpr size_t waterMaskPixelCount = 256u * 256u;
     if (!mesh->waterMask.allLand && !mesh->waterMask.allWater &&
-        !mesh->waterMask.data.empty()) {
+        mesh->waterMask.data.size() >= waterMaskPixelCount) {
         TextureDesc waterMaskDesc;
         waterMaskDesc.width = 256;
         waterMaskDesc.height = 256;
-        waterMaskDesc.format = TextureDesc::Format::RGBA8;
+        waterMaskDesc.format =
+            mesh->waterMask.data.size() >= waterMaskPixelCount * 4u
+                ? TextureDesc::Format::RGBA8
+                : TextureDesc::Format::R8;
         waterMaskDesc.data = mesh->waterMask.data.data();
-        waterMaskDesc.dataSize = mesh->waterMask.data.size();
+        waterMaskDesc.dataSize =
+            waterMaskDesc.format == TextureDesc::Format::RGBA8
+                ? waterMaskPixelCount * 4u
+                : waterMaskPixelCount;
         waterMaskDesc.mipmap = true;
         waterMaskDesc.minFilter = TextureDesc::Filter::Linear;
         waterMaskDesc.magFilter = TextureDesc::Filter::Linear;

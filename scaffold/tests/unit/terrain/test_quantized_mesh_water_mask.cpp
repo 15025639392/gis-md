@@ -145,7 +145,7 @@ TEST(QuantizedMeshContentLoaderWaterMaskTest,
 }
 
 TEST(QuantizedMeshContentLoaderWaterMaskTest,
-     FullMaskPreservesCesiumNativeWaterAlphaSemanticsForRenderer) {
+     FullMaskPreservesCesiumNativeSingleChannelWaterSemanticsForRenderer) {
     std::vector<uint8_t> mask(256 * 256, 0);
     mask[0] = 7;
     mask[12345] = 255;
@@ -159,12 +159,9 @@ TEST(QuantizedMeshContentLoaderWaterMaskTest,
     const WaterMask& waterMask = result.gltfModel->terrainWaterMask;
     EXPECT_FALSE(waterMask.allLand);
     EXPECT_FALSE(waterMask.allWater);
-    ASSERT_EQ(256u * 256u * 4u, waterMask.data.size());
-    EXPECT_EQ(7, waterMask.data[3]);
-    EXPECT_EQ(255, waterMask.data[12345 * 4]);
-    EXPECT_EQ(255, waterMask.data[12345 * 4 + 1]);
-    EXPECT_EQ(255, waterMask.data[12345 * 4 + 2]);
-    EXPECT_EQ(255, waterMask.data[12345 * 4 + 3]);
+    ASSERT_EQ(256u * 256u, waterMask.data.size());
+    EXPECT_EQ(7, waterMask.data[0]);
+    EXPECT_EQ(255, waterMask.data[12345]);
     ASSERT_TRUE(result.gltfModel->terrainWaterMaskTextureIndex.has_value());
     ASSERT_LT(*result.gltfModel->terrainWaterMaskTextureIndex,
               result.gltfModel->textures.size());

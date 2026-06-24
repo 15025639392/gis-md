@@ -393,14 +393,7 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
             if (extLen > len - offset) break;
             waterMask.allLand = false;
             waterMask.allWater = false;
-            waterMask.data.assign(256 * 256 * 4, 0);
-            for (int i = 0; i < 256 * 256; ++i) {
-                uint8_t v = data[offset + i];
-                waterMask.data[i * 4] = 255;
-                waterMask.data[i * 4 + 1] = 255;
-                waterMask.data[i * 4 + 2] = 255;
-                waterMask.data[i * 4 + 3] = v;
-            }
+            waterMask.data.assign(data + offset, data + offset + extLen);
         } else if (enableWaterMask && extId == 2 && extLen == 1) {
             if (extLen > len - offset) break;
             uint8_t v = data[offset];
