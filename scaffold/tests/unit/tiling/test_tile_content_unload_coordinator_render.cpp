@@ -228,6 +228,66 @@ TEST(
 
 TEST(
     TileContentUnloadCoordinatorRenderTest,
+    EmptyContentUnloadRemovesOnlyTileAndClearsEmptyMarkerLikeCesiumNative) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::Empty;
+    tile.content.loadState = TileLoadState::Done;
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &tile);
+    tile.children.push_back(&child);
+
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::Unloaded, tile.content.loadState);
+    EXPECT_EQ(1u, tile.children.size());
+    EXPECT_EQ(&child, tile.children.front());
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+}
+
+TEST(
+    TileContentUnloadCoordinatorRenderTest,
+    ExternalContentUnloadRequestsChildClearLikeCesiumNative) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::External;
+    tile.content.loadState = TileLoadState::Done;
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &tile);
+    tile.children.push_back(&child);
+
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::RemoveAndClearChildren, result);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::Unloaded, tile.content.loadState);
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+}
+
+TEST(
+    TileContentUnloadCoordinatorRenderTest,
     GltfTerrainUnloadDoesNotWaitForNestedUpsampleWork) {
     TilesetTile root(
         TileKey{"Geographic-TMS", 0, 0, 0},
