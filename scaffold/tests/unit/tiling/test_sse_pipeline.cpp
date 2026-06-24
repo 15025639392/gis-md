@@ -15933,11 +15933,13 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     TilesetTile* child = root->children[1];
     check(child &&
               child->content.isRasterDetailUpsample() &&
+              child->content.rasterDetailSourceProjection ==
+                  RasterOverlayProjection::WebMercator &&
               !child->bounds.isEmpty() &&
               root->bounds.contains(
                   child->bounds.center().first,
                   child->bounds.center().second),
-          "TileRasterUpsampledChildMaterializer: glTF child uses overlay subdivision bounds");
+          "TileRasterUpsampledChildMaterializer: glTF child keeps overlay projection and subdivision bounds");
 }
 
 void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
@@ -27607,7 +27609,8 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
           "Tileset: raster-detail unload fixture has ready more-detail raster");
 
     TilesetTile* child = root->children[1];
-    child->content.markRasterDetailUpsample();
+    child->content.markRasterDetailUpsample(
+        RasterOverlayProjection::WebMercator);
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
@@ -27631,16 +27634,35 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
     check(tileset.loadDiagnostics().unloadQueueTiles == 1,
           "Tileset: raster-detail protected parent remains queued for retry");
 
+    TilesetTile* sibling = root->children[2];
+    sibling->content.markRasterDetailUpsample(
+        RasterOverlayProjection::WebMercator);
+    TilesetTestAccess::requestMissingTile(tileset, sibling->key);
+    check(sibling->content.loadState == TileLoadState::ContentLoading &&
+              root->content.loadState == TileLoadState::Unloading &&
+              root->content.renderContent.hasGltfContent() &&
+              tileset.loadDiagnostics().pendingGltfTerrainUploads == 2 &&
+              rawProvider->requestCount == 0,
+          "Tileset: raster-detail sibling queues local upsample from protected Unloading parent");
+
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =
         child->content.renderContent.gltfModelForRead();
+    const GltfModel* siblingModel =
+        sibling->content.renderContent.gltfModelForRead();
     check(child->content.loadState == TileLoadState::Done &&
+              sibling->content.loadState == TileLoadState::Done &&
               child->content.contentKind == TileContentKind::Render &&
+              sibling->content.contentKind == TileContentKind::Render &&
               child->content.renderContent.hasGltfContent() &&
+              sibling->content.renderContent.hasGltfContent() &&
               child->content.renderContent.hasGltfResources() &&
+              sibling->content.renderContent.hasGltfResources() &&
               !child->content.renderContent.hasSurfaceMesh() &&
-              childModel != nullptr,
-          "Tileset: raster-detail child completes as glTF terrain from protected parent");
+              !sibling->content.renderContent.hasSurfaceMesh() &&
+              childModel != nullptr &&
+              siblingModel != nullptr,
+          "Tileset: raster-detail children complete as glTF terrain from protected parent");
     const Rectangle* childWebMercator = childModel
         ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
               RasterOverlayProjection::WebMercator)
@@ -27649,6 +27671,14 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
               childModel->rasterOverlayDetails.boundingRegion.rectangle ==
                   child->bounds,
           "Tileset: raster-detail child preserves derived raster overlay details after parent protected unload");
+    const Rectangle* siblingWebMercator = siblingModel
+        ? siblingModel->rasterOverlayDetails.findRectangleForOverlayProjection(
+              RasterOverlayProjection::WebMercator)
+        : nullptr;
+    check(siblingWebMercator != nullptr &&
+              siblingModel->rasterOverlayDetails.boundingRegion.rectangle ==
+                  sibling->bounds,
+          "Tileset: raster-detail sibling preserves derived raster overlay details after parent protected unload");
 
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
     check(root->content.loadState == TileLoadState::Unloaded &&

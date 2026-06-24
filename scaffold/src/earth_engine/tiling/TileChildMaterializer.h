@@ -156,7 +156,9 @@ struct TileChildMaterializer {
         const std::pair<double, double>& subdivisionCenter,
         double defaultGeometricError,
         EnsureTileFn&& ensureTile,
-        IPrepareRendererResources* pPrepRenderer = nullptr) {
+        IPrepareRendererResources* pPrepRenderer = nullptr,
+        std::optional<RasterOverlayProjection> sourceProjection =
+            std::nullopt) {
         if (parent.children.size() >= 4) {
             const bool canRefreshRasterUpsampledChildren =
                 parent.children.size() == 4 &&
@@ -249,7 +251,11 @@ struct TileChildMaterializer {
                 child->rasterOverlayState.releaseAndClearReferences(
                     pPrepRenderer);
             }
-            child->content.markRasterDetailUpsample();
+            if (sourceProjection) {
+                child->content.markRasterDetailUpsample(*sourceProjection);
+            } else {
+                child->content.markRasterDetailUpsample();
+            }
             child->unconditionallyRefine = false;
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,

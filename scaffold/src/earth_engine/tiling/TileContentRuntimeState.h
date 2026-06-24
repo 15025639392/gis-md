@@ -2,6 +2,9 @@
 
 #include "TileLoadState.h"
 #include "TileRenderContentState.h"
+#include "SurfaceTile.h"
+
+#include <optional>
 
 namespace earth_engine {
 
@@ -22,6 +25,7 @@ struct TileContentRuntimeState {
     /// raster imagery. It still derives terrain from its parent, but may keep
     /// refining while raster overlays report more detail.
     bool rasterUpsampledForMoreDetail = false;
+    std::optional<RasterOverlayProjection> rasterDetailSourceProjection;
 
     bool derivesTerrainFromParent() const {
         return upsampledFromParent;
@@ -45,9 +49,15 @@ struct TileContentRuntimeState {
         rasterUpsampledForMoreDetail = true;
     }
 
+    void markRasterDetailUpsample(RasterOverlayProjection sourceProjection) {
+        markRasterDetailUpsample();
+        rasterDetailSourceProjection = sourceProjection;
+    }
+
     void clearUpsampleKind() {
         upsampledFromParent = false;
         rasterUpsampledForMoreDetail = false;
+        rasterDetailSourceProjection.reset();
     }
 };
 

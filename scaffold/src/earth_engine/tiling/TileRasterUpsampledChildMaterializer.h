@@ -50,6 +50,8 @@ public:
         std::pair<double, double> subdivisionCenter =
             subdivisionRectangle.center();
         bool hasMoreRasterDetail = false;
+        RasterOverlayProjection moreDetailProjection =
+            RasterOverlayProjection::Geographic;
         tile.rasterOverlayState.forEachMapping([&](const auto* mapped) {
             if (hasMoreRasterDetail ||
                 !mapped ||
@@ -76,6 +78,7 @@ public:
                 Vec3(projectionCenter.first, projectionCenter.second, 0.0));
             subdivisionCenter = {center.longitude(), center.latitude()};
             hasMoreRasterDetail = true;
+            moreDetailProjection = projection;
         });
 
         if (!hasMoreRasterDetail) {
@@ -88,7 +91,8 @@ public:
             subdivisionCenter,
             defaultGeometricError,
             ensureTile,
-            pPrepRenderer);
+            pPrepRenderer,
+            moreDetailProjection);
     }
 
 private:

@@ -158,6 +158,15 @@ private:
         }
 
         if (tile.content.isRasterDetailUpsample()) {
+            if (tile.content.rasterDetailSourceProjection) {
+                const int candidate =
+                    model.rasterOverlayDetails.textureCoordinateIDForProjection(
+                        *tile.content.rasterDetailSourceProjection);
+                return modelHasTextureCoordinate(model, candidate)
+                    ? candidate
+                    : -1;
+            }
+
             for (const auto& mapping : source.rasterOverlayState.mappings()) {
                 if (!mapping || !mapping->isMoreDetailAvailable()) {
                     continue;
