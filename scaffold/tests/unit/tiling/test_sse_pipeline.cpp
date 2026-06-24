@@ -4234,6 +4234,139 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
           "RasterMappedToTilesetTile: attached temporary ancestor still does not trigger upsample children");
 }
 
+void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+    provider.setLevelRange(0, 3);
+    provider.setFrameNumber(1);
+
+    const TileKey parentImageryKey{"XYZ-WebMercator", 3, 4, 2};
+    const Rectangle parentRectangle =
+        overlay->getTileScheme().tileToRectangle(parentImageryKey);
+    const Rectangle childRectangle(
+        parentRectangle.west(),
+        parentRectangle.south(),
+        parentRectangle.center().first,
+        parentRectangle.center().second);
+    RasterOverlayDetails parentDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        parentRectangle);
+    RasterOverlayDetails childDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        childRectangle);
+
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 2, 2, 1},
+        parentRectangle);
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 3, 4, 2},
+        childRectangle,
+        &parent);
+    parent.rasterOverlayState.mappings().resize(1);
+
+    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    std::vector<RasterOverlayProjection> parentMissing;
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        nullptr,
+        0);
+    parentMapped->getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(4, 4));
+    parentMapped->getLoadingTile()->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentReady = parentMapped->getReadyTile();
+    check(parentReady && !parentReady->isMappedRasterTile(),
+          "RasterMappedToTilesetTile: fixture parent fallback uses current direct raster tile");
+    parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
+
+    RasterMappedToTilesetTile childMapped;
+    std::vector<RasterOverlayProjection> childMissing;
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* childLoading = childMapped.getLoadingTile();
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        &parent,
+        0);
+    RecordingPrepareRendererResources prepResources;
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        &prepResources,
+        childMissing,
+        &parent,
+        0);
+    check(childMapped.getReadyTile() == parentReady &&
+              childMapped.getLoadingTile() == childLoading &&
+              childMapped.getState() ==
+                  RasterMappedToTilesetTile::State::TemporarilyAttached,
+          "RasterMappedToTilesetTile: fixture starts with attached ancestor fallback and own loading tile");
+
+    provider.setMaximumScreenSpaceError(1.0);
+    check(provider.ownsCurrentTile(*parentReady),
+          "RasterMappedToTilesetTile: direct ready fallback remains current after mapped invalidation");
+    check(!provider.ownsCurrentTile(*childLoading),
+          "RasterMappedToTilesetTile: mapped loading tile is stale after provider epoch invalidation");
+    const auto updateAfterInvalidation = childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        &prepResources,
+        childMissing,
+        &parent,
+        0);
+
+    check(updateAfterInvalidation == RasterMappedToTilesetTile::MoreDetail::No,
+          "RasterMappedToTilesetTile: stale loading tile removal returns ready fallback detail state");
+    check(childMapped.getReadyTile() == parentReady &&
+              childMapped.getLoadingTile() == nullptr &&
+              childMapped.getState() == RasterMappedToTilesetTile::State::Attached,
+          "RasterMappedToTilesetTile: stale loading tile with ready fallback normalizes to Attached");
+}
+
 void testRasterMappedFailedChildFollowsParentLoadingTile() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -28564,6 +28697,7 @@ int main() {
     testRasterMappedFailureFallbackMatchesOverlayOwner();
     testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking();
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
+    testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached();
     testRasterMappedFailedChildFollowsParentLoadingTile();
     testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload();
     testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion();

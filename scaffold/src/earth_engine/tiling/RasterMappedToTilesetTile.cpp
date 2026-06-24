@@ -168,7 +168,9 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         loadingTileSource_ = ReadyTileSource::None;
         mappedSourceTiles_ = {};
         directRasterTile_ = false;
-        if (_pReadyTile == nullptr) {
+        if (_pReadyTile != nullptr) {
+            state_ = State::Attached;
+        } else {
             state_ = State::Unattached;
         }
     }
@@ -517,6 +519,7 @@ void RasterMappedToTilesetTile::clearTileOwnershipState() {
     originalFailed_ = false;
     textureCoordinateID_ = -1;
     overlaySlot_ = 0;
+    state_ = State::Unattached;
 }
 
 bool RasterMappedToTilesetTile::loadThrottled(
