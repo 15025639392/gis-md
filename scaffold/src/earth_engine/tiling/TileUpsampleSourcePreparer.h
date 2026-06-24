@@ -139,7 +139,7 @@ private:
             return false;
         }
 
-        if (findDirectGltfTerrainParent(tile, true)) {
+        if (findDirectGltfTerrainParent(tile, false)) {
             return true;
         }
 
@@ -149,7 +149,7 @@ private:
             parent->content.renderContent.isTerrainRenderContent() &&
             parent->content.renderContent.hasGltfContent()) {
             ensureTileMesh(*parent);
-            return findDirectGltfTerrainParent(tile, true) != nullptr;
+            return findDirectGltfTerrainParent(tile, false) != nullptr;
         }
 
         if (parent->content.loadState == TileLoadState::Unloaded ||

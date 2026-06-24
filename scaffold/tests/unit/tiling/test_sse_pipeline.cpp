@@ -28262,31 +28262,25 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
     sibling->content.markRasterDetailUpsample(
         RasterOverlayProjection::WebMercator);
     TilesetTestAccess::requestMissingTile(tileset, sibling->key);
-    check(sibling->content.loadState == TileLoadState::ContentLoading &&
+    check(sibling->content.loadState == TileLoadState::Unloaded &&
               root->content.loadState == TileLoadState::Unloading &&
               root->content.renderContent.hasGltfContent() &&
-              tileset.loadDiagnostics().pendingGltfTerrainUploads == 2 &&
+              tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
               rawProvider->requestCount == 0,
-          "Tileset: raster-detail sibling queues local upsample from protected Unloading parent");
+          "Tileset: raster-detail sibling waits instead of starting from protected Unloading parent");
 
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =
         child->content.renderContent.gltfModelForRead();
-    const GltfModel* siblingModel =
-        sibling->content.renderContent.gltfModelForRead();
     check(child->content.loadState == TileLoadState::Done &&
-              sibling->content.loadState == TileLoadState::Done &&
+              sibling->content.loadState == TileLoadState::Unloaded &&
               child->content.contentKind == TileContentKind::Render &&
-              sibling->content.contentKind == TileContentKind::Render &&
               child->content.renderContent.hasGltfContent() &&
-              sibling->content.renderContent.hasGltfContent() &&
               child->content.renderContent.hasGltfResources() &&
-              sibling->content.renderContent.hasGltfResources() &&
               !child->content.renderContent.hasSurfaceMesh() &&
-              !sibling->content.renderContent.hasSurfaceMesh() &&
-              childModel != nullptr &&
-              siblingModel != nullptr,
-          "Tileset: raster-detail children complete as glTF terrain from protected parent");
+              !sibling->content.renderContent.hasGltfContent() &&
+              childModel != nullptr,
+          "Tileset: raster-detail child completes while sibling waits for a Done parent");
     const Rectangle* childWebMercator = childModel
         ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
               RasterOverlayProjection::WebMercator)
@@ -28295,15 +28289,6 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
               childModel->rasterOverlayDetails.boundingRegion.rectangle ==
                   child->bounds,
           "Tileset: raster-detail child preserves derived raster overlay details after parent protected unload");
-    const Rectangle* siblingWebMercator = siblingModel
-        ? siblingModel->rasterOverlayDetails.findRectangleForOverlayProjection(
-              RasterOverlayProjection::WebMercator)
-        : nullptr;
-    check(siblingWebMercator != nullptr &&
-              siblingModel->rasterOverlayDetails.boundingRegion.rectangle ==
-                  sibling->bounds,
-          "Tileset: raster-detail sibling preserves derived raster overlay details after parent protected unload");
-
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
     check(root->content.loadState == TileLoadState::Unloaded &&
               root->content.contentKind == TileContentKind::Unknown &&

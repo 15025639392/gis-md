@@ -189,6 +189,54 @@ TEST(TileSurfaceMeshEnsurerTest,
 }
 
 TEST(TileSurfaceMeshEnsurerTest,
+     RasterDetailUpsampleWaitsForUnloadingGltfParent) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Unloading;
+    parent.content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    parent.content.renderContent.setTerrainRenderContent(true);
+
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &parent);
+    parent.children.push_back(&child);
+    child.content.markRasterDetailUpsample(RasterOverlayProjection::Geographic);
+
+    int ensuredMeshes = 0;
+    int queuedLoads = 0;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        1.0,
+        false,
+        [&ensuredMeshes](TilesetTile&) {
+            ++ensuredMeshes;
+        },
+        [&queuedLoads](const TileKey&, TileLoadPriorityGroup, double) {
+            ++queuedLoads;
+        });
+
+    EXPECT_FALSE(prepared);
+    EXPECT_EQ(0, ensuredMeshes);
+    EXPECT_EQ(0, queuedLoads);
+    EXPECT_EQ(nullptr,
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  false,
+                  true,
+                  false));
+    EXPECT_EQ(&parent,
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  true,
+                  true,
+                  false));
+}
+
+TEST(TileSurfaceMeshEnsurerTest,
      ContentTerrainManagerPreparationOnlyClearsLegacyResidue) {
     TileContentLifecycleManager lifecycle;
     TileContentCacheManager cache;
