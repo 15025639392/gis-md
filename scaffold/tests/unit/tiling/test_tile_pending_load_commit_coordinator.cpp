@@ -44,6 +44,10 @@ public:
         return it == availability.end() ? TileAvailabilityState::NotAvailable
                                         : it->second;
     }
+    bool isTerrainAvailabilityBoundaryLevel(int level) const override {
+        return metadataAvailabilityLevels > 0 &&
+               level % metadataAvailabilityLevels == 0;
+    }
     void applyTerrainAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
         appliedUpdates.insert(
@@ -74,6 +78,7 @@ public:
     mutable std::vector<TileKey> notedUpsampledParents;
     mutable std::vector<TileKey> clearedUpsampledParents;
     std::unordered_map<TileKey, TileAvailabilityState> availability;
+    int metadataAvailabilityLevels = 0;
 };
 
 class RecordingContentTreeProvider final : public TilesetContentProvider {
@@ -509,6 +514,63 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(TileLoadStatePredicates::
                     hasResolvedAvailabilityBoundaryContent(
                         TileLoadState::Failed));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     AvailabilityBoundaryChildCreationFollowsCesiumNativeLoadStateOrdering) {
+    const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
+    const std::array<TileKey, 4> childKeys{
+        TileKey{"Geographic-TMS", 3, 0, 0},
+        TileKey{"Geographic-TMS", 3, 1, 0},
+        TileKey{"Geographic-TMS", 3, 0, 1},
+        TileKey{"Geographic-TMS", 3, 1, 1}};
+
+    for (const auto& [state, shouldCreateChildren] :
+         std::array<std::pair<TileLoadState, bool>, 6>{
+             std::pair{TileLoadState::Unloaded, false},
+             std::pair{TileLoadState::ContentLoading, false},
+             std::pair{TileLoadState::FailedTemporarily, false},
+             std::pair{TileLoadState::ContentLoaded, true},
+             std::pair{TileLoadState::Done, true},
+             std::pair{TileLoadState::Failed, true}}) {
+        RecordingTerrainContentProvider provider;
+        provider.availability[childKeys[0]] = TileAvailabilityState::Available;
+        provider.metadataAvailabilityLevels = 2;
+
+        auto scheme = TileScheme::createGeographicTMS();
+        TilesetTileRegistry registry;
+        TileContentAccess contentAccess =
+            TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+
+        TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
+        ASSERT_NE(nullptr, boundary);
+        boundary->content.loadState = state;
+
+        const TileChildFrameMaterializeResult result =
+            contentAccess.ensureTileChildren(*boundary);
+
+        if (shouldCreateChildren) {
+            EXPECT_TRUE(result.changed);
+            EXPECT_FALSE(result.retryLater);
+            ASSERT_EQ(4u, boundary->children.size());
+            for (size_t i = 0; i < childKeys.size(); ++i) {
+                ASSERT_NE(nullptr, boundary->children[i]);
+                EXPECT_EQ(childKeys[i], boundary->children[i]->key);
+            }
+            EXPECT_FALSE(
+                boundary->children[0]->content
+                    .isTerrainAvailabilityUpsample());
+            for (size_t i = 1; i < boundary->children.size(); ++i) {
+                EXPECT_TRUE(
+                    boundary->children[i]->content
+                        .isTerrainAvailabilityUpsample());
+            }
+        } else {
+            EXPECT_FALSE(result.changed);
+            EXPECT_TRUE(result.retryLater);
+            EXPECT_TRUE(boundary->children.empty());
+        }
+    }
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
