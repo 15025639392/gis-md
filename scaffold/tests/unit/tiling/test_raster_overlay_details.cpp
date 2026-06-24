@@ -11,11 +11,14 @@
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
+#include "earth_engine/tiling/TileLoadResultMetadataApplicator.h"
 #include "earth_engine/tiling/TileRasterOverlayDetailsGenerator.h"
 #include "earth_engine/tiling/TileRenderContentState.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TilesetTile.h"
 
 using namespace earth_engine;
 
@@ -359,7 +362,7 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsTest,
-     RenderTerrainStillAppendsDifferentMetadataDetailsLikeCesiumNative) {
+     RenderTerrainUsesExplicitMetadataDetailsAsFinalLoadResult) {
     auto model = std::make_unique<GltfModel>();
     const Rectangle modelRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 0.0, 5.0);
@@ -381,12 +384,43 @@ TEST(RasterOverlayDetailsTest,
     ASSERT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     const RasterOverlayDetails& details = result.gltfModel->rasterOverlayDetails;
-    ASSERT_EQ(2u, details.rasterOverlayProjections.size());
-    ASSERT_EQ(2u, details.rasterOverlayRectangles.size());
-    EXPECT_EQ(modelRectangle, details.rasterOverlayRectangles[0]);
-    EXPECT_EQ(metadataRectangle, details.rasterOverlayRectangles[1]);
-    EXPECT_EQ(modelRectangle.computeUnion(metadataRectangle),
-              details.boundingRegion.rectangle);
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(metadataRectangle, details.rasterOverlayRectangles[0]);
+    EXPECT_EQ(metadataRectangle, details.boundingRegion.rectangle);
+}
+
+TEST(RasterOverlayDetailsTest,
+     TerrainMetadataApplicatorReplacesStaleRenderContentDetails) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    auto model = std::make_unique<GltfModel>();
+    const Rectangle staleRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, 0.0, 5.0);
+    model->rasterOverlayDetails.setGeographicRectangle(
+        staleRectangle,
+        -20.0,
+        30.0);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+
+    const Rectangle loadResultRectangle =
+        Rectangle::fromDegrees(0.0, -5.0, 10.0, 5.0);
+    TileLoadResultMetadata metadata;
+    metadata.rasterOverlayDetails.emplace();
+    metadata.rasterOverlayDetails->setGeographicRectangle(
+        loadResultRectangle,
+        -10.0,
+        40.0);
+
+    TileLoadResultMetadataApplicator::apply(tile, std::move(metadata));
+
+    const RasterOverlayDetails& details =
+        tile.content.renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(loadResultRectangle, details.rasterOverlayRectangles[0]);
+    EXPECT_EQ(loadResultRectangle, details.boundingRegion.rectangle);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,

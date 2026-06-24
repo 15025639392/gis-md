@@ -102,7 +102,9 @@ void TileLoadResultMetadataApplicator::apply(
     if (metadata.rasterOverlayDetails) {
         if (RasterOverlayDetails* details =
                 tile.content.renderContent.mutableRasterOverlayDetails()) {
-            if (!details->equalsExact(*metadata.rasterOverlayDetails)) {
+            if (tile.content.renderContent.isTerrainRenderContent()) {
+                *details = *metadata.rasterOverlayDetails;
+            } else if (!details->equalsExact(*metadata.rasterOverlayDetails)) {
                 details->merge(*metadata.rasterOverlayDetails);
             }
         }
