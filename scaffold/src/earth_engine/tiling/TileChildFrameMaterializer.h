@@ -16,40 +16,48 @@ struct TileChildFrameMaterializeInput {
     bool contentProviderOwnsTerrainQuadtree = false;
 };
 
+struct TileChildFrameMaterializeResult {
+    bool changed = false;
+    bool retryLater = false;
+};
+
 class TileChildFrameMaterializer {
 public:
     template <typename EnsureTileFn, typename AvailabilityStateFn>
-    static void ensureChildren(
+    static TileChildFrameMaterializeResult ensureChildren(
         TileChildFrameMaterializeInput input,
         EnsureTileFn&& ensureTile,
         AvailabilityStateFn&& availabilityState) {
         if (!input.contentChildKeys.empty()) {
-            TileChildMaterializer::linkContentChildren(
-                input.tile,
-                input.contentChildKeys,
-                ensureTile);
-            return;
+            return TileChildFrameMaterializeResult{
+                TileChildMaterializer::linkContentChildren(
+                    input.tile,
+                    input.contentChildKeys,
+                    ensureTile),
+                false};
         }
 
         if (input.tile.key.z >= input.maxZoom) {
-            return;
+            return {};
         }
         if (input.tile.content.isTerrainAvailabilityUpsample()) {
-            return;
+            return {};
         }
         if (!input.hasTerrainQuadtree) {
-            return;
+            return {};
         }
         if (input.isAvailabilityBoundaryWaitingForContent) {
-            return;
+            return TileChildFrameMaterializeResult{false, true};
         }
 
-        TileChildMaterializer::materializeTerrainChildren(
-            input.tile,
-            input.maxZoom,
-            availabilityState,
-            ensureTile,
-            input.contentProviderOwnsTerrainQuadtree);
+        return TileChildFrameMaterializeResult{
+            TileChildMaterializer::materializeTerrainChildren(
+                input.tile,
+                input.maxZoom,
+                availabilityState,
+                ensureTile,
+                input.contentProviderOwnsTerrainQuadtree),
+            false};
     }
 };
 

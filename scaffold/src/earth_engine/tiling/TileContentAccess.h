@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileKey.h"
+#include "TileChildFrameMaterializer.h"
 #include "TileContentLifecycleManager.h"
 #include "TileLegacyHeightmapContentResolver.h"
 #include "RasterMappedToTilesetTile.h"
@@ -39,7 +40,7 @@ public:
         size_t rasterOverlayCount);
 
     TilesetTile* ensureTile(const TileKey& key);
-    void ensureTileChildren(TilesetTile& tile);
+    TileChildFrameMaterializeResult ensureTileChildren(TilesetTile& tile);
     bool hasResolvedAvailabilityBoundaryContent(const TilesetTile& tile) const;
     bool isAvailabilityBoundaryTile(const TilesetTile& tile) const;
     bool canRefine(const TilesetTile& tile) const;

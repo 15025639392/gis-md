@@ -782,6 +782,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     ASSERT_NE(nullptr, boundary);
     boundary->content.loadState = TileLoadState::ContentLoading;
     EXPECT_TRUE(boundary->children.empty());
+    const TileChildFrameMaterializeResult waitingChildren =
+        contentAccess.ensureTileChildren(*boundary);
+    EXPECT_TRUE(waitingChildren.retryLater);
+    EXPECT_FALSE(waitingChildren.changed);
+    EXPECT_TRUE(boundary->children.empty());
 
     QuantizedMeshAvailabilityUpdate update;
     update.layerIndex = 0;
@@ -823,6 +828,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     }
 
     bool childrenEnsured = false;
+    TileChildFrameMaterializeResult commitChildren;
     bool resourcesDirty = false;
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
@@ -834,9 +840,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&contentAccess](const TileKey& key) {
             return contentAccess.ensureTile(key);
         },
-        [&contentAccess, &childrenEnsured](TilesetTile& tile) {
+        [&contentAccess, &childrenEnsured, &commitChildren](
+            TilesetTile& tile) {
             childrenEnsured = true;
-            contentAccess.ensureTileChildren(tile);
+            commitChildren = contentAccess.ensureTileChildren(tile);
         },
         [](TilesetTile& committedTile) {
             committedTile.content.renderContent.addGltfPrimitiveResource(
@@ -846,6 +853,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_TRUE(childrenEnsured);
+    EXPECT_TRUE(commitChildren.changed);
+    EXPECT_FALSE(commitChildren.retryLater);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_EQ(TileLoadState::Done, boundary->content.loadState);
     ASSERT_EQ(4u, boundary->children.size());

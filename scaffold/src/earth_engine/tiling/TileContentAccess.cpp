@@ -114,13 +114,15 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
     return tile;
 }
 
-void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
+TileChildFrameMaterializeResult
+TileContentAccess::ensureTileChildren(TilesetTile& tile) {
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key)) {
         const std::vector<TileKey> childKeys =
             contentProviderOwnsTerrainQuadtree() && contentProvider_
                 ? contentProvider_->childTiles(tile.key)
                 : TileSelectionRootPolicy::levelZeroTerrainRoots(
                       tile.key.schemeId);
+        bool changed = false;
         for (const TileKey& childKey : childKeys) {
             TilesetTile* child = ensureTile(childKey);
             if (!child) {
@@ -143,12 +145,12 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
                         tile);
                 }
             }
-            linkChildIfMissing(tile, *child);
+            changed |= linkChildIfMissing(tile, *child);
         }
-        return;
+        return TileChildFrameMaterializeResult{changed, false};
     }
 
-    TileChildFrameMaterializer::ensureChildren(
+    return TileChildFrameMaterializer::ensureChildren(
         TileChildFrameMaterializeInput{
             tile,
             contentProvider_ && !contentProviderOwnsTerrainQuadtree()
