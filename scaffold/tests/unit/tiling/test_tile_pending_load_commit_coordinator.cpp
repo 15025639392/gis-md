@@ -2351,6 +2351,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     tile.content.renderContent.setGltfContent(
         makeCommitCoordinatorQuadTerrainGltfModel(bounds));
     tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
     tile.content.renderContent.setGltfResourcesReady(true);
 
     RasterOverlayDetails details;
@@ -2420,6 +2422,97 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(tile.content.renderContent.hasGltfContent());
     EXPECT_FALSE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_FALSE(tile.rasterOverlayState.hasMissingProjections());
+    EXPECT_EQ(loadingTileUseCountBeforeCommit - 1, loadingTile.use_count());
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     RetryLaterTerminalReleasesMappedRasterReferencesButKeepsRenderContentLikeCesiumNative) {
+    const TileKey key{"Geographic-TMS", 2, 1, 1};
+    const std::string cacheKey = "test:retry-terminal-raster-detach";
+    const Rectangle bounds = Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
+    TilesetTile tile(key, bounds);
+    tile.geometricError = 100.0;
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.renderContent.setGltfContent(
+        makeCommitCoordinatorQuadTerrainGltfModel(bounds));
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.setGltfResourcesReady(true);
+    const GltfModel* rawModel =
+        tile.content.renderContent.gltfModelForRead();
+
+    RasterOverlayDetails details;
+    details.rasterOverlayProjections = {RasterOverlayProjection::WebMercator};
+    details.rasterOverlayRectangles = {
+        projectRectangleSimple(WebMercatorProjection(Ellipsoid::WGS84()),
+                               bounds)};
+    details.boundingRegion = {bounds, -25.0, 125.0};
+    RasterOverlayDetails* mutableDetails =
+        tile.content.renderContent.mutableRasterOverlayDetails();
+    ASSERT_NE(nullptr, mutableDetails);
+    *mutableDetails = details;
+
+    RasterOverlay overlay(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activeOverlay(overlay);
+    std::vector<ActivatedRasterOverlay*> rasterOverlays{&activeOverlay};
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        rasterOverlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mapped);
+    ASSERT_NE(nullptr, mapped->getLoadingTile());
+    std::shared_ptr<RasterOverlayTile> loadingTile =
+        mapped->getLoadingTileHandle();
+    ASSERT_NE(nullptr, loadingTile);
+    ASSERT_GT(loadingTile.use_count(), 1);
+    const long loadingTileUseCountBeforeCommit = loadingTile.use_count();
+    EXPECT_EQ(1, activeOverlay.getCachedTileCount());
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    PendingTileLoad result{
+        TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        result,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_TRUE(tile.content.renderContent.hasGltfPrimitiveResources());
     EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
     EXPECT_FALSE(tile.rasterOverlayState.hasMissingProjections());
     EXPECT_EQ(loadingTileUseCountBeforeCommit - 1, loadingTile.use_count());
