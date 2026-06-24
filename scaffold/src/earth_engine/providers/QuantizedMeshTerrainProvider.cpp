@@ -1319,12 +1319,10 @@ void QuantizedMeshTerrainProvider::syncPublicStateFromLayers() {
     minZoom_ = primary.minZoom;
     maxZoom_ = primary.maxZoom;
     attribution_.clear();
-    std::unordered_set<std::string> seenAttributions;
     for (const LayerConfig& layer : layers_) {
         minZoom_ = std::min(minZoom_, layer.minZoom);
         maxZoom_ = std::max(maxZoom_, layer.maxZoom);
         if (layer.attribution.empty()) continue;
-        if (!seenAttributions.insert(layer.attribution).second) continue;
         if (!attribution_.empty()) {
             attribution_ += "\n";
         }

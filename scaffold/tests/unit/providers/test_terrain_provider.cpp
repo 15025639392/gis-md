@@ -2016,6 +2016,52 @@ TEST(QuantizedMeshTerrainProviderTest, ParentLayerFillsTopLayerGapsLikeCesiumNat
     std::filesystem::remove_all(root);
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     ParentLayerDuplicateAttributionsArePreservedLikeCesiumNative) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_parent_layer_duplicate_attribution_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "child");
+    std::filesystem::create_directories(root / "parent");
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "attribution": "Shared terrain credit",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4
+    })json";
+    {
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "attribution": "Shared terrain credit",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "maxzoom": 4
+    })json";
+
+    const std::string childLayerUrl =
+        "file://" + (root / "child" / "layer.json").generic_string();
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(childLayerJson, childLayerUrl));
+
+    EXPECT_EQ(
+        "Shared terrain credit\nShared terrain credit",
+        provider.attribution());
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, MissingParentLayerKeepsChildLayerLikeCesiumNative) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
