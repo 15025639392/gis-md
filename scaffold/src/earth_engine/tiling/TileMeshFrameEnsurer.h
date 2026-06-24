@@ -74,7 +74,8 @@ public:
             (tile.rasterOverlayState.mappingCount() > 0 ||
              tile.rasterOverlayState.hasMissingProjections());
         if (hasHeightmapSurfaceResidue || hasRasterOverlayResidue) {
-            tile.content.renderContent.clearSurfaceMeshResources();
+            tile.content.renderContent
+                .clearSurfaceResiduePreservingContentMetadata();
             tile.content.renderContent.clearRetainedHeightmap();
             tile.rasterOverlayState.releaseAndClearReferences(nullptr);
             markResourcesDirty();

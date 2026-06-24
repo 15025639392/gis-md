@@ -412,6 +412,22 @@ public:
         clearTerrainHeightRange();
     }
 
+    void clearSurfaceResiduePreservingContentMetadata() {
+        const bool hadGltfContent = gltfModel != nullptr;
+        const bool hadTerrainHeightRange = surface_.hasTerrainHeightRange;
+        const double terrainMinimumHeight = surface_.terrainMinimumHeight;
+        const double terrainMaximumHeight = surface_.terrainMaximumHeight;
+        clearSurfaceMeshResources();
+        if (hadGltfContent) {
+            surface_.surfaceSource = SurfaceDrawableSource::GltfContent;
+            if (hadTerrainHeightRange) {
+                setTerrainHeightRange(
+                    terrainMinimumHeight,
+                    terrainMaximumHeight);
+            }
+        }
+    }
+
     void clearRenderContent() {
         clearSurfaceMeshResources();
         surface_.heightmap.reset();

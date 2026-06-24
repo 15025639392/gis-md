@@ -12149,6 +12149,9 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     gltfWithStaleHeightmapSurface.content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(gltfWithStaleHeightmapSurface.bounds),
         Mat4::identity());
+    gltfWithStaleHeightmapSurface.content.renderContent.setTerrainHeightRange(
+        -25.0,
+        875.0);
     gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
     gltfWithStaleHeightmapSurface.content.renderContent.setMeshReady(true);
@@ -12166,8 +12169,15 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     check(gltfStaleResourcesDirty &&
               gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
               !gltfWithStaleHeightmapSurface.content.renderContent.hasSurfaceMesh() &&
-              !gltfWithStaleHeightmapSurface.content.renderContent.hasRetainedHeightmap(),
-          "TileMeshFrameEnsurer: glTF terrain clears stale heightmap surface residue without SurfaceMesh path");
+              !gltfWithStaleHeightmapSurface.content.renderContent.hasRetainedHeightmap() &&
+              gltfWithStaleHeightmapSurface.content.renderContent.hasTerrainHeightRange() &&
+              std::abs(gltfWithStaleHeightmapSurface.content.renderContent
+                           .terrainMinimumHeight() -
+                       -25.0) < 1e-12 &&
+              std::abs(gltfWithStaleHeightmapSurface.content.renderContent
+                           .terrainMaximumHeight() -
+                       875.0) < 1e-12,
+          "TileMeshFrameEnsurer: glTF terrain clears stale heightmap surface residue without losing content height range");
 
     TilesetTile staleHeightmapSurfaceTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
