@@ -52,7 +52,6 @@ public:
             ownHeightmap,
             input.device,
             input.hasTerrainQuadtree,
-            true,
             std::forward<IngestAvailabilityFn>(ingestAvailability),
             std::forward<FindUpsampleSourceFn>(findUpsampleSource),
             std::forward<EnsureAncestorMeshFn>(ensureAncestorMesh),
@@ -81,24 +80,11 @@ private:
         DecodedHeightmap* ownHeightmap,
         RenderDevice* device,
         bool hasTerrainQuadtree,
-        bool useHeightmapSurfacePath,
         IngestAvailabilityFn&& ingestAvailability,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        const bool contentTerrainQuadtreeOwnsSurface =
-            hasTerrainQuadtree && !useHeightmapSurfacePath;
-        const bool hasHeightmapSurfaceResidue =
-            contentTerrainQuadtreeOwnsSurface &&
-            (tile.content.renderContent.hasSurfaceMesh() ||
-             tile.content.renderContent.hasRetainedHeightmap());
-        if (hasHeightmapSurfaceResidue) {
-            tile.content.renderContent.clearSurfaceMeshResources();
-            tile.content.renderContent.clearRetainedHeightmap();
-            markResourcesDirty();
-        }
-
         if (tile.content.renderContent.hasGltfContent()) {
             return;
         }
@@ -110,7 +96,7 @@ private:
                     ownHeightmap,
                     device,
                     hasTerrainQuadtree,
-                    useHeightmapSurfacePath},
+                    true},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,
