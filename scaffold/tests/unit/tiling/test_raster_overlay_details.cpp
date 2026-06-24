@@ -15,6 +15,7 @@
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileLoadResultMetadataApplicator.h"
+#include "earth_engine/tiling/TileRasterOverlayDetailsDeriver.h"
 #include "earth_engine/tiling/TileRasterOverlayDetailsGenerator.h"
 #include "earth_engine/tiling/TileRasterOverlayMappingPolicy.h"
 #include "earth_engine/tiling/TileRenderContentState.h"
@@ -1223,4 +1224,50 @@ TEST(RasterOverlayDetailsGeneratorTest,
     ASSERT_GE(primitive.vertexTexCoords[0].size(), 2u);
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
+}
+
+TEST(RasterOverlayDetailsDeriverTest,
+     ChildOverlayRectangleInterpolatesAcrossAntimeridianLikeCesiumNative) {
+    RasterOverlayDetails parentDetails;
+    const Rectangle parentBounds =
+        Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0);
+    parentDetails.setGeographicRectangle(parentBounds, -50.0, 150.0);
+
+    const Rectangle westernChild =
+        Rectangle::fromDegrees(170.0, -10.0, 180.0, 10.0);
+    const RasterOverlayDetails westernDetails =
+        TileRasterOverlayDetailsDeriver::deriveChildFromParent(
+            parentDetails,
+            parentBounds,
+            westernChild,
+            -50.0,
+            150.0);
+
+    ASSERT_EQ(1u, westernDetails.rasterOverlayRectangles.size());
+    const Rectangle expectedWestern =
+        Rectangle::fromDegrees(170.0, -10.0, -180.0, 10.0);
+    expectRectangleNear(
+        expectedWestern,
+        westernDetails.rasterOverlayRectangles.front());
+    EXPECT_TRUE(
+        westernDetails.rasterOverlayRectangles.front().crossesAntimeridian());
+    EXPECT_EQ(westernChild, westernDetails.boundingRegion.rectangle);
+
+    const Rectangle easternChild =
+        Rectangle::fromDegrees(-180.0, -10.0, -170.0, 10.0);
+    const RasterOverlayDetails easternDetails =
+        TileRasterOverlayDetailsDeriver::deriveChildFromParent(
+            parentDetails,
+            parentBounds,
+            easternChild,
+            -50.0,
+            150.0);
+
+    ASSERT_EQ(1u, easternDetails.rasterOverlayRectangles.size());
+    expectRectangleNear(
+        easternChild,
+        easternDetails.rasterOverlayRectangles.front());
+    EXPECT_FALSE(
+        easternDetails.rasterOverlayRectangles.front().crossesAntimeridian());
+    EXPECT_EQ(easternChild, easternDetails.boundingRegion.rectangle);
 }
