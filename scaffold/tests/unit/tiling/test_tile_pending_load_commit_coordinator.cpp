@@ -934,11 +934,17 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
     const Rectangle updatedRectangle(0.1, 0.2, 0.3, 0.4);
+    const Rectangle updatedContentRectangle(0.5, 0.6, 0.7, 0.8);
 
     TileLoadResult result = TileLoadResult::createTerminal(
         TileLoadStatus::Empty);
     result.content.metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(updatedRectangle, -10.0, 20.0);
+    result.content.metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(
+            updatedContentRectangle,
+            -5.0,
+            15.0);
     PendingTileLoad pending{TileLoadDomain::Content,
         key,
         cacheKey,
@@ -961,6 +967,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
     EXPECT_DOUBLE_EQ(-10.0, tile.boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(20.0, tile.boundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(updatedContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(-5.0, tile.contentBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(15.0, tile.contentBoundingVolume->maximumHeight);
     EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
@@ -1128,10 +1138,18 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
     const Rectangle updatedRectangle(0.3, 0.4, 0.5, 0.6);
+    const Rectangle updatedContentRectangle(0.35, 0.45, 0.55, 0.65);
 
+    TileLoadResultMetadata metadata =
+        makeBoundingVolumeMetadata(updatedRectangle, 5.0, 70.0);
+    metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(
+            updatedContentRectangle,
+            7.0,
+            60.0);
     TileLoadResult result = TileLoadResult::createTerminal(
         TileLoadStatus::External,
-        makeBoundingVolumeMetadata(updatedRectangle, 5.0, 70.0));
+        std::move(metadata));
     PendingTileLoad pending{TileLoadDomain::Content,
         key,
         cacheKey,
@@ -1154,6 +1172,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
     EXPECT_DOUBLE_EQ(5.0, tile.boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(70.0, tile.boundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(updatedContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(7.0, tile.contentBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(60.0, tile.contentBoundingVolume->maximumHeight);
     EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
