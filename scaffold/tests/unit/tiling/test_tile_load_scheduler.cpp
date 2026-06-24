@@ -1168,6 +1168,67 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
 }
 
+TEST(TileLoadSchedulerTest,
+     PermanentlyFailedTerrainUpsampleDoesNotPrepareOrRetryLikeCesiumNative) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey failedUpsampleKey{"test", 2, 0, 0};
+    TilesetTile failedTile(failedUpsampleKey, Rectangle{});
+    failedTile.content.markTerrainAvailabilityUpsample();
+    failedTile.content.loadState = TileLoadState::Failed;
+
+    bool snapshotBuilt = false;
+    bool prepared = false;
+    bool markedLoading = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                failedUpsampleKey,
+                TileLoadPriorityGroup::Normal,
+                10.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr},
+            cacheKeyForTile,
+            [&failedUpsampleKey, &failedTile, &snapshotBuilt](
+                const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                EXPECT_EQ(failedUpsampleKey, key);
+                snapshotBuilt = true;
+                tileState = &failedTile;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                snapshot.loadState = failedTile.content.loadState;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&markedLoading](const TileKey&) {
+                markedLoading = true;
+            });
+
+    EXPECT_TRUE(snapshotBuilt);
+    EXPECT_FALSE(prepared);
+    EXPECT_FALSE(markedLoading);
+    EXPECT_EQ(TileLoadState::Failed, failedTile.content.loadState);
+    EXPECT_EQ(0u, outcome.issued);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(0u, lifecycle.counts().gltfTerrainTerminalResults);
+    EXPECT_EQ(0u, lifecycle.counts().gltfTerrainUploads);
+}
+
 TEST(TileLoadSchedulerTest, SkipsEmptyUpsampledCacheKey) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
