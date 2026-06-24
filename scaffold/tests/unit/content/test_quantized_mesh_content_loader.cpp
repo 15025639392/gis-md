@@ -5,6 +5,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Vec3.h"
+#include "earth_engine/tiling/TileLoadTypes.h"
 
 #include <array>
 #include <cmath>
@@ -356,6 +357,8 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_EQ(geographicRootWestRectangle(),
               result.metadata.updatedBoundingVolume->region);
     ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
+    EXPECT_TRUE(result.metadata.rasterOverlayDetails->equalsExact(
+        result.gltfModel->rasterOverlayDetails));
     const Rectangle* rasterRectangle =
         result.metadata.rasterOverlayDetails->findRectangleForOverlayProjection(
             RasterOverlayProjection::Geographic);
@@ -365,6 +368,13 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_EQ(2, result.quantizedMeshAvailabilityUpdates.front().layerIndex);
     EXPECT_EQ(currentTileUpdate.subtreeKey,
               result.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+
+    TileLoadResult loadResult =
+        TileLoadResult::fromContentResult(std::move(result));
+    EXPECT_EQ(TileLoadStatus::Renderable, loadResult.status);
+    EXPECT_TRUE(loadResult.shouldUpload());
+    EXPECT_TRUE(loadResult.isRenderableContentTerrain());
+    EXPECT_TRUE(loadResult.content.satisfiesContentTerrainPayloadContract());
 }
 
 TEST(QuantizedMeshContentLoaderTest,
