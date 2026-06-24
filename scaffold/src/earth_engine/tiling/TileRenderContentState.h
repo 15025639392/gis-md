@@ -455,6 +455,7 @@ public:
                             const Mat4& contentTransform) {
         surface_.heightmap.reset();
         surface_.mesh.reset();
+        surfaceWaterMaskTexture_.reset();
         surface_.horizonOcclusionPoint.reset();
         surface_.meshReady = false;
         clearTerrainHeightRange();

@@ -24,6 +24,17 @@ using namespace earth_engine;
 
 namespace {
 
+class TestTexture final : public Texture {
+public:
+    TestTexture(int width, int height) : width_(width), height_(height) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+};
+
 void prepareGltfRenderContent(TileRenderContentState& renderContent,
                               RasterOverlayDetails details = {}) {
     auto model = std::make_unique<GltfModel>();
@@ -188,6 +199,33 @@ TEST(RasterOverlayDetailsTest,
     expectRectangleNear(
         gltfRectangle,
         renderContent.rasterOverlayDetails().rasterOverlayRectangles.front());
+}
+
+TEST(RasterOverlayDetailsTest,
+     PreparingGltfTerrainClearsLegacySurfaceWaterMaskTexture) {
+    TileRenderContentState renderContent;
+    renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    renderContent.setSurfaceWaterMaskTexture(
+        std::make_unique<TestTexture>(8, 4));
+    const int64_t retainedWithLegacyWater =
+        renderContent.estimateRetainedBytes();
+    ASSERT_NE(nullptr, renderContent.surfaceWaterMaskTexture());
+    ASSERT_GE(retainedWithLegacyWater, 8 * 4 * 4);
+
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle(0.0, 0.0, 1.0, 1.0),
+        -1.0,
+        1.0);
+    renderContent.prepareGltfContent(std::move(model), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    EXPECT_TRUE(renderContent.hasGltfContent());
+    EXPECT_TRUE(renderContent.isTerrainRenderContent());
+    EXPECT_EQ(nullptr, renderContent.surfaceWaterMaskTexture());
+    EXPECT_FALSE(renderContent.hasSurfaceMesh());
+    EXPECT_LT(renderContent.estimateRetainedBytes(),
+              retainedWithLegacyWater);
 }
 
 TEST(RasterOverlayDetailsTest,
