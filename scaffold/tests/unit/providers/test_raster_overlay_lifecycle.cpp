@@ -1654,8 +1654,8 @@ TEST(RasterOverlayLifecycleTest,
     const Rectangle spanningFourTiles(
         centerBounds.west() - centerBounds.width() * 0.5,
         centerBounds.south() - centerBounds.height() * 0.5,
-        centerBounds.west() + centerBounds.width() * 0.5,
-        centerBounds.south() + centerBounds.height() * 0.5);
+        centerBounds.east() + centerBounds.width() * 0.5,
+        centerBounds.north() + centerBounds.height() * 0.5);
 
     RasterOverlayTileProvider::RasterTileMapping mapping =
         provider.mapRasterTilesToGeometryTile(
@@ -1725,19 +1725,19 @@ TEST(RasterOverlayLifecycleTest,
     ASSERT_EQ(1, uploaderPtr->uploadCount);
     ASSERT_FALSE(uploaderPtr->lastUpload.pixels.empty());
 
-    const std::vector<uint8_t>& pixels = uploaderPtr->lastUpload.pixels;
-    EXPECT_TRUE(std::any_of(
-        pixels.begin(),
-        pixels.end(),
-        [](uint8_t value) {
-            return value == 7;
-        }));
-    EXPECT_TRUE(std::any_of(
-        pixels.begin(),
-        pixels.end(),
-        [](uint8_t value) {
-            return value == 8;
-        }));
+    const DecodedImage& image = uploaderPtr->lastUpload;
+    ASSERT_EQ(4, image.channels);
+    bool hasParentLevelPixel = false;
+    bool hasSourceLevelPixel = false;
+    for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        for (int channel = 0; channel < 3; ++channel) {
+            const uint8_t value = image.pixels[i + static_cast<size_t>(channel)];
+            hasParentLevelPixel = hasParentLevelPixel || value == 7;
+            hasSourceLevelPixel = hasSourceLevelPixel || value == 8;
+        }
+    }
+    EXPECT_TRUE(hasParentLevelPixel);
+    EXPECT_TRUE(hasSourceLevelPixel);
 }
 
 TEST(
@@ -4043,15 +4043,22 @@ TEST(RasterOverlayLifecycleTest, CompositeImageMixesSourceLevelsAfterFailureLike
               static_cast<size_t>(image.width) *
                   static_cast<size_t>(image.height) * 4u);
 
+    bool allPixelsCameFromExpectedLevels = true;
     bool hasParentLevelPixel = false;
     bool hasSourceLevelPixel = false;
     for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        const bool cameFromExpectedLevel =
+            image.pixels[i] == expectedSourceZoom - 1 ||
+            image.pixels[i] == expectedSourceZoom;
+        allPixelsCameFromExpectedLevels =
+            allPixelsCameFromExpectedLevels && cameFromExpectedLevel;
         hasParentLevelPixel = hasParentLevelPixel ||
                               image.pixels[i] == expectedSourceZoom - 1;
         hasSourceLevelPixel = hasSourceLevelPixel ||
                               image.pixels[i] == expectedSourceZoom;
     }
 
+    EXPECT_TRUE(allPixelsCameFromExpectedLevels);
     EXPECT_TRUE(hasParentLevelPixel);
     EXPECT_TRUE(hasSourceLevelPixel);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
