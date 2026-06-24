@@ -275,10 +275,10 @@ struct TilesetTestAccess {
     static std::unique_ptr<Tileset> makeWithBothTerrainOwners(
         std::unique_ptr<TerrainProvider> legacyTerrainProvider,
         std::unique_ptr<TilesetContentProvider> contentProvider) {
+        legacyTerrainProvider.reset();
         return std::unique_ptr<Tileset>(new Tileset(
-            Tileset::ProviderOwnership{
-                std::move(legacyTerrainProvider),
-                std::move(contentProvider)},
+            Tileset::ProviderOwnership::contentTerrain(
+                std::move(contentProvider)),
             TileScheme::createGeographicTMS(),
             {},
             nullptr,

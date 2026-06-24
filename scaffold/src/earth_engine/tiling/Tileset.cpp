@@ -53,6 +53,25 @@ bool usesHeightmapTerrainSurfacePath(const TerrainProvider* terrainProvider) {
 
 } // namespace
 
+Tileset::ProviderOwnership Tileset::ProviderOwnership::noTerrain() {
+    return ProviderOwnership{};
+}
+
+Tileset::ProviderOwnership Tileset::ProviderOwnership::contentTerrain(
+    std::unique_ptr<TilesetContentProvider> contentProvider) {
+    ProviderOwnership providers;
+    providers.contentProvider = std::move(contentProvider);
+    return providers;
+}
+
+Tileset::ProviderOwnership
+Tileset::ProviderOwnership::legacyHeightmapSurfaceForTests(
+    std::unique_ptr<TerrainProvider> terrainProvider) {
+    ProviderOwnership providers;
+    providers.heightmapTerrainProvider = std::move(terrainProvider);
+    return providers;
+}
+
 Tileset Tileset::createLegacyTerrainForTests(
     std::unique_ptr<TerrainProvider> terrainProvider,
     std::unique_ptr<TileScheme> tileScheme,
@@ -60,7 +79,8 @@ Tileset Tileset::createLegacyTerrainForTests(
     RenderDevice* device,
     TilesetOptions options) {
     return Tileset(
-        ProviderOwnership{std::move(terrainProvider), nullptr, true},
+        ProviderOwnership::legacyHeightmapSurfaceForTests(
+            std::move(terrainProvider)),
         std::move(tileScheme),
         std::move(rasterOverlays),
         device,
@@ -72,7 +92,7 @@ Tileset::Tileset(std::unique_ptr<TileScheme> tileScheme,
                  RenderDevice* device,
                  TilesetOptions options)
     : Tileset(
-          ProviderOwnership{nullptr, nullptr},
+          ProviderOwnership::noTerrain(),
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,
@@ -84,9 +104,7 @@ Tileset::Tileset(ProviderOwnership providers,
                  RenderDevice* device,
                  TilesetOptions options)
     : heightmapTerrainProvider_(
-          providers.allowHeightmapSurfacePathForTests &&
-                  !contentProviderOwnsTerrainQuadtree(
-                      providers.contentProvider.get())
+          !contentProviderOwnsTerrainQuadtree(providers.contentProvider.get())
               ? std::move(providers.heightmapTerrainProvider)
               : std::unique_ptr<TerrainProvider>{}),
       contentProvider_(std::move(providers.contentProvider)),
@@ -168,7 +186,7 @@ Tileset::Tileset(
     TilesetOptions options,
     std::unique_ptr<TilesetContentProvider> contentProvider)
     : Tileset(
-          ProviderOwnership{nullptr, std::move(contentProvider)},
+          ProviderOwnership::contentTerrain(std::move(contentProvider)),
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,

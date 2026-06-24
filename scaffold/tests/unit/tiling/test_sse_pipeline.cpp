@@ -170,10 +170,8 @@ struct TilesetTestAccess {
         TilesetOptions options = {}) {
         return std::unique_ptr<Tileset>(
             new Tileset(
-                Tileset::ProviderOwnership{
-                    std::move(terrainProvider),
-                    nullptr,
-                    true},
+                Tileset::ProviderOwnership::legacyHeightmapSurfaceForTests(
+                    std::move(terrainProvider)),
                 std::move(scheme),
                 std::move(overlays),
                 device,
