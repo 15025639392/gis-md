@@ -17,6 +17,7 @@
 #include "earth_engine/tiling/TilePendingUploadFrameProcessor.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileLoadRequestDispatcher.h"
+#include "earth_engine/tiling/TileContentUnloadCoordinator.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
@@ -4186,6 +4187,76 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(child.content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(child.content.renderContent.isTerrainRenderContent());
     EXPECT_FALSE(child.content.renderContent.hasRasterOverlayDetailsContent());
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainAvailabilityUpsampleLoadingProtectsParentGltfContentOnUnloadLikeCesiumNative) {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 1, 0};
+    const std::string cacheKey = "terrain-availability-parent";
+    const Rectangle parentBounds =
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0);
+    const Rectangle childBounds =
+        Rectangle::fromDegrees(-90.0, -90.0, 0.0, 0.0);
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    parent.children.push_back(&child);
+
+    GltfModel* rawParentModel = nullptr;
+    {
+        auto parentModel =
+            makeCommitCoordinatorQuadTerrainGltfModel(parentBounds);
+        rawParentModel = parentModel.get();
+        parent.content.renderContent.setGltfContent(std::move(parentModel));
+    }
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.setGltfResourcesReady(true);
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Done;
+
+    child.content.markTerrainAvailabilityUpsample();
+    child.content.loadState = TileLoadState::ContentLoading;
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileCacheUnloadContentResult firstUnload =
+        TileContentUnloadCoordinator::unloadContent(
+            parent,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Keep, firstUnload);
+    EXPECT_EQ(TileLoadState::Unloading, parent.content.loadState);
+    EXPECT_EQ(TileContentKind::Render, parent.content.contentKind);
+    EXPECT_EQ(rawParentModel, parent.content.renderContent.gltfModelForRead());
+    EXPECT_TRUE(parent.content.renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(parent.content.renderContent.hasGltfPrimitiveResources());
+    EXPECT_FALSE(parent.content.renderContent.hasGltfResources());
+    EXPECT_TRUE(
+        parent.content.renderContent.hasRasterOverlayDetailsContent());
+
+    child.content.loadState = TileLoadState::Done;
+    const TileCacheUnloadContentResult secondUnload =
+        TileContentUnloadCoordinator::unloadContent(
+            parent,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Remove, secondUnload);
+    EXPECT_EQ(TileLoadState::Unloaded, parent.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, parent.content.contentKind);
+    EXPECT_FALSE(parent.content.renderContent.hasGltfContent());
+    EXPECT_FALSE(parent.content.renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(
+        parent.content.renderContent.hasRasterOverlayDetailsContent());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
