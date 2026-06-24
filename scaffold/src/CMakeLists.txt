@@ -368,6 +368,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TilesetUpdateFrameRuntime.cpp
     earth_engine/tiling/TilesetRenderFrameExecutor.h
     earth_engine/tiling/TilesetRenderFrameExecutor.cpp
+    earth_engine/tiling/TilesetTerrainProviders.h
+    earth_engine/tiling/TilesetTerrainProviders.cpp
     earth_engine/tiling/TileRenderContentState.h
     earth_engine/tiling/TileRenderReferenceState.h
     earth_engine/tiling/TileRenderReferenceReleaser.h

@@ -36,17 +36,6 @@ FrameResourceBudgetConfig makeFrameResourceBudgetConfig(
             resourceSmoothingActive));
 }
 
-bool providerHasTerrainQuadtree(const TerrainProvider* terrainProvider,
-                                const TilesetContentProvider* contentProvider) {
-    return terrainProvider != nullptr ||
-           (contentProvider && contentProvider->providesTerrainQuadtree());
-}
-
-bool contentProviderOwnsTerrainQuadtree(
-    const TilesetContentProvider* contentProvider) {
-    return contentProvider && contentProvider->providesTerrainQuadtree();
-}
-
 } // namespace
 
 Tileset::ProviderOwnership Tileset::ProviderOwnership::noTerrain() {
@@ -76,36 +65,32 @@ Tileset::Tileset(ProviderOwnership providers,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,
                  TilesetOptions options)
-    : legacyHeightmapTerrainProvider_(
-          !contentProviderOwnsTerrainQuadtree(providers.contentProvider.get())
-              ? std::move(providers.legacyHeightmapTerrainProvider)
-              : std::unique_ptr<TerrainProvider>{}),
-      usesLegacyHeightmapTerrainSurfacePath_(
-          legacyHeightmapTerrainProvider_ != nullptr),
-      contentProvider_(std::move(providers.contentProvider)),
+    : terrainProviders_(
+          std::move(providers.legacyHeightmapTerrainProvider),
+          std::move(providers.contentProvider)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),
       device_(device),
       options_(std::move(options)),
       contentAccess_(
-          contentProviderOwnsTerrainQuadtree(contentProvider_.get())
+          terrainProviders_.contentProviderOwnsTerrainQuadtree()
               ? TileContentAccess::forContentTerrain(
                     tileRegistry_,
                     *tileScheme_,
-                    *contentProvider_,
+                    *terrainProviders_.contentProvider(),
                     rasterOverlays_.size())
-              : legacyHeightmapTerrainProvider_
+              : terrainProviders_.usesLegacyHeightmapTerrainSurfacePath()
                     ? TileContentAccess::forHeightmapTerrainSurfacePath(
                           tileRegistry_,
                           *tileScheme_,
-                          legacyHeightmapTerrainProvider_.get(),
-                          contentProvider_.get(),
+                          terrainProviders_.legacyHeightmapTerrainProvider(),
+                          terrainProviders_.contentProvider(),
                           contentLifecycle_.legacyHeightmapTerrainCache(),
                           rasterOverlays_.size())
                     : TileContentAccess::forNoTerrain(
                           tileRegistry_,
                           *tileScheme_,
-                          contentProvider_.get(),
+                          terrainProviders_.contentProvider(),
                           rasterOverlays_.size())),
       resourceInvalidator_(
           resourceRevision_,
@@ -118,7 +103,7 @@ Tileset::Tileset(ProviderOwnership providers,
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
           options_.tileCacheUnloadTimeLimit,
-          usesLegacyHeightmapTerrainSurfacePath_),
+          terrainProviders_.usesLegacyHeightmapTerrainSurfacePath()),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),
@@ -126,10 +111,8 @@ Tileset::Tileset(ProviderOwnership providers,
           contentLifecycle_,
           resourceInvalidator_,
           loadQueue_,
-          providerHasTerrainQuadtree(
-              legacyHeightmapTerrainProvider_.get(),
-              contentProvider_.get()),
-          usesLegacyHeightmapTerrainSurfacePath_
+          terrainProviders_.hasTerrainQuadtree(),
+          terrainProviders_.usesLegacyHeightmapTerrainSurfacePath()
               ? TileMeshPreparationMode::LegacyHeightmapSurface
               : TileMeshPreparationMode::ContentTerrain,
           device_,
@@ -139,7 +122,7 @@ Tileset::Tileset(ProviderOwnership providers,
           contentAccess_,
           meshPreparation_,
           resourceInvalidator_,
-          usesLegacyHeightmapTerrainSurfacePath_),
+          terrainProviders_.usesLegacyHeightmapTerrainSurfacePath()),
       renderCommands_(
           meshPreparation_,
           cacheOwnership_,
@@ -171,9 +154,7 @@ Tileset::Tileset(
           std::move(options)) {}
 
 bool Tileset::hasTerrainQuadtree() const {
-    return providerHasTerrainQuadtree(
-        legacyHeightmapTerrainProvider_.get(),
-        contentProvider_.get());
+    return terrainProviders_.hasTerrainQuadtree();
 }
 
 Tileset::~Tileset() {
@@ -188,7 +169,7 @@ int Tileset::pendingRequests() const {
 }
 
 int Tileset::cachedHeightmapTerrainTilesForLegacySurfacePath() const {
-    if (!usesLegacyHeightmapTerrainSurfacePath_) {
+    if (!terrainProviders_.usesLegacyHeightmapTerrainSurfacePath()) {
         return 0;
     }
     return static_cast<int>(
@@ -215,7 +196,7 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
         contentCache_.unloadQueue(),
         tileRegistry_.tiles());
     TilesetProviderDiagnosticsCollector::collectContentAndRaster(
-        contentProvider_.get(),
+        terrainProviders_.contentProvider(),
         rasterOverlays_)
         .applyTo(diagnostics);
     return diagnostics;
@@ -226,7 +207,7 @@ Tileset::makeContentRuntimeRequestFrame() const {
     TileContentRuntimeRequestFrame frame{
         rasterOverlays_,
         tileRegistry_.tiles()};
-    frame.contentProvider = contentProvider_.get();
+    frame.contentProvider = terrainProviders_.contentProvider();
     frame.device = device_;
     frame.frameNumber = frameNumber_;
     frame.maximumSimultaneousTileLoads =
@@ -241,7 +222,7 @@ Tileset::makeContentRuntimeRequestFrame() const {
 TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
     IPrepareRendererResources* pPrepRenderer) const {
     TileContentRuntimeUploadFrame frame{rasterOverlays_};
-    frame.contentProvider = contentProvider_.get();
+    frame.contentProvider = terrainProviders_.contentProvider();
     frame.device = device_;
     frame.pPrepRenderer = pPrepRenderer;
     frame.frameNumber = frameNumber_;
@@ -301,7 +282,7 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
         contentLifecycle_.legacyHeightmapTerrainCache(),
         lngRad,
         latRad,
-        usesLegacyHeightmapTerrainSurfacePath_);
+        terrainProviders_.usesLegacyHeightmapTerrainSurfacePath());
 }
 
 void Tileset::update(

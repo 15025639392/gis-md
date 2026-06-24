@@ -38,7 +38,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.resourceRevision_,
             tileset.options_.maximumSimultaneousTileLoads,
             TilesetProviderDiagnosticsCollector::collectContentAndRaster(
-                tileset.contentProvider_.get(),
+                tileset.terrainProviders_.contentProvider(),
                 tileset.rasterOverlays_)
                 .maximumTransportActiveRequests(
                     TileFrameResourceBudgetPlanInput::

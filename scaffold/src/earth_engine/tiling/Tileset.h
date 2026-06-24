@@ -20,6 +20,7 @@
 #include "TileSelectionCounters.h"
 #include "TileSelectionMetrics.h"
 #include "TileSelectionReuseState.h"
+#include "TilesetTerrainProviders.h"
 #include "TilesetTileRegistry.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../core/math/Vec3.h"
@@ -165,9 +166,7 @@ private:
         const TilesetTile& tile) const;
     TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
 
-    std::unique_ptr<TerrainProvider> legacyHeightmapTerrainProvider_;
-    bool usesLegacyHeightmapTerrainSurfacePath_ = false;
-    std::unique_ptr<TilesetContentProvider> contentProvider_;
+    TilesetTerrainProviders terrainProviders_;
     std::unique_ptr<TileScheme> tileScheme_;
     std::vector<ActivatedRasterOverlay*> rasterOverlays_;
     RenderDevice* device_ = nullptr;

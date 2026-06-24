@@ -288,7 +288,8 @@ struct TilesetTestAccess {
     }
 
     static bool hasLegacyTerrainProvider(const Tileset& tileset) {
-        return tileset.legacyHeightmapTerrainProvider_ != nullptr;
+        return tileset.terrainProviders_.legacyHeightmapTerrainProvider() !=
+               nullptr;
     }
 };
 } // namespace earth_engine
