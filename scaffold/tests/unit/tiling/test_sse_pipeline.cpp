@@ -133,6 +133,7 @@
 #include <list>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -2425,6 +2426,41 @@ public:
     std::vector<PendingRequest> pendingRequests;
 };
 
+std::unique_ptr<DecodedImage> makeDecodedRgbaImage(int width, int height);
+
+class ThrowOnceImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "throw-once-imagery"; }
+    std::string type() const override { return "throw-once-imagery"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 8; }
+    int tileWidth() const override { return 64; }
+    int tileHeight() const override { return 64; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://throw-once";
+    }
+
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        if (requestCount == 1) {
+            throw std::runtime_error("simulated raster source exception");
+        }
+        callback(key, makeDecodedRgbaImage(64, 64));
+    }
+
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    int requestCount = 0;
+};
+
 class SlowRasterTextureUploader final : public RasterTextureUploader {
 public:
     int maxTextureSize() const override { return 4096; }
@@ -2981,6 +3017,48 @@ void testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot() {
           "RasterOverlayTileProvider: terminal non-exception source failure is cached like cesium-native SharedAssetDepot");
     check(secondBudget.rasterNetworkRequestsIssued() == 0,
           "RasterOverlayTileProvider: cached terminal failure does not consume raster request budget");
+}
+
+void testRasterOverlayExceptionSourceFailureCanRetryLikeSharedAssetDepot() {
+    ThrowOnceImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    const TileKey key{imageryScheme->id(), 0, 0, 0};
+    RasterOverlayTileProvider::TilePtr tile = provider.getTile(key);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+
+    check(tile && provider.loadTileThrottled(*tile, &firstBudget),
+          "RasterOverlayTileProvider: exception retry fixture starts first source request");
+    if (!tile) return;
+
+    check(imagery.requestCount == 1 &&
+              tile->getState() == RasterOverlayTile::LoadState::Unloaded,
+          "RasterOverlayTileProvider: exception source failure remains retryable like cesium-native SharedAssetDepot");
+
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(2, config);
+    check(provider.loadTileThrottled(*tile, &secondBudget) &&
+              imagery.requestCount == 2,
+          "RasterOverlayTileProvider: exception source failure retries the same source key");
+
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(3, config);
+    provider.processPendingUploads(false, &uploadBudget);
+
+    check(tile->getState() == RasterOverlayTile::LoadState::Loaded &&
+              tile->getTexture() != nullptr,
+          "RasterOverlayTileProvider: retried exception source failure can load successfully");
 }
 
 void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
@@ -28183,6 +28261,7 @@ int main() {
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache();
     testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot();
+    testRasterOverlayExceptionSourceFailureCanRetryLikeSharedAssetDepot();
     testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight();
     testRasterOverlayDirectTileJoinsMappedSourceInFlight();
     testRasterOverlayMappedRasterTilesShareSourceInFlight();

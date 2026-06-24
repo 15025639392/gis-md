@@ -1241,6 +1241,18 @@ bool isEpochMappedRasterCacheKey(const std::string& cacheKey) {
     return cacheKey.rfind("mapped-raster/epoch/", 0) == 0;
 }
 
+bool isTransientRasterSourceFailure(
+    const std::vector<std::string>& diagnostics) {
+    return std::any_of(
+        diagnostics.begin(),
+        diagnostics.end(),
+        [](const std::string& diagnostic) {
+            return diagnostic.find(
+                       "Raster source tile request threw before completion") !=
+                   std::string::npos;
+        });
+}
+
 } // namespace
 
 RasterOverlayTileProvider::QuadtreeSourcePlan
@@ -3014,10 +3026,15 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             }
             logAndroidRasterPipeline("compose-failed", cacheKey, 0, 0);
             if (auto tile = tileWeak.lock()) {
+                const bool transientFailure =
+                    isTransientRasterSourceFailure(diagnostics);
                 tile->setLoadDiagnostics(std::move(diagnostics));
                 tile->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
-                tile->setState(RasterOverlayTile::LoadState::Failed);
+                tile->setState(
+                    transientFailure
+                        ? RasterOverlayTile::LoadState::Unloaded
+                        : RasterOverlayTile::LoadState::Failed);
             }
             decrementActiveRasterTileLoads(
                 state->activeRasterTileLoads);
