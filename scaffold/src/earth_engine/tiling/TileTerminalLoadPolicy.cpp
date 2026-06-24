@@ -72,14 +72,12 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
         case TileLoadStatus::RetryLater:
         case TileLoadStatus::Cancelled:
             markUnknownTemporaryFailure(tile, pPrepRenderer);
-            action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Failed:
         case TileLoadStatus::Renderable:
         case TileLoadStatus::External:
             markUnknownPermanentFailure(tile, pPrepRenderer);
-            action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
     }
@@ -115,17 +113,14 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
             break;
         case TileLoadStatus::RetryLater:
             markUnknownTemporaryFailure(tile, pPrepRenderer);
-            action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Cancelled:
             markUnknownTemporaryFailure(tile, pPrepRenderer);
-            action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Failed:
             markUnknownPermanentFailure(tile, pPrepRenderer);
-            action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Renderable:

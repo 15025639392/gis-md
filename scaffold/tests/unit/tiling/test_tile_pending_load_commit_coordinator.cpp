@@ -210,7 +210,7 @@ void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
-    EXPECT_TRUE(childrenEnsured);
+    EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
@@ -306,7 +306,7 @@ void expectRetryLaterPreservesRenderContentLikeCesiumNative(
     EXPECT_FALSE(tile.rasterOverlayState.hasMissingProjections());
     EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
-    EXPECT_TRUE(childrenEnsured);
+    EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
 }
 
@@ -411,7 +411,7 @@ void expectContentTerminalIgnoresMetadata(TileLoadStatus status,
 } // namespace
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainContentFailedOrRetryTerminalEnsuresChildrenLikeCesiumNative) {
+     TerrainContentFailedOrRetryTerminalDoesNotEnsureChildrenLikeCesiumNative) {
     for (const auto& [status, expectedLoadState] :
          std::array<std::pair<TileLoadStatus, TileLoadState>, 2>{
              std::pair{TileLoadStatus::RetryLater,
@@ -445,7 +445,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             [&resourcesDirty]() { resourcesDirty = true; });
 
         EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
-        EXPECT_TRUE(childrenEnsured);
+        EXPECT_FALSE(childrenEnsured);
         EXPECT_TRUE(resourcesDirty);
         EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
         EXPECT_EQ(expectedLoadState, tile.content.loadState);
@@ -504,8 +504,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    EXPECT_TRUE(childrenEnsured);
-    EXPECT_TRUE(childResult.retryLater);
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_FALSE(childResult.retryLater);
     EXPECT_FALSE(childResult.changed);
     EXPECT_TRUE(boundary->children.empty());
     EXPECT_EQ(TileLoadState::FailedTemporarily,
@@ -513,6 +513,12 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(TileContentKind::Unknown, boundary->content.contentKind);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+
+    childResult = contentAccess.ensureTileChildren(*boundary);
+
+    EXPECT_TRUE(childResult.retryLater);
+    EXPECT_FALSE(childResult.changed);
+    EXPECT_TRUE(boundary->children.empty());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -1768,7 +1774,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_EQ(0, ensureGltfCalls);
-    EXPECT_TRUE(childrenEnsured);
+    EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
@@ -1989,7 +1995,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
-    EXPECT_TRUE(childrenEnsured);
+    EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_EQ(TileLoadState::Failed, child.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, child.content.contentKind);

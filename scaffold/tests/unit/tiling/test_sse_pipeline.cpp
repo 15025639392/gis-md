@@ -10943,10 +10943,15 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
               root->content.loadState == TileLoadState::FailedTemporarily &&
               root->content.contentKind == TileContentKind::Unknown,
           "Tileset: RetryLater content remains a retryable unknown tile");
+    check(root && root->children.empty(),
+          "Tileset: RetryLater terminal commit does not materialize children before updateContent like cesium-native");
+    if (root) {
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+    }
     check(root && root->children.size() == 1 &&
               root->children.front() &&
               root->children.front()->key == childKey,
-          "Tileset: RetryLater content still materializes latent children like cesium-native");
+          "Tileset: RetryLater content materializes latent children during updateContent like cesium-native");
 
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(rawProvider->requestCount == 2,
@@ -11043,10 +11048,15 @@ void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
               root->content.loadState == TileLoadState::FailedTemporarily &&
               root->content.contentKind == TileContentKind::Unknown,
           "Tileset: Cancelled content remains a retryable unknown tile");
+    check(root && root->children.empty(),
+          "Tileset: Cancelled terminal commit does not materialize children before updateContent like cesium-native");
+    if (root) {
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+    }
     check(root && root->children.size() == 1 &&
               root->children.front() &&
               root->children.front()->key == childKey,
-          "Tileset: Cancelled content still materializes latent children like cesium-native");
+          "Tileset: Cancelled content materializes latent children during updateContent like cesium-native");
 
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(rawProvider->requestCount == 2,
@@ -11079,10 +11089,15 @@ void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
               root->content.loadState == TileLoadState::Failed &&
               root->content.contentKind == TileContentKind::Unknown,
           "Tileset: Failed content remains a permanent unknown failure");
+    check(root && root->children.empty(),
+          "Tileset: Failed terminal commit does not materialize children before updateContent like cesium-native");
+    if (root) {
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+    }
     check(root && root->children.size() == 1 &&
               root->children.front() &&
               root->children.front()->key == childKey,
-          "Tileset: Failed content still materializes latent children like cesium-native");
+          "Tileset: Failed content materializes latent children during updateContent like cesium-native");
 
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(root && root->content.loadState == TileLoadState::Failed,
@@ -11112,10 +11127,13 @@ void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
     TilesetTestAccess::processPendingUploads(tileset);
 
     TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
+    if (root) {
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+    }
     check(root && root->content.loadState == TileLoadState::Failed &&
               root->content.contentKind == TileContentKind::Unknown &&
               root->children.size() == 1,
-          "Tileset: failed unknown cache-unload setup has latent children");
+          "Tileset: failed unknown cache-unload setup materializes latent children through updateContent");
     if (!root || root->children.empty()) return;
 
     TilesetTile* child = root->children.front();
@@ -13573,6 +13591,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
         TileLoadStatus::RetryLater,
         nullptr);
     check(!action.markEmptyCacheKey &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
@@ -13583,6 +13602,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
         TileLoadStatus::Cancelled,
         nullptr);
     check(!action.markEmptyCacheKey &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
@@ -13593,6 +13613,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
         TileLoadStatus::Renderable,
         nullptr);
     check(!action.markEmptyCacheKey &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::Failed,
@@ -13665,33 +13686,33 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
         TileLoadStatus::RetryLater,
         nullptr);
     check(!action.markEmptyCacheKey &&
-              action.ensureChildren &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileTerminalLoadPolicy: retry content maps to temporary failure and latent child materialization");
+          "TileTerminalLoadPolicy: retry content maps to temporary failure without terminal child materialization");
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
         TileLoadStatus::Cancelled,
         nullptr);
     check(!action.markEmptyCacheKey &&
-              action.ensureChildren &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileTerminalLoadPolicy: cancelled content maps to temporary failure and latent child materialization");
+          "TileTerminalLoadPolicy: cancelled content maps to temporary failure without terminal child materialization");
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
         TileLoadStatus::Failed,
         nullptr);
     check(!action.markEmptyCacheKey &&
-              action.ensureChildren &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::Failed,
-          "TileTerminalLoadPolicy: failed content maps to permanent failure and latent child materialization");
+          "TileTerminalLoadPolicy: failed content maps to permanent failure without terminal child materialization");
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
@@ -13799,12 +13820,12 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         emptyContentRegistry,
             nullptr);
     check(!action.markEmptyCacheKey &&
-              action.ensureChildren &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               !emptyContentRegistry.contains("content-retry") &&
               retryTile.content.contentKind == TileContentKind::Unknown &&
               retryTile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileTerminalLoadCommitter: retry content clears stale empty registry marker");
+          "TileTerminalLoadCommitter: retry content clears stale empty registry marker without child materialization");
 
     TilesetTile cancelledContentTile(TileKey{"test", 0, 4, 0}, Rectangle{});
     emptyContentRegistry.insert("content-cancelled");
@@ -13815,14 +13836,14 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         emptyContentRegistry,
             nullptr);
     check(!action.markEmptyCacheKey &&
-              action.ensureChildren &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               !emptyContentRegistry.contains("content-cancelled") &&
               cancelledContentTile.content.contentKind ==
                   TileContentKind::Unknown &&
               cancelledContentTile.content.loadState ==
                   TileLoadState::FailedTemporarily,
-          "TileTerminalLoadCommitter: cancelled content clears stale empty registry marker");
+          "TileTerminalLoadCommitter: cancelled content clears stale empty registry marker without child materialization");
 
     TilesetTile failedTerrainTile(TileKey{"test", 0, 5, 0}, Rectangle{});
     emptyContentRegistry.insert("terrain-failed");
@@ -13833,12 +13854,12 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         emptyContentRegistry,
             nullptr);
     check(!action.markEmptyCacheKey &&
-              action.ensureChildren &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               !emptyContentRegistry.contains("terrain-failed") &&
               failedTerrainTile.content.contentKind == TileContentKind::Unknown &&
               failedTerrainTile.content.loadState == TileLoadState::Failed,
-          "TileTerminalLoadCommitter: failed terrain clears stale empty registry marker and keeps child materialization available");
+          "TileTerminalLoadCommitter: failed terrain clears stale empty registry marker without child materialization");
 
     TilesetTile cancelledTerrainTile(TileKey{"test", 0, 6, 0}, Rectangle{});
     emptyContentRegistry.insert("terrain-cancelled");
@@ -13849,14 +13870,14 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         emptyContentRegistry,
             nullptr);
     check(!action.markEmptyCacheKey &&
-              action.ensureChildren &&
+              !action.ensureChildren &&
               action.resourcesDirty &&
               !emptyContentRegistry.contains("terrain-cancelled") &&
               cancelledTerrainTile.content.contentKind ==
                   TileContentKind::Unknown &&
               cancelledTerrainTile.content.loadState ==
                   TileLoadState::FailedTemporarily,
-          "TileTerminalLoadCommitter: cancelled terrain clears stale empty marker and keeps child materialization available");
+          "TileTerminalLoadCommitter: cancelled terrain clears stale empty marker without child materialization");
 }
 
 void testTileContentUploadPolicyPreparesGltfRenderContent() {
@@ -14610,11 +14631,11 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
         [&resourcesDirty]() { resourcesDirty = true; });
 
     check(!emptyContentRegistry.contains(cacheKey) &&
-              childrenEnsured &&
+              !childrenEnsured &&
               resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TilePendingLoadCommitCoordinator: retry content terminal clears stale empty marker through pending path");
+          "TilePendingLoadCommitCoordinator: retry content terminal clears stale empty marker without child materialization");
 }
 
 void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
@@ -14643,11 +14664,11 @@ void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
         [&resourcesDirty]() { resourcesDirty = true; });
 
     check(!emptyContentRegistry.contains(cacheKey) &&
-              childrenEnsured &&
+              !childrenEnsured &&
               resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TilePendingLoadCommitCoordinator: cancelled content terminal clears stale empty marker through pending path");
+          "TilePendingLoadCommitCoordinator: cancelled content terminal clears stale empty marker without child materialization");
 }
 
 void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
@@ -14676,11 +14697,11 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
         [&resourcesDirty]() { resourcesDirty = true; });
 
     check(!emptyContentRegistry.contains(cacheKey) &&
-              childrenEnsured &&
+              !childrenEnsured &&
               resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TilePendingLoadCommitCoordinator: retry terrain terminal clears stale empty marker through pending path");
+          "TilePendingLoadCommitCoordinator: retry terrain terminal clears stale empty marker without child materialization");
 }
 
 void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
@@ -14709,11 +14730,11 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
         [&resourcesDirty]() { resourcesDirty = true; });
 
     check(!emptyContentRegistry.contains(cacheKey) &&
-              childrenEnsured &&
+              !childrenEnsured &&
               resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TilePendingLoadCommitCoordinator: cancelled terrain terminal clears stale empty marker through pending path");
+          "TilePendingLoadCommitCoordinator: cancelled terrain terminal clears stale empty marker without child materialization");
 }
 
 void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
