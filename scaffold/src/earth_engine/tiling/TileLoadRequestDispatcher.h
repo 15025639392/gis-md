@@ -94,8 +94,7 @@ public:
              token,
              group,
              priority,
-             domain,
-             &provider](const TileKey&, TileContentLoadResult result) mutable {
+             domain](const TileKey&, TileContentLoadResult result) mutable {
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
@@ -104,19 +103,6 @@ public:
                                 domain,
                                 TileLoadResult::fromContentResult(
                                     std::move(result)));
-                        if (loadResult.isRenderableContentTerrain() &&
-                            !loadResult.content
-                                 .quantizedMeshAvailabilityUpdatesApplied &&
-                            !loadResult.content
-                                 .quantizedMeshAvailabilityUpdates.empty() &&
-                            provider.providesTerrainQuadtree()) {
-                            provider.applyTerrainAvailabilityUpdates(
-                                loadResult.content
-                                    .quantizedMeshAvailabilityUpdates);
-                            loadResult.content
-                                .quantizedMeshAvailabilityUpdatesApplied =
-                                true;
-                        }
                         enqueueCompletedLoadResult(
                             pendingLoads,
                             domain,

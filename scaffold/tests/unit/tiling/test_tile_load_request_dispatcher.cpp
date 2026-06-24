@@ -729,7 +729,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     TerrainContentAvailabilityAppliesWhenLoadResultQueuesUploadLikeCesiumNative) {
+     TerrainContentAvailabilityStaysPendingUntilUploadCommitLikeCesiumNative) {
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
@@ -758,14 +758,27 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(issued);
     EXPECT_EQ(1u, pendingLoads.gltfTerrainUploadCount());
-    ASSERT_EQ(1u, provider.appliedUpdates.size());
-    EXPECT_EQ(2, provider.appliedUpdates.front().layerIndex);
+    EXPECT_TRUE(provider.appliedUpdates.empty());
+
+    std::optional<PendingTileLoad> upload =
+        pendingLoads.takeHighestPriorityUpload(false, budget);
+    ASSERT_TRUE(upload.has_value());
+    EXPECT_FALSE(
+        upload->content().quantizedMeshAvailabilityUpdatesApplied);
+    ASSERT_EQ(1u,
+              upload->content().quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(2,
+              upload->content()
+                  .quantizedMeshAvailabilityUpdates.front()
+                  .layerIndex);
     EXPECT_EQ((TileKey{"Geographic-TMS", 3, 1, 1}),
-              provider.appliedUpdates.front().subtreeKey);
+              upload->content()
+                  .quantizedMeshAvailabilityUpdates.front()
+                  .subtreeKey);
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     SkipsAlreadyAppliedTerrainAvailabilityUpdatesLikeLayerJsonTerrainLoader) {
+     PreservesAlreadyAppliedTerrainAvailabilityMarkerUntilUploadCommit) {
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
