@@ -129,6 +129,41 @@ TEST(
 
 TEST(
     TileContentUnloadCoordinatorRenderTest,
+    ContentLoadingUnloadKeepsInFlightRenderStateLikeCesiumNative) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.loadState = TileLoadState::ContentLoading;
+    tile.content.renderContent.setGltfContent(makeTriangleGltfModel());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.rasterOverlayState.ensureMapping(0);
+
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Keep, result);
+    EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
+    EXPECT_TRUE(tile.content.renderContent.hasGltfContent());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_EQ(1u, tile.rasterOverlayState.mappingCount());
+    EXPECT_NE(terrainCache.end(), terrainCache.find(cacheKey));
+    EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+}
+
+TEST(
+    TileContentUnloadCoordinatorRenderTest,
     GltfTerrainUnloadDoesNotWaitForNestedUpsampleWork) {
     TilesetTile root(
         TileKey{"Geographic-TMS", 0, 0, 0},
