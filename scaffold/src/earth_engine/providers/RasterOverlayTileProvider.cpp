@@ -2766,18 +2766,7 @@ bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
     // assets so large rectangle compositions converge over multiple frames.
     if (tile.isMappedRasterTile() &&
         tile.getState() == RasterOverlayTile::LoadState::Loading) {
-        std::shared_ptr<MappedSourceImageSet> sourceSet;
-        {
-            std::lock_guard<std::mutex> lock(asyncState_->mutex);
-            auto it = asyncState_->activeMappedSourceSets.find(
-                tile.getCacheKey());
-            if (it != asyncState_->activeMappedSourceSets.end()) {
-                sourceSet = it->second;
-            }
-        }
-        if (sourceSet && sourceSet->hasUnissuedSources()) {
-            issueMappedSourceImageSet(sourceSet, budget);
-        }
+        pumpLoadingMappedRasterTile(tile, budget);
         return true;
     }
     if (tile.getState() != RasterOverlayTile::LoadState::Unloaded) {
@@ -2803,6 +2792,8 @@ bool RasterOverlayTileProvider::loadMappedRasterTile(
         case RasterOverlayTile::LoadState::Unloaded:
             break;
         case RasterOverlayTile::LoadState::Loading:
+            pumpLoadingMappedRasterTile(tile, budget);
+            return true;
         case RasterOverlayTile::LoadState::Loaded:
         case RasterOverlayTile::LoadState::Done:
         case RasterOverlayTile::LoadState::Failed:
@@ -2887,6 +2878,29 @@ bool RasterOverlayTileProvider::loadMappedRasterTile(
         targetBounds,
         ck,
         budget);
+}
+
+bool RasterOverlayTileProvider::pumpLoadingMappedRasterTile(
+    RasterOverlayTile& tile,
+    FrameResourceBudget* budget) {
+    if (!tile.isMappedRasterTile() ||
+        tile.getState() != RasterOverlayTile::LoadState::Loading) {
+        return false;
+    }
+
+    std::shared_ptr<MappedSourceImageSet> sourceSet;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        auto it = asyncState_->activeMappedSourceSets.find(
+            tile.getCacheKey());
+        if (it != asyncState_->activeMappedSourceSets.end()) {
+            sourceSet = it->second;
+        }
+    }
+    if (sourceSet && sourceSet->hasUnissuedSources()) {
+        issueMappedSourceImageSet(sourceSet, budget);
+    }
+    return true;
 }
 
 bool RasterOverlayTileProvider::loadSourceTileList(

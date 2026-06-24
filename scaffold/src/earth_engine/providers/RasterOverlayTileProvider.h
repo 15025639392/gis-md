@@ -318,6 +318,8 @@ private:
     /// quadtree imagery tiles that overlap its geometry rectangle.
     bool loadMappedRasterTile(RasterOverlayTile& tile,
                               FrameResourceBudget* budget = nullptr);
+    bool pumpLoadingMappedRasterTile(RasterOverlayTile& tile,
+                                     FrameResourceBudget* budget);
     int issueMappedSourceImageSet(
         const std::shared_ptr<MappedSourceImageSet>& sourceSet,
         FrameResourceBudget* budget);

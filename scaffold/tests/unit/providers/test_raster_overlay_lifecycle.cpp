@@ -4740,6 +4740,40 @@ TEST(RasterOverlayLifecycleTest,
               mappedRasterTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     LoadTilePumpsRemainingMappedSourceFanoutLikeCesiumNativeFuture) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    auto mappedRasterTile = provider.mapRasterTilesToGeometryTile(
+        Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0),
+        1024.0,
+        1024.0).tile;
+    ASSERT_NE(nullptr, mappedRasterTile);
+    ASSERT_TRUE(mappedRasterTile->isMappedRasterTile());
+    ASSERT_GT(mappedRasterTile->getMappedSourceKeys().size(), 1u);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkInflight = 32;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+
+    EXPECT_TRUE(provider.loadTile(*mappedRasterTile, &firstBudget));
+    EXPECT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(1u, firstBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+              mappedRasterTile->getState());
+
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(2, config);
+
+    EXPECT_TRUE(provider.loadTile(*mappedRasterTile, &secondBudget));
+    EXPECT_EQ(2u, imagery.pending.size());
+    EXPECT_EQ(1u, secondBudget.rasterNetworkRequestsIssued());
+}
+
 TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightIsFull) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
