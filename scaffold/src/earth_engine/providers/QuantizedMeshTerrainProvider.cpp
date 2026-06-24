@@ -1647,7 +1647,9 @@ TileContentLoadResult QuantizedMeshTerrainProvider::loadQuantizedMeshTileContent
         enableWaterMask,
         metadata,
         rasterOverlayProjectionForTerrainScheme(contentSchemeId),
-        std::move(currentTileAvailabilityUpdate));
+        std::move(currentTileAvailabilityUpdate),
+        QuantizedMeshContentLoader::RasterOverlayDetailsMode::
+            GenerateTerrainProjection);
 }
 
 void QuantizedMeshTerrainProvider::requestTileContent(

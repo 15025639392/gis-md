@@ -45,6 +45,11 @@ struct QuantizedMeshContentLoadResult {
 
 class QuantizedMeshContentLoader final {
 public:
+    enum class RasterOverlayDetailsMode {
+        None,
+        GenerateTerrainProjection
+    };
+
     static QuantizedMeshContentLoadResult load(
         const uint8_t* data,
         size_t size,
@@ -54,7 +59,9 @@ public:
         RasterOverlayProjection terrainProjection =
             RasterOverlayProjection::Geographic,
         std::optional<QuantizedMeshAvailabilityUpdate>
-            currentTileAvailabilityUpdate = std::nullopt);
+            currentTileAvailabilityUpdate = std::nullopt,
+        RasterOverlayDetailsMode rasterOverlayDetailsMode =
+            RasterOverlayDetailsMode::GenerateTerrainProjection);
 
     static TileContentLoadResult loadTileContent(
         const uint8_t* data,
@@ -65,7 +72,9 @@ public:
         RasterOverlayProjection terrainProjection =
             RasterOverlayProjection::Geographic,
         std::optional<QuantizedMeshAvailabilityUpdate>
-            currentTileAvailabilityUpdate = std::nullopt);
+            currentTileAvailabilityUpdate = std::nullopt,
+        RasterOverlayDetailsMode rasterOverlayDetailsMode =
+            RasterOverlayDetailsMode::GenerateTerrainProjection);
 
     static TileContentLoadResult toTileContentLoadResult(
         QuantizedMeshContentLoadResult&& result);

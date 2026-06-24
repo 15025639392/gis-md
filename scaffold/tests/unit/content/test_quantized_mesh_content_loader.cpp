@@ -497,6 +497,43 @@ TEST(QuantizedMeshContentLoaderTest,
 }
 
 TEST(QuantizedMeshContentLoaderTest,
+     CanLoadGltfTerrainWithoutRasterOverlayDetailsLikeLayerJsonTerrainLoader) {
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(-10.0f, 150.0f);
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            geographicRootWestRectangle(),
+            false,
+            {},
+            RasterOverlayProjection::Geographic,
+            std::nullopt,
+            QuantizedMeshContentLoader::RasterOverlayDetailsMode::None);
+
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(nullptr, result.gltfModel);
+    EXPECT_TRUE(result.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(result.metadata.rasterOverlayDetails.has_value());
+    ASSERT_TRUE(result.metadata.updatedBoundingVolume.has_value());
+    EXPECT_EQ(geographicRootWestRectangle(),
+              result.metadata.updatedBoundingVolume->region);
+    ASSERT_TRUE(result.metadata.terrainHeightRange.has_value());
+    EXPECT_NEAR(-10.0, result.metadata.terrainHeightRange->first, 1e-6);
+    EXPECT_NEAR(150.0, result.metadata.terrainHeightRange->second, 1e-6);
+
+    TileContentLoadResult contentResult =
+        QuantizedMeshContentLoader::toTileContentLoadResult(
+            std::move(result));
+    EXPECT_EQ(TileLoadStatus::Renderable, contentResult.status);
+    EXPECT_TRUE(contentResult.terrainRenderContent);
+    ASSERT_NE(nullptr, contentResult.gltfModel);
+    EXPECT_TRUE(contentResult.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(contentResult.metadata.rasterOverlayDetails.has_value());
+}
+
+TEST(QuantizedMeshContentLoaderTest,
      GeneratesWebMercatorRasterOverlayDetailsLikeLayerJsonTerrainLoader) {
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytesWithInteriorVertex();

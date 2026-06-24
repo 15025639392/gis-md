@@ -53,7 +53,7 @@ struct TileContentLoadResult {
         TileContentLoadResult result;
         result.status = model ? TileLoadStatus::Renderable
                               : TileLoadStatus::Failed;
-        if (model) {
+        if (model && !model->rasterOverlayDetails.empty()) {
             result.metadata.rasterOverlayDetails = model->rasterOverlayDetails;
         }
         result.gltfModel = std::move(model);
@@ -66,7 +66,8 @@ struct TileContentLoadResult {
         Mat4 contentTransform = Mat4::identity()) {
         TileContentLoadResult result = render(std::move(model));
         if (result.status == TileLoadStatus::Renderable) {
-            if (!metadata.rasterOverlayDetails && result.gltfModel) {
+            if (!metadata.rasterOverlayDetails && result.gltfModel &&
+                !result.gltfModel->rasterOverlayDetails.empty()) {
                 metadata.rasterOverlayDetails =
                     result.gltfModel->rasterOverlayDetails;
             } else if (metadata.rasterOverlayDetails && result.gltfModel) {

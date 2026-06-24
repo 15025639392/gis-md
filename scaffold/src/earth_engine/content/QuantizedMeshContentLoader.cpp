@@ -249,7 +249,8 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     const std::vector<QuantizedMeshMetadataContent>& metadata,
     RasterOverlayProjection terrainProjection,
     std::optional<QuantizedMeshAvailabilityUpdate>
-        currentTileAvailabilityUpdate) {
+        currentTileAvailabilityUpdate,
+    RasterOverlayDetailsMode rasterOverlayDetailsMode) {
     QuantizedMeshContentLoadResult result;
 
     std::unique_ptr<QuantizedMeshParser::DecodedTile> decodedTile =
@@ -268,14 +269,6 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         return result;
     }
 
-    RasterOverlayDetails rasterOverlayDetails = makeRasterOverlayDetails(
-        tileRectangle,
-        decodedTile->minimumHeight,
-        decodedTile->maximumHeight,
-        terrainProjection);
-    gltfModel->rasterOverlayDetails = rasterOverlayDetails;
-    rewriteTerrainProjectionTexCoords(*gltfModel, terrainProjection);
-
     result.status = QuantizedMeshContentLoadStatus::Success;
     result.diagnostics = decodedTile->diagnostics;
     result.metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
@@ -287,7 +280,17 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         decodedTile->maximumHeight};
     result.metadata.horizonOcclusionPoint =
         decodedTile->horizonOcclusionPoint;
-    result.metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
+    if (rasterOverlayDetailsMode ==
+        RasterOverlayDetailsMode::GenerateTerrainProjection) {
+        RasterOverlayDetails rasterOverlayDetails = makeRasterOverlayDetails(
+            tileRectangle,
+            decodedTile->minimumHeight,
+            decodedTile->maximumHeight,
+            terrainProjection);
+        gltfModel->rasterOverlayDetails = rasterOverlayDetails;
+        rewriteTerrainProjectionTexCoords(*gltfModel, terrainProjection);
+        result.metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
+    }
     result.gltfModel = std::move(gltfModel);
     result.availabilityUpdates.reserve(
         metadata.size() + (currentTileAvailabilityUpdate ? 1u : 0u));
@@ -343,7 +346,8 @@ TileContentLoadResult QuantizedMeshContentLoader::loadTileContent(
     const std::vector<QuantizedMeshMetadataContent>& metadata,
     RasterOverlayProjection terrainProjection,
     std::optional<QuantizedMeshAvailabilityUpdate>
-        currentTileAvailabilityUpdate) {
+        currentTileAvailabilityUpdate,
+    RasterOverlayDetailsMode rasterOverlayDetailsMode) {
     return toTileContentLoadResult(
         load(data,
              size,
@@ -351,7 +355,8 @@ TileContentLoadResult QuantizedMeshContentLoader::loadTileContent(
              enableWaterMask,
              metadata,
              terrainProjection,
-             std::move(currentTileAvailabilityUpdate)));
+             std::move(currentTileAvailabilityUpdate),
+             rasterOverlayDetailsMode));
 }
 
 } // namespace earth_engine
