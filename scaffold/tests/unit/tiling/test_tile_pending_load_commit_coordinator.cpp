@@ -816,6 +816,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     tile.content.loadState = TileLoadState::ContentLoading;
 
     TileLoadLifecycle lifecycle;
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 1;
     FrameResourceBudget budget;
@@ -846,6 +848,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -866,6 +869,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_EQ(1, ensureGltfCalls);
     EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
 
@@ -897,6 +901,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     tile.content.loadState = TileLoadState::ContentLoading;
 
     TileLoadLifecycle lifecycle;
+    TileEmptyContentRegistry emptyContentRegistry;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 1;
     FrameResourceBudget budget;
@@ -927,6 +932,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1027,6 +1033,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     bool childrenEnsured = false;
     TileChildFrameMaterializeResult commitChildren;
+    TileEmptyContentRegistry emptyContentRegistry;
     bool resourcesDirty = false;
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
@@ -1034,6 +1041,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&contentAccess](const TileKey& key) {
             return contentAccess.ensureTile(key);
@@ -1121,6 +1129,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     bool resourcesDirty = false;
@@ -1132,6 +1141,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1275,6 +1285,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     bool resourcesDirty = false;
@@ -1285,6 +1296,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         rasterOverlays,
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1372,6 +1384,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     bool resourcesDirty = false;
@@ -1382,6 +1395,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         rasterOverlays,
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1457,6 +1471,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     int ensureGltfCalls = 0;
@@ -1468,6 +1483,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1542,6 +1558,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     bool resourcesDirty = false;
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
@@ -1549,6 +1566,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1612,6 +1630,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     int ensureGltfCalls = 0;
@@ -1623,6 +1642,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1679,6 +1699,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     int ensureGltfCalls = 0;
@@ -1690,6 +1711,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1761,6 +1783,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     bool gltfEnsured = false;
@@ -1772,6 +1795,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&child](const TileKey&) -> TilesetTile* { return &child; },
         [](TilesetTile&) {},
@@ -1821,6 +1845,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {5.0f, 6.0f, 7.0f, 8.0f};
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     terrainCache[cacheKey] = std::move(cachedHeightmap);
     bool gltfEnsured = false;
@@ -1832,6 +1858,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
@@ -1840,6 +1867,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
     EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(gltfEnsured);
     EXPECT_FALSE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
@@ -1881,6 +1909,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                         .has_value());
     }
 
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     int ensureGltfCalls = 0;
@@ -1892,6 +1921,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
@@ -1945,6 +1975,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadResult::fromContentResult(std::move(contentResult))};
+    TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     bool gltfEnsured = false;
@@ -1956,6 +1987,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},

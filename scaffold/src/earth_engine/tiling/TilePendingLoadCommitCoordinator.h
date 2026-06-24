@@ -102,6 +102,7 @@ public:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        TileEmptyContentRegistry& emptyContentRegistry,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
@@ -109,6 +110,7 @@ public:
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile* tile = ensureTile(upload.key);
         if (!tile) {
+            emptyContentRegistry.erase(upload.cacheKey);
             TilePendingUploadCompletion::eraseUpload(
                 lifecycle,
                 upload.cacheKey);
@@ -138,6 +140,7 @@ public:
             markResourcesDirty();
         }
 
+        emptyContentRegistry.erase(upload.cacheKey);
         TilePendingUploadCompletion::eraseUpload(
             lifecycle,
             upload.cacheKey);
@@ -182,6 +185,7 @@ public:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        TileEmptyContentRegistry& emptyContentRegistry,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
@@ -193,6 +197,7 @@ public:
             device,
             pPrepRenderer,
             rasterOverlays,
+            emptyContentRegistry,
             lifecycle,
             std::forward<EnsureTileFn>(ensureTile),
             std::forward<EnsureChildrenFn>(ensureChildren),

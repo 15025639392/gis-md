@@ -61,6 +61,7 @@ public:
                 input.device,
                 input.pPrepRenderer,
                 input.rasterOverlays,
+                input.emptyContentRegistry,
                 input.loadLifecycle,
                 ensureTile,
                 ensureTileChildren,

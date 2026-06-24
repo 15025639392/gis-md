@@ -14512,6 +14512,8 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {5.0f, 6.0f, 7.0f, 8.0f};
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
     terrainCache[cacheKey] = std::move(cachedHeightmap);
     bool gltfEnsured = false;
@@ -14523,6 +14525,7 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
         nullptr,
         nullptr,
         {},
+        emptyContentRegistry,
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
@@ -14531,10 +14534,11 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
 
     check(terrainCache.find(cacheKey) != terrainCache.end() &&
               terrainCache.at(cacheKey)->valid() &&
+              !emptyContentRegistry.contains(cacheKey) &&
               !gltfEnsured &&
               !resourcesDirty &&
               !lifecycle.containsWorkForCacheKey(cacheKey),
-          "TilePendingLoadCommitCoordinator: missing content upload preserves terrain cache and releases work");
+          "TilePendingLoadCommitCoordinator: missing content upload preserves terrain cache and clears stale empty marker");
 }
 
 void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
