@@ -4,6 +4,7 @@
 #include "RasterOverlayScreenSpaceMetrics.h"
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "TileRasterOverlaySignature.h"
+#include "TileRasterOverlayReadinessPolicy.h"
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
@@ -25,12 +26,6 @@ std::optional<Rectangle> projectedBoundingVolumeRectangle(
         projectEffectiveContentBoundingVolumeRectangle(tile, projection);
 }
 
-bool doneTileCannotHoldRasterOverlays(const TilesetTile& tile) {
-    return tile.content.loadState == TileLoadState::Done &&
-           (tile.content.contentKind != TileContentKind::Render ||
-            !tile.hasRasterOverlayHostContent());
-}
-
 } // namespace
 
 TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
@@ -42,7 +37,8 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
     FrameResourceBudget& frameResourceBudget,
     IPrepareRendererResources* pPrepRenderer) {
     TileRasterOverlayPrefetchAction action;
-    if (doneTileCannotHoldRasterOverlays(tile)) {
+    if (TileRasterOverlayReadinessPolicy::doneTileCannotHoldRasterOverlays(
+            tile)) {
         tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
         return action;
     }

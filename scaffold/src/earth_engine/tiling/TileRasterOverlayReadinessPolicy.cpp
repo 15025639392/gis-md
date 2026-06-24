@@ -1,6 +1,7 @@
 #include "TileRasterOverlayReadinessPolicy.h"
 
 #include "RasterMappedToTilesetTile.h"
+#include "TileLoadState.h"
 #include "TilesetTile.h"
 
 #include "../layers/ActivatedRasterOverlay.h"
@@ -9,6 +10,13 @@
 #include <algorithm>
 
 namespace earth_engine {
+
+bool TileRasterOverlayReadinessPolicy::doneTileCannotHoldRasterOverlays(
+    const TilesetTile& tile) {
+    return tile.content.loadState == TileLoadState::Done &&
+           (tile.content.contentKind != TileContentKind::Render ||
+            !tile.hasRasterOverlayHostContent());
+}
 
 bool TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
     const TilesetTile& tile,

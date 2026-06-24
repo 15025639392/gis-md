@@ -65,6 +65,7 @@
 #include "earth_engine/tiling/TilePriorityMetrics.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileRasterOverlayFrameProcessor.h"
+#include "earth_engine/tiling/TileRasterOverlayReadinessPolicy.h"
 #include "earth_engine/tiling/TileRenderablePolicy.h"
 #include "earth_engine/tiling/TileRenderPlanFrameRefresher.h"
 #include "earth_engine/tiling/TileRenderPlanFinalizer.h"
@@ -11993,6 +11994,18 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     tile.content.renderContent.setSurfaceMesh(nullptr);
     check(!tile.canPrepareRasterOverlays(),
           "TilesetTile: raster overlay preparation requires terrain mesh details");
+
+    TilesetTile contentTerrainResidue(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle{});
+    contentTerrainResidue.contentProviderTerrainQuadtreeTile = true;
+    contentTerrainResidue.markRenderContentDone();
+    contentTerrainResidue.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    contentTerrainResidue.content.renderContent.setMeshReady(true);
+    check(TileRasterOverlayReadinessPolicy::
+              doneTileCannotHoldRasterOverlays(contentTerrainResidue),
+          "TileRasterOverlayReadinessPolicy: content terrain without glTF render content cannot hold raster overlays");
 
     tile.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),

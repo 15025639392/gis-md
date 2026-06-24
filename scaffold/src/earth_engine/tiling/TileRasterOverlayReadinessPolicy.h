@@ -10,6 +10,8 @@ struct TilesetTile;
 
 class TileRasterOverlayReadinessPolicy {
 public:
+    static bool doneTileCannotHoldRasterOverlays(const TilesetTile& tile);
+
     static bool requiredOverlaysReady(
         const TilesetTile& tile,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);

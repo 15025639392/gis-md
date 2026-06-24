@@ -3,6 +3,7 @@
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
 #include "TileRasterOverlayDetailsGenerator.h"
+#include "TileRasterOverlayReadinessPolicy.h"
 #include "TileRasterOverlaySignature.h"
 #include "TilesetTile.h"
 
@@ -23,12 +24,6 @@ std::optional<Rectangle> projectedBoundingVolumeRectangle(
         projectEffectiveContentBoundingVolumeRectangle(tile, projection);
 }
 
-bool doneTileCannotHoldRasterOverlays(const TilesetTile& tile) {
-    return tile.content.loadState == TileLoadState::Done &&
-           (tile.content.contentKind != TileContentKind::Render ||
-            !tile.hasRasterOverlayHostContent());
-}
-
 } // namespace
 
 RenderContentRasterOverlayUpdateAction
@@ -42,7 +37,8 @@ RenderContentRasterOverlayStateUpdater::update(
     FrameResourceBudget& frameResourceBudget) {
     RenderContentRasterOverlayUpdateAction action;
 
-    if (doneTileCannotHoldRasterOverlays(tile)) {
+    if (TileRasterOverlayReadinessPolicy::doneTileCannotHoldRasterOverlays(
+            tile)) {
         tile.rasterOverlayState.releaseAndClearReferences(&renderer);
         return action;
     }
