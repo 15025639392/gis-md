@@ -119,6 +119,11 @@ struct TileLoadResult {
         if (isSuccessfulTileLoadStatus(result.status)) {
             loadResult.content = TileLoadedContent::fromContentResult(
                 std::move(result));
+            if (loadResult.content.terrainRenderContent &&
+                !loadResult.content.satisfiesContentTerrainPayloadContract()) {
+                loadResult.status = TileLoadStatus::Failed;
+                loadResult.content = {};
+            }
         }
         return loadResult;
     }

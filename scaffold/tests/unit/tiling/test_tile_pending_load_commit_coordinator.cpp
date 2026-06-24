@@ -101,6 +101,13 @@ std::unique_ptr<GltfModel> makeMinimalTerrainGltfModelForCommitTest(
 TileLoadResult makeTerrainContentContentResult(
     std::unique_ptr<GltfModel> model,
     TileLoadResultMetadata metadata = {}) {
+    if (model && model->rasterOverlayDetails.empty()) {
+        const Rectangle rectangle =
+            metadata.updatedBoundingVolume
+                ? metadata.updatedBoundingVolume->region
+                : Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0);
+        model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    }
     TileContentLoadResult contentResult =
         TileContentLoadResult::renderTerrain(
             std::move(model),
@@ -1530,6 +1537,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     const Rectangle modelRectangle =
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
     auto model = makeCartographicQuadTerrainGltfModel(
+        modelRectangle,
+        -25.0,
+        125.0);
+    model->rasterOverlayDetails.setGeographicRectangle(
         modelRectangle,
         -25.0,
         125.0);

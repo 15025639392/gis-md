@@ -560,6 +560,8 @@ TEST(TileLoadRequestDispatcherTest,
         TileLoadResult::fromContentResult(
             TileContentLoadResult::renderTerrain(
                 std::make_unique<GltfModel>()));
+    EXPECT_EQ(TileLoadStatus::Failed, terrainWithoutRasterDetails.status);
+    EXPECT_FALSE(terrainWithoutRasterDetails.shouldUpload());
     EXPECT_FALSE(terrainWithoutRasterDetails.isRenderableContentTerrain());
     TileLoadResult normalizedTerrainWithoutRasterDetails =
         TileLoadResult::normalizeForDomain(
