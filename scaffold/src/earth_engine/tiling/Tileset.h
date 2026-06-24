@@ -160,7 +160,6 @@ private:
     TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame() const;
     TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame(
         IPrepareRendererResources* pPrepRenderer) const;
-    const TerrainProvider* legacyHeightmapTerrainProviderForSurfacePath() const;
     bool hasTerrainQuadtree() const;
     TileLoadRequestOutcome requestMissingContent(
         const std::vector<TileLoadRequest>& loadRequests,

@@ -243,11 +243,6 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
     return diagnostics;
 }
 
-const TerrainProvider* Tileset::legacyHeightmapTerrainProviderForSurfacePath()
-    const {
-    return legacyHeightmapTerrainProvider_.get();
-}
-
 TileContentRuntimeRequestFrame
 Tileset::makeContentRuntimeRequestFrame() const {
     TileContentRuntimeRequestFrame frame{
