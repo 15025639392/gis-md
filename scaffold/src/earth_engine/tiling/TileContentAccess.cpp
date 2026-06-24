@@ -32,16 +32,6 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
     return true;
 }
 
-bool hasTerrainAvailabilityUpsampledChild(const TilesetTile& tile) {
-    return std::any_of(
-        tile.children.begin(),
-        tile.children.end(),
-        [](const TilesetTile* child) {
-            return child &&
-                   child->content.isTerrainAvailabilityUpsample();
-        });
-}
-
 } // namespace
 
 TileContentAccess TileContentAccess::forContentTerrain(
@@ -187,11 +177,18 @@ TileContentAccess::ensureTileChildren(
         [this](const TileKey& key) {
             return availabilityState(key);
         });
-    if (contentProviderOwnsTerrainQuadtree() && contentProvider_ &&
-        hasTerrainAvailabilityUpsampledChild(tile)) {
-        contentProvider_->noteTerrainAvailabilityUpsampledChild(tile.key);
-    } else if (contentProviderOwnsTerrainQuadtree() && contentProvider_) {
-        contentProvider_->clearTerrainAvailabilityUpsampledChild(tile.key);
+    if (contentProviderOwnsTerrainQuadtree() && contentProvider_) {
+        const bool hasUpsampledChild =
+            TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
+                tile,
+                [this](const TileKey& key) {
+                    return availabilityState(key);
+                });
+        if (hasUpsampledChild) {
+            contentProvider_->noteTerrainAvailabilityUpsampledChild(tile.key);
+        } else {
+            contentProvider_->clearTerrainAvailabilityUpsampledChild(tile.key);
+        }
     }
     return result;
 }

@@ -11003,6 +11003,9 @@ void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.empty(),
           "Tileset: availability boundary waits for content before child creation like cesium-native");
+    check(rawProvider->notedUpsampledParents.size() == 1 &&
+              rawProvider->notedUpsampledParents.back() == rootKey,
+          "Tileset: availability boundary records upsampled child state from availability before children exist like cesium-native");
 
     check(rawProvider->completeWithEmpty(rootKey),
           "Tileset: availability boundary content completes");
