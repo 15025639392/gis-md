@@ -131,20 +131,11 @@ public:
     void clearOcclusionCallback();
 
 private:
-    struct ProviderOwnership {
-        std::unique_ptr<TerrainProvider> legacyHeightmapTerrainProvider;
-        std::unique_ptr<TilesetContentProvider> contentProvider;
-
-        static ProviderOwnership noTerrain();
-        static ProviderOwnership contentTerrain(
-            std::unique_ptr<TilesetContentProvider> contentProvider);
-    };
-
     friend struct TilesetTestAccess;
     friend class TilesetSelectionFrameFacade;
     friend class TilesetUpdateFrameRuntime;
 
-    Tileset(ProviderOwnership providers,
+    Tileset(TilesetTerrainProviders terrainProviders,
             std::unique_ptr<TileScheme> tileScheme,
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,

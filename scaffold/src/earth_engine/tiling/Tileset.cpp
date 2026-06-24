@@ -38,36 +38,23 @@ FrameResourceBudgetConfig makeFrameResourceBudgetConfig(
 
 } // namespace
 
-Tileset::ProviderOwnership Tileset::ProviderOwnership::noTerrain() {
-    return ProviderOwnership{};
-}
-
-Tileset::ProviderOwnership Tileset::ProviderOwnership::contentTerrain(
-    std::unique_ptr<TilesetContentProvider> contentProvider) {
-    ProviderOwnership providers;
-    providers.contentProvider = std::move(contentProvider);
-    return providers;
-}
-
 Tileset::Tileset(std::unique_ptr<TileScheme> tileScheme,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,
                  TilesetOptions options)
     : Tileset(
-          ProviderOwnership::noTerrain(),
+          TilesetTerrainProviders(nullptr, nullptr),
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,
           std::move(options)) {}
 
-Tileset::Tileset(ProviderOwnership providers,
+Tileset::Tileset(TilesetTerrainProviders terrainProviders,
                  std::unique_ptr<TileScheme> tileScheme,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,
                  TilesetOptions options)
-    : terrainProviders_(
-          std::move(providers.legacyHeightmapTerrainProvider),
-          std::move(providers.contentProvider)),
+    : terrainProviders_(std::move(terrainProviders)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),
       device_(device),
@@ -147,7 +134,7 @@ Tileset::Tileset(
     TilesetOptions options,
     std::unique_ptr<TilesetContentProvider> contentProvider)
     : Tileset(
-          ProviderOwnership::contentTerrain(std::move(contentProvider)),
+          TilesetTerrainProviders(nullptr, std::move(contentProvider)),
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,

@@ -49,10 +49,10 @@ struct TilesetTestAccess {
         std::unique_ptr<TerrainProvider> legacyTerrainProvider,
         std::unique_ptr<TilesetContentProvider> contentProvider,
         std::unique_ptr<TileScheme> scheme) {
-        legacyTerrainProvider.reset();
         return std::unique_ptr<Tileset>(
             new Tileset(
-                Tileset::ProviderOwnership::contentTerrain(
+                TilesetTerrainProviders(
+                    std::move(legacyTerrainProvider),
                     std::move(contentProvider)),
                 std::move(scheme),
                 {},
@@ -63,12 +63,11 @@ struct TilesetTestAccess {
     static std::unique_ptr<Tileset> makeLegacyOnlyTilesetForMigrationTest(
         std::unique_ptr<TerrainProvider> legacyTerrainProvider,
         std::unique_ptr<TileScheme> scheme) {
-        Tileset::ProviderOwnership providers;
-        providers.legacyHeightmapTerrainProvider =
-            std::move(legacyTerrainProvider);
         return std::unique_ptr<Tileset>(
             new Tileset(
-                std::move(providers),
+                TilesetTerrainProviders(
+                    std::move(legacyTerrainProvider),
+                    nullptr),
                 std::move(scheme),
                 {},
                 nullptr,
