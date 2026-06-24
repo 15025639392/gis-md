@@ -685,6 +685,39 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     AvailabilityBoundaryRetryLaterStillRecordsPartialUpsampleLikeCesiumNative) {
+    const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
+    const std::array<TileKey, 4> childKeys{
+        TileKey{"Geographic-TMS", 3, 0, 0},
+        TileKey{"Geographic-TMS", 3, 1, 0},
+        TileKey{"Geographic-TMS", 3, 0, 1},
+        TileKey{"Geographic-TMS", 3, 1, 1}};
+
+    RecordingTerrainContentProvider provider;
+    provider.availability[childKeys[0]] = TileAvailabilityState::Available;
+    provider.metadataAvailabilityLevels = 2;
+
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+
+    TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
+    ASSERT_NE(nullptr, boundary);
+    boundary->content.loadState = TileLoadState::ContentLoading;
+
+    const TileChildFrameMaterializeResult childResult =
+        contentAccess.ensureTileChildren(*boundary);
+
+    EXPECT_TRUE(childResult.retryLater);
+    EXPECT_FALSE(childResult.changed);
+    EXPECT_TRUE(boundary->children.empty());
+    ASSERT_EQ(1u, provider.notedUpsampledParents.size());
+    EXPECT_EQ(boundaryKey, provider.notedUpsampledParents.front());
+    EXPECT_TRUE(provider.clearedUpsampledParents.empty());
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainRetryLaterNonBoundaryCanMaterializeChildrenLikeCesiumNative) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
