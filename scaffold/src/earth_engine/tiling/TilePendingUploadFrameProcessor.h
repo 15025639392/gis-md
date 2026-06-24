@@ -51,7 +51,8 @@ public:
                 input.pPrepRenderer,
                 ensureTile,
                 ensureTileChildren,
-                markResourcesDirty);
+                markResourcesDirty,
+                input.contentProvider);
         };
 
         auto processUpload = [&](PendingTileLoad& upload) {

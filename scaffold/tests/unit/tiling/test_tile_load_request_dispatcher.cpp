@@ -546,6 +546,20 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(
         1u,
         normalizedGltf.content.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(
+        1u,
+        normalizedGltf.quantizedMeshAvailabilityUpdates.size());
+
+    TileContentLoadResult failedContentResult =
+        TileContentLoadResult::failed();
+    failedContentResult.quantizedMeshAvailabilityUpdates.push_back(
+        QuantizedMeshAvailabilityUpdate{});
+    TileLoadResult normalizedFailed =
+        TileLoadResult::fromContentResult(std::move(failedContentResult));
+    EXPECT_EQ(TileLoadStatus::Failed, normalizedFailed.status);
+    EXPECT_TRUE(
+        normalizedFailed.content.quantizedMeshAvailabilityUpdates.empty());
+    EXPECT_EQ(1u, normalizedFailed.quantizedMeshAvailabilityUpdates.size());
 
     TileLoadResult terrainWithoutRasterDetails =
         TileLoadResult::fromContentResult(

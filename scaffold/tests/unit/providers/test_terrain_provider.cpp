@@ -2648,7 +2648,14 @@ TEST(QuantizedMeshTerrainProviderTest,
     }
 
     EXPECT_EQ(TileLoadStatus::Failed, completed.status);
-    EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdates.empty());
+    ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(1, completed.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(
+        rootKey,
+        completed.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+    EXPECT_FALSE(provider.supportsTile(parentOnlyChild));
+    provider.applyAvailabilityUpdates(
+        completed.quantizedMeshAvailabilityUpdates);
     EXPECT_TRUE(provider.supportsTile(parentOnlyChild));
     EXPECT_NE(std::string::npos,
               provider.buildUrl(parentOnlyChild).find(
@@ -2740,7 +2747,14 @@ TEST(
     }
 
     EXPECT_EQ(TileLoadStatus::Failed, completed.status);
-    EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdates.empty());
+    ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(1, completed.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(
+        rootKey,
+        completed.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+    EXPECT_EQ(2, provider.estimatedRequestFanout(rootKey));
+    provider.applyAvailabilityUpdates(
+        completed.quantizedMeshAvailabilityUpdates);
     EXPECT_EQ(1, provider.estimatedRequestFanout(rootKey));
 
     std::filesystem::remove_all(root);

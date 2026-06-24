@@ -108,6 +108,8 @@ struct TileLoadResult {
     static TileLoadResult fromContentResult(TileContentLoadResult&& result) {
         TileLoadResult loadResult;
         loadResult.status = result.status;
+        loadResult.quantizedMeshAvailabilityUpdates =
+            result.quantizedMeshAvailabilityUpdates;
         if (result.status == TileLoadStatus::Renderable &&
             result.gltfModel == nullptr) {
             loadResult.status = TileLoadStatus::Failed;
@@ -167,6 +169,8 @@ struct TileLoadResult {
 
     TileLoadStatus status = TileLoadStatus::Failed;
     TileLoadedContent content;
+    std::vector<QuantizedMeshAvailabilityUpdate>
+        quantizedMeshAvailabilityUpdates;
 };
 
 struct PendingTileLoad {

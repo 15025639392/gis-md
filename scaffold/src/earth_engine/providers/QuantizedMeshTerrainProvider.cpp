@@ -2122,11 +2122,12 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 return;
             }
             if (!isCesiumSuccessfulHttpStatus(statusCode) || body->empty()) {
-                applyAvailabilityUpdates(
-                    availabilityUpdatesForCompletedContent());
+                TileContentLoadResult result = TileContentLoadResult::failed();
+                result.quantizedMeshAvailabilityUpdates =
+                    availabilityUpdatesForCompletedContent();
                 requestsFailed_.fetch_add(1, std::memory_order_relaxed);
                 completion.complete();
-                (*callback)(key, TileContentLoadResult::failed());
+                (*callback)(key, std::move(result));
                 return;
             }
 #ifdef __ANDROID__
@@ -2173,11 +2174,11 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     metadata,
                     std::move(currentTileAvailabilityUpdate));
             if (result.status == TileLoadStatus::Failed) {
-                applyAvailabilityUpdates(
-                    availabilityUpdatesForCompletedContent());
+                result.quantizedMeshAvailabilityUpdates =
+                    availabilityUpdatesForCompletedContent();
                 requestsFailed_.fetch_add(1, std::memory_order_relaxed);
                 completion.complete();
-                (*callback)(key, TileContentLoadResult::failed());
+                (*callback)(key, std::move(result));
                 return;
             }
 

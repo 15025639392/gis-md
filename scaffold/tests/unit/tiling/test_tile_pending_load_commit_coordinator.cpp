@@ -1001,6 +1001,47 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainFailedTerminalAppliesAvailabilityAtCommit) {
+    const TileKey key{"Geographic-TMS", 2, 1, 0};
+    const std::string cacheKey = "terrain-failed-availability";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::Failed);
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = key;
+    result.quantizedMeshAvailabilityUpdates.push_back(update);
+    PendingTileLoad pending{TileLoadDomain::TerrainContent,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(result)};
+    TileEmptyContentRegistry emptyContentRegistry;
+    RecordingTerrainContentProvider provider;
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        pending,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; },
+        &provider);
+
+    ASSERT_EQ(1u, provider.appliedUpdates.size());
+    EXPECT_EQ(0, provider.appliedUpdates.front().layerIndex);
+    EXPECT_EQ(key, provider.appliedUpdates.front().subtreeKey);
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainExternalTerminalFailsThroughUnifiedTerminalPolicy) {
     const TileKey key{"Geographic-TMS", 0, 0, 0};
     const std::string cacheKey = "terrain-external";

@@ -45,11 +45,21 @@ public:
         IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
-        MarkResourcesDirtyFn&& markResourcesDirty) {
+        MarkResourcesDirtyFn&& markResourcesDirty,
+        TilesetContentProvider* contentProvider = nullptr) {
         TilesetTile* tile = ensureTile(result.key);
         if (!tile) {
             emptyContentRegistry.erase(result.cacheKey);
             return;
+        }
+
+        if (contentProvider &&
+            contentProvider->providesTerrainQuadtree() &&
+            !result.result.quantizedMeshAvailabilityUpdates.empty() &&
+            result.result.status != TileLoadStatus::RetryLater &&
+            result.result.status != TileLoadStatus::Cancelled) {
+            contentProvider->applyTerrainAvailabilityUpdates(
+                result.result.quantizedMeshAvailabilityUpdates);
         }
 
         const TileTerminalLoadAction action =
@@ -204,7 +214,8 @@ public:
         IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
-        MarkResourcesDirtyFn&& markResourcesDirty) {
+        MarkResourcesDirtyFn&& markResourcesDirty,
+        TilesetContentProvider* contentProvider = nullptr) {
         if (result.domain == TileLoadDomain::Content) {
             commitContentTerminalResult(
                 result,
@@ -220,7 +231,8 @@ public:
                 pPrepRenderer,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<EnsureChildrenFn>(ensureChildren),
-                std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+                std::forward<MarkResourcesDirtyFn>(markResourcesDirty),
+                contentProvider);
         }
     }
 
