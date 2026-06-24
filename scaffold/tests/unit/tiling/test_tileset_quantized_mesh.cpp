@@ -754,6 +754,10 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_TRUE(provider.supportsTile(availableDeepTile));
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(unavailableSibling));
+    EXPECT_EQ(
+        "https://example.invalid/fallback/16/0/0.terrain",
+        provider.buildUrl(availableDeepTile));
+    EXPECT_TRUE(provider.buildUrl(unavailableSibling).empty());
 }
 
 TEST(TilesetQuantizedMeshTest,

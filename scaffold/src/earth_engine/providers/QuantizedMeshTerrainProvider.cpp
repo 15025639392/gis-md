@@ -1604,7 +1604,7 @@ std::string QuantizedMeshTerrainProvider::buildUrlForLayer(
 
 std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
     std::lock_guard<std::recursive_mutex> lock(layersMutex_);
-    if (availabilityState(key) == TileAvailabilityState::Unknown) {
+    if (availabilityState(key) != TileAvailabilityState::Available) {
         return {};
     }
 
