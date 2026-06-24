@@ -101,6 +101,10 @@ public:
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
         applyAvailabilityUpdates(updates);
     }
+    void noteTerrainAvailabilityUpsampledChild(
+        const TileKey& key) const override;
+    void clearTerrainAvailabilityUpsampledChild(
+        const TileKey& key) const override;
 
     void requestTileContent(const TileKey& key,
                             CancellationToken token,
@@ -326,6 +330,7 @@ private:
     std::string extensionsToRequest_;
     std::vector<std::vector<TileAvailabilityRect>> availabilityRanges_;
     std::vector<std::unordered_set<uint64_t>> loadedSubtrees_;
+    mutable std::unordered_set<TileKey> parentsWithTerrainUpsampledChildren_;
     bool hasAvailability_ = false;
     int availabilityLevels_ = -1;  // -1 = not using subtree mode
     int minZoom_ = 0;

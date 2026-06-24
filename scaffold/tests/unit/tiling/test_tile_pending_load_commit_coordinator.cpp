@@ -50,6 +50,10 @@ public:
             updates.begin(),
             updates.end());
     }
+    void noteTerrainAvailabilityUpsampledChild(
+        const TileKey& key) const override {
+        notedUpsampledParents.push_back(key);
+    }
     void requestTileContent(
         const TileKey& key,
         CancellationToken,
@@ -62,6 +66,7 @@ public:
     }
 
     std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
+    mutable std::vector<TileKey> notedUpsampledParents;
     std::unordered_map<TileKey, TileAvailabilityState> availability;
 };
 
@@ -799,6 +804,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         }
         EXPECT_EQ(expectedLoadState, root->content.loadState);
         EXPECT_EQ(TileContentKind::Unknown, root->content.contentKind);
+        ASSERT_EQ(1u, provider.notedUpsampledParents.size());
+        EXPECT_EQ(rootKey, provider.notedUpsampledParents.front());
     }
 }
 

@@ -136,6 +136,9 @@ public:
     }
     virtual void applyTerrainAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>&) {}
+    virtual void noteTerrainAvailabilityUpsampledChild(const TileKey&) const {}
+    virtual void clearTerrainAvailabilityUpsampledChild(
+        const TileKey&) const {}
     virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 
     using ContentCallback = std::function<void(

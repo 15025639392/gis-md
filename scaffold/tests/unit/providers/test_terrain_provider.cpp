@@ -958,6 +958,107 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_FALSE(completed.metadata.rasterOverlayDetails.has_value());
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     RequestTileContentKeepsRasterOverlayDetailsForExistingUpsampledChildLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "available": [
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 0, "startY": 0, "endX": 1, "endY": 1}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    provider.noteTerrainAvailabilityUpsampledChild(key);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TileContentLoadResult completed;
+
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    ASSERT_TRUE(completed.metadata.rasterOverlayDetails.has_value());
+
+    auto scheme = TileScheme::createGeographicTMS();
+    const Rectangle expected = scheme->tileToRectangle(key);
+    EXPECT_EQ(expected,
+              completed.gltfModel->rasterOverlayDetails.boundingRegion
+                  .rectangle);
+    EXPECT_TRUE(completed.metadata.rasterOverlayDetails->equalsExact(
+        completed.gltfModel->rasterOverlayDetails));
+    EXPECT_NE(
+        nullptr,
+        completed.gltfModel->rasterOverlayDetails
+            .findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic));
+
+    provider.clearTerrainAvailabilityUpsampledChild(key);
+    callbackCalled = false;
+    completed = {};
+
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    EXPECT_TRUE(completed.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(completed.metadata.rasterOverlayDetails.has_value());
+}
+
 TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");

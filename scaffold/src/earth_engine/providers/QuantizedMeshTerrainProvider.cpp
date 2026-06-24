@@ -1412,9 +1412,15 @@ QuantizedMeshTerrainProvider::childTiles(const TileKey& key) const {
 
 bool QuantizedMeshTerrainProvider::
     tileHasTerrainAvailabilityUpsampledChild(const TileKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(key) ||
         !isTileInLayerRange(key, schemeId_)) {
         return false;
+    }
+
+    if (parentsWithTerrainUpsampledChildren_.find(key) !=
+        parentsWithTerrainUpsampledChildren_.end()) {
+        return true;
     }
 
     const std::vector<TileKey> children = quadtreeChildren(key);
@@ -1425,6 +1431,18 @@ bool QuantizedMeshTerrainProvider::
         }
     }
     return availableChildren > 0 && availableChildren < children.size();
+}
+
+void QuantizedMeshTerrainProvider::noteTerrainAvailabilityUpsampledChild(
+    const TileKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+    parentsWithTerrainUpsampledChildren_.insert(key);
+}
+
+void QuantizedMeshTerrainProvider::clearTerrainAvailabilityUpsampledChild(
+    const TileKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+    parentsWithTerrainUpsampledChildren_.erase(key);
 }
 
 void QuantizedMeshTerrainProvider::resetFallbackLayerFromFields() {

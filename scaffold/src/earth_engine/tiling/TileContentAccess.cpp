@@ -32,6 +32,16 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
     return true;
 }
 
+bool hasTerrainAvailabilityUpsampledChild(const TilesetTile& tile) {
+    return std::any_of(
+        tile.children.begin(),
+        tile.children.end(),
+        [](const TilesetTile* child) {
+            return child &&
+                   child->content.isTerrainAvailabilityUpsample();
+        });
+}
+
 } // namespace
 
 TileContentAccess TileContentAccess::forContentTerrain(
@@ -158,7 +168,8 @@ TileContentAccess::ensureTileChildren(
         return TileChildFrameMaterializeResult{changed, false};
     }
 
-    return TileChildFrameMaterializer::ensureChildren(
+    TileChildFrameMaterializeResult result =
+        TileChildFrameMaterializer::ensureChildren(
         TileChildFrameMaterializeInput{
             tile,
             contentProvider_ && !contentProviderOwnsTerrainQuadtree()
@@ -176,6 +187,13 @@ TileContentAccess::ensureTileChildren(
         [this](const TileKey& key) {
             return availabilityState(key);
         });
+    if (contentProviderOwnsTerrainQuadtree() && contentProvider_ &&
+        hasTerrainAvailabilityUpsampledChild(tile)) {
+        contentProvider_->noteTerrainAvailabilityUpsampledChild(tile.key);
+    } else if (contentProviderOwnsTerrainQuadtree() && contentProvider_) {
+        contentProvider_->clearTerrainAvailabilityUpsampledChild(tile.key);
+    }
+    return result;
 }
 
 bool TileContentAccess::hasResolvedAvailabilityBoundaryContent(
