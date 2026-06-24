@@ -1,9 +1,13 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfModel.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileContentUnloadCoordinator.h"
+#include "earth_engine/tiling/TileScheme.h"
 
 #include <memory>
 #include <string>
@@ -20,6 +24,57 @@ public:
 
 private:
     size_t byteSize_ = 0;
+};
+
+class DummyTexture final : public Texture {
+public:
+    DummyTexture(int width, int height) : width_(width), height_(height) {}
+
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+};
+
+class RecordingPrepareRendererResources final
+    : public IPrepareRendererResources {
+public:
+    void attachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex,
+        std::shared_ptr<const RasterOverlayTile> rasterTile,
+        Texture* texture,
+        float translationU,
+        float translationV,
+        float scaleU,
+        float scaleV) override {
+        ++attachCount;
+        lastGeometryKey = geometryKey;
+        lastOverlayIndex = overlayIndex;
+        lastRasterTile = std::move(rasterTile);
+        lastTexture = texture;
+        lastUv = {translationU, translationV, scaleU, scaleV};
+    }
+
+    void detachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex) noexcept override {
+        ++detachCount;
+        lastDetachedGeometryKey = geometryKey;
+        lastDetachedOverlayIndex = overlayIndex;
+    }
+
+    int attachCount = 0;
+    int detachCount = 0;
+    TileKey lastGeometryKey;
+    TileKey lastDetachedGeometryKey;
+    int32_t lastOverlayIndex = -1;
+    int32_t lastDetachedOverlayIndex = -1;
+    std::shared_ptr<const RasterOverlayTile> lastRasterTile;
+    Texture* lastTexture = nullptr;
+    std::array<float, 4> lastUv{0.0f, 0.0f, 1.0f, 1.0f};
 };
 
 std::unique_ptr<GltfModel> makeTriangleGltfModel() {
@@ -42,6 +97,15 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     primitive.indices = {0, 1, 2};
     model->primitives.push_back(std::move(primitive));
     return model;
+}
+
+RasterOverlayDetails makeWebMercatorDetails(const Rectangle& rectangle) {
+    RasterOverlayDetails details;
+    details.rasterOverlayProjections = {RasterOverlayProjection::WebMercator};
+    details.rasterOverlayRectangles = {rectangle};
+    details.rasterOverlayInvertedVCoordinates = {false};
+    details.boundingRegion = {rectangle, 0.0, 0.0};
+    return details;
 }
 
 } // namespace
@@ -272,4 +336,82 @@ TEST(
     EXPECT_FALSE(root.content.renderContent.hasGltfContent());
     EXPECT_FALSE(root.content.renderContent.hasGltfPrimitiveResources());
     EXPECT_FALSE(root.content.renderContent.isTerrainRenderContent());
+}
+
+TEST(
+    TileContentUnloadCoordinatorRenderTest,
+    ProtectedGltfTerrainUnloadDetachesRasterMappingsBeforeKeepLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey parentKey{scheme->id(), 0, 0, 0};
+    const TileKey childKey{scheme->id(), 1, 0, 0};
+
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Done;
+    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+
+    TilesetTile child(
+        childKey,
+        scheme->tileToRectangle(childKey),
+        &parent);
+    child.content.upsampledFromParent = true;
+    child.content.loadState = TileLoadState::ContentLoading;
+    parent.children.push_back(&child);
+
+    DebugImageryProvider imagery;
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setFrameNumber(1);
+    RasterOverlayDetails details = makeWebMercatorDetails(parent.bounds);
+    RecordingPrepareRendererResources prep;
+    std::vector<RasterOverlayProjection> missingProjections;
+    RasterMappedToTilesetTile& mapping =
+        parent.rasterOverlayState.ensureMapping(0);
+    mapping.update(
+        parent.key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        &prep,
+        missingProjections);
+    ASSERT_NE(nullptr, mapping.getLoadingTile());
+    mapping.getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(8, 4));
+    mapping.update(
+        parent.key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        &prep,
+        missingProjections);
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+              mapping.getState());
+    ASSERT_EQ(1, prep.attachCount);
+
+    const std::string cacheKey = "XYZ-WebMercator:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            parent,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            &prep);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Keep, result);
+    EXPECT_EQ(TileContentKind::Render, parent.content.contentKind);
+    EXPECT_EQ(TileLoadState::Unloading, parent.content.loadState);
+    EXPECT_TRUE(parent.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(0u, parent.rasterOverlayState.mappingCount());
+    EXPECT_EQ(1, prep.detachCount);
+    EXPECT_EQ(parent.key, prep.lastDetachedGeometryKey);
+    EXPECT_EQ(0, prep.lastDetachedOverlayIndex);
+    EXPECT_NE(terrainCache.end(), terrainCache.find(cacheKey));
 }
