@@ -55,6 +55,10 @@ public:
         const TileKey& key) const override {
         notedUpsampledParents.push_back(key);
     }
+    void clearTerrainAvailabilityUpsampledChild(
+        const TileKey& key) const override {
+        clearedUpsampledParents.push_back(key);
+    }
     void requestTileContent(
         const TileKey& key,
         CancellationToken,
@@ -68,6 +72,7 @@ public:
 
     std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
     mutable std::vector<TileKey> notedUpsampledParents;
+    mutable std::vector<TileKey> clearedUpsampledParents;
     std::unordered_map<TileKey, TileAvailabilityState> availability;
 };
 
@@ -833,6 +838,57 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         ASSERT_EQ(1u, provider.notedUpsampledParents.size());
         EXPECT_EQ(rootKey, provider.notedUpsampledParents.front());
     }
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     UpdatedTerrainAvailabilityReclassifiesExistingUpsampledChildrenLikeCesiumNative) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::array<TileKey, 4> childKeys{
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        TileKey{"Geographic-TMS", 1, 0, 1},
+        TileKey{"Geographic-TMS", 1, 1, 1}};
+
+    RecordingTerrainContentProvider provider;
+    provider.availability[childKeys[0]] = TileAvailabilityState::Available;
+
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+
+    TilesetTile* root = contentAccess.ensureTile(rootKey);
+    ASSERT_NE(nullptr, root);
+    root->content.loadState = TileLoadState::Done;
+
+    TileChildFrameMaterializeResult childResult =
+        contentAccess.ensureTileChildren(*root);
+
+    ASSERT_TRUE(childResult.changed);
+    ASSERT_FALSE(childResult.retryLater);
+    ASSERT_EQ(4u, root->children.size());
+    EXPECT_FALSE(root->children[0]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(root->children[1]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(root->children[2]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(root->children[3]->content.isTerrainAvailabilityUpsample());
+    ASSERT_EQ(1u, provider.notedUpsampledParents.size());
+    EXPECT_EQ(rootKey, provider.notedUpsampledParents.front());
+
+    provider.availability[childKeys[1]] = TileAvailabilityState::Available;
+    provider.availability[childKeys[2]] = TileAvailabilityState::Available;
+    provider.availability[childKeys[3]] = TileAvailabilityState::Available;
+
+    childResult = contentAccess.ensureTileChildren(*root);
+
+    EXPECT_TRUE(childResult.changed);
+    EXPECT_FALSE(childResult.retryLater);
+    ASSERT_EQ(4u, root->children.size());
+    for (TilesetTile* child : root->children) {
+        ASSERT_NE(nullptr, child);
+        EXPECT_FALSE(child->content.isTerrainAvailabilityUpsample());
+    }
+    ASSERT_EQ(1u, provider.clearedUpsampledParents.size());
+    EXPECT_EQ(rootKey, provider.clearedUpsampledParents.front());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
