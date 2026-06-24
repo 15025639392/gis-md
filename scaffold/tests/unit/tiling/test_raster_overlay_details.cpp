@@ -35,6 +35,15 @@ private:
     int height_ = 0;
 };
 
+class TestBuffer final : public Buffer {
+public:
+    explicit TestBuffer(size_t byteSize) : byteSize_(byteSize) {}
+    size_t size() const override { return byteSize_; }
+
+private:
+    size_t byteSize_ = 0;
+};
+
 void prepareGltfRenderContent(TileRenderContentState& renderContent,
                               RasterOverlayDetails details = {}) {
     auto model = std::make_unique<GltfModel>();
@@ -226,6 +235,34 @@ TEST(RasterOverlayDetailsTest,
     EXPECT_FALSE(renderContent.hasSurfaceMesh());
     EXPECT_LT(renderContent.estimateRetainedBytes(),
               retainedWithLegacyWater);
+}
+
+TEST(RasterOverlayDetailsTest,
+     GltfTerrainRejectsLateLegacySurfaceGpuPayload) {
+    TileRenderContentState renderContent;
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle(0.0, 0.0, 1.0, 1.0),
+        -1.0,
+        1.0);
+    renderContent.prepareGltfContent(std::move(model), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+    ASSERT_TRUE(renderContent.hasGltfContent());
+    ASSERT_TRUE(renderContent.isTerrainRenderContent());
+
+    renderContent.setSurfaceGpuBuffers(
+        std::make_unique<TestBuffer>(64),
+        std::make_unique<TestBuffer>(16));
+    renderContent.setSurfaceWaterMaskTexture(
+        std::make_unique<TestTexture>(8, 4));
+
+    EXPECT_TRUE(renderContent.hasGltfContent());
+    EXPECT_TRUE(renderContent.isTerrainRenderContent());
+    EXPECT_EQ(nullptr, renderContent.surfaceVertexBuffer());
+    EXPECT_EQ(nullptr, renderContent.surfaceIndexBuffer());
+    EXPECT_EQ(nullptr, renderContent.surfaceWaterMaskTexture());
+    EXPECT_EQ(SurfaceDrawableSource::GltfContent,
+              renderContent.currentSurfaceSource());
 }
 
 TEST(RasterOverlayDetailsTest,

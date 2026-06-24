@@ -298,11 +298,20 @@ public:
 
     void setSurfaceGpuBuffers(std::unique_ptr<Buffer> vertexBuffer,
                               std::unique_ptr<Buffer> indexBuffer) {
+        if (isGltfOwnedContentState()) {
+            surface_.gpuVertexBuffer.reset();
+            surface_.gpuIndexBuffer.reset();
+            return;
+        }
         surface_.gpuVertexBuffer = std::move(vertexBuffer);
         surface_.gpuIndexBuffer = std::move(indexBuffer);
     }
 
     void setSurfaceWaterMaskTexture(std::unique_ptr<Texture> texture) {
+        if (isGltfOwnedContentState()) {
+            surfaceWaterMaskTexture_.reset();
+            return;
+        }
         surfaceWaterMaskTexture_ = std::move(texture);
     }
 
