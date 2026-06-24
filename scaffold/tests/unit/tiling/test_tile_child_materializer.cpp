@@ -469,7 +469,7 @@ TEST(TileChildMaterializerTest,
         Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
     auto model = std::make_unique<GltfModel>();
     model->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
-    tile.content.contentKind = TileContentKind::Render;
+    tile.content.contentKind = TileContentKind::Unknown;
     tile.content.loadState = TileLoadState::FailedTemporarily;
     tile.content.renderContent.setGltfContent(std::move(model));
     tile.content.renderContent.setTerrainRenderContent(true);
@@ -484,6 +484,7 @@ TEST(TileChildMaterializerTest,
     EXPECT_FALSE(TileContentTerrainResiduePolicy::clearRejectableResidue(tile));
 
     tile.content.loadState = TileLoadState::FailedTemporarily;
+    tile.content.contentKind = TileContentKind::Unknown;
     EXPECT_FALSE(
         TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(tile));
     EXPECT_TRUE(
