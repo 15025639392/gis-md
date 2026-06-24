@@ -14,12 +14,14 @@
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
 #include "earth_engine/tiling/TilePendingUploadFrameProcessor.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
+#include "earth_engine/tiling/TileLoadRequestDispatcher.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
 
 #include <array>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -88,6 +90,12 @@ TileLoadResultMetadata makeBoundingVolumeMetadata(
             minimumHeight,
             maximumHeight);
     return metadata;
+}
+
+TileLoadResult makeMalformedRenderableWithoutPayloadForCommitTest() {
+    TileLoadResult result;
+    result.status = TileLoadStatus::Renderable;
+    return result;
 }
 
 std::unique_ptr<GltfModel> makeMinimalTerrainGltfModelForCommitTest(
@@ -1894,6 +1902,78 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(TileContentKind::Unknown, child.content.contentKind);
     EXPECT_TRUE(terrainCache.empty());
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     QueuedInvalidTerrainUpsampleCommitsAsFailedTerminalLikeCesiumNative) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const std::string cacheKey = "test:invalid-terrain-upsample-terminal";
+    const Rectangle parentBounds{-1.0, -1.0, 1.0, 1.0};
+    const Rectangle childBounds{-1.0, -1.0, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.loadState = TileLoadState::ContentLoading;
+    child.content.markTerrainAvailabilityUpsample();
+    child.content.renderContent.setGltfContent(
+        makeCommitCoordinatorQuadTerrainGltfModel(childBounds));
+    child.content.renderContent.setTerrainRenderContent(true);
+
+    std::mutex mutex;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+
+    const TileLoadDispatchResult dispatchResult =
+        TileLoadRequestDispatcher::queueUpsampledLoad(
+            mutex,
+            requestState,
+            pendingLoads,
+            childKey,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadDomain::TerrainContent,
+            makeMalformedRenderableWithoutPayloadForCommitTest());
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, dispatchResult);
+    EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.gltfTerrainTerminalResultCount());
+
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::optional<PendingTileLoad> terminal =
+        pendingLoads.takeHighestPriorityTerminalResult(budget);
+    ASSERT_TRUE(terminal.has_value());
+    EXPECT_EQ(TileLoadDomain::TerrainContent, terminal->domain);
+    EXPECT_EQ(TileLoadStatus::Failed, terminal->result.status);
+    EXPECT_FALSE(terminal->content().hasGltfTerrainPayload());
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
+        *terminal,
+        emptyContentRegistry,
+        nullptr,
+        [&child](const TileKey& key) -> TilesetTile* {
+            return key == child.key ? &child : nullptr;
+        },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_TRUE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_EQ(TileLoadState::Failed, child.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, child.content.contentKind);
+    EXPECT_TRUE(child.content.isTerrainAvailabilityUpsample());
+    EXPECT_FALSE(child.content.renderContent.hasGltfModel());
+    EXPECT_FALSE(child.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(child.content.renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(child.content.renderContent.hasRasterOverlayDetailsContent());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
