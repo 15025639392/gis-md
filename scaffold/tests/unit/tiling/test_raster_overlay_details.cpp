@@ -621,7 +621,7 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
-     RegionGenerationFillsExistingProjectionSlotWithoutRectangle) {
+     RegionGenerationSkipsExistingProjectionSlotWithoutRectangleLikeCesiumNative) {
     TileRenderContentState renderContent;
     RasterOverlayDetails existingDetails;
     existingDetails.rasterOverlayProjections.push_back(
@@ -640,16 +640,18 @@ TEST(RasterOverlayDetailsGeneratorTest,
             boundingRegion,
             RasterOverlayProjection::Geographic);
 
-    EXPECT_TRUE(generated);
+    EXPECT_FALSE(generated);
     const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
     ASSERT_EQ(1u, details.rasterOverlayProjections.size());
-    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
-    EXPECT_EQ(region, details.rasterOverlayRectangles[0]);
-    EXPECT_EQ(0, details.textureCoordinateIDForProjection(
+    EXPECT_TRUE(details.rasterOverlayRectangles.empty());
+    EXPECT_EQ(-1, details.textureCoordinateIDForProjection(
                     RasterOverlayProjection::Geographic));
-    expectRectangleNear(region, details.boundingRegion.rectangle);
-    EXPECT_NEAR(0.0, details.boundingRegion.minimumHeight, 1e-6);
-    EXPECT_NEAR(0.0, details.boundingRegion.maximumHeight, 1e-6);
+    EXPECT_TRUE(details.boundingRegion.rectangle.isEmpty());
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    EXPECT_TRUE(model->primitives.front().vertexTexCoords[0].empty());
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
@@ -878,7 +880,7 @@ TEST(RasterOverlayDetailsGeneratorTest,
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
-     ModelBoundsGenerationFillsExistingProjectionSlotWithoutRectangle) {
+     ModelBoundsGenerationSkipsExistingProjectionSlotWithoutRectangleLikeCesiumNative) {
     TileRenderContentState renderContent;
     RasterOverlayDetails existingDetails;
     existingDetails.rasterOverlayProjections.push_back(
@@ -895,20 +897,19 @@ TEST(RasterOverlayDetailsGeneratorTest,
             renderContent,
             RasterOverlayProjection::Geographic);
 
-    EXPECT_TRUE(generated);
+    EXPECT_FALSE(generated);
     const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
     ASSERT_EQ(1u, details.rasterOverlayProjections.size());
-    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
-    EXPECT_EQ(0, details.textureCoordinateIDForProjection(
+    EXPECT_TRUE(details.rasterOverlayRectangles.empty());
+    EXPECT_EQ(-1, details.textureCoordinateIDForProjection(
                     RasterOverlayProjection::Geographic));
-    expectRectangleNear(modelRegion, details.rasterOverlayRectangles[0]);
+    EXPECT_TRUE(details.boundingRegion.rectangle.isEmpty());
 
     const GltfModel* model = renderContent.gltfModelForRead();
     ASSERT_NE(nullptr, model);
     ASSERT_EQ(1u, model->primitives.size());
     const GltfPrimitive& primitive = model->primitives.front();
-    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
-    EXPECT_TRUE(primitive.vertexTexCoords[1].empty());
+    EXPECT_TRUE(primitive.vertexTexCoords[0].empty());
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,

@@ -32,12 +32,6 @@ std::optional<size_t> findProjectionIndex(
     return std::nullopt;
 }
 
-bool hasProjectionRectangle(const RasterOverlayDetails& details,
-                            size_t index) {
-    return index < details.rasterOverlayRectangles.size() &&
-           !details.rasterOverlayRectangles[index].isEmpty();
-}
-
 void mergeBoundingRegion(
     RasterOverlayDetails& details,
     const BoundingRegionBuilder::BoundingRegion& generatedRegion) {
@@ -306,15 +300,13 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     if (!details) {
         return false;
     }
-    const size_t textureCoordinateIndex =
-        details->rasterOverlayProjections.size();
     const std::optional<size_t> existingIndex =
         findProjectionIndex(*details, projection);
-    if (existingIndex && hasProjectionRectangle(*details, *existingIndex)) {
+    if (existingIndex) {
         return false;
     }
     const size_t targetTextureCoordinateIndex =
-        existingIndex.value_or(textureCoordinateIndex);
+        details->rasterOverlayProjections.size();
     if (boundingVolume.kind != TileBoundingVolumeKind::Region) {
         return false;
     }
@@ -350,11 +342,9 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromModelBounds(
     if (!details) {
         return false;
     }
-    const size_t textureCoordinateIndex =
-        details->rasterOverlayProjections.size();
     const std::optional<size_t> existingIndex =
         findProjectionIndex(*details, projection);
-    if (existingIndex && hasProjectionRectangle(*details, *existingIndex)) {
+    if (existingIndex) {
         return false;
     }
 
@@ -365,7 +355,7 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromModelBounds(
     }
 
     const size_t targetTextureCoordinateIndex =
-        existingIndex.value_or(textureCoordinateIndex);
+        details->rasterOverlayProjections.size();
     const Rectangle projectedRectangle =
         projectRegionRectangle(tightRegion->rectangle, projection);
     if (!writeGltfOverlayTexCoords(
