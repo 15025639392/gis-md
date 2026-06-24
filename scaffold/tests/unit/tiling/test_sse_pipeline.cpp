@@ -13798,13 +13798,13 @@ void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
     TileContentUploadCommitter::prepareRenderContent(
         readyTile,
         TileLoadedContent::fromContentResult(std::move(readyResult)));
-    readyTile.content.renderContent.setMeshReady(true);
     TileContentUploadCommitAction action =
         TileContentUploadCommitter::finishRenderResourcePreparation(
             readyTile,
-            readyTile.content.renderContent.isMeshReady());
+            true);
     check(action.resourcesDirty &&
               readyTile.content.renderContent.gltfModelForRead() == rawReadyModel &&
+              !readyTile.content.renderContent.isSurfaceMeshReady() &&
               readyTile.content.contentKind == TileContentKind::Render &&
               readyTile.content.loadState == TileLoadState::ContentLoaded,
           "TileContentUploadCommitter: successful resource preparation keeps render content state and requests dirty resources");

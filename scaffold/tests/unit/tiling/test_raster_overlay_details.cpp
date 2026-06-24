@@ -255,9 +255,11 @@ TEST(RasterOverlayDetailsTest,
         std::make_unique<TestBuffer>(16));
     renderContent.setSurfaceWaterMaskTexture(
         std::make_unique<TestTexture>(8, 4));
+    renderContent.setMeshReady(true);
 
     EXPECT_TRUE(renderContent.hasGltfContent());
     EXPECT_TRUE(renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(renderContent.isSurfaceMeshReady());
     EXPECT_EQ(nullptr, renderContent.surfaceVertexBuffer());
     EXPECT_EQ(nullptr, renderContent.surfaceIndexBuffer());
     EXPECT_EQ(nullptr, renderContent.surfaceWaterMaskTexture());

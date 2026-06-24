@@ -187,6 +187,10 @@ public:
         }
     }
     void setMeshReady(bool ready) {
+        if (isGltfOwnedContentState()) {
+            surface_.meshReady = false;
+            return;
+        }
         surface_.meshReady = ready;
     }
     void setGltfResourcesReady(bool ready) {
