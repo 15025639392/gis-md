@@ -722,6 +722,45 @@ TEST(TileChildMaterializerTest, NonRootUnavailableTerrainSiblingsBecomeUpsampled
 }
 
 TEST(TileChildMaterializerTest,
+     UnknownTerrainSiblingsBecomeUpsampledWhenAnyChildIsAvailableLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            if (key == TileKey{"Geographic-TMS", 2, 2, 0}) {
+                return TileAvailabilityState::Available;
+            }
+            return TileAvailabilityState::Unknown;
+        },
+        ensure,
+        true);
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+
+    EXPECT_FALSE(parent.children[0]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[1]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[2]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[3]->content.isTerrainAvailabilityUpsample());
+}
+
+TEST(TileChildMaterializerTest,
      TerrainAvailabilityMaterializationClearsStaleUnconditionalRefine) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 1, 1, 0},
