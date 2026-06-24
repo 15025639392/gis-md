@@ -878,6 +878,89 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_FALSE(completed.metadata.rasterOverlayDetails.has_value());
 }
 
+TEST(
+    QuantizedMeshTerrainProviderTest,
+    WebMercatorRequestTileContentKeepsRasterOverlayDetailsForUpsampleChildLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 12,
+      "available": [
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 1, "startY": 1, "endX": 1, "endY": 1}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"XYZ-WebMercator", 1, 1, 1};
+    provider.noteTerrainAvailabilityUpsampledChild(key);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TileContentLoadResult completed;
+
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    ASSERT_TRUE(completed.metadata.rasterOverlayDetails.has_value());
+    EXPECT_TRUE(completed.metadata.rasterOverlayDetails->equalsExact(
+        completed.gltfModel->rasterOverlayDetails));
+    ASSERT_EQ(1u,
+              completed.gltfModel->rasterOverlayDetails
+                  .rasterOverlayProjections.size());
+    EXPECT_EQ(
+        RasterOverlayProjection::WebMercator,
+        completed.gltfModel->rasterOverlayDetails
+            .rasterOverlayProjections.front());
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    const Rectangle expectedGeographic = scheme->tileToRectangle(key);
+    const Rectangle expectedProjected = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        expectedGeographic);
+    const RasterOverlayDetails& details =
+        completed.gltfModel->rasterOverlayDetails;
+    const Rectangle* rasterRectangle =
+        details.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    ASSERT_NE(nullptr, rasterRectangle);
+    EXPECT_TRUE(rasterRectangle->equalsEpsilon(expectedProjected, 1e-6));
+    EXPECT_EQ(expectedGeographic, details.boundingRegion.rectangle);
+    ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
+    EXPECT_EQ(expectedGeographic,
+              completed.metadata.updatedBoundingVolume->region);
+}
+
 TEST(QuantizedMeshTerrainProviderTest,
      RequestTileContentOmitsRasterOverlayDetailsWithoutUpsampleChildLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
