@@ -21764,6 +21764,80 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
           "TileLoadScheduler: failed glTF terrain upsample queues Failed terminal instead of retrying forever");
 }
 
+void testTileLoadSchedulerDoesNotStartUpsampleFromUnloadingParent() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    TilesetTile child(
+        childKey,
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 0.0),
+        &parent);
+    parent.children.push_back(&child);
+    child.content.markTerrainAvailabilityUpsample();
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Unloading;
+    parent.content.renderContent.setGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+
+    check(TileGltfTerrainUpsampledChildMaterializer::canCreateLoadResult(child),
+          "TileLoadScheduler: fixture exposes protected Unloading parent as a materializer source");
+
+    bool prepared = false;
+    bool ensured = false;
+    bool marked = false;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                childKey,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr},
+            testCacheKeyForTile,
+            [&child](const TileKey&,
+                     const std::string&,
+                     TilesetTile*& tileState) {
+                tileState = &child;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                snapshot.loadState = child.content.loadState;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepared, &ensured](TilesetTile& tile, double priority) {
+                prepared = true;
+                return TileUpsampleSourcePreparer::prepareSourceTile(
+                    tile,
+                    priority,
+                    false,
+                    [&ensured](TilesetTile&) {
+                        ensured = true;
+                    },
+                    [](const TileKey&, TileLoadPriorityGroup, double) {});
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight &&
+              prepared && !ensured && !marked &&
+              child.content.loadState == TileLoadState::Unloaded &&
+              lifecycle.counts().gltfTerrainUploads == 0 &&
+              lifecycle.counts().gltfTerrainTerminalResults == 0,
+          "TileLoadScheduler: new terrain upsample waits instead of starting from protected Unloading parent like cesium-native");
+}
+
 void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -29398,6 +29472,7 @@ int main() {
     testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample();
     testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails();
+    testTileLoadSchedulerDoesNotStartUpsampleFromUnloadingParent();
     testTileLoadSchedulerContinuesAfterMissingUpsampleTileState();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
