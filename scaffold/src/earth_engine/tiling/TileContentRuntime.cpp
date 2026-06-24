@@ -69,8 +69,8 @@ bool TileContentRuntime::processPendingUploads(
         [this](const TileKey& key) {
             return contentAccess_.ensureTile(key);
         },
-        [this](TilesetTile& tile) {
-            contentAccess_.ensureTileChildren(tile);
+        [this, &frame](TilesetTile& tile) {
+            contentAccess_.ensureTileChildren(tile, frame.pPrepRenderer);
         },
         [this]() {
             markResourcesDirty();

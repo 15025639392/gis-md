@@ -4,6 +4,8 @@
 
 namespace earth_engine {
 
+class IPrepareRendererResources;
+
 struct TileContentTerrainResiduePolicy {
     static bool hasAcceptedTerrainContent(const TilesetTile& tile) {
         return tile.content.renderContent.hasGltfContent() &&
@@ -22,12 +24,14 @@ struct TileContentTerrainResiduePolicy {
                tile.rasterOverlayState.hasMissingProjections();
     }
 
-    static bool clearRejectableResidue(TilesetTile& tile) {
+    static bool clearRejectableResidue(
+        TilesetTile& tile,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
         if (!hasRejectableResidue(tile)) {
             return false;
         }
         tile.content.renderContent.clearRenderContent();
-        tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+        tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
         return true;
     }
 };

@@ -762,7 +762,9 @@ TEST(TileChildMaterializerTest,
 
 TEST(TileChildMaterializerTest,
      TerrainAvailabilityMaterializationClearsIncompleteGltfTerrainResidue) {
+    DebugImageryProvider imagery;
     auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
     TilesetTile parent(
         TileKey{"Geographic-TMS", 1, 1, 0},
         scheme->tileToRectangle(TileKey{"Geographic-TMS", 1, 1, 0}));
@@ -791,6 +793,38 @@ TEST(TileChildMaterializerTest,
     TilesetTile* staleChild =
         ensure(TileKey{"Geographic-TMS", 2, 2, 0});
     ASSERT_NE(nullptr, staleChild);
+    staleChild->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    staleChild->content.renderContent.setMeshReady(true);
+    staleChild->content.renderContent.mutableRasterOverlayDetails()
+        ->setGeographicRectangle(staleChild->bounds);
+    RasterMappedToTilesetTile& mapped =
+        staleChild->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        staleChild->key,
+        staleChild->content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missingProjections);
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    mapped.getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(4, 4));
+    RecordingPrepareRendererResources prep;
+    mapped.update(
+        staleChild->key,
+        staleChild->content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        provider,
+        &prep,
+        missingProjections);
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+              mapped.getState());
+    ASSERT_EQ(1, prep.attachCount);
+
     staleChild->content.renderContent.setGltfContent(
         std::make_unique<GltfModel>());
     staleChild->content.renderContent.setTerrainRenderContent(true);
@@ -811,7 +845,8 @@ TEST(TileChildMaterializerTest,
                 : TileAvailabilityState::NotAvailable;
         },
         ensure,
-        true);
+        true,
+        &prep);
 
     EXPECT_TRUE(changed);
     ASSERT_EQ(4u, parent.children.size());
@@ -820,6 +855,9 @@ TEST(TileChildMaterializerTest,
     EXPECT_FALSE(staleChild->content.renderContent.hasGltfContent());
     EXPECT_FALSE(staleChild->content.renderContent.isRenderContentReady());
     EXPECT_EQ(0u, staleChild->rasterOverlayState.mappingCount());
+    EXPECT_EQ(1, prep.detachCount);
+    EXPECT_EQ(staleChild->key, prep.lastDetachedGeometryKey);
+    EXPECT_EQ(0, prep.lastDetachedOverlayIndex);
 }
 
 TEST(TileChildMaterializerTest,

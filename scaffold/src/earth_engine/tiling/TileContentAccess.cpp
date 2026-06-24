@@ -115,7 +115,9 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
 }
 
 TileChildFrameMaterializeResult
-TileContentAccess::ensureTileChildren(TilesetTile& tile) {
+TileContentAccess::ensureTileChildren(
+    TilesetTile& tile,
+    IPrepareRendererResources* pPrepRenderer) {
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key)) {
         const std::vector<TileKey> childKeys =
             contentProviderOwnsTerrainQuadtree() && contentProvider_
@@ -160,7 +162,8 @@ TileContentAccess::ensureTileChildren(TilesetTile& tile) {
             hasTerrainQuadtree(),
             isAvailabilityBoundaryTile(tile) &&
                 !hasResolvedAvailabilityBoundaryContent(tile),
-            contentProviderOwnsTerrainQuadtree()},
+            contentProviderOwnsTerrainQuadtree(),
+            pPrepRenderer},
         [this](const TileKey& key) {
             return ensureTile(key);
         },

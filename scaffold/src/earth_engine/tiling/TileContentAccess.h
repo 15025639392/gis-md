@@ -13,6 +13,7 @@ namespace earth_engine {
 
 class TerrainProvider;
 class TileContentLifecycleManager;
+class IPrepareRendererResources;
 class TileScheme;
 class TilesetContentProvider;
 class TilesetTileRegistry;
@@ -40,7 +41,9 @@ public:
         size_t rasterOverlayCount);
 
     TilesetTile* ensureTile(const TileKey& key);
-    TileChildFrameMaterializeResult ensureTileChildren(TilesetTile& tile);
+    TileChildFrameMaterializeResult ensureTileChildren(
+        TilesetTile& tile,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
     bool hasResolvedAvailabilityBoundaryContent(const TilesetTile& tile) const;
     bool isAvailabilityBoundaryTile(const TilesetTile& tile) const;
     bool canRefine(const TilesetTile& tile) const;

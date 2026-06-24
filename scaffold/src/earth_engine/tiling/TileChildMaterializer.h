@@ -53,7 +53,8 @@ struct TileChildMaterializer {
         int maxZoom,
         AvailabilityFn&& availabilityState,
         EnsureTileFn&& ensureTile,
-        bool clearTerrainAvailabilityUpsampleContent = false) {
+        bool clearTerrainAvailabilityUpsampleContent = false,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
         if (parent.key.z >= maxZoom ||
             parent.content.isTerrainAvailabilityUpsample()) {
             return false;
@@ -128,9 +129,9 @@ struct TileChildMaterializer {
                 child->content.isRasterDetailUpsample() ||
                 hasStaleTerrainResidue) {
                 if (!hasAcceptedTerrainContent) {
-                    child->content.renderContent.clearRenderContent();
-                    child->rasterOverlayState.releaseAndClearReferences(
-                        nullptr);
+                    TileContentTerrainResiduePolicy::clearRejectableResidue(
+                        *child,
+                        pPrepRenderer);
                 }
                 if (upsampled) {
                     child->content.markTerrainAvailabilityUpsample();

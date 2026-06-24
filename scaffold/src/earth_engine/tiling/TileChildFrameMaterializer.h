@@ -7,6 +7,8 @@
 
 namespace earth_engine {
 
+class IPrepareRendererResources;
+
 struct TileChildFrameMaterializeInput {
     TilesetTile& tile;
     std::vector<TileKey> contentChildKeys;
@@ -14,6 +16,7 @@ struct TileChildFrameMaterializeInput {
     bool hasTerrainQuadtree = false;
     bool isAvailabilityBoundaryWaitingForContent = false;
     bool contentProviderOwnsTerrainQuadtree = false;
+    IPrepareRendererResources* pPrepRenderer = nullptr;
 };
 
 struct TileChildFrameMaterializeResult {
@@ -56,7 +59,8 @@ public:
                 input.maxZoom,
                 availabilityState,
                 ensureTile,
-                input.contentProviderOwnsTerrainQuadtree),
+                input.contentProviderOwnsTerrainQuadtree,
+                input.pPrepRenderer),
             false};
     }
 };
