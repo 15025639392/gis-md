@@ -422,12 +422,13 @@ TEST(TileSelectionRootPolicyTest,
     auto acceptedModel = std::make_unique<GltfModel>();
     acceptedModel->rasterOverlayDetails.setGeographicRectangle(
         levelZero->bounds,
-        -1000.0,
-        9000.0);
+        -25.0,
+        125.0);
     levelZero->content.renderContent.prepareGltfContent(
         std::move(acceptedModel),
         Mat4::identity());
     levelZero->content.renderContent.setTerrainRenderContent(true);
+    levelZero->content.renderContent.setTerrainHeightRange(-25.0, 125.0);
     levelZero->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     levelZero->content.renderContent.markRenderContentReady();
@@ -442,6 +443,13 @@ TEST(TileSelectionRootPolicyTest,
 
     EXPECT_TRUE(levelZero->content.renderContent.hasGltfModel());
     EXPECT_TRUE(levelZero->content.renderContent.isRenderContentReady());
+    ASSERT_TRUE(levelZero->content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(
+        -25.0,
+        levelZero->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        125.0,
+        levelZero->content.renderContent.terrainMaximumHeight());
     EXPECT_EQ(existingMapping, levelZero->rasterOverlayState.mappingAt(0));
 }
 

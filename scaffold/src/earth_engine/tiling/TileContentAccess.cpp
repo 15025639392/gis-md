@@ -137,9 +137,14 @@ TileContentAccess::ensureTileChildren(
                     TileBoundsMetrics::terrainMinimumHeight(tile),
                     TileBoundsMetrics::terrainMaximumHeight(tile));
             }
-            TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
-                *child,
-                tile);
+            const bool hasAcceptedTerrainContent =
+                TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
+                    *child);
+            if (!hasAcceptedTerrainContent) {
+                TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
+                    *child,
+                    tile);
+            }
             if (contentProviderOwnsTerrainQuadtree()) {
                 if (TileContentTerrainResiduePolicy::clearRejectableResidue(
                         *child)) {
