@@ -15643,7 +15643,8 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
 
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    RenderContentRasterOverlayStateUpdater::update(
+    const RenderContentRasterOverlayUpdateAction action =
+        RenderContentRasterOverlayStateUpdater::update(
         renderer,
         tile,
         overlays,
@@ -15667,6 +15668,10 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
               loadingTile->getRectangle() == expectedContentWebMercator &&
               loadingTile->getRectangle() != tileWebMercator,
           "RenderContentRasterOverlayStateUpdater: fallback raster request uses effective content bounding volume like cesium-native");
+    check(!action.unloadTileContent,
+          "RenderContentRasterOverlayStateUpdater: bounding-volume fallback does not request content reload");
+    check(tile.rasterOverlayState.missingProjections().empty(),
+          "RenderContentRasterOverlayStateUpdater: bounding-volume fallback does not report missing render-content projection");
 }
 
 void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {

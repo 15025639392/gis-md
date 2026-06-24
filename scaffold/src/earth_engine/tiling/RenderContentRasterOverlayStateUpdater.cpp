@@ -101,6 +101,13 @@ RenderContentRasterOverlayStateUpdater::update(
                 projection,
                 tile.nonZeroGeometricError(),
                 maximumScreenSpaceError);
+        std::vector<RasterOverlayProjection> localMissingProjections;
+        std::vector<RasterOverlayProjection>& missingProjections =
+            hasRenderContentDetails
+                ? tile.rasterOverlayState.missingProjections()
+                : localMissingProjections;
+        const bool mapAsRenderContent =
+            hasRenderContentDetails || waitForContentTerrainDetails;
         const RasterMappedToTilesetTile::MoreDetail moreDetail =
             overlay.update(
                 tile.key,
@@ -109,10 +116,10 @@ RenderContentRasterOverlayStateUpdater::update(
                 rasterScreenPixels.y,
                 *activeProvider,
                 &renderer,
-                tile.rasterOverlayState.missingProjections(),
+                missingProjections,
                 tile.parent,
                 i,
-                hasRenderContentDetails || waitForContentTerrainDetails,
+                mapAsRenderContent,
                 boundingVolumeRectangle);
         if (tile.rasterOverlayState.hasMissingProjections()) {
             action.unloadTileContent = true;
