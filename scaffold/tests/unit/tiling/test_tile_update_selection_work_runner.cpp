@@ -45,6 +45,7 @@ TEST(
             [&]() { refreshCalled = true; },
             [&](const FrameState&) { selectCalled = true; },
             [&](const TileKey&) -> TilesetTile* { return nullptr; },
+            [](TilesetTile&) {},
             [&](const std::vector<TileLoadRequest>& requests,
                 FrameResourceBudget*) {
                 requestCalled = true;
@@ -111,6 +112,7 @@ TEST(
                 loadQueue.queue(queuedKey, TileLoadPriorityGroup::Normal, 2.0);
             },
             [&](const TileKey&) -> TilesetTile* { return nullptr; },
+            [](TilesetTile&) {},
             [&](const std::vector<TileLoadRequest>& requests,
                 FrameResourceBudget*) {
                 requestCalled = true;

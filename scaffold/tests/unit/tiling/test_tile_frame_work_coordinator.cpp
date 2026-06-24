@@ -81,6 +81,7 @@ TEST(
         [&]() { refreshCalled = true; },
         [&](const FrameState&) { selectCalled = true; },
         [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](TilesetTile&) {},
         [](const std::vector<TileLoadRequest>&, FrameResourceBudget*) {
             return TileLoadRequestOutcome{};
         });
@@ -170,6 +171,7 @@ TEST(TileFrameWorkCoordinatorTest, StableFrameStrictReusesSelection) {
         [&]() { refreshCalled = true; },
         [&](const FrameState&) { selectCalled = true; },
         [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](TilesetTile&) {},
         [&requestCalled](
             const std::vector<TileLoadRequest>& requests,
             FrameResourceBudget*) {

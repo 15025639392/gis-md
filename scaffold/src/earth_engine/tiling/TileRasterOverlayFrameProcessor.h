@@ -10,6 +10,7 @@
 #include "../layers/ActivatedRasterOverlay.h"
 
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <unordered_set>
 #include <vector>
@@ -52,7 +53,8 @@ public:
         double maximumScreenSpaceError,
         FrameResourceBudget& frameResourceBudget,
         EnsureTileFn&& ensureTile,
-        IPrepareRendererResources* pPrepRenderer = nullptr) {
+        IPrepareRendererResources* pPrepRenderer = nullptr,
+        const std::function<void(TilesetTile&)>& unloadTileContent = {}) {
         struct PrefetchTile {
             TileKey key;
             TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
@@ -79,7 +81,8 @@ public:
                 if (!prefetchedTiles.insert(item.key).second) {
                     continue;
                 }
-                TileRasterOverlayPrefetcher::prefetch(
+                const TileRasterOverlayPrefetchAction action =
+                    TileRasterOverlayPrefetcher::prefetch(
                     *item.tile,
                     rasterOverlays,
                     overlayProcessingOrder,
@@ -87,6 +90,10 @@ public:
                     maximumScreenSpaceError,
                     frameResourceBudget,
                     pPrepRenderer);
+                if (action.unloadTileContent && unloadTileContent) {
+                    unloadTileContent(*item.tile);
+                    continue;
+                }
             }
         }
         std::vector<TileLoadRequest> sortedLoadRequests = loadRequests;
@@ -105,7 +112,8 @@ public:
                 if (!prefetchedTiles.insert(request.key).second) {
                     continue;
                 }
-                TileRasterOverlayPrefetcher::prefetch(
+                const TileRasterOverlayPrefetchAction action =
+                    TileRasterOverlayPrefetcher::prefetch(
                     *tile,
                     rasterOverlays,
                     overlayProcessingOrder,
@@ -113,6 +121,10 @@ public:
                     maximumScreenSpaceError,
                     frameResourceBudget,
                     pPrepRenderer);
+                if (action.unloadTileContent && unloadTileContent) {
+                    unloadTileContent(*tile);
+                    continue;
+                }
             }
         }
     }

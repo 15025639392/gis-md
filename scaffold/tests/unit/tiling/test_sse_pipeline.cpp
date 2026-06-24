@@ -5320,6 +5320,76 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
           "TileRasterOverlayFrameProcessor: raster prefetch starts the higher-priority tile first");
 }
 
+void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    TilesetTile tile(
+        key,
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0));
+    tile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
+            RasterOverlayProjection::Geographic);
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.geometricError = 100.0;
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(key);
+    std::vector<TileLoadRequest> requests;
+    const std::vector<size_t> overlayOrder =
+        TileSelectionRasterOverlayPreparer::processingOrder(overlays);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+    bool unloadCalled = false;
+
+    TileRasterOverlayFrameProcessor::prefetchSelection(
+        plan,
+        requests,
+        overlays,
+        overlayOrder,
+        nullptr,
+        16.0,
+        budget,
+        [&tile](const TileKey& requestedKey) -> TilesetTile* {
+            return requestedKey == tile.key ? &tile : nullptr;
+        },
+        nullptr,
+        [&](TilesetTile& unloadTile) {
+            unloadCalled = true;
+            TileContentUnloadCoordinator::unloadContent(
+                unloadTile,
+                TileCacheKey::forTile(unloadTile.key),
+                &terrainCache,
+                emptyContentRegistry,
+                nullptr);
+        });
+
+    check(unloadCalled &&
+              tile.content.loadState == TileLoadState::Unloaded &&
+              tile.content.contentKind == TileContentKind::Unknown,
+          "TileRasterOverlayFrameProcessor: prefetch missing projection unloads content like cesium-native updateTileOverlays");
+    check(tile.rasterOverlayState.mappings().empty() &&
+              tile.rasterOverlayState.missingProjections().empty(),
+          "TileRasterOverlayFrameProcessor: prefetch reload clears transient missing projection overlay state");
+    check(activated.getCachedTileCount() == 0,
+          "TileRasterOverlayFrameProcessor: prefetch missing projection does not start raster source requests before reload");
+}
+
 void testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch() {
     const TileKey key{"Geographic-TMS", 1, 0, 0};
     TilesetTile tile(key, Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0));
@@ -18411,6 +18481,7 @@ void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
             [&]() { refreshCalled = true; },
             [&](const FrameState&) { selectCalled = true; },
             [&](const TileKey&) -> TilesetTile* { return nullptr; },
+            [](TilesetTile&) {},
             [&](const std::vector<TileLoadRequest>& requests,
                 FrameResourceBudget*) {
                 requestCalled = true;
@@ -18504,6 +18575,7 @@ void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
         [&]() { refreshCalled = true; },
         [&](const FrameState&) { selectCalled = true; },
         [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](TilesetTile&) {},
         [](const std::vector<TileLoadRequest>&, FrameResourceBudget*) {
             return TileLoadRequestOutcome{};
         });
@@ -27873,6 +27945,7 @@ int main() {
     testTilesetPrefetchUsesContentBoundingVolumeFallback();
     testTilesetPrefetchGeneratesRenderContentDetailsFromRegion();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
+    testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch();
     testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testRasterSelectionPrefetchSkipHonorsMoreDetail();

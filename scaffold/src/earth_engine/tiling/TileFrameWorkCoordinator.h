@@ -58,6 +58,7 @@ public:
               typename RefreshTilePlanRenderEntriesFn,
               typename SelectTilesFn,
               typename EnsureTileFn,
+              typename UnloadTileContentFn,
               typename RequestMissingTilesFn>
     static TileFrameWorkResult run(
         TileFrameWorkInput input,
@@ -68,6 +69,7 @@ public:
         RefreshTilePlanRenderEntriesFn&& refreshTilePlanRenderEntries,
         SelectTilesFn&& selectTiles,
         EnsureTileFn&& ensureTile,
+        UnloadTileContentFn&& unloadTileContent,
         RequestMissingTilesFn&& requestMissingTiles) {
         TileFrameWorkResult result;
 
@@ -151,6 +153,7 @@ public:
             refreshTilePlanRenderEntries,
             selectTiles,
             ensureTile,
+            unloadTileContent,
             requestMissingTiles);
 
         return result;

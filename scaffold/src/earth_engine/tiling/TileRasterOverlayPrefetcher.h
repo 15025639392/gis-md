@@ -11,9 +11,13 @@ class IPrepareRendererResources;
 class RenderDevice;
 struct TilesetTile;
 
+struct TileRasterOverlayPrefetchAction {
+    bool unloadTileContent = false;
+};
+
 class TileRasterOverlayPrefetcher {
 public:
-    static void prefetch(
+    static TileRasterOverlayPrefetchAction prefetch(
         TilesetTile& tile,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         const std::vector<size_t>& overlayProcessingOrder,

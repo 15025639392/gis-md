@@ -87,6 +87,9 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
         [&tileset](const TileKey& key) {
             return tileset.contentAccess_.ensureTile(key);
         },
+        [&tileset, pPrepRenderer](TilesetTile& tile) {
+            tileset.cacheOwnership_.unloadTileContent(tile, pPrepRenderer);
+        },
         [&tileset](const std::vector<TileLoadRequest>& requests,
                    FrameResourceBudget* budget) {
             return tileset.requestMissingContent(

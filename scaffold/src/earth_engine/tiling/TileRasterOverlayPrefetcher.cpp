@@ -33,7 +33,7 @@ bool doneTileCannotHoldRasterOverlays(const TilesetTile& tile) {
 
 } // namespace
 
-void TileRasterOverlayPrefetcher::prefetch(
+TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
     TilesetTile& tile,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     const std::vector<size_t>& overlayProcessingOrder,
@@ -41,9 +41,10 @@ void TileRasterOverlayPrefetcher::prefetch(
     double maximumScreenSpaceError,
     FrameResourceBudget& frameResourceBudget,
     IPrepareRendererResources* pPrepRenderer) {
+    TileRasterOverlayPrefetchAction action;
     if (doneTileCannotHoldRasterOverlays(tile)) {
         tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
-        return;
+        return action;
     }
 
     tile.rasterOverlayState.synchronizeMappingIdentity(
@@ -55,7 +56,7 @@ void TileRasterOverlayPrefetcher::prefetch(
     tile.rasterOverlayState.clearMissingProjections();
 
     if (rasterOverlays.empty()) {
-        return;
+        return action;
     }
 
     const bool hasRenderContentDetails =
@@ -133,6 +134,10 @@ void TileRasterOverlayPrefetcher::prefetch(
             i,
             mapAsRenderContent,
             boundingVolumeRectangle);
+        if (tile.rasterOverlayState.hasMissingProjections()) {
+            action.unloadTileContent = true;
+            return action;
+        }
 
         RasterOverlayTile* loadingTile = mapped.getLoadingTile();
         if (loadingTile &&
@@ -141,6 +146,7 @@ void TileRasterOverlayPrefetcher::prefetch(
             mapped.loadThrottled(*activeProvider, &frameResourceBudget);
         }
     }
+    return action;
 }
 
 } // namespace earth_engine

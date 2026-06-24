@@ -15,6 +15,7 @@
 #include "../debug/PerfTimer.h"
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace earth_engine {
@@ -52,12 +53,14 @@ public:
     template <typename RefreshTilePlanRenderEntriesFn,
               typename SelectTilesFn,
               typename EnsureTileFn,
+              typename UnloadTileContentFn,
               typename RequestMissingTilesFn>
     static TileUpdateSelectionWorkResult run(
         TileUpdateSelectionWorkInput input,
         RefreshTilePlanRenderEntriesFn&& refreshTilePlanRenderEntries,
         SelectTilesFn&& selectTiles,
         EnsureTileFn&& ensureTile,
+        UnloadTileContentFn&& unloadTileContent,
         RequestMissingTilesFn&& requestMissingTiles) {
         TileUpdateSelectionWorkResult result;
         result.reuseMode = input.reuseMode;
@@ -92,7 +95,9 @@ public:
             input.device,
             input.maximumScreenSpaceError,
             input.frameResourceBudget,
-            ensureTile);
+            ensureTile,
+            nullptr,
+            std::forward<UnloadTileContentFn>(unloadTileContent));
         result.prefetchMs = perf::nowMs() - prefetchStartMs;
 
         const double requestStartMs = perf::nowMs();
