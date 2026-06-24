@@ -128,9 +128,7 @@ struct TileLoadResult {
     static TileLoadResult normalizeForDomain(
         TileLoadDomain domain,
         TileLoadResult&& result) {
-        if (domain == TileLoadDomain::TerrainContent &&
-            result.status == TileLoadStatus::Renderable &&
-            !result.content.satisfiesContentTerrainPayloadContract()) {
+        if (result.shouldFailUploadForDomain(domain)) {
             return createTerminal(TileLoadStatus::Failed);
         }
         return std::move(result);
@@ -148,6 +146,17 @@ struct TileLoadResult {
     bool shouldUpload() const {
         return status == TileLoadStatus::Renderable &&
                hasRenderableContent();
+    }
+
+    bool shouldFailUploadForDomain(TileLoadDomain domain) const {
+        if (status != TileLoadStatus::Renderable) {
+            return false;
+        }
+        if (domain == TileLoadDomain::TerrainContent) {
+            return !content.satisfiesContentTerrainPayloadContract();
+        }
+        return content.terrainRenderContent &&
+               !content.satisfiesContentTerrainPayloadContract();
     }
 
     bool shouldApplyTerminalMetadata() const {

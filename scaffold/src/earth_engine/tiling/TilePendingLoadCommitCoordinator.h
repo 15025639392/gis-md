@@ -123,9 +123,7 @@ public:
             return;
         }
 
-        if (upload.result.status == TileLoadStatus::Renderable &&
-            upload.content().terrainRenderContent &&
-            !upload.content().satisfiesContentTerrainPayloadContract()) {
+        if (upload.result.shouldFailUploadForDomain(upload.domain)) {
             const TileTerminalLoadAction action =
                 upload.domain == TileLoadDomain::TerrainContent
                     ? TileTerminalLoadCommitter::commitTerrainTerminalResult(

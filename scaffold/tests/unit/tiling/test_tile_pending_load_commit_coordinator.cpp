@@ -2465,6 +2465,69 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainContentUploadRejectsOrdinaryGltfPayloadAtCommit) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    const std::string cacheKey = "test:ordinary-gltf-terrain-upload";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    PendingTileLoad upload{TileLoadDomain::TerrainContent,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::fromContentResult(
+            TileContentLoadResult::render(std::make_unique<GltfModel>()))};
+    ASSERT_EQ(TileLoadStatus::Renderable, upload.result.status);
+    ASSERT_FALSE(upload.content().hasGltfTerrainPayload());
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableGltfTerrain(
+                makeMinimalTerrainGltfModelForCommitTest(tile.bounds))});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    int ensureGltfCalls = 0;
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        {},
+        emptyContentRegistry,
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&ensureGltfCalls](TilesetTile&) { ++ensureGltfCalls; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_EQ(0, ensureGltfCalls);
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
+    EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      MalformedTerrainUploadCommitsAsFailedTerminalLikeCesiumNative) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:malformed-terrain-upload";
