@@ -13944,20 +13944,20 @@ void testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult() {
         details.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
     check(geographic && *geographic == tileRectangle &&
-              webMercator == nullptr &&
-              details.rasterOverlayProjections.size() == 1 &&
+              webMercator != nullptr &&
+              details.rasterOverlayProjections.size() == 2 &&
               details.textureCoordinateIDForProjection(
                   RasterOverlayProjection::Geographic) == 0 &&
               details.textureCoordinateIDForProjection(
-                  RasterOverlayProjection::WebMercator) == -1 &&
+                  RasterOverlayProjection::WebMercator) == 1 &&
               tile.content.renderContent.hasGltfModel() &&
               !tile.content.renderContent.hasSurfaceMesh() &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileContentUploadCommitter: glTF terrain upload keeps loader raster overlay details and leaves missing projections for cesium-native reload");
+          "TileContentUploadCommitter: glTF terrain upload merges active raster overlay details like cesium-native");
 }
 
-void testContentUploadKeepsContentProviderTerrainRasterOverlayDetailsFromLoadResult() {
+void testContentUploadGeneratesContentProviderTerrainRasterOverlayDetails() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -13997,13 +13997,17 @@ void testContentUploadKeepsContentProviderTerrainRasterOverlayDetailsFromLoadRes
         details.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
     check(geographic && *geographic == tileRectangle &&
-              webMercator == nullptr &&
-              details.rasterOverlayProjections.size() == 1 &&
+              webMercator != nullptr &&
+              details.rasterOverlayProjections.size() == 2 &&
+              details.textureCoordinateIDForProjection(
+                  RasterOverlayProjection::Geographic) == 0 &&
+              details.textureCoordinateIDForProjection(
+                  RasterOverlayProjection::WebMercator) == 1 &&
               tile.content.renderContent.isTerrainRenderContent() &&
               tile.content.renderContent.hasGltfModel() &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileContentUploadCommitter: content-provider terrain glTF upload does not synthesize active overlay details");
+          "TileContentUploadCommitter: content-provider terrain glTF upload synthesizes active overlay details like cesium-native");
 }
 
 void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
@@ -14150,12 +14154,12 @@ void testContentUploadPreparesTerrainContentRenderContent() {
               tile.content.renderContent.currentSurfaceSource() ==
                   SurfaceDrawableSource::GltfContent &&
               geographic && *geographic == tileRectangle &&
-              webMercator == nullptr &&
+              webMercator != nullptr &&
               details.textureCoordinateIDForProjection(
-                  RasterOverlayProjection::WebMercator) == -1 &&
+                  RasterOverlayProjection::WebMercator) == 1 &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileContentUploadCommitter: content-domain glTF terrain upload uses unified render content and loader overlay details");
+          "TileContentUploadCommitter: content-domain glTF terrain upload uses unified render content and active overlay details");
 }
 
 void testContentTileLoadResultCarriesTerrainContentModel() {
@@ -28755,7 +28759,7 @@ int main() {
     testTileTerminalLoadCommitterWritesEmptyRegistryActions();
     testTileContentUploadPolicyPreparesGltfRenderContent();
     testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult();
-    testContentUploadKeepsContentProviderTerrainRasterOverlayDetailsFromLoadResult();
+    testContentUploadGeneratesContentProviderTerrainRasterOverlayDetails();
     testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf();
     testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails();
     testContentUploadPreparesTerrainContentRenderContent();

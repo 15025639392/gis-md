@@ -73,8 +73,7 @@ void TileContentUploadCommitter::prepareRenderContent(
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         std::move(content));
-    if (tile.content.renderContent.hasGltfModel() &&
-        !tile.content.renderContent.isTerrainRenderContent()) {
+    if (tile.content.renderContent.hasGltfModel()) {
         TileRasterOverlayDetailsGenerator::
             ensureProjectionDetailsFromActiveOverlays(
                 tile.content.renderContent,
