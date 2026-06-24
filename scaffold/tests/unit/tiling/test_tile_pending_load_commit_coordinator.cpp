@@ -36,6 +36,12 @@ public:
     std::string id() const override { return "recording-terrain-content"; }
     bool supportsTile(const TileKey&) const override { return true; }
     bool providesTerrainQuadtree() const override { return true; }
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey& key) const override {
+        const auto it = availability.find(key);
+        return it == availability.end() ? TileAvailabilityState::NotAvailable
+                                        : it->second;
+    }
     void applyTerrainAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
         appliedUpdates.insert(
@@ -55,6 +61,7 @@ public:
     }
 
     std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
+    std::unordered_map<TileKey, TileAvailabilityState> availability;
 };
 
 class RecordingContentTreeProvider final : public TilesetContentProvider {
@@ -620,6 +627,83 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         EXPECT_EQ(expectedLoadState, root->content.loadState);
         EXPECT_EQ(TileContentKind::Unknown, root->content.contentKind);
         EXPECT_EQ(0, provider.requestCount);
+    }
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentTerrainTerminalFailuresMaterializeAvailabilityChildrenOnLaterUpdateLikeCesiumNative) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::array<TileKey, 4> childKeys{
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        TileKey{"Geographic-TMS", 1, 0, 1},
+        TileKey{"Geographic-TMS", 1, 1, 1}};
+
+    for (const auto& [status, expectedLoadState] :
+         std::array<std::pair<TileLoadStatus, TileLoadState>, 2>{
+             std::pair{TileLoadStatus::RetryLater,
+                       TileLoadState::FailedTemporarily},
+             std::pair{TileLoadStatus::Failed, TileLoadState::Failed}}) {
+        RecordingTerrainContentProvider provider;
+        provider.availability[childKeys[0]] = TileAvailabilityState::Available;
+
+        auto scheme = TileScheme::createGeographicTMS();
+        TilesetTileRegistry registry;
+        TileContentAccess contentAccess =
+            TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+
+        TilesetTile* root = contentAccess.ensureTile(rootKey);
+        ASSERT_NE(nullptr, root);
+        root->content.loadState = TileLoadState::ContentLoading;
+
+        const std::string cacheKey =
+            status == TileLoadStatus::RetryLater
+                ? "content-terrain-retry-latent-children"
+                : "content-terrain-failed-latent-children";
+        TileEmptyContentRegistry emptyContentRegistry;
+        PendingTileLoad pending{
+            TileLoadDomain::Content,
+            rootKey,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            status};
+        bool childrenEnsuredDuringCommit = false;
+
+        TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+            pending,
+            emptyContentRegistry,
+            nullptr,
+            [&contentAccess](const TileKey& key) {
+                return contentAccess.ensureTile(key);
+            },
+            [&childrenEnsuredDuringCommit](TilesetTile&) {
+                childrenEnsuredDuringCommit = true;
+            },
+            []() {});
+
+        EXPECT_FALSE(childrenEnsuredDuringCommit);
+        EXPECT_TRUE(root->children.empty());
+        EXPECT_EQ(TileContentKind::Unknown, root->content.contentKind);
+        EXPECT_EQ(expectedLoadState, root->content.loadState);
+
+        const TileChildFrameMaterializeResult childResult =
+            contentAccess.ensureTileChildren(*root);
+
+        EXPECT_TRUE(childResult.changed);
+        EXPECT_FALSE(childResult.retryLater);
+        ASSERT_EQ(4u, root->children.size());
+        for (size_t i = 0; i < childKeys.size(); ++i) {
+            ASSERT_NE(nullptr, root->children[i]);
+            EXPECT_EQ(childKeys[i], root->children[i]->key);
+        }
+        EXPECT_FALSE(root->children[0]->content.isTerrainAvailabilityUpsample());
+        for (size_t i = 1; i < root->children.size(); ++i) {
+            EXPECT_TRUE(
+                root->children[i]->content.isTerrainAvailabilityUpsample());
+        }
+        EXPECT_EQ(expectedLoadState, root->content.loadState);
+        EXPECT_EQ(TileContentKind::Unknown, root->content.contentKind);
     }
 }
 
