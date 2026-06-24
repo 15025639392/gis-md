@@ -11896,8 +11896,13 @@ void testTileRenderablePolicyClassifiesRenderableContent() {
 
     snapshot.contentKind = TileContentKind::External;
     snapshot.meshReady = false;
+    snapshot.requiredRasterOverlaysReady = false;
     check(TileRenderablePolicy::isCompleteRenderable(snapshot),
-          "TileRenderablePolicy: external done content is renderable");
+          "TileRenderablePolicy: external done content is not blocked by raster overlays");
+
+    snapshot.contentKind = TileContentKind::Empty;
+    check(TileRenderablePolicy::isCompleteRenderable(snapshot),
+          "TileRenderablePolicy: empty done content is not blocked by raster overlays");
 
     check(TileRenderablePolicy::hasSurfaceDrawable(
               TileContentKind::Render,

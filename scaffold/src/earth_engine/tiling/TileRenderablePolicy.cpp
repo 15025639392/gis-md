@@ -16,16 +16,13 @@ bool TileRenderablePolicy::isCompleteRenderable(
         return false;
     }
 
-    if (!snapshot.requiredRasterOverlaysReady) {
-        return false;
-    }
-
     switch (snapshot.contentKind) {
         case TileContentKind::Empty:
         case TileContentKind::External:
             return true;
         case TileContentKind::Render:
-            return snapshot.meshReady;
+            return snapshot.requiredRasterOverlaysReady &&
+                   snapshot.meshReady;
         case TileContentKind::Unknown:
             return false;
     }
