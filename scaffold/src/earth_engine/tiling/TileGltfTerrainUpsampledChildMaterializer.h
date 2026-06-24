@@ -22,12 +22,15 @@ public:
         if (!parent) {
             return nullptr;
         }
-        return parent->content.loadState == TileLoadState::Done &&
-                parent->content.contentKind == TileContentKind::Render &&
-                parent->content.renderContent.isTerrainRenderContent() &&
-                parent->content.renderContent.hasGltfContent()
+        return isCommittedGltfTerrainSource(*parent)
             ? parent
             : nullptr;
+    }
+
+    static bool isCommittedGltfTerrainSource(const TilesetTile& tile) {
+        return tile.hasCommittedRenderContent() &&
+                tile.content.renderContent.isTerrainRenderContent() &&
+                tile.content.renderContent.hasGltfContent();
     }
 
     static std::optional<TileLoadResult> createLoadResult(

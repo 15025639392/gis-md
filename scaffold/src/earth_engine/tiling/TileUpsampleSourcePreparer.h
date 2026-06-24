@@ -21,7 +21,7 @@ public:
         const TilesetTile* parent = tile.parent;
         if (allowGltfTerrainSource && parent) {
             const bool parentStateReady =
-                parent->content.loadState == TileLoadState::Done ||
+                parent->hasCommittedRenderContent() ||
                 (allowUnloadingSource &&
                  parent->content.loadState == TileLoadState::Unloading);
             if (parentStateReady &&
@@ -117,7 +117,7 @@ private:
             return nullptr;
         }
         const bool parentStateReady =
-            parent->content.loadState == TileLoadState::Done ||
+            parent->hasCommittedRenderContent() ||
             (allowUnloadingSource &&
              parent->content.loadState == TileLoadState::Unloading);
         return parentStateReady &&

@@ -16935,7 +16935,7 @@ void testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent() {
           "TileUpsampleSourcePreparer: raster-detail upsample does not use legacy ancestor SurfaceMesh sources");
 }
 
-void testTileUpsampleSourcePreparerRasterDetailFinalizesDirectGltfParentOnly() {
+void testTileUpsampleSourcePreparerRasterDetailAcceptsContentLoadedDirectGltfParent() {
     TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
@@ -16960,11 +16960,8 @@ void testTileUpsampleSourcePreparerRasterDetailFinalizesDirectGltfParentOnly() {
         child,
         17.0,
         false,
-        [&ensuredMeshes, &parent](TilesetTile& tile) {
+        [&ensuredMeshes](TilesetTile&) {
             ++ensuredMeshes;
-            check(&tile == &parent,
-                  "TileUpsampleSourcePreparer: raster-detail finalizes only the direct glTF parent");
-            tile.content.loadState = TileLoadState::Done;
         },
         [&queuedKeys](const TileKey& key,
                       TileLoadPriorityGroup,
@@ -16973,14 +16970,15 @@ void testTileUpsampleSourcePreparerRasterDetailFinalizesDirectGltfParentOnly() {
         });
 
     check(prepared &&
-              ensuredMeshes == 1 &&
+              ensuredMeshes == 0 &&
               queuedKeys.empty() &&
+              parent.content.loadState == TileLoadState::ContentLoaded &&
               TileUpsampleSourcePreparer::findSourceTile(
                   child,
                   false,
                   true,
                   false) == &parent,
-          "TileUpsampleSourcePreparer: raster-detail upsample prepares the direct glTF terrain parent");
+          "TileUpsampleSourcePreparer: raster-detail upsample accepts ContentLoaded direct glTF terrain parent");
 }
 
 void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
@@ -27996,7 +27994,7 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
           "Tileset: glTF terrain availability upsample derives raster details from parent model region");
 }
 
-void testTerrainContentUpsampleRequiresDoneParentSource() {
+void testTerrainContentUpsampleAcceptsContentLoadedParentSource() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
     TilesetTile parent(
@@ -28020,6 +28018,11 @@ void testTerrainContentUpsampleRequiresDoneParentSource() {
               !TileGltfTerrainUpsampledChildMaterializer::
                   createLoadResult(child).has_value(),
           "Tileset: glTF terrain upsample waits for Done parent instead of using protected Unloading content");
+
+    parent.content.loadState = TileLoadState::ContentLoaded;
+    check(TileGltfTerrainUpsampledChildMaterializer::
+              findGltfTerrainSource(child) == &parent,
+          "Tileset: glTF terrain upsample accepts ContentLoaded parent source like cesium-native");
 
     parent.content.loadState = TileLoadState::Done;
     check(TileGltfTerrainUpsampledChildMaterializer::
@@ -28892,7 +28895,7 @@ int main() {
     testTileUpsampleSourcePreparerWaitsForLoadingAncestor();
     testTileUpsampleSourcePreparerWaitsForUnloadingAncestor();
     testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent();
-    testTileUpsampleSourcePreparerRasterDetailFinalizesDirectGltfParentOnly();
+    testTileUpsampleSourcePreparerRasterDetailAcceptsContentLoadedDirectGltfParent();
     testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded();
     testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear();
     testTileUnloadPolicyFindsQueuedTilesByLoadState();
@@ -29097,7 +29100,7 @@ int main() {
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
     testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection();
     testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
-    testTerrainContentUpsampleRequiresDoneParentSource();
+    testTerrainContentUpsampleAcceptsContentLoadedParentSource();
     testTerrainContentUpsamplePropagatesInvertedVCoordinate();
     testTerrainContentUpsampleRejectsOrdinaryGltfContentParent();
     testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails();
