@@ -129,7 +129,7 @@ TEST(TileRenderCommandPreparerTest,
         std::make_unique<DummyBuffer>(4),
         nullptr);
     ASSERT_TRUE(tile.content.renderContent.isMeshReady());
-    ASSERT_TRUE(tile.hasSurfaceDrawable());
+    ASSERT_FALSE(tile.hasSurfaceDrawable());
     tile.selectionFrameState.completeRenderable = true;
     tile.selectionFrameState.renderable = true;
 

@@ -294,7 +294,7 @@ TEST(
     root.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
-    ASSERT_TRUE(root.hasSurfaceDrawable());
+    ASSERT_FALSE(root.hasSurfaceDrawable());
     ASSERT_FALSE(root.content.renderContent.hasGltfContent());
 
     TilePlan plan;
@@ -338,7 +338,7 @@ TEST(
     parent.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
-    ASSERT_TRUE(parent.hasSurfaceDrawable());
+    ASSERT_FALSE(parent.hasSurfaceDrawable());
     ASSERT_FALSE(parent.content.renderContent.hasGltfContent());
 
     std::unordered_map<std::string, TilesetTile*> tiles{

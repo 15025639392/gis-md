@@ -171,6 +171,10 @@ struct TilesetTile {
     }
 
     bool hasSurfaceDrawable() const {
+        if (contentProviderTerrainQuadtreeTile &&
+            !content.renderContent.hasGltfContent()) {
+            return false;
+        }
         return TileRenderablePolicy::hasSurfaceDrawable(
             content.contentKind,
             content.loadState,
