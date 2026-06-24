@@ -63,6 +63,7 @@ public:
                 input.rasterOverlays,
                 input.loadLifecycle,
                 ensureTile,
+                ensureTileChildren,
                 ensureGltfResources,
                 markResourcesDirty);
         };

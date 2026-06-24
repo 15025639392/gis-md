@@ -96,7 +96,7 @@ TileContentUploadCommitter::finishRenderResourcePreparation(
         tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
         TileContentUploadPolicy::markGltfRenderResourcesFailed(tile);
     }
-    return TileContentUploadCommitAction{true};
+    return TileContentUploadCommitAction{true, true};
 }
 
 } // namespace earth_engine

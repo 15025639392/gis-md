@@ -14387,6 +14387,7 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
         {},
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](TilesetTile&) {},
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
 

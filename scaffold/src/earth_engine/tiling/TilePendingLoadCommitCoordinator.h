@@ -93,6 +93,7 @@ public:
     }
 
     template <typename EnsureTileFn,
+              typename EnsureChildrenFn,
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
     static void commitContentUpload(
@@ -103,6 +104,7 @@ public:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
+        EnsureChildrenFn&& ensureChildren,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile* tile = ensureTile(upload.key);
@@ -129,6 +131,9 @@ public:
                 *tile,
                 tile->content.renderContent.isRenderContentReady(),
                 pPrepRenderer);
+        if (action.ensureChildren) {
+            ensureChildren(*tile);
+        }
         if (action.resourcesDirty) {
             markResourcesDirty();
         }
@@ -168,6 +173,7 @@ public:
     }
 
     template <typename EnsureTileFn,
+              typename EnsureChildrenFn,
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
     static void commitUpload(
@@ -178,6 +184,7 @@ public:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
+        EnsureChildrenFn&& ensureChildren,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         commitContentUpload(
@@ -188,6 +195,7 @@ public:
             rasterOverlays,
             lifecycle,
             std::forward<EnsureTileFn>(ensureTile),
+            std::forward<EnsureChildrenFn>(ensureChildren),
             std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
             std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
     }

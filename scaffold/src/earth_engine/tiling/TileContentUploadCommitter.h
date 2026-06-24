@@ -13,6 +13,7 @@ class TilesetContentProvider;
 struct TilesetTile;
 
 struct TileContentUploadCommitAction {
+    bool ensureChildren = false;
     bool resourcesDirty = false;
 };
 
