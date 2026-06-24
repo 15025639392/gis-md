@@ -1508,7 +1508,7 @@ QuantizedMeshTerrainProvider::firstAvailableLayer(const TileKey& key) const {
     if (index < layers_.size()) {
         return &layers_[index];
     }
-    return layers_.empty() ? nullptr : &layers_.front();
+    return nullptr;
 }
 
 QuantizedMeshTerrainProvider::LayerConfig*
@@ -1517,7 +1517,7 @@ QuantizedMeshTerrainProvider::firstAvailableLayer(const TileKey& key) {
     if (index < layers_.size()) {
         return &layers_[index];
     }
-    return layers_.empty() ? nullptr : &layers_.front();
+    return nullptr;
 }
 
 size_t QuantizedMeshTerrainProvider::firstAvailableLayerIndex(

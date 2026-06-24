@@ -758,6 +758,8 @@ TEST(TilesetQuantizedMeshTest,
         "https://example.invalid/fallback/16/0/0.terrain",
         provider.buildUrl(availableDeepTile));
     EXPECT_TRUE(provider.buildUrl(unavailableSibling).empty());
+    EXPECT_EQ(1, provider.estimatedRequestFanout(availableDeepTile));
+    EXPECT_EQ(0, provider.estimatedRequestFanout(unavailableSibling));
 }
 
 TEST(TilesetQuantizedMeshTest,
