@@ -176,6 +176,7 @@ private:
     TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
 
     std::unique_ptr<TerrainProvider> legacyHeightmapTerrainProvider_;
+    bool usesLegacyHeightmapTerrainSurfacePath_ = false;
     std::unique_ptr<TilesetContentProvider> contentProvider_;
     std::unique_ptr<TileScheme> tileScheme_;
     std::vector<ActivatedRasterOverlay*> rasterOverlays_;

@@ -47,11 +47,6 @@ bool contentProviderOwnsTerrainQuadtree(
     return contentProvider && contentProvider->providesTerrainQuadtree();
 }
 
-bool usesLegacyHeightmapTerrainSurfacePath(
-    const TerrainProvider* terrainProvider) {
-    return terrainProvider != nullptr;
-}
-
 } // namespace
 
 Tileset::ProviderOwnership Tileset::ProviderOwnership::noTerrain() {
@@ -108,6 +103,8 @@ Tileset::Tileset(ProviderOwnership providers,
           !contentProviderOwnsTerrainQuadtree(providers.contentProvider.get())
               ? std::move(providers.legacyHeightmapTerrainProvider)
               : std::unique_ptr<TerrainProvider>{}),
+      usesLegacyHeightmapTerrainSurfacePath_(
+          legacyHeightmapTerrainProvider_ != nullptr),
       contentProvider_(std::move(providers.contentProvider)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),
@@ -144,8 +141,7 @@ Tileset::Tileset(ProviderOwnership providers,
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
           options_.tileCacheUnloadTimeLimit,
-          usesLegacyHeightmapTerrainSurfacePath(
-              legacyHeightmapTerrainProvider_.get())),
+          usesLegacyHeightmapTerrainSurfacePath_),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),
@@ -156,8 +152,7 @@ Tileset::Tileset(ProviderOwnership providers,
           providerHasTerrainQuadtree(
               legacyHeightmapTerrainProvider_.get(),
               contentProvider_.get()),
-          usesLegacyHeightmapTerrainSurfacePath(
-              legacyHeightmapTerrainProvider_.get())
+          usesLegacyHeightmapTerrainSurfacePath_
               ? TileMeshPreparationMode::LegacyHeightmapSurface
               : TileMeshPreparationMode::ContentTerrain,
           device_,
@@ -215,8 +210,7 @@ int Tileset::pendingRequests() const {
 }
 
 int Tileset::cachedHeightmapTerrainTilesForLegacySurfacePath() const {
-    if (!usesLegacyHeightmapTerrainSurfacePath(
-            legacyHeightmapTerrainProvider_.get())) {
+    if (!usesLegacyHeightmapTerrainSurfacePath_) {
         return 0;
     }
     return static_cast<int>(
@@ -285,8 +279,7 @@ TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
     frame.smoothedMainThreadUploadLimit =
         static_cast<uint32_t>(kSmoothedMainThreadUploadLimit);
     frame.retainLegacyHeightmapTerrainCache =
-        usesLegacyHeightmapTerrainSurfacePath(
-            legacyHeightmapTerrainProvider_.get());
+        usesLegacyHeightmapTerrainSurfacePath_;
     return frame;
 }
 
@@ -337,8 +330,7 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
         contentLifecycle_.legacyHeightmapTerrainCache(),
         lngRad,
         latRad,
-        usesLegacyHeightmapTerrainSurfacePath(
-            legacyHeightmapTerrainProvider_.get()));
+        usesLegacyHeightmapTerrainSurfacePath_);
 }
 
 void Tileset::update(
