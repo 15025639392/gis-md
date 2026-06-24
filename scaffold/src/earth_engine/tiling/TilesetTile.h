@@ -14,8 +14,6 @@
 #include "TileBoundingVolume.h"
 #include "../core/math/MathUtils.h"
 #include "../core/math/Rectangle.h"
-#include "../providers/TerrainProvider.h"
-#include "TileScheme.h"
 
 #include <memory>
 #include <vector>
@@ -25,6 +23,7 @@
 namespace earth_engine {
 
 class RasterMappedToTilesetTile;
+class TileScheme;
 
 /// cesium-native Tile equivalent.
 /// Each tile in the unified quadtree holds geometry (QM mesh) and
