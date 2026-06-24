@@ -222,8 +222,9 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
                 return isAvailabilityBoundaryTile(candidate);
             },
             [](const TilesetTile& candidate) {
-                return candidate.content.loadState >
-                    TileLoadState::ContentLoading;
+                return TileLoadStatePredicates::
+                    hasResolvedAvailabilityBoundaryContent(
+                        candidate.content.loadState);
             });
     }
 
