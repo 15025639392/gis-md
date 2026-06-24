@@ -2095,13 +2095,27 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     parseAvailabilityUpdatesFromMetadataRequests(
                         *availabilityRequests,
                         metadataBodies);
+            auto availabilityUpdatesForCompletedContent =
+                [&]() {
+                    std::vector<QuantizedMeshAvailabilityUpdate> updates =
+                        sideEffectAvailabilityUpdates;
+                    if (includeCurrentLayerMetadata &&
+                        contentLayerIndex >= 0) {
+                        QuantizedMeshAvailabilityUpdate update;
+                        update.layerIndex = contentLayerIndex;
+                        update.subtreeKey = key;
+                        updates.push_back(std::move(update));
+                    }
+                    return updates;
+                };
             if (token->isCancelled()) {
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::cancelled());
                 return;
             }
             if (!isCesiumSuccessfulHttpStatus(statusCode) || body->empty()) {
-                applyAvailabilityUpdates(sideEffectAvailabilityUpdates);
+                applyAvailabilityUpdates(
+                    availabilityUpdatesForCompletedContent());
                 requestsFailed_.fetch_add(1, std::memory_order_relaxed);
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::failed());
@@ -2151,7 +2165,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     metadata,
                     std::move(currentTileAvailabilityUpdate));
             if (result.status == TileLoadStatus::Failed) {
-                applyAvailabilityUpdates(sideEffectAvailabilityUpdates);
+                applyAvailabilityUpdates(
+                    availabilityUpdatesForCompletedContent());
                 requestsFailed_.fetch_add(1, std::memory_order_relaxed);
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::failed());

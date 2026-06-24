@@ -1346,6 +1346,73 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     QuantizedMeshProviderMarksCurrentMetadataSubtreeLoadedOnDecodeFailure) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    QueuedContentPlatformBridge bridge;
+    provider->setPlatformBridge(&bridge);
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 3, 0, 0};
+    QuantizedMeshAvailabilityUpdate rootUpdate;
+    rootUpdate.layerIndex = 0;
+    rootUpdate.subtreeKey = TileKey{"Geographic-TMS", 0, 0, 0};
+    rootUpdate.metadataAvailability = {{1, 0, 0, 0, 0}};
+    provider->applyAvailabilityUpdates({rootUpdate});
+    ASSERT_EQ(
+        TileAvailabilityState::Available,
+        provider->availabilityState(boundaryKey));
+    EXPECT_EQ(
+        TileAvailabilityState::Unknown,
+        provider->availabilityState(childKey));
+
+    std::mutex callbackMutex;
+    std::condition_variable callbackCv;
+    bool callbackCalled = false;
+    TileLoadStatus callbackStatus = TileLoadStatus::RetryLater;
+    provider->requestTileContent(
+        boundaryKey,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(callbackMutex);
+                callbackCalled = true;
+                callbackStatus = result.status;
+            }
+            callbackCv.notify_all();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_EQ(
+        "https://example.invalid/2/0/0.terrain",
+        bridge.pendingUrl(0));
+    ASSERT_TRUE(bridge.completeNext(200, {0x01, 0x02, 0x03, 0x04}));
+
+    {
+        std::unique_lock<std::mutex> lock(callbackMutex);
+        ASSERT_TRUE(callbackCv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+    EXPECT_EQ(TileLoadStatus::Failed, callbackStatus);
+    EXPECT_EQ(
+        TileAvailabilityState::NotAvailable,
+        provider->availabilityState(childKey));
+}
+
+TEST(TilesetQuantizedMeshTest,
      ContentTerrainRasterPrefetchWaitsForGltfOverlayDetails) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
