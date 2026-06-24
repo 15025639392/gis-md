@@ -27966,6 +27966,37 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
           "Tileset: glTF terrain availability upsample derives raster details from parent model region");
 }
 
+void testTerrainContentUpsampleRequiresDoneParentSource() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle{-MathUtils::OnePi, -MathUtils::PiOverTwo, 0.0, 0.0});
+    TilesetTile child(
+        childKey,
+        Rectangle{-MathUtils::PiOverTwo, -MathUtils::PiOverTwo, 0.0, 0.0},
+        &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds),
+        Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Unloading;
+
+    check(TileGltfTerrainUpsampledChildMaterializer::
+              findGltfTerrainSource(child) == nullptr &&
+              !TileGltfTerrainUpsampledChildMaterializer::
+                  createLoadResult(child).has_value(),
+          "Tileset: glTF terrain upsample waits for Done parent instead of using protected Unloading content");
+
+    parent.content.loadState = TileLoadState::Done;
+    check(TileGltfTerrainUpsampledChildMaterializer::
+              findGltfTerrainSource(child) == &parent,
+          "Tileset: glTF terrain upsample accepts Done parent source like cesium-native");
+}
+
 void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -29036,6 +29067,7 @@ int main() {
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
     testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection();
     testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
+    testTerrainContentUpsampleRequiresDoneParentSource();
     testTerrainContentUpsamplePropagatesInvertedVCoordinate();
     testTerrainContentUpsampleRejectsOrdinaryGltfContentParent();
     testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails();

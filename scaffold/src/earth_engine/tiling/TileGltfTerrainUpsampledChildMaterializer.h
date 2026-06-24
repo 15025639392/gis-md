@@ -22,10 +22,7 @@ public:
         if (!parent) {
             return nullptr;
         }
-        const bool sourceStateReady =
-            parent->content.loadState == TileLoadState::Done ||
-            parent->content.loadState == TileLoadState::Unloading;
-        return sourceStateReady &&
+        return parent->content.loadState == TileLoadState::Done &&
                 parent->content.contentKind == TileContentKind::Render &&
                 parent->content.renderContent.isTerrainRenderContent() &&
                 parent->content.renderContent.hasGltfContent()
