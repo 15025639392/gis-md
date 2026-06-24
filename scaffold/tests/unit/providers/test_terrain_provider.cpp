@@ -4968,6 +4968,55 @@ TEST(QuantizedMeshTerrainProviderTest, AppliesWorkerPreparedAvailabilityUpdatesL
               provider.availabilityState(siblingKey));
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     DuplicateMetadataAvailabilityUpdateDoesNotReopenLoadedSubtreeLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey firstChild{"Geographic-TMS", 3, 0, 0};
+    const TileKey staleChild{"Geographic-TMS", 3, 1, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(firstChild));
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(staleChild));
+
+    QuantizedMeshAvailabilityUpdate firstUpdate;
+    firstUpdate.layerIndex = 0;
+    firstUpdate.subtreeKey = subtreeKey;
+    firstUpdate.metadataAvailability = {{0, 0, 0, 0, 0}};
+    provider.applyAvailabilityUpdates({firstUpdate});
+
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(firstChild));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(staleChild));
+    EXPECT_TRUE(provider.isSubtreeLoaded(1, 0));
+
+    QuantizedMeshAvailabilityUpdate duplicateUpdate;
+    duplicateUpdate.layerIndex = 0;
+    duplicateUpdate.subtreeKey = subtreeKey;
+    duplicateUpdate.metadataAvailability = {{0, 1, 0, 1, 0}};
+    provider.applyAvailabilityUpdates({duplicateUpdate});
+
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(firstChild));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(staleChild));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, MetadataUpdateSkipsNonArrayLevelsWithoutAdvancingLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
