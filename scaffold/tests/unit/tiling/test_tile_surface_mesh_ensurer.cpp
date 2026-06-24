@@ -14,6 +14,47 @@
 using namespace earth_engine;
 
 TEST(TileSurfaceMeshEnsurerTest,
+     DefaultsToContentOwnedTerrainMode) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(parent.bounds, 4)));
+    parent.markRenderContentDone();
+
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    bool ancestorEnsured = false;
+    const TileSurfaceMeshEnsureResult result =
+        TileSurfaceMeshEnsurer::ensure(
+            TileSurfaceMeshEnsureInput{
+                child,
+                nullptr,
+                nullptr,
+                true},
+            [](const TileKey&, DecodedHeightmap*) {},
+            [&parent](const TilesetTile&, bool) -> const TilesetTile* {
+                return &parent;
+            },
+            [&ancestorEnsured](TilesetTile&) {
+                ancestorEnsured = true;
+            },
+            [](const TilesetTile&) {
+                return true;
+            });
+
+    EXPECT_FALSE(result.resourcesDirty);
+    EXPECT_FALSE(child.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(ancestorEnsured);
+    EXPECT_NE(TileLoadState::Done, child.content.loadState);
+}
+
+TEST(TileSurfaceMeshEnsurerTest,
      ContentOwnedTerrainModeRejectsLegacyFallbacks) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},

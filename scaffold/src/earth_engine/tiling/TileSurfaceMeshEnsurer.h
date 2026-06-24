@@ -16,7 +16,7 @@ struct TileSurfaceMeshEnsureInput {
     DecodedHeightmap* ownHeightmap = nullptr;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
-    bool useHeightmapSurfacePath = true;
+    bool useHeightmapSurfacePath = false;
 };
 
 struct TileSurfaceMeshEnsureResult {

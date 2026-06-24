@@ -43,7 +43,7 @@ private:
     TileContentResourceInvalidator& resourceInvalidator_;
     TileLoadQueue& loadQueue_;
     bool hasTerrainQuadtree_ = false;
-    bool useHeightmapSurfacePath_ = true;
+    bool useHeightmapSurfacePath_ = false;
     RenderDevice* device_ = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
 };
