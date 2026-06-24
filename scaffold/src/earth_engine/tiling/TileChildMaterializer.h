@@ -90,6 +90,8 @@ struct TileChildMaterializer {
         for (const ChildAvailability& childInfo : children) {
             TilesetTile* child = ensureTile(childInfo.key);
             if (!child) continue;
+            const bool childUnconditionalRefineChanged =
+                child->unconditionallyRefine;
             child->unconditionallyRefine = false;
             const bool hasAcceptedTerrainContent =
                 TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
@@ -121,7 +123,8 @@ struct TileChildMaterializer {
             const bool childGeometryChanged =
                 childTraversalGeometryChanged ||
                 (!hasAcceptedTerrainContent && childBoundsChanged);
-            changed |= childGeometryChanged;
+            changed |=
+                childGeometryChanged || childUnconditionalRefineChanged;
             if (!hasAcceptedTerrainContent) {
                 TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                     *child,

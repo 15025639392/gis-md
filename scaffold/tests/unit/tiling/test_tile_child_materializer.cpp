@@ -910,6 +910,78 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
+     TerrainAvailabilityReportsExistingChildUnconditionalRefineCleanup) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        scheme->tileToRectangle(TileKey{"Geographic-TMS", 1, 1, 0}));
+    parent.geometricError = 80.0;
+    parent.refine = TileRefine::Replace;
+    parent.boundingVolume = TileBoundingVolume::fromRegion(
+        parent.bounds,
+        -12.0,
+        34.0);
+    parent.content.renderContent.setTerrainHeightRange(-12.0, 34.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key))).first;
+        }
+        return it->second.get();
+    };
+
+    const std::array<TileKey, 4> childKeys = {
+        TileKey{"Geographic-TMS", 2, 2, 0},
+        TileKey{"Geographic-TMS", 2, 3, 0},
+        TileKey{"Geographic-TMS", 2, 2, 1},
+        TileKey{"Geographic-TMS", 2, 3, 1}};
+    for (size_t i = 0; i < childKeys.size(); ++i) {
+        TilesetTile* child = ensure(childKeys[i]);
+        ASSERT_NE(nullptr, child);
+        child->geometricError = 40.0;
+        child->refine = TileRefine::Replace;
+        child->boundingVolume = TileBoundingVolume::fromLooseRegion(
+            child->bounds,
+            -12.0,
+            34.0);
+        child->content.renderContent.setTerrainHeightRange(-12.0, 34.0);
+        child->contentBoundingVolume.reset();
+        if (i != 0) {
+            child->content.markTerrainAvailabilityUpsample();
+        }
+        parent.children.push_back(child);
+        child->parent = &parent;
+    }
+    parent.children[2]->unconditionallyRefine = true;
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure,
+        true);
+
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_FALSE(parent.children[2]->unconditionallyRefine);
+    EXPECT_FALSE(parent.children[0]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[1]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[2]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[3]->content.isTerrainAvailabilityUpsample());
+}
+
+TEST(TileChildMaterializerTest,
      TerrainAvailabilityMaterializationRefreshesPartialGltfResidue) {
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTile parent(
