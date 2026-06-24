@@ -1944,6 +1944,18 @@ private:
 
         if (completedSources.size() == 1 &&
             sourceTiles.sourceKeys.size() == 1 &&
+            completedSources.front().terminalFailure &&
+            !completedSources.front().image &&
+            !completedSources.front().sourceSubset.has_value() &&
+            rectanglesEqualForDirectRasterTile(
+                targetBounds,
+                completedSources.front().bounds)) {
+            onFailure(std::move(completedSources.front().diagnostics));
+            return;
+        }
+
+        if (completedSources.size() == 1 &&
+            sourceTiles.sourceKeys.size() == 1 &&
             completedSources.front().image &&
             !completedSources.front().sourceSubset.has_value() &&
             rectanglesEqualForDirectRasterTile(

@@ -2933,6 +2933,56 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
           "RasterOverlayTileProvider: fallback parent subset is not cached as the child source asset");
 }
 
+void testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    const TileKey failingRoot{imageryScheme->id(), 0, 0, 0};
+    RasterOverlayTileProvider::TilePtr firstTile =
+        provider.getTile(failingRoot);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+
+    check(firstTile && provider.loadTileThrottled(*firstTile, &firstBudget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: terminal failure cache fixture starts root source request");
+    if (!firstTile || imagery.pendingRequests.empty()) return;
+
+    const int requestsBeforeFailure =
+        static_cast<int>(imagery.pendingRequests.size());
+    imagery.pendingRequests.front().callback(failingRoot, nullptr);
+
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(2, config);
+    provider.processPendingUploads(false, &uploadBudget);
+
+    check(firstTile->getState() == RasterOverlayTile::LoadState::Failed,
+          "RasterOverlayTileProvider: terminal root source failure marks direct tile failed");
+
+    RasterOverlayTileProvider::TilePtr secondTile =
+        provider.getTile(failingRoot);
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(3, config);
+    provider.loadTileThrottled(*secondTile, &secondBudget);
+
+    const int requestsAfterRetry =
+        static_cast<int>(imagery.pendingRequests.size());
+    check(requestsAfterRetry == requestsBeforeFailure,
+          "RasterOverlayTileProvider: terminal non-exception source failure is cached like cesium-native SharedAssetDepot");
+    check(secondBudget.rasterNetworkRequestsIssued() == 0,
+          "RasterOverlayTileProvider: cached terminal failure does not consume raster request budget");
+}
+
 void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -28132,6 +28182,7 @@ int main() {
     testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache();
+    testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot();
     testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight();
     testRasterOverlayDirectTileJoinsMappedSourceInFlight();
     testRasterOverlayMappedRasterTilesShareSourceInFlight();
