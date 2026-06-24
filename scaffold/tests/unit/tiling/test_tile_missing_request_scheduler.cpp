@@ -303,6 +303,52 @@ TEST(
     EXPECT_EQ(contentProvider.requestCount, 1);
 }
 
+TEST(
+    TileMissingRequestSchedulerTest,
+    UnloadedGltfResidueDoesNotBlockContentProviderRequest) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    TerrainQuadtreeContentProvider contentProvider;
+    contentProvider.supports = true;
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = cacheKeyForTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.contentKind = TileContentKind::Render;
+    tile->content.loadState = TileLoadState::Unloaded;
+    tile->content.renderContent.setGltfContent(std::make_unique<GltfModel>());
+    tiles[cacheKey] = std::move(tile);
+
+    const TileLoadRequestOutcome outcome =
+        TileMissingRequestScheduler::request(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileMissingRequestSchedulerInput{
+                lifecycle,
+                budget,
+                &contentProvider,
+                tiles,
+                emptyContentRegistry},
+            cacheKeyForTile,
+            [](TilesetTile&, double) { return false; },
+            [&tiles](const TileKey& tileKey) -> TilesetTile* {
+                const std::string lookupKey = cacheKeyForTile(tileKey);
+                auto it = tiles.find(lookupKey);
+                return it == tiles.end() ? nullptr : it->second.get();
+            });
+
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(contentProvider.requestCount, 1);
+}
+
 TEST(TileMissingRequestSchedulerTest, UpsampledTileWithoutGltfSourceDoesNotQueueLegacyUpload) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;

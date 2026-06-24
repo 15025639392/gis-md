@@ -86,8 +86,7 @@ private:
             input.contentProvider->providesTerrainQuadtree();
         snapshot.hasRenderContent =
             outTileState &&
-            outTileState->content.contentKind == TileContentKind::Render &&
-            outTileState->content.renderContent.hasGltfContent();
+            outTileState->hasCommittedRenderContent();
         if (outTileState) {
             snapshot.loadState = outTileState->content.loadState;
         }
