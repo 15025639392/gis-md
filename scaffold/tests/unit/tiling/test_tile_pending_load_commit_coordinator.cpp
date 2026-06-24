@@ -279,6 +279,26 @@ void seedStaleRenderResidue(TilesetTile& tile) {
     ASSERT_TRUE(tile.rasterOverlayState.hasMissingProjections());
 }
 
+void seedOrdinaryGltfRenderResidue(TilesetTile& tile) {
+    tile.content.contentKind = TileContentKind::Render;
+    auto model = std::make_unique<GltfModel>();
+    GltfModel* rawModel = model.get();
+    tile.content.renderContent.setGltfContent(std::move(model));
+    tile.content.renderContent.setTerrainRenderContent(false);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.setGltfResourcesReady(true);
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+
+    ASSERT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    ASSERT_TRUE(tile.content.renderContent.hasGltfPrimitiveResources());
+    ASSERT_FALSE(tile.content.renderContent.isTerrainRenderContent());
+    ASSERT_EQ(1u, tile.rasterOverlayState.mappingCount());
+    ASSERT_TRUE(tile.rasterOverlayState.hasMissingProjections());
+}
+
 void expectTerminalResultClearsStaleRenderResidue(
     TileLoadDomain domain,
     TileLoadStatus status,
@@ -801,6 +821,45 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadDomain::Content);
     expectRetryLaterPreservesRenderContentLikeCesiumNative(
         TileLoadDomain::TerrainContent);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     RetryLaterPreservesOrdinaryGltfRenderContentLikeCesiumNative) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "retry-preserves-ordinary-gltf-content";
+    TilesetTile tile(key, Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+    seedOrdinaryGltfRenderResidue(tile);
+    const GltfModel* rawModel = tile.content.renderContent.gltfModelForRead();
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    PendingTileLoad result{
+        TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
+        result,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    EXPECT_TRUE(tile.content.renderContent.hasGltfPrimitiveResources());
+    EXPECT_FALSE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_FALSE(tile.rasterOverlayState.hasMissingProjections());
+    EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
