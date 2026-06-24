@@ -28425,10 +28425,12 @@ void testTilesetClearChildrenErasesFlatMapDescendants() {
 void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey availableChild{"Geographic-TMS", 1, 0, 0};
+    const TileKey availableGrandchild{"Geographic-TMS", 2, 0, 0};
     auto provider =
         std::make_unique<ManualTerrainQuadtreeContentProvider>(rootKey);
     ManualTerrainQuadtreeContentProvider* rawProvider = provider.get();
     rawProvider->availableKeys.push_back(availableChild);
+    rawProvider->availableKeys.push_back(availableGrandchild);
 
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -28448,17 +28450,34 @@ void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: clear-upsample-state setup creates terrain children");
-    check(rawProvider->notedUpsampledParents.size() == 1 &&
-              rawProvider->notedUpsampledParents.front() == rootKey,
+    TilesetTile* child = root->children.front();
+    if (!child) return;
+    child->content.loadState = TileLoadState::Done;
+    child->content.contentKind = TileContentKind::Empty;
+    TilesetTestAccess::ensureTileChildren(tileset, *child);
+
+    check(child->children.size() == 4,
+          "Tileset: clear-upsample-state setup creates nested terrain children");
+    check(rawProvider->notedUpsampledParents.size() == 2 &&
+              rawProvider->notedUpsampledParents[0] == rootKey &&
+              rawProvider->notedUpsampledParents[1] == child->key,
           "Tileset: terrain provider records existing upsampled children");
 
+    const TileKey childKey = child->key;
     TilesetTestAccess::clearChildrenRecursively(tileset, *root);
 
     check(root->children.empty(),
           "Tileset: clear-upsample-state removes child list");
-    check(rawProvider->clearedUpsampledParents.size() == 1 &&
-              rawProvider->clearedUpsampledParents.front() == rootKey,
-          "Tileset: clear children clears provider upsampled-child state like cesium-native current children");
+    const bool clearedRoot =
+        std::find(rawProvider->clearedUpsampledParents.begin(),
+                  rawProvider->clearedUpsampledParents.end(),
+                  rootKey) != rawProvider->clearedUpsampledParents.end();
+    const bool clearedRemovedChild =
+        std::find(rawProvider->clearedUpsampledParents.begin(),
+                  rawProvider->clearedUpsampledParents.end(),
+                  childKey) != rawProvider->clearedUpsampledParents.end();
+    check(clearedRoot && clearedRemovedChild,
+          "Tileset: clear children clears provider upsampled-child state for removed subtree like cesium-native current children");
 }
 
 void testTilesetClearChildrenErasesClaimedUploadDescendantWork() {

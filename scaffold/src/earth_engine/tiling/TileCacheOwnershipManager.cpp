@@ -5,8 +5,11 @@
 #include "TileContentLifecycleManager.h"
 #include "TileLoadQueue.h"
 #include "TileSubtreeRemovalCoordinator.h"
+#include "TileSubtreeTraversal.h"
 #include "TilesetTile.h"
 #include "../content/GltfContentProvider.h"
+
+#include <vector>
 
 namespace earth_engine {
 
@@ -64,6 +67,18 @@ void TileCacheOwnershipManager::clearChildrenRecursively(
     if (tile && contentProvider_ &&
         contentProvider_->providesTerrainQuadtree()) {
         contentProvider_->clearTerrainAvailabilityUpsampledChild(tile->key);
+        const std::vector<TileSubtreeRemovalEntry> descendants =
+            TileSubtreeTraversal::collectDescendantsForRemoval(
+                *tile,
+                [](const TileKey& key) {
+                    return TileCacheKey::forTile(key);
+                });
+        for (const TileSubtreeRemovalEntry& descendant : descendants) {
+            if (descendant.tile) {
+                contentProvider_->clearTerrainAvailabilityUpsampledChild(
+                    descendant.tile->key);
+            }
+        }
     }
     TileSubtreeRemovalCoordinator::clearChildrenRecursively(
         tile,
