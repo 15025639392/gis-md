@@ -828,6 +828,103 @@ TEST(TileLoadSchedulerTest,
         childBounds);
 }
 
+TEST(TileLoadSchedulerTest,
+     ContentLoadedRasterDetailParentQueuesGltfUpsampleLikeCesiumNative) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.markRasterDetailUpsample(
+        RasterOverlayProjection::Geographic);
+    parent.content.renderContent.setGltfContent(
+        makeSchedulerQuadTerrainGltfModel(parentBounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
+    parent.markRenderContentLoaded();
+
+    TerrainQuadtreeContentProvider provider;
+    FanoutTerrainProvider legacyProvider;
+    bool prepared = false;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                childKey,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider},
+            cacheKeyForTile,
+            [&child](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                tileState = &child;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                snapshot.contentProviderOwnsTerrainQuadtree = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepared](TilesetTile& tile, double priority) {
+                prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+                    tile,
+                    priority,
+                    false,
+                    [](TilesetTile&) {},
+                    [](const TileKey&, TileLoadPriorityGroup, double) {});
+                return prepared;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_TRUE(prepared);
+    EXPECT_TRUE(marked);
+    EXPECT_EQ(TileLoadState::ContentLoaded, parent.content.loadState);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(legacyProvider.requestCount, 0);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 1u);
+    EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
+
+    PendingLoadFinalizeContext finalizeContext{false, budget};
+    std::optional<PendingTileLoad> pending;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        pending =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(
+                finalizeContext);
+    }
+    ASSERT_TRUE(pending.has_value());
+    EXPECT_EQ(pending->domain, TileLoadDomain::TerrainContent);
+    EXPECT_EQ(pending->result.status, TileLoadStatus::Renderable);
+    EXPECT_TRUE(pending->content().hasGltfTerrainPayload());
+    ASSERT_NE(pending->content().gltfModel, nullptr);
+    ASSERT_TRUE(pending->content().metadata.rasterOverlayDetails.has_value());
+    EXPECT_EQ(
+        childBounds,
+        pending->content()
+            .metadata
+            .rasterOverlayDetails
+            ->boundingRegion
+            .rectangle);
+}
+
 TEST(
     TileLoadSchedulerTest,
     ProtectedUnloadingTerrainSourceCanFinishQueuedUpsampleLikeCesiumNative) {
