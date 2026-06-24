@@ -264,45 +264,6 @@ struct TilesetTile {
         (void)scheme;
     }
 
-    /// Find the deepest ancestor with a ready mesh (for upsampling)
-    TilesetTile* findUpsampleAncestor() {
-        TilesetTile* p = parent;
-        while (p) {
-            if (p->content.renderContent.isTerrainRenderContent() &&
-                p->content.renderContent.hasGltfContent()) {
-                if (p->content.renderContent.isGltfRenderReady()) {
-                    return p;
-                }
-                return nullptr;
-            }
-            if (p->contentProviderTerrainQuadtreeTile) {
-                return nullptr;
-            }
-            if (p->content.renderContent.isSurfaceMeshReady() &&
-                p->content.renderContent.surfaceVertexBuffer()) return p;
-            p = p->parent;
-        }
-        return nullptr;
-    }
-    const TilesetTile* findUpsampleAncestor() const {
-        const TilesetTile* p = parent;
-        while (p) {
-            if (p->content.renderContent.isTerrainRenderContent() &&
-                p->content.renderContent.hasGltfContent()) {
-                if (p->content.renderContent.isGltfRenderReady()) {
-                    return p;
-                }
-                return nullptr;
-            }
-            if (p->contentProviderTerrainQuadtreeTile) {
-                return nullptr;
-            }
-            if (p->content.renderContent.isSurfaceMeshReady() &&
-                p->content.renderContent.surfaceVertexBuffer()) return p;
-            p = p->parent;
-        }
-        return nullptr;
-    }
 };
 
 } // namespace earth_engine
