@@ -395,6 +395,7 @@ private:
             sourceTileDepotInFlight;
         std::unordered_map<std::string, std::shared_ptr<MappedSourceImageSet>>
             activeMappedSourceSets;
+        std::deque<std::string> activeMappedSourceSetOrder;
         std::deque<std::pair<std::string, uint64_t>>
             sourceTileDepotCacheLru;
         int64_t sourceTileDepotCacheBytes = 0;

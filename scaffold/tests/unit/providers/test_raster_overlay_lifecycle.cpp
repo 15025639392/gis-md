@@ -4512,6 +4512,74 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     FrameProcessingPumpsMappedSourceSetsInCreationOrderLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+    const Rectangle westHalf(
+        rootBounds.west(),
+        rootBounds.south(),
+        rootBounds.west() + rootBounds.width() * 0.5,
+        rootBounds.north());
+    const Rectangle eastHalf(
+        rootBounds.west() + rootBounds.width() * 0.5,
+        rootBounds.south(),
+        rootBounds.east(),
+        rootBounds.north());
+
+    auto firstTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, westHalf),
+        1024.0,
+        1024.0).tile;
+    auto secondTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, eastHalf),
+        1024.0,
+        1024.0).tile;
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_NE(nullptr, secondTile);
+    ASSERT_TRUE(firstTile->isMappedRasterTile());
+    ASSERT_TRUE(secondTile->isMappedRasterTile());
+    ASSERT_GE(firstTile->getMappedSourceKeys().size(), 2u);
+    ASSERT_GE(secondTile->getMappedSourceKeys().size(), 2u);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkInflight = 8;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+    ASSERT_TRUE(provider.loadTileThrottled(*firstTile, &firstBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    ASSERT_EQ(firstTile->getMappedSourceKeys()[0],
+              imagery.requestedKeys.back());
+
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(2, config);
+    ASSERT_TRUE(provider.loadTileThrottled(*secondTile, &secondBudget));
+    ASSERT_EQ(2u, imagery.pending.size());
+    ASSERT_EQ(secondTile->getMappedSourceKeys()[0],
+              imagery.requestedKeys.back());
+
+    while (!imagery.pending.empty()) {
+        imagery.completeNext();
+    }
+    ASSERT_EQ(0, provider.getActiveRasterSourceRequests());
+    ASSERT_TRUE(provider.hasPendingWork());
+
+    FrameResourceBudget pumpBudget;
+    pumpBudget.beginFrame(3, config);
+    EXPECT_EQ(0, provider.processPendingUploads(false, &pumpBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(firstTile->getMappedSourceKeys()[1],
+              imagery.pending.front().key);
+    EXPECT_EQ(firstTile->getMappedSourceKeys()[1],
+              imagery.requestedKeys.back());
+    EXPECT_EQ(1u, pumpBudget.rasterNetworkRequestsIssued());
+}
+
+TEST(RasterOverlayLifecycleTest,
      MappedRasterConfigChangeAbandonsUnissuedSourceFanout) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
