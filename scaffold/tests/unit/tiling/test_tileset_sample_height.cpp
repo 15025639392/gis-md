@@ -16,8 +16,10 @@ struct TilesetTestAccess {
     static Tileset makeLegacyTerrainTileset(
         std::unique_ptr<TerrainProvider> terrainProvider,
         std::unique_ptr<TileScheme> tileScheme) {
-        return Tileset::createLegacyTerrainForTests(
-            std::move(terrainProvider),
+        Tileset::ProviderOwnership providers;
+        providers.legacyHeightmapTerrainProvider = std::move(terrainProvider);
+        return Tileset(
+            std::move(providers),
             std::move(tileScheme),
             {},
             nullptr,

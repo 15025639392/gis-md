@@ -137,8 +137,6 @@ private:
         static ProviderOwnership noTerrain();
         static ProviderOwnership contentTerrain(
             std::unique_ptr<TilesetContentProvider> contentProvider);
-        static ProviderOwnership legacyHeightmapSurfaceForTests(
-            std::unique_ptr<TerrainProvider> terrainProvider);
     };
 
     friend struct TilesetTestAccess;
@@ -150,13 +148,6 @@ private:
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,
             TilesetOptions options);
-    static Tileset createLegacyTerrainForTests(
-        std::unique_ptr<TerrainProvider> terrainProvider,
-        std::unique_ptr<TileScheme> tileScheme,
-        std::vector<ActivatedRasterOverlay*> rasterOverlays,
-        RenderDevice* device,
-        TilesetOptions options);
-
     TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame() const;
     TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame(
         IPrepareRendererResources* pPrepRenderer) const;

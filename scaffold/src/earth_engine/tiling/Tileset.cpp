@@ -60,29 +60,6 @@ Tileset::ProviderOwnership Tileset::ProviderOwnership::contentTerrain(
     return providers;
 }
 
-Tileset::ProviderOwnership
-Tileset::ProviderOwnership::legacyHeightmapSurfaceForTests(
-    std::unique_ptr<TerrainProvider> terrainProvider) {
-    ProviderOwnership providers;
-    providers.legacyHeightmapTerrainProvider = std::move(terrainProvider);
-    return providers;
-}
-
-Tileset Tileset::createLegacyTerrainForTests(
-    std::unique_ptr<TerrainProvider> terrainProvider,
-    std::unique_ptr<TileScheme> tileScheme,
-    std::vector<ActivatedRasterOverlay*> rasterOverlays,
-    RenderDevice* device,
-    TilesetOptions options) {
-    return Tileset(
-        ProviderOwnership::legacyHeightmapSurfaceForTests(
-            std::move(terrainProvider)),
-        std::move(tileScheme),
-        std::move(rasterOverlays),
-        device,
-        std::move(options));
-}
-
 Tileset::Tileset(std::unique_ptr<TileScheme> tileScheme,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,

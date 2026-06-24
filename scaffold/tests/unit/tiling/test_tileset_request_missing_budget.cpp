@@ -46,8 +46,10 @@ struct TilesetTestAccess {
         std::vector<ActivatedRasterOverlay*> overlays = {},
         RenderDevice* device = nullptr,
         TilesetOptions options = {}) {
-        return Tileset::createLegacyTerrainForTests(
-            std::move(terrainProvider),
+        Tileset::ProviderOwnership providers;
+        providers.legacyHeightmapTerrainProvider = std::move(terrainProvider);
+        return Tileset(
+            std::move(providers),
             std::move(scheme),
             std::move(overlays),
             device,
