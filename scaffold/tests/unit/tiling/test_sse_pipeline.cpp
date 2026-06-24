@@ -3390,6 +3390,50 @@ void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
           "RasterOverlayTileProvider: deferred upload resumes on the next frame");
 }
 
+void testRasterOverlayPendingUploadSurvivesSourceCacheEviction() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    const TileKey key{imageryScheme->id(), 1, 0, 0};
+    RasterOverlayTileProvider::TilePtr tile = provider.getTile(key);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget requestBudget;
+    requestBudget.beginFrame(1, config);
+
+    check(tile && provider.loadTileThrottled(*tile, &requestBudget) &&
+              imagery.pendingRequests.size() == 1,
+          "RasterOverlayTileProvider: source cache eviction fixture starts direct request");
+    if (!tile || imagery.pendingRequests.empty()) return;
+
+    imagery.pendingRequests.front().callback(key, makeDecodedRgbaImage(64, 64));
+    check(provider.getPendingUploadCount() == 1 &&
+              provider.getCachedSourceTileBytes() > 0,
+          "RasterOverlayTileProvider: source cache eviction fixture has pending upload and cached source");
+
+    provider.setSubTileCacheBytes(0);
+    check(provider.getCachedSourceTileBytes() == 0 &&
+              provider.getCachedSourceTileCount() == 0,
+          "RasterOverlayTileProvider: sub-tile cache budget zero evicts inactive source cache");
+
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(2, config);
+    provider.processPendingUploads(false, &uploadBudget);
+
+    check(tile->getState() == RasterOverlayTile::LoadState::Loaded &&
+              tile->getTexture() != nullptr &&
+              provider.getPendingUploadCount() == 0,
+          "RasterOverlayTileProvider: pending upload keeps source image alive after cache eviction");
+}
+
 void testRasterMappedUsesRenderContentDetailsRectangle() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -28327,6 +28371,7 @@ int main() {
     testRasterOverlayMappedRasterTilesShareSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
+    testRasterOverlayPendingUploadSurvivesSourceCacheEviction();
     testRasterMappedUsesRenderContentDetailsRectangle();
     testRasterMappedMissingProjectionUsesPlaceholder();
     testRasterMappedPlaceholderRemapsWhenProviderBecomesReady();
