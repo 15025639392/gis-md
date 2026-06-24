@@ -61,7 +61,7 @@ TEST(TileUnloadPolicyTest, ProtectsOnlyDirectLoadingUpsampledChildren) {
     child.content.upsampledFromParent = true;
     child.content.loadState = TileLoadState::ContentLoading;
     EXPECT_TRUE(
-        TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent));
+        TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent));
 
     child.content.upsampledFromParent = false;
     child.content.loadState = TileLoadState::Done;
@@ -69,7 +69,7 @@ TEST(TileUnloadPolicyTest, ProtectsOnlyDirectLoadingUpsampledChildren) {
     grandchild.content.upsampledFromParent = true;
     grandchild.content.loadState = TileLoadState::ContentLoading;
     EXPECT_FALSE(
-        TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent));
+        TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent));
 }
 
 TEST(TileUnloadPolicyTest, FindsQueuedTilesByLoadState) {

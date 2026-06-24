@@ -16735,7 +16735,7 @@ void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
 
     child.content.upsampledFromParent = true;
     child.content.loadState = TileLoadState::ContentLoading;
-    check(TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent),
+    check(TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent),
           "TileUnloadPolicy: detects direct loading upsampled child");
 
     child.content.upsampledFromParent = false;
@@ -16743,7 +16743,7 @@ void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
     child.children.push_back(&grandchild);
     grandchild.content.upsampledFromParent = true;
     grandchild.content.loadState = TileLoadState::ContentLoading;
-    check(!TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent),
+    check(!TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent),
           "TileUnloadPolicy: non-source ancestors are not protected by nested upsample work");
 
     parent.content.renderContent.setSurfaceDrawable(true);

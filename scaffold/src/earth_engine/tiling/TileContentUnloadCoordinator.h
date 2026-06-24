@@ -64,7 +64,7 @@ public:
                 break;
             case TileContentKind::Render:
                 if (tile.content.loadState != TileLoadState::Unloading &&
-                    TileUnloadPolicy::hasContentLoadingUpsampledDescendant(
+                    TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(
                         tile)) {
                     if (shouldReleaseRenderResourcesForProtectedUnload(tile)) {
                         TileUnloadPolicy::
@@ -75,7 +75,7 @@ public:
                     return TileCacheUnloadContentResult::Keep;
                 }
                 if (tile.content.loadState == TileLoadState::Unloading &&
-                    TileUnloadPolicy::hasContentLoadingUpsampledDescendant(
+                    TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(
                         tile)) {
                     return TileCacheUnloadContentResult::Keep;
                 }

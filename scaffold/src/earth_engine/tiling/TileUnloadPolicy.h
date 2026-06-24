@@ -15,7 +15,7 @@ struct TilesetTile;
 struct TileUnloadPolicy {
     static bool isEligibleForContentUnloadQueue(const TilesetTile& tile);
     static bool hasReferencedDescendant(const TilesetTile& tile);
-    static bool hasContentLoadingUpsampledDescendant(const TilesetTile& tile);
+    static bool hasContentLoadingUpsampledDirectChild(const TilesetTile& tile);
     static bool shouldDeferForReferences(
         const TilesetTile& tile,
         bool externalSubtreeHasActiveWork);

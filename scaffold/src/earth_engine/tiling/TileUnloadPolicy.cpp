@@ -27,7 +27,7 @@ bool TileUnloadPolicy::hasReferencedDescendant(const TilesetTile& tile) {
     return false;
 }
 
-bool TileUnloadPolicy::hasContentLoadingUpsampledDescendant(
+bool TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(
     const TilesetTile& tile) {
     for (const TilesetTile* child : tile.children) {
         if (!child) continue;
