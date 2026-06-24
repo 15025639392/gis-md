@@ -1848,6 +1848,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                              RasterOverlayProjection outputProjection,
                              int maximumSourceLevel,
                              bool emptyWhenOnlyAncestorFallback,
+                             bool allowDirectTerminalFailure,
                              MappedSourceLoadSuccess success,
                              MappedSourceLoadFailure failure)
         : scheme(createAsyncSchemeSnapshot(tileScheme))
@@ -1858,6 +1859,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         , projection(outputProjection)
         , maximumLevel(maximumSourceLevel)
         , returnEmptyForAncestorOnly(emptyWhenOnlyAncestorFallback)
+        , directTerminalFailure(allowDirectTerminalFailure)
         , onSuccess(std::move(success))
         , onFailure(std::move(failure))
         , remaining(sourceTiles.budgetUnits()) {
@@ -1960,7 +1962,8 @@ private:
             completedSources = std::move(sources);
         }
 
-        if (completedSources.size() == 1 &&
+        if (directTerminalFailure &&
+            completedSources.size() == 1 &&
             sourceTiles.sourceKeys.size() == 1 &&
             completedSources.front().terminalFailure &&
             !completedSources.front().image &&
@@ -2092,6 +2095,7 @@ private:
     RasterOverlayProjection projection;
     int maximumLevel = 0;
     bool returnEmptyForAncestorOnly = false;
+    bool directTerminalFailure = false;
     MappedSourceLoadSuccess onSuccess;
     MappedSourceLoadFailure onFailure;
     mutable std::mutex mutex;
@@ -2969,6 +2973,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         projection_,
         getMaximumLevel(),
         returnEmptyForAncestorOnly,
+        !tile.isMappedRasterTile(),
         [state, cacheKey, tileWeak, requestSourceDepotEpoch](
             std::unique_ptr<DecodedImage> composed,
             std::shared_ptr<const DecodedImage> sharedImage,

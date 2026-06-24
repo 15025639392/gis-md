@@ -3459,7 +3459,7 @@ TEST(RasterOverlayLifecycleTest,
         128.0).tile;
     ASSERT_NE(nullptr, firstTile);
     ASSERT_TRUE(provider.loadTile(*firstTile));
-    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    provider.processPendingUploads(false);
     EXPECT_EQ(1, provider.getCachedSourceTileCount());
     EXPECT_EQ(1, provider.getCachedSourceTileBytes());
     ASSERT_EQ(1u, imagery.requestedKeys.size());
@@ -3471,7 +3471,7 @@ TEST(RasterOverlayLifecycleTest,
         128.0).tile;
     ASSERT_NE(nullptr, secondTile);
     ASSERT_TRUE(provider.loadTile(*secondTile));
-    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    provider.processPendingUploads(false);
     EXPECT_EQ(1, provider.getCachedSourceTileCount());
     EXPECT_EQ(1, provider.getCachedSourceTileBytes());
     ASSERT_EQ(2u, imagery.requestedKeys.size());
@@ -3483,7 +3483,7 @@ TEST(RasterOverlayLifecycleTest,
         128.0).tile;
     ASSERT_NE(nullptr, firstAgainTile);
     ASSERT_TRUE(provider.loadTile(*firstAgainTile));
-    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    provider.processPendingUploads(false);
     EXPECT_EQ(1, provider.getCachedSourceTileCount());
     EXPECT_EQ(1, provider.getCachedSourceTileBytes());
     ASSERT_EQ(3u, imagery.requestedKeys.size());
@@ -4357,7 +4357,7 @@ TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail
               tile->isMoreDetailAvailable());
 }
 
-TEST(RasterOverlayLifecycleTest, FailedRasterTilesLoadEmptyLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, FailedRasterTilesFollowCesiumNativeDepotFailureSemantics) {
     NullImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -4365,14 +4365,14 @@ TEST(RasterOverlayLifecycleTest, FailedRasterTilesLoadEmptyLikeCesiumNative) {
     auto tile = provider.getTile(TileKey{scheme->id(), 2, 1, 1});
     ASSERT_NE(nullptr, tile);
     ASSERT_TRUE(provider.loadTile(*tile));
-    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
-    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+    EXPECT_EQ(0, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
     EXPECT_EQ(nullptr, tile->getTexture());
     const int failedTileRequests = imagery.requestCount;
 
     EXPECT_TRUE(provider.loadTile(*tile));
     EXPECT_TRUE(provider.loadTileThrottled(*tile, nullptr));
-    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
     EXPECT_EQ(failedTileRequests, imagery.requestCount);
 
     Rectangle rootBounds =
