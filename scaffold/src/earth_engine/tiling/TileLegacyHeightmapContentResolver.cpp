@@ -1,6 +1,5 @@
 #include "TileLegacyHeightmapContentResolver.h"
 
-#include "TileCacheKey.h"
 #include "TileLoadStatePredicates.h"
 #include "TileRefinementAvailabilityResolver.h"
 #include "TileScheme.h"
@@ -9,24 +8,14 @@
 
 namespace earth_engine {
 
-namespace {
-
-const LegacyHeightmapTerrainCache& emptyLegacyHeightmapTerrainCache() {
-    static const LegacyHeightmapTerrainCache empty;
-    return empty;
-}
-
-} // namespace
-
 TileLegacyHeightmapContentResolver::TileLegacyHeightmapContentResolver(
     const TerrainProvider* terrainProvider,
     const TilesetContentProvider* contentProvider,
     const TileScheme& tileScheme,
-    const LegacyHeightmapTerrainCache* terrainCache)
+    const LegacyHeightmapTerrainCache*)
     : terrainProvider_(terrainProvider),
       contentProvider_(contentProvider),
-      tileScheme_(&tileScheme),
-      terrainCache_(terrainCache) {}
+      tileScheme_(&tileScheme) {}
 
 bool TileLegacyHeightmapContentResolver::isAvailabilityBoundaryTile(
     const TilesetTile& tile) const {
@@ -42,10 +31,6 @@ bool TileLegacyHeightmapContentResolver::canRefine(
         contentProvider_,
         terrainProvider_,
         *tileScheme_,
-        terrainCache_ ? *terrainCache_ : emptyLegacyHeightmapTerrainCache(),
-        [](const TileKey& key) {
-            return TileCacheKey::forTile(key);
-        },
         [this](const TilesetTile& candidate) {
             return isAvailabilityBoundaryTile(candidate);
         },

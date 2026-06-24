@@ -2483,17 +2483,13 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
-    ResolverUsesLegacyHeightmapTerrainCacheForNonTerrainContentProvider) {
+    ResolverIgnoresLegacyHeightmapTerrainCacheForRefinement) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey cachedHeightmapChildKey{"Geographic-TMS", 1, 0, 0};
     SelectionTreeContentProvider nonTerrainContentProvider(
         {rootKey},
         {{rootKey, {cachedHeightmapChildKey}}});
     auto tileScheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        heightmapTerrainCache;
-    heightmapTerrainCache[TileCacheKey::forTile(cachedHeightmapChildKey)] =
-        std::make_unique<DecodedHeightmap>();
     TilesetTile root(
         rootKey,
         tileScheme->tileToRectangle(rootKey));
@@ -2508,10 +2504,6 @@ TEST(
                 provider,
                 nullptr,
                 *tileScheme,
-                heightmapTerrainCache,
-                [](const TileKey& key) {
-                    return TileCacheKey::forTile(key);
-                },
                 [](const TilesetTile&) { return false; },
                 [](const TilesetTile& tile) {
                     return tile.content.renderContent
@@ -2519,5 +2511,6 @@ TEST(
                 });
         };
 
+    EXPECT_FALSE(canRefineWithProvider(nullptr));
     EXPECT_TRUE(canRefineWithProvider(&nonTerrainContentProvider));
 }

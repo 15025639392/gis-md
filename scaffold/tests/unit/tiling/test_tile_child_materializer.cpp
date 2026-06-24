@@ -1677,10 +1677,7 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
             false,
             false,
             true,
-            true,
             18},
-        [](const TileKey&) { return std::string{"child"}; },
-        [](const std::string&) { return false; },
         [](const TileKey&) { return TileAvailabilityState::NotAvailable; }));
 }
 
@@ -2253,8 +2250,6 @@ TEST(TileChildMaterializerTest,
 
 TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals) {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    auto noCacheKey = [](const TileKey&) { return std::string{}; };
-    auto noTerrainCached = [](const std::string&) { return false; };
     auto noAvailability = [](const TileKey&) {
         return TileAvailabilityState::NotAvailable;
     };
@@ -2267,10 +2262,7 @@ TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals)
             false,
             false,
             false,
-            true,
             4},
-        noCacheKey,
-        noTerrainCached,
         noAvailability));
 
     EXPECT_FALSE(TileChildMaterializer::canRefine(
@@ -2281,17 +2273,14 @@ TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals)
             true,
             false,
             true,
-            false,
             4},
-        [](const TileKey&) { return std::string{"child"}; },
-        [](const std::string&) { return true; },
         [](const TileKey&) { return TileAvailabilityState::Available; }));
 }
 
-TEST(TileChildMaterializerTest, CanRefineUsesCachedAndAvailableTerrainSignals) {
+TEST(TileChildMaterializerTest, CanRefineIgnoresCachedHeightmapTerrainSignals) {
     TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
 
-    EXPECT_TRUE(TileChildMaterializer::canRefine(
+    EXPECT_FALSE(TileChildMaterializer::canRefine(
         tile,
         TileRefinementAvailabilityOptions{
             false,
@@ -2299,12 +2288,7 @@ TEST(TileChildMaterializerTest, CanRefineUsesCachedAndAvailableTerrainSignals) {
             false,
             false,
             false,
-            true,
             4},
-        cacheKeyFor,
-        [](const std::string& cacheKey) {
-            return cacheKey == "Geographic-TMS:1:0:0";
-        },
         [](const TileKey&) { return TileAvailabilityState::NotAvailable; }));
 
     EXPECT_TRUE(TileChildMaterializer::canRefine(
@@ -2315,10 +2299,7 @@ TEST(TileChildMaterializerTest, CanRefineUsesCachedAndAvailableTerrainSignals) {
             false,
             false,
             true,
-            true,
             4},
-        cacheKeyFor,
-        [](const std::string&) { return false; },
         [](const TileKey& key) {
             return key.x == 1 && key.y == 0
                 ? TileAvailabilityState::Available
@@ -2337,16 +2318,12 @@ TEST(TileChildMaterializerTest, CanRefineStopsAtMaxZoomWithoutChildrenOrTerrainS
             false,
             false,
             true,
-            true,
             4},
-        [](const TileKey&) { return std::string{"child"}; },
-        [](const std::string&) { return true; },
         [](const TileKey&) { return TileAvailabilityState::Available; }));
 }
 
 TEST(TileChildMaterializerTest, CanRefineSkipsOutOfRangeGeographicTmsChildren) {
     TilesetTile tile(TileKey{"Geographic-TMS", 0, 2, 0}, Rectangle{});
-    int cacheChecks = 0;
     int availabilityChecks = 0;
 
     EXPECT_FALSE(TileChildMaterializer::canRefine(
@@ -2357,18 +2334,11 @@ TEST(TileChildMaterializerTest, CanRefineSkipsOutOfRangeGeographicTmsChildren) {
             false,
             false,
             true,
-            true,
             2},
-        [](const TileKey&) { return std::string{"child"}; },
-        [&cacheChecks](const std::string&) {
-            ++cacheChecks;
-            return true;
-        },
         [&availabilityChecks](const TileKey&) {
             ++availabilityChecks;
             return TileAvailabilityState::Available;
         }));
-    EXPECT_EQ(0, cacheChecks);
     EXPECT_EQ(0, availabilityChecks);
 }
 
@@ -2387,10 +2357,7 @@ TEST(TileChildMaterializerTest,
             false,
             false,
             true,
-            true,
             31},
-        cacheKeyFor,
-        [](const std::string&) { return false; },
         [&availabilityChecks](const TileKey& key) {
             ++availabilityChecks;
             return key == TileKey{"Geographic-TMS", 31, 2147483647, 1073741823}
@@ -2414,10 +2381,7 @@ TEST(TileChildMaterializerTest,
             false,
             true,
             true,
-            true,
             4},
-        [](const TileKey&) { return std::string{"child"}; },
-        [](const std::string&) { return true; },
         [](const TileKey&) { return TileAvailabilityState::Available; }));
 }
 
@@ -2436,9 +2400,6 @@ TEST(TileChildMaterializerTest, CanRefineBlocksTerrainUpsampledTiles) {
             false,
             false,
             true,
-            true,
             4},
-        [](const TileKey&) { return std::string{"child"}; },
-        [](const std::string&) { return true; },
         [](const TileKey&) { return TileAvailabilityState::Available; }));
 }

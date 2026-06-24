@@ -28,7 +28,6 @@ struct TileRefinementAvailabilityOptions {
     bool contentProviderSupportsTile = false;
     bool isAvailabilityBoundaryWaitingForContent = false;
     bool hasTerrainQuadtree = false;
-    bool cachedHeightmapCanRefine = true;
     int maxZoom = 0;
 };
 
@@ -295,14 +294,10 @@ struct TileChildMaterializer {
         return changed;
     }
 
-    template <typename CacheKeyFn,
-              typename IsTerrainCachedFn,
-              typename AvailabilityStateFn>
+    template <typename AvailabilityStateFn>
     static bool canRefine(
         const TilesetTile& tile,
         const TileRefinementAvailabilityOptions& options,
-        CacheKeyFn&& cacheKey,
-        IsTerrainCachedFn&& isTerrainCached,
         AvailabilityStateFn&& availabilityState) {
         if (tile.content.isTerrainAvailabilityUpsample()) {
             return false;
@@ -329,10 +324,6 @@ struct TileChildMaterializer {
 
         for (const TileKey& childKey :
              TileQuadtreeChildKeys::terrainChildren(tile.key)) {
-            if (options.cachedHeightmapCanRefine &&
-                isTerrainCached(cacheKey(childKey))) {
-                return true;
-            }
             if (options.hasTerrainQuadtree &&
                 availabilityState(childKey) ==
                     TileAvailabilityState::Available) {

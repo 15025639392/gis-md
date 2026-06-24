@@ -26,7 +26,6 @@ private:
     const TerrainProvider* terrainProvider_ = nullptr;
     const TilesetContentProvider* contentProvider_ = nullptr;
     const TileScheme* tileScheme_ = nullptr;
-    const LegacyHeightmapTerrainCache* terrainCache_ = nullptr;
 };
 
 } // namespace earth_engine
