@@ -145,7 +145,7 @@ public:
 
     /// cesium-native: returns whether the provider is ready to serve tiles.
     bool isReady() const { return ready_; }
-    void setReady(bool ready) { ready_ = ready; }
+    void setReady(bool ready);
 
     /// cesium-native: returns the shared placeholder tile.
     TilePtr getPlaceholderTile();

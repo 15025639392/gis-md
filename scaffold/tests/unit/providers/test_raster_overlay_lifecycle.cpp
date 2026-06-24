@@ -4575,6 +4575,108 @@ TEST(RasterOverlayLifecycleTest, PlaceholderRemapsWhenProviderBecomesReadyLikeCe
     EXPECT_EQ(1, provider.getCachedTileCount());
 }
 
+TEST(RasterOverlayLifecycleTest, ReadyFalseInvalidatesMappedTileLifecycleLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey key{scheme->id(), 3, 2, 3};
+    const Rectangle rectangle = scheme->tileToRectangle(key);
+    RasterOverlayDetails details = makeProviderDetails(*scheme, rectangle);
+    std::vector<RasterOverlayProjection> missing;
+    RasterMappedToTilesetTile mapped;
+
+    ASSERT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown,
+              mapped.update(
+                  key,
+                  details,
+                  256.0,
+                  256.0,
+                  provider,
+                  nullptr,
+                  missing));
+    std::shared_ptr<RasterOverlayTile> oldTile = mapped.getLoadingTileHandle();
+    ASSERT_NE(nullptr, oldTile);
+    ASSERT_TRUE(provider.ownsCurrentTile(*oldTile));
+    ASSERT_TRUE(provider.loadTile(*oldTile));
+    ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
+
+    imagery.completeNext();
+    ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
+    ASSERT_TRUE(provider.hasPendingWork());
+
+    provider.setReady(false);
+
+    EXPECT_FALSE(provider.isReady());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, oldTile->getState());
+    EXPECT_FALSE(provider.ownsCurrentTile(*oldTile));
+    EXPECT_EQ(0, provider.getCachedTileCount());
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(0, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, uploaderPtr->uploadCount);
+    EXPECT_FALSE(provider.hasPendingWork());
+}
+
+TEST(RasterOverlayLifecycleTest, ReadyFalseThenTrueRemapsWithoutStaleTileReuse) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey key{scheme->id(), 2, 1, 1};
+    const Rectangle rectangle = scheme->tileToRectangle(key);
+    RasterOverlayDetails details = makeProviderDetails(*scheme, rectangle);
+    std::vector<RasterOverlayProjection> missing;
+    RasterMappedToTilesetTile mapped;
+
+    ASSERT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown,
+              mapped.update(
+                  key,
+                  details,
+                  256.0,
+                  256.0,
+                  provider,
+                  nullptr,
+                  missing));
+    std::shared_ptr<RasterOverlayTile> oldTile = mapped.getLoadingTileHandle();
+    ASSERT_NE(nullptr, oldTile);
+    ASSERT_TRUE(provider.ownsCurrentTile(*oldTile));
+
+    provider.setReady(false);
+    missing.clear();
+    mapped.update(
+        key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missing);
+    ASSERT_EQ(provider.getPlaceholderTile().get(), mapped.getLoadingTile());
+
+    provider.setReady(true);
+    missing.clear();
+    const RasterMappedToTilesetTile::MoreDetail remapped = mapped.update(
+        key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missing);
+
+    std::shared_ptr<RasterOverlayTile> newTile = mapped.getLoadingTileHandle();
+    ASSERT_NE(nullptr, newTile);
+    EXPECT_NE(oldTile.get(), newTile.get());
+    EXPECT_FALSE(provider.ownsCurrentTile(*oldTile));
+    EXPECT_TRUE(provider.ownsCurrentTile(*newTile));
+    EXPECT_TRUE(newTile->isMappedRasterTile());
+    EXPECT_EQ(projectForProvider(provider, rectangle), newTile->getRectangle());
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, remapped);
+    EXPECT_TRUE(missing.empty());
+}
+
 TEST(RasterOverlayLifecycleTest, RenderContentDetailsRectangleMapsRealTileLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

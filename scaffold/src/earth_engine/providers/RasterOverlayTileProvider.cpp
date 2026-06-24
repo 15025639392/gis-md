@@ -2109,6 +2109,50 @@ RasterOverlayTileProvider::getAsyncDestructionCompleteEvent() {
     return asyncState_->destructionCompleteFuture;
 }
 
+void RasterOverlayTileProvider::setReady(bool ready) {
+    if (ready_ == ready) {
+        return;
+    }
+
+    ready_ = ready;
+    if (ready_) {
+        asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    abandonActiveMappedSourceSets();
+
+    size_t abandonedUploads = 0;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        ++asyncState_->sourceTileDepotEpoch;
+        asyncState_->sourceTileDepotCache.clear();
+        asyncState_->sourceTileDepotCacheLru.clear();
+        asyncState_->sourceTileDepotCacheBytes = 0;
+        asyncState_->inFlightRequests.clear();
+        abandonedUploads = asyncState_->pendingUploads.size();
+        asyncState_->pendingUploads.clear();
+    }
+
+    for (size_t i = 0; i < abandonedUploads; ++i) {
+        decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
+    }
+
+    for (auto& entry : tiles_) {
+        if (!entry.second) {
+            continue;
+        }
+        entry.second->setMoreDetailAvailable(
+            RasterOverlayTile::MoreDetailAvailable::No);
+        entry.second->setState(RasterOverlayTile::LoadState::Failed);
+    }
+    tiles_.clear();
+
+    refreshSourceAssetDepot();
+    asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+    asyncState_->resolveDestructionIfComplete();
+}
+
 void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
     owner_ = owner;
     applyOwnerOptions();
