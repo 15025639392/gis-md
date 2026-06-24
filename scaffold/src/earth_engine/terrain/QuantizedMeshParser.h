@@ -42,7 +42,6 @@ public:
         bool hasMetadataAvailability = false;
         std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
         std::vector<std::string> diagnostics;
-        RasterOverlayDetails rasterOverlayDetails;
     };
 
     struct MetadataAvailabilityParseResult {

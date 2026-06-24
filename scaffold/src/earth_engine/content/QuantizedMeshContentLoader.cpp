@@ -40,7 +40,6 @@ void setLocalPosition(SurfaceVertex& vertex, const Vec3& localPosition) {
 std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     const QuantizedMeshParser::DecodedTile& decodedTile) {
     auto model = std::make_unique<GltfModel>();
-    model->rasterOverlayDetails = decodedTile.rasterOverlayDetails;
     model->terrainWaterMask = decodedTile.waterMask;
     model->preferredLocalOriginEcef = decodedTile.localOriginEcef;
 

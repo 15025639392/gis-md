@@ -355,10 +355,6 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
     }
 
     auto decoded = std::make_unique<DecodedTile>();
-    decoded->rasterOverlayDetails.setGeographicRectangle(
-        bounds,
-        hdr.minimumHeight,
-        hdr.maximumHeight);
     decoded->localOriginEcef =
         Vec3(hdr.boundingSphereX, hdr.boundingSphereY, hdr.boundingSphereZ);
     decoded->minimumHeight = hdr.minimumHeight;
