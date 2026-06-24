@@ -98,7 +98,7 @@ struct TilesetTestAccess {
     }
 
     static TilesetContentProvider* requestFrameContentProvider(
-        const Tileset& tileset) {
+        Tileset& tileset) {
         return tileset.makeContentRuntimeRequestFrame().contentProvider;
     }
 

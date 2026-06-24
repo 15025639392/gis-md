@@ -190,7 +190,7 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
 }
 
 TileContentRuntimeRequestFrame
-Tileset::makeContentRuntimeRequestFrame() const {
+Tileset::makeContentRuntimeRequestFrame() {
     TileContentRuntimeRequestFrame frame{
         rasterOverlays_,
         tileRegistry_.tiles()};
@@ -207,7 +207,7 @@ Tileset::makeContentRuntimeRequestFrame() const {
 }
 
 TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
-    IPrepareRendererResources* pPrepRenderer) const {
+    IPrepareRendererResources* pPrepRenderer) {
     TileContentRuntimeUploadFrame frame{rasterOverlays_};
     frame.contentProvider = terrainProviders_.contentProvider();
     frame.device = device_;

@@ -16,12 +16,12 @@ public:
     TerrainProvider* legacyHeightmapTerrainProvider() {
         return legacyHeightmapTerrainProvider_.get();
     }
-    TerrainProvider* legacyHeightmapTerrainProvider() const {
+    const TerrainProvider* legacyHeightmapTerrainProvider() const {
         return legacyHeightmapTerrainProvider_.get();
     }
 
     TilesetContentProvider* contentProvider() { return contentProvider_.get(); }
-    TilesetContentProvider* contentProvider() const {
+    const TilesetContentProvider* contentProvider() const {
         return contentProvider_.get();
     }
 
