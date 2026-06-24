@@ -1862,6 +1862,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         , onFailure(std::move(failure))
         , remaining(sourceTiles.budgetUnits()) {
         sources.reserve(sourceTiles.sourceKeys.size());
+        sourceIssued.assign(sourceTiles.sourceKeys.size(), false);
     }
 
     int issueSome(int maxNewRequests,
@@ -1872,24 +1873,25 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         std::vector<TileKey> sourceKeys;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (completed ||
-                nextSourceIndex >= sourceTiles.sourceKeys.size()) {
+            if (completed) {
                 return 0;
             }
             int remainingNewRequests = maxNewRequests;
-            while (nextSourceIndex < sourceTiles.sourceKeys.size()) {
-                const TileKey& sourceKey =
-                    sourceTiles.sourceKeys[nextSourceIndex];
+            for (size_t i = 0; i < sourceTiles.sourceKeys.size(); ++i) {
+                if (sourceIssued[i]) {
+                    continue;
+                }
+                const TileKey& sourceKey = sourceTiles.sourceKeys[i];
                 const bool needsNewRequest =
                     depot->wouldIssueNewRequest(sourceKey);
                 if (needsNewRequest && remainingNewRequests <= 0) {
-                    break;
+                    continue;
                 }
                 if (needsNewRequest) {
                     --remainingNewRequests;
                 }
                 sourceKeys.push_back(sourceKey);
-                ++nextSourceIndex;
+                sourceIssued[i] = true;
             }
         }
         for (const TileKey& sourceKey : sourceKeys) {
@@ -1914,7 +1916,11 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
 
     bool hasUnissuedSources() const {
         std::lock_guard<std::mutex> lock(mutex);
-        return !completed && nextSourceIndex < sourceTiles.sourceKeys.size();
+        return !completed &&
+               std::any_of(
+                   sourceIssued.begin(),
+                   sourceIssued.end(),
+                   [](bool issued) { return !issued; });
     }
 
     bool isComplete() const {
@@ -1926,7 +1932,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         std::lock_guard<std::mutex> lock(mutex);
         completed = true;
         remaining = 0;
-        nextSourceIndex = sourceTiles.sourceKeys.size();
+        std::fill(sourceIssued.begin(), sourceIssued.end(), true);
         sources.clear();
     }
 
@@ -2090,7 +2096,7 @@ private:
     MappedSourceLoadFailure onFailure;
     mutable std::mutex mutex;
     int remaining = 0;
-    size_t nextSourceIndex = 0;
+    std::vector<bool> sourceIssued;
     bool completed = false;
     std::vector<RasterSourceResult> sources;
 };

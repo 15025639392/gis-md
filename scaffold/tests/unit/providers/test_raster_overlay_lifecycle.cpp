@@ -2990,6 +2990,108 @@ TEST(
     EXPECT_EQ(newSourceKey, imagery.requestedKeys[1]);
 }
 
+TEST(
+    RasterOverlayLifecycleTest,
+    MappedRasterFanoutJoinsLaterSharedSourceWhenEarlierSourceIsBudgetBlocked) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+    provider.setSubTileCacheBytes(0);
+
+    const TileKey newSourceKey{scheme->id(), 3, 2, 3};
+    const TileKey sharedSourceKey{scheme->id(), 3, 3, 3};
+    const Rectangle newSourceBounds =
+        scheme->tileToRectangle(newSourceKey);
+    const Rectangle sharedSourceBounds =
+        scheme->tileToRectangle(sharedSourceKey);
+    const Rectangle sharedPatch(
+        sharedSourceBounds.west(),
+        sharedSourceBounds.south(),
+        sharedSourceBounds.west() + sharedSourceBounds.width() * 0.5,
+        sharedSourceBounds.north());
+    const Rectangle mixedBounds(
+        newSourceBounds.west(),
+        sharedSourceBounds.south(),
+        sharedSourceBounds.east(),
+        sharedSourceBounds.north());
+
+    RasterOverlayTileProvider::RasterTileMapping sharedMapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, sharedPatch),
+            256.0,
+            512.0);
+    RasterOverlayTileProvider::RasterTileMapping mixedMapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, mixedBounds),
+            512.0,
+            512.0);
+    ASSERT_NE(nullptr, sharedMapping.tile);
+    ASSERT_NE(nullptr, mixedMapping.tile);
+    ASSERT_TRUE(sharedMapping.tile->isMappedRasterTile());
+    ASSERT_TRUE(mixedMapping.tile->isMappedRasterTile());
+    ASSERT_EQ(1u, sharedMapping.sourceTiles.sourceKeys.size());
+    ASSERT_EQ(sharedSourceKey, sharedMapping.sourceTiles.sourceKeys.front());
+    ASSERT_EQ(2u, mixedMapping.sourceTiles.sourceKeys.size());
+    EXPECT_EQ(newSourceKey, mixedMapping.sourceTiles.sourceKeys[0]);
+    EXPECT_EQ(sharedSourceKey, mixedMapping.sourceTiles.sourceKeys[1]);
+
+    FrameResourceBudgetConfig firstConfig;
+    firstConfig.maxNetworkRequestsPerFrame = 1;
+    firstConfig.maxNetworkInflight = 1;
+    firstConfig.maxRasterNetworkRequestsPerFrame = 1;
+    firstConfig.maxRasterNetworkInflight = 1;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, firstConfig);
+
+    ASSERT_TRUE(provider.loadTileThrottled(*sharedMapping.tile, &firstBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(sharedSourceKey, imagery.pending.front().key);
+    EXPECT_EQ(1u, firstBudget.rasterNetworkRequestsIssued());
+
+    FrameResourceBudgetConfig blockedConfig;
+    blockedConfig.maxNetworkRequestsPerFrame = 0;
+    blockedConfig.maxNetworkInflight = 0;
+    blockedConfig.maxRasterNetworkRequestsPerFrame = 0;
+    blockedConfig.maxRasterNetworkInflight = 0;
+    FrameResourceBudget blockedBudget;
+    blockedBudget.beginFrame(2, blockedConfig);
+
+    EXPECT_TRUE(provider.loadTileThrottled(*mixedMapping.tile, &blockedBudget));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+              mixedMapping.tile->getState());
+    EXPECT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(0u, blockedBudget.rasterNetworkRequestsIssued());
+
+    imagery.completeNext();
+    EXPECT_EQ(0, provider.getActiveRasterSourceRequests());
+    EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
+
+    FrameResourceBudgetConfig pumpConfig;
+    pumpConfig.maxNetworkRequestsPerFrame = 1;
+    pumpConfig.maxNetworkInflight = 1;
+    pumpConfig.maxRasterNetworkRequestsPerFrame = 1;
+    pumpConfig.maxRasterNetworkInflight = 1;
+    FrameResourceBudget pumpBudget;
+    pumpBudget.beginFrame(3, pumpConfig);
+
+    EXPECT_EQ(1, provider.processPendingUploads(false, &pumpBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(newSourceKey, imagery.pending.front().key);
+    EXPECT_EQ(1u, pumpBudget.rasterNetworkRequestsIssued());
+
+    imagery.completeNext();
+    EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              mixedMapping.tile->getState());
+    EXPECT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(sharedSourceKey, imagery.requestedKeys[0]);
+    EXPECT_EQ(newSourceKey, imagery.requestedKeys[1]);
+}
+
 TEST(RasterOverlayLifecycleTest, DirectAndMappedRasterTilesShareProviderSourceTileAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
