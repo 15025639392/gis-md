@@ -155,9 +155,18 @@ public:
         }
 
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
-        TileContentUploadCommitter::applyAvailabilityUpdates(
-            contentProvider,
-            upload.content());
+        const bool shouldApplyTerrainAvailability =
+            upload.content().satisfiesContentTerrainPayloadContract() &&
+            !upload.content().quantizedMeshAvailabilityUpdatesApplied &&
+            !upload.content().quantizedMeshAvailabilityUpdates.empty() &&
+            contentProvider &&
+            contentProvider->providesTerrainQuadtree();
+        std::vector<QuantizedMeshAvailabilityUpdate>
+            terrainAvailabilityUpdates;
+        if (shouldApplyTerrainAvailability) {
+            terrainAvailabilityUpdates =
+                std::move(upload.content().quantizedMeshAvailabilityUpdates);
+        }
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
             std::move(upload.content()),
@@ -165,11 +174,17 @@ public:
             device,
             pPrepRenderer);
         ensureGltfResources(*tile);
+        const bool renderResourcesReady =
+            tile->content.renderContent.isRenderContentReady();
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
                 *tile,
-                tile->content.renderContent.isRenderContentReady(),
+                renderResourcesReady,
                 pPrepRenderer);
+        if (renderResourcesReady && !terrainAvailabilityUpdates.empty()) {
+            contentProvider->applyTerrainAvailabilityUpdates(
+                terrainAvailabilityUpdates);
+        }
         if (action.ensureChildren) {
             ensureChildren(*tile);
         }

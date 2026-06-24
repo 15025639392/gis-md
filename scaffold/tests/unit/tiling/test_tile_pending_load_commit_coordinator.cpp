@@ -976,6 +976,80 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentDomainTerrainAvailabilityWaitsForRenderResourcesLikeCesiumNative) {
+    RecordingTerrainContentProvider provider;
+
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 7;
+    update.subtreeKey = TileKey{"Geographic-TMS", 2, 0, 0};
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+
+    TileContentLoadResult contentResult =
+        TileContentLoadResult::renderTerrain(
+            makeMinimalTerrainGltfModelForCommitTest());
+    contentResult.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    const TileKey key{"Geographic-TMS", 2, 0, 0};
+    const std::string cacheKey = "content-gltf-terrain-resource-failure";
+    PendingTileLoad upload{
+        TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::fromContentResult(std::move(contentResult))};
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadLifecycle lifecycle;
+    TileEmptyContentRegistry emptyContentRegistry;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableGltfTerrain(
+                makeMinimalTerrainGltfModelForCommitTest())});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    int ensureGltfCalls = 0;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        &provider,
+        nullptr,
+        nullptr,
+        {},
+        emptyContentRegistry,
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [&ensureGltfCalls](TilesetTile&) {
+            ++ensureGltfCalls;
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(provider.appliedUpdates.empty());
+    EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentTerrainUploadMaterializesAvailabilityChildrenAfterCommit) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
