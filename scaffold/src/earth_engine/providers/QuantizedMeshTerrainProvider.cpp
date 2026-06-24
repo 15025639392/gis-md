@@ -2181,9 +2181,6 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 return;
             }
 
-            applyAvailabilityUpdates(result.quantizedMeshAvailabilityUpdates);
-            result.quantizedMeshAvailabilityUpdatesApplied =
-                !result.quantizedMeshAvailabilityUpdates.empty();
             completion.complete();
             (*callback)(key, std::move(result));
         });
