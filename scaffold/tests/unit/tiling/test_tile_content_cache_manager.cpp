@@ -3,6 +3,7 @@
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/tiling/TileCacheOwnershipManager.h"
 #include "earth_engine/tiling/TileContentCacheManager.h"
 #include "earth_engine/tiling/TileLoadQueue.h"
 
@@ -514,4 +515,96 @@ TEST(
     EXPECT_EQ(fixture.tiles.find(fixture.childCacheKey), fixture.tiles.end());
     EXPECT_EQ(fixture.rootRaw->content.loadState, TileLoadState::Unloaded);
     EXPECT_EQ(fixture.rootRaw->content.contentKind, TileContentKind::Unknown);
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    ExternalSubtreeUnloadClearsDescendantIndexStateLikeCesiumNative) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    TileLoadQueue loadQueue;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    bool resourceSmoothingActive = false;
+    int64_t maximumCachedBytes = 0;
+    double unloadTimeLimitMs = 0.0;
+
+    const TileKey rootKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const TileKey grandchildKey{"test", 2, 0, 0};
+    const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
+    const std::string childCacheKey = TileCacheKey::forTile(childKey);
+    const std::string grandchildCacheKey =
+        TileCacheKey::forTile(grandchildKey);
+
+    auto root = std::make_unique<TilesetTile>(rootKey, Rectangle{});
+    auto child = std::make_unique<TilesetTile>(
+        childKey,
+        Rectangle{},
+        root.get());
+    auto grandchild = std::make_unique<TilesetTile>(
+        grandchildKey,
+        Rectangle{},
+        child.get());
+    TilesetTile* rootRaw = root.get();
+    TilesetTile* childRaw = child.get();
+    rootRaw->children.push_back(child.get());
+    childRaw->children.push_back(grandchild.get());
+    rootRaw->content.loadState = TileLoadState::Done;
+    rootRaw->content.contentKind = TileContentKind::External;
+    child->content.loadState = TileLoadState::Done;
+    child->content.contentKind = TileContentKind::Render;
+    grandchild->content.loadState = TileLoadState::Done;
+    grandchild->content.contentKind = TileContentKind::Render;
+
+    tiles[rootCacheKey] = std::move(root);
+    tiles[childCacheKey] = std::move(child);
+    tiles[grandchildCacheKey] = std::move(grandchild);
+    lifecycle.legacyHeightmapTerrainCache()[rootCacheKey] =
+        makeFlatHeightmap(1.0f);
+    lifecycle.legacyHeightmapTerrainCache()[childCacheKey] =
+        makeFlatHeightmap(2.0f);
+    lifecycle.legacyHeightmapTerrainCache()[grandchildCacheKey] =
+        makeFlatHeightmap(3.0f);
+    lifecycle.emptyContentRegistry().insert(childCacheKey);
+    lifecycle.emptyContentRegistry().insert(grandchildCacheKey);
+    loadQueue.queue(childKey, TileLoadPriorityGroup::Normal, 1.0);
+    loadQueue.queue(grandchildKey, TileLoadPriorityGroup::Normal, 2.0);
+    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.markEligibleForUnloading(tiles, rootCacheKey);
+    manager.markEligibleForUnloading(tiles, childCacheKey);
+    manager.markEligibleForUnloading(tiles, grandchildCacheKey);
+    ASSERT_TRUE(manager.unloadQueue().contains(rootCacheKey));
+    ASSERT_TRUE(manager.unloadQueue().contains(childCacheKey));
+    ASSERT_TRUE(manager.unloadQueue().contains(grandchildCacheKey));
+
+    TileCacheOwnershipManager ownership(
+        manager,
+        lifecycle,
+        loadQueue,
+        tiles,
+        resourceSmoothingActive,
+        maximumCachedBytes,
+        unloadTimeLimitMs,
+        true);
+
+    ownership.unloadCachedBytes(0, nullptr);
+
+    EXPECT_EQ(tiles.end(), tiles.find(childCacheKey));
+    EXPECT_EQ(tiles.end(), tiles.find(grandchildCacheKey));
+    ASSERT_NE(tiles.end(), tiles.find(rootCacheKey));
+    EXPECT_TRUE(rootRaw->children.empty());
+    EXPECT_EQ(TileLoadState::Unloaded, rootRaw->content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, rootRaw->content.contentKind);
+    EXPECT_FALSE(manager.unloadQueue().contains(rootCacheKey));
+    EXPECT_FALSE(manager.unloadQueue().contains(childCacheKey));
+    EXPECT_FALSE(manager.unloadQueue().contains(grandchildCacheKey));
+    EXPECT_TRUE(loadQueue.empty());
+    EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(childCacheKey));
+    EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(
+        grandchildCacheKey));
+    EXPECT_EQ(lifecycle.legacyHeightmapTerrainCache().end(),
+              lifecycle.legacyHeightmapTerrainCache().find(childCacheKey));
+    EXPECT_EQ(
+        lifecycle.legacyHeightmapTerrainCache().end(),
+        lifecycle.legacyHeightmapTerrainCache().find(grandchildCacheKey));
 }
