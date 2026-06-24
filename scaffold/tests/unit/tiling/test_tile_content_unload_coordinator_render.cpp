@@ -474,4 +474,20 @@ TEST(
     EXPECT_EQ(parent.key, prep.lastDetachedGeometryKey);
     EXPECT_EQ(0, prep.lastDetachedOverlayIndex);
     EXPECT_NE(terrainCache.end(), terrainCache.find(cacheKey));
+
+    const TileCacheUnloadContentResult secondResult =
+        TileContentUnloadCoordinator::unloadContent(
+            parent,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            &prep);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Keep, secondResult);
+    EXPECT_EQ(TileContentKind::Render, parent.content.contentKind);
+    EXPECT_EQ(TileLoadState::Unloading, parent.content.loadState);
+    EXPECT_TRUE(parent.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(0u, parent.rasterOverlayState.mappingCount());
+    EXPECT_EQ(1, prep.detachCount);
+    EXPECT_NE(terrainCache.end(), terrainCache.find(cacheKey));
 }
