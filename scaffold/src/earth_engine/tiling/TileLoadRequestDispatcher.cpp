@@ -25,9 +25,11 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledLoad(
         pendingLoads.containsCacheKey(cacheKey)) {
         return TileLoadDispatchResult::Skipped;
     }
+    result = TileLoadResult::normalizeForDomain(
+        domain,
+        std::move(result));
     if (domain == TileLoadDomain::TerrainContent &&
-        (result.status != TileLoadStatus::Renderable ||
-         !result.content.hasGltfTerrainPayload())) {
+        result.status != TileLoadStatus::Renderable) {
         return TileLoadDispatchResult::Skipped;
     }
     pendingLoads.addUpload(

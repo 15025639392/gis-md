@@ -100,14 +100,10 @@ public:
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
                         TileLoadResult loadResult =
-                            TileLoadResult::fromContentResult(
-                                std::move(result));
-                        if (domain == TileLoadDomain::TerrainContent &&
-                            loadResult.status == TileLoadStatus::Renderable &&
-                            !loadResult.content.hasGltfTerrainPayload()) {
-                            loadResult = TileLoadResult::createTerminal(
-                                TileLoadStatus::Failed);
-                        }
+                            TileLoadResult::normalizeForDomain(
+                                domain,
+                                TileLoadResult::fromContentResult(
+                                    std::move(result)));
                         if (loadResult.content.hasGltfTerrainPayload() &&
                             !loadResult.content
                                  .quantizedMeshAvailabilityUpdatesApplied &&

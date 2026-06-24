@@ -639,6 +639,14 @@ TEST(TileLoadRequestDispatcherTest,
     TileLoadResult contentGltf = TileLoadResult::fromContentResult(
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
     EXPECT_TRUE(contentGltf.shouldUpload());
+    TileLoadResult normalizedContentGltfForTerrain =
+        TileLoadResult::normalizeForDomain(
+            TileLoadDomain::TerrainContent,
+            std::move(contentGltf));
+    EXPECT_EQ(
+        TileLoadStatus::Failed,
+        normalizedContentGltfForTerrain.status);
+    EXPECT_FALSE(normalizedContentGltfForTerrain.shouldUpload());
 
     auto contentModel = std::make_unique<GltfModel>();
     GltfModel* rawContentModel = contentModel.get();

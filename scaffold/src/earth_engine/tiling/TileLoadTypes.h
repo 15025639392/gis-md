@@ -61,6 +61,20 @@ struct TileLoadedContent {
     }
 };
 
+enum class TileLoadDomain {
+    TerrainContent,
+    Content
+};
+
+inline bool isTerrainContentLoadDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::TerrainContent;
+}
+
+inline bool isContentLoadDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::Content ||
+           domain == TileLoadDomain::TerrainContent;
+}
+
 struct TileLoadResult {
     static TileLoadResult createTerminal(TileLoadStatus status) {
         TileLoadResult loadResult;
@@ -103,6 +117,17 @@ struct TileLoadResult {
         return loadResult;
     }
 
+    static TileLoadResult normalizeForDomain(
+        TileLoadDomain domain,
+        TileLoadResult&& result) {
+        if (domain == TileLoadDomain::TerrainContent &&
+            result.status == TileLoadStatus::Renderable &&
+            !result.content.hasGltfTerrainPayload()) {
+            return createTerminal(TileLoadStatus::Failed);
+        }
+        return std::move(result);
+    }
+
     bool hasRenderableContent() const {
         return content.hasRenderablePayload();
     }
@@ -121,20 +146,6 @@ struct TileLoadResult {
     TileLoadStatus status = TileLoadStatus::Failed;
     TileLoadedContent content;
 };
-
-enum class TileLoadDomain {
-    TerrainContent,
-    Content
-};
-
-inline bool isTerrainContentLoadDomain(TileLoadDomain domain) {
-    return domain == TileLoadDomain::TerrainContent;
-}
-
-inline bool isContentLoadDomain(TileLoadDomain domain) {
-    return domain == TileLoadDomain::Content ||
-           domain == TileLoadDomain::TerrainContent;
-}
 
 struct PendingTileLoad {
     PendingTileLoad() = default;
