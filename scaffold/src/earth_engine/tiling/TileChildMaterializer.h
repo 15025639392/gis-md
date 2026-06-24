@@ -118,7 +118,8 @@ struct TileChildMaterializer {
             }
 
             const bool upsampled =
-                childInfo.state != TileAvailabilityState::Available;
+                childInfo.state != TileAvailabilityState::Available &&
+                !hasAcceptedTerrainContent;
             const bool hasStaleTerrainResidue =
                 clearTerrainAvailabilityUpsampleContent &&
                 !hasAcceptedTerrainContent &&
@@ -126,8 +127,11 @@ struct TileChildMaterializer {
             if (child->content.isTerrainAvailabilityUpsample() != upsampled ||
                 child->content.isRasterDetailUpsample() ||
                 hasStaleTerrainResidue) {
-                child->content.renderContent.clearRenderContent();
-                child->rasterOverlayState.releaseAndClearReferences(nullptr);
+                if (!hasAcceptedTerrainContent) {
+                    child->content.renderContent.clearRenderContent();
+                    child->rasterOverlayState.releaseAndClearReferences(
+                        nullptr);
+                }
                 if (upsampled) {
                     child->content.markTerrainAvailabilityUpsample();
                 } else {
