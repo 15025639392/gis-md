@@ -257,6 +257,44 @@ void expectTerminalResultClearsStaleRenderResidue(
     EXPECT_EQ(expectedLoadState, tile.content.loadState);
 }
 
+void expectRetryLaterPreservesRenderContentLikeCesiumNative(
+    TileLoadDomain domain) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "retry-preserves-render-content";
+    TilesetTile tile(key, Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+    seedStaleRenderResidue(tile);
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    PendingTileLoad result{
+        domain,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
+        result,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(tile.content.renderContent.hasGltfContent());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_TRUE(tile.content.renderContent.hasGltfPrimitiveResources());
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_FALSE(tile.rasterOverlayState.hasMissingProjections());
+    EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+    EXPECT_TRUE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+}
+
 void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
@@ -466,14 +504,22 @@ TEST(TilePendingLoadCommitCoordinatorTest,
      TerminalFailureReplacesStaleRenderResidueLikeCesiumNative) {
     expectTerminalResultClearsStaleRenderResidue(
         TileLoadDomain::Content,
-        TileLoadStatus::RetryLater,
+        TileLoadStatus::Failed,
         TileContentKind::Unknown,
-        TileLoadState::FailedTemporarily);
+        TileLoadState::Failed);
     expectTerminalResultClearsStaleRenderResidue(
         TileLoadDomain::TerrainContent,
         TileLoadStatus::Failed,
         TileContentKind::Unknown,
         TileLoadState::Failed);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     RetryLaterPreservesRenderContentAndClearsRasterMappingsLikeCesiumNative) {
+    expectRetryLaterPreservesRenderContentLikeCesiumNative(
+        TileLoadDomain::Content);
+    expectRetryLaterPreservesRenderContentLikeCesiumNative(
+        TileLoadDomain::TerrainContent);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -1258,13 +1304,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         committedDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
     ASSERT_NE(nullptr, geographic);
+    ASSERT_NE(nullptr, webMercator);
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
     EXPECT_EQ(updatedRectangle, *geographic);
-    EXPECT_EQ(nullptr, webMercator);
-    EXPECT_EQ(-1,
+    EXPECT_EQ(1,
               committedDetails.textureCoordinateIDForProjection(
                   RasterOverlayProjection::WebMercator));
-    EXPECT_EQ(updatedRectangle, committedDetails.boundingRegion.rectangle);
+    EXPECT_FALSE(committedDetails.boundingRegion.rectangle.isEmpty());
     EXPECT_FALSE(tile.contentBoundingVolume.has_value());
     ASSERT_TRUE(tile.initialContentBoundingVolume.has_value());
     EXPECT_EQ(staleContentRectangle,
@@ -1358,15 +1404,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         16.0,
         budget);
 
-    EXPECT_EQ(1u, tile.rasterOverlayState.missingProjections().size());
-    EXPECT_EQ(RasterOverlayProjection::WebMercator,
-              tile.rasterOverlayState.missingProjections().front());
+    EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
     RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
     ASSERT_NE(nullptr, mapped);
     ASSERT_NE(nullptr, mapped->getLoadingTile());
-    EXPECT_EQ(RasterOverlayTile::LoadState::Placeholder,
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
               mapped->getLoadingTile()->getState());
-    EXPECT_EQ(0, activeOverlay.getCachedTileCount());
+    EXPECT_EQ(1, activeOverlay.getCachedTileCount());
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }

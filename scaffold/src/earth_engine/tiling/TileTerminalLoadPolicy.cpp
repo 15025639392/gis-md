@@ -11,8 +11,11 @@ void markUnknownTemporaryFailure(
     TilesetTile& tile,
     IPrepareRendererResources* pPrepRenderer) {
     tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
-    tile.content.renderContent.clearRenderContent();
-    tile.markContentFailedTemporarily();
+    if (tile.content.renderContent.hasRenderableTerrainContent()) {
+        tile.content.loadState = TileLoadState::FailedTemporarily;
+    } else {
+        tile.markContentFailedTemporarily();
+    }
 }
 
 void markUnknownPermanentFailure(
