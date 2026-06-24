@@ -1414,6 +1414,49 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     MalformedTerrainContentResultNormalizesToFailedPreservingAvailability) {
+    const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0));
+
+    TileLoadResultMetadata metadata;
+    metadata.rasterOverlayDetails.emplace();
+    metadata.rasterOverlayDetails->setGeographicRectangle(
+        Rectangle::fromDegrees(5.0, 6.0, 7.0, 8.0));
+
+    TileContentLoadResult contentResult;
+    contentResult.status = TileLoadStatus::Renderable;
+    contentResult.gltfModel = std::move(model);
+    contentResult.metadata = std::move(metadata);
+    contentResult.terrainRenderContent = true;
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 7;
+    update.subtreeKey = subtreeKey;
+    update.metadataAvailability = {{0, 0, 0, 1, 1}};
+    contentResult.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    TileLoadResult normalized =
+        TileLoadResult::fromContentResult(std::move(contentResult));
+
+    EXPECT_EQ(TileLoadStatus::Failed, normalized.status);
+    EXPECT_FALSE(normalized.shouldUpload());
+    EXPECT_FALSE(normalized.hasRenderableContent());
+    EXPECT_FALSE(normalized.content.hasGltfTerrainPayload());
+    ASSERT_EQ(1u, normalized.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(
+        update.layerIndex,
+        normalized.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(
+        update.subtreeKey,
+        normalized.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+    EXPECT_EQ(
+        update.metadataAvailability,
+        normalized.quantizedMeshAvailabilityUpdates.front()
+            .metadataAvailability);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainFailedAndCancelledTerminalsIgnoreTileLoadResultMetadata) {
     expectTerrainTerminalIgnoresMetadata(
         TileLoadStatus::Failed,
