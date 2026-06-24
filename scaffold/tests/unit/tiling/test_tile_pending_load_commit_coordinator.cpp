@@ -19,6 +19,7 @@
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <mutex>
@@ -54,6 +55,42 @@ public:
     }
 
     std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
+};
+
+class RecordingContentTreeProvider final : public TilesetContentProvider {
+public:
+    RecordingContentTreeProvider(TileKey root, std::vector<TileKey> children)
+        : root_(std::move(root)), children_(std::move(children)) {}
+
+    std::string id() const override { return "recording-content-tree"; }
+    bool supportsTile(const TileKey& key) const override {
+        if (key == root_) {
+            return true;
+        }
+        return std::find(children_.begin(), children_.end(), key) !=
+               children_.end();
+    }
+    std::vector<TileKey> rootTiles() const override { return {root_}; }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        return key == root_ ? children_ : std::vector<TileKey>{};
+    }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        callback(key, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    int requestCount = 0;
+
+private:
+    TileKey root_;
+    std::vector<TileKey> children_;
 };
 
 class RecordingTerrainProvider final : public TerrainProvider {
@@ -519,6 +556,71 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(childResult.retryLater);
     EXPECT_FALSE(childResult.changed);
     EXPECT_TRUE(boundary->children.empty());
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentTerminalFailuresMaterializeLatentChildrenOnLaterUpdateLikeCesiumNative) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+
+    for (const auto& [status, expectedLoadState] :
+         std::array<std::pair<TileLoadStatus, TileLoadState>, 2>{
+             std::pair{TileLoadStatus::RetryLater,
+                       TileLoadState::FailedTemporarily},
+             std::pair{TileLoadStatus::Failed, TileLoadState::Failed}}) {
+        RecordingContentTreeProvider provider(rootKey, {childKey});
+        auto scheme = TileScheme::createGeographicTMS();
+        TilesetTileRegistry registry;
+        TileContentAccess contentAccess =
+            TileContentAccess::forNoTerrain(registry, *scheme, &provider, 0);
+
+        TilesetTile* root = contentAccess.ensureTile(rootKey);
+        ASSERT_NE(nullptr, root);
+        root->content.loadState = TileLoadState::ContentLoading;
+
+        const std::string cacheKey =
+            status == TileLoadStatus::RetryLater
+                ? "content-retry-latent-children"
+                : "content-failed-latent-children";
+        TileEmptyContentRegistry emptyContentRegistry;
+        PendingTileLoad pending{
+            TileLoadDomain::Content,
+            rootKey,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            status};
+        bool childrenEnsuredDuringCommit = false;
+
+        TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+            pending,
+            emptyContentRegistry,
+            nullptr,
+            [&contentAccess](const TileKey& key) {
+                return contentAccess.ensureTile(key);
+            },
+            [&childrenEnsuredDuringCommit](TilesetTile&) {
+                childrenEnsuredDuringCommit = true;
+            },
+            []() {});
+
+        EXPECT_FALSE(childrenEnsuredDuringCommit);
+        EXPECT_TRUE(root->children.empty());
+        EXPECT_EQ(TileContentKind::Unknown, root->content.contentKind);
+        EXPECT_EQ(expectedLoadState, root->content.loadState);
+
+        const TileChildFrameMaterializeResult childResult =
+            contentAccess.ensureTileChildren(*root);
+
+        EXPECT_TRUE(childResult.changed);
+        EXPECT_FALSE(childResult.retryLater);
+        ASSERT_EQ(1u, root->children.size());
+        ASSERT_NE(nullptr, root->children.front());
+        EXPECT_EQ(childKey, root->children.front()->key);
+        EXPECT_EQ(expectedLoadState, root->content.loadState);
+        EXPECT_EQ(TileContentKind::Unknown, root->content.contentKind);
+        EXPECT_EQ(0, provider.requestCount);
+    }
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

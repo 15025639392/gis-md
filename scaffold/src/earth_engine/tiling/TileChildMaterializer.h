@@ -40,9 +40,14 @@ struct TileChildMaterializer {
         EnsureTileFn&& ensureTile) {
         bool changed = false;
         for (const TileKey& childKey : childKeys) {
+            const size_t childCountBefore = parent.children.size();
             TilesetTile* child = ensureTile(childKey);
             if (!child) continue;
-            changed |= linkChild(parent, *child);
+            const bool linkedByEnsure =
+                parent.children.size() != childCountBefore &&
+                std::find(parent.children.begin(), parent.children.end(),
+                          child) != parent.children.end();
+            changed |= linkedByEnsure || linkChild(parent, *child);
         }
         return changed;
     }
