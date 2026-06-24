@@ -2,7 +2,7 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
-#include "TileRasterOverlayDetailsGenerator.h"
+#include "TileRasterOverlayMappingPolicy.h"
 #include "TileRasterOverlaySignature.h"
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TilesetTile.h"
@@ -13,20 +13,9 @@
 #include "../providers/RasterOverlayTileProvider.h"
 
 #include <memory>
-#include <optional>
 #include <vector>
 
 namespace earth_engine {
-namespace {
-
-std::optional<Rectangle> projectedBoundingVolumeRectangle(
-    const TilesetTile& tile,
-    RasterOverlayProjection projection) {
-    return TileRasterOverlayDetailsGenerator::
-        projectEffectiveContentBoundingVolumeRectangle(tile, projection);
-}
-
-} // namespace
 
 TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
     TilesetTile& tile,
@@ -55,21 +44,9 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
         return action;
     }
 
-    const bool hasRenderContentDetails =
-        tile.content.contentKind == TileContentKind::Render &&
-        tile.content.renderContent.hasRasterOverlayDetailsContent();
-    const bool mapsLoadedRenderContent =
-        tile.content.contentKind == TileContentKind::Render &&
-        tile.content.renderContent.hasRenderableTerrainContent();
-    const bool waitForContentTerrainDetails =
-        tile.waitsForContentTerrainRasterDetails();
-    const RasterOverlayDetails* renderDetails = mapsLoadedRenderContent
-        ? &tile.content.renderContent.rasterOverlayDetails()
-        : nullptr;
-    static const RasterOverlayDetails emptyOverlayDetails;
-    const RasterOverlayDetails& overlayDetails = renderDetails
-        ? *renderDetails
-        : emptyOverlayDetails;
+    const TileRasterOverlayMappingContext mappingContext =
+        TileRasterOverlayMappingPolicy::contextFor(tile);
+    const RasterOverlayDetails& overlayDetails = mappingContext.details();
 
     for (size_t i : overlayProcessingOrder) {
         if (i >= tile.rasterOverlayState.mappingCount()) {
@@ -90,17 +67,20 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
 
         const RasterOverlayProjection projection =
             activeProvider->getProjection();
-        const Rectangle* geometryRectangle = renderDetails
-            ? renderDetails->findRectangleForOverlayProjection(projection)
-            : nullptr;
+        const Rectangle* geometryRectangle =
+            TileRasterOverlayMappingPolicy::geometryRectangle(
+                mappingContext,
+                projection);
         const std::optional<Rectangle> boundingVolumeRectangle =
-            hasRenderContentDetails || waitForContentTerrainDetails
-                ? std::nullopt
-                : projectedBoundingVolumeRectangle(tile, projection);
-        const Rectangle& rasterTargetRectangle = geometryRectangle
-            ? *geometryRectangle
-            : (boundingVolumeRectangle ? *boundingVolumeRectangle
-                                       : tile.bounds);
+            TileRasterOverlayMappingPolicy::boundingVolumeRectangle(
+                tile,
+                mappingContext,
+                projection);
+        const Rectangle& rasterTargetRectangle =
+            TileRasterOverlayMappingPolicy::targetRectangle(
+                tile,
+                geometryRectangle,
+                boundingVolumeRectangle);
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,
@@ -111,7 +91,8 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
         RasterMappedToTilesetTile& mapped =
             tile.rasterOverlayState.ensureMapping(i);
         std::vector<RasterOverlayProjection> localMissingProjections;
-        const bool mapAsRenderContent = mapsLoadedRenderContent;
+        const bool mapAsRenderContent =
+            mappingContext.mapsLoadedRenderContent;
         std::vector<RasterOverlayProjection>& missingProjections =
             mapAsRenderContent
                 ? tile.rasterOverlayState.missingProjections()
