@@ -151,14 +151,18 @@ struct TilesetTile {
     }
 
     bool canPrepareRasterOverlays() const {
+        return content.loadState == TileLoadState::Done &&
+               content.contentKind == TileContentKind::Render &&
+               hasRasterOverlayHostContent() &&
+               content.renderContent.isRenderContentReady();
+    }
+
+    bool hasRasterOverlayHostContent() const {
         if (contentProviderTerrainQuadtreeTile &&
             !content.renderContent.hasGltfContent()) {
             return false;
         }
-        return content.loadState == TileLoadState::Done &&
-               content.contentKind == TileContentKind::Render &&
-               content.renderContent.hasRenderableTerrainContent() &&
-               content.renderContent.isRenderContentReady();
+        return content.renderContent.hasRenderableTerrainContent();
     }
 
     bool waitsForContentTerrainRasterDetails() const {

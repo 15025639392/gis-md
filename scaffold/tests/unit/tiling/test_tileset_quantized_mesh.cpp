@@ -921,6 +921,65 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     ContentTerrainDoneSurfaceResidueCannotHoldRasterPrefetchMappings) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        overlays,
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    ASSERT_TRUE(root->contentProviderTerrainQuadtreeTile);
+    root->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::Done;
+    root->rasterOverlayState.ensureMapping(0);
+    root->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+    ASSERT_FALSE(root->content.renderContent.hasGltfContent());
+    ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
+    ASSERT_FALSE(root->hasRasterOverlayHostContent());
+    ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
+
+    FrameResourceBudgetConfig budgetConfig;
+    budgetConfig.maxRasterNetworkRequestsPerFrame = 64;
+    budgetConfig.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, budgetConfig);
+
+    TileRasterOverlayPrefetcher::prefetch(
+        *root,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
+    EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
+    RasterOverlayTileProvider* rasterProvider = activated.getTileProvider();
+    ASSERT_NE(nullptr, rasterProvider);
+    EXPECT_EQ(0, rasterProvider->getCachedTileCount());
+}
+
+TEST(TilesetQuantizedMeshTest,
      ContentTerrainEnsureTileClearsNonTerrainGltfRasterResidue) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");

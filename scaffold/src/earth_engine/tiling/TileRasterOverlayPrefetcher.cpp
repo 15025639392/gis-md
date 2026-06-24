@@ -28,7 +28,7 @@ std::optional<Rectangle> projectedBoundingVolumeRectangle(
 bool doneTileCannotHoldRasterOverlays(const TilesetTile& tile) {
     return tile.content.loadState == TileLoadState::Done &&
            (tile.content.contentKind != TileContentKind::Render ||
-            !tile.content.renderContent.hasRenderableTerrainContent());
+            !tile.hasRasterOverlayHostContent());
 }
 
 } // namespace
