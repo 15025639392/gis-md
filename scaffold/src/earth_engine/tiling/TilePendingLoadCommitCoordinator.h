@@ -123,6 +123,37 @@ public:
             return;
         }
 
+        if (upload.result.status == TileLoadStatus::Renderable &&
+            upload.content().terrainRenderContent &&
+            !upload.content().satisfiesContentTerrainPayloadContract()) {
+            const TileTerminalLoadAction action =
+                upload.domain == TileLoadDomain::TerrainContent
+                    ? TileTerminalLoadCommitter::commitTerrainTerminalResult(
+                          *tile,
+                          upload.cacheKey,
+                          TileLoadResult::createTerminal(
+                              TileLoadStatus::Failed),
+                          emptyContentRegistry,
+                          pPrepRenderer)
+                    : TileTerminalLoadCommitter::commitContentTerminalResult(
+                          *tile,
+                          upload.cacheKey,
+                          TileLoadResult::createTerminal(
+                              TileLoadStatus::Failed),
+                          emptyContentRegistry,
+                          pPrepRenderer);
+            if (action.ensureChildren) {
+                ensureChildren(*tile);
+            }
+            if (action.resourcesDirty) {
+                markResourcesDirty();
+            }
+            TilePendingUploadCompletion::eraseUpload(
+                lifecycle,
+                upload.cacheKey);
+            return;
+        }
+
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
         TileContentUploadCommitter::applyAvailabilityUpdates(
             contentProvider,

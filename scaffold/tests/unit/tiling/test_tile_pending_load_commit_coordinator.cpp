@@ -1674,6 +1674,78 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     MalformedTerrainUploadCommitsAsFailedTerminalLikeCesiumNative) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:malformed-terrain-upload";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadResult malformed = TileLoadResult::createTerminal(
+        TileLoadStatus::Renderable);
+    malformed.content.gltfModel = std::make_unique<GltfModel>();
+    malformed.content.terrainRenderContent = true;
+    ASSERT_FALSE(
+        malformed.content.satisfiesContentTerrainPayloadContract());
+
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(malformed)};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        TileLoadResult queuedMalformed = TileLoadResult::createTerminal(
+            TileLoadStatus::Renderable);
+        queuedMalformed.content.gltfModel = std::make_unique<GltfModel>();
+        queuedMalformed.content.terrainRenderContent = true;
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            std::move(queuedMalformed)});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    int ensureGltfCalls = 0;
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        {},
+        emptyContentRegistry,
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&ensureGltfCalls](TilesetTile&) { ++ensureGltfCalls; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_EQ(0, ensureGltfCalls);
+    EXPECT_TRUE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentDomainTerrainContentUploadUsesContentLifecycleLikeCesiumNative) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain-content-domain";
