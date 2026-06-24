@@ -136,16 +136,25 @@ struct TilesetTile {
 
     TileRenderableSnapshot renderableSnapshot(
         bool requiredRasterOverlaysReady) const {
+        const bool renderContentReady =
+            contentProviderTerrainQuadtreeTile &&
+                    !content.renderContent.hasGltfContent()
+                ? false
+                : content.renderContent.isRenderContentReady();
         return TileRenderableSnapshot{
             content.loadState,
             content.contentKind,
             unconditionallyRefine,
             !children.empty(),
             requiredRasterOverlaysReady,
-            content.renderContent.isRenderContentReady()};
+            renderContentReady};
     }
 
     bool canPrepareRasterOverlays() const {
+        if (contentProviderTerrainQuadtreeTile &&
+            !content.renderContent.hasGltfContent()) {
+            return false;
+        }
         return content.loadState == TileLoadState::Done &&
                content.contentKind == TileContentKind::Render &&
                content.renderContent.hasRenderableTerrainContent() &&

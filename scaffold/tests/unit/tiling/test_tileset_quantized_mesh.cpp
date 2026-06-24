@@ -22,6 +22,7 @@
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
+#include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileSelectionRootPolicy.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/SurfaceTile.h"
@@ -896,7 +897,10 @@ TEST(TilesetQuantizedMeshTest,
     root->rasterOverlayState.missingProjections().push_back(
         RasterOverlayProjection::WebMercator);
 
-    ASSERT_TRUE(root->canPrepareRasterOverlays());
+    ASSERT_FALSE(root->canPrepareRasterOverlays());
+    EXPECT_FALSE(TileSelectionRasterOverlayPreparer::isCompleteRenderable(
+        *root,
+        {}));
     ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
     ASSERT_TRUE(root->content.renderContent.hasRetainedHeightmap());
     ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
