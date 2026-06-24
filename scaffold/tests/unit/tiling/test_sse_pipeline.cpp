@@ -4369,6 +4369,99 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
           "RasterMappedToTilesetTile: stale loading tile with ready fallback stays TemporarilyAttached");
 }
 
+void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+    provider.setFrameNumber(1);
+
+    const Rectangle rectangle =
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
+    RasterOverlayDetails details = makeProviderDetails(
+        overlay->getTileScheme(),
+        rectangle);
+    const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
+
+    RasterMappedToTilesetTile mapped;
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* firstLoading = mapped.getLoadingTile();
+    check(firstLoading != nullptr && firstLoading->isMappedRasterTile(),
+          "RasterMappedToTilesetTile: stale-ready fixture creates mapped raster tile");
+    if (!firstLoading) return;
+    firstLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+
+    RecordingPrepareRendererResources prepResources;
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &prepResources,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* firstReady = mapped.getReadyTile();
+    check(firstReady == firstLoading &&
+              mapped.getState() == RasterMappedToTilesetTile::State::Attached &&
+              prepResources.attachCount == 1,
+          "RasterMappedToTilesetTile: stale-ready fixture attaches first epoch raster");
+
+    provider.setMaximumScreenSpaceError(1.0);
+    check(!provider.ownsCurrentTile(*firstReady),
+          "RasterMappedToTilesetTile: ready mapped tile is stale after provider epoch invalidation");
+
+    const auto updateAfterInvalidation = mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &prepResources,
+        missingProjections,
+        nullptr,
+        0);
+
+    check(updateAfterInvalidation ==
+              RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: stale ready remap reports pending detail");
+    check(prepResources.detachCount == 1,
+          "RasterMappedToTilesetTile: stale ready raster detaches renderer resources");
+    check(mapped.getReadyTile() == nullptr &&
+              mapped.getLoadingTile() != nullptr &&
+              mapped.getLoadingTile() != firstReady &&
+              provider.ownsCurrentTile(*mapped.getLoadingTile()) &&
+              mapped.getState() == RasterMappedToTilesetTile::State::Unattached,
+          "RasterMappedToTilesetTile: stale ready raster is replaced by current epoch loading tile");
+}
+
 void testRasterMappedFailedChildFollowsParentLoadingTile() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -29085,6 +29178,7 @@ int main() {
     testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking();
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached();
+    testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch();
     testRasterMappedFailedChildFollowsParentLoadingTile();
     testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload();
     testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion();
