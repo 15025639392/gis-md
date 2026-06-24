@@ -64,9 +64,11 @@ public:
                 if (tile.content.loadState != TileLoadState::Unloading &&
                     TileUnloadPolicy::hasContentLoadingUpsampledDescendant(
                         tile)) {
-                    TileUnloadPolicy::
-                        releaseMainThreadRenderResourcesForProtectedUnload(
-                            tile);
+                    if (shouldReleaseRenderResourcesForProtectedUnload(tile)) {
+                        TileUnloadPolicy::
+                            releaseMainThreadRenderResourcesForProtectedUnload(
+                                tile);
+                    }
                     tile.markContentUnloading();
                     return TileCacheUnloadContentResult::Keep;
                 }
@@ -89,6 +91,13 @@ public:
         emptyContentRegistry.erase(cacheKey);
         TileUnloadPolicy::markContentUnloaded(tile);
         return result;
+    }
+
+private:
+    static bool shouldReleaseRenderResourcesForProtectedUnload(
+        const TilesetTile& tile) {
+        return tile.content.loadState == TileLoadState::ContentLoaded ||
+               tile.content.loadState == TileLoadState::Done;
     }
 };
 
