@@ -9,6 +9,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
+#include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileContentAccess.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
@@ -1049,6 +1050,100 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     FailedTerrainTerminalAvailabilityDrivesLaterChildCreationLikeCesiumNative) {
+    const TileKey key{"Geographic-TMS", 2, 1, 0};
+    const TileKey availableChildKey{"Geographic-TMS", 3, 2, 0};
+    const std::string cacheKey = "terrain-failed-availability-children";
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTile tile(key, scheme->tileToRectangle(key));
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::Failed);
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = key;
+    update.metadataAvailability.push_back({0, 2, 0, 2, 0});
+    result.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    PendingTileLoad pending{TileLoadDomain::TerrainContent,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(result)};
+    TileEmptyContentRegistry emptyContentRegistry;
+    RecordingTerrainContentProvider provider;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        pending,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        []() {},
+        &provider);
+
+    ASSERT_EQ(1u, provider.appliedUpdates.size());
+    EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& childKey) -> TilesetTile* {
+        const std::string childCacheKey =
+            childKey.schemeId + "/" + std::to_string(childKey.z) + "/" +
+            std::to_string(childKey.x) + "/" + std::to_string(childKey.y);
+        auto it = tiles.find(childCacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                childCacheKey,
+                std::make_unique<TilesetTile>(
+                    childKey,
+                    scheme->tileToRectangle(childKey)))
+                     .first;
+        }
+        return it->second.get();
+    };
+    auto availability = [&provider](const TileKey& childKey) {
+        for (const QuantizedMeshAvailabilityUpdate& applied :
+             provider.appliedUpdates) {
+            const int relativeLevel =
+                childKey.z - applied.subtreeKey.z - 1;
+            for (const QuantizedMeshAvailabilityRange& range :
+                 applied.metadataAvailability) {
+                if (relativeLevel == static_cast<int>(range[0]) &&
+                    childKey.x >= static_cast<int>(range[1]) &&
+                    childKey.y >= static_cast<int>(range[2]) &&
+                    childKey.x <= static_cast<int>(range[3]) &&
+                    childKey.y <= static_cast<int>(range[4])) {
+                    return TileAvailabilityState::Available;
+                }
+            }
+        }
+        return TileAvailabilityState::NotAvailable;
+    };
+
+    const TileChildFrameMaterializeResult childResult =
+        TileChildFrameMaterializer::ensureChildren(
+            TileChildFrameMaterializeInput{
+                tile,
+                {},
+                4,
+                true,
+                false},
+            ensure,
+            availability);
+
+    EXPECT_TRUE(childResult.changed);
+    EXPECT_FALSE(childResult.retryLater);
+    EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+    ASSERT_EQ(4u, tile.children.size());
+    EXPECT_EQ(availableChildKey, tile.children[0]->key);
+    EXPECT_FALSE(tile.children[0]->content.upsampledFromParent);
+    EXPECT_TRUE(tile.children[1]->content.upsampledFromParent);
+    EXPECT_TRUE(tile.children[2]->content.upsampledFromParent);
+    EXPECT_TRUE(tile.children[3]->content.upsampledFromParent);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
