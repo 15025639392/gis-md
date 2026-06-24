@@ -3061,6 +3061,65 @@ void testRasterOverlayExceptionSourceFailureCanRetryLikeSharedAssetDepot() {
           "RasterOverlayTileProvider: retried exception source failure can load successfully");
 }
 
+void testRasterOverlaySourceInvalidationRecreatesDirectAssetLikeSharedAssetDepot() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    const TileKey key{imageryScheme->id(), 0, 0, 0};
+    RasterOverlayTileProvider::TilePtr oldTile = provider.getTile(key);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget oldBudget;
+    oldBudget.beginFrame(1, config);
+
+    check(oldTile && provider.loadTileThrottled(*oldTile, &oldBudget) &&
+              imagery.pendingRequests.size() == 1,
+          "RasterOverlayTileProvider: source invalidation fixture starts first direct request");
+    if (!oldTile || imagery.pendingRequests.empty()) return;
+
+    auto oldCallback = imagery.pendingRequests.front().callback;
+    provider.setMaximumTextureSize(1024);
+
+    check(!provider.ownsCurrentTile(*oldTile) &&
+              oldTile->getState() == RasterOverlayTile::LoadState::Failed,
+          "RasterOverlayTileProvider: source invalidation retires old direct tile");
+
+    RasterOverlayTileProvider::TilePtr newTile = provider.getTile(key);
+    FrameResourceBudget newBudget;
+    newBudget.beginFrame(2, config);
+    check(newTile && newTile.get() != oldTile.get() &&
+              provider.loadTileThrottled(*newTile, &newBudget) &&
+              imagery.pendingRequests.size() == 2,
+          "RasterOverlayTileProvider: source invalidation recreates direct asset request like SharedAssetDepot");
+    if (!newTile || imagery.pendingRequests.size() < 2) return;
+
+    oldCallback(key, makeDecodedRgbaImage(64, 64));
+    FrameResourceBudget staleUploadBudget;
+    staleUploadBudget.beginFrame(3, config);
+    provider.processPendingUploads(false, &staleUploadBudget);
+
+    check(newTile->getState() == RasterOverlayTile::LoadState::Loading &&
+              newTile->getTexture() == nullptr,
+          "RasterOverlayTileProvider: stale direct source completion does not upload into recreated tile");
+
+    imagery.pendingRequests.back().callback(key, makeDecodedRgbaImage(64, 64));
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(4, config);
+    provider.processPendingUploads(false, &uploadBudget);
+
+    check(newTile->getState() == RasterOverlayTile::LoadState::Loaded &&
+              newTile->getTexture() != nullptr,
+          "RasterOverlayTileProvider: recreated direct source asset loads from the new epoch response");
+}
+
 void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -28262,6 +28321,7 @@ int main() {
     testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache();
     testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot();
     testRasterOverlayExceptionSourceFailureCanRetryLikeSharedAssetDepot();
+    testRasterOverlaySourceInvalidationRecreatesDirectAssetLikeSharedAssetDepot();
     testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight();
     testRasterOverlayDirectTileJoinsMappedSourceInFlight();
     testRasterOverlayMappedRasterTilesShareSourceInFlight();
