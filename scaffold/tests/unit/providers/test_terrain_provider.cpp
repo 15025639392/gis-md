@@ -672,6 +672,47 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
+     DecodeTileContentFailureCarriesCurrentLayerEmptyAvailabilityLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    EXPECT_FALSE(provider.isSubtreeLoaded(0, 0));
+
+    const std::vector<uint8_t> invalidBytes{1, 2, 3, 4};
+    TileContentLoadResult result = provider.decodeTileContent(
+        rootKey,
+        invalidBytes.data(),
+        invalidBytes.size());
+
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
+    ASSERT_EQ(1u, result.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(0, result.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(rootKey,
+              result.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+    EXPECT_TRUE(
+        result.quantizedMeshAvailabilityUpdates.front()
+            .metadataAvailability.empty());
+
+    provider.applyAvailabilityUpdates(result.quantizedMeshAvailabilityUpdates);
+    EXPECT_TRUE(provider.isSubtreeLoaded(0, 0));
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
      WebMercatorRequestTileContentUsesProjectedLayerRectangleLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");

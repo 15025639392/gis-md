@@ -2367,13 +2367,21 @@ TileContentLoadResult QuantizedMeshTerrainProvider::decodeTileContent(
         }
     }
 
-    return loadQuantizedMeshTileContent(
+    std::optional<QuantizedMeshAvailabilityUpdate> failedAvailabilityUpdate =
+        currentTileAvailabilityUpdate;
+    TileContentLoadResult result = loadQuantizedMeshTileContent(
         key,
         data,
         size,
         waterMaskEnabled_,
         {},
         std::move(currentTileAvailabilityUpdate));
+    if (result.status == TileLoadStatus::Failed &&
+        failedAvailabilityUpdate) {
+        result.quantizedMeshAvailabilityUpdates.push_back(
+            std::move(*failedAvailabilityUpdate));
+    }
+    return result;
 }
 
 TileContentLoadResult QuantizedMeshTerrainProvider::decodeContent(
