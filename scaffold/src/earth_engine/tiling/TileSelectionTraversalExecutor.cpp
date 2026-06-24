@@ -192,7 +192,15 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
         return context.createSingleTileDetails(tile);
     }
 
-    context.ensureTileChildren(tile);
+    const TileChildFrameMaterializeResult childMaterialize =
+        context.ensureTileChildren(tile);
+    if (childMaterialize.retryLater) {
+        context.queueTileLoad(
+            tile.key,
+            TileLoadPriorityGroup::Urgent,
+            tilePriority);
+        queuedForLoad = true;
+    }
 
     if (preTraversal.addAdditiveParentToPlan) {
         context.addTileToCurrentPlan(

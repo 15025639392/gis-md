@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileLoadTypes.h"
+#include "TileChildFrameMaterializer.h"
 #include "TileSelectionCounters.h"
 #include "TileTraversalDetails.h"
 #include "../core/math/Vec3.h"
@@ -32,7 +33,8 @@ struct TileSelectionTraversalContext {
         double,
         bool,
         double);
-    using EnsureTileChildrenFn = void (*)(void*, TilesetTile&);
+    using EnsureTileChildrenFn =
+        TileChildFrameMaterializeResult (*)(void*, TilesetTile&);
     using CanRefineFn = bool (*)(void*, const TilesetTile&);
     using CheckOcclusionFn =
         TileOcclusionState (*)(void*, const TilesetTile&);
@@ -79,8 +81,9 @@ struct TileSelectionTraversalContext {
             priority);
     }
 
-    void ensureTileChildren(TilesetTile& tile) const {
-        ensureTileChildrenFn(contentAccessUserData, tile);
+    TileChildFrameMaterializeResult ensureTileChildren(
+        TilesetTile& tile) const {
+        return ensureTileChildrenFn(contentAccessUserData, tile);
     }
 
     bool canRefine(const TilesetTile& tile) const {

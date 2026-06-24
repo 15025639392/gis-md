@@ -41,8 +41,9 @@ void addTileToCurrentPlan(void* userData,
         priority);
 }
 
-void ensureTileChildren(void* userData, TilesetTile& tile) {
-    static_cast<TileContentAccess*>(userData)->ensureTileChildren(tile);
+TileChildFrameMaterializeResult ensureTileChildren(void* userData,
+                                                   TilesetTile& tile) {
+    return static_cast<TileContentAccess*>(userData)->ensureTileChildren(tile);
 }
 
 bool canRefine(void* userData, const TilesetTile& tile) {
