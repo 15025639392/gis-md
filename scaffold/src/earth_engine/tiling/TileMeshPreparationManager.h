@@ -2,8 +2,10 @@
 
 #include "TileKey.h"
 #include "TileLoadTypes.h"
+#include "TileLegacyHeightmapSurfacePreparer.h"
 #include "TileMeshFrameEnsurer.h"
 
+#include <memory>
 #include <vector>
 
 namespace earth_engine {
@@ -38,7 +40,6 @@ public:
 
 private:
     void prepareContentTerrainFrame(TilesetTile& tile);
-    void prepareHeightmapSurfaceFrame(TilesetTile& tile);
     bool usesLegacyHeightmapSurfacePath() const;
     void markResourcesDirty();
     void queueTileLoad(const TileKey& key,
@@ -48,10 +49,9 @@ private:
     TileContentLifecycleManager& contentLifecycle_;
     TileContentResourceInvalidator& resourceInvalidator_;
     TileLoadQueue& loadQueue_;
-    bool hasTerrainQuadtree_ = false;
     TileMeshPreparationMode mode_ = TileMeshPreparationMode::ContentTerrain;
-    RenderDevice* device_ = nullptr;
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
+    std::unique_ptr<TileLegacyHeightmapSurfacePreparer>
+        legacyHeightmapSurfacePreparer_;
 };
 
 } // namespace earth_engine

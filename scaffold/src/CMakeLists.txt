@@ -379,6 +379,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileOcclusionState.h
     earth_engine/tiling/TileOcclusionCallback.h
     earth_engine/tiling/TileOcclusionResolver.h
+    earth_engine/tiling/TileLegacyHeightmapSurfacePreparer.h
+    earth_engine/tiling/TileLegacyHeightmapSurfacePreparer.cpp
     earth_engine/tiling/TileMeshFrameEnsurer.h
     earth_engine/tiling/TileMeshPreparationManager.h
     earth_engine/tiling/TileMeshPreparationManager.cpp
