@@ -6049,6 +6049,92 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
           "TileRasterOverlayFrameProcessor: prefetch missing projection queues same-frame content reload");
 }
 
+void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReload() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    TilesetTile tile(
+        key,
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0));
+    tile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
+            RasterOverlayProjection::Geographic);
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.loadState = TileLoadState::ContentLoaded;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.geometricError = 100.0;
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(key);
+    const std::vector<size_t> overlayOrder =
+        TileSelectionRasterOverlayPreparer::processingOrder(overlays);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    bool unloadCalled = false;
+    bool queueReloadCalled = false;
+
+    TileRasterOverlayFrameProcessor::prefetchSelection(
+        plan,
+        {},
+        overlays,
+        overlayOrder,
+        nullptr,
+        16.0,
+        budget,
+        [&tile](const TileKey& requestedKey) -> TilesetTile* {
+            return requestedKey == tile.key ? &tile : nullptr;
+        },
+        nullptr,
+        [&](TilesetTile&) {
+            unloadCalled = true;
+        },
+        [&](const TileKey&, TileLoadPriorityGroup, double) {
+            queueReloadCalled = true;
+        });
+
+    check(!unloadCalled &&
+              !queueReloadCalled &&
+              tile.content.loadState == TileLoadState::ContentLoaded &&
+              tile.content.contentKind == TileContentKind::Render,
+          "TileRasterOverlayFrameProcessor: ContentLoaded render content waits for Done before missing-projection reload like cesium-native");
+    check(tile.rasterOverlayState.mappings().empty() &&
+              tile.rasterOverlayState.missingProjections().empty(),
+          "TileRasterOverlayFrameProcessor: ContentLoaded prefetch does not record transient missing projection state");
+
+    tile.content.loadState = TileLoadState::Done;
+    TileRasterOverlayFrameProcessor::prefetchSelection(
+        plan,
+        {},
+        overlays,
+        overlayOrder,
+        nullptr,
+        16.0,
+        budget,
+        [&tile](const TileKey& requestedKey) -> TilesetTile* {
+            return requestedKey == tile.key ? &tile : nullptr;
+        },
+        nullptr,
+        [&](TilesetTile&) {
+            unloadCalled = true;
+        },
+        [&](const TileKey&, TileLoadPriorityGroup, double) {
+            queueReloadCalled = true;
+        });
+
+    check(unloadCalled && queueReloadCalled,
+          "TileRasterOverlayFrameProcessor: Done render content still reloads missing projection during prefetch");
+}
+
 void testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch() {
     const TileKey key{"Geographic-TMS", 1, 0, 0};
     TilesetTile tile(key, Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0));
@@ -29280,6 +29366,7 @@ int main() {
     testTilesetPrefetchGeneratesRenderContentDetailsFromRegion();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
     testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch();
+    testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReload();
     testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testRasterSelectionPrefetchSkipHonorsMoreDetail();

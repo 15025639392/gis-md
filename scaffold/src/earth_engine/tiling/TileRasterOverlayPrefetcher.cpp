@@ -31,7 +31,6 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
         tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
         return action;
     }
-
     tile.rasterOverlayState.synchronizeMappingIdentity(
         TileRasterOverlaySignature::mappingIdentity(rasterOverlays),
         pPrepRenderer);
@@ -114,7 +113,12 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
             mapAsRenderContent,
             boundingVolumeRectangle);
         if (tile.rasterOverlayState.hasMissingProjections()) {
-            action.unloadTileContent = true;
+            if (tile.content.loadState == TileLoadState::Done) {
+                action.unloadTileContent = true;
+            } else {
+                tile.rasterOverlayState.releaseAndClearReferences(
+                    pPrepRenderer);
+            }
             return action;
         }
 
