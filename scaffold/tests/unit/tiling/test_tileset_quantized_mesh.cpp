@@ -1268,6 +1268,84 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     QuantizedMeshProviderBoundaryWaitsAfterAvailabilityUpdateLikeCesiumNative) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    QuantizedMeshTerrainProvider* rawProvider = provider.get();
+
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
+    TilesetTile* boundary =
+        TilesetTestAccess::ensureTile(tileset, boundaryKey);
+    ASSERT_NE(nullptr, boundary);
+
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = boundaryKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+    rawProvider->applyAvailabilityUpdates({update});
+    EXPECT_EQ(
+        TileAvailabilityState::Available,
+        rawProvider->availabilityState(
+            TileKey{"Geographic-TMS", 3, 0, 0}));
+    EXPECT_EQ(
+        TileAvailabilityState::NotAvailable,
+        rawProvider->availabilityState(
+            TileKey{"Geographic-TMS", 3, 1, 0}));
+
+    for (TileLoadState waitingState : {
+             TileLoadState::Unloaded,
+             TileLoadState::ContentLoading,
+             TileLoadState::FailedTemporarily}) {
+        boundary->children.clear();
+        boundary->content.loadState = waitingState;
+        TilesetTestAccess::ensureTileChildren(tileset, *boundary);
+        EXPECT_TRUE(boundary->children.empty());
+        EXPECT_FALSE(TilesetTestAccess::canRefine(tileset, *boundary));
+    }
+
+    boundary->content.loadState = TileLoadState::ContentLoaded;
+    TilesetTestAccess::ensureTileChildren(tileset, *boundary);
+    ASSERT_EQ(4u, boundary->children.size());
+
+    const std::array<TileKey, 4> expectedChildren = {{
+        TileKey{"Geographic-TMS", 3, 0, 0},
+        TileKey{"Geographic-TMS", 3, 1, 0},
+        TileKey{"Geographic-TMS", 3, 0, 1},
+        TileKey{"Geographic-TMS", 3, 1, 1}}};
+    for (size_t i = 0; i < expectedChildren.size(); ++i) {
+        ASSERT_NE(nullptr, boundary->children[i]);
+        EXPECT_EQ(expectedChildren[i], boundary->children[i]->key);
+        EXPECT_EQ(boundary, boundary->children[i]->parent);
+    }
+    EXPECT_FALSE(
+        boundary->children[0]->content.isTerrainAvailabilityUpsample());
+    for (size_t i = 1; i < boundary->children.size(); ++i) {
+        EXPECT_TRUE(
+            boundary->children[i]->content.isTerrainAvailabilityUpsample());
+    }
+    EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *boundary));
+}
+
+TEST(TilesetQuantizedMeshTest,
      ContentTerrainRasterPrefetchWaitsForGltfOverlayDetails) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
