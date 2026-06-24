@@ -17,19 +17,19 @@ TileMeshPreparationManager::TileMeshPreparationManager(
     TileContentResourceInvalidator& resourceInvalidator,
     TileLoadQueue& loadQueue,
     bool hasTerrainQuadtree,
-    bool useHeightmapSurfacePath,
+    TileMeshPreparationMode mode,
     RenderDevice* device,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays)
     : contentLifecycle_(contentLifecycle),
       resourceInvalidator_(resourceInvalidator),
       loadQueue_(loadQueue),
       hasTerrainQuadtree_(hasTerrainQuadtree),
-      useHeightmapSurfacePath_(useHeightmapSurfacePath),
+      mode_(mode),
       device_(device),
       rasterOverlays_(rasterOverlays) {}
 
 void TileMeshPreparationManager::prepareRenderableTile(TilesetTile& tile) {
-    if (!useHeightmapSurfacePath_) {
+    if (!usesLegacyHeightmapSurfacePath()) {
         prepareContentTerrainFrame(tile);
         return;
     }
@@ -47,19 +47,14 @@ void TileMeshPreparationManager::prepareContentTerrainFrame(TilesetTile& tile) {
 
 void TileMeshPreparationManager::prepareHeightmapSurfaceFrame(
     TilesetTile& tile) {
-    if (!useHeightmapSurfacePath_) {
-        prepareContentTerrainFrame(tile);
-        return;
-    }
-
     auto ingestAvailability = [](const TileKey&, DecodedHeightmap*) {};
     auto findUpsampleSource =
-        [this](const TilesetTile& sourceTile, bool allowUnloadingSource) {
+        [](const TilesetTile& sourceTile, bool allowUnloadingSource) {
             return TileUpsampleSourcePreparer::findSourceTile(
                 sourceTile,
                 allowUnloadingSource,
                 false,
-                useHeightmapSurfacePath_);
+                true);
         };
     auto ensureAncestorMesh = [this](TilesetTile& ancestor) {
         prepareRenderableTile(ancestor);
@@ -95,7 +90,7 @@ bool TileMeshPreparationManager::prepareUpsampleSourceTile(
     return TileUpsampleSourcePreparer::prepareSourceTile(
         tile,
         priority,
-        useHeightmapSurfacePath_,
+        usesLegacyHeightmapSurfacePath(),
         [this](TilesetTile& ancestor) {
             prepareRenderableTile(ancestor);
         },
@@ -104,6 +99,10 @@ bool TileMeshPreparationManager::prepareUpsampleSourceTile(
                double queuePriority) {
             queueTileLoad(key, group, queuePriority);
         });
+}
+
+bool TileMeshPreparationManager::usesLegacyHeightmapSurfacePath() const {
+    return mode_ == TileMeshPreparationMode::LegacyHeightmapSurface;
 }
 
 void TileMeshPreparationManager::markResourcesDirty() {

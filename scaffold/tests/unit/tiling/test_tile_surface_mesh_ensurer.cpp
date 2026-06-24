@@ -201,7 +201,7 @@ TEST(TileSurfaceMeshEnsurerTest,
         invalidator,
         loadQueue,
         true,
-        false,
+        TileMeshPreparationMode::ContentTerrain,
         nullptr,
         overlays);
 
@@ -237,7 +237,7 @@ TEST(TileSurfaceMeshEnsurerTest,
         invalidator,
         loadQueue,
         true,
-        false,
+        TileMeshPreparationMode::ContentTerrain,
         nullptr,
         overlays);
 
@@ -272,7 +272,7 @@ TEST(TileSurfaceMeshEnsurerTest,
         invalidator,
         loadQueue,
         true,
-        false,
+        TileMeshPreparationMode::ContentTerrain,
         nullptr,
         overlays);
 
@@ -321,7 +321,7 @@ TEST(TileSurfaceMeshEnsurerTest,
         invalidator,
         loadQueue,
         true,
-        false,
+        TileMeshPreparationMode::ContentTerrain,
         nullptr,
         overlays);
 

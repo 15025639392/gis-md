@@ -15,6 +15,11 @@ class TileContentResourceInvalidator;
 class TileLoadQueue;
 struct TilesetTile;
 
+enum class TileMeshPreparationMode {
+    ContentTerrain,
+    LegacyHeightmapSurface
+};
+
 class TileMeshPreparationManager {
 public:
     TileMeshPreparationManager(
@@ -22,18 +27,19 @@ public:
         TileContentResourceInvalidator& resourceInvalidator,
         TileLoadQueue& loadQueue,
         bool hasTerrainQuadtree,
-        bool useHeightmapSurfacePath,
+        TileMeshPreparationMode mode,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
 
     void prepareRenderableTile(TilesetTile& tile);
-    void prepareContentTerrainFrame(TilesetTile& tile);
     bool prepareUpsampleSourceTile(
         TilesetTile& tile,
         double priority);
 
 private:
+    void prepareContentTerrainFrame(TilesetTile& tile);
     void prepareHeightmapSurfaceFrame(TilesetTile& tile);
+    bool usesLegacyHeightmapSurfacePath() const;
     void markResourcesDirty();
     void queueTileLoad(const TileKey& key,
                        TileLoadPriorityGroup group,
@@ -43,7 +49,7 @@ private:
     TileContentResourceInvalidator& resourceInvalidator_;
     TileLoadQueue& loadQueue_;
     bool hasTerrainQuadtree_ = false;
-    bool useHeightmapSurfacePath_ = false;
+    TileMeshPreparationMode mode_ = TileMeshPreparationMode::ContentTerrain;
     RenderDevice* device_ = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
 };

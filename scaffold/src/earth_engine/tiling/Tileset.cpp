@@ -154,7 +154,9 @@ Tileset::Tileset(ProviderOwnership providers,
           providerHasTerrainQuadtree(
               heightmapTerrainProvider_.get(),
               contentProvider_.get()),
-          usesHeightmapTerrainSurfacePath(heightmapTerrainProvider_.get()),
+          usesHeightmapTerrainSurfacePath(heightmapTerrainProvider_.get())
+              ? TileMeshPreparationMode::LegacyHeightmapSurface
+              : TileMeshPreparationMode::ContentTerrain,
           device_,
           rasterOverlays_),
       contentRuntime_(
