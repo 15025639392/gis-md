@@ -88,6 +88,14 @@ TileLoadResultMetadata makeBoundingVolumeMetadata(
     return metadata;
 }
 
+std::unique_ptr<GltfModel> makeMinimalTerrainGltfModelForCommitTest(
+    const Rectangle& rectangle =
+        Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0)) {
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 TileLoadResult makeTerrainContentContentResult(
     std::unique_ptr<GltfModel> model,
     TileLoadResultMetadata metadata = {}) {
@@ -486,7 +494,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.metadataAvailability = {{0, 1, 2, 3, 4}};
 
     TileLoadedContent content = TileLoadedContent::fromContentResult(
-        TileContentLoadResult::renderTerrain(std::make_unique<GltfModel>()));
+        TileContentLoadResult::renderTerrain(
+            makeMinimalTerrainGltfModelForCommitTest()));
     content.quantizedMeshAvailabilityUpdates.push_back(update);
 
     TileContentUploadCommitter::applyAvailabilityUpdates(
@@ -513,7 +522,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.metadataAvailability = {{0, 1, 2, 3, 4}};
 
     TileLoadedContent content = TileLoadedContent::fromContentResult(
-        TileContentLoadResult::renderTerrain(std::make_unique<GltfModel>()));
+        TileContentLoadResult::renderTerrain(
+            makeMinimalTerrainGltfModelForCommitTest()));
     content.quantizedMeshAvailabilityUpdates.push_back(update);
     content.quantizedMeshAvailabilityUpdatesApplied = true;
 
@@ -551,7 +561,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.subtreeKey = subtreeKey;
     update.metadataAvailability = {{0, 0, 0, 0, 0}};
 
-    auto model = std::make_unique<GltfModel>();
+    auto model = makeMinimalTerrainGltfModelForCommitTest();
     GltfModel* rawModel = model.get();
     TileContentLoadResult contentResult =
         TileContentLoadResult::renderTerrain(std::move(model));
@@ -583,7 +593,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableGltfTerrain(
-                std::make_unique<GltfModel>())});
+                makeMinimalTerrainGltfModelForCommitTest())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -631,7 +641,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.subtreeKey = TileKey{"Geographic-TMS", 2, 0, 0};
     update.metadataAvailability = {{0, 0, 0, 0, 0}};
 
-    auto model = std::make_unique<GltfModel>();
+    auto model = makeMinimalTerrainGltfModelForCommitTest();
     GltfModel* rawModel = model.get();
     TileContentLoadResult contentResult =
         TileContentLoadResult::renderTerrain(std::move(model));
@@ -662,7 +672,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
+            TileLoadResult::createRenderableGltfTerrain(
+                makeMinimalTerrainGltfModelForCommitTest())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());

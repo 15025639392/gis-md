@@ -1248,6 +1248,14 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     return model;
 }
 
+std::unique_ptr<GltfModel> makeTerrainTriangleGltfModel(
+    const Rectangle& rectangle =
+        Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0)) {
+    auto model = makeTriangleGltfModel();
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 bool rasterDetailsUseTightTriangleBounds(const RasterOverlayDetails& details) {
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     const std::optional<Cartographic> east =
@@ -21921,11 +21929,11 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
           "Tileset: content-owned terrain budget test queues terrain and content requests");
     check(rawContentProvider->completeWithTerrainModel(
               terrainKey,
-              makeTriangleGltfModel()),
+              makeTerrainTriangleGltfModel()),
           "Tileset: lower-priority terrain glTF upload can complete first");
     check(rawContentProvider->completeWithTerrainModel(
               contentKey,
-              makeTriangleGltfModel()),
+              makeTerrainTriangleGltfModel()),
           "Tileset: higher-priority terrain glTF upload can complete second");
     check(tileset.loadDiagnostics().pendingContentUploads == 0 &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 2,

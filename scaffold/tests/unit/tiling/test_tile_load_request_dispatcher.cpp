@@ -20,6 +20,14 @@ TileLoadResult makeMalformedRenderableWithoutPayloadForTest() {
     return result;
 }
 
+std::unique_ptr<GltfModel> makeTerrainGltfModelForTest(
+    const Rectangle& rectangle =
+        Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0)) {
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 } // namespace
 
 class DispatcherBudgetTerrainProvider final : public TerrainProvider {
@@ -308,7 +316,7 @@ public:
         CancellationToken,
         ContentCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
-        auto model = std::make_unique<GltfModel>();
+        auto model = makeTerrainGltfModelForTest();
         TileContentLoadResult result =
             TileContentLoadResult::renderTerrain(std::move(model));
         QuantizedMeshAvailabilityUpdate update;
@@ -410,7 +418,7 @@ public:
         callbackSawIssued = issuedBeforeCallback_;
         TileContentLoadResult result =
             TileContentLoadResult::renderTerrain(
-                std::make_unique<GltfModel>());
+                makeTerrainGltfModelForTest());
         callback(key, std::move(result));
     }
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
@@ -530,7 +538,7 @@ TEST(TileLoadRequestDispatcherTest,
 
 TEST(TileLoadRequestDispatcherTest,
      TerrainContentUsesGltfContentResult) {
-    auto gltfModel = std::make_unique<GltfModel>();
+    auto gltfModel = makeTerrainGltfModelForTest();
     GltfModel* rawGltfModel = gltfModel.get();
     TileContentLoadResult contentResult =
         TileContentLoadResult::renderTerrain(std::move(gltfModel));
@@ -547,6 +555,18 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(
         1u,
         normalizedGltf.content.quantizedMeshAvailabilityUpdates.size());
+
+    TileLoadResult terrainWithoutRasterDetails =
+        TileLoadResult::fromContentResult(
+            TileContentLoadResult::renderTerrain(
+                std::make_unique<GltfModel>()));
+    EXPECT_FALSE(terrainWithoutRasterDetails.isRenderableContentTerrain());
+    TileLoadResult normalizedTerrainWithoutRasterDetails =
+        TileLoadResult::normalizeForDomain(
+            TileLoadDomain::TerrainContent,
+            std::move(terrainWithoutRasterDetails));
+    EXPECT_EQ(TileLoadStatus::Failed,
+              normalizedTerrainWithoutRasterDetails.status);
 
     TileLoadResult renderableWithoutPayload =
         makeMalformedRenderableWithoutPayloadForTest();
