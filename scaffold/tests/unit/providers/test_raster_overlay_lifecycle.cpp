@@ -4619,6 +4619,38 @@ TEST(RasterOverlayLifecycleTest, ReadyFalseInvalidatesMappedTileLifecycleLikeCes
     EXPECT_FALSE(provider.hasPendingWork());
 }
 
+TEST(RasterOverlayLifecycleTest, ReadyFalseRejectsLateDirectSourceCompletionLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey key{scheme->id(), 2, 1, 1};
+    std::shared_ptr<RasterOverlayTile> tile = provider.getTile(key);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_FALSE(tile->isMappedRasterTile());
+    ASSERT_TRUE(provider.ownsCurrentTile(*tile));
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
+    ASSERT_TRUE(provider.hasPendingWork());
+
+    provider.setReady(false);
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
+    EXPECT_FALSE(provider.ownsCurrentTile(*tile));
+    EXPECT_EQ(0, provider.getCachedTileCount());
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    imagery.completeNext();
+
+    EXPECT_EQ(0, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(0, uploaderPtr->uploadCount);
+    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
+}
+
 TEST(RasterOverlayLifecycleTest, ReadyFalseThenTrueRemapsWithoutStaleTileReuse) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
