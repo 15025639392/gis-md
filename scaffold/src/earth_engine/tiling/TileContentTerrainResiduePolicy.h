@@ -16,8 +16,17 @@ struct TileContentTerrainResiduePolicy {
                tile.content.renderContent.hasRasterOverlayDetailsContent();
     }
 
+    static bool hasProtectedRetryableTerrainContent(const TilesetTile& tile) {
+        return tile.content.contentKind == TileContentKind::Render &&
+               (tile.content.loadState == TileLoadState::ContentLoading ||
+                tile.content.loadState == TileLoadState::FailedTemporarily) &&
+               tile.content.renderContent.hasGltfContent() &&
+               tile.content.renderContent.isTerrainRenderContent();
+    }
+
     static bool hasRejectableResidue(const TilesetTile& tile) {
-        if (hasAcceptedTerrainContent(tile)) {
+        if (hasAcceptedTerrainContent(tile) ||
+            hasProtectedRetryableTerrainContent(tile)) {
             return false;
         }
         return tile.content.renderContent.hasRenderableTerrainContent() ||

@@ -462,6 +462,40 @@ TEST(TileChildMaterializerTest,
     }
 }
 
+TEST(TileChildMaterializerTest,
+     RetryLaterTerrainContentIsProtectedFromResidueCleanupLikeCesiumNative) {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.loadState = TileLoadState::FailedTemporarily;
+    tile.content.renderContent.setGltfContent(std::move(model));
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+
+    tile.content.loadState = TileLoadState::ContentLoading;
+    EXPECT_TRUE(
+        TileContentTerrainResiduePolicy::
+            hasProtectedRetryableTerrainContent(tile));
+    EXPECT_FALSE(TileContentTerrainResiduePolicy::hasRejectableResidue(tile));
+    EXPECT_FALSE(TileContentTerrainResiduePolicy::clearRejectableResidue(tile));
+
+    tile.content.loadState = TileLoadState::FailedTemporarily;
+    EXPECT_FALSE(
+        TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(tile));
+    EXPECT_TRUE(
+        TileContentTerrainResiduePolicy::
+            hasProtectedRetryableTerrainContent(tile));
+    EXPECT_FALSE(TileContentTerrainResiduePolicy::hasRejectableResidue(tile));
+    EXPECT_FALSE(TileContentTerrainResiduePolicy::clearRejectableResidue(tile));
+    EXPECT_TRUE(tile.content.renderContent.hasGltfContent());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_TRUE(tile.content.renderContent.hasGltfPrimitiveResources());
+}
+
 TEST(TileChildMaterializerTest, NoAvailableTerrainChildrenCreatesNoneLikeCesiumNative) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
