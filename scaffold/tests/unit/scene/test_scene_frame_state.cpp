@@ -721,7 +721,8 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     EXPECT_TRUE(submittedTerrainGltf);
     EXPECT_TRUE(submittedNonTerrainGltf);
     EXPECT_GT(scene.diagnostics().renderGltfPrimitives, 0);
-    EXPECT_EQ(scene.diagnostics().terrainSurfaceMeshes, 2);
+    EXPECT_EQ(scene.diagnostics().terrainSurfaceTileCommands, 2);
+    EXPECT_GT(scene.diagnostics().terrainGltfPrimitiveCommands, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderContentCommands, 0);
     EXPECT_EQ(scene.diagnostics().contentTilesets, 1);
     EXPECT_GT(scene.diagnostics().contentVisibleTiles, 0);

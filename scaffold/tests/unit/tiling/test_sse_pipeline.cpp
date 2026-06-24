@@ -22324,8 +22324,8 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
     check(snapshot.drawCalls == 5 &&
               snapshot.renderSurfaceTiles == 3 &&
               snapshot.surfaceMeshCount == 3 &&
-              snapshot.terrainSurfaceMeshes == 3 &&
-              snapshot.terrainReadySurfaceMeshes == 3 &&
+              snapshot.terrainSurfaceTileCommands == 3 &&
+              snapshot.terrainGltfPrimitiveCommands == 1 &&
               snapshot.terrainRenderContentCommands == 4 &&
               snapshot.renderGltfPrimitives == 2,
           "SceneRenderCommandDiagnosticsSnapshot: counts render command lanes");
@@ -22349,8 +22349,12 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
                   snapshot.renderGltfPrimitives &&
               diagnostics.terrainRenderContentCommands ==
                   snapshot.terrainRenderContentCommands &&
+              diagnostics.terrainSurfaceTileCommands ==
+                  snapshot.terrainSurfaceTileCommands &&
+              diagnostics.terrainGltfPrimitiveCommands ==
+                  snapshot.terrainGltfPrimitiveCommands &&
               diagnostics.imageryAttachments == 2,
-          "SceneRenderDiagnostics: flattens render command snapshot into legacy diagnostics");
+          "SceneRenderDiagnostics: flattens render command snapshot into diagnostics");
 
     RenderCommandList commandsWithoutTextures = {missingImagerySurface};
     SceneRenderDiagnostics::addRenderCommands(
@@ -24526,7 +24530,7 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(scene.diagnostics().renderGltfPrimitives > 0,
           "Scene: diagnostics expose rendered glTF primitive count");
     check(scene.diagnostics().terrainRenderContentCommands ==
-              scene.diagnostics().terrainSurfaceMeshes,
+              scene.diagnostics().terrainSurfaceTileCommands,
           "Scene: terrain render content diagnostics exclude ordinary glTF content tilesets");
     check(scene.diagnostics().contentTilesets == 1 &&
               scene.diagnostics().contentVisibleTiles > 0,
@@ -24600,6 +24604,8 @@ void testSceneTerrainContentCountsAsTerrainRenderContent() {
     check(terrainGltfCommands > 0,
           "Scene: glTF terrain contributes terrain render commands");
     check(scene.diagnostics().renderGltfPrimitives == terrainGltfCommands &&
+              scene.diagnostics().terrainGltfPrimitiveCommands ==
+                  terrainGltfCommands &&
               scene.diagnostics().terrainRenderContentCommands ==
                   terrainGltfCommands +
                       scene.diagnostics().terrainSurfaceCommandsSubmitted,

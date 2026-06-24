@@ -161,9 +161,9 @@ struct Diagnostics {
     int terrainUnloadQueueTiles = 0;
     int missingRasterOverlayProjections = 0;
     uint64_t terrainGeneration = 0;
-    int terrainSurfaceMeshes = 0;
+    int terrainSurfaceTileCommands = 0;
+    int terrainGltfPrimitiveCommands = 0;
     int terrainParentFallbackMeshes = 0;
-    int terrainReadySurfaceMeshes = 0;
     int terrainTransitionSurfaceMeshes = 0;
     int ellipsoidSurfaceMeshes = 0;
     int staleSurfaceCommands = 0;

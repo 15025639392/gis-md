@@ -46,8 +46,8 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     EXPECT_EQ(snapshot.drawCalls, 5);
     EXPECT_EQ(snapshot.renderSurfaceTiles, 3);
     EXPECT_EQ(snapshot.surfaceMeshCount, 3);
-    EXPECT_EQ(snapshot.terrainSurfaceMeshes, 3);
-    EXPECT_EQ(snapshot.terrainReadySurfaceMeshes, 3);
+    EXPECT_EQ(snapshot.terrainSurfaceTileCommands, 3);
+    EXPECT_EQ(snapshot.terrainGltfPrimitiveCommands, 1);
     EXPECT_EQ(snapshot.terrainRenderContentCommands, 4);
     EXPECT_EQ(snapshot.renderGltfPrimitives, 2);
     EXPECT_EQ(snapshot.gpuTextureCount, 2);
@@ -71,6 +71,12 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     EXPECT_EQ(
         diagnostics.terrainRenderContentCommands,
         snapshot.terrainRenderContentCommands);
+    EXPECT_EQ(
+        diagnostics.terrainSurfaceTileCommands,
+        snapshot.terrainSurfaceTileCommands);
+    EXPECT_EQ(
+        diagnostics.terrainGltfPrimitiveCommands,
+        snapshot.terrainGltfPrimitiveCommands);
     EXPECT_EQ(diagnostics.imageryAttachments, 2);
 
     RenderCommandList commandsWithoutTextures = {missingImagerySurface};

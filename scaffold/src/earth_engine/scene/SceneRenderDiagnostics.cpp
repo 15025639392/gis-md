@@ -26,9 +26,10 @@ void applyRenderCommandSnapshot(
     diagnostics.imageryMaxTargetZoom = snapshot.imageryMaxTargetZoom;
     diagnostics.imageryMinTextureZoom = snapshot.imageryMinTextureZoom;
     diagnostics.imageryMaxTextureZoom = snapshot.imageryMaxTextureZoom;
-    diagnostics.terrainSurfaceMeshes = snapshot.terrainSurfaceMeshes;
-    diagnostics.terrainReadySurfaceMeshes =
-        snapshot.terrainReadySurfaceMeshes;
+    diagnostics.terrainSurfaceTileCommands =
+        snapshot.terrainSurfaceTileCommands;
+    diagnostics.terrainGltfPrimitiveCommands =
+        snapshot.terrainGltfPrimitiveCommands;
 }
 
 void applySurfaceGenerationSnapshot(
@@ -59,8 +60,7 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
             ++snapshot.surfaceMeshCount;
             if (command.terrainRenderContent) {
                 ++snapshot.terrainRenderContentCommands;
-                ++snapshot.terrainSurfaceMeshes;
-                ++snapshot.terrainReadySurfaceMeshes;
+                ++snapshot.terrainSurfaceTileCommands;
             }
             if (!command.textures.empty()) {
                 ++snapshot.imageryExactAttachments;
@@ -109,6 +109,7 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
             ++snapshot.renderGltfPrimitives;
             if (command.terrainRenderContent) {
                 ++snapshot.terrainRenderContentCommands;
+                ++snapshot.terrainGltfPrimitiveCommands;
             }
         }
     }
@@ -188,9 +189,9 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.imageryMinTextureZoom = 0;
     diagnostics.imageryMaxTextureZoom = 0;
     diagnostics.terrainGeneration = 0;
-    diagnostics.terrainSurfaceMeshes = 0;
+    diagnostics.terrainSurfaceTileCommands = 0;
+    diagnostics.terrainGltfPrimitiveCommands = 0;
     diagnostics.terrainParentFallbackMeshes = 0;
-    diagnostics.terrainReadySurfaceMeshes = 0;
     diagnostics.terrainTransitionSurfaceMeshes = 0;
     diagnostics.ellipsoidSurfaceMeshes = 0;
 }

@@ -527,7 +527,7 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         "Update: cam %.1f env %.1f base %.1f terr %.1f content %.1f\n"
         "Draw calls: %d  |  GPU tex: %d  |  glTF prim: %d\n"
         "Visible tiles: terrain %d content %d/%d  |  Cached: %d\n"
-        "Surface meshes: %d (%d ellip, %d terr, %d ready, %d parent, %d trans)\n"
+        "Surface meshes: %d (%d ellip, %d terrSurfCmd, %d terrGltfCmd, %d parent, %d trans)\n"
         "Attachments: %d exact, %d parent, %d missing, %d unsup, %d kicked, %d retained\n"
         "Zoom: %d-%d  |  Img: %d-%d -> tex %d-%d\n"
         "LOD: %.0f px  |  EqZoom: %d\n"
@@ -561,7 +561,7 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         diag.visibleTiles, diag.contentVisibleTiles, diag.contentTilesets,
         diag.cachedTextures,
         diag.surfaceMeshCount, diag.ellipsoidSurfaceMeshes,
-        diag.terrainSurfaceMeshes, diag.terrainReadySurfaceMeshes,
+        diag.terrainSurfaceTileCommands, diag.terrainGltfPrimitiveCommands,
         diag.terrainParentFallbackMeshes, diag.terrainTransitionSurfaceMeshes,
         diag.imageryExactAttachments, diag.imageryParentFallbackAttachments,
         diag.imageryMissingTiles, diag.imageryUnsupportedTiles,

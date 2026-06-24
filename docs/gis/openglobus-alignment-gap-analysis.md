@@ -35,7 +35,7 @@
 - `BasemapLayer` 构建 `SurfaceTile` GPU mesh 时会优先查询 `TerrainLayer::findBestTile`，若有覆盖 tile，则使用 `TileSurface::buildTerrainMesh` 生成 ECEF terrain SurfaceTile mesh；否则使用 ellipsoid SurfaceTile mesh。
 - `Scene` 不再在 terrain enabled 时先发出独立地形 surface 命令；SurfaceTile 继续作为标准地表 depth 主链路。
 - 旧 `TerrainMeshBuilder` 和 `TerrainSurface` render kind 已移除，避免单位球地形路径绕过 SurfaceTile 契约。
-- `Diagnostics` 已补充 `terrainCachedTiles`、`terrainGeneration`、`terrainSurfaceMeshes`、`terrainParentFallbackMeshes` 与 `ellipsoidSurfaceMeshes`，用于核对地形数据是否进入 SurfaceTile mesh 构建条件。
+- `Diagnostics` 已补充 `terrainCachedTiles`、`terrainGeneration`、`terrainSurfaceTileCommands`、`terrainGltfPrimitiveCommands`、`terrainParentFallbackMeshes` 与 `ellipsoidSurfaceMeshes`，用于区分 legacy SurfaceTile 地形命令和 content-owned glTF terrain 命令。
 - `TileSurface` 已区分采样模型：Mercator 主区继续使用 WebMercator-v；OpenGlobus north/south polar LonLat group 使用 geographic-v，避免极区 SurfaceTile mesh 被 Web Mercator clamp 到 `±85.05112878°`。
 - parent terrain fallback 已通过目标 tile 的 WGS84 经纬度在父 `TerrainTile` bounds 内采样，等价于从父 heightmap 矩阵裁剪子 tile 覆盖范围；该行为有单元测试固定。
 - SurfaceTile terrain 已默认生成 skirt 作为不同 LOD/未齐备邻接瓦片时的接缝降级策略；当前还不是完整邻接边高程 reconciliation。

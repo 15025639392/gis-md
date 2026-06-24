@@ -20,8 +20,8 @@ struct SceneRenderCommandDiagnosticsSnapshot {
     int imageryMaxTargetZoom = 0;
     int imageryMinTextureZoom = 0;
     int imageryMaxTextureZoom = 0;
-    int terrainSurfaceMeshes = 0;
-    int terrainReadySurfaceMeshes = 0;
+    int terrainSurfaceTileCommands = 0;
+    int terrainGltfPrimitiveCommands = 0;
 
     static SceneRenderCommandDiagnosticsSnapshot fromCommands(
         const RenderCommandList& commands);
