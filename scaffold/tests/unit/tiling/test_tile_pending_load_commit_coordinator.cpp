@@ -2803,6 +2803,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileLoadResult malformed = TileLoadResult::createTerminal(
         TileLoadStatus::Renderable);
     malformed.content.gltfModel = std::make_unique<GltfModel>();
+    malformed.content.gltfModel->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0));
+    malformed.content.metadata.rasterOverlayDetails.emplace();
+    malformed.content.metadata.rasterOverlayDetails->setGeographicRectangle(
+        Rectangle::fromDegrees(5.0, 6.0, 7.0, 8.0));
     malformed.content.terrainRenderContent = true;
     ASSERT_FALSE(
         malformed.content.satisfiesContentTerrainPayloadContract());
@@ -2824,6 +2829,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult queuedMalformed = TileLoadResult::createTerminal(
             TileLoadStatus::Renderable);
         queuedMalformed.content.gltfModel = std::make_unique<GltfModel>();
+        queuedMalformed.content.gltfModel->rasterOverlayDetails
+            .setGeographicRectangle(
+                Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0));
+        queuedMalformed.content.metadata.rasterOverlayDetails.emplace();
+        queuedMalformed.content.metadata.rasterOverlayDetails
+            ->setGeographicRectangle(
+                Rectangle::fromDegrees(5.0, 6.0, 7.0, 8.0));
         queuedMalformed.content.terrainRenderContent = true;
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             key,

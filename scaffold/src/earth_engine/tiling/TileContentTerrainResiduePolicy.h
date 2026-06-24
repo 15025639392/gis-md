@@ -12,8 +12,7 @@ struct TileContentTerrainResiduePolicy {
                (tile.content.loadState == TileLoadState::ContentLoaded ||
                 tile.content.loadState == TileLoadState::Done) &&
                tile.content.renderContent.hasGltfContent() &&
-               tile.content.renderContent.isTerrainRenderContent() &&
-               tile.content.renderContent.hasRasterOverlayDetailsContent();
+               tile.content.renderContent.isTerrainRenderContent();
     }
 
     static bool hasProtectedRetryableTerrainContent(const TilesetTile& tile) {

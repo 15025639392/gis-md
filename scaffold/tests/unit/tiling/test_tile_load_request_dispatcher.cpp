@@ -592,15 +592,20 @@ TEST(TileLoadRequestDispatcherTest,
         TileLoadResult::fromContentResult(
             TileContentLoadResult::renderTerrain(
                 std::make_unique<GltfModel>()));
-    EXPECT_EQ(TileLoadStatus::Failed, terrainWithoutRasterDetails.status);
-    EXPECT_FALSE(terrainWithoutRasterDetails.shouldUpload());
-    EXPECT_FALSE(terrainWithoutRasterDetails.isRenderableContentTerrain());
+    EXPECT_EQ(TileLoadStatus::Renderable,
+              terrainWithoutRasterDetails.status);
+    EXPECT_TRUE(terrainWithoutRasterDetails.shouldUpload());
+    EXPECT_TRUE(terrainWithoutRasterDetails.isRenderableContentTerrain());
+    EXPECT_FALSE(
+        terrainWithoutRasterDetails.content.metadata.rasterOverlayDetails
+            .has_value());
     TileLoadResult normalizedTerrainWithoutRasterDetails =
         TileLoadResult::normalizeForDomain(
             TileLoadDomain::TerrainContent,
             std::move(terrainWithoutRasterDetails));
-    EXPECT_EQ(TileLoadStatus::Failed,
+    EXPECT_EQ(TileLoadStatus::Renderable,
               normalizedTerrainWithoutRasterDetails.status);
+    EXPECT_TRUE(normalizedTerrainWithoutRasterDetails.shouldUpload());
 
     auto mismatchedModel = makeTerrainGltfModelForTest(
         Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0));

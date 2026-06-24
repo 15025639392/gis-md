@@ -46,17 +46,23 @@ struct TileLoadedContent {
         quantizedMeshAvailabilityUpdates;
 
     bool satisfiesContentTerrainPayloadContract() const {
-        return terrainRenderContent &&
-               gltfModel != nullptr &&
-               !gltfModel->rasterOverlayDetails.empty() &&
-               metadata.rasterOverlayDetails.has_value() &&
-               !metadata.rasterOverlayDetails->empty() &&
+        if (!terrainRenderContent || gltfModel == nullptr) {
+            return false;
+        }
+        const bool modelHasDetails = !gltfModel->rasterOverlayDetails.empty();
+        const bool metadataHasDetails =
+            metadata.rasterOverlayDetails.has_value() &&
+            !metadata.rasterOverlayDetails->empty();
+        if (!modelHasDetails && !metadataHasDetails) {
+            return true;
+        }
+        return modelHasDetails && metadataHasDetails &&
                metadata.rasterOverlayDetails->equalsExact(
                    gltfModel->rasterOverlayDetails);
     }
 
     bool hasGltfTerrainPayload() const {
-        return satisfiesContentTerrainPayloadContract();
+        return terrainRenderContent && gltfModel != nullptr;
     }
 
     bool hasRenderablePayload() const {

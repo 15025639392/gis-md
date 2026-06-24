@@ -531,6 +531,16 @@ TEST(QuantizedMeshContentLoaderTest,
     ASSERT_NE(nullptr, contentResult.gltfModel);
     EXPECT_TRUE(contentResult.gltfModel->rasterOverlayDetails.empty());
     EXPECT_FALSE(contentResult.metadata.rasterOverlayDetails.has_value());
+
+    TileLoadResult loadResult =
+        TileLoadResult::fromContentResult(std::move(contentResult));
+    EXPECT_EQ(TileLoadStatus::Renderable, loadResult.status);
+    EXPECT_TRUE(loadResult.shouldUpload());
+    EXPECT_TRUE(loadResult.isRenderableContentTerrain());
+    EXPECT_TRUE(loadResult.content.satisfiesContentTerrainPayloadContract());
+    EXPECT_TRUE(loadResult.content.hasGltfTerrainPayload());
+    EXPECT_TRUE(loadResult.content.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(loadResult.content.metadata.rasterOverlayDetails.has_value());
 }
 
 TEST(QuantizedMeshContentLoaderTest,
