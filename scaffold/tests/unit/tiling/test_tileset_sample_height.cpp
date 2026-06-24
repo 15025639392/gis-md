@@ -16,10 +16,10 @@ struct TilesetTestAccess {
     static Tileset makeLegacyTerrainTileset(
         std::unique_ptr<TerrainProvider> terrainProvider,
         std::unique_ptr<TileScheme> tileScheme) {
-        Tileset::ProviderOwnership providers;
-        providers.legacyHeightmapTerrainProvider = std::move(terrainProvider);
         return Tileset(
-            std::move(providers),
+            TilesetTerrainProviders(
+                std::move(terrainProvider),
+                nullptr),
             std::move(tileScheme),
             {},
             nullptr,
@@ -95,6 +95,26 @@ std::unique_ptr<GltfModel> makeTerrainGltfTriangle(
     primitive.runtime.baseVertices = primitive.vertices;
     model->primitives.push_back(std::move(primitive));
     model->rasterOverlayDetails.setGeographicRectangle(bounds);
+    return model;
+}
+
+std::unique_ptr<GltfModel> makeStackedTerrainGltfTriangles(
+    const Rectangle& bounds,
+    double lowerHeight,
+    double upperHeight) {
+    std::unique_ptr<GltfModel> model =
+        makeTerrainGltfTriangle(
+            bounds,
+            lowerHeight,
+            lowerHeight,
+            lowerHeight);
+    std::unique_ptr<GltfModel> upper =
+        makeTerrainGltfTriangle(
+            bounds,
+            upperHeight,
+            upperHeight,
+            upperHeight);
+    model->primitives.push_back(std::move(upper->primitives.front()));
     return model;
 }
 
@@ -289,4 +309,23 @@ TEST(TilesetSampleHeightTest,
     const double latitude = childBounds.south() + childBounds.height() * 0.25;
 
     EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 123.0f, 1e-4f);
+}
+
+TEST(TilesetSampleHeightTest,
+     ContentTerrainQuadtreeReturnsHighestLoadedGltfTerrainAtLocationLikeCesiumNative) {
+    Tileset tileset = makeContentTerrainSamplingTileset();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    const Rectangle rootBounds = tileset.tileScheme().tileToRectangle(rootKey);
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *root,
+        makeStackedTerrainGltfTriangles(rootBounds, 78.0, 83.0));
+
+    const double longitude = rootBounds.west() + rootBounds.width() * 0.25;
+    const double latitude = rootBounds.south() + rootBounds.height() * 0.25;
+
+    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 83.0f, 1e-4f);
 }
