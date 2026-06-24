@@ -53,7 +53,9 @@ struct TileLoadedContent {
                gltfModel != nullptr &&
                !gltfModel->rasterOverlayDetails.empty() &&
                metadata.rasterOverlayDetails.has_value() &&
-               !metadata.rasterOverlayDetails->empty();
+               !metadata.rasterOverlayDetails->empty() &&
+               metadata.rasterOverlayDetails->equalsExact(
+                   gltfModel->rasterOverlayDetails);
     }
 
     bool hasGltfTerrainPayload() const {

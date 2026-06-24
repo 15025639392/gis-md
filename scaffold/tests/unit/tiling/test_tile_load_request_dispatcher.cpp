@@ -568,6 +568,21 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(TileLoadStatus::Failed,
               normalizedTerrainWithoutRasterDetails.status);
 
+    auto mismatchedModel = makeTerrainGltfModelForTest(
+        Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0));
+    TileLoadResultMetadata mismatchedMetadata;
+    mismatchedMetadata.rasterOverlayDetails.emplace();
+    mismatchedMetadata.rasterOverlayDetails->setGeographicRectangle(
+        Rectangle::fromDegrees(5.0, 6.0, 7.0, 8.0));
+    TileLoadedContent mismatchedContent =
+        TileLoadedContent::fromContentResult(
+            TileContentLoadResult::renderTerrain(
+                std::move(mismatchedModel),
+                mismatchedMetadata));
+    mismatchedContent.gltfModel->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0));
+    EXPECT_FALSE(mismatchedContent.satisfiesContentTerrainPayloadContract());
+
     TileLoadResult renderableWithoutPayload =
         makeMalformedRenderableWithoutPayloadForTest();
     EXPECT_FALSE(renderableWithoutPayload.shouldUpload());
