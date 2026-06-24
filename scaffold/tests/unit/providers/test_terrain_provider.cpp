@@ -721,6 +721,104 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
+     RequestTileContentFailureCarriesCurrentLayerEmptyAvailabilityLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(
+                  TileKey{"Geographic-TMS", 1, 1, 0}));
+    EXPECT_FALSE(provider.isSubtreeLoaded(0, 0));
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
+    provider.requestTileContent(
+        rootKey,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(0).find("0/0/0.terrain"));
+    ASSERT_TRUE(bridge.completeNext(500));
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Failed, completed.status);
+    ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(0, completed.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(rootKey,
+              completed.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+    EXPECT_TRUE(
+        completed.quantizedMeshAvailabilityUpdates.front()
+            .metadataAvailability.empty());
+
+    provider.applyAvailabilityUpdates(
+        completed.quantizedMeshAvailabilityUpdates);
+    EXPECT_TRUE(provider.isSubtreeLoaded(0, 0));
+
+    done = false;
+    completed = TileContentLoadResult::retryLater();
+    provider.requestTileContent(
+        rootKey,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(500));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Failed, completed.status);
+    EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdates.empty());
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
      WebMercatorRequestTileContentUsesProjectedLayerRectangleLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
