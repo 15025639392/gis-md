@@ -6,9 +6,11 @@
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Vec3.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace earth_engine;
@@ -281,6 +283,44 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_EQ(GltfTextureWrap::ClampToEdge, texture.sampler.wrapS);
     EXPECT_EQ(GltfTextureWrap::ClampToEdge, texture.sampler.wrapT);
     EXPECT_TRUE(texture.sampler.mipmap);
+}
+
+TEST(QuantizedMeshContentLoaderTest,
+     CarriesSingleByteWaterMaskFlagsWithoutTextureLikeCesiumNative) {
+    for (const auto& [maskValue, expectedOnlyWater, expectedOnlyLand] :
+         std::array<std::tuple<uint8_t, bool, bool>, 2>{
+             std::tuple<uint8_t, bool, bool>{0u, false, true},
+             std::tuple<uint8_t, bool, bool>{255u, true, false}}) {
+        const std::vector<uint8_t> bytes =
+            makeQuantizedMeshBytesWithWaterMask({maskValue}, -10.0f, 150.0f);
+
+        QuantizedMeshContentLoadResult result =
+            QuantizedMeshContentLoader::load(
+                bytes.data(),
+                bytes.size(),
+                geographicRootWestRectangle(),
+                true,
+                {});
+
+        ASSERT_TRUE(result.success());
+        ASSERT_NE(nullptr, result.gltfModel);
+        EXPECT_EQ(expectedOnlyWater,
+                  result.gltfModel->terrainWaterMask.allWater);
+        EXPECT_EQ(expectedOnlyLand,
+                  result.gltfModel->terrainWaterMask.allLand);
+        EXPECT_TRUE(result.gltfModel->terrainWaterMask.data.empty());
+        EXPECT_FALSE(result.gltfModel->terrainWaterMaskTextureIndex.has_value());
+        EXPECT_TRUE(result.gltfModel->textures.empty());
+        ASSERT_EQ(1u, result.gltfModel->primitives.size());
+        const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+        EXPECT_TRUE(primitive.hasTerrainWaterMaskMetadata);
+        EXPECT_EQ(expectedOnlyWater, primitive.terrainOnlyWater);
+        EXPECT_EQ(expectedOnlyLand, primitive.terrainOnlyLand);
+        EXPECT_FALSE(primitive.terrainWaterMaskTextureIndex.has_value());
+        EXPECT_DOUBLE_EQ(0.0, primitive.terrainWaterMaskTranslationX);
+        EXPECT_DOUBLE_EQ(0.0, primitive.terrainWaterMaskTranslationY);
+        EXPECT_DOUBLE_EQ(1.0, primitive.terrainWaterMaskScale);
+    }
 }
 
 TEST(QuantizedMeshContentLoaderTest,
