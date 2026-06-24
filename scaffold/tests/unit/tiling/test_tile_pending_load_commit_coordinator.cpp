@@ -2016,6 +2016,124 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentUploadGeneratesRasterDetailsFromUpdatedContentBoundsLikeCesiumNative) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey =
+        "test:gltf-terrain-updated-content-bounds-raster";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    const Rectangle originalTileRectangle =
+        Rectangle::fromDegrees(-90.0, -45.0, 90.0, 45.0);
+    const Rectangle originalContentRectangle =
+        Rectangle::fromDegrees(-80.0, -30.0, 80.0, 30.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(originalTileRectangle, -100.0, 1000.0);
+    tile.contentBoundingVolume =
+        TileBoundingVolume::fromRegion(originalContentRectangle, -10.0, 120.0);
+
+    const Rectangle updatedTileRectangle =
+        Rectangle::fromDegrees(-40.0, -20.0, 40.0, 20.0);
+    const Rectangle updatedContentRectangle =
+        Rectangle::fromDegrees(-7.0, -3.0, 5.0, 9.0);
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedTileRectangle, -50.0, 500.0);
+    metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 150.0);
+
+    auto model = makeCommitCoordinatorQuadTerrainGltfModel(
+        updatedContentRectangle);
+    model->rasterOverlayDetails = RasterOverlayDetails{};
+    TileLoadResult loadResult = TileLoadResult::fromContentResult(
+        TileContentLoadResult::renderTerrain(
+            std::move(model),
+            std::move(metadata)));
+    ASSERT_EQ(TileLoadStatus::Renderable, loadResult.status);
+    ASSERT_TRUE(loadResult.isRenderableContentTerrain());
+    ASSERT_FALSE(
+        loadResult.content.metadata.rasterOverlayDetails.has_value());
+
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(loadResult)};
+
+    RasterOverlay overlay(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activeOverlay(overlay);
+    std::vector<ActivatedRasterOverlay*> rasterOverlays{&activeOverlay};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableGltfTerrain(
+                std::make_unique<GltfModel>())});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        rasterOverlays,
+        emptyContentRegistry,
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    const RasterOverlayDetails& committedDetails =
+        tile.content.renderContent.rasterOverlayDetails();
+    const Rectangle* webMercator =
+        committedDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    ASSERT_NE(nullptr, webMercator);
+    const Rectangle expectedContentWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        updatedContentRectangle);
+    const Rectangle updatedTileWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        updatedTileRectangle);
+    EXPECT_EQ(expectedContentWebMercator, *webMercator);
+    EXPECT_NE(updatedTileWebMercator, *webMercator);
+    EXPECT_EQ(0,
+              committedDetails.textureCoordinateIDForProjection(
+                  RasterOverlayProjection::WebMercator));
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_EQ(updatedTileRectangle, tile.boundingVolume->region);
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(updatedContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentUploadSkipsExistingRasterProjectionLikeCesiumNative) {
     const TileKey key{"Geographic-TMS", 2, 1, 1};
     const std::string cacheKey = "test:gltf-terrain-existing-raster";
