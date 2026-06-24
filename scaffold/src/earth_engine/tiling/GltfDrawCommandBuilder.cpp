@@ -87,7 +87,7 @@ void GltfDrawCommandBuilder::build(
             primitive.sortCenterEcef.y(),
             primitive.sortCenterEcef.z()};
         cmd.uniforms["u_renderOpacity"] = {context.transitionOpacity};
-        if (context.surfaceClipUv) {
+        if (cmd.terrainRenderContent && context.surfaceClipUv) {
             cmd.surfaceClipUv = *context.surfaceClipUv;
             cmd.surfaceClipEnabled = 1.0f;
             cmd.uniforms["u_clipUV"] = {

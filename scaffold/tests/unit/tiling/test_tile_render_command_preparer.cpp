@@ -229,3 +229,53 @@ TEST(TileRenderCommandPreparerTest,
     EXPECT_EQ(command.uniforms.at("u_clipEnabled"),
               (std::vector<float>{1.0f}));
 }
+
+TEST(TileRenderCommandPreparerTest,
+     OrdinaryGltfContentIgnoresTerrainFallbackClipUv) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.renderContent.setGltfContent(std::make_unique<GltfModel>());
+    tile.content.renderContent.setTerrainRenderContent(false);
+    GltfPrimitiveRenderResources primitive;
+    primitive.vertexBuffer = std::make_unique<DummyBuffer>(96);
+    primitive.indexBuffer = std::make_unique<DummyBuffer>(12);
+    primitive.vertexCount = 3;
+    primitive.indexCount = 3;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(primitive));
+    tile.content.renderContent.setGltfResourcesReady(true);
+    ASSERT_TRUE(tile.content.renderContent.isGltfRenderReady());
+
+    FrameResourceBudget budget;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+
+    TileRenderCommandPreparer::build(
+        renderer,
+        tile,
+        commands,
+        overlays,
+        nullptr,
+        budget,
+        makeContext(true),
+        [](TilesetTile&) {
+            FAIL() << "ordinary glTF render content must not enter surface prep";
+        },
+        [](TilesetTile&) {
+            FAIL() << "ordinary glTF render content should not unload";
+        },
+        [](TilesetTile&) {
+            FAIL() << "ordinary glTF render content should not upsample raster children";
+        });
+
+    ASSERT_EQ(commands.size(), 1u);
+    const RenderCommand& command = commands.front();
+    EXPECT_EQ(RenderCommandKind::GltfPrimitive, command.kind);
+    EXPECT_FALSE(command.terrainRenderContent);
+    EXPECT_EQ(command.surfaceClipEnabled, 0.0f);
+    ASSERT_TRUE(command.uniforms.count("u_clipUV") > 0);
+    ASSERT_TRUE(command.uniforms.count("u_clipEnabled") > 0);
+    EXPECT_EQ(command.uniforms.at("u_clipUV"),
+              (std::vector<float>{0.0f, 0.0f, 1.0f, 1.0f}));
+    EXPECT_EQ(command.uniforms.at("u_clipEnabled"),
+              (std::vector<float>{0.0f}));
+}
