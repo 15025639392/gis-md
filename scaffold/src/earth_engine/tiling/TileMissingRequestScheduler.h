@@ -79,6 +79,7 @@ private:
         snapshot.upsampledFromParent =
             outTileState != nullptr &&
             outTileState->content.derivesTerrainFromParent();
+        snapshot.heightmapSurfacePathEnabled = input.terrainCache != nullptr;
         snapshot.contentProviderSupportsTile =
             !snapshot.upsampledFromParent &&
             input.contentProvider &&

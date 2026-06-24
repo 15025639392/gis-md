@@ -652,6 +652,7 @@ TEST(TileLoadSchedulerTest,
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
+                snapshot.heightmapSurfacePathEnabled = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -971,6 +972,7 @@ TEST(TileLoadSchedulerTest,
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
+                snapshot.heightmapSurfacePathEnabled = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -1036,6 +1038,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
                     tileState = &waitingTile;
                     snapshot.hasTile = true;
                     snapshot.upsampledFromParent = true;
+                    snapshot.heightmapSurfacePathEnabled = true;
                 } else {
                     tileState = nullptr;
                 }
@@ -1148,6 +1151,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
+                snapshot.heightmapSurfacePathEnabled = true;
                 tileState = key == missingTileStateKey ? nullptr : &readyTile;
                 return snapshot;
             },

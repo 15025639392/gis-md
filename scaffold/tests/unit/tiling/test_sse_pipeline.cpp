@@ -20389,6 +20389,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.upsampledFromParent = true;
+    snapshot.heightmapSurfacePathEnabled = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::UpsampledTerrain,
@@ -20696,6 +20697,7 @@ void testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull() {
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
+                snapshot.heightmapSurfacePathEnabled = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -20814,6 +20816,7 @@ void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
+                snapshot.heightmapSurfacePathEnabled = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -20879,6 +20882,7 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
+                snapshot.heightmapSurfacePathEnabled = true;
                 tileState = key == missingTileStateKey ? nullptr : &readyTile;
                 return snapshot;
             },

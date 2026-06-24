@@ -60,6 +60,7 @@ TEST(TileLoadRequestPlannerTest, ClassifiesUpsampledAndCachedTerrain) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
     snapshot.upsampledFromParent = true;
+    snapshot.heightmapSurfacePathEnabled = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
 
     EXPECT_EQ(
@@ -78,6 +79,7 @@ TEST(TileLoadRequestPlannerTest, UpsampledTerrainTakesLocalPathBeforeProviderChe
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
     snapshot.upsampledFromParent = true;
+    snapshot.heightmapSurfacePathEnabled = true;
     snapshot.loadState = TileLoadState::Unloaded;
     snapshot.terrainAlreadyCached = true;
     snapshot.hasRenderContent = true;
@@ -97,6 +99,23 @@ TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainUpsampleUsesGltfPath) {
 
     EXPECT_EQ(
         TileLoadRequestKind::TerrainContentUpsample,
+        TileLoadRequestPlanner::classify(snapshot));
+}
+
+TEST(TileLoadRequestPlannerTest, LegacyUpsampleRequiresHeightmapSurfacePath) {
+    TileLoadRequestSnapshot snapshot;
+    snapshot.hasTile = true;
+    snapshot.upsampledFromParent = true;
+    snapshot.loadState = TileLoadState::Unloaded;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Skip,
+        TileLoadRequestPlanner::classify(snapshot));
+
+    snapshot.heightmapSurfacePathEnabled = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::UpsampledTerrain,
         TileLoadRequestPlanner::classify(snapshot));
 }
 

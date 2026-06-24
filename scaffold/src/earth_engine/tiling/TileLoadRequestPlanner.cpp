@@ -14,7 +14,9 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
         if (snapshot.contentProviderOwnsTerrainQuadtree) {
             return TileLoadRequestKind::TerrainContentUpsample;
         }
-        return TileLoadRequestKind::UpsampledTerrain;
+        return snapshot.heightmapSurfacePathEnabled
+            ? TileLoadRequestKind::UpsampledTerrain
+            : TileLoadRequestKind::Skip;
     }
 
     if (snapshot.contentProviderSupportsTile) {

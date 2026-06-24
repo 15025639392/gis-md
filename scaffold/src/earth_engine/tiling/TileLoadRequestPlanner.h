@@ -14,6 +14,7 @@ enum class TileLoadRequestKind {
 struct TileLoadRequestSnapshot {
     bool hasTile = false;
     bool upsampledFromParent = false;
+    bool heightmapSurfacePathEnabled = false;
     bool contentProviderSupportsTile = false;
     bool contentProviderOwnsTerrainQuadtree = false;
     bool terrainAlreadyCached = false;
