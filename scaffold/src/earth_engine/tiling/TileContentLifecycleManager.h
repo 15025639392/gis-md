@@ -16,7 +16,7 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class IPrepareRendererResources;
 
-using HeightmapTerrainCache =
+using LegacyHeightmapTerrainCache =
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>;
 
 class TileContentLifecycleManager {
@@ -27,11 +27,11 @@ public:
     TileLoadLifecycle& loadLifecycle() { return loadLifecycle_; }
     const TileLoadLifecycle& loadLifecycle() const { return loadLifecycle_; }
 
-    HeightmapTerrainCache& heightmapTerrainCache() {
-        return heightmapTerrainCache_;
+    LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache() {
+        return legacyHeightmapTerrainCache_;
     }
-    const HeightmapTerrainCache& heightmapTerrainCache() const {
-        return heightmapTerrainCache_;
+    const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache() const {
+        return legacyHeightmapTerrainCache_;
     }
 
     TileEmptyContentRegistry& emptyContentRegistry() {
@@ -92,15 +92,15 @@ public:
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
         uint32_t smoothedMainThreadUploadLimit,
-        bool retainHeightmapTerrainCacheForLegacySurfacePath,
+        bool retainLegacyHeightmapTerrainCacheForLegacySurfacePath,
         bool interactionActive,
         bool resourceSmoothingActive,
         FrameResourceBudget* budget,
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (!retainHeightmapTerrainCacheForLegacySurfacePath) {
-            heightmapTerrainCache_.clear();
+        if (!retainLegacyHeightmapTerrainCacheForLegacySurfacePath) {
+            legacyHeightmapTerrainCache_.clear();
         }
         return TilesetContentLifecycleCoordinator::processPendingUploads(
             makeUploadContext(
@@ -172,8 +172,7 @@ private:
     }
 
     TileLoadLifecycle loadLifecycle_;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        heightmapTerrainCache_;
+    LegacyHeightmapTerrainCache legacyHeightmapTerrainCache_;
     TileEmptyContentRegistry emptyContentRegistry_;
 };
 

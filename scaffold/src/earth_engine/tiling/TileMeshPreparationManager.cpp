@@ -71,7 +71,7 @@ void TileMeshPreparationManager::prepareHeightmapSurfaceFrame(
     TileMeshFrameEnsurer::ensureHeightmapSurface(
         TileHeightmapMeshFrameEnsureInput{
             tile,
-            contentLifecycle_.heightmapTerrainCache(),
+            contentLifecycle_.legacyHeightmapTerrainCache(),
             device_,
             hasTerrainQuadtree_},
         [](const TileKey& key) {

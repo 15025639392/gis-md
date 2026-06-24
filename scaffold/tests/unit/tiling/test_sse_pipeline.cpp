@@ -192,13 +192,13 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.heightmapTerrainCache()[
+        tileset.contentLifecycle_.legacyHeightmapTerrainCache()[
             terrainCacheKey(tileset, key)] =
             std::move(heightmap);
     }
 
     static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
-        return tileset.contentLifecycle_.heightmapTerrainCache().count(
+        return tileset.contentLifecycle_.legacyHeightmapTerrainCache().count(
                    terrainCacheKey(tileset, key)) > 0;
     }
 
@@ -11792,7 +11792,7 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);
-    lifecycle.heightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
+    lifecycle.legacyHeightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
 
     manager.updateTotalBytesUsed(tiles, lifecycle, true);
@@ -11816,8 +11816,8 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
 
     check(manager.totalBytesUsed() == 0 &&
               !manager.unloadQueue().contains(cacheKey) &&
-              lifecycle.heightmapTerrainCache().find(cacheKey) ==
-                  lifecycle.heightmapTerrainCache().end() &&
+              lifecycle.legacyHeightmapTerrainCache().find(cacheKey) ==
+                  lifecycle.legacyHeightmapTerrainCache().end() &&
               !lifecycle.emptyContentRegistry().contains(cacheKey) &&
               tiles[cacheKey]->content.loadState == TileLoadState::Unloaded &&
               !clearChildrenCalled,
@@ -11836,7 +11836,7 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);
-    lifecycle.heightmapTerrainCache()[cacheKey] = makeFlatHeightmap(2.0f);
+    lifecycle.legacyHeightmapTerrainCache()[cacheKey] = makeFlatHeightmap(2.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
     loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
     manager.markEligibleForUnloading(tiles, cacheKey);
@@ -11862,8 +11862,8 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
     manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue, true);
 
     check(!manager.unloadQueue().contains(cacheKey) &&
-              lifecycle.heightmapTerrainCache().find(cacheKey) ==
-                  lifecycle.heightmapTerrainCache().end() &&
+              lifecycle.legacyHeightmapTerrainCache().find(cacheKey) ==
+                  lifecycle.legacyHeightmapTerrainCache().end() &&
               !lifecycle.emptyContentRegistry().contains(cacheKey) &&
               loadQueue.empty() &&
               !lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey) &&
@@ -11913,7 +11913,7 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);
-    lifecycle.heightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
+    lifecycle.legacyHeightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
 
     manager.updateTotalBytesUsed(tiles, lifecycle, true);
     const int64_t bytesBeforeUnload = manager.totalBytesUsed();
@@ -11934,8 +11934,8 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
               manager.totalBytesUsed() == bytesBeforeUnload &&
               manager.cacheBytesDirty() &&
               !manager.unloadQueue().contains(cacheKey) &&
-              lifecycle.heightmapTerrainCache().find(cacheKey) ==
-                  lifecycle.heightmapTerrainCache().end(),
+              lifecycle.legacyHeightmapTerrainCache().find(cacheKey) ==
+                  lifecycle.legacyHeightmapTerrainCache().end(),
           "TileContentCacheManager: smoothing defers byte refresh while preserving dirty cache state");
 }
 
@@ -11954,7 +11954,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     rootRaw->children.push_back(child.get());
     rootRaw->content.loadState = TileLoadState::Done;
     rootRaw->content.contentKind = TileContentKind::External;
-    lifecycle.heightmapTerrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
+    lifecycle.legacyHeightmapTerrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
     {
         std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
         lifecycle.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
@@ -12007,7 +12007,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
     rootRaw->children.push_back(child.get());
     rootRaw->content.loadState = TileLoadState::Done;
     rootRaw->content.contentKind = TileContentKind::External;
-    lifecycle.heightmapTerrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
+    lifecycle.legacyHeightmapTerrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
     {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
@@ -12070,7 +12070,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
     rootRaw->children.push_back(child.get());
     rootRaw->content.loadState = TileLoadState::Done;
     rootRaw->content.contentKind = TileContentKind::External;
-    lifecycle.heightmapTerrainCache()[childCacheKey] = makeFlatHeightmap(7.0f);
+    lifecycle.legacyHeightmapTerrainCache()[childCacheKey] = makeFlatHeightmap(7.0f);
     {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
@@ -12157,7 +12157,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     rootRaw->content.contentKind = TileContentKind::External;
     childRaw->content.loadState = TileLoadState::Done;
     childRaw->content.contentKind = TileContentKind::Render;
-    lifecycle.heightmapTerrainCache()[childCacheKey] = makeFlatHeightmap(7.0f);
+    lifecycle.legacyHeightmapTerrainCache()[childCacheKey] = makeFlatHeightmap(7.0f);
     {
         std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
         lifecycle.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,

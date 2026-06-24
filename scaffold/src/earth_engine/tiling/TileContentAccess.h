@@ -34,7 +34,7 @@ public:
         const TileScheme& tileScheme,
         const TerrainProvider* heightmapTerrainProvider,
         const TilesetContentProvider* contentProvider,
-        const HeightmapTerrainCache& heightmapTerrainCache,
+        const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache,
         size_t rasterOverlayCount);
 
     TilesetTile* ensureTile(const TileKey& key);
@@ -42,7 +42,7 @@ public:
     bool hasResolvedAvailabilityBoundaryContent(const TilesetTile& tile) const;
     bool isAvailabilityBoundaryTile(const TilesetTile& tile) const;
     bool canRefine(const TilesetTile& tile) const;
-    bool retainsHeightmapTerrainCacheForLegacySurfacePath() const;
+    bool retainsLegacyHeightmapTerrainCacheForLegacySurfacePath() const;
 
 private:
     enum class TerrainOwnership {
@@ -55,7 +55,7 @@ private:
                       const TileScheme& tileScheme,
                       const TerrainProvider* heightmapTerrainProvider,
                       const TilesetContentProvider* contentProvider,
-                      const HeightmapTerrainCache* heightmapTerrainCache,
+                      const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache,
                       TerrainOwnership terrainOwnership,
                       size_t rasterOverlayCount);
 
@@ -74,7 +74,7 @@ private:
     const TileScheme& tileScheme_;
     const TerrainProvider* heightmapTerrainProvider_ = nullptr;
     const TilesetContentProvider* contentProvider_ = nullptr;
-    const HeightmapTerrainCache* heightmapTerrainCache_ = nullptr;
+    const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache_ = nullptr;
     TerrainOwnership terrainOwnership_ = TerrainOwnership::None;
     size_t rasterOverlayCount_ = 0;
 };

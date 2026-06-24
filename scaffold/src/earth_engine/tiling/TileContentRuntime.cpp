@@ -59,7 +59,7 @@ bool TileContentRuntime::processPendingUploads(
         frame.mainThreadLoadingTimeLimit,
         frame.currentFrameTimeSeconds,
         frame.smoothedMainThreadUploadLimit,
-        contentAccess_.retainsHeightmapTerrainCacheForLegacySurfacePath(),
+        contentAccess_.retainsLegacyHeightmapTerrainCacheForLegacySurfacePath(),
         interactionActive,
         resourceSmoothingActive,
         budget,

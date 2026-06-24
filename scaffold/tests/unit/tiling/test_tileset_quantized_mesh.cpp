@@ -101,10 +101,10 @@ struct TilesetTestAccess {
         return tileset.makeContentRuntimeRequestFrame().contentProvider;
     }
 
-    static bool runtimeRetainsHeightmapTerrainCacheForLegacySurfacePath(
+    static bool runtimeRetainsLegacyHeightmapTerrainCacheForLegacySurfacePath(
         const Tileset& tileset) {
         return tileset.contentAccess_
-            .retainsHeightmapTerrainCacheForLegacySurfacePath();
+            .retainsLegacyHeightmapTerrainCacheForLegacySurfacePath();
     }
 
     static const TerrainProvider* effectiveLegacyTerrainProvider(
@@ -128,14 +128,14 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.heightmapTerrainCache()[TileCacheKey::forTile(key)] =
+        tileset.contentLifecycle_.legacyHeightmapTerrainCache()[TileCacheKey::forTile(key)] =
             std::move(heightmap);
     }
 
     static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
-        return tileset.contentLifecycle_.heightmapTerrainCache().find(
+        return tileset.contentLifecycle_.legacyHeightmapTerrainCache().find(
                    TileCacheKey::forTile(key)) !=
-            tileset.contentLifecycle_.heightmapTerrainCache().end();
+            tileset.contentLifecycle_.legacyHeightmapTerrainCache().end();
     }
 
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {
@@ -618,7 +618,7 @@ TEST(TilesetQuantizedMeshTest,
                   contentTerrainTileset));
     EXPECT_FALSE(
         TilesetTestAccess::
-            runtimeRetainsHeightmapTerrainCacheForLegacySurfacePath(
+            runtimeRetainsLegacyHeightmapTerrainCacheForLegacySurfacePath(
                 contentTerrainTileset));
 
     auto legacyTerrainProvider =
@@ -633,7 +633,7 @@ TEST(TilesetQuantizedMeshTest,
                   *legacyTerrainTileset));
     EXPECT_TRUE(
         TilesetTestAccess::
-            runtimeRetainsHeightmapTerrainCacheForLegacySurfacePath(
+            runtimeRetainsLegacyHeightmapTerrainCacheForLegacySurfacePath(
                 *legacyTerrainTileset));
 }
 
@@ -1076,7 +1076,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainProviderDiscardsHeightmapTerrainCacheDuringFrameRuntime) {
+     ContentTerrainProviderDiscardsLegacyHeightmapTerrainCacheDuringFrameRuntime) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
@@ -1117,7 +1117,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainProviderDiscardsHeightmapTerrainCacheDuringUploadRuntime) {
+     ContentTerrainProviderDiscardsLegacyHeightmapTerrainCacheDuringUploadRuntime) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
@@ -1145,7 +1145,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     NoTerrainTilesetIgnoresHeightmapTerrainCacheLikeCesiumNativeContentPath) {
+     NoTerrainTilesetIgnoresLegacyHeightmapTerrainCacheLikeCesiumNativeContentPath) {
     Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},

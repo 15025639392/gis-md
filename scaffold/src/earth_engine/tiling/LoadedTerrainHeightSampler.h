@@ -20,7 +20,7 @@ public:
             std::unique_ptr<DecodedHeightmap>>& terrainCache,
         double longitudeRadians,
         double latitudeRadians,
-        bool includeHeightmapTerrainCache);
+        bool includeLegacyHeightmapTerrainCache);
 };
 
 } // namespace earth_engine

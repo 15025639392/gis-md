@@ -125,7 +125,7 @@ Tileset::Tileset(ProviderOwnership providers,
                           *tileScheme_,
                           heightmapTerrainProvider_.get(),
                           contentProvider_.get(),
-                          contentLifecycle_.heightmapTerrainCache(),
+                          contentLifecycle_.legacyHeightmapTerrainCache(),
                           rasterOverlays_.size())
                     : TileContentAccess::forNoTerrain(
                           tileRegistry_,
@@ -215,7 +215,7 @@ int Tileset::cachedHeightmapTerrainTilesForLegacySurfacePath() const {
     if (!usesHeightmapTerrainSurfacePath(heightmapTerrainProvider_.get())) {
         return 0;
     }
-    return static_cast<int>(contentLifecycle_.heightmapTerrainCache().size());
+    return static_cast<int>(contentLifecycle_.legacyHeightmapTerrainCache().size());
 }
 
 int64_t Tileset::totalBytesUsed() const {
@@ -327,7 +327,7 @@ TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {
 float Tileset::sampleHeight(double lngRad, double latRad) const {
     return LoadedTerrainHeightSampler::sampleHeight(
         tileRegistry_.tiles(),
-        contentLifecycle_.heightmapTerrainCache(),
+        contentLifecycle_.legacyHeightmapTerrainCache(),
         lngRad,
         latRad,
         usesHeightmapTerrainSurfacePath(heightmapTerrainProvider_.get()));

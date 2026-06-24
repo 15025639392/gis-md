@@ -34,7 +34,7 @@ public:
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
         const TileContentLifecycleManager& lifecycle,
-        bool includeHeightmapTerrainCache);
+        bool includeLegacyHeightmapTerrainCache);
 
     void markEligibleForUnloading(
         const std::unordered_map<
@@ -47,20 +47,20 @@ public:
         const std::string& cacheKey,
         TileContentLifecycleManager& lifecycle,
         TileLoadQueue& loadQueue,
-        bool includeHeightmapTerrainCache = false);
+        bool includeLegacyHeightmapTerrainCache = false);
 
     TileCacheUnloadContentResult unloadTileContent(
         TilesetTile& tile,
         TileContentLifecycleManager& lifecycle,
         IPrepareRendererResources* pPrepRenderer,
-        bool includeHeightmapTerrainCache = false);
+        bool includeLegacyHeightmapTerrainCache = false);
 
     template <typename ClearChildrenFn>
     void unloadCachedBytes(
         int64_t maximumCachedBytes,
         double unloadTimeLimitMs,
         bool resourceSmoothingActive,
-        bool includeHeightmapTerrainCache,
+        bool includeLegacyHeightmapTerrainCache,
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
@@ -85,13 +85,13 @@ public:
             },
             [this,
              &lifecycle,
-             includeHeightmapTerrainCache,
+             includeLegacyHeightmapTerrainCache,
              pPrepRenderer](TilesetTile& tile) {
                 return unloadTileContent(
                     tile,
                     lifecycle,
                     pPrepRenderer,
-                    includeHeightmapTerrainCache);
+                    includeLegacyHeightmapTerrainCache);
             },
             [this](const std::string& key) {
                 markIneligibleForUnloading(key);
@@ -104,7 +104,7 @@ public:
             updateTotalBytesUsed(
                 tiles,
                 lifecycle,
-                includeHeightmapTerrainCache);
+                includeLegacyHeightmapTerrainCache);
             cacheBytesDirty_ = false;
         }
     }

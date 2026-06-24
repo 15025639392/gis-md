@@ -51,7 +51,7 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.heightmapTerrainCache()[TileCacheKey::forTile(key)] =
+        tileset.contentLifecycle_.legacyHeightmapTerrainCache()[TileCacheKey::forTile(key)] =
             std::move(heightmap);
     }
 
@@ -2448,7 +2448,7 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
-    ContentTerrainQuadtreeIgnoresHeightmapTerrainCacheForRefinement) {
+    ContentTerrainQuadtreeIgnoresLegacyHeightmapTerrainCacheForRefinement) {
     auto contentProvider = std::make_unique<TerrainQuadtreeContentProvider>();
 
     Tileset tileset(
@@ -2478,7 +2478,7 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
-    ResolverUsesHeightmapTerrainCacheForNonTerrainContentProvider) {
+    ResolverUsesLegacyHeightmapTerrainCacheForNonTerrainContentProvider) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey cachedHeightmapChildKey{"Geographic-TMS", 1, 0, 0};
     SelectionTreeContentProvider nonTerrainContentProvider(

@@ -144,7 +144,7 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
 
 TEST(
     TileContentLifecycleManagerTest,
-    ContentOwnedTerrainRequestLeavesHeightmapTerrainCacheUntouched) {
+    ContentOwnedTerrainRequestLeavesLegacyHeightmapTerrainCacheUntouched) {
     TileContentLifecycleManager manager;
     LifecycleTerrainContentProvider contentProvider;
     std::vector<ActivatedRasterOverlay*> rasterOverlays;
@@ -152,7 +152,7 @@ TEST(
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    manager.heightmapTerrainCache()["test/0/0/0"] = std::move(cachedHeightmap);
+    manager.legacyHeightmapTerrainCache()["test/0/0/0"] = std::move(cachedHeightmap);
 
     const TileLoadRequestOutcome outcome = manager.requestMissingTiles(
         {TileLoadRequest{
@@ -174,14 +174,14 @@ TEST(
 
     EXPECT_EQ(1u, outcome.issued);
     EXPECT_EQ(1, contentProvider.requestCount);
-    EXPECT_EQ(1u, manager.heightmapTerrainCache().size());
+    EXPECT_EQ(1u, manager.legacyHeightmapTerrainCache().size());
     EXPECT_EQ(1u, manager.loadLifecycle().pendingLoads()
                       .terminalResultCount());
 }
 
 TEST(
     TileContentLifecycleManagerTest,
-    RequestMissingTilesDoesNotOwnStaleHeightmapTerrainCache) {
+    RequestMissingTilesDoesNotOwnStaleLegacyHeightmapTerrainCache) {
     TileContentLifecycleManager manager;
     LifecycleTerrainContentProvider contentProvider;
     std::vector<ActivatedRasterOverlay*> rasterOverlays;
@@ -189,7 +189,7 @@ TEST(
     auto staleHeightmap = std::make_unique<DecodedHeightmap>();
     staleHeightmap->tileSize = 2;
     staleHeightmap->heights = {1.0f, 1.0f, 1.0f, 1.0f};
-    manager.heightmapTerrainCache()["test/0/0/0"] = std::move(staleHeightmap);
+    manager.legacyHeightmapTerrainCache()["test/0/0/0"] = std::move(staleHeightmap);
 
     const TileLoadRequestOutcome outcome = manager.requestMissingTiles(
         {TileLoadRequest{
@@ -211,7 +211,7 @@ TEST(
 
     EXPECT_EQ(1u, outcome.issued);
     EXPECT_EQ(1, contentProvider.requestCount);
-    EXPECT_EQ(1u, manager.heightmapTerrainCache().size());
+    EXPECT_EQ(1u, manager.legacyHeightmapTerrainCache().size());
 }
 
 TEST(TileContentLifecycleManagerTest, ShutdownClearsClaimedUploadWork) {
