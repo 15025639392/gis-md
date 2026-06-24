@@ -3066,11 +3066,13 @@ int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(
         }
         issued += issueMappedSourceImageSet(sourceSet, budget);
         if (budget) {
+            const bool sourceSetStillNeedsRequestSlots =
+                sourceSet->hasUnissuedSources();
             const int remainingSlots = availableRasterRequestSlots(
                 budget,
                 asyncState_->activeRasterSourceRequests.load(
                     std::memory_order_relaxed));
-            if (remainingSlots <= 0) {
+            if (sourceSetStillNeedsRequestSlots && remainingSlots <= 0) {
                 break;
             }
         }
