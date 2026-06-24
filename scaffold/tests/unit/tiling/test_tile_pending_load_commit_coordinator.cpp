@@ -3314,6 +3314,105 @@ TEST(
 
 TEST(
     TilePendingLoadCommitCoordinatorTest,
+    ContentUploadIgnoresInvalidRasterDetailsForLooseBoundsLikeCesiumNative) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey =
+        "test:gltf-terrain-invalid-raster-details-bounds";
+    const Rectangle looseRectangle = Rectangle::MAXIMUM;
+    TilesetTile tile(key, looseRectangle);
+    tile.content.loadState = TileLoadState::ContentLoading;
+    tile.boundingVolume =
+        TileBoundingVolume::fromLooseRegion(looseRectangle, -1000.0, 9000.0);
+
+    const Rectangle modelRectangle =
+        Rectangle::fromDegrees(-11.0, -3.0, -5.0, 4.0);
+    TileLoadResultMetadata metadata;
+    metadata.rasterOverlayDetails.emplace();
+    metadata.rasterOverlayDetails->rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    metadata.rasterOverlayDetails->rasterOverlayRectangles.push_back(
+        modelRectangle);
+
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeTerrainContentContentResult(
+            makeCartographicQuadTerrainGltfModel(
+                modelRectangle,
+                -35.0,
+                95.0),
+            std::move(metadata))};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableGltfTerrain(
+                std::make_unique<GltfModel>())});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    bool resourcesDirty = false;
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        {},
+        emptyContentRegistry,
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_TRUE(tile.initialBoundingVolume.has_value());
+    EXPECT_EQ(looseRectangle, tile.initialBoundingVolume->region);
+    EXPECT_TRUE(tile.initialBoundingVolume->looseFittingHeights);
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_FALSE(tile.boundingVolume->looseFittingHeights);
+    EXPECT_TRUE(tile.boundingVolume->region.equalsEpsilon(
+        modelRectangle,
+        1e-12));
+    EXPECT_NEAR(-35.0, tile.boundingVolume->minimumHeight, 1e-5);
+    EXPECT_NEAR(95.0, tile.boundingVolume->maximumHeight, 1e-5);
+    const RasterOverlayDetails& details =
+        tile.content.renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_TRUE(details.boundingRegion.rectangle.isEmpty());
+    EXPECT_TRUE(tile.content.renderContent.hasTerrainHeightRange());
+    EXPECT_NEAR(
+        -35.0,
+        tile.content.renderContent.terrainMinimumHeight(),
+        1e-5);
+    EXPECT_NEAR(
+        95.0,
+        tile.content.renderContent.terrainMaximumHeight(),
+        1e-5);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(
+    TilePendingLoadCommitCoordinatorTest,
     ContentUploadTightensNonDefaultLooseGltfTerrainBoundsLikeCesiumNative) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain-non-default-loose-bounds";
