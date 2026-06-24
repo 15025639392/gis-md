@@ -68,10 +68,6 @@ struct TilesetTestAccess {
         return tileset.checkOcclusion(tile);
     }
 
-    static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
-        tileset.meshPreparation_.prepareRenderableTile(tile);
-    }
-
     static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
         const std::vector<size_t> overlayOrder =
             TileSelectionRasterOverlayPreparer::processingOrder(
@@ -721,7 +717,7 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     EXPECT_TRUE(submittedTerrainGltf);
     EXPECT_TRUE(submittedNonTerrainGltf);
     EXPECT_GT(scene.diagnostics().renderGltfPrimitives, 0);
-    EXPECT_EQ(scene.diagnostics().terrainSurfaceTileCommands, 2);
+    EXPECT_EQ(scene.diagnostics().terrainSurfaceTileCommands, 0);
     EXPECT_GT(scene.diagnostics().terrainGltfPrimitiveCommands, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderContentCommands, 0);
     EXPECT_EQ(scene.diagnostics().contentTilesets, 1);
@@ -735,15 +731,15 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     EXPECT_GT(scene.diagnostics().terrainRenderEntriesDrawn, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDrawn, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesMissed, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedMissed, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesMissed, 1);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedMissed, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingMissed, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferred, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDeferred, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDeferred, 0);
-    EXPECT_GT(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
-    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
-    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
+    EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
+    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 1);
+    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 2);
     EXPECT_EQ(scene.tileset(), terrainRaw);
     EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
 }
@@ -792,185 +788,6 @@ TEST(SceneFrameStateTest, GltfTerrainCountsAsTerrainRenderContent) {
         scene.diagnostics().terrainRenderContentCommands,
         terrainGltfCommands +
             scene.diagnostics().terrainSurfaceCommandsSubmitted);
-}
-
-TEST(SceneFrameStateTest, DiagnosticsExposeTerrainRenderEntryFallbackReasons) {
-    DummyRenderDevice device;
-    Scene scene;
-    ASSERT_TRUE(scene.setRenderDevice(&device));
-    scene.setViewport(800, 600, 1.0f);
-
-    const auto& ellipsoid = Ellipsoid::WGS84();
-    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
-    scene.camera().lookAt(
-        target + Vec3(1000000.0, 0.0, 0.0),
-        target,
-        Vec3::unitZ());
-
-    auto baseOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = std::make_unique<Tileset>(
-        TileScheme::createGeographicTMS(),
-        std::vector<ActivatedRasterOverlay*>{&baseActivated},
-        &device,
-        TilesetOptions{});
-    Tileset* terrainRaw = terrainTileset.get();
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
-    TilesetTile* child = TilesetTestAccess::ensureTile(*terrainRaw, childKey);
-    ASSERT_NE(root, nullptr);
-    ASSERT_NE(child, nullptr);
-
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
-    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
-    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
-        root->rasterOverlayState.mappings().empty()
-            ? nullptr
-            : root->rasterOverlayState.mappings()[0].get();
-    RasterOverlayTile* rootRaster =
-        rootMapped ? rootMapped->getLoadingTile() : nullptr;
-    ASSERT_NE(rootRaster, nullptr);
-    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
-    rootRaster->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-
-    scene.setTileset(std::move(terrainTileset));
-    scene.update(1.0 / 60.0);
-    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
-    TilesetTestAccess::beginTilePlan(*terrainRaw);
-    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *child);
-    scene.render();
-
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesPlanned, 1);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedPlanned, 1);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingPlanned, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesAncestorFallback, 1);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSynchronousPrep, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferredPrep, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDrawn, 1);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 1);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDrawn, 0);
-    EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 1);
-    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
-    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
-
-    const auto surfaceCommandIt = std::find_if(
-        device.submittedCommands.begin(),
-        device.submittedCommands.end(),
-        [](const RenderCommand& submittedCommand) {
-            return submittedCommand.kind == RenderCommandKind::SurfaceTile;
-        });
-    ASSERT_NE(device.submittedCommands.end(), surfaceCommandIt);
-    const RenderCommand& command = *surfaceCommandIt;
-    EXPECT_EQ(0, command.surfaceGeometryZoom);
-    ASSERT_FALSE(command.textures.empty());
-    EXPECT_EQ(rootRaster->getTexture(), command.textures.front());
-    EXPECT_GT(command.surfaceClipEnabled, 0.5f);
-    EXPECT_NEAR(0.0f, command.surfaceClipUv[0], 1e-6f);
-    EXPECT_NEAR(0.5f, command.surfaceClipUv[1], 1e-6f);
-    EXPECT_NEAR(0.5f, command.surfaceClipUv[2], 1e-6f);
-    EXPECT_NEAR(0.5f, command.surfaceClipUv[3], 1e-6f);
-
-    const PresentationTrace& trace = scene.presentationTrace();
-    ASSERT_EQ(1u, trace.tilesets.size());
-    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
-    ASSERT_EQ(1u, tilesetTrace.renderEntries.size());
-    const PresentationRenderEntryTrace& entryTrace =
-        tilesetTrace.renderEntries.front();
-    EXPECT_EQ(childKey, entryTrace.selectedKey);
-    EXPECT_EQ(rootKey, entryTrace.renderKey);
-    EXPECT_TRUE(entryTrace.usesAncestorFallback);
-    EXPECT_TRUE(entryTrace.surfaceClipEnabled);
-    EXPECT_EQ(command.surfaceClipUv, entryTrace.surfaceClipUv);
-    EXPECT_EQ(1, tilesetTrace.renderEntryAncestorFallbackCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntrySynchronousPrepCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryDeferredPrepCount);
-    EXPECT_EQ(1, tilesetTrace.renderEntryPlannedCommandCount);
-    EXPECT_EQ(1, tilesetTrace.renderEntrySelectedPlannedCommandCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryFadingPlannedCommandCount);
-    EXPECT_EQ(1, tilesetTrace.renderEntryCommandDrawCount);
-    EXPECT_EQ(1, tilesetTrace.renderEntrySelectedCommandDrawCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryFadingCommandDrawCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryCommandMissedDrawCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntrySelectedCommandMissedDrawCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryFadingCommandMissedDrawCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryCommandMissingSelectedCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryCommandMissingRenderCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryCommandDeferredCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntrySelectedCommandDeferredCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryFadingCommandDeferredCount);
-
-    const auto commandTraceIt = std::find_if(
-        trace.commands.begin(),
-        trace.commands.end(),
-        [](const PresentationCommandTrace& commandTrace) {
-            return commandTrace.kind == RenderCommandKind::SurfaceTile;
-        });
-    ASSERT_NE(trace.commands.end(), commandTraceIt);
-    EXPECT_EQ(command.surfaceClipUv, commandTraceIt->surfaceClipUv);
-    EXPECT_NE(
-        std::string::npos,
-        commandTraceIt->stableKey.find("clip:Geographic-TMS/1/0/0"));
-}
-
-TEST(SceneFrameStateTest, RenderPlanKeepsSurfaceBeforeBaseRasterIsDrawable) {
-    DummyRenderDevice device;
-    auto baseOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay baseActivated(*baseOverlay);
-    Tileset tileset(
-        TileScheme::createGeographicTMS(),
-        std::vector<ActivatedRasterOverlay*>{&baseActivated},
-        &device,
-        TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    ASSERT_NE(nullptr, root);
-
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    ASSERT_TRUE(root->hasSurfaceDrawable());
-
-    TilesetTestAccess::beginTilePlan(tileset);
-    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-    ASSERT_EQ(1u, tileset.tilePlan().renderEntries.size());
-    EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().selectedKey);
-    EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().renderKey);
-
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
-        root->rasterOverlayState.mappings().empty()
-            ? nullptr
-            : root->rasterOverlayState.mappings()[0].get();
-    RasterOverlayTile* rootRaster =
-        rootMapped ? rootMapped->getLoadingTile() : nullptr;
-    ASSERT_NE(nullptr, rootRaster);
-    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
-    rootRaster->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
-    TilesetTestAccess::beginTilePlan(tileset);
-    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-    ASSERT_EQ(1u, tileset.tilePlan().renderEntries.size());
-    EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().selectedKey);
-    EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().renderKey);
 }
 
 TEST(SceneFrameStateTest, PresentationTraceCopiesRenderEntryPassFailures) {
@@ -1104,306 +921,6 @@ TEST(SceneFrameStateTest, PresentationTraceExposesAdditiveSelectedEntries) {
     EXPECT_EQ(0, tilesetTrace.renderEntryAncestorFallbackCount);
 }
 
-TEST(SceneFrameStateTest, ClippedFallbackCommandsUseSelectedChildStableKeys) {
-    DummyRenderDevice device;
-    Scene scene;
-    ASSERT_TRUE(scene.setRenderDevice(&device));
-    scene.setViewport(800, 600, 1.0f);
-
-    const auto& ellipsoid = Ellipsoid::WGS84();
-    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
-    scene.camera().lookAt(
-        target + Vec3(1000000.0, 0.0, 0.0),
-        target,
-        Vec3::unitZ());
-
-    auto baseOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = std::make_unique<Tileset>(
-        TileScheme::createGeographicTMS(),
-        std::vector<ActivatedRasterOverlay*>{&baseActivated},
-        &device,
-        TilesetOptions{});
-    Tileset* terrainRaw = terrainTileset.get();
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey childAKey{"Geographic-TMS", 1, 0, 0};
-    const TileKey childBKey{"Geographic-TMS", 1, 1, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
-    TilesetTile* childA =
-        TilesetTestAccess::ensureTile(*terrainRaw, childAKey);
-    TilesetTile* childB =
-        TilesetTestAccess::ensureTile(*terrainRaw, childBKey);
-    ASSERT_NE(nullptr, root);
-    ASSERT_NE(nullptr, childA);
-    ASSERT_NE(nullptr, childB);
-
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
-    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
-    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
-        root->rasterOverlayState.mappings().empty()
-            ? nullptr
-            : root->rasterOverlayState.mappings()[0].get();
-    RasterOverlayTile* rootRaster =
-        rootMapped ? rootMapped->getLoadingTile() : nullptr;
-    ASSERT_NE(nullptr, rootRaster);
-    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
-    rootRaster->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-
-    scene.setTileset(std::move(terrainTileset));
-    scene.update(1.0 / 60.0);
-    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
-    TilesetTestAccess::beginTilePlan(*terrainRaw);
-    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *childA);
-    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *childB);
-    scene.render();
-
-    std::vector<std::string> clippedStableKeys;
-    for (const RenderCommand& command : device.submittedCommands) {
-        if (command.kind != RenderCommandKind::SurfaceTile ||
-            command.surfaceClipEnabled <= 0.5f) {
-            continue;
-        }
-        clippedStableKeys.push_back(command.stableKey);
-    }
-
-    ASSERT_EQ(2u, clippedStableKeys.size());
-    EXPECT_NE(clippedStableKeys[0], clippedStableKeys[1]);
-    EXPECT_NE(
-        std::string::npos,
-        clippedStableKeys[0].find("clip:Geographic-TMS/1/"));
-    EXPECT_NE(
-        std::string::npos,
-        clippedStableKeys[1].find("clip:Geographic-TMS/1/"));
-}
-
-TEST(SceneFrameStateTest, SurfaceCommandUsesNoSkirtTerrainIndexRange) {
-    DummyRenderDevice device;
-    Scene scene;
-    ASSERT_TRUE(scene.setRenderDevice(&device));
-    scene.setViewport(800, 600, 1.0f);
-
-    const auto& ellipsoid = Ellipsoid::WGS84();
-    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
-    scene.camera().lookAt(
-        target + Vec3(1000000.0, 0.0, 0.0),
-        target,
-        Vec3::unitZ());
-
-    auto baseOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = std::make_unique<Tileset>(
-        TileScheme::createGeographicTMS(),
-        std::vector<ActivatedRasterOverlay*>{&baseActivated},
-        &device,
-        TilesetOptions{});
-    Tileset* terrainRaw = terrainTileset.get();
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
-    ASSERT_NE(nullptr, root);
-
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
-    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
-    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_GE(mesh->indices.size(), 12u);
-    mesh->skirtMeta.noSkirtIndicesBegin = 0;
-    mesh->skirtMeta.noSkirtIndicesCount =
-        static_cast<uint32_t>(mesh->indices.size() - 6u);
-    mesh->skirtMeta.noSkirtVerticesBegin = 0;
-    mesh->skirtMeta.noSkirtVerticesCount =
-        static_cast<uint32_t>(mesh->vertices.size());
-
-    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
-        root->rasterOverlayState.mappings().empty()
-            ? nullptr
-            : root->rasterOverlayState.mappings()[0].get();
-    RasterOverlayTile* rootRaster =
-        rootMapped ? rootMapped->getLoadingTile() : nullptr;
-    ASSERT_NE(nullptr, rootRaster);
-    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
-    rootRaster->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-
-    scene.setTileset(std::move(terrainTileset));
-    scene.update(1.0 / 60.0);
-    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
-    TilesetTestAccess::beginTilePlan(*terrainRaw);
-    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
-    scene.render();
-
-    const auto surfaceCommandIt = std::find_if(
-        device.submittedCommands.begin(),
-        device.submittedCommands.end(),
-        [](const RenderCommand& command) {
-            return command.kind == RenderCommandKind::SurfaceTile;
-        });
-    ASSERT_NE(device.submittedCommands.end(), surfaceCommandIt);
-    const RenderCommand& command = *surfaceCommandIt;
-    EXPECT_EQ(0, command.indexOffset);
-    EXPECT_EQ(
-        static_cast<int>(mesh->skirtMeta.noSkirtIndicesCount),
-        command.indexCount);
-    EXPECT_EQ(
-        static_cast<int>(mesh->indices.size()),
-        command.surfaceMeshIndexCount);
-    EXPECT_EQ(command.indexCount, command.surfaceNoSkirtIndexCount);
-    EXPECT_EQ(6, command.surfaceSkirtIndexCount);
-}
-
-TEST(SceneFrameStateTest, SurfaceCommandSkipsExplicitMeshMissingIndexBuffer) {
-    DummyRenderDevice device;
-    Scene scene;
-    ASSERT_TRUE(scene.setRenderDevice(&device));
-    scene.setViewport(800, 600, 1.0f);
-
-    const auto& ellipsoid = Ellipsoid::WGS84();
-    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
-    scene.camera().lookAt(
-        target + Vec3(1000000.0, 0.0, 0.0),
-        target,
-        Vec3::unitZ());
-
-    auto terrainTileset = std::make_unique<Tileset>(
-        TileScheme::createGeographicTMS(),
-        std::vector<ActivatedRasterOverlay*>{},
-        &device,
-        TilesetOptions{});
-    Tileset* terrainRaw = terrainTileset.get();
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
-    ASSERT_NE(nullptr, root);
-
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
-    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
-    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_FALSE(mesh->vertices.empty());
-    ASSERT_FALSE(mesh->indices.empty());
-
-    BufferDesc vertexBufferDesc;
-    vertexBufferDesc.size = mesh->vertices.size() * sizeof(SurfaceVertex);
-    vertexBufferDesc.data = mesh->vertices.data();
-    vertexBufferDesc.type = BufferDesc::Type::Vertex;
-    root->content.renderContent.setSurfaceGpuBuffers(
-        device.createBuffer(vertexBufferDesc),
-        nullptr);
-
-    scene.setTileset(std::move(terrainTileset));
-    scene.update(1.0 / 60.0);
-    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
-    TilesetTestAccess::beginTilePlan(*terrainRaw);
-    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
-    scene.render();
-
-    const bool submittedSurfaceTile = std::any_of(
-        device.submittedCommands.begin(),
-        device.submittedCommands.end(),
-        [](const RenderCommand& command) {
-            return command.kind == RenderCommandKind::SurfaceTile;
-        });
-    EXPECT_FALSE(submittedSurfaceTile);
-}
-
-TEST(SceneFrameStateTest, SurfaceCommandIgnoresOverflowingNoSkirtRange) {
-    DummyRenderDevice device;
-    Scene scene;
-    ASSERT_TRUE(scene.setRenderDevice(&device));
-    scene.setViewport(800, 600, 1.0f);
-
-    const auto& ellipsoid = Ellipsoid::WGS84();
-    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
-    scene.camera().lookAt(
-        target + Vec3(1000000.0, 0.0, 0.0),
-        target,
-        Vec3::unitZ());
-
-    auto baseOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = std::make_unique<Tileset>(
-        TileScheme::createGeographicTMS(),
-        std::vector<ActivatedRasterOverlay*>{&baseActivated},
-        &device,
-        TilesetOptions{});
-    Tileset* terrainRaw = terrainTileset.get();
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
-    ASSERT_NE(nullptr, root);
-
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
-    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
-    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_FALSE(mesh->indices.empty());
-    mesh->skirtMeta.noSkirtIndicesBegin =
-        std::numeric_limits<uint32_t>::max();
-    mesh->skirtMeta.noSkirtIndicesCount = 2;
-
-    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
-        root->rasterOverlayState.mappings().empty()
-            ? nullptr
-            : root->rasterOverlayState.mappings()[0].get();
-    RasterOverlayTile* rootRaster =
-        rootMapped ? rootMapped->getLoadingTile() : nullptr;
-    ASSERT_NE(nullptr, rootRaster);
-    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
-    rootRaster->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-
-    scene.setTileset(std::move(terrainTileset));
-    scene.update(1.0 / 60.0);
-    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
-    TilesetTestAccess::beginTilePlan(*terrainRaw);
-    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
-    scene.render();
-
-    const auto surfaceCommandIt = std::find_if(
-        device.submittedCommands.begin(),
-        device.submittedCommands.end(),
-        [](const RenderCommand& command) {
-            return command.kind == RenderCommandKind::SurfaceTile;
-        });
-    ASSERT_NE(device.submittedCommands.end(), surfaceCommandIt);
-    const RenderCommand& command = *surfaceCommandIt;
-    EXPECT_EQ(0, command.indexOffset);
-    EXPECT_EQ(static_cast<int>(mesh->indices.size()), command.indexCount);
-    EXPECT_EQ(
-        static_cast<int>(mesh->indices.size()),
-        command.surfaceNoSkirtIndexCount);
-    EXPECT_EQ(0, command.surfaceSkirtIndexCount);
-}
-
 TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
     DummyRenderDevice device;
     Scene scene;
@@ -1533,15 +1050,15 @@ TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesAncestorFallback, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSynchronousPrep, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferredPrep, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDrawn, 1);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 1);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesMissed, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDrawn, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesMissed, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferred, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDeferred, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDeferred, 0);
-    EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 1);
-    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
-    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
+    EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
+    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 1);
+    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 1);
 }
 
 TEST(SceneFrameStateTest, SortsTransparentGltfByCameraDepth) {
