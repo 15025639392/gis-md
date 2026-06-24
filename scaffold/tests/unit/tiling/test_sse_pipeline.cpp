@@ -13395,7 +13395,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
         nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
-              !action.ensureChildren &&
+              action.ensureChildren &&
               tile.content.contentKind == TileContentKind::Empty &&
               tile.content.loadState == TileLoadState::Done &&
               tile.unconditionallyRefine,
@@ -13476,7 +13476,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
         nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
-              !action.ensureChildren &&
+              action.ensureChildren &&
               tile.content.contentKind == TileContentKind::Empty &&
               tile.content.loadState == TileLoadState::Done,
           "TileTerminalLoadPolicy: empty content marks done empty tile");
@@ -13620,6 +13620,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
             nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
+              action.ensureChildren &&
               emptyContentRegistry.contains("terrain-empty") &&
               terrainTile.content.contentKind == TileContentKind::Empty &&
               terrainTile.content.loadState == TileLoadState::Done,
@@ -13634,7 +13635,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
             nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
-              !action.ensureChildren &&
+              action.ensureChildren &&
               emptyContentRegistry.contains("content-empty") &&
               contentTile.content.contentKind == TileContentKind::Empty &&
               contentTile.content.loadState == TileLoadState::Done,

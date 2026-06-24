@@ -377,9 +377,43 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
     EXPECT_DOUBLE_EQ(-10.0, tile.boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(20.0, tile.boundingVolume->maximumHeight);
-    EXPECT_FALSE(childrenEnsured);
+    EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainEmptyTerminalEnsuresChildrenLikeCesiumNativeDoneState) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    const std::string cacheKey = "terrain-empty";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::Empty);
+    PendingTileLoad pending{TileLoadDomain::TerrainContent,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(result)};
+    TileEmptyContentRegistry emptyContentRegistry;
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        pending,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_EQ(TileContentKind::Empty, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

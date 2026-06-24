@@ -51,6 +51,7 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
             tile.markEmptyContentLoaded();
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
+            action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         }
@@ -85,6 +86,7 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
             tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
+            action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::External:
