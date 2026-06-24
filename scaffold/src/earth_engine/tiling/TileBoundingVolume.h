@@ -29,6 +29,7 @@ struct TileBoundingVolume {
     Rectangle region;
     double minimumHeight = 0.0;
     double maximumHeight = 0.0;
+    bool looseFittingHeights = false;
     BoundingSphere sphere{Vec3::zero(), 0.0};
     OrientedBoundingBox box{
         Vec3::zero(),
@@ -53,6 +54,17 @@ struct TileBoundingVolume {
         volume.region = rectangle;
         volume.minimumHeight = minHeight;
         volume.maximumHeight = maxHeight;
+        return volume;
+    }
+
+    static TileBoundingVolume fromLooseRegion(const Rectangle& rectangle,
+                                              double minHeight,
+                                              double maxHeight) {
+        TileBoundingVolume volume = fromRegion(
+            rectangle,
+            minHeight,
+            maxHeight);
+        volume.looseFittingHeights = true;
         return volume;
     }
 

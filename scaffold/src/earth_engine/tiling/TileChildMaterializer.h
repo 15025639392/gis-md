@@ -96,7 +96,7 @@ struct TileChildMaterializer {
             const double maximumHeight =
                 TileBoundsMetrics::terrainMaximumHeight(parent);
             const TileBoundingVolume childBoundingVolume =
-                TileBoundingVolume::fromRegion(
+                TileBoundingVolume::fromLooseRegion(
                     child->bounds,
                     minimumHeight,
                     maximumHeight);
@@ -345,7 +345,9 @@ private:
                expected.kind == TileBoundingVolumeKind::Region &&
                existing->region == expected.region &&
                existing->minimumHeight == expected.minimumHeight &&
-               existing->maximumHeight == expected.maximumHeight;
+               existing->maximumHeight == expected.maximumHeight &&
+               existing->looseFittingHeights ==
+                   expected.looseFittingHeights;
     }
 
     static bool linkChild(TilesetTile& parent, TilesetTile& child) {

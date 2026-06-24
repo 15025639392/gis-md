@@ -698,6 +698,7 @@ TEST(TileChildMaterializerTest,
     EXPECT_EQ(TileBoundingVolumeKind::Region,
               acceptedChild->boundingVolume->kind);
     EXPECT_EQ(acceptedChild->bounds, acceptedChild->boundingVolume->region);
+    EXPECT_TRUE(acceptedChild->boundingVolume->looseFittingHeights);
     EXPECT_DOUBLE_EQ(-12.0,
                      acceptedChild->boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(34.0,
