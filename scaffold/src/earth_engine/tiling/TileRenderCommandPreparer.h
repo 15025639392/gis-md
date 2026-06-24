@@ -93,10 +93,7 @@ public:
 
         if (tile.contentProviderTerrainQuadtreeTile &&
             !tile.content.renderContent.hasGltfContent()) {
-            if (!context.allowSynchronousMeshPrep) {
-                return;
-            }
-            ensureTileMesh(tile);
+            return;
         }
 
         if (!tile.content.renderContent.isMeshReady()) {

@@ -115,7 +115,7 @@ TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) 
 }
 
 TEST(TileRenderCommandPreparerTest,
-     ContentProviderTerrainRunsCleanupEvenWhenLegacySurfaceReady) {
+     ContentProviderTerrainWithoutGltfDoesNotEnterLegacySurfacePrep) {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.contentProviderTerrainQuadtreeTile = true;
     tile.content.contentKind = TileContentKind::Render;
@@ -159,11 +159,11 @@ TEST(TileRenderCommandPreparerTest,
             upsampleChildrenCalled = true;
         });
 
-    EXPECT_TRUE(ensureMeshCalled);
+    EXPECT_FALSE(ensureMeshCalled);
     EXPECT_FALSE(unloadContentCalled);
     EXPECT_FALSE(upsampleChildrenCalled);
-    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
-    EXPECT_FALSE(tile.content.renderContent.isMeshReady());
-    EXPECT_FALSE(tile.hasSurfaceDrawable());
+    EXPECT_TRUE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_TRUE(tile.content.renderContent.isMeshReady());
+    EXPECT_FALSE(tile.renderableSnapshot(true).meshReady);
     EXPECT_TRUE(commands.empty());
 }
