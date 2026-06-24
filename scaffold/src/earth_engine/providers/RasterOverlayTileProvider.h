@@ -382,6 +382,10 @@ private:
         using Result = std::shared_ptr<const SourceTileAsset>;
         std::vector<std::function<void(Result)>> waiters;
     };
+    struct PendingSourceFallback {
+        TileKey originalKey;
+        std::function<int()> issue;
+    };
 
     /// Shared runtime state touched by async raster callbacks. It intentionally
     /// outlives RasterOverlayTileProvider when a source request completes
@@ -397,7 +401,7 @@ private:
         std::unordered_map<std::string, std::shared_ptr<MappedSourceImageSet>>
             activeMappedSourceSets;
         std::deque<std::string> activeMappedSourceSetOrder;
-        std::deque<std::function<int()>> pendingSourceFallbacks;
+        std::deque<PendingSourceFallback> pendingSourceFallbacks;
         std::deque<std::pair<std::string, uint64_t>>
             sourceTileDepotCacheLru;
         int64_t sourceTileDepotCacheBytes = 0;

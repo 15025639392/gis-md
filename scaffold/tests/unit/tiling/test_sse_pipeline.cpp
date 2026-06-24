@@ -2935,6 +2935,67 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
           "RasterOverlayTileProvider: fallback parent subset is not cached as the child source asset");
 }
 
+void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 3});
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, sourceAlignedBounds),
+            512.0,
+            512.0).tile;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: abandoned-fallback fixture starts child source requests");
+    if (!mappedRasterTile || imagery.pendingRequests.empty()) return;
+
+    const TileKey failedSource = imagery.pendingRequests.front().key;
+    imagery.pendingRequests.front().callback(failedSource, nullptr);
+
+    const int matchingSourceRequestsBefore =
+        static_cast<int>(std::count_if(
+            imagery.pendingRequests.begin(),
+            imagery.pendingRequests.end(),
+            [&](const PendingRectangleImageryProvider::PendingRequest& request) {
+                return request.key == failedSource;
+            }));
+
+    provider.setMaximumScreenSpaceError(1.0);
+
+    RasterOverlayTileProvider::TilePtr directTile =
+        provider.getTile(failedSource);
+    FrameResourceBudget directBudget;
+    directBudget.beginFrame(2, config);
+    check(directTile && provider.loadTileThrottled(*directTile, &directBudget),
+          "RasterOverlayTileProvider: direct source load starts after mapped fallback abandonment");
+
+    const int matchingSourceRequestsAfter =
+        static_cast<int>(std::count_if(
+            imagery.pendingRequests.begin(),
+            imagery.pendingRequests.end(),
+            [&](const PendingRectangleImageryProvider::PendingRequest& request) {
+                return request.key == failedSource;
+            }));
+    check(matchingSourceRequestsAfter == matchingSourceRequestsBefore + 1,
+          "RasterOverlayTileProvider: abandoned mapped fallback clears stale shared source in-flight");
+}
+
 void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -28070,6 +28131,7 @@ int main() {
     testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache();
+    testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight();
     testRasterOverlayDirectTileJoinsMappedSourceInFlight();
     testRasterOverlayMappedRasterTilesShareSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();

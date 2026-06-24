@@ -1565,32 +1565,34 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         std::lock_guard<std::mutex> lock(
                             self->state->mutex);
                         self->state->pendingSourceFallbacks.push_back(
-                            [self,
-                             parentKey,
-                             originalKey,
-                             onSourceIssued,
-                             onSourceFinished,
-                             onSourceFailed,
-                             onReady,
-                             fallbackInFlightKeys]() mutable {
-                                int issued = 0;
-                                self->requestSource(
-                                    parentKey,
-                                    originalKey,
-                                    true,
-                                    false,
-                                    [&]() {
-                                        ++issued;
-                                        if (onSourceIssued) {
-                                            onSourceIssued();
-                                        }
-                                    },
-                                    onSourceFinished,
-                                    onSourceFailed,
-                                    std::move(onReady),
-                                    std::move(fallbackInFlightKeys));
-                                return issued;
-                            });
+                            PendingSourceFallback{
+                                originalKey,
+                                [self,
+                                 parentKey,
+                                 originalKey,
+                                 onSourceIssued,
+                                 onSourceFinished,
+                                 onSourceFailed,
+                                 onReady,
+                                 fallbackInFlightKeys]() mutable {
+                                    int issued = 0;
+                                    self->requestSource(
+                                        parentKey,
+                                        originalKey,
+                                        true,
+                                        false,
+                                        [&]() {
+                                            ++issued;
+                                            if (onSourceIssued) {
+                                                onSourceIssued();
+                                            }
+                                        },
+                                        onSourceFinished,
+                                        onSourceFailed,
+                                        std::move(onReady),
+                                        std::move(fallbackInFlightKeys));
+                                    return issued;
+                                }});
                     }
                     return;
                 }
@@ -1642,6 +1644,12 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             return false;
         }
         return inFlight.find(key) == inFlight.end();
+    }
+
+    void abandonInFlightSource(const TileKey& originalKey) {
+        finishInFlightSource(
+            originalKey,
+            makeAbandonedSourceResult(originalKey));
     }
 
 private:
@@ -2405,6 +2413,7 @@ void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
 void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
     std::vector<std::pair<std::string, std::shared_ptr<MappedSourceImageSet>>>
         activeSets;
+    std::vector<TileKey> abandonedFallbackSources;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         activeSets.reserve(asyncState_->activeMappedSourceSets.size());
@@ -2412,9 +2421,21 @@ void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
             activeSets.emplace_back(entry.first, std::move(entry.second));
             asyncState_->inFlightRequests.erase(entry.first);
         }
+        abandonedFallbackSources.reserve(
+            asyncState_->pendingSourceFallbacks.size());
+        for (const PendingSourceFallback& fallback :
+             asyncState_->pendingSourceFallbacks) {
+            abandonedFallbackSources.push_back(fallback.originalKey);
+        }
         asyncState_->activeMappedSourceSets.clear();
         asyncState_->activeMappedSourceSetOrder.clear();
         asyncState_->pendingSourceFallbacks.clear();
+    }
+
+    if (sourceAssetDepot_) {
+        for (const TileKey& key : abandonedFallbackSources) {
+            sourceAssetDepot_->abandonInFlightSource(key);
+        }
     }
 
     for (const auto& [cacheKey, sourceSet] : activeSets) {
@@ -3122,18 +3143,18 @@ int RasterOverlayTileProvider::issuePendingSourceFallbacks(
             }
         }
 
-        std::function<int()> issueFallback;
+        PendingSourceFallback fallback;
         {
             std::lock_guard<std::mutex> lock(asyncState_->mutex);
             if (asyncState_->pendingSourceFallbacks.empty()) {
                 break;
             }
-            issueFallback =
+            fallback =
                 std::move(asyncState_->pendingSourceFallbacks.front());
             asyncState_->pendingSourceFallbacks.pop_front();
         }
 
-        const int newlyIssued = issueFallback ? issueFallback() : 0;
+        const int newlyIssued = fallback.issue ? fallback.issue() : 0;
         if (newlyIssued > 0) {
             issued += newlyIssued;
             if (budget) {
