@@ -347,7 +347,9 @@ TEST(QuantizedMeshContentLoaderTest,
             false,
             {},
             RasterOverlayProjection::Geographic,
-            currentTileUpdate);
+            currentTileUpdate,
+            QuantizedMeshContentLoader::RasterOverlayDetailsMode::
+                GenerateTerrainProjection);
 
     EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     EXPECT_TRUE(result.terrainRenderContent);
@@ -393,7 +395,11 @@ TEST(QuantizedMeshContentLoaderTest,
             bytes.size(),
             geographicRootWestRectangle(),
             false,
-            {});
+            {},
+            RasterOverlayProjection::Geographic,
+            std::nullopt,
+            QuantizedMeshContentLoader::RasterOverlayDetailsMode::
+                GenerateTerrainProjection);
 
     EXPECT_TRUE(result.success());
     ASSERT_NE(nullptr, result.gltfModel);
@@ -509,8 +515,7 @@ TEST(QuantizedMeshContentLoaderTest,
             false,
             {},
             RasterOverlayProjection::Geographic,
-            std::nullopt,
-            QuantizedMeshContentLoader::RasterOverlayDetailsMode::None);
+            std::nullopt);
 
     ASSERT_TRUE(result.success());
     ASSERT_NE(nullptr, result.gltfModel);
@@ -556,7 +561,10 @@ TEST(QuantizedMeshContentLoaderTest,
             tileRectangle,
             false,
             {},
-            RasterOverlayProjection::WebMercator);
+            RasterOverlayProjection::WebMercator,
+            std::nullopt,
+            QuantizedMeshContentLoader::RasterOverlayDetailsMode::
+                GenerateTerrainProjection);
 
     ASSERT_TRUE(result.success());
     ASSERT_NE(nullptr, result.gltfModel);
@@ -711,7 +719,10 @@ TEST(QuantizedMeshContentLoaderTest,
             tileRectangle,
             false,
             {},
-            RasterOverlayProjection::WebMercator);
+            RasterOverlayProjection::WebMercator,
+            std::nullopt,
+            QuantizedMeshContentLoader::RasterOverlayDetailsMode::
+                GenerateTerrainProjection);
 
     ASSERT_TRUE(result.success());
     ASSERT_NE(nullptr, result.gltfModel);
