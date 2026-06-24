@@ -22,6 +22,7 @@
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
+#include "earth_engine/core/geodesy/QuadtreeGeometricError.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/terrain/TerrainTile.h"
@@ -1126,7 +1127,12 @@ TEST(QuantizedMeshTerrainProviderTest,
     ASSERT_TRUE(westMetadata->boundingVolume.has_value());
     EXPECT_EQ(westMetadata->bounds, westMetadata->boundingVolume->region);
     EXPECT_FALSE(westMetadata->contentBoundingVolume.has_value());
-    EXPECT_GT(westMetadata->geometricError, 0.0);
+    EXPECT_NEAR(
+        calcLayerJsonTerrainGeometricError(
+            Ellipsoid::WGS84(),
+            westMetadata->bounds),
+        westMetadata->geometricError,
+        1e-9);
 
     const std::vector<TileKey> rootChildren =
         provider.childTiles(westRoot);
@@ -1140,8 +1146,16 @@ TEST(QuantizedMeshTerrainProviderTest,
     ASSERT_TRUE(availableChild.has_value());
     ASSERT_TRUE(availableChild->parentKey.has_value());
     EXPECT_EQ(westRoot, *availableChild->parentKey);
-    EXPECT_LT(availableChild->geometricError,
-              westMetadata->geometricError);
+    EXPECT_NEAR(
+        calcLayerJsonTerrainGeometricError(
+            Ellipsoid::WGS84(),
+            availableChild->bounds),
+        availableChild->geometricError,
+        1e-9);
+    EXPECT_NEAR(
+        westMetadata->geometricError * 0.5,
+        availableChild->geometricError,
+        1e-9);
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
