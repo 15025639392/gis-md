@@ -407,7 +407,10 @@ void installQuantizedMeshTerrainContent(TilesetTile& tile,
             tile.bounds,
             false,
             {},
-            projection);
+            projection,
+            std::nullopt,
+            QuantizedMeshContentLoader::RasterOverlayDetailsMode::
+                GenerateTerrainProjection);
     ASSERT_EQ(TileLoadStatus::Renderable, loadResult.status);
     ASSERT_NE(nullptr, loadResult.gltfModel);
     ASSERT_TRUE(loadResult.terrainRenderContent);
@@ -1676,6 +1679,7 @@ TEST(TilesetQuantizedMeshTest,
      QuantizedMeshProviderLoadResultMetadataReachesTileLifecycle) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
+    QuantizedMeshTerrainProvider* terrainProvider = provider.get();
     QueuedContentPlatformBridge bridge;
     provider->setPlatformBridge(&bridge);
     DummyRenderDevice device;
@@ -1688,6 +1692,7 @@ TEST(TilesetQuantizedMeshTest,
         std::move(provider));
 
     const TileKey key{"Geographic-TMS", 2, 1, 1};
+    terrainProvider->noteTerrainAvailabilityUpsampledChild(key);
     TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
     ASSERT_NE(nullptr, tile);
     ASSERT_TRUE(tile->boundingVolume.has_value());
