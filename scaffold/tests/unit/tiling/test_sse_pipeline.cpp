@@ -4359,12 +4359,14 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
         &parent,
         0);
 
-    check(updateAfterInvalidation == RasterMappedToTilesetTile::MoreDetail::No,
-          "RasterMappedToTilesetTile: stale loading tile removal returns ready fallback detail state");
+    check(updateAfterInvalidation ==
+              RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: stale loading tile removal keeps pending detail state");
     check(childMapped.getReadyTile() == parentReady &&
-              childMapped.getLoadingTile() == nullptr &&
-              childMapped.getState() == RasterMappedToTilesetTile::State::Attached,
-          "RasterMappedToTilesetTile: stale loading tile with ready fallback normalizes to Attached");
+              childMapped.getLoadingTile() != nullptr &&
+              childMapped.getState() ==
+                  RasterMappedToTilesetTile::State::TemporarilyAttached,
+          "RasterMappedToTilesetTile: stale loading tile with ready fallback stays TemporarilyAttached");
 }
 
 void testRasterMappedFailedChildFollowsParentLoadingTile() {

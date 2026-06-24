@@ -168,8 +168,11 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         loadingTileSource_ = ReadyTileSource::None;
         mappedSourceTiles_ = {};
         directRasterTile_ = false;
+        originalFailed_ = false;
         if (_pReadyTile != nullptr) {
-            state_ = State::Attached;
+            state_ = readyTileSource_ == ReadyTileSource::Ancestor
+                ? State::TemporarilyAttached
+                : State::Attached;
         } else {
             state_ = State::Unattached;
         }
@@ -267,7 +270,9 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     // identity stable. Rectangle provider calls create per-mapping tiles, so a
     // ready-but-unattached mapping must not ask the provider for a fresh tile
     // on the next update.
-    if (_pLoadingTile == nullptr && _pReadyTile == nullptr) {
+    if (_pLoadingTile == nullptr &&
+        (_pReadyTile == nullptr ||
+         readyTileSource_ == ReadyTileSource::Ancestor)) {
         if (!tileProvider.isReady()) {
             // cesium-native mapOverlayToTile: provider not created/ready yet,
             // so use the overlay placeholder and do not invent a projection.
