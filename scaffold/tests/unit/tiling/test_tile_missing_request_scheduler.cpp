@@ -130,6 +130,7 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
                 &provider,
                 tiles,
                 &terrainCache,
+                true,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },
@@ -191,6 +192,7 @@ TEST(TileMissingRequestSchedulerTest, DoesNotRetryLegacyTerrainAfterEmptyMarkerC
                 nullptr,
                 tiles,
                 &terrainCache,
+                true,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },
@@ -248,6 +250,7 @@ TEST(
                 &contentProvider,
                 tiles,
                 &terrainCache,
+                true,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },
@@ -294,6 +297,7 @@ TEST(
                 &contentProvider,
                 tiles,
                 &terrainCache,
+                false,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },
@@ -340,6 +344,7 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileWithoutGltfSourceDoesNotQueue
                 &provider,
                 tiles,
                 &terrainCache,
+                true,
                 emptyContentRegistry},
             cacheKeyForTile,
             [&prepared](TilesetTile&, double) {
@@ -354,6 +359,60 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileWithoutGltfSourceDoesNotQueue
 
     EXPECT_EQ(outcome.issued, 0u);
     EXPECT_TRUE(prepared);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
+    EXPECT_EQ(tileRaw->content.loadState, TileLoadState::Unloaded);
+}
+
+TEST(TileMissingRequestSchedulerTest,
+     HeightmapCachePointerDoesNotEnableLegacyUpsampleWithoutRuntimePath) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    RetryContentProvider provider;
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey key{"test", 1, 0, 0};
+    const std::string cacheKey = cacheKeyForTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.upsampledFromParent = true;
+    TilesetTile* tileRaw = tile.get();
+    tiles[cacheKey] = std::move(tile);
+    bool prepared = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileMissingRequestScheduler::request(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileMissingRequestSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                tiles,
+                &terrainCache,
+                false,
+                emptyContentRegistry},
+            cacheKeyForTile,
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&tiles](const TileKey& tileKey) -> TilesetTile* {
+                const std::string lookupKey = cacheKeyForTile(tileKey);
+                auto it = tiles.find(lookupKey);
+                return it == tiles.end() ? nullptr : it->second.get();
+            });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_FALSE(prepared);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::Unloaded);
@@ -393,6 +452,7 @@ TEST(TileMissingRequestSchedulerTest, VirtualTerrainRootNeverRequestsProvider) {
                 nullptr,
                 tiles,
                 &terrainCache,
+                true,
                 emptyContentRegistry},
             cacheKeyForTile,
             [](TilesetTile&, double) { return false; },

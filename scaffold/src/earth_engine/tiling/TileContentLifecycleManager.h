@@ -146,6 +146,7 @@ private:
             rasterOverlays,
             tiles,
             useHeightmapSurfacePath ? &heightmapTerrainCache_ : nullptr,
+            useHeightmapSurfacePath,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,

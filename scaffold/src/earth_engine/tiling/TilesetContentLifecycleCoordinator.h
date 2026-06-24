@@ -31,6 +31,7 @@ struct TilesetContentLifecycleContext {
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>*
         terrainCache = nullptr;
+    bool useHeightmapSurfacePath = false;
     TileEmptyContentRegistry& emptyContentRegistry;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 20;
@@ -79,6 +80,7 @@ public:
                 context.contentProvider,
                 context.tiles,
                 context.terrainCache,
+                context.useHeightmapSurfacePath,
                 context.emptyContentRegistry},
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);

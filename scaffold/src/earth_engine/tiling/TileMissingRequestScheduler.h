@@ -22,6 +22,7 @@ struct TileMissingRequestSchedulerInput {
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
     const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>*
         terrainCache = nullptr;
+    bool useHeightmapSurfacePath = false;
     const TileEmptyContentRegistry& emptyContentRegistry;
 };
 
@@ -79,7 +80,8 @@ private:
         snapshot.upsampledFromParent =
             outTileState != nullptr &&
             outTileState->content.derivesTerrainFromParent();
-        snapshot.heightmapSurfacePathEnabled = input.terrainCache != nullptr;
+        snapshot.heightmapSurfacePathEnabled =
+            input.useHeightmapSurfacePath;
         snapshot.contentProviderSupportsTile =
             !snapshot.upsampledFromParent &&
             input.contentProvider &&
@@ -89,6 +91,7 @@ private:
             input.contentProvider->providesTerrainQuadtree();
         snapshot.terrainAlreadyCached =
             !snapshot.contentProviderOwnsTerrainQuadtree &&
+            input.useHeightmapSurfacePath &&
             input.terrainCache &&
             input.terrainCache->count(cacheKey) > 0;
         snapshot.hasRenderContent =
