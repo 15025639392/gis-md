@@ -21548,7 +21548,6 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
                 budget,
                 &provider,
                 tiles,
-                true,
                 emptyContentRegistry},
             testCacheKeyForTile,
             [](TilesetTile&, double) { return false; },

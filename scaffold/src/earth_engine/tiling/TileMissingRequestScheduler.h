@@ -20,7 +20,6 @@ struct TileMissingRequestSchedulerInput {
     FrameResourceBudget& budget;
     TilesetContentProvider* contentProvider = nullptr;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
-    bool useHeightmapSurfacePath = false;
     const TileEmptyContentRegistry& emptyContentRegistry;
 };
 

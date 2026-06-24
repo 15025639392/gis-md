@@ -58,13 +58,9 @@ public:
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
         uint32_t smoothedMainThreadUploadLimit,
-        bool useHeightmapSurfacePath,
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
-        if (!useHeightmapSurfacePath) {
-            heightmapTerrainCache_.clear();
-        }
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
             loadRequests,
             makeContext(
@@ -76,8 +72,7 @@ public:
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
                 currentFrameTimeSeconds,
-                smoothedMainThreadUploadLimit,
-                useHeightmapSurfacePath),
+                smoothedMainThreadUploadLimit),
             budget,
             std::forward<PrepareUpsampleSourceTileFn>(
                 prepareUpsampleSourceTile),
@@ -137,15 +132,13 @@ private:
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
-        uint32_t smoothedMainThreadUploadLimit,
-        bool useHeightmapSurfacePath) {
+        uint32_t smoothedMainThreadUploadLimit) {
         return TilesetContentLifecycleContext{
             loadLifecycle_,
             contentProvider,
             device,
             rasterOverlays,
             tiles,
-            useHeightmapSurfacePath,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,

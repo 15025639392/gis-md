@@ -29,7 +29,6 @@ struct TilesetContentLifecycleContext {
     RenderDevice* device = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
-    bool useHeightmapSurfacePath = false;
     TileEmptyContentRegistry& emptyContentRegistry;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 20;
@@ -77,7 +76,6 @@ public:
                 *budget,
                 context.contentProvider,
                 context.tiles,
-                context.useHeightmapSurfacePath,
                 context.emptyContentRegistry},
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);
