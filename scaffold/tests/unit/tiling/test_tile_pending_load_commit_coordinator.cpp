@@ -12,6 +12,7 @@
 #include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileContentAccess.h"
+#include "earth_engine/tiling/TileLoadStatePredicates.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
 #include "earth_engine/tiling/TilePendingUploadFrameProcessor.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
@@ -479,6 +480,31 @@ void expectContentTerminalIgnoresMetadata(TileLoadStatus status,
 }
 
 } // namespace
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     AvailabilityBoundaryResolvedStateUsesCesiumNativeLoadStateOrdering) {
+    EXPECT_FALSE(TileLoadStatePredicates::
+                     hasResolvedAvailabilityBoundaryContent(
+                         TileLoadState::Unloading));
+    EXPECT_FALSE(TileLoadStatePredicates::
+                     hasResolvedAvailabilityBoundaryContent(
+                         TileLoadState::FailedTemporarily));
+    EXPECT_FALSE(TileLoadStatePredicates::
+                     hasResolvedAvailabilityBoundaryContent(
+                         TileLoadState::Unloaded));
+    EXPECT_FALSE(TileLoadStatePredicates::
+                     hasResolvedAvailabilityBoundaryContent(
+                         TileLoadState::ContentLoading));
+    EXPECT_TRUE(TileLoadStatePredicates::
+                    hasResolvedAvailabilityBoundaryContent(
+                        TileLoadState::ContentLoaded));
+    EXPECT_TRUE(TileLoadStatePredicates::
+                    hasResolvedAvailabilityBoundaryContent(
+                        TileLoadState::Done));
+    EXPECT_TRUE(TileLoadStatePredicates::
+                    hasResolvedAvailabilityBoundaryContent(
+                        TileLoadState::Failed));
+}
 
 TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainContentFailedOrRetryTerminalDoesNotEnsureChildrenLikeCesiumNative) {
