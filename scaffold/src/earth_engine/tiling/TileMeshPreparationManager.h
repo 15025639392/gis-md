@@ -28,12 +28,12 @@ public:
 
     void prepareRenderableTile(TilesetTile& tile);
     void prepareContentTerrainFrame(TilesetTile& tile);
-    void ensureLegacySurfaceMesh(TilesetTile& tile);
     bool prepareUpsampleSourceTile(
         TilesetTile& tile,
         double priority);
 
 private:
+    void prepareHeightmapSurfaceFrame(TilesetTile& tile);
     void markResourcesDirty();
     void queueTileLoad(const TileKey& key,
                        TileLoadPriorityGroup group,

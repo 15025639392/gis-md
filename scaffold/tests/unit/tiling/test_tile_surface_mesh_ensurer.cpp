@@ -307,3 +307,44 @@ TEST(TileSurfaceMeshEnsurerTest,
     EXPECT_EQ(2u, resourceRevision);
     EXPECT_TRUE(cache.cacheBytesDirty());
 }
+
+TEST(TileSurfaceMeshEnsurerTest,
+     ContentTerrainManagerUpsampleRejectsLegacySurfaceAncestor) {
+    TileContentLifecycleManager lifecycle;
+    TileContentCacheManager cache;
+    uint64_t resourceRevision = 1;
+    TileContentResourceInvalidator invalidator(resourceRevision, cache);
+    TileLoadQueue loadQueue;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    TileMeshPreparationManager manager(
+        lifecycle,
+        invalidator,
+        loadQueue,
+        true,
+        false,
+        nullptr,
+        overlays);
+
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(parent.bounds, 4)));
+    parent.markRenderContentDone();
+
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &parent);
+    parent.children.push_back(&child);
+    child.content.markTerrainAvailabilityUpsample();
+
+    EXPECT_FALSE(manager.prepareUpsampleSourceTile(child, 10.0));
+    EXPECT_FALSE(child.content.renderContent.hasSurfaceMesh());
+    EXPECT_NE(TileLoadState::Done, child.content.loadState);
+    EXPECT_TRUE(loadQueue.empty());
+    EXPECT_EQ(2u, resourceRevision);
+    EXPECT_TRUE(cache.cacheBytesDirty());
+    EXPECT_FALSE(parent.content.renderContent.hasSurfaceMesh());
+}

@@ -33,7 +33,7 @@ void TileMeshPreparationManager::prepareRenderableTile(TilesetTile& tile) {
         prepareContentTerrainFrame(tile);
         return;
     }
-    ensureLegacySurfaceMesh(tile);
+    prepareHeightmapSurfaceFrame(tile);
 }
 
 void TileMeshPreparationManager::prepareContentTerrainFrame(TilesetTile& tile) {
@@ -45,7 +45,8 @@ void TileMeshPreparationManager::prepareContentTerrainFrame(TilesetTile& tile) {
         });
 }
 
-void TileMeshPreparationManager::ensureLegacySurfaceMesh(TilesetTile& tile) {
+void TileMeshPreparationManager::prepareHeightmapSurfaceFrame(
+    TilesetTile& tile) {
     if (!useHeightmapSurfacePath_) {
         prepareContentTerrainFrame(tile);
         return;
