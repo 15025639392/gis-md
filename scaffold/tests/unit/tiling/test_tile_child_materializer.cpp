@@ -453,6 +453,56 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
+     ExistingContentChildrenClearAvailabilityBoundaryRetryLikeCesiumNative) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 0, 0}));
+    parent.content.loadState = TileLoadState::ContentLoading;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    int ensureCalls = 0;
+    auto ensure = [&tiles, &scheme, &ensureCalls](
+                      const TileKey& key) -> TilesetTile* {
+        ++ensureCalls;
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles
+                     .emplace(
+                         cacheKey,
+                         std::make_unique<TilesetTile>(
+                             key,
+                             scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+    auto unavailable = [](const TileKey&) {
+        return TileAvailabilityState::NotAvailable;
+    };
+
+    const TileChildFrameMaterializeResult result =
+        TileChildFrameMaterializer::ensureChildren(
+            TileChildFrameMaterializeInput{
+                parent,
+                {TileKey{"Geographic-TMS", 1, 0, 0}},
+                2,
+                true,
+                true},
+            ensure,
+            unavailable);
+
+    EXPECT_TRUE(result.changed);
+    EXPECT_FALSE(result.retryLater);
+    EXPECT_EQ(1, ensureCalls);
+    ASSERT_EQ(1u, parent.children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
+              parent.children.front()->key);
+    EXPECT_FALSE(parent.children.front()->content.upsampledFromParent);
+}
+
+TEST(TileChildMaterializerTest,
      AvailabilityBoundaryResolvedStatesMatchCesiumNative) {
     for (TileLoadState waitingState : {
              TileLoadState::Unloading,
