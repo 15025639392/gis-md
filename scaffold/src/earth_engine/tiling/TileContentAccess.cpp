@@ -31,11 +31,6 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
     return true;
 }
 
-const LegacyHeightmapTerrainCache& emptyLegacyHeightmapTerrainCache() {
-    static const LegacyHeightmapTerrainCache empty;
-    return empty;
-}
-
 } // namespace
 
 TileContentAccess TileContentAccess::forContentTerrain(
@@ -97,10 +92,13 @@ TileContentAccess::TileContentAccess(
     size_t rasterOverlayCount)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
-      legacyHeightmapTerrainProvider_(legacyHeightmapTerrainProvider),
       contentProvider_(contentProvider),
-      legacyHeightmapTerrainCache_(legacyHeightmapTerrainCache),
       terrainOwnership_(terrainOwnership),
+      legacyHeightmapContent_(
+          legacyHeightmapTerrainProvider,
+          contentProvider,
+          tileScheme,
+          legacyHeightmapTerrainCache),
       rasterOverlayCount_(rasterOverlayCount) {}
 
 TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
@@ -179,18 +177,11 @@ bool TileContentAccess::isAvailabilityBoundaryTile(
     if (contentProviderOwnsTerrainQuadtree()) {
         return contentTerrainAvailabilityBoundaryTile(tile);
     }
-    return legacyHeightmapAvailabilityBoundaryTile(tile);
+    return legacyHeightmapContent_.isAvailabilityBoundaryTile(tile);
 }
 
 bool TileContentAccess::contentProviderOwnsTerrainQuadtree() const {
     return terrainOwnership_ == TerrainOwnership::ContentProvider;
-}
-
-bool TileContentAccess::legacyHeightmapAvailabilityBoundaryTile(
-    const TilesetTile& tile) const {
-    return legacyHeightmapTerrainProvider_ &&
-           legacyHeightmapTerrainProvider_->isAvailabilityBoundaryLevel(
-               tile.key.z);
 }
 
 bool TileContentAccess::contentTerrainAvailabilityBoundaryTile(
@@ -222,23 +213,7 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
             });
     }
 
-    return TileRefinementAvailabilityResolver::
-        canRefineLegacyHeightmapSurfaceOrExternalContent(
-        tile,
-        contentProvider_,
-        legacyHeightmapTerrainProvider_,
-        tileScheme_,
-        legacyHeightmapTerrainCache_ ? *legacyHeightmapTerrainCache_
-                                     : emptyLegacyHeightmapTerrainCache(),
-        [](const TileKey& key) {
-            return TileCacheKey::forTile(key);
-        },
-        [this](const TilesetTile& candidate) {
-            return isAvailabilityBoundaryTile(candidate);
-        },
-        [](const TilesetTile& candidate) {
-            return candidate.content.loadState > TileLoadState::ContentLoading;
-        });
+    return legacyHeightmapContent_.canRefine(tile);
 }
 
 TileAvailabilityState TileContentAccess::availabilityState(
@@ -246,14 +221,7 @@ TileAvailabilityState TileContentAccess::availabilityState(
     if (contentProviderOwnsTerrainQuadtree()) {
         return contentTerrainAvailabilityState(key);
     }
-    return legacyHeightmapAvailabilityState(key);
-}
-
-TileAvailabilityState TileContentAccess::legacyHeightmapAvailabilityState(
-    const TileKey& key) const {
-    return legacyHeightmapTerrainProvider_
-        ? legacyHeightmapTerrainProvider_->availabilityState(key)
-        : TileAvailabilityState::NotAvailable;
+    return legacyHeightmapContent_.availabilityState(key);
 }
 
 TileAvailabilityState TileContentAccess::contentTerrainAvailabilityState(

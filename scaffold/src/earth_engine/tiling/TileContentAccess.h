@@ -2,6 +2,7 @@
 
 #include "TileKey.h"
 #include "TileContentLifecycleManager.h"
+#include "TileLegacyHeightmapContentResolver.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TilesetTile.h"
 
@@ -60,21 +61,16 @@ private:
 
     bool contentProviderOwnsTerrainQuadtree() const;
     bool hasTerrainQuadtree() const;
-    bool legacyHeightmapAvailabilityBoundaryTile(
-        const TilesetTile& tile) const;
     bool contentTerrainAvailabilityBoundaryTile(const TilesetTile& tile) const;
     TileAvailabilityState availabilityState(const TileKey& key) const;
-    TileAvailabilityState legacyHeightmapAvailabilityState(
-        const TileKey& key) const;
     TileAvailabilityState contentTerrainAvailabilityState(
         const TileKey& key) const;
 
     TilesetTileRegistry& tileRegistry_;
     const TileScheme& tileScheme_;
-    const TerrainProvider* legacyHeightmapTerrainProvider_ = nullptr;
     const TilesetContentProvider* contentProvider_ = nullptr;
-    const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache_ = nullptr;
     TerrainOwnership terrainOwnership_ = TerrainOwnership::None;
+    TileLegacyHeightmapContentResolver legacyHeightmapContent_;
     size_t rasterOverlayCount_ = 0;
 };
 
