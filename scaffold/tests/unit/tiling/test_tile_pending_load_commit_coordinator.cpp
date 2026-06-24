@@ -854,7 +854,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadGeneratesRasterDetailsFromUpdatedBoundsBeforeTileContentBounds) {
+     ContentUploadKeepsTerrainRasterDetailsFromLoadResultBeforeReload) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain-updated-bounds";
     TilesetTile tile(key, Rectangle{});
@@ -877,7 +877,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadPriorityGroup::Normal,
         0.0,
         makeTerrainContentContentResult(
-            std::make_unique<GltfModel>(),
+            makeCommitCoordinatorQuadTerrainGltfModel(updatedRectangle),
             std::move(metadata))};
 
     RasterOverlay overlay(
@@ -927,19 +927,19 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     const RasterOverlayDetails& committedDetails =
         tile.content.renderContent.rasterOverlayDetails();
-    const Rectangle* rectangle =
+    const Rectangle* geographic =
+        committedDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    const Rectangle* webMercator =
         committedDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
-    ASSERT_NE(nullptr, rectangle);
-
-    const Rectangle expectedUpdatedProjection = projectRectangleSimple(
-        WebMercatorProjection(Ellipsoid::WGS84()),
-        updatedRectangle);
-    const Rectangle staleContentProjection = projectRectangleSimple(
-        WebMercatorProjection(Ellipsoid::WGS84()),
-        staleContentRectangle);
-    EXPECT_EQ(expectedUpdatedProjection, *rectangle);
-    EXPECT_NE(staleContentProjection, *rectangle);
+    ASSERT_NE(nullptr, geographic);
+    EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
+    EXPECT_EQ(updatedRectangle, *geographic);
+    EXPECT_EQ(nullptr, webMercator);
+    EXPECT_EQ(-1,
+              committedDetails.textureCoordinateIDForProjection(
+                  RasterOverlayProjection::WebMercator));
     EXPECT_EQ(updatedRectangle, committedDetails.boundingRegion.rectangle);
     EXPECT_FALSE(tile.contentBoundingVolume.has_value());
     ASSERT_TRUE(tile.initialContentBoundingVolume.has_value());
@@ -1033,12 +1033,15 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         16.0,
         budget);
 
-    EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
+    EXPECT_EQ(1u, tile.rasterOverlayState.missingProjections().size());
+    EXPECT_EQ(RasterOverlayProjection::WebMercator,
+              tile.rasterOverlayState.missingProjections().front());
     RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
     ASSERT_NE(nullptr, mapped);
     ASSERT_NE(nullptr, mapped->getLoadingTile());
-    EXPECT_NE(RasterOverlayTile::LoadState::Placeholder,
+    EXPECT_EQ(RasterOverlayTile::LoadState::Placeholder,
               mapped->getLoadingTile()->getState());
+    EXPECT_EQ(0, activeOverlay.getCachedTileCount());
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
