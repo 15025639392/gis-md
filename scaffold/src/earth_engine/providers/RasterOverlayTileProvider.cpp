@@ -824,6 +824,16 @@ bool isResolvedRasterSourceResult(const RasterSourceResult& source) {
     return source.image || source.terminalFailure;
 }
 
+bool hasNonAncestorRasterSourceImage(
+    const std::vector<RasterSourceResult>& sources) {
+    return std::any_of(
+        sources.begin(),
+        sources.end(),
+        [](const RasterSourceResult& source) {
+            return source.image && !source.sourceSubset.has_value();
+        });
+}
+
 void appendUniqueCredits(std::vector<std::string>& target,
                          const std::vector<std::string>& credits) {
     for (const std::string& credit : credits) {
@@ -1204,12 +1214,7 @@ RasterOverlayTileProvider::CompositeImageResult composeMappedSourceImageSet(
     bool emptyWhenOnlyAncestorFallback) {
     const bool haveAnyUsefulImageData =
         !emptyWhenOnlyAncestorFallback ||
-        std::any_of(sources.begin(),
-                    sources.end(),
-                    [](const RasterSourceResult& source) {
-                        return source.image &&
-                               !source.sourceSubset.has_value();
-                    });
+        hasNonAncestorRasterSourceImage(sources);
     if (!haveAnyUsefulImageData) {
         RasterOverlayTileProvider::CompositeImageResult result;
         result.image = std::make_unique<DecodedImage>();
@@ -2114,10 +2119,7 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
     int maximumSourceZoom) {
     std::vector<RasterSourceResult> sources;
     sources.reserve(publicSources.size());
-    bool haveAnyUsefulImageData = false;
     for (auto& source : publicSources) {
-        haveAnyUsefulImageData |=
-            source.image != nullptr && !source.sourceSubset.has_value();
         sources.push_back(RasterSourceResult{
             source.key,
             source.bounds,
@@ -2128,7 +2130,7 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             std::move(source.credits),
             false});
     }
-    if (!haveAnyUsefulImageData) {
+    if (!hasNonAncestorRasterSourceImage(sources)) {
         CompositeImageResult result;
         result.image = std::make_unique<DecodedImage>();
         for (RasterSourceResult& source : sources) {

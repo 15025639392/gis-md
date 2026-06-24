@@ -1671,6 +1671,69 @@ TEST(RasterOverlayLifecycleTest,
     }
 }
 
+TEST(RasterOverlayLifecycleTest,
+     MappedRasterUsesMixedLevelsWhenSourceTileFailsLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(0, 8);
+
+    const int expectedLevel = 8;
+    const TileKey centerKey =
+        scheme->positionToTile(0.1, 0.2, expectedLevel);
+    const Rectangle centerBounds = scheme->tileToRectangle(centerKey);
+    const Rectangle spanningFourTiles(
+        centerBounds.west() - centerBounds.width() * 0.5,
+        centerBounds.south() - centerBounds.height() * 0.5,
+        centerBounds.west() + centerBounds.width() * 0.5,
+        centerBounds.south() + centerBounds.height() * 0.5);
+
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, spanningFourTiles),
+            static_cast<double>(imagery.tileWidth() * 4),
+            static_cast<double>(imagery.tileHeight() * 4));
+
+    ASSERT_NE(nullptr, mapping.tile);
+    ASSERT_TRUE(mapping.tile->isMappedRasterTile());
+    ASSERT_EQ(expectedLevel, mapping.sourceTiles.sourceZoom);
+    ASSERT_EQ(4u, mapping.sourceTiles.sourceKeys.size());
+
+    imagery.failingKey = mapping.sourceTiles.sourceKeys.back();
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    ASSERT_TRUE(provider.loadTileThrottled(*mapping.tile, &budget));
+    EXPECT_EQ(4u, budget.rasterNetworkRequestsIssued());
+
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+
+    ASSERT_EQ(RasterOverlayTile::LoadState::Loaded,
+              mapping.tile->getState());
+    ASSERT_EQ(1, uploaderPtr->uploadCount);
+    ASSERT_FALSE(uploaderPtr->lastUpload.pixels.empty());
+
+    const std::vector<uint8_t>& pixels = uploaderPtr->lastUpload.pixels;
+    EXPECT_TRUE(std::any_of(
+        pixels.begin(),
+        pixels.end(),
+        [](uint8_t value) {
+            return value == 7;
+        }));
+    EXPECT_TRUE(std::any_of(
+        pixels.begin(),
+        pixels.end(),
+        [](uint8_t value) {
+            return value == 8;
+        }));
+}
+
 TEST(
     RasterOverlayLifecycleTest,
     MappedRasterTileCarriesMappedSourceListForLoadLikeCesiumNative) {
