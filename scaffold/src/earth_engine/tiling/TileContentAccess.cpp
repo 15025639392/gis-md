@@ -185,7 +185,13 @@ TileContentAccess::ensureTileChildren(
                     return availabilityState(key);
                 });
         if (hasUpsampledChild) {
-            contentProvider_->noteTerrainAvailabilityUpsampledChild(tile.key);
+            if (tile.children.empty()) {
+                contentProvider_->noteTerrainAvailabilityLatentUpsampledChild(
+                    tile.key);
+            } else {
+                contentProvider_->noteTerrainAvailabilityUpsampledChild(
+                    tile.key);
+            }
         } else {
             contentProvider_->clearTerrainAvailabilityUpsampledChild(tile.key);
         }

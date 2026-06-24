@@ -136,6 +136,8 @@ public:
     }
     virtual void applyTerrainAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>&) {}
+    virtual void noteTerrainAvailabilityLatentUpsampledChild(
+        const TileKey&) const {}
     virtual void noteTerrainAvailabilityUpsampledChild(const TileKey&) const {}
     virtual void clearTerrainAvailabilityUpsampledChild(
         const TileKey&) const {}

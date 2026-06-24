@@ -1418,11 +1418,6 @@ bool QuantizedMeshTerrainProvider::
         return false;
     }
 
-    if (parentsWithTerrainUpsampledChildren_.find(key) !=
-        parentsWithTerrainUpsampledChildren_.end()) {
-        return true;
-    }
-
     const std::vector<TileKey> children = quadtreeChildren(key);
     uint32_t availableChildren = 0;
     for (const TileKey& child : children) {
@@ -1430,7 +1425,16 @@ bool QuantizedMeshTerrainProvider::
             ++availableChildren;
         }
     }
-    return availableChildren > 0 && availableChildren < children.size();
+    if (availableChildren > 0 && availableChildren < children.size()) {
+        return true;
+    }
+    return parentsWithTerrainUpsampledChildren_.find(key) !=
+           parentsWithTerrainUpsampledChildren_.end();
+}
+
+void QuantizedMeshTerrainProvider::
+    noteTerrainAvailabilityLatentUpsampledChild(const TileKey& key) const {
+    (void)key;
 }
 
 void QuantizedMeshTerrainProvider::noteTerrainAvailabilityUpsampledChild(

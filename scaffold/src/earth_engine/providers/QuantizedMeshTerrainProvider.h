@@ -101,6 +101,8 @@ public:
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
         applyAvailabilityUpdates(updates);
     }
+    void noteTerrainAvailabilityLatentUpsampledChild(
+        const TileKey& key) const override;
     void noteTerrainAvailabilityUpsampledChild(
         const TileKey& key) const override;
     void clearTerrainAvailabilityUpsampledChild(

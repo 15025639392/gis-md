@@ -5406,6 +5406,11 @@ public:
         notedUpsampledParents.push_back(key);
     }
 
+    void noteTerrainAvailabilityLatentUpsampledChild(
+        const TileKey& key) const override {
+        notedLatentUpsampledParents.push_back(key);
+    }
+
     void clearTerrainAvailabilityUpsampledChild(
         const TileKey& key) const override {
         clearedUpsampledParents.push_back(key);
@@ -5413,6 +5418,7 @@ public:
 
     std::vector<TileKey> availableKeys;
     std::vector<PendingRequest> pendingRequests;
+    mutable std::vector<TileKey> notedLatentUpsampledParents;
     mutable std::vector<TileKey> notedUpsampledParents;
     mutable std::vector<TileKey> clearedUpsampledParents;
     int metadataAvailabilityLevels = 1;
@@ -11096,9 +11102,10 @@ void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.empty(),
           "Tileset: availability boundary waits for content before child creation like cesium-native");
-    check(rawProvider->notedUpsampledParents.size() == 1 &&
-              rawProvider->notedUpsampledParents.back() == rootKey,
-          "Tileset: availability boundary records upsampled child state from availability before children exist like cesium-native");
+    check(rawProvider->notedUpsampledParents.empty() &&
+              rawProvider->notedLatentUpsampledParents.size() == 1 &&
+              rawProvider->notedLatentUpsampledParents.back() == rootKey,
+          "Tileset: availability boundary records latent upsampled child state from availability before children exist like cesium-native");
 
     check(rawProvider->completeWithEmpty(rootKey),
           "Tileset: availability boundary content completes");

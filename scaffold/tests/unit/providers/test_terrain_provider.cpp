@@ -880,6 +880,65 @@ TEST(QuantizedMeshTerrainProviderTest,
 
 TEST(
     QuantizedMeshTerrainProviderTest,
+    WebMercatorRequestTileContentIgnoresLatentUpsampleMarkerWhenAllChildrenAvailableLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 12,
+      "available": [
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 1, "startY": 1, "endX": 1, "endY": 1}],
+        [{"startX": 2, "startY": 2, "endX": 3, "endY": 3}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"XYZ-WebMercator", 1, 1, 1};
+    provider.noteTerrainAvailabilityLatentUpsampledChild(key);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TileContentLoadResult completed;
+
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    EXPECT_TRUE(completed.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(completed.metadata.rasterOverlayDetails.has_value());
+}
+
+TEST(
+    QuantizedMeshTerrainProviderTest,
     WebMercatorRequestTileContentKeepsRasterOverlayDetailsForUpsampleChildLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
