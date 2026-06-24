@@ -927,6 +927,85 @@ TEST(TileLoadSchedulerTest,
 
 TEST(
     TileLoadSchedulerTest,
+    FailedGltfTerrainUpsampleQueuesFailedTerminalLikeCesiumNative) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    const Rectangle parentBounds =
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0);
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(
+        childKey,
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 0.0),
+        &parent);
+    parent.children.push_back(&child);
+    child.content.markTerrainAvailabilityUpsample();
+    auto parentModel = makeSchedulerQuadTerrainGltfModel(parentBounds);
+    GltfPrimitive& primitive = parentModel->primitives.front();
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.75f, 0.75f},
+        std::array<float, 2>{1.0f, 0.75f},
+        std::array<float, 2>{0.75f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    parent.content.renderContent.setGltfContent(std::move(parentModel));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    bool marked = false;
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                childKey,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr},
+            cacheKeyForTile,
+            [&child](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                tileState = &child;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                snapshot.loadState = child.content.loadState;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) {
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(1u, outcome.issued);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_TRUE(marked);
+    EXPECT_EQ(1u, lifecycle.counts().gltfTerrainTerminalResults);
+    EXPECT_EQ(0u, lifecycle.counts().gltfTerrainUploads);
+
+    std::optional<PendingTileLoad> terminal;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        terminal =
+            lifecycle.pendingLoads().takeHighestPriorityTerminalResult(
+                budget);
+    }
+    ASSERT_TRUE(terminal.has_value());
+    EXPECT_EQ(TileLoadDomain::TerrainContent, terminal->domain);
+    EXPECT_EQ(TileLoadStatus::Failed, terminal->result.status);
+}
+
+TEST(
+    TileLoadSchedulerTest,
     ProtectedUnloadingTerrainSourceCanFinishQueuedUpsampleLikeCesiumNative) {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};

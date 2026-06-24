@@ -101,7 +101,8 @@ public:
                     TileGltfTerrainUpsampledChildMaterializer::
                         createLoadResult(*tileState);
                 if (!gltfUpsample) {
-                    continue;
+                    gltfUpsample =
+                        TileLoadResult::createTerminal(TileLoadStatus::Failed);
                 }
                 const TileLoadDispatchResult dispatchResult =
                     TileLoadRequestDispatcher::queueUpsampledLoad(
