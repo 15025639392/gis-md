@@ -85,18 +85,21 @@ struct TileChildMaterializer {
         for (const ChildAvailability& childInfo : children) {
             TilesetTile* child = ensureTile(childInfo.key);
             if (!child) continue;
-            child->geometricError = parent.geometricError * 0.5;
-            child->refine = parent.refine;
-            const double minimumHeight =
-                TileBoundsMetrics::terrainMinimumHeight(parent);
-            const double maximumHeight =
-                TileBoundsMetrics::terrainMaximumHeight(parent);
-            child->boundingVolume = TileBoundingVolume::fromRegion(
-                child->bounds,
-                minimumHeight,
-                maximumHeight);
-            child->contentBoundingVolume.reset();
-            if (!child->content.renderContent.isRenderContentReady()) {
+            const bool hasAcceptedTerrainContent =
+                TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
+                    *child);
+            if (!hasAcceptedTerrainContent) {
+                child->geometricError = parent.geometricError * 0.5;
+                child->refine = parent.refine;
+                const double minimumHeight =
+                    TileBoundsMetrics::terrainMinimumHeight(parent);
+                const double maximumHeight =
+                    TileBoundsMetrics::terrainMaximumHeight(parent);
+                child->boundingVolume = TileBoundingVolume::fromRegion(
+                    child->bounds,
+                    minimumHeight,
+                    maximumHeight);
+                child->contentBoundingVolume.reset();
                 TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                     *child,
                     parent);
@@ -118,7 +121,7 @@ struct TileChildMaterializer {
                 } else {
                     child->content.clearUpsampleKind();
                 }
-                if (!child->content.renderContent.isRenderContentReady()) {
+                if (!hasAcceptedTerrainContent) {
                     TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                         *child,
                         parent);

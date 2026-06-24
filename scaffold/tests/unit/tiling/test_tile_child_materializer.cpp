@@ -809,10 +809,13 @@ TEST(TileChildMaterializerTest,
     ASSERT_NE(nullptr, readyGltfChild);
     readyGltfChild->content.renderContent.setGltfContent(
         std::make_unique<GltfModel>());
+    readyGltfChild->content.renderContent.setTerrainRenderContent(true);
     readyGltfChild->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     readyGltfChild->content.renderContent.markRenderContentReady();
     readyGltfChild->content.renderContent.setTerrainHeightRange(1.0, 2.0);
+    readyGltfChild->boundingVolume =
+        TileBoundingVolume::fromRegion(readyGltfChild->bounds, 1.0, 2.0);
 
     EXPECT_TRUE(TileChildMaterializer::materializeTerrainChildren(
         parent,
@@ -832,6 +835,9 @@ TEST(TileChildMaterializerTest,
     EXPECT_DOUBLE_EQ(
         2.0,
         readyGltfChild->content.renderContent.terrainMaximumHeight());
+    ASSERT_TRUE(readyGltfChild->boundingVolume.has_value());
+    EXPECT_DOUBLE_EQ(1.0, readyGltfChild->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(2.0, readyGltfChild->boundingVolume->maximumHeight);
 }
 
 TEST(TileChildMaterializerTest,
