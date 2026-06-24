@@ -74,7 +74,7 @@ public:
         metadata.key = key;
         metadata.bounds = WebMercatorProjection::maximumGlobeRectangle();
         metadata.hasExplicitBounds = true;
-        metadata.boundingVolume = TileBoundingVolume::fromRegion(
+        metadata.boundingVolume = TileBoundingVolume::fromLooseRegion(
             metadata.bounds,
             -1000.0,
             9000.0);
@@ -306,6 +306,7 @@ TEST(TileSelectionRootPolicyTest, VirtualTerrainRootIsEmptyDoneRefineNode) {
         1e-12);
     EXPECT_DOUBLE_EQ(root->boundingVolume->minimumHeight, -1000.0);
     EXPECT_DOUBLE_EQ(root->boundingVolume->maximumHeight, 9000.0);
+    EXPECT_TRUE(root->boundingVolume->looseFittingHeights);
     EXPECT_FALSE(root->contentBoundingVolume.has_value());
     EXPECT_EQ(root->rasterOverlayState.mappings().size(), 0u);
 }
@@ -345,6 +346,7 @@ TEST(TileSelectionRootPolicyTest, VirtualGeographicRootLinksLevelZeroDataTiles) 
         EXPECT_EQ(child->boundingVolume->kind, TileBoundingVolumeKind::Region);
         EXPECT_DOUBLE_EQ(child->boundingVolume->minimumHeight, -1000.0);
         EXPECT_DOUBLE_EQ(child->boundingVolume->maximumHeight, 9000.0);
+        EXPECT_TRUE(child->boundingVolume->looseFittingHeights);
         EXPECT_FALSE(child->contentBoundingVolume.has_value());
         EXPECT_TRUE(child->content.renderContent.hasTerrainHeightRange());
         EXPECT_DOUBLE_EQ(
@@ -417,8 +419,13 @@ TEST(TileSelectionRootPolicyTest,
     const TileKey levelZeroKey{"Geographic-TMS", 0, 1, 0};
     TilesetTile* levelZero = fixture.contentAccess.ensureTile(levelZeroKey);
     ASSERT_NE(nullptr, levelZero);
+    auto acceptedModel = std::make_unique<GltfModel>();
+    acceptedModel->rasterOverlayDetails.setGeographicRectangle(
+        levelZero->bounds,
+        -1000.0,
+        9000.0);
     levelZero->content.renderContent.prepareGltfContent(
-        std::make_unique<GltfModel>(),
+        std::move(acceptedModel),
         Mat4::identity());
     levelZero->content.renderContent.setTerrainRenderContent(true);
     levelZero->content.renderContent.addGltfPrimitiveResource(
@@ -462,6 +469,7 @@ TEST(
         1e-5);
     ASSERT_TRUE(root->boundingVolume.has_value());
     EXPECT_EQ(root->boundingVolume->kind, TileBoundingVolumeKind::Region);
+    EXPECT_TRUE(root->boundingVolume->looseFittingHeights);
     EXPECT_NEAR(
         root->boundingVolume->region.south(),
         expectedBounds.south(),
@@ -507,6 +515,7 @@ TEST(TileSelectionRootPolicyTest, VirtualWebMercatorRootLinksLevelZeroDataTile) 
         TileBoundingVolumeKind::Region);
     EXPECT_DOUBLE_EQ(root->children[0]->boundingVolume->minimumHeight, -1000.0);
     EXPECT_DOUBLE_EQ(root->children[0]->boundingVolume->maximumHeight, 9000.0);
+    EXPECT_TRUE(root->children[0]->boundingVolume->looseFittingHeights);
     EXPECT_FALSE(root->children[0]->contentBoundingVolume.has_value());
     EXPECT_EQ(root->rasterOverlayState.mappings().size(), 0u);
 }

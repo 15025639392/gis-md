@@ -26,7 +26,7 @@ void initializeVirtualTerrainRoot(TilesetTile& tile) {
         calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), tile.bounds);
     tile.refine = TileRefine::Replace;
     tile.unconditionallyRefine = true;
-    tile.boundingVolume = TileBoundingVolume::fromRegion(
+    tile.boundingVolume = TileBoundingVolume::fromLooseRegion(
         tile.bounds,
         kLooseMinimumHeight,
         kLooseMaximumHeight);

@@ -1350,7 +1350,7 @@ QuantizedMeshTerrainProvider::tileMetadata(const TileKey& key) const {
         metadata.key = key;
         metadata.bounds = terrainRootRectangle(schemeId_);
         metadata.hasExplicitBounds = true;
-        metadata.boundingVolume = TileBoundingVolume::fromRegion(
+        metadata.boundingVolume = TileBoundingVolume::fromLooseRegion(
             metadata.bounds,
             kLooseTerrainMinimumHeight,
             kLooseTerrainMaximumHeight);
@@ -1377,7 +1377,7 @@ QuantizedMeshTerrainProvider::tileMetadata(const TileKey& key) const {
     }
     metadata.bounds = terrainContentRectangle(key, schemeId_);
     metadata.hasExplicitBounds = true;
-    metadata.boundingVolume = TileBoundingVolume::fromRegion(
+    metadata.boundingVolume = TileBoundingVolume::fromLooseRegion(
         metadata.bounds,
         kLooseTerrainMinimumHeight,
         kLooseTerrainMaximumHeight);

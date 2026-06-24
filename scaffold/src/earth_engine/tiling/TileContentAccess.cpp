@@ -132,7 +132,7 @@ TileContentAccess::ensureTileChildren(
                 continue;
             }
             if (!child->boundingVolume) {
-                child->boundingVolume = TileBoundingVolume::fromRegion(
+                child->boundingVolume = TileBoundingVolume::fromLooseRegion(
                     child->bounds,
                     TileBoundsMetrics::terrainMinimumHeight(tile),
                     TileBoundsMetrics::terrainMaximumHeight(tile));
