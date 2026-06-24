@@ -2654,6 +2654,118 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentUploadAppendsMissingRasterProjectionLikeCesiumNative) {
+    const TileKey key{"Geographic-TMS", 2, 1, 1};
+    const std::string cacheKey = "test:gltf-terrain-append-raster";
+    const Rectangle bounds = Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    TilesetTile tile(key, bounds);
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    auto model = makeCommitCoordinatorQuadTerrainGltfModel(bounds);
+    GltfModel* rawModel = model.get();
+    ASSERT_EQ(1u, model->primitives.size());
+    const std::vector<std::array<float, 2>> geographicTexCoords = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    model->primitives[0].vertexTexCoords[0] = geographicTexCoords;
+    RasterOverlayDetails existingDetails;
+    existingDetails.setGeographicRectangle(bounds, -25.0, 125.0);
+    model->rasterOverlayDetails = existingDetails;
+
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(bounds, -25.0, 125.0);
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeTerrainContentContentResult(std::move(model), std::move(metadata))};
+
+    RasterOverlay overlay(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activeOverlay(overlay);
+    std::vector<ActivatedRasterOverlay*> rasterOverlays{&activeOverlay};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableGltfTerrain(
+                std::make_unique<GltfModel>())});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        rasterOverlays,
+        emptyContentRegistry,
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    const GltfModel* committedModel =
+        tile.content.renderContent.gltfModelForRead();
+    ASSERT_EQ(rawModel, committedModel);
+    ASSERT_NE(nullptr, committedModel);
+    ASSERT_EQ(1u, committedModel->primitives.size());
+    EXPECT_EQ(geographicTexCoords,
+              committedModel->primitives[0].vertexTexCoords[0]);
+    ASSERT_EQ(
+        committedModel->primitives[0].vertices.size(),
+        committedModel->primitives[0].vertexTexCoords[1].size());
+    const RasterOverlayDetails& committedDetails =
+        tile.content.renderContent.rasterOverlayDetails();
+    ASSERT_EQ(2u, committedDetails.rasterOverlayProjections.size());
+    ASSERT_EQ(2u, committedDetails.rasterOverlayRectangles.size());
+    EXPECT_EQ(RasterOverlayProjection::Geographic,
+              committedDetails.rasterOverlayProjections[0]);
+    EXPECT_EQ(RasterOverlayProjection::WebMercator,
+              committedDetails.rasterOverlayProjections[1]);
+    EXPECT_EQ(bounds, committedDetails.rasterOverlayRectangles[0]);
+    EXPECT_EQ(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            bounds),
+        committedDetails.rasterOverlayRectangles[1]);
+    EXPECT_EQ(0,
+              committedDetails.textureCoordinateIDForProjection(
+                  RasterOverlayProjection::Geographic));
+    EXPECT_EQ(1,
+              committedDetails.textureCoordinateIDForProjection(
+                  RasterOverlayProjection::WebMercator));
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentUploadClearsStaleRasterOverlayStateBeforeNewRenderGeneration) {
     const TileKey key{"Geographic-TMS", 2, 1, 1};
     const std::string cacheKey = "test:gltf-raster-generation";
