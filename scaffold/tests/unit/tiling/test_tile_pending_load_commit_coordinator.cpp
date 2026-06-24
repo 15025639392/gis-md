@@ -1544,7 +1544,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainAvailabilityUpdatesWaitForReadyRenderResourcesLikeCesiumNative) {
+     TerrainAvailabilityUpdatesApplyBeforeRenderResourcePreparationLikeCesiumNative) {
     for (TileLoadDomain domain : {
              TileLoadDomain::Content,
              TileLoadDomain::TerrainContent}) {
@@ -1615,7 +1615,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             },
             [&resourcesDirty]() { resourcesDirty = true; });
 
-        EXPECT_TRUE(provider.appliedUpdates.empty());
+        ASSERT_EQ(1u, provider.appliedUpdates.size());
+        EXPECT_EQ(update.layerIndex, provider.appliedUpdates.front().layerIndex);
+        EXPECT_EQ(update.subtreeKey, provider.appliedUpdates.front().subtreeKey);
+        EXPECT_EQ(update.metadataAvailability,
+                  provider.appliedUpdates.front().metadataAvailability);
         EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
         EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
         EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);

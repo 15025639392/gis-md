@@ -179,6 +179,8 @@ public:
         if (shouldApplyTerrainAvailability) {
             terrainAvailabilityUpdates =
                 std::move(upload.content().quantizedMeshAvailabilityUpdates);
+            contentProvider->applyTerrainAvailabilityUpdates(
+                terrainAvailabilityUpdates);
         }
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
@@ -189,10 +191,6 @@ public:
         ensureGltfResources(*tile);
         const bool renderResourcesReady =
             tile->content.renderContent.isRenderContentReady();
-        if (renderResourcesReady && !terrainAvailabilityUpdates.empty()) {
-            contentProvider->applyTerrainAvailabilityUpdates(
-                terrainAvailabilityUpdates);
-        }
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
                 *tile,
