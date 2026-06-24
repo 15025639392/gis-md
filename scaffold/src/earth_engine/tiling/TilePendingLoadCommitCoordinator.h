@@ -132,20 +132,28 @@ public:
         }
 
         if (upload.result.shouldFailUploadForDomain(upload.domain)) {
+            TileLoadResult failedResult =
+                TileLoadResult::createFailedPreservingAvailability(
+                    std::move(upload.result));
+            if (upload.domain == TileLoadDomain::TerrainContent &&
+                shouldApplyTerminalTerrainAvailability(
+                    failedResult,
+                    contentProvider)) {
+                contentProvider->applyTerrainAvailabilityUpdates(
+                    failedResult.quantizedMeshAvailabilityUpdates);
+            }
             const TileTerminalLoadAction action =
                 upload.domain == TileLoadDomain::TerrainContent
                     ? TileTerminalLoadCommitter::commitTerrainTerminalResult(
                           *tile,
                           upload.cacheKey,
-                          TileLoadResult::createFailedPreservingAvailability(
-                              std::move(upload.result)),
+                          std::move(failedResult),
                           emptyContentRegistry,
                           pPrepRenderer)
                     : TileTerminalLoadCommitter::commitContentTerminalResult(
                           *tile,
                           upload.cacheKey,
-                          TileLoadResult::createFailedPreservingAvailability(
-                              std::move(upload.result)),
+                          std::move(failedResult),
                           emptyContentRegistry,
                           pPrepRenderer);
             if (action.ensureChildren) {
