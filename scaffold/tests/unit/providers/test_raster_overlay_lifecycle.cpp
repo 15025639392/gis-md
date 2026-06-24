@@ -7185,11 +7185,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageCompletesNoCoverageLikeCesiumNati
             2,
             std::move(noCoverage),
             2);
-    ASSERT_NE(nullptr, noCoverageResult.image);
-    EXPECT_EQ(0, noCoverageResult.image->width);
-    EXPECT_EQ(0, noCoverageResult.image->height);
-    EXPECT_EQ(0, noCoverageResult.image->channels);
-    EXPECT_TRUE(noCoverageResult.image->pixels.empty());
+    EXPECT_EQ(nullptr, noCoverageResult.image);
     EXPECT_EQ(target, noCoverageResult.rectangle);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
               noCoverageResult.moreDetailAvailable);

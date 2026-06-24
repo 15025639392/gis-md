@@ -1164,7 +1164,6 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
         projectedHeightPerPixel);
     if (measurements.width <= 0 || measurements.height <= 0) {
         RasterOverlayTileProvider::CompositeImageResult result;
-        result.image = std::make_unique<DecodedImage>();
         result.rectangle = targetBounds;
         result.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Yes;

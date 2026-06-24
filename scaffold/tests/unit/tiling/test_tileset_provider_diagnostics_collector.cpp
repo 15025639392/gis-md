@@ -84,6 +84,11 @@ public:
             [this, count]() { return enteredCount_ >= count; });
     }
 
+    int enteredCount() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return enteredCount_;
+    }
+
     bool complete(int statusCode, std::vector<uint8_t> body = {}) {
         std::function<void(int, std::vector<uint8_t>)> callback;
         {
@@ -110,7 +115,7 @@ public:
     std::string getToken(const std::string&) const override { return {}; }
 
 private:
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::function<void(int, std::vector<uint8_t>)> callback_;
     bool entered_ = false;
@@ -262,6 +267,32 @@ TEST(
             .terrainProviderRequests
             .maximumTransportActiveRequests,
         11);
+}
+
+TEST(
+    TilesetProviderDiagnosticsCollectorTest,
+    ContentAndRasterCollectorDoesNotPullLegacyTerrainProviderIntoMainTilesetPath) {
+    ProviderRequestDiagnostics terrainDiagnostics;
+    terrainDiagnostics.requestsStarted = 9;
+    terrainDiagnostics.maximumTransportActiveRequests = 3;
+    DiagnosticTerrainProvider terrainProvider(terrainDiagnostics);
+
+    ProviderRequestDiagnostics contentDiagnostics;
+    contentDiagnostics.requestsStarted = 1;
+    contentDiagnostics.maximumTransportActiveRequests = 11;
+    DiagnosticContentProvider contentProvider(contentDiagnostics);
+
+    const TilesetProviderDiagnosticsSnapshot snapshot =
+        TilesetProviderDiagnosticsCollector::collectContentAndRaster(
+            &contentProvider,
+            {});
+    TilesetLoadDiagnostics loadDiagnostics;
+    snapshot.applyTo(loadDiagnostics);
+
+    EXPECT_EQ(loadDiagnostics.terrainProviderRequests.requestsStarted, 0);
+    EXPECT_EQ(loadDiagnostics.contentProviderRequests.requestsStarted, 1);
+    EXPECT_EQ(snapshot.maximumTransportActiveRequests(20), 11u);
+    (void)terrainProvider;
 }
 
 TEST(
@@ -432,6 +463,10 @@ TEST(
     EXPECT_EQ(activeDiag.pendingContentTotal(), 0);
 
     ASSERT_TRUE(bridge.complete(404));
+    for (int i = 0; i < 200 && bridge.enteredCount() < 2; ++i) {
+        rasterProvider->processPendingUploads(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     ASSERT_TRUE(bridge.waitUntilEnteredCount(2));
     ASSERT_TRUE(bridge.complete(404));
     for (int i = 0; i < 200 &&
@@ -451,9 +486,10 @@ TEST(
     EXPECT_EQ(
         doneDiag.rasterProviderRequests.maximumTransportActiveRequests,
         11);
-    EXPECT_EQ(doneDiag.rasterOverlayTilesLoading, 1);
+    EXPECT_EQ(doneDiag.rasterOverlayTilesLoading, 0);
     EXPECT_EQ(doneDiag.rasterSourceRequestsInFlight, 0);
-    EXPECT_EQ(doneDiag.rasterPendingUploads, 1);
+    EXPECT_EQ(doneDiag.rasterPendingUploads, 0);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, rasterTile->getState());
 }
 
 TEST(

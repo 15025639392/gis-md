@@ -28,6 +28,13 @@ void TilesetProviderDiagnosticsSnapshot::applyTo(
 }
 
 TilesetProviderDiagnosticsSnapshot
+TilesetProviderDiagnosticsCollector::collectContentAndRaster(
+    const TilesetContentProvider* contentProvider,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    return collect(nullptr, contentProvider, rasterOverlays);
+}
+
+TilesetProviderDiagnosticsSnapshot
 TilesetProviderDiagnosticsCollector::collect(
     const TerrainProvider* terrainProvider,
     const TilesetContentProvider* contentProvider,

@@ -5167,9 +5167,17 @@ public:
         return TileContentLoadResult::failed();
     }
 
+    ProviderRequestDiagnostics requestDiagnostics() const override {
+        ProviderRequestDiagnostics diagnostics;
+        diagnostics.maximumTransportActiveRequests =
+            maximumTransportActiveRequests;
+        return diagnostics;
+    }
+
     std::vector<TileKey> availableKeys;
     std::vector<PendingRequest> pendingRequests;
     int metadataAvailabilityLevels = 1;
+    int maximumTransportActiveRequests = -1;
 
 private:
     TileKey rootKey_;
@@ -22134,11 +22142,18 @@ void testTilesetFrameResourceBudgetUsesProviderTransportLane() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 20;
 
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto provider =
+        std::make_unique<ManualTerrainQuadtreeContentProvider>(rootKey);
     provider->maximumTransportActiveRequests = 11;
-    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    ManualTerrainQuadtreeContentProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        options,
+        std::move(provider));
 
     Camera camera;
     camera.lookAt(Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
@@ -22159,14 +22174,13 @@ void testTilesetFrameResourceBudgetUsesProviderTransportLane() {
               diag.resourceBudget.maxNetworkRequestsPerFrame == 20 &&
               diag.resourceBudget.maxTerrainContentNetworkRequestsPerFrame == 20,
           "Tileset: frame resource budget uses provider transport lane for raster fanout");
-    check(diag.terrainProviderRequests.maximumTransportActiveRequests == 11,
-          "Tileset: provider transport lane remains visible in diagnostics");
+    check(diag.contentProviderRequests.maximumTransportActiveRequests == 11 &&
+              diag.terrainProviderRequests.maximumTransportActiveRequests < 0,
+          "Tileset: content provider transport lane remains visible without legacy terrain diagnostics");
     while (!rawProvider->pendingRequests.empty()) {
         const TileKey pendingKey = rawProvider->pendingRequests.front().key;
-        check(rawProvider->completeWithHeightmap(
-                  pendingKey,
-                  makeFlatHeightmap(0.0f)),
-              "Tileset: transport-lane budget test completes pending terrain request");
+        check(rawProvider->completeWithEmpty(pendingKey),
+              "Tileset: transport-lane budget test completes pending content request");
     }
 }
 

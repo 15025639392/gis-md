@@ -26,6 +26,10 @@ struct TilesetProviderDiagnosticsSnapshot {
 
 class TilesetProviderDiagnosticsCollector {
 public:
+    static TilesetProviderDiagnosticsSnapshot collectContentAndRaster(
+        const TilesetContentProvider* contentProvider,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+
     static TilesetProviderDiagnosticsSnapshot collect(
         const TerrainProvider* terrainProvider,
         const TilesetContentProvider* contentProvider,

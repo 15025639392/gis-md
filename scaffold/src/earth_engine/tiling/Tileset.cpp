@@ -242,8 +242,7 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
         frameResourceBudget_,
         contentCache_.unloadQueue(),
         tileRegistry_.tiles());
-    TilesetProviderDiagnosticsCollector::collect(
-        legacyHeightmapTerrainProviderForSurfacePath(),
+    TilesetProviderDiagnosticsCollector::collectContentAndRaster(
         contentProvider_.get(),
         rasterOverlays_)
         .applyTo(diagnostics);
