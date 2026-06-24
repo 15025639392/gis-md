@@ -91,15 +91,6 @@ void TileLoadResultMetadataApplicator::apply(
         }
     }
 
-    if (metadata.updatedBoundingVolume &&
-        !metadata.updatedContentBoundingVolume &&
-        tile.contentBoundingVolume) {
-        if (!tile.initialContentBoundingVolume) {
-            tile.initialContentBoundingVolume = *tile.contentBoundingVolume;
-        }
-        tile.contentBoundingVolume.reset();
-    }
-
     if (metadata.updatedBoundingVolume) {
         tile.boundingVolume = std::move(metadata.updatedBoundingVolume);
         if (!metadata.terrainHeightRange) {

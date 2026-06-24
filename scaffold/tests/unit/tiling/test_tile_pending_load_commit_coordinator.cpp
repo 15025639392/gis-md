@@ -1802,7 +1802,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadKeepsTerrainRasterDetailsFromLoadResultBeforeReload) {
+     ContentUploadPreservesStaleContentBoundsWhenOnlyTileBoundsUpdateLikeCesiumNative) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain-updated-bounds";
     TilesetTile tile(key, Rectangle{});
@@ -1892,7 +1892,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
               committedDetails.textureCoordinateIDForProjection(
                   RasterOverlayProjection::WebMercator));
     EXPECT_FALSE(committedDetails.boundingRegion.rectangle.isEmpty());
-    EXPECT_FALSE(tile.contentBoundingVolume.has_value());
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(staleContentRectangle, tile.contentBoundingVolume->region);
     ASSERT_TRUE(tile.initialContentBoundingVolume.has_value());
     EXPECT_EQ(staleContentRectangle,
               tile.initialContentBoundingVolume->region);
