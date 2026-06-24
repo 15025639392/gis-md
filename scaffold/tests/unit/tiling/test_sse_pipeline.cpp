@@ -5440,7 +5440,7 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
             TileContentUnloadCoordinator::unloadContent(
                 unloadTile,
                 TileCacheKey::forTile(unloadTile.key),
-                &terrainCache,
+                terrainCache,
                 emptyContentRegistry,
                 nullptr);
         },
@@ -18671,7 +18671,7 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
             TileContentUnloadCoordinator::unloadContent(
                 unloadTile,
                 TileCacheKey::forTile(unloadTile.key),
-                &terrainCache,
+                terrainCache,
                 emptyContentRegistry,
                 nullptr);
         },
@@ -21548,7 +21548,6 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
                 budget,
                 &provider,
                 tiles,
-                &terrainCache,
                 true,
                 emptyContentRegistry},
             testCacheKeyForTile,

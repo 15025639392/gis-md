@@ -29,8 +29,6 @@ struct TilesetContentLifecycleContext {
     RenderDevice* device = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>*
-        terrainCache = nullptr;
     bool useHeightmapSurfacePath = false;
     TileEmptyContentRegistry& emptyContentRegistry;
     uint64_t frameNumber = 0;
@@ -79,7 +77,6 @@ public:
                 *budget,
                 context.contentProvider,
                 context.tiles,
-                context.terrainCache,
                 context.useHeightmapSurfacePath,
                 context.emptyContentRegistry},
             [](const TileKey& key) {

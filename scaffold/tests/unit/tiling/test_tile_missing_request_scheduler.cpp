@@ -129,7 +129,6 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
                 budget,
                 &provider,
                 tiles,
-                &terrainCache,
                 true,
                 emptyContentRegistry},
             cacheKeyForTile,
@@ -191,7 +190,6 @@ TEST(TileMissingRequestSchedulerTest, DoesNotRetryLegacyTerrainAfterEmptyMarkerC
                 budget,
                 nullptr,
                 tiles,
-                &terrainCache,
                 true,
                 emptyContentRegistry},
             cacheKeyForTile,
@@ -249,7 +247,6 @@ TEST(
                 budget,
                 &contentProvider,
                 tiles,
-                &terrainCache,
                 true,
                 emptyContentRegistry},
             cacheKeyForTile,
@@ -296,7 +293,6 @@ TEST(
                 budget,
                 &contentProvider,
                 tiles,
-                &terrainCache,
                 false,
                 emptyContentRegistry},
             cacheKeyForTile,
@@ -343,7 +339,6 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileWithoutGltfSourceDoesNotQueue
                 budget,
                 &provider,
                 tiles,
-                &terrainCache,
                 true,
                 emptyContentRegistry},
             cacheKeyForTile,
@@ -365,7 +360,7 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileWithoutGltfSourceDoesNotQueue
 }
 
 TEST(TileMissingRequestSchedulerTest,
-     HeightmapCachePointerDoesNotEnableLegacyUpsampleWithoutRuntimePath) {
+     TerrainContentUpsampleWithoutGltfSourceDoesNotQueueLegacyUpload) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -375,8 +370,6 @@ TEST(TileMissingRequestSchedulerTest,
     RetryContentProvider provider;
     TileEmptyContentRegistry emptyContentRegistry;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey key{"test", 1, 0, 0};
     const std::string cacheKey = cacheKeyForTile(key);
@@ -397,7 +390,6 @@ TEST(TileMissingRequestSchedulerTest,
                 budget,
                 &provider,
                 tiles,
-                &terrainCache,
                 false,
                 emptyContentRegistry},
             cacheKeyForTile,
@@ -412,7 +404,7 @@ TEST(TileMissingRequestSchedulerTest,
             });
 
     EXPECT_EQ(outcome.issued, 0u);
-    EXPECT_FALSE(prepared);
+    EXPECT_TRUE(prepared);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::Unloaded);
@@ -451,7 +443,6 @@ TEST(TileMissingRequestSchedulerTest, VirtualTerrainRootNeverRequestsProvider) {
                 budget,
                 nullptr,
                 tiles,
-                &terrainCache,
                 true,
                 emptyContentRegistry},
             cacheKeyForTile,
