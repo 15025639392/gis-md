@@ -16826,6 +16826,39 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
           "TileUpsampleSourcePreparer: content-loaded ancestor is finalized before upsample request proceeds");
 }
 
+void testTileUpsampleSourcePreparerDoesNotQueueGrandparentForGltfUpsample() {
+    TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
+    TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
+    grandparent.children.push_back(&parent);
+    parent.children.push_back(&child);
+
+    grandparent.content.loadState = TileLoadState::Unloaded;
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::ContentLoaded;
+    child.content.markTerrainAvailabilityUpsample();
+
+    int ensuredMeshes = 0;
+    std::vector<TileKey> queuedKeys;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        12.0,
+        false,
+        [&ensuredMeshes](TilesetTile&) {
+            ++ensuredMeshes;
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    check(!prepared &&
+              ensuredMeshes == 1 &&
+              queuedKeys.empty(),
+          "TileUpsampleSourcePreparer: glTF terrain upsample only prepares the direct parent and does not queue grandparents like cesium-native");
+}
+
 void testTileUpsampleSourcePreparerWaitsForLoadingAncestor() {
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
@@ -28899,6 +28932,7 @@ int main() {
     testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor();
     testTileUpsampleSourcePreparerQueuesUnloadedAncestor();
     testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor();
+    testTileUpsampleSourcePreparerDoesNotQueueGrandparentForGltfUpsample();
     testTileUpsampleSourcePreparerWaitsForLoadingAncestor();
     testTileUpsampleSourcePreparerWaitsForUnloadingAncestor();
     testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent();

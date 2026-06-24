@@ -68,6 +68,14 @@ public:
                 std::forward<QueueTileLoadFn>(queueTileLoad));
         }
 
+        if (!useHeightmapSurfacePath) {
+            return prepareDirectGltfTerrainSourceTile(
+                tile,
+                priority,
+                std::forward<EnsureTileMeshFn>(ensureTileMesh),
+                std::forward<QueueTileLoadFn>(queueTileLoad));
+        }
+
         if (findSourceTile(tile,
                            false,
                            true,
@@ -126,6 +134,39 @@ private:
                 parent->content.renderContent.hasGltfContent()
             ? parent
             : nullptr;
+    }
+
+    template <typename EnsureTileMeshFn, typename QueueTileLoadFn>
+    static bool prepareDirectGltfTerrainSourceTile(
+        TilesetTile& tile,
+        double priority,
+        EnsureTileMeshFn&& ensureTileMesh,
+        QueueTileLoadFn&& queueTileLoad) {
+        TilesetTile* parent = tile.parent;
+        if (!parent) {
+            return false;
+        }
+
+        if (findSourceTile(tile, false, true, false)) {
+            return true;
+        }
+
+        if ((parent->content.loadState == TileLoadState::ContentLoaded ||
+             parent->content.loadState == TileLoadState::Done) &&
+            parent->content.contentKind == TileContentKind::Render) {
+            ensureTileMesh(*parent);
+            return findSourceTile(tile, false, true, false) != nullptr;
+        }
+
+        if (parent->content.loadState == TileLoadState::Unloaded ||
+            parent->content.loadState == TileLoadState::FailedTemporarily) {
+            queueTileLoad(
+                parent->key,
+                TileLoadPriorityGroup::Urgent,
+                priority);
+        }
+
+        return false;
     }
 
     template <typename EnsureTileMeshFn, typename QueueTileLoadFn>

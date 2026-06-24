@@ -1238,6 +1238,49 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(parent.key, queuedKeys.front());
 }
 
+TEST(
+    TileLoadSchedulerTest,
+    GltfTerrainUpsampleSourcePreparationDoesNotQueueGrandparentLikeCesiumNative) {
+    TilesetTile grandparent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, -90.0, 0.0),
+        &grandparent);
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 2, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, -135.0, -45.0),
+        &parent);
+    grandparent.children.push_back(&parent);
+    parent.children.push_back(&child);
+    child.content.markTerrainAvailabilityUpsample();
+
+    grandparent.content.loadState = TileLoadState::Unloaded;
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::ContentLoaded;
+
+    std::vector<TileKey> ensuredKeys;
+    std::vector<TileKey> queuedKeys;
+    const bool ready = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        12.0,
+        false,
+        [&ensuredKeys](TilesetTile& tile) {
+            ensuredKeys.push_back(tile.key);
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    EXPECT_FALSE(ready);
+    ASSERT_EQ(1u, ensuredKeys.size());
+    EXPECT_EQ(parent.key, ensuredKeys.front());
+    EXPECT_TRUE(queuedKeys.empty());
+}
+
 TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
