@@ -1381,9 +1381,10 @@ TEST(TilesetQuantizedMeshTest,
             TileKey{"Geographic-TMS", 3, 1, 0}));
 
     for (TileLoadState waitingState : {
+             TileLoadState::Unloading,
+             TileLoadState::FailedTemporarily,
              TileLoadState::Unloaded,
-             TileLoadState::ContentLoading,
-             TileLoadState::FailedTemporarily}) {
+             TileLoadState::ContentLoading}) {
         boundary->children.clear();
         boundary->content.loadState = waitingState;
         TilesetTestAccess::ensureTileChildren(tileset, *boundary);

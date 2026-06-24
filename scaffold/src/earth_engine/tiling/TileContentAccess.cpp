@@ -174,7 +174,18 @@ TileContentAccess::ensureTileChildren(
 
 bool TileContentAccess::hasResolvedAvailabilityBoundaryContent(
     const TilesetTile& tile) const {
-    return tile.content.loadState > TileLoadState::ContentLoading;
+    switch (tile.content.loadState) {
+    case TileLoadState::ContentLoaded:
+    case TileLoadState::Done:
+    case TileLoadState::Failed:
+        return true;
+    case TileLoadState::Unloading:
+    case TileLoadState::FailedTemporarily:
+    case TileLoadState::Unloaded:
+    case TileLoadState::ContentLoading:
+        return false;
+    }
+    return false;
 }
 
 bool TileContentAccess::isAvailabilityBoundaryTile(
