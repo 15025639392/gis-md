@@ -3262,7 +3262,7 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_FALSE(provider.hasPendingWork());
 }
 
-TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksAreCachedByRequestedTileLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksRetryChildAndReuseCachedParentLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -3293,7 +3293,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksAreCachedByRequestedTile
     ASSERT_TRUE(provider.loadTile(*secondTile));
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
 
-    EXPECT_EQ(requestsAfterFirstLoad,
+    EXPECT_EQ(requestsAfterFirstLoad + 1,
               static_cast<int>(imagery.requestedKeys.size()));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               secondTile->getState());
@@ -3428,8 +3428,12 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
         512.0).tile;
     ASSERT_NE(nullptr, repeatedEastTile);
     ASSERT_TRUE(provider.loadTile(*repeatedEastTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(eastChild, imagery.pending.front().key);
+    imagery.completeNext();
     EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
-    EXPECT_EQ(requestsAfterConcurrentFallback, imagery.requestedKeys.size());
+    EXPECT_EQ(requestsAfterConcurrentFallback + 1,
+              imagery.requestedKeys.size());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               repeatedEastTile->getState());
     EXPECT_EQ(nullptr, repeatedEastTile->getTexture());
@@ -4465,6 +4469,83 @@ TEST(RasterOverlayLifecycleTest,
     while (!imagery.pending.empty()) {
         imagery.completeNext();
     }
+    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     MappedRasterConfigChangeRemapsHeldLoadingTileInsteadOfFailingOverlay) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey rootKey{scheme->id(), 0, 0, 0};
+    const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
+    RasterOverlayDetails details = makeProviderDetails(*scheme, rootBounds);
+    RasterMappedToTilesetTile mapped;
+    std::vector<RasterOverlayProjection> missing;
+
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            rootKey,
+            details,
+            1024.0,
+            1024.0,
+            provider,
+            nullptr,
+            missing,
+            nullptr,
+            0,
+            true));
+    RasterOverlayTile* staleTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(staleTile->isMappedRasterTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 2;
+    config.maxRasterNetworkInflight = 16;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+
+    ASSERT_TRUE(mapped.loadThrottled(provider, &firstBudget));
+    EXPECT_EQ(2u, imagery.pending.size());
+    EXPECT_EQ(2u, firstBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading, staleTile->getState());
+
+    provider.setMaximumScreenSpaceError(
+        provider.getMaximumScreenSpaceError() * 2.0);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, staleTile->getState());
+
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            rootKey,
+            details,
+            1024.0,
+            1024.0,
+            provider,
+            nullptr,
+            missing,
+            nullptr,
+            0,
+            true));
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    EXPECT_NE(staleTile, mapped.getLoadingTile());
+    EXPECT_EQ(
+        RasterOverlayTile::LoadState::Unloaded,
+        mapped.getLoadingTile()->getState());
+
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(2, config);
+    ASSERT_TRUE(mapped.loadThrottled(provider, &secondBudget));
+    EXPECT_GT(imagery.pending.size(), 2u);
+    EXPECT_GT(secondBudget.rasterNetworkRequestsIssued(), 0u);
+
+    while (!imagery.pending.empty()) {
+        imagery.completeNext();
+    }
+    processPendingUploadsUntil(provider, 1);
     EXPECT_FALSE(provider.hasPendingWork());
     EXPECT_EQ(0, provider.getPendingUploadCount());
 }

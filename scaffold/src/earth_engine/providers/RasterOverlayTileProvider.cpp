@@ -1237,6 +1237,10 @@ bool isMappedRasterCacheKey(const std::string& cacheKey) {
     return cacheKey.rfind("mapped-raster/", 0) == 0;
 }
 
+bool isEpochMappedRasterCacheKey(const std::string& cacheKey) {
+    return cacheKey.rfind("mapped-raster/epoch/", 0) == 0;
+}
+
 } // namespace
 
 RasterOverlayTileProvider::QuadtreeSourcePlan
@@ -1379,6 +1383,13 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             }
         }
         if (cachedSource) {
+            if (ancestorFallback) {
+                auto completed = std::make_shared<SourceTileAsset>(
+                    sourceAssetFromResult(*cachedSource));
+                if (finishInFlightSource(originalKey, completed) > 0) {
+                    return;
+                }
+            }
             onReady(std::move(*cachedSource));
             return;
         }
@@ -1681,8 +1692,8 @@ private:
         return cached;
     }
 
-    void finishInFlightSource(const TileKey& originalKey,
-                              InFlightSourceTileAsset::Result source) {
+    size_t finishInFlightSource(const TileKey& originalKey,
+                                InFlightSourceTileAsset::Result source) {
         std::vector<std::function<void(InFlightSourceTileAsset::Result)>>
             waiters;
         {
@@ -1696,6 +1707,7 @@ private:
         for (auto& waiter : waiters) {
             waiter(source);
         }
+        return waiters.size();
     }
 
     void cacheSource(const TileKey& requestedKey,
@@ -3238,6 +3250,14 @@ bool RasterOverlayTileProvider::ownsCurrentTile(
 
     const std::string& cacheKey = tile.getCacheKey();
     if (!cacheKey.empty()) {
+        if (isEpochMappedRasterCacheKey(cacheKey)) {
+            const std::string currentEpochPrefix =
+                "mapped-raster/epoch/" +
+                std::to_string(mappedRasterTileEpoch_) + "/";
+            if (cacheKey.rfind(currentEpochPrefix, 0) != 0) {
+                return false;
+            }
+        }
         auto it = tiles_.find(cacheKey);
         return it != tiles_.end() && it->second.get() == &tile;
     }
