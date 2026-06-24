@@ -44,6 +44,7 @@ struct TileContentRuntimeUploadFrame {
     double mainThreadLoadingTimeLimit = 0.0;
     double currentFrameTimeSeconds = 0.0;
     uint32_t smoothedMainThreadUploadLimit = 0;
+    bool retainLegacyHeightmapTerrainCache = false;
 };
 
 class TileContentRuntime {

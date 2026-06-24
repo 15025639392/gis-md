@@ -284,6 +284,9 @@ TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
     frame.currentFrameTimeSeconds = currentFrameTimeSeconds_;
     frame.smoothedMainThreadUploadLimit =
         static_cast<uint32_t>(kSmoothedMainThreadUploadLimit);
+    frame.retainLegacyHeightmapTerrainCache =
+        usesLegacyHeightmapTerrainSurfacePath(
+            legacyHeightmapTerrainProvider_.get());
     return frame;
 }
 

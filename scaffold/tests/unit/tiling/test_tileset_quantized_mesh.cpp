@@ -103,8 +103,8 @@ struct TilesetTestAccess {
 
     static bool runtimeRetainsLegacyHeightmapTerrainCacheForLegacySurfacePath(
         const Tileset& tileset) {
-        return tileset.contentAccess_
-            .retainsLegacyHeightmapTerrainCacheForLegacySurfacePath();
+        return tileset.makeContentRuntimeUploadFrame(nullptr)
+            .retainLegacyHeightmapTerrainCache;
     }
 
     static const TerrainProvider* effectiveLegacyTerrainProvider(

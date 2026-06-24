@@ -286,7 +286,7 @@ struct TilesetTestAccess {
     }
 
     static bool hasLegacyTerrainProvider(const Tileset& tileset) {
-        return tileset.heightmapTerrainProvider_ != nullptr;
+        return tileset.legacyHeightmapTerrainProvider_ != nullptr;
     }
 };
 } // namespace earth_engine
@@ -956,18 +956,20 @@ TEST(TilesetRequestMissingBudgetTest,
 TEST(
     TilesetRequestMissingBudgetTest,
     UpdateFrameUsesProviderTransportLaneForRasterBudget) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 20;
 
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    provider->maximumTransportActiveRequests = 11;
-    ManualCompletionTerrainProvider* rawProvider = provider.get();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    auto provider = std::make_unique<ManualCompletionContentProvider>(key);
+    provider->ownsTerrainQuadtree = true;
+    provider->diagnostics.maximumTransportActiveRequests = 11;
+    ManualCompletionContentProvider* rawProvider = provider.get();
+    Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
-        options);
+        options,
+        std::move(provider));
 
     Camera camera;
     camera.lookAt(
@@ -991,14 +993,15 @@ TEST(
         diagnostics.resourceBudget.maxTerrainContentNetworkRequestsPerFrame,
         20u);
     EXPECT_EQ(
-        diagnostics.terrainProviderRequests.maximumTransportActiveRequests,
+        diagnostics.contentProviderRequests.maximumTransportActiveRequests,
         11);
+    EXPECT_EQ(
+        diagnostics.terrainProviderRequests.maximumTransportActiveRequests,
+        -1);
 
     while (!rawProvider->pendingRequests.empty()) {
         const TileKey pendingKey = rawProvider->pendingRequests.front().key;
-        EXPECT_TRUE(rawProvider->completeWithHeightmap(
-            pendingKey,
-            makeFlatHeightmap(0.0f)));
+        EXPECT_TRUE(rawProvider->completeWithEmpty(pendingKey));
     }
 }
 
