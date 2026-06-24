@@ -1378,6 +1378,48 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainExternalTerminalDoesNotApplyMetadataAfterFailure) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    const std::string cacheKey = "terrain-external-metadata";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+    const Rectangle originalRectangle =
+        Rectangle::fromDegrees(-20.0, -10.0, 20.0, 10.0);
+    const Rectangle updatedRectangle =
+        Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(originalRectangle, -100.0, 100.0);
+
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::External,
+        makeBoundingVolumeMetadata(updatedRectangle, -5.0, 15.0));
+    PendingTileLoad pending{TileLoadDomain::TerrainContent,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(result)};
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        pending,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        []() {});
+
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_EQ(originalRectangle, tile.boundingVolume->region);
+    EXPECT_DOUBLE_EQ(-100.0, tile.boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(100.0, tile.boundingVolume->maximumHeight);
+    EXPECT_FALSE(tile.initialBoundingVolume.has_value());
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentExternalTerminalAppliesTileLoadResultMetadata) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "content-external";

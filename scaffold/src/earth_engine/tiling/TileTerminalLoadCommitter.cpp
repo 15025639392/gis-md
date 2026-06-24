@@ -19,7 +19,8 @@ TileTerminalLoadCommitter::commitTerrainTerminalResult(
             tile,
             result.status,
             pPrepRenderer);
-    if (result.shouldApplyTerminalMetadata()) {
+    if (result.shouldApplyTerminalMetadata() &&
+        result.status == TileLoadStatus::Empty) {
         TileLoadResultMetadataApplicator::apply(
             tile,
             std::move(result.content.metadata));
