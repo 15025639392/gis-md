@@ -1213,10 +1213,13 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     const std::optional<int> metadataAvailability =
         jsonInt32(j, "metadataAvailability");
     layer.availabilityLevels = metadataAvailability.value_or(-1);
-    // cesium-native always constructs a QuadtreeRectangleAvailability for
-    // layer.json terrain. If `available` is absent or empty, that empty table
-    // still makes only level-0 roots available by default.
-    layer.hasAvailability = true;
+    // Without layer.json `available` or `metadataAvailability`, cesium-native
+    // treats the layer as generally requestable and lets tile selection decide
+    // what to ask for. An explicit empty `available` table still constrains the
+    // layer to roots only.
+    layer.hasAvailability =
+        metadataAvailability.has_value() ||
+        (j.contains("available") && j["available"].is_array());
 
     if (layer.availabilityLevels > 0) {
         const int subtreeCount =
@@ -1604,14 +1607,21 @@ std::string QuantizedMeshTerrainProvider::buildUrlForLayer(
 
 std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
     std::lock_guard<std::recursive_mutex> lock(layersMutex_);
-    if (availabilityState(key) != TileAvailabilityState::Available) {
-        return {};
-    }
 
     if (!layers_.empty()) {
         const LayerConfig* layer = firstAvailableLayer(key);
         if (layer) {
             return buildUrlForLayer(*layer, key);
+        }
+        if (layers_.size() == 1) {
+            const LayerConfig& candidate = layers_.front();
+            if (!candidate.layerJsonUrl.empty() &&
+                candidate.availabilityLevels <= 0 &&
+                (!candidate.fallbackLayer ||
+                 (key.z >= candidate.minZoom && key.z <= candidate.maxZoom)) &&
+                isTileInLayerRange(key, candidate.schemeId)) {
+                return buildUrlForLayer(candidate, key);
+            }
         }
     }
 
@@ -2335,12 +2345,35 @@ TileContentLoadResult QuantizedMeshTerrainProvider::decodeTileContent(
         return TileContentLoadResult::failed();
     }
 
+    std::optional<QuantizedMeshAvailabilityUpdate>
+        currentTileAvailabilityUpdate;
+    {
+        std::lock_guard<std::recursive_mutex> lock(layersMutex_);
+        const size_t contentLayerIndex = firstAvailableLayerIndex(key);
+        if (contentLayerIndex < layers_.size()) {
+            const LayerConfig& contentLayer = layers_[contentLayerIndex];
+            if (contentLayer.availabilityLevels >= 1 &&
+                key.z % contentLayer.availabilityLevels == 0 &&
+                !isSubtreeLoadedInLayer(
+                    contentLayer,
+                    key.z / contentLayer.availabilityLevels,
+                    mortonEncode2D(static_cast<uint32_t>(key.x),
+                                   static_cast<uint32_t>(key.y)))) {
+                QuantizedMeshAvailabilityUpdate update;
+                update.layerIndex = static_cast<int>(contentLayerIndex);
+                update.subtreeKey = key;
+                currentTileAvailabilityUpdate = std::move(update);
+            }
+        }
+    }
+
     return loadQuantizedMeshTileContent(
         key,
         data,
         size,
         waterMaskEnabled_,
-        {});
+        {},
+        std::move(currentTileAvailabilityUpdate));
 }
 
 TileContentLoadResult QuantizedMeshTerrainProvider::decodeContent(

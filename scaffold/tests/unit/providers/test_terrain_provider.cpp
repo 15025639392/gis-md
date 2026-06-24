@@ -592,6 +592,57 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
+     DecodeTileContentCarriesCurrentLayerMetadataAvailabilityLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey metadataChild{"Geographic-TMS", 1, 1, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(metadataChild));
+
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithMetadata(R"json({
+          "available": [
+            [{"startX":1,"startY":0,"endX":1,"endY":0}]
+          ]
+        })json");
+    TileContentLoadResult result =
+        provider.decodeTileContent(rootKey, bytes.data(), bytes.size());
+
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+    ASSERT_EQ(1u, result.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(0, result.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(rootKey,
+              result.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+    ASSERT_EQ(
+        1u,
+        result.quantizedMeshAvailabilityUpdates.front()
+            .metadataAvailability.size());
+    EXPECT_FALSE(result.quantizedMeshAvailabilityUpdatesApplied);
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(metadataChild));
+
+    provider.applyAvailabilityUpdates(result.quantizedMeshAvailabilityUpdates);
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(metadataChild));
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
      DecodeContentWithoutTileKeyIsRejected) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
