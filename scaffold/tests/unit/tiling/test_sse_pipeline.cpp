@@ -16909,6 +16909,47 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
           "TileUpsampleSourcePreparer: content-loaded ancestor is finalized before upsample request proceeds");
 }
 
+void testTileUpsampleSourcePreparerFinalizesContentLoadedGltfTerrainParent() {
+    TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::ContentLoaded;
+    child.content.markTerrainAvailabilityUpsample();
+
+    int ensuredMeshes = 0;
+    std::vector<TileKey> queuedKeys;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        13.0,
+        false,
+        [&ensuredMeshes](TilesetTile& tile) {
+            ++ensuredMeshes;
+            auto model = std::make_unique<GltfModel>();
+            model->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+            tile.content.renderContent.setGltfContent(std::move(model));
+            tile.content.renderContent.setTerrainRenderContent(true);
+            tile.content.loadState = TileLoadState::Done;
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    check(prepared &&
+              ensuredMeshes == 1 &&
+              queuedKeys.empty() &&
+              parent.content.loadState == TileLoadState::Done &&
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  false,
+                  true,
+                  false) == &parent,
+          "TileUpsampleSourcePreparer: content-loaded glTF terrain parent is finalized before direct terrain upsample proceeds");
+}
+
 void testTileUpsampleSourcePreparerDoesNotQueueGrandparentForGltfUpsample() {
     TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
@@ -29089,6 +29130,7 @@ int main() {
     testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor();
     testTileUpsampleSourcePreparerQueuesUnloadedAncestor();
     testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor();
+    testTileUpsampleSourcePreparerFinalizesContentLoadedGltfTerrainParent();
     testTileUpsampleSourcePreparerDoesNotQueueGrandparentForGltfUpsample();
     testTileUpsampleSourcePreparerWaitsForLoadingAncestor();
     testTileUpsampleSourcePreparerWaitsForUnloadingAncestor();
