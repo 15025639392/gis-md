@@ -3656,7 +3656,13 @@ TEST(QuantizedMeshTerrainProviderTest,
     for (const TileContentLoadResult& result : completed) {
         EXPECT_EQ(TileLoadStatus::Renderable, result.status);
         ASSERT_EQ(1u, result.quantizedMeshAvailabilityUpdates.size());
-        EXPECT_EQ(1, result.quantizedMeshAvailabilityUpdates.front().layerIndex);
+        const QuantizedMeshAvailabilityUpdate& update =
+            result.quantizedMeshAvailabilityUpdates.front();
+        EXPECT_EQ(1, update.layerIndex);
+        EXPECT_EQ(rootKey, update.subtreeKey);
+        ASSERT_EQ(1u, update.metadataAvailability.size());
+        EXPECT_EQ((QuantizedMeshAvailabilityRange{0, 2, 0, 2, 0}),
+                  update.metadataAvailability.front());
     }
     EXPECT_EQ(0u, bridge.pendingCount());
     EXPECT_EQ(3, provider.requestDiagnostics().requestsStarted);
