@@ -585,6 +585,7 @@ TEST(
         resourceSmoothingActive,
         maximumCachedBytes,
         unloadTimeLimitMs,
+        nullptr,
         true);
 
     ownership.unloadCachedBytes(0, nullptr);

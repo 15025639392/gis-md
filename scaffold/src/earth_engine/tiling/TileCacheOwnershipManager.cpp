@@ -6,6 +6,7 @@
 #include "TileLoadQueue.h"
 #include "TileSubtreeRemovalCoordinator.h"
 #include "TilesetTile.h"
+#include "../content/GltfContentProvider.h"
 
 namespace earth_engine {
 
@@ -17,6 +18,7 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
     bool& resourceSmoothingActiveForFrame,
     int64_t& maximumCachedBytes,
     double& tileCacheUnloadTimeLimit,
+    TilesetContentProvider* contentProvider,
     bool includeLegacyHeightmapTerrainCache)
     : contentCache_(contentCache),
       contentLifecycle_(contentLifecycle),
@@ -25,6 +27,7 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
       resourceSmoothingActiveForFrame_(resourceSmoothingActiveForFrame),
       maximumCachedBytes_(maximumCachedBytes),
       tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit),
+      contentProvider_(contentProvider),
       includeLegacyHeightmapTerrainCache_(includeLegacyHeightmapTerrainCache) {}
 
 void TileCacheOwnershipManager::updateTotalBytesUsed() {
@@ -58,6 +61,10 @@ void TileCacheOwnershipManager::eraseTileIndexState(const std::string& key) {
 void TileCacheOwnershipManager::clearChildrenRecursively(
     TilesetTile* tile,
     IPrepareRendererResources* pPrepRenderer) {
+    if (tile && contentProvider_ &&
+        contentProvider_->providesTerrainQuadtree()) {
+        contentProvider_->clearTerrainAvailabilityUpsampledChild(tile->key);
+    }
     TileSubtreeRemovalCoordinator::clearChildrenRecursively(
         tile,
         tiles_,

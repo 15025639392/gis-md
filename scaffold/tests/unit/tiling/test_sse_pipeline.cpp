@@ -5308,8 +5308,20 @@ public:
         return diagnostics;
     }
 
+    void noteTerrainAvailabilityUpsampledChild(
+        const TileKey& key) const override {
+        notedUpsampledParents.push_back(key);
+    }
+
+    void clearTerrainAvailabilityUpsampledChild(
+        const TileKey& key) const override {
+        clearedUpsampledParents.push_back(key);
+    }
+
     std::vector<TileKey> availableKeys;
     std::vector<PendingRequest> pendingRequests;
+    mutable std::vector<TileKey> notedUpsampledParents;
+    mutable std::vector<TileKey> clearedUpsampledParents;
     int metadataAvailabilityLevels = 1;
     int maximumTransportActiveRequests = -1;
 
@@ -28407,6 +28419,45 @@ void testTilesetClearChildrenErasesFlatMapDescendants() {
           "Tileset: recreated child is present in parent child list");
 }
 
+void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey availableChild{"Geographic-TMS", 1, 0, 0};
+    auto provider =
+        std::make_unique<ManualTerrainQuadtreeContentProvider>(rootKey);
+    ManualTerrainQuadtreeContentProvider* rawProvider = provider.get();
+    rawProvider->availableKeys.push_back(availableChild);
+
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: clear-upsample-state root tile is created");
+    if (!root) return;
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: clear-upsample-state setup creates terrain children");
+    check(rawProvider->notedUpsampledParents.size() == 1 &&
+              rawProvider->notedUpsampledParents.front() == rootKey,
+          "Tileset: terrain provider records existing upsampled children");
+
+    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
+
+    check(root->children.empty(),
+          "Tileset: clear-upsample-state removes child list");
+    check(rawProvider->clearedUpsampledParents.size() == 1 &&
+              rawProvider->clearedUpsampledParents.front() == rootKey,
+          "Tileset: clear children clears provider upsampled-child state like cesium-native current children");
+}
+
 void testTilesetClearChildrenErasesClaimedUploadDescendantWork() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -29346,6 +29397,7 @@ int main() {
     testTerrainContentUpsampleRejectsOrdinaryGltfContentParent();
     testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails();
     testTilesetClearChildrenErasesFlatMapDescendants();
+    testTilesetClearChildrenClearsTerrainUpsampledChildProviderState();
     testTilesetClearChildrenErasesClaimedUploadDescendantWork();
     testTilesetClearChildrenIgnoresStaleContentCallback();
     testTilesetUnloadKeepsParentWithReferencedDescendant();
