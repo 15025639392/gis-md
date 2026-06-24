@@ -16,6 +16,7 @@
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileLoadResultMetadataApplicator.h"
 #include "earth_engine/tiling/TileRasterOverlayDetailsGenerator.h"
+#include "earth_engine/tiling/TileRasterOverlayMappingPolicy.h"
 #include "earth_engine/tiling/TileRenderContentState.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetTile.h"
@@ -208,6 +209,77 @@ TEST(RasterOverlayDetailsTest,
     expectRectangleNear(
         gltfRectangle,
         renderContent.rasterOverlayDetails().rasterOverlayRectangles.front());
+}
+
+TEST(RasterOverlayDetailsTest,
+     ContentLoadingTerrainGltfResidueDoesNotMapRasterOverlays) {
+    const Rectangle tileRectangle(0.0, 0.0, 1.0, 1.0);
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(tileRectangle, -1.0, 1.0);
+
+    TilesetTile tile(
+        TileKey{"test", 0, 0, 0},
+        tileRectangle);
+    tile.contentProviderTerrainQuadtreeTile = true;
+    prepareTerrainQuadRenderContent(
+        tile.content.renderContent,
+        tileRectangle,
+        details);
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    const TileRasterOverlayMappingContext context =
+        TileRasterOverlayMappingPolicy::contextFor(tile);
+
+    EXPECT_FALSE(context.hasRenderContentDetails);
+    EXPECT_FALSE(context.mapsLoadedRenderContent);
+    EXPECT_TRUE(context.waitForContentTerrainDetails);
+    EXPECT_TRUE(context.details().empty());
+    EXPECT_EQ(
+        nullptr,
+        TileRasterOverlayMappingPolicy::geometryRectangle(
+            context,
+            RasterOverlayProjection::Geographic));
+    EXPECT_FALSE(
+        TileRasterOverlayMappingPolicy::boundingVolumeRectangle(
+            tile,
+            context,
+            RasterOverlayProjection::Geographic)
+            .has_value());
+}
+
+TEST(RasterOverlayDetailsTest,
+     ContentLoadedTerrainGltfMapsRasterOverlaysBeforeRenderResources) {
+    const Rectangle tileRectangle(0.0, 0.0, 1.0, 1.0);
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(tileRectangle, -1.0, 1.0);
+
+    TilesetTile tile(
+        TileKey{"test", 0, 0, 0},
+        tileRectangle);
+    tile.contentProviderTerrainQuadtreeTile = true;
+    prepareTerrainQuadRenderContent(
+        tile.content.renderContent,
+        tileRectangle,
+        details);
+    tile.markRenderContentLoaded();
+
+    const TileRasterOverlayMappingContext context =
+        TileRasterOverlayMappingPolicy::contextFor(tile);
+
+    EXPECT_TRUE(context.hasRenderContentDetails);
+    EXPECT_TRUE(context.mapsLoadedRenderContent);
+    EXPECT_FALSE(context.waitForContentTerrainDetails);
+    ASSERT_NE(
+        nullptr,
+        TileRasterOverlayMappingPolicy::geometryRectangle(
+            context,
+            RasterOverlayProjection::Geographic));
+    expectRectangleNear(
+        tileRectangle,
+        *TileRasterOverlayMappingPolicy::geometryRectangle(
+            context,
+            RasterOverlayProjection::Geographic));
 }
 
 TEST(RasterOverlayDetailsTest,

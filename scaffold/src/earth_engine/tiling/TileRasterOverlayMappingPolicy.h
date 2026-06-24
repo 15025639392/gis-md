@@ -23,10 +23,10 @@ struct TileRasterOverlayMappingPolicy {
     static TileRasterOverlayMappingContext contextFor(
         const TilesetTile& tile) {
         const bool hasRenderContentDetails =
-            tile.content.contentKind == TileContentKind::Render &&
+            tile.hasCommittedRenderContent() &&
             tile.content.renderContent.hasRasterOverlayDetailsContent();
         const bool mapsLoadedRenderContent =
-            tile.content.contentKind == TileContentKind::Render &&
+            tile.hasCommittedRenderContent() &&
             tile.content.renderContent.hasRenderableTerrainContent();
 
         return TileRasterOverlayMappingContext{

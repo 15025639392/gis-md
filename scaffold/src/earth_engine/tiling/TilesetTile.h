@@ -156,6 +156,12 @@ struct TilesetTile {
                content.renderContent.isRenderContentReady();
     }
 
+    bool hasCommittedRenderContent() const {
+        return content.contentKind == TileContentKind::Render &&
+               (content.loadState == TileLoadState::ContentLoaded ||
+                content.loadState == TileLoadState::Done);
+    }
+
     bool hasRasterOverlayHostContent() const {
         if (contentProviderTerrainQuadtreeTile &&
             !content.renderContent.hasGltfContent()) {
@@ -166,7 +172,7 @@ struct TilesetTile {
 
     bool waitsForContentTerrainRasterDetails() const {
         return contentProviderTerrainQuadtreeTile &&
-               !(content.contentKind == TileContentKind::Render &&
+               !(hasCommittedRenderContent() &&
                  content.renderContent.hasRasterOverlayDetailsContent());
     }
 
