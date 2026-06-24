@@ -61,6 +61,9 @@ public:
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
+        if (contentProvider && contentProvider->providesTerrainQuadtree()) {
+            legacyHeightmapTerrainCache_.clear();
+        }
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
             loadRequests,
             makeContext(

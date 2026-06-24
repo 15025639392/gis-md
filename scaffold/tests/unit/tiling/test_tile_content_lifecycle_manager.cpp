@@ -41,6 +41,25 @@ public:
     }
 };
 
+class LifecycleOrdinaryContentProvider final : public TilesetContentProvider {
+public:
+    int requestCount = 0;
+
+    std::string id() const override { return "ordinary-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        callback(key, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+};
+
 class LifecycleLegacyTerrainProvider final : public TerrainProvider {
 public:
     int requestCount = 0;
@@ -144,7 +163,7 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
 
 TEST(
     TileContentLifecycleManagerTest,
-    ContentOwnedTerrainRequestLeavesLegacyHeightmapTerrainCacheUntouched) {
+    ContentOwnedTerrainRequestClearsLegacyHeightmapTerrainCache) {
     TileContentLifecycleManager manager;
     LifecycleTerrainContentProvider contentProvider;
     std::vector<ActivatedRasterOverlay*> rasterOverlays;
@@ -174,16 +193,16 @@ TEST(
 
     EXPECT_EQ(1u, outcome.issued);
     EXPECT_EQ(1, contentProvider.requestCount);
-    EXPECT_EQ(1u, manager.legacyHeightmapTerrainCache().size());
+    EXPECT_TRUE(manager.legacyHeightmapTerrainCache().empty());
     EXPECT_EQ(1u, manager.loadLifecycle().pendingLoads()
                       .terminalResultCount());
 }
 
 TEST(
     TileContentLifecycleManagerTest,
-    RequestMissingTilesDoesNotOwnStaleLegacyHeightmapTerrainCache) {
+    NonTerrainContentRequestDoesNotOwnStaleLegacyHeightmapTerrainCache) {
     TileContentLifecycleManager manager;
-    LifecycleTerrainContentProvider contentProvider;
+    LifecycleOrdinaryContentProvider contentProvider;
     std::vector<ActivatedRasterOverlay*> rasterOverlays;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     auto staleHeightmap = std::make_unique<DecodedHeightmap>();
