@@ -6,9 +6,13 @@
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
 #include "earth_engine/tiling/TileOcclusionState.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileSelectionFrameBuilder.h"
 #include "earth_engine/tiling/TileSelectionTraversalContextBuilder.h"
+#include "earth_engine/tiling/TileSelectionTraversalExecutor.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
+
+#include <limits>
 
 using namespace earth_engine;
 
@@ -52,6 +56,23 @@ struct TraversalContextFixture {
             binding);
     }
 };
+
+struct RetryChildrenProbe {
+    int calls = 0;
+};
+
+TileChildFrameMaterializeResult retryChildrenMaterialization(
+    void* userData,
+    TilesetTile& tile) {
+    auto* probe = static_cast<RetryChildrenProbe*>(userData);
+    ++probe->calls;
+    EXPECT_EQ(tile.key, (TileKey{"test", 0, 0, 0}));
+    return TileChildFrameMaterializeResult{false, true};
+}
+
+bool alwaysCanRefine(void*, const TilesetTile&) {
+    return true;
+}
 
 } // namespace
 
@@ -117,4 +138,47 @@ TEST(
         context.checkOcclusion(child),
         TileOcclusionState::NotOccluded);
     EXPECT_EQ(callbackCalls, 2);
+}
+
+TEST(
+    TileSelectionTraversalContextBuilderTest,
+    TraversalQueuesUrgentLoadWhenChildrenRetryLater) {
+    TraversalContextFixture fixture;
+    fixture.options.enableFrustumCulling = false;
+    fixture.options.enableFogCulling = false;
+    fixture.options.enableLodTransitionPeriod = false;
+    RetryChildrenProbe probe;
+    TileSelectionTraversalContext context = fixture.build();
+    context.contentAccessUserData = &probe;
+    context.ensureTileChildrenFn = retryChildrenMaterialization;
+    context.canRefineFn = alwaysCanRefine;
+
+    TilesetTile tile(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-1.0, -1.0, 1.0, 1.0});
+    tile.unconditionallyRefine = true;
+    tile.geometricError = 1.0;
+
+    const SelectorFrame selectorFrame;
+    const TileTraversalDetails details =
+        TileSelectionTraversalExecutor::visitTileIfNeeded(
+            context,
+            tile,
+            selectorFrame,
+            0,
+            false);
+
+    EXPECT_EQ(probe.calls, 1);
+    ASSERT_EQ(fixture.loadQueue.size(), 1u);
+    EXPECT_EQ(fixture.loadQueue.front().key, tile.key);
+    EXPECT_EQ(
+        fixture.loadQueue.front().group,
+        TileLoadPriorityGroup::Urgent);
+    EXPECT_DOUBLE_EQ(
+        fixture.loadQueue.front().priority,
+        std::numeric_limits<double>::max());
+    EXPECT_EQ(tile.selectionFrameState.selectionState,
+              TileSelectionState::Refined);
+    EXPECT_TRUE(details.allAreRenderable);
+    EXPECT_EQ(details.notYetRenderableCount, 0u);
 }
