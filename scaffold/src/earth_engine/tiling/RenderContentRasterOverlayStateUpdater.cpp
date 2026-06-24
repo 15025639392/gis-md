@@ -53,10 +53,13 @@ RenderContentRasterOverlayStateUpdater::update(
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
         tile.content.renderContent.hasRasterOverlayDetailsContent();
+    const bool mapsLoadedRenderContent =
+        tile.content.contentKind == TileContentKind::Render &&
+        tile.content.renderContent.hasRenderableTerrainContent();
     const bool waitForContentTerrainDetails =
         tile.waitsForContentTerrainRasterDetails();
     static const RasterOverlayDetails emptyOverlayDetails;
-    const RasterOverlayDetails& overlayDetails = hasRenderContentDetails
+    const RasterOverlayDetails& overlayDetails = mapsLoadedRenderContent
         ? tile.content.renderContent.rasterOverlayDetails()
         : emptyOverlayDetails;
 
@@ -98,12 +101,11 @@ RenderContentRasterOverlayStateUpdater::update(
                 tile.nonZeroGeometricError(),
                 maximumScreenSpaceError);
         std::vector<RasterOverlayProjection> localMissingProjections;
+        const bool mapAsRenderContent = mapsLoadedRenderContent;
         std::vector<RasterOverlayProjection>& missingProjections =
-            hasRenderContentDetails
+            mapAsRenderContent
                 ? tile.rasterOverlayState.missingProjections()
                 : localMissingProjections;
-        const bool mapAsRenderContent =
-            hasRenderContentDetails || waitForContentTerrainDetails;
         const RasterMappedToTilesetTile::MoreDetail moreDetail =
             overlay.update(
                 tile.key,

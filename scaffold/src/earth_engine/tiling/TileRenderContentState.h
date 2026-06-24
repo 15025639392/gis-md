@@ -141,7 +141,7 @@ public:
         return hasSurfaceMesh() || hasGltfContent();
     }
     bool hasRasterOverlayDetailsContent() const {
-        return hasSurfaceMesh() || hasGltfContent();
+        return !rasterOverlayDetails().empty();
     }
     bool isTerrainRenderContent() const { return terrainRenderContent_; }
     const SurfaceTileMesh* surfaceMesh() const { return surface_.mesh.get(); }

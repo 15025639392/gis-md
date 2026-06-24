@@ -58,9 +58,12 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
         tile.content.renderContent.hasRasterOverlayDetailsContent();
+    const bool mapsLoadedRenderContent =
+        tile.content.contentKind == TileContentKind::Render &&
+        tile.content.renderContent.hasRenderableTerrainContent();
     const bool waitForContentTerrainDetails =
         tile.waitsForContentTerrainRasterDetails();
-    const RasterOverlayDetails* renderDetails = hasRenderContentDetails
+    const RasterOverlayDetails* renderDetails = mapsLoadedRenderContent
         ? &tile.content.renderContent.rasterOverlayDetails()
         : nullptr;
     static const RasterOverlayDetails emptyOverlayDetails;
@@ -108,12 +111,11 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
         RasterMappedToTilesetTile& mapped =
             tile.rasterOverlayState.ensureMapping(i);
         std::vector<RasterOverlayProjection> localMissingProjections;
+        const bool mapAsRenderContent = mapsLoadedRenderContent;
         std::vector<RasterOverlayProjection>& missingProjections =
-            hasRenderContentDetails
+            mapAsRenderContent
                 ? tile.rasterOverlayState.missingProjections()
                 : localMissingProjections;
-        const bool mapAsRenderContent =
-            hasRenderContentDetails || waitForContentTerrainDetails;
 
         // cesium-native updates RasterMappedTo3DTile before giving any
         // throttled raster request another chance to run. Keep that order so
