@@ -53,11 +53,9 @@ public:
             return;
         }
 
-        if (contentProvider &&
-            contentProvider->providesTerrainQuadtree() &&
-            !result.result.quantizedMeshAvailabilityUpdates.empty() &&
-            result.result.status != TileLoadStatus::RetryLater &&
-            result.result.status != TileLoadStatus::Cancelled) {
+        if (shouldApplyTerminalTerrainAvailability(
+                result.result,
+                contentProvider)) {
             contentProvider->applyTerrainAvailabilityUpdates(
                 result.result.quantizedMeshAvailabilityUpdates);
         }
@@ -271,6 +269,16 @@ public:
             std::forward<EnsureChildrenFn>(ensureChildren),
             std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
             std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+    }
+
+private:
+    static bool shouldApplyTerminalTerrainAvailability(
+        const TileLoadResult& result,
+        const TilesetContentProvider* contentProvider) {
+        return contentProvider &&
+               contentProvider->providesTerrainQuadtree() &&
+               !result.quantizedMeshAvailabilityUpdates.empty() &&
+               result.status == TileLoadStatus::Failed;
     }
 };
 
