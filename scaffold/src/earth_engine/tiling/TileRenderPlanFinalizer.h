@@ -157,8 +157,10 @@ struct TileRenderPlanFinalizer {
 
 private:
     static bool canBuildRenderEntryDirectly(const TilesetTile& tile) {
-        return tile.content.renderContent.hasGltfContent() ||
-               hasRenderableSurfaceForPlan(tile);
+        if (tile.content.renderContent.hasGltfContent()) {
+            return tile.content.renderContent.isGltfRenderReady();
+        }
+        return hasRenderableSurfaceForPlan(tile);
     }
 
     static bool needsSurfaceGeometryPrep(const TilesetTile& tile) {

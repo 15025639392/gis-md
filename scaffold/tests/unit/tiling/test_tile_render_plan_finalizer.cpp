@@ -190,6 +190,56 @@ TEST(
 
 TEST(
     TileRenderPlanFinalizerTest,
+    UsesReadyGltfAncestorWhileSelectedGltfResourcesArePending) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 1, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+    makeGltfRenderReady(parent);
+    child.content.renderContent.setGltfContent(makeEmptyGltfModel());
+    child.content.loadState = TileLoadState::Done;
+    child.content.contentKind = TileContentKind::Render;
+    ASSERT_TRUE(child.content.renderContent.hasGltfContent());
+    ASSERT_FALSE(child.content.renderContent.isGltfRenderReady());
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile);
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, childKey);
+    EXPECT_EQ(entry.renderKey, parentKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::AncestorFallback);
+    EXPECT_TRUE(entry.usesAncestorFallback);
+    EXPECT_TRUE(entry.surfaceClipEnabled);
+    EXPECT_TRUE(entry.allowSynchronousMeshPrep);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
+    EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
     RejectsGltfAncestorFallbackUntilResourcesAreReady) {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 1, 0};
