@@ -1410,6 +1410,23 @@ QuantizedMeshTerrainProvider::childTiles(const TileKey& key) const {
     return anyChildAvailable ? children : std::vector<TileKey>{};
 }
 
+bool QuantizedMeshTerrainProvider::
+    tileHasTerrainAvailabilityUpsampledChild(const TileKey& key) const {
+    if (TileSelectionRootPolicy::isVirtualTerrainRoot(key) ||
+        !isTileInLayerRange(key, schemeId_)) {
+        return false;
+    }
+
+    const std::vector<TileKey> children = quadtreeChildren(key);
+    uint32_t availableChildren = 0;
+    for (const TileKey& child : children) {
+        if (availabilityState(child) == TileAvailabilityState::Available) {
+            ++availableChildren;
+        }
+    }
+    return availableChildren > 0 && availableChildren < children.size();
+}
+
 void QuantizedMeshTerrainProvider::resetFallbackLayerFromFields() {
     LayerConfig layer;
     layer.urlTemplate = urlTemplate_;
@@ -1640,6 +1657,8 @@ TileContentLoadResult QuantizedMeshTerrainProvider::loadQuantizedMeshTileContent
         const LayerConfig* contentLayer = firstAvailableLayer(key);
         contentSchemeId = contentLayer ? contentLayer->schemeId : schemeId_;
     }
+    const bool needsTerrainProjectionForUpsample =
+        tileHasTerrainAvailabilityUpsampledChild(key);
     return QuantizedMeshContentLoader::loadTileContent(
         data,
         size,
@@ -1648,8 +1667,10 @@ TileContentLoadResult QuantizedMeshTerrainProvider::loadQuantizedMeshTileContent
         metadata,
         rasterOverlayProjectionForTerrainScheme(contentSchemeId),
         std::move(currentTileAvailabilityUpdate),
-        QuantizedMeshContentLoader::RasterOverlayDetailsMode::
-            GenerateTerrainProjection);
+        needsTerrainProjectionForUpsample
+            ? QuantizedMeshContentLoader::RasterOverlayDetailsMode::
+                  GenerateTerrainProjection
+            : QuantizedMeshContentLoader::RasterOverlayDetailsMode::None);
 }
 
 void QuantizedMeshTerrainProvider::requestTileContent(

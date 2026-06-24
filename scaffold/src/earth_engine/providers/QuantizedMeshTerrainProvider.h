@@ -243,6 +243,7 @@ private:
         const LayerConfig& layer,
         int subtreeLevel,
         uint64_t mortonIndex) const;
+    bool tileHasTerrainAvailabilityUpsampledChild(const TileKey& key) const;
     void markSubtreeLoadedInLayer(
         LayerConfig& layer,
         int subtreeLevel,

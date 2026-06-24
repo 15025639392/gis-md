@@ -582,13 +582,8 @@ TEST(QuantizedMeshTerrainProviderTest,
     auto scheme = TileScheme::createGeographicTMS();
     EXPECT_EQ(scheme->tileToRectangle(requestedKey),
               result.metadata.updatedBoundingVolume->region);
-    ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
-    const Rectangle* rectangle =
-        result.metadata.rasterOverlayDetails
-            ->findRectangleForOverlayProjection(
-                RasterOverlayProjection::Geographic);
-    ASSERT_NE(nullptr, rectangle);
-    EXPECT_EQ(scheme->tileToRectangle(requestedKey), *rectangle);
+    EXPECT_TRUE(result.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(result.metadata.rasterOverlayDetails.has_value());
     EXPECT_NEAR(minimumHeight,
                 result.metadata.updatedBoundingVolume->minimumHeight,
                 1e-6);
@@ -773,32 +768,74 @@ TEST(QuantizedMeshTerrainProviderTest,
     const Rectangle expected = scheme->tileToRectangle(key);
     EXPECT_EQ(expected, completed.metadata.updatedBoundingVolume->region);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(expected,
-              completed.gltfModel->rasterOverlayDetails.boundingRegion
-                  .rectangle);
-    const Rectangle expectedProjected = projectRectangleSimple(
-        WebMercatorProjection(Ellipsoid::WGS84()),
-        expected);
-    const Rectangle* rasterRectangle =
-        completed.gltfModel->rasterOverlayDetails
-            .findRectangleForOverlayProjection(
-                RasterOverlayProjection::WebMercator);
-    ASSERT_NE(nullptr, rasterRectangle);
-    EXPECT_TRUE(rasterRectangle->equalsEpsilon(expectedProjected, 1e-6));
-    EXPECT_EQ(nullptr,
-              completed.gltfModel->rasterOverlayDetails
-                  .findRectangleForOverlayProjection(
-                      RasterOverlayProjection::Geographic));
+    EXPECT_TRUE(completed.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(completed.metadata.rasterOverlayDetails.has_value());
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     RequestTileContentIncludesRasterOverlayDetailsForTerrainTileLikeCesiumNative) {
+     RequestTileContentOmitsRasterOverlayDetailsWithoutUpsampleChildLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
     QueuedStatusPlatformBridge bridge;
     provider.setPlatformBridge(&bridge);
 
     const TileKey key{"Geographic-TMS", 1, 1, 0};
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TileContentLoadResult completed;
+
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    EXPECT_TRUE(completed.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(completed.metadata.rasterOverlayDetails.has_value());
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     RequestTileContentGeneratesRasterOverlayDetailsForUpsampleChildLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "available": [
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
     std::mutex mutex;
     std::condition_variable cv;
     bool callbackCalled = false;
@@ -2551,15 +2588,8 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_NEAR(childMaximumHeight,
                 completed.metadata.updatedBoundingVolume->maximumHeight,
                 1e-6);
-    ASSERT_TRUE(completed.metadata.rasterOverlayDetails.has_value());
-    EXPECT_NEAR(
-        childMinimumHeight,
-        completed.metadata.rasterOverlayDetails->boundingRegion.minimumHeight,
-        1e-6);
-    EXPECT_NEAR(
-        childMaximumHeight,
-        completed.metadata.rasterOverlayDetails->boundingRegion.maximumHeight,
-        1e-6);
+    EXPECT_TRUE(completed.gltfModel->rasterOverlayDetails.empty());
+    EXPECT_FALSE(completed.metadata.rasterOverlayDetails.has_value());
     ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
     EXPECT_EQ(1, completed.quantizedMeshAvailabilityUpdates.front().layerIndex);
     EXPECT_EQ(
