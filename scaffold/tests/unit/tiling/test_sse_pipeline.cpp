@@ -2720,6 +2720,7 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
         failedSource.z - 1,
         failedSource.x / 2,
         failedSource.y / 2};
+    provider.processPendingUploads(false, &budget);
     const bool requestedParent =
         std::any_of(
             imagery.pendingRequests.begin(),
@@ -2890,6 +2891,7 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
         failedSource.z - 1,
         failedSource.x / 2,
         failedSource.y / 2};
+    provider.processPendingUploads(false, &budget);
 
     auto parentRequest = std::find_if(
         imagery.pendingRequests.begin(),

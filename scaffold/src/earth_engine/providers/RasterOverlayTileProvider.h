@@ -321,6 +321,7 @@ private:
     int issueMappedSourceImageSet(
         const std::shared_ptr<MappedSourceImageSet>& sourceSet,
         FrameResourceBudget* budget);
+    int issuePendingSourceFallbacks(FrameResourceBudget* budget);
     int issueActiveMappedSourceImageSets(FrameResourceBudget* budget);
     int estimateNewSourceRequestsForSourceKeys(
         const std::vector<TileKey>& sourceKeys) const;
@@ -396,6 +397,7 @@ private:
         std::unordered_map<std::string, std::shared_ptr<MappedSourceImageSet>>
             activeMappedSourceSets;
         std::deque<std::string> activeMappedSourceSetOrder;
+        std::deque<std::function<int()>> pendingSourceFallbacks;
         std::deque<std::pair<std::string, uint64_t>>
             sourceTileDepotCacheLru;
         int64_t sourceTileDepotCacheBytes = 0;

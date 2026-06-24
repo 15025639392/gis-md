@@ -1390,7 +1390,9 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     return;
                 }
             }
-            onReady(std::move(*cachedSource));
+            if (onReady) {
+                onReady(std::move(*cachedSource));
+            }
             return;
         }
 
@@ -1400,10 +1402,12 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             auto waiter =
                 [self, originalKey, ancestorFallback, onReady](
                     InFlightSourceTileAsset::Result cached) mutable {
-                    onReady(self->rasterSourceResultFromAsset(
-                        cached,
-                        originalKey,
-                        ancestorFallback));
+                    if (onReady) {
+                        onReady(self->rasterSourceResultFromAsset(
+                            cached,
+                            originalKey,
+                            ancestorFallback));
+                    }
                 };
             {
                 std::lock_guard<std::mutex> lock(cacheMutex);
@@ -1441,7 +1445,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         for (const TileKey& key : fallbackInFlightKeys) {
                             self->finishInFlightSource(key, cached);
                         }
-                    } else {
+                    } else if (onReady) {
                         onReady(std::move(source));
                     }
                 };
@@ -1459,7 +1463,9 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             fallbackInFlightKeys.push_back(requestedKey);
         }
 
-        onSourceIssued();
+        if (onSourceIssued) {
+            onSourceIssued();
+        }
         CancellationToken token;
         const std::vector<TileKey> exceptionInFlightKeys =
             fallbackInFlightKeys;
@@ -1476,7 +1482,9 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 const TileKey& loadedKey,
                 std::unique_ptr<DecodedImage> image) mutable {
                 if (!self->state->alive.load(std::memory_order_acquire)) {
-                    onSourceFinished();
+                    if (onSourceFinished) {
+                        onSourceFinished();
+                    }
                     auto abandoned =
                         self->makeAbandonedSourceResult(originalKey);
                     self->finishInFlightSource(originalKey, abandoned);
@@ -1487,7 +1495,9 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 }
 
                 if (image) {
-                    onSourceFinished();
+                    if (onSourceFinished) {
+                        onSourceFinished();
+                    }
                     RasterSourceResult source;
                     source.key = loadedKey;
                     source.bounds = self->scheme.tileToRectangle(loadedKey);
@@ -1534,10 +1544,14 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     return;
                 }
 
-                onSourceFailed();
+                if (onSourceFailed) {
+                    onSourceFailed();
+                }
                 if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
-                    onSourceFinished();
+                    if (onSourceFinished) {
+                        onSourceFinished();
+                    }
                     if (!self->state->alive.load(std::memory_order_acquire)) {
                         auto abandoned =
                             self->makeAbandonedSourceResult(originalKey);
@@ -1547,20 +1561,43 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         }
                         return;
                     }
-                    self->requestSource(
-                        parentKey,
-                        originalKey,
-                        true,
-                        false,
-                        onSourceIssued,
-                        onSourceFinished,
-                        onSourceFailed,
-                        std::move(onReady),
-                        std::move(fallbackInFlightKeys));
+                    {
+                        std::lock_guard<std::mutex> lock(
+                            self->state->mutex);
+                        self->state->pendingSourceFallbacks.push_back(
+                            [self,
+                             parentKey,
+                             originalKey,
+                             onSourceIssued,
+                             onSourceFinished,
+                             onSourceFailed,
+                             onReady,
+                             fallbackInFlightKeys]() mutable {
+                                int issued = 0;
+                                self->requestSource(
+                                    parentKey,
+                                    originalKey,
+                                    true,
+                                    false,
+                                    [&]() {
+                                        ++issued;
+                                        if (onSourceIssued) {
+                                            onSourceIssued();
+                                        }
+                                    },
+                                    onSourceFinished,
+                                    onSourceFailed,
+                                    std::move(onReady),
+                                    std::move(fallbackInFlightKeys));
+                                return issued;
+                            });
+                    }
                     return;
                 }
 
-                onSourceFinished();
+                if (onSourceFinished) {
+                    onSourceFinished();
+                }
                 auto failed = self->cacheTerminalFailure(originalKey);
                 self->finishInFlightSource(originalKey, failed);
                 for (const TileKey& key : fallbackInFlightKeys) {
@@ -1573,8 +1610,12 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 token,
                 std::move(callback));
         } catch (...) {
-            onSourceFailed();
-            onSourceFinished();
+            if (onSourceFailed) {
+                onSourceFailed();
+            }
+            if (onSourceFinished) {
+                onSourceFinished();
+            }
             SourceTileAsset failed;
             failed.key = originalKey;
             failed.bounds = scheme.tileToRectangle(originalKey);
@@ -2096,6 +2137,7 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
         }
         asyncState_->activeMappedSourceSets.clear();
         asyncState_->activeMappedSourceSetOrder.clear();
+        asyncState_->pendingSourceFallbacks.clear();
         asyncState_->inFlightRequests.clear();
     }
     for (const auto& sourceSet : abandonedSourceSets) {
@@ -2145,6 +2187,7 @@ void RasterOverlayTileProvider::setReady(bool ready) {
         asyncState_->sourceTileDepotCacheBytes = 0;
         asyncState_->inFlightRequests.clear();
         asyncState_->activeMappedSourceSetOrder.clear();
+        asyncState_->pendingSourceFallbacks.clear();
         abandonedUploads = asyncState_->pendingUploads.size();
         asyncState_->pendingUploads.clear();
     }
@@ -2371,6 +2414,7 @@ void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
         }
         asyncState_->activeMappedSourceSets.clear();
         asyncState_->activeMappedSourceSetOrder.clear();
+        asyncState_->pendingSourceFallbacks.clear();
     }
 
     for (const auto& [cacheKey, sourceSet] : activeSets) {
@@ -3059,8 +3103,48 @@ bool RasterOverlayTileProvider::mappedTileWouldIssueNewSourceRequests(
                tile.getMappedSourceKeys()) > 0;
 }
 
+int RasterOverlayTileProvider::issuePendingSourceFallbacks(
+    FrameResourceBudget* budget) {
+    int issued = 0;
+    while (true) {
+        if (budget) {
+            const int remainingSlots = availableRasterRequestSlots(
+                budget,
+                asyncState_->activeRasterSourceRequests.load(
+                    std::memory_order_relaxed));
+            if (remainingSlots <= 0) {
+                break;
+            }
+        }
+
+        std::function<int()> issueFallback;
+        {
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
+            if (asyncState_->pendingSourceFallbacks.empty()) {
+                break;
+            }
+            issueFallback =
+                std::move(asyncState_->pendingSourceFallbacks.front());
+            asyncState_->pendingSourceFallbacks.pop_front();
+        }
+
+        const int newlyIssued = issueFallback ? issueFallback() : 0;
+        if (newlyIssued > 0) {
+            issued += newlyIssued;
+            if (budget) {
+                budget->tryIssue(
+                    FrameResourceLane::RasterRequest,
+                    FrameResourcePriority::Normal,
+                    newlyIssued);
+            }
+        }
+    }
+    return issued;
+}
+
 int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(
     FrameResourceBudget* budget) {
+    int issued = issuePendingSourceFallbacks(budget);
     std::vector<std::shared_ptr<MappedSourceImageSet>> activeSets;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
@@ -3079,7 +3163,6 @@ int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(
         asyncState_->activeMappedSourceSetOrder.swap(compactedOrder);
     }
 
-    int issued = 0;
     for (const auto& sourceSet : activeSets) {
         if (!sourceSet || !sourceSet->hasUnissuedSources()) {
             continue;
@@ -3285,6 +3368,7 @@ bool RasterOverlayTileProvider::hasPendingWork() const {
     return !asyncState_->pendingUploads.empty() ||
            !asyncState_->inFlightRequests.empty() ||
            !asyncState_->activeMappedSourceSets.empty() ||
+           !asyncState_->pendingSourceFallbacks.empty() ||
            !asyncState_->sourceTileDepotInFlight.empty() ||
            asyncState_->activeRasterComposeTasks.load(
                std::memory_order_relaxed) > 0 ||

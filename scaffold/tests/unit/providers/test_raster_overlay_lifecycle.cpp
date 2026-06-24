@@ -1524,6 +1524,7 @@ TEST(RasterOverlayLifecycleTest, DirectTileUsesParentSubsetFallbackLikeCesiumNat
     ASSERT_NE(nullptr, tile);
 
     ASSERT_TRUE(provider.loadTile(*tile));
+    EXPECT_EQ(0, provider.processPendingUploads(false));
     ASSERT_EQ(2u, imagery.requestedKeys.size());
     EXPECT_EQ(childKey, imagery.requestedKeys[0]);
     EXPECT_EQ(parentKey, imagery.requestedKeys[1]);
@@ -3477,6 +3478,9 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     EXPECT_EQ(eastChild, imagery.pending[1].key);
 
     imagery.completeNext();
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(eastChild, imagery.pending[0].key);
+    EXPECT_EQ(0, provider.processPendingUploads(false));
     ASSERT_EQ(2u, imagery.pending.size());
     EXPECT_EQ(eastChild, imagery.pending[0].key);
     EXPECT_EQ(parent, imagery.pending[1].key);
@@ -3522,6 +3526,69 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
               repeatedEastTile->getState());
     EXPECT_EQ(nullptr, repeatedEastTile->getTexture());
     EXPECT_FALSE(provider.hasPendingWork());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     ParentFallbackSourceRequestsArePumpedByFrameBudget) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(0, 3);
+
+    const TileKey child{scheme->id(), 3, 2, 2};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {child};
+
+    auto tile = provider.getTile(child);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_FALSE(tile->isMappedRasterTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkInflight = 8;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+    ASSERT_TRUE(provider.loadTileThrottled(*tile, &firstBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(child, imagery.pending.front().key);
+    EXPECT_EQ(1u, firstBudget.rasterNetworkRequestsIssued());
+
+    imagery.completeNext();
+    EXPECT_TRUE(imagery.pending.empty());
+    EXPECT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(child, imagery.requestedKeys.front());
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    FrameResourceBudget blockedBudget;
+    config.maxNetworkRequestsPerFrame = 0;
+    config.maxNetworkInflight = 0;
+    config.maxRasterNetworkRequestsPerFrame = 0;
+    config.maxRasterNetworkInflight = 0;
+    blockedBudget.beginFrame(2, config);
+    EXPECT_EQ(0, provider.processPendingUploads(false, &blockedBudget));
+    EXPECT_TRUE(imagery.pending.empty());
+    EXPECT_EQ(1u, imagery.requestedKeys.size());
+
+    FrameResourceBudget fallbackBudget;
+    config.maxNetworkRequestsPerFrame = 20;
+    config.maxNetworkInflight = 20;
+    config.maxRasterNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkInflight = 8;
+    fallbackBudget.beginFrame(3, config);
+    EXPECT_EQ(0, provider.processPendingUploads(false, &fallbackBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(parent, imagery.pending.front().key);
+    EXPECT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(parent, imagery.requestedKeys.back());
+    EXPECT_EQ(1u, fallbackBudget.rasterNetworkRequestsIssued());
+
+    imagery.completeNext();
+    EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              tile->isMoreDetailAvailable());
 }
 
 TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumNative) {
