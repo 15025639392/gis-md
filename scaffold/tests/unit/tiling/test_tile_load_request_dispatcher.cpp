@@ -295,10 +295,6 @@ public:
 class SyncTerrainContentAvailabilityContentProvider final
     : public TilesetContentProvider {
 public:
-    explicit SyncTerrainContentAvailabilityContentProvider(
-        bool updatesAlreadyApplied = false)
-        : updatesAlreadyApplied_(updatesAlreadyApplied) {}
-
     std::string id() const override {
         return "dispatcher-gltf-terrain-availability";
     }
@@ -324,8 +320,6 @@ public:
         update.subtreeKey = TileKey{"Geographic-TMS", 3, 1, 1};
         update.metadataAvailability = {{0, 0, 0, 0, 0}};
         result.quantizedMeshAvailabilityUpdates.push_back(update);
-        result.quantizedMeshAvailabilityUpdatesApplied =
-            updatesAlreadyApplied_;
         callback(key, std::move(result));
     }
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
@@ -333,9 +327,6 @@ public:
     }
 
     std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
-
-private:
-    bool updatesAlreadyApplied_ = false;
 };
 
 class DeferredContentProvider final : public TilesetContentProvider {
@@ -774,8 +765,6 @@ TEST(TileLoadRequestDispatcherTest,
     std::optional<PendingTileLoad> upload =
         pendingLoads.takeHighestPriorityUpload(false, budget);
     ASSERT_TRUE(upload.has_value());
-    EXPECT_FALSE(
-        upload->content().quantizedMeshAvailabilityUpdatesApplied);
     ASSERT_EQ(1u,
               upload->content().quantizedMeshAvailabilityUpdates.size());
     EXPECT_EQ(2,
@@ -786,50 +775,6 @@ TEST(TileLoadRequestDispatcherTest,
               upload->content()
                   .quantizedMeshAvailabilityUpdates.front()
                   .subtreeKey);
-}
-
-TEST(TileLoadRequestDispatcherTest,
-     PreservesAlreadyAppliedTerrainAvailabilityMarkerUntilUploadCommit) {
-    std::mutex mutex;
-    std::condition_variable condition;
-    TilePendingRequestState requestState;
-    TilePendingLoadQueue pendingLoads;
-    FrameResourceBudgetConfig config;
-    FrameResourceBudget budget;
-    budget.beginFrame(1, config);
-    const TileKey key{"Geographic-TMS", 3, 1, 1};
-    SyncTerrainContentAvailabilityContentProvider provider(
-        true);
-
-    TileLoadDispatchResult result =
-        TileLoadRequestDispatcher::requestContent(
-            mutex,
-            condition,
-            requestState,
-            pendingLoads,
-            budget,
-            provider,
-            key,
-            "gltf-terrain-availability-applied",
-            TileLoadPriorityGroup::Normal,
-            0.0,
-            []() {});
-
-    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
-    EXPECT_EQ(1u, pendingLoads.gltfTerrainUploadCount());
-    EXPECT_TRUE(provider.appliedUpdates.empty());
-
-    std::optional<PendingTileLoad> upload =
-        pendingLoads.takeHighestPriorityUpload(false, budget);
-    ASSERT_TRUE(upload.has_value());
-    EXPECT_TRUE(
-        upload->content().quantizedMeshAvailabilityUpdatesApplied);
-    ASSERT_EQ(1u,
-              upload->content().quantizedMeshAvailabilityUpdates.size());
-    EXPECT_EQ(2,
-              upload->content()
-                  .quantizedMeshAvailabilityUpdates.front()
-                  .layerIndex);
 }
 
 TEST(TileLoadRequestDispatcherTest,

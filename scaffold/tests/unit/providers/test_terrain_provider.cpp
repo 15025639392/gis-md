@@ -633,7 +633,6 @@ TEST(QuantizedMeshTerrainProviderTest,
         1u,
         result.quantizedMeshAvailabilityUpdates.front()
             .metadataAvailability.size());
-    EXPECT_FALSE(result.quantizedMeshAvailabilityUpdatesApplied);
     EXPECT_EQ(TileAvailabilityState::Unknown,
               provider.availabilityState(metadataChild));
 
@@ -2420,7 +2419,6 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
     EXPECT_EQ(0, requestDiag.peakWorkerBlockingRequests);
 
     ASSERT_FALSE(completed.quantizedMeshAvailabilityUpdates.empty());
-    EXPECT_FALSE(completed.quantizedMeshAvailabilityUpdatesApplied);
     provider.applyAvailabilityUpdates(completed.quantizedMeshAvailabilityUpdates);
     EXPECT_TRUE(provider.supportsTile(parentOnlyChild));
     EXPECT_EQ(parentBase + "/parentTiles/1/2/0.terrain",
@@ -2522,7 +2520,6 @@ TEST(QuantizedMeshTerrainProviderTest,
     TileContentLoadResult firstCompleted = loadRoot();
     EXPECT_EQ(TileLoadStatus::Renderable, firstCompleted.status);
     ASSERT_NE(nullptr, firstCompleted.gltfModel);
-    EXPECT_FALSE(firstCompleted.quantizedMeshAvailabilityUpdatesApplied);
 
     for (int i = 0;
          i < 200 && provider.requestDiagnostics().requestsCompleted < 2;
@@ -3155,7 +3152,6 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(rootKey,
               firstCompleted.quantizedMeshAvailabilityUpdates[1].subtreeKey);
 
-    EXPECT_FALSE(firstCompleted.quantizedMeshAvailabilityUpdatesApplied);
     provider.applyAvailabilityUpdates(
         firstCompleted.quantizedMeshAvailabilityUpdates);
     EXPECT_EQ(1, provider.estimatedRequestFanout(rootKey));
@@ -3390,7 +3386,6 @@ TEST(QuantizedMeshTerrainProviderTest,
         completed.quantizedMeshAvailabilityUpdates[1]
             .metadataAvailability.empty());
 
-    EXPECT_FALSE(completed.quantizedMeshAvailabilityUpdatesApplied);
     provider.applyAvailabilityUpdates(completed.quantizedMeshAvailabilityUpdates);
     EXPECT_EQ(TileAvailabilityState::Available,
               provider.availabilityState(childAvailableKey));
@@ -3498,7 +3493,6 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(parentTile,
               completed.quantizedMeshAvailabilityUpdates[0].subtreeKey);
 
-    EXPECT_FALSE(completed.quantizedMeshAvailabilityUpdatesApplied);
     provider.applyAvailabilityUpdates(completed.quantizedMeshAvailabilityUpdates);
 
     const std::string parentBase =

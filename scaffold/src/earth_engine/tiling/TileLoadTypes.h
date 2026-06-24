@@ -35,8 +35,6 @@ struct TileLoadedContent {
         content.terrainRenderContent = result.terrainRenderContent;
         content.quantizedMeshAvailabilityUpdates =
             std::move(result.quantizedMeshAvailabilityUpdates);
-        content.quantizedMeshAvailabilityUpdatesApplied =
-            result.quantizedMeshAvailabilityUpdatesApplied;
         return content;
     }
 
@@ -46,7 +44,6 @@ struct TileLoadedContent {
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
-    bool quantizedMeshAvailabilityUpdatesApplied = false;
 
     bool satisfiesContentTerrainPayloadContract() const {
         return terrainRenderContent &&

@@ -2040,8 +2040,6 @@ TEST(TilesetQuantizedMeshTest,
     ASSERT_TRUE(childLoad.has_value());
     EXPECT_TRUE(childLoad->content.hasGltfTerrainPayload());
     EXPECT_TRUE(childLoad->content.quantizedMeshAvailabilityUpdates.empty());
-    EXPECT_FALSE(
-        childLoad->content.quantizedMeshAvailabilityUpdatesApplied);
 }
 
 TEST(TilesetQuantizedMeshTest,

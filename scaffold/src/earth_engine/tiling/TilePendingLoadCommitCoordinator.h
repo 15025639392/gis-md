@@ -157,7 +157,6 @@ public:
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
         const bool shouldApplyTerrainAvailability =
             upload.content().satisfiesContentTerrainPayloadContract() &&
-            !upload.content().quantizedMeshAvailabilityUpdatesApplied &&
             !upload.content().quantizedMeshAvailabilityUpdates.empty() &&
             contentProvider &&
             contentProvider->providesTerrainQuadtree();
