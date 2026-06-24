@@ -640,6 +640,14 @@ TEST(QuantizedMeshTerrainProviderTest,
     provider.applyAvailabilityUpdates(result.quantizedMeshAvailabilityUpdates);
     EXPECT_EQ(TileAvailabilityState::Available,
               provider.availabilityState(metadataChild));
+
+    TileContentLoadResult secondResult =
+        provider.decodeTileContent(rootKey, bytes.data(), bytes.size());
+
+    EXPECT_EQ(TileLoadStatus::Renderable, secondResult.status);
+    EXPECT_TRUE(secondResult.quantizedMeshAvailabilityUpdates.empty());
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(metadataChild));
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
