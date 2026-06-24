@@ -171,3 +171,61 @@ TEST(TileRenderCommandPreparerTest,
     EXPECT_FALSE(tile.selectionFrameState.renderable);
     EXPECT_TRUE(commands.empty());
 }
+
+TEST(TileRenderCommandPreparerTest,
+     GltfTerrainAncestorFallbackCarriesClipToPrimitiveCommand) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.renderContent.setGltfContent(std::make_unique<GltfModel>());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources primitive;
+    primitive.vertexBuffer = std::make_unique<DummyBuffer>(96);
+    primitive.indexBuffer = std::make_unique<DummyBuffer>(12);
+    primitive.vertexCount = 3;
+    primitive.indexCount = 3;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(primitive));
+    tile.content.renderContent.setGltfResourcesReady(true);
+    ASSERT_TRUE(tile.content.renderContent.isGltfRenderReady());
+
+    FrameResourceBudget budget;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    bool ensureMeshCalled = false;
+    bool unloadContentCalled = false;
+    bool upsampleChildrenCalled = false;
+
+    TileRenderCommandPreparer::build(
+        renderer,
+        tile,
+        commands,
+        overlays,
+        nullptr,
+        budget,
+        makeContext(true),
+        [&ensureMeshCalled](TilesetTile&) {
+            ensureMeshCalled = true;
+        },
+        [&unloadContentCalled](TilesetTile&) {
+            unloadContentCalled = true;
+        },
+        [&upsampleChildrenCalled](TilesetTile&) {
+            upsampleChildrenCalled = true;
+        });
+
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_FALSE(ensureMeshCalled);
+    EXPECT_FALSE(unloadContentCalled);
+    EXPECT_FALSE(upsampleChildrenCalled);
+    const RenderCommand& command = commands.front();
+    EXPECT_EQ(RenderCommandKind::GltfPrimitive, command.kind);
+    EXPECT_TRUE(command.terrainRenderContent);
+    EXPECT_GT(command.surfaceClipEnabled, 0.5f);
+    EXPECT_EQ(command.surfaceClipUv,
+              (std::array<float, 4>{0.25f, 0.0f, 0.5f, 1.0f}));
+    ASSERT_TRUE(command.uniforms.count("u_clipUV") > 0);
+    ASSERT_TRUE(command.uniforms.count("u_clipEnabled") > 0);
+    EXPECT_EQ(command.uniforms.at("u_clipUV"),
+              (std::vector<float>{0.25f, 0.0f, 0.5f, 1.0f}));
+    EXPECT_EQ(command.uniforms.at("u_clipEnabled"),
+              (std::vector<float>{1.0f}));
+}

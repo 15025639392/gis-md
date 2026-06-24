@@ -87,6 +87,16 @@ void GltfDrawCommandBuilder::build(
             primitive.sortCenterEcef.y(),
             primitive.sortCenterEcef.z()};
         cmd.uniforms["u_renderOpacity"] = {context.transitionOpacity};
+        if (context.surfaceClipUv) {
+            cmd.surfaceClipUv = *context.surfaceClipUv;
+            cmd.surfaceClipEnabled = 1.0f;
+            cmd.uniforms["u_clipUV"] = {
+                (*context.surfaceClipUv)[0],
+                (*context.surfaceClipUv)[1],
+                (*context.surfaceClipUv)[2],
+                (*context.surfaceClipUv)[3]};
+            cmd.uniforms["u_clipEnabled"] = {1.0f};
+        }
         cmd.uniforms["u_baseColor"] = {
             primitive.baseColorFactor[0],
             primitive.baseColorFactor[1],

@@ -2,7 +2,9 @@
 
 #include "../renderer/RenderCommand.h"
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace earth_engine {
@@ -15,6 +17,7 @@ struct GltfDrawCommandBuildContext {
     uint64_t frameNumber = 0;
     uint64_t generation = 0;
     float transitionOpacity = 1.0f;
+    std::optional<std::array<float, 4>> surfaceClipUv;
 };
 
 struct GltfDrawCommandBuilder {

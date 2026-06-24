@@ -87,7 +87,8 @@ public:
                 GltfDrawCommandBuildContext{
                     context.frameNumber,
                     context.generation,
-                    context.transitionOpacity});
+                    context.transitionOpacity,
+                    context.surfaceClipUv});
             return;
         }
 
