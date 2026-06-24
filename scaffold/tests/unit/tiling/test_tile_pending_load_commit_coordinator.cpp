@@ -544,6 +544,52 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentTerrainEnsureTilePreservesRetryLaterRenderContent) {
+    RecordingTerrainContentProvider provider;
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* tile = contentAccess.ensureTile(key);
+    ASSERT_NE(nullptr, tile);
+    tile->content.loadState = TileLoadState::ContentLoading;
+    seedStaleRenderResidue(*tile);
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    PendingTileLoad result{
+        TileLoadDomain::TerrainContent,
+        key,
+        "retry-preserve-ensure-tile",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
+        result,
+        emptyContentRegistry,
+        nullptr,
+        [&contentAccess](const TileKey& tileKey) {
+            return contentAccess.ensureTile(tileKey);
+        },
+        [](TilesetTile&) {},
+        []() {});
+
+    ASSERT_EQ(TileLoadState::FailedTemporarily, tile->content.loadState);
+    ASSERT_TRUE(tile->content.renderContent.hasGltfContent());
+    ASSERT_TRUE(tile->content.renderContent.isTerrainRenderContent());
+
+    TilesetTile* ensuredAgain = contentAccess.ensureTile(key);
+
+    ASSERT_EQ(tile, ensuredAgain);
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile->content.loadState);
+    EXPECT_TRUE(tile->content.renderContent.hasGltfContent());
+    EXPECT_TRUE(tile->content.renderContent.isTerrainRenderContent());
+    EXPECT_TRUE(tile->content.renderContent.hasGltfPrimitiveResources());
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerminalNonRenderContentReplacesStaleRenderResidueLikeCesiumNative) {
     expectTerminalResultClearsStaleRenderResidue(
         TileLoadDomain::Content,

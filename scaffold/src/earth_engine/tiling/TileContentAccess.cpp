@@ -110,7 +110,9 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
         rasterOverlayCount_);
     if (tile && contentProviderOwnsTerrainQuadtree()) {
         tile->contentProviderTerrainQuadtreeTile = true;
-        TileContentTerrainResiduePolicy::clearRejectableResidue(*tile);
+        if (tile->content.loadState == TileLoadState::Unloaded) {
+            TileContentTerrainResiduePolicy::clearRejectableResidue(*tile);
+        }
     }
     return tile;
 }
