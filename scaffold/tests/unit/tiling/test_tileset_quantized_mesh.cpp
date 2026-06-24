@@ -240,6 +240,19 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     return bytes;
 }
 
+std::vector<uint8_t> makeQuantizedMeshBytesWithMetadata(
+    const std::string& metadataJson) {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(Vec3::zero(), Vec3::zero());
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(
+        bytes,
+        static_cast<uint32_t>(sizeof(uint32_t) + metadataJson.size()));
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadataJson.size()));
+    bytes.insert(bytes.end(), metadataJson.begin(), metadataJson.end());
+    return bytes;
+}
+
 class NoopHttpRequest final : public HttpRequest {
 public:
     void cancel() override {}
@@ -1519,6 +1532,94 @@ TEST(TilesetQuantizedMeshTest,
     TilesetTestAccess::ensureTileChildren(tileset, *boundary);
     ASSERT_EQ(4u, boundary->children.size());
     EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *boundary));
+}
+
+TEST(TilesetQuantizedMeshTest,
+     QuantizedMeshMetadataAvailabilityCommitMaterializesChildrenLikeCesiumNative) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 2,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    QuantizedMeshTerrainProvider* rawProvider = provider.get();
+    QueuedContentPlatformBridge bridge;
+    provider->setPlatformBridge(&bridge);
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey availableChild{"Geographic-TMS", 1, 0, 0};
+    const TileKey unavailableChild{"Geographic-TMS", 1, 1, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              rawProvider->availabilityState(availableChild));
+
+    const TileLoadRequestOutcome outcome =
+        TilesetTestAccess::requestMissingContent(tileset, rootKey);
+    EXPECT_EQ(1u, outcome.issued);
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_EQ(
+        "https://example.invalid/0/0/0.terrain",
+        bridge.pendingUrl(0));
+
+    const std::string metadataJson = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+    ASSERT_TRUE(bridge.completeNext(
+        200,
+        makeQuantizedMeshBytesWithMetadata(metadataJson)));
+
+    bool processedPendingLoad = false;
+    for (int i = 0; i < 50; ++i) {
+        const TileLoadLifecycleCounts counts =
+            TilesetTestAccess::contentLoadLifecycleCounts(tileset);
+        if (counts.gltfTerrainUploads > 0) {
+            processedPendingLoad =
+                TilesetTestAccess::processPendingLoads(tileset);
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(processedPendingLoad);
+    EXPECT_EQ(TileLoadState::Done, root->content.loadState);
+    EXPECT_EQ(TileContentKind::Render, root->content.contentKind);
+    EXPECT_TRUE(root->content.renderContent.isTerrainRenderContent());
+
+    EXPECT_EQ(TileAvailabilityState::Available,
+              rawProvider->availabilityState(availableChild));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              rawProvider->availabilityState(unavailableChild));
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(4u, root->children.size());
+    EXPECT_EQ(availableChild, root->children[0]->key);
+    EXPECT_FALSE(
+        root->children[0]->content.isTerrainAvailabilityUpsample());
+    for (size_t i = 1; i < root->children.size(); ++i) {
+        EXPECT_TRUE(
+            root->children[i]->content.isTerrainAvailabilityUpsample());
+    }
+    EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *root));
 }
 
 TEST(TilesetQuantizedMeshTest,
