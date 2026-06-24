@@ -477,15 +477,15 @@ void expectContentTerminalIgnoresMetadata(TileLoadStatus status,
 TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainContentFailedOrRetryTerminalDoesNotEnsureChildrenLikeCesiumNative) {
     for (const auto& [status, expectedLoadState] :
-         std::array<std::pair<TileLoadStatus, TileLoadState>, 2>{
+         std::array<std::pair<TileLoadStatus, TileLoadState>, 3>{
              std::pair{TileLoadStatus::RetryLater,
+                       TileLoadState::FailedTemporarily},
+             std::pair{TileLoadStatus::Cancelled,
                        TileLoadState::FailedTemporarily},
              std::pair{TileLoadStatus::Failed, TileLoadState::Failed}}) {
         const TileKey key{"Geographic-TMS", 0, 0, 0};
-        const std::string cacheKey =
-            status == TileLoadStatus::RetryLater
-                ? "gltf-terrain-retry"
-                : "gltf-terrain-failed";
+        std::string cacheKey = "gltf-terrain-terminal-";
+        cacheKey += std::to_string(static_cast<int>(status));
         TilesetTile tile(key, Rectangle{});
         tile.content.loadState = TileLoadState::ContentLoading;
 
