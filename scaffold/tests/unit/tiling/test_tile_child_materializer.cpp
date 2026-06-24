@@ -599,6 +599,92 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
+     TerrainAvailabilityMaterializationRefreshesAcceptedChildGeometryLikeCesiumNative) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        scheme->tileToRectangle(TileKey{"Geographic-TMS", 1, 1, 0}));
+    parent.geometricError = 80.0;
+    parent.refine = TileRefine::Add;
+    parent.boundingVolume = TileBoundingVolume::fromRegion(
+        parent.bounds,
+        -12.0,
+        34.0);
+    parent.content.renderContent.setTerrainHeightRange(-12.0, 34.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key))).first;
+        }
+        return it->second.get();
+    };
+
+    TilesetTile* acceptedChild =
+        ensure(TileKey{"Geographic-TMS", 2, 2, 0});
+    ASSERT_NE(nullptr, acceptedChild);
+    acceptedChild->geometricError = 999.0;
+    acceptedChild->refine = TileRefine::Replace;
+    acceptedChild->boundingVolume = TileBoundingVolume::fromRegion(
+        acceptedChild->bounds,
+        1.0,
+        2.0);
+    acceptedChild->contentBoundingVolume = TileBoundingVolume::fromRegion(
+        acceptedChild->bounds,
+        3.0,
+        4.0);
+    acceptedChild->content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    acceptedChild->content.renderContent.setTerrainRenderContent(true);
+    ASSERT_TRUE(
+        TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
+            *acceptedChild));
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure,
+        true);
+
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ(acceptedChild, parent.children[0]);
+    EXPECT_FALSE(acceptedChild->content.upsampledFromParent);
+    EXPECT_TRUE(acceptedChild->content.renderContent.hasGltfModel());
+    EXPECT_TRUE(acceptedChild->content.renderContent.isTerrainRenderContent());
+    EXPECT_DOUBLE_EQ(40.0, acceptedChild->geometricError);
+    EXPECT_EQ(TileRefine::Add, acceptedChild->refine);
+    ASSERT_TRUE(acceptedChild->boundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Region,
+              acceptedChild->boundingVolume->kind);
+    EXPECT_EQ(acceptedChild->bounds, acceptedChild->boundingVolume->region);
+    EXPECT_DOUBLE_EQ(-12.0,
+                     acceptedChild->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(34.0,
+                     acceptedChild->boundingVolume->maximumHeight);
+    EXPECT_FALSE(acceptedChild->contentBoundingVolume.has_value());
+    ASSERT_TRUE(
+        acceptedChild->content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(
+        -12.0,
+        acceptedChild->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        34.0,
+        acceptedChild->content.renderContent.terrainMaximumHeight());
+}
+
+TEST(TileChildMaterializerTest,
      TerrainAvailabilityUpgradeClearsStaleUpsampledMesh) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 1, 1, 0},
@@ -824,7 +910,7 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
-     TerrainAvailabilityMaterializationPreservesReadyGltfHeightRange) {
+     TerrainAvailabilityMaterializationRefreshesReadyGltfGeometryLikeCesiumNative) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 1, 1, 0},
         Rectangle{});
@@ -868,14 +954,14 @@ TEST(TileChildMaterializerTest,
     EXPECT_TRUE(readyGltfChild->content.renderContent.hasGltfModel());
     EXPECT_TRUE(readyGltfChild->content.renderContent.isRenderContentReady());
     EXPECT_DOUBLE_EQ(
-        1.0,
+        -100.0,
         readyGltfChild->content.renderContent.terrainMinimumHeight());
     EXPECT_DOUBLE_EQ(
-        2.0,
+        200.0,
         readyGltfChild->content.renderContent.terrainMaximumHeight());
     ASSERT_TRUE(readyGltfChild->boundingVolume.has_value());
-    EXPECT_DOUBLE_EQ(1.0, readyGltfChild->boundingVolume->minimumHeight);
-    EXPECT_DOUBLE_EQ(2.0, readyGltfChild->boundingVolume->maximumHeight);
+    EXPECT_DOUBLE_EQ(-100.0, readyGltfChild->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(200.0, readyGltfChild->boundingVolume->maximumHeight);
 }
 
 TEST(TileChildMaterializerTest,

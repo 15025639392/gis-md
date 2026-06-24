@@ -89,18 +89,29 @@ struct TileChildMaterializer {
             const bool hasAcceptedTerrainContent =
                 TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
                     *child);
-            if (!hasAcceptedTerrainContent) {
-                child->geometricError = parent.geometricError * 0.5;
-                child->refine = parent.refine;
-                const double minimumHeight =
-                    TileBoundsMetrics::terrainMinimumHeight(parent);
-                const double maximumHeight =
-                    TileBoundsMetrics::terrainMaximumHeight(parent);
-                child->boundingVolume = TileBoundingVolume::fromRegion(
+            const double childGeometricError = parent.geometricError * 0.5;
+            const double minimumHeight =
+                TileBoundsMetrics::terrainMinimumHeight(parent);
+            const double maximumHeight =
+                TileBoundsMetrics::terrainMaximumHeight(parent);
+            const TileBoundingVolume childBoundingVolume =
+                TileBoundingVolume::fromRegion(
                     child->bounds,
                     minimumHeight,
                     maximumHeight);
-                child->contentBoundingVolume.reset();
+            const bool childGeometryChanged =
+                child->geometricError != childGeometricError ||
+                child->refine != parent.refine ||
+                !sameRegionBoundingVolume(
+                    child->boundingVolume,
+                    childBoundingVolume) ||
+                child->contentBoundingVolume.has_value();
+            child->geometricError = childGeometricError;
+            child->refine = parent.refine;
+            child->boundingVolume = childBoundingVolume;
+            child->contentBoundingVolume.reset();
+            changed |= childGeometryChanged;
+            if (childGeometryChanged || !hasAcceptedTerrainContent) {
                 TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                     *child,
                     parent);
@@ -319,6 +330,17 @@ private:
     static bool canRepresentTileCoordinate(int64_t value) {
         return value >= static_cast<int64_t>(std::numeric_limits<int>::min()) &&
                value <= static_cast<int64_t>(std::numeric_limits<int>::max());
+    }
+
+    static bool sameRegionBoundingVolume(
+        const std::optional<TileBoundingVolume>& existing,
+        const TileBoundingVolume& expected) {
+        return existing &&
+               existing->kind == TileBoundingVolumeKind::Region &&
+               expected.kind == TileBoundingVolumeKind::Region &&
+               existing->region == expected.region &&
+               existing->minimumHeight == expected.minimumHeight &&
+               existing->maximumHeight == expected.maximumHeight;
     }
 
     static bool linkChild(TilesetTile& parent, TilesetTile& child) {
