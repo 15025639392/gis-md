@@ -1186,8 +1186,14 @@ TEST(RasterOverlayLifecycleTest,
 
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               mapping.tile->getState());
-    ASSERT_EQ(1u, mapping.tile->credits().size());
-    EXPECT_EQ("Imagery credit", mapping.tile->credits().front());
+    ASSERT_EQ(mapping.sourceTiles.sourceKeys.size(),
+              mapping.tile->credits().size());
+    EXPECT_TRUE(std::all_of(
+        mapping.tile->credits().begin(),
+        mapping.tile->credits().end(),
+        [](const std::string& credit) {
+            return credit == "Imagery credit";
+        }));
 }
 
 TEST(RasterOverlayLifecycleTest, WebMercatorBoundarySlopUsesProjectedGeometrySpanLikeCesiumNative) {
@@ -7360,7 +7366,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImagePreservesRgbSourceChannelsLikeCes
 }
 
 TEST(RasterOverlayLifecycleTest,
-     CompositeImageExpandsSingleChannelSourceToUploadableRgb) {
+     CompositeImagePreservesSingleChannelSourceLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
@@ -7382,14 +7388,12 @@ TEST(RasterOverlayLifecycleTest,
             1);
 
     ASSERT_NE(nullptr, result.image);
-    EXPECT_EQ(3, result.image->channels);
-    ASSERT_GE(result.image->pixels.size(), 3u);
+    EXPECT_EQ(1, result.image->channels);
+    ASSERT_EQ(4u, result.image->pixels.size());
     EXPECT_EQ(77, result.image->pixels[0]);
-    EXPECT_EQ(77, result.image->pixels[1]);
-    EXPECT_EQ(77, result.image->pixels[2]);
     EXPECT_EQ(
         static_cast<size_t>(result.image->width) *
-            static_cast<size_t>(result.image->height) * 3u,
+            static_cast<size_t>(result.image->height),
         result.image->pixels.size());
 }
 
@@ -7469,15 +7473,54 @@ TEST(RasterOverlayLifecycleTest,
             1);
 
     ASSERT_NE(nullptr, result.image);
-    EXPECT_EQ(3, result.image->channels);
+    EXPECT_EQ(1, result.image->channels);
     EXPECT_EQ(2, result.image->bytesPerChannel);
-    ASSERT_EQ(6u, result.image->pixels.size());
+    ASSERT_EQ(2u, result.image->pixels.size());
     EXPECT_EQ(0x34, result.image->pixels[0]);
     EXPECT_EQ(0x12, result.image->pixels[1]);
-    EXPECT_EQ(0x34, result.image->pixels[2]);
-    EXPECT_EQ(0x12, result.image->pixels[3]);
-    EXPECT_EQ(0x34, result.image->pixels[4]);
-    EXPECT_EQ(0x12, result.image->pixels[5]);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     CompositeImagePreservesDuplicateCreditsLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey westKey{scheme->id(), 2, 0, 1};
+    const TileKey eastKey{scheme->id(), 2, 1, 1};
+    const Rectangle westBounds = scheme->tileToRectangle(westKey);
+    const Rectangle eastBounds = scheme->tileToRectangle(eastKey);
+    const Rectangle target(
+        westBounds.west(),
+        westBounds.south(),
+        eastBounds.east(),
+        westBounds.north());
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
+    sources.push_back({
+        westKey,
+        westBounds,
+        makeRgbImage(1, 1, 10, 11, 12),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+    sources.back().credits = {"Imagery credit"};
+    sources.push_back({
+        eastKey,
+        eastBounds,
+        makeRgbImage(1, 1, 20, 21, 22),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+    sources.back().credits = {"Imagery credit"};
+
+    auto result =
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+            *scheme,
+            target,
+            2,
+            std::move(sources),
+            2);
+
+    ASSERT_NE(nullptr, result.image);
+    ASSERT_EQ(2u, result.credits.size());
+    EXPECT_EQ("Imagery credit", result.credits[0]);
+    EXPECT_EQ("Imagery credit", result.credits[1]);
 }
 
 TEST(RasterOverlayLifecycleTest,

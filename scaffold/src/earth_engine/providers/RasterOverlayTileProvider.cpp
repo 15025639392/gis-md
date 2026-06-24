@@ -858,16 +858,13 @@ bool hasNonAncestorRasterSourceImage(
         });
 }
 
-void appendUniqueCredits(std::vector<std::string>& target,
-                         const std::vector<std::string>& credits) {
+void appendCredits(std::vector<std::string>& target,
+                   const std::vector<std::string>& credits) {
     for (const std::string& credit : credits) {
         if (credit.empty()) {
             continue;
         }
-        if (std::find(target.begin(), target.end(), credit) ==
-            target.end()) {
-            target.push_back(credit);
-        }
+        target.push_back(credit);
     }
 }
 
@@ -1089,18 +1086,17 @@ void blitImage(DecodedImage& target,
                             copyBytes,
                             target.pixels.data() + targetOffset);
             };
-            copyChannel(0, 0);
-            copyChannel(1, source.channels > 1 ? 1 : 0);
-            copyChannel(2, source.channels > 2 ? 2 : 0);
-            if (target.channels >= 4) {
-                if (source.channels >= 4) {
-                    copyChannel(3, 3);
-                } else {
+            for (int channel = 0; channel < target.channels; ++channel) {
+                if (channel == 3 && source.channels < 4) {
                     const size_t alphaOffset =
-                        dstIndex + 3u * targetStride;
+                        dstIndex + static_cast<size_t>(channel) * targetStride;
                     std::fill_n(target.pixels.data() + alphaOffset,
                                 targetStride,
                                 0xFF);
+                } else {
+                    copyChannel(
+                        channel,
+                        source.channels > channel ? channel : 0);
                 }
             }
         }
@@ -1121,7 +1117,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
             diagnostics.end(),
             std::make_move_iterator(source.diagnostics.begin()),
             std::make_move_iterator(source.diagnostics.end()));
-        appendUniqueCredits(credits, source.credits);
+        appendCredits(credits, source.credits);
     }
     sources.erase(
         std::remove_if(sources.begin(), sources.end(),
@@ -1171,8 +1167,6 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
         result.credits = std::move(credits);
         return result;
     }
-    measurements.channels = std::max(3, measurements.channels);
-
     auto output = std::make_unique<DecodedImage>();
     output->width = measurements.width;
     output->height = measurements.height;
@@ -1248,7 +1242,7 @@ RasterOverlayTileProvider::CompositeImageResult composeMappedSourceImageSet(
                 result.diagnostics.end(),
                 std::make_move_iterator(source.diagnostics.begin()),
                 std::make_move_iterator(source.diagnostics.end()));
-            appendUniqueCredits(result.credits, source.credits);
+            appendCredits(result.credits, source.credits);
         }
         return result;
     }
