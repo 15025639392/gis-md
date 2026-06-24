@@ -2681,9 +2681,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
     EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
-    ASSERT_EQ(1u, provider.appliedUpdates.size());
-    EXPECT_EQ(4, provider.appliedUpdates.front().layerIndex);
-    EXPECT_EQ(key, provider.appliedUpdates.front().subtreeKey);
+    EXPECT_TRUE(provider.appliedUpdates.empty());
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
 

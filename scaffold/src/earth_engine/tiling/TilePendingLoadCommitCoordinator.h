@@ -132,13 +132,6 @@ public:
         }
 
         if (upload.result.shouldFailUploadForDomain(upload.domain)) {
-            if (upload.domain == TileLoadDomain::TerrainContent &&
-                contentProvider &&
-                contentProvider->providesTerrainQuadtree() &&
-                !upload.result.quantizedMeshAvailabilityUpdates.empty()) {
-                contentProvider->applyTerrainAvailabilityUpdates(
-                    upload.result.quantizedMeshAvailabilityUpdates);
-            }
             const TileTerminalLoadAction action =
                 upload.domain == TileLoadDomain::TerrainContent
                     ? TileTerminalLoadCommitter::commitTerrainTerminalResult(
