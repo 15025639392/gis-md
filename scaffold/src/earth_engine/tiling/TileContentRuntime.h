@@ -19,6 +19,7 @@ class TileContentLifecycleManager;
 class TileContentResourceInvalidator;
 class TileMeshPreparationManager;
 class TilesetContentProvider;
+struct TilesetTestAccess;
 struct TilesetTile;
 
 struct TileContentRuntimeRequestFrame {
@@ -44,7 +45,6 @@ struct TileContentRuntimeUploadFrame {
     double mainThreadLoadingTimeLimit = 0.0;
     double currentFrameTimeSeconds = 0.0;
     uint32_t smoothedMainThreadUploadLimit = 0;
-    bool retainLegacyHeightmapTerrainCache = false;
 };
 
 class TileContentRuntime {
@@ -53,7 +53,8 @@ public:
         TileContentLifecycleManager& lifecycle,
         TileContentAccess& contentAccess,
         TileMeshPreparationManager& meshPreparation,
-        TileContentResourceInvalidator& resourceInvalidator);
+        TileContentResourceInvalidator& resourceInvalidator,
+        bool retainLegacyHeightmapTerrainCacheForLegacySurfacePath);
 
     TileLoadRequestOutcome requestMissingTiles(
         const std::vector<TileLoadRequest>& loadRequests,
@@ -67,10 +68,13 @@ public:
     void markResourcesDirty();
 
 private:
+    friend struct TilesetTestAccess;
+
     TileContentLifecycleManager& lifecycle_;
     TileContentAccess& contentAccess_;
     TileMeshPreparationManager& meshPreparation_;
     TileContentResourceInvalidator& resourceInvalidator_;
+    bool retainLegacyHeightmapTerrainCacheForLegacySurfacePath_ = false;
 };
 
 } // namespace earth_engine

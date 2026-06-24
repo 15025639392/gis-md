@@ -138,7 +138,8 @@ Tileset::Tileset(ProviderOwnership providers,
           contentLifecycle_,
           contentAccess_,
           meshPreparation_,
-          resourceInvalidator_),
+          resourceInvalidator_,
+          usesLegacyHeightmapTerrainSurfacePath_),
       renderCommands_(
           meshPreparation_,
           cacheOwnership_,
@@ -250,8 +251,6 @@ TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
     frame.currentFrameTimeSeconds = currentFrameTimeSeconds_;
     frame.smoothedMainThreadUploadLimit =
         static_cast<uint32_t>(kSmoothedMainThreadUploadLimit);
-    frame.retainLegacyHeightmapTerrainCache =
-        usesLegacyHeightmapTerrainSurfacePath_;
     return frame;
 }
 

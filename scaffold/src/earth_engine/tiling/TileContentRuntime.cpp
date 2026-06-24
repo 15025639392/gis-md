@@ -12,11 +12,14 @@ TileContentRuntime::TileContentRuntime(
     TileContentLifecycleManager& lifecycle,
     TileContentAccess& contentAccess,
     TileMeshPreparationManager& meshPreparation,
-    TileContentResourceInvalidator& resourceInvalidator)
+    TileContentResourceInvalidator& resourceInvalidator,
+    bool retainLegacyHeightmapTerrainCacheForLegacySurfacePath)
     : lifecycle_(lifecycle),
       contentAccess_(contentAccess),
       meshPreparation_(meshPreparation),
-      resourceInvalidator_(resourceInvalidator) {}
+      resourceInvalidator_(resourceInvalidator),
+      retainLegacyHeightmapTerrainCacheForLegacySurfacePath_(
+          retainLegacyHeightmapTerrainCacheForLegacySurfacePath) {}
 
 TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
     const std::vector<TileLoadRequest>& loadRequests,
@@ -59,7 +62,7 @@ bool TileContentRuntime::processPendingUploads(
         frame.mainThreadLoadingTimeLimit,
         frame.currentFrameTimeSeconds,
         frame.smoothedMainThreadUploadLimit,
-        frame.retainLegacyHeightmapTerrainCache,
+        retainLegacyHeightmapTerrainCacheForLegacySurfacePath_,
         interactionActive,
         resourceSmoothingActive,
         budget,

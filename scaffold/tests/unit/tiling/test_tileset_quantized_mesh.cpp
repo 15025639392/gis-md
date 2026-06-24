@@ -103,10 +103,10 @@ struct TilesetTestAccess {
         return tileset.makeContentRuntimeRequestFrame().contentProvider;
     }
 
-    static bool runtimeRetainsLegacyHeightmapTerrainCacheForLegacySurfacePath(
+    static bool contentRuntimeRetainsLegacyHeightmapTerrainCache(
         const Tileset& tileset) {
-        return tileset.makeContentRuntimeUploadFrame(nullptr)
-            .retainLegacyHeightmapTerrainCache;
+        return tileset.contentRuntime_
+            .retainLegacyHeightmapTerrainCacheForLegacySurfacePath_;
     }
 
     static const TerrainProvider* effectiveLegacyTerrainProvider(
@@ -620,7 +620,7 @@ TEST(TilesetQuantizedMeshTest,
                   contentTerrainTileset));
     EXPECT_FALSE(
         TilesetTestAccess::
-            runtimeRetainsLegacyHeightmapTerrainCacheForLegacySurfacePath(
+            contentRuntimeRetainsLegacyHeightmapTerrainCache(
                 contentTerrainTileset));
 
     auto legacyTerrainProvider =
@@ -635,7 +635,7 @@ TEST(TilesetQuantizedMeshTest,
                   *legacyTerrainTileset));
     EXPECT_TRUE(
         TilesetTestAccess::
-            runtimeRetainsLegacyHeightmapTerrainCacheForLegacySurfacePath(
+            contentRuntimeRetainsLegacyHeightmapTerrainCache(
                 *legacyTerrainTileset));
 }
 
