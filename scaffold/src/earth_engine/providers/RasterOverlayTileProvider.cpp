@@ -2680,7 +2680,11 @@ bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
         return true;
     }
 
-    if (getThrottledTilesCurrentlyLoading() >= maximumSimultaneousTileLoads) {
+    const bool canJoinExistingMappedSources =
+        tile.isMappedRasterTile() &&
+        !mappedTileWouldIssueNewSourceRequests(tile);
+    if (!canJoinExistingMappedSources &&
+        getThrottledTilesCurrentlyLoading() >= maximumSimultaneousTileLoads) {
         return false;  // Throttled
     }
 
@@ -2810,29 +2814,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         if (asyncState_->inFlightRequests.count(cacheKey)) return true;
     }
 
-    auto estimateNewSourceRequests = [&]() {
-        int estimated = 0;
-        std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        for (const TileKey& sourceKey : sourceTiles.sourceKeys) {
-            const std::string sourceKeyString =
-                sourceCacheKey(
-                    asyncState_->sourceTileDepotEpoch,
-                    sourceKey);
-            auto cached =
-                asyncState_->sourceTileDepotCache.find(sourceKeyString);
-            if (cached != asyncState_->sourceTileDepotCache.end() &&
-                (cached->second.image || cached->second.terminalFailure)) {
-                continue;
-            }
-            if (asyncState_->sourceTileDepotInFlight.count(sourceKeyString) >
-                0) {
-                continue;
-            }
-            ++estimated;
-        }
-        return estimated;
-    };
-    const int estimatedNewSourceRequests = estimateNewSourceRequests();
+    const int estimatedNewSourceRequests =
+        estimateNewSourceRequestsForSourceKeys(sourceTiles.sourceKeys);
     const int availableSourceRequestSlots = availableRasterRequestSlots(
         budget,
         asyncState_->activeRasterSourceRequests.load(
@@ -3031,6 +3014,38 @@ int RasterOverlayTileProvider::issueMappedSourceImageSet(
             newlyIssued);
     }
     return newlyIssued;
+}
+
+int RasterOverlayTileProvider::estimateNewSourceRequestsForSourceKeys(
+    const std::vector<TileKey>& sourceKeys) const {
+    int estimated = 0;
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    for (const TileKey& sourceKey : sourceKeys) {
+        const std::string sourceKeyString =
+            sourceCacheKey(
+                asyncState_->sourceTileDepotEpoch,
+                sourceKey);
+        auto cached =
+            asyncState_->sourceTileDepotCache.find(sourceKeyString);
+        if (cached != asyncState_->sourceTileDepotCache.end() &&
+            (cached->second.image || cached->second.terminalFailure)) {
+            continue;
+        }
+        if (asyncState_->sourceTileDepotInFlight.count(sourceKeyString) > 0) {
+            continue;
+        }
+        ++estimated;
+    }
+    return estimated;
+}
+
+bool RasterOverlayTileProvider::mappedTileWouldIssueNewSourceRequests(
+    const RasterOverlayTile& tile) const {
+    if (!tile.isMappedRasterTile() || !tile.hasMappedSourceList()) {
+        return true;
+    }
+    return estimateNewSourceRequestsForSourceKeys(
+               tile.getMappedSourceKeys()) > 0;
 }
 
 int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(

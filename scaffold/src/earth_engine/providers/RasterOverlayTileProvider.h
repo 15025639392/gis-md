@@ -322,6 +322,10 @@ private:
         const std::shared_ptr<MappedSourceImageSet>& sourceSet,
         FrameResourceBudget* budget);
     int issueActiveMappedSourceImageSets(FrameResourceBudget* budget);
+    int estimateNewSourceRequestsForSourceKeys(
+        const std::vector<TileKey>& sourceKeys) const;
+    bool mappedTileWouldIssueNewSourceRequests(
+        const RasterOverlayTile& tile) const;
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;
