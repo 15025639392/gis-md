@@ -2497,7 +2497,8 @@ TEST(
 
     auto canRefineWithProvider =
         [&](const TilesetContentProvider* provider) {
-            return TileRefinementAvailabilityResolver::canRefine(
+            return TileRefinementAvailabilityResolver::
+                canRefineLegacyHeightmapSurfaceOrExternalContent(
                 root,
                 provider,
                 nullptr,

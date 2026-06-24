@@ -61,10 +61,12 @@ private:
 
     bool contentProviderOwnsTerrainQuadtree() const;
     bool hasTerrainQuadtree() const;
-    bool heightmapAvailabilityBoundaryTile(const TilesetTile& tile) const;
+    bool legacyHeightmapAvailabilityBoundaryTile(
+        const TilesetTile& tile) const;
     bool contentTerrainAvailabilityBoundaryTile(const TilesetTile& tile) const;
     TileAvailabilityState availabilityState(const TileKey& key) const;
-    TileAvailabilityState heightmapAvailabilityState(const TileKey& key) const;
+    TileAvailabilityState legacyHeightmapAvailabilityState(
+        const TileKey& key) const;
     TileAvailabilityState contentTerrainAvailabilityState(
         const TileKey& key) const;
 

@@ -179,14 +179,14 @@ bool TileContentAccess::isAvailabilityBoundaryTile(
     if (contentProviderOwnsTerrainQuadtree()) {
         return contentTerrainAvailabilityBoundaryTile(tile);
     }
-    return heightmapAvailabilityBoundaryTile(tile);
+    return legacyHeightmapAvailabilityBoundaryTile(tile);
 }
 
 bool TileContentAccess::contentProviderOwnsTerrainQuadtree() const {
     return terrainOwnership_ == TerrainOwnership::ContentProvider;
 }
 
-bool TileContentAccess::heightmapAvailabilityBoundaryTile(
+bool TileContentAccess::legacyHeightmapAvailabilityBoundaryTile(
     const TilesetTile& tile) const {
     return heightmapTerrainProvider_ &&
            heightmapTerrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
@@ -226,7 +226,8 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
             });
     }
 
-    return TileRefinementAvailabilityResolver::canRefine(
+    return TileRefinementAvailabilityResolver::
+        canRefineLegacyHeightmapSurfaceOrExternalContent(
         tile,
         contentProvider_,
         heightmapTerrainProvider_,
@@ -249,10 +250,10 @@ TileAvailabilityState TileContentAccess::availabilityState(
     if (contentProviderOwnsTerrainQuadtree()) {
         return contentTerrainAvailabilityState(key);
     }
-    return heightmapAvailabilityState(key);
+    return legacyHeightmapAvailabilityState(key);
 }
 
-TileAvailabilityState TileContentAccess::heightmapAvailabilityState(
+TileAvailabilityState TileContentAccess::legacyHeightmapAvailabilityState(
     const TileKey& key) const {
     return heightmapTerrainProvider_
         ? heightmapTerrainProvider_->availabilityState(key)

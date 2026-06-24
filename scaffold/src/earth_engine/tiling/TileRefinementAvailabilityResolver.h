@@ -51,7 +51,7 @@ public:
 
     template <typename CacheKeyFn, typename IsAvailabilityBoundaryFn,
               typename HasLoadedTerrainContentFn>
-    static bool canRefine(
+    static bool canRefineLegacyHeightmapSurfaceOrExternalContent(
         const TilesetTile& tile,
         const TilesetContentProvider* contentProvider,
         const TerrainProvider* heightmapTerrainProvider,
