@@ -4379,7 +4379,7 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
 }
 
 TEST(RasterOverlayLifecycleTest,
-     LoadingRectangleIssuesRemainingSourceFanoutAcrossFramesLikeCesiumNative) {
+     FrameProcessingIssuesRemainingMappedSourceFanoutLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -4416,7 +4416,7 @@ TEST(RasterOverlayLifecycleTest,
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, config);
 
-    EXPECT_TRUE(provider.loadTileThrottled(*mappedRasterTile, &secondBudget));
+    EXPECT_EQ(0, provider.processPendingUploads(false, &secondBudget));
     EXPECT_EQ(2u, imagery.pending.size());
     EXPECT_EQ(2u, secondBudget.rasterNetworkRequestsIssued());
     while (!imagery.pending.empty()) {

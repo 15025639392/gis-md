@@ -2499,7 +2499,7 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
               provider.loadTileThrottled(*mappedRasterTile, &secondFrameBudget) &&
               imagery.pendingRequests.size() == firstBatchSize &&
               secondFrameBudget.rasterNetworkRequestsIssued() == 0,
-          "RasterOverlayTileProvider: loading mapped raster tiles do not pump source requests on later frames");
+          "RasterOverlayTileProvider: loading mapped raster tiles skip redundant source requests once fanout is issued");
 
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {

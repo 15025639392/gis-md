@@ -321,6 +321,7 @@ private:
     int issueMappedSourceImageSet(
         const std::shared_ptr<MappedSourceImageSet>& sourceSet,
         FrameResourceBudget* budget);
+    int issueActiveMappedSourceImageSets(FrameResourceBudget* budget);
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;

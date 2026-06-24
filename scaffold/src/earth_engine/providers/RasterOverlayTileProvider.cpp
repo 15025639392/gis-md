@@ -3033,6 +3033,36 @@ int RasterOverlayTileProvider::issueMappedSourceImageSet(
     return newlyIssued;
 }
 
+int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(
+    FrameResourceBudget* budget) {
+    std::vector<std::shared_ptr<MappedSourceImageSet>> activeSets;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        activeSets.reserve(asyncState_->activeMappedSourceSets.size());
+        for (const auto& entry : asyncState_->activeMappedSourceSets) {
+            activeSets.push_back(entry.second);
+        }
+    }
+
+    int issued = 0;
+    for (const auto& sourceSet : activeSets) {
+        if (!sourceSet || !sourceSet->hasUnissuedSources()) {
+            continue;
+        }
+        issued += issueMappedSourceImageSet(sourceSet, budget);
+        if (budget) {
+            const int remainingSlots = availableRasterRequestSlots(
+                budget,
+                asyncState_->activeRasterSourceRequests.load(
+                    std::memory_order_relaxed));
+            if (remainingSlots <= 0) {
+                break;
+            }
+        }
+    }
+    return issued;
+}
+
 int RasterOverlayTileProvider::processPendingUploads(
     bool interactionActive,
     FrameResourceBudget* budget) {
@@ -3048,6 +3078,8 @@ int RasterOverlayTileProvider::processPendingUploads(
         localBudget.beginFrame(frameNumber_, config);
         budget = &localBudget;
     }
+
+    issueActiveMappedSourceImageSets(budget);
 
     int processed = 0;
     while (true) {
