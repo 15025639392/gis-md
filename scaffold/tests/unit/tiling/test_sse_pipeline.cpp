@@ -21269,10 +21269,10 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
               terrainKey,
               makeTriangleGltfModel()),
           "Tileset: lower-priority terrain glTF upload can complete first");
-    check(rawContentProvider->completeWithModel(
+    check(rawContentProvider->completeWithTerrainModel(
               contentKey,
               makeTriangleGltfModel()),
-          "Tileset: higher-priority content upload can complete second");
+          "Tileset: higher-priority terrain glTF upload can complete second");
     check(tileset.loadDiagnostics().pendingContentUploads == 0 &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 2,
           "Tileset: terrain-owned glTF uploads are tracked separately from heightmap terrain");

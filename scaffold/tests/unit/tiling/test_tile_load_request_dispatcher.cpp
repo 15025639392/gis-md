@@ -421,6 +421,36 @@ public:
     bool callbackSawIssued = false;
 };
 
+class SyncOrdinaryRenderFromTerrainQuadtreeProvider final
+    : public TilesetContentProvider {
+public:
+    explicit SyncOrdinaryRenderFromTerrainQuadtreeProvider(
+        bool& issuedBeforeCallback)
+        : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+    std::string id() const override {
+        return "dispatcher-terrain-ordinary-render";
+    }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callbackSawIssued = issuedBeforeCallback_;
+        callback(
+            key,
+            TileContentLoadResult::render(std::make_unique<GltfModel>()));
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    bool& issuedBeforeCallback_;
+    bool callbackSawIssued = false;
+};
+
 TEST(TileLoadRequestDispatcherTest,
      RunsOnIssuedBeforeSynchronousContentTerminalCallback) {
     std::mutex mutex;
@@ -787,6 +817,47 @@ TEST(TileLoadRequestDispatcherTest,
     ASSERT_TRUE(upload.has_value());
     EXPECT_EQ(TileLoadDomain::TerrainContent, upload->domain);
     EXPECT_TRUE(upload->content().hasGltfTerrainPayload());
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     TerrainContentProviderRejectsOrdinaryRenderableGltfPayload) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    SyncOrdinaryRenderFromTerrainQuadtreeProvider provider(issued);
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "ordinary-gltf-from-terrain-provider",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(provider.callbackSawIssued);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.gltfTerrainTerminalResultCount());
+
+    std::optional<PendingTileLoad> terminal =
+        pendingLoads.takeHighestPriorityTerminalResult(budget);
+    ASSERT_TRUE(terminal.has_value());
+    EXPECT_EQ(TileLoadDomain::TerrainContent, terminal->domain);
+    EXPECT_EQ(TileLoadStatus::Failed, terminal->result.status);
+    EXPECT_FALSE(terminal->content().hasGltfTerrainPayload());
 }
 
 TEST(TileLoadRequestDispatcherTest,

@@ -102,6 +102,12 @@ public:
                         TileLoadResult loadResult =
                             TileLoadResult::fromContentResult(
                                 std::move(result));
+                        if (domain == TileLoadDomain::TerrainContent &&
+                            loadResult.status == TileLoadStatus::Renderable &&
+                            !loadResult.content.hasGltfTerrainPayload()) {
+                            loadResult = TileLoadResult::createTerminal(
+                                TileLoadStatus::Failed);
+                        }
                         if (loadResult.content.hasGltfTerrainPayload() &&
                             !loadResult.content
                                  .quantizedMeshAvailabilityUpdatesApplied &&

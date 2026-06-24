@@ -71,11 +71,8 @@ struct TileContentLoadResult {
                 metadata.rasterOverlayDetails =
                     result.gltfModel->rasterOverlayDetails;
             } else if (metadata.rasterOverlayDetails && result.gltfModel) {
-                if (!result.gltfModel->rasterOverlayDetails.equalsExact(
-                        *metadata.rasterOverlayDetails)) {
-                    result.gltfModel->rasterOverlayDetails.merge(
-                        *metadata.rasterOverlayDetails);
-                }
+                result.gltfModel->rasterOverlayDetails =
+                    *metadata.rasterOverlayDetails;
             }
             result.metadata = std::move(metadata);
             result.contentTransform = contentTransform;
