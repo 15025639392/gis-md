@@ -2681,6 +2681,29 @@ void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
           "RasterOverlayTileProvider: clamped coverage miss samples the nearest coverage edge");
 }
 
+void testRasterOverlayCoverageIsConstrainedToTilingSchemeLikeCesiumNative() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setCoverageRectangle(Rectangle::MAXIMUM);
+
+    const Rectangle schemeBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 0, 0, 0});
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, Rectangle::MAXIMUM),
+            512.0,
+            512.0).tile;
+
+    check(mappedRasterTile && mappedRasterTile->isMappedRasterTile(),
+          "RasterOverlayTileProvider: maximum coverage creates mapped WebMercator raster");
+    check(mappedRasterTile &&
+              mappedRasterTile->getMappedSourceBounds().equalsEpsilon(
+                  schemeBounds,
+                  1e-12),
+          "RasterOverlayTileProvider: provider coverage is constrained by tiling scheme like cesium-native");
+}
+
 void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -28439,6 +28462,7 @@ int main() {
     testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative();
     testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss();
+    testRasterOverlayCoverageIsConstrainedToTilingSchemeLikeCesiumNative();
     testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian();
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
     testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative();

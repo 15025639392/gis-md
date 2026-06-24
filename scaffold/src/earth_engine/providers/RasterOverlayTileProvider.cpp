@@ -521,6 +521,30 @@ bool shouldClampOutsideCoverage(const RasterOverlay* owner) {
     return true;
 }
 
+Rectangle schemeCoverageRectangle(const TileScheme& scheme) {
+    const int rootX = std::max(1, scheme.tileCountX(0));
+    const int rootY = std::max(1, scheme.tileCountY(0));
+    Rectangle result = scheme.tileToRectangle(TileKey{scheme.id(), 0, 0, 0});
+    for (int y = 0; y < rootY; ++y) {
+        for (int x = 0; x < rootX; ++x) {
+            if (x == 0 && y == 0) {
+                continue;
+            }
+            result = result.computeUnion(
+                scheme.tileToRectangle(TileKey{scheme.id(), 0, x, y}));
+        }
+    }
+    return result;
+}
+
+Rectangle effectiveCoverageRectangle(
+    const TileScheme& scheme,
+    const Rectangle& providerCoverage) {
+    const Rectangle schemeRectangle = schemeCoverageRectangle(scheme);
+    return schemeRectangle.computeIntersection(providerCoverage)
+        .value_or(schemeRectangle);
+}
+
 bool isDecodedImageUploadable(const DecodedImage& image) {
     if (image.width <= 0 || image.height <= 0 || image.channels <= 0 ||
         image.bytesPerChannel <= 0) {
@@ -2303,6 +2327,8 @@ void RasterOverlayTileProvider::setCoverageRectangle(
         return;
     }
     coverageRectangle_ = coverageRectangle;
+    const Rectangle effectiveCoverage =
+        effectiveCoverageRectangle(scheme_, coverageRectangle_);
     invalidateSourceAssetDepotCache();
     for (auto it = tiles_.begin(); it != tiles_.end();) {
         if (it->first.rfind("mapped-raster/", 0) == 0 || !it->second) {
@@ -2314,7 +2340,7 @@ void RasterOverlayTileProvider::setCoverageRectangle(
                 it->second->getRectangle(),
                 projection_);
         const bool stillCovered =
-            tileGeographicBounds.computeIntersection(coverageRectangle_)
+            tileGeographicBounds.computeIntersection(effectiveCoverage)
                 .has_value();
         const bool loading =
             it->second->getState() == RasterOverlayTile::LoadState::Loading;
@@ -2523,7 +2549,9 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     if (key.z < getMinimumLevel() || key.z > getMaximumLevel()) return nullptr;
     if (!provider_.supportsTile(key)) return nullptr;
     Rectangle geographicBounds = scheme_.tileToRectangle(key);
-    if (!geographicBounds.computeIntersection(coverageRectangle_)) return nullptr;
+    const Rectangle effectiveCoverage =
+        effectiveCoverageRectangle(scheme_, coverageRectangle_);
+    if (!geographicBounds.computeIntersection(effectiveCoverage)) return nullptr;
     Rectangle bounds =
         projectGeographicToProvider(geographicBounds, projection_);
 
@@ -2553,10 +2581,12 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
 
     const Rectangle geometryBounds =
         unprojectProviderToGeographic(providerGeometryBounds, projection_);
+    const Rectangle effectiveCoverage =
+        effectiveCoverageRectangle(scheme_, coverageRectangle_);
     const std::optional<Rectangle> sourceBounds =
         mapGeometryBoundsToImageryCoverage(
             geometryBounds,
-            coverageRectangle_,
+            effectiveCoverage,
             shouldClampOutsideCoverage(owner_));
     if (!sourceBounds) {
         return {nullptr, false, {}};
@@ -2808,9 +2838,11 @@ bool RasterOverlayTileProvider::loadMappedRasterTile(
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
     RasterSourceTileMapping sourceTiles;
+    const Rectangle effectiveCoverage =
+        effectiveCoverageRectangle(scheme_, coverageRectangle_);
     if (tile.hasMappedSourceList() &&
         tile.getMappedSourceBounds().computeIntersection(
-            coverageRectangle_)) {
+            effectiveCoverage)) {
         sourceTiles.sourceZoom = tile.getMappedSourceZoom();
         sourceTiles.sourceBounds = tile.getMappedSourceBounds();
         sourceTiles.sourceKeys = tile.getMappedSourceKeys();
@@ -2822,7 +2854,7 @@ bool RasterOverlayTileProvider::loadMappedRasterTile(
         const std::optional<Rectangle> mappedSourceBounds =
             mapGeometryBoundsToImageryCoverage(
                 targetBounds,
-                coverageRectangle_,
+                effectiveCoverage,
                 shouldClampOutsideCoverage(owner_));
         if (!mappedSourceBounds) {
             logAndroidRasterPipeline("coverage-miss", ck, 0, 0);
