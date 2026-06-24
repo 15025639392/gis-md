@@ -202,7 +202,8 @@ bool TileContentAccess::hasTerrainQuadtree() const {
            terrainOwnership_ == TerrainOwnership::HeightmapSurface;
 }
 
-bool TileContentAccess::usesHeightmapSurfacePath() const {
+bool TileContentAccess::retainsHeightmapTerrainCacheForLegacySurfacePath()
+    const {
     return terrainOwnership_ == TerrainOwnership::HeightmapSurface;
 }
 

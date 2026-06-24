@@ -92,14 +92,14 @@ public:
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
         uint32_t smoothedMainThreadUploadLimit,
-        bool useHeightmapSurfacePath,
+        bool retainHeightmapTerrainCacheForLegacySurfacePath,
         bool interactionActive,
         bool resourceSmoothingActive,
         FrameResourceBudget* budget,
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (!useHeightmapSurfacePath) {
+        if (!retainHeightmapTerrainCacheForLegacySurfacePath) {
             heightmapTerrainCache_.clear();
         }
         return TilesetContentLifecycleCoordinator::processPendingUploads(

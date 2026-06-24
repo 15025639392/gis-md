@@ -101,8 +101,10 @@ struct TilesetTestAccess {
         return tileset.makeContentRuntimeRequestFrame().contentProvider;
     }
 
-    static bool runtimeUsesHeightmapSurfacePath(const Tileset& tileset) {
-        return tileset.contentAccess_.usesHeightmapSurfacePath();
+    static bool runtimeRetainsHeightmapTerrainCacheForLegacySurfacePath(
+        const Tileset& tileset) {
+        return tileset.contentAccess_
+            .retainsHeightmapTerrainCacheForLegacySurfacePath();
     }
 
     static TerrainProvider* effectiveLegacyTerrainProvider(
@@ -614,8 +616,10 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_EQ(rawContentProvider,
               TilesetTestAccess::requestFrameContentProvider(
                   contentTerrainTileset));
-    EXPECT_FALSE(TilesetTestAccess::runtimeUsesHeightmapSurfacePath(
-        contentTerrainTileset));
+    EXPECT_FALSE(
+        TilesetTestAccess::
+            runtimeRetainsHeightmapTerrainCacheForLegacySurfacePath(
+                contentTerrainTileset));
 
     auto legacyTerrainProvider =
         std::make_unique<CountingLegacyTerrainProvider>(nullptr);
@@ -627,8 +631,10 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_EQ(nullptr,
               TilesetTestAccess::requestFrameContentProvider(
                   *legacyTerrainTileset));
-    EXPECT_TRUE(TilesetTestAccess::runtimeUsesHeightmapSurfacePath(
-        *legacyTerrainTileset));
+    EXPECT_TRUE(
+        TilesetTestAccess::
+            runtimeRetainsHeightmapTerrainCacheForLegacySurfacePath(
+                *legacyTerrainTileset));
 }
 
 TEST(TilesetQuantizedMeshTest,
