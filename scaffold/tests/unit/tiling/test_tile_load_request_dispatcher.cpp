@@ -1095,7 +1095,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingContentTerminalKeys) {
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     SkipsUpsampledTerrainWhenCacheKeyPending) {
+     SkipsTerrainContentUpsampleWhenCacheKeyPending) {
     std::mutex mutex;
     TilePendingRequestState requestState;
     TilePendingLoadQueue pendingLoads;
@@ -1131,7 +1131,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     RejectsUpsampledTerrainContentWithoutGltfPayloadWhenNetworkBudgetExhausted) {
+     RejectsTerrainContentUpsampleWithoutGltfPayloadWhenNetworkBudgetExhausted) {
     std::mutex mutex;
     TilePendingRequestState requestState;
     TilePendingLoadQueue pendingLoads;

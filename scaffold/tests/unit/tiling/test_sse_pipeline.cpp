@@ -20341,7 +20341,7 @@ void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
           "TileContentLifecycleManager: shutdown clears claimed upload work");
 }
 
-void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
+void testTileLoadRequestDispatcherSkipsTerrainContentUpsampleWhenCacheKeyPending() {
     std::mutex mutex;
     TilePendingRequestState requestState;
     TilePendingLoadQueue pendingLoads;
@@ -20378,13 +20378,13 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
             }());
 
     check(result == TileLoadDispatchResult::Skipped,
-          "TileLoadRequestDispatcher: pending cache key suppresses upsampled terrain enqueue");
+          "TileLoadRequestDispatcher: pending cache key suppresses terrain content upsample enqueue");
     check(pendingLoads.gltfTerrainUploadCount() == 0 &&
               pendingLoads.gltfTerrainTerminalResultCount() == 1,
-          "TileLoadRequestDispatcher: skipped upsampled terrain leaves existing pending work intact");
+          "TileLoadRequestDispatcher: skipped terrain content upsample leaves existing pending work intact");
 }
 
-void testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhausted() {
+void testTileLoadRequestDispatcherRejectsTerrainContentUpsampleWithoutGltfPayload() {
     std::mutex mutex;
     TilePendingRequestState requestState;
     TilePendingLoadQueue pendingLoads;
@@ -20411,11 +20411,11 @@ void testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhaust
             }());
 
     check(result == TileLoadDispatchResult::Skipped,
-          "TileLoadRequestDispatcher: local upsampled terrain without glTF payload is rejected");
+          "TileLoadRequestDispatcher: terrain content upsample without glTF payload is rejected");
     check(requestState.empty() &&
               pendingLoads.gltfTerrainUploadCount() == 0 &&
               budget.networkRequestsIssued() == 0,
-          "TileLoadRequestDispatcher: rejected local upsampled terrain does not issue a network request");
+          "TileLoadRequestDispatcher: rejected terrain content upsample does not issue a network request");
 }
 
 void testTileLoadRequestPlannerClassifiesRequestKinds() {
@@ -20450,14 +20450,12 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.upsampledFromParent = true;
-    snapshot.heightmapSurfacePathEnabled = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
     check(TileLoadRequestPlanner::classify(snapshot) ==
-              TileLoadRequestKind::UpsampledTerrain,
-          "TileLoadRequestPlanner: upsampled tile uses local terrain upload path");
+              TileLoadRequestKind::TerrainContentUpsample,
+          "TileLoadRequestPlanner: upsampled tile uses terrain content upsample path");
 
     snapshot = TileLoadRequestSnapshot{};
-    snapshot.terrainAlreadyCached = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: cached terrain tile is skipped");
@@ -20720,7 +20718,7 @@ void testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock() {
     }
 }
 
-void testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull() {
+void testTileLoadSchedulerQueuesTerrainContentUpsampleWhenNetworkInflightIsFull() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -20758,7 +20756,6 @@ void testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull() {
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
-                snapshot.heightmapSurfacePathEnabled = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -20773,7 +20770,7 @@ void testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull() {
     check(prepared && !marked &&
               lifecycle.counts().gltfTerrainUploads == 0 &&
               lifecycle.pendingRequestCount() == 1,
-          "TileLoadScheduler: upsampled terrain without glTF source waits instead of queuing legacy upload");
+          "TileLoadScheduler: terrain content upsample without glTF source waits instead of queuing legacy upload");
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -20816,7 +20813,6 @@ void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
                 planned = true;
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainAlreadyCached = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -20834,7 +20830,7 @@ void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
     }
 }
 
-void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
+void testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -20877,7 +20873,6 @@ void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
-                snapshot.heightmapSurfacePathEnabled = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -20943,7 +20938,6 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
-                snapshot.heightmapSurfacePathEnabled = true;
                 tileState = key == missingTileStateKey ? nullptr : &readyTile;
                 return snapshot;
             },
@@ -20963,7 +20957,7 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
               plannedColumns[1] == readyUpsampleKey.x &&
               preparedColumns.size() == 1 &&
               preparedColumns.front() == readyUpsampleKey.x,
-          "TileLoadScheduler: missing upsample tile state skips source preparation");
+          "TileLoadScheduler: missing upsample tile state skips only that source preparation");
     check(markedColumns.empty() &&
               lifecycle.counts().gltfTerrainUploads == 0,
           "TileLoadScheduler: later upsampled tile without glTF source does not enter legacy upload queue");
@@ -28420,16 +28414,16 @@ int main() {
     testTileContentLifecycleManagerExposesClaimedUploadWork();
     testTileContentLifecycleManagerShutdownClearsClaimedUploadWork();
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
-    testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
-    testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhausted();
+    testTileLoadRequestDispatcherSkipsTerrainContentUpsampleWhenCacheKeyPending();
+    testTileLoadRequestDispatcherRejectsTerrainContentUpsampleWithoutGltfPayload();
     testTileLoadRequestPlannerClassifiesRequestKinds();
     testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock();
-    testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull();
+    testTileLoadSchedulerQueuesTerrainContentUpsampleWhenNetworkInflightIsFull();
     testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull();
-    testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
+    testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample();
     testTileLoadSchedulerContinuesAfterMissingUpsampleTileState();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();

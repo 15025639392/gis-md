@@ -6,7 +6,6 @@ namespace earth_engine {
 
 enum class TileLoadRequestKind {
     Skip,
-    UpsampledTerrain,
     TerrainContentUpsample,
     Content
 };
@@ -14,10 +13,8 @@ enum class TileLoadRequestKind {
 struct TileLoadRequestSnapshot {
     bool hasTile = false;
     bool upsampledFromParent = false;
-    bool heightmapSurfacePathEnabled = false;
     bool contentProviderSupportsTile = false;
     bool contentProviderOwnsTerrainQuadtree = false;
-    bool terrainAlreadyCached = false;
     bool hasRenderContent = false;
     TileLoadState loadState = TileLoadState::Unloaded;
 };

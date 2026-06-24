@@ -80,8 +80,6 @@ private:
         snapshot.upsampledFromParent =
             outTileState != nullptr &&
             outTileState->content.derivesTerrainFromParent();
-        snapshot.heightmapSurfacePathEnabled =
-            input.useHeightmapSurfacePath;
         snapshot.contentProviderSupportsTile =
             !snapshot.upsampledFromParent &&
             input.contentProvider &&
@@ -89,11 +87,6 @@ private:
         snapshot.contentProviderOwnsTerrainQuadtree =
             input.contentProvider &&
             input.contentProvider->providesTerrainQuadtree();
-        snapshot.terrainAlreadyCached =
-            !snapshot.contentProviderOwnsTerrainQuadtree &&
-            input.useHeightmapSurfacePath &&
-            input.terrainCache &&
-            input.terrainCache->count(cacheKey) > 0;
         snapshot.hasRenderContent =
             outTileState &&
             outTileState->content.contentKind == TileContentKind::Render &&

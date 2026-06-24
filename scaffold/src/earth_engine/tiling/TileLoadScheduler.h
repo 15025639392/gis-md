@@ -77,8 +77,7 @@ public:
                 continue;
             }
 
-            if (requestKind == TileLoadRequestKind::UpsampledTerrain ||
-                requestKind == TileLoadRequestKind::TerrainContentUpsample) {
+            if (requestKind == TileLoadRequestKind::TerrainContentUpsample) {
                 if (!tileState ||
                     !prepareUpsampleSourceTile(
                         *tileState,
@@ -86,15 +85,12 @@ public:
                     continue;
                 }
 
-                const bool needsTerrainContentUpsample =
-                    requestKind == TileLoadRequestKind::TerrainContentUpsample;
                 const bool needsRasterDetailUpsample =
                     tileState->content.isRasterDetailUpsample();
                 const bool hasTerrainContentSource =
                     TileGltfTerrainUpsampledChildMaterializer::
                         canCreateLoadResult(*tileState);
-                if ((needsTerrainContentUpsample ||
-                     needsRasterDetailUpsample) &&
+                if (needsRasterDetailUpsample &&
                     !hasTerrainContentSource) {
                     continue;
                 }

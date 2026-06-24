@@ -11,12 +11,7 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
     }
 
     if (snapshot.upsampledFromParent) {
-        if (snapshot.contentProviderOwnsTerrainQuadtree) {
-            return TileLoadRequestKind::TerrainContentUpsample;
-        }
-        return snapshot.heightmapSurfacePathEnabled
-            ? TileLoadRequestKind::UpsampledTerrain
-            : TileLoadRequestKind::Skip;
+        return TileLoadRequestKind::TerrainContentUpsample;
     }
 
     if (snapshot.contentProviderSupportsTile) {
@@ -30,9 +25,6 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
         return TileLoadRequestKind::Skip;
     }
 
-    if (snapshot.terrainAlreadyCached) {
-        return TileLoadRequestKind::Skip;
-    }
     return TileLoadRequestKind::Skip;
 }
 

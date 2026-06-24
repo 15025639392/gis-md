@@ -612,7 +612,7 @@ TEST(TileLoadSchedulerTest, PendingUploadsRemainIndependentWhenLegacyTerrainIsIg
 }
 
 TEST(TileLoadSchedulerTest,
-     UpsampledTerrainWithoutGltfSourceDoesNotQueueLegacyTerrainUpload) {
+     TerrainContentUpsampleWithoutGltfSourceDoesNotQueueLegacyTerrainUpload) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -652,7 +652,6 @@ TEST(TileLoadSchedulerTest,
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
-                snapshot.heightmapSurfacePathEnabled = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -666,7 +665,6 @@ TEST(TileLoadSchedulerTest,
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_TRUE(prepared);
     EXPECT_FALSE(marked);
-    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
 
@@ -910,7 +908,6 @@ TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
                 planned = true;
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
-                snapshot.terrainAlreadyCached = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -930,7 +927,7 @@ TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
 }
 
 TEST(TileLoadSchedulerTest,
-     SortsUpsampledTerrainButDoesNotQueueLegacyDomainWithoutGltfSource) {
+     SortsTerrainContentUpsampleButDoesNotQueueLegacyDomainWithoutGltfSource) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -972,7 +969,6 @@ TEST(TileLoadSchedulerTest,
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
-                snapshot.heightmapSurfacePathEnabled = true;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -984,13 +980,12 @@ TEST(TileLoadSchedulerTest,
                 markedOrder.push_back(key.x);
             });
 
-    ASSERT_EQ(prepareOrder.size(), 2u);
     EXPECT_EQ(outcome.issued, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
+    ASSERT_EQ(prepareOrder.size(), 2u);
     EXPECT_EQ(prepareOrder[0], urgentKey.x);
     EXPECT_EQ(prepareOrder[1], normalKey.x);
     EXPECT_TRUE(markedOrder.empty());
-    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
 }
 
@@ -1038,7 +1033,6 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
                     tileState = &waitingTile;
                     snapshot.hasTile = true;
                     snapshot.upsampledFromParent = true;
-                    snapshot.heightmapSurfacePathEnabled = true;
                 } else {
                     tileState = nullptr;
                 }
@@ -1151,7 +1145,6 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
                 snapshot.upsampledFromParent = true;
-                snapshot.heightmapSurfacePathEnabled = true;
                 tileState = key == missingTileStateKey ? nullptr : &readyTile;
                 return snapshot;
             },
@@ -1172,7 +1165,6 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
     EXPECT_EQ(plannedColumns[0], missingTileStateKey.x);
     EXPECT_EQ(plannedColumns[1], readyUpsampleKey.x);
     EXPECT_EQ(preparedColumns.front(), readyUpsampleKey.x);
-    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 0u);
 }
 
