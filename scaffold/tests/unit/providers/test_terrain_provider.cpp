@@ -2434,6 +2434,149 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
+     MultipleLayersLoadContentFromFirstAvailableLayerLikeCesiumNative) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_first_available_layer_content_test";
+    std::filesystem::remove_all(root);
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    {
+        std::filesystem::create_directories(root / "parent");
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "minzoom": 0,
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    const std::string parentMetadata = R"json({
+      "available": [
+        [{"startX":2,"startY":0,"endX":2,"endY":0}]
+      ]
+    })json";
+
+    constexpr float childMinimumHeight = 12.0f;
+    constexpr float childMaximumHeight = 34.0f;
+    constexpr float parentMinimumHeight = -100.0f;
+    constexpr float parentMaximumHeight = 200.0f;
+    writeBytes(
+        root / "child" / "childTiles" / "0" / "0" / "0.terrain",
+        makeQuantizedMeshBytesWithMetadata(
+            "",
+            childMinimumHeight,
+            childMaximumHeight));
+    writeBytes(
+        root / "parent" / "parentTiles" / "0" / "0" / "0.terrain",
+        makeQuantizedMeshBytesWithMetadata(
+            parentMetadata,
+            parentMinimumHeight,
+            parentMaximumHeight));
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        childLayerJson,
+        "file://" + (root / "child" / "layer.json").generic_string()));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey parentOnlyChild{"Geographic-TMS", 1, 2, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(parentOnlyChild));
+    EXPECT_NE(std::string::npos,
+              provider.buildUrl(rootKey).find("childTiles/0/0/0.terrain"));
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
+    provider.requestTileContent(
+        rootKey,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    for (int i = 0;
+         i < 200 && provider.requestDiagnostics().requestsCompleted < 2;
+         ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
+    EXPECT_NEAR(childMinimumHeight,
+                completed.metadata.updatedBoundingVolume->minimumHeight,
+                1e-6);
+    EXPECT_NEAR(childMaximumHeight,
+                completed.metadata.updatedBoundingVolume->maximumHeight,
+                1e-6);
+    ASSERT_TRUE(completed.metadata.rasterOverlayDetails.has_value());
+    EXPECT_NEAR(
+        childMinimumHeight,
+        completed.metadata.rasterOverlayDetails->boundingRegion.minimumHeight,
+        1e-6);
+    EXPECT_NEAR(
+        childMaximumHeight,
+        completed.metadata.rasterOverlayDetails->boundingRegion.maximumHeight,
+        1e-6);
+    ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(1, completed.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    EXPECT_EQ(
+        rootKey,
+        completed.quantizedMeshAvailabilityUpdates.front().subtreeKey);
+
+    provider.applyAvailabilityUpdates(
+        completed.quantizedMeshAvailabilityUpdates);
+    EXPECT_TRUE(provider.supportsTile(parentOnlyChild));
+    EXPECT_NE(std::string::npos,
+              provider.buildUrl(parentOnlyChild).find(
+                  "parentTiles/1/2/0.terrain"));
+
+    const ProviderRequestDiagnostics requestDiag =
+        provider.requestDiagnostics();
+    EXPECT_EQ(2, requestDiag.requestsStarted);
+    EXPECT_EQ(2, requestDiag.requestsCompleted);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
      DoesNotReloadUnderlyingAvailabilityAfterSubtreeLoadedLikeCesiumNative) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
