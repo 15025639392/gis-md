@@ -66,20 +66,12 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
         waterMaskTexture.image.width = 256;
         waterMaskTexture.image.height = 256;
         waterMaskTexture.image.channels = 1;
-        if (decodedTile.waterMask.data.size() >= waterMaskPixelCount * 4u) {
-            waterMaskTexture.image.pixels.reserve(waterMaskPixelCount);
-            for (size_t i = 0; i < waterMaskPixelCount; ++i) {
-                waterMaskTexture.image.pixels.push_back(
-                    decodedTile.waterMask.data[i * 4u + 3u]);
-            }
-        } else if (decodedTile.waterMask.data.size() >= waterMaskPixelCount) {
-            waterMaskTexture.image.pixels.assign(
-                decodedTile.waterMask.data.begin(),
-                decodedTile.waterMask.data.begin() + waterMaskPixelCount);
-        }
-        if (waterMaskTexture.image.pixels.size() != waterMaskPixelCount) {
+        if (decodedTile.waterMask.data.size() < waterMaskPixelCount) {
             return nullptr;
         }
+        waterMaskTexture.image.pixels.assign(
+            decodedTile.waterMask.data.begin(),
+            decodedTile.waterMask.data.begin() + waterMaskPixelCount);
         waterMaskTexture.sampler.minFilter = GltfTextureFilter::Linear;
         waterMaskTexture.sampler.magFilter = GltfTextureFilter::Linear;
         waterMaskTexture.sampler.mipmap = true;

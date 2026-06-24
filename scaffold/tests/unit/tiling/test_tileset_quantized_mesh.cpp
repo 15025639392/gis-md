@@ -186,7 +186,8 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     const Vec3& tileCenterEcef,
     float minimumHeight = 0.0f,
     float maximumHeight = 100.0f,
-    const Vec3& horizonOcclusionPoint = Vec3::zero()) {
+    const Vec3& horizonOcclusionPoint = Vec3::zero(),
+    std::optional<std::vector<uint8_t>> waterMask = std::nullopt) {
     std::vector<uint8_t> bytes;
 
     appendPod<double>(bytes, tileCenterEcef.x());
@@ -227,6 +228,14 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     appendPod<uint16_t>(bytes, 0);
     appendPod<uint16_t>(bytes, 0);
     for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
+
+    if (waterMask) {
+        appendPod<uint8_t>(bytes, 2);
+        appendPod<uint32_t>(
+            bytes,
+            static_cast<uint32_t>(waterMask->size()));
+        bytes.insert(bytes.end(), waterMask->begin(), waterMask->end());
+    }
 
     return bytes;
 }
@@ -636,6 +645,55 @@ TEST(TilesetQuantizedMeshTest,
         TilesetTestAccess::
             contentRuntimeRetainsLegacyHeightmapTerrainCache(
                 *legacyTerrainTileset));
+}
+
+TEST(TilesetQuantizedMeshTest,
+     QuantizedMeshWaterMaskBecomesSingleChannelGltfTextureLikeCesiumNative) {
+    constexpr size_t waterMaskPixelCount = 256u * 256u;
+    std::vector<uint8_t> waterMask(waterMaskPixelCount);
+    for (size_t i = 0; i < waterMask.size(); ++i) {
+        waterMask[i] = static_cast<uint8_t>(i & 0xffu);
+    }
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(
+        Vec3::zero(),
+        Vec3::zero(),
+        0.0f,
+        100.0f,
+        Vec3::zero(),
+        waterMask);
+
+    TileContentLoadResult result =
+        QuantizedMeshContentLoader::loadTileContent(
+            bytes.data(),
+            bytes.size(),
+            Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0),
+            true,
+            {});
+
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+    EXPECT_TRUE(result.terrainRenderContent);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->textures.size());
+    ASSERT_TRUE(result.gltfModel->terrainWaterMaskTextureIndex.has_value());
+    EXPECT_EQ(0u, *result.gltfModel->terrainWaterMaskTextureIndex);
+    const GltfTexture& texture = result.gltfModel->textures.front();
+    EXPECT_EQ(256, texture.image.width);
+    EXPECT_EQ(256, texture.image.height);
+    EXPECT_EQ(1, texture.image.channels);
+    EXPECT_EQ(waterMask, texture.image.pixels);
+    EXPECT_EQ(GltfTextureFilter::Linear, texture.sampler.minFilter);
+    EXPECT_EQ(GltfTextureFilter::Linear, texture.sampler.magFilter);
+    EXPECT_TRUE(texture.sampler.mipmap);
+    EXPECT_EQ(GltfTextureWrap::ClampToEdge, texture.sampler.wrapS);
+    EXPECT_EQ(GltfTextureWrap::ClampToEdge, texture.sampler.wrapT);
+
+    ASSERT_FALSE(result.gltfModel->primitives.empty());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_TRUE(primitive.hasTerrainWaterMaskMetadata);
+    EXPECT_FALSE(primitive.terrainOnlyLand);
+    EXPECT_FALSE(primitive.terrainOnlyWater);
+    ASSERT_TRUE(primitive.terrainWaterMaskTextureIndex.has_value());
+    EXPECT_EQ(0u, *primitive.terrainWaterMaskTextureIndex);
 }
 
 TEST(TilesetQuantizedMeshTest,
