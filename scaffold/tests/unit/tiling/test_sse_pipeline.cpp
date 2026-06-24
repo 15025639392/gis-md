@@ -14457,11 +14457,12 @@ void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
             readyTile,
             true);
     check(action.resourcesDirty &&
+              action.ensureChildren &&
               readyTile.content.renderContent.gltfModelForRead() == rawReadyModel &&
               !readyTile.content.renderContent.isSurfaceMeshReady() &&
               readyTile.content.contentKind == TileContentKind::Render &&
               readyTile.content.loadState == TileLoadState::ContentLoaded,
-          "TileContentUploadCommitter: successful resource preparation keeps render content state and requests dirty resources");
+          "TileContentUploadCommitter: successful resource preparation keeps render content state and requests dirty resources plus child materialization");
 
     TilesetTile failedTile(TileKey{"test", 0, 1, 0}, Rectangle{});
     auto failedModel = std::make_unique<GltfModel>();
@@ -14474,10 +14475,11 @@ void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
         failedTile,
         false);
     check(action.resourcesDirty &&
+              !action.ensureChildren &&
               !failedTile.content.renderContent.hasGltfModel() &&
               failedTile.content.contentKind == TileContentKind::Unknown &&
               failedTile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileContentUploadCommitter: failed resource preparation rolls back render content and requests dirty resources");
+          "TileContentUploadCommitter: failed resource preparation rolls back render content without child materialization");
 }
 
 void testTileTerrainUploadPolicyMarksTerrainRenderContentStates() {

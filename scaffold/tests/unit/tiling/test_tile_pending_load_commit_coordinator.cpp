@@ -811,6 +811,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     int ensureGltfCalls = 0;
+    bool childrenEnsured = false;
     bool resourcesDirty = false;
 
     TilePendingLoadCommitCoordinator::commitUpload(
@@ -822,7 +823,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](TilesetTile&) {},
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&ensureGltfCalls](TilesetTile& committedTile) {
             committedTile.content.renderContent.addGltfPrimitiveResource(
                 GltfPrimitiveRenderResources{});
@@ -839,6 +840,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
     EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
@@ -1262,6 +1264,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             false);
 
     EXPECT_TRUE(action.resourcesDirty);
+    EXPECT_FALSE(action.ensureChildren);
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
@@ -1520,6 +1523,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     int ensureGltfCalls = 0;
+    bool childrenEnsured = false;
     bool resourcesDirty = false;
 
     TilePendingLoadCommitCoordinator::commitUpload(
@@ -1531,7 +1535,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](TilesetTile&) {},
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&ensureGltfCalls](TilesetTile& committedTile) {
             committedTile.content.renderContent.addGltfPrimitiveResource(
                 GltfPrimitiveRenderResources{});
@@ -1558,6 +1562,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     ASSERT_NE(nullptr, tile.content.renderContent.horizonOcclusionPoint());
     EXPECT_EQ(Vec3(1.0, 2.0, 3.0),
               *tile.content.renderContent.horizonOcclusionPoint());
+    EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
@@ -1683,6 +1688,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     int ensureGltfCalls = 0;
+    bool childrenEnsured = false;
     bool resourcesDirty = false;
 
     TilePendingLoadCommitCoordinator::commitUpload(
@@ -1694,7 +1700,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         emptyContentRegistry,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](TilesetTile&) {},
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&ensureGltfCalls](TilesetTile& committedTile) {
             committedTile.content.renderContent.addGltfPrimitiveResource(
                 GltfPrimitiveRenderResources{});
@@ -1707,6 +1713,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
     EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
