@@ -13267,7 +13267,7 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
           "TileContentUploadPolicy: glTF upload replaces terrain and old render resources");
 }
 
-void testContentUploadGeneratesTerrainContentActiveRasterOverlayProjectionDetails() {
+void testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -13306,25 +13306,21 @@ void testContentUploadGeneratesTerrainContentActiveRasterOverlayProjectionDetail
     const Rectangle* webMercator =
         details.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
-    const Rectangle expectedWebMercator = projectRectangleSimple(
-        WebMercatorProjection(Ellipsoid::WGS84()),
-        tileRectangle);
-
     check(geographic && *geographic == tileRectangle &&
-              webMercator && *webMercator == expectedWebMercator &&
-              details.rasterOverlayProjections.size() == 2 &&
+              webMercator == nullptr &&
+              details.rasterOverlayProjections.size() == 1 &&
               details.textureCoordinateIDForProjection(
                   RasterOverlayProjection::Geographic) == 0 &&
               details.textureCoordinateIDForProjection(
-                  RasterOverlayProjection::WebMercator) == 1 &&
+                  RasterOverlayProjection::WebMercator) == -1 &&
               tile.content.renderContent.hasGltfModel() &&
               !tile.content.renderContent.hasSurfaceMesh() &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileContentUploadCommitter: glTF terrain upload generates active raster overlay projection details like cesium-native reload");
+          "TileContentUploadCommitter: glTF terrain upload keeps loader raster overlay details and leaves missing projections for cesium-native reload");
 }
 
-void testContentUploadGeneratesTerrainRasterOverlayProjectionDetails() {
+void testContentUploadKeepsContentProviderTerrainRasterOverlayDetailsFromLoadResult() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -13363,18 +13359,14 @@ void testContentUploadGeneratesTerrainRasterOverlayProjectionDetails() {
     const Rectangle* webMercator =
         details.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
-    const Rectangle expectedWebMercator = projectRectangleSimple(
-        WebMercatorProjection(Ellipsoid::WGS84()),
-        tileRectangle);
-
     check(geographic && *geographic == tileRectangle &&
-              webMercator && *webMercator == expectedWebMercator &&
-              details.rasterOverlayProjections.size() == 2 &&
+              webMercator == nullptr &&
+              details.rasterOverlayProjections.size() == 1 &&
               tile.content.renderContent.isTerrainRenderContent() &&
               tile.content.renderContent.hasGltfModel() &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileContentUploadCommitter: content-provider terrain glTF upload generates active raster overlay projection details");
+          "TileContentUploadCommitter: content-provider terrain glTF upload does not synthesize active overlay details");
 }
 
 void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
@@ -13521,12 +13513,12 @@ void testContentUploadPreparesTerrainContentRenderContent() {
               tile.content.renderContent.currentSurfaceSource() ==
                   SurfaceDrawableSource::GltfContent &&
               geographic && *geographic == tileRectangle &&
-              webMercator &&
+              webMercator == nullptr &&
               details.textureCoordinateIDForProjection(
-                  RasterOverlayProjection::WebMercator) == 1 &&
+                  RasterOverlayProjection::WebMercator) == -1 &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileContentUploadCommitter: content-domain glTF terrain upload uses unified render content and overlay details");
+          "TileContentUploadCommitter: content-domain glTF terrain upload uses unified render content and loader overlay details");
 }
 
 void testContentTileLoadResultCarriesTerrainContentModel() {
@@ -28004,8 +27996,8 @@ int main() {
     testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates();
     testTileTerminalLoadCommitterWritesEmptyRegistryActions();
     testTileContentUploadPolicyPreparesGltfRenderContent();
-    testContentUploadGeneratesTerrainContentActiveRasterOverlayProjectionDetails();
-    testContentUploadGeneratesTerrainRasterOverlayProjectionDetails();
+    testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult();
+    testContentUploadKeepsContentProviderTerrainRasterOverlayDetailsFromLoadResult();
     testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf();
     testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails();
     testContentUploadPreparesTerrainContentRenderContent();
