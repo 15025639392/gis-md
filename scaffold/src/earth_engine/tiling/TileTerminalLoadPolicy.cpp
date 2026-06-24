@@ -11,6 +11,7 @@ void markUnknownTemporaryFailure(
     TilesetTile& tile,
     IPrepareRendererResources* pPrepRenderer) {
     tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+    tile.content.renderContent.clearRenderContent();
     tile.markContentFailedTemporarily();
 }
 
@@ -18,7 +19,15 @@ void markUnknownPermanentFailure(
     TilesetTile& tile,
     IPrepareRendererResources* pPrepRenderer) {
     tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+    tile.content.renderContent.clearRenderContent();
     tile.markContentFailedPermanently();
+}
+
+void clearRenderResidueForTerminalNonRenderContent(
+    TilesetTile& tile,
+    IPrepareRendererResources* pPrepRenderer) {
+    tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+    tile.content.renderContent.clearRenderContent();
 }
 
 void applyNativeEmptyContentRefinement(TilesetTile& tile) {
@@ -47,7 +56,9 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
     switch (status) {
         case TileLoadStatus::Empty: {
             action.markEmptyCacheKey = true;
-            tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+            clearRenderResidueForTerminalNonRenderContent(
+                tile,
+                pPrepRenderer);
             tile.markEmptyContentLoaded();
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
@@ -83,14 +94,18 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
     switch (status) {
         case TileLoadStatus::Empty:
             action.markEmptyCacheKey = true;
-            tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+            clearRenderResidueForTerminalNonRenderContent(
+                tile,
+                pPrepRenderer);
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::External:
-            tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+            clearRenderResidueForTerminalNonRenderContent(
+                tile,
+                pPrepRenderer);
             tile.markExternalContentDone();
             action.ensureChildren = true;
             action.resourcesDirty = true;

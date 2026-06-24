@@ -201,6 +201,62 @@ void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
 }
 
+void seedStaleRenderResidue(TilesetTile& tile) {
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.renderContent.setGltfContent(
+        makeMinimalTerrainGltfModelForCommitTest(tile.bounds));
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.setGltfResourcesReady(true);
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+
+    ASSERT_TRUE(tile.content.renderContent.hasGltfContent());
+    ASSERT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    ASSERT_TRUE(tile.content.renderContent.hasGltfPrimitiveResources());
+    ASSERT_EQ(1u, tile.rasterOverlayState.mappingCount());
+    ASSERT_TRUE(tile.rasterOverlayState.hasMissingProjections());
+}
+
+void expectTerminalResultClearsStaleRenderResidue(
+    TileLoadDomain domain,
+    TileLoadStatus status,
+    TileContentKind expectedContentKind,
+    TileLoadState expectedLoadState) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "terminal-replaces-render-residue";
+    TilesetTile tile(key, Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+    seedStaleRenderResidue(tile);
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    PendingTileLoad result{
+        domain,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        status};
+
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
+        result,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        []() {});
+
+    EXPECT_FALSE(tile.content.renderContent.hasGltfContent());
+    EXPECT_FALSE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(tile.content.renderContent.hasGltfPrimitiveResources());
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_FALSE(tile.rasterOverlayState.hasMissingProjections());
+    EXPECT_EQ(expectedContentKind, tile.content.contentKind);
+    EXPECT_EQ(expectedLoadState, tile.content.loadState);
+}
+
 void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
@@ -341,6 +397,39 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
         EXPECT_EQ(expectedLoadState, tile.content.loadState);
     }
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerminalFailureReplacesStaleRenderResidueLikeCesiumNative) {
+    expectTerminalResultClearsStaleRenderResidue(
+        TileLoadDomain::Content,
+        TileLoadStatus::RetryLater,
+        TileContentKind::Unknown,
+        TileLoadState::FailedTemporarily);
+    expectTerminalResultClearsStaleRenderResidue(
+        TileLoadDomain::TerrainContent,
+        TileLoadStatus::Failed,
+        TileContentKind::Unknown,
+        TileLoadState::Failed);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerminalNonRenderContentReplacesStaleRenderResidueLikeCesiumNative) {
+    expectTerminalResultClearsStaleRenderResidue(
+        TileLoadDomain::Content,
+        TileLoadStatus::Empty,
+        TileContentKind::Empty,
+        TileLoadState::Done);
+    expectTerminalResultClearsStaleRenderResidue(
+        TileLoadDomain::Content,
+        TileLoadStatus::External,
+        TileContentKind::External,
+        TileLoadState::Done);
+    expectTerminalResultClearsStaleRenderResidue(
+        TileLoadDomain::TerrainContent,
+        TileLoadStatus::Empty,
+        TileContentKind::Empty,
+        TileLoadState::Done);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
