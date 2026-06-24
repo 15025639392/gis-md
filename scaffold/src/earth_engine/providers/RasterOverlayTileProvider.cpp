@@ -2938,13 +2938,15 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         budget,
         asyncState_->activeRasterSourceRequests.load(
             std::memory_order_relaxed));
-    const bool hasJoinableSharedSource =
-        tile.isMappedRasterTile() &&
+    // cesium-native SharedAssetDepot::getOrCreate returns an existing pending
+    // or loaded asset without starting transport work. Preserve that budget
+    // behavior for both mapped and direct raster loads.
+    const bool hasReusableSharedSource =
         estimatedNewSourceRequests <
             static_cast<int>(sourceTiles.sourceKeys.size());
     if (estimatedNewSourceRequests > 0 &&
         availableSourceRequestSlots <= 0 &&
-        !hasJoinableSharedSource) {
+        !hasReusableSharedSource) {
         return false;
     }
     if (!tile.isMappedRasterTile() && estimatedNewSourceRequests > 0 &&

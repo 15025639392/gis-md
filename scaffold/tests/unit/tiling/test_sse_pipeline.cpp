@@ -3219,6 +3219,8 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     check(directTile &&
               provider.loadTileThrottled(*directTile, &directBudget),
           "RasterOverlayTileProvider: direct tile joins mapped source in-flight");
+    check(directBudget.rasterNetworkRequestsIssued() == 0,
+          "RasterOverlayTileProvider: direct tile joining mapped source in-flight does not consume raster request budget");
 
     const int matchingRequests =
         static_cast<int>(std::count_if(
@@ -3241,6 +3243,71 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
           "RasterOverlayTileProvider: direct tile loads from shared mapped source");
     check(directTile->getTexture() != nullptr,
           "RasterOverlayTileProvider: direct tile receives texture from shared source upload");
+}
+
+void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    const TileKey geometryKey{imageryScheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = imageryScheme->tileToRectangle(geometryKey);
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, sourceBounds),
+            512.0,
+            512.0).tile;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget mappedBudget;
+    mappedBudget.beginFrame(1, config);
+
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &mappedBudget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: cached-source fixture starts mapped source request");
+    if (!mappedRasterTile || imagery.pendingRequests.empty()) {
+        return;
+    }
+
+    const TileKey sourceKey = imagery.pendingRequests.front().key;
+    const auto pendingRequests = imagery.pendingRequests;
+    for (const auto& request : pendingRequests) {
+        request.callback(request.key, makeDecodedRgbaImage(64, 64));
+    }
+
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(2, config);
+    processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
+
+    check(mappedRasterTile->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: cached-source fixture loads mapped raster tile");
+
+    RasterOverlayTileProvider::TilePtr directTile = provider.getTile(sourceKey);
+    FrameResourceBudget directBudget;
+    directBudget.beginFrame(3, config);
+    check(directTile &&
+              provider.loadTileThrottled(*directTile, &directBudget),
+          "RasterOverlayTileProvider: direct tile reuses cached mapped source asset");
+    check(directBudget.rasterNetworkRequestsIssued() == 0,
+          "RasterOverlayTileProvider: cached mapped source asset does not consume raster request budget");
+    check(imagery.pendingRequests.size() == pendingRequests.size(),
+          "RasterOverlayTileProvider: cached mapped source asset does not start another imagery request");
+
+    FrameResourceBudget directUploadBudget;
+    directUploadBudget.beginFrame(4, config);
+    provider.processPendingUploads(false, &directUploadBudget);
+
+    check(directTile->getState() == RasterOverlayTile::LoadState::Loaded &&
+              directTile->getTexture() != nullptr,
+          "RasterOverlayTileProvider: direct tile uploads from cached mapped source asset");
 }
 
 void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
@@ -28374,6 +28441,7 @@ int main() {
     testRasterOverlaySourceInvalidationRecreatesDirectAssetLikeSharedAssetDepot();
     testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight();
     testRasterOverlayDirectTileJoinsMappedSourceInFlight();
+    testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget();
     testRasterOverlayMappedRasterTilesShareSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
