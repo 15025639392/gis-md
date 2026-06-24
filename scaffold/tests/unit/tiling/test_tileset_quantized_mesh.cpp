@@ -478,6 +478,38 @@ private:
     std::string schemeId_;
 };
 
+class MutableMetadataContentTerrainProvider final
+    : public TilesetContentProvider {
+public:
+    std::string id() const override { return "mutable-metadata-terrain"; }
+    bool providesTerrainQuadtree() const override { return true; }
+    bool supportsTile(const TileKey& key) const override {
+        return key == metadata.key;
+    }
+    std::vector<TileKey> rootTiles() const override {
+        return {metadata.key};
+    }
+    std::optional<TilesetContentTileMetadata> tileMetadata(
+        const TileKey& key) const override {
+        if (key != metadata.key) {
+            return std::nullopt;
+        }
+        return metadata;
+    }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    TilesetContentTileMetadata metadata;
+};
+
 class PendingBoundaryContentTerrainProvider final
     : public TilesetContentProvider {
 public:
@@ -990,6 +1022,65 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
+     ContentTerrainEnsureTileDoesNotRefreshMetadataDuringProtectedUnload) {
+    auto provider =
+        std::make_unique<MutableMetadataContentTerrainProvider>();
+    MutableMetadataContentTerrainProvider* rawProvider = provider.get();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle originalBounds =
+        Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0);
+    rawProvider->metadata.key = rootKey;
+    rawProvider->metadata.bounds = originalBounds;
+    rawProvider->metadata.hasExplicitBounds = true;
+    rawProvider->metadata.geometricError = 128.0;
+    rawProvider->metadata.boundingVolume =
+        TileBoundingVolume::fromRegion(originalBounds, -10.0, 20.0);
+
+    Tileset tileset(
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    ASSERT_TRUE(root->boundingVolume.has_value());
+    EXPECT_EQ(originalBounds, root->bounds);
+    EXPECT_DOUBLE_EQ(-10.0, root->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(128.0, root->geometricError);
+
+    const Rectangle refreshedBounds =
+        Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0);
+    rawProvider->metadata.bounds = refreshedBounds;
+    rawProvider->metadata.boundingVolume =
+        TileBoundingVolume::fromRegion(refreshedBounds, 30.0, 40.0);
+    rawProvider->metadata.geometricError = 64.0;
+
+    root->content.loadState = TileLoadState::Unloading;
+    TilesetTile* unloadingEnsure = TilesetTestAccess::ensureTile(
+        tileset,
+        rootKey);
+
+    ASSERT_EQ(root, unloadingEnsure);
+    ASSERT_TRUE(root->boundingVolume.has_value());
+    EXPECT_EQ(originalBounds, root->bounds);
+    EXPECT_DOUBLE_EQ(-10.0, root->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(128.0, root->geometricError);
+
+    root->content.loadState = TileLoadState::ContentLoading;
+    TilesetTile* retryableEnsure = TilesetTestAccess::ensureTile(
+        tileset,
+        rootKey);
+
+    ASSERT_EQ(root, retryableEnsure);
+    ASSERT_TRUE(root->boundingVolume.has_value());
+    EXPECT_EQ(refreshedBounds, root->bounds);
+    EXPECT_DOUBLE_EQ(30.0, root->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(64.0, root->geometricError);
+}
+
+TEST(TilesetQuantizedMeshTest,
      ContentTerrainDoneSurfaceResidueCannotHoldRasterPrefetchMappings) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -1428,7 +1519,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     QuantizedMeshProviderMarksCurrentMetadataSubtreeLoadedOnDecodeFailure) {
+     QuantizedMeshProviderCarriesCurrentMetadataSubtreeOnDecodeFailure) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     QueuedContentPlatformBridge bridge;
@@ -1463,6 +1554,7 @@ TEST(TilesetQuantizedMeshTest,
     std::condition_variable callbackCv;
     bool callbackCalled = false;
     TileLoadStatus callbackStatus = TileLoadStatus::RetryLater;
+    std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
     provider->requestTileContent(
         boundaryKey,
         CancellationToken{},
@@ -1471,6 +1563,8 @@ TEST(TilesetQuantizedMeshTest,
                 std::lock_guard<std::mutex> lock(callbackMutex);
                 callbackCalled = true;
                 callbackStatus = result.status;
+                availabilityUpdates =
+                    std::move(result.quantizedMeshAvailabilityUpdates);
             }
             callbackCv.notify_all();
         });
@@ -1489,6 +1583,14 @@ TEST(TilesetQuantizedMeshTest,
             [&] { return callbackCalled; }));
     }
     EXPECT_EQ(TileLoadStatus::Failed, callbackStatus);
+    ASSERT_EQ(1u, availabilityUpdates.size());
+    EXPECT_EQ(0, availabilityUpdates.front().layerIndex);
+    EXPECT_EQ(boundaryKey, availabilityUpdates.front().subtreeKey);
+    EXPECT_TRUE(availabilityUpdates.front().metadataAvailability.empty());
+    EXPECT_EQ(
+        TileAvailabilityState::Unknown,
+        provider->availabilityState(childKey));
+    provider->applyAvailabilityUpdates(availabilityUpdates);
     EXPECT_EQ(
         TileAvailabilityState::NotAvailable,
         provider->availabilityState(childKey));

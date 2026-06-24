@@ -2,6 +2,7 @@
 
 #include "TileCacheKey.h"
 #include "TileCreationPolicy.h"
+#include "TileLoadStatePredicates.h"
 #include "TilePlan.h"
 #include "TileSelectionRootPolicy.h"
 #include "TileScheme.h"
@@ -51,7 +52,9 @@ TilesetTile* TilesetTileRegistry::ensureTile(
     auto it = tiles_.find(ck);
     if (it != tiles_.end() && it->second) {
         if (contentMetadata &&
-            it->second->content.loadState <= TileLoadState::ContentLoading) {
+            TileLoadStatePredicates::
+                canRefreshContentMetadataBeforeContentAccepted(
+                    it->second->content.loadState)) {
             TileCreationPolicy::applyContentMetadata(
                 *it->second,
                 *contentMetadata);
