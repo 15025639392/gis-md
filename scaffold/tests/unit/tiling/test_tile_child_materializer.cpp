@@ -391,7 +391,8 @@ TEST(TileChildMaterializerTest,
             return it->second.get();
         };
 
-        TileChildFrameMaterializer::ensureChildren(
+        const TileChildFrameMaterializeResult result =
+            TileChildFrameMaterializer::ensureChildren(
             TileChildFrameMaterializeInput{
                 parent,
                 {},
@@ -401,6 +402,8 @@ TEST(TileChildMaterializerTest,
             ensure,
             availability);
 
+        EXPECT_FALSE(result.changed);
+        EXPECT_TRUE(result.retryLater);
         EXPECT_EQ(0, ensureCalls);
         EXPECT_TRUE(parent.children.empty());
     }
@@ -421,7 +424,8 @@ TEST(TileChildMaterializerTest,
         return it->second.get();
     };
 
-    TileChildFrameMaterializer::ensureChildren(
+    const TileChildFrameMaterializeResult result =
+        TileChildFrameMaterializer::ensureChildren(
         TileChildFrameMaterializeInput{
             parent,
             {},
@@ -431,6 +435,8 @@ TEST(TileChildMaterializerTest,
         ensure,
         availability);
 
+    EXPECT_TRUE(result.changed);
+    EXPECT_FALSE(result.retryLater);
     ASSERT_EQ(4u, parent.children.size());
     EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
               parent.children[0]->key);
