@@ -637,7 +637,8 @@ TEST(TileChildMaterializerTest,
     TilesetTile* staleRasterChild =
         ensure(TileKey{"Geographic-TMS", 2, 3, 0});
     ASSERT_NE(nullptr, staleRasterChild);
-    staleRasterChild->content.markRasterDetailUpsample();
+    staleRasterChild->content.markRasterDetailUpsample(
+        RasterOverlayProjection::WebMercator);
     staleRasterChild->content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
     staleRasterChild->content.renderContent.setMeshReady(true);
@@ -657,6 +658,7 @@ TEST(TileChildMaterializerTest,
     ASSERT_EQ(4u, parent.children.size());
     EXPECT_TRUE(staleRasterChild->content.isTerrainAvailabilityUpsample());
     EXPECT_FALSE(staleRasterChild->content.isRasterDetailUpsample());
+    EXPECT_FALSE(staleRasterChild->content.rasterDetailSourceProjection);
     EXPECT_FALSE(staleRasterChild->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(staleRasterChild->content.renderContent.isMeshReady());
 }

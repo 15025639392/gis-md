@@ -42,11 +42,13 @@ struct TileContentRuntimeState {
     void markTerrainAvailabilityUpsample() {
         upsampledFromParent = true;
         rasterUpsampledForMoreDetail = false;
+        rasterDetailSourceProjection.reset();
     }
 
     void markRasterDetailUpsample() {
         upsampledFromParent = true;
         rasterUpsampledForMoreDetail = true;
+        rasterDetailSourceProjection.reset();
     }
 
     void markRasterDetailUpsample(RasterOverlayProjection sourceProjection) {
