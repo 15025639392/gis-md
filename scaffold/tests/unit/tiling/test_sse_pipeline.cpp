@@ -12865,6 +12865,9 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         makeQuadTerrainGltfModel(gltfFrameTile.bounds),
         Mat4::identity());
     gltfFrameTile.content.renderContent.setTerrainRenderContent(true);
+    gltfFrameTile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    gltfFrameTile.markRenderContentDone();
     bool frameResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
@@ -12887,6 +12890,9 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     gltfWithStaleHeightmapSurface.content.renderContent.setTerrainHeightRange(
         -25.0,
         875.0);
+    gltfWithStaleHeightmapSurface.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    gltfWithStaleHeightmapSurface.markRenderContentDone();
     gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
     gltfWithStaleHeightmapSurface.content.renderContent.setMeshReady(true);

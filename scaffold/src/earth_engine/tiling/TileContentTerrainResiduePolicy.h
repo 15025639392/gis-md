@@ -8,7 +8,10 @@ class IPrepareRendererResources;
 
 struct TileContentTerrainResiduePolicy {
     static bool hasAcceptedTerrainContent(const TilesetTile& tile) {
-        return tile.content.renderContent.hasGltfContent() &&
+        return tile.content.contentKind == TileContentKind::Render &&
+               (tile.content.loadState == TileLoadState::ContentLoaded ||
+                tile.content.loadState == TileLoadState::Done) &&
+               tile.content.renderContent.hasGltfContent() &&
                tile.content.renderContent.isTerrainRenderContent() &&
                tile.content.renderContent.hasRasterOverlayDetailsContent();
     }

@@ -431,7 +431,7 @@ TEST(TileSelectionRootPolicyTest,
     levelZero->content.renderContent.setTerrainHeightRange(-25.0, 125.0);
     levelZero->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
-    levelZero->content.renderContent.markRenderContentReady();
+    levelZero->markRenderContentDone();
     RasterMappedToTilesetTile* existingMapping =
         &levelZero->rasterOverlayState.ensureMapping(0);
 

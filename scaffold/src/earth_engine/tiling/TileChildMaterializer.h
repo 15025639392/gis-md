@@ -100,19 +100,25 @@ struct TileChildMaterializer {
                     child->bounds,
                     minimumHeight,
                     maximumHeight);
-            const bool childGeometryChanged =
+            const bool childTraversalGeometryChanged =
                 child->geometricError != childGeometricError ||
-                child->refine != parent.refine ||
+                child->refine != parent.refine;
+            const bool childBoundsChanged =
                 !sameRegionBoundingVolume(
                     child->boundingVolume,
                     childBoundingVolume) ||
                 child->contentBoundingVolume.has_value();
             child->geometricError = childGeometricError;
             child->refine = parent.refine;
-            child->boundingVolume = childBoundingVolume;
-            child->contentBoundingVolume.reset();
+            if (!hasAcceptedTerrainContent) {
+                child->boundingVolume = childBoundingVolume;
+                child->contentBoundingVolume.reset();
+            }
+            const bool childGeometryChanged =
+                childTraversalGeometryChanged ||
+                (!hasAcceptedTerrainContent && childBoundsChanged);
             changed |= childGeometryChanged;
-            if (childGeometryChanged || !hasAcceptedTerrainContent) {
+            if (!hasAcceptedTerrainContent) {
                 TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                     *child,
                     parent);

@@ -257,6 +257,102 @@ TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiu
 }
 
 TEST(TileChildMaterializerTest,
+     AcceptedGltfTerrainChildKeepsTileLoadResultBounds) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    parent.geometricError = 100.0;
+    parent.refine = TileRefine::Replace;
+    parent.content.renderContent.setTerrainHeightRange(-1000.0, 9000.0);
+
+    const TileKey acceptedChildKey{"Geographic-TMS", 1, 1, 0};
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto acceptedChild = std::make_unique<TilesetTile>(
+        acceptedChildKey,
+        scheme->tileToRectangle(acceptedChildKey));
+    TilesetTile* acceptedChildRaw = acceptedChild.get();
+    tiles.emplace(cacheKeyFor(acceptedChildKey), std::move(acceptedChild));
+
+    const Rectangle tightRectangle =
+        Rectangle::fromDegrees(-70.0, -40.0, -60.0, -30.0);
+    const Rectangle tightContentRectangle =
+        Rectangle::fromDegrees(-69.0, -39.0, -61.0, -31.0);
+    acceptedChildRaw->boundingVolume =
+        TileBoundingVolume::fromRegion(tightRectangle, -25.0, 125.0);
+    acceptedChildRaw->contentBoundingVolume =
+        TileBoundingVolume::fromRegion(tightContentRectangle, -10.0, 90.0);
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(
+        tightRectangle,
+        -25.0,
+        125.0);
+    acceptedChildRaw->content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    acceptedChildRaw->content.renderContent.setTerrainRenderContent(true);
+    acceptedChildRaw->content.renderContent.setTerrainHeightRange(
+        -25.0,
+        125.0);
+    acceptedChildRaw->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    acceptedChildRaw->markRenderContentDone();
+
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+    auto availability = [](const TileKey& key) {
+        return key.x == 0 && key.y == 0
+            ? TileAvailabilityState::Available
+            : TileAvailabilityState::NotAvailable;
+    };
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        2,
+        availability,
+        ensure,
+        true);
+
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ(acceptedChildRaw, parent.children[1]);
+    EXPECT_FALSE(acceptedChildRaw->content.isTerrainAvailabilityUpsample());
+    ASSERT_TRUE(acceptedChildRaw->boundingVolume.has_value());
+    EXPECT_EQ(tightRectangle, acceptedChildRaw->boundingVolume->region);
+    EXPECT_DOUBLE_EQ(-25.0, acceptedChildRaw->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(125.0, acceptedChildRaw->boundingVolume->maximumHeight);
+    EXPECT_FALSE(acceptedChildRaw->boundingVolume->looseFittingHeights);
+    ASSERT_TRUE(acceptedChildRaw->contentBoundingVolume.has_value());
+    EXPECT_EQ(
+        tightContentRectangle,
+        acceptedChildRaw->contentBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(
+        -10.0,
+        acceptedChildRaw->contentBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(
+        90.0,
+        acceptedChildRaw->contentBoundingVolume->maximumHeight);
+    ASSERT_TRUE(
+        acceptedChildRaw->content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(
+        -25.0,
+        acceptedChildRaw->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        125.0,
+        acceptedChildRaw->content.renderContent.terrainMaximumHeight());
+}
+
+TEST(TileChildMaterializerTest,
      AvailabilityBoundaryWaitsForContentBeforeCreatingChildrenLikeCesiumNative) {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
@@ -623,7 +719,7 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
-     TerrainAvailabilityMaterializationRefreshesAcceptedChildGeometryLikeCesiumNative) {
+     TerrainAvailabilityMaterializationRefreshesPartialGltfResidue) {
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTile parent(
         TileKey{"Geographic-TMS", 1, 1, 0},
@@ -671,7 +767,7 @@ TEST(TileChildMaterializerTest,
     acceptedChild->content.renderContent.setGltfContent(
         std::move(acceptedModel));
     acceptedChild->content.renderContent.setTerrainRenderContent(true);
-    ASSERT_TRUE(
+    ASSERT_FALSE(
         TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
             *acceptedChild));
 
@@ -690,8 +786,8 @@ TEST(TileChildMaterializerTest,
     ASSERT_EQ(4u, parent.children.size());
     EXPECT_EQ(acceptedChild, parent.children[0]);
     EXPECT_FALSE(acceptedChild->content.upsampledFromParent);
-    EXPECT_TRUE(acceptedChild->content.renderContent.hasGltfModel());
-    EXPECT_TRUE(acceptedChild->content.renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(acceptedChild->content.renderContent.hasGltfModel());
+    EXPECT_FALSE(acceptedChild->content.renderContent.isTerrainRenderContent());
     EXPECT_DOUBLE_EQ(40.0, acceptedChild->geometricError);
     EXPECT_EQ(TileRefine::Add, acceptedChild->refine);
     ASSERT_TRUE(acceptedChild->boundingVolume.has_value());
@@ -755,6 +851,7 @@ TEST(TileChildMaterializerTest,
         std::move(acceptedModel));
     acceptedChild->content.renderContent.setTerrainRenderContent(true);
     acceptedChild->content.renderContent.setGltfResourcesReady(true);
+    acceptedChild->markRenderContentDone();
     acceptedChild->content.markTerrainAvailabilityUpsample();
     ASSERT_TRUE(
         TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
