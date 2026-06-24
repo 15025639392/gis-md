@@ -6336,6 +6336,134 @@ TEST(RasterOverlayLifecycleTest, MissingPreciseRectangleWithoutRenderDetailsUses
     EXPECT_EQ(0, provider.getCachedTileCount());
 }
 
+TEST(
+    RasterOverlayLifecycleTest,
+    FailedRasterFallbackSelectsAncestorByOverlayOwnerLikeCesiumNative) {
+    auto overlayA = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    auto overlayB = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider providerA(
+        overlayA->getProvider(),
+        *scheme,
+        nullptr);
+    RasterOverlayTileProvider providerB(
+        overlayB->getProvider(),
+        *scheme,
+        nullptr);
+    providerA.setOwner(overlayA.get());
+    providerB.setOwner(overlayB.get());
+
+    const TileKey parentKey{scheme->id(), 2, 1, 1};
+    const TileKey childKey{scheme->id(), 3, 2, 2};
+    const Rectangle parentBounds = scheme->tileToRectangle(parentKey);
+    const Rectangle childBounds = scheme->tileToRectangle(childKey);
+    RasterOverlayDetails parentDetails =
+        makeProviderDetails(*scheme, parentBounds);
+    RasterOverlayDetails childDetails =
+        makeProviderDetails(*scheme, childBounds);
+
+    TilesetTile parent(parentKey, parentBounds);
+    auto wrongOwner = std::make_unique<RasterMappedToTilesetTile>();
+    std::vector<RasterOverlayProjection> wrongMissing;
+    wrongOwner->update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        providerB,
+        nullptr,
+        wrongMissing,
+        nullptr,
+        0);
+    ASSERT_NE(nullptr, wrongOwner->getLoadingTile());
+    wrongOwner->getLoadingTile()->setTexture(
+        std::make_unique<TestTexture>(4, 4));
+    wrongOwner->update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        providerB,
+        nullptr,
+        wrongMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* wrongReady = wrongOwner->getReadyTile();
+    ASSERT_NE(nullptr, wrongReady);
+    parent.rasterOverlayState.mappings().push_back(std::move(wrongOwner));
+
+    auto matchingOwner = std::make_unique<RasterMappedToTilesetTile>();
+    std::vector<RasterOverlayProjection> matchingMissing;
+    matchingOwner->update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        providerA,
+        nullptr,
+        matchingMissing,
+        nullptr,
+        1);
+    ASSERT_NE(nullptr, matchingOwner->getLoadingTile());
+    matchingOwner->getLoadingTile()->setTexture(
+        std::make_unique<TestTexture>(4, 4));
+    matchingOwner->update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        providerA,
+        nullptr,
+        matchingMissing,
+        nullptr,
+        1);
+    RasterOverlayTile* matchingReady = matchingOwner->getReadyTile();
+    ASSERT_NE(nullptr, matchingReady);
+    parent.rasterOverlayState.mappings().push_back(std::move(matchingOwner));
+
+    TilesetTile child(childKey, childBounds, &parent);
+    RasterMappedToTilesetTile childMapped;
+    std::vector<RasterOverlayProjection> childMissing;
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        providerA,
+        nullptr,
+        childMissing,
+        &parent,
+        0);
+    ASSERT_NE(nullptr, childMapped.getLoadingTile());
+    childMapped.getLoadingTile()->setState(
+        RasterOverlayTile::LoadState::Failed);
+
+    const RasterMappedToTilesetTile::MoreDetail fallbackUpdate =
+        childMapped.update(
+            child.key,
+            childDetails,
+            512.0,
+            512.0,
+            providerA,
+            nullptr,
+            childMissing,
+            &parent,
+            0);
+
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::No, fallbackUpdate);
+    EXPECT_EQ(matchingReady, childMapped.getReadyTile());
+    EXPECT_NE(wrongReady, childMapped.getReadyTile());
+    EXPECT_EQ(nullptr, childMapped.getLoadingTile());
+    EXPECT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+              childMapped.getReadyTileSource());
+}
+
 TEST(RasterOverlayLifecycleTest, AttachedUnknownReportsMoreDetailLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
