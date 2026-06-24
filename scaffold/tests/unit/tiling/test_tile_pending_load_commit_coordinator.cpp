@@ -1874,6 +1874,51 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     MissingTerminalResultClearsStaleEmptyMarker) {
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"test", 0, 1, 0};
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert("missing-terrain");
+    emptyContentRegistry.insert("missing-content");
+    PendingTileLoad terrainResult{
+        TileLoadDomain::TerrainContent,
+        terrainKey,
+        "missing-terrain",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+    PendingTileLoad contentResult{
+        TileLoadDomain::Content,
+        contentKey,
+        "missing-content",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        terrainResult,
+        emptyContentRegistry,
+        nullptr,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        contentResult,
+        emptyContentRegistry,
+        nullptr,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_FALSE(emptyContentRegistry.contains("missing-terrain"));
+    EXPECT_FALSE(emptyContentRegistry.contains("missing-content"));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainContentDomainUploadUsesContentLifecycleWithoutLegacyMeshPath) {
     const TileKey key{"Geographic-TMS", 2, 0, 0};
     const std::string cacheKey = "gltf-terrain-domain-content-upload";

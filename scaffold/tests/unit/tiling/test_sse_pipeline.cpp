@@ -14579,9 +14579,9 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
 
     check(!childrenEnsured &&
               !resourcesDirty &&
-              emptyContentRegistry.contains("missing-terrain") &&
-              emptyContentRegistry.contains("missing-content"),
-          "TilePendingLoadCommitCoordinator: missing tile terminal results have no state side effects");
+              !emptyContentRegistry.contains("missing-terrain") &&
+              !emptyContentRegistry.contains("missing-content"),
+          "TilePendingLoadCommitCoordinator: missing tile terminal results clear stale empty markers without tile side effects");
 }
 
 void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {

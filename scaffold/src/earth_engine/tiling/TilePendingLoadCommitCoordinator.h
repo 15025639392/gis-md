@@ -47,7 +47,10 @@ public:
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile* tile = ensureTile(result.key);
-        if (!tile) return;
+        if (!tile) {
+            emptyContentRegistry.erase(result.cacheKey);
+            return;
+        }
 
         const TileTerminalLoadAction action =
             TileTerminalLoadCommitter::commitTerrainTerminalResult(
@@ -75,7 +78,10 @@ public:
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile* tile = ensureTile(result.key);
-        if (!tile) return;
+        if (!tile) {
+            emptyContentRegistry.erase(result.cacheKey);
+            return;
+        }
 
         const TileTerminalLoadAction action =
             TileTerminalLoadCommitter::commitContentTerminalResult(
