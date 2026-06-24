@@ -34,6 +34,7 @@ std::unique_ptr<GltfModel> makeEmptyGltfModel() {
 
 void makeGltfRenderReady(TilesetTile& tile) {
     tile.content.renderContent.setGltfContent(makeEmptyGltfModel());
+    tile.content.renderContent.setTerrainRenderContent(true);
     tile.content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     tile.markRenderContentDone();
@@ -186,6 +187,67 @@ TEST(
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
     EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    FindUpsampleAncestorUsesReadyGltfTerrainBeforeLegacySurfaceState) {
+    const TileKey grandparentKey{"test", 0, 0, 0};
+    const TileKey parentKey{"test", 1, 0, 0};
+    const TileKey childKey{"test", 2, 0, 0};
+    TilesetTile grandparent(
+        grandparentKey,
+        Rectangle{0.0, 0.0, 4.0, 4.0});
+    TilesetTile parent(
+        parentKey,
+        Rectangle{0.0, 2.0, 2.0, 4.0},
+        &grandparent);
+    TilesetTile child(
+        childKey,
+        Rectangle{0.0, 3.0, 1.0, 4.0},
+        &parent);
+    grandparent.children.push_back(&parent);
+    parent.children.push_back(&child);
+
+    makeGltfRenderReady(parent);
+    grandparent.markRenderContentDone();
+    grandparent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    EXPECT_EQ(child.findUpsampleAncestor(), &parent);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    FindUpsampleAncestorSkipsPendingGltfTerrainModel) {
+    const TileKey grandparentKey{"test", 0, 0, 0};
+    const TileKey parentKey{"test", 1, 0, 0};
+    const TileKey childKey{"test", 2, 0, 0};
+    TilesetTile grandparent(
+        grandparentKey,
+        Rectangle{0.0, 0.0, 4.0, 4.0});
+    TilesetTile parent(
+        parentKey,
+        Rectangle{0.0, 2.0, 2.0, 4.0},
+        &grandparent);
+    TilesetTile child(
+        childKey,
+        Rectangle{0.0, 3.0, 1.0, 4.0},
+        &parent);
+    grandparent.children.push_back(&parent);
+    parent.children.push_back(&child);
+
+    parent.content.renderContent.setGltfContent(makeEmptyGltfModel());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.loadState = TileLoadState::Done;
+    parent.content.contentKind = TileContentKind::Render;
+    grandparent.markRenderContentDone();
+    grandparent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    EXPECT_EQ(child.findUpsampleAncestor(), &grandparent);
 }
 
 TEST(

@@ -268,7 +268,15 @@ struct TilesetTile {
     TilesetTile* findUpsampleAncestor() {
         TilesetTile* p = parent;
         while (p) {
-            if (p->content.renderContent.isMeshReady() &&
+            if (p->content.renderContent.isTerrainRenderContent() &&
+                p->content.renderContent.hasGltfContent()) {
+                if (p->content.renderContent.isGltfRenderReady()) {
+                    return p;
+                }
+                p = p->parent;
+                continue;
+            }
+            if (p->content.renderContent.isSurfaceMeshReady() &&
                 p->content.renderContent.surfaceVertexBuffer()) return p;
             p = p->parent;
         }
@@ -277,7 +285,15 @@ struct TilesetTile {
     const TilesetTile* findUpsampleAncestor() const {
         const TilesetTile* p = parent;
         while (p) {
-            if (p->content.renderContent.isMeshReady() &&
+            if (p->content.renderContent.isTerrainRenderContent() &&
+                p->content.renderContent.hasGltfContent()) {
+                if (p->content.renderContent.isGltfRenderReady()) {
+                    return p;
+                }
+                p = p->parent;
+                continue;
+            }
+            if (p->content.renderContent.isSurfaceMeshReady() &&
                 p->content.renderContent.surfaceVertexBuffer()) return p;
             p = p->parent;
         }
