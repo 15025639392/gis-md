@@ -126,3 +126,79 @@ TEST(
     EXPECT_FALSE(tile.selectionFrameState.renderable);
     EXPECT_FALSE(tile.selectionFrameState.completeRenderable);
 }
+
+TEST(
+    TileContentUnloadCoordinatorRenderTest,
+    GltfTerrainUnloadWaitsForLoadingUpsampledDescendantSubtree) {
+    TilesetTile root(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    root.content.contentKind = TileContentKind::Render;
+    root.content.loadState = TileLoadState::Done;
+    root.content.renderContent.setGltfContent(makeTriangleGltfModel());
+    root.content.renderContent.setTerrainRenderContent(true);
+    root.content.renderContent.setGltfResourcesReady(true);
+    root.selectionFrameState.updateFrameRenderability(true);
+
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &root);
+    root.children.push_back(&child);
+
+    TilesetTile grandchild(
+        TileKey{"Geographic-TMS", 2, 0, 1},
+        Rectangle::fromDegrees(-180.0, 45.0, -90.0, 90.0),
+        &child);
+    child.children.push_back(&grandchild);
+    grandchild.content.markRasterDetailUpsample(
+        RasterOverlayProjection::Geographic);
+    grandchild.content.loadState = TileLoadState::ContentLoading;
+
+    const std::string cacheKey = "Geographic-TMS:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    const TileCacheUnloadContentResult firstResult =
+        TileContentUnloadCoordinator::unloadContent(
+            root,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Keep, firstResult);
+    EXPECT_EQ(TileLoadState::Unloading, root.content.loadState);
+    EXPECT_TRUE(root.content.renderContent.hasGltfContent());
+    EXPECT_TRUE(root.content.renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(root.content.renderContent.hasGltfPrimitiveResources());
+    EXPECT_FALSE(root.selectionFrameState.renderable);
+
+    const TileCacheUnloadContentResult secondResult =
+        TileContentUnloadCoordinator::unloadContent(
+            root,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Keep, secondResult);
+    EXPECT_EQ(TileLoadState::Unloading, root.content.loadState);
+    EXPECT_TRUE(root.content.renderContent.hasGltfContent());
+
+    grandchild.content.loadState = TileLoadState::ContentLoaded;
+
+    const TileCacheUnloadContentResult finalResult =
+        TileContentUnloadCoordinator::unloadContent(
+            root,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Remove, finalResult);
+    EXPECT_EQ(TileLoadState::Unloaded, root.content.loadState);
+    EXPECT_FALSE(root.content.renderContent.hasGltfContent());
+    EXPECT_FALSE(root.content.renderContent.isTerrainRenderContent());
+}
