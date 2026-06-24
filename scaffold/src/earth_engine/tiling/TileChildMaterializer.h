@@ -295,6 +295,34 @@ struct TileChildMaterializer {
     }
 
     template <typename AvailabilityStateFn>
+    static bool hasTerrainAvailabilityUpsampledChild(
+        const TilesetTile& tile,
+        AvailabilityStateFn&& availabilityState) {
+        if (!tile.children.empty()) {
+            return std::any_of(
+                tile.children.begin(),
+                tile.children.end(),
+                [](const TilesetTile* child) {
+                    return child &&
+                           child->content.isTerrainAvailabilityUpsample();
+                });
+        }
+
+        int availableChildren = 0;
+        int totalChildren = 0;
+        for (const TileKey& childKey :
+             TileQuadtreeChildKeys::terrainChildren(tile.key)) {
+            ++totalChildren;
+            if (availabilityState(childKey) ==
+                TileAvailabilityState::Available) {
+                ++availableChildren;
+            }
+        }
+        return totalChildren == 4 && availableChildren > 0 &&
+               availableChildren < 4;
+    }
+
+    template <typename AvailabilityStateFn>
     static bool canRefine(
         const TilesetTile& tile,
         const TileRefinementAvailabilityOptions& options,

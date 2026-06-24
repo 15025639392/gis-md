@@ -548,6 +548,61 @@ TEST(TileChildMaterializerTest, UnknownTerrainChildrenDoNotCreateUpsampledQuadLi
 }
 
 TEST(TileChildMaterializerTest,
+     TerrainAvailabilityUpsampledChildProbeMatchesCesiumBeforeChildrenExist) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+
+    auto availableCount = [](int count) {
+        return [count, seen = 0](const TileKey&) mutable {
+            return seen++ < count ? TileAvailabilityState::Available
+                                  : TileAvailabilityState::NotAvailable;
+        };
+    };
+
+    EXPECT_FALSE(TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
+        parent,
+        availableCount(0)));
+    EXPECT_TRUE(TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
+        parent,
+        availableCount(1)));
+    EXPECT_TRUE(TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
+        parent,
+        availableCount(3)));
+    EXPECT_FALSE(TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
+        parent,
+        availableCount(4)));
+}
+
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityUpsampledChildProbeMatchesCesiumAfterChildrenExist) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+    TilesetTile sw(TileKey{"Geographic-TMS", 2, 2, 0}, Rectangle{});
+    TilesetTile se(TileKey{"Geographic-TMS", 2, 3, 0}, Rectangle{});
+    TilesetTile nw(TileKey{"Geographic-TMS", 2, 2, 1}, Rectangle{});
+    TilesetTile ne(TileKey{"Geographic-TMS", 2, 3, 1}, Rectangle{});
+    parent.children = {&sw, &se, &nw, &ne};
+
+    int availabilityChecks = 0;
+    EXPECT_FALSE(TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
+        parent,
+        [&availabilityChecks](const TileKey&) {
+            ++availabilityChecks;
+            return TileAvailabilityState::Available;
+        }));
+    EXPECT_EQ(0, availabilityChecks);
+
+    nw.content.markTerrainAvailabilityUpsample();
+    EXPECT_TRUE(TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
+        parent,
+        [](const TileKey&) {
+            return TileAvailabilityState::NotAvailable;
+        }));
+}
+
+TEST(TileChildMaterializerTest,
      TerrainAvailabilityUpsampledTileDoesNotMaterializeChildrenLikeCesiumNative) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 1, 1, 0},
