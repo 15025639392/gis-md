@@ -172,6 +172,10 @@ public:
             rasterOverlays,
             device,
             pPrepRenderer);
+        if (!terrainAvailabilityUpdates.empty()) {
+            contentProvider->applyTerrainAvailabilityUpdates(
+                terrainAvailabilityUpdates);
+        }
         ensureGltfResources(*tile);
         const bool renderResourcesReady =
             tile->content.renderContent.isRenderContentReady();
@@ -180,10 +184,6 @@ public:
                 *tile,
                 renderResourcesReady,
                 pPrepRenderer);
-        if (renderResourcesReady && !terrainAvailabilityUpdates.empty()) {
-            contentProvider->applyTerrainAvailabilityUpdates(
-                terrainAvailabilityUpdates);
-        }
         if (action.ensureChildren) {
             ensureChildren(*tile);
         }
