@@ -47,49 +47,11 @@ void applyNativeEmptyContentRefinement(TilesetTile& tile) {
     }
 }
 
-} // namespace
-
-TileTerminalLoadAction
-TileTerminalLoadPolicy::applyTerrainTerminalResult(
+TileTerminalLoadAction applyTerminalResult(
     TilesetTile& tile,
     TileLoadStatus status,
-    IPrepareRendererResources* pPrepRenderer) {
-    TileTerminalLoadAction action;
-
-    switch (status) {
-        case TileLoadStatus::Empty: {
-            action.markEmptyCacheKey = true;
-            clearRenderResidueForTerminalNonRenderContent(
-                tile,
-                pPrepRenderer);
-            tile.markEmptyContentLoaded();
-            applyNativeEmptyContentRefinement(tile);
-            tile.markEmptyContentDone();
-            action.ensureChildren = true;
-            action.resourcesDirty = true;
-            break;
-        }
-        case TileLoadStatus::RetryLater:
-        case TileLoadStatus::Cancelled:
-            markUnknownTemporaryFailure(tile, pPrepRenderer);
-            action.resourcesDirty = true;
-            break;
-        case TileLoadStatus::Failed:
-        case TileLoadStatus::Renderable:
-        case TileLoadStatus::External:
-            markUnknownPermanentFailure(tile, pPrepRenderer);
-            action.resourcesDirty = true;
-            break;
-    }
-
-    return action;
-}
-
-TileTerminalLoadAction
-TileTerminalLoadPolicy::applyContentTerminalResult(
-    TilesetTile& tile,
-    TileLoadStatus status,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    bool allowExternalContent) {
     TileTerminalLoadAction action;
 
     switch (status) {
@@ -104,25 +66,23 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::External:
-            clearRenderResidueForTerminalNonRenderContent(
-                tile,
-                pPrepRenderer);
-            tile.markExternalContentDone();
-            action.ensureChildren = true;
+            if (allowExternalContent) {
+                clearRenderResidueForTerminalNonRenderContent(
+                    tile,
+                    pPrepRenderer);
+                tile.markExternalContentDone();
+                action.ensureChildren = true;
+            } else {
+                markUnknownPermanentFailure(tile, pPrepRenderer);
+            }
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::RetryLater:
-            markUnknownTemporaryFailure(tile, pPrepRenderer);
-            action.resourcesDirty = true;
-            break;
         case TileLoadStatus::Cancelled:
             markUnknownTemporaryFailure(tile, pPrepRenderer);
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Failed:
-            markUnknownPermanentFailure(tile, pPrepRenderer);
-            action.resourcesDirty = true;
-            break;
         case TileLoadStatus::Renderable:
             markUnknownPermanentFailure(tile, pPrepRenderer);
             action.resourcesDirty = true;
@@ -130,6 +90,24 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
     }
 
     return action;
+}
+
+} // namespace
+
+TileTerminalLoadAction
+TileTerminalLoadPolicy::applyTerrainTerminalResult(
+    TilesetTile& tile,
+    TileLoadStatus status,
+    IPrepareRendererResources* pPrepRenderer) {
+    return applyTerminalResult(tile, status, pPrepRenderer, false);
+}
+
+TileTerminalLoadAction
+TileTerminalLoadPolicy::applyContentTerminalResult(
+    TilesetTile& tile,
+    TileLoadStatus status,
+    IPrepareRendererResources* pPrepRenderer) {
+    return applyTerminalResult(tile, status, pPrepRenderer, true);
 }
 
 } // namespace earth_engine

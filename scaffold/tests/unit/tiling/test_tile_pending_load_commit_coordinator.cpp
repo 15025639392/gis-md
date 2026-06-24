@@ -942,6 +942,40 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainExternalTerminalFailsThroughUnifiedTerminalPolicy) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    const std::string cacheKey = "terrain-external";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::External);
+    PendingTileLoad pending{TileLoadDomain::TerrainContent,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(result)};
+    TileEmptyContentRegistry emptyContentRegistry;
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        pending,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentExternalTerminalAppliesTileLoadResultMetadata) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "content-external";
