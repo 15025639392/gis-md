@@ -3231,6 +3231,93 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainContentUploadCapturesInitialBoundingVolumesBeforeUpdate) {
+    TileLoadLifecycle lifecycle;
+    const TileKey key{"Geographic-TMS", 2, 1, 1};
+    const std::string cacheKey = "terrain-content-initial-bv";
+    TilesetTile tile(key, Rectangle{});
+    const Rectangle initialRectangle =
+        Rectangle::fromDegrees(-20.0, -10.0, 20.0, 10.0);
+    const Rectangle initialContentRectangle =
+        Rectangle::fromDegrees(-18.0, -8.0, 18.0, 8.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(initialRectangle, -1000.0, 9000.0);
+    tile.contentBoundingVolume = TileBoundingVolume::fromRegion(
+        initialContentRectangle,
+        -50.0,
+        75.0);
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    const Rectangle updatedRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    const Rectangle updatedContentRectangle =
+        Rectangle::fromDegrees(-11.0, -3.0, -7.0, 1.0);
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedRectangle, -25.0, 125.0);
+    metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(
+            updatedContentRectangle,
+            -15.0,
+            95.0);
+    PendingTileLoad upload{
+        TileLoadDomain::TerrainContent,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeTerrainContentContentResult(
+            makeMinimalTerrainGltfModelForCommitTest(updatedRectangle),
+            std::move(metadata))};
+    TileEmptyContentRegistry emptyContentRegistry;
+    bool gltfEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitContentUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        {},
+        emptyContentRegistry,
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [&gltfEnsured](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            gltfEnsured = true;
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_TRUE(tile.initialBoundingVolume.has_value());
+    EXPECT_EQ(initialRectangle, tile.initialBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(-1000.0, tile.initialBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(9000.0, tile.initialBoundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.initialContentBoundingVolume.has_value());
+    EXPECT_EQ(initialContentRectangle,
+              tile.initialContentBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(-50.0,
+                     tile.initialContentBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(75.0,
+                     tile.initialContentBoundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
+    EXPECT_DOUBLE_EQ(-25.0, tile.boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(125.0, tile.boundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(updatedContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(-15.0, tile.contentBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(95.0, tile.contentBoundingVolume->maximumHeight);
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
+    EXPECT_TRUE(gltfEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentRetryAndCancelledClearEmptyMarker) {
     expectContentTerminalClearsEmptyMarker(TileLoadStatus::RetryLater);
     expectContentTerminalClearsEmptyMarker(TileLoadStatus::Cancelled);
