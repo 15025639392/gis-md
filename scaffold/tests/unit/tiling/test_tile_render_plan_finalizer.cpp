@@ -220,7 +220,7 @@ TEST(
 
 TEST(
     TileRenderPlanFinalizerTest,
-    FindUpsampleAncestorSkipsPendingGltfTerrainModel) {
+    FindUpsampleAncestorDoesNotFallbackToLegacySurfaceForPendingGltfTerrain) {
     const TileKey grandparentKey{"test", 0, 0, 0};
     const TileKey parentKey{"test", 1, 0, 0};
     const TileKey childKey{"test", 2, 0, 0};
@@ -247,7 +247,40 @@ TEST(
         std::make_unique<DummyBuffer>(4),
         nullptr);
 
-    EXPECT_EQ(child.findUpsampleAncestor(), &grandparent);
+    EXPECT_EQ(child.findUpsampleAncestor(), nullptr);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    FindUpsampleAncestorDoesNotUseContentProviderSurfaceResidue) {
+    const TileKey grandparentKey{"test", 0, 0, 0};
+    const TileKey parentKey{"test", 1, 0, 0};
+    const TileKey childKey{"test", 2, 0, 0};
+    TilesetTile grandparent(
+        grandparentKey,
+        Rectangle{0.0, 0.0, 4.0, 4.0});
+    TilesetTile parent(
+        parentKey,
+        Rectangle{0.0, 2.0, 2.0, 4.0},
+        &grandparent);
+    TilesetTile child(
+        childKey,
+        Rectangle{0.0, 3.0, 1.0, 4.0},
+        &parent);
+    grandparent.children.push_back(&parent);
+    parent.children.push_back(&child);
+
+    parent.contentProviderTerrainQuadtreeTile = true;
+    parent.markRenderContentDone();
+    parent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+    grandparent.markRenderContentDone();
+    grandparent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    EXPECT_EQ(child.findUpsampleAncestor(), nullptr);
 }
 
 TEST(

@@ -273,8 +273,10 @@ struct TilesetTile {
                 if (p->content.renderContent.isGltfRenderReady()) {
                     return p;
                 }
-                p = p->parent;
-                continue;
+                return nullptr;
+            }
+            if (p->contentProviderTerrainQuadtreeTile) {
+                return nullptr;
             }
             if (p->content.renderContent.isSurfaceMeshReady() &&
                 p->content.renderContent.surfaceVertexBuffer()) return p;
@@ -290,8 +292,10 @@ struct TilesetTile {
                 if (p->content.renderContent.isGltfRenderReady()) {
                     return p;
                 }
-                p = p->parent;
-                continue;
+                return nullptr;
+            }
+            if (p->contentProviderTerrainQuadtreeTile) {
+                return nullptr;
             }
             if (p->content.renderContent.isSurfaceMeshReady() &&
                 p->content.renderContent.surfaceVertexBuffer()) return p;
