@@ -15743,6 +15743,89 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
           "TileContentUnloadCoordinator: protected upsample source remains kept while child is loading");
 }
 
+void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep() {
+    auto scheme = TileScheme::createXYZWebMercator();
+    DebugImageryProvider imagery;
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setFrameNumber(1);
+
+    TilesetTile parent(TileKey{scheme->id(), 0, 0, 0},
+                       scheme->tileToRectangle(
+                           TileKey{scheme->id(), 0, 0, 0}));
+    TilesetTile child(TileKey{scheme->id(), 1, 0, 0},
+                      scheme->tileToRectangle(
+                          TileKey{scheme->id(), 1, 0, 0}),
+                      &parent);
+    parent.children.push_back(&child);
+
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Done;
+    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    child.content.upsampledFromParent = true;
+    child.content.loadState = TileLoadState::ContentLoading;
+
+    parent.rasterOverlayState.ensureMappingSlots(1);
+    RasterOverlayDetails details = makeProviderDetails(*scheme, parent.bounds);
+    std::vector<RasterOverlayProjection> missingProjections;
+    RecordingPrepareRendererResources prep;
+    RasterMappedToTilesetTile& mapping =
+        parent.rasterOverlayState.ensureMapping(0);
+    mapping.update(
+        parent.key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        &prep,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* loadingTile = mapping.getLoadingTile();
+    check(loadingTile != nullptr,
+          "TileContentUnloadCoordinator: protected unload setup starts raster mapping load");
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    mapping.update(
+        parent.key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        &prep,
+        missingProjections,
+        nullptr,
+        0);
+    check(mapping.getState() == RasterMappedToTilesetTile::State::Attached &&
+              prep.attachCount == 1 &&
+              TileCacheMetrics::estimateTileBytes(parent) == 8 * 4 * 4,
+          "TileContentUnloadCoordinator: protected unload setup attaches raster mapping");
+
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            parent,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            &prep);
+
+    check(result == TileCacheUnloadContentResult::Keep &&
+              parent.content.contentKind == TileContentKind::Render &&
+              parent.content.loadState == TileLoadState::Unloading &&
+              parent.content.renderContent.hasSurfaceMesh() &&
+              parent.rasterOverlayState.mappingCount() == 0 &&
+              TileCacheMetrics::estimateTileBytes(parent) == 0 &&
+              prep.detachCount == 1 &&
+              prep.lastDetachedOverlayIndex == 0 &&
+              terrainCache.find(cacheKey) != terrainCache.end(),
+          "TileContentUnloadCoordinator: protected upsample source detaches raster mappings before keeping CPU content");
+}
+
 void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
@@ -28985,6 +29068,7 @@ int main() {
     testTileContentUnloadCoordinatorKeepsReferencedExternalContent();
     testTileContentUnloadCoordinatorRemovesRenderContentCache();
     testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource();
+    testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep();
     testTileContentUnloadCoordinatorRemovesCompletedProtectedSource();
     testTileIndexStateErasesEmptyContentRegistryKey();
     testTileTerrainHeightRangePolicySetsAndInheritsRanges();
