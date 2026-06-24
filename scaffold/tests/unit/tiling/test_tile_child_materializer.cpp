@@ -408,42 +408,48 @@ TEST(TileChildMaterializerTest,
         EXPECT_TRUE(parent.children.empty());
     }
 
-    parent.content.loadState = TileLoadState::ContentLoaded;
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
-        const std::string cacheKey = cacheKeyFor(key);
-        auto it = tiles.find(cacheKey);
-        if (it == tiles.end()) {
-            it = tiles.emplace(
-                cacheKey,
-                std::make_unique<TilesetTile>(
-                    key,
-                    scheme->tileToRectangle(key)))
-                     .first;
-        }
-        return it->second.get();
-    };
+    for (TileLoadState resolvedState : {
+             TileLoadState::ContentLoaded,
+             TileLoadState::Done,
+             TileLoadState::Failed}) {
+        parent.children.clear();
+        parent.content.loadState = resolvedState;
+        std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+        auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+            const std::string cacheKey = cacheKeyFor(key);
+            auto it = tiles.find(cacheKey);
+            if (it == tiles.end()) {
+                it = tiles.emplace(
+                    cacheKey,
+                    std::make_unique<TilesetTile>(
+                        key,
+                        scheme->tileToRectangle(key)))
+                         .first;
+            }
+            return it->second.get();
+        };
 
-    const TileChildFrameMaterializeResult result =
-        TileChildFrameMaterializer::ensureChildren(
-        TileChildFrameMaterializeInput{
-            parent,
-            {},
-            2,
-            true,
-            false},
-        ensure,
-        availability);
+        const TileChildFrameMaterializeResult result =
+            TileChildFrameMaterializer::ensureChildren(
+            TileChildFrameMaterializeInput{
+                parent,
+                {},
+                2,
+                true,
+                false},
+            ensure,
+            availability);
 
-    EXPECT_TRUE(result.changed);
-    EXPECT_FALSE(result.retryLater);
-    ASSERT_EQ(4u, parent.children.size());
-    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
-              parent.children[0]->key);
-    EXPECT_FALSE(parent.children[0]->content.upsampledFromParent);
-    EXPECT_TRUE(parent.children[1]->content.upsampledFromParent);
-    EXPECT_TRUE(parent.children[2]->content.upsampledFromParent);
-    EXPECT_TRUE(parent.children[3]->content.upsampledFromParent);
+        EXPECT_TRUE(result.changed);
+        EXPECT_FALSE(result.retryLater);
+        ASSERT_EQ(4u, parent.children.size());
+        EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
+                  parent.children[0]->key);
+        EXPECT_FALSE(parent.children[0]->content.upsampledFromParent);
+        EXPECT_TRUE(parent.children[1]->content.upsampledFromParent);
+        EXPECT_TRUE(parent.children[2]->content.upsampledFromParent);
+        EXPECT_TRUE(parent.children[3]->content.upsampledFromParent);
+    }
 }
 
 TEST(TileChildMaterializerTest,
