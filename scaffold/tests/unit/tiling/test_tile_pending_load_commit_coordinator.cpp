@@ -566,6 +566,80 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainFailedAvailabilityBoundaryMaterializesChildrenLikeCesiumNative) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+
+    const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = boundaryKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+    provider->applyTerrainAvailabilityUpdates({update});
+
+    TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
+    ASSERT_NE(nullptr, boundary);
+    boundary->content.loadState = TileLoadState::ContentLoading;
+
+    const std::string cacheKey = "terrain-boundary-failed";
+    TileEmptyContentRegistry emptyContentRegistry;
+    PendingTileLoad pending{
+        TileLoadDomain::TerrainContent,
+        boundaryKey,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::Failed};
+
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        pending,
+        emptyContentRegistry,
+        nullptr,
+        [&contentAccess](const TileKey& key) {
+            return contentAccess.ensureTile(key);
+        },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_EQ(TileLoadState::Failed, boundary->content.loadState);
+    EXPECT_TRUE(boundary->children.empty());
+
+    const TileChildFrameMaterializeResult childResult =
+        contentAccess.ensureTileChildren(*boundary);
+
+    EXPECT_TRUE(childResult.changed);
+    EXPECT_FALSE(childResult.retryLater);
+    ASSERT_EQ(4u, boundary->children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 3, 0, 0}),
+              boundary->children[0]->key);
+    EXPECT_FALSE(boundary->children[0]->content.isTerrainAvailabilityUpsample());
+    for (size_t i = 1; i < boundary->children.size(); ++i) {
+        EXPECT_TRUE(
+            boundary->children[i]->content.isTerrainAvailabilityUpsample());
+    }
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentTerminalFailuresMaterializeLatentChildrenOnLaterUpdateLikeCesiumNative) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
