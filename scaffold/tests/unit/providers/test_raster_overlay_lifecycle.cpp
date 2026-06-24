@@ -6981,6 +6981,136 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     FailedRasterFallbackPrefersParentLoadingTileLikeCesiumNative) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+
+    const TileKey grandparentKey{overlay->getTileScheme().id(), 1, 0, 0};
+    const TileKey parentKey{overlay->getTileScheme().id(), 2, 0, 0};
+    const TileKey childKey{overlay->getTileScheme().id(), 3, 0, 0};
+    RasterOverlayDetails grandparentDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        overlay->getTileScheme().tileToRectangle(grandparentKey));
+    RasterOverlayDetails parentDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        overlay->getTileScheme().tileToRectangle(parentKey));
+    RasterOverlayDetails childDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        overlay->getTileScheme().tileToRectangle(childKey));
+    std::vector<RasterOverlayProjection> missing;
+
+    TilesetTile grandparentTile(
+        grandparentKey,
+        overlay->getTileScheme().tileToRectangle(grandparentKey));
+    RasterMappedToTilesetTile& grandparentMapping =
+        grandparentTile.rasterOverlayState.ensureMapping(0);
+    grandparentMapping.update(
+        grandparentKey,
+        grandparentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    RasterOverlayTile* grandparentReady =
+        grandparentMapping.getLoadingTile();
+    ASSERT_NE(nullptr, grandparentReady);
+    grandparentReady->setTexture(std::make_unique<TestTexture>(4, 4));
+    grandparentMapping.update(
+        grandparentKey,
+        grandparentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    ASSERT_EQ(grandparentReady, grandparentMapping.getReadyTile());
+
+    TilesetTile parentTile(
+        parentKey,
+        overlay->getTileScheme().tileToRectangle(parentKey),
+        &grandparentTile);
+    RasterMappedToTilesetTile& parentMapping =
+        parentTile.rasterOverlayState.ensureMapping(0);
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        &grandparentTile,
+        0);
+    RasterOverlayTile* parentLoading = parentMapping.getLoadingTile();
+    ASSERT_NE(nullptr, parentLoading);
+
+    RecordingPrepareRendererResources recorder;
+    const RasterMappedToTilesetTile::MoreDetail parentFallback =
+        parentMapping.update(
+            parentKey,
+            parentDetails,
+            512.0,
+            512.0,
+            provider,
+            &recorder,
+            missing,
+            &grandparentTile,
+            0);
+    ASSERT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown,
+              parentFallback);
+    ASSERT_EQ(parentLoading, parentMapping.getLoadingTile());
+    ASSERT_EQ(grandparentReady, parentMapping.getReadyTile());
+    ASSERT_EQ(RasterMappedToTilesetTile::State::TemporarilyAttached,
+              parentMapping.getState());
+
+    RasterMappedToTilesetTile childMapping;
+    childMapping.update(
+        childKey,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    RasterOverlayTile* childOriginal = childMapping.getLoadingTile();
+    ASSERT_NE(nullptr, childOriginal);
+    childOriginal->setState(RasterOverlayTile::LoadState::Failed);
+
+    const RasterMappedToTilesetTile::MoreDetail childFallback =
+        childMapping.update(
+            childKey,
+            childDetails,
+            512.0,
+            512.0,
+            provider,
+            nullptr,
+            missing,
+            &parentTile,
+            0);
+
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown,
+              childFallback);
+    EXPECT_EQ(parentLoading, childMapping.getLoadingTile());
+    EXPECT_EQ(grandparentReady, childMapping.getReadyTile());
+    EXPECT_NE(childOriginal, childMapping.getLoadingTile());
+    EXPECT_FALSE(childMapping.isMoreDetailAvailable());
+}
+
+TEST(RasterOverlayLifecycleTest,
      BoundingRegionAncestorFallbackComputesChildUvWindow) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
