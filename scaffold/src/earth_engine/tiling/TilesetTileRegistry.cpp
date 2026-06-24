@@ -50,7 +50,8 @@ TilesetTile* TilesetTileRegistry::ensureTile(
         contentProvider ? contentProvider->tileMetadata(key) : std::nullopt;
     auto it = tiles_.find(ck);
     if (it != tiles_.end() && it->second) {
-        if (contentMetadata) {
+        if (contentMetadata &&
+            it->second->content.loadState <= TileLoadState::ContentLoading) {
             TileCreationPolicy::applyContentMetadata(
                 *it->second,
                 *contentMetadata);

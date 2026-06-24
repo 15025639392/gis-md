@@ -1354,6 +1354,18 @@ TEST(TilesetQuantizedMeshTest,
             boundary->children[i]->content.isTerrainAvailabilityUpsample());
     }
     EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *boundary));
+
+    boundary->children.clear();
+    boundary->content.loadState = TileLoadState::Failed;
+    TilesetTestAccess::ensureTileChildren(tileset, *boundary);
+    ASSERT_EQ(4u, boundary->children.size());
+    EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *boundary));
+
+    boundary->children.clear();
+    boundary->content.loadState = TileLoadState::Done;
+    TilesetTestAccess::ensureTileChildren(tileset, *boundary);
+    ASSERT_EQ(4u, boundary->children.size());
+    EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *boundary));
 }
 
 TEST(TilesetQuantizedMeshTest,
