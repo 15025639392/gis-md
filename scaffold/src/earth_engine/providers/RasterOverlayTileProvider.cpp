@@ -1421,7 +1421,6 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         originalKey,
                         ancestorFallback);
                     if (cached) {
-                        self->cacheSource(originalKey, source);
                         auto originalCompleted =
                             std::make_shared<SourceTileAsset>(
                                 self->sourceAssetFromResult(source));
@@ -1496,11 +1495,13 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     if (!attribution.empty()) {
                         source.credits.push_back(attribution);
                     }
-                    self->cacheSource(originalKey, source);
                     auto completed = std::make_shared<SourceTileAsset>(
                         self->sourceAssetFromResult(source));
                     InFlightSourceTileAsset::Result directCompleted =
                         completed;
+                    if (!ancestorFallback) {
+                        self->cacheSource(originalKey, source);
+                    }
                     if (loadedKey != originalKey) {
                         RasterSourceResult directSource;
                         directSource.key = loadedKey;

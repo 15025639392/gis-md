@@ -2853,6 +2853,85 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
           "RasterOverlayTileProvider: direct parent waiter keeps a valid rectangle");
 }
 
+void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 3});
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, sourceAlignedBounds),
+            512.0,
+            512.0).tile;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(mappedRasterTile &&
+              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: child-cache retry fixture starts child source requests");
+    if (!mappedRasterTile || imagery.pendingRequests.empty()) return;
+
+    const TileKey failedSource = imagery.pendingRequests.front().key;
+    imagery.pendingRequests.front().callback(failedSource, nullptr);
+    const TileKey parentKey{
+        failedSource.schemeId,
+        failedSource.z - 1,
+        failedSource.x / 2,
+        failedSource.y / 2};
+
+    auto parentRequest = std::find_if(
+        imagery.pendingRequests.begin(),
+        imagery.pendingRequests.end(),
+        [&](const PendingRectangleImageryProvider::PendingRequest& request) {
+            return request.key == parentKey;
+        });
+    check(parentRequest != imagery.pendingRequests.end(),
+          "RasterOverlayTileProvider: child-cache retry fixture requests fallback parent");
+    if (parentRequest == imagery.pendingRequests.end()) return;
+
+    parentRequest->callback(parentKey, makeDecodedRgbaImage(64, 64));
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(2, config);
+    processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
+
+    const int matchingChildRequestsBefore =
+        static_cast<int>(std::count_if(
+            imagery.pendingRequests.begin(),
+            imagery.pendingRequests.end(),
+            [&](const PendingRectangleImageryProvider::PendingRequest& request) {
+                return request.key == failedSource;
+            }));
+
+    RasterOverlayTileProvider::TilePtr childTile =
+        provider.getTile(failedSource);
+    FrameResourceBudget retryBudget;
+    retryBudget.beginFrame(3, config);
+    check(childTile && provider.loadTileThrottled(*childTile, &retryBudget),
+          "RasterOverlayTileProvider: direct child retries after fallback parent completed");
+
+    const int matchingChildRequestsAfter =
+        static_cast<int>(std::count_if(
+            imagery.pendingRequests.begin(),
+            imagery.pendingRequests.end(),
+            [&](const PendingRectangleImageryProvider::PendingRequest& request) {
+                return request.key == failedSource;
+            }));
+    check(matchingChildRequestsAfter == matchingChildRequestsBefore + 1,
+          "RasterOverlayTileProvider: fallback parent subset is not cached as the child source asset");
+}
+
 void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -27747,6 +27826,7 @@ int main() {
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
     testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
+    testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache();
     testRasterOverlayDirectTileJoinsMappedSourceInFlight();
     testRasterOverlayMappedRasterTilesShareSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();
