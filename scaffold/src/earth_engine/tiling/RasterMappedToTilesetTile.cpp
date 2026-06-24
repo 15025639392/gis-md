@@ -110,8 +110,7 @@ const Rectangle* findRectangleForProjection(
     bool* invertedV = nullptr) {
     for (size_t i = 0; i < overlayDetails.rasterOverlayProjections.size(); ++i) {
         if (overlayDetails.rasterOverlayProjections[i] == projection &&
-            i < overlayDetails.rasterOverlayRectangles.size() &&
-            !overlayDetails.rasterOverlayRectangles[i].isEmpty()) {
+            i < overlayDetails.rasterOverlayRectangles.size()) {
                 if (textureCoordinateID) {
                     *textureCoordinateID = static_cast<int32_t>(i);
                 }

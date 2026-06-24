@@ -571,7 +571,7 @@ TEST(TileSurfaceTest,
         childBounds,
         childMesh->rasterOverlayDetails.rasterOverlayRectangles[1]);
     EXPECT_EQ(
-        1,
+        0,
         childMesh->rasterOverlayDetails.textureCoordinateIDForProjection(
             RasterOverlayProjection::Geographic));
     EXPECT_EQ(

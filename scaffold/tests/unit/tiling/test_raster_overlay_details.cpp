@@ -407,6 +407,17 @@ TEST(RasterOverlayDetailsTest,
     EXPECT_EQ(Rectangle::EMPTY, first.rasterOverlayRectangles[3]);
     EXPECT_EQ(firstRectangle, first.rasterOverlayRectangles[0]);
     EXPECT_FALSE(first.rasterOverlayInvertedVCoordinates[0]);
+
+    RasterOverlayDetails emptyOnly;
+    emptyOnly.rasterOverlayProjections = {RasterOverlayProjection::WebMercator};
+    emptyOnly.rasterOverlayRectangles = {Rectangle::EMPTY};
+    const Rectangle* emptyFound =
+        emptyOnly.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    ASSERT_NE(nullptr, emptyFound);
+    EXPECT_TRUE(emptyFound->isEmpty());
+    EXPECT_EQ(0, emptyOnly.textureCoordinateIDForProjection(
+                     RasterOverlayProjection::WebMercator));
 }
 
 TEST(RasterOverlayDetailsTest,

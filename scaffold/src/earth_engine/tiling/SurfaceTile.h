@@ -113,8 +113,7 @@ struct RasterOverlayDetails {
         RasterOverlayProjection projection) const {
         for (size_t i = 0; i < rasterOverlayProjections.size(); ++i) {
             if (rasterOverlayProjections[i] == projection &&
-                i < rasterOverlayRectangles.size() &&
-                !rasterOverlayRectangles[i].isEmpty()) {
+                i < rasterOverlayRectangles.size()) {
                 return &rasterOverlayRectangles[i];
             }
         }
@@ -125,8 +124,7 @@ struct RasterOverlayDetails {
         RasterOverlayProjection projection) const {
         for (size_t i = 0; i < rasterOverlayProjections.size(); ++i) {
             if (rasterOverlayProjections[i] == projection &&
-                i < rasterOverlayRectangles.size() &&
-                !rasterOverlayRectangles[i].isEmpty()) {
+                i < rasterOverlayRectangles.size()) {
                 return static_cast<int32_t>(i);
             }
         }
