@@ -11792,7 +11792,7 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
               "TileContentCacheManager: erase-index claimed upload test dequeues payload");
     }
 
-    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
+    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue, true);
 
     check(!manager.unloadQueue().contains(cacheKey) &&
               lifecycle.heightmapTerrainCache().find(cacheKey) ==

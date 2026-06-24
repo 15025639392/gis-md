@@ -173,7 +173,8 @@ TEST(
         manager.unloadTileContent(
             *tileRaw,
             lifecycle,
-            nullptr);
+            nullptr,
+            true);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
     EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
@@ -280,7 +281,7 @@ TEST(
                         .has_value());
     }
 
-    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
+    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue, true);
 
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
     EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
@@ -331,7 +332,8 @@ TEST(
     manager.eraseTileIndexState(
         cacheKey,
         lifecycle,
-        loadQueue);
+        loadQueue,
+        true);
 
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
     EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
@@ -344,7 +346,7 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
-    ContentTerrainUnloadPurgesLegacyHeightmapTerrainCache) {
+    ContentTerrainUnloadDoesNotTouchLegacyHeightmapTerrainCacheByDefault) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -366,7 +368,7 @@ TEST(
             nullptr);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
-    EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
+    EXPECT_NE(lifecycle.heightmapTerrainCache().find(cacheKey),
               lifecycle.heightmapTerrainCache().end());
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_EQ(TileLoadState::Unloaded, tileRaw->content.loadState);
@@ -375,7 +377,7 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
-    ContentTerrainEraseIndexStatePurgesLegacyHeightmapTerrainCache) {
+    ContentTerrainEraseIndexStateDoesNotTouchLegacyHeightmapTerrainCacheByDefault) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     TileLoadQueue loadQueue;
@@ -388,7 +390,7 @@ TEST(
 
     manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
 
-    EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
+    EXPECT_NE(lifecycle.heightmapTerrainCache().find(cacheKey),
               lifecycle.heightmapTerrainCache().end());
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_TRUE(loadQueue.empty());

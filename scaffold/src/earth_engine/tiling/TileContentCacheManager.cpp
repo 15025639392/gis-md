@@ -33,11 +33,14 @@ void TileContentCacheManager::markIneligibleForUnloading(
 void TileContentCacheManager::eraseTileIndexState(
     const std::string& cacheKey,
     TileContentLifecycleManager& lifecycle,
-    TileLoadQueue& loadQueue) {
+    TileLoadQueue& loadQueue,
+    bool includeHeightmapTerrainCache) {
     TileIndexState::eraseCacheKeyState(
         cacheKey,
         unloadQueue_,
-        &lifecycle.heightmapTerrainCache(),
+        includeHeightmapTerrainCache
+            ? &lifecycle.heightmapTerrainCache()
+            : nullptr,
         lifecycle.emptyContentRegistry(),
         loadQueue,
         lifecycle.loadLifecycle(),
@@ -49,11 +52,14 @@ void TileContentCacheManager::eraseTileIndexState(
 TileCacheUnloadContentResult TileContentCacheManager::unloadTileContent(
     TilesetTile& tile,
     TileContentLifecycleManager& lifecycle,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    bool includeHeightmapTerrainCache) {
     return TileContentUnloadCoordinator::unloadContent(
         tile,
         TileCacheKey::forTile(tile.key),
-        &lifecycle.heightmapTerrainCache(),
+        includeHeightmapTerrainCache
+            ? &lifecycle.heightmapTerrainCache()
+            : nullptr,
         lifecycle.emptyContentRegistry(),
         pPrepRenderer);
 }
