@@ -166,10 +166,18 @@ public:
                surface_.surfaceSource != SurfaceDrawableSource::HeightmapTerrain;
     }
     void setSurfaceMesh(std::unique_ptr<SurfaceTileMesh> surfaceMesh) {
+        if (isGltfOwnedContentState()) {
+            clearLegacySurfacePayloadPreservingGltfMetadata();
+            return;
+        }
         surface_.horizonOcclusionPoint.reset();
         surface_.mesh = std::move(surfaceMesh);
     }
     void setRetainedHeightmap(std::unique_ptr<DecodedHeightmap> decoded) {
+        if (isGltfOwnedContentState()) {
+            surface_.heightmap.reset();
+            return;
+        }
         surface_.heightmap = std::move(decoded);
     }
     void clearRetainedHeightmap() {
@@ -198,6 +206,10 @@ public:
         surface_.surfaceDrawable = drawable;
     }
     void setSurfaceSource(SurfaceDrawableSource source) {
+        if (gltfModel && source != SurfaceDrawableSource::GltfContent) {
+            surface_.surfaceSource = SurfaceDrawableSource::GltfContent;
+            return;
+        }
         surface_.surfaceSource = source;
     }
     void setTerrainHeightRange(double minimumHeight, double maximumHeight) {
@@ -481,6 +493,22 @@ public:
     }
 
 private:
+    bool isGltfOwnedContentState() const {
+        return gltfModel != nullptr ||
+               surface_.surfaceSource == SurfaceDrawableSource::GltfContent;
+    }
+
+    void clearLegacySurfacePayloadPreservingGltfMetadata() {
+        surface_.mesh.reset();
+        surface_.gpuVertexBuffer.reset();
+        surface_.gpuIndexBuffer.reset();
+        surfaceWaterMaskTexture_.reset();
+        surface_.horizonOcclusionPoint.reset();
+        surface_.meshReady = false;
+        surface_.surfaceDrawable = false;
+        surface_.surfaceSource = SurfaceDrawableSource::GltfContent;
+    }
+
     TileSurfaceContentState surface_;
     std::unique_ptr<Texture> surfaceWaterMaskTexture_;
     std::unique_ptr<GltfModel> gltfModel;

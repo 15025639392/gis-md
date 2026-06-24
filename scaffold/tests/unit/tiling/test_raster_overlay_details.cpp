@@ -154,6 +154,43 @@ void expectRectangleNear(const Rectangle& expected,
 } // namespace
 
 TEST(RasterOverlayDetailsTest,
+     GltfTerrainRejectsLaterLegacySurfaceResidue) {
+    TileRenderContentState renderContent;
+    auto model = std::make_unique<GltfModel>();
+    RasterOverlayDetails gltfDetails;
+    const Rectangle gltfRectangle(0.0, 0.0, 1.0, 1.0);
+    gltfDetails.setGeographicRectangle(gltfRectangle, -1.0, 1.0);
+    model->rasterOverlayDetails = std::move(gltfDetails);
+    renderContent.prepareGltfContent(std::move(model), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    auto staleSurface = std::make_unique<SurfaceTileMesh>();
+    RasterOverlayDetails staleDetails;
+    staleDetails.setGeographicRectangle(
+        Rectangle(2.0, 2.0, 3.0, 3.0),
+        10.0,
+        20.0);
+    staleSurface->rasterOverlayDetails = std::move(staleDetails);
+
+    renderContent.setSurfaceMesh(std::move(staleSurface));
+    renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
+    renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
+
+    EXPECT_TRUE(renderContent.hasGltfContent());
+    EXPECT_TRUE(renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(renderContent.hasRetainedHeightmap());
+    EXPECT_EQ(SurfaceDrawableSource::GltfContent,
+              renderContent.currentSurfaceSource());
+    ASSERT_EQ(1u,
+              renderContent.rasterOverlayDetails()
+                  .rasterOverlayRectangles.size());
+    expectRectangleNear(
+        gltfRectangle,
+        renderContent.rasterOverlayDetails().rasterOverlayRectangles.front());
+}
+
+TEST(RasterOverlayDetailsTest,
      ClearingGltfTerrainContentDoesNotExposeStaleSurfaceState) {
     TileRenderContentState renderContent;
     auto model = std::make_unique<GltfModel>();

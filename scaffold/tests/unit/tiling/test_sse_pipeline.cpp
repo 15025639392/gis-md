@@ -12245,10 +12245,12 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         [&gltfStaleResourcesDirty]() {
             gltfStaleResourcesDirty = true;
         });
-    check(gltfStaleResourcesDirty &&
+    check(!gltfStaleResourcesDirty &&
               gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
               !gltfWithStaleHeightmapSurface.content.renderContent.hasSurfaceMesh() &&
               !gltfWithStaleHeightmapSurface.content.renderContent.hasRetainedHeightmap() &&
+              gltfWithStaleHeightmapSurface.content.renderContent.isSurfaceSource(
+                  SurfaceDrawableSource::GltfContent) &&
               gltfWithStaleHeightmapSurface.content.renderContent.hasTerrainHeightRange() &&
               std::abs(gltfWithStaleHeightmapSurface.content.renderContent
                            .terrainMinimumHeight() -
@@ -12256,7 +12258,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               std::abs(gltfWithStaleHeightmapSurface.content.renderContent
                            .terrainMaximumHeight() -
                        875.0) < 1e-12,
-          "TileMeshFrameEnsurer: glTF terrain clears stale heightmap surface residue without losing content height range");
+          "TileMeshFrameEnsurer: glTF terrain rejects stale heightmap surface residue before frame cleanup");
 
     TilesetTile staleHeightmapSurfaceTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
