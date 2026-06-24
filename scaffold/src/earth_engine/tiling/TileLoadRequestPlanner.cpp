@@ -15,7 +15,8 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
     }
 
     if (snapshot.contentProviderSupportsTile) {
-        if (snapshot.hasRenderContent) {
+        if (snapshot.hasRenderContent &&
+            snapshot.loadState != TileLoadState::FailedTemporarily) {
             return TileLoadRequestKind::Skip;
         }
         return TileLoadRequestKind::Content;

@@ -20980,6 +20980,11 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
               TileLoadRequestKind::Content,
           "TileLoadRequestPlanner: temporarily failed content tile remains retryable");
 
+    snapshot.hasRenderContent = true;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Content,
+          "TileLoadRequestPlanner: temporarily failed content tile remains retryable with retained render content");
+
     snapshot.loadState = TileLoadState::Failed;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,

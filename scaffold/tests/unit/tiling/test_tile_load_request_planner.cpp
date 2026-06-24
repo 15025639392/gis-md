@@ -143,6 +143,12 @@ TEST(TileLoadRequestPlannerTest, ContentProviderKeepsTemporarilyFailedTilesRetry
         TileLoadRequestKind::Content,
         TileLoadRequestPlanner::classify(snapshot));
 
+    snapshot.hasRenderContent = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Content,
+        TileLoadRequestPlanner::classify(snapshot));
+
     snapshot.loadState = TileLoadState::Failed;
 
     EXPECT_EQ(
