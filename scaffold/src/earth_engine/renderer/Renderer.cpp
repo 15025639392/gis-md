@@ -339,6 +339,8 @@ uniform float u_mappedRasterTexCoordSet3;
 uniform float u_gltfHasWaterMask;
 uniform vec4 u_gltfWaterMaskTranslationScale;
 uniform vec4 u_gltfWaterMaskState;
+uniform vec4 u_clipUV;
+uniform float u_clipEnabled;
 
 out vec4 fragColor;
 
@@ -531,6 +533,14 @@ float anisotropicSpecular(
 }
 
 void main() {
+    vec2 terrainUv = uvFromSet(0.0);
+    if (u_clipEnabled > 0.5 &&
+        (terrainUv.x < u_clipUV.x ||
+         terrainUv.x > u_clipUV.x + u_clipUV.z ||
+         terrainUv.y < u_clipUV.y ||
+         terrainUv.y > u_clipUV.y + u_clipUV.w)) {
+        discard;
+    }
     float faceSign = gl_FrontFacing ? 1.0 : -1.0;
     vec3 N = normalize(v_normal) * faceSign;
     vec3 geometryN = N;
@@ -1475,6 +1485,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float& u_gltfHasWaterMask [[buffer(81)]],
                              constant float4& u_gltfWaterMaskTranslationScale [[buffer(82)]],
                              constant float4& u_gltfWaterMaskState [[buffer(83)]],
+                             constant float4& u_clipUV [[buffer(84)]],
+                             constant float& u_clipEnabled [[buffer(85)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -1515,6 +1527,14 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              sampler u_mappedRasterSampler2 [[sampler(17)]],
                              sampler u_mappedRasterSampler3 [[sampler(18)]],
                              sampler u_gltfWaterMaskSampler [[sampler(19)]]) {
+    float2 terrainUv = gltfUvFromSet(in, 0.0);
+    if (u_clipEnabled > 0.5 &&
+        (terrainUv.x < u_clipUV.x ||
+         terrainUv.x > u_clipUV.x + u_clipUV.z ||
+         terrainUv.y < u_clipUV.y ||
+         terrainUv.y > u_clipUV.y + u_clipUV.w)) {
+        discard_fragment();
+    }
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
     float3 geometryN = n;
@@ -2295,6 +2315,8 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
         1.0f,
         0.0f};
     cmd.uniforms["u_gltfWaterMaskState"] = {1.0f, 0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_clipUV"] = {0.0f, 0.0f, 1.0f, 1.0f};
+    cmd.uniforms["u_clipEnabled"] = {0.0f};
     for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
         cmd.uniforms["u_mappedRasterTileUV" + std::to_string(i)] = {
             0.0f,

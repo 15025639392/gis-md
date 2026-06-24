@@ -170,6 +170,12 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
     ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
     ASSERT_TRUE(cmd.uniforms.count("u_unlit"));
+    ASSERT_TRUE(cmd.uniforms.count("u_clipUV"));
+    ASSERT_TRUE(cmd.uniforms.count("u_clipEnabled"));
+    EXPECT_EQ((std::vector<float>{0.0f, 0.0f, 1.0f, 1.0f}),
+              cmd.uniforms.at("u_clipUV"));
+    EXPECT_EQ((std::vector<float>{0.0f}),
+              cmd.uniforms.at("u_clipEnabled"));
 }
 
 TEST(RendererCommandTest, GltfGlesVertexShadersSetExplicitPointSize) {
@@ -179,6 +185,28 @@ TEST(RendererCommandTest, GltfGlesVertexShadersSetExplicitPointSize) {
 
     EXPECT_NE(std::string::npos, vertex.find("gl_PointSize = 1.0;"));
     EXPECT_NE(std::string::npos, instancedVertex.find("gl_PointSize = 1.0;"));
+}
+
+TEST(RendererCommandTest, GltfFragmentShadersApplyTerrainFallbackClip) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(std::string::npos, glsl.find("uniform vec4 u_clipUV"));
+    EXPECT_NE(std::string::npos, glsl.find("uniform float u_clipEnabled"));
+    EXPECT_NE(std::string::npos, glsl.find("vec2 terrainUv = uvFromSet(0.0);"));
+    EXPECT_NE(std::string::npos, glsl.find("if (u_clipEnabled > 0.5 &&"));
+    EXPECT_NE(std::string::npos, glsl.find("discard;"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("constant float4& u_clipUV [[buffer(84)]]"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("constant float& u_clipEnabled [[buffer(85)]]"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("float2 terrainUv = gltfUvFromSet(in, 0.0);"));
+    EXPECT_NE(std::string::npos, msl.find("if (u_clipEnabled > 0.5 &&"));
+    EXPECT_NE(std::string::npos, msl.find("discard_fragment();"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersApplyCesiumTextureTransformFormula) {
