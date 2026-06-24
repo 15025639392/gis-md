@@ -1439,6 +1439,124 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentLoadedTerrainUploadMaterializesAvailabilityChildrenLikeCesiumNative) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    QuantizedMeshTerrainProvider* rawProvider = provider.get();
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TileContentAccess contentAccess =
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+
+    const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
+    TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
+    ASSERT_NE(nullptr, boundary);
+    boundary->content.loadState = TileLoadState::ContentLoading;
+
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = boundaryKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+
+    TileContentLoadResult contentResult =
+        TileContentLoadResult::renderTerrain(
+            makeMinimalTerrainGltfModelForCommitTest(boundary->bounds));
+    contentResult.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    const std::string cacheKey =
+        "content-loaded-gltf-terrain-availability";
+    PendingTileLoad upload{
+        TileLoadDomain::Content,
+        boundaryKey,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::fromContentResult(std::move(contentResult))};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::Content,
+            boundaryKey,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableGltfTerrain(
+                makeMinimalTerrainGltfModelForCommitTest(boundary->bounds))});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    bool childrenEnsured = false;
+    TileChildFrameMaterializeResult commitChildren;
+    TileEmptyContentRegistry emptyContentRegistry;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        rawProvider,
+        nullptr,
+        nullptr,
+        {},
+        emptyContentRegistry,
+        lifecycle,
+        [&contentAccess](const TileKey& key) {
+            return contentAccess.ensureTile(key);
+        },
+        [&contentAccess, &childrenEnsured, &commitChildren](
+            TilesetTile& tile) {
+            childrenEnsured = true;
+            commitChildren = contentAccess.ensureTileChildren(tile);
+        },
+        [](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.content.renderContent.markRenderContentReady();
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(childrenEnsured);
+    EXPECT_TRUE(commitChildren.changed);
+    EXPECT_FALSE(commitChildren.retryLater);
+    EXPECT_EQ(TileLoadState::ContentLoaded, boundary->content.loadState);
+    EXPECT_TRUE(boundary->content.renderContent.isRenderContentReady());
+    ASSERT_EQ(4u, boundary->children.size());
+    EXPECT_EQ(
+        TileAvailabilityState::Available,
+        rawProvider->availabilityState(
+            TileKey{"Geographic-TMS", 3, 0, 0}));
+    EXPECT_EQ(
+        TileAvailabilityState::NotAvailable,
+        rawProvider->availabilityState(
+            TileKey{"Geographic-TMS", 3, 1, 0}));
+    EXPECT_FALSE(
+        boundary->children[0]->content.isTerrainAvailabilityUpsample());
+    for (size_t i = 1; i < boundary->children.size(); ++i) {
+        EXPECT_TRUE(
+            boundary->children[i]->content.isTerrainAvailabilityUpsample());
+    }
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentUploadAppliesTerrainContentUpdatedBoundingVolumeToTile) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
