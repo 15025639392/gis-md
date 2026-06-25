@@ -43,7 +43,7 @@ TileTerminalLoadCommitter::commitTerminalResult(
     TileEmptyContentRegistry& emptyContentRegistry,
     IPrepareRendererResources* pPrepRenderer,
     TilesetContentProvider* contentProvider) {
-    TileAvailabilityUpdateCommitter::applyTerrainAvailabilityUpdates(
+    TileAvailabilityUpdateCommitter::applyAvailabilityUpdates(
         domain,
         result,
         contentProvider);

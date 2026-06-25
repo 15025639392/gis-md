@@ -82,7 +82,7 @@ public:
         return {};
     }
     bool providesTerrainQuadtree() const override { return true; }
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey&) const override {
         return TileAvailabilityState::Available;
     }
@@ -136,7 +136,7 @@ public:
         return metadata;
     }
     bool providesTerrainQuadtree() const override { return true; }
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey&) const override {
         return TileAvailabilityState::Available;
     }
@@ -166,7 +166,7 @@ public:
         return {};
     }
     bool providesTerrainQuadtree() const override { return true; }
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey&) const override {
         return TileAvailabilityState::Available;
     }
@@ -188,8 +188,7 @@ struct GeographicRootFixture {
         TileContentAccess::forNoTerrain(
             registry,
             *scheme,
-            nullptr,
-            2);
+            nullptr);
 };
 
 struct WebMercatorRootFixture {
@@ -200,8 +199,7 @@ struct WebMercatorRootFixture {
         TileContentAccess::forNoTerrain(
             registry,
             *scheme,
-            nullptr,
-            1);
+            nullptr);
 };
 
 struct ContentOwnedGeographicRootFixture {
@@ -213,8 +211,7 @@ struct ContentOwnedGeographicRootFixture {
         TileContentAccess::forContentTerrain(
         registry,
         *scheme,
-        provider,
-        2);
+        provider);
 };
 
 struct ContentOwnedWebMercatorRootFixture {
@@ -225,8 +222,7 @@ struct ContentOwnedWebMercatorRootFixture {
         TileContentAccess::forContentTerrain(
         registry,
         *scheme,
-        provider,
-        1);
+        provider);
 };
 
 struct ProviderOrderedRootFixture {
@@ -237,8 +233,7 @@ struct ProviderOrderedRootFixture {
         TileContentAccess::forContentTerrain(
             registry,
             *scheme,
-            provider,
-            2);
+            provider);
 };
 
 } // namespace

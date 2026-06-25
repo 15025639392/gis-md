@@ -123,14 +123,18 @@ TileContentAccess::TileContentAccess(
           tileScheme,
           legacyHeightmapTerrainCache) {}
 
-TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
+TilesetTile* TileContentAccess::ensureTile(
+    const TileKey& key,
+    IPrepareRendererResources* pPrepRenderer) {
     TilesetTile* tile = tileRegistry_.ensureTile(
         key,
         tileScheme_,
         contentProvider_);
     if (tile && contentProviderOwnsTerrainQuadtree()) {
         tile->contentProviderTerrainQuadtreeTile = true;
-        TileContentTerrainResiduePolicy::clearRejectableResidue(*tile);
+        TileContentTerrainResiduePolicy::clearRejectableResidue(
+            *tile,
+            pPrepRenderer);
     }
     return tile;
 }
@@ -147,7 +151,7 @@ TileContentAccess::ensureTileChildren(
                       tile.key.schemeId);
         bool changed = false;
         for (const TileKey& childKey : childKeys) {
-            TilesetTile* child = ensureTile(childKey);
+            TilesetTile* child = ensureTile(childKey, pPrepRenderer);
             if (!child) {
                 continue;
             }
@@ -244,7 +248,7 @@ TileAvailabilityState TileContentAccess::availabilityState(
 
 TileAvailabilityState TileContentAccess::contentTerrainAvailabilityState(
     const TileKey& key) const {
-    return contentProvider_->terrainAvailabilityState(key);
+    return contentProvider_->availabilityState(key);
 }
 
 } // namespace earth_engine

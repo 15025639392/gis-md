@@ -455,14 +455,14 @@ public:
     bool providesTerrainQuadtree() const override { return true; }
 
     bool supportsTile(const TileKey& key) const override {
-        return terrainAvailabilityState(key) == TileAvailabilityState::Available;
+        return availabilityState(key) == TileAvailabilityState::Available;
     }
 
     std::vector<TileKey> rootTiles() const override {
         return {TileKey{schemeId_, 0, 0, 0}};
     }
 
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey& key) const override {
         if (key.schemeId != schemeId_) {
             return TileAvailabilityState::NotAvailable;
@@ -542,7 +542,7 @@ public:
         return key == rootKey || key == availableChildKey;
     }
 
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey& key) const override {
         if (key == rootKey || key == availableChildKey) {
             return TileAvailabilityState::Available;
@@ -818,7 +818,7 @@ TEST(TilesetQuantizedMeshTest,
         ASSERT_TRUE(metadata->parentKey.has_value());
         EXPECT_EQ(virtualRoot, *metadata->parentKey);
         EXPECT_EQ(TileAvailabilityState::Available,
-                  provider.terrainAvailabilityState(rootKey));
+                  provider.availabilityState(rootKey));
 
         bool completed = false;
         TileContentLoadResult result = TileContentLoadResult::failed();

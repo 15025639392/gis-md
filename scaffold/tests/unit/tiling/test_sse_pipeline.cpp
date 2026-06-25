@@ -4728,7 +4728,7 @@ public:
     }
     bool supportsTile(const TileKey& key) const override {
         return key == rootKey_ ||
-               terrainAvailabilityState(key) == TileAvailabilityState::Available;
+               availabilityState(key) == TileAvailabilityState::Available;
     }
     std::vector<TileKey> rootTiles() const override {
         return {rootKey_};
@@ -4736,7 +4736,7 @@ public:
     bool providesTerrainQuadtree() const override {
         return true;
     }
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey& key) const override {
         return std::find(availableKeys.begin(), availableKeys.end(), key) !=
                        availableKeys.end()

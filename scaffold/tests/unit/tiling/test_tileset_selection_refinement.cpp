@@ -237,7 +237,7 @@ public:
     std::string id() const override { return "content-terrain-quadtree"; }
 
     bool supportsTile(const TileKey& key) const override {
-        return terrainAvailabilityState(key) ==
+        return availabilityState(key) ==
                TileAvailabilityState::Available;
     }
 
@@ -252,7 +252,7 @@ public:
         return {};
     }
 
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey& key) const override {
         for (const auto& entry : availability) {
             if (entry.first == key) {

@@ -131,14 +131,14 @@ public:
         return {};
     }
     virtual bool providesTerrainQuadtree() const { return false; }
-    virtual TileAvailabilityState terrainAvailabilityState(
+    virtual TileAvailabilityState availabilityState(
         const TileKey&) const {
         return TileAvailabilityState::NotAvailable;
     }
     virtual bool isTerrainAvailabilityBoundaryLevel(int) const {
         return false;
     }
-    virtual void applyTerrainAvailabilityUpdates(
+    virtual void applyAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>&) {}
     virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 

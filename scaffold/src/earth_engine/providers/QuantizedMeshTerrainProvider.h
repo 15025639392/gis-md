@@ -74,11 +74,7 @@ public:
     }
 
     bool supportsTile(const TileKey& key) const override;
-    TileAvailabilityState terrainAvailabilityState(
-        const TileKey& key) const override {
-        return availabilityState(key);
-    }
-    TileAvailabilityState availabilityState(const TileKey& key) const;
+    TileAvailabilityState availabilityState(const TileKey& key) const override;
     std::string buildUrl(const TileKey& key) const;
     int estimatedRequestFanout(const TileKey& key) const override;
 
@@ -96,11 +92,7 @@ public:
         return isAvailabilityBoundaryLevel(level);
     }
     void applyAvailabilityUpdates(
-        const std::vector<QuantizedMeshAvailabilityUpdate>& updates);
-    void applyTerrainAvailabilityUpdates(
-        const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
-        applyAvailabilityUpdates(updates);
-    }
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override;
     void requestTileContent(const TileKey& key,
                             CancellationToken token,
                             ContentCallback callback,

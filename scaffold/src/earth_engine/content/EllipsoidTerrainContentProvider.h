@@ -22,7 +22,7 @@ public:
         const TileKey& key) const override;
     std::vector<TileKey> childTiles(const TileKey& key) const override;
     bool providesTerrainQuadtree() const override { return true; }
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey& key) const override;
 
     void requestTileContent(const TileKey& key,

@@ -261,7 +261,7 @@ EllipsoidTerrainContentProvider::childTiles(const TileKey& key) const {
     return quadtreeChildrenForKey(key);
 }
 
-TileAvailabilityState EllipsoidTerrainContentProvider::terrainAvailabilityState(
+TileAvailabilityState EllipsoidTerrainContentProvider::availabilityState(
     const TileKey& key) const {
     return supportsTile(key) ? TileAvailabilityState::Available
                              : TileAvailabilityState::NotAvailable;

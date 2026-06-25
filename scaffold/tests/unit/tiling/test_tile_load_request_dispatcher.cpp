@@ -301,7 +301,7 @@ public:
     }
     bool supportsTile(const TileKey&) const override { return true; }
     bool providesTerrainQuadtree() const override { return true; }
-    void applyTerrainAvailabilityUpdates(
+    void applyAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
         appliedUpdates.insert(
             appliedUpdates.end(),

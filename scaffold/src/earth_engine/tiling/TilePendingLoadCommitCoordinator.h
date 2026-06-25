@@ -116,7 +116,7 @@ public:
         }
 
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
-        TileAvailabilityUpdateCommitter::applyTerrainAvailabilityUpdates(
+        TileAvailabilityUpdateCommitter::applyAvailabilityUpdates(
             upload.domain,
             upload.result,
             contentProvider);

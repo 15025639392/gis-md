@@ -41,7 +41,7 @@ public:
     std::string id() const override { return "recording-terrain-content"; }
     bool supportsTile(const TileKey&) const override { return true; }
     bool providesTerrainQuadtree() const override { return true; }
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey& key) const override {
         const auto it = availability.find(key);
         return it == availability.end() ? TileAvailabilityState::NotAvailable
@@ -51,7 +51,7 @@ public:
         return metadataAvailabilityLevels > 0 &&
                level % metadataAvailabilityLevels == 0;
     }
-    void applyTerrainAvailabilityUpdates(
+    void applyAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
         appliedUpdates.insert(
             appliedUpdates.end(),
@@ -809,7 +809,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.layerIndex = 0;
     update.subtreeKey = boundaryKey;
     update.metadataAvailability = {{0, 0, 0, 0, 0}};
-    provider->applyTerrainAvailabilityUpdates({update});
+    provider->applyAvailabilityUpdates({update});
 
     TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
     ASSERT_NE(nullptr, boundary);
@@ -2047,7 +2047,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         makeMinimalTerrainGltfModelForCommitTest());
     availabilityResult.content.quantizedMeshAvailabilityUpdates.push_back(
         update);
-    TileAvailabilityUpdateCommitter::applyTerrainAvailabilityUpdates(
+    TileAvailabilityUpdateCommitter::applyAvailabilityUpdates(
         TileLoadDomain::TerrainContent,
         availabilityResult,
         &provider);

@@ -6,7 +6,7 @@
 namespace earth_engine {
 
 struct TileAvailabilityUpdateCommitter {
-    static void applyTerrainAvailabilityUpdates(
+    static void applyAvailabilityUpdates(
         TileLoadDomain domain,
         TileLoadResult& result,
         TilesetContentProvider* contentProvider) {
@@ -17,7 +17,7 @@ struct TileAvailabilityUpdateCommitter {
         TileAvailabilityUpdateSelection selection =
             TileLoadDomainPolicy::availabilityUpdatesForDomain(domain, result);
         if (selection.updates && !selection.updates->empty()) {
-            contentProvider->applyTerrainAvailabilityUpdates(*selection.updates);
+            contentProvider->applyAvailabilityUpdates(*selection.updates);
             if (selection.clearAfterApply) {
                 selection.updates->clear();
             }

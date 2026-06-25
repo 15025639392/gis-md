@@ -33,7 +33,7 @@ public:
                 true,
                 tileScheme.maxZoom()},
             [&contentProvider](const TileKey& key) {
-                return contentProvider.terrainAvailabilityState(key);
+                return contentProvider.availabilityState(key);
             });
     }
 

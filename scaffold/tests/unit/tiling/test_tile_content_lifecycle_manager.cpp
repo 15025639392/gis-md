@@ -24,7 +24,7 @@ public:
     std::string id() const override { return "content-terrain"; }
     bool supportsTile(const TileKey&) const override { return true; }
     bool providesTerrainQuadtree() const override { return true; }
-    TileAvailabilityState terrainAvailabilityState(
+    TileAvailabilityState availabilityState(
         const TileKey&) const override {
         return TileAvailabilityState::Available;
     }

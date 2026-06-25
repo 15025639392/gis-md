@@ -37,7 +37,8 @@ public:
         const TilesetContentProvider* contentProvider,
         const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache);
 
-    TilesetTile* ensureTile(const TileKey& key);
+    TilesetTile* ensureTile(const TileKey& key,
+                            IPrepareRendererResources* pPrepRenderer = nullptr);
     TileChildFrameMaterializeResult ensureTileChildren(
         TilesetTile& tile,
         IPrepareRendererResources* pPrepRenderer = nullptr);
