@@ -269,6 +269,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TilePlan.cpp
     earth_engine/tiling/TileChildFrameMaterializer.h
     earth_engine/tiling/TileChildMaterializer.h
+    earth_engine/tiling/TileTerrainAvailabilityUpsampleBookkeeping.h
     earth_engine/tiling/TileContentUnloadCoordinator.h
     earth_engine/tiling/TileRasterUpsampledChildMaterializer.h
     earth_engine/tiling/TileLodTransitionController.h

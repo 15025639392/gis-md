@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
@@ -10,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 using namespace earth_engine;
 
@@ -23,6 +25,29 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     heightmap->maxHeight = heightMeters;
     return heightmap;
 }
+
+class RecordingTerrainContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "recording-terrain-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    void clearTerrainAvailabilityUpsampledChild(
+        const TileKey& key) const override {
+        clearedUpsampledParents.push_back(key);
+    }
+    void requestTileContent(const TileKey& key,
+                            CancellationToken,
+                            ContentCallback callback,
+                            HttpRequestPriority =
+                                HttpRequestPriority::Normal) override {
+        callback(key, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    mutable std::vector<TileKey> clearedUpsampledParents;
+};
 
 struct ExternalSubtreeFixture {
     TileContentCacheManager manager;
@@ -664,4 +689,63 @@ TEST(
     EXPECT_EQ(
         lifecycle.legacyHeightmapTerrainCache().end(),
         lifecycle.legacyHeightmapTerrainCache().find(grandchildCacheKey));
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    ClearChildrenClearsTerrainUpsampleProviderStateForRemovedSubtree) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    TileLoadQueue loadQueue;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    bool resourceSmoothingActive = false;
+    int64_t maximumCachedBytes = 0;
+    double unloadTimeLimitMs = 0.0;
+    RecordingTerrainContentProvider provider;
+
+    const TileKey rootKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const TileKey grandchildKey{"test", 2, 0, 0};
+    const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
+    const std::string childCacheKey = TileCacheKey::forTile(childKey);
+    const std::string grandchildCacheKey =
+        TileCacheKey::forTile(grandchildKey);
+
+    auto root = std::make_unique<TilesetTile>(rootKey, Rectangle{});
+    auto child = std::make_unique<TilesetTile>(
+        childKey,
+        Rectangle{},
+        root.get());
+    auto grandchild = std::make_unique<TilesetTile>(
+        grandchildKey,
+        Rectangle{},
+        child.get());
+    TilesetTile* rootRaw = root.get();
+    TilesetTile* childRaw = child.get();
+    rootRaw->children.push_back(child.get());
+    childRaw->children.push_back(grandchild.get());
+    tiles[rootCacheKey] = std::move(root);
+    tiles[childCacheKey] = std::move(child);
+    tiles[grandchildCacheKey] = std::move(grandchild);
+
+    TileCacheOwnershipManager ownership(
+        manager,
+        lifecycle,
+        loadQueue,
+        tiles,
+        resourceSmoothingActive,
+        maximumCachedBytes,
+        unloadTimeLimitMs,
+        &provider,
+        false);
+
+    ownership.clearChildrenRecursively(rootRaw, nullptr);
+
+    EXPECT_TRUE(rootRaw->children.empty());
+    EXPECT_EQ(tiles.end(), tiles.find(childCacheKey));
+    EXPECT_EQ(tiles.end(), tiles.find(grandchildCacheKey));
+    ASSERT_EQ(3u, provider.clearedUpsampledParents.size());
+    EXPECT_EQ(rootKey, provider.clearedUpsampledParents[0]);
+    EXPECT_EQ(childKey, provider.clearedUpsampledParents[1]);
+    EXPECT_EQ(grandchildKey, provider.clearedUpsampledParents[2]);
 }

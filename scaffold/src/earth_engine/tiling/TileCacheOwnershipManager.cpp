@@ -5,7 +5,7 @@
 #include "TileContentLifecycleManager.h"
 #include "TileLoadQueue.h"
 #include "TileSubtreeRemovalCoordinator.h"
-#include "TileSubtreeTraversal.h"
+#include "TileTerrainAvailabilityUpsampleBookkeeping.h"
 #include "TilesetTile.h"
 #include "../content/GltfContentProvider.h"
 
@@ -64,22 +64,8 @@ void TileCacheOwnershipManager::eraseTileIndexState(const std::string& key) {
 void TileCacheOwnershipManager::clearChildrenRecursively(
     TilesetTile* tile,
     IPrepareRendererResources* pPrepRenderer) {
-    if (tile && contentProvider_ &&
-        contentProvider_->providesTerrainQuadtree()) {
-        contentProvider_->clearTerrainAvailabilityUpsampledChild(tile->key);
-        const std::vector<TileSubtreeRemovalEntry> descendants =
-            TileSubtreeTraversal::collectDescendantsForRemoval(
-                *tile,
-                [](const TileKey& key) {
-                    return TileCacheKey::forTile(key);
-                });
-        for (const TileSubtreeRemovalEntry& descendant : descendants) {
-            if (descendant.tile) {
-                contentProvider_->clearTerrainAvailabilityUpsampledChild(
-                    descendant.tile->key);
-            }
-        }
-    }
+    TileTerrainAvailabilityUpsampleBookkeepingPolicy::
+        clearRemovedSubtreeProviderState(contentProvider_, tile);
     TileSubtreeRemovalCoordinator::clearChildrenRecursively(
         tile,
         tiles_,

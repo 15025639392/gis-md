@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileChildMaterializer.h"
+#include "TileTerrainAvailabilityUpsampleBookkeeping.h"
 #include "TilesetTile.h"
 
 #include <vector>
@@ -17,13 +18,6 @@ struct TileChildFrameMaterializeInput {
     bool isAvailabilityBoundaryWaitingForContent = false;
     bool contentProviderOwnsTerrainQuadtree = false;
     IPrepareRendererResources* pPrepRenderer = nullptr;
-};
-
-enum class TileTerrainAvailabilityUpsampleBookkeeping {
-    None,
-    Clear,
-    Latent,
-    Materialized
 };
 
 struct TileChildFrameMaterializeResult {

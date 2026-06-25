@@ -10,6 +10,7 @@
 #include "TileSelectionRootPolicy.h"
 #include "TileScheme.h"
 #include "TileTerrainHeightRangePolicy.h"
+#include "TileTerrainAvailabilityUpsampleBookkeeping.h"
 #include "TilesetTileRegistry.h"
 #include "../content/GltfContentProvider.h"
 
@@ -59,26 +60,6 @@ bool initializeTerrainChild(
         changed = true;
     }
     return changed;
-}
-
-void applyTerrainAvailabilityUpsampleBookkeeping(
-    const TilesetContentProvider& contentProvider,
-    const TilesetTile& tile,
-    TileTerrainAvailabilityUpsampleBookkeeping bookkeeping) {
-    switch (bookkeeping) {
-        case TileTerrainAvailabilityUpsampleBookkeeping::None:
-            break;
-        case TileTerrainAvailabilityUpsampleBookkeeping::Clear:
-            contentProvider.clearTerrainAvailabilityUpsampledChild(tile.key);
-            break;
-        case TileTerrainAvailabilityUpsampleBookkeeping::Latent:
-            contentProvider.noteTerrainAvailabilityLatentUpsampledChild(
-                tile.key);
-            break;
-        case TileTerrainAvailabilityUpsampleBookkeeping::Materialized:
-            contentProvider.noteTerrainAvailabilityUpsampledChild(tile.key);
-            break;
-    }
 }
 
 } // namespace
@@ -200,7 +181,8 @@ TileContentAccess::ensureTileChildren(
             return availabilityState(key);
         });
     if (contentProviderOwnsTerrainQuadtree() && contentProvider_) {
-        applyTerrainAvailabilityUpsampleBookkeeping(
+        TileTerrainAvailabilityUpsampleBookkeepingPolicy::
+            applyMaterializationResult(
             *contentProvider_,
             tile,
             result.terrainUpsampleBookkeeping);
