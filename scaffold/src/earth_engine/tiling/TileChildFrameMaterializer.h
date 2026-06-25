@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileChildMaterializer.h"
+#include "TileLoadDomainPolicy.h"
 #include "TilesetTile.h"
 
 #include <vector>
@@ -40,13 +41,11 @@ public:
                 false};
         }
 
-        if (input.tile.key.z >= input.maxZoom) {
-            return {};
-        }
-        if (input.tile.content.isTerrainAvailabilityUpsample()) {
-            return {};
-        }
-        if (!input.hasTerrainQuadtree) {
+        if (!TileLoadDomainPolicy::shouldCreateTerrainChildren(
+                input.tile.key.z,
+                input.maxZoom,
+                input.hasTerrainQuadtree,
+                input.tile.content.isTerrainAvailabilityUpsample())) {
             return {};
         }
         if (input.isAvailabilityBoundaryWaitingForContent) {

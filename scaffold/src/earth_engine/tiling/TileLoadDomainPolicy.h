@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileContentRuntimeState.h"
 #include "TileLoadTypes.h"
 
 namespace earth_engine {
@@ -24,6 +25,28 @@ struct TileLoadDomainPolicy {
             return {&result.content.quantizedMeshAvailabilityUpdates, false};
         }
         return {};
+    }
+
+    /// Determines whether the frame materializer should attempt to create
+    /// terrain quadtree children for the given tile. Returns false when the
+    /// tile is at max zoom, is itself an upsampled child (cannot refine
+    /// further), or the scene has no terrain quadtree. Callers should still
+    /// handle the availability-boundary retry-later case separately.
+    static bool shouldCreateTerrainChildren(
+        int tileZoom,
+        int maxZoom,
+        bool hasTerrainQuadtree,
+        bool isTerrainAvailabilityUpsample) {
+        if (tileZoom >= maxZoom) {
+            return false;
+        }
+        if (isTerrainAvailabilityUpsample) {
+            return false;
+        }
+        if (!hasTerrainQuadtree) {
+            return false;
+        }
+        return true;
     }
 
     static bool shouldUploadForDomain(

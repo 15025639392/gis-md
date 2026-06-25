@@ -1700,6 +1700,18 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     ShouldCreateTerrainChildrenRespectsMaxZoomAndUpsampleAndQuadtree) {
+    EXPECT_FALSE(TileLoadDomainPolicy::shouldCreateTerrainChildren(
+        10, 10, true, false));
+    EXPECT_FALSE(TileLoadDomainPolicy::shouldCreateTerrainChildren(
+        5, 10, true, true));
+    EXPECT_FALSE(TileLoadDomainPolicy::shouldCreateTerrainChildren(
+        5, 10, false, false));
+    EXPECT_TRUE(TileLoadDomainPolicy::shouldCreateTerrainChildren(
+        5, 10, true, false));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentFailedTerminalIgnoresTileLoadResultMetadata) {
     expectContentTerminalIgnoresMetadata(
         TileLoadStatus::Failed,
