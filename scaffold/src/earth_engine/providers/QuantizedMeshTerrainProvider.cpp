@@ -1432,11 +1432,6 @@ bool QuantizedMeshTerrainProvider::
            parentsWithTerrainUpsampledChildren_.end();
 }
 
-void QuantizedMeshTerrainProvider::
-    noteTerrainAvailabilityLatentUpsampledChild(const TileKey& key) const {
-    (void)key;
-}
-
 void QuantizedMeshTerrainProvider::noteTerrainAvailabilityUpsampledChild(
     const TileKey& key) const {
     std::lock_guard<std::recursive_mutex> lock(layersMutex_);

@@ -61,10 +61,6 @@ public:
         const TileKey& key) const override {
         notedUpsampledParents.push_back(key);
     }
-    void noteTerrainAvailabilityLatentUpsampledChild(
-        const TileKey& key) const override {
-        notedLatentUpsampledParents.push_back(key);
-    }
     void clearTerrainAvailabilityUpsampledChild(
         const TileKey& key) const override {
         clearedUpsampledParents.push_back(key);
@@ -81,7 +77,6 @@ public:
     }
 
     std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
-    mutable std::vector<TileKey> notedLatentUpsampledParents;
     mutable std::vector<TileKey> notedUpsampledParents;
     mutable std::vector<TileKey> clearedUpsampledParents;
     std::unordered_map<TileKey, TileAvailabilityState> availability;
@@ -720,8 +715,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(childResult.changed);
     EXPECT_TRUE(boundary->children.empty());
     EXPECT_TRUE(provider.notedUpsampledParents.empty());
-    ASSERT_EQ(1u, provider.notedLatentUpsampledParents.size());
-    EXPECT_EQ(boundaryKey, provider.notedLatentUpsampledParents.front());
     EXPECT_TRUE(provider.clearedUpsampledParents.empty());
 }
 

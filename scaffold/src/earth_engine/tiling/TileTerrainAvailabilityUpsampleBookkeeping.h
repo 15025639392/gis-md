@@ -30,8 +30,6 @@ public:
                     tile.key);
                 break;
             case TileTerrainAvailabilityUpsampleBookkeeping::Latent:
-                contentProvider.noteTerrainAvailabilityLatentUpsampledChild(
-                    tile.key);
                 break;
             case TileTerrainAvailabilityUpsampleBookkeeping::Materialized:
                 contentProvider.noteTerrainAvailabilityUpsampledChild(
