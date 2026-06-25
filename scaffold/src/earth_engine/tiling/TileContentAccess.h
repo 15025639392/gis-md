@@ -23,22 +23,19 @@ public:
     static TileContentAccess forContentTerrain(
         TilesetTileRegistry& tileRegistry,
         const TileScheme& tileScheme,
-        const TilesetContentProvider& contentProvider,
-        size_t rasterOverlayCount);
+        const TilesetContentProvider& contentProvider);
 
     static TileContentAccess forNoTerrain(
         TilesetTileRegistry& tileRegistry,
         const TileScheme& tileScheme,
-        const TilesetContentProvider* contentProvider,
-        size_t rasterOverlayCount);
+        const TilesetContentProvider* contentProvider);
 
     static TileContentAccess forHeightmapTerrainSurfacePath(
         TilesetTileRegistry& tileRegistry,
         const TileScheme& tileScheme,
         const TerrainProvider* legacyHeightmapTerrainProvider,
         const TilesetContentProvider* contentProvider,
-        const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache,
-        size_t rasterOverlayCount);
+        const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache);
 
     TilesetTile* ensureTile(const TileKey& key);
     TileChildFrameMaterializeResult ensureTileChildren(
@@ -60,8 +57,7 @@ private:
                       const TerrainProvider* legacyHeightmapTerrainProvider,
                       const TilesetContentProvider* contentProvider,
                       const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache,
-                      TerrainOwnership terrainOwnership,
-                      size_t rasterOverlayCount);
+                      TerrainOwnership terrainOwnership);
 
     bool contentProviderOwnsTerrainQuadtree() const;
     bool hasTerrainQuadtree() const;
@@ -75,7 +71,6 @@ private:
     const TilesetContentProvider* contentProvider_ = nullptr;
     TerrainOwnership terrainOwnership_ = TerrainOwnership::None;
     TileLegacyHeightmapContentResolver legacyHeightmapContent_;
-    size_t rasterOverlayCount_ = 0;
 };
 
 } // namespace earth_engine

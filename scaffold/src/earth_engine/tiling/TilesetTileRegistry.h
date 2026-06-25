@@ -19,8 +19,7 @@ public:
     TilesetTile* ensureTile(
         const TileKey& key,
         const TileScheme& tileScheme,
-        const TilesetContentProvider* contentProvider,
-        size_t rasterOverlayCount);
+        const TilesetContentProvider* contentProvider);
 
     TilesetTile* findTile(const TileKey& key);
     const TilesetTile* findTile(const TileKey& key) const;

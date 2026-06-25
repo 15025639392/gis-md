@@ -44,8 +44,7 @@ void initializeVirtualTerrainRoot(TilesetTile& tile) {
 TilesetTile* TilesetTileRegistry::ensureTile(
     const TileKey& key,
     const TileScheme& tileScheme,
-    const TilesetContentProvider* contentProvider,
-    size_t rasterOverlayCount) {
+    const TilesetContentProvider* contentProvider) {
     const std::string ck = TileCacheKey::forTile(key);
     const std::optional<TilesetContentTileMetadata> contentMetadata =
         contentProvider ? contentProvider->tileMetadata(key) : std::nullopt;
@@ -78,14 +77,12 @@ TilesetTile* TilesetTileRegistry::ensureTile(
         parent = ensureTile(
             *contentMetadata->parentKey,
             tileScheme,
-            contentProvider,
-            rasterOverlayCount);
+            contentProvider);
     } else if (!contentMetadata && key.z > 0) {
         parent = ensureTile(
             TilePlanBuilder::parentKey(key),
             tileScheme,
-            contentProvider,
-            rasterOverlayCount);
+            contentProvider);
     }
 
     const Rectangle bounds = contentMetadata && contentMetadata->hasExplicitBounds
@@ -96,8 +93,7 @@ TilesetTile* TilesetTileRegistry::ensureTile(
         *tile,
         contentMetadata,
         parent,
-        calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), tile->bounds),
-        rasterOverlayCount);
+        calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), tile->bounds));
 
     TilesetTile* raw = tile.get();
     tiles_[ck] = std::move(tile);

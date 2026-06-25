@@ -546,7 +546,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         auto scheme = TileScheme::createGeographicTMS();
         TilesetTileRegistry registry;
         TileContentAccess contentAccess =
-            TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+            TileContentAccess::forContentTerrain(registry, *scheme, provider);
 
         TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
         ASSERT_NE(nullptr, boundary);
@@ -639,7 +639,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider);
 
     const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
     TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
@@ -706,7 +706,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, provider);
 
     TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
     ASSERT_NE(nullptr, boundary);
@@ -742,7 +742,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider);
 
     const TileKey parentKey{"Geographic-TMS", 1, 0, 0};
     const TileKey availableChildKey{"Geographic-TMS", 2, 0, 0};
@@ -819,7 +819,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider);
 
     const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
     QuantizedMeshAvailabilityUpdate update;
@@ -889,7 +889,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         auto scheme = TileScheme::createGeographicTMS();
         TilesetTileRegistry registry;
         TileContentAccess contentAccess =
-            TileContentAccess::forNoTerrain(registry, *scheme, &provider, 0);
+            TileContentAccess::forNoTerrain(registry, *scheme, &provider);
 
         TilesetTile* root = contentAccess.ensureTile(rootKey);
         ASSERT_NE(nullptr, root);
@@ -960,7 +960,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         auto scheme = TileScheme::createGeographicTMS();
         TilesetTileRegistry registry;
         TileContentAccess contentAccess =
-            TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+            TileContentAccess::forContentTerrain(registry, *scheme, provider);
 
         TilesetTile* root = contentAccess.ensureTile(rootKey);
         ASSERT_NE(nullptr, root);
@@ -1034,7 +1034,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, provider);
 
     TilesetTile* root = contentAccess.ensureTile(rootKey);
     ASSERT_NE(nullptr, root);
@@ -1137,7 +1137,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, provider);
 
     const TileKey key{"Geographic-TMS", 0, 0, 0};
     TilesetTile* tile = contentAccess.ensureTile(key);
@@ -1995,7 +1995,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider);
 
     const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
     TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
@@ -2116,7 +2116,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider);
 
     const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
     TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);
@@ -4001,7 +4001,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTileRegistry registry;
     TileContentAccess contentAccess =
-        TileContentAccess::forContentTerrain(registry, *scheme, *provider, 0);
+        TileContentAccess::forContentTerrain(registry, *scheme, *provider);
 
     const TileKey boundaryKey{"Geographic-TMS", 2, 0, 0};
     TilesetTile* boundary = contentAccess.ensureTile(boundaryKey);

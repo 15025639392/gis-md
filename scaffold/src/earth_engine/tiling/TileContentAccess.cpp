@@ -37,31 +37,27 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
 TileContentAccess TileContentAccess::forContentTerrain(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TilesetContentProvider& contentProvider,
-    size_t rasterOverlayCount) {
+    const TilesetContentProvider& contentProvider) {
     return TileContentAccess(
         tileRegistry,
         tileScheme,
         nullptr,
         &contentProvider,
         nullptr,
-        TerrainOwnership::ContentProvider,
-        rasterOverlayCount);
+        TerrainOwnership::ContentProvider);
 }
 
 TileContentAccess TileContentAccess::forNoTerrain(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TilesetContentProvider* contentProvider,
-    size_t rasterOverlayCount) {
+    const TilesetContentProvider* contentProvider) {
     return TileContentAccess(
         tileRegistry,
         tileScheme,
         nullptr,
         contentProvider,
         nullptr,
-        TerrainOwnership::None,
-        rasterOverlayCount);
+        TerrainOwnership::None);
 }
 
 TileContentAccess TileContentAccess::forHeightmapTerrainSurfacePath(
@@ -69,8 +65,7 @@ TileContentAccess TileContentAccess::forHeightmapTerrainSurfacePath(
     const TileScheme& tileScheme,
     const TerrainProvider* legacyHeightmapTerrainProvider,
     const TilesetContentProvider* contentProvider,
-    const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache,
-    size_t rasterOverlayCount) {
+    const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache) {
     assert(legacyHeightmapTerrainProvider &&
            "forHeightmapTerrainSurfacePath requires a heightmap TerrainProvider");
     return TileContentAccess(
@@ -79,8 +74,7 @@ TileContentAccess TileContentAccess::forHeightmapTerrainSurfacePath(
         legacyHeightmapTerrainProvider,
         contentProvider,
         &legacyHeightmapTerrainCache,
-        TerrainOwnership::HeightmapSurface,
-        rasterOverlayCount);
+        TerrainOwnership::HeightmapSurface);
 }
 
 TileContentAccess::TileContentAccess(
@@ -89,8 +83,7 @@ TileContentAccess::TileContentAccess(
     const TerrainProvider* legacyHeightmapTerrainProvider,
     const TilesetContentProvider* contentProvider,
     const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache,
-    TerrainOwnership terrainOwnership,
-    size_t rasterOverlayCount)
+    TerrainOwnership terrainOwnership)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
       contentProvider_(contentProvider),
@@ -99,15 +92,13 @@ TileContentAccess::TileContentAccess(
           legacyHeightmapTerrainProvider,
           contentProvider,
           tileScheme,
-          legacyHeightmapTerrainCache),
-      rasterOverlayCount_(rasterOverlayCount) {}
+          legacyHeightmapTerrainCache) {}
 
 TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
     TilesetTile* tile = tileRegistry_.ensureTile(
         key,
         tileScheme_,
-        contentProvider_,
-        rasterOverlayCount_);
+        contentProvider_);
     if (tile && contentProviderOwnsTerrainQuadtree()) {
         tile->contentProviderTerrainQuadtreeTile = true;
     }

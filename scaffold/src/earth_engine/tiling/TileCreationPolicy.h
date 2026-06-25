@@ -27,8 +27,7 @@ struct TileCreationPolicy {
         TilesetTile& tile,
         const std::optional<TilesetContentTileMetadata>& metadata,
         const TilesetTile* parent,
-        double defaultGeometricError,
-        size_t rasterOverlayCount) {
+        double defaultGeometricError) {
         tile.geometricError = metadata
             ? metadata->geometricError
             : defaultGeometricError;
@@ -39,7 +38,6 @@ struct TileCreationPolicy {
             tile.viewerRequestVolume = metadata->viewerRequestVolume;
             tile.contentBoundingVolume = metadata->contentBoundingVolume;
         }
-        (void)rasterOverlayCount;
         initializeTerrainHeightRange(tile, metadata, parent);
     }
 

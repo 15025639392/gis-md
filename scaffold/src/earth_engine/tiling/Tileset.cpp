@@ -64,21 +64,18 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
               ? TileContentAccess::forContentTerrain(
                     tileRegistry_,
                     *tileScheme_,
-                    *terrainProviders_.contentProvider(),
-                    rasterOverlays_.size())
+                    *terrainProviders_.contentProvider())
               : terrainProviders_.usesLegacyHeightmapTerrainSurfacePath()
                     ? TileContentAccess::forHeightmapTerrainSurfacePath(
                           tileRegistry_,
                           *tileScheme_,
                           terrainProviders_.legacyHeightmapTerrainProvider(),
                           terrainProviders_.contentProvider(),
-                          contentLifecycle_.legacyHeightmapTerrainCache(),
-                          rasterOverlays_.size())
+                          contentLifecycle_.legacyHeightmapTerrainCache())
                     : TileContentAccess::forNoTerrain(
                           tileRegistry_,
                           *tileScheme_,
-                          terrainProviders_.contentProvider(),
-                          rasterOverlays_.size())),
+                          terrainProviders_.contentProvider())),
       resourceInvalidator_(
           resourceRevision_,
           contentCache_),
