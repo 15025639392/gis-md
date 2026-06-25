@@ -64,12 +64,7 @@ public:
                 emptyContentRegistry,
                 pPrepRenderer,
                 contentProvider);
-        if (action.ensureChildren) {
-            ensureChildren(*tile);
-        }
-        if (action.resourcesDirty) {
-            markResourcesDirty();
-        }
+        applyCommitAction(action, *tile, ensureChildren, markResourcesDirty);
     }
 
     template <typename EnsureTileFn,
@@ -113,12 +108,7 @@ public:
                     emptyContentRegistry,
                     pPrepRenderer,
                     contentProvider);
-            if (action.ensureChildren) {
-                ensureChildren(*tile);
-            }
-            if (action.resourcesDirty) {
-                markResourcesDirty();
-            }
+            applyCommitAction(action, *tile, ensureChildren, markResourcesDirty);
             TilePendingUploadCompletion::eraseUpload(
                 lifecycle,
                 upload.cacheKey);
@@ -144,17 +134,29 @@ public:
                 *tile,
                 renderResourcesReady,
                 pPrepRenderer);
-        if (action.ensureChildren) {
-            ensureChildren(*tile);
-        }
-        if (action.resourcesDirty) {
-            markResourcesDirty();
-        }
+        applyCommitAction(action, *tile, ensureChildren, markResourcesDirty);
 
         emptyContentRegistry.erase(upload.cacheKey);
         TilePendingUploadCompletion::eraseUpload(
             lifecycle,
             upload.cacheKey);
+    }
+
+private:
+    template <typename CommitAction,
+              typename EnsureChildrenFn,
+              typename MarkResourcesDirtyFn>
+    static void applyCommitAction(
+        const CommitAction& action,
+        TilesetTile& tile,
+        EnsureChildrenFn&& ensureChildren,
+        MarkResourcesDirtyFn&& markResourcesDirty) {
+        if (action.ensureChildren) {
+            ensureChildren(tile);
+        }
+        if (action.resourcesDirty) {
+            markResourcesDirty();
+        }
     }
 
 };
