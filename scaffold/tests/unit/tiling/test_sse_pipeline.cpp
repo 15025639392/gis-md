@@ -13146,6 +13146,57 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !staleHeightmapSurfaceTile.content.renderContent.hasSurfaceMesh() &&
               !staleHeightmapSurfaceTile.content.renderContent.hasRetainedHeightmap(),
           "TileMeshFrameEnsurer: content terrain quadtree clears stale heightmap surface residue");
+
+    TilesetTile staleRasterResidueTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    staleRasterResidueTile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    staleRasterResidueTile.content.renderContent.setMeshReady(true);
+    staleRasterResidueTile.content.renderContent.mutableRasterOverlayDetails()
+        ->setGeographicRectangle(staleRasterResidueTile.bounds);
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider rasterProvider(imagery, *scheme, nullptr);
+    RasterMappedToTilesetTile& mapped =
+        staleRasterResidueTile.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        staleRasterResidueTile.key,
+        staleRasterResidueTile.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        rasterProvider,
+        nullptr,
+        missingProjections);
+    check(mapped.getLoadingTile() != nullptr,
+          "TileMeshFrameEnsurer: stale raster residue starts mapped raster load");
+    mapped.getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(4, 4));
+    RecordingPrepareRendererResources prep;
+    mapped.update(
+        staleRasterResidueTile.key,
+        staleRasterResidueTile.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        rasterProvider,
+        &prep,
+        missingProjections);
+    bool staleRasterResourcesDirty = false;
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
+            staleRasterResidueTile,
+            &prep},
+        [&staleRasterResourcesDirty]() {
+            staleRasterResourcesDirty = true;
+        });
+    check(staleRasterResourcesDirty &&
+              prep.detachCount == 1 &&
+              prep.lastDetachedGeometryKey == staleRasterResidueTile.key &&
+              prep.lastDetachedOverlayIndex == 0 &&
+              staleRasterResidueTile.rasterOverlayState.mappingCount() == 0 &&
+              !staleRasterResidueTile.content.renderContent.hasSurfaceMesh(),
+          "TileMeshFrameEnsurer: content terrain residue cleanup detaches stale raster mappings like cesium-native");
 }
 
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {

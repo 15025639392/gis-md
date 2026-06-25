@@ -24,6 +24,7 @@ struct TileHeightmapMeshFrameEnsureInput {
 
 struct TileContentTerrainMeshFrameEnsureInput {
     TilesetTile& tile;
+    IPrepareRendererResources* pPrepRenderer = nullptr;
 };
 
 class TileMeshFrameEnsurer {
@@ -64,7 +65,9 @@ public:
         const TileContentTerrainMeshFrameEnsureInput& input,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile& tile = input.tile;
-        if (TileContentTerrainResiduePolicy::clearRejectableResidue(tile)) {
+        if (TileContentTerrainResiduePolicy::clearRejectableResidue(
+                tile,
+                input.pPrepRenderer)) {
             markResourcesDirty();
         }
     }

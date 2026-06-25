@@ -41,18 +41,23 @@ TileMeshPreparationManager::TileMeshPreparationManager(
     }
 }
 
-void TileMeshPreparationManager::prepareRenderableTile(TilesetTile& tile) {
+void TileMeshPreparationManager::prepareRenderableTile(
+    TilesetTile& tile,
+    IPrepareRendererResources* pPrepRenderer) {
     if (!usesLegacyHeightmapSurfacePath()) {
-        prepareContentTerrainFrame(tile);
+        prepareContentTerrainFrame(tile, pPrepRenderer);
         return;
     }
     legacyHeightmapSurfacePreparer_->prepareRenderableTile(tile);
 }
 
-void TileMeshPreparationManager::prepareContentTerrainFrame(TilesetTile& tile) {
+void TileMeshPreparationManager::prepareContentTerrainFrame(
+    TilesetTile& tile,
+    IPrepareRendererResources* pPrepRenderer) {
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
-            tile},
+            tile,
+            pPrepRenderer},
         [this]() {
             markResourcesDirty();
         });

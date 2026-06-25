@@ -59,8 +59,8 @@ void TileRenderCommandManager::buildTileDrawCommand(
             transitionOpacity,
             allowSynchronousMeshPrep,
             surfaceClipUv},
-        [this](TilesetTile& meshTile) {
-            meshPreparation_.prepareRenderableTile(meshTile);
+        [this, &renderer](TilesetTile& meshTile) {
+            meshPreparation_.prepareRenderableTile(meshTile, &renderer);
         },
         [this, &renderer](TilesetTile& unloadTile) {
             cacheOwnership_.unloadTileContent(unloadTile, &renderer);

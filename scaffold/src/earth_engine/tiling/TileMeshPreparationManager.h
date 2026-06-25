@@ -11,6 +11,7 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+class IPrepareRendererResources;
 class RenderDevice;
 class TileContentLifecycleManager;
 class TileContentResourceInvalidator;
@@ -33,13 +34,17 @@ public:
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
 
-    void prepareRenderableTile(TilesetTile& tile);
+    void prepareRenderableTile(
+        TilesetTile& tile,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
     bool prepareUpsampleSourceTile(
         TilesetTile& tile,
         double priority);
 
 private:
-    void prepareContentTerrainFrame(TilesetTile& tile);
+    void prepareContentTerrainFrame(
+        TilesetTile& tile,
+        IPrepareRendererResources* pPrepRenderer);
     bool usesLegacyHeightmapSurfacePath() const;
     void markResourcesDirty();
     void queueTileLoad(const TileKey& key,
