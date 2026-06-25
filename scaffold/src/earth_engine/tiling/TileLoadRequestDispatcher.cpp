@@ -28,8 +28,7 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledLoad(
     result = TileLoadDomainPolicy::normalizeForDomain(
         domain,
         std::move(result));
-    if (domain == TileLoadDomain::TerrainContent &&
-        !result.isRenderableContentTerrain()) {
+    if (!TileLoadDomainPolicy::shouldUploadForDomain(domain, result)) {
         pendingLoads.addTerminalResult(
             PendingTileLoad{
                 domain,

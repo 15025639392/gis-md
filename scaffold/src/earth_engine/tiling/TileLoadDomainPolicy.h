@@ -5,17 +5,20 @@
 namespace earth_engine {
 
 struct TileLoadDomainPolicy {
+    static bool shouldUploadForDomain(
+        TileLoadDomain domain,
+        const TileLoadResult& result) {
+        if (domain == TileLoadDomain::TerrainContent) {
+            return result.isRenderableContentTerrain();
+        }
+        return result.shouldUpload();
+    }
+
     static bool shouldFailUploadForDomain(
         TileLoadDomain domain,
         const TileLoadResult& result) {
-        if (result.status != TileLoadStatus::Renderable) {
-            return false;
-        }
-        if (domain == TileLoadDomain::TerrainContent) {
-            return !result.content.satisfiesContentTerrainPayloadContract();
-        }
-        return result.content.terrainRenderContent &&
-               !result.content.satisfiesContentTerrainPayloadContract();
+        return result.status == TileLoadStatus::Renderable &&
+               !shouldUploadForDomain(domain, result);
     }
 
     static TileLoadResult normalizeForDomain(
