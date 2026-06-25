@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileContentUpsampleKind.h"
 #include "TileRenderContentState.h"
 #include "TilesetTile.h"
 
@@ -11,11 +12,13 @@ struct TileSurfaceMeshResolution {
 
     static TileSurfaceMeshResolution forContext(
         bool hasOwnTerrain,
-        bool upsampledFromParent,
+        TileContentUpsampleKind upsampleKind,
         bool hasTerrainQuadtree) {
         TileSurfaceMeshResolution resolution;
         resolution.markDone =
-            hasOwnTerrain || upsampledFromParent || !hasTerrainQuadtree;
+            hasOwnTerrain ||
+            upsampleKind != TileContentUpsampleKind::None ||
+            !hasTerrainQuadtree;
         return resolution;
     }
 

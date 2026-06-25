@@ -11609,13 +11609,30 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     ownResolution.source = SurfaceDrawableSource::HeightmapTerrain;
     ownResolution.markDone = true;
     TileSurfaceMeshResolution ownContext =
-        TileSurfaceMeshResolution::forContext(true, false, true);
+        TileSurfaceMeshResolution::forContext(
+            true,
+            TileContentUpsampleKind::None,
+            true);
     TileSurfaceMeshResolution upsampleContext =
-        TileSurfaceMeshResolution::forContext(false, true, true);
+        TileSurfaceMeshResolution::forContext(
+            false,
+            TileContentUpsampleKind::TerrainAvailability,
+            true);
+    TileSurfaceMeshResolution rasterDetailUpsampleContext =
+        TileSurfaceMeshResolution::forContext(
+            false,
+            TileContentUpsampleKind::RasterDetail,
+            true);
     TileSurfaceMeshResolution noProviderContext =
-        TileSurfaceMeshResolution::forContext(false, false, false);
+        TileSurfaceMeshResolution::forContext(
+            false,
+            TileContentUpsampleKind::None,
+            false);
     TileSurfaceMeshResolution pendingQuadtreeContext =
-        TileSurfaceMeshResolution::forContext(false, false, true);
+        TileSurfaceMeshResolution::forContext(
+            false,
+            TileContentUpsampleKind::None,
+            true);
     check(missingResolution.resolvedSource() ==
               SurfaceDrawableSource::EllipsoidFallback &&
               ownResolution.resolvedSource() ==
@@ -11623,6 +11640,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               ownResolution.markDone &&
               ownContext.markDone &&
               upsampleContext.markDone &&
+              rasterDetailUpsampleContext.markDone &&
               noProviderContext.markDone &&
               !pendingQuadtreeContext.markDone,
           "TileSurfaceMeshResolution: source fallback and done decision are explicit");

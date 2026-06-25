@@ -237,7 +237,7 @@ TEST(TileSurfaceMeshEnsurerTest,
 }
 
 TEST(TileSurfaceMeshEnsurerTest,
-     GltfTerrainUpsampleSourceWaitsForDoneParentLikeCesiumNative) {
+     GltfTerrainUpsampleSourceAcceptsProtectedUnloadingParentLikeCesiumNative) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -253,7 +253,7 @@ TEST(TileSurfaceMeshEnsurerTest,
         &parent);
     child.content.markTerrainAvailabilityUpsample();
 
-    EXPECT_EQ(nullptr,
+    EXPECT_EQ(&parent,
               TileGltfTerrainUpsampledChildMaterializer::
                   findGltfTerrainSource(child));
 

@@ -31,7 +31,7 @@ public:
         TileSurfaceMeshResolution resolution =
             TileSurfaceMeshResolution::forContext(
                 hasOwnTerrain,
-                tile.content.derivesTerrainFromParent(),
+                tile.content.upsampleKind(),
                 hasTerrainQuadtree);
         if (tile.content.derivesTerrainFromParent() &&
             !useHeightmapSurfacePath) {
