@@ -110,7 +110,6 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
         rasterOverlayCount_);
     if (tile && contentProviderOwnsTerrainQuadtree()) {
         tile->contentProviderTerrainQuadtreeTile = true;
-        TileContentTerrainResiduePolicy::clearRejectableResidue(*tile);
     }
     return tile;
 }
@@ -147,7 +146,8 @@ TileContentAccess::ensureTileChildren(
             }
             if (contentProviderOwnsTerrainQuadtree()) {
                 if (TileContentTerrainResiduePolicy::clearRejectableResidue(
-                        *child)) {
+                        *child,
+                        pPrepRenderer)) {
                     TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                         *child,
                         tile);

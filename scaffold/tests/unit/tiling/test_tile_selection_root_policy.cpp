@@ -6,6 +6,11 @@
 #include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/content/GltfModel.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/renderer/IPrepareRendererResources.h"
+#include "earth_engine/renderer/RenderDevice.h"
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileContentAccess.h"
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
 #include "earth_engine/tiling/TileLoadState.h"
@@ -18,6 +23,51 @@
 using namespace earth_engine;
 
 namespace {
+
+class DummyTexture final : public Texture {
+public:
+    DummyTexture(int width, int height) : width_(width), height_(height) {}
+
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+};
+
+class RecordingPrepareRendererResources final
+    : public IPrepareRendererResources {
+public:
+    void attachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex,
+        std::shared_ptr<const RasterOverlayTile>,
+        Texture*,
+        float,
+        float,
+        float,
+        float) override {
+        ++attachCount;
+        lastGeometryKey = geometryKey;
+        lastOverlayIndex = overlayIndex;
+    }
+
+    void detachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex) noexcept override {
+        ++detachCount;
+        lastDetachedGeometryKey = geometryKey;
+        lastDetachedOverlayIndex = overlayIndex;
+    }
+
+    int attachCount = 0;
+    int detachCount = 0;
+    TileKey lastGeometryKey;
+    TileKey lastDetachedGeometryKey;
+    int32_t lastOverlayIndex = -1;
+    int32_t lastDetachedOverlayIndex = -1;
+};
 
 class ContentOwnedTerrainProvider final : public TilesetContentProvider {
 public:
@@ -411,6 +461,64 @@ TEST(TileSelectionRootPolicyTest,
     EXPECT_DOUBLE_EQ(
         9000.0,
         levelZero->content.renderContent.terrainMaximumHeight());
+}
+
+TEST(TileSelectionRootPolicyTest,
+     ContentOwnedVirtualRootDetachesStaleRasterResidueLikeCesiumNative) {
+    ContentOwnedGeographicRootFixture fixture;
+    const TileKey levelZeroKey{"Geographic-TMS", 0, 1, 0};
+    TilesetTile* levelZero = fixture.contentAccess.ensureTile(levelZeroKey);
+    ASSERT_NE(nullptr, levelZero);
+    levelZero->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    levelZero->content.renderContent.setMeshReady(true);
+    levelZero->content.renderContent.mutableRasterOverlayDetails()
+        ->setGeographicRectangle(levelZero->bounds);
+
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider rasterProvider(imagery, *scheme, nullptr);
+    RasterMappedToTilesetTile& mapped =
+        levelZero->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        levelZero->key,
+        levelZero->content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        rasterProvider,
+        nullptr,
+        missingProjections);
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    mapped.getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(4, 4));
+    RecordingPrepareRendererResources prep;
+    mapped.update(
+        levelZero->key,
+        levelZero->content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        rasterProvider,
+        &prep,
+        missingProjections);
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+              mapped.getState());
+    ASSERT_EQ(1, prep.attachCount);
+
+    TilesetTile* root = fixture.contentAccess.ensureTile(
+        TileSelectionRootPolicy::virtualTerrainRootKey("Geographic-TMS"));
+    ASSERT_NE(nullptr, root);
+
+    fixture.contentAccess.ensureTileChildren(*root, &prep);
+
+    ASSERT_EQ(2u, root->children.size());
+    EXPECT_EQ(levelZero, root->children[1]);
+    EXPECT_EQ(1, prep.detachCount);
+    EXPECT_EQ(levelZeroKey, prep.lastDetachedGeometryKey);
+    EXPECT_EQ(0, prep.lastDetachedOverlayIndex);
+    EXPECT_EQ(0u, levelZero->rasterOverlayState.mappingCount());
+    EXPECT_FALSE(levelZero->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(levelZero->content.renderContent.isRenderContentReady());
 }
 
 TEST(TileSelectionRootPolicyTest,
