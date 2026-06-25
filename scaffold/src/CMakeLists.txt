@@ -465,8 +465,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileTerrainHeightRangePolicy.cpp
     earth_engine/tiling/TileVisibleRangeFinalizer.h
     earth_engine/tiling/TileVisibleRangeFinalizer.cpp
-    earth_engine/tiling/TileTerrainUploadPolicy.h
-    earth_engine/tiling/TileTerrainUploadPolicy.cpp
     earth_engine/tiling/TileTraversalDetails.h
     earth_engine/tiling/TileTraversalDetails.cpp
     earth_engine/tiling/TileUpsampleSourcePreparer.h

@@ -98,7 +98,6 @@
 #include "earth_engine/tiling/TileTerminalLoadCommitter.h"
 #include "earth_engine/tiling/TileTerminalLoadPolicy.h"
 #include "earth_engine/tiling/TileTerrainHeightRangePolicy.h"
-#include "earth_engine/tiling/TileTerrainUploadPolicy.h"
 #include "earth_engine/tiling/TileTraversalDetails.h"
 #include "earth_engine/tiling/TileViewerRequestVolumePolicy.h"
 #include "earth_engine/tiling/TileSubtreeTraversal.h"
@@ -14740,27 +14739,6 @@ void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
               failedTile.content.contentKind == TileContentKind::Unknown &&
               failedTile.content.loadState == TileLoadState::FailedTemporarily,
           "TileContentUploadCommitter: failed resource preparation rolls back render content without child materialization");
-}
-
-void testTileTerrainUploadPolicyMarksTerrainRenderContentStates() {
-    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    tile.content.contentKind = TileContentKind::Unknown;
-    tile.content.loadState = TileLoadState::Unloaded;
-
-    TileTerrainUploadPolicy::markTerrainRenderContentLoaded(tile);
-    check(tile.content.contentKind == TileContentKind::Render &&
-              tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileTerrainUploadPolicy: terrain upload enters render content loaded state");
-
-    tile.content.renderContent.setGltfContent(std::make_unique<GltfModel>());
-    tile.content.renderContent.addGltfPrimitiveResource(
-        GltfPrimitiveRenderResources{});
-    TileTerrainUploadPolicy::markTerrainRenderContentFailedTemporarily(tile);
-    check(!tile.content.renderContent.hasGltfModel() &&
-              !tile.content.renderContent.hasGltfPrimitiveResources() &&
-              tile.content.contentKind == TileContentKind::Unknown &&
-              tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileTerrainUploadPolicy: failed terrain render-resource preparation rolls back render content");
 }
 
 void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentUpload() {
@@ -29554,7 +29532,6 @@ int main() {
     testTileLoadResultPreservesInitialBoundingVolumes();
     testTileContentUploadPolicyMarksGltfRenderResourceFailure();
     testTileContentUploadCommitterAppliesRenderResourceOutcome();
-    testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
     testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentUpload();
     testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults();
     testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker();
