@@ -43,15 +43,9 @@ void restoreInitialBoundingVolumesAfterResourceFailure(TilesetTile& tile) {
 
 } // namespace
 
-void TileContentUploadCommitter::prepareRenderContent(
-    TilesetTile& tile,
-    TileLoadedContent&& content,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-    RenderDevice* device,
-    IPrepareRendererResources* pPrepRenderer,
+void TileContentUploadCommitter::applyTerrainAvailabilityUpdates(
+    const TileLoadedContent& content,
     TilesetContentProvider* contentProvider) {
-    const std::optional<TileBoundingVolume> effectiveContentBoundingVolume =
-        effectiveContentBoundingVolumeForLoad(tile, content);
     if (contentProvider &&
         contentProvider->providesTerrainQuadtree() &&
         content.satisfiesContentTerrainPayloadContract() &&
@@ -59,6 +53,16 @@ void TileContentUploadCommitter::prepareRenderContent(
         contentProvider->applyTerrainAvailabilityUpdates(
             content.quantizedMeshAvailabilityUpdates);
     }
+}
+
+void TileContentUploadCommitter::prepareRenderContent(
+    TilesetTile& tile,
+    TileLoadedContent&& content,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    RenderDevice* device,
+    IPrepareRendererResources* pPrepRenderer) {
+    const std::optional<TileBoundingVolume> effectiveContentBoundingVolume =
+        effectiveContentBoundingVolumeForLoad(tile, content);
     // cesium-native RasterOverlayCollection::addTileOverlays clears old
     // mappings before a new render-content generation maps overlays.
     tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);

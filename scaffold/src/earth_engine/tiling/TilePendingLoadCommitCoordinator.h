@@ -160,13 +160,15 @@ public:
         }
 
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
+        TileContentUploadCommitter::applyTerrainAvailabilityUpdates(
+            upload.content(),
+            contentProvider);
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
             std::move(upload.content()),
             rasterOverlays,
             device,
-            pPrepRenderer,
-            contentProvider);
+            pPrepRenderer);
         ensureGltfResources(*tile);
         const bool renderResourcesReady =
             tile->content.renderContent.isRenderContentReady();

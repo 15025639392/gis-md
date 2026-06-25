@@ -18,13 +18,15 @@ struct TileContentUploadCommitAction {
 };
 
 struct TileContentUploadCommitter {
+    static void applyTerrainAvailabilityUpdates(
+        const TileLoadedContent& content,
+        TilesetContentProvider* contentProvider = nullptr);
     static void prepareRenderContent(
         TilesetTile& tile,
         TileLoadedContent&& content,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays = {},
         RenderDevice* device = nullptr,
-        IPrepareRendererResources* pPrepRenderer = nullptr,
-        TilesetContentProvider* contentProvider = nullptr);
+        IPrepareRendererResources* pPrepRenderer = nullptr);
     static TileContentUploadCommitAction finishRenderResourcePreparation(
         TilesetTile& tile,
         bool resourcesReady,

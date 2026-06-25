@@ -1891,6 +1891,48 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     PrepareRenderContentDoesNotApplyTerrainAvailabilityUpdatesLikeCesiumNative) {
+    RecordingTerrainContentProvider provider;
+
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 7;
+    update.subtreeKey = TileKey{"Geographic-TMS", 2, 0, 0};
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+
+    TileLoadResult loadResult = makeTerrainContentContentResult(
+        makeMinimalTerrainGltfModelForCommitTest());
+    loadResult.content.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 0, 0},
+        Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileContentUploadCommitter::prepareRenderContent(
+        tile,
+        std::move(loadResult.content),
+        {},
+        nullptr,
+        nullptr);
+
+    EXPECT_TRUE(provider.appliedUpdates.empty());
+    EXPECT_TRUE(tile.content.renderContent.hasGltfContent());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+
+    TileLoadResult availabilityResult = makeTerrainContentContentResult(
+        makeMinimalTerrainGltfModelForCommitTest());
+    availabilityResult.content.quantizedMeshAvailabilityUpdates.push_back(
+        update);
+    TileContentUploadCommitter::applyTerrainAvailabilityUpdates(
+        availabilityResult.content,
+        &provider);
+
+    ASSERT_EQ(1u, provider.appliedUpdates.size());
+    EXPECT_EQ(update.layerIndex, provider.appliedUpdates.front().layerIndex);
+    EXPECT_EQ(update.subtreeKey, provider.appliedUpdates.front().subtreeKey);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainAvailabilityUpdatesApplyBeforeRenderResourcePreparationLikeCesiumNative) {
     for (TileLoadDomain domain : {
              TileLoadDomain::Content,
