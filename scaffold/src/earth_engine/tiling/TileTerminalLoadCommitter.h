@@ -21,19 +21,6 @@ struct TileTerminalLoadCommitter {
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer,
         TilesetContentProvider* contentProvider = nullptr);
-    static TileTerminalLoadAction commitTerrainTerminalResult(
-        TilesetTile& tile,
-        const std::string& cacheKey,
-        TileLoadResult result,
-        TileEmptyContentRegistry& emptyContentRegistry,
-        IPrepareRendererResources* pPrepRenderer,
-        TilesetContentProvider* contentProvider = nullptr);
-    static TileTerminalLoadAction commitContentTerminalResult(
-        TilesetTile& tile,
-        const std::string& cacheKey,
-        TileLoadResult result,
-        TileEmptyContentRegistry& emptyContentRegistry,
-        IPrepareRendererResources* pPrepRenderer);
 };
 
 } // namespace earth_engine

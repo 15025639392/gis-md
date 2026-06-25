@@ -144,7 +144,8 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::FailedTemporarily);
 
-    TileTerminalLoadCommitter::commitContentTerminalResult(
+    TileTerminalLoadCommitter::commitTerminalResult(
+        TileLoadDomain::Content,
         *tileRaw,
         cacheKey,
         TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
@@ -204,7 +205,8 @@ TEST(TileMissingRequestSchedulerTest, DoesNotRetryLegacyTerrainAfterEmptyMarkerC
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::FailedTemporarily);
 
-    TileTerminalLoadCommitter::commitTerrainTerminalResult(
+    TileTerminalLoadCommitter::commitTerminalResult(
+        TileLoadDomain::TerrainContent,
         *tileRaw,
         cacheKey,
         TileLoadResult::createTerminal(TileLoadStatus::RetryLater),

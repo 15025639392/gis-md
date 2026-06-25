@@ -269,7 +269,7 @@ void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         emptyContentRegistry,
         nullptr,
@@ -414,7 +414,7 @@ void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
         status};
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         emptyContentRegistry,
         nullptr,
@@ -449,7 +449,7 @@ void expectTerrainTerminalIgnoresMetadata(TileLoadStatus status,
         std::move(result)};
     TileEmptyContentRegistry emptyContentRegistry;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -483,7 +483,7 @@ void expectContentTerminalIgnoresMetadata(TileLoadStatus status,
         std::move(result)};
     TileEmptyContentRegistry emptyContentRegistry;
 
-    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -661,7 +661,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileChildFrameMaterializeResult childResult;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -770,7 +770,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -846,7 +846,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -910,7 +910,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             status};
         bool childrenEnsuredDuringCommit = false;
 
-        TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        TilePendingLoadCommitCoordinator::commitTerminalResult(
             pending,
             emptyContentRegistry,
             nullptr,
@@ -981,7 +981,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             status};
         bool childrenEnsuredDuringCommit = false;
 
-        TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        TilePendingLoadCommitCoordinator::commitTerminalResult(
             pending,
             emptyContentRegistry,
             nullptr,
@@ -1225,7 +1225,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -1265,7 +1265,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -1304,7 +1304,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -1347,7 +1347,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileEmptyContentRegistry emptyContentRegistry;
     RecordingTerrainContentProvider provider;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -1445,7 +1445,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         bool childrenEnsured = false;
         bool resourcesDirty = false;
 
-        TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        TilePendingLoadCommitCoordinator::commitTerminalResult(
             pending,
             emptyContentRegistry,
             nullptr,
@@ -1480,7 +1480,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -1519,7 +1519,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         std::move(result)};
     TileEmptyContentRegistry emptyContentRegistry;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -1566,7 +1566,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         pending,
         emptyContentRegistry,
         nullptr,
@@ -3132,7 +3132,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         emptyContentRegistry,
         nullptr,
@@ -3222,7 +3222,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         emptyContentRegistry,
         nullptr,
@@ -4604,14 +4604,14 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         terrainResult,
         emptyContentRegistry,
         nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
-    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
         contentResult,
         emptyContentRegistry,
         nullptr,

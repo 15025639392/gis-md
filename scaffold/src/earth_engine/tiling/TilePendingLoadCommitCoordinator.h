@@ -40,7 +40,7 @@ public:
     template <typename EnsureTileFn,
               typename EnsureChildrenFn,
               typename MarkResourcesDirtyFn>
-    static void commitTerrainTerminalResult(
+    static void commitTerminalResult(
         PendingTileLoad& result,
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer,
@@ -56,45 +56,13 @@ public:
 
         const TileTerminalLoadAction action =
             TileTerminalLoadCommitter::commitTerminalResult(
-                TileLoadDomain::TerrainContent,
+                result.domain,
                 *tile,
                 result.cacheKey,
                 std::move(result.result),
                 emptyContentRegistry,
                 pPrepRenderer,
                 contentProvider);
-        if (action.ensureChildren) {
-            ensureChildren(*tile);
-        }
-        if (action.resourcesDirty) {
-            markResourcesDirty();
-        }
-    }
-
-    template <typename EnsureTileFn,
-              typename EnsureChildrenFn,
-              typename MarkResourcesDirtyFn>
-    static void commitContentTerminalResult(
-        PendingTileLoad& result,
-        TileEmptyContentRegistry& emptyContentRegistry,
-        IPrepareRendererResources* pPrepRenderer,
-        EnsureTileFn&& ensureTile,
-        EnsureChildrenFn&& ensureChildren,
-        MarkResourcesDirtyFn&& markResourcesDirty) {
-        TilesetTile* tile = ensureTile(result.key);
-        if (!tile) {
-            emptyContentRegistry.erase(result.cacheKey);
-            return;
-        }
-
-        const TileTerminalLoadAction action =
-            TileTerminalLoadCommitter::commitTerminalResult(
-                TileLoadDomain::Content,
-                *tile,
-                result.cacheKey,
-                std::move(result.result),
-                emptyContentRegistry,
-                pPrepRenderer);
         if (action.ensureChildren) {
             ensureChildren(*tile);
         }
@@ -184,40 +152,6 @@ public:
         TilePendingUploadCompletion::eraseUpload(
             lifecycle,
             upload.cacheKey);
-    }
-
-    template <typename EnsureTileFn,
-              typename EnsureChildrenFn,
-              typename MarkResourcesDirtyFn>
-    static void commitTerminalResult(
-        PendingTileLoad& result,
-        TileEmptyContentRegistry& emptyContentRegistry,
-        IPrepareRendererResources* pPrepRenderer,
-        EnsureTileFn&& ensureTile,
-        EnsureChildrenFn&& ensureChildren,
-        MarkResourcesDirtyFn&& markResourcesDirty,
-        TilesetContentProvider* contentProvider = nullptr) {
-        TilesetTile* tile = ensureTile(result.key);
-        if (!tile) {
-            emptyContentRegistry.erase(result.cacheKey);
-            return;
-        }
-
-        const TileTerminalLoadAction action =
-            TileTerminalLoadCommitter::commitTerminalResult(
-                result.domain,
-                *tile,
-                result.cacheKey,
-                std::move(result.result),
-                emptyContentRegistry,
-                pPrepRenderer,
-                contentProvider);
-        if (action.ensureChildren) {
-            ensureChildren(*tile);
-        }
-        if (action.resourcesDirty) {
-            markResourcesDirty();
-        }
     }
 
 };

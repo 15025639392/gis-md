@@ -7,34 +7,9 @@
 
 namespace earth_engine {
 
-TileTerminalLoadAction
-TileTerminalLoadCommitter::commitTerminalResult(
-    TileLoadDomain domain,
-    TilesetTile& tile,
-    const std::string& cacheKey,
-    TileLoadResult result,
-    TileEmptyContentRegistry& emptyContentRegistry,
-    IPrepareRendererResources* pPrepRenderer,
-    TilesetContentProvider* contentProvider) {
-    if (domain == TileLoadDomain::TerrainContent) {
-        return commitTerrainTerminalResult(
-            tile,
-            cacheKey,
-            std::move(result),
-            emptyContentRegistry,
-            pPrepRenderer,
-            contentProvider);
-    }
-    return commitContentTerminalResult(
-        tile,
-        cacheKey,
-        std::move(result),
-        emptyContentRegistry,
-        pPrepRenderer);
-}
+namespace {
 
-TileTerminalLoadAction
-TileTerminalLoadCommitter::commitTerrainTerminalResult(
+TileTerminalLoadAction commitTerrainTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
     TileLoadResult result,
@@ -67,8 +42,7 @@ TileTerminalLoadCommitter::commitTerrainTerminalResult(
     return action;
 }
 
-TileTerminalLoadAction
-TileTerminalLoadCommitter::commitContentTerminalResult(
+TileTerminalLoadAction commitContentTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
     TileLoadResult result,
@@ -90,6 +64,34 @@ TileTerminalLoadCommitter::commitContentTerminalResult(
         emptyContentRegistry.erase(cacheKey);
     }
     return action;
+}
+
+} // namespace
+
+TileTerminalLoadAction
+TileTerminalLoadCommitter::commitTerminalResult(
+    TileLoadDomain domain,
+    TilesetTile& tile,
+    const std::string& cacheKey,
+    TileLoadResult result,
+    TileEmptyContentRegistry& emptyContentRegistry,
+    IPrepareRendererResources* pPrepRenderer,
+    TilesetContentProvider* contentProvider) {
+    if (domain == TileLoadDomain::TerrainContent) {
+        return commitTerrainTerminalResult(
+            tile,
+            cacheKey,
+            std::move(result),
+            emptyContentRegistry,
+            pPrepRenderer,
+            contentProvider);
+    }
+    return commitContentTerminalResult(
+        tile,
+        cacheKey,
+        std::move(result),
+        emptyContentRegistry,
+        pPrepRenderer);
 }
 
 } // namespace earth_engine
