@@ -131,6 +131,7 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
         contentProvider_);
     if (tile && contentProviderOwnsTerrainQuadtree()) {
         tile->contentProviderTerrainQuadtreeTile = true;
+        TileContentTerrainResiduePolicy::clearRejectableResidue(*tile);
     }
     return tile;
 }

@@ -945,8 +945,12 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_TRUE(result.availabilityUpdates.empty());
 }
 
-TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
+TEST(QuantizedMeshContentLoaderTest,
+     InvalidBodyPreservesKnownAvailabilityUpdatesLikeLayerJsonTerrainLoader) {
     const uint8_t invalid[] = {0, 1, 2, 3};
+    QuantizedMeshAvailabilityUpdate currentTileUpdate;
+    currentTileUpdate.layerIndex = 2;
+    currentTileUpdate.subtreeKey = TileKey{"Geographic-TMS", 1, 0, 0};
 
     QuantizedMeshContentLoadResult result =
         QuantizedMeshContentLoader::load(
@@ -958,7 +962,9 @@ TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
                 0,
                 TileKey{"Geographic-TMS", 0, 0, 0},
                 invalid,
-                sizeof(invalid)}});
+                sizeof(invalid)}},
+            RasterOverlayProjection::Geographic,
+            currentTileUpdate);
 
     EXPECT_FALSE(result.success());
     EXPECT_EQ(QuantizedMeshContentLoadStatus::Failed, result.status);
@@ -966,5 +972,17 @@ TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
     EXPECT_FALSE(result.metadata.updatedBoundingVolume.has_value());
     EXPECT_FALSE(result.metadata.updatedContentBoundingVolume.has_value());
     EXPECT_FALSE(result.metadata.rasterOverlayDetails.has_value());
-    EXPECT_TRUE(result.availabilityUpdates.empty());
+    ASSERT_EQ(2u, result.availabilityUpdates.size());
+    EXPECT_EQ(2, result.availabilityUpdates[0].layerIndex);
+    EXPECT_EQ(
+        currentTileUpdate.subtreeKey,
+        result.availabilityUpdates[0].subtreeKey);
+    EXPECT_EQ(0, result.availabilityUpdates[1].layerIndex);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 0, 0, 0}),
+              result.availabilityUpdates[1].subtreeKey);
+
+    TileContentLoadResult contentResult =
+        QuantizedMeshContentLoader::toTileContentLoadResult(std::move(result));
+    EXPECT_EQ(TileLoadStatus::Failed, contentResult.status);
+    ASSERT_EQ(2u, contentResult.quantizedMeshAvailabilityUpdates.size());
 }

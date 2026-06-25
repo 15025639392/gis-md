@@ -2410,8 +2410,6 @@ TileContentLoadResult QuantizedMeshTerrainProvider::decodeTileContent(
         }
     }
 
-    std::optional<QuantizedMeshAvailabilityUpdate> failedAvailabilityUpdate =
-        currentTileAvailabilityUpdate;
     TileContentLoadResult result = loadQuantizedMeshTileContent(
         key,
         data,
@@ -2419,11 +2417,6 @@ TileContentLoadResult QuantizedMeshTerrainProvider::decodeTileContent(
         waterMaskEnabled_,
         {},
         std::move(currentTileAvailabilityUpdate));
-    if (result.status == TileLoadStatus::Failed &&
-        failedAvailabilityUpdate) {
-        result.quantizedMeshAvailabilityUpdates.push_back(
-            std::move(*failedAvailabilityUpdate));
-    }
     return result;
 }
 

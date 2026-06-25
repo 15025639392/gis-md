@@ -239,6 +239,44 @@ void rewriteTerrainProjectionTexCoords(GltfModel& model,
     }
 }
 
+std::vector<QuantizedMeshAvailabilityUpdate> collectAvailabilityUpdates(
+    const std::vector<QuantizedMeshMetadataContent>& metadata,
+    std::optional<QuantizedMeshAvailabilityUpdate>
+        currentTileAvailabilityUpdate,
+    const QuantizedMeshParser::DecodedTile* decodedTile,
+    std::vector<std::string>* diagnostics) {
+    std::vector<QuantizedMeshAvailabilityUpdate> updates;
+    updates.reserve(
+        metadata.size() + (currentTileAvailabilityUpdate ? 1u : 0u));
+    if (currentTileAvailabilityUpdate) {
+        if (decodedTile && decodedTile->hasMetadataAvailability) {
+            currentTileAvailabilityUpdate->metadataAvailability =
+                decodedTile->metadataAvailability;
+        }
+        updates.push_back(std::move(*currentTileAvailabilityUpdate));
+    }
+    for (const QuantizedMeshMetadataContent& item : metadata) {
+        QuantizedMeshAvailabilityUpdate update;
+        update.layerIndex = item.layerIndex;
+        update.subtreeKey = item.subtreeKey;
+        if (item.data && item.size > 0) {
+            QuantizedMeshParser::MetadataAvailabilityParseResult metadataResult =
+                QuantizedMeshParser::parseMetadataAvailabilityWithDiagnostics(
+                    item.data,
+                    item.size);
+            update.metadataAvailability = std::move(metadataResult.availability);
+            if (diagnostics) {
+                diagnostics->insert(
+                    diagnostics->end(),
+                    metadataResult.diagnostics.begin(),
+                    metadataResult.diagnostics.end());
+            }
+        }
+        updates.push_back(std::move(update));
+    }
+    return updates;
+}
+
 } // namespace
 
 QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
@@ -260,12 +298,22 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
             tileRectangle,
             enableWaterMask);
     if (!decodedTile) {
+        result.availabilityUpdates = collectAvailabilityUpdates(
+            metadata,
+            std::move(currentTileAvailabilityUpdate),
+            nullptr,
+            &result.diagnostics);
         return result;
     }
 
     std::unique_ptr<GltfModel> gltfModel =
         makeQuantizedMeshGltfModel(*decodedTile);
     if (!gltfModel || gltfModel->primitives.empty()) {
+        result.availabilityUpdates = collectAvailabilityUpdates(
+            metadata,
+            std::move(currentTileAvailabilityUpdate),
+            decodedTile.get(),
+            &result.diagnostics);
         return result;
     }
 
@@ -292,33 +340,11 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         result.metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
     }
     result.gltfModel = std::move(gltfModel);
-    result.availabilityUpdates.reserve(
-        metadata.size() + (currentTileAvailabilityUpdate ? 1u : 0u));
-    if (currentTileAvailabilityUpdate) {
-        if (decodedTile->hasMetadataAvailability) {
-            currentTileAvailabilityUpdate->metadataAvailability =
-                decodedTile->metadataAvailability;
-        }
-        result.availabilityUpdates.push_back(
-            std::move(*currentTileAvailabilityUpdate));
-    }
-    for (const QuantizedMeshMetadataContent& item : metadata) {
-        QuantizedMeshAvailabilityUpdate update;
-        update.layerIndex = item.layerIndex;
-        update.subtreeKey = item.subtreeKey;
-        if (item.data && item.size > 0) {
-            QuantizedMeshParser::MetadataAvailabilityParseResult metadataResult =
-                QuantizedMeshParser::parseMetadataAvailabilityWithDiagnostics(
-                    item.data,
-                    item.size);
-            update.metadataAvailability = std::move(metadataResult.availability);
-            result.diagnostics.insert(
-                result.diagnostics.end(),
-                metadataResult.diagnostics.begin(),
-                metadataResult.diagnostics.end());
-        }
-        result.availabilityUpdates.push_back(std::move(update));
-    }
+    result.availabilityUpdates = collectAvailabilityUpdates(
+        metadata,
+        std::move(currentTileAvailabilityUpdate),
+        decodedTile.get(),
+        &result.diagnostics);
 
     return result;
 }
@@ -326,7 +352,10 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
 TileContentLoadResult QuantizedMeshContentLoader::toTileContentLoadResult(
     QuantizedMeshContentLoadResult&& result) {
     if (!result.success()) {
-        return TileContentLoadResult::failed();
+        TileContentLoadResult contentResult = TileContentLoadResult::failed();
+        contentResult.quantizedMeshAvailabilityUpdates =
+            std::move(result.availabilityUpdates);
+        return contentResult;
     }
 
     TileContentLoadResult contentResult =
