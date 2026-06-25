@@ -2,36 +2,31 @@
 
 #include "TileLoadTypes.h"
 
-#include <utility>
-#include <vector>
-
 namespace earth_engine {
 
 struct TileAvailabilityUpdateCommitter {
-    static std::vector<QuantizedMeshAvailabilityUpdate>
-    extractTerrainAvailabilityUpdates(
+    static void applyTerrainAvailabilityUpdates(
         TileLoadDomain domain,
         TileLoadResult& result,
         TilesetContentProvider* contentProvider) {
+        if (!contentProvider || !contentProvider->providesTerrainQuadtree()) {
+            return;
+        }
+
         if (domain == TileLoadDomain::TerrainContent &&
-            contentProvider &&
-            contentProvider->providesTerrainQuadtree() &&
             result.status == TileLoadStatus::Failed &&
             !result.quantizedMeshAvailabilityUpdates.empty()) {
-            return std::move(result.quantizedMeshAvailabilityUpdates);
-        }
-        return {};
-    }
-
-    static void applyTerrainAvailabilityUpdates(
-        const TileLoadedContent& content,
-        TilesetContentProvider* contentProvider) {
-        if (contentProvider &&
-            contentProvider->providesTerrainQuadtree() &&
-            content.satisfiesContentTerrainPayloadContract() &&
-            !content.quantizedMeshAvailabilityUpdates.empty()) {
             contentProvider->applyTerrainAvailabilityUpdates(
-                content.quantizedMeshAvailabilityUpdates);
+                result.quantizedMeshAvailabilityUpdates);
+            result.quantizedMeshAvailabilityUpdates.clear();
+            return;
+        }
+
+        if (result.status == TileLoadStatus::Renderable &&
+            result.content.satisfiesContentTerrainPayloadContract() &&
+            !result.content.quantizedMeshAvailabilityUpdates.empty()) {
+            contentProvider->applyTerrainAvailabilityUpdates(
+                result.content.quantizedMeshAvailabilityUpdates);
         }
     }
 };

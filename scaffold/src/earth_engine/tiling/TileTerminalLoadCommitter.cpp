@@ -3,7 +3,6 @@
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadResultMetadataApplicator.h"
 #include <utility>
-#include <vector>
 namespace earth_engine {
 namespace {
 TileTerminalLoadAction commitTerminalResultImpl(
@@ -48,12 +47,10 @@ TileTerminalLoadCommitter::commitTerminalResult(
     TileEmptyContentRegistry& emptyContentRegistry,
     IPrepareRendererResources* pPrepRenderer,
     TilesetContentProvider* contentProvider) {
-    std::vector<QuantizedMeshAvailabilityUpdate> terrainAvailabilityUpdates;
-    terrainAvailabilityUpdates =
-        TileAvailabilityUpdateCommitter::extractTerrainAvailabilityUpdates(
-            domain,
-            result,
-            contentProvider);
+    TileAvailabilityUpdateCommitter::applyTerrainAvailabilityUpdates(
+        domain,
+        result,
+        contentProvider);
     TileTerminalLoadAction action = commitTerminalResultImpl(
         domain,
         tile,
@@ -61,10 +58,6 @@ TileTerminalLoadCommitter::commitTerminalResult(
         std::move(result),
         emptyContentRegistry,
         pPrepRenderer);
-    if (!terrainAvailabilityUpdates.empty()) {
-        contentProvider->applyTerrainAvailabilityUpdates(
-            terrainAvailabilityUpdates);
-    }
     return action;
 }
 } // namespace earth_engine

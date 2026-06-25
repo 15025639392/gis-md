@@ -2,6 +2,7 @@
 
 #include "TileContentUploadCommitter.h"
 #include "TileEmptyContentRegistry.h"
+#include "TileAvailabilityUpdateCommitter.h"
 #include "TileLoadDomainPolicy.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
@@ -125,8 +126,9 @@ public:
         }
 
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
-        TileContentUploadCommitter::applyTerrainAvailabilityUpdates(
-            upload.content(),
+        TileAvailabilityUpdateCommitter::applyTerrainAvailabilityUpdates(
+            upload.domain,
+            upload.result,
             contentProvider);
         TileContentUploadCommitter::prepareRenderContent(
             *tile,

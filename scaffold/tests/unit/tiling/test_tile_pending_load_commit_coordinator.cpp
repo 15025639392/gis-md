@@ -22,6 +22,7 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
+#include "earth_engine/tiling/TileAvailabilityUpdateCommitter.h"
 
 #include <algorithm>
 #include <array>
@@ -1916,8 +1917,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         makeMinimalTerrainGltfModelForCommitTest());
     availabilityResult.content.quantizedMeshAvailabilityUpdates.push_back(
         update);
-    TileContentUploadCommitter::applyTerrainAvailabilityUpdates(
-        availabilityResult.content,
+    TileAvailabilityUpdateCommitter::applyTerrainAvailabilityUpdates(
+        TileLoadDomain::TerrainContent,
+        availabilityResult,
         &provider);
 
     ASSERT_EQ(1u, provider.appliedUpdates.size());
