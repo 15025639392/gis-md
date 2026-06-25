@@ -61,6 +61,26 @@ bool initializeTerrainChild(
     return changed;
 }
 
+void applyTerrainAvailabilityUpsampleBookkeeping(
+    const TilesetContentProvider& contentProvider,
+    const TilesetTile& tile,
+    TileTerrainAvailabilityUpsampleBookkeeping bookkeeping) {
+    switch (bookkeeping) {
+        case TileTerrainAvailabilityUpsampleBookkeeping::None:
+            break;
+        case TileTerrainAvailabilityUpsampleBookkeeping::Clear:
+            contentProvider.clearTerrainAvailabilityUpsampledChild(tile.key);
+            break;
+        case TileTerrainAvailabilityUpsampleBookkeeping::Latent:
+            contentProvider.noteTerrainAvailabilityLatentUpsampledChild(
+                tile.key);
+            break;
+        case TileTerrainAvailabilityUpsampleBookkeeping::Materialized:
+            contentProvider.noteTerrainAvailabilityUpsampledChild(tile.key);
+            break;
+    }
+}
+
 } // namespace
 
 TileContentAccess TileContentAccess::forContentTerrain(
@@ -180,23 +200,10 @@ TileContentAccess::ensureTileChildren(
             return availabilityState(key);
         });
     if (contentProviderOwnsTerrainQuadtree() && contentProvider_) {
-        const bool hasUpsampledChild =
-            TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
-                tile,
-                [this](const TileKey& key) {
-                    return availabilityState(key);
-                });
-        if (hasUpsampledChild) {
-            if (tile.children.empty()) {
-                contentProvider_->noteTerrainAvailabilityLatentUpsampledChild(
-                    tile.key);
-            } else {
-                contentProvider_->noteTerrainAvailabilityUpsampledChild(
-                    tile.key);
-            }
-        } else {
-            contentProvider_->clearTerrainAvailabilityUpsampledChild(tile.key);
-        }
+        applyTerrainAvailabilityUpsampleBookkeeping(
+            *contentProvider_,
+            tile,
+            result.terrainUpsampleBookkeeping);
     }
     return result;
 }

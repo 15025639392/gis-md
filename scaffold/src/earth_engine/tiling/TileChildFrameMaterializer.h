@@ -19,9 +19,18 @@ struct TileChildFrameMaterializeInput {
     IPrepareRendererResources* pPrepRenderer = nullptr;
 };
 
+enum class TileTerrainAvailabilityUpsampleBookkeeping {
+    None,
+    Clear,
+    Latent,
+    Materialized
+};
+
 struct TileChildFrameMaterializeResult {
     bool changed = false;
     bool retryLater = false;
+    TileTerrainAvailabilityUpsampleBookkeeping terrainUpsampleBookkeeping =
+        TileTerrainAvailabilityUpsampleBookkeeping::None;
 };
 
 class TileChildFrameMaterializer {
@@ -32,28 +41,45 @@ public:
         EnsureTileFn&& ensureTile,
         AvailabilityStateFn&& availabilityState) {
         if (!input.contentChildKeys.empty()) {
-            return TileChildFrameMaterializeResult{
+            return finalizeTerrainAvailabilityUpsampleBookkeeping(
+                input,
+                TileChildFrameMaterializeResult{
                 TileChildMaterializer::linkContentChildren(
                     input.tile,
                     input.contentChildKeys,
                     ensureTile),
-                false};
+                false},
+                availabilityState);
         }
 
         if (input.tile.key.z >= input.maxZoom) {
-            return {};
+            return finalizeTerrainAvailabilityUpsampleBookkeeping(
+                input,
+                {},
+                availabilityState);
         }
         if (input.tile.content.isTerrainAvailabilityUpsample()) {
-            return {};
+            return finalizeTerrainAvailabilityUpsampleBookkeeping(
+                input,
+                {},
+                availabilityState);
         }
         if (!input.hasTerrainQuadtree) {
-            return {};
+            return finalizeTerrainAvailabilityUpsampleBookkeeping(
+                input,
+                {},
+                availabilityState);
         }
         if (input.isAvailabilityBoundaryWaitingForContent) {
-            return TileChildFrameMaterializeResult{false, true};
+            return finalizeTerrainAvailabilityUpsampleBookkeeping(
+                input,
+                TileChildFrameMaterializeResult{false, true},
+                availabilityState);
         }
 
-        return TileChildFrameMaterializeResult{
+        return finalizeTerrainAvailabilityUpsampleBookkeeping(
+            input,
+            TileChildFrameMaterializeResult{
             TileChildMaterializer::materializeTerrainChildren(
                 input.tile,
                 input.maxZoom,
@@ -61,7 +87,35 @@ public:
                 ensureTile,
                 input.contentProviderOwnsTerrainQuadtree,
                 input.pPrepRenderer),
-            false};
+            false},
+            availabilityState);
+    }
+
+private:
+    template <typename AvailabilityStateFn>
+    static TileChildFrameMaterializeResult
+    finalizeTerrainAvailabilityUpsampleBookkeeping(
+        const TileChildFrameMaterializeInput& input,
+        TileChildFrameMaterializeResult result,
+        AvailabilityStateFn&& availabilityState) {
+        if (!input.contentProviderOwnsTerrainQuadtree) {
+            return result;
+        }
+
+        const bool hasUpsampledChild =
+            TileChildMaterializer::hasTerrainAvailabilityUpsampledChild(
+                input.tile,
+                availabilityState);
+        if (hasUpsampledChild) {
+            result.terrainUpsampleBookkeeping =
+                input.tile.children.empty()
+                    ? TileTerrainAvailabilityUpsampleBookkeeping::Latent
+                    : TileTerrainAvailabilityUpsampleBookkeeping::Materialized;
+        } else {
+            result.terrainUpsampleBookkeeping =
+                TileTerrainAvailabilityUpsampleBookkeeping::Clear;
+        }
+        return result;
     }
 };
 

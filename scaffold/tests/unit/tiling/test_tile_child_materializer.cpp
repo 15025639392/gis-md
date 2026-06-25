@@ -503,6 +503,49 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
+     AvailabilityBoundaryRetryReportsLatentUpsampleBookkeepingLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 2, 0, 0},
+        Rectangle{});
+    parent.content.loadState = TileLoadState::ContentLoading;
+
+    const std::array<TileKey, 4> childKeys{
+        TileKey{"Geographic-TMS", 3, 0, 0},
+        TileKey{"Geographic-TMS", 3, 1, 0},
+        TileKey{"Geographic-TMS", 3, 0, 1},
+        TileKey{"Geographic-TMS", 3, 1, 1}};
+    auto availability = [&childKeys](const TileKey& key) {
+        return key == childKeys[0]
+            ? TileAvailabilityState::Available
+            : TileAvailabilityState::NotAvailable;
+    };
+
+    int ensureCalls = 0;
+    const TileChildFrameMaterializeResult result =
+        TileChildFrameMaterializer::ensureChildren(
+            TileChildFrameMaterializeInput{
+                parent,
+                {},
+                8,
+                true,
+                true,
+                true},
+            [&ensureCalls](const TileKey&) -> TilesetTile* {
+                ++ensureCalls;
+                return nullptr;
+            },
+            availability);
+
+    EXPECT_FALSE(result.changed);
+    EXPECT_TRUE(result.retryLater);
+    EXPECT_EQ(
+        TileTerrainAvailabilityUpsampleBookkeeping::Latent,
+        result.terrainUpsampleBookkeeping);
+    EXPECT_EQ(0, ensureCalls);
+    EXPECT_TRUE(parent.children.empty());
+}
+
+TEST(TileChildMaterializerTest,
      AvailabilityBoundaryResolvedStatesMatchCesiumNative) {
     for (TileLoadState waitingState : {
              TileLoadState::Unloading,
