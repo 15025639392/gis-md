@@ -4317,7 +4317,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilesetTile parent(parentKey, parentBounds);
     TilesetTile child(childKey, childBounds, &parent);
     child.content.loadState = TileLoadState::ContentLoading;
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     parent.content.renderContent.setGltfContent(
         makeCommitCoordinatorQuadTerrainGltfModel(parentBounds));
     parent.content.renderContent.setTerrainRenderContent(true);

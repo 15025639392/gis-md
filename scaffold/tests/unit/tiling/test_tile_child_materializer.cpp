@@ -1782,7 +1782,7 @@ TEST(TileChildMaterializerTest, RasterUpsampledChildrenSplitSubdivisionAndRemain
         ASSERT_NE(nullptr, child);
         EXPECT_EQ(&parent, child->parent);
         EXPECT_TRUE(child->content.upsampledFromParent);
-        EXPECT_TRUE(child->content.rasterUpsampledForMoreDetail);
+        EXPECT_TRUE(child->content.isRasterDetailUpsample());
         EXPECT_DOUBLE_EQ(50.0, child->geometricError);
         ASSERT_TRUE(child->boundingVolume.has_value());
         EXPECT_EQ(TileBoundingVolumeKind::Region, child->boundingVolume->kind);
@@ -1894,8 +1894,7 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
         TileKey{"Geographic-TMS", 10, 512, 512},
         Rectangle::fromDegrees(106.0, 29.0, 107.0, 30.0));
     parent.geometricError = 64.0;
-    parent.content.upsampledFromParent = true;
-    parent.content.rasterUpsampledForMoreDetail = true;
+    parent.content.markRasterDetailUpsample();
     parent.content.renderContent.setTerrainHeightRange(100.0, 500.0);
 
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -1922,8 +1921,7 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
     for (TilesetTile* child : parent.children) {
         ASSERT_NE(nullptr, child);
         EXPECT_EQ(&parent, child->parent);
-        EXPECT_TRUE(child->content.upsampledFromParent);
-        EXPECT_TRUE(child->content.rasterUpsampledForMoreDetail);
+        EXPECT_TRUE(child->content.isRasterDetailUpsample());
         EXPECT_DOUBLE_EQ(32.0, child->geometricError);
         EXPECT_TRUE(child->content.renderContent.hasTerrainHeightRange());
         EXPECT_DOUBLE_EQ(
@@ -2655,8 +2653,7 @@ TEST(TileChildMaterializerTest, CanRefineBlocksTerrainUpsampledTiles) {
     TilesetTile existingChild(TileKey{"Geographic-TMS", 1, 0, 0}, Rectangle{});
     tile.children.push_back(&existingChild);
 
-    tile.content.upsampledFromParent = true;
-    tile.content.rasterUpsampledForMoreDetail = false;
+    tile.content.markTerrainAvailabilityUpsample();
     EXPECT_FALSE(TileChildMaterializer::canRefine(
         tile,
         TileRefinementAvailabilityOptions{
