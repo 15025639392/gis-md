@@ -630,7 +630,7 @@ TEST(TileLoadSchedulerTest,
 
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
-    tile.content.upsampledFromParent = true;
+    tile.content.markTerrainAvailabilityUpsample();
     bool prepared = false;
     bool marked = false;
 
@@ -689,7 +689,7 @@ TEST(TileLoadSchedulerTest,
     const TileKey childKey{"test", 1, 0, 0};
     TilesetTile parent(parentKey, Rectangle{});
     TilesetTile child(childKey, Rectangle{}, &parent);
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     TerrainQuadtreeContentProvider provider;
     FanoutTerrainProvider legacyProvider;
     bool prepared = false;
@@ -750,7 +750,7 @@ TEST(TileLoadSchedulerTest,
     const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
     TilesetTile parent(parentKey, parentBounds);
     TilesetTile child(childKey, childBounds, &parent);
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     parent.content.renderContent.setGltfContent(
         makeSchedulerQuadTerrainGltfModel(parentBounds));
     parent.content.renderContent.setTerrainRenderContent(true);
@@ -1152,8 +1152,8 @@ TEST(TileLoadSchedulerTest,
     const TileKey urgentKey{"test", 1, 1, 0};
     TilesetTile normalTile(normalKey, Rectangle{});
     TilesetTile urgentTile(urgentKey, Rectangle{});
-    normalTile.content.upsampledFromParent = true;
-    urgentTile.content.upsampledFromParent = true;
+    normalTile.content.markTerrainAvailabilityUpsample();
+    urgentTile.content.markTerrainAvailabilityUpsample();
     std::vector<int> prepareOrder;
     std::vector<int> markedOrder;
 
@@ -1213,7 +1213,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
     const TileKey waitingUpsampleKey{"test", 2, 0, 0};
     const TileKey loadableTerrainKey{"test", 1, 1, 0};
     TilesetTile waitingTile(waitingUpsampleKey, Rectangle{});
-    waitingTile.content.upsampledFromParent = true;
+    waitingTile.content.markTerrainAvailabilityUpsample();
     DeferredTerrainProvider provider;
     std::vector<int> plannedLevels;
     std::vector<int> preparedLevels;
@@ -1288,7 +1288,7 @@ TEST(TileLoadSchedulerTest,
         &parent);
     grandparent.children.push_back(&parent);
     parent.children.push_back(&child);
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
 
     grandparent.content.renderContent.prepareGltfContent(
         makeSchedulerQuadTerrainGltfModel(grandparent.bounds),
@@ -1371,7 +1371,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
     const TileKey missingTileStateKey{"test", 2, 0, 0};
     const TileKey readyUpsampleKey{"test", 2, 1, 0};
     TilesetTile readyTile(readyUpsampleKey, Rectangle{});
-    readyTile.content.upsampledFromParent = true;
+    readyTile.content.markTerrainAvailabilityUpsample();
     std::vector<int> plannedColumns;
     std::vector<int> preparedColumns;
     std::vector<int> markedColumns;
@@ -1495,7 +1495,7 @@ TEST(TileLoadSchedulerTest, SkipsEmptyUpsampledCacheKey) {
 
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
-    tile.content.upsampledFromParent = true;
+    tile.content.markTerrainAvailabilityUpsample();
     bool prepared = false;
     bool marked = false;
 
@@ -1544,7 +1544,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
 
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
-    tile.content.upsampledFromParent = true;
+    tile.content.markTerrainAvailabilityUpsample();
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());

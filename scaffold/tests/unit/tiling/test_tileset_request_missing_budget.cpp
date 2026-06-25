@@ -1640,7 +1640,7 @@ TEST(
     ASSERT_NE(root->children[1], nullptr);
 
     TilesetTile* upsampledChild = root->children[1];
-    ASSERT_TRUE(upsampledChild->content.upsampledFromParent);
+    ASSERT_TRUE(upsampledChild->content.derivesTerrainFromParent());
 
     TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
     const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();

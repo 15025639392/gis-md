@@ -58,15 +58,15 @@ TEST(TileUnloadPolicyTest, ProtectsOnlyDirectLoadingUpsampledChildren) {
     TilesetTile grandchild(TileKey{"test", 2, 0, 0}, Rectangle{}, &child);
     parent.children.push_back(&child);
 
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::ContentLoading;
     EXPECT_TRUE(
         TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent));
 
-    child.content.upsampledFromParent = false;
+    child.content.clearUpsampleKind();
     child.content.loadState = TileLoadState::Done;
     child.children.push_back(&grandchild);
-    grandchild.content.upsampledFromParent = true;
+    grandchild.content.markTerrainAvailabilityUpsample();
     grandchild.content.loadState = TileLoadState::ContentLoading;
     EXPECT_FALSE(
         TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent));

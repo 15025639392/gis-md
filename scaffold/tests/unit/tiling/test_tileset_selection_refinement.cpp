@@ -2404,7 +2404,7 @@ TEST(
     TilesetTestAccess::ensureTileChildren(tileset, *parent);
     ASSERT_FALSE(parent->children.empty());
     ASSERT_NE(nullptr, parent->children[0]);
-    EXPECT_FALSE(parent->children[0]->content.upsampledFromParent);
+    EXPECT_FALSE(parent->children[0]->content.derivesTerrainFromParent());
 }
 
 TEST(

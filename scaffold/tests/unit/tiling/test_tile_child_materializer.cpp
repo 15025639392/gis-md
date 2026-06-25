@@ -218,10 +218,10 @@ TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiu
     TilesetTile* nw = parent.children[2];
     TilesetTile* ne = parent.children[3];
 
-    EXPECT_FALSE(sw->content.upsampledFromParent);
-    EXPECT_TRUE(se->content.upsampledFromParent);
-    EXPECT_TRUE(nw->content.upsampledFromParent);
-    EXPECT_TRUE(ne->content.upsampledFromParent);
+    EXPECT_FALSE(sw->content.derivesTerrainFromParent());
+    EXPECT_TRUE(se->content.derivesTerrainFromParent());
+    EXPECT_TRUE(nw->content.derivesTerrainFromParent());
+    EXPECT_TRUE(ne->content.derivesTerrainFromParent());
 
     EXPECT_DOUBLE_EQ(50.0, sw->geometricError);
     EXPECT_DOUBLE_EQ(50.0, se->geometricError);
@@ -445,10 +445,14 @@ TEST(TileChildMaterializerTest,
         ASSERT_EQ(4u, parent.children.size());
         EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
                   parent.children[0]->key);
-        EXPECT_FALSE(parent.children[0]->content.upsampledFromParent);
-        EXPECT_TRUE(parent.children[1]->content.upsampledFromParent);
-        EXPECT_TRUE(parent.children[2]->content.upsampledFromParent);
-        EXPECT_TRUE(parent.children[3]->content.upsampledFromParent);
+        EXPECT_FALSE(
+            parent.children[0]->content.isTerrainAvailabilityUpsample());
+        EXPECT_TRUE(
+            parent.children[1]->content.isTerrainAvailabilityUpsample());
+        EXPECT_TRUE(
+            parent.children[2]->content.isTerrainAvailabilityUpsample());
+        EXPECT_TRUE(
+            parent.children[3]->content.isTerrainAvailabilityUpsample());
     }
 }
 
@@ -499,7 +503,7 @@ TEST(TileChildMaterializerTest,
     ASSERT_EQ(1u, parent.children.size());
     EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
               parent.children.front()->key);
-    EXPECT_FALSE(parent.children.front()->content.upsampledFromParent);
+    EXPECT_FALSE(parent.children.front()->content.derivesTerrainFromParent());
 }
 
 TEST(TileChildMaterializerTest,
@@ -869,10 +873,10 @@ TEST(TileChildMaterializerTest, NonRootUnavailableTerrainSiblingsBecomeUpsampled
     EXPECT_EQ((TileKey{"Geographic-TMS", 2, 2, 1}), parent.children[2]->key);
     EXPECT_EQ((TileKey{"Geographic-TMS", 2, 3, 1}), parent.children[3]->key);
 
-    EXPECT_FALSE(parent.children[0]->content.upsampledFromParent);
-    EXPECT_TRUE(parent.children[1]->content.upsampledFromParent);
-    EXPECT_TRUE(parent.children[2]->content.upsampledFromParent);
-    EXPECT_TRUE(parent.children[3]->content.upsampledFromParent);
+    EXPECT_FALSE(parent.children[0]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[1]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[2]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(parent.children[3]->content.isTerrainAvailabilityUpsample());
 }
 
 TEST(TileChildMaterializerTest,
@@ -1091,7 +1095,7 @@ TEST(TileChildMaterializerTest,
     EXPECT_TRUE(changed);
     ASSERT_EQ(4u, parent.children.size());
     EXPECT_EQ(acceptedChild, parent.children[0]);
-    EXPECT_FALSE(acceptedChild->content.upsampledFromParent);
+    EXPECT_FALSE(acceptedChild->content.derivesTerrainFromParent());
     EXPECT_FALSE(acceptedChild->content.renderContent.hasGltfModel());
     EXPECT_FALSE(acceptedChild->content.renderContent.isTerrainRenderContent());
     EXPECT_DOUBLE_EQ(40.0, acceptedChild->geometricError);
@@ -1318,7 +1322,7 @@ TEST(TileChildMaterializerTest,
     ASSERT_EQ(4u, parent.children.size());
     TilesetTile* upgradedChild = parent.children[1];
     ASSERT_EQ((TileKey{"Geographic-TMS", 2, 3, 0}), upgradedChild->key);
-    ASSERT_TRUE(upgradedChild->content.upsampledFromParent);
+    ASSERT_TRUE(upgradedChild->content.isTerrainAvailabilityUpsample());
     upgradedChild->content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
     upgradedChild->content.renderContent.setMeshReady(true);
@@ -1337,7 +1341,7 @@ TEST(TileChildMaterializerTest,
         ensure);
 
     EXPECT_TRUE(changed);
-    EXPECT_FALSE(upgradedChild->content.upsampledFromParent);
+    EXPECT_FALSE(upgradedChild->content.derivesTerrainFromParent());
     EXPECT_FALSE(upgradedChild->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(upgradedChild->content.renderContent.isMeshReady());
     EXPECT_FALSE(upgradedChild->content.renderContent.isSurfaceDrawable());
@@ -1672,10 +1676,10 @@ TEST(TileChildMaterializerTest, NonRootGeographicTerrainChildrenPreserveBounds) 
     EXPECT_NEAR(MathUtils::PiOverTwo * 0.5, ne->bounds.south(), 1e-9);
     EXPECT_NEAR(-MathUtils::PiOverTwo, ne->bounds.east(), 1e-9);
     EXPECT_NEAR(MathUtils::PiOverTwo, ne->bounds.north(), 1e-9);
-    EXPECT_FALSE(sw->content.upsampledFromParent);
-    EXPECT_TRUE(se->content.upsampledFromParent);
-    EXPECT_TRUE(nw->content.upsampledFromParent);
-    EXPECT_TRUE(ne->content.upsampledFromParent);
+    EXPECT_FALSE(sw->content.derivesTerrainFromParent());
+    EXPECT_TRUE(se->content.derivesTerrainFromParent());
+    EXPECT_TRUE(nw->content.derivesTerrainFromParent());
+    EXPECT_TRUE(ne->content.derivesTerrainFromParent());
 }
 
 TEST(TileChildMaterializerTest,
@@ -1724,10 +1728,10 @@ TEST(TileChildMaterializerTest,
     EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 1}), se->key);
     EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 0, 0}), nw->key);
     EXPECT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 0}), ne->key);
-    EXPECT_FALSE(sw->content.upsampledFromParent);
-    EXPECT_TRUE(se->content.upsampledFromParent);
-    EXPECT_TRUE(nw->content.upsampledFromParent);
-    EXPECT_TRUE(ne->content.upsampledFromParent);
+    EXPECT_FALSE(sw->content.derivesTerrainFromParent());
+    EXPECT_TRUE(se->content.derivesTerrainFromParent());
+    EXPECT_TRUE(nw->content.derivesTerrainFromParent());
+    EXPECT_TRUE(ne->content.derivesTerrainFromParent());
     EXPECT_LE(sw->bounds.north(), nw->bounds.south());
     EXPECT_LE(se->bounds.north(), ne->bounds.south());
 }
@@ -1781,7 +1785,7 @@ TEST(TileChildMaterializerTest, RasterUpsampledChildrenSplitSubdivisionAndRemain
     for (TilesetTile* child : parent.children) {
         ASSERT_NE(nullptr, child);
         EXPECT_EQ(&parent, child->parent);
-        EXPECT_TRUE(child->content.upsampledFromParent);
+        EXPECT_TRUE(child->content.derivesTerrainFromParent());
         EXPECT_TRUE(child->content.isRasterDetailUpsample());
         EXPECT_DOUBLE_EQ(50.0, child->geometricError);
         ASSERT_TRUE(child->boundingVolume.has_value());

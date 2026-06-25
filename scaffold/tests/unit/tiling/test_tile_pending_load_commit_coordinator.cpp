@@ -1409,10 +1409,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
     ASSERT_EQ(4u, tile.children.size());
     EXPECT_EQ(availableChildKey, tile.children[0]->key);
-    EXPECT_FALSE(tile.children[0]->content.upsampledFromParent);
-    EXPECT_TRUE(tile.children[1]->content.upsampledFromParent);
-    EXPECT_TRUE(tile.children[2]->content.upsampledFromParent);
-    EXPECT_TRUE(tile.children[3]->content.upsampledFromParent);
+    EXPECT_FALSE(tile.children[0]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(tile.children[1]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(tile.children[2]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(tile.children[3]->content.isTerrainAvailabilityUpsample());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

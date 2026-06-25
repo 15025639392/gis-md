@@ -19,22 +19,16 @@ struct TileContentRuntimeState {
     TileContentKind contentKind = TileContentKind::Unknown;
 
     /// cesium-native UpsampledQuadtreeNode equivalent. The tile is not
-    /// requestable; its render content is derived from an ancestor tile.
-    bool upsampledFromParent = false;
-
-    /// This upsampled tile exists to subdivide the surface for higher-detail
-    /// raster imagery. It still derives terrain from its parent, but may keep
-    /// refining while raster overlays report more detail.
-    bool rasterUpsampledForMoreDetail = false;
+    /// requestable; its render content is derived from an ancestor tile. The
+    /// kind distinguishes terrain availability fallback from raster-detail
+    /// subdivision so request, unload and mesh preparation paths can keep their
+    /// lifecycle rules separate.
+    TileContentUpsampleKind contentUpsampleKind =
+        TileContentUpsampleKind::None;
     std::optional<RasterOverlayProjection> rasterDetailSourceProjection;
 
     TileContentUpsampleKind upsampleKind() const {
-        if (!upsampledFromParent) {
-            return TileContentUpsampleKind::None;
-        }
-        return rasterUpsampledForMoreDetail
-            ? TileContentUpsampleKind::RasterDetail
-            : TileContentUpsampleKind::TerrainAvailability;
+        return contentUpsampleKind;
     }
 
     bool derivesTerrainFromParent() const {
@@ -51,14 +45,12 @@ struct TileContentRuntimeState {
     }
 
     void markTerrainAvailabilityUpsample() {
-        upsampledFromParent = true;
-        rasterUpsampledForMoreDetail = false;
+        contentUpsampleKind = TileContentUpsampleKind::TerrainAvailability;
         rasterDetailSourceProjection.reset();
     }
 
     void markRasterDetailUpsample() {
-        upsampledFromParent = true;
-        rasterUpsampledForMoreDetail = true;
+        contentUpsampleKind = TileContentUpsampleKind::RasterDetail;
         rasterDetailSourceProjection.reset();
     }
 
@@ -68,8 +60,7 @@ struct TileContentRuntimeState {
     }
 
     void clearUpsampleKind() {
-        upsampledFromParent = false;
-        rasterUpsampledForMoreDetail = false;
+        contentUpsampleKind = TileContentUpsampleKind::None;
         rasterDetailSourceProjection.reset();
     }
 };

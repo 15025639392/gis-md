@@ -416,7 +416,7 @@ TEST(
         childKey,
         scheme->tileToRectangle(childKey),
         &parent);
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::ContentLoading;
     parent.children.push_back(&child);
 

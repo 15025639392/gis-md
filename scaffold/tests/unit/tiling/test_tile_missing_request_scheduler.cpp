@@ -367,7 +367,7 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileWithoutGltfSourceDoesNotQueue
     const TileKey key{"test", 1, 0, 0};
     const std::string cacheKey = cacheKeyForTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
-    tile->content.upsampledFromParent = true;
+    tile->content.markTerrainAvailabilityUpsample();
     TilesetTile* tileRaw = tile.get();
     tiles[cacheKey] = std::move(tile);
     bool prepared = false;
@@ -417,7 +417,7 @@ TEST(TileMissingRequestSchedulerTest,
     const TileKey key{"test", 1, 0, 0};
     const std::string cacheKey = cacheKeyForTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
-    tile->content.upsampledFromParent = true;
+    tile->content.markTerrainAvailabilityUpsample();
     TilesetTile* tileRaw = tile.get();
     tiles[cacheKey] = std::move(tile);
     bool prepared = false;

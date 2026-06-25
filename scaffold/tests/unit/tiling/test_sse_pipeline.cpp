@@ -6042,8 +6042,7 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
           "Tileset: raster upsampled children make parent refinable");
     bool allUpsampled = root->children.size() == 4;
     for (TilesetTile* child : root->children) {
-        allUpsampled &= child && child->content.upsampledFromParent &&
-            child->content.rasterUpsampledForMoreDetail &&
+        allUpsampled &= child && child->content.isRasterDetailUpsample() &&
             child->parent == root &&
             std::abs(child->geometricError - 50.0) < 1e-9 &&
             child->boundingVolume &&
@@ -14457,7 +14456,7 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
     parent.selectionFrameState.completeRenderable = true;
     parent.selectionFrameState.renderable = true;
     parent.content.renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::ContentLoading;
     const std::string cacheKey = "test:0:0:0";
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -14513,7 +14512,7 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
     parent.content.loadState = TileLoadState::Done;
     parent.content.renderContent.setMeshReady(true);
     parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::ContentLoading;
     parent.rasterOverlayState.ensureMappingSlots(1);
     RasterOverlayDetails details = makeProviderDetails(*scheme, parent.bounds);
@@ -14580,7 +14579,7 @@ void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
     parent.content.loadState = TileLoadState::Unloading;
     parent.content.renderContent.setMeshReady(true);
     parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::Done;
     const std::string cacheKey = "test:0:0:0";
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -15464,14 +15463,14 @@ void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
     TilesetTile grandchild(TileKey{"test", 2, 0, 0}, Rectangle{}, &child);
     parent.children.push_back(&child);
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::ContentLoading;
     check(TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent),
           "TileUnloadPolicy: detects direct loading upsampled child");
-    child.content.upsampledFromParent = false;
+    child.content.clearUpsampleKind();
     child.content.loadState = TileLoadState::Done;
     child.children.push_back(&grandchild);
-    grandchild.content.upsampledFromParent = true;
+    grandchild.content.markTerrainAvailabilityUpsample();
     grandchild.content.loadState = TileLoadState::ContentLoading;
     check(!TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent),
           "TileUnloadPolicy: non-source ancestors are not protected by nested upsample work");
@@ -15501,7 +15500,7 @@ void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
     grandparent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     failedParent.content.loadState = TileLoadState::Failed;
     failedParent.content.contentKind = TileContentKind::Unknown;
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -15532,7 +15531,7 @@ void testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor() {
     parent.children.push_back(&child);
     parent.content.loadState = TileLoadState::FailedTemporarily;
     parent.content.contentKind = TileContentKind::Unknown;
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     int ensuredMeshes = 0;
     std::vector<TileLoadRequest> queuedRequests;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -15561,7 +15560,7 @@ void testTileUpsampleSourcePreparerQueuesUnloadedAncestor() {
     parent.children.push_back(&child);
     parent.content.loadState = TileLoadState::Unloaded;
     parent.content.contentKind = TileContentKind::Unknown;
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     int ensuredMeshes = 0;
     std::vector<TileLoadRequest> queuedRequests;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -15590,7 +15589,7 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
     parent.children.push_back(&child);
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::ContentLoaded;
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -15691,7 +15690,7 @@ void testTileUpsampleSourcePreparerWaitsForLoadingAncestor() {
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
     parent.content.loadState = TileLoadState::ContentLoading;
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -15720,7 +15719,7 @@ void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
     parent.content.renderContent.setMeshReady(true);
     parent.content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
-    child.content.upsampledFromParent = true;
+    child.content.markTerrainAvailabilityUpsample();
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -19729,7 +19728,7 @@ void testTileLoadSchedulerQueuesTerrainContentUpsampleWhenNetworkInflightIsFull(
     }
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
-    tile.content.upsampledFromParent = true;
+    tile.content.markTerrainAvailabilityUpsample();
     bool prepared = false;
     bool marked = false;
     TileLoadRequestOutcome outcome =
@@ -19827,8 +19826,8 @@ void testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample() {
     const TileKey urgentKey{"test", 1, 1, 0};
     TilesetTile normalTile(normalKey, Rectangle{});
     TilesetTile urgentTile(urgentKey, Rectangle{});
-    normalTile.content.upsampledFromParent = true;
-    urgentTile.content.upsampledFromParent = true;
+    normalTile.content.markTerrainAvailabilityUpsample();
+    urgentTile.content.markTerrainAvailabilityUpsample();
     std::vector<int> prepareOrder;
     std::vector<int> markedOrder;
     TileLoadRequestOutcome outcome =
@@ -20025,7 +20024,7 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
     const TileKey missingTileStateKey{"test", 2, 0, 0};
     const TileKey readyUpsampleKey{"test", 2, 1, 0};
     TilesetTile readyTile(readyUpsampleKey, Rectangle{});
-    readyTile.content.upsampledFromParent = true;
+    readyTile.content.markTerrainAvailabilityUpsample();
     std::vector<int> plannedColumns;
     std::vector<int> preparedColumns;
     std::vector<int> markedColumns;
@@ -20087,7 +20086,7 @@ void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
     budget.beginFrame(1, config);
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
-    tile.content.upsampledFromParent = true;
+    tile.content.markTerrainAvailabilityUpsample();
     bool prepared = false;
     bool marked = false;
     TileLoadRequestOutcome outcome =
@@ -20130,7 +20129,7 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
     budget.beginFrame(1, config);
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
-    tile.content.upsampledFromParent = true;
+    tile.content.markTerrainAvailabilityUpsample();
     const std::string cacheKey = testCacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -21332,7 +21331,7 @@ void prepareSparseRootChildrenRenderable(Tileset& tileset,
     TilesetTestAccess::ensureTileChildren(tileset, root);
     for (TilesetTile* child : root.children) {
         if (!child) continue;
-        if (!child->content.upsampledFromParent) {
+        if (!child->content.derivesTerrainFromParent()) {
             TilesetTestAccess::putTerrainCache(
                 tileset,
                 child->key,
@@ -21580,7 +21579,7 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     for (TilesetTile* child : root->children) {
         if (!child) continue;
         childKeys.push_back(child->key);
-        child->content.upsampledFromParent = false;
+        child->content.clearUpsampleKind();
         TilesetTestAccess::putTerrainCache(
             tileset,
             child->key,
@@ -21730,7 +21729,7 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
     for (TilesetTile* child : root->children) {
         if (!child) continue;
         childKeys.push_back(child->key);
-        child->content.upsampledFromParent = false;
+        child->content.clearUpsampleKind();
         child->content.loadState = TileLoadState::Failed;
         child->content.contentKind = TileContentKind::Empty;
         child->content.renderContent.setMeshReady(false);
@@ -22512,7 +22511,7 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
     for (TilesetTile* child : root->children) {
         if (!child) continue;
         childKeys.push_back(child->key);
-        child->content.upsampledFromParent = false;
+        child->content.clearUpsampleKind();
         TilesetTestAccess::putTerrainCache(
             tileset,
             child->key,
@@ -24107,11 +24106,11 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
     TilesetTile* se = root->children[1];
     TilesetTile* nw = root->children[2];
     TilesetTile* ne = root->children[3];
-    check(sw && !sw->content.upsampledFromParent,
+    check(sw && !sw->content.derivesTerrainFromParent(),
           "Tileset: available child remains a requestable real tile");
-    check(se && se->content.upsampledFromParent &&
-              nw && nw->content.upsampledFromParent &&
-              ne && ne->content.upsampledFromParent,
+    check(se && se->content.isTerrainAvailabilityUpsample() &&
+              nw && nw->content.isTerrainAvailabilityUpsample() &&
+              ne && ne->content.isTerrainAvailabilityUpsample(),
           "Tileset: unavailable siblings become upsampled children");
     check(sw && se &&
               std::abs(sw->geometricError - root->geometricError * 0.5) < 1e-9 &&
@@ -24163,7 +24162,7 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
     if (root->children.size() < 3 || !root->children[2]) return;
     TilesetTile* nw = root->children[2];
     check(nw->key == TileKey{"Geographic-TMS", 1, 0, 1} &&
-              !nw->content.upsampledFromParent,
+              !nw->content.derivesTerrainFromParent(),
           "Tileset: non-root terrain child setup uses a real available parent tile");
     TilesetTestAccess::putTerrainCache(
         tileset,
@@ -24190,10 +24189,10 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
               std::abs(childNe->bounds.east() + MathUtils::PiOverTwo) < 1e-9 &&
               std::abs(childNe->bounds.north() - MathUtils::PiOverTwo) < 1e-9,
           "Tileset: non-root Geographic-TMS terrain children preserve cesium-native order and rectangles");
-    check(childSw && !childSw->content.upsampledFromParent &&
-              childSe && childSe->content.upsampledFromParent &&
-              childNw && childNw->content.upsampledFromParent &&
-              childNe && childNe->content.upsampledFromParent,
+    check(childSw && !childSw->content.derivesTerrainFromParent() &&
+              childSe && childSe->content.isTerrainAvailabilityUpsample() &&
+              childNw && childNw->content.isTerrainAvailabilityUpsample() &&
+              childNe && childNe->content.isTerrainAvailabilityUpsample(),
           "Tileset: non-root partial terrain availability still materializes unavailable siblings as upsampled children");
 }
 void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
@@ -24216,7 +24215,7 @@ void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
     if (root->children.size() < 2 || !root->children[1]) return;
     TilesetTile* se = root->children[1];
     check(se->key == TileKey{"Geographic-TMS", 1, 1, 0} &&
-              !se->content.upsampledFromParent,
+              !se->content.derivesTerrainFromParent(),
           "Tileset: non-root upsample sibling setup uses a real available parent tile");
     TilesetTestAccess::ensureTileChildren(tileset, *se);
     check(se->children.size() == 4,
@@ -24231,10 +24230,10 @@ void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
               childNw->key == TileKey{"Geographic-TMS", 2, 2, 1} &&
               childNe->key == TileKey{"Geographic-TMS", 2, 3, 1},
           "Tileset: non-root upsample siblings preserve cesium-native SW/SE/NW/NE keys");
-    check(childSw && !childSw->content.upsampledFromParent &&
-              childSe && childSe->content.upsampledFromParent &&
-              childNw && childNw->content.upsampledFromParent &&
-              childNe && childNe->content.upsampledFromParent,
+    check(childSw && !childSw->content.derivesTerrainFromParent() &&
+              childSe && childSe->content.isTerrainAvailabilityUpsample() &&
+              childNw && childNw->content.isTerrainAvailabilityUpsample() &&
+              childNe && childNe->content.isTerrainAvailabilityUpsample(),
           "Tileset: non-root unavailable terrain siblings are UpsampledQuadtreeNode equivalents");
 }
 void testTilesetAncestorFallbackIsClippedToMissingChild() {
@@ -25194,7 +25193,7 @@ void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
           "Tileset: parent-wait setup creates partial-availability children");
     if (root->children.size() < 2 || !root->children[1]) return;
     TilesetTile* upsampledChild = root->children[1];
-    check(upsampledChild->content.upsampledFromParent,
+    check(upsampledChild->content.isTerrainAvailabilityUpsample(),
           "Tileset: parent-wait child is marked as upsampled terrain");
     TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
     const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
@@ -25227,7 +25226,7 @@ void testTilesetUpsampledChildFinalizesContentLoadedParent() {
           "Tileset: content-loaded-parent setup creates partial-availability children");
     if (root->children.size() < 2 || !root->children[1]) return;
     TilesetTile* upsampledChild = root->children[1];
-    check(upsampledChild->content.upsampledFromParent,
+    check(upsampledChild->content.isTerrainAvailabilityUpsample(),
           "Tileset: content-loaded-parent child is marked as upsampled terrain");
     TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
     check(upsampledChild->content.loadState == TileLoadState::Unloaded &&
@@ -25276,7 +25275,7 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
           "Tileset: glTF-parent upsample setup creates partial-availability children");
     if (root->children.size() < 2 || !root->children[1]) return;
     TilesetTile* child = root->children[1];
-    check(child->content.upsampledFromParent,
+    check(child->content.isTerrainAvailabilityUpsample(),
           "Tileset: glTF-parent child is marked as upsampled terrain");
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
@@ -26279,7 +26278,7 @@ void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
           "Tileset: upsample-child-loading setup creates children");
     if (root->children.empty() || !root->children.front()) return;
     TilesetTile* child = root->children.front();
-    child->content.upsampledFromParent = true;
+    child->content.markTerrainAvailabilityUpsample();
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::Unloaded &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 0,

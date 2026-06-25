@@ -32,7 +32,7 @@ struct ProtectedSourceFixture {
             SurfaceDrawableSource::HeightmapTerrain);
         parent.selectionFrameState.renderable = true;
         parent.selectionFrameState.completeRenderable = true;
-        child.content.upsampledFromParent = true;
+        child.content.markTerrainAvailabilityUpsample();
         child.content.loadState = TileLoadState::ContentLoading;
         terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
     }
@@ -106,9 +106,9 @@ TEST(
         Rectangle{},
         &fixture.child};
     fixture.child.children.push_back(&grandchild);
-    fixture.child.content.upsampledFromParent = false;
+    fixture.child.content.clearUpsampleKind();
     fixture.child.content.loadState = TileLoadState::Done;
-    grandchild.content.upsampledFromParent = true;
+    grandchild.content.markTerrainAvailabilityUpsample();
     grandchild.content.loadState = TileLoadState::ContentLoading;
 
     const TileCacheUnloadContentResult result = fixture.unloadParent();
