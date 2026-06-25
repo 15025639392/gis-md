@@ -100,7 +100,8 @@ public:
                 upload.domain,
                 upload.result)) {
             TileLoadResult failedResult =
-                TileLoadResult::createFailedPreservingAvailability(
+                TileLoadDomainPolicy::normalizeForDomain(
+                    upload.domain,
                     std::move(upload.result));
             const TileTerminalLoadAction action =
                 TileTerminalLoadCommitter::commitTerminalResult(
