@@ -1,6 +1,7 @@
 #include "TileTerminalLoadCommitter.h"
 #include "TileAvailabilityUpdateCommitter.h"
 #include "TileEmptyContentRegistry.h"
+#include "TileLoadDomainPolicy.h"
 #include "TileLoadResultMetadataApplicator.h"
 #include <utility>
 namespace earth_engine {
@@ -18,14 +19,9 @@ TileTerminalLoadAction commitTerminalResultImpl(
             tile,
             result.status,
             pPrepRenderer);
-    if (domain == TileLoadDomain::TerrainContent) {
-        if (result.shouldApplyTerminalMetadata() &&
-            result.status == TileLoadStatus::Empty) {
-            TileLoadResultMetadataApplicator::apply(
-                tile,
-                std::move(result.content.metadata));
-        }
-    } else if (result.shouldApplyTerminalMetadata()) {
+    if (TileLoadDomainPolicy::shouldApplyTerminalMetadataForDomain(
+            domain,
+            result)) {
         TileLoadResultMetadataApplicator::apply(
             tile,
             std::move(result.content.metadata));

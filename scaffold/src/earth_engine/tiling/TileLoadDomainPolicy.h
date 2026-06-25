@@ -23,6 +23,16 @@ struct TileLoadDomainPolicy {
                !shouldUploadForDomain(domain, result);
     }
 
+    static bool shouldApplyTerminalMetadataForDomain(
+        TileLoadDomain domain,
+        const TileLoadResult& result) {
+        if (!result.shouldApplyTerminalMetadata()) {
+            return false;
+        }
+        return domain != TileLoadDomain::TerrainContent ||
+               result.status == TileLoadStatus::Empty;
+    }
+
     static TileLoadResult normalizeForDomain(
         TileLoadDomain domain,
         TileLoadResult&& result) {

@@ -1564,6 +1564,35 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     DomainPolicyScopesTerminalMetadataLikeCesiumNative) {
+    TileLoadResult emptyResult = TileLoadResult::createTerminal(
+        TileLoadStatus::Empty,
+        makeBoundingVolumeMetadata(
+            Rectangle(0.1, 0.2, 0.3, 0.4),
+            -10.0,
+            20.0));
+    TileLoadResult externalResult = TileLoadResult::createTerminal(
+        TileLoadStatus::External,
+        makeBoundingVolumeMetadata(
+            Rectangle(0.2, 0.3, 0.4, 0.5),
+            -5.0,
+            15.0));
+
+    EXPECT_TRUE(TileLoadDomainPolicy::shouldApplyTerminalMetadataForDomain(
+        TileLoadDomain::Content,
+        emptyResult));
+    EXPECT_TRUE(TileLoadDomainPolicy::shouldApplyTerminalMetadataForDomain(
+        TileLoadDomain::Content,
+        externalResult));
+    EXPECT_TRUE(TileLoadDomainPolicy::shouldApplyTerminalMetadataForDomain(
+        TileLoadDomain::TerrainContent,
+        emptyResult));
+    EXPECT_FALSE(TileLoadDomainPolicy::shouldApplyTerminalMetadataForDomain(
+        TileLoadDomain::TerrainContent,
+        externalResult));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentFailedTerminalIgnoresTileLoadResultMetadata) {
     expectContentTerminalIgnoresMetadata(
         TileLoadStatus::Failed,
