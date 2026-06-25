@@ -13,12 +13,20 @@ TileTerminalLoadCommitter::commitTerrainTerminalResult(
     const std::string& cacheKey,
     TileLoadResult result,
     TileEmptyContentRegistry& emptyContentRegistry,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    TilesetContentProvider* contentProvider) {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyTerrainTerminalResult(
             tile,
             result.status,
             pPrepRenderer);
+    if (contentProvider &&
+        contentProvider->providesTerrainQuadtree() &&
+        result.status == TileLoadStatus::Failed &&
+        !result.quantizedMeshAvailabilityUpdates.empty()) {
+        contentProvider->applyTerrainAvailabilityUpdates(
+            result.quantizedMeshAvailabilityUpdates);
+    }
     if (result.shouldApplyTerminalMetadata() &&
         result.status == TileLoadStatus::Empty) {
         TileLoadResultMetadataApplicator::apply(

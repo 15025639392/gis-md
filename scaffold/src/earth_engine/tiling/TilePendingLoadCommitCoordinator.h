@@ -53,20 +53,14 @@ public:
             return;
         }
 
-        if (shouldApplyTerminalTerrainAvailability(
-                result.result,
-                contentProvider)) {
-            contentProvider->applyTerrainAvailabilityUpdates(
-                result.result.quantizedMeshAvailabilityUpdates);
-        }
-
         const TileTerminalLoadAction action =
             TileTerminalLoadCommitter::commitTerrainTerminalResult(
                 *tile,
                 result.cacheKey,
                 std::move(result.result),
                 emptyContentRegistry,
-                pPrepRenderer);
+                pPrepRenderer,
+                contentProvider);
         if (action.ensureChildren) {
             ensureChildren(*tile);
         }
@@ -135,13 +129,6 @@ public:
             TileLoadResult failedResult =
                 TileLoadResult::createFailedPreservingAvailability(
                     std::move(upload.result));
-            if (upload.domain == TileLoadDomain::TerrainContent &&
-                shouldApplyTerminalTerrainAvailability(
-                    failedResult,
-                    contentProvider)) {
-                contentProvider->applyTerrainAvailabilityUpdates(
-                    failedResult.quantizedMeshAvailabilityUpdates);
-            }
             const TileTerminalLoadAction action =
                 upload.domain == TileLoadDomain::TerrainContent
                     ? TileTerminalLoadCommitter::commitTerrainTerminalResult(
@@ -149,7 +136,8 @@ public:
                           upload.cacheKey,
                           std::move(failedResult),
                           emptyContentRegistry,
-                          pPrepRenderer)
+                          pPrepRenderer,
+                          contentProvider)
                     : TileTerminalLoadCommitter::commitContentTerminalResult(
                           *tile,
                           upload.cacheKey,
@@ -266,15 +254,6 @@ public:
             std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
     }
 
-private:
-    static bool shouldApplyTerminalTerrainAvailability(
-        const TileLoadResult& result,
-        const TilesetContentProvider* contentProvider) {
-        return contentProvider &&
-               contentProvider->providesTerrainQuadtree() &&
-               !result.quantizedMeshAvailabilityUpdates.empty() &&
-               result.status == TileLoadStatus::Failed;
-    }
 };
 
 } // namespace earth_engine

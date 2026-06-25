@@ -9,6 +9,7 @@ namespace earth_engine {
 
 class TileEmptyContentRegistry;
 class IPrepareRendererResources;
+class TilesetContentProvider;
 struct TilesetTile;
 
 struct TileTerminalLoadCommitter {
@@ -17,7 +18,8 @@ struct TileTerminalLoadCommitter {
         const std::string& cacheKey,
         TileLoadResult result,
         TileEmptyContentRegistry& emptyContentRegistry,
-        IPrepareRendererResources* pPrepRenderer);
+        IPrepareRendererResources* pPrepRenderer,
+        TilesetContentProvider* contentProvider = nullptr);
     static TileTerminalLoadAction commitContentTerminalResult(
         TilesetTile& tile,
         const std::string& cacheKey,
