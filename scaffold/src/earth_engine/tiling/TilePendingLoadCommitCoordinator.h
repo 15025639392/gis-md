@@ -55,7 +55,8 @@ public:
         }
 
         const TileTerminalLoadAction action =
-            TileTerminalLoadCommitter::commitTerrainTerminalResult(
+            TileTerminalLoadCommitter::commitTerminalResult(
+                TileLoadDomain::TerrainContent,
                 *tile,
                 result.cacheKey,
                 std::move(result.result),
@@ -87,7 +88,8 @@ public:
         }
 
         const TileTerminalLoadAction action =
-            TileTerminalLoadCommitter::commitContentTerminalResult(
+            TileTerminalLoadCommitter::commitTerminalResult(
+                TileLoadDomain::Content,
                 *tile,
                 result.cacheKey,
                 std::move(result.result),
@@ -133,20 +135,14 @@ public:
                 TileLoadResult::createFailedPreservingAvailability(
                     std::move(upload.result));
             const TileTerminalLoadAction action =
-                upload.domain == TileLoadDomain::TerrainContent
-                    ? TileTerminalLoadCommitter::commitTerrainTerminalResult(
-                          *tile,
-                          upload.cacheKey,
-                          std::move(failedResult),
-                          emptyContentRegistry,
-                          pPrepRenderer,
-                          contentProvider)
-                    : TileTerminalLoadCommitter::commitContentTerminalResult(
-                          *tile,
-                          upload.cacheKey,
-                          std::move(failedResult),
-                          emptyContentRegistry,
-                          pPrepRenderer);
+                TileTerminalLoadCommitter::commitTerminalResult(
+                    upload.domain,
+                    *tile,
+                    upload.cacheKey,
+                    std::move(failedResult),
+                    emptyContentRegistry,
+                    pPrepRenderer,
+                    contentProvider);
             if (action.ensureChildren) {
                 ensureChildren(*tile);
             }
@@ -201,23 +197,26 @@ public:
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty,
         TilesetContentProvider* contentProvider = nullptr) {
-        if (result.domain == TileLoadDomain::Content) {
-            commitContentTerminalResult(
-                result,
+        TilesetTile* tile = ensureTile(result.key);
+        if (!tile) {
+            emptyContentRegistry.erase(result.cacheKey);
+            return;
+        }
+
+        const TileTerminalLoadAction action =
+            TileTerminalLoadCommitter::commitTerminalResult(
+                result.domain,
+                *tile,
+                result.cacheKey,
+                std::move(result.result),
                 emptyContentRegistry,
                 pPrepRenderer,
-                std::forward<EnsureTileFn>(ensureTile),
-                std::forward<EnsureChildrenFn>(ensureChildren),
-                std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
-        } else {
-            commitTerrainTerminalResult(
-                result,
-                emptyContentRegistry,
-                pPrepRenderer,
-                std::forward<EnsureTileFn>(ensureTile),
-                std::forward<EnsureChildrenFn>(ensureChildren),
-                std::forward<MarkResourcesDirtyFn>(markResourcesDirty),
                 contentProvider);
+        if (action.ensureChildren) {
+            ensureChildren(*tile);
+        }
+        if (action.resourcesDirty) {
+            markResourcesDirty();
         }
     }
 

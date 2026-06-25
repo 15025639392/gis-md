@@ -75,10 +75,6 @@ enum class TileLoadDomain {
     Content
 };
 
-inline bool isTerrainContentLoadDomain(TileLoadDomain domain) {
-    return domain == TileLoadDomain::TerrainContent;
-}
-
 inline bool isContentLoadDomain(TileLoadDomain domain) {
     return domain == TileLoadDomain::Content ||
            domain == TileLoadDomain::TerrainContent;
