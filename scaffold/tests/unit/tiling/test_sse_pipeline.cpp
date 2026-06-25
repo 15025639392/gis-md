@@ -19449,7 +19449,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
           "TileLoadRequestPlanner: unloaded content tile remains requestable");
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
-    snapshot.upsampledFromParent = true;
+    snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
     snapshot.loadState = TileLoadState::FailedTemporarily;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::TerrainContentUpsample,
@@ -19731,7 +19731,7 @@ void testTileLoadSchedulerQueuesTerrainContentUpsampleWhenNetworkInflightIsFull(
                 tileState = &tile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -19838,7 +19838,7 @@ void testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample() {
                 tileState = key == urgentKey ? &urgentTile : &normalTile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -19906,7 +19906,7 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
                 tileState = &child;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 snapshot.loadState = child.content.loadState;
                 return snapshot;
             },
@@ -19973,7 +19973,7 @@ void testTileLoadSchedulerDoesNotStartUpsampleFromUnloadingParent() {
                 tileState = &child;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 snapshot.loadState = child.content.loadState;
                 return snapshot;
             },
@@ -20036,7 +20036,7 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
                 plannedColumns.push_back(key.x);
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 tileState = key == missingTileStateKey ? nullptr : &readyTile;
                 return snapshot;
             },
@@ -20089,7 +20089,7 @@ void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
                 tileState = &tile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 return snapshot;
             },
             [](const std::string&) { return true; },
@@ -20142,7 +20142,7 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
                 tileState = &tile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 return snapshot;
             },
             [](const std::string&) { return false; },

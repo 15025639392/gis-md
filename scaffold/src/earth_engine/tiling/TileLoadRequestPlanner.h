@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileContentUpsampleKind.h"
 #include "TileLoadState.h"
 
 namespace earth_engine {
@@ -12,7 +13,7 @@ enum class TileLoadRequestKind {
 
 struct TileLoadRequestSnapshot {
     bool hasTile = false;
-    bool upsampledFromParent = false;
+    TileContentUpsampleKind upsampleKind = TileContentUpsampleKind::None;
     bool contentProviderSupportsTile = false;
     bool contentProviderOwnsTerrainQuadtree = false;
     bool hasRenderContent = false;

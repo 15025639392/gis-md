@@ -652,7 +652,7 @@ TEST(TileLoadSchedulerTest,
                 tileState = &tile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -713,7 +713,7 @@ TEST(TileLoadSchedulerTest,
                 tileState = &child;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 snapshot.contentProviderOwnsTerrainQuadtree = true;
                 return snapshot;
             },
@@ -779,7 +779,7 @@ TEST(TileLoadSchedulerTest,
                 tileState = &child;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 snapshot.contentProviderOwnsTerrainQuadtree = true;
                 return snapshot;
             },
@@ -876,7 +876,7 @@ TEST(TileLoadSchedulerTest,
                 tileState = &child;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 snapshot.contentProviderOwnsTerrainQuadtree = true;
                 return snapshot;
             },
@@ -976,7 +976,7 @@ TEST(
                 tileState = &child;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 snapshot.loadState = child.content.loadState;
                 return snapshot;
             },
@@ -1181,7 +1181,7 @@ TEST(TileLoadSchedulerTest,
                 tileState = key == urgentKey ? &urgentTile : &normalTile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 return snapshot;
             },
             [](const std::string&) { return false; },
@@ -1245,7 +1245,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
                 if (key == waitingUpsampleKey) {
                     tileState = &waitingTile;
                     snapshot.hasTile = true;
-                    snapshot.upsampledFromParent = true;
+                    snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 } else {
                     tileState = nullptr;
                 }
@@ -1400,7 +1400,7 @@ TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
                 plannedColumns.push_back(key.x);
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 tileState = key == missingTileStateKey ? nullptr : &readyTile;
                 return snapshot;
             },
@@ -1462,7 +1462,7 @@ TEST(TileLoadSchedulerTest,
                 tileState = &failedTile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 snapshot.loadState = failedTile.content.loadState;
                 return snapshot;
             },
@@ -1517,7 +1517,7 @@ TEST(TileLoadSchedulerTest, SkipsEmptyUpsampledCacheKey) {
                 tileState = &tile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 return snapshot;
             },
             [](const std::string&) { return true; },
@@ -1577,7 +1577,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
                 tileState = &tile;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampledFromParent = true;
+                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
                 return snapshot;
             },
             [](const std::string&) { return false; },

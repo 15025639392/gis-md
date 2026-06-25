@@ -59,7 +59,7 @@ TEST(TileLoadRequestPlannerTest, ContentProviderMakesUnloadedTilesRequestable) {
 TEST(TileLoadRequestPlannerTest, ClassifiesUpsampledTerrainAsContentUpsample) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
-    snapshot.upsampledFromParent = true;
+    snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
     snapshot.loadState = TileLoadState::FailedTemporarily;
 
     EXPECT_EQ(
@@ -76,7 +76,7 @@ TEST(TileLoadRequestPlannerTest, ClassifiesUpsampledTerrainAsContentUpsample) {
 TEST(TileLoadRequestPlannerTest, UpsampledTerrainTakesContentUpsamplePathBeforeProviderChecks) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
-    snapshot.upsampledFromParent = true;
+    snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
     snapshot.loadState = TileLoadState::Unloaded;
     snapshot.hasRenderContent = true;
 
@@ -88,8 +88,20 @@ TEST(TileLoadRequestPlannerTest, UpsampledTerrainTakesContentUpsamplePathBeforeP
 TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainUpsampleUsesGltfPath) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
-    snapshot.upsampledFromParent = true;
+    snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
     snapshot.contentProviderOwnsTerrainQuadtree = true;
+    snapshot.loadState = TileLoadState::Unloaded;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::TerrainContentUpsample,
+        TileLoadRequestPlanner::classify(snapshot));
+}
+
+TEST(TileLoadRequestPlannerTest,
+     RasterDetailUpsampleKeepsExplicitUpsampleKind) {
+    TileLoadRequestSnapshot snapshot;
+    snapshot.hasTile = true;
+    snapshot.upsampleKind = TileContentUpsampleKind::RasterDetail;
     snapshot.loadState = TileLoadState::Unloaded;
 
     EXPECT_EQ(
@@ -100,7 +112,7 @@ TEST(TileLoadRequestPlannerTest, ContentOwnedTerrainUpsampleUsesGltfPath) {
 TEST(TileLoadRequestPlannerTest, UpsampleDoesNotRequireHeightmapSurfacePath) {
     TileLoadRequestSnapshot snapshot;
     snapshot.hasTile = true;
-    snapshot.upsampledFromParent = true;
+    snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
     snapshot.loadState = TileLoadState::Unloaded;
 
     EXPECT_EQ(

@@ -10,7 +10,7 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
         return TileLoadRequestKind::Skip;
     }
 
-    if (snapshot.upsampledFromParent) {
+    if (snapshot.upsampleKind != TileContentUpsampleKind::None) {
         return TileLoadRequestKind::TerrainContentUpsample;
     }
 

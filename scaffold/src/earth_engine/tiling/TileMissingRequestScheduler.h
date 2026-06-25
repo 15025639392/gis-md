@@ -74,11 +74,12 @@ private:
 
         TileLoadRequestSnapshot snapshot;
         snapshot.hasTile = outTileState != nullptr;
-        snapshot.upsampledFromParent =
-            outTileState != nullptr &&
-            outTileState->content.derivesTerrainFromParent();
+        snapshot.upsampleKind =
+            outTileState != nullptr
+                ? outTileState->content.upsampleKind()
+                : TileContentUpsampleKind::None;
         snapshot.contentProviderSupportsTile =
-            !snapshot.upsampledFromParent &&
+            snapshot.upsampleKind == TileContentUpsampleKind::None &&
             input.contentProvider &&
             input.contentProvider->supportsTile(key);
         snapshot.contentProviderOwnsTerrainQuadtree =

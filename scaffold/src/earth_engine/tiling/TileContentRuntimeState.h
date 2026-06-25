@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileContentUpsampleKind.h"
 #include "TileLoadState.h"
 #include "TileRenderContentState.h"
 #include "SurfaceTile.h"
@@ -27,16 +28,26 @@ struct TileContentRuntimeState {
     bool rasterUpsampledForMoreDetail = false;
     std::optional<RasterOverlayProjection> rasterDetailSourceProjection;
 
+    TileContentUpsampleKind upsampleKind() const {
+        if (!upsampledFromParent) {
+            return TileContentUpsampleKind::None;
+        }
+        return rasterUpsampledForMoreDetail
+            ? TileContentUpsampleKind::RasterDetail
+            : TileContentUpsampleKind::TerrainAvailability;
+    }
+
     bool derivesTerrainFromParent() const {
-        return upsampledFromParent;
+        return upsampleKind() != TileContentUpsampleKind::None;
     }
 
     bool isTerrainAvailabilityUpsample() const {
-        return upsampledFromParent && !rasterUpsampledForMoreDetail;
+        return upsampleKind() ==
+               TileContentUpsampleKind::TerrainAvailability;
     }
 
     bool isRasterDetailUpsample() const {
-        return upsampledFromParent && rasterUpsampledForMoreDetail;
+        return upsampleKind() == TileContentUpsampleKind::RasterDetail;
     }
 
     void markTerrainAvailabilityUpsample() {

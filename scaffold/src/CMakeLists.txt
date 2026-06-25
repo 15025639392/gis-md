@@ -253,6 +253,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/QuadtreeTilingScheme.h
     earth_engine/tiling/QuadtreeTilingScheme.cpp
     earth_engine/tiling/TileLoadState.h
+    earth_engine/tiling/TileContentUpsampleKind.h
     earth_engine/tiling/TileRefine.h
     earth_engine/tiling/TileAvailability.h
     earth_engine/tiling/TileAvailability.cpp
