@@ -39,7 +39,8 @@ public:
         IPrepareRendererResources* pPrepRenderer = nullptr);
     bool prepareUpsampleSourceTile(
         TilesetTile& tile,
-        double priority);
+        double priority,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
 
 private:
     void prepareContentTerrainFrame(

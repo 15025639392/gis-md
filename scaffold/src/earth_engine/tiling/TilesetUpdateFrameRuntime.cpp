@@ -89,11 +89,12 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
         [&tileset, pPrepRenderer](TilesetTile& tile) {
             tileset.cacheOwnership_.unloadTileContent(tile, pPrepRenderer);
         },
-        [&tileset](const std::vector<TileLoadRequest>& requests,
-                   FrameResourceBudget* budget) {
+        [&tileset, pPrepRenderer](const std::vector<TileLoadRequest>& requests,
+                                  FrameResourceBudget* budget) {
             return tileset.requestMissingContent(
                 requests,
-                budget);
+                budget,
+                pPrepRenderer);
         });
     const TileUpdateUploadRunResult& uploadWork = frameWork.uploadWork;
     const TileUpdateSelectionWorkResult& selectionWork =

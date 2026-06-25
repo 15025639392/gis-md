@@ -191,12 +191,14 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
 }
 
 TileContentRuntimeRequestFrame
-Tileset::makeContentRuntimeRequestFrame() {
+Tileset::makeContentRuntimeRequestFrame(
+    IPrepareRendererResources* pPrepRenderer) {
     TileContentRuntimeRequestFrame frame{
         rasterOverlays_,
         tileRegistry_.tiles()};
     frame.contentProvider = terrainProviders_.contentProvider();
     frame.device = device_;
+    frame.pPrepRenderer = pPrepRenderer;
     frame.frameNumber = frameNumber_;
     frame.maximumSimultaneousTileLoads =
         options_.maximumSimultaneousTileLoads;
@@ -225,10 +227,11 @@ TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
 
 TileLoadRequestOutcome Tileset::requestMissingContent(
     const std::vector<TileLoadRequest>& loadRequests,
-    FrameResourceBudget* budget) {
+    FrameResourceBudget* budget,
+    IPrepareRendererResources* pPrepRenderer) {
     return contentRuntime_.requestMissingTiles(
         loadRequests,
-        makeContentRuntimeRequestFrame(),
+        makeContentRuntimeRequestFrame(pPrepRenderer),
         budget);
 }
 

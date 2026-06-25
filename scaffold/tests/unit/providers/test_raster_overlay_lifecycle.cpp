@@ -16,7 +16,12 @@
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
+#include "earth_engine/tiling/TileContentCacheManager.h"
+#include "earth_engine/tiling/TileContentLifecycleManager.h"
+#include "earth_engine/tiling/TileContentResourceInvalidator.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
+#include "earth_engine/tiling/TileLoadQueue.h"
+#include "earth_engine/tiling/TileMeshPreparationManager.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/SurfaceTileDrawCommandBuilder.h"
@@ -5681,6 +5686,97 @@ TEST(RasterOverlayLifecycleTest,
         &recorder);
 
     EXPECT_EQ(1, recorder.detachCount);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     UpsampleSourcePreparationDetachesStaleRasterResidueLikeCesiumNative) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* provider =
+        activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+
+    TileContentLifecycleManager lifecycle;
+    TileContentCacheManager cache;
+    uint64_t resourceRevision = 1;
+    TileContentResourceInvalidator invalidator(resourceRevision, cache);
+    TileLoadQueue loadQueue;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    TileMeshPreparationManager manager(
+        lifecycle,
+        invalidator,
+        loadQueue,
+        true,
+        TileMeshPreparationMode::ContentTerrain,
+        nullptr,
+        overlays);
+
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(parent.bounds);
+    parent.content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.setGltfResourcesReady(true);
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Done;
+
+    std::vector<RasterOverlayProjection> missing;
+    RasterMappedToTilesetTile& mapped =
+        parent.rasterOverlayState.ensureMapping(0);
+    mapped.update(
+        parent.key,
+        parent.content.renderContent.rasterOverlayDetails(),
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        nullptr,
+        0,
+        true);
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    mapped.getLoadingTile()->setTexture(std::make_unique<TestTexture>(4, 4));
+    RecordingPrepareRendererResources recorder;
+    mapped.update(
+        parent.key,
+        parent.content.renderContent.rasterOverlayDetails(),
+        512.0,
+        512.0,
+        *provider,
+        &recorder,
+        missing,
+        nullptr,
+        0,
+        true);
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+              mapped.getState());
+    ASSERT_EQ(1, recorder.attachCount);
+
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &parent);
+    parent.children.push_back(&child);
+    child.content.markTerrainAvailabilityUpsample();
+
+    EXPECT_FALSE(manager.prepareUpsampleSourceTile(
+        child,
+        10.0,
+        &recorder));
+
+    EXPECT_EQ(1, recorder.detachCount);
+    EXPECT_EQ(0u, parent.rasterOverlayState.mappingCount());
+    EXPECT_FALSE(parent.content.renderContent.hasGltfContent());
+    EXPECT_EQ(2u, resourceRevision);
+    EXPECT_TRUE(cache.cacheBytesDirty());
 }
 
 TEST(RasterOverlayLifecycleTest,

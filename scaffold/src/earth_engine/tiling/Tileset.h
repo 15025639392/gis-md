@@ -140,13 +140,15 @@ private:
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,
             TilesetOptions options);
-    TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame();
+    TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame(
+        IPrepareRendererResources* pPrepRenderer);
     TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame(
         IPrepareRendererResources* pPrepRenderer);
     bool hasTerrainQuadtree() const;
     TileLoadRequestOutcome requestMissingContent(
         const std::vector<TileLoadRequest>& loadRequests,
-        FrameResourceBudget* budget = nullptr);
+        FrameResourceBudget* budget = nullptr,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
     bool processPendingLoads(
         bool interactionActive,
         bool resourceSmoothingActive,

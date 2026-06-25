@@ -37,10 +37,11 @@ TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
         frame.currentFrameTimeSeconds,
         frame.smoothedMainThreadUploadLimit,
         budget,
-        [this](TilesetTile& tile, double priority) {
+        [this, &frame](TilesetTile& tile, double priority) {
             return meshPreparation_.prepareUpsampleSourceTile(
                 tile,
-                priority);
+                priority,
+                frame.pPrepRenderer);
         },
         [this](const TileKey& key) {
             return contentAccess_.ensureTile(key);

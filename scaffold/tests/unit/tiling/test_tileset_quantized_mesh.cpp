@@ -101,7 +101,7 @@ struct TilesetTestAccess {
 
     static TilesetContentProvider* requestFrameContentProvider(
         Tileset& tileset) {
-        return tileset.makeContentRuntimeRequestFrame().contentProvider;
+        return tileset.makeContentRuntimeRequestFrame(nullptr).contentProvider;
     }
 
     static bool contentRuntimeRetainsLegacyHeightmapTerrainCache(

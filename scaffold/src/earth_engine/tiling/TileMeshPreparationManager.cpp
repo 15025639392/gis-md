@@ -65,7 +65,8 @@ void TileMeshPreparationManager::prepareContentTerrainFrame(
 
 bool TileMeshPreparationManager::prepareUpsampleSourceTile(
     TilesetTile& tile,
-    double priority) {
+    double priority,
+    IPrepareRendererResources* pPrepRenderer) {
     if (usesLegacyHeightmapSurfacePath()) {
         return legacyHeightmapSurfacePreparer_->prepareUpsampleSourceTile(
             tile,
@@ -76,8 +77,8 @@ bool TileMeshPreparationManager::prepareUpsampleSourceTile(
         tile,
         priority,
         false,
-        [this](TilesetTile& ancestor) {
-            prepareRenderableTile(ancestor);
+        [this, pPrepRenderer](TilesetTile& ancestor) {
+            prepareRenderableTile(ancestor, pPrepRenderer);
         },
         [this](const TileKey& key,
                TileLoadPriorityGroup group,
