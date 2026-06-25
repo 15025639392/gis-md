@@ -489,6 +489,62 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
+    BatchesExternalChildrenClearUntilUnloadLoopCompletesLikeCesiumNative) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey rootAKey{"test", 0, 0, 0};
+    const TileKey rootBKey{"test", 0, 1, 0};
+    const std::string rootACacheKey = TileCacheKey::forTile(rootAKey);
+    const std::string rootBCacheKey = TileCacheKey::forTile(rootBKey);
+
+    auto rootA = std::make_unique<TilesetTile>(rootAKey, Rectangle{});
+    auto rootB = std::make_unique<TilesetTile>(rootBKey, Rectangle{});
+    rootA->content.loadState = TileLoadState::Done;
+    rootA->content.contentKind = TileContentKind::External;
+    rootB->content.loadState = TileLoadState::Done;
+    rootB->content.contentKind = TileContentKind::External;
+    lifecycle.legacyHeightmapTerrainCache()[rootACacheKey] =
+        makeFlatHeightmap(4.0f);
+    lifecycle.legacyHeightmapTerrainCache()[rootBCacheKey] =
+        makeFlatHeightmap(5.0f);
+    tiles[rootACacheKey] = std::move(rootA);
+    tiles[rootBCacheKey] = std::move(rootB);
+
+    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.markEligibleForUnloading(tiles, rootACacheKey);
+    manager.markEligibleForUnloading(tiles, rootBCacheKey);
+
+    bool clearedA = false;
+    bool clearedB = false;
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        true,
+        tiles,
+        lifecycle,
+        nullptr,
+        [&](TilesetTile& tile) {
+            if (tile.key == rootAKey) {
+                clearedA = true;
+                EXPECT_FALSE(manager.unloadQueue().contains(rootBCacheKey));
+            } else if (tile.key == rootBKey) {
+                clearedB = true;
+            }
+        });
+
+    EXPECT_TRUE(clearedA);
+    EXPECT_TRUE(clearedB);
+    EXPECT_FALSE(manager.unloadQueue().contains(rootACacheKey));
+    EXPECT_FALSE(manager.unloadQueue().contains(rootBCacheKey));
+    EXPECT_TRUE(tiles[rootACacheKey]->children.empty());
+    EXPECT_TRUE(tiles[rootBCacheKey]->children.empty());
+}
+
+TEST(
+    TileContentCacheManagerTest,
     RetriesExternalSubtreeUnloadAfterPendingWorkCompletes) {
     ExternalSubtreeFixture fixture;
     fixture.tiles[fixture.childCacheKey]->content.loadState =

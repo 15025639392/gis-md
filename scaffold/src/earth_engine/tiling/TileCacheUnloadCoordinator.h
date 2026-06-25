@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace earth_engine {
 
@@ -60,6 +61,7 @@ public:
                 TileLoadState::Unloading);
         };
 
+        std::vector<TilesetTile*> tilesNeedingChildrenCleared;
         size_t remainingCandidates = unloadQueue.size();
         while ((totalBytesUsed > maximumCachedBytes ||
                 hasQueuedUnloadingTile()) &&
@@ -100,7 +102,7 @@ public:
             markIneligible(key);
             if (removed ==
                 TileCacheUnloadContentResult::RemoveAndClearChildren) {
-                clearChildren(tile);
+                tilesNeedingChildrenCleared.emplace_back(&tile);
             }
 
             totalBytesUsed = std::max<int64_t>(
@@ -110,6 +112,12 @@ public:
             cacheBytesDirty = true;
 
             if (timeBudgetExpired()) break;
+        }
+
+        for (TilesetTile* tile : tilesNeedingChildrenCleared) {
+            if (tile) {
+                clearChildren(*tile);
+            }
         }
 
         return TileCacheUnloadResult{
