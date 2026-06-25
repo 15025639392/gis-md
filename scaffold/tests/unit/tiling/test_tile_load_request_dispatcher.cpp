@@ -600,7 +600,7 @@ TEST(TileLoadRequestDispatcherTest,
         terrainWithoutRasterDetails.content.metadata.rasterOverlayDetails
             .has_value());
     TileLoadResult normalizedTerrainWithoutRasterDetails =
-        TileLoadResult::normalizeForDomain(
+        TileLoadRequestDispatcher::normalizeForDomain(
             TileLoadDomain::TerrainContent,
             std::move(terrainWithoutRasterDetails));
     EXPECT_EQ(TileLoadStatus::Renderable,
@@ -715,7 +715,7 @@ TEST(TileLoadRequestDispatcherTest,
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
     EXPECT_TRUE(contentGltf.shouldUpload());
     TileLoadResult normalizedContentGltfForTerrain =
-        TileLoadResult::normalizeForDomain(
+        TileLoadRequestDispatcher::normalizeForDomain(
             TileLoadDomain::TerrainContent,
             std::move(contentGltf));
     EXPECT_EQ(

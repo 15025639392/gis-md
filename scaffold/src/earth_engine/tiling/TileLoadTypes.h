@@ -141,15 +141,6 @@ struct TileLoadResult {
         return loadResult;
     }
 
-    static TileLoadResult normalizeForDomain(
-        TileLoadDomain domain,
-        TileLoadResult&& result) {
-        if (result.shouldFailUploadForDomain(domain)) {
-            return createFailedPreservingAvailability(std::move(result));
-        }
-        return std::move(result);
-    }
-
     bool hasRenderableContent() const {
         return content.hasRenderablePayload();
     }
