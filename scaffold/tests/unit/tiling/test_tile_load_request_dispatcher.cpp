@@ -4,6 +4,7 @@
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/core/math/Vec3.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
+#include "earth_engine/tiling/TileLoadDomainPolicy.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileLoadRequestDispatcher.h"
 
@@ -600,7 +601,7 @@ TEST(TileLoadRequestDispatcherTest,
         terrainWithoutRasterDetails.content.metadata.rasterOverlayDetails
             .has_value());
     TileLoadResult normalizedTerrainWithoutRasterDetails =
-        TileLoadRequestDispatcher::normalizeForDomain(
+        TileLoadDomainPolicy::normalizeForDomain(
             TileLoadDomain::TerrainContent,
             std::move(terrainWithoutRasterDetails));
     EXPECT_EQ(TileLoadStatus::Renderable,
@@ -715,7 +716,7 @@ TEST(TileLoadRequestDispatcherTest,
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
     EXPECT_TRUE(contentGltf.shouldUpload());
     TileLoadResult normalizedContentGltfForTerrain =
-        TileLoadRequestDispatcher::normalizeForDomain(
+        TileLoadDomainPolicy::normalizeForDomain(
             TileLoadDomain::TerrainContent,
             std::move(contentGltf));
     EXPECT_EQ(

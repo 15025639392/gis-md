@@ -155,17 +155,6 @@ struct TileLoadResult {
                hasRenderableContent();
     }
 
-    bool shouldFailUploadForDomain(TileLoadDomain domain) const {
-        if (status != TileLoadStatus::Renderable) {
-            return false;
-        }
-        if (domain == TileLoadDomain::TerrainContent) {
-            return !content.satisfiesContentTerrainPayloadContract();
-        }
-        return content.terrainRenderContent &&
-               !content.satisfiesContentTerrainPayloadContract();
-    }
-
     bool shouldApplyTerminalMetadata() const {
         return isSuccessfulTileLoadStatus(status) &&
                (status == TileLoadStatus::Empty ||

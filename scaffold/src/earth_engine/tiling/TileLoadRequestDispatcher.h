@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileLoadDomainPolicy.h"
 #include "TileLoadTypes.h"
 #include "TilePendingLoadQueue.h"
 #include "TilePendingRequestState.h"
@@ -24,16 +25,6 @@ enum class TileLoadDispatchResult {
 
 class TileLoadRequestDispatcher {
 public:
-    static TileLoadResult normalizeForDomain(
-        TileLoadDomain domain,
-        TileLoadResult&& result) {
-        if (result.shouldFailUploadForDomain(domain)) {
-            return TileLoadResult::createFailedPreservingAvailability(
-                std::move(result));
-        }
-        return std::move(result);
-    }
-
     static TileLoadDispatchResult queueUpsampledLoad(
         std::mutex& mutex,
         TilePendingRequestState& requestState,
@@ -108,7 +99,8 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
-                        TileLoadResult loadResult = normalizeForDomain(
+                        TileLoadResult loadResult =
+                            TileLoadDomainPolicy::normalizeForDomain(
                             domain,
                             TileLoadResult::fromContentResult(
                                 std::move(result)));

@@ -25,7 +25,7 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledLoad(
         pendingLoads.containsCacheKey(cacheKey)) {
         return TileLoadDispatchResult::Skipped;
     }
-    result = TileLoadRequestDispatcher::normalizeForDomain(
+    result = TileLoadDomainPolicy::normalizeForDomain(
         domain,
         std::move(result));
     if (domain == TileLoadDomain::TerrainContent &&

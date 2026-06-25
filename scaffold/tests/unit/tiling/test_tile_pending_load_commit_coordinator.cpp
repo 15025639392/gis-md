@@ -12,6 +12,7 @@
 #include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileContentAccess.h"
+#include "earth_engine/tiling/TileLoadDomainPolicy.h"
 #include "earth_engine/tiling/TileLoadStatePredicates.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
 #include "earth_engine/tiling/TilePendingUploadFrameProcessor.h"
@@ -4028,8 +4029,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         0.0,
         TileLoadResult::fromContentResult(std::move(ordinaryGltf))};
     ASSERT_EQ(TileLoadStatus::Renderable, upload.result.status);
-    ASSERT_TRUE(upload.result.shouldFailUploadForDomain(
-        TileLoadDomain::TerrainContent));
+    ASSERT_TRUE(TileLoadDomainPolicy::shouldFailUploadForDomain(
+        TileLoadDomain::TerrainContent,
+        upload.result));
     ASSERT_EQ(1u, upload.result.quantizedMeshAvailabilityUpdates.size());
 
     TileLoadLifecycle lifecycle;

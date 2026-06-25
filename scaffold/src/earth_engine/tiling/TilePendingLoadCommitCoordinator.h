@@ -2,6 +2,7 @@
 
 #include "TileContentUploadCommitter.h"
 #include "TileEmptyContentRegistry.h"
+#include "TileLoadDomainPolicy.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
 #include "TilePendingUploadCompletion.h"
@@ -125,7 +126,9 @@ public:
             return;
         }
 
-        if (upload.result.shouldFailUploadForDomain(upload.domain)) {
+        if (TileLoadDomainPolicy::shouldFailUploadForDomain(
+                upload.domain,
+                upload.result)) {
             TileLoadResult failedResult =
                 TileLoadResult::createFailedPreservingAvailability(
                     std::move(upload.result));
