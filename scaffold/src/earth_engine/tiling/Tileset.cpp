@@ -87,7 +87,6 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
           options_.tileCacheUnloadTimeLimit,
-          terrainProviders_.contentProvider(),
           terrainProviders_.usesLegacyHeightmapTerrainSurfacePath()),
       rasterUpsampledChildren_(
           contentAccess_,

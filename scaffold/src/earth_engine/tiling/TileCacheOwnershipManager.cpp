@@ -5,7 +5,6 @@
 #include "TileContentLifecycleManager.h"
 #include "TileLoadQueue.h"
 #include "TileSubtreeRemovalCoordinator.h"
-#include "TileTerrainAvailabilityUpsampleBookkeeping.h"
 #include "TilesetTile.h"
 #include "../content/GltfContentProvider.h"
 
@@ -21,7 +20,6 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
     bool& resourceSmoothingActiveForFrame,
     int64_t& maximumCachedBytes,
     double& tileCacheUnloadTimeLimit,
-    TilesetContentProvider* contentProvider,
     bool includeLegacyHeightmapTerrainCache)
     : contentCache_(contentCache),
       contentLifecycle_(contentLifecycle),
@@ -30,7 +28,6 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
       resourceSmoothingActiveForFrame_(resourceSmoothingActiveForFrame),
       maximumCachedBytes_(maximumCachedBytes),
       tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit),
-      contentProvider_(contentProvider),
       includeLegacyHeightmapTerrainCache_(includeLegacyHeightmapTerrainCache) {}
 
 void TileCacheOwnershipManager::updateTotalBytesUsed() {
@@ -64,8 +61,6 @@ void TileCacheOwnershipManager::eraseTileIndexState(const std::string& key) {
 void TileCacheOwnershipManager::clearChildrenRecursively(
     TilesetTile* tile,
     IPrepareRendererResources* pPrepRenderer) {
-    TileTerrainAvailabilityUpsampleBookkeepingPolicy::
-        clearRemovedSubtreeProviderState(contentProvider_, tile);
     TileSubtreeRemovalCoordinator::clearChildrenRecursively(
         tile,
         tiles_,

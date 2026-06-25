@@ -10,7 +10,6 @@
 #include "TileSelectionRootPolicy.h"
 #include "TileScheme.h"
 #include "TileTerrainHeightRangePolicy.h"
-#include "TileTerrainAvailabilityUpsampleBookkeeping.h"
 #include "TilesetTileRegistry.h"
 #include "../content/GltfContentProvider.h"
 
@@ -181,13 +180,6 @@ TileContentAccess::ensureTileChildren(
         [this](const TileKey& key) {
             return availabilityState(key);
         });
-    if (contentProviderOwnsTerrainQuadtree() && contentProvider_) {
-        TileTerrainAvailabilityUpsampleBookkeepingPolicy::
-            applyMaterializationResult(
-            *contentProvider_,
-            tile,
-            result.terrainUpsampleBookkeeping);
-    }
     return result;
 }
 

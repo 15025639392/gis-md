@@ -58,14 +58,6 @@ public:
             updates.begin(),
             updates.end());
     }
-    void noteTerrainAvailabilityUpsampledChild(
-        const TileKey& key) const override {
-        notedUpsampledParents.push_back(key);
-    }
-    void clearTerrainAvailabilityUpsampledChild(
-        const TileKey& key) const override {
-        clearedUpsampledParents.push_back(key);
-    }
     void requestTileContent(
         const TileKey& key,
         CancellationToken,
@@ -78,8 +70,6 @@ public:
     }
 
     std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
-    mutable std::vector<TileKey> notedUpsampledParents;
-    mutable std::vector<TileKey> clearedUpsampledParents;
     std::unordered_map<TileKey, TileAvailabilityState> availability;
     int metadataAvailabilityLevels = 0;
 };
@@ -715,8 +705,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(childResult.retryLater);
     EXPECT_FALSE(childResult.changed);
     EXPECT_TRUE(boundary->children.empty());
-    EXPECT_TRUE(provider.notedUpsampledParents.empty());
-    EXPECT_TRUE(provider.clearedUpsampledParents.empty());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -1009,8 +997,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         }
         EXPECT_EQ(expectedLoadState, root->content.loadState);
         EXPECT_EQ(TileContentKind::Unknown, root->content.contentKind);
-        ASSERT_EQ(1u, provider.notedUpsampledParents.size());
-        EXPECT_EQ(rootKey, provider.notedUpsampledParents.front());
     }
 }
 
@@ -1045,8 +1031,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(root->children[1]->content.isTerrainAvailabilityUpsample());
     EXPECT_TRUE(root->children[2]->content.isTerrainAvailabilityUpsample());
     EXPECT_TRUE(root->children[3]->content.isTerrainAvailabilityUpsample());
-    ASSERT_EQ(1u, provider.notedUpsampledParents.size());
-    EXPECT_EQ(rootKey, provider.notedUpsampledParents.front());
 
     provider.availability[childKeys[1]] = TileAvailabilityState::Available;
     provider.availability[childKeys[2]] = TileAvailabilityState::Available;
@@ -1061,8 +1045,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         ASSERT_NE(nullptr, child);
         EXPECT_FALSE(child->content.isTerrainAvailabilityUpsample());
     }
-    ASSERT_EQ(1u, provider.clearedUpsampledParents.size());
-    EXPECT_EQ(rootKey, provider.clearedUpsampledParents.front());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

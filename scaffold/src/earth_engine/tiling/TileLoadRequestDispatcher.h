@@ -48,7 +48,8 @@ public:
         const std::string& cacheKey,
         TileLoadPriorityGroup group,
         double priority,
-        OnIssuedFn&& onIssued) {
+        OnIssuedFn&& onIssued,
+        TileContentRequestOptions options = {}) {
         CancellationToken token;
         const int estimatedFanout = provider.estimatedRequestFanout(key);
         const FrameResourceLane requestLane =
@@ -117,7 +118,8 @@ public:
                 }
                 condition.notify_all();
             },
-            toHttpPriority(group));
+            toHttpPriority(group),
+            options);
         return TileLoadDispatchResult::Issued;
     }
 

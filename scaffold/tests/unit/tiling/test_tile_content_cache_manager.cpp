@@ -26,29 +26,6 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     return heightmap;
 }
 
-class RecordingTerrainContentProvider final : public TilesetContentProvider {
-public:
-    std::string id() const override { return "recording-terrain-content"; }
-    bool supportsTile(const TileKey&) const override { return true; }
-    bool providesTerrainQuadtree() const override { return true; }
-    void clearTerrainAvailabilityUpsampledChild(
-        const TileKey& key) const override {
-        clearedUpsampledParents.push_back(key);
-    }
-    void requestTileContent(const TileKey& key,
-                            CancellationToken,
-                            ContentCallback callback,
-                            HttpRequestPriority =
-                                HttpRequestPriority::Normal) override {
-        callback(key, TileContentLoadResult::retryLater());
-    }
-    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
-        return TileContentLoadResult::failed();
-    }
-
-    mutable std::vector<TileKey> clearedUpsampledParents;
-};
-
 struct ExternalSubtreeFixture {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
@@ -666,7 +643,6 @@ TEST(
         resourceSmoothingActive,
         maximumCachedBytes,
         unloadTimeLimitMs,
-        nullptr,
         true);
 
     ownership.unloadCachedBytes(0, nullptr);
@@ -693,7 +669,7 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
-    ClearChildrenClearsTerrainUpsampleProviderStateForRemovedSubtree) {
+    ClearChildrenRecursivelyRemovesSubtreeIndexState) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     TileLoadQueue loadQueue;
@@ -701,8 +677,6 @@ TEST(
     bool resourceSmoothingActive = false;
     int64_t maximumCachedBytes = 0;
     double unloadTimeLimitMs = 0.0;
-    RecordingTerrainContentProvider provider;
-
     const TileKey rootKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
     const TileKey grandchildKey{"test", 2, 0, 0};
@@ -736,7 +710,6 @@ TEST(
         resourceSmoothingActive,
         maximumCachedBytes,
         unloadTimeLimitMs,
-        &provider,
         false);
 
     ownership.clearChildrenRecursively(rootRaw, nullptr);
@@ -744,8 +717,4 @@ TEST(
     EXPECT_TRUE(rootRaw->children.empty());
     EXPECT_EQ(tiles.end(), tiles.find(childCacheKey));
     EXPECT_EQ(tiles.end(), tiles.find(grandchildCacheKey));
-    ASSERT_EQ(3u, provider.clearedUpsampledParents.size());
-    EXPECT_EQ(rootKey, provider.clearedUpsampledParents[0]);
-    EXPECT_EQ(childKey, provider.clearedUpsampledParents[1]);
-    EXPECT_EQ(grandchildKey, provider.clearedUpsampledParents[2]);
 }

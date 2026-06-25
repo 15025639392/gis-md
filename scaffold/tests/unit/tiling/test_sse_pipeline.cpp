@@ -4776,18 +4776,8 @@ public:
             maximumTransportActiveRequests;
         return diagnostics;
     }
-    void noteTerrainAvailabilityUpsampledChild(
-        const TileKey& key) const override {
-        notedUpsampledParents.push_back(key);
-    }
-    void clearTerrainAvailabilityUpsampledChild(
-        const TileKey& key) const override {
-        clearedUpsampledParents.push_back(key);
-    }
     std::vector<TileKey> availableKeys;
     std::vector<PendingRequest> pendingRequests;
-    mutable std::vector<TileKey> notedUpsampledParents;
-    mutable std::vector<TileKey> clearedUpsampledParents;
     int metadataAvailabilityLevels = 1;
     int maximumTransportActiveRequests = -1;
 private:
@@ -10093,9 +10083,8 @@ void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.empty(),
           "Tileset: availability boundary waits for content before child creation like cesium-native");
-    check(rawProvider->notedUpsampledParents.empty() &&
-              rawProvider->clearedUpsampledParents.empty(),
-          "Tileset: availability boundary latent upsample state does not pollute materialized provider bookkeeping before children exist");
+    check(root->children.empty(),
+          "Tileset: availability boundary latent upsample state does not materialize children before content resolves");
     check(rawProvider->completeWithEmpty(rootKey),
           "Tileset: availability boundary content completes");
     TilesetTestAccess::processPendingUploads(tileset);
@@ -26119,24 +26108,12 @@ void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
     TilesetTestAccess::ensureTileChildren(tileset, *child);
     check(child->children.size() == 4,
           "Tileset: clear-upsample-state setup creates nested terrain children");
-    check(rawProvider->notedUpsampledParents.size() == 2 &&
-              rawProvider->notedUpsampledParents[0] == rootKey &&
-              rawProvider->notedUpsampledParents[1] == child->key,
-          "Tileset: terrain provider records existing upsampled children");
     const TileKey childKey = child->key;
     TilesetTestAccess::clearChildrenRecursively(tileset, *root);
     check(root->children.empty(),
           "Tileset: clear-upsample-state removes child list");
-    const bool clearedRoot =
-        std::find(rawProvider->clearedUpsampledParents.begin(),
-                  rawProvider->clearedUpsampledParents.end(),
-                  rootKey) != rawProvider->clearedUpsampledParents.end();
-    const bool clearedRemovedChild =
-        std::find(rawProvider->clearedUpsampledParents.begin(),
-                  rawProvider->clearedUpsampledParents.end(),
-                  childKey) != rawProvider->clearedUpsampledParents.end();
-    check(clearedRoot && clearedRemovedChild,
-          "Tileset: clear children clears provider upsampled-child state for removed subtree like cesium-native current children");
+    check(TilesetTestAccess::findTile(tileset, childKey) == nullptr,
+          "Tileset: clear children removes nested terrain child tiles from flat tile map");
 }
 void testTilesetClearChildrenErasesClaimedUploadDescendantWork() {
     auto provider = std::make_unique<SparseTerrainProvider>();

@@ -101,16 +101,16 @@ public:
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
         applyAvailabilityUpdates(updates);
     }
-    void noteTerrainAvailabilityUpsampledChild(
-        const TileKey& key) const override;
-    void clearTerrainAvailabilityUpsampledChild(
-        const TileKey& key) const override;
-
     void requestTileContent(const TileKey& key,
                             CancellationToken token,
                             ContentCallback callback,
                             HttpRequestPriority priority =
                                 HttpRequestPriority::Normal) override;
+    void requestTileContent(const TileKey& key,
+                            CancellationToken token,
+                            ContentCallback callback,
+                            HttpRequestPriority priority,
+                            TileContentRequestOptions options) override;
     TileContentLoadResult decodeTileContent(const TileKey& key,
                                             const uint8_t* data,
                                             size_t size) const;
@@ -221,6 +221,7 @@ private:
         bool metadataFinished = false;
         bool contentFinished = false;
         bool finalized = false;
+        bool forceRasterOverlayDetails = false;
         int statusCode = 0;
         std::vector<uint8_t> body;
     };
@@ -247,7 +248,6 @@ private:
         const LayerConfig& layer,
         int subtreeLevel,
         uint64_t mortonIndex) const;
-    bool tileHasTerrainAvailabilityUpsampledChild(const TileKey& key) const;
     void markSubtreeLoadedInLayer(
         LayerConfig& layer,
         int subtreeLevel,
@@ -265,7 +265,8 @@ private:
         bool enableWaterMask,
         const std::vector<QuantizedMeshMetadataContent>& metadata,
         std::optional<QuantizedMeshAvailabilityUpdate>
-            currentTileAvailabilityUpdate = std::nullopt) const;
+            currentTileAvailabilityUpdate = std::nullopt,
+        bool forceRasterOverlayDetails = false) const;
     void resetFallbackLayerFromFields();
     void syncPublicStateFromLayers();
     void handleAsyncTileBody(
@@ -315,7 +316,8 @@ private:
         std::shared_ptr<ContentCallback> callback,
         std::shared_ptr<std::vector<uint8_t>> body,
         int statusCode,
-        std::vector<std::vector<uint8_t>> metadataBodies);
+        std::vector<std::vector<uint8_t>> metadataBodies,
+        bool forceRasterOverlayDetails);
     std::vector<QuantizedMeshAvailabilityUpdate>
     parseAvailabilityUpdatesFromMetadataRequests(
         const std::vector<LayerAvailabilityRequest>& availabilityRequests,
@@ -330,7 +332,6 @@ private:
     std::string extensionsToRequest_;
     std::vector<std::vector<TileAvailabilityRect>> availabilityRanges_;
     std::vector<std::unordered_set<uint64_t>> loadedSubtrees_;
-    mutable std::unordered_set<TileKey> parentsWithTerrainUpsampledChildren_;
     bool hasAvailability_ = false;
     int availabilityLevels_ = -1;  // -1 = not using subtree mode
     int minZoom_ = 0;

@@ -542,9 +542,6 @@ TEST(TileChildMaterializerTest,
 
     EXPECT_FALSE(result.changed);
     EXPECT_TRUE(result.retryLater);
-    EXPECT_EQ(
-        TileTerrainAvailabilityUpsampleBookkeeping::Latent,
-        result.terrainUpsampleBookkeeping);
     EXPECT_EQ(0, ensureCalls);
     EXPECT_TRUE(parent.children.empty());
 }

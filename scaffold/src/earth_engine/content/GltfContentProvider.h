@@ -112,6 +112,10 @@ struct TileContentLoadResult {
     }
 };
 
+struct TileContentRequestOptions {
+    bool generateTerrainRasterOverlayDetails = false;
+};
+
 class TilesetContentProvider {
 public:
     virtual ~TilesetContentProvider() = default;
@@ -136,9 +140,6 @@ public:
     }
     virtual void applyTerrainAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>&) {}
-    virtual void noteTerrainAvailabilityUpsampledChild(const TileKey&) const {}
-    virtual void clearTerrainAvailabilityUpsampledChild(
-        const TileKey&) const {}
     virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 
     using ContentCallback = std::function<void(
@@ -149,6 +150,19 @@ public:
                                     ContentCallback callback,
                                     HttpRequestPriority priority =
                                         HttpRequestPriority::Normal) = 0;
+
+    virtual void requestTileContent(
+        const TileKey& key,
+        CancellationToken token,
+        ContentCallback callback,
+        HttpRequestPriority priority,
+        TileContentRequestOptions) {
+        requestTileContent(
+            key,
+            std::move(token),
+            std::move(callback),
+            priority);
+    }
 
     virtual TileContentLoadResult decodeContent(
         const uint8_t* data,

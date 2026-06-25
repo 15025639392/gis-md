@@ -164,7 +164,8 @@ public:
                         [&markTileContentLoading, &requestKey, &outcome]() {
                             markTileContentLoading(requestKey);
                             ++outcome.issued;
-                        });
+                        },
+                        requestOptionsForTile(*input.contentProvider, tileState));
                 if (shouldStopAfterDispatch(dispatchResult)) {
                     break;
                 }
@@ -176,6 +177,22 @@ public:
     }
 
 private:
+    static TileContentRequestOptions requestOptionsForTile(
+        const TilesetContentProvider& provider,
+        const TilesetTile* tile) {
+        TileContentRequestOptions options;
+        if (!provider.providesTerrainQuadtree() || !tile) {
+            return options;
+        }
+        for (const TilesetTile* child : tile->children) {
+            if (child && child->content.isTerrainAvailabilityUpsample()) {
+                options.generateTerrainRasterOverlayDetails = true;
+                break;
+            }
+        }
+        return options;
+    }
+
     static bool shouldStopAfterDispatch(TileLoadDispatchResult result) {
         return result == TileLoadDispatchResult::Destroying ||
                result == TileLoadDispatchResult::Blocked;

@@ -1903,7 +1903,6 @@ TEST(TilesetQuantizedMeshTest,
      QuantizedMeshProviderLoadResultMetadataReachesTileLifecycle) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
-    QuantizedMeshTerrainProvider* terrainProvider = provider.get();
     QueuedContentPlatformBridge bridge;
     provider->setPlatformBridge(&bridge);
     DummyRenderDevice device;
@@ -1916,9 +1915,18 @@ TEST(TilesetQuantizedMeshTest,
         std::move(provider));
 
     const TileKey key{"Geographic-TMS", 2, 1, 1};
-    terrainProvider->noteTerrainAvailabilityUpsampledChild(key);
     TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
     ASSERT_NE(nullptr, tile);
+    const TileKey upsampledChildKey{"Geographic-TMS", 3, 2, 2};
+    TilesetTile* upsampledChild =
+        TilesetTestAccess::ensureTile(tileset, upsampledChildKey);
+    ASSERT_NE(nullptr, upsampledChild);
+    upsampledChild->parent = tile;
+    upsampledChild->content.markTerrainAvailabilityUpsample();
+    if (std::find(tile->children.begin(), tile->children.end(), upsampledChild) ==
+        tile->children.end()) {
+        tile->children.push_back(upsampledChild);
+    }
     ASSERT_TRUE(tile->boundingVolume.has_value());
     const TileBoundingVolume initialVolume = *tile->boundingVolume;
 

@@ -902,7 +902,6 @@ TEST(
     provider.setPlatformBridge(&bridge);
 
     const TileKey key{"XYZ-WebMercator", 1, 1, 1};
-    provider.noteTerrainAvailabilityLatentUpsampledChild(key);
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -960,7 +959,6 @@ TEST(
     provider.setPlatformBridge(&bridge);
 
     const TileKey key{"XYZ-WebMercator", 1, 1, 1};
-    provider.noteTerrainAvailabilityUpsampledChild(key);
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -977,7 +975,9 @@ TEST(
                 callbackCalled = true;
             }
             cv.notify_one();
-        });
+        },
+        HttpRequestPriority::Normal,
+        TileContentRequestOptions{true});
 
     ASSERT_TRUE(bridge.waitUntilPendingCount(1));
     ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
@@ -1062,7 +1062,7 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     RequestTileContentGeneratesRasterOverlayDetailsForUpsampleChildLikeCesiumNative) {
+     RequestTileContentGeneratesRasterOverlayDetailsWhenRequestedLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({
@@ -1099,7 +1099,9 @@ TEST(QuantizedMeshTerrainProviderTest,
                 callbackCalled = true;
             }
             cv.notify_one();
-        });
+        },
+        HttpRequestPriority::Normal,
+        TileContentRequestOptions{true});
 
     ASSERT_TRUE(bridge.waitUntilPendingCount(1));
     ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
@@ -1221,7 +1223,6 @@ TEST(QuantizedMeshTerrainProviderTest,
     provider.setPlatformBridge(&bridge);
 
     const TileKey key{"Geographic-TMS", 1, 0, 0};
-    provider.noteTerrainAvailabilityUpsampledChild(key);
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -1238,7 +1239,9 @@ TEST(QuantizedMeshTerrainProviderTest,
                 callbackCalled = true;
             }
             cv.notify_one();
-        });
+        },
+        HttpRequestPriority::Normal,
+        TileContentRequestOptions{true});
 
     ASSERT_TRUE(bridge.waitUntilPendingCount(1));
     ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
@@ -1267,7 +1270,6 @@ TEST(QuantizedMeshTerrainProviderTest,
             .findRectangleForOverlayProjection(
                 RasterOverlayProjection::Geographic));
 
-    provider.clearTerrainAvailabilityUpsampledChild(key);
     callbackCalled = false;
     completed = {};
 

@@ -13,7 +13,6 @@ namespace earth_engine {
 class IPrepareRendererResources;
 class TileContentLifecycleManager;
 class TileLoadQueue;
-class TilesetContentProvider;
 struct TilesetTile;
 
 class TileCacheOwnershipManager {
@@ -26,7 +25,6 @@ public:
         bool& resourceSmoothingActiveForFrame,
         int64_t& maximumCachedBytes,
         double& tileCacheUnloadTimeLimit,
-        TilesetContentProvider* contentProvider,
         bool includeLegacyHeightmapTerrainCache);
 
     void updateTotalBytesUsed();
@@ -50,7 +48,6 @@ private:
     bool& resourceSmoothingActiveForFrame_;
     int64_t& maximumCachedBytes_;
     double& tileCacheUnloadTimeLimit_;
-    TilesetContentProvider* contentProvider_ = nullptr;
     bool includeLegacyHeightmapTerrainCache_ = true;
 };
 
