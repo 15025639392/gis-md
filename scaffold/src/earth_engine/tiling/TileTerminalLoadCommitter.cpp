@@ -2,42 +2,11 @@
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadResultMetadataApplicator.h"
 #include <utility>
+#include <vector>
 namespace earth_engine {
 namespace {
-TileTerminalLoadAction commitTerrainTerminalResult(
-    TilesetTile& tile,
-    const std::string& cacheKey,
-    TileLoadResult result,
-    TileEmptyContentRegistry& emptyContentRegistry,
-    IPrepareRendererResources* pPrepRenderer,
-    TilesetContentProvider* contentProvider) {
-    TileTerminalLoadAction action =
-        TileTerminalLoadPolicy::applyTerminalResult(
-        TileLoadDomain::TerrainContent,
-            tile,
-            result.status,
-            pPrepRenderer);
-    if (contentProvider &&
-        contentProvider->providesTerrainQuadtree() &&
-        result.status == TileLoadStatus::Failed &&
-        !result.quantizedMeshAvailabilityUpdates.empty()) {
-        contentProvider->applyTerrainAvailabilityUpdates(
-            result.quantizedMeshAvailabilityUpdates);
-    }
-    if (result.shouldApplyTerminalMetadata() &&
-        result.status == TileLoadStatus::Empty) {
-        TileLoadResultMetadataApplicator::apply(
-            tile,
-            std::move(result.content.metadata));
-    }
-    if (action.markEmptyCacheKey) {
-        emptyContentRegistry.insert(cacheKey);
-    } else {
-        emptyContentRegistry.erase(cacheKey);
-    }
-    return action;
-}
-TileTerminalLoadAction commitContentTerminalResult(
+TileTerminalLoadAction commitTerminalResultImpl(
+    TileLoadDomain domain,
     TilesetTile& tile,
     const std::string& cacheKey,
     TileLoadResult result,
@@ -45,11 +14,18 @@ TileTerminalLoadAction commitContentTerminalResult(
     IPrepareRendererResources* pPrepRenderer) {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyTerminalResult(
-        TileLoadDomain::Content,
+            domain,
             tile,
             result.status,
             pPrepRenderer);
-    if (result.shouldApplyTerminalMetadata()) {
+    if (domain == TileLoadDomain::TerrainContent) {
+        if (result.shouldApplyTerminalMetadata() &&
+            result.status == TileLoadStatus::Empty) {
+            TileLoadResultMetadataApplicator::apply(
+                tile,
+                std::move(result.content.metadata));
+        }
+    } else if (result.shouldApplyTerminalMetadata()) {
         TileLoadResultMetadataApplicator::apply(
             tile,
             std::move(result.content.metadata));
@@ -71,20 +47,28 @@ TileTerminalLoadCommitter::commitTerminalResult(
     TileEmptyContentRegistry& emptyContentRegistry,
     IPrepareRendererResources* pPrepRenderer,
     TilesetContentProvider* contentProvider) {
-    if (domain == TileLoadDomain::TerrainContent) {
-        return commitTerrainTerminalResult(
-            tile,
-            cacheKey,
-            std::move(result),
-            emptyContentRegistry,
-            pPrepRenderer,
-            contentProvider);
+    std::vector<QuantizedMeshAvailabilityUpdate> terrainAvailabilityUpdates;
+    if (domain == TileLoadDomain::TerrainContent &&
+        contentProvider &&
+        contentProvider->providesTerrainQuadtree() &&
+        result.status == TileLoadStatus::Failed &&
+        !result.quantizedMeshAvailabilityUpdates.empty()) {
+        terrainAvailabilityUpdates =
+            std::move(result.quantizedMeshAvailabilityUpdates);
     }
-    return commitContentTerminalResult(
+    TileTerminalLoadAction action = commitTerminalResultImpl(
+        domain,
         tile,
         cacheKey,
         std::move(result),
         emptyContentRegistry,
         pPrepRenderer);
+    if (!terrainAvailabilityUpdates.empty()) {
+        // Availability updates must remain on the terrain path, but the
+        // terminal policy itself is now shared.
+        contentProvider->applyTerrainAvailabilityUpdates(
+            terrainAvailabilityUpdates);
+    }
+    return action;
 }
 } // namespace earth_engine
