@@ -1593,6 +1593,113 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     FailedTerrainContentSelectsAvailabilityUpdatesAndClearAfterApply) {
+    const TileKey key{"Geographic-TMS", 2, 1, 0};
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::Failed);
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = key;
+    update.metadataAvailability = {{0, 0, 0, 1, 1}};
+    result.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    TileAvailabilityUpdateSelection selection =
+        TileLoadDomainPolicy::availabilityUpdatesForDomain(
+            TileLoadDomain::TerrainContent,
+            result);
+
+    ASSERT_NE(nullptr, selection.updates);
+    EXPECT_EQ(1u, selection.updates->size());
+    EXPECT_EQ(0, selection.updates->front().layerIndex);
+    EXPECT_EQ(key, selection.updates->front().subtreeKey);
+    EXPECT_TRUE(selection.clearAfterApply);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     RenderableTerrainContentSelectsContentAvailabilityUpdatesAndDoesNotClear) {
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 7;
+    update.subtreeKey = TileKey{"Geographic-TMS", 2, 0, 0};
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+
+    TileContentLoadResult contentResult =
+        TileContentLoadResult::renderTerrain(
+            makeMinimalTerrainGltfModelForCommitTest());
+    contentResult.quantizedMeshAvailabilityUpdates.push_back(update);
+    TileLoadResult result =
+        TileLoadResult::fromContentResult(std::move(contentResult));
+    ASSERT_EQ(TileLoadStatus::Renderable, result.status);
+
+    TileAvailabilityUpdateSelection selection =
+        TileLoadDomainPolicy::availabilityUpdatesForDomain(
+            TileLoadDomain::TerrainContent,
+            result);
+
+    ASSERT_NE(nullptr, selection.updates);
+    EXPECT_EQ(1u, selection.updates->size());
+    EXPECT_EQ(7, selection.updates->front().layerIndex);
+    EXPECT_FALSE(selection.clearAfterApply);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     RetryLaterAndCancelledTerminalDoNotSelectAvailabilityUpdates) {
+    for (TileLoadStatus status : {TileLoadStatus::RetryLater,
+                                  TileLoadStatus::Cancelled}) {
+        TileLoadResult result = TileLoadResult::createTerminal(status);
+        result.quantizedMeshAvailabilityUpdates.push_back(
+            QuantizedMeshAvailabilityUpdate{});
+
+        TileAvailabilityUpdateSelection selection =
+            TileLoadDomainPolicy::availabilityUpdatesForDomain(
+                TileLoadDomain::TerrainContent,
+                result);
+
+        EXPECT_EQ(nullptr, selection.updates);
+    }
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     OrdinaryContentFailedDoesNotSelectAvailabilityUpdates) {
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::Failed);
+    result.quantizedMeshAvailabilityUpdates.push_back(
+        QuantizedMeshAvailabilityUpdate{});
+
+    TileAvailabilityUpdateSelection selection =
+        TileLoadDomainPolicy::availabilityUpdatesForDomain(
+            TileLoadDomain::Content,
+            result);
+
+    EXPECT_EQ(nullptr, selection.updates);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     OrdinaryRenderableNonTerrainContentDoesNotSelectAvailabilityUpdates) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.vertices.resize(1);
+    primitive.vertices[0].positionEcef = Vec3(1.0, 0.0, 0.0);
+    primitive.indices = {0};
+    model->primitives.push_back(std::move(primitive));
+    TileContentLoadResult contentResult;
+    contentResult.status = TileLoadStatus::Renderable;
+    contentResult.gltfModel = std::move(model);
+    contentResult.terrainRenderContent = false;
+    contentResult.quantizedMeshAvailabilityUpdates.push_back(
+        QuantizedMeshAvailabilityUpdate{});
+    TileLoadResult result =
+        TileLoadResult::fromContentResult(std::move(contentResult));
+    ASSERT_EQ(TileLoadStatus::Renderable, result.status);
+
+    TileAvailabilityUpdateSelection selection =
+        TileLoadDomainPolicy::availabilityUpdatesForDomain(
+            TileLoadDomain::Content,
+            result);
+
+    EXPECT_EQ(nullptr, selection.updates);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentFailedTerminalIgnoresTileLoadResultMetadata) {
     expectContentTerminalIgnoresMetadata(
         TileLoadStatus::Failed,

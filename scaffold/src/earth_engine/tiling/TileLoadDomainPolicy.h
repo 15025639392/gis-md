@@ -4,7 +4,28 @@
 
 namespace earth_engine {
 
+struct TileAvailabilityUpdateSelection {
+    std::vector<QuantizedMeshAvailabilityUpdate>* updates = nullptr;
+    bool clearAfterApply = false;
+};
+
 struct TileLoadDomainPolicy {
+    static TileAvailabilityUpdateSelection availabilityUpdatesForDomain(
+        TileLoadDomain domain,
+        TileLoadResult& result) {
+        if (domain == TileLoadDomain::TerrainContent &&
+            result.status == TileLoadStatus::Failed &&
+            !result.quantizedMeshAvailabilityUpdates.empty()) {
+            return {&result.quantizedMeshAvailabilityUpdates, true};
+        }
+        if (result.status == TileLoadStatus::Renderable &&
+            result.content.satisfiesContentTerrainPayloadContract() &&
+            !result.content.quantizedMeshAvailabilityUpdates.empty()) {
+            return {&result.content.quantizedMeshAvailabilityUpdates, false};
+        }
+        return {};
+    }
+
     static bool shouldUploadForDomain(
         TileLoadDomain domain,
         const TileLoadResult& result) {

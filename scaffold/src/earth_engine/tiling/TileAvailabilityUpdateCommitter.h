@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileLoadDomainPolicy.h"
 #include "TileLoadTypes.h"
 
 namespace earth_engine {
@@ -13,20 +14,13 @@ struct TileAvailabilityUpdateCommitter {
             return;
         }
 
-        if (domain == TileLoadDomain::TerrainContent &&
-            result.status == TileLoadStatus::Failed &&
-            !result.quantizedMeshAvailabilityUpdates.empty()) {
-            contentProvider->applyTerrainAvailabilityUpdates(
-                result.quantizedMeshAvailabilityUpdates);
-            result.quantizedMeshAvailabilityUpdates.clear();
-            return;
-        }
-
-        if (result.status == TileLoadStatus::Renderable &&
-            result.content.satisfiesContentTerrainPayloadContract() &&
-            !result.content.quantizedMeshAvailabilityUpdates.empty()) {
-            contentProvider->applyTerrainAvailabilityUpdates(
-                result.content.quantizedMeshAvailabilityUpdates);
+        TileAvailabilityUpdateSelection selection =
+            TileLoadDomainPolicy::availabilityUpdatesForDomain(domain, result);
+        if (selection.updates && !selection.updates->empty()) {
+            contentProvider->applyTerrainAvailabilityUpdates(*selection.updates);
+            if (selection.clearAfterApply) {
+                selection.updates->clear();
+            }
         }
     }
 };
