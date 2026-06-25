@@ -174,13 +174,9 @@ public:
             !upload.content().quantizedMeshAvailabilityUpdates.empty() &&
             contentProvider &&
             contentProvider->providesTerrainQuadtree();
-        std::vector<QuantizedMeshAvailabilityUpdate>
-            terrainAvailabilityUpdates;
         if (shouldApplyTerrainAvailability) {
-            terrainAvailabilityUpdates =
-                std::move(upload.content().quantizedMeshAvailabilityUpdates);
             contentProvider->applyTerrainAvailabilityUpdates(
-                terrainAvailabilityUpdates);
+                upload.content().quantizedMeshAvailabilityUpdates);
         }
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
