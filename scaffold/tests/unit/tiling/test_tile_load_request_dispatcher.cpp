@@ -574,9 +574,7 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(
         1u,
         normalizedGltf.content.quantizedMeshAvailabilityUpdates.size());
-    EXPECT_EQ(
-        1u,
-        normalizedGltf.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_TRUE(normalizedGltf.quantizedMeshAvailabilityUpdates.empty());
 
     TileContentLoadResult failedContentResult =
         TileContentLoadResult::failed();

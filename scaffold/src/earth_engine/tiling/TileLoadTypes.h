@@ -100,8 +100,13 @@ struct TileLoadResult {
     static TileLoadResult createFailedPreservingAvailability(
         TileLoadResult&& result) {
         TileLoadResult failed = createTerminal(TileLoadStatus::Failed);
-        failed.quantizedMeshAvailabilityUpdates =
-            std::move(result.quantizedMeshAvailabilityUpdates);
+        if (!result.quantizedMeshAvailabilityUpdates.empty()) {
+            failed.quantizedMeshAvailabilityUpdates =
+                std::move(result.quantizedMeshAvailabilityUpdates);
+        } else {
+            failed.quantizedMeshAvailabilityUpdates =
+                std::move(result.content.quantizedMeshAvailabilityUpdates);
+        }
         return failed;
     }
 
@@ -118,11 +123,11 @@ struct TileLoadResult {
     static TileLoadResult fromContentResult(TileContentLoadResult&& result) {
         TileLoadResult loadResult;
         loadResult.status = result.status;
-        loadResult.quantizedMeshAvailabilityUpdates =
-            result.quantizedMeshAvailabilityUpdates;
         if (result.status == TileLoadStatus::Renderable &&
             result.gltfModel == nullptr) {
             loadResult.status = TileLoadStatus::Failed;
+            loadResult.quantizedMeshAvailabilityUpdates =
+                std::move(result.quantizedMeshAvailabilityUpdates);
             return loadResult;
         }
         if (isSuccessfulTileLoadStatus(result.status)) {
@@ -130,10 +135,19 @@ struct TileLoadResult {
                 std::move(result));
             if (loadResult.content.terrainRenderContent &&
                 !loadResult.content.satisfiesContentTerrainPayloadContract()) {
+                auto availabilityUpdates = std::move(
+                    loadResult.content.quantizedMeshAvailabilityUpdates);
                 loadResult.status = TileLoadStatus::Failed;
                 loadResult.content = {};
+                loadResult.quantizedMeshAvailabilityUpdates =
+                    std::move(availabilityUpdates);
+                return loadResult;
             }
+            loadResult.quantizedMeshAvailabilityUpdates.clear();
+            return loadResult;
         }
+        loadResult.quantizedMeshAvailabilityUpdates =
+            std::move(result.quantizedMeshAvailabilityUpdates);
         return loadResult;
     }
 

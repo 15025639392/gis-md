@@ -4067,7 +4067,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     ASSERT_TRUE(TileLoadDomainPolicy::shouldFailUploadForDomain(
         TileLoadDomain::TerrainContent,
         upload.result));
-    ASSERT_EQ(1u, upload.result.quantizedMeshAvailabilityUpdates.size());
+    ASSERT_TRUE(upload.result.quantizedMeshAvailabilityUpdates.empty());
+    ASSERT_EQ(
+        1u,
+        upload.result.content.quantizedMeshAvailabilityUpdates.size());
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
