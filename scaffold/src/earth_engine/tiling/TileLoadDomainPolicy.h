@@ -11,7 +11,9 @@ struct TileLoadDomainPolicy {
         if (domain == TileLoadDomain::TerrainContent) {
             return result.isRenderableContentTerrain();
         }
-        return result.shouldUpload();
+        return result.shouldUpload() &&
+               (!result.content.terrainRenderContent ||
+                result.content.satisfiesContentTerrainPayloadContract());
     }
 
     static bool shouldFailUploadForDomain(

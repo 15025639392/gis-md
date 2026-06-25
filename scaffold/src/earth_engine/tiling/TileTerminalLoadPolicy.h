@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileLoadTypes.h"
 #include "../content/GltfContentProvider.h"
 #include "../providers/TerrainProvider.h"
 
@@ -15,11 +16,8 @@ struct TileTerminalLoadAction {
 };
 
 struct TileTerminalLoadPolicy {
-    static TileTerminalLoadAction applyTerrainTerminalResult(
-        TilesetTile& tile,
-        TileLoadStatus status,
-        IPrepareRendererResources* pPrepRenderer);
-    static TileTerminalLoadAction applyContentTerminalResult(
+    static TileTerminalLoadAction applyTerminalResult(
+        TileLoadDomain domain,
         TilesetTile& tile,
         TileLoadStatus status,
         IPrepareRendererResources* pPrepRenderer);

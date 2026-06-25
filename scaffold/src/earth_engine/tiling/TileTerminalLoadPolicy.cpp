@@ -1,6 +1,7 @@
 #include "TileTerminalLoadPolicy.h"
 
 #include "RasterMappedToTilesetTile.h"
+#include "TileLoadTypes.h"
 #include "TilesetTile.h"
 
 namespace earth_engine {
@@ -95,19 +96,16 @@ TileTerminalLoadAction applyTerminalResult(
 } // namespace
 
 TileTerminalLoadAction
-TileTerminalLoadPolicy::applyTerrainTerminalResult(
+TileTerminalLoadPolicy::applyTerminalResult(
+    TileLoadDomain domain,
     TilesetTile& tile,
     TileLoadStatus status,
     IPrepareRendererResources* pPrepRenderer) {
-    return applyTerminalResult(tile, status, pPrepRenderer, false);
-}
-
-TileTerminalLoadAction
-TileTerminalLoadPolicy::applyContentTerminalResult(
-    TilesetTile& tile,
-    TileLoadStatus status,
-    IPrepareRendererResources* pPrepRenderer) {
-    return applyTerminalResult(tile, status, pPrepRenderer, true);
+    return ::earth_engine::applyTerminalResult(
+        tile,
+        status,
+        pPrepRenderer,
+        domain == TileLoadDomain::Content);
 }
 
 } // namespace earth_engine

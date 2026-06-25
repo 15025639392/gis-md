@@ -117,7 +117,6 @@
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
 #include "earth_engine/tiling/RenderContentRasterOverlayStateUpdater.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
-
 #include <atomic>
 #include <array>
 #include <chrono>
@@ -137,15 +136,12 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
-
 using namespace earth_engine;
-
 namespace earth_engine {
 struct TilesetTestAccess {
     static Tileset makeLegacyTerrainTileset(
@@ -161,7 +157,6 @@ struct TilesetTestAccess {
             device,
             std::move(options));
     }
-
     static std::unique_ptr<Tileset> makeLegacyTerrainTilesetPtr(
         std::unique_ptr<TerrainProvider> terrainProvider,
         std::unique_ptr<TileScheme> scheme,
@@ -176,16 +171,13 @@ struct TilesetTestAccess {
                 device,
                 std::move(options)));
     }
-
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
     }
-
     static std::string terrainCacheKey(Tileset& tileset, const TileKey& key) {
         (void)tileset;
         return TileCacheKey::forTile(key);
     }
-
     static void putTerrainCache(
         Tileset& tileset,
         const TileKey& key,
@@ -194,19 +186,16 @@ struct TilesetTestAccess {
             terrainCacheKey(tileset, key)] =
             std::move(heightmap);
     }
-
     static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
         return tileset.contentLifecycle_.legacyHeightmapTerrainCache().count(
                    terrainCacheKey(tileset, key)) > 0;
     }
-
     static bool containsPendingWorkFor(Tileset& tileset,
                                        const TileKey& key) {
         return tileset.contentLifecycle_
             .loadLifecycle()
             .containsWorkForCacheKey(terrainCacheKey(tileset, key));
     }
-
     static bool claimContentUpload(Tileset& tileset, const TileKey& key) {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
@@ -227,21 +216,17 @@ struct TilesetTestAccess {
             .takeHighestPriorityUpload(false, budget)
             .has_value();
     }
-
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
         tileset.contentAccess_.ensureTileChildren(tile);
     }
-
     static bool canRefine(Tileset& tileset, const TilesetTile& tile) {
         return tileset.contentAccess_.canRefine(tile);
     }
-
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
         return TileSelectionRasterOverlayPreparer::isRenderable(
             tile,
             tileset.rasterOverlays_);
     }
-
     static void addTileToCurrentPlan(Tileset& tileset, TilesetTile& tile) {
         TileSelectionPlanAppender::addTileToCurrentPlan(
             tileset.tilePlan_,
@@ -253,7 +238,6 @@ struct TilesetTestAccess {
             std::numeric_limits<double>::max());
         refreshTilePlanRenderEntries(tileset);
     }
-
     static bool culledTileReportsMissingRenderableForForbidHoles(
         Tileset& tileset,
         const TilesetTile& tile) {
@@ -266,7 +250,6 @@ struct TilesetTestAccess {
                !details.anyWereRenderedLastFrame &&
                details.notYetRenderableCount == 1;
     }
-
     static bool culledTileIsIgnoredWithoutForbidHoles(
         Tileset& tileset,
         const TilesetTile& tile) {
@@ -279,7 +262,6 @@ struct TilesetTestAccess {
                !details.anyWereRenderedLastFrame &&
                details.notYetRenderableCount == 0;
     }
-
     static bool singleTileDetailsAnyWereRenderedLastFrame(
         Tileset& tileset,
         const TilesetTile& tile) {
@@ -288,14 +270,12 @@ struct TilesetTestAccess {
             tileset.rasterOverlays_)
             .anyWereRenderedLastFrame;
     }
-
     static void requestMissingTile(Tileset& tileset, const TileKey& key) {
         tileset.requestMissingContent({
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Normal}});
     }
-
     static TileLoadRequestOutcome requestMissingTileWithBudget(
         Tileset& tileset,
         const TileKey& key,
@@ -307,7 +287,6 @@ struct TilesetTestAccess {
                 1.0}},
             &budget);
     }
-
     static void requestMissingTilesWithPriorities(
         Tileset& tileset,
         const TileKey& firstKey,
@@ -324,7 +303,6 @@ struct TilesetTestAccess {
                 TileLoadPriorityGroup::Normal,
                 secondPriority}});
     }
-
     static void requestMissingTilesWithBudget(
         Tileset& tileset,
         FrameResourceBudget& budget,
@@ -341,28 +319,24 @@ struct TilesetTestAccess {
                 1.0}},
             &budget);
     }
-
     static void requestMissingPreload(Tileset& tileset, const TileKey& key) {
         tileset.requestMissingContent({
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Preload}});
     }
-
     static void requestMissingUrgent(Tileset& tileset, const TileKey& key) {
         tileset.requestMissingContent({
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Urgent}});
     }
-
     static void processPendingUploads(Tileset& tileset) {
         tileset.processPendingLoads(
             false,
             false,
             nullptr);
     }
-
     static void processPendingUploadsWithBudget(
         Tileset& tileset,
         FrameResourceBudget& budget) {
@@ -372,13 +346,11 @@ struct TilesetTestAccess {
             nullptr,
             &budget);
     }
-
     static void beginFrameResourceBudget(
         Tileset& tileset,
         const FrameResourceBudgetConfig& config) {
         tileset.frameResourceBudget_.beginFrame(1, config);
     }
-
     static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
         const std::vector<size_t> overlayOrder =
             TileSelectionRasterOverlayPreparer::processingOrder(
@@ -391,7 +363,6 @@ struct TilesetTestAccess {
             tileset.options_.maximumScreenSpaceError,
             tileset.frameResourceBudget_);
     }
-
     static void prefetchRasterOverlaySelection(
         Tileset& tileset,
         const std::vector<TileLoadRequest>& requests,
@@ -411,15 +382,12 @@ struct TilesetTestAccess {
                 return tileset.contentAccess_.ensureTile(key);
             });
     }
-
     static bool loadQueueEmpty(const Tileset& tileset) {
         return tileset.loadQueue_.empty();
     }
-
     static size_t loadQueueSize(const Tileset& tileset) {
         return tileset.loadQueue_.size();
     }
-
     static bool loadQueueContainsOnly(const Tileset& tileset,
                                       const TileKey& key,
                                       TileLoadPriorityGroup group) {
@@ -427,7 +395,6 @@ struct TilesetTestAccess {
                tileset.loadQueue_.front().key == key &&
                tileset.loadQueue_.front().group == group;
     }
-
     static bool loadQueueContainsOnlyNormal(const Tileset& tileset,
                                             const TileKey& key) {
         return loadQueueContainsOnly(
@@ -435,7 +402,6 @@ struct TilesetTestAccess {
             key,
             TileLoadPriorityGroup::Normal);
     }
-
     static bool loadQueueContainsNormal(const Tileset& tileset,
                                         const TileKey& key) {
         for (const TileLoadRequest& request : tileset.loadQueue_) {
@@ -446,7 +412,6 @@ struct TilesetTestAccess {
         }
         return false;
     }
-
     static bool loadQueueContainsUrgent(const Tileset& tileset,
                                         const TileKey& key) {
         for (const TileLoadRequest& request : tileset.loadQueue_) {
@@ -457,7 +422,6 @@ struct TilesetTestAccess {
         }
         return false;
     }
-
     static bool loadQueueContainsAny(const Tileset& tileset,
                                      const TileKey& key) {
         for (const TileLoadRequest& request : tileset.loadQueue_) {
@@ -467,7 +431,6 @@ struct TilesetTestAccess {
         }
         return false;
     }
-
     static void queuePreload(Tileset& tileset, const TileKey& key) {
         TileSelectionPlanAppender::queueTileLoad(
             tileset.loadQueue_,
@@ -475,7 +438,6 @@ struct TilesetTestAccess {
             TileLoadPriorityGroup::Preload,
             std::numeric_limits<double>::max());
     }
-
     static void queueNormal(Tileset& tileset, const TileKey& key) {
         TileSelectionPlanAppender::queueTileLoad(
             tileset.loadQueue_,
@@ -483,7 +445,6 @@ struct TilesetTestAccess {
             TileLoadPriorityGroup::Normal,
             std::numeric_limits<double>::max());
     }
-
     static void queueUrgent(Tileset& tileset, const TileKey& key) {
         TileSelectionPlanAppender::queueTileLoad(
             tileset.loadQueue_,
@@ -491,46 +452,36 @@ struct TilesetTestAccess {
             TileLoadPriorityGroup::Urgent,
             std::numeric_limits<double>::max());
     }
-
     static int64_t maximumCachedBytes() {
         return Tileset::kMaximumCachedBytes;
     }
-
     static int64_t estimateTileBytes(const TilesetTile& tile) {
         return TileCacheMetrics::estimateTileBytes(tile);
     }
-
     static void updateTotalBytesUsed(Tileset& tileset) {
         tileset.cacheOwnership_.updateTotalBytesUsed();
     }
-
     static void markEligibleForUnloading(Tileset& tileset, const TileKey& key) {
         tileset.cacheOwnership_.markEligibleForUnloading(
             terrainCacheKey(tileset, key));
     }
-
     static void unloadCachedBytes(Tileset& tileset, int64_t maximumCachedBytes) {
         tileset.cacheOwnership_.unloadCachedBytes(maximumCachedBytes, nullptr);
     }
-
     static void clearChildrenRecursively(Tileset& tileset, TilesetTile& tile) {
         tileset.cacheOwnership_.clearChildrenRecursively(&tile, nullptr);
     }
-
     static TilesetTile* findTile(Tileset& tileset, const TileKey& key) {
         return tileset.tileRegistry_.findTile(key);
     }
-
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
         tileset.meshPreparation_.prepareRenderableTile(tile);
     }
-
     static void unloadTileContent(Tileset& tileset,
                                   TilesetTile& tile,
                                   IPrepareRendererResources* pPrepRenderer) {
         tileset.cacheOwnership_.unloadTileContent(tile, pPrepRenderer);
     }
-
     static void buildTileDrawCommand(Tileset& tileset,
                                      Renderer& renderer,
                                      TilesetTile& tile,
@@ -547,55 +498,43 @@ struct TilesetTestAccess {
             commands,
             transitionOpacity);
     }
-
     static void setInteractionActiveForFrame(Tileset& tileset, bool active) {
         tileset.interactionActiveForFrame_ = active;
     }
-
     static uint64_t resourceRevision(const Tileset& tileset) {
         return tileset.resourceRevision_;
     }
-
     static bool cacheBytesDirty(const Tileset& tileset) {
         return tileset.contentCache_.cacheBytesDirty();
     }
-
     static bool selectionReuseReusable(const Tileset& tileset) {
         return tileset.selectionReuseState_.reusable;
     }
-
     static void primeCleanReusableResources(Tileset& tileset) {
         tileset.contentCache_.cacheBytesDirty() = false;
         tileset.selectionReuseState_.reusable = true;
     }
-
     static void markTileResourcesDirty(Tileset& tileset) {
         tileset.markContentResourcesDirty();
     }
-
     static const Vec3& localOrigin(const TilesetTile& tile) {
         return tile.content.renderContent.renderLocalOrigin();
     }
-
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {
         return TileBoundsMetrics::tileBoundsCenter(bounds);
     }
-
     static double tileBoundsRadius(const TilesetTile& tile,
                                    const Vec3& center) {
         return TileBoundsMetrics::tileBoundsRadius(tile, center);
     }
-
     static std::optional<OrientedBoundingBox> tileBoundingRegionObb(
         const TilesetTile& tile) {
         return TileBoundsMetrics::tileBoundingRegionObb(tile);
     }
-
     static bool tileIntersectsFrustum(const TilesetTile& tile,
                                       const Frustum& frustum) {
         return TileBoundsMetrics::tileIntersectsFrustum(tile, frustum);
     }
-
     static double approximateDistanceToTileBounds(
         const TilesetTile& tile,
         const Vec3& cameraPosition) {
@@ -603,28 +542,22 @@ struct TilesetTestAccess {
             tile,
             cameraPosition);
     }
-
     static void selectTiles(Tileset& tileset, const FrameState& frameState) {
         TilesetSelectionFrameFacade::selectTiles(tileset, frameState);
     }
-
     static void beginTilePlan(Tileset& tileset) {
         tileset.tilePlan_ = TilePlan{};
     }
-
     static const TilePlan& tilePlan(Tileset& tileset) {
         return tileset.tilePlan_;
     }
-
     static TilePlan& mutableTilePlan(Tileset& tileset) {
         return tileset.tilePlan_;
     }
-
     static const TileSelectionCounters& selectionCounters(
         const Tileset& tileset) {
         return tileset.selectionCounters_;
     }
-
     static void updateLodTransitions(Tileset& tileset,
                                      double deltaSeconds) {
         TileLodTransitionFrameUpdater::update(
@@ -638,7 +571,6 @@ struct TilesetTestAccess {
                 tileset.options_.lodTransitionLength});
         refreshTilePlanRenderEntries(tileset);
     }
-
     static void refreshTilePlanRenderEntries(Tileset& tileset) {
         TileRenderPlanFrameRefresher::refresh(
             tileset.tilePlan_,
@@ -649,31 +581,26 @@ struct TilesetTestAccess {
                 tileset.interactionActiveForFrame_,
                 tileset.resourceSmoothingActiveForFrame_});
     }
-
     static size_t fadingOutSetSize(const Tileset& tileset) {
         return tileset.tilesFadingOut_.size();
     }
-
     static void setLastCamera(Tileset& tileset,
                               const Vec3& position,
                               const Vec3& direction) {
         tileset.lastCameraPosition_ = position;
         tileset.lastCameraDirection_ = direction;
     }
-
     static void setOcclusionState(
         Tileset& tileset,
         TileOcclusionState state) {
         tileset.setOcclusionCallback(
             [state](const TilesetTile&) { return state; });
     }
-
     static void setOcclusionCallback(
         Tileset& tileset,
         Tileset::OcclusionCallback callback) {
         tileset.setOcclusionCallback(std::move(callback));
     }
-
     static TileOcclusionState checkOcclusion(
         Tileset& tileset,
         const TilesetTile& tile) {
@@ -681,11 +608,8 @@ struct TilesetTestAccess {
     }
 };
 } // namespace earth_engine
-
 namespace {
-
 int gFailures = 0;
-
 int processPendingRasterUploadsUntil(RasterOverlayTileProvider& provider,
                                      int expectedUploads,
                                      FrameResourceBudget* budget = nullptr) {
@@ -700,23 +624,19 @@ int processPendingRasterUploadsUntil(RasterOverlayTileProvider& provider,
     }
     return processed;
 }
-
 const std::vector<std::unique_ptr<Tileset>>& emptyContentTilesets() {
     static const std::vector<std::unique_ptr<Tileset>> empty;
     return empty;
 }
-
 class BlockingHttpRequest final : public HttpRequest {
 public:
     void cancel() override {}
 };
-
 class BlockingPlatformBridge final : public PlatformBridge {
 public:
     void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
-
     std::unique_ptr<HttpRequest> get(
         const std::string&,
         std::function<void(int, std::vector<uint8_t>)> callback,
@@ -730,7 +650,6 @@ public:
         return std::make_unique<BlockingHttpRequest>();
     }
     int maximumActiveRequests() const override { return 11; }
-
     bool waitUntilEntered() {
         std::unique_lock<std::mutex> lock(mutex_);
         return cv_.wait_for(
@@ -738,7 +657,6 @@ public:
             std::chrono::seconds(2),
             [this]() { return entered_; });
     }
-
     bool complete(int statusCode, std::vector<uint8_t> body = {}) {
         std::function<void(int, std::vector<uint8_t>)> callback;
         {
@@ -751,7 +669,6 @@ public:
         callback(statusCode, std::move(body));
         return true;
     }
-
     std::string cacheDirectory() const override { return "/tmp"; }
     std::string documentsDirectory() const override { return "/tmp"; }
     std::unique_ptr<DecodedImage> decodeImage(
@@ -762,25 +679,21 @@ public:
     void log(LogLevel, const std::string&, const std::string&) override {}
     DeviceInfo deviceInfo() const override { return {}; }
     std::string getToken(const std::string&) const override { return {}; }
-
 private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::function<void(int, std::vector<uint8_t>)> callback_;
     bool entered_ = false;
 };
-
 class QueuedPlatformBridge final : public PlatformBridge {
 public:
     struct PendingRequest {
         std::string url;
         std::function<void(int, std::vector<uint8_t>)> callback;
     };
-
     void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
-
     std::unique_ptr<HttpRequest> get(
         const std::string& url,
         std::function<void(int, std::vector<uint8_t>)> callback,
@@ -793,7 +706,6 @@ public:
         return std::make_unique<BlockingHttpRequest>();
     }
     int maximumActiveRequests() const override { return 11; }
-
     bool waitUntilPendingCount(size_t count) {
         std::unique_lock<std::mutex> lock(mutex_);
         return cv_.wait_for(
@@ -801,17 +713,14 @@ public:
             std::chrono::seconds(2),
             [this, count]() { return pending_.size() >= count; });
     }
-
     size_t pendingCount() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return pending_.size();
     }
-
     std::string pendingUrl(size_t index) const {
         std::lock_guard<std::mutex> lock(mutex_);
         return index < pending_.size() ? pending_[index].url : std::string();
     }
-
     bool completeNext(int statusCode, std::vector<uint8_t> body = {}) {
         std::function<void(int, std::vector<uint8_t>)> callback;
         {
@@ -825,7 +734,6 @@ public:
         callback(statusCode, std::move(body));
         return true;
     }
-
     std::string cacheDirectory() const override { return "/tmp"; }
     std::string documentsDirectory() const override { return "/tmp"; }
     std::unique_ptr<DecodedImage> decodeImage(
@@ -836,18 +744,15 @@ public:
     void log(LogLevel, const std::string&, const std::string&) override {}
     DeviceInfo deviceInfo() const override { return {}; }
     std::string getToken(const std::string&) const override { return {}; }
-
 private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<PendingRequest> pending_;
 };
-
 class BlockingDecodeXYZImageryProvider final : public XYZImageryProvider {
 public:
     explicit BlockingDecodeXYZImageryProvider(std::string urlTemplate)
         : XYZImageryProvider(std::move(urlTemplate)) {}
-
     std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t*,
         size_t) override {
@@ -857,10 +762,8 @@ public:
             decodeEntered_ = true;
         }
         cv_.notify_all();
-
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, [this]() { return releaseDecode_; });
-
         auto image = std::make_unique<DecodedImage>();
         image->width = 1;
         image->height = 1;
@@ -868,7 +771,6 @@ public:
         image->pixels = {255, 255, 255, 255};
         return image;
     }
-
     bool waitUntilDecodeEntered() {
         std::unique_lock<std::mutex> lock(mutex_);
         return cv_.wait_for(
@@ -876,7 +778,6 @@ public:
             std::chrono::seconds(2),
             [this]() { return decodeEntered_; });
     }
-
     void releaseDecode() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -884,16 +785,13 @@ public:
         }
         cv_.notify_all();
     }
-
     std::atomic<int> decodeCalls{0};
-
 private:
     std::mutex mutex_;
     std::condition_variable cv_;
     bool decodeEntered_ = false;
     bool releaseDecode_ = false;
 };
-
 void check(bool condition, const std::string& name) {
     if (condition) {
         std::cout << "  OK  " << name << "\n";
@@ -903,7 +801,6 @@ void check(bool condition, const std::string& name) {
     }
     std::cout.flush();
 }
-
 Rectangle projectForProvider(const TileScheme& scheme,
                              const Rectangle& geographicRectangle) {
     if (scheme.crsProfile() == "EPSG:3857") {
@@ -913,12 +810,10 @@ Rectangle projectForProvider(const TileScheme& scheme,
     }
     return geographicRectangle;
 }
-
 Rectangle projectForProvider(const RasterOverlayTileProvider& provider,
                              const Rectangle& geographicRectangle) {
     return projectForProvider(provider.getTileScheme(), geographicRectangle);
 }
-
 RasterOverlayDetails makeProviderDetails(const TileScheme& scheme,
                                          const Rectangle& geographicRectangle) {
     RasterOverlayDetails details;
@@ -932,7 +827,6 @@ RasterOverlayDetails makeProviderDetails(const TileScheme& scheme,
     }
     return details;
 }
-
 bool uniformNear(const RenderCommand& cmd,
                  const char* name,
                  std::initializer_list<float> expected,
@@ -950,7 +844,6 @@ bool uniformNear(const RenderCommand& cmd,
     }
     return true;
 }
-
 void checkTextureTransformUniforms(const RenderCommand& cmd,
                                    const char* offsetScaleName,
                                    const char* rotationName,
@@ -960,7 +853,6 @@ void checkTextureTransformUniforms(const RenderCommand& cmd,
             uniformNear(cmd, rotationName, {1.0f, 0.0f}),
         name);
 }
-
 SelectorView makeSelectorView(const Camera& camera,
                                           int viewportWidth,
                                           int viewportHeight) {
@@ -975,7 +867,6 @@ SelectorView makeSelectorView(const Camera& camera,
     view.viewportHeightPixels = viewportHeight;
     return view;
 }
-
 Camera makeCameraFromCenterPitchHeading(double longitudeDegrees,
                                         double latitudeDegrees,
                                         double cameraHeightMeters,
@@ -990,7 +881,6 @@ Camera makeCameraFromCenterPitchHeading(double longitudeDegrees,
     const Vec3 east =
         Vec3(-target.y(), target.x(), 0.0).normalized();
     const Vec3 north = localUp.cross(east).normalized();
-
     const double horizontalScale = std::cos(pitchRadians);
     const Vec3 direction =
         (east * (std::sin(headingRadians) * horizontalScale) +
@@ -999,26 +889,22 @@ Camera makeCameraFromCenterPitchHeading(double longitudeDegrees,
     const Vec3 cameraUp =
         (north * std::cos(headingRadians) -
          east * std::sin(headingRadians)).normalized();
-
     Camera camera;
     camera.lookAt(target - direction * cameraHeightMeters,
                   target,
                   cameraUp);
     return camera;
 }
-
 template <typename T>
 void appendPod(std::vector<uint8_t>& bytes, T value) {
     const auto* p = reinterpret_cast<const uint8_t*>(&value);
     bytes.insert(bytes.end(), p, p + sizeof(T));
 }
-
 void pad4(std::vector<uint8_t>& bytes, uint8_t pad) {
     while ((bytes.size() % 4u) != 0u) {
         bytes.push_back(pad);
     }
 }
-
 void writeBytes(const std::filesystem::path& path,
                 const std::vector<uint8_t>& bytes) {
     std::filesystem::create_directories(path.parent_path());
@@ -1026,9 +912,7 @@ void writeBytes(const std::filesystem::path& path,
     out.write(reinterpret_cast<const char*>(bytes.data()),
               static_cast<std::streamsize>(bytes.size()));
 }
-
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters);
-
 RasterOverlay::Options makeRasterOverlayOptions() {
     RasterOverlay::Options options{};
     options.maximumSimultaneousTileLoads = 20;
@@ -1043,18 +927,14 @@ RasterOverlay::Options makeRasterOverlayOptions() {
     options.blocksCompleteRenderable = true;
     return options;
 }
-
 class AttributedDebugImageryProvider final : public DebugImageryProvider {
 public:
     explicit AttributedDebugImageryProvider(std::string attribution)
         : attribution_(std::move(attribution)) {}
-
     std::string attribution() const override { return attribution_; }
-
 private:
     std::string attribution_;
 };
-
 class DummyBuffer final : public Buffer {
 public:
     explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
@@ -1066,43 +946,34 @@ public:
     }
     size_t size() const override { return byteSize_; }
     const std::vector<uint8_t>& bytes() const { return bytes_; }
-
 private:
     size_t byteSize_ = 0;
     std::vector<uint8_t> bytes_;
 };
-
 class DiagnosticImageryProvider final : public DebugImageryProvider {
 public:
     DiagnosticImageryProvider(std::string providerId,
                               ProviderRequestDiagnostics diagnostics)
         : providerId_(std::move(providerId)),
           diagnostics_(diagnostics) {}
-
     std::string id() const override { return providerId_; }
-
     ProviderRequestDiagnostics requestDiagnostics() const override {
         return diagnostics_;
     }
-
 private:
     std::string providerId_;
     ProviderRequestDiagnostics diagnostics_;
 };
-
 class DummyShaderProgram final : public ShaderProgram {};
-
 class DummyTexture final : public Texture {
 public:
     DummyTexture(int width, int height) : width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
-
 private:
     int width_ = 0;
     int height_ = 0;
 };
-
 class RecordingPrepareRendererResources final
     : public IPrepareRendererResources {
 public:
@@ -1122,7 +993,6 @@ public:
         lastTexture = texture;
         lastUv = {translationU, translationV, scaleU, scaleV};
     }
-
     void detachRasterInMainThread(
         const TileKey& geometryKey,
         int32_t overlayIndex) noexcept override {
@@ -1130,7 +1000,6 @@ public:
         lastDetachedGeometryKey = geometryKey;
         lastDetachedOverlayIndex = overlayIndex;
     }
-
     int attachCount = 0;
     int detachCount = 0;
     TileKey lastGeometryKey;
@@ -1141,7 +1010,6 @@ public:
     Texture* lastTexture = nullptr;
     std::array<float, 4> lastUv{0.0f, 0.0f, 1.0f, 1.0f};
 };
-
 class DummyRenderDevice final : public RenderDevice {
 public:
     Backend backendType() const override { return Backend::OpenGLES; }
@@ -1150,14 +1018,12 @@ public:
     bool supportsFloatTextures() const override { return true; }
     bool supportsInstancing() const override { return true; }
     std::string rendererString() const override { return "DummyRenderDevice"; }
-
     std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override {
         if (!allowTextureCreation) return nullptr;
         lastTextureDesc = desc;
         ++createdTextureCount;
         return std::make_unique<DummyTexture>(desc.width, desc.height);
     }
-
     bool updateTextureRegion(Texture*,
                              int,
                              int,
@@ -1167,24 +1033,19 @@ public:
                              size_t) override {
         return false;
     }
-
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
         return std::make_unique<DummyBuffer>(desc.size, desc.data);
     }
-
     bool updateBuffer(Buffer*, size_t, const void*, size_t) override {
         return false;
     }
-
     std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
         return std::make_unique<DummyShaderProgram>();
     }
-
     std::unique_ptr<Framebuffer> createFramebuffer(
         const FramebufferDesc&) override {
         return nullptr;
     }
-
     void beginFrame() override {}
     void submit(const RenderCommandList& commands) override {
         submittedCommands = commands;
@@ -1193,17 +1054,14 @@ public:
     void onSurfaceCreated() override {}
     void onSurfaceChanged(int, int) override {}
     void onSurfaceDestroyed() override {}
-
     RenderCommandList submittedCommands;
     TextureDesc lastTextureDesc;
     int createdTextureCount = 0;
     bool allowTextureCreation = false;
 };
-
 struct InitializedRendererHarness {
     DummyRenderDevice device;
     Renderer renderer;
-
     InitializedRendererHarness() : renderer(&device) {
         device.allowTextureCreation = true;
         const GlobeMesh globeMesh = Globe::createMesh(4, 2);
@@ -1211,7 +1069,6 @@ struct InitializedRendererHarness {
               "Renderer test harness initializes shared surface resources");
     }
 };
-
 std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     auto model = std::make_unique<GltfModel>();
     GltfPrimitive primitive;
@@ -1245,7 +1102,6 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     model->primitives.push_back(std::move(primitive));
     return model;
 }
-
 std::unique_ptr<GltfModel> makeTerrainTriangleGltfModel(
     const Rectangle& rectangle =
         Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0)) {
@@ -1253,7 +1109,6 @@ std::unique_ptr<GltfModel> makeTerrainTriangleGltfModel(
     model->rasterOverlayDetails.setGeographicRectangle(rectangle);
     return model;
 }
-
 bool rasterDetailsUseTightTriangleBounds(const RasterOverlayDetails& details) {
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     const std::optional<Cartographic> east =
@@ -1263,7 +1118,6 @@ bool rasterDetailsUseTightTriangleBounds(const RasterOverlayDetails& details) {
     if (!east || !north) {
         return false;
     }
-
     const Rectangle expectedRectangle(
         std::min(east->longitude(), north->longitude()),
         std::min(east->latitude(), north->latitude()),
@@ -1277,7 +1131,6 @@ bool rasterDetailsUseTightTriangleBounds(const RasterOverlayDetails& details) {
            std::abs(details.boundingRegion.maximumHeight -
                     std::max(east->height(), north->height())) < 1e-6;
 }
-
 std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     const Rectangle& rectangle) {
     auto model = std::make_unique<GltfModel>();
@@ -1292,7 +1145,6 @@ std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     rootNode.translation = rootNode.baseTranslation;
     model->nodes.push_back(rootNode);
     model->sceneRootNodes.push_back(0);
-
     GltfPrimitive primitive;
     primitive.vertices.resize(4);
     primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
@@ -1322,7 +1174,6 @@ std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     model->rasterOverlayDetails.setGeographicRectangle(rectangle);
     return model;
 }
-
 std::unique_ptr<GltfModel> makeFlatGeographicTerrainGltfModel(
     const Rectangle& rectangle,
     double heightMeters) {
@@ -1358,14 +1209,12 @@ std::unique_ptr<GltfModel> makeFlatGeographicTerrainGltfModel(
     model->rasterOverlayDetails.setGeographicRectangle(rectangle);
     return model;
 }
-
 std::unique_ptr<GltfModel> makeWebMercatorQuadTerrainGltfModel(
     const Rectangle& rectangle) {
     auto model = makeQuadTerrainGltfModel(rectangle);
     if (!model || model->primitives.empty()) {
         return model;
     }
-
     GltfPrimitive& primitive = model->primitives.front();
     primitive.vertexTexCoords[0] = {
         std::array<float, 2>{0.0f, 0.0f},
@@ -1377,7 +1226,6 @@ std::unique_ptr<GltfModel> makeWebMercatorQuadTerrainGltfModel(
         std::array<float, 2>{1.0f, 0.0f},
         std::array<float, 2>{0.0f, 1.0f},
         std::array<float, 2>{1.0f, 1.0f}};
-
     model->rasterOverlayDetails.rasterOverlayProjections = {
         RasterOverlayProjection::Geographic,
         RasterOverlayProjection::WebMercator};
@@ -1389,7 +1237,6 @@ std::unique_ptr<GltfModel> makeWebMercatorQuadTerrainGltfModel(
     model->rasterOverlayDetails.boundingRegion = {rectangle, 0.0, 0.0};
     return model;
 }
-
 GltfPrimitive makeTransparentTrianglePrimitiveAt(const Vec3& center) {
     GltfPrimitive primitive;
     primitive.vertices.resize(3);
@@ -1414,7 +1261,6 @@ GltfPrimitive makeTransparentTrianglePrimitiveAt(const Vec3& center) {
     primitive.baseColorFactor = {1.0f, 1.0f, 1.0f, 0.5f};
     return primitive;
 }
-
 std::unique_ptr<GltfModel> makeTexturedTriangleGltfModel() {
     auto model = makeTriangleGltfModel();
     GltfTexture texture;
@@ -1439,7 +1285,6 @@ std::unique_ptr<GltfModel> makeTexturedTriangleGltfModel() {
     model->primitives[0].alphaMode = GltfAlphaMode::Blend;
     return model;
 }
-
 std::vector<uint8_t> makeTriangleGlbBytes() {
     auto appendU32 = [](std::vector<uint8_t>& bytes, uint32_t value) {
         bytes.push_back(static_cast<uint8_t>(value & 0xffu));
@@ -1460,27 +1305,22 @@ std::vector<uint8_t> makeTriangleGlbBytes() {
             bytes.push_back(pad);
         }
     };
-
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     appendF32(bin, 1.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     appendF32(bin, 0.0f); appendF32(bin, 1.0f); appendF32(bin, 0.0f);
-
     const size_t normalsOffset = bin.size();
     for (int i = 0; i < 3; ++i) {
         appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 1.0f);
     }
-
     const size_t uvOffset = bin.size();
     appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     appendF32(bin, 1.0f); appendF32(bin, 0.0f);
     appendF32(bin, 0.0f); appendF32(bin, 1.0f);
-
     const size_t indicesOffset = bin.size();
     appendU16(bin, 0); appendU16(bin, 1); appendU16(bin, 2);
     pad4(bin, 0);
-
     const std::string jsonText =
         std::string("{") +
         "\"asset\":{\"version\":\"2.0\"}," +
@@ -1501,10 +1341,8 @@ std::vector<uint8_t> makeTriangleGlbBytes() {
         "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"}," +
         "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}" +
         "]}";
-
     std::vector<uint8_t> jsonBytes(jsonText.begin(), jsonText.end());
     pad4(jsonBytes, 0x20);
-
     std::vector<uint8_t> glb;
     appendU32(glb, 0x46546C67u);
     appendU32(glb, 2u);
@@ -1518,7 +1356,6 @@ std::vector<uint8_t> makeTriangleGlbBytes() {
     glb.insert(glb.end(), bin.begin(), bin.end());
     return glb;
 }
-
 std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
     bool blendMaterial = false,
     bool includeRotationScale = false) {
@@ -1527,26 +1364,21 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
     appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f);
-
     const size_t normalsOffset = bin.size();
     for (int i = 0; i < 3; ++i) {
         appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f);
     }
-
     const size_t uvOffset = bin.size();
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
     appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f);
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f);
-
     const size_t indicesOffset = bin.size();
     appendPod<uint16_t>(bin, 0); appendPod<uint16_t>(bin, 1); appendPod<uint16_t>(bin, 2);
     pad4(bin, 0);
-
     const size_t translationsOffset = bin.size();
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 5.0f);
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 25.0f);
     pad4(bin, 0);
-
     size_t rotationsOffset = 0;
     size_t scalesOffset = 0;
     if (includeRotationScale) {
@@ -1557,13 +1389,11 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
         appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
         appendPod<float>(bin, kSqrtHalf); appendPod<float>(bin, kSqrtHalf);
         pad4(bin, 0);
-
         scalesOffset = bin.size();
         appendPod<float>(bin, 2.0f); appendPod<float>(bin, 3.0f); appendPod<float>(bin, 4.0f);
         appendPod<float>(bin, 1.0f); appendPod<float>(bin, 2.0f); appendPod<float>(bin, 1.0f);
         pad4(bin, 0);
     }
-
     const std::string materialJson = blendMaterial
         ? "\"materials\":[{\"alphaMode\":\"BLEND\","
           "\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,1,1,0.5]}}],"
@@ -1583,7 +1413,6 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
         ? ",{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}"
           ",{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}"
         : "";
-
     const std::string jsonText =
         std::string("{") +
         "\"asset\":{\"version\":\"2.0\"}," +
@@ -1614,10 +1443,8 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
         "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}" +
         extraAccessorsJson +
         "]}";
-
     std::vector<uint8_t> jsonBytes(jsonText.begin(), jsonText.end());
     pad4(jsonBytes, 0x20);
-
     std::vector<uint8_t> glb;
     appendPod<uint32_t>(glb, 0x46546C67u);
     appendPod<uint32_t>(glb, 2u);
@@ -1633,7 +1460,6 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
     glb.insert(glb.end(), bin.begin(), bin.end());
     return glb;
 }
-
 std::vector<uint8_t> makeI3dmBytes(std::vector<uint8_t> gltfPayload,
                                    const std::vector<Vec3>& positions) {
     std::vector<uint8_t> featureBinary;
@@ -1644,7 +1470,6 @@ std::vector<uint8_t> makeI3dmBytes(std::vector<uint8_t> gltfPayload,
         appendPod<float>(featureBinary, static_cast<float>(position.z()));
     }
     pad4(featureBinary, 0);
-
     const std::string featureJson =
         std::string("{") +
         "\"INSTANCES_LENGTH\":" + std::to_string(positions.size()) + "," +
@@ -1655,7 +1480,6 @@ std::vector<uint8_t> makeI3dmBytes(std::vector<uint8_t> gltfPayload,
         featureJson.begin(),
         featureJson.end());
     pad4(featureBytes, 0x20);
-
     std::vector<uint8_t> i3dm;
     i3dm.push_back('i');
     i3dm.push_back('3');
@@ -1678,7 +1502,6 @@ std::vector<uint8_t> makeI3dmBytes(std::vector<uint8_t> gltfPayload,
     i3dm.insert(i3dm.end(), gltfPayload.begin(), gltfPayload.end());
     return i3dm;
 }
-
 std::vector<uint8_t> makePntsBytes() {
     std::vector<uint8_t> featureBinary;
     const size_t positionsOffset = featureBinary.size();
@@ -1693,7 +1516,6 @@ std::vector<uint8_t> makePntsBytes() {
         featureBinary.end(),
         {255u, 0u, 0u, 0u, 128u, 255u});
     pad4(featureBinary, 0);
-
     const std::string featureJson =
         std::string("{") +
         "\"POINTS_LENGTH\":2,"
@@ -1706,7 +1528,6 @@ std::vector<uint8_t> makePntsBytes() {
         featureJson.begin(),
         featureJson.end());
     pad4(featureBytes, 0x20);
-
     std::vector<uint8_t> pnts;
     pnts.push_back('p');
     pnts.push_back('n');
@@ -1725,14 +1546,12 @@ std::vector<uint8_t> makePntsBytes() {
     pnts.insert(pnts.end(), featureBinary.begin(), featureBinary.end());
     return pnts;
 }
-
 std::vector<uint8_t> makeCmptBytes(
     const std::vector<std::vector<uint8_t>>& innerTiles) {
     size_t byteLength = 16u;
     for (const std::vector<uint8_t>& inner : innerTiles) {
         byteLength += inner.size();
     }
-
     std::vector<uint8_t> cmpt;
     cmpt.push_back('c');
     cmpt.push_back('m');
@@ -1746,33 +1565,27 @@ std::vector<uint8_t> makeCmptBytes(
     }
     return cmpt;
 }
-
 struct ExternalGltfBytes {
     std::vector<uint8_t> jsonBytes;
     std::vector<uint8_t> binBytes;
 };
-
 ExternalGltfBytes makeTriangleExternalGltfBytes() {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
     appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f);
-
     const size_t normalsOffset = bin.size();
     for (int i = 0; i < 3; ++i) {
         appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f);
     }
-
     const size_t uvOffset = bin.size();
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
     appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f);
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f);
-
     const size_t indicesOffset = bin.size();
     appendPod<uint16_t>(bin, 0); appendPod<uint16_t>(bin, 1); appendPod<uint16_t>(bin, 2);
     while ((bin.size() % 4u) != 0u) bin.push_back(0);
-
     const std::string jsonText =
         std::string("{") +
         "\"asset\":{\"version\":\"2.0\"}," +
@@ -1798,44 +1611,37 @@ ExternalGltfBytes makeTriangleExternalGltfBytes() {
         std::vector<uint8_t>(jsonText.begin(), jsonText.end()),
         std::move(bin)};
 }
-
 void testRasterOverlayProviderRetention() {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
     TileKey key{scheme->id(), 3, 4, 2};
-
     provider.setFrameNumber(1);
     auto first = provider.getTile(key);
     check(first != nullptr, "RasterOverlayTileProvider: getTile creates tile");
     check(provider.getCachedTileCount() == 1,
           "RasterOverlayTileProvider: cache has one tile after getTile");
-
     provider.setFrameNumber(2);
     provider.trimUnusedTiles();
     check(provider.getCachedTileCount() == 1,
           "RasterOverlayTileProvider: tile survives one unused frame");
-
     provider.setFrameNumber(122);
     provider.markUsed(key);
     provider.trimUnusedTiles();
     check(provider.getCachedTileCount() == 1,
           "RasterOverlayTileProvider: markUsed(TileKey) refreshes retention");
-
     provider.setFrameNumber(243);
     first.reset();
     provider.trimUnusedTiles();
     check(provider.getCachedTileCount() == 0,
           "RasterOverlayTileProvider: stale tile is eventually trimmed");
 }
-
 void testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
     XYZImageryProvider provider("https://example.invalid/{z}/{x}/{y}.png");
     BlockingPlatformBridge bridge;
     provider.setPlatformBridge(&bridge);
     CancellationToken token;
     std::atomic<bool> callbackCalled{false};
-
     provider.requestTile(
         TileKey{"XYZ-WebMercator", 1, 0, 0},
         token,
@@ -1844,7 +1650,6 @@ void testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
             check(!image,
                   "XYZImageryProvider: cancelled async bridge request returns no image");
         });
-
     check(bridge.waitUntilEntered(),
           "XYZImageryProvider: test bridge observes async HTTP entry");
     ProviderRequestDiagnostics activeDiag = provider.requestDiagnostics();
@@ -1854,7 +1659,6 @@ void testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
               activeDiag.peakWorkerBlockingRequests == 0 &&
               activeDiag.maximumTransportActiveRequests == 11,
           "XYZImageryProvider: async bridge diagnostics expose transport limit without worker blocking");
-
     token.cancel();
     check(bridge.complete(200, {1, 2, 3}),
           "XYZImageryProvider: test bridge completes cancelled async request");
@@ -1863,7 +1667,6 @@ void testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
          ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
     check(doneDiag.requestsStarted == 1 &&
               doneDiag.requestsCompleted == 1 &&
@@ -1873,7 +1676,6 @@ void testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
               callbackCalled.load(std::memory_order_acquire),
           "XYZImageryProvider: diagnostics complete async bridge request after cancellation");
 }
-
 void testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline() {
     BlockingDecodeXYZImageryProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
@@ -1882,7 +1684,6 @@ void testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline() {
     CancellationToken token;
     std::atomic<bool> callbackCalled{false};
     std::atomic<bool> callbackHasImage{false};
-
     provider.requestTile(
         TileKey{"XYZ-WebMercator", 1, 0, 0},
         token,
@@ -1892,7 +1693,6 @@ void testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline() {
             callbackHasImage.store(image != nullptr, std::memory_order_release);
             callbackCalled.store(true, std::memory_order_release);
         });
-
     check(bridge.waitUntilEntered(),
           "XYZImageryProvider: bridge decode test observes HTTP entry");
     check(bridge.complete(200, {1, 2, 3}),
@@ -1902,45 +1702,37 @@ void testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline() {
           "XYZImageryProvider: bridge response schedules decode on worker");
     check(!callbackCalled.load(std::memory_order_acquire),
           "XYZImageryProvider: bridge callback is not invoked before worker decode completes");
-
     provider.releaseDecode();
     for (int i = 0; i < 200 &&
                     !callbackCalled.load(std::memory_order_acquire);
          ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-
     check(callbackCalled.load(std::memory_order_acquire) &&
               callbackHasImage.load(std::memory_order_acquire),
           "XYZImageryProvider: worker decode completes successful bridge request");
     check(provider.requestDiagnostics().requestsCompleted == 1,
           "XYZImageryProvider: successful bridge decode completes diagnostics on worker");
 }
-
 void testXYZImageryProviderUrlTemplateReversePlaceholders() {
     XYZImageryProvider provider(
         "https://example.invalid/{z}/{x}/{y}/{reverseX}/{reverseY}/{reverseZ}.png");
     provider.setZoomRange(0, 6);
-
     check(provider.buildUrl(TileKey{"XYZ-WebMercator", 3, 2, 5}) ==
               "https://example.invalid/3/2/5/5/2/3.png",
           "XYZImageryProvider: reverse placeholders match cesium-native URL template semantics");
-
     provider.setSchemeId("TMS-WebMercator");
     check(provider.buildUrl(TileKey{"TMS-WebMercator", 2, 1, 2}) ==
               "https://example.invalid/2/1/2/2/1/4.png",
           "XYZImageryProvider: TMS-WebMercator reverse placeholders use one root tile like cesium-native");
-
     provider.setSchemeId("Geographic-TMS");
     check(provider.buildUrl(TileKey{"Geographic-TMS", 2, 6, 1}) ==
               "https://example.invalid/2/6/1/1/2/4.png",
           "XYZImageryProvider: Geographic-TMS reverse placeholders use two root X tiles like cesium-native");
 }
-
 void testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative() {
     XYZImageryProvider provider(
         "https://example.invalid/{z}/{reverseZ}.png");
-
     check(provider.maxZoom() == 25,
           "XYZImageryProvider: default maximum level matches cesium-native UrlTemplateRasterOverlay");
     check(provider.supportsTile(TileKey{"XYZ-WebMercator", 25, 0, 0}),
@@ -1949,7 +1741,6 @@ void testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative() {
               "https://example.invalid/3/22.png",
           "XYZImageryProvider: default reverseZ uses maximumLevel 25 like cesium-native");
 }
-
 void testProviderExplicitRootOnlyZoomRangeLimitsTiles() {
     XYZImageryProvider imagery(
         "https://example.invalid/{z}/{x}/{y}.png");
@@ -1957,11 +1748,9 @@ void testProviderExplicitRootOnlyZoomRangeLimitsTiles() {
         "https://example.invalid/{z}/{x}/{y}.png");
     QuantizedMeshTerrainProvider quantizedMesh(
         "https://example.invalid/{z}/{x}/{y}.terrain");
-
     imagery.setZoomRange(0, 0);
     heightmap.setZoomRange(0, 0);
     quantizedMesh.setZoomRange(0, 0);
-
     check(imagery.maxZoom() == 0 &&
               imagery.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}) &&
               !imagery.supportsTile(TileKey{"XYZ-WebMercator", 1, 0, 0}),
@@ -1973,24 +1762,20 @@ void testProviderExplicitRootOnlyZoomRangeLimitsTiles() {
     check(quantizedMesh.maxZoom() == 0,
           "QuantizedMeshTerrainProvider: explicit 0..0 zoom range records root-only maximum");
 }
-
 void testProviderExplicitMaximumZoomStillLimitsTiles() {
     XYZImageryProvider imagery(
         "https://example.invalid/{z}/{x}/{y}.png");
     imagery.setZoomRange(0, 6);
-
     check(imagery.maxZoom() == 6 &&
               imagery.supportsTile(TileKey{"XYZ-WebMercator", 6, 0, 0}) &&
               !imagery.supportsTile(TileKey{"XYZ-WebMercator", 7, 0, 0}),
           "XYZImageryProvider: positive maximum zoom remains an explicit limit");
 }
-
 void testRasterOverlayProviderDefaultMaximumLevelMatchesCesiumNative() {
     XYZImageryProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider overlayProvider(provider, *scheme, nullptr);
-
     check(scheme->maxZoom() == 25 &&
               overlayProvider.getMaximumLevel() == 25,
           "RasterOverlayTileProvider: standard scheme does not clamp cesium-native default maximum level");
@@ -1998,13 +1783,11 @@ void testRasterOverlayProviderDefaultMaximumLevelMatchesCesiumNative() {
               nullptr,
           "RasterOverlayTileProvider: default URL-template overlay can create z25 tiles like cesium-native");
 }
-
 void testStandardTileSchemeMaximumLevelsMatchRasterOverlayDefaults() {
     auto xyz = TileScheme::createXYZWebMercator();
     auto tms = TileScheme::createTMS();
     auto geographic = TileScheme::createGeographicTMS();
     auto openGlobus = TileScheme::createOpenGlobusEarth();
-
     check(xyz->maxZoom() == 25 &&
               tms->maxZoom() == 25 &&
               geographic->maxZoom() == 25,
@@ -2012,35 +1795,28 @@ void testStandardTileSchemeMaximumLevelsMatchRasterOverlayDefaults() {
     check(openGlobus->maxZoom() == 22,
           "TileScheme: OpenGlobus grouped scheme keeps its project-specific maximum level");
 }
-
 void testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders() {
     XYZImageryProvider provider(
         "https://example.invalid/{westDegrees}/{southDegrees}/{eastDegrees}/{northDegrees}/{width}/{height}.png");
     provider.setTileSize(512, 256);
-
     check(provider.buildUrl(TileKey{"XYZ-WebMercator", 1, 0, 0}) ==
               "https://example.invalid/-180.000000/0.000000/0.000000/85.051129/512/256.png",
           "XYZImageryProvider: bounds and size placeholders match cesium-native URL template semantics");
 }
-
 void testXYZImageryProviderUrlTemplateProjectedBoundsPlaceholders() {
     XYZImageryProvider provider(
         "https://example.invalid/{minimumX}/{minimumY}/{maximumX}/{maximumY}.png");
-
     check(provider.buildUrl(TileKey{"XYZ-WebMercator", 1, 0, 0}) ==
               "https://example.invalid/-20037508.342789/0.000000/0.000000/20037508.342789.png",
           "XYZImageryProvider: projected bounds placeholders match cesium-native WebMercator rectangle semantics");
 }
-
 void testXYZImageryProviderUrlTemplateUnknownAndCaseInsensitivePlaceholders() {
     XYZImageryProvider provider(
         "https://example.invalid/{Z}/{X}/{Y}/{WestDegrees}/{missing}.png?bad={unterminated");
-
     check(provider.buildUrl(TileKey{"XYZ-WebMercator", 1, 0, 0}) ==
               "https://example.invalid/1/0/0/-180.000000/[UNKNOWN PLACEHOLDER].png?bad={unterminated",
           "XYZImageryProvider: URL template substitution is case-insensitive and handles unknown placeholders like cesium-native");
 }
-
 void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
     HeightmapTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
@@ -2048,7 +1824,6 @@ void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
     provider.setPlatformBridge(&bridge);
     CancellationToken token;
     std::atomic<bool> callbackCalled{false};
-
     provider.requestTile(
         TileKey{"XYZ-WebMercator", 1, 0, 0},
         token,
@@ -2057,7 +1832,6 @@ void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
             check(result.status == TileLoadStatus::Cancelled,
                   "HeightmapTerrainProvider: cancelled async bridge request reports cancelled");
         });
-
     check(bridge.waitUntilEntered(),
           "HeightmapTerrainProvider: test bridge observes async HTTP entry");
     ProviderRequestDiagnostics activeDiag = provider.requestDiagnostics();
@@ -2067,7 +1841,6 @@ void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
               activeDiag.peakWorkerBlockingRequests == 0 &&
               activeDiag.maximumTransportActiveRequests == 11,
           "HeightmapTerrainProvider: async bridge diagnostics expose transport limit without worker blocking");
-
     token.cancel();
     check(bridge.complete(200, {1, 2, 3}),
           "HeightmapTerrainProvider: test bridge completes cancelled async request");
@@ -2076,7 +1849,6 @@ void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
          ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
     check(doneDiag.requestsStarted == 1 &&
               doneDiag.requestsCompleted == 1 &&
@@ -2086,28 +1858,22 @@ void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
               callbackCalled.load(std::memory_order_acquire),
           "HeightmapTerrainProvider: diagnostics complete async bridge request after cancellation");
 }
-
 void testActivatedRasterOverlayBindsProviderOwner() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     ActivatedRasterOverlay activated(*overlay);
     RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
-
     check(provider && provider->getOwner() == overlay.get(),
           "ActivatedRasterOverlay: ensureTileProvider binds provider owner like cesium-native");
 }
-
 void testActivatedRasterOverlayExposesPlaceholderBeforeProvider() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     ActivatedRasterOverlay activated(*overlay);
-
     check(activated.getTileProvider() == nullptr,
           "ActivatedRasterOverlay: active provider is null before ensure like cesium-native");
     check(activated.getPlaceholderTile() != nullptr &&
@@ -2115,7 +1881,6 @@ void testActivatedRasterOverlayExposesPlaceholderBeforeProvider() {
                   RasterOverlayTile::LoadState::Placeholder,
           "ActivatedRasterOverlay: placeholder tile exists before provider creation like cesium-native");
 }
-
 void testActivatedRasterOverlayEnsuresProvider() {
     RasterOverlay::Options options = makeRasterOverlayOptions();
     options.maximumScreenSpaceError = 4.0;
@@ -2123,10 +1888,8 @@ void testActivatedRasterOverlayEnsuresProvider() {
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         options);
-
     ActivatedRasterOverlay activated(*overlay);
     RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
-
     check(provider != nullptr,
           "ActivatedRasterOverlay: ensureTileProvider creates runtime provider");
     check(provider && provider->getOwner() == overlay.get(),
@@ -2139,7 +1902,6 @@ void testActivatedRasterOverlayEnsuresProvider() {
                   RasterOverlayTile::LoadState::Placeholder,
           "ActivatedRasterOverlay: ensured provider exposes placeholder tile");
 }
-
 void testTileSelectionKickedStatePreservesOriginalResult() {
     TileSelectionState rendered = TileSelectionState::Rendered;
     kickSelectionState(rendered);
@@ -2149,7 +1911,6 @@ void testTileSelectionKickedStatePreservesOriginalResult() {
           "TileSelectionState: rendered kick is detected");
     check(originalSelectionState(rendered) == TileSelectionState::Rendered,
           "TileSelectionState: rendered original result survives kick");
-
     TileSelectionState refined = TileSelectionState::Refined;
     kickSelectionState(refined);
     check(refined == TileSelectionState::RefinedAndKicked,
@@ -2158,7 +1919,6 @@ void testTileSelectionKickedStatePreservesOriginalResult() {
           "TileSelectionState: refined kick is detected");
     check(originalSelectionState(refined) == TileSelectionState::Refined,
           "TileSelectionState: refined original result survives kick");
-
     TileSelectionState culled = TileSelectionState::Culled;
     kickSelectionState(culled);
     check(culled == TileSelectionState::Culled,
@@ -2166,18 +1926,14 @@ void testTileSelectionKickedStatePreservesOriginalResult() {
     check(!selectionWasKicked(culled),
           "TileSelectionState: culled state is not treated as kicked");
 }
-
 void testEllipsoidScaleToGeodeticSurfaceMatchesCesiumNative() {
     const auto& ellipsoid = Ellipsoid::WGS84();
-
     check(std::abs(ellipsoid.semiMinorAxis() - 6356752.3142451793) < 1e-9,
           "Ellipsoid: WGS84 polar radius matches cesium-native");
-
     check(!ellipsoid.tryScaleToGeodeticSurface(Vec3::zero()).has_value(),
           "Ellipsoid: scaleToGeodeticSurface returns empty at center like cesium-native");
     check(!ellipsoid.tryCartesianToCartographic(Vec3::zero()).has_value(),
           "Ellipsoid: cartesianToCartographic returns empty at center like cesium-native");
-
     const auto nearCenterSurface =
         ellipsoid.tryScaleToGeodeticSurface(Vec3(1.0, 0.0, 0.0));
     check(nearCenterSurface.has_value() &&
@@ -2185,7 +1941,6 @@ void testEllipsoidScaleToGeodeticSurfaceMatchesCesiumNative() {
               std::abs(nearCenterSurface->y()) < 1e-12 &&
               std::abs(nearCenterSurface->z()) < 1e-12,
           "Ellipsoid: nonzero near-center projection uses cesium-native radial intersection");
-
     const auto surfaceCart = ellipsoid.tryCartesianToCartographic(
         Vec3(ellipsoid.semiMajorAxis() + 1000.0, 0.0, 0.0));
     check(surfaceCart.has_value() &&
@@ -2194,10 +1949,8 @@ void testEllipsoidScaleToGeodeticSurfaceMatchesCesiumNative() {
               std::abs(surfaceCart->height() - 1000.0) < 1e-6,
           "Ellipsoid: optional cartesianToCartographic preserves normal height");
 }
-
 void testEllipsoidRayIntersectionIntervalMatchesCesiumNative() {
     const Ellipsoid unitSphere(1.0, 1.0);
-
     const auto outside =
         unitSphere.rayIntersectionInterval(Vec3(2.0, 0.0, 0.0),
                                            Vec3(-1.0, 0.0, 0.0));
@@ -2205,7 +1958,6 @@ void testEllipsoidRayIntersectionIntervalMatchesCesiumNative() {
               std::abs(outside->entryDistance - 1.0) < 1e-12 &&
               std::abs(outside->exitDistance - 3.0) < 1e-12,
           "Ellipsoid: ray outside interval matches cesium-native");
-
     const auto inside =
         Ellipsoid::WGS84().rayIntersectionInterval(
             Vec3(20000.0, 0.0, 0.0),
@@ -2215,19 +1967,16 @@ void testEllipsoidRayIntersectionIntervalMatchesCesiumNative() {
               std::abs(inside->exitDistance -
                        (Ellipsoid::WGS84().semiMajorAxis() - 20000.0)) < 1e-6,
           "Ellipsoid: ray inside interval starts at zero like cesium-native");
-
     check(!unitSphere
                .rayIntersectionInterval(Vec3(1.0, 0.0, 0.0),
                                         Vec3(0.0, 0.0, 1.0))
                .has_value(),
           "Ellipsoid: tangent ray on surface is a miss like cesium-native");
-
     check(!Ellipsoid(0.0, 0.0)
                .rayIntersectionInterval(Vec3(2.0, 0.0, 0.0),
                                         Vec3(-1.0, 0.0, 0.0))
                .has_value(),
           "Ellipsoid: degenerate radii return no ray interval like cesium-native");
-
     const auto entryPoint =
         unitSphere.rayIntersection(Vec3(0.5, 0.0, 0.0),
                                    Vec3(1.0, 0.0, 0.0));
@@ -2235,7 +1984,6 @@ void testEllipsoidRayIntersectionIntervalMatchesCesiumNative() {
               entryPoint->distanceTo(Vec3(0.5, 0.0, 0.0)) < 1e-12,
           "Ellipsoid: single ray intersection returns interval entry point");
 }
-
 void testTransformsEastNorthUpToFixedFrameMatchesCesiumNative() {
     auto columnMatches = [](const Mat4& m,
                             int col,
@@ -2245,7 +1993,6 @@ void testTransformsEastNorthUpToFixedFrameMatchesCesiumNative() {
                std::abs(m(1, col) - expected.y()) < epsilon &&
                std::abs(m(2, col) - expected.z()) < epsilon;
     };
-
     const Mat4 zeroFrame =
         Transforms::eastNorthUpToFixedFrame(Vec3::zero());
     check(columnMatches(zeroFrame, 0, Vec3(0.0, 1.0, 0.0)) &&
@@ -2253,7 +2000,6 @@ void testTransformsEastNorthUpToFixedFrameMatchesCesiumNative() {
               columnMatches(zeroFrame, 2, Vec3(0.0, 0.0, 1.0)) &&
               columnMatches(zeroFrame, 3, Vec3::zero()),
           "Transforms: ENU fixed frame at origin matches cesium-native");
-
     const double polarRadius = Ellipsoid::WGS84().semiMinorAxis();
     const Mat4 northPoleFrame =
         Transforms::eastNorthUpToFixedFrame(Vec3(0.0, 0.0, polarRadius));
@@ -2262,7 +2008,6 @@ void testTransformsEastNorthUpToFixedFrameMatchesCesiumNative() {
               columnMatches(northPoleFrame, 2, Vec3(0.0, 0.0, 1.0)) &&
               columnMatches(northPoleFrame, 3, Vec3(0.0, 0.0, polarRadius)),
           "Transforms: ENU fixed frame at north pole matches cesium-native");
-
     const Mat4 southPoleFrame =
         Transforms::eastNorthUpToFixedFrame(Vec3(0.0, 0.0, -polarRadius));
     check(columnMatches(southPoleFrame, 0, Vec3(0.0, 1.0, 0.0)) &&
@@ -2270,7 +2015,6 @@ void testTransformsEastNorthUpToFixedFrameMatchesCesiumNative() {
               columnMatches(southPoleFrame, 2, Vec3(0.0, 0.0, -1.0)) &&
               columnMatches(southPoleFrame, 3, Vec3(0.0, 0.0, -polarRadius)),
           "Transforms: ENU fixed frame at south pole matches cesium-native");
-
     const double equatorialRadius = Ellipsoid::WGS84().semiMajorAxis();
     const Mat4 equatorFrame =
         Transforms::eastNorthUpToFixedFrame(Vec3(equatorialRadius, 0.0, 0.0));
@@ -2280,10 +2024,8 @@ void testTransformsEastNorthUpToFixedFrameMatchesCesiumNative() {
               columnMatches(equatorFrame, 3, Vec3(equatorialRadius, 0.0, 0.0)),
           "Transforms: ENU fixed frame at equator matches cesium-native");
 }
-
 void testOrientedBoundingBoxDegenerateAxesMatchCesiumNative() {
     const Vec3 camera = Vec3::zero();
-
     OrientedBoundingBox allDegenerate(
         Vec3(1.0, 0.0, 0.0),
         Vec3::zero(),
@@ -2291,7 +2033,6 @@ void testOrientedBoundingBoxDegenerateAxesMatchCesiumNative() {
         Vec3::zero());
     check(allDegenerate.computeDistanceSquaredToPosition(camera) == 1.0,
           "OrientedBoundingBox: all degenerate axes distance matches cesium-native");
-
     OrientedBoundingBox oneAxis(
         Vec3(1.0, 0.0, 0.0),
         Vec3::unitX(),
@@ -2299,7 +2040,6 @@ void testOrientedBoundingBoxDegenerateAxesMatchCesiumNative() {
         Vec3::zero());
     check(oneAxis.computeDistanceSquaredToPosition(camera) == 0.0,
           "OrientedBoundingBox: one valid axis distance matches cesium-native");
-
     OrientedBoundingBox twoAxes(
         Vec3(1.0, 0.0, 0.0),
         Vec3::unitX(),
@@ -2307,7 +2047,6 @@ void testOrientedBoundingBoxDegenerateAxesMatchCesiumNative() {
         Vec3::zero());
     check(twoAxes.computeDistanceSquaredToPosition(camera) == 0.0,
           "OrientedBoundingBox: two valid axes distance matches cesium-native");
-
     OrientedBoundingBox missingX(
         Vec3(1.0, 0.0, 0.0),
         Vec3::zero(),
@@ -2315,7 +2054,6 @@ void testOrientedBoundingBoxDegenerateAxesMatchCesiumNative() {
         Vec3::unitZ());
     check(missingX.computeDistanceSquaredToPosition(camera) == 1.0,
           "OrientedBoundingBox: missing axis distance matches cesium-native");
-
     OrientedBoundingBox unitBox(
         Vec3::zero(),
         Vec3::unitX(),
@@ -2326,25 +2064,20 @@ void testOrientedBoundingBoxDegenerateAxesMatchCesiumNative() {
     check(unitBox.intersectPlane(Plane(Vec3::unitX(), 1.0)) == 1,
           "OrientedBoundingBox: positive tangent plane is inside like cesium-native");
 }
-
 void testBoundingSpherePlaneBoundaryMatchesCesiumNative() {
     BoundingSphere sphere(Vec3::zero(), 1.0);
-
     check(sphere.intersectPlane(Plane(Vec3::unitX(), -1.0)) == 0,
           "BoundingSphere: negative tangent plane intersects like cesium-native");
     check(sphere.intersectPlane(Plane(Vec3::unitX(), 1.0)) == 1,
           "BoundingSphere: positive tangent plane is inside like cesium-native");
 }
-
 void testRasterOverlayProviderMappedRasterTile() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     auto geometryScheme = TileScheme::createGeographicTMS();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-
     TileKey geometryKey{"Geographic-TMS", 2, 4, 2};
     Rectangle geometryBounds = geometryScheme->tileToRectangle(geometryKey);
-
     provider.setFrameNumber(1);
     auto mappedRasterTile = provider.mapRasterTilesToGeometryTile(
         projectForProvider(provider, geometryBounds), 512.0, 512.0).tile;
@@ -2364,23 +2097,19 @@ void testRasterOverlayProviderMappedRasterTile() {
     check(mappedRasterTile && mappedRasterTile->getTargetScreenPixelsX() == 512.0 &&
               mappedRasterTile->getTargetScreenPixelsY() == 512.0,
           "RasterOverlayTileProvider: target screen pixels are retained");
-
     provider.setFrameNumber(122);
     provider.markUsed(*mappedRasterTile);
     provider.trimUnusedTiles();
     check(provider.getCachedTileCount() == 1,
           "RasterOverlayTileProvider: markUsed(tile) retains mapped raster tile");
 }
-
 void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setLevelRange(0, 3);
-
     TileKey key{"XYZ-WebMercator", 3, 4, 2};
     Rectangle bounds = imageryScheme->tileToRectangle(key);
-
     provider.setFrameNumber(1);
     auto mappedTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     check(mappedTile != nullptr,
@@ -2397,14 +2126,12 @@ void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
     check(directTile && directTile == mappedTile,
           "RasterOverlayTileProvider: exact rectangle path reuses direct quadtree tile");
 }
-
 class PendingRectangleImageryProvider final : public ImageryProvider {
 public:
     struct PendingRequest {
         TileKey key;
         TileCallback callback;
     };
-
     std::string id() const override { return "pending-rectangle-imagery"; }
     std::string type() const override { return "pending-rectangle-imagery"; }
     std::string schemeId() const override { return "XYZ-WebMercator"; }
@@ -2415,25 +2142,20 @@ public:
     std::string buildUrl(const TileKey&) const override {
         return "memory://pending-rectangle";
     }
-
     void requestTile(const TileKey& key,
                      CancellationToken,
                      TileCallback callback,
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
-
     std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t*,
         size_t) override {
         return nullptr;
     }
-
     std::vector<PendingRequest> pendingRequests;
 };
-
 std::unique_ptr<DecodedImage> makeDecodedRgbaImage(int width, int height);
-
 class ThrowOnceImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "throw-once-imagery"; }
@@ -2446,7 +2168,6 @@ public:
     std::string buildUrl(const TileKey&) const override {
         return "memory://throw-once";
     }
-
     void requestTile(const TileKey& key,
                      CancellationToken,
                      TileCallback callback,
@@ -2457,20 +2178,16 @@ public:
         }
         callback(key, makeDecodedRgbaImage(64, 64));
     }
-
     std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t*,
         size_t) override {
         return nullptr;
     }
-
     int requestCount = 0;
 };
-
 class SlowRasterTextureUploader final : public RasterTextureUploader {
 public:
     int maxTextureSize() const override { return 4096; }
-
     std::unique_ptr<Texture> uploadRasterTexture(
         const DecodedImage& image,
         const RasterTextureUploadOptions&) override {
@@ -2478,10 +2195,8 @@ public:
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         return std::make_unique<DummyTexture>(image.width, image.height);
     }
-
     int uploadCount = 0;
 };
-
 std::unique_ptr<DecodedImage> makeDecodedRgbaImage(int width, int height) {
     auto image = std::make_unique<DecodedImage>();
     image->width = width;
@@ -2492,12 +2207,10 @@ std::unique_ptr<DecodedImage> makeDecodedRgbaImage(int width, int height) {
         255);
     return image;
 }
-
 void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-
     const Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 2, 3});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
@@ -2505,7 +2218,6 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
             512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkRequestsPerFrame = 1024;
@@ -2513,7 +2225,6 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
     config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget firstFrameBudget;
     firstFrameBudget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &firstFrameBudget) &&
               mappedRasterTile->getState() ==
@@ -2532,7 +2243,6 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
               activeSourceDiag.peakExternalResourceBlockingRequests ==
                   static_cast<int>(imagery.pendingRequests.size()),
           "RasterOverlayTileProvider: diagnostics expose quadtree source fanout");
-
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
     const size_t firstBatchSize = imagery.pendingRequests.size();
@@ -2541,7 +2251,6 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
               imagery.pendingRequests.size() == firstBatchSize &&
               secondFrameBudget.rasterNetworkRequestsIssued() == 0,
           "RasterOverlayTileProvider: loading mapped raster tiles skip redundant source requests once fanout is issued");
-
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {
         request.callback(request.key, makeDecodedRgbaImage(64, 64));
@@ -2557,12 +2266,10 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
                   static_cast<int>(firstBatchSize),
           "RasterOverlayTileProvider: diagnostics complete quadtree source fanout");
 }
-
 void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-
     const Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 2, 3});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
@@ -2570,7 +2277,6 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
             512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
     config.maxRasterNetworkRequestsPerFrame = 4;
@@ -2578,7 +2284,6 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               mappedRasterTile->getState() ==
@@ -2587,7 +2292,6 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
           "RasterOverlayTileProvider: oversized quadtree source batch starts with budgeted fanout like cesium-native");
     check(budget.rasterNetworkRequestsIssued() == 4,
           "RasterOverlayTileProvider: oversized mapped raster fanout is split by frame request budget");
-
     FrameResourceBudgetConfig secondConfig = config;
     secondConfig.maxNetworkInflight = 4;
     secondConfig.maxRasterNetworkInflight = 4;
@@ -2606,29 +2310,24 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
               imagery.pendingRequests.size() == firstBatchSize,
           "RasterOverlayTileProvider: oversized raster batch still respects inflight pressure for later loads");
 }
-
 void testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               mappedRasterTile->getMappedSourceZoom() == 5 &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               imagery.pendingRequests.size() == 16,
           "RasterOverlayTileProvider: quadtree source range trims Cesium-native tile-edge touches");
-
     bool allInsideTrimmedRange = true;
     for (const auto& request : imagery.pendingRequests) {
         allInsideTrimmedRange =
@@ -2640,35 +2339,28 @@ void testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches() {
     check(allInsideTrimmedRange,
           "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
 }
-
 void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-
     const Rectangle coverageBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     const Rectangle outsideCoverageBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 5});
     provider.setCoverageRectangle(coverageBounds);
-
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, outsideCoverageBounds), 512.0, 512.0).tile;
-
     check(mappedRasterTile && mappedRasterTile->isMappedRasterTile(),
           "RasterOverlayTileProvider: base imagery outside coverage creates a clamped mapped raster tile like cesium-native");
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: clamped coverage miss issues edge source requests");
-
     bool allRequestsTouchCoverage = true;
     for (const auto& request : imagery.pendingRequests) {
         allRequestsTouchCoverage =
@@ -2678,13 +2370,11 @@ void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
     check(allRequestsTouchCoverage,
           "RasterOverlayTileProvider: clamped coverage miss samples the nearest coverage edge");
 }
-
 void testRasterOverlayCoverageIsConstrainedToTilingSchemeLikeCesiumNative() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setCoverageRectangle(Rectangle::MAXIMUM);
-
     const Rectangle schemeBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 0, 0, 0});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
@@ -2692,7 +2382,6 @@ void testRasterOverlayCoverageIsConstrainedToTilingSchemeLikeCesiumNative() {
             projectForProvider(provider, Rectangle::MAXIMUM),
             512.0,
             512.0).tile;
-
     check(mappedRasterTile && mappedRasterTile->isMappedRasterTile(),
           "RasterOverlayTileProvider: maximum coverage creates mapped WebMercator raster");
     check(mappedRasterTile &&
@@ -2701,12 +2390,10 @@ void testRasterOverlayCoverageIsConstrainedToTilingSchemeLikeCesiumNative() {
                   1e-12),
           "RasterOverlayTileProvider: provider coverage is constrained by tiling scheme like cesium-native");
 }
-
 void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(
@@ -2714,13 +2401,11 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
                 Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0)),
             1024.0,
             1024.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
@@ -2728,7 +2413,6 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     if (!mappedRasterTile || imagery.pendingRequests.empty()) {
         return;
     }
-
     const int tileCountX =
         imageryScheme->tileCountX(mappedRasterTile->getMappedSourceZoom());
     bool onlyDatelineEdgeColumns = true;
@@ -2748,29 +2432,24 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     check(onlyDatelineEdgeColumns && hasWesternEdge && hasEasternEdge,
           "RasterOverlayTileProvider: antimeridian source plan requests dateline edge columns instead of the whole world");
 }
-
 void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               imagery.pendingRequests.size() == 16,
           "RasterOverlayTileProvider: parent-fallback fixture starts with source tile requests");
     if (imagery.pendingRequests.empty()) return;
-
     const TileKey failedSource = imagery.pendingRequests.front().key;
     imagery.pendingRequests.front().callback(failedSource, nullptr);
     const ProviderRequestDiagnostics fallbackDiag =
@@ -2778,7 +2457,6 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
     check(fallbackDiag.externalResourceRequestsFailed == 1 &&
               fallbackDiag.externalResourceRequestsCompleted == 1,
           "RasterOverlayTileProvider: failed source request is visible in external diagnostics");
-
     const TileKey expectedParent{
         failedSource.schemeId,
         failedSource.z - 1,
@@ -2795,13 +2473,11 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
     check(requestedParent,
           "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
 }
-
 void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setLevelRange(1, 1);
-
     const Rectangle geometryBounds =
         Rectangle::fromDegrees(-180.0, -60.0, 180.0, 60.0);
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
@@ -2809,14 +2485,12 @@ void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() 
             projectForProvider(provider, geometryBounds),
             512.0,
             512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile && mappedRasterTile->isMappedRasterTile() &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
@@ -2824,7 +2498,6 @@ void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() 
     if (!mappedRasterTile || imagery.pendingRequests.empty()) {
         return;
     }
-
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {
         request.callback(request.key, nullptr);
@@ -2839,7 +2512,6 @@ void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() 
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
     processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
-
     check(mappedRasterTile->getState() == RasterOverlayTile::LoadState::Loaded &&
               mappedRasterTile->getTexture() == nullptr &&
               mappedRasterTile->isMoreDetailAvailable() ==
@@ -2852,7 +2524,6 @@ void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() 
                   failedDiag.externalResourceRequestsCompleted,
           "RasterOverlayTileProvider: loaded failed-source mapped raster does not replay terminal source requests");
 }
-
 void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -2861,25 +2532,21 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: fallback-share fixture starts child source requests");
     if (imagery.pendingRequests.empty()) return;
-
     const TileKey failedSource = imagery.pendingRequests.front().key;
     imagery.pendingRequests.front().callback(failedSource, nullptr);
     const TileKey parentKey{
@@ -2887,14 +2554,12 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
         failedSource.z - 1,
         failedSource.x / 2,
         failedSource.y / 2};
-
     RasterOverlayTileProvider::TilePtr parentTile = provider.getTile(parentKey);
     FrameResourceBudget parentBudget;
     parentBudget.beginFrame(2, config);
     check(parentTile &&
               provider.loadTileThrottled(*parentTile, &parentBudget),
           "RasterOverlayTileProvider: direct parent joins fallback parent in-flight");
-
     auto parentRequest = std::find_if(
         imagery.pendingRequests.begin(),
         imagery.pendingRequests.end(),
@@ -2904,12 +2569,10 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
     check(parentRequest != imagery.pendingRequests.end(),
           "RasterOverlayTileProvider: fallback parent request exists once");
     if (parentRequest == imagery.pendingRequests.end()) return;
-
     parentRequest->callback(parentKey, makeDecodedRgbaImage(64, 64));
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(3, config);
     provider.processPendingUploads(false, &uploadBudget);
-
     check(parentTile->getState() == RasterOverlayTile::LoadState::Loaded,
           "RasterOverlayTileProvider: direct parent waiter loads after shared parent completes");
     check(parentTile->getTexture() != nullptr,
@@ -2917,7 +2580,6 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
     check(!parentTile->getRectangle().isEmpty(),
           "RasterOverlayTileProvider: direct parent waiter keeps a valid rectangle");
 }
-
 void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -2926,7 +2588,6 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
@@ -2934,20 +2595,17 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
             512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: child-cache retry fixture starts child source requests");
     if (!mappedRasterTile || imagery.pendingRequests.empty()) return;
-
     const TileKey failedSource = imagery.pendingRequests.front().key;
     imagery.pendingRequests.front().callback(failedSource, nullptr);
     const TileKey parentKey{
@@ -2956,7 +2614,6 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
         failedSource.x / 2,
         failedSource.y / 2};
     provider.processPendingUploads(false, &budget);
-
     auto parentRequest = std::find_if(
         imagery.pendingRequests.begin(),
         imagery.pendingRequests.end(),
@@ -2966,12 +2623,10 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
     check(parentRequest != imagery.pendingRequests.end(),
           "RasterOverlayTileProvider: child-cache retry fixture requests fallback parent");
     if (parentRequest == imagery.pendingRequests.end()) return;
-
     parentRequest->callback(parentKey, makeDecodedRgbaImage(64, 64));
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
     processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
-
     const int matchingChildRequestsBefore =
         static_cast<int>(std::count_if(
             imagery.pendingRequests.begin(),
@@ -2979,14 +2634,12 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
             [&](const PendingRectangleImageryProvider::PendingRequest& request) {
                 return request.key == failedSource;
             }));
-
     RasterOverlayTileProvider::TilePtr childTile =
         provider.getTile(failedSource);
     FrameResourceBudget retryBudget;
     retryBudget.beginFrame(3, config);
     check(childTile && provider.loadTileThrottled(*childTile, &retryBudget),
           "RasterOverlayTileProvider: direct child retries after fallback parent completed");
-
     const int matchingChildRequestsAfter =
         static_cast<int>(std::count_if(
             imagery.pendingRequests.begin(),
@@ -2997,7 +2650,6 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
     check(matchingChildRequestsAfter == matchingChildRequestsBefore + 1,
           "RasterOverlayTileProvider: fallback parent subset is not cached as the child source asset");
 }
-
 void testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3006,40 +2658,32 @@ void testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     const TileKey failingRoot{imageryScheme->id(), 0, 0, 0};
     RasterOverlayTileProvider::TilePtr firstTile =
         provider.getTile(failingRoot);
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget firstBudget;
     firstBudget.beginFrame(1, config);
-
     check(firstTile && provider.loadTileThrottled(*firstTile, &firstBudget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: terminal failure cache fixture starts root source request");
     if (!firstTile || imagery.pendingRequests.empty()) return;
-
     const int requestsBeforeFailure =
         static_cast<int>(imagery.pendingRequests.size());
     imagery.pendingRequests.front().callback(failingRoot, nullptr);
-
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
     provider.processPendingUploads(false, &uploadBudget);
-
     check(firstTile->getState() == RasterOverlayTile::LoadState::Failed,
           "RasterOverlayTileProvider: terminal root source failure marks direct tile failed");
-
     RasterOverlayTileProvider::TilePtr secondTile =
         provider.getTile(failingRoot);
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(3, config);
     provider.loadTileThrottled(*secondTile, &secondBudget);
-
     const int requestsAfterRetry =
         static_cast<int>(imagery.pendingRequests.size());
     check(requestsAfterRetry == requestsBeforeFailure,
@@ -3047,7 +2691,6 @@ void testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot() {
     check(secondBudget.rasterNetworkRequestsIssued() == 0,
           "RasterOverlayTileProvider: cached terminal failure does not consume raster request budget");
 }
-
 void testRasterOverlayExceptionSourceFailureCanRetryLikeSharedAssetDepot() {
     ThrowOnceImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3056,40 +2699,32 @@ void testRasterOverlayExceptionSourceFailureCanRetryLikeSharedAssetDepot() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     const TileKey key{imageryScheme->id(), 0, 0, 0};
     RasterOverlayTileProvider::TilePtr tile = provider.getTile(key);
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget firstBudget;
     firstBudget.beginFrame(1, config);
-
     check(tile && provider.loadTileThrottled(*tile, &firstBudget),
           "RasterOverlayTileProvider: exception retry fixture starts first source request");
     if (!tile) return;
-
     check(imagery.requestCount == 1 &&
               tile->getState() == RasterOverlayTile::LoadState::Unloaded,
           "RasterOverlayTileProvider: exception source failure remains retryable like cesium-native SharedAssetDepot");
-
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, config);
     check(provider.loadTileThrottled(*tile, &secondBudget) &&
               imagery.requestCount == 2,
           "RasterOverlayTileProvider: exception source failure retries the same source key");
-
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(3, config);
     provider.processPendingUploads(false, &uploadBudget);
-
     check(tile->getState() == RasterOverlayTile::LoadState::Loaded &&
               tile->getTexture() != nullptr,
           "RasterOverlayTileProvider: retried exception source failure can load successfully");
 }
-
 void testRasterOverlaySourceInvalidationRecreatesDirectAssetLikeSharedAssetDepot() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3098,29 +2733,23 @@ void testRasterOverlaySourceInvalidationRecreatesDirectAssetLikeSharedAssetDepot
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     const TileKey key{imageryScheme->id(), 0, 0, 0};
     RasterOverlayTileProvider::TilePtr oldTile = provider.getTile(key);
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget oldBudget;
     oldBudget.beginFrame(1, config);
-
     check(oldTile && provider.loadTileThrottled(*oldTile, &oldBudget) &&
               imagery.pendingRequests.size() == 1,
           "RasterOverlayTileProvider: source invalidation fixture starts first direct request");
     if (!oldTile || imagery.pendingRequests.empty()) return;
-
     auto oldCallback = imagery.pendingRequests.front().callback;
     provider.setMaximumTextureSize(1024);
-
     check(!provider.ownsCurrentTile(*oldTile) &&
               oldTile->getState() == RasterOverlayTile::LoadState::Failed,
           "RasterOverlayTileProvider: source invalidation retires old direct tile");
-
     RasterOverlayTileProvider::TilePtr newTile = provider.getTile(key);
     FrameResourceBudget newBudget;
     newBudget.beginFrame(2, config);
@@ -3129,26 +2758,21 @@ void testRasterOverlaySourceInvalidationRecreatesDirectAssetLikeSharedAssetDepot
               imagery.pendingRequests.size() == 2,
           "RasterOverlayTileProvider: source invalidation recreates direct asset request like SharedAssetDepot");
     if (!newTile || imagery.pendingRequests.size() < 2) return;
-
     oldCallback(key, makeDecodedRgbaImage(64, 64));
     FrameResourceBudget staleUploadBudget;
     staleUploadBudget.beginFrame(3, config);
     provider.processPendingUploads(false, &staleUploadBudget);
-
     check(newTile->getState() == RasterOverlayTile::LoadState::Loading &&
               newTile->getTexture() == nullptr,
           "RasterOverlayTileProvider: stale direct source completion does not upload into recreated tile");
-
     imagery.pendingRequests.back().callback(key, makeDecodedRgbaImage(64, 64));
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(4, config);
     provider.processPendingUploads(false, &uploadBudget);
-
     check(newTile->getState() == RasterOverlayTile::LoadState::Loaded &&
               newTile->getTexture() != nullptr,
           "RasterOverlayTileProvider: recreated direct source asset loads from the new epoch response");
 }
-
 void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3157,7 +2781,6 @@ void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
@@ -3165,23 +2788,19 @@ void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
             512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: abandoned-fallback fixture starts child source requests");
     if (!mappedRasterTile || imagery.pendingRequests.empty()) return;
-
     const TileKey failedSource = imagery.pendingRequests.front().key;
     imagery.pendingRequests.front().callback(failedSource, nullptr);
-
     const int matchingSourceRequestsBefore =
         static_cast<int>(std::count_if(
             imagery.pendingRequests.begin(),
@@ -3189,16 +2808,13 @@ void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
             [&](const PendingRectangleImageryProvider::PendingRequest& request) {
                 return request.key == failedSource;
             }));
-
     provider.setMaximumScreenSpaceError(1.0);
-
     RasterOverlayTileProvider::TilePtr directTile =
         provider.getTile(failedSource);
     FrameResourceBudget directBudget;
     directBudget.beginFrame(2, config);
     check(directTile && provider.loadTileThrottled(*directTile, &directBudget),
           "RasterOverlayTileProvider: direct source load starts after mapped fallback abandonment");
-
     const int matchingSourceRequestsAfter =
         static_cast<int>(std::count_if(
             imagery.pendingRequests.begin(),
@@ -3209,7 +2825,6 @@ void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
     check(matchingSourceRequestsAfter == matchingSourceRequestsBefore + 1,
           "RasterOverlayTileProvider: abandoned mapped fallback clears stale shared source in-flight");
 }
-
 void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3218,7 +2833,6 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     Rectangle broadBounds =
         Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0);
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
@@ -3226,20 +2840,17 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
             projectForProvider(provider, broadBounds),
             1024.0,
             1024.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkInflight = 1024;
     config.maxRasterUploadsPerFrame = 1024;
     FrameResourceBudget mappedRasterBudget;
     mappedRasterBudget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &mappedRasterBudget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: mapped source sharing fixture starts source requests");
     if (imagery.pendingRequests.empty()) return;
-
     const TileKey sharedSourceKey = imagery.pendingRequests.front().key;
     RasterOverlayTileProvider::TilePtr directTile =
         provider.getTile(sharedSourceKey);
@@ -3250,7 +2861,6 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
           "RasterOverlayTileProvider: direct tile joins mapped source in-flight");
     check(directBudget.rasterNetworkRequestsIssued() == 0,
           "RasterOverlayTileProvider: direct tile joining mapped source in-flight does not consume raster request budget");
-
     const int matchingRequests =
         static_cast<int>(std::count_if(
             imagery.pendingRequests.begin(),
@@ -3260,20 +2870,17 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
             }));
     check(matchingRequests == 1,
           "RasterOverlayTileProvider: mapped raster and direct tile share one imagery request like cesium-native SharedAssetDepot");
-
     imagery.pendingRequests.front().callback(
         sharedSourceKey,
         makeDecodedRgbaImage(64, 64));
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(3, config);
     provider.processPendingUploads(false, &uploadBudget);
-
     check(directTile->getState() == RasterOverlayTile::LoadState::Loaded,
           "RasterOverlayTileProvider: direct tile loads from shared mapped source");
     check(directTile->getTexture() != nullptr,
           "RasterOverlayTileProvider: direct tile receives texture from shared source upload");
 }
-
 void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3282,7 +2889,6 @@ void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     const TileKey geometryKey{imageryScheme->id(), 3, 2, 3};
     const Rectangle sourceBounds = imageryScheme->tileToRectangle(geometryKey);
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
@@ -3290,14 +2896,12 @@ void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
             projectForProvider(provider, sourceBounds),
             512.0,
             512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget mappedBudget;
     mappedBudget.beginFrame(1, config);
-
     check(mappedRasterTile &&
               provider.loadTileThrottled(*mappedRasterTile, &mappedBudget) &&
               !imagery.pendingRequests.empty(),
@@ -3305,20 +2909,16 @@ void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
     if (!mappedRasterTile || imagery.pendingRequests.empty()) {
         return;
     }
-
     const TileKey sourceKey = imagery.pendingRequests.front().key;
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {
         request.callback(request.key, makeDecodedRgbaImage(64, 64));
     }
-
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
     processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
-
     check(mappedRasterTile->getState() == RasterOverlayTile::LoadState::Loaded,
           "RasterOverlayTileProvider: cached-source fixture loads mapped raster tile");
-
     RasterOverlayTileProvider::TilePtr directTile = provider.getTile(sourceKey);
     FrameResourceBudget directBudget;
     directBudget.beginFrame(3, config);
@@ -3329,16 +2929,13 @@ void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
           "RasterOverlayTileProvider: cached mapped source asset does not consume raster request budget");
     check(imagery.pendingRequests.size() == pendingRequests.size(),
           "RasterOverlayTileProvider: cached mapped source asset does not start another imagery request");
-
     FrameResourceBudget directUploadBudget;
     directUploadBudget.beginFrame(4, config);
     provider.processPendingUploads(false, &directUploadBudget);
-
     check(directTile->getState() == RasterOverlayTile::LoadState::Loaded &&
               directTile->getTexture() != nullptr,
           "RasterOverlayTileProvider: direct tile uploads from cached mapped source asset");
 }
-
 void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3347,7 +2944,6 @@ void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     const Rectangle sharedSourceBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 2, 3});
     const Rectangle westHalf =
@@ -3372,7 +2968,6 @@ void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
             projectForProvider(provider, eastHalf),
             512.0,
             512.0).tile;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
@@ -3381,7 +2976,6 @@ void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
     westBudget.beginFrame(1, config);
     FrameResourceBudget eastBudget;
     eastBudget.beginFrame(2, config);
-
     check(westMappedRaster && westMappedRaster->isMappedRasterTile() &&
               eastMappedRaster && eastMappedRaster->isMappedRasterTile() &&
               provider.loadTileThrottled(*westMappedRaster, &westBudget) &&
@@ -3390,7 +2984,6 @@ void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
     if (!westMappedRaster || !eastMappedRaster || imagery.pendingRequests.empty()) {
         return;
     }
-
     check(westMappedRaster->getMappedSourceZoom() == eastMappedRaster->getMappedSourceZoom() &&
               westBudget.rasterNetworkRequestsIssued() == 12 &&
               eastBudget.rasterNetworkRequestsIssued() == 4 &&
@@ -3402,35 +2995,28 @@ void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
     check(provider.requestDiagnostics().peakExternalResourceBlockingRequests ==
               static_cast<int>(imagery.pendingRequests.size()),
           "RasterOverlayTileProvider: diagnostics keep mapped source fanout peak");
-
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {
         request.callback(request.key, makeDecodedRgbaImage(64, 64));
     }
-
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(3, config);
     processPendingRasterUploadsUntil(provider, 2, &uploadBudget);
-
     check(westMappedRaster->getState() == RasterOverlayTile::LoadState::Loaded &&
               eastMappedRaster->getState() == RasterOverlayTile::LoadState::Loaded,
           "RasterOverlayTileProvider: both mapped raster tiles resolve from shared source assets");
 }
-
 void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-
     const Rectangle rootBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 0, 0, 0});
     RasterOverlayTileProvider::TilePtr mappedRasterTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 131072.0, 131072.0).tile;
-
     check(mappedRasterTile && mappedRasterTile->getMappedSourceZoom() == 5,
           "RasterOverlayTileProvider: quadtree source zoom is reduced until combined texture fits like cesium-native");
 }
-
 void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3440,12 +3026,10 @@ void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     TileKey firstKey{imageryScheme->id(), 1, 0, 0};
     TileKey secondKey{imageryScheme->id(), 1, 1, 0};
     RasterOverlayTileProvider::TilePtr firstTile = provider.getTile(firstKey);
     RasterOverlayTileProvider::TilePtr secondTile = provider.getTile(secondKey);
-
     check(firstTile && provider.loadTileThrottled(*firstTile, nullptr) &&
               secondTile && provider.loadTileThrottled(*secondTile, nullptr) &&
               imagery.pendingRequests.size() == 2,
@@ -3453,7 +3037,6 @@ void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
     if (imagery.pendingRequests.size() < 2) {
         return;
     }
-
     imagery.pendingRequests[0].callback(
         firstKey,
         makeDecodedRgbaImage(4, 4));
@@ -3462,7 +3045,6 @@ void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
         makeDecodedRgbaImage(4, 4));
     check(provider.getPendingUploadCount() == 2,
           "RasterOverlayTileProvider: upload budget test has two pending uploads");
-
     FrameResourceBudgetConfig config;
     config.maxRasterUploadsPerFrame = 4;
     config.mainThreadTimeMs = 0.001;
@@ -3475,7 +3057,6 @@ void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
               provider.getPendingUploadCount() == 1 &&
               firstFrameBudget.rasterUploadsUsed() == 1,
           "RasterOverlayTileProvider: elapsed upload cost stops later uploads in the same frame");
-
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
     const int secondProcessed =
@@ -3485,7 +3066,6 @@ void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
               provider.getPendingUploadCount() == 0,
           "RasterOverlayTileProvider: deferred upload resumes on the next frame");
 }
-
 void testRasterOverlayPendingUploadSurvivesSourceCacheEviction() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3494,53 +3074,43 @@ void testRasterOverlayPendingUploadSurvivesSourceCacheEviction() {
         imagery,
         *imageryScheme,
         std::move(uploader));
-
     const TileKey key{imageryScheme->id(), 1, 0, 0};
     RasterOverlayTileProvider::TilePtr tile = provider.getTile(key);
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget requestBudget;
     requestBudget.beginFrame(1, config);
-
     check(tile && provider.loadTileThrottled(*tile, &requestBudget) &&
               imagery.pendingRequests.size() == 1,
           "RasterOverlayTileProvider: source cache eviction fixture starts direct request");
     if (!tile || imagery.pendingRequests.empty()) return;
-
     imagery.pendingRequests.front().callback(key, makeDecodedRgbaImage(64, 64));
     check(provider.getPendingUploadCount() == 1 &&
               provider.getCachedSourceTileBytes() > 0,
           "RasterOverlayTileProvider: source cache eviction fixture has pending upload and cached source");
-
     provider.setSubTileCacheBytes(0);
     check(provider.getCachedSourceTileBytes() == 0 &&
               provider.getCachedSourceTileCount() == 0,
           "RasterOverlayTileProvider: sub-tile cache budget zero evicts inactive source cache");
-
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
     provider.processPendingUploads(false, &uploadBudget);
-
     check(tile->getState() == RasterOverlayTile::LoadState::Loaded &&
               tile->getTexture() != nullptr &&
               provider.getPendingUploadCount() == 0,
           "RasterOverlayTileProvider: pending upload keeps source image alive after cache eviction");
 }
-
 void testRasterMappedUsesRenderContentDetailsRectangle() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
     RasterOverlayDetails details =
         makeProviderDetails(*imageryScheme, preciseRectangle);
-
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
@@ -3554,7 +3124,6 @@ void testRasterMappedUsesRenderContentDetailsRectangle() {
         missingProjections,
         nullptr,
         0);
-
     check(moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: unloaded details tile reports unknown detail");
     check(mapped.getLoadingTile() != nullptr &&
@@ -3564,13 +3133,11 @@ void testRasterMappedUsesRenderContentDetailsRectangle() {
     check(missingProjections.empty(),
           "RasterMappedToTilesetTile: existing projection is not reported missing");
 }
-
 void testRasterMappedMissingProjectionUsesPlaceholder() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
-
     RasterMappedToTilesetTile mapped;
     RasterOverlayDetails emptyDetails;
     std::vector<RasterOverlayProjection> missingProjections;
@@ -3585,7 +3152,6 @@ void testRasterMappedMissingProjectionUsesPlaceholder() {
         missingProjections,
         nullptr,
         0);
-
     check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
           "RasterMappedToTilesetTile: missing projection placeholder does not request detail");
     check(mapped.getLoadingTile() != nullptr &&
@@ -3598,18 +3164,15 @@ void testRasterMappedMissingProjectionUsesPlaceholder() {
     check(provider.getCachedTileCount() == 0,
           "RasterMappedToTilesetTile: missing projection does not create synthetic tile");
 }
-
 void testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setReady(false);
     provider.setFrameNumber(1);
-
     RasterOverlayDetails details = makeProviderDetails(
         *imageryScheme,
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
-
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
@@ -3623,7 +3186,6 @@ void testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
         missingProjections,
         nullptr,
         0);
-
     check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
           "RasterMappedToTilesetTile: provider-not-ready placeholder does not request detail");
     check(mapped.getLoadingTile() != nullptr &&
@@ -3639,19 +3201,16 @@ void testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
     check(provider.getCachedTileCount() == 0,
           "RasterMappedToTilesetTile: provider-not-ready does not create a cache tile");
 }
-
 void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setReady(false);
     provider.setFrameNumber(1);
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
     RasterOverlayDetails details =
         makeProviderDetails(*imageryScheme, preciseRectangle);
-
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
@@ -3665,7 +3224,6 @@ void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
         missingProjections,
         nullptr,
         0);
-
     provider.setReady(true);
     missingProjections.clear();
     const auto remapped = mapped.update(
@@ -3678,7 +3236,6 @@ void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
         missingProjections,
         nullptr,
         0);
-
     check(remapped == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: provider-ready placeholder remaps to loading real tile");
     check(mapped.getLoadingTile() != nullptr &&
@@ -3693,17 +3250,14 @@ void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
     check(provider.getCachedTileCount() == 1,
           "RasterMappedToTilesetTile: remapped placeholder creates one real cache tile");
 }
-
 void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
-
     RasterOverlayDetails staleDetails;
     staleDetails.rasterOverlayProjections.push_back(
         RasterOverlayProjection::Geographic);
-
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
@@ -3717,7 +3271,6 @@ void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() 
         missingProjections,
         nullptr,
         0);
-
     check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
           "RasterMappedToTilesetTile: stale render details use placeholder");
     check(mapped.getLoadingTile() != nullptr &&
@@ -3734,13 +3287,11 @@ void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() 
     check(provider.getCachedTileCount() == 0,
           "RasterMappedToTilesetTile: stale render details do not create a cache tile");
 }
-
 void testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
-
     RasterMappedToTilesetTile mapped;
     RasterOverlayDetails emptyDetails;
     std::vector<RasterOverlayProjection> missingProjections;
@@ -3762,7 +3313,6 @@ void testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
         0,
         false,
         projectedRectangle);
-
     check(moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: bounding region without render details maps first detail");
     check(mapped.getLoadingTile() != nullptr &&
@@ -3787,21 +3337,17 @@ void testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
                        projectedRectangle.north()) < 1e-12,
           "RasterMappedToTilesetTile: bounding region request uses projected precise rectangle");
 }
-
 void testRasterMappedAttachedUnknownReportsMoreDetail() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
-
     RasterOverlayDetails details = makeProviderDetails(
         *imageryScheme,
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
-
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
-
     const auto firstUpdate = mapped.update(
         geometryKey,
         details,
@@ -3815,10 +3361,8 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
     check(firstUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown &&
               mapped.getLoadingTile() != nullptr,
           "RasterMappedToTilesetTile: unloaded tile reports unknown detail");
-
     RasterOverlayTile* loadingTile = mapped.getLoadingTile();
     loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
-
     const auto promotedUpdate = mapped.update(
         geometryKey,
         details,
@@ -3833,7 +3377,6 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
               mapped.getState() == RasterMappedToTilesetTile::State::Unattached &&
               mapped.getReadyTile() == loadingTile,
           "RasterMappedToTilesetTile: no-renderer promotion is cover-ready but not attached");
-
     RecordingPrepareRendererResources prepResources;
     const auto rendererUpdate = mapped.update(
         geometryKey,
@@ -3851,7 +3394,6 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
               prepResources.lastRasterTile.get() == loadingTile &&
               prepResources.lastTexture == loadingTile->getTexture(),
           "RasterMappedToTilesetTile: resource prep is notified for promoted ready raster");
-
     const auto attachedUpdate = mapped.update(
         geometryKey,
         details,
@@ -3867,7 +3409,6 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
     check(!mapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: bool upsample query still requires explicit Yes");
 }
-
 void testRasterMappedFailureFallbackMatchesOverlayOwner() {
     auto overlayA = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -3877,7 +3418,6 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider providerA(
         overlayA->getProvider(),
         overlayA->getTileScheme(),
@@ -3890,14 +3430,12 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
     providerB.setOwner(overlayB.get());
     providerA.setFrameNumber(1);
     providerB.setFrameNumber(1);
-
     RasterOverlayDetails parentDetails = makeProviderDetails(
         overlayA->getTileScheme(),
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     RasterOverlayDetails childDetails = makeProviderDetails(
         overlayA->getTileScheme(),
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
-
     TilesetTile parent(
         TileKey{"Geographic-TMS", 2, 2, 1},
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
@@ -3906,7 +3444,6 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         &parent);
     parent.rasterOverlayState.mappings().resize(2);
-
     auto wrongOwner = std::make_unique<RasterMappedToTilesetTile>();
     std::vector<RasterOverlayProjection> wrongMissing;
     wrongOwner->update(
@@ -3934,7 +3471,6 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         0);
     RasterOverlayTile* wrongReady = wrongOwner->getReadyTile();
     parent.rasterOverlayState.mappings()[0] = std::move(wrongOwner);
-
     auto matchingOwner = std::make_unique<RasterMappedToTilesetTile>();
     std::vector<RasterOverlayProjection> matchingMissing;
     matchingOwner->update(
@@ -3963,7 +3499,6 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         1);
     RasterOverlayTile* matchingReady = matchingOwner->getReadyTile();
     parent.rasterOverlayState.mappings()[1] = std::move(matchingOwner);
-
     RasterMappedToTilesetTile childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
@@ -3979,7 +3514,6 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
     childMapped.getLoadingTile()->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     childMapped.getLoadingTile()->setState(RasterOverlayTile::LoadState::Failed);
-
     const auto fallbackUpdate = childMapped.update(
         child.key,
         childDetails,
@@ -3990,7 +3524,6 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         childMissing,
         &parent,
         0);
-
     check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::No,
           "RasterMappedToTilesetTile: original failed tile suppresses more-detail subdivision");
     check(childMapped.getReadyTile() == matchingReady &&
@@ -4004,24 +3537,20 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
               std::abs(childMapped.getScaleV() - 0.5f) < 1e-6f,
           "RasterMappedToTilesetTile: ancestor imagery UV window covers child geometry");
 }
-
 void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
         overlay->getTileScheme(),
         nullptr);
     provider.setOwner(overlay.get());
     provider.setFrameNumber(1);
-
     RasterOverlayDetails details;
     details.setGeographicRectangle(
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
-
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
@@ -4039,7 +3568,6 @@ void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
     failedTile->setState(RasterOverlayTile::LoadState::Failed);
     failedTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
-
     const auto failedUpdate = mapped.update(
         geometryKey,
         details,
@@ -4050,7 +3578,6 @@ void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
         missingProjections,
         nullptr,
         0);
-
     check(failedUpdate == RasterMappedToTilesetTile::MoreDetail::No,
           "RasterMappedToTilesetTile: failed tile with no ancestor suppresses more detail like cesium-native");
     check(mapped.getReadyTile() == failedTile &&
@@ -4060,24 +3587,20 @@ void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
     check(!mapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: failed ready tile never reports more detail available");
 }
-
 void testRasterMappedFailedReadyTileDetachSkipsRendererCallback() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
         overlay->getTileScheme(),
         nullptr);
     provider.setOwner(overlay.get());
     provider.setFrameNumber(1);
-
     RasterOverlayDetails details;
     details.setGeographicRectangle(
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
-
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
@@ -4093,7 +3616,6 @@ void testRasterMappedFailedReadyTileDetachSkipsRendererCallback() {
         0);
     RasterOverlayTile* failedTile = mapped.getLoadingTile();
     failedTile->setState(RasterOverlayTile::LoadState::Failed);
-
     mapped.update(
         geometryKey,
         details,
@@ -4107,36 +3629,30 @@ void testRasterMappedFailedReadyTileDetachSkipsRendererCallback() {
     check(mapped.getReadyTile() == failedTile &&
               mapped.getState() == RasterMappedToTilesetTile::State::Attached,
           "RasterMappedToTilesetTile: failed tile is marked attached without renderer resources like cesium-native");
-
     RecordingPrepareRendererResources prep;
     mapped.detachFromTile(&prep);
-
     check(prep.detachCount == 0,
           "RasterMappedToTilesetTile: detach skips renderer callback for failed ready tiles like cesium-native");
     check(mapped.getState() == RasterMappedToTilesetTile::State::Unattached,
           "RasterMappedToTilesetTile: failed ready detach still resets attachment state");
 }
-
 void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
         overlay->getTileScheme(),
         nullptr);
     provider.setOwner(overlay.get());
     provider.setFrameNumber(1);
-
     RasterOverlayDetails parentDetails = makeProviderDetails(
         overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     RasterOverlayDetails childDetails = makeProviderDetails(
         overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
-
     TilesetTile parent(
         TileKey{"Geographic-TMS", 2, 2, 1},
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
@@ -4145,7 +3661,6 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         &parent);
     parent.rasterOverlayState.mappings().resize(1);
-
     auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
@@ -4176,7 +3691,6 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
               parentMapped->getState() == RasterMappedToTilesetTile::State::Unattached,
           "RasterMappedToTilesetTile: parent fallback is cover-ready before resource prep");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-
     RasterMappedToTilesetTile childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
@@ -4189,7 +3703,6 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         childMissing,
         nullptr,
         0);
-
     const auto fallbackUpdate = childMapped.update(
         child.key,
         childDetails,
@@ -4200,7 +3713,6 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         childMissing,
         &parent,
         0);
-
     check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: loading child with ancestor raster reports unknown detail");
     check(childMapped.getReadyTile() == parentReady &&
@@ -4208,7 +3720,6 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
           "RasterMappedToTilesetTile: ancestor raster is cover-ready before resource prep");
     check(!childMapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: temporary ancestor raster does not trigger upsample children");
-
     RecordingPrepareRendererResources prepResources;
     const auto prepFallbackUpdate = childMapped.update(
         child.key,
@@ -4220,7 +3731,6 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         childMissing,
         &parent,
         0);
-
     check(prepFallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: ancestor fallback keeps loading-child detail unknown");
     check(childMapped.getState() ==
@@ -4232,13 +3742,11 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
     check(!childMapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: attached temporary ancestor still does not trigger upsample children");
 }
-
 void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
         overlay->getTileScheme(),
@@ -4246,7 +3754,6 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
     provider.setOwner(overlay.get());
     provider.setLevelRange(0, 3);
     provider.setFrameNumber(1);
-
     const TileKey parentImageryKey{"XYZ-WebMercator", 3, 4, 2};
     const Rectangle parentRectangle =
         overlay->getTileScheme().tileToRectangle(parentImageryKey);
@@ -4261,7 +3768,6 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
     RasterOverlayDetails childDetails = makeProviderDetails(
         overlay->getTileScheme(),
         childRectangle);
-
     TilesetTile parent(
         TileKey{"Geographic-TMS", 2, 2, 1},
         parentRectangle);
@@ -4270,7 +3776,6 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
         childRectangle,
         &parent);
     parent.rasterOverlayState.mappings().resize(1);
-
     auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
@@ -4301,7 +3806,6 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
     check(parentReady && !parentReady->isMappedRasterTile(),
           "RasterMappedToTilesetTile: fixture parent fallback uses current direct raster tile");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-
     RasterMappedToTilesetTile childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
@@ -4341,7 +3845,6 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
               childMapped.getState() ==
                   RasterMappedToTilesetTile::State::TemporarilyAttached,
           "RasterMappedToTilesetTile: fixture starts with attached ancestor fallback and own loading tile");
-
     provider.setMaximumScreenSpaceError(1.0);
     check(provider.ownsCurrentTile(*parentReady),
           "RasterMappedToTilesetTile: direct ready fallback remains current after mapped invalidation");
@@ -4357,7 +3860,6 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
         childMissing,
         &parent,
         0);
-
     check(updateAfterInvalidation ==
               RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: stale loading tile removal keeps pending detail state");
@@ -4367,27 +3869,23 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
                   RasterMappedToTilesetTile::State::TemporarilyAttached,
           "RasterMappedToTilesetTile: stale loading tile with ready fallback stays TemporarilyAttached");
 }
-
 void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
         overlay->getTileScheme(),
         nullptr);
     provider.setOwner(overlay.get());
     provider.setFrameNumber(1);
-
     const Rectangle rectangle =
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
     RasterOverlayDetails details = makeProviderDetails(
         overlay->getTileScheme(),
         rectangle);
     const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
-
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -4415,7 +3913,6 @@ void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
         missingProjections,
         nullptr,
         0);
-
     RecordingPrepareRendererResources prepResources;
     mapped.update(
         geometryKey,
@@ -4432,11 +3929,9 @@ void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
               mapped.getState() == RasterMappedToTilesetTile::State::Attached &&
               prepResources.attachCount == 1,
           "RasterMappedToTilesetTile: stale-ready fixture attaches first epoch raster");
-
     provider.setMaximumScreenSpaceError(1.0);
     check(!provider.ownsCurrentTile(*firstReady),
           "RasterMappedToTilesetTile: ready mapped tile is stale after provider epoch invalidation");
-
     const auto updateAfterInvalidation = mapped.update(
         geometryKey,
         details,
@@ -4447,7 +3942,6 @@ void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
         missingProjections,
         nullptr,
         0);
-
     check(updateAfterInvalidation ==
               RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: stale ready remap reports pending detail");
@@ -4460,20 +3954,17 @@ void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
               mapped.getState() == RasterMappedToTilesetTile::State::Unattached,
           "RasterMappedToTilesetTile: stale ready raster is replaced by current epoch loading tile");
 }
-
 void testRasterMappedFailedChildFollowsParentLoadingTile() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
         overlay->getTileScheme(),
         nullptr);
     provider.setOwner(overlay.get());
     provider.setFrameNumber(1);
-
     RasterOverlayDetails grandparentDetails = makeProviderDetails(
         overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
@@ -4483,7 +3974,6 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
     RasterOverlayDetails childDetails = makeProviderDetails(
         overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, 5.0, -15.0, 10.0));
-
     TilesetTile grandparent(
         TileKey{"Geographic-TMS", 2, 2, 1},
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
@@ -4497,7 +3987,6 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
         &parent);
     grandparent.rasterOverlayState.mappings().resize(1);
     parent.rasterOverlayState.mappings().resize(1);
-
     auto grandparentMapped = std::make_unique<RasterMappedToTilesetTile>();
     std::vector<RasterOverlayProjection> grandparentMissing;
     grandparentMapped->update(
@@ -4527,7 +4016,6 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
     RasterOverlayTile* grandparentReady = grandparentMapped->getReadyTile();
     grandparent.rasterOverlayState.mappings()[0] =
         std::move(grandparentMapped);
-
     auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
@@ -4555,7 +4043,6 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
               parentMapped->getReadyTile() == grandparentReady,
           "RasterMappedToTilesetTile: parent fixture has loading raster plus temporary ancestor");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-
     RasterMappedToTilesetTile childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
@@ -4572,7 +4059,6 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
     failedChildLoading->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     failedChildLoading->setState(RasterOverlayTile::LoadState::Failed);
-
     const auto fallbackUpdate = childMapped.update(
         child.key,
         childDetails,
@@ -4583,7 +4069,6 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
         childMissing,
         &parent,
         0);
-
     check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: failed child follows parent loading raster like cesium-native");
     check(childMapped.getLoadingTile() == parentLoading,
@@ -4592,7 +4077,6 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
           "RasterMappedToTilesetTile: failed child still draws closest available ancestor raster");
     check(!childMapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: original failed child does not trigger raster upsample children");
-
     parentLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
     parentLoading->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
@@ -4617,27 +4101,23 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
               promotedBinding.tile == parentLoading,
           "RasterMappedToTilesetTile: promoted parent loading raster remains an ancestor binding");
 }
-
 void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
         overlay->getTileScheme(),
         nullptr);
     provider.setOwner(overlay.get());
     provider.setFrameNumber(1);
-
     RasterOverlayDetails parentDetails = makeProviderDetails(
         overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     RasterOverlayDetails childDetails = makeProviderDetails(
         overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
-
     TilesetTile parent(
         TileKey{"Geographic-TMS", 2, 2, 1},
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
@@ -4646,7 +4126,6 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         &parent);
     parent.rasterOverlayState.mappings().resize(1);
-
     auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
@@ -4679,7 +4158,6 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
               parentRaster->getTexture() == nullptr,
           "RasterMappedToTilesetTile: parent loaded raster can be lifecycle-ready before texture upload");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-
     RasterMappedToTilesetTile childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
@@ -4692,7 +4170,6 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
         childMissing,
         nullptr,
         0);
-
     const auto fallbackUpdate = childMapped.update(
         child.key,
         childDetails,
@@ -4703,7 +4180,6 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
         childMissing,
         &parent,
         0);
-
     check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: loaded ancestor without texture keeps child detail unknown");
     check(childMapped.getReadyTile() == parentRaster,
@@ -4713,27 +4189,23 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
     check(childMapped.texture() == nullptr,
           "RasterMappedToTilesetTile: lifecycle-ready ancestor does not create drawable texture binding");
 }
-
 void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
         overlay->getTileScheme(),
         nullptr);
     provider.setOwner(overlay.get());
     provider.setFrameNumber(1);
-
     RasterOverlayDetails parentDetails = makeProviderDetails(
         overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     RasterOverlayDetails childDetails = makeProviderDetails(
         overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
-
     TilesetTile parent(
         TileKey{"Geographic-TMS", 2, 2, 1},
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
@@ -4742,7 +4214,6 @@ void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         &parent);
     parent.rasterOverlayState.mappings().resize(1);
-
     auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
@@ -4763,7 +4234,6 @@ void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
               parentMapped->getLoadingTile() == parentLoading,
           "RasterMappedToTilesetTile: test fixture keeps ancestor raster loaded but not promoted");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-
     RasterMappedToTilesetTile childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
@@ -4777,7 +4247,6 @@ void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
         nullptr,
         0);
     RasterOverlayTile* childDesired = childMapped.getLoadingTile();
-
     const auto fallbackUpdate = childMapped.update(
         child.key,
         childDetails,
@@ -4788,7 +4257,6 @@ void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
         childMissing,
         &parent,
         0);
-
     check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: loaded ancestor loading raster keeps child detail unknown");
     check(childMapped.getReadyTile() == parentLoading,
@@ -4799,19 +4267,16 @@ void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
               RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
           "RasterMappedToTilesetTile: borrowed loaded ancestor loading tile is marked as ancestor source");
 }
-
 void testRasterOverlayNativeTranslationAndRendererWindow() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey child{"Geographic-TMS", 2, 2, 0};
     const TileKey parent{"Geographic-TMS", 1, 1, 0};
-
     const TileTextureWindow nativeWindow =
         TileSurface::computeTranslationAndScale(
             scheme->tileToRectangle(child),
             scheme->tileToRectangle(parent));
     const TileTextureWindow rendererWindow =
         TileSurface::textureWindowForNorthWestUv(nativeWindow);
-
     check(std::abs(nativeWindow.offsetU - 0.0f) < 1e-6f &&
               std::abs(nativeWindow.offsetV - 0.0f) < 1e-6f &&
               std::abs(nativeWindow.scaleU - 0.5f) < 1e-6f &&
@@ -4823,21 +4288,17 @@ void testRasterOverlayNativeTranslationAndRendererWindow() {
               std::abs(rendererWindow.scaleV - 0.5f) < 1e-6f,
           "RasterOverlayUtilities: renderer window converts native V to north-west UV");
 }
-
 void testTilesetMaximumCachedBytesMatchesCesiumNativeDefault() {
     check(TilesetTestAccess::maximumCachedBytes() == 512LL * 1024 * 1024,
           "Tileset: maximumCachedBytes default matches cesium-native");
 }
-
 void testHeightmapTerrainProviderExposesAttribution() {
     HeightmapTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png",
         "height source credit");
-
     check(provider.attribution() == "height source credit",
           "HeightmapTerrainProvider: terrain attribution metadata is exposed");
 }
-
 void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/{z}/{x}/{y}.terrain");
@@ -4848,12 +4309,9 @@ void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
         nullptr,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTestAccess::primeCleanReusableResources(tileset);
     const uint64_t beforeRevision = TilesetTestAccess::resourceRevision(tileset);
-
     TilesetTestAccess::markTileResourcesDirty(tileset);
-
     check(TilesetTestAccess::resourceRevision(tileset) == beforeRevision + 1,
           "Tileset: resource dirty bumps resource revision");
     check(TilesetTestAccess::cacheBytesDirty(tileset),
@@ -4861,12 +4319,10 @@ void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
     check(TilesetTestAccess::selectionReuseReusable(tileset),
           "Tileset: resource dirty preserves selection reuse for static loading");
 }
-
 void testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative() {
     const Rectangle pointRegion(-1.03, 0.2292, -1.03, 0.2292);
     TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, pointRegion);
     tile.boundingVolume = TileBoundingVolume::fromRegion(pointRegion, 0.0, 3.0);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     auto distanceTo = [&](double longitude, double latitude, double height) {
         const Vec3 position = ellipsoid.cartographicToCartesian(
@@ -4884,14 +4340,12 @@ void testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative() {
             Cartographic::fromRadians(longitude, latitude, height));
         return regionPosition.distanceTo(position);
     };
-
     check(std::abs(distanceTo(-1.03, 0.2292, 4.0) - 1.0) < 1e-6,
           "Tileset: degenerate BoundingRegion distance above max height matches cesium-native");
     check(distanceTo(-1.03, 0.2292, 3.0) < 1e-6,
           "Tileset: degenerate BoundingRegion distance at max height is zero");
     check(distanceTo(-1.03, 0.2292, 2.0) < 1e-6,
           "Tileset: degenerate BoundingRegion distance inside height range is zero");
-
     const double sideDistance = distanceTo(-1.02, 0.2291, 2.0);
     const double expectedSideDistance =
         expectedCartesianDistance(-1.02, 0.2291, 2.0);
@@ -4901,17 +4355,14 @@ void testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative() {
               MathUtils::Epsilon6),
           "Tileset: degenerate BoundingRegion lateral distance matches cesium-native");
 }
-
 void testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey key{"Geographic-TMS", 5, 20, 12};
     const Rectangle bounds = scheme->tileToRectangle(key);
-
     TilesetTile defaultTile(key, bounds);
     const Vec3 center = TileBoundsMetrics::tileBoundsCenter(bounds);
     const double defaultRadius =
         TileBoundsMetrics::tileBoundsRadius(defaultTile, center);
-
     TilesetTile explicitDefaultTile(key, bounds);
     explicitDefaultTile.content.renderContent.setTerrainHeightRange(
         TileBoundsMetrics::kDefaultTerrainMinimumHeight,
@@ -4919,24 +4370,19 @@ void testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange() {
     );
     const double explicitDefaultRadius =
         TileBoundsMetrics::tileBoundsRadius(explicitDefaultTile, center);
-
     check(std::abs(defaultRadius - explicitDefaultRadius) < 1e-6,
           "TileBoundsMetrics: missing terrain height range uses the central default range");
 }
-
 void testTilesetBoundingRegionObbHandlesLargeRectanglesLikeCesiumNative() {
     constexpr double kPi = 3.14159265358979323846264338327950288;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const Rectangle bounds(-kPi, -kPi * 0.5, kPi, kPi * 0.5);
-
     TilesetTile rootTile(rootKey, bounds);
     rootTile.content.renderContent.setTerrainHeightRange(-1000.0, 9000.0);
-
     const auto rootObb = TilesetTestAccess::tileBoundingRegionObb(rootTile);
     check(rootObb.has_value(),
           "Tileset: BoundingRegion OBB builds for width greater than PI like cesium-native");
     if (!rootObb) return;
-
     const double equatorialExtent =
         Ellipsoid::WGS84().semiMajorAxis() + rootTile.content.renderContent.terrainMaximumHeight();
     const double polarExtent =
@@ -4954,17 +4400,14 @@ void testTilesetBoundingRegionObbHandlesLargeRectanglesLikeCesiumNative() {
               axis2Error < 1e-6,
           "Tileset: large BoundingRegion OBB extents match cesium-native root-region strategy");
 }
-
 void testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative() {
     const auto& ellipsoid = Ellipsoid::WGS84();
     const S2CellBoundingVolume volume(
         S2CellID::fromToken("1"),
         0.0,
         100000.0);
-
     check(volume.computeDistanceSquaredToPosition(volume.getCenter()) == 0.0,
           "S2CellBoundingVolume: distance is zero inside bounding volume like cesium-native");
-
     constexpr double caseOneDistance = 100.0;
     const auto& boundingPlanes = volume.getBoundingPlanes();
     const Plane topPlane(
@@ -4974,7 +4417,6 @@ void testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative() {
     check(std::abs(std::sqrt(volume.computeDistanceSquaredToPosition(position)) -
                    caseOneDistance) < 1e-7,
           "S2CellBoundingVolume: one selected top plane distance matches cesium-native");
-
     const Plane sidePlane(
         boundingPlanes[2].getNormal(),
         boundingPlanes[2].getDistance() - caseOneDistance);
@@ -4987,33 +4429,28 @@ void testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative() {
     check(std::abs(std::sqrt(volume.computeDistanceSquaredToPosition(position)) -
                    caseOneDistance) < 1e-7,
           "S2CellBoundingVolume: one selected side plane distance matches cesium-native");
-
     constexpr double caseTwoDistance = 5.0;
     position = (vertices[0] + vertices[1]) * 0.5;
     position.z() -= caseTwoDistance;
     check(std::abs(std::sqrt(volume.computeDistanceSquaredToPosition(position)) -
                    caseTwoDistance) < 1e-7,
           "S2CellBoundingVolume: top and side plane edge distance matches cesium-native");
-
     position = (vertices[0] + vertices[4]) * 0.5;
     position.x() -= 1.0;
     position.z() -= 1.0;
     check(std::abs(volume.computeDistanceSquaredToPosition(position) - 2.0) <
               1e-7,
           "S2CellBoundingVolume: two side plane edge distance matches cesium-native");
-
     position = (vertices[5] + vertices[6]) * 0.5;
     position.x() -= 10000.0;
     position.y() -= 1.0;
     check(std::abs(std::sqrt(volume.computeDistanceSquaredToPosition(position)) -
                    10000.0) < 1e-7,
           "S2CellBoundingVolume: obtuse bottom-side distance matches cesium-native");
-
     position = vertices[2] + Vec3(1.0, 1.0, 1.0);
     check(std::abs(volume.computeDistanceSquaredToPosition(position) - 3.0) <
               1e-7,
           "S2CellBoundingVolume: three selected plane vertex distance matches cesium-native");
-
     const Vec3 outsideManyPlanes(-ellipsoid.semiMajorAxis(), 0.0, 0.0);
     const double expectedDistance =
         ellipsoid.semiMajorAxis() +
@@ -5022,10 +4459,8 @@ void testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative() {
               volume.computeDistanceSquaredToPosition(outsideManyPlanes)) -
               expectedDistance) < 1e-7,
           "S2CellBoundingVolume: more-than-three-plane distance matches cesium-native");
-
     check(volume.intersectPlane(Plane::ORIGIN_ZX) == 0,
           "S2CellBoundingVolume: origin ZX plane intersects like cesium-native");
-
     const Plane outsidePlane(
         Plane::ORIGIN_YZ.getNormal(),
         Plane::ORIGIN_YZ.getDistance() -
@@ -5035,9 +4470,7 @@ void testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative() {
     check(volume.intersectPlane(Plane::ORIGIN_YZ) == 1,
           "S2CellBoundingVolume: origin YZ plane is inside like cesium-native");
 }
-
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters);
-
 class DefaultZoomTerrainProvider final : public TerrainProvider {
 public:
     std::string id() const override { return "default-zoom-terrain"; }
@@ -5045,11 +4478,9 @@ public:
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 1; }
     int tileSize() const override { return 2; }
-
     std::string buildUrl(const TileKey&) const override {
         return "memory://default-zoom";
     }
-
     void requestTile(const TileKey& key,
                      CancellationToken,
                      TerrainCallback callback,
@@ -5057,15 +4488,12 @@ public:
         ++requestCount;
         callback(key, TerrainTileLoadResult::retryLater());
     }
-
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t*, size_t) override {
         return nullptr;
     }
-
     int requestCount = 0;
 };
-
 class SparseTerrainProvider final : public TerrainProvider {
 public:
     std::string id() const override { return "sparse-terrain"; }
@@ -5073,7 +4501,6 @@ public:
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 4; }
     int tileSize() const override { return 2; }
-
     TileAvailabilityState availabilityState(const TileKey& key) const override {
         if (key.schemeId != schemeId()) return TileAvailabilityState::NotAvailable;
         if (key.z == 0) return TileAvailabilityState::Available;
@@ -5085,11 +4512,9 @@ public:
         }
         return TileAvailabilityState::NotAvailable;
     }
-
     std::string buildUrl(const TileKey&) const override {
         return "memory://sparse";
     }
-
     void requestTile(const TileKey& key,
                      CancellationToken,
                      TerrainCallback callback,
@@ -5097,16 +4522,13 @@ public:
         ++requestCount;
         callback(key, TerrainTileLoadResult::retryLater());
     }
-
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t*, size_t) override {
         return nullptr;
     }
-
     int requestCount = 0;
     std::vector<TileKey> extraAvailableKeys;
 };
-
 Tileset makeLegacySurfaceFixtureTileset(
     std::unique_ptr<TileScheme> scheme,
     std::vector<ActivatedRasterOverlay*> overlays = {},
@@ -5119,22 +4541,18 @@ Tileset makeLegacySurfaceFixtureTileset(
         device,
         std::move(options));
 }
-
 class TerminalTerrainProvider final : public TerrainProvider {
 public:
     explicit TerminalTerrainProvider(TileLoadStatus status)
         : status_(status) {}
-
     std::string id() const override { return "terminal-terrain"; }
     std::string schemeId() const override { return "Geographic-TMS"; }
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 1; }
     int tileSize() const override { return 2; }
-
     std::string buildUrl(const TileKey&) const override {
         return "memory://terminal";
     }
-
     void requestTile(const TileKey& key,
                      CancellationToken,
                      TerrainCallback callback,
@@ -5159,14 +4577,11 @@ public:
                 break;
         }
     }
-
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t*, size_t) override {
         return nullptr;
     }
-
     int requestCount = 0;
-
 private:
     static std::unique_ptr<DecodedHeightmap> makeHeightmap() {
         auto hm = std::make_unique<DecodedHeightmap>();
@@ -5174,41 +4589,34 @@ private:
         hm->heights = {0.0f, 0.0f, 0.0f, 0.0f};
         return hm;
     }
-
     TileLoadStatus status_;
 };
-
 class ManualCompletionTerrainProvider final : public TerrainProvider {
 public:
     struct PendingRequest {
         TileKey key;
         TerrainCallback callback;
     };
-
     std::string id() const override { return "manual-completion-terrain"; }
     std::string schemeId() const override { return "Geographic-TMS"; }
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 1; }
     int tileSize() const override { return 2; }
-
     std::string buildUrl(const TileKey&) const override {
         return "memory://manual-completion";
     }
-
     void requestTile(const TileKey& key,
                      CancellationToken,
                      TerrainCallback callback,
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
-
     ProviderRequestDiagnostics requestDiagnostics() const override {
         ProviderRequestDiagnostics diagnostics;
         diagnostics.maximumTransportActiveRequests =
             maximumTransportActiveRequests;
         return diagnostics;
     }
-
     bool completeWithHeightmap(
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
@@ -5221,58 +4629,46 @@ public:
         if (it == pendingRequests.end()) {
             return false;
         }
-
         TerrainCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
         callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
         return true;
     }
-
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t*, size_t) override {
         return nullptr;
     }
-
     std::vector<PendingRequest> pendingRequests;
     int maximumTransportActiveRequests = -1;
 };
-
 class ManualCompletionContentProvider final : public TilesetContentProvider {
 public:
     struct PendingRequest {
         TileKey key;
         ContentCallback callback;
     };
-
     explicit ManualCompletionContentProvider(TileKey key)
         : keys_{std::move(key)} {}
-
     explicit ManualCompletionContentProvider(std::vector<TileKey> keys)
         : keys_(std::move(keys)) {}
-
     std::string id() const override {
         return "manual-completion-content";
     }
-
     bool supportsTile(const TileKey& key) const override {
         return std::find(keys_.begin(), keys_.end(), key) != keys_.end();
     }
-
     std::vector<TileKey> rootTiles() const override {
         return keys_;
     }
-
     bool providesTerrainQuadtree() const override {
         return ownsTerrainQuadtree;
     }
-
     void requestTileContent(const TileKey& key,
                             CancellationToken,
                             ContentCallback callback,
                             HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
-
     bool completeWithModel(
         const TileKey& key,
         std::unique_ptr<GltfModel> model) {
@@ -5285,13 +4681,11 @@ public:
         if (it == pendingRequests.end()) {
             return false;
         }
-
         ContentCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
         callback(key, TileContentLoadResult::render(std::move(model)));
         return true;
     }
-
     bool completeWithTerrainModel(
         const TileKey& key,
         std::unique_ptr<GltfModel> model) {
@@ -5304,7 +4698,6 @@ public:
         if (it == pendingRequests.end()) {
             return false;
         }
-
         TileContentLoadResult result =
             TileContentLoadResult::renderTerrain(std::move(model));
         ContentCallback callback = std::move(it->callback);
@@ -5312,47 +4705,37 @@ public:
         callback(key, std::move(result));
         return true;
     }
-
     TileContentLoadResult decodeContent(
         const uint8_t*,
         size_t) override {
         return TileContentLoadResult::failed();
     }
-
     std::vector<PendingRequest> pendingRequests;
     bool ownsTerrainQuadtree = false;
-
 private:
     std::vector<TileKey> keys_;
 };
-
 class ManualTerrainQuadtreeContentProvider final : public TilesetContentProvider {
 public:
     struct PendingRequest {
         TileKey key;
         ContentCallback callback;
     };
-
     explicit ManualTerrainQuadtreeContentProvider(TileKey rootKey)
         : rootKey_(std::move(rootKey)) {}
-
     std::string id() const override {
         return "manual-terrain-quadtree-content";
     }
-
     bool supportsTile(const TileKey& key) const override {
         return key == rootKey_ ||
                terrainAvailabilityState(key) == TileAvailabilityState::Available;
     }
-
     std::vector<TileKey> rootTiles() const override {
         return {rootKey_};
     }
-
     bool providesTerrainQuadtree() const override {
         return true;
     }
-
     TileAvailabilityState terrainAvailabilityState(
         const TileKey& key) const override {
         return std::find(availableKeys.begin(), availableKeys.end(), key) !=
@@ -5360,18 +4743,15 @@ public:
                    ? TileAvailabilityState::Available
                    : TileAvailabilityState::NotAvailable;
     }
-
     bool isTerrainAvailabilityBoundaryLevel(int level) const override {
         return level % metadataAvailabilityLevels == 0;
     }
-
     void requestTileContent(const TileKey& key,
                             CancellationToken,
                             ContentCallback callback,
                             HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
-
     bool completeWithEmpty(const TileKey& key) {
         auto it = std::find_if(
             pendingRequests.begin(),
@@ -5382,39 +4762,32 @@ public:
         if (it == pendingRequests.end()) {
             return false;
         }
-
         ContentCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
         callback(key, TileContentLoadResult::empty());
         return true;
     }
-
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
         return TileContentLoadResult::failed();
     }
-
     ProviderRequestDiagnostics requestDiagnostics() const override {
         ProviderRequestDiagnostics diagnostics;
         diagnostics.maximumTransportActiveRequests =
             maximumTransportActiveRequests;
         return diagnostics;
     }
-
     void noteTerrainAvailabilityUpsampledChild(
         const TileKey& key) const override {
         notedUpsampledParents.push_back(key);
     }
-
     void noteTerrainAvailabilityLatentUpsampledChild(
         const TileKey& key) const override {
         notedLatentUpsampledParents.push_back(key);
     }
-
     void clearTerrainAvailabilityUpsampledChild(
         const TileKey& key) const override {
         clearedUpsampledParents.push_back(key);
     }
-
     std::vector<TileKey> availableKeys;
     std::vector<PendingRequest> pendingRequests;
     mutable std::vector<TileKey> notedLatentUpsampledParents;
@@ -5422,11 +4795,9 @@ public:
     mutable std::vector<TileKey> clearedUpsampledParents;
     int metadataAvailabilityLevels = 1;
     int maximumTransportActiveRequests = -1;
-
 private:
     TileKey rootKey_;
 };
-
 class SelectionTreeContentProvider final : public TilesetContentProvider {
 public:
     SelectionTreeContentProvider(
@@ -5436,11 +4807,9 @@ public:
         : roots_(std::move(roots)),
           children_(std::move(children)),
           terminalStatus_(terminalStatus) {}
-
     std::string id() const override {
         return "selection-tree-content";
     }
-
     bool supportsTile(const TileKey& key) const override {
         if (std::find(roots_.begin(), roots_.end(), key) != roots_.end()) {
             return true;
@@ -5454,18 +4823,15 @@ public:
         }
         return false;
     }
-
     std::vector<TileKey> rootTiles() const override {
         return roots_;
     }
-
     std::vector<TileKey> childTiles(const TileKey& key) const override {
         for (const auto& entry : children_) {
             if (entry.first == key) return entry.second;
         }
         return {};
     }
-
     void requestTileContent(const TileKey& key,
                             CancellationToken,
                             ContentCallback callback,
@@ -5473,13 +4839,10 @@ public:
         ++requestCount;
         callback(key, terminalResult());
     }
-
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
         return TileContentLoadResult::failed();
     }
-
     int requestCount = 0;
-
 private:
     TileContentLoadResult terminalResult() const {
         switch (terminalStatus_) {
@@ -5493,12 +4856,10 @@ private:
                 return TileContentLoadResult::failed();
         }
     }
-
     std::vector<TileKey> roots_;
     std::vector<std::pair<TileKey, std::vector<TileKey>>> children_;
     TileLoadStatus terminalStatus_ = TileLoadStatus::RetryLater;
 };
-
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     auto hm = std::make_unique<DecodedHeightmap>();
     hm->tileSize = 2;
@@ -5507,14 +4868,12 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     hm->maxHeight = heightMeters;
     return hm;
 }
-
 void testTilesetMissingRasterProjectionRequestsReload() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -5523,13 +4882,11 @@ void testTilesetMissingRasterProjectionRequestsReload() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: missing-raster-projection root tile is created");
     if (!root) return;
-
     const Rectangle terrainRectangle =
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
     root->boundingVolume =
@@ -5542,7 +4899,6 @@ void testTilesetMissingRasterProjectionRequestsReload() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -5551,14 +4907,12 @@ void testTilesetMissingRasterProjectionRequestsReload() {
         *root,
         commands,
         1.0f);
-
     check(commands.empty(),
           "Tileset: missing raster projection stops draw command creation");
     check(root->content.loadState != TileLoadState::Done ||
               root->content.contentKind != TileContentKind::Render ||
               !root->content.renderContent.hasSurfaceMesh(),
           "Tileset: missing raster projection unloads render content for reload like cesium-native");
-
     const RasterOverlayDetails& generatedDetails =
         root->content.renderContent.rasterOverlayDetails();
     const Rectangle expectedWebMercator = projectRectangleSimple(
@@ -5580,14 +4934,12 @@ void testTilesetMissingRasterProjectionRequestsReload() {
     check(!root->rasterOverlayState.hasMissingProjections(),
           "Tileset: missing raster projection unload clears transient reload projection state like cesium-native");
 }
-
 void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -5596,13 +4948,11 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: raster target-pixels root tile is created");
     if (!root) return;
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
@@ -5616,7 +4966,6 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -5625,7 +4974,6 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
         *root,
         commands,
         1.0f);
-
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr &&
@@ -5637,14 +4985,12 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
               loadingTile->getTargetScreenPixelsY() < 80.0,
           "Tileset: raster target-pixels are computed from precise rectangle size");
 }
-
 void testTilesetEnsuresOverlayProviderBeforeMapping() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -5653,13 +4999,11 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: lazy raster-provider root tile is created");
     if (!root) return;
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 5.0);
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
@@ -5673,7 +5017,6 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -5682,7 +5025,6 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
         *root,
         commands,
         1.0f);
-
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
     check(activated.getTileProvider() != nullptr &&
               activated.getTileProvider()->getOwner() == overlay.get(),
@@ -5692,14 +5034,12 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
                   projectForProvider(overlay->getTileScheme(), preciseRectangle),
           "Tileset: lazy provider maps raster using render-content rectangle");
 }
-
 void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -5708,13 +5048,11 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: prefetch wait-for-details root tile is created");
     if (!root) return;
-
     const Rectangle regionRectangle =
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
     root->bounds = Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
@@ -5724,13 +5062,11 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
         10.0);
     root->geometricError = 100.0;
     root->rasterOverlayState.mappings().resize(1);
-
     FrameResourceBudgetConfig budgetConfig;
     budgetConfig.maxRasterNetworkRequestsPerFrame = 64;
     budgetConfig.maxRasterNetworkInflight = 64;
     TilesetTestAccess::beginFrameResourceBudget(tileset, budgetConfig);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTileProvider* provider = activated.getTileProvider();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
@@ -5760,14 +5096,12 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
                        expectedWebMercator.north()) < 1e-12,
           "Tileset: prefetch bounding-region request uses projected precise rectangle");
 }
-
 void testTilesetPrefetchUsesContentBoundingVolumeFallback() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -5776,13 +5110,11 @@ void testTilesetPrefetchUsesContentBoundingVolumeFallback() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: prefetch content-bounds fallback root tile is created");
     if (!root) return;
-
     const Rectangle tileRectangle =
         Rectangle::fromDegrees(-40.0, -20.0, 40.0, 20.0);
     const Rectangle contentRectangle =
@@ -5794,13 +5126,11 @@ void testTilesetPrefetchUsesContentBoundingVolumeFallback() {
         TileBoundingVolume::fromRegion(contentRectangle, -10.0, 120.0);
     root->geometricError = 100.0;
     root->rasterOverlayState.mappings().resize(1);
-
     FrameResourceBudgetConfig budgetConfig;
     budgetConfig.maxRasterNetworkRequestsPerFrame = 64;
     budgetConfig.maxRasterNetworkInflight = 64;
     TilesetTestAccess::beginFrameResourceBudget(tileset, budgetConfig);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
@@ -5810,20 +5140,17 @@ void testTilesetPrefetchUsesContentBoundingVolumeFallback() {
     const Rectangle tileWebMercator = projectRectangleSimple(
         WebMercatorProjection(Ellipsoid::WGS84()),
         tileRectangle);
-
     check(loadingTile &&
               loadingTile->getRectangle() == expectedContentWebMercator &&
               loadingTile->getRectangle() != tileWebMercator,
           "Tileset: prefetch fallback raster request uses effective content bounding volume like cesium-native");
 }
-
 void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -5832,13 +5159,11 @@ void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: prefetch detail-generation root tile is created");
     if (!root) return;
-
     const Rectangle regionRectangle =
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
     root->bounds = Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
@@ -5852,9 +5177,7 @@ void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
     root->content.renderContent.setMeshReady(true);
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     const RasterOverlayDetails& details =
         root->content.renderContent.rasterOverlayDetails();
     const Rectangle* webMercatorDetails =
@@ -5866,7 +5189,6 @@ void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
               details.boundingRegion.minimumHeight >
                   details.boundingRegion.maximumHeight,
           "Tileset: prefetch leaves missing render-content raster details for reload");
-
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
@@ -5881,14 +5203,12 @@ void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
                   RasterOverlayProjection::WebMercator,
           "Tileset: prefetch records missing render-content projection for reload like cesium-native");
 }
-
 void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<PendingRectangleImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -5897,7 +5217,6 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey edgeKey{"Geographic-TMS", 1, 0, 0};
     const TileKey centerKey{"Geographic-TMS", 1, 1, 0};
     TilesetTile* edge = TilesetTestAccess::ensureTile(tileset, edgeKey);
@@ -5905,7 +5224,6 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
     check(edge && center,
           "TileRasterOverlayFrameProcessor: priority test creates both tiles");
     if (!edge || !center) return;
-
     edge->bounds = Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0);
     center->bounds = Rectangle::fromDegrees(1.0, 0.0, 2.0, 1.0);
     edge->content.renderContent.setSurfaceMesh(
@@ -5932,13 +5250,11 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
     center->geometricError = 1.0;
     edge->selectionFrameState.priority = 100.0;
     center->selectionFrameState.priority = 1.0;
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     TilesetTestAccess::prefetchRasterOverlaySelection(
         tileset,
         {
@@ -5946,21 +5262,18 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
             TileLoadRequest{centerKey, TileLoadPriorityGroup::Normal, 1.0},
         },
         budget);
-
     RasterMappedToTilesetTile* centerMapping =
         center->rasterOverlayState.mappingCount() > 0
             ? center->rasterOverlayState.mappings()[0].get()
             : nullptr;
     RasterOverlayTile* centerLoading =
         centerMapping ? centerMapping->getLoadingTile() : nullptr;
-
     check(centerLoading &&
               centerLoading->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
               budget.rasterNetworkRequestsIssued() > 0,
           "TileRasterOverlayFrameProcessor: raster prefetch starts the higher-priority tile first");
 }
-
 void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -5968,7 +5281,6 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     const TileKey key{"Geographic-TMS", 0, 0, 0};
     TilesetTile tile(
         key,
@@ -5982,7 +5294,6 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
     tile.geometricError = 100.0;
-
     TilePlan plan;
     plan.visibleTiles.push_back(key);
     std::vector<TileLoadRequest> requests;
@@ -6001,7 +5312,6 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
     TileKey queuedReloadKey;
     TileLoadPriorityGroup queuedReloadGroup = TileLoadPriorityGroup::Preload;
     double queuedReloadPriority = 0.0;
-
     TileRasterOverlayFrameProcessor::prefetchSelection(
         plan,
         requests,
@@ -6031,7 +5341,6 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
             queuedReloadGroup = reloadGroup;
             queuedReloadPriority = reloadPriority;
         });
-
     check(unloadCalled &&
               tile.content.loadState == TileLoadState::Unloaded &&
               tile.content.contentKind == TileContentKind::Unknown,
@@ -6047,7 +5356,6 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
               queuedReloadPriority == tile.selectionFrameState.priority,
           "TileRasterOverlayFrameProcessor: prefetch missing projection queues same-frame content reload");
 }
-
 void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReload() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -6055,7 +5363,6 @@ void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReloa
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     const TileKey key{"Geographic-TMS", 0, 0, 0};
     TilesetTile tile(
         key,
@@ -6069,7 +5376,6 @@ void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReloa
     tile.content.loadState = TileLoadState::ContentLoaded;
     tile.content.contentKind = TileContentKind::Render;
     tile.geometricError = 100.0;
-
     TilePlan plan;
     plan.visibleTiles.push_back(key);
     const std::vector<size_t> overlayOrder =
@@ -6081,7 +5387,6 @@ void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReloa
     budget.beginFrame(1, config);
     bool unloadCalled = false;
     bool queueReloadCalled = false;
-
     TileRasterOverlayFrameProcessor::prefetchSelection(
         plan,
         {},
@@ -6100,7 +5405,6 @@ void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReloa
         [&](const TileKey&, TileLoadPriorityGroup, double) {
             queueReloadCalled = true;
         });
-
     check(!unloadCalled &&
               !queueReloadCalled &&
               tile.content.loadState == TileLoadState::ContentLoaded &&
@@ -6109,7 +5413,6 @@ void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReloa
     check(tile.rasterOverlayState.mappings().empty() &&
               tile.rasterOverlayState.missingProjections().empty(),
           "TileRasterOverlayFrameProcessor: ContentLoaded prefetch does not record transient missing projection state");
-
     tile.content.loadState = TileLoadState::Done;
     TileRasterOverlayFrameProcessor::prefetchSelection(
         plan,
@@ -6129,23 +5432,19 @@ void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReloa
         [&](const TileKey&, TileLoadPriorityGroup, double) {
             queueReloadCalled = true;
         });
-
     check(unloadCalled && queueReloadCalled,
           "TileRasterOverlayFrameProcessor: Done render content still reloads missing projection during prefetch");
 }
-
 void testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch() {
     const TileKey key{"Geographic-TMS", 1, 0, 0};
     TilesetTile tile(key, Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0));
     TilePlan plan;
     plan.visibleTiles.push_back(key);
-
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     std::vector<ActivatedRasterOverlay*> overlays;
     std::vector<size_t> overlayOrder;
     int ensureCalls = 0;
@@ -6164,18 +5463,15 @@ void testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch() {
             }
             return nullptr;
         });
-
     check(ensureCalls == 1,
           "TileRasterOverlayFrameProcessor: duplicate visible/load request prefetch is skipped in the same frame");
 }
-
 void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -6184,13 +5480,11 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: prebuild raster promotion root tile is created");
     if (!root) return;
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
@@ -6206,25 +5500,21 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
           "Tileset: prebuild raster promotion creates loading raster");
     if (!mapped || !loadingTile) return;
-
     loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     check(mapped->getReadyTile() == loadingTile &&
               mapped->getState() == RasterMappedToTilesetTile::State::Unattached,
           "Tileset: prebuild raster promotion makes tile ready before resource prep");
     check(TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: selector renderability sees promoted raster before build");
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6233,7 +5523,6 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
         *root,
         commands,
         1.0f);
-
     check(!commands.empty() &&
               mapped->getState() == RasterMappedToTilesetTile::State::Attached &&
               commands.front().kind == RenderCommandKind::SurfaceTile &&
@@ -6241,14 +5530,12 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
               commands.front().textures.front() == loadingTile->getTexture(),
           "Tileset: build command emits a surface command from the core ready raster");
 }
-
 void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -6257,13 +5544,11 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: ready-raster prefetch skip root tile is created");
     if (!root) return;
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
@@ -6279,7 +5564,6 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappingAt(0);
@@ -6288,11 +5572,9 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     check(loadingTile != nullptr,
           "Tileset: ready-raster prefetch skip creates loading raster");
     if (!mapped || !loadingTile) return;
-
     loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     check(mapped->getReadyTile() == loadingTile,
           "Tileset: ready-raster prefetch skip has a ready mapping");
@@ -6300,14 +5582,12 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
               *root,
               std::vector<ActivatedRasterOverlay*>{&activated}),
           "Tileset: ready raster with no more detail skips traversal prefetch");
-
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     check(!TileSelectionRasterOverlayPreparer::canSkipReadyOverlayPrefetch(
               *root,
               std::vector<ActivatedRasterOverlay*>{&activated}),
           "Tileset: ready raster with more detail keeps traversal prefetch active");
-
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     RasterOverlayTileProvider* provider =
@@ -6315,7 +5595,6 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     check(provider != nullptr,
           "Tileset: pending-raster skip test has active provider");
     if (!provider) return;
-
     const Rectangle childRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -6.0, 0.0);
     TilesetTile child(
@@ -6338,7 +5617,6 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
         childMissingProjections,
         root,
         0);
-
     check(childMapped.getReadyTile() == loadingTile &&
               childMapped.getLoadingTile() != nullptr,
           "Tileset: child raster can render ancestor while own raster is pending");
@@ -6346,7 +5624,6 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
               child,
               std::vector<ActivatedRasterOverlay*>{&activated}),
           "Tileset: pending child raster prevents traversal prefetch skip");
-
     RasterOverlayTile* failedChildRaster = childMapped.getLoadingTile();
     failedChildRaster->setState(RasterOverlayTile::LoadState::Failed);
     const RasterMappedToTilesetTile::MoreDetail converged =
@@ -6360,21 +5637,18 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
             childMissingProjections,
             root,
             0);
-
     check(converged == RasterMappedToTilesetTile::MoreDetail::No &&
               childMapped.getLoadingTile() == nullptr &&
               childMapped.getReadyTile() == loadingTile &&
               !childMapped.isMoreDetailAvailable(),
           "Tileset: failed pending child raster converges to ancestor without more detail");
 }
-
 void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -6383,13 +5657,11 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
         {&baseActivated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: placeholder-base root tile is created");
     if (!root) return;
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
@@ -6418,10 +5690,8 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
-
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: required base imagery keeps complete renderable false while loading");
-
     InitializedRendererHarness rendererHarness;
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6430,7 +5700,6 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
         *root,
         commands,
         1.0f);
-
     check(!commands.empty() &&
               commands.front().kind == RenderCommandKind::SurfaceTile &&
               commands.front().textures.size() > 5 &&
@@ -6456,14 +5725,12 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: missing blocking base imagery keeps strict complete renderable false");
 }
-
 void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -6472,7 +5739,6 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
         {&baseActivated},
         nullptr,
         TilesetOptions{});
-
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* parent = TilesetTestAccess::ensureTile(tileset, parentKey);
@@ -6480,7 +5746,6 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     check(parent != nullptr && child != nullptr && child->parent == parent,
           "Tileset: failed-child base imagery setup creates parent/child tiles");
     if (!parent || !child) return;
-
     auto makeRenderableSurface = [&](TilesetTile& tile) {
         tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
         tile.content.renderContent.mutableSurfaceMesh()
@@ -6498,7 +5763,6 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     };
     makeRenderableSurface(*parent);
     makeRenderableSurface(*child);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *parent);
     RasterMappedToTilesetTile* parentMapped =
         parent->rasterOverlayState.mappings()[0].get();
@@ -6507,7 +5771,6 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     check(parentLoading != nullptr,
           "Tileset: failed-child base imagery setup creates parent raster");
     if (!parentMapped || !parentLoading) return;
-
     parentLoading->setTexture(std::make_unique<DummyTexture>(8, 8));
     Texture* parentTexture = parentLoading->getTexture();
     parentLoading->setMoreDetailAvailable(
@@ -6515,7 +5778,6 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     TilesetTestAccess::prefetchRasterOverlays(tileset, *parent);
     check(parentMapped->getReadyTile() == parentLoading,
           "Tileset: failed-child base imagery setup promotes parent raster");
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *child);
     RasterMappedToTilesetTile* childMapped = child->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* childLoading =
@@ -6523,11 +5785,9 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     check(childLoading != nullptr,
           "Tileset: failed-child base imagery setup creates child raster");
     if (!childMapped || !childLoading || !parentTexture) return;
-
     childLoading->setTexture(std::make_unique<DummyTexture>(2, 2));
     Texture* failedChildTexture = childLoading->getTexture();
     childLoading->setState(RasterOverlayTile::LoadState::Failed);
-
     InitializedRendererHarness rendererHarness;
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6536,12 +5796,10 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
         *child,
         commands,
         1.0f);
-
     check(commands.size() == 1 &&
               commands.front().kind == RenderCommandKind::SurfaceTile,
           "Tileset: failed child imagery still draws using a real ancestor texture");
     if (commands.empty()) return;
-
     check(commands.front().textures.size() == 1 &&
               commands.front().textures.front() == parentTexture &&
               commands.front().textures.front() != failedChildTexture &&
@@ -6554,7 +5812,6 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
               binding.tile == parentLoading,
           "Tileset: failed child surface binding is the logical ancestor raster");
 }
-
 void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -6572,7 +5829,6 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
         roadOptions);
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     ActivatedRasterOverlay roadActivated(*roadOverlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -6581,13 +5837,11 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
         {&baseActivated, &roadActivated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: annotation-nonblocking root tile is created");
     if (!root) return;
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
@@ -6604,7 +5858,6 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(2);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* baseMapped = root->rasterOverlayState.mappings()[0].get();
     RasterMappedToTilesetTile* roadMapped = root->rasterOverlayState.mappings()[1].get();
@@ -6613,17 +5866,14 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     check(baseLoading != nullptr && roadMapped != nullptr,
           "Tileset: annotation-nonblocking setup creates base and road mappings");
     if (!baseMapped || !baseLoading || !roadMapped) return;
-
     baseLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
     baseLoading->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     check(baseMapped->getReadyTile() == baseLoading &&
               roadMapped->getReadyTile() == nullptr &&
               TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: ready base imagery completes the tile even while annotation is missing");
-
     InitializedRendererHarness rendererHarness;
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6632,7 +5882,6 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: missing annotation overlay does not suppress surface draw");
     if (commands.empty()) return;
@@ -6643,7 +5892,6 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
               command.surfaceOverlayTextureCount == 0,
           "Tileset: base imagery draws alone until annotation overlay is ready");
 }
-
 void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -6657,7 +5905,6 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
         roadOptions);
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     ActivatedRasterOverlay roadActivated(*roadOverlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -6666,13 +5913,11 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
         {&baseActivated, &roadActivated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: composite overlay root tile is created");
     if (!root) return;
-
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
@@ -6688,7 +5933,6 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(2);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* baseMapped = root->rasterOverlayState.mappings()[0].get();
     RasterMappedToTilesetTile* roadMapped = root->rasterOverlayState.mappings()[1].get();
@@ -6699,14 +5943,12 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     check(baseLoading != nullptr && roadLoading != nullptr,
           "Tileset: composite overlay creates both raster mappings");
     if (!baseMapped || !roadMapped || !baseLoading || !roadLoading) return;
-
     baseLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
     baseLoading->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     roadLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
     roadLoading->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6715,7 +5957,6 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: visible raster overlays composite into one surface draw command");
     if (commands.empty()) return;
@@ -6729,14 +5970,12 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     check(command.surfaceOverlayOpacities[0] == roadOptions.opacity,
           "Tileset: composite command preserves overlay opacity");
 }
-
 void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -6745,13 +5984,11 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: raster-more-detail root tile is created");
     if (!root) return;
-
     const Rectangle contentRectangle =
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
     const Rectangle overlayRectangle =
@@ -6776,7 +6013,6 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6785,17 +6021,14 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
         *root,
         commands,
         1.0f);
-
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
           "Tileset: raster-more-detail loading tile is mapped");
     if (!loadingTile) return;
-
     loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
-
     commands.clear();
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
@@ -6803,7 +6036,6 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
         *root,
         commands,
         1.0f);
-
     check(root->children.size() == 4,
           "Tileset: raster more detail creates four upsampled children");
     check(TilesetTestAccess::canRefine(tileset, *root),
@@ -6868,7 +6100,6 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     check(hasExpectedChildBounds,
           "Tileset: raster more-detail children split the Cesium-native content/overlay union at projection center");
 }
-
 void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -6878,19 +6109,16 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF render-content root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6899,7 +6127,6 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
         *root,
         commands,
         0.5f);
-
     check(!root->content.renderContent.isMeshReady() &&
               root->content.renderContent.isGltfRenderReady() &&
               root->content.renderContent.isRenderContentReady() &&
@@ -6920,7 +6147,6 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
     check(commands.size() == 1,
           "Tileset: glTF render content emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.kind == RenderCommandKind::GltfPrimitive,
           "Tileset: glTF draw command uses the GltfPrimitive kind");
@@ -7025,7 +6251,6 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
               std::abs(cmd.worldSortCenter[2]) < 1e-9,
           "Tileset: glTF draw command carries primitive world center for transparent sorting");
 }
-
 void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     auto overlayOptions = makeRasterOverlayOptions();
     overlayOptions.opacity = 0.42f;
@@ -7034,7 +6259,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
         TileScheme::createXYZWebMercator(),
         overlayOptions);
     ActivatedRasterOverlay activated(*overlay);
-
     DummyRenderDevice device;
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
@@ -7048,13 +6272,11 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
         &device,
         TilesetOptions{},
         std::move(contentProvider));
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF mapped raster root tile is created");
     if (!root) return;
-
     const Rectangle geometryRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
     root->content.renderContent.setSurfaceMesh(
@@ -7072,7 +6294,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
         !root->content.renderContent.hasRetainedHeightmap()) {
         return;
     }
-
     auto model = makeTexturedTriangleGltfModel();
     model->rasterOverlayDetails.rasterOverlayProjections = {
         RasterOverlayProjection::Geographic,
@@ -7098,7 +6319,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
         tileset,
         rootKey,
         std::move(staleHeightmap));
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7113,7 +6333,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     check(mapped != nullptr && loading != nullptr,
           "Tileset: glTF mapped raster draw path creates a loading mapping");
     if (!mapped || !loading) return;
-
     loading->setTexture(std::make_unique<DummyTexture>(4, 4));
     loading->setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
     commands.clear();
@@ -7123,7 +6342,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF mapped raster emits one primitive command");
     if (commands.empty()) return;
@@ -7166,7 +6384,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     check(!cmd.resourceKeepAlive.empty(),
           "Tileset: glTF mapped raster command retains raster tile resources");
 }
-
 void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     auto overlayOptions = makeRasterOverlayOptions();
     auto overlay = std::make_unique<RasterOverlay>(
@@ -7174,7 +6391,6 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
         TileScheme::createXYZWebMercator(),
         overlayOptions);
     ActivatedRasterOverlay activated(*overlay);
-
     DummyRenderDevice device;
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
@@ -7183,13 +6399,11 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
         {&activated},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF terrain water mask root tile is created");
     if (!root) return;
-
     const Rectangle geometryRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
     auto model = makeTexturedTriangleGltfModel();
@@ -7231,7 +6445,6 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     model->primitives.front().terrainWaterMaskTranslationY =
         waterMask.translationY;
     model->primitives.front().terrainWaterMaskScale = waterMask.scale;
-
     root->content.renderContent.prepareGltfContent(
         std::move(model),
         Mat4::identity());
@@ -7240,7 +6453,6 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
     root->rasterOverlayState.mappings().resize(1);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappings()[0].get();
@@ -7248,11 +6460,9 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     check(mapped != nullptr && loading != nullptr,
           "Tileset: glTF terrain water mask creates mapped raster");
     if (!mapped || !loading) return;
-
     loading->setTexture(std::make_unique<DummyTexture>(4, 4));
     loading->setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7261,7 +6471,6 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF terrain water mask emits one primitive command");
     if (commands.empty()) return;
@@ -7293,7 +6502,6 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
               cmd.uniforms.at("u_gltfWaterMaskState").size() == 4,
           "Tileset: glTF terrain water mask uploads shader uniforms");
 }
-
 void testTilesetGltfTangentsUseModelLinearTransform() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -7302,13 +6510,11 @@ void testTilesetGltfTangentsUseModelLinearTransform() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF tangent transform root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::scale(Vec3(2.0, 1.0, 1.0)));
@@ -7322,7 +6528,6 @@ void testTilesetGltfTangentsUseModelLinearTransform() {
     }
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7331,12 +6536,10 @@ void testTilesetGltfTangentsUseModelLinearTransform() {
         *root,
         commands,
         1.0f);
-
     check(!commands.empty() &&
               root->content.renderContent.gltfPrimitiveResourceCount() == 1u,
           "Tileset: glTF tangent transform uploads primitive resources");
     if (commands.empty()) return;
-
     const auto* uploadedVertices =
         dynamic_cast<const DummyBuffer*>(commands.front().vertexBuffer);
     bool tangentUsesModelLinear = false;
@@ -7355,7 +6558,6 @@ void testTilesetGltfTangentsUseModelLinearTransform() {
     check(tangentUsesModelLinear,
           "Tileset: glTF tangents use model linear transform under non-uniform scale");
 }
-
 void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -7364,13 +6566,11 @@ void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF MASK material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
@@ -7382,7 +6582,6 @@ void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
     model->primitives[0].alphaCutoff = 0.35f;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7391,11 +6590,9 @@ void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF MASK material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(!cmd.blend && cmd.depthWrite,
           "Tileset: glTF MASK material remains an opaque depth-writing command");
@@ -7406,7 +6603,6 @@ void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
                   1e-6f,
           "Tileset: glTF MASK material uploads alpha cutoff uniforms");
 }
-
 void testTilesetGltfUnlitMaterialUploadsUniform() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -7415,13 +6611,11 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF unlit material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
@@ -7435,7 +6629,6 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
     model->primitives[0].emissiveFactor = {0.4f, 0.5f, 0.6f};
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7444,11 +6637,9 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF unlit material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_unlit") &&
               cmd.uniforms.at("u_unlit").front() == 1.0f,
@@ -7460,7 +6651,6 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
                   1e-6f,
           "Tileset: glTF unlit command keeps source material factors for diagnostics");
 }
-
 void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -7470,13 +6660,11 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF emissive material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
@@ -7496,7 +6684,6 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
     primitive.emissiveTexture = emissiveBinding;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7505,11 +6692,9 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF emissive material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_emissiveFactor") &&
               cmd.uniforms.at("u_emissiveFactor").size() == 3 &&
@@ -7550,7 +6735,6 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
                        1.0f) < 1e-6f,
           "Tileset: glTF emissive texture uploads KHR_texture_transform uniforms");
 }
-
 void testTilesetGltfIorMaterialUploadsSpecularF0() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -7559,13 +6743,11 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF IOR material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
@@ -7580,7 +6762,6 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
     model->primitives.push_back(std::move(fullReflectancePrimitive));
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7589,11 +6770,9 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 2,
           "Tileset: glTF IOR materials emit primitive draw commands");
     if (commands.size() < 2) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_dielectricSpecularF0") &&
               std::abs(cmd.uniforms.at("u_dielectricSpecularF0").front() -
@@ -7606,7 +6785,6 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
                       .front() - 1.0f) < 1e-6f,
           "Tileset: glTF IOR zero material uploads full-reflectance F0");
 }
-
 void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -7616,13 +6794,11 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF anisotropy material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
@@ -7642,7 +6818,6 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
     primitive.anisotropyTexture = anisotropyBinding;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7651,11 +6826,9 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF anisotropy material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_anisotropyFactors") &&
               cmd.uniforms.at("u_anisotropyFactors").size() == 2 &&
@@ -7693,7 +6866,6 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
                        1.0f) < 1e-6f,
           "Tileset: glTF anisotropy texture uploads KHR_texture_transform uniforms");
 }
-
 void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -7703,13 +6875,11 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF spec-gloss material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
@@ -7731,7 +6901,6 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
     primitive.specularGlossinessTexture = specGlossBinding;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7740,11 +6909,9 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF spec-gloss material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_specularGlossinessWorkflow") &&
               cmd.uniforms.at("u_specularGlossinessWorkflow").front() ==
@@ -7794,7 +6961,6 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
                   1.0f) < 1e-6f,
           "Tileset: glTF spec-gloss texture uploads KHR_texture_transform uniforms");
 }
-
 void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -7804,13 +6970,11 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF transmission material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
@@ -7830,7 +6994,6 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
     primitive.transmissionTexture = transmissionBinding;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7839,11 +7002,9 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF transmission material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.blend && !cmd.depthWrite,
           "Tileset: glTF transmission material becomes a translucent command");
@@ -7880,7 +7041,6 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
                        1.0f) < 1e-6f,
           "Tileset: glTF transmission texture uploads KHR_texture_transform uniforms");
 }
-
 void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -7890,13 +7050,11 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF specular material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
@@ -7923,7 +7081,6 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     primitive.specularColorTexture = specularColorBinding;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -7932,11 +7089,9 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF specular material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_specularFactor") &&
               std::abs(cmd.uniforms.at("u_specularFactor").front() - 0.25f) <
@@ -7993,7 +7148,6 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
         "u_specularColorTexRotationSinCos",
         "Tileset: glTF specularColor texture uploads KHR_texture_transform uniforms");
 }
-
 void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -8003,13 +7157,11 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF clearcoat material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
@@ -8044,7 +7196,6 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
     primitive.clearcoatNormalTexture = clearcoatNormalBinding;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8053,11 +7204,9 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF clearcoat material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_clearcoatFactors") &&
               cmd.uniforms.at("u_clearcoatFactors").size() == 3 &&
@@ -8121,7 +7270,6 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
         "u_clearcoatNormalTexRotationSinCos",
         "Tileset: glTF clearcoat normal texture uploads KHR_texture_transform uniforms");
 }
-
 void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -8131,13 +7279,11 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF sheen material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
@@ -8164,7 +7310,6 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
     primitive.sheenRoughnessTexture = sheenRoughnessBinding;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8173,11 +7318,9 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF sheen material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_sheenColorFactor") &&
               cmd.uniforms.at("u_sheenColorFactor").size() == 3 &&
@@ -8233,7 +7376,6 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
         "u_sheenRoughnessTexRotationSinCos",
         "Tileset: glTF sheen roughness texture uploads KHR_texture_transform uniforms");
 }
-
 void testTilesetGltfPointAndLineModesReachDrawCommands() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -8242,13 +7384,11 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF point/line mode root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
@@ -8271,7 +7411,6 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
     model->primitives.push_back(std::move(lineStrip));
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8280,7 +7419,6 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 3,
           "Tileset: glTF point, line, and line-strip primitives emit separate draw commands");
     if (commands.size() < 3) return;
@@ -8290,7 +7428,6 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
     check(commands[2].primitive == RenderCommand::PrimitiveType::LineStrip,
           "Tileset: glTF LINE_STRIP mode reaches renderer draw command topology");
 }
-
 void testTilesetGltfDoubleSidedDisablesCullOnly() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -8299,13 +7436,11 @@ void testTilesetGltfDoubleSidedDisablesCullOnly() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF doubleSided material root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
@@ -8316,7 +7451,6 @@ void testTilesetGltfDoubleSidedDisablesCullOnly() {
     model->primitives[0].doubleSided = true;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8325,18 +7459,15 @@ void testTilesetGltfDoubleSidedDisablesCullOnly() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF doubleSided material emits one primitive draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(!cmd.cullFace,
           "Tileset: glTF doubleSided material disables back-face culling");
     check(!cmd.blend && cmd.depthWrite,
           "Tileset: glTF doubleSided material stays opaque and depth-writing");
 }
-
 void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -8345,13 +7476,11 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF opaque instancing root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
@@ -8369,7 +7498,6 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
     primitive.instances = {firstInstance, secondInstance};
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8378,11 +7506,9 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1,
           "Tileset: glTF opaque instances stay in one draw command");
     if (commands.empty()) return;
-
     const RenderCommand& cmd = commands.front();
     check(cmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
               cmd.instanceCount == 2 &&
@@ -8390,7 +7516,6 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
               !cmd.blend &&
               cmd.depthWrite,
           "Tileset: glTF opaque instances use GPU instanced draw command");
-
     const auto* instanceBuffer = dynamic_cast<const DummyBuffer*>(
         cmd.instanceBuffer);
     bool firstNormalIsInverseTranspose = false;
@@ -8416,7 +7541,6 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
     check(firstNormalIsInverseTranspose,
           "Tileset: glTF opaque instance normal matrix uses inverse-transpose");
 }
-
 void testTilesetGltfBlendInstancesSplitForSorting() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -8425,13 +7549,11 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF BLEND instancing root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
@@ -8448,7 +7570,6 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
     primitive.instances = {nearInstance, farInstance};
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8457,12 +7578,10 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 2 &&
               root->content.renderContent.gltfPrimitiveResourceCount() == 2u,
           "Tileset: glTF BLEND instances become separate sortable draw commands");
     if (commands.size() < 2) return;
-
     bool splitCommands = true;
     for (const RenderCommand& cmd : commands) {
         splitCommands = splitCommands &&
@@ -8478,7 +7597,6 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
     check(std::abs(commands[0].worldSortCenter[2] - 5.0) < 1e-9 &&
               std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
           "Tileset: split BLEND instance commands carry per-instance sort centers");
-
     const auto* firstVertices =
         dynamic_cast<const DummyBuffer*>(commands[0].vertexBuffer);
     const auto* secondVertices =
@@ -8498,7 +7616,6 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
     check(verticesBakedPerInstance,
           "Tileset: split BLEND instance vertices are baked relative to shared local origin");
 }
-
 void testTilesetGltfTransmissionInstancesSplitForSorting() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -8507,13 +7624,11 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF transmission instancing root tile is created");
     if (!root) return;
-
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
@@ -8530,7 +7645,6 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
     primitive.instances = {nearInstance, farInstance};
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8539,12 +7653,10 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 2 &&
               root->content.renderContent.gltfPrimitiveResourceCount() == 2u,
           "Tileset: glTF transmission instances become separate sortable draw commands");
     if (commands.size() < 2) return;
-
     bool splitCommands = true;
     for (const RenderCommand& cmd : commands) {
         splitCommands = splitCommands &&
@@ -8564,7 +7676,6 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
               std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
           "Tileset: split transmission instance commands carry per-instance sort centers");
 }
-
 void testTilesetContentProviderLoadsGltfRenderContent() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -8581,9 +7692,7 @@ void testTilesetContentProviderLoadsGltfRenderContent() {
         &device,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
-
     TilesetTile* root = nullptr;
     for (int i = 0; i < 100; ++i) {
         TilesetTestAccess::processPendingUploads(tileset);
@@ -8596,11 +7705,9 @@ void testTilesetContentProviderLoadsGltfRenderContent() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(root != nullptr,
           "Tileset: content provider creates the requested root tile");
     if (!root) return;
-
     check(root->content.loadState == TileLoadState::Done &&
               root->content.contentKind == TileContentKind::Render &&
               root->content.renderContent.gltfContent() != nullptr,
@@ -8636,11 +7743,9 @@ void testTilesetContentProviderLoadsGltfRenderContent() {
                   "Tileset: glTF test buffer captures uploaded vertex data");
         }
     }
-
     const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
     check(diag.pendingContentTotal() == 0,
           "Tileset: content provider GLB drains content pending lifecycle queues");
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8653,7 +7758,6 @@ void testTilesetContentProviderLoadsGltfRenderContent() {
               commands.front().kind == RenderCommandKind::GltfPrimitive,
           "Tileset: loaded content provider GLB renders through GltfPrimitive command");
 }
-
 void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -8668,9 +7772,7 @@ void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
         &device,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
-
     TilesetTile* root = nullptr;
     for (int i = 0; i < 100; ++i) {
         TilesetTestAccess::processPendingUploads(tileset);
@@ -8683,11 +7785,9 @@ void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(root != nullptr,
           "Tileset: native glTF instancing provider creates the requested tile");
     if (!root) return;
-
     check(root->content.loadState == TileLoadState::Done &&
               root->content.contentKind == TileContentKind::Render &&
               root->content.renderContent.gltfContent() != nullptr,
@@ -8710,7 +7810,6 @@ void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
                       2u * (16u + 9u) * sizeof(float),
               "Tileset: native EXT_mesh_gpu_instancing uploads instance matrices");
     }
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8728,7 +7827,6 @@ void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
               commands.front().depthWrite,
           "Tileset: native EXT_mesh_gpu_instancing renders as opaque GPU instancing");
 }
-
 void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -8743,9 +7841,7 @@ void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
         &device,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
-
     TilesetTile* root = nullptr;
     for (int i = 0; i < 100; ++i) {
         TilesetTestAccess::processPendingUploads(tileset);
@@ -8758,11 +7854,9 @@ void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(root != nullptr,
           "Tileset: native glTF instancing TRS provider creates the requested tile");
     if (!root) return;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8771,7 +7865,6 @@ void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1 &&
               commands.front().kind ==
                   RenderCommandKind::GltfPrimitiveInstanced &&
@@ -8783,7 +7876,6 @@ void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
               std::abs(TilesetTestAccess::localOrigin(*root).z() - 15.0) <
                   1e-12,
           "Tileset: native EXT_mesh_gpu_instancing TRS local origin uses transformed instance centroids");
-
     const auto* instanceBuffer =
         commands.empty()
             ? nullptr
@@ -8798,7 +7890,6 @@ void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
             instanceBuffer->bytes().data(),
             packed.size() * sizeof(float));
     }
-
     constexpr float kTwoThirds = 2.0f / 3.0f;
     const std::array<float, 25> expectedFirst = {
         2.0f, 0.0f, 0.0f, 0.0f,
@@ -8816,7 +7907,6 @@ void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
         0.0f, 1.0f, 0.0f,
         -0.5f, 0.0f, 0.0f,
         0.0f, 0.0f, 1.0f};
-
     auto packedNear = [&](size_t offset,
                           const std::array<float, 25>& expected) {
         for (size_t i = 0; i < expected.size(); ++i) {
@@ -8831,7 +7921,6 @@ void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
               packedNear(25, expectedSecond),
           "Tileset: native EXT_mesh_gpu_instancing uploads TRS model and normal matrices");
 }
-
 void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -8846,9 +7935,7 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
         &device,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
-
     TilesetTile* root = nullptr;
     for (int i = 0; i < 100; ++i) {
         TilesetTestAccess::processPendingUploads(tileset);
@@ -8861,18 +7948,15 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(root != nullptr,
           "Tileset: native EXT_mesh_gpu_instancing BLEND provider creates the requested tile");
     if (!root) return;
-
     check(root->content.renderContent.hasGltfModel() &&
               root->content.renderContent.gltfModelForRead()->primitives.size() == 1 &&
               root->content.renderContent.gltfModelForRead()->primitives.front().alphaMode ==
                   GltfAlphaMode::Blend &&
               root->content.renderContent.gltfModelForRead()->primitives.front().instances.size() == 2,
           "Tileset: native EXT_mesh_gpu_instancing BLEND parses two transparent instances");
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8881,12 +7965,10 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 2 &&
               root->content.renderContent.gltfPrimitiveResourceCount() == 2u,
           "Tileset: native EXT_mesh_gpu_instancing BLEND splits into sortable commands");
     if (commands.size() < 2) return;
-
     bool splitCommands = true;
     for (const RenderCommand& cmd : commands) {
         splitCommands = splitCommands &&
@@ -8903,7 +7985,6 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
               std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
           "Tileset: native EXT_mesh_gpu_instancing BLEND carries per-instance sort centers");
 }
-
 void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -8918,9 +7999,7 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
         &device,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
-
     TilesetTile* root = nullptr;
     for (int i = 0; i < 100; ++i) {
         TilesetTestAccess::processPendingUploads(tileset);
@@ -8933,11 +8012,9 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(root != nullptr,
           "Tileset: native EXT_mesh_gpu_instancing BLEND TRS provider creates the requested tile");
     if (!root) return;
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -8946,12 +8023,10 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 2 &&
               root->content.renderContent.gltfPrimitiveResourceCount() == 2u,
           "Tileset: native EXT_mesh_gpu_instancing BLEND TRS splits into sortable commands");
     if (commands.size() < 2) return;
-
     bool splitCommands = true;
     for (const RenderCommand& cmd : commands) {
         splitCommands = splitCommands &&
@@ -8980,7 +8055,6 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
                   1e-9 &&
               std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
           "Tileset: native EXT_mesh_gpu_instancing BLEND TRS carries transformed sort centers");
-
     const auto* firstVertices =
         dynamic_cast<const DummyBuffer*>(commands[0].vertexBuffer);
     const auto* secondVertices =
@@ -9013,7 +8087,6 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
     check(secondVertexBakedPerInstance,
           "Tileset: native EXT_mesh_gpu_instancing BLEND TRS bakes rotation and scale into split vertices");
 }
-
 void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -9030,9 +8103,7 @@ void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
         &device,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
-
     TilesetTile* root = nullptr;
     for (int i = 0; i < 100; ++i) {
         TilesetTestAccess::processPendingUploads(tileset);
@@ -9045,16 +8116,13 @@ void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(root != nullptr,
           "Tileset: I3DM native EXT_mesh_gpu_instancing opaque creates the requested tile");
     if (!root) return;
-
     check(root->content.renderContent.hasGltfModel() &&
               root->content.renderContent.gltfModelForRead()->primitives.size() == 1 &&
               root->content.renderContent.gltfModelForRead()->primitives.front().instances.size() == 4,
           "Tileset: I3DM and native EXT_mesh_gpu_instancing combine into four opaque instances");
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -9063,7 +8131,6 @@ void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 1 &&
               root->content.renderContent.gltfPrimitiveResourceCount() == 1u &&
               commands.front().kind ==
@@ -9080,7 +8147,6 @@ void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
               std::abs(TilesetTestAccess::localOrigin(*root).z() - 15.0) <
                   1e-12,
           "Tileset: I3DM native EXT_mesh_gpu_instancing opaque local origin averages combined instance centroids");
-
     const auto* instanceBuffer =
         commands.empty()
             ? nullptr
@@ -9095,7 +8161,6 @@ void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
             instanceBuffer->bytes().data(),
             packed.size() * sizeof(float));
     }
-
     const std::array<std::array<float, 3>, 4> expectedTranslations = {{
         {-5.0f - 1.0f / 3.0f, -1.0f / 3.0f, -10.0f},
         {-5.0f - 1.0f / 3.0f, -1.0f / 3.0f, 10.0f},
@@ -9131,7 +8196,6 @@ void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
     check(matricesMatch,
           "Tileset: I3DM native EXT_mesh_gpu_instancing opaque uploads combined instance matrices");
 }
-
 void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -9148,9 +8212,7 @@ void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
         &device,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
-
     TilesetTile* root = nullptr;
     for (int i = 0; i < 100; ++i) {
         TilesetTestAccess::processPendingUploads(tileset);
@@ -9163,18 +8225,15 @@ void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(root != nullptr,
           "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND creates the requested tile");
     if (!root) return;
-
     check(root->content.renderContent.hasGltfModel() &&
               root->content.renderContent.gltfModelForRead()->primitives.size() == 1 &&
               root->content.renderContent.gltfModelForRead()->primitives.front().alphaMode ==
                   GltfAlphaMode::Blend &&
               root->content.renderContent.gltfModelForRead()->primitives.front().instances.size() == 4,
           "Tileset: I3DM and native EXT_mesh_gpu_instancing combine into four transparent instances");
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -9183,12 +8242,10 @@ void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
         *root,
         commands,
         1.0f);
-
     check(commands.size() == 4 &&
               root->content.renderContent.gltfPrimitiveResourceCount() == 4u,
           "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND splits every combined instance");
     if (commands.size() < 4) return;
-
     bool splitCommands = true;
     for (const RenderCommand& cmd : commands) {
         splitCommands = splitCommands &&
@@ -9201,7 +8258,6 @@ void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
     }
     check(splitCommands,
           "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND never submits one translucent instanced command");
-
     const double expectedX[4] = {
         1.0 / 3.0,
         1.0 / 3.0,
@@ -9222,7 +8278,6 @@ void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
     check(sortCentersMatch,
           "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND carries per-combined-instance sort centers");
 }
-
 void testTilesetJsonProviderLoadsExplicitGltfTile() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -9232,7 +8287,6 @@ void testTilesetJsonProviderLoadsExplicitGltfTile() {
     const ExternalGltfBytes externalGltf = makeTriangleExternalGltfBytes();
     writeBytes(root / "models" / "triangle.gltf", externalGltf.jsonBytes);
     writeBytes(root / "models" / "triangle.bin", externalGltf.binBytes);
-
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -9260,7 +8314,6 @@ void testTilesetJsonProviderLoadsExplicitGltfTile() {
     check(rootChildren.size() == 1,
           "TilesetJsonContentProvider: wrapper root owns the parsed root tile");
     if (rootChildren.empty()) return;
-
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -9269,7 +8322,6 @@ void testTilesetJsonProviderLoadsExplicitGltfTile() {
         &device,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTestAccess::requestMissingTile(tileset, roots.front());
     TilesetTestAccess::processPendingUploads(tileset);
     TilesetTile* wrapper = TilesetTestAccess::findTile(tileset, roots.front());
@@ -9279,7 +8331,6 @@ void testTilesetJsonProviderLoadsExplicitGltfTile() {
               wrapper->unconditionallyRefine &&
               !wrapper->children.empty(),
           "Tileset: tileset.json wrapper loads as external unconditional-refine content");
-
     const TileKey contentKey = rootChildren.front();
     TilesetTestAccess::requestMissingTile(tileset, contentKey);
     TilesetTile* contentTile = nullptr;
@@ -9294,7 +8345,6 @@ void testTilesetJsonProviderLoadsExplicitGltfTile() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(contentTile &&
               contentTile->refine == TileRefine::Add &&
               contentTile->boundingVolume.has_value(),
@@ -9323,10 +8373,8 @@ void testTilesetJsonProviderLoadsExplicitGltfTile() {
                         contentTile->content.renderContent.gltfModelForRead()->primitives[0].vertices[2]
                             .positionEcef).z() - 301.0) < 1e-12,
           "Tileset: asset.gltfUpAxis default Y converts glTF Y-up to Z-up");
-
     std::filesystem::remove_all(root);
 }
-
 void testTilesetJsonGltfUpAxisZKeepsZUpContent() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -9336,7 +8384,6 @@ void testTilesetJsonGltfUpAxisZKeepsZUpContent() {
     const ExternalGltfBytes externalGltf = makeTriangleExternalGltfBytes();
     writeBytes(root / "models" / "triangle.gltf", externalGltf.jsonBytes);
     writeBytes(root / "models" / "triangle.bin", externalGltf.binBytes);
-
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1", "gltfUpAxis": "Z"},
       "geometricError": 100,
@@ -9369,7 +8416,6 @@ void testTilesetJsonGltfUpAxisZKeepsZUpContent() {
         std::filesystem::remove_all(root);
         return;
     }
-
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -9378,7 +8424,6 @@ void testTilesetJsonGltfUpAxisZKeepsZUpContent() {
         &device,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTestAccess::requestMissingTile(tileset, roots.front());
     TilesetTestAccess::processPendingUploads(tileset);
     const TileKey contentKey = rootChildren.front();
@@ -9395,7 +8440,6 @@ void testTilesetJsonGltfUpAxisZKeepsZUpContent() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(contentTile &&
               contentTile->content.renderContent.hasGltfModel() &&
               std::abs((contentTile->content.renderContent.gltfTransform() *
@@ -9408,10 +8452,8 @@ void testTilesetJsonGltfUpAxisZKeepsZUpContent() {
                         contentTile->content.renderContent.gltfModelForRead()->primitives[0].vertices[2]
                             .positionEcef).z() - 300.0) < 1e-12,
           "Tileset: asset.gltfUpAxis Z preserves already-Z-up glTF content");
-
     std::filesystem::remove_all(root);
 }
-
 void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -9423,7 +8465,6 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
         makeI3dmBytes(
             makeTriangleGlbBytes(),
             {Vec3(0.0, 0.0, 0.0), Vec3(0.0, 10.0, 0.0)}));
-
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -9455,7 +8496,6 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
         std::filesystem::remove_all(root);
         return;
     }
-
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -9464,7 +8504,6 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
         &device,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTestAccess::requestMissingTile(tileset, roots.front());
     TilesetTestAccess::processPendingUploads(tileset);
     const TileKey contentKey = rootChildren.front();
@@ -9481,7 +8520,6 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(contentTile &&
               contentTile->content.renderContent.hasGltfModel() &&
               contentTile->content.renderContent.gltfModelForRead()->primitives.size() == 1u &&
@@ -9494,7 +8532,6 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
         std::filesystem::remove_all(root);
         return;
     }
-
     const GltfPrimitive& primitive =
         contentTile->content.renderContent.gltfModelForRead()->primitives[0];
     const Vec3 yUpVertex = primitive.vertices[2].positionEcef;
@@ -9511,10 +8548,8 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
               std::abs(second.y() - 10.0) < 1e-12 &&
               std::abs(second.z() - 1.0) < 1e-12,
           "Tileset: default-up-axis i3dm keeps instance positions tile-local while converting glTF Y-up vertices");
-
     std::filesystem::remove_all(root);
 }
-
 void testTilesetJsonProviderLoadsPntsPointCloud() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -9522,7 +8557,6 @@ void testTilesetJsonProviderLoadsPntsPointCloud() {
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "models");
     writeBytes(root / "models" / "points.pnts", makePntsBytes());
-
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -9553,7 +8587,6 @@ void testTilesetJsonProviderLoadsPntsPointCloud() {
         std::filesystem::remove_all(root);
         return;
     }
-
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -9562,7 +8595,6 @@ void testTilesetJsonProviderLoadsPntsPointCloud() {
         &device,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTestAccess::requestMissingTile(tileset, roots.front());
     TilesetTestAccess::processPendingUploads(tileset);
     const TileKey contentKey = rootChildren.front();
@@ -9579,7 +8611,6 @@ void testTilesetJsonProviderLoadsPntsPointCloud() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(contentTile &&
               contentTile->content.renderContent.hasGltfModel() &&
               contentTile->content.renderContent.gltfModelForRead()->primitives.size() == 1 &&
@@ -9606,7 +8637,6 @@ void testTilesetJsonProviderLoadsPntsPointCloud() {
     check(contentTile &&
               contentTile->content.renderContent.gltfPrimitiveResourceCount() == 1,
           "Tileset: PNTS content prepares one point resource set");
-
     if (contentTile) {
         Renderer renderer(nullptr);
         RenderCommandList commands;
@@ -9622,10 +8652,8 @@ void testTilesetJsonProviderLoadsPntsPointCloud() {
                       RenderCommand::PrimitiveType::Points,
               "Tileset: PNTS content renders through Points draw topology");
     }
-
     std::filesystem::remove_all(root);
 }
-
 void testTilesetJsonProviderLoadsCmptCompositeContent() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -9635,7 +8663,6 @@ void testTilesetJsonProviderLoadsCmptCompositeContent() {
     writeBytes(
         root / "models" / "composite.cmpt",
         makeCmptBytes({makeTriangleGlbBytes(), makePntsBytes()}));
-
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -9666,7 +8693,6 @@ void testTilesetJsonProviderLoadsCmptCompositeContent() {
         std::filesystem::remove_all(root);
         return;
     }
-
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -9675,7 +8701,6 @@ void testTilesetJsonProviderLoadsCmptCompositeContent() {
         &device,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTestAccess::requestMissingTile(tileset, roots.front());
     TilesetTestAccess::processPendingUploads(tileset);
     const TileKey contentKey = rootChildren.front();
@@ -9692,7 +8717,6 @@ void testTilesetJsonProviderLoadsCmptCompositeContent() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(contentTile &&
               contentTile->content.renderContent.hasGltfModel() &&
               contentTile->content.renderContent.gltfModelForRead()->primitives.size() == 2 &&
@@ -9704,7 +8728,6 @@ void testTilesetJsonProviderLoadsCmptCompositeContent() {
     check(contentTile &&
               contentTile->content.renderContent.gltfPrimitiveResourceCount() == 2,
           "Tileset: CMPT content prepares one resource per inner primitive");
-
     if (contentTile) {
         Renderer renderer(nullptr);
         RenderCommandList commands;
@@ -9721,15 +8744,12 @@ void testTilesetJsonProviderLoadsCmptCompositeContent() {
                       RenderCommand::PrimitiveType::Points,
               "Tileset: CMPT content renders inner primitive topologies");
     }
-
     std::filesystem::remove_all(root);
 }
-
 void expectTilesetJsonTileFailsExplicitly(
     std::unique_ptr<TilesetJsonContentProvider> provider,
     const TileKey& key,
     const std::string& name);
-
 void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
     auto runCase = [](const std::string& tilesetJson,
                       const std::string& url,
@@ -9748,28 +8768,24 @@ void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
               checkName +
                   ": unsupported contents fixture creates wrapper root");
         if (roots.empty()) return;
-
         const std::vector<TileKey> rootChildren =
             rawProvider->childTiles(roots.front());
         check(rootChildren.size() == 1,
               checkName +
                   ": unsupported contents fixture keeps parsed root tile");
         if (rootChildren.empty()) return;
-
         const std::vector<TileKey> unsupportedChildren =
             rawProvider->childTiles(rootChildren.front());
         check(unsupportedChildren.size() == 1 &&
                   rawProvider->supportsTile(unsupportedChildren.front()),
               checkName + ": unsupported contents child stays addressable");
         if (unsupportedChildren.empty()) return;
-
         expectTilesetJsonTileFailsExplicitly(
             std::move(provider),
             unsupportedChildren.front(),
             checkName +
                 ": unsupported multiple contents fails explicitly instead of disappearing");
     };
-
     const std::string coreMultipleContentsJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -9790,7 +8806,6 @@ void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
             "file:///unsupported-multiple-contents/tileset.json",
             "unsupported multiple contents fixture",
             "TilesetJsonContentProvider");
-
     const std::string emptyMultipleContentsJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -9808,7 +8823,6 @@ void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
             "file:///unsupported-empty-multiple-contents/tileset.json",
             "unsupported empty multiple contents fixture",
             "TilesetJsonContentProvider empty contents");
-
     const std::string malformedMultipleContentsJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -9826,7 +8840,6 @@ void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
             "file:///unsupported-malformed-multiple-contents/tileset.json",
             "unsupported malformed multiple contents fixture",
             "TilesetJsonContentProvider malformed contents");
-
     const std::string legacyMultipleContentsJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_multiple_contents"],
@@ -9854,7 +8867,6 @@ void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
             "unsupported legacy multiple contents fixture",
             "TilesetJsonContentProvider legacy");
 }
-
 void testTilesetJsonProviderParsesViewerRequestVolume() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -9866,7 +8878,6 @@ void testTilesetJsonProviderParsesViewerRequestVolume() {
         "content": {"uri": "tile.glb"}
       }
     })json";
-
     TilesetJsonContentProvider provider(
         "file:///viewer-request-volume/tileset.json",
         std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -9880,7 +8891,6 @@ void testTilesetJsonProviderParsesViewerRequestVolume() {
     check(rootChildren.size() == 1,
           "TilesetJsonContentProvider: viewerRequestVolume root stays addressable");
     if (rootChildren.empty()) return;
-
     const std::optional<TilesetContentTileMetadata> metadata =
         provider.tileMetadata(rootChildren.front());
     check(metadata &&
@@ -9894,7 +8904,6 @@ void testTilesetJsonProviderParsesViewerRequestVolume() {
                   40.0) < 1e-12,
           "TilesetJsonContentProvider: viewerRequestVolume sphere is preserved in metadata");
 }
-
 void testTilesetJsonProviderParsesS2BoundingVolume() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -9914,7 +8923,6 @@ void testTilesetJsonProviderParsesS2BoundingVolume() {
         "content": {"uri": "tile.glb"}
       }
     })json";
-
     TilesetJsonContentProvider provider(
         "file:///s2-bounding-volume/tileset.json",
         std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -9928,7 +8936,6 @@ void testTilesetJsonProviderParsesS2BoundingVolume() {
     check(rootChildren.size() == 1,
           "TilesetJsonContentProvider: S2 root stays addressable");
     if (rootChildren.empty()) return;
-
     const std::optional<TilesetContentTileMetadata> metadata =
         provider.tileMetadata(rootChildren.front());
     check(metadata &&
@@ -9944,7 +8951,6 @@ void testTilesetJsonProviderParsesS2BoundingVolume() {
                   1000.0) < 1e-12,
           "TilesetJsonContentProvider: S2 token and height range are preserved in metadata");
 }
-
 void expectTilesetJsonTileFailsExplicitly(
     std::unique_ptr<TilesetJsonContentProvider> provider,
     const TileKey& key,
@@ -9957,7 +8963,6 @@ void expectTilesetJsonTileFailsExplicitly(
         &device,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTestAccess::requestMissingTile(tileset, key);
     TilesetTestAccess::processPendingUploads(tileset);
     TilesetTile* tile = TilesetTestAccess::findTile(tileset, key);
@@ -9966,7 +8971,6 @@ void expectTilesetJsonTileFailsExplicitly(
               tile->content.contentKind == TileContentKind::Unknown,
           name);
 }
-
 void testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -9977,7 +8981,6 @@ void testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider() {
         "geometricError": 64
       }
     })json";
-
     TilesetJsonContentProvider provider(
         "file:///unknown-required-extension/tileset.json",
         std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -9987,7 +8990,6 @@ void testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider() {
     check(provider.rootTiles().empty(),
           "TilesetJsonContentProvider: invalid required-extension tileset exposes no roots");
 }
-
 void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -9998,7 +9000,6 @@ void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
         "geometricError": 64
       }
     })json";
-
     TilesetJsonContentProvider provider(
         "file:///unsupported-extensions-used/tileset.json",
         std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -10008,14 +9009,12 @@ void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
     check(provider.rootTiles().empty(),
           "TilesetJsonContentProvider: invalid extensionsUsed tileset exposes no roots");
 }
-
 void testTilesetJsonGeneratedUnsupportedExtensionsInvalidateProvider() {
     const std::array<const char*, 4> unsupportedExtensions = {
         "3DTILES_ellipsoid",
         "3DTILES_content_conditional",
         "3DTILES_content_voxels",
         "MAXAR_content_geojson"};
-
     for (const char* extension : unsupportedExtensions) {
         const std::string tilesetJson =
             std::string("{") +
@@ -10026,7 +9025,6 @@ void testTilesetJsonGeneratedUnsupportedExtensionsInvalidateProvider() {
             "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
             "\"geometricError\":64"
             "}}";
-
         TilesetJsonContentProvider provider(
             "file:///unsupported-generated-" +
                 std::string(extension) +
@@ -10045,7 +9043,6 @@ void testTilesetJsonGeneratedUnsupportedExtensionsInvalidateProvider() {
                   " exposes no roots");
     }
 }
-
 void testTilesetJsonExtrasDoNotDeclareExtensions() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -10075,7 +9072,6 @@ void testTilesetJsonExtrasDoNotDeclareExtensions() {
         }
       }
     })json";
-
     TilesetJsonContentProvider provider(
         "file:///extras-extension-data/tileset.json",
         std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -10086,12 +9082,10 @@ void testTilesetJsonExtrasDoNotDeclareExtensions() {
     check(!roots.empty(),
           "TilesetJsonContentProvider: extras extension-looking data exposes roots");
     if (roots.empty()) return;
-
     const std::vector<TileKey> children = provider.childTiles(roots.front());
     check(children.size() == 1 && provider.supportsTile(children.front()),
           "TilesetJsonContentProvider: extras extension-looking child stays addressable");
     if (children.empty()) return;
-
     TileLoadStatus status = TileLoadStatus::Failed;
     provider.requestTileContent(
         children.front(),
@@ -10102,14 +9096,12 @@ void testTilesetJsonExtrasDoNotDeclareExtensions() {
     check(status == TileLoadStatus::Empty,
           "TilesetJsonContentProvider: extras extension-looking data does not mark tile unsupported");
 }
-
 void testTilesetJsonTopLevelPerTileExtensionPayloadInvalidatesProvider() {
     struct ExtensionPayloadCase {
         std::string label;
         std::string extension;
         std::string payload;
     };
-
     const std::array<ExtensionPayloadCase, 2> cases = {{
         {
             "implicit tiling",
@@ -10126,7 +9118,6 @@ void testTilesetJsonTopLevelPerTileExtensionPayloadInvalidatesProvider() {
             "\"3DTILES_multiple_contents\":{"
             "\"content\":[{\"uri\":\"a.b3dm\"},{\"uri\":\"b.b3dm\"}]"
             "}"}}};
-
     for (const ExtensionPayloadCase& testCase : cases) {
         const std::string tilesetJson =
             std::string("{") +
@@ -10145,7 +9136,6 @@ void testTilesetJsonTopLevelPerTileExtensionPayloadInvalidatesProvider() {
             "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
             "\"geometricError\":64"
             "}}";
-
         TilesetJsonContentProvider provider(
             "file:///unsupported-top-level-" + testCase.label +
                 "-extension/tileset.json",
@@ -10162,7 +9152,6 @@ void testTilesetJsonTopLevelPerTileExtensionPayloadInvalidatesProvider() {
                   " payload exposes no roots");
     }
 }
-
 void testTilesetJsonRequiredExtensionMustAlsoBeUsed() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -10178,7 +9167,6 @@ void testTilesetJsonRequiredExtensionMustAlsoBeUsed() {
         "geometricError": 64
       }
     })json";
-
     TilesetJsonContentProvider provider(
         "file:///required-extension-without-used/tileset.json",
         std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -10188,7 +9176,6 @@ void testTilesetJsonRequiredExtensionMustAlsoBeUsed() {
     check(provider.rootTiles().empty(),
           "TilesetJsonContentProvider: required-only extension tileset exposes no roots");
 }
-
 void testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider() {
     const std::string duplicateTopLevelJson = R"json({
       "asset": {"version": "1.1"},
@@ -10204,7 +9191,6 @@ void testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider() {
         "geometricError": 64
       }
     })json";
-
     TilesetJsonContentProvider topLevelProvider(
         "file:///duplicate-top-level-extension/tileset.json",
         std::vector<uint8_t>(
@@ -10215,7 +9201,6 @@ void testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider() {
           "TilesetJsonContentProvider: duplicate top-level extension invalidates provider");
     check(topLevelProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: duplicate top-level extension exposes no roots");
-
     const std::string duplicateContentGltfJson = R"json({
       "asset": {"version": "1.1"},
       "extensionsUsed": ["3DTILES_content_gltf"],
@@ -10230,7 +9215,6 @@ void testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider() {
         "geometricError": 64
       }
     })json";
-
     TilesetJsonContentProvider contentGltfProvider(
         "file:///duplicate-content-gltf-extension/tileset.json",
         std::vector<uint8_t>(
@@ -10242,7 +9226,6 @@ void testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider() {
     check(contentGltfProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: duplicate 3DTILES_content_gltf extension exposes no roots");
 }
-
 void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
     const std::string declarationWithoutPayloadJson = R"json({
       "asset": {"version": "1.0"},
@@ -10264,7 +9247,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
           "TilesetJsonContentProvider: 3DTILES_content_gltf declaration without payload remains valid");
     check(!declarationWithoutPayloadProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: 3DTILES_content_gltf declaration without payload exposes roots");
-
     const std::string payloadWithoutDeclarationJson = R"json({
       "asset": {"version": "1.0"},
       "extensions": {
@@ -10288,7 +9270,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
           "TilesetJsonContentProvider: 3DTILES_content_gltf payload without declaration invalidates provider");
     check(payloadWithoutDeclarationProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: 3DTILES_content_gltf payload without declaration exposes no roots");
-
     const std::string payloadWithUnknownFieldJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_content_gltf"],
@@ -10314,7 +9295,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
           "TilesetJsonContentProvider: 3DTILES_content_gltf payload unknown field invalidates provider");
     check(payloadWithUnknownFieldProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: 3DTILES_content_gltf payload unknown field exposes no roots");
-
     const std::string supportedTopLevelJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_content_gltf"],
@@ -10343,7 +9323,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
           "TilesetJsonContentProvider: supported 3DTILES_content_gltf declaration stays valid");
     check(!supportedProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: supported 3DTILES_content_gltf exposes roots");
-
     const std::string unsupportedTopLevelJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_content_gltf"],
@@ -10369,7 +9348,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
           "TilesetJsonContentProvider: unsupported 3DTILES_content_gltf glTF extension invalidates provider");
     check(unsupportedProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: unsupported 3DTILES_content_gltf exposes no roots");
-
     const std::vector<const char*> unsupportedGltfExtensions = {
         "KHR_draco_mesh_compression",
         "EXT_meshopt_compression",
@@ -10440,7 +9418,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
         "KHR_materials_subsurface",
         "KHR_materials_variants",
         "KHR_materials_volume"};
-
     for (const char* extension : unsupportedGltfExtensions) {
         const std::string unsupportedPayloadJson =
             std::string("{") +
@@ -10475,7 +9452,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
                   extension +
                   " payload exposes no roots");
     }
-
     const std::string requiredOnlyPayloadJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_content_gltf"],
@@ -10500,7 +9476,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
           "TilesetJsonContentProvider: 3DTILES_content_gltf extensionsRequired must also be used");
     check(requiredOnlyPayloadProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: required-only 3DTILES_content_gltf exposes no roots");
-
     const std::string tileObjectJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -10517,7 +9492,6 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
         }
       }
     })json";
-
     auto tileProvider = std::make_unique<TilesetJsonContentProvider>(
         "file:///misplaced-content-gltf-extension/tileset.json",
         std::vector<uint8_t>(tileObjectJson.begin(), tileObjectJson.end()),
@@ -10533,19 +9507,16 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
               rawProvider->supportsTile(rootChildren.front()),
           "TilesetJsonContentProvider: misplaced 3DTILES_content_gltf tile stays addressable");
     if (rootChildren.empty()) return;
-
     expectTilesetJsonTileFailsExplicitly(
         std::move(tileProvider),
         rootChildren.front(),
         "Tileset: misplaced 3DTILES_content_gltf fails explicitly");
 }
-
 void testTilesetJsonTopLevelMetadataFieldsInvalidateProvider() {
     struct MetadataFieldCase {
         std::string fieldJson;
         std::string label;
     };
-
     const std::array<MetadataFieldCase, 6> cases = {{
         {"\"properties\":{\"height\":{\"minimum\":0,\"maximum\":1}}",
          "properties"},
@@ -10557,7 +9528,6 @@ void testTilesetJsonTopLevelMetadataFieldsInvalidateProvider() {
          "groups"},
         {"\"metadata\":{\"class\":\"building\",\"properties\":{}}",
          "metadata"}}};
-
     for (const MetadataFieldCase& testCase : cases) {
         const std::string tilesetJson =
             std::string("{") +
@@ -10568,7 +9538,6 @@ void testTilesetJsonTopLevelMetadataFieldsInvalidateProvider() {
             "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
             "\"geometricError\":64"
             "}}";
-
         TilesetJsonContentProvider provider(
             "file:///unsupported-metadata-" + testCase.label + "/tileset.json",
             std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -10583,7 +9552,6 @@ void testTilesetJsonTopLevelMetadataFieldsInvalidateProvider() {
                   " metadata exposes no roots");
     }
 }
-
 void testTilesetJsonUnsupportedTileRequiredExtensionFailsTile() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -10597,7 +9565,6 @@ void testTilesetJsonUnsupportedTileRequiredExtensionFailsTile() {
         }
       }
     })json";
-
     auto provider = std::make_unique<TilesetJsonContentProvider>(
         "file:///unsupported-tile-required-extension/tileset.json",
         std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -10613,13 +9580,11 @@ void testTilesetJsonUnsupportedTileRequiredExtensionFailsTile() {
               rawProvider->supportsTile(rootChildren.front()),
           "TilesetJsonContentProvider: unsupported tile extension root stays addressable");
     if (rootChildren.empty()) return;
-
     expectTilesetJsonTileFailsExplicitly(
         std::move(provider),
         rootChildren.front(),
         "Tileset: unsupported tile required extension fails explicitly");
 }
-
 void testTilesetJsonUnsupportedTileExtensionsUsedFailsTile() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -10633,7 +9598,6 @@ void testTilesetJsonUnsupportedTileExtensionsUsedFailsTile() {
         }
       }
     })json";
-
     auto provider = std::make_unique<TilesetJsonContentProvider>(
         "file:///unsupported-tile-extensions-used/tileset.json",
         std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -10649,19 +9613,16 @@ void testTilesetJsonUnsupportedTileExtensionsUsedFailsTile() {
               rawProvider->supportsTile(rootChildren.front()),
           "TilesetJsonContentProvider: unsupported tile extensionsUsed stays addressable");
     if (rootChildren.empty()) return;
-
     expectTilesetJsonTileFailsExplicitly(
         std::move(provider),
         rootChildren.front(),
         "Tileset: unsupported tile extensionsUsed fails explicitly");
 }
-
 void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
     struct TileObjectExtensionCase {
         std::string tileBodyJson;
         std::string label;
     };
-
     const std::array<TileObjectExtensionCase, 2> cases = {{
         {
             "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
@@ -10676,7 +9637,6 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
             "\"3DTILES_content_voxels\":{\"dimensions\":[1,1,1]}}}",
             "content 3DTILES_content_voxels"},
     }};
-
     for (const TileObjectExtensionCase& testCase : cases) {
         const std::string tilesetJson =
             std::string("{") +
@@ -10685,7 +9645,6 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
             "\"root\":{" +
             testCase.tileBodyJson +
             "}}";
-
         auto provider = std::make_unique<TilesetJsonContentProvider>(
             "file:///unsupported-" + testCase.label + "/tileset.json",
             std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -10705,7 +9664,6 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
                   testCase.label +
                   " stays addressable");
         if (rootChildren.empty()) return;
-
         expectTilesetJsonTileFailsExplicitly(
             std::move(provider),
             rootChildren.front(),
@@ -10714,19 +9672,16 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
                 " fails explicitly");
     }
 }
-
 void testTilesetJsonMalformedContentUriFailsTile() {
     struct MalformedContentCase {
         std::string contentJson;
         std::string label;
     };
-
     const std::array<MalformedContentCase, 4> cases = {{
         {"{\"uri\":7}", "non-string uri"},
         {"{\"url\":7}", "non-string legacy url"},
         {"{\"uri\":\"\"}", "empty uri"},
         {"{\"uri\":7,\"url\":\"fallback.glb\"}", "malformed uri with url fallback"}}};
-
     for (const MalformedContentCase& testCase : cases) {
         const std::string tilesetJson =
             std::string("{") +
@@ -10738,7 +9693,6 @@ void testTilesetJsonMalformedContentUriFailsTile() {
             "\"content\":" +
             testCase.contentJson +
             "}}";
-
         auto provider = std::make_unique<TilesetJsonContentProvider>(
             "file:///malformed-content-uri-" + testCase.label +
                 "/tileset.json",
@@ -10759,7 +9713,6 @@ void testTilesetJsonMalformedContentUriFailsTile() {
                   testCase.label +
                   " tile stays addressable");
         if (rootChildren.empty()) return;
-
         expectTilesetJsonTileFailsExplicitly(
             std::move(provider),
             rootChildren.front(),
@@ -10768,13 +9721,11 @@ void testTilesetJsonMalformedContentUriFailsTile() {
                 " fails explicitly");
     }
 }
-
 void testTilesetJsonUnsupportedTileMetadataFieldsFailTile() {
     struct MetadataFieldCase {
         std::string tileBodyJson;
         std::string label;
     };
-
     const std::array<MetadataFieldCase, 3> cases = {{
         {
             "\"metadata\":{\"class\":\"building\",\"properties\":{\"name\":\"A\"}},"
@@ -10789,7 +9740,6 @@ void testTilesetJsonUnsupportedTileMetadataFieldsFailTile() {
         {
             "\"content\":{\"uri\":\"tile.glb\",\"group\":0}",
             "content group"}}};
-
     for (const MetadataFieldCase& testCase : cases) {
         const std::string tilesetJson =
             std::string("{") +
@@ -10800,7 +9750,6 @@ void testTilesetJsonUnsupportedTileMetadataFieldsFailTile() {
             "\"geometricError\":64," +
             testCase.tileBodyJson +
             "}}";
-
         auto provider = std::make_unique<TilesetJsonContentProvider>(
             "file:///unsupported-" + testCase.label + "/tileset.json",
             std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
@@ -10820,7 +9769,6 @@ void testTilesetJsonUnsupportedTileMetadataFieldsFailTile() {
                   testCase.label +
                   " tile stays addressable");
         if (rootChildren.empty()) return;
-
         expectTilesetJsonTileFailsExplicitly(
             std::move(provider),
             rootChildren.front(),
@@ -10829,7 +9777,6 @@ void testTilesetJsonUnsupportedTileMetadataFieldsFailTile() {
                 " fails explicitly");
     }
 }
-
 void testTilesetJsonUnsupportedImplicitTilingFailsTile() {
     auto runCase = [](const std::string& tilesetJson,
                       const std::string& url,
@@ -10850,13 +9797,11 @@ void testTilesetJsonUnsupportedImplicitTilingFailsTile() {
                   rawProvider->supportsTile(rootChildren.front()),
               checkName + ": implicit tile stays addressable");
         if (rootChildren.empty()) return;
-
         expectTilesetJsonTileFailsExplicitly(
             std::move(provider),
             rootChildren.front(),
             checkName + ": unsupported implicit tiling fails explicitly");
     };
-
     const std::string coreImplicitJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -10876,7 +9821,6 @@ void testTilesetJsonUnsupportedImplicitTilingFailsTile() {
             "file:///unsupported-implicit-core/tileset.json",
             "unsupported core implicit tiling fixture",
             "TilesetJsonContentProvider");
-
     const std::string legacyImplicitJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_implicit_tiling"],
@@ -10901,7 +9845,6 @@ void testTilesetJsonUnsupportedImplicitTilingFailsTile() {
             "unsupported legacy implicit tiling fixture",
             "TilesetJsonContentProvider legacy");
 }
-
 void testTilesetJsonProviderLoadsExternalTilesetContent() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -10909,7 +9852,6 @@ void testTilesetJsonProviderLoadsExternalTilesetContent() {
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "external");
     writeBytes(root / "triangle.glb", makeTriangleGlbBytes());
-
     const std::string externalTilesetJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 50,
@@ -10924,7 +9866,6 @@ void testTilesetJsonProviderLoadsExternalTilesetContent() {
                std::vector<uint8_t>(
                    externalTilesetJson.begin(),
                    externalTilesetJson.end()));
-
     const std::string parentTilesetJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
@@ -10948,7 +9889,6 @@ void testTilesetJsonProviderLoadsExternalTilesetContent() {
         rawProvider->childTiles(roots.front());
     if (rootChildren.empty()) return;
     const TileKey externalContentKey = rootChildren.front();
-
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -10957,7 +9897,6 @@ void testTilesetJsonProviderLoadsExternalTilesetContent() {
         &device,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTestAccess::requestMissingTile(tileset, externalContentKey);
     TilesetTile* externalContentTile = nullptr;
     for (int i = 0; i < 100; ++i) {
@@ -10972,13 +9911,11 @@ void testTilesetJsonProviderLoadsExternalTilesetContent() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(externalContentTile &&
               externalContentTile->unconditionallyRefine &&
               !externalContentTile->children.empty(),
           "Tileset: JSON content tileset loads as external content and attaches child root");
     if (!externalContentTile || externalContentTile->children.empty()) return;
-
     const TileKey renderKey = externalContentTile->children.front()->key;
     TilesetTestAccess::requestMissingTile(tileset, renderKey);
     TilesetTile* renderTile = nullptr;
@@ -10993,7 +9930,6 @@ void testTilesetJsonProviderLoadsExternalTilesetContent() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-
     check(renderTile &&
               renderTile->boundingVolume &&
               renderTile->boundingVolume->kind == TileBoundingVolumeKind::Sphere,
@@ -11004,10 +9940,8 @@ void testTilesetJsonProviderLoadsExternalTilesetContent() {
                         renderTile->content.renderContent.gltfModelForRead()->primitives[0].vertices[0]
                             .positionEcef).x() - 105.0) < 1e-12,
           "Tileset: external tileset parent and child transforms compose into glTF content");
-
     std::filesystem::remove_all(root);
 }
-
 void testTilesetViewerRequestVolumeGatesContentLoadQueue() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto provider = std::make_unique<ManualCompletionContentProvider>(
@@ -11019,18 +9953,15 @@ void testTilesetViewerRequestVolumeGatesContentLoadQueue() {
         nullptr,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: viewerRequestVolume gate root tile is created");
     if (!root) return;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 126;
     frameState.camera = &camera;
@@ -11041,7 +9972,6 @@ void testTilesetViewerRequestVolumeGatesContentLoadQueue() {
         tileset,
         camera.position(),
         camera.direction());
-
     root->viewerRequestVolume = TileBoundingVolume::fromSphere(
         camera.position() - camera.direction() * 1000000.0,
         100.0);
@@ -11050,7 +9980,6 @@ void testTilesetViewerRequestVolumeGatesContentLoadQueue() {
           "Tileset: viewerRequestVolume outside camera prevents content load queue");
     check(tileset.tilePlan().visibleTiles.empty(),
           "Tileset: viewerRequestVolume outside camera prevents rendering selection");
-
     frameState.frameId = 127;
     root->viewerRequestVolume = TileBoundingVolume::fromSphere(
         camera.position(),
@@ -11059,7 +9988,6 @@ void testTilesetViewerRequestVolumeGatesContentLoadQueue() {
     check(!TilesetTestAccess::loadQueueEmpty(tileset),
           "Tileset: viewerRequestVolume containing camera allows content load queue");
 }
-
 void testTilesetUnloadRenderContentReleasesGltfResources() {
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -11069,13 +9997,11 @@ void testTilesetUnloadRenderContentReleasesGltfResources() {
         {},
         nullptr,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF unload root tile is created");
     if (!root) return;
-
     root->content.renderContent.setGltfContent(makeTriangleGltfModel());
     GltfPrimitiveRenderResources resources;
     resources.vertexBuffer = std::make_unique<DummyBuffer>(96);
@@ -11086,9 +10012,7 @@ void testTilesetUnloadRenderContentReleasesGltfResources() {
     root->content.renderContent.setMeshReady(true);
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
-
     TilesetTestAccess::unloadTileContent(tileset, *root, nullptr);
-
     check(root->content.renderContent.gltfModelForRead() == nullptr &&
               !root->content.renderContent.hasGltfPrimitiveResources(),
           "Tileset: unloadTileContent releases glTF model and primitive resources");
@@ -11097,25 +10021,21 @@ void testTilesetUnloadRenderContentReleasesGltfResources() {
               !root->content.renderContent.isMeshReady(),
           "Tileset: unloaded glTF render content returns to native unknown/unloaded state");
 }
-
 void testTilesetTotalBytesIncludesDecodedHeightmapPayload() {
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto heightmap = makeFlatHeightmap(7.0f);
     heightmap->noDataValues = {-32768.0f};
     const int64_t expected =
         static_cast<int64_t>(heightmap->heights.size() * sizeof(float)) +
         static_cast<int64_t>(heightmap->noDataValues.size() * sizeof(float));
-
     TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     check(tileset.totalBytesUsed() == expected,
           "Tileset: totalBytesUsed includes decoded heightmap payload");
 }
-
 void testTilesetContentRetryLaterMaterializesLatentChildren() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -11131,11 +10051,9 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::ensureTile(tileset, rootKey);
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     TilesetTestAccess::processPendingUploads(tileset);
-
     TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
     check(root &&
               root->content.loadState == TileLoadState::FailedTemporarily &&
@@ -11150,12 +10068,10 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
               root->children.front() &&
               root->children.front()->key == childKey,
           "Tileset: RetryLater content materializes latent children during updateContent like cesium-native");
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(rawProvider->requestCount == 2,
           "Tileset: RetryLater content remains retryable");
 }
-
 void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey availableChildKey{"Geographic-TMS", 1, 0, 0};
@@ -11165,7 +10081,6 @@ void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
         contentProvider.get();
     rawProvider->availableKeys = {availableChildKey};
     rawProvider->metadataAvailabilityLevels = 1;
-
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         std::move(scheme),
@@ -11173,17 +10088,14 @@ void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: terrain availability boundary root tile is created");
     if (!root) return;
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(root->content.loadState == TileLoadState::ContentLoading &&
               rawProvider->pendingRequests.size() == 1,
           "Tileset: availability boundary content is loading before children");
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.empty(),
           "Tileset: availability boundary waits for content before child creation like cesium-native");
@@ -11191,17 +10103,14 @@ void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
               rawProvider->notedLatentUpsampledParents.size() == 1 &&
               rawProvider->notedLatentUpsampledParents.back() == rootKey,
           "Tileset: availability boundary records latent upsampled child state from availability before children exist like cesium-native");
-
     check(rawProvider->completeWithEmpty(rootKey),
           "Tileset: availability boundary content completes");
     TilesetTestAccess::processPendingUploads(tileset);
     check(root->content.loadState == TileLoadState::Done,
           "Tileset: availability boundary content reaches resolved state");
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: resolved availability boundary creates all four children like cesium-native");
-
     const std::array<TileKey, 4> expectedChildren = {{
         TileKey{"Geographic-TMS", 1, 0, 0},
         TileKey{"Geographic-TMS", 1, 1, 0},
@@ -11213,7 +10122,6 @@ void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
                   root->children[i]->key == expectedChildren[i],
               "Tileset: availability boundary children preserve cesium-native SW/SE/NW/NE order");
     }
-
     check(root->children.front() &&
               !root->children.front()->content.isTerrainAvailabilityUpsample(),
           "Tileset: available boundary child remains a real terrain tile");
@@ -11223,7 +10131,6 @@ void testTilesetTerrainAvailabilityBoundaryWaitsForContentBeforeChildren() {
               "Tileset: unavailable boundary siblings become upsampled nodes");
     }
 }
-
 void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -11240,11 +10147,9 @@ void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::ensureTile(tileset, rootKey);
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     TilesetTestAccess::processPendingUploads(tileset);
-
     TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
     check(root &&
               root->content.loadState == TileLoadState::FailedTemporarily &&
@@ -11259,12 +10164,10 @@ void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
               root->children.front() &&
               root->children.front()->key == childKey,
           "Tileset: Cancelled content materializes latent children during updateContent like cesium-native");
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(rawProvider->requestCount == 2,
           "Tileset: Cancelled content remains retryable");
 }
-
 void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -11281,11 +10184,9 @@ void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::ensureTile(tileset, rootKey);
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     TilesetTestAccess::processPendingUploads(tileset);
-
     TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
     check(root &&
               root->content.loadState == TileLoadState::Failed &&
@@ -11300,14 +10201,12 @@ void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
               root->children.front() &&
               root->children.front()->key == childKey,
           "Tileset: Failed content materializes latent children during updateContent like cesium-native");
-
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(root && root->content.loadState == TileLoadState::Failed,
           "Tileset: Failed content remains non-retryable after latent child materialization");
     check(rawProvider->requestCount == 1,
           "Tileset: terminal Failed content is not retried by normal queue");
 }
-
 void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -11323,11 +10222,9 @@ void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTestAccess::ensureTile(tileset, rootKey);
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     TilesetTestAccess::processPendingUploads(tileset);
-
     TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
     if (root) {
         TilesetTestAccess::ensureTileChildren(tileset, *root);
@@ -11337,14 +10234,11 @@ void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
               root->children.size() == 1,
           "Tileset: failed unknown cache-unload setup materializes latent children through updateContent");
     if (!root || root->children.empty()) return;
-
     TilesetTile* child = root->children.front();
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     check(tileset.loadDiagnostics().unloadQueueTiles == 1,
           "Tileset: failed unknown tile enters cache unload queue like cesium-native");
-
     TilesetTestAccess::unloadCachedBytes(tileset, -1);
-
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
     TilesetTile* childAfter = TilesetTestAccess::findTile(tileset, childKey);
     check(rootAfter == root &&
@@ -11356,37 +10250,30 @@ void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
               rootAfter->children.front() == childAfter,
           "Tileset: cache unload preserves failed unknown latent children");
 }
-
 void testTilesetRenderContentRequiresDoneState() {
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: renderability state root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(0.0f));
     root->content.loadState = TileLoadState::ContentLoaded;
     root->content.contentKind = TileContentKind::Render;
-
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: ContentLoaded render content is not renderable before main-thread finish");
-
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     check(root->content.loadState == TileLoadState::Done &&
               TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: Done render content is renderable after main-thread finish");
 }
-
 void testTilesetMappedRasterMustBeReadyForRenderability() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-
     {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
@@ -11396,12 +10283,10 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
             {},
             nullptr,
             TilesetOptions{});
-
         TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
         check(root != nullptr,
               "Tileset: mapped-raster renderability root tile is created");
         if (!root) return;
-
         TilesetTestAccess::putTerrainCache(
             tileset,
             rootKey,
@@ -11410,13 +10295,11 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
         check(TilesetTestAccess::isTileRenderable(tileset, *root),
               "Tileset: Done render content without mapped rasters is renderable");
     }
-
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -11425,41 +10308,34 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
         {&activated},
         nullptr,
         TilesetOptions{});
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: required-raster renderability root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-
     root->rasterOverlayState.mappings().resize(1);
     root->rasterOverlayState.mappings()[0] = std::make_unique<RasterMappedToTilesetTile>();
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: mapped raster without ready tile blocks renderability like cesium-native");
 }
-
 void testTilesetUnconditionallyRefineRenderableOnlyWithoutChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: unconditionally-refine renderability root tile is created");
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->unconditionallyRefine = true;
     check(TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: unconditionally-refined leaf is renderable when waiting is futile");
-
     TilesetTile* child = TilesetTestAccess::ensureTile(
         tileset,
         TileKey{"Geographic-TMS", 1, 0, 0});
@@ -11468,12 +10344,10 @@ void testTilesetUnconditionallyRefineRenderableOnlyWithoutChildren() {
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: unconditionally-refined tile with children is not renderable");
 }
-
 void testTilePriorityMetricsMatchesCesiumNativeFormula() {
     const Vec3 cameraPosition(0.0, 0.0, 0.0);
     const Vec3 cameraDirection(1.0, 0.0, 0.0);
     constexpr double distance = 100.0;
-
     check(std::abs(TilePriorityMetrics::computeTilePriority(
                        Vec3(10.0, 0.0, 0.0),
                        cameraPosition,
@@ -11505,22 +10379,18 @@ void testTilePriorityMetricsMatchesCesiumNativeFormula() {
                        distance) + distance) < 1e-12,
           "TilePriorityMetrics: view dot follows cesium-native formula without clamping");
 }
-
 void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
     TilesetTile tile(
         TileKey{"test", 0, 0, 0},
         Rectangle{-1.0, -0.5, 1.0, 0.5});
-
     const Vec3 boundsCenter = TileBoundsMetrics::tileBoundsCenter(tile.bounds);
     check(TileSelectionInputMetrics::tileCenter(tile) == boundsCenter,
           "TileSelectionInputMetrics: tile center falls back to bounds center");
-
     tile.boundingVolume =
         TileBoundingVolume::fromSphere(Vec3(10.0, 20.0, 30.0), 5.0);
     check(TileSelectionInputMetrics::tileCenter(tile) ==
               Vec3(10.0, 20.0, 30.0),
           "TileSelectionInputMetrics: tile center prefers bounding volume center");
-
     const double priority = TileSelectionInputMetrics::priorityForView(
         Vec3(10.0, 0.0, 0.0),
         Vec3::zero(),
@@ -11528,7 +10398,6 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
         100.0);
     check(std::abs(priority) < 1e-12,
           "TileSelectionInputMetrics: priority delegates directional metric");
-
     const Mat4 projection = Camera{}.projectionMatrix(800.0, 800.0);
     const double nativeSse =
         TileSelectionInputMetrics::screenSpaceErrorForView(
@@ -11552,7 +10421,6 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
               800,
               1000.0) == 0.0,
           "TileSelectionInputMetrics: zero geometric error has zero SSE");
-
     tile.geometricError = 10.0;
     std::vector<SelectorView> views(2);
     views[0].position = Vec3(10.0, 0.0, 0.0);
@@ -11563,7 +10431,6 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
     views[1].direction = Vec3(-1.0, 0.0, 0.0);
     views[1].projectionMatrix = strongerProjection;
     views[1].viewportHeightPixels = 800;
-
     const TileSelectionInputSummary summary =
         TileSelectionInputMetrics::summarizeForViews(tile, views);
     check(summary.distances.size() == 2 &&
@@ -11597,7 +10464,6 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
     check(std::abs(summary.screenSpaceError -
                   std::max(firstViewSse, secondViewSse)) < 1e-12,
           "TileSelectionInputMetrics: summary uses exact maximum per-view SSE like cesium-native");
-
     for (SelectorView& view : views) {
         view.position = TileSelectionInputMetrics::tileCenter(tile);
     }
@@ -11606,7 +10472,6 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
     check(degenerateSummary.priority == std::numeric_limits<double>::max(),
           "TileSelectionInputMetrics: all degenerate priority views stay at max like cesium-native");
 }
-
 void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
     // cesium-native ViewState::computeScreenSpaceError is equivalent to:
     // pixelError = geometricError * projection[1][1] * viewportHeight /
@@ -11617,7 +10482,6 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
     rawProjection[2][3] = -1.0;
     rawProjection[3][2] = 1.0;
     const Mat4 projection(rawProjection);
-
     const double sse = TileSelectionInputMetrics::screenSpaceErrorForView(
         10.0,
         projection,
@@ -11625,7 +10489,6 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
         1000.0);
     check(std::abs(sse - 8.0) < 1e-12,
           "TileSelectionInputMetrics: SSE matches cesium-native projection golden");
-
     const double closeSse = TileSelectionInputMetrics::screenSpaceErrorForView(
         10.0,
         projection,
@@ -11633,7 +10496,6 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
         500.0);
     check(std::abs(closeSse - 16.0) < 1e-12,
           "TileSelectionInputMetrics: halving distance doubles SSE");
-
     const double tallViewportSse =
         TileSelectionInputMetrics::screenSpaceErrorForView(
             10.0,
@@ -11642,7 +10504,6 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
             1000.0);
     check(std::abs(tallViewportSse - 12.0) < 1e-12,
           "TileSelectionInputMetrics: SSE scales with viewport height");
-
     const double zeroViewportSse =
         TileSelectionInputMetrics::screenSpaceErrorForView(
             10.0,
@@ -11651,7 +10512,6 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
             1000.0);
     check(std::abs(zeroViewportSse) < 1e-12,
           "TileSelectionInputMetrics: zero-height viewport has zero SSE like cesium-native");
-
     const double insideTileSse =
         TileSelectionInputMetrics::screenSpaceErrorForView(
             1.0,
@@ -11667,13 +10527,11 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
     check(std::abs(insideTileSse - clampedDistanceSse) < 1e-3,
           "TileSelectionInputMetrics: zero distance uses cesium-native 1e-7 clamp");
 }
-
 void testTileLoadPriorityPolicyMatchesNativeOrdering() {
     check(static_cast<int>(TileLoadPriorityGroup::Preload) == 0 &&
               static_cast<int>(TileLoadPriorityGroup::Normal) == 1 &&
               static_cast<int>(TileLoadPriorityGroup::Urgent) == 2,
           "TileLoadPriorityPolicy: priority group values match cesium-native");
-
     check(TileLoadPriorityPolicy::hasHigherPriority(
               TileLoadPriorityGroup::Urgent,
               100.0,
@@ -11692,7 +10550,6 @@ void testTileLoadPriorityPolicyMatchesNativeOrdering() {
               TileLoadPriorityGroup::Urgent,
               100.0),
           "TileLoadPriorityPolicy: preload never outranks urgent by numeric priority");
-
     struct TestRequest {
         TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
         double priority = 0.0;
@@ -11722,17 +10579,14 @@ void testTileLoadPriorityPolicyMatchesNativeOrdering() {
               FrameResourcePriority::Urgent,
           "TileLoadPriorityPolicy: frame resource priority mapping is explicit");
 }
-
 void testTileLoadQueueDeduplicatesAndUpgradesPriority() {
     TileLoadQueue queue;
     const TileKey key{"test", 1, 2, 3};
-
     queue.queue(key, TileLoadPriorityGroup::Preload, 1.0);
     queue.queue(key, TileLoadPriorityGroup::Normal, 100.0);
     queue.queue(key, TileLoadPriorityGroup::Normal, 10.0);
     queue.queue(key, TileLoadPriorityGroup::Preload, 0.0);
     queue.queue(key, TileLoadPriorityGroup::Urgent, 1000.0);
-
     check(queue.size() == 1,
           "TileLoadQueue: duplicate tile keeps a single request");
     check(queue.front().key == key,
@@ -11741,14 +10595,12 @@ void testTileLoadQueueDeduplicatesAndUpgradesPriority() {
           "TileLoadQueue: higher priority group upgrades queued request");
     check(queue.front().priority == 1000.0,
           "TileLoadQueue: upgraded request keeps selected priority value");
-
     queue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
     queue.queue(key, TileLoadPriorityGroup::Urgent, 2000.0);
     check(queue.size() == 1 &&
               queue.front().group == TileLoadPriorityGroup::Urgent &&
               queue.front().priority == 1000.0,
           "TileLoadQueue: duplicate requests cannot downgrade an already higher-priority entry");
-
     queue.resize(4);
     check(queue.size() == 1,
           "TileLoadQueue: resize does not grow default load requests");
@@ -11756,20 +10608,16 @@ void testTileLoadQueueDeduplicatesAndUpgradesPriority() {
     check(queue.empty(),
           "TileLoadQueue: resize truncates queued load requests");
 }
-
 void testTileUnloadQueueMaintainsLruOrderAndDeduplicatesKeys() {
     TileUnloadQueue queue;
-
     queue.pushBackIfAbsent("");
     check(queue.empty() && !queue.contains(""),
           "TileUnloadQueue: empty cache keys are not queued");
-
     queue.pushBackIfAbsent("a");
     queue.pushBackIfAbsent("b");
     queue.pushBackIfAbsent("a");
     check(queue.size() == 2 && queue.front() == "a",
           "TileUnloadQueue: duplicate keys are not requeued");
-
     queue.moveFrontToBack();
     check(queue.front() == "b",
           "TileUnloadQueue: front key rotates to the back");
@@ -11781,41 +10629,34 @@ void testTileUnloadQueueMaintainsLruOrderAndDeduplicatesKeys() {
     check(queue.empty() && !queue.contains("a"),
           "TileUnloadQueue: popFront clears map membership");
 }
-
 void testTileIndexStateQueuesOnlyUnloadableTiles() {
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     auto renderTile = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 0},
         Rectangle{});
     renderTile->content.contentKind = TileContentKind::Render;
     renderTile->content.loadState = TileLoadState::Done;
     tiles["render"] = std::move(renderTile);
-
     auto loadingTile = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 1},
         Rectangle{});
     loadingTile->content.contentKind = TileContentKind::Render;
     loadingTile->content.loadState = TileLoadState::ContentLoading;
     tiles["loading"] = std::move(loadingTile);
-
     auto failedUnknownTile = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 2},
         Rectangle{});
     failedUnknownTile->content.contentKind = TileContentKind::Unknown;
     failedUnknownTile->content.loadState = TileLoadState::Failed;
     tiles["failed-unknown"] = std::move(failedUnknownTile);
-
     auto unloadedUnknownTile = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 3},
         Rectangle{});
     unloadedUnknownTile->content.contentKind = TileContentKind::Unknown;
     unloadedUnknownTile->content.loadState = TileLoadState::Unloaded;
     tiles["unloaded-unknown"] = std::move(unloadedUnknownTile);
-
     tiles["null"] = nullptr;
-
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
         tiles,
@@ -11840,25 +10681,21 @@ void testTileIndexStateQueuesOnlyUnloadableTiles() {
         unloadQueue,
         tiles,
         "missing");
-
     check(unloadQueue.size() == 2 &&
               unloadQueue.contains("render") &&
               unloadQueue.contains("failed-unknown") &&
               !unloadQueue.contains("unloaded-unknown"),
           "TileIndexState: unload queue includes failed unknown content but not unloaded unknown content");
-
     TileIndexState::markIneligibleForUnloading(unloadQueue, "render");
     check(unloadQueue.size() == 1 &&
               !unloadQueue.contains("render") &&
               unloadQueue.contains("failed-unknown"),
           "TileIndexState: ineligible tile is removed without clearing other unloadable tiles");
 }
-
 void testTileCacheUnloadCoordinatorRotatesDeferredCandidates() {
     TileUnloadQueue unloadQueue;
     unloadQueue.pushBackIfAbsent("referenced");
     unloadQueue.pushBackIfAbsent("free");
-
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     auto referenced = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 0},
@@ -11867,14 +10704,12 @@ void testTileCacheUnloadCoordinatorRotatesDeferredCandidates() {
     referenced->content.loadState = TileLoadState::Done;
     referenced->addReference();
     tiles["referenced"] = std::move(referenced);
-
     auto free = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 1},
         Rectangle{});
     free->content.contentKind = TileContentKind::Render;
     free->content.loadState = TileLoadState::Done;
     tiles["free"] = std::move(free);
-
     std::vector<std::string> unloadedKeys;
     std::vector<std::string> markedIneligibleKeys;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
@@ -11897,7 +10732,6 @@ void testTileCacheUnloadCoordinatorRotatesDeferredCandidates() {
             unloadQueue.erase(key);
         },
         [](TilesetTile&) {});
-
     check(unloadedKeys.size() == 1 &&
               unloadedKeys.front() == "free" &&
               markedIneligibleKeys.size() == 1 &&
@@ -11908,12 +10742,10 @@ void testTileCacheUnloadCoordinatorRotatesDeferredCandidates() {
               result.shouldRefreshTotalBytes,
           "TileCacheUnloadCoordinator: deferred referenced candidate rotates and later candidate unloads");
 }
-
 void testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred() {
     TileUnloadQueue unloadQueue;
     unloadQueue.pushBackIfAbsent("a");
     unloadQueue.pushBackIfAbsent("b");
-
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     for (int y = 0; y < 2; ++y) {
         auto tile = std::make_unique<TilesetTile>(
@@ -11924,7 +10756,6 @@ void testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred() {
         tile->addReference();
         tiles[y == 0 ? "a" : "b"] = std::move(tile);
     }
-
     int unloadAttempts = 0;
     int markedIneligibleCount = 0;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
@@ -11946,7 +10777,6 @@ void testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred() {
             ++markedIneligibleCount;
         },
         [](TilesetTile&) {});
-
     check(unloadAttempts == 0 &&
               markedIneligibleCount == 0 &&
               unloadQueue.size() == 2 &&
@@ -11955,12 +10785,10 @@ void testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred() {
               !result.shouldRefreshTotalBytes,
           "TileCacheUnloadCoordinator: all-deferred queue scans once without dirtying cache bytes");
 }
-
 void testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues() {
     TileUnloadQueue unloadQueue;
     unloadQueue.pushBackIfAbsent("stale");
     unloadQueue.pushBackIfAbsent("free");
-
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     auto free = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 1},
@@ -11968,7 +10796,6 @@ void testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues() {
     free->content.contentKind = TileContentKind::Render;
     free->content.loadState = TileLoadState::Done;
     tiles["free"] = std::move(free);
-
     std::vector<std::string> unloadedKeys;
     std::vector<std::string> markedIneligibleKeys;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
@@ -11991,7 +10818,6 @@ void testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues() {
             unloadQueue.erase(key);
         },
         [](TilesetTile&) {});
-
     check(unloadedKeys.size() == 1 &&
               unloadedKeys.front() == "free" &&
               markedIneligibleKeys.size() == 1 &&
@@ -12001,11 +10827,9 @@ void testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues() {
               result.shouldRefreshTotalBytes,
           "TileCacheUnloadCoordinator: stale queue keys are dropped before continuing to later candidates");
 }
-
 void testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing() {
     TileUnloadQueue unloadQueue;
     unloadQueue.pushBackIfAbsent("free");
-
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     auto free = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 0},
@@ -12013,7 +10837,6 @@ void testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing() {
     free->content.contentKind = TileContentKind::Render;
     free->content.loadState = TileLoadState::Done;
     tiles["free"] = std::move(free);
-
     int unloadAttempts = 0;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
@@ -12034,14 +10857,12 @@ void testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing() {
             unloadQueue.erase(key);
         },
         [](TilesetTile&) {});
-
     check(unloadAttempts == 1 &&
               unloadQueue.empty() &&
               result.cacheBytesDirty &&
               !result.shouldRefreshTotalBytes,
           "TileCacheUnloadCoordinator: smoothing keeps cache bytes dirty without same-frame refresh");
 }
-
 void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     const TileKey erasedKey{"test", 1, 2, 3};
     const TileKey keptKey{"test", 1, 2, 4};
@@ -12053,24 +10874,19 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     };
     const std::string erasedCacheKey = cacheKeyForTile(erasedKey);
     const std::string keptCacheKey = cacheKeyForTile(keptKey);
-
     TileUnloadQueue unloadQueue;
     unloadQueue.pushBackIfAbsent(erasedCacheKey);
     unloadQueue.pushBackIfAbsent(keptCacheKey);
-
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     terrainCache[erasedCacheKey] = std::make_unique<DecodedHeightmap>();
     terrainCache[keptCacheKey] = std::make_unique<DecodedHeightmap>();
-
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(erasedCacheKey);
     emptyContentRegistry.insert(keptCacheKey);
-
     TileLoadQueue loadQueue;
     loadQueue.queue(erasedKey, TileLoadPriorityGroup::Normal, 10.0);
     loadQueue.queue(keptKey, TileLoadPriorityGroup::Normal, 1.0);
-
     TileLoadLifecycle lifecycle;
     lifecycle.requestState().beginTerrainRequest(
         erasedCacheKey,
@@ -12098,7 +10914,6 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
                   .has_value(),
               "TileIndexState: claimed upload test dequeues erased payload");
     }
-
     TileIndexState::eraseCacheKeyState(
         erasedCacheKey,
         unloadQueue,
@@ -12107,7 +10922,6 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
         loadQueue,
         lifecycle,
         cacheKeyForTile);
-
     check(!unloadQueue.contains(erasedCacheKey) &&
               unloadQueue.contains(keptCacheKey) &&
               terrainCache.find(erasedCacheKey) == terrainCache.end() &&
@@ -12121,7 +10935,6 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
               lifecycle.containsWorkForCacheKey(keptCacheKey),
           "TileIndexState: erase removes matching load queue and lifecycle work only");
 }
-
 void testTileIndexStateErasesTerminalResults() {
     const TileKey erasedKey{"test", 1, 0, 0};
     const TileKey keptKey{"test", 1, 0, 1};
@@ -12133,7 +10946,6 @@ void testTileIndexStateErasesTerminalResults() {
     };
     const std::string erasedCacheKey = cacheKeyForTile(erasedKey);
     const std::string keptCacheKey = cacheKeyForTile(keptKey);
-
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
@@ -12155,7 +10967,6 @@ void testTileIndexStateErasesTerminalResults() {
                 0.0,
                 TileLoadStatus::RetryLater});
     }
-
     TileIndexState::eraseCacheKeyState(
         erasedCacheKey,
         unloadQueue,
@@ -12164,19 +10975,16 @@ void testTileIndexStateErasesTerminalResults() {
         loadQueue,
         lifecycle,
         cacheKeyForTile);
-
     check(!lifecycle.containsWorkForCacheKey(erasedCacheKey) &&
               lifecycle.containsWorkForCacheKey(keptCacheKey) &&
               lifecycle.counts().gltfTerrainTerminalResults == 0 &&
               lifecycle.counts().contentTerminalResults == 1,
           "TileIndexState: erase clears matching terminal results without touching other keys");
 }
-
 void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = TileCacheKey::forTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
@@ -12185,13 +10993,11 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     tiles[cacheKey] = std::move(tile);
     lifecycle.legacyHeightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
-
     manager.updateTotalBytesUsed(tiles, lifecycle, true);
     manager.markEligibleForUnloading(tiles, cacheKey);
     check(manager.totalBytesUsed() > 0 &&
               manager.unloadQueue().contains(cacheKey),
           "TileContentCacheManager: owns byte accounting and unload queue state");
-
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
@@ -12204,7 +11010,6 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
         [&clearChildrenCalled](TilesetTile&) {
             clearChildrenCalled = true;
         });
-
     check(manager.totalBytesUsed() == 0 &&
               !manager.unloadQueue().contains(cacheKey) &&
               lifecycle.legacyHeightmapTerrainCache().find(cacheKey) ==
@@ -12214,13 +11019,11 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
               !clearChildrenCalled,
           "TileContentCacheManager: unload removes render content and stale empty marker");
 }
-
 void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     TileLoadQueue loadQueue;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = TileCacheKey::forTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
@@ -12249,9 +11052,7 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
                   .has_value(),
               "TileContentCacheManager: erase-index claimed upload test dequeues payload");
     }
-
     manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue, true);
-
     check(!manager.unloadQueue().contains(cacheKey) &&
               lifecycle.legacyHeightmapTerrainCache().find(cacheKey) ==
                   lifecycle.legacyHeightmapTerrainCache().end() &&
@@ -12261,12 +11062,10 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
               !lifecycle.loadLifecycle().hasPendingWork(),
           "TileContentCacheManager: erase index clears claimed upload work and cache indexes");
 }
-
 void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = TileCacheKey::forTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
@@ -12274,7 +11073,6 @@ void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
     tile->content.contentKind = TileContentKind::Unknown;
     tiles[cacheKey] = std::move(tile);
     lifecycle.emptyContentRegistry().insert(cacheKey);
-
     manager.markEligibleForUnloading(tiles, cacheKey);
     manager.unloadCachedBytes(
         -1,
@@ -12285,19 +11083,16 @@ void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
         lifecycle,
         nullptr,
         [](TilesetTile&) {});
-
     check(!manager.unloadQueue().contains(cacheKey) &&
               !lifecycle.emptyContentRegistry().contains(cacheKey) &&
               tiles[cacheKey]->content.loadState == TileLoadState::Unloaded &&
               tiles[cacheKey]->content.contentKind == TileContentKind::Unknown,
           "TileContentCacheManager: unloading unknown content clears stale empty marker");
 }
-
 void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = TileCacheKey::forTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
@@ -12305,12 +11100,10 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);
     lifecycle.legacyHeightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
-
     manager.updateTotalBytesUsed(tiles, lifecycle, true);
     const int64_t bytesBeforeUnload = manager.totalBytesUsed();
     manager.cacheBytesDirty() = false;
     manager.markEligibleForUnloading(tiles, cacheKey);
-
     manager.unloadCachedBytes(
         0,
         0.0,
@@ -12320,7 +11113,6 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
         lifecycle,
         nullptr,
         [](TilesetTile&) {});
-
     check(bytesBeforeUnload > 0 &&
               manager.totalBytesUsed() == bytesBeforeUnload &&
               manager.cacheBytesDirty() &&
@@ -12329,12 +11121,10 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
                   lifecycle.legacyHeightmapTerrainCache().end(),
           "TileContentCacheManager: smoothing defers byte refresh while preserving dirty cache state");
 }
-
 void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     const TileKey rootKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
     const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
@@ -12357,11 +11147,9 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
-
     manager.updateTotalBytesUsed(tiles, lifecycle, true);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
-
     manager.unloadCachedBytes(
         0,
         0.0,
@@ -12373,7 +11161,6 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
         [&clearChildrenCalled](TilesetTile&) {
             clearChildrenCalled = true;
         });
-
     check(manager.unloadQueue().contains(rootCacheKey) &&
               tiles[rootCacheKey]->content.contentKind ==
                   TileContentKind::External &&
@@ -12382,12 +11169,10 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
               !clearChildrenCalled,
           "TileContentCacheManager: external wrapper unload defers while subtree has active work");
 }
-
 void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     const TileKey rootKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
     const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
@@ -12419,11 +11204,9 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
-
     manager.updateTotalBytesUsed(tiles, lifecycle, true);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
-
     manager.unloadCachedBytes(
         0,
         0.0,
@@ -12435,7 +11218,6 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
         [&clearChildrenCalled](TilesetTile&) {
             clearChildrenCalled = true;
         });
-
     check(manager.unloadQueue().contains(rootCacheKey) &&
               tiles[rootCacheKey]->content.contentKind ==
                   TileContentKind::External &&
@@ -12445,12 +11227,10 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
               !clearChildrenCalled,
           "TileContentCacheManager: external wrapper unload defers while subtree has claimed upload work");
 }
-
 void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadCompletes() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     const TileKey rootKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
     const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
@@ -12482,11 +11262,9 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
-
     manager.updateTotalBytesUsed(tiles, lifecycle, true);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
-
     manager.unloadCachedBytes(
         0,
         0.0,
@@ -12502,7 +11280,6 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
               !clearChildrenCalled &&
               !rootRaw->children.empty(),
           "TileContentCacheManager: claimed upload keeps external wrapper queued before retry");
-
     lifecycle.loadLifecycle().cancelAndEraseCacheKey(childCacheKey);
     manager.unloadCachedBytes(
         0,
@@ -12519,7 +11296,6 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
             tile.children.clear();
             tiles.erase(childCacheKey);
         });
-
     check(!manager.unloadQueue().contains(rootCacheKey) &&
               clearChildrenCalled &&
               rootRaw->children.empty() &&
@@ -12529,12 +11305,10 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
               rootRaw->content.contentKind == TileContentKind::Unknown,
           "TileContentCacheManager: external subtree unload retries after claimed upload work completes");
 }
-
 void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     const TileKey rootKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
     const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
@@ -12560,11 +11334,9 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
-
     manager.updateTotalBytesUsed(tiles, lifecycle, true);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
-
     manager.unloadCachedBytes(
         0,
         0.0,
@@ -12581,7 +11353,6 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
               !rootRaw->children.empty() &&
               tiles.find(childCacheKey) != tiles.end(),
           "TileContentCacheManager: active external subtree work keeps wrapper queued for retry");
-
     lifecycle.loadLifecycle().cancelAndEraseCacheKey(childCacheKey);
     manager.unloadCachedBytes(
         0,
@@ -12598,7 +11369,6 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
             tile.children.clear();
             tiles.erase(childCacheKey);
         });
-
     check(!manager.unloadQueue().contains(rootCacheKey) &&
               clearChildrenCalled &&
               rootRaw->children.empty() &&
@@ -12607,51 +11377,42 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
               rootRaw->content.contentKind == TileContentKind::Unknown,
           "TileContentCacheManager: external subtree unload retries after active work completes");
 }
-
 void testTileRenderablePolicyClassifiesRenderableContent() {
     TileRenderableSnapshot snapshot;
     snapshot.loadState = TileLoadState::Failed;
     snapshot.contentKind = TileContentKind::Unknown;
     check(TileRenderablePolicy::isCompleteRenderable(snapshot),
           "TileRenderablePolicy: failed tile is renderable as empty fallback");
-
     snapshot.loadState = TileLoadState::ContentLoading;
     snapshot.contentKind = TileContentKind::Render;
     snapshot.meshReady = true;
     check(!TileRenderablePolicy::isCompleteRenderable(snapshot),
           "TileRenderablePolicy: non-done tile is not complete renderable");
-
     snapshot.loadState = TileLoadState::Done;
     snapshot.requiredRasterOverlaysReady = false;
     check(!TileRenderablePolicy::isCompleteRenderable(snapshot),
           "TileRenderablePolicy: required raster overlays block completeness");
-
     snapshot.requiredRasterOverlaysReady = true;
     snapshot.unconditionallyRefine = true;
     snapshot.hasChildren = true;
     check(!TileRenderablePolicy::isCompleteRenderable(snapshot),
           "TileRenderablePolicy: unconditional refine parent with children is not renderable");
-
     snapshot.unconditionallyRefine = false;
     snapshot.hasChildren = false;
     snapshot.meshReady = false;
     check(!TileRenderablePolicy::isCompleteRenderable(snapshot),
           "TileRenderablePolicy: render content requires mesh readiness");
-
     snapshot.meshReady = true;
     check(TileRenderablePolicy::isCompleteRenderable(snapshot),
           "TileRenderablePolicy: ready render content is renderable");
-
     snapshot.contentKind = TileContentKind::External;
     snapshot.meshReady = false;
     snapshot.requiredRasterOverlaysReady = false;
     check(TileRenderablePolicy::isCompleteRenderable(snapshot),
           "TileRenderablePolicy: external done content is not blocked by raster overlays");
-
     snapshot.contentKind = TileContentKind::Empty;
     check(TileRenderablePolicy::isCompleteRenderable(snapshot),
           "TileRenderablePolicy: empty done content is not blocked by raster overlays");
-
     check(TileRenderablePolicy::hasSurfaceDrawable(
               TileContentKind::Render,
               TileLoadState::Done,
@@ -12671,12 +11432,10 @@ void testTileRenderablePolicyClassifiesRenderableContent() {
               false),
           "TileRenderablePolicy: empty failed content is drawable");
 }
-
 void testTilesetTileSelectionFrameStateOwnsTraversalFields() {
     TilesetTile tile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle{});
-
     tile.selectionFrameState.selectionState = TileSelectionState::Rendered;
     tile.selectionFrameState.previousSelectionState =
         TileSelectionState::Refined;
@@ -12685,7 +11444,6 @@ void testTilesetTileSelectionFrameStateOwnsTraversalFields() {
     tile.selectionFrameState.cameraInside = true;
     tile.selectionFrameState.ancestorMeetsSse = true;
     tile.selectionFrameState.lodTransitionFadePercentage = 0.25f;
-
     check(tile.selectionFrameState.selectionState ==
               TileSelectionState::Rendered &&
               tile.selectionFrameState.previousSelectionState ==
@@ -12696,7 +11454,6 @@ void testTilesetTileSelectionFrameStateOwnsTraversalFields() {
               tile.selectionFrameState.ancestorMeetsSse &&
               tile.selectionFrameState.lodTransitionFadePercentage == 0.25f,
           "TilesetTile: selection frame state owns traversal fields");
-
     tile.selectionFrameState.selectionState = TileSelectionState::Culled;
     tile.selectionFrameState.renderable = true;
     tile.selectionFrameState.completeRenderable = true;
@@ -12705,24 +11462,20 @@ void testTilesetTileSelectionFrameStateOwnsTraversalFields() {
               tile.selectionFrameState.renderable &&
               tile.selectionFrameState.completeRenderable,
           "TilesetTile: selection frame state remains authoritative storage");
-
     tile.updateFrameRenderability(false, false);
     check(!tile.content.renderContent.isSurfaceDrawable() &&
               !tile.selectionFrameState.completeRenderable &&
               !tile.selectionFrameState.renderable,
           "TilesetTile: frame renderability helper updates selection frame state");
-
     tile.updateTraversalRenderability(true);
     check(tile.selectionFrameState.renderable &&
               !tile.selectionFrameState.completeRenderable,
           "TilesetTile: traversal renderability helper updates traversal-only renderable state");
 }
-
 void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     TilesetTile tile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle{});
-
     tile.markRenderContentDone();
     TileRenderableSnapshot blockedSnapshot = tile.renderableSnapshot(false);
     check(blockedSnapshot.loadState == TileLoadState::Done &&
@@ -12732,22 +11485,18 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
           "TilesetTile: renderable snapshot carries render content readiness and raster readiness");
     check(!TileRenderablePolicy::isCompleteRenderable(blockedSnapshot),
           "TilesetTile: renderable snapshot preserves required raster overlay blocking");
-
     tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     check(tile.canPrepareRasterOverlays(),
           "TilesetTile: ready terrain render content can prepare raster overlays");
     check(!tile.hasSurfaceDrawable(),
           "TilesetTile: ready render resources without GPU buffer is not surface drawable");
-
     tile.content.renderContent.setMeshReady(false);
     check(!tile.canPrepareRasterOverlays(),
           "TilesetTile: raster overlay preparation waits for ready render resources");
-
     tile.content.renderContent.setMeshReady(true);
     tile.content.renderContent.setSurfaceMesh(nullptr);
     check(!tile.canPrepareRasterOverlays(),
           "TilesetTile: raster overlay preparation requires terrain mesh details");
-
     TilesetTile contentTerrainResidue(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle{});
@@ -12759,7 +11508,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     check(TileRasterOverlayReadinessPolicy::
               doneTileCannotHoldRasterOverlays(contentTerrainResidue),
           "TileRasterOverlayReadinessPolicy: content terrain without glTF render content cannot hold raster overlays");
-
     tile.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
@@ -12779,7 +11527,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               tile.selectionFrameState.completeRenderable &&
               tile.selectionFrameState.renderable,
           "TilesetTile: surface commit updates source, done state, drawable, and frame renderability");
-
     tile.content.loadState = TileLoadState::ContentLoaded;
     tile.clearFrameRenderability();
     TileSurfaceRenderContentCoordinator::commitSurface(
@@ -12799,7 +11546,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               tile.selectionFrameState.completeRenderable &&
               tile.selectionFrameState.renderable,
           "TileSurfaceRenderContentCoordinator: surface commit can refresh drawable render content without forcing Done");
-
     TilesetTile child(
         TileKey{"Geographic-TMS", 1, 0, 0},
         Rectangle{},
@@ -12826,7 +11572,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               std::abs(child.content.renderContent.terrainMinimumHeight() + 50.0) < 1e-9 &&
               std::abs(child.content.renderContent.terrainMaximumHeight() - 125.0) < 1e-9,
           "TileSurfaceRenderContentCoordinator: surface commit applies mesh height range and inherits it to unready children");
-
     DummyRenderDevice device;
     TilesetTile gpuTile(
         TileKey{"Geographic-TMS", 0, 1, 0},
@@ -12859,7 +11604,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               gpuTile.content.renderContent.isSurfaceDrawable() &&
               gpuTile.selectionFrameState.completeRenderable,
           "TileSurfaceRenderContentCoordinator: surface commit prepares GPU buffers before drawable/renderability update");
-
     TileSurfaceMeshResolution missingResolution;
     TileSurfaceMeshResolution ownResolution;
     ownResolution.source = SurfaceDrawableSource::HeightmapTerrain;
@@ -12882,7 +11626,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               noProviderContext.markDone &&
               !pendingQuadtreeContext.markDone,
           "TileSurfaceMeshResolution: source fallback and done decision are explicit");
-
     gpuTile.content.renderContent.setSurfaceSource(
         SurfaceDrawableSource::AncestorUpsample);
     check(TileSurfaceMeshResolutionPolicy::shouldReplaceReadySurface(
@@ -12892,7 +11635,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                   gpuTile,
                   false),
           "TileSurfaceMeshResolutionPolicy: ready non-own terrain is replaced only when own terrain arrives");
-
     TilesetTile fallbackTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -12911,7 +11653,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                   SurfaceDrawableSource::EllipsoidFallback &&
               fallbackResolution.markDone,
           "TileSurfaceMeshSourceResolver: no-provider tile resolves to done ellipsoid fallback");
-
     TilesetTile contentTerrainFallbackTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -12930,7 +11671,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                   SurfaceDrawableSource::None &&
               !contentTerrainFallbackResolution.markDone,
           "TileSurfaceMeshSourceResolver: content terrain quadtree waits for content instead of creating an ellipsoid fallback");
-
     TilesetTile upsampleParent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -12961,7 +11701,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !upsampleResolution.markDone &&
               !ancestorEnsured,
           "TileSurfaceMeshSourceResolver: child resolves ancestor upsample without forcing Done while provider is pending");
-
     TilesetTile contentOwnedLegacyParent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -12996,7 +11735,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !contentOwnedUpsampleResolution.markDone &&
               !contentOwnedAncestorEnsured,
           "TileSurfaceMeshSourceResolver: content-owned terrain does not upsample from legacy SurfaceMesh ancestors");
-
     TilesetTile gltfParent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -13028,7 +11766,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !gltfUpsampleResolution.markDone &&
               !gltfAncestorEnsured,
           "TileSurfaceMeshSourceResolver: glTF terrain ancestor defers to glTF upsample instead of SurfaceMesh fallback");
-
     bool gltfEnsureIngested = false;
     bool gltfEnsureAncestorEnsured = false;
     bool gltfEnsureCompletenessChecked = false;
@@ -13059,7 +11796,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !gltfEnsureAncestorEnsured &&
               !gltfEnsureCompletenessChecked,
           "TileSurfaceMeshEnsurer: glTF terrain upsample source bypasses SurfaceMesh commit path");
-
     TilesetTile gltfFrameTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -13080,7 +11816,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     check(!frameResourcesDirty &&
               !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
           "TileMeshFrameEnsurer: glTF terrain render content has no SurfaceMesh frame path");
-
     TilesetTile gltfWithStaleHeightmapSurface(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -13123,7 +11858,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                            .terrainMaximumHeight() -
                        875.0) < 1e-12,
           "TileMeshFrameEnsurer: glTF terrain rejects stale heightmap surface residue before frame cleanup");
-
     TilesetTile staleHeightmapSurfaceTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -13145,7 +11879,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !staleHeightmapSurfaceTile.content.renderContent.hasSurfaceMesh() &&
               !staleHeightmapSurfaceTile.content.renderContent.hasRetainedHeightmap(),
           "TileMeshFrameEnsurer: content terrain quadtree clears stale heightmap surface residue");
-
     TilesetTile staleRasterResidueTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -13197,7 +11930,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !staleRasterResidueTile.content.renderContent.hasSurfaceMesh(),
           "TileMeshFrameEnsurer: content terrain residue cleanup detaches stale raster mappings like cesium-native");
 }
-
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
     TileSelectionRefineFlowResult refineFlow;
     refineFlow.ancestorMeetsSse = false;
@@ -13215,7 +11947,6 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
           "TileSelectionPreTraversalPolicy: non-refinable tile keeps normal load eligibility");
     check(!plan.visitChildren,
           "TileSelectionPreTraversalPolicy: non-refinable tile does not visit children");
-
     refineFlow.ancestorMeetsSse = true;
     plan = TileSelectionPreTraversalPolicy::plan(
         TileSelectionPreTraversalInput{
@@ -13227,7 +11958,6 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
                   TileSelectionPreTraversalFinishReason::CannotRefine &&
               plan.singleTileShouldQueueLoad,
           "TileSelectionPreTraversalPolicy: leaf load eligibility ignores ancestor-meets-SSE like cesium-native");
-
     refineFlow = TileSelectionRefineFlowResult{};
     refineFlow.refine = false;
     refineFlow.ancestorMeetsSse = true;
@@ -13242,7 +11972,6 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
           "TileSelectionPreTraversalPolicy: satisfied refined decision renders current tile");
     check(!plan.singleTileShouldQueueLoad,
           "TileSelectionPreTraversalPolicy: ancestor-meets-SSE continuation suppresses duplicate normal load");
-
     refineFlow.ancestorMeetsSse = false;
     plan = TileSelectionPreTraversalPolicy::plan(
         TileSelectionPreTraversalInput{
@@ -13252,7 +11981,6 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
     check(plan.finishAsSingleTile &&
               plan.singleTileShouldQueueLoad,
           "TileSelectionPreTraversalPolicy: tile meeting SSE queues its own normal load");
-
     refineFlow = TileSelectionRefineFlowResult{};
     refineFlow.refine = true;
     refineFlow.queueUrgentLoad = true;
@@ -13269,7 +11997,6 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
           "TileSelectionPreTraversalPolicy: urgent load state is preserved for descendants");
     check(plan.ancestorMeetsSseAfterPreTraversal,
           "TileSelectionPreTraversalPolicy: ancestor-meets-SSE state is preserved");
-
     refineFlow = TileSelectionRefineFlowResult{};
     refineFlow.refine = true;
     refineFlow.queuedForLoad = false;
@@ -13283,7 +12010,6 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
     check(plan.additiveParentShouldQueueLoad &&
               plan.queuedForLoadAfterPreTraversal,
           "TileSelectionPreTraversalPolicy: ADD parent render marks load as queued");
-
     refineFlow.queuedForLoad = true;
     plan = TileSelectionPreTraversalPolicy::plan(
         TileSelectionPreTraversalInput{
@@ -13294,7 +12020,6 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
               plan.queuedForLoadAfterPreTraversal,
           "TileSelectionPreTraversalPolicy: ADD parent avoids duplicate load when already queued");
 }
-
 void testTileSelectionRenderEntryPolicyPlansRenderedTileWrites() {
     TileSelectionRenderEntryPlan plan =
         TileSelectionRenderEntryPolicy::plan(
@@ -13309,7 +12034,6 @@ void testTileSelectionRenderEntryPolicyPlansRenderedTileWrites() {
     check(!plan.resetLodTransitionFade &&
               !plan.queueNormalLoad,
           "TileSelectionRenderEntryPolicy: enabled LOD transition preserves fade and skips load");
-
     plan = TileSelectionRenderEntryPolicy::plan(
         TileSelectionRenderEntryInput{
             false,
@@ -13320,7 +12044,6 @@ void testTileSelectionRenderEntryPolicyPlansRenderedTileWrites() {
     check(plan.queueNormalLoad,
           "TileSelectionRenderEntryPolicy: queue-for-load plans normal load");
 }
-
 void testTileSelectionRootPolicyChoosesTraversalRoots() {
     const std::vector<TileKey> explicitRoots{
         TileKey{"content", 2, 4, 6},
@@ -13332,13 +12055,11 @@ void testTileSelectionRootPolicyChoosesTraversalRoots() {
             explicitRoots);
     check(roots == explicitRoots,
           "TileSelectionRootPolicy: explicit content roots take priority");
-
     roots = TileSelectionRootPolicy::chooseRoots("Geographic-TMS", {});
     check(roots.size() == 2 &&
               roots[0] == TileKey{"Geographic-TMS", 0, 0, 0} &&
               roots[1] == TileKey{"Geographic-TMS", 0, 1, 0},
           "TileSelectionRootPolicy: Geographic-TMS non-terrain domain uses level-zero data roots");
-
     roots = TileSelectionRootPolicy::chooseRoots("Geographic-TMS", {}, true);
     check(roots.size() == 1 &&
               roots[0] ==
@@ -13346,7 +12067,6 @@ void testTileSelectionRootPolicyChoosesTraversalRoots() {
                       "Geographic-TMS") &&
               TileSelectionRootPolicy::isVirtualTerrainRoot(roots[0]),
           "TileSelectionRootPolicy: Geographic-TMS uses virtual terrain root");
-
     roots = TileSelectionRootPolicy::chooseRoots("XYZ-WebMercator", {}, true);
     check(roots.size() == 1 &&
               roots[0] ==
@@ -13354,32 +12074,27 @@ void testTileSelectionRootPolicyChoosesTraversalRoots() {
                       "XYZ-WebMercator") &&
               TileSelectionRootPolicy::isVirtualTerrainRoot(roots[0]),
           "TileSelectionRootPolicy: WebMercator uses virtual terrain root");
-
     roots = TileSelectionRootPolicy::chooseRoots("XYZ-WebMercator", {});
     check(roots.size() == 1 &&
               roots[0] == TileKey{"XYZ-WebMercator", 0, 0, 0} &&
               !TileSelectionRootPolicy::isVirtualTerrainRoot(roots[0]),
           "TileSelectionRootPolicy: WebMercator non-terrain domain uses data root");
-
     roots = TileSelectionRootPolicy::levelZeroTerrainRoots("Geographic-TMS");
     check(roots.size() == 2 &&
               roots[0] == TileKey{"Geographic-TMS", 0, 0, 0} &&
               roots[1] == TileKey{"Geographic-TMS", 0, 1, 0},
           "TileSelectionRootPolicy: Geographic-TMS keeps two level-zero data roots");
-
     roots = TileSelectionRootPolicy::chooseRoots("OpenGlobus-Earth", {});
     check(roots.size() == 3 &&
               roots[0] == TileKey{"OpenGlobus-Earth", 0, 0, 0} &&
               roots[1] == TileKey{"OpenGlobus-Earth", 0, 0, 1} &&
               roots[2] == TileKey{"OpenGlobus-Earth", 0, 0, 2},
           "TileSelectionRootPolicy: OpenGlobus scheme uses three roots");
-
     roots = TileSelectionRootPolicy::chooseRoots("custom", {});
     check(roots.size() == 1 &&
               roots[0] == TileKey{"custom", 0, 0, 0},
           "TileSelectionRootPolicy: unknown schemes use one default root");
 }
-
 void testTileSelectionFrameBuilderCopiesViewsAndComputesFog() {
     FrameState emptyFrame;
     SelectorFrame selectorFrame =
@@ -13389,7 +12104,6 @@ void testTileSelectionFrameBuilderCopiesViewsAndComputesFog() {
     check(selectorFrame.views.empty() &&
               selectorFrame.fogDensities.empty(),
           "TileSelectionFrameBuilder: empty selector views stay empty");
-
     FrameState frameState;
     SelectorView lowView;
     lowView.position = Ellipsoid::WGS84().cartographicToCartesian(
@@ -13400,7 +12114,6 @@ void testTileSelectionFrameBuilderCopiesViewsAndComputesFog() {
         Cartographic::fromRadians(0.0, 0.0, 300.0));
     highView.viewportHeightPixels = 1080;
     frameState.selectorViews = {lowView, highView};
-
     selectorFrame = TileSelectionFrameBuilder::build(
         frameState,
         {
@@ -13415,13 +12128,11 @@ void testTileSelectionFrameBuilderCopiesViewsAndComputesFog() {
               std::abs(selectorFrame.fogDensities[0] - 0.001) < 1e-12 &&
               std::abs(selectorFrame.fogDensities[1] - 0.005) < 1e-12,
           "TileSelectionFrameBuilder: fog density follows each view height");
-
     FrameState belowEllipsoidFrame;
     SelectorView belowEllipsoidView;
     belowEllipsoidView.position = Ellipsoid::WGS84().cartographicToCartesian(
         Cartographic::fromRadians(0.0, 0.0, -100.0));
     belowEllipsoidFrame.selectorViews = {belowEllipsoidView};
-
     selectorFrame = TileSelectionFrameBuilder::build(
         belowEllipsoidFrame,
         {
@@ -13432,7 +12143,6 @@ void testTileSelectionFrameBuilderCopiesViewsAndComputesFog() {
               std::abs(selectorFrame.fogDensities[0] - 0.002) < 1e-12,
           "TileSelectionFrameBuilder: below-ellipsoid camera height participates in fog interpolation like cesium-native");
 }
-
 void testTileSelectionResetPolicyPlansPerFrameState() {
     TileSelectionResetPlan plan =
         TileSelectionResetPolicy::plan(
@@ -13453,7 +12163,6 @@ void testTileSelectionResetPolicyPlansPerFrameState() {
               !plan.completeRenderable &&
               !plan.renderable,
           "TileSelectionResetPolicy: renderable follows complete renderability");
-
     plan = TileSelectionResetPolicy::plan(
         TileSelectionResetInput{
             TileSelectionState::Refined,
@@ -13465,7 +12174,6 @@ void testTileSelectionResetPolicyPlansPerFrameState() {
               plan.renderable,
           "TileSelectionResetPolicy: complete renderability is preserved independently from drawable state");
 }
-
 void testTileSelectionSummaryPolicyPlansRecordAndCounts() {
     TileSelectionFrameState renderedState;
     renderedState.selectionState = TileSelectionState::RenderedAndKicked;
@@ -13480,7 +12188,6 @@ void testTileSelectionSummaryPolicyPlansRecordAndCounts() {
                 TileKey{"test", 3, 4, 5},
                 renderedState,
                 false});
-
     check(plan.visited,
           "TileSelectionSummaryPolicy: visited tile produces a summary plan");
     check(plan.record.key == TileKey{"test", 3, 4, 5} &&
@@ -13500,7 +12207,6 @@ void testTileSelectionSummaryPolicyPlansRecordAndCounts() {
     check(plan.selectionRenderedCount == 0 &&
               plan.selectionRefinedCount == 0,
           "TileSelectionSummaryPolicy: kicked states are counted separately from original selection states");
-
     TileSelectionFrameState notVisitedState;
     notVisitedState.selectionState = TileSelectionState::NotVisited;
     notVisitedState.previousSelectionState = TileSelectionState::Rendered;
@@ -13518,7 +12224,6 @@ void testTileSelectionSummaryPolicyPlansRecordAndCounts() {
               plan.notYetRenderableCount == 0,
           "TileSelectionSummaryPolicy: not visited tiles do not affect summary counts");
 }
-
 void testTileSelectionSummaryPolicyPlansFrameCounts() {
     const TileSelectionSummaryFramePlan plan =
         TileSelectionSummaryPolicy::planFrame(
@@ -13530,7 +12235,6 @@ void testTileSelectionSummaryPolicyPlansFrameCounts() {
                 11,
                 13,
                 17});
-
     check(plan.renderingNodeCount == 7 &&
               plan.walkthroughNodeCount == 3 &&
               plan.notRenderingNodeCount == 7,
@@ -13541,16 +12245,13 @@ void testTileSelectionSummaryPolicyPlansFrameCounts() {
               plan.mercatorTileCount == 7,
           "TileSelectionSummaryPolicy: frame plan preserves traversal diagnostic counters");
 }
-
 void testTileFrameStateCollectsInactiveTilesOncePerFrame() {
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
     auto current = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 0},
         Rectangle{});
     current->markUsedForRenderFrame(7);
     tiles["current"] = std::move(current);
-
     auto inactive = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 1},
         Rectangle{});
@@ -13558,16 +12259,13 @@ void testTileFrameStateCollectsInactiveTilesOncePerFrame() {
     TilesetTile* inactiveRaw = inactive.get();
     tiles["inactive"] = std::move(inactive);
     tiles["null"] = nullptr;
-
     const std::vector<TileFrameInactiveEntry> inactiveTiles =
         TileFrameState::collectInactiveTiles(tiles, 7);
-
     check(inactiveTiles.size() == 1 &&
               inactiveTiles[0].cacheKey == "inactive" &&
               inactiveTiles[0].tile == inactiveRaw,
           "TileFrameState: inactive scan skips current-frame and null tiles");
 }
-
 void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
     TileLoadQueue loadQueue;
     loadQueue.queue(
@@ -13582,7 +12280,6 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
         TileKey{"test", 0, 1, 0},
         TileLoadPriorityGroup::Urgent,
         1.0);
-
     TileLoadLifecycle lifecycle;
     CancellationToken terrainToken;
     CancellationToken contentToken;
@@ -13607,11 +12304,9 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
-
     TileUnloadQueue unloadQueue;
     unloadQueue.pushBackIfAbsent("unload-a");
     unloadQueue.pushBackIfAbsent("unload-b");
-
     FrameResourceBudgetConfig budgetConfig;
     budgetConfig.maxNetworkRequestsPerFrame = 10;
     budgetConfig.maxTerrainContentNetworkRequestsPerFrame = 3;
@@ -13644,7 +12339,6 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
         FrameResourceLane::RasterTextureUpload,
         FrameResourcePriority::Normal);
     resourceBudget.recordElapsed(FrameResourceLane::ContentFinalize, 1.5);
-
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     auto unloaded = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 0},
@@ -13652,7 +12346,6 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
     unloaded->content.loadState = TileLoadState::Unloaded;
     unloaded->content.contentKind = TileContentKind::Unknown;
     tiles["unloaded"] = std::move(unloaded);
-
     auto done = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 1},
         Rectangle{});
@@ -13662,7 +12355,6 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
         RasterOverlayProjection::Geographic);
     tiles["done"] = std::move(done);
     tiles["null"] = nullptr;
-
     const TilesetLoadDiagnostics diag =
         TileLoadDiagnosticsCollector::collect(
             loadQueue,
@@ -13670,7 +12362,6 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
             resourceBudget,
             unloadQueue,
             tiles);
-
     check(diag.loadQueuePreloadRequests == 1 &&
               diag.loadQueueNormalRequests == 1 &&
               diag.loadQueueUrgentRequests == 1 &&
@@ -13710,31 +12401,26 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
               diag.resourceBudget.interactionActive &&
               diag.resourceBudget.smoothingActive,
           "TileLoadDiagnostics: exposes FrameResourceBudget usage and limits");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("terrain-request");
         lifecycle.requestState().completeContentRequest("content-request");
     }
 }
-
 void testTileContentStateTransitionOwnsLoadAndContentStateChanges() {
     TileRenderContentState renderContent;
     TileLoadState loadState = TileLoadState::Unloaded;
     TileContentKind contentKind = TileContentKind::Unknown;
     bool unconditionallyRefine = false;
     TileSelectionFrameState selectionFrameState;
-
     TileContentStateTransition::markLoading(loadState, contentKind);
     check(loadState == TileLoadState::ContentLoading &&
               contentKind == TileContentKind::Unknown,
           "TileContentStateTransition: loading keeps unknown content kind");
-
     TileContentStateTransition::markRenderLoaded(loadState, contentKind);
     check(loadState == TileLoadState::ContentLoaded &&
               contentKind == TileContentKind::Render,
           "TileContentStateTransition: render loaded maps content kind");
-
     TileContentStateTransition::markRenderDone(
         renderContent,
         loadState,
@@ -13743,7 +12429,6 @@ void testTileContentStateTransitionOwnsLoadAndContentStateChanges() {
               contentKind == TileContentKind::Render &&
               renderContent.isMeshReady(),
           "TileContentStateTransition: render done makes mesh ready");
-
     TileContentStateTransition::markRenderFailedTemporarily(
         renderContent,
         loadState,
@@ -13752,22 +12437,18 @@ void testTileContentStateTransitionOwnsLoadAndContentStateChanges() {
               contentKind == TileContentKind::Unknown &&
               !renderContent.isMeshReady(),
           "TileContentStateTransition: render temporary failure clears mesh readiness");
-
     TileContentStateTransition::markFailedPermanently(loadState, contentKind);
     check(loadState == TileLoadState::Failed &&
               contentKind == TileContentKind::Unknown,
           "TileContentStateTransition: permanent failure keeps unknown content kind");
-
     TileContentStateTransition::markEmptyLoaded(loadState, contentKind);
     check(loadState == TileLoadState::ContentLoaded &&
               contentKind == TileContentKind::Empty,
           "TileContentStateTransition: empty loaded preserves content loaded phase");
-
     TileContentStateTransition::markEmptyDone(loadState, contentKind);
     check(loadState == TileLoadState::Done &&
               contentKind == TileContentKind::Empty,
           "TileContentStateTransition: empty done reaches loaded terminal state");
-
     TileContentStateTransition::markExternalDone(
         loadState,
         contentKind,
@@ -13776,7 +12457,6 @@ void testTileContentStateTransitionOwnsLoadAndContentStateChanges() {
               contentKind == TileContentKind::External &&
               unconditionallyRefine,
           "TileContentStateTransition: external content forces unconditional refinement");
-
     selectionFrameState.updateFrameRenderability(true);
     TileContentStateTransition::markUnloading(loadState);
     check(loadState == TileLoadState::Unloading,
@@ -13791,15 +12471,14 @@ void testTileContentStateTransitionOwnsLoadAndContentStateChanges() {
               !selectionFrameState.renderable,
           "TileContentStateTransition: unloaded clears content kind and frame renderability");
 }
-
 void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     parent.geometricError = 8.0;
     TilesetTile tile(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
     tile.geometricError = 8.0;
-
     TileTerminalLoadAction action =
-        TileTerminalLoadPolicy::applyTerrainTerminalResult(
+        TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::TerrainContent,
             tile,
             TileLoadStatus::Empty,
         nullptr);
@@ -13810,14 +12489,12 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
               tile.content.loadState == TileLoadState::Done &&
               tile.unconditionallyRefine,
           "TileTerminalLoadPolicy: empty terrain marks empty content and native unconditional refinement");
-
     TilesetTile zeroErrorRoot(TileKey{"test", 0, 0, 0}, Rectangle{});
     zeroErrorRoot.geometricError = 0.0;
     check(std::abs(
               zeroErrorRoot.nonZeroGeometricError() -
               MathUtils::Epsilon5) < 1e-12,
           "TilesetTile: zero root geometric error falls back to cesium-native epsilon");
-
     TilesetTile nonZeroAncestor(TileKey{"test", 0, 0, 0}, Rectangle{});
     nonZeroAncestor.geometricError = 32.0;
     TilesetTile unconditionalParent(
@@ -13833,8 +12510,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
     zeroErrorChild.geometricError = 0.0;
     check(std::abs(zeroErrorChild.nonZeroGeometricError() - 16.0) < 1e-12,
           "TilesetTile: nonzero geometric error skips unconditional ancestors like cesium-native");
-
-    action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::TerrainContent,
         zeroErrorRoot,
         TileLoadStatus::Empty,
         nullptr);
@@ -13844,8 +12521,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
               zeroErrorRoot.content.loadState == TileLoadState::Done &&
               !zeroErrorRoot.unconditionallyRefine,
           "TileTerminalLoadPolicy: zero-error root empty terrain does not become unconditional");
-
-    action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::TerrainContent,
         tile,
         TileLoadStatus::RetryLater,
         nullptr);
@@ -13855,8 +12532,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TileTerminalLoadPolicy: retry terrain maps to temporary failure");
-
-    action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::TerrainContent,
         tile,
         TileLoadStatus::Cancelled,
         nullptr);
@@ -13866,8 +12543,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TileTerminalLoadPolicy: cancelled terrain maps to temporary failure");
-
-    action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::TerrainContent,
         tile,
         TileLoadStatus::Renderable,
         nullptr);
@@ -13878,12 +12555,11 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
               tile.content.loadState == TileLoadState::Failed,
           "TileTerminalLoadPolicy: terminal success without upload maps to permanent failure");
 }
-
 void testTileTerminalLoadPolicyMapsContentTerminalStates() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-
     TileTerminalLoadAction action =
-        TileTerminalLoadPolicy::applyContentTerminalResult(
+        TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
             tile,
             TileLoadStatus::Empty,
         nullptr);
@@ -13893,7 +12569,6 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
               tile.content.contentKind == TileContentKind::Empty &&
               tile.content.loadState == TileLoadState::Done,
           "TileTerminalLoadPolicy: empty content marks done empty tile");
-
     TilesetTile contentParent(TileKey{"test", 0, 0, 0}, Rectangle{});
     contentParent.geometricError = 16.0;
     TilesetTile lowerErrorEmptyContent(
@@ -13901,7 +12576,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
         Rectangle{},
         &contentParent);
     lowerErrorEmptyContent.geometricError = 8.0;
-    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         lowerErrorEmptyContent,
         TileLoadStatus::Empty,
         nullptr);
@@ -13911,13 +12587,13 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
                   TileContentKind::Empty &&
               lowerErrorEmptyContent.content.loadState == TileLoadState::Done,
           "TileTerminalLoadPolicy: lower-error empty content remains renderable empty content");
-
     TilesetTile equalErrorEmptyContent(
         TileKey{"test", 1, 1, 0},
         Rectangle{},
         &contentParent);
     equalErrorEmptyContent.geometricError = 16.0;
-    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         equalErrorEmptyContent,
         TileLoadStatus::Empty,
         nullptr);
@@ -13927,8 +12603,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
                   TileContentKind::Empty &&
               equalErrorEmptyContent.content.loadState == TileLoadState::Done,
           "TileTerminalLoadPolicy: native empty content with parent-level error becomes unconditional");
-
-    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         tile,
         TileLoadStatus::External,
         nullptr);
@@ -13939,8 +12615,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
               tile.unconditionallyRefine &&
               tile.content.loadState == TileLoadState::Done,
           "TileTerminalLoadPolicy: external content requests child materialization");
-
-    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         tile,
         TileLoadStatus::RetryLater,
         nullptr);
@@ -13950,8 +12626,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TileTerminalLoadPolicy: retry content maps to temporary failure without terminal child materialization");
-
-    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         tile,
         TileLoadStatus::Cancelled,
         nullptr);
@@ -13961,8 +12637,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TileTerminalLoadPolicy: cancelled content maps to temporary failure without terminal child materialization");
-
-    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         tile,
         TileLoadStatus::Failed,
         nullptr);
@@ -13972,8 +12648,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::Failed,
           "TileTerminalLoadPolicy: failed content maps to permanent failure without terminal child materialization");
-
-    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+    action = TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         tile,
         TileLoadStatus::Renderable,
         nullptr);
@@ -13984,46 +12660,43 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
               tile.content.loadState == TileLoadState::Failed,
           "TileTerminalLoadPolicy: terminal render without upload maps to permanent failure");
 }
-
 void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() {
     auto addRasterMapping = [](TilesetTile& tile) {
         tile.rasterOverlayState.mappings().push_back(
             std::make_unique<RasterMappedToTilesetTile>());
     };
-
     TilesetTile emptyContent(TileKey{"test", 0, 0, 0}, Rectangle{});
     addRasterMapping(emptyContent);
-    TileTerminalLoadPolicy::applyContentTerminalResult(
+    TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         emptyContent,
         TileLoadStatus::Empty,
         nullptr);
     check(emptyContent.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: empty content clears stale raster mappings");
-
     TilesetTile retryContent(TileKey{"test", 0, 0, 0}, Rectangle{});
     addRasterMapping(retryContent);
-    TileTerminalLoadPolicy::applyContentTerminalResult(
+    TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
         retryContent,
         TileLoadStatus::RetryLater,
         nullptr);
     check(retryContent.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: retry content clears stale raster mappings");
-
     TilesetTile failedTerrain(TileKey{"test", 0, 0, 0}, Rectangle{});
     addRasterMapping(failedTerrain);
-    TileTerminalLoadPolicy::applyTerrainTerminalResult(
+    TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::TerrainContent,
         failedTerrain,
         TileLoadStatus::Failed,
         nullptr);
     check(failedTerrain.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: failed terrain clears stale raster mappings");
 }
-
 void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     TileEmptyContentRegistry emptyContentRegistry;
     TilesetTile terrainTile(TileKey{"test", 0, 0, 0}, Rectangle{});
     terrainTile.geometricError = 1.0;
-
     TileTerminalLoadAction action =
         TileTerminalLoadCommitter::commitTerminalResult(
             TileLoadDomain::TerrainContent,
@@ -14039,7 +12712,6 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               terrainTile.content.contentKind == TileContentKind::Empty &&
               terrainTile.content.loadState == TileLoadState::Done,
           "TileTerminalLoadCommitter: empty terrain commits tile state and empty registry marker");
-
     TilesetTile contentTile(TileKey{"test", 0, 1, 0}, Rectangle{});
     action = TileTerminalLoadCommitter::commitTerminalResult(
         TileLoadDomain::Content,
@@ -14055,7 +12727,6 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               contentTile.content.contentKind == TileContentKind::Empty &&
               contentTile.content.loadState == TileLoadState::Done,
           "TileTerminalLoadCommitter: empty content commits tile state and empty registry marker");
-
     TilesetTile externalTile(TileKey{"test", 0, 2, 0}, Rectangle{});
     action = TileTerminalLoadCommitter::commitTerminalResult(
         TileLoadDomain::Content,
@@ -14072,7 +12743,6 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               externalTile.unconditionallyRefine &&
               externalTile.content.loadState == TileLoadState::Done,
           "TileTerminalLoadCommitter: external content returns child-materialization action without empty marker");
-
     TilesetTile retryTile(TileKey{"test", 0, 3, 0}, Rectangle{});
     emptyContentRegistry.insert("content-retry");
     action = TileTerminalLoadCommitter::commitTerminalResult(
@@ -14089,7 +12759,6 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               retryTile.content.contentKind == TileContentKind::Unknown &&
               retryTile.content.loadState == TileLoadState::FailedTemporarily,
           "TileTerminalLoadCommitter: retry content clears stale empty registry marker without child materialization");
-
     TilesetTile cancelledContentTile(TileKey{"test", 0, 4, 0}, Rectangle{});
     emptyContentRegistry.insert("content-cancelled");
     action = TileTerminalLoadCommitter::commitTerminalResult(
@@ -14108,7 +12777,6 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               cancelledContentTile.content.loadState ==
                   TileLoadState::FailedTemporarily,
           "TileTerminalLoadCommitter: cancelled content clears stale empty registry marker without child materialization");
-
     TilesetTile failedTerrainTile(TileKey{"test", 0, 5, 0}, Rectangle{});
     emptyContentRegistry.insert("terrain-failed");
     action = TileTerminalLoadCommitter::commitTerminalResult(
@@ -14125,7 +12793,6 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               failedTerrainTile.content.contentKind == TileContentKind::Unknown &&
               failedTerrainTile.content.loadState == TileLoadState::Failed,
           "TileTerminalLoadCommitter: failed terrain clears stale empty registry marker without child materialization");
-
     TilesetTile cancelledTerrainTile(TileKey{"test", 0, 6, 0}, Rectangle{});
     emptyContentRegistry.insert("terrain-cancelled");
     action = TileTerminalLoadCommitter::commitTerminalResult(
@@ -14145,7 +12812,6 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
                   TileLoadState::FailedTemporarily,
           "TileTerminalLoadCommitter: cancelled terrain clears stale empty marker without child materialization");
 }
-
 void testTileContentUploadPolicyPreparesGltfRenderContent() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.renderContent.setRetainedHeightmap(
@@ -14162,17 +12828,14 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
     tile.content.renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
     tile.content.contentKind = TileContentKind::Empty;
     tile.content.loadState = TileLoadState::Done;
-
     auto model = std::make_unique<GltfModel>();
     GltfModel* rawModel = model.get();
     TileContentLoadResult result = TileContentLoadResult::render(
         std::move(model));
     result.contentTransform = Mat4::translation(Vec3(1.0, 2.0, 3.0));
-
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         TileLoadedContent::fromContentResult(std::move(result)));
-
     check(!tile.content.renderContent.hasRetainedHeightmap() &&
               !tile.content.renderContent.hasSurfaceMesh() &&
               !tile.content.renderContent.surfaceVertexBuffer() &&
@@ -14190,7 +12853,6 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
               tile.content.loadState == TileLoadState::ContentLoaded,
           "TileContentUploadPolicy: glTF upload replaces terrain and old render resources");
 }
-
 void testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -14198,7 +12860,6 @@ void testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     const Rectangle tileRectangle =
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
     TilesetTile tile(
@@ -14206,7 +12867,6 @@ void testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult() {
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     tile.boundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -25.0, 125.0);
-
     auto model = makeQuadTerrainGltfModel(tileRectangle);
     TileLoadResultMetadata metadata;
     metadata.updatedBoundingVolume =
@@ -14215,13 +12875,11 @@ void testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult() {
         TileContentLoadResult::renderTerrain(
             std::move(model),
             std::move(metadata)));
-
     TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(content),
         overlays,
         nullptr);
-
     const RasterOverlayDetails& details =
         tile.content.renderContent.rasterOverlayDetails();
     const Rectangle* geographic =
@@ -14243,7 +12901,6 @@ void testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult() {
               tile.content.loadState == TileLoadState::ContentLoaded,
           "TileContentUploadCommitter: glTF terrain upload merges active raster overlay details like cesium-native");
 }
-
 void testContentUploadGeneratesContentProviderTerrainRasterOverlayDetails() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -14251,7 +12908,6 @@ void testContentUploadGeneratesContentProviderTerrainRasterOverlayDetails() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     const Rectangle tileRectangle =
         Rectangle::fromDegrees(-11.0, -5.0, -3.0, 7.0);
     TilesetTile tile(
@@ -14259,7 +12915,6 @@ void testContentUploadGeneratesContentProviderTerrainRasterOverlayDetails() {
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     tile.boundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -35.0, 210.0);
-
     auto model = makeQuadTerrainGltfModel(tileRectangle);
     TileLoadResultMetadata metadata;
     metadata.updatedBoundingVolume =
@@ -14268,13 +12923,11 @@ void testContentUploadGeneratesContentProviderTerrainRasterOverlayDetails() {
         TileContentLoadResult::renderTerrain(
             std::move(model),
             std::move(metadata)));
-
     TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(content),
         overlays,
         nullptr);
-
     const RasterOverlayDetails& details =
         tile.content.renderContent.rasterOverlayDetails();
     const Rectangle* geographic =
@@ -14296,7 +12949,6 @@ void testContentUploadGeneratesContentProviderTerrainRasterOverlayDetails() {
               tile.content.loadState == TileLoadState::ContentLoaded,
           "TileContentUploadCommitter: content-provider terrain glTF upload synthesizes active overlay details like cesium-native");
 }
-
 void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -14304,7 +12956,6 @@ void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     const Rectangle tileRectangle =
         Rectangle::fromDegrees(-9.0, -4.0, 3.0, 8.0);
     TilesetTile tile(
@@ -14312,17 +12963,14 @@ void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
         Rectangle::fromDegrees(-20.0, -10.0, 20.0, 10.0));
     tile.boundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -10.0, 120.0);
-
     TileLoadedContent content;
     content.gltfModel = makeTriangleGltfModel();
     content.terrainRenderContent = false;
-
     TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(content),
         overlays,
         nullptr);
-
     const RasterOverlayDetails& details =
         tile.content.renderContent.rasterOverlayDetails();
     const Rectangle* webMercator =
@@ -14331,7 +12979,6 @@ void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
     const Rectangle expectedWebMercator = projectRectangleSimple(
         WebMercatorProjection(Ellipsoid::WGS84()),
         tileRectangle);
-
     check(webMercator && *webMercator == expectedWebMercator &&
               details.rasterOverlayProjections.size() == 1 &&
               details.textureCoordinateIDForProjection(
@@ -14341,7 +12988,6 @@ void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
               !tile.content.renderContent.isTerrainRenderContent(),
           "TileContentUploadCommitter: ordinary glTF upload generates active raster overlay projection details like cesium-native");
 }
-
 void testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -14349,7 +12995,6 @@ void testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     const Rectangle tileRectangle =
         Rectangle::fromDegrees(-40.0, -20.0, 40.0, 20.0);
     const Rectangle contentRectangle =
@@ -14361,16 +13006,13 @@ void testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails() {
         TileBoundingVolume::fromRegion(tileRectangle, -100.0, 1000.0);
     tile.contentBoundingVolume =
         TileBoundingVolume::fromRegion(contentRectangle, -10.0, 120.0);
-
     TileLoadedContent content;
     content.gltfModel = makeTriangleGltfModel();
-
     TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(content),
         overlays,
         nullptr);
-
     const RasterOverlayDetails& details =
         tile.content.renderContent.rasterOverlayDetails();
     const Rectangle* webMercator =
@@ -14382,13 +13024,11 @@ void testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails() {
     const Rectangle tileWebMercator = projectRectangleSimple(
         WebMercatorProjection(Ellipsoid::WGS84()),
         tileRectangle);
-
     check(webMercator && *webMercator == expectedContentWebMercator &&
               *webMercator != tileWebMercator &&
               rasterDetailsUseTightTriangleBounds(details),
           "TileContentUploadCommitter: raster overlay details use effective content bounding volume like cesium-native");
 }
-
 void testContentUploadPreparesTerrainContentRenderContent() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -14396,7 +13036,6 @@ void testContentUploadPreparesTerrainContentRenderContent() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     const Rectangle tileRectangle =
         Rectangle::fromDegrees(-8.0, -3.0, 4.0, 9.0);
     TilesetTile tile(
@@ -14407,10 +13046,8 @@ void testContentUploadPreparesTerrainContentRenderContent() {
     tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     tile.content.renderContent.setMeshReady(true);
     tile.content.renderContent.setSurfaceDrawable(true);
-
     auto model = makeQuadTerrainGltfModel(tileRectangle);
     GltfModel* rawModel = model.get();
-
     TileLoadResultMetadata metadata;
     metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -15.0, 85.0);
@@ -14418,13 +13055,11 @@ void testContentUploadPreparesTerrainContentRenderContent() {
         TileContentLoadResult::renderTerrain(
             std::move(model),
             std::move(metadata)));
-
     TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(loaded),
         overlays,
         nullptr);
-
     const RasterOverlayDetails& details =
         tile.content.renderContent.rasterOverlayDetails();
     const Rectangle* geographic =
@@ -14433,7 +13068,6 @@ void testContentUploadPreparesTerrainContentRenderContent() {
     const Rectangle* webMercator =
         details.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
-
     check(tile.content.renderContent.gltfModelForRead() == rawModel &&
               tile.content.renderContent.hasGltfModel() &&
               tile.content.renderContent.isTerrainRenderContent() &&
@@ -14448,7 +13082,6 @@ void testContentUploadPreparesTerrainContentRenderContent() {
               tile.content.loadState == TileLoadState::ContentLoaded,
           "TileContentUploadCommitter: content-domain glTF terrain upload uses unified render content and active overlay details");
 }
-
 void testContentTileLoadResultCarriesTerrainContentModel() {
     auto model = makeTriangleGltfModel();
     GltfModel* rawModel = model.get();
@@ -14458,12 +13091,10 @@ void testContentTileLoadResultCarriesTerrainContentModel() {
         contentRectangle,
         -2.0,
         18.0);
-
     TileContentLoadResult contentResult =
         TileContentLoadResult::renderTerrain(std::move(model));
     TileLoadResult loadResult =
         TileLoadResult::fromContentResult(std::move(contentResult));
-
     const RasterOverlayDetails* details =
         loadResult.content.metadata.rasterOverlayDetails
             ? &*loadResult.content.metadata.rasterOverlayDetails
@@ -14472,31 +13103,26 @@ void testContentTileLoadResultCarriesTerrainContentModel() {
         ? details->findRectangleForOverlayProjection(
               RasterOverlayProjection::Geographic)
         : nullptr;
-
     check(loadResult.status == TileLoadStatus::Renderable &&
               loadResult.shouldUpload() &&
               loadResult.content.gltfModel.get() == rawModel &&
               geographic && *geographic == contentRectangle,
           "TileLoadResult: content-domain glTF terrain model carries TileLoadResult metadata");
 }
-
 void testGltfRenderContentProvidesRasterOverlayDetails() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     auto staleMesh = std::make_unique<SurfaceTileMesh>();
     staleMesh->rasterOverlayDetails.setGeographicRectangle(
         Rectangle{0.0, 1.0, 2.0, 3.0});
     tile.content.renderContent.setSurfaceMesh(std::move(staleMesh));
-
     auto model = std::make_unique<GltfModel>();
     const Rectangle contentRectangle{4.0, 5.0, 6.0, 7.0};
     model->rasterOverlayDetails.setGeographicRectangle(contentRectangle);
     TileContentLoadResult result = TileContentLoadResult::render(
         std::move(model));
-
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         TileLoadedContent::fromContentResult(std::move(result)));
-
     const RasterOverlayDetails& details =
         tile.content.renderContent.rasterOverlayDetails();
     const Rectangle* found = details.findRectangleForOverlayProjection(
@@ -14509,14 +13135,12 @@ void testGltfRenderContentProvidesRasterOverlayDetails() {
               !tile.content.renderContent.hasSurfaceMesh(),
           "TileRenderContentState: glTF content carries raster overlay details like cesium-native TileLoadResult");
 }
-
 void testTileContentUploadPolicyAppliesTileLoadResultFields() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.boundingVolume =
         TileBoundingVolume::fromRegion(Rectangle{0.0, 0.0, 1.0, 1.0},
                                        0.0,
                                        1.0);
-
     auto model = std::make_unique<GltfModel>();
     const Rectangle modelRasterRectangle{1.0, 1.0, 2.0, 2.0};
     model->rasterOverlayDetails.setGeographicRectangle(modelRasterRectangle);
@@ -14535,11 +13159,9 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
     resultDetails.rasterOverlayRectangles = {resultRasterRectangle};
     resultDetails.boundingRegion = {resultRasterRectangle, -9.0, 19.0};
     result.metadata.rasterOverlayDetails = std::move(resultDetails);
-
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         TileLoadedContent::fromContentResult(std::move(result)));
-
     const RasterOverlayDetails& committedDetails =
         tile.content.renderContent.rasterOverlayDetails();
     const Rectangle* committedGeographic =
@@ -14571,7 +13193,6 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
               committedDetails.boundingRegion.maximumHeight == 19.0 &&
               !tile.content.renderContent.isTerrainRenderContent(),
           "TileContentUploadPolicy: glTF upload merges TileLoadResult raster details like cesium-native");
-
     TilesetTile looseTile(
         TileKey{"test", 0, 1, 0},
         Rectangle{0.0, 0.0, 1.0, 1.0});
@@ -14586,11 +13207,9 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
     RasterOverlayDetails tightDetails;
     tightDetails.setGeographicRectangle(tightRasterRectangle, -12.0, 34.0);
     looseResult.metadata.rasterOverlayDetails = std::move(tightDetails);
-
     TileContentUploadPolicy::prepareGltfRenderContent(
         looseTile,
         TileLoadedContent::fromContentResult(std::move(looseResult)));
-
     check(looseTile.boundingVolume &&
               looseTile.boundingVolume->kind ==
                   TileBoundingVolumeKind::Region &&
@@ -14602,7 +13221,6 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
               looseTile.content.renderContent.terrainMaximumHeight() == 34.0,
           "TileContentUploadPolicy: raster overlay details tighten loose bounding region like cesium-native");
 }
-
 void testTileLoadResultPreservesInitialBoundingVolumes() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     const Rectangle initialRectangle{0.0, 0.0, 1.0, 1.0};
@@ -14613,7 +13231,6 @@ void testTileLoadResultPreservesInitialBoundingVolumes() {
         initialContentRectangle,
         -200.0,
         300.0);
-
     auto model = std::make_unique<GltfModel>();
     TileContentLoadResult result = TileContentLoadResult::render(
         std::move(model));
@@ -14623,11 +13240,9 @@ void testTileLoadResultPreservesInitialBoundingVolumes() {
         TileBoundingVolume::fromRegion(updatedRectangle, -12.0, 34.0);
     result.metadata.updatedContentBoundingVolume =
         TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 15.0);
-
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         TileLoadedContent::fromContentResult(std::move(result)));
-
     check(tile.initialBoundingVolume &&
               tile.initialBoundingVolume->kind ==
                   TileBoundingVolumeKind::Region &&
@@ -14646,7 +13261,6 @@ void testTileLoadResultPreservesInitialBoundingVolumes() {
               tile.contentBoundingVolume &&
               tile.contentBoundingVolume->region == updatedContentRectangle,
           "TileLoadResult: initial bounding volumes stay separate from updated volumes like cesium-native");
-
     TilesetTile explicitTile(TileKey{"test", 0, 1, 0}, Rectangle{});
     explicitTile.boundingVolume =
         TileBoundingVolume::fromRegion(initialRectangle, -1.0, 1.0);
@@ -14659,11 +13273,9 @@ void testTileLoadResultPreservesInitialBoundingVolumes() {
         TileBoundingVolume::fromRegion(explicitInitialRectangle, 10.0, 20.0);
     explicitResult.metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(explicitUpdatedRectangle, 11.0, 19.0);
-
     TileContentUploadPolicy::prepareGltfRenderContent(
         explicitTile,
         TileLoadedContent::fromContentResult(std::move(explicitResult)));
-
     check(explicitTile.initialBoundingVolume &&
               explicitTile.initialBoundingVolume->region ==
                   explicitInitialRectangle &&
@@ -14673,7 +13285,6 @@ void testTileLoadResultPreservesInitialBoundingVolumes() {
               explicitTile.boundingVolume->region == explicitUpdatedRectangle,
           "TileLoadResult: explicit initial bounding volume from loader is preserved");
 }
-
 void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     auto model = std::make_unique<GltfModel>();
@@ -14689,9 +13300,7 @@ void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {
     tile.content.renderContent.setTerrainRenderContent(true);
     tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::ContentLoaded;
-
     TileContentUploadPolicy::markGltfRenderResourcesFailed(tile);
-
     check(!tile.content.renderContent.hasGltfModel() &&
               tile.content.renderContent.gltfTransform() ==
                   Mat4::identity() &&
@@ -14707,14 +13316,12 @@ void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TileContentUploadPolicy: failed glTF resource preparation clears glTF-derived render content state");
 }
-
 void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
     TilesetTile readyTile(TileKey{"test", 0, 0, 0}, Rectangle{});
     auto readyModel = std::make_unique<GltfModel>();
     GltfModel* rawReadyModel = readyModel.get();
     TileContentLoadResult readyResult = TileContentLoadResult::render(
         std::move(readyModel));
-
     TileContentUploadCommitter::prepareRenderContent(
         readyTile,
         TileLoadedContent::fromContentResult(std::move(readyResult)));
@@ -14729,7 +13336,6 @@ void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
               readyTile.content.contentKind == TileContentKind::Render &&
               readyTile.content.loadState == TileLoadState::ContentLoaded,
           "TileContentUploadCommitter: successful resource preparation keeps render content state and requests dirty resources plus child materialization");
-
     TilesetTile failedTile(TileKey{"test", 0, 1, 0}, Rectangle{});
     auto failedModel = std::make_unique<GltfModel>();
     TileContentLoadResult failedResult = TileContentLoadResult::render(
@@ -14747,14 +13353,12 @@ void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
               failedTile.content.loadState == TileLoadState::FailedTemporarily,
           "TileContentUploadCommitter: failed resource preparation rolls back render content without child materialization");
 }
-
 void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentUpload() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "shared-cache-key";
     PendingTileLoad upload{TileLoadDomain::Content,
@@ -14776,7 +13380,6 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
                   .has_value(),
               "TilePendingLoadCommitCoordinator: test claims missing content upload before commit");
     }
-
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {5.0f, 6.0f, 7.0f, 8.0f};
@@ -14786,7 +13389,6 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
     terrainCache[cacheKey] = std::move(cachedHeightmap);
     bool gltfEnsured = false;
     bool resourcesDirty = false;
-
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
@@ -14799,7 +13401,6 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
         [](TilesetTile&) {},
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
-
     check(terrainCache.find(cacheKey) != terrainCache.end() &&
               terrainCache.at(cacheKey)->valid() &&
               !emptyContentRegistry.contains(cacheKey) &&
@@ -14808,7 +13409,6 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
               !lifecycle.containsWorkForCacheKey(cacheKey),
           "TilePendingLoadCommitCoordinator: missing content upload preserves terrain cache and clears stale empty marker");
 }
-
 void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
     const TileKey terrainKey{"test", 0, 0, 0};
     const TileKey contentKey{"test", 0, 1, 0};
@@ -14829,7 +13429,6 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
         TileLoadStatus::RetryLater};
     bool childrenEnsured = false;
     bool resourcesDirty = false;
-
     TilePendingLoadCommitCoordinator::commitTerminalResult(
         terrainResult,
         emptyContentRegistry,
@@ -14844,20 +13443,17 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
-
     check(!childrenEnsured &&
               !resourcesDirty &&
               !emptyContentRegistry.contains("missing-terrain") &&
               !emptyContentRegistry.contains("missing-content"),
           "TilePendingLoadCommitCoordinator: missing tile terminal results clear stale empty markers without tile side effects");
 }
-
 void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
-
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
     PendingTileLoad result{TileLoadDomain::Content,
@@ -14868,7 +13464,6 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
         TileLoadStatus::RetryLater};
     bool childrenEnsured = false;
     bool resourcesDirty = false;
-
     TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         emptyContentRegistry,
@@ -14876,7 +13471,6 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
-
     check(!emptyContentRegistry.contains(cacheKey) &&
               !childrenEnsured &&
               resourcesDirty &&
@@ -14884,13 +13478,11 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TilePendingLoadCommitCoordinator: retry content terminal clears stale empty marker without child materialization");
 }
-
 void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
-
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
     PendingTileLoad result{TileLoadDomain::Content,
@@ -14901,7 +13493,6 @@ void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
         TileLoadStatus::Cancelled};
     bool childrenEnsured = false;
     bool resourcesDirty = false;
-
     TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         emptyContentRegistry,
@@ -14909,7 +13500,6 @@ void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
-
     check(!emptyContentRegistry.contains(cacheKey) &&
               !childrenEnsured &&
               resourcesDirty &&
@@ -14917,13 +13507,11 @@ void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TilePendingLoadCommitCoordinator: cancelled content terminal clears stale empty marker without child materialization");
 }
-
 void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
-
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
     PendingTileLoad result{TileLoadDomain::TerrainContent,
@@ -14934,7 +13522,6 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
         TileLoadStatus::RetryLater};
     bool resourcesDirty = false;
     bool childrenEnsured = false;
-
     TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         emptyContentRegistry,
@@ -14942,7 +13529,6 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
-
     check(!emptyContentRegistry.contains(cacheKey) &&
               !childrenEnsured &&
               resourcesDirty &&
@@ -14950,13 +13536,11 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TilePendingLoadCommitCoordinator: retry terrain terminal clears stale empty marker without child materialization");
 }
-
 void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
-
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
     PendingTileLoad result{TileLoadDomain::TerrainContent,
@@ -14967,7 +13551,6 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
         TileLoadStatus::Cancelled};
     bool resourcesDirty = false;
     bool childrenEnsured = false;
-
     TilePendingLoadCommitCoordinator::commitTerminalResult(
         result,
         emptyContentRegistry,
@@ -14975,7 +13558,6 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
-
     check(!emptyContentRegistry.contains(cacheKey) &&
               !childrenEnsured &&
               resourcesDirty &&
@@ -14983,7 +13565,6 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TilePendingLoadCommitCoordinator: cancelled terrain terminal clears stale empty marker without child materialization");
 }
-
 void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 1, 0};
@@ -14993,11 +13574,9 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
     parent.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
-
     std::unordered_map<std::string, TilesetTile*> tiles{
         {"test:0:0:0", &parent},
         {"test:1:1:0", &child}};
-
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -15024,7 +13603,6 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
             });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == childKey &&
               plan.renderEntries.front().renderKey == parentKey &&
@@ -15045,7 +13623,6 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
                   1e-6f,
           "TileRenderPlanFinalizer: ancestor fallback clip UVs cover the selected child quadrant");
 }
-
 void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
@@ -15055,11 +13632,9 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
     parent.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
-
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
         {TileCacheKey::forTile(childKey), &child}};
-
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -15079,7 +13654,6 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
         });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == childKey &&
               plan.renderEntries.front().renderKey == parentKey &&
@@ -15092,7 +13666,6 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: recovery frames keep drawable ancestors active until the selected child is ready");
 }
-
 void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
     const TileKey rootKey{"test", 0, 0, 0};
     const TileKey parentKey{"test", 1, 0, 0};
@@ -15108,12 +13681,10 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
     parent.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
-
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(rootKey), &root},
         {TileCacheKey::forTile(parentKey), &parent},
         {TileCacheKey::forTile(childKey), &child}};
-
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -15133,7 +13704,6 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
         [&root](const TilesetTile& tile) {
             return tile.key == root.key;
         });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == childKey &&
               plan.renderEntries.front().renderKey == rootKey &&
@@ -15144,7 +13714,6 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
               plan.renderEntryAncestorFallbackCount == 1,
           "TileRenderPlanFinalizer: ancestor fallback skips nearer geometry that is not actually renderable");
 }
-
 void testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
@@ -15152,7 +13721,6 @@ void testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding() {
     root.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
-
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -15171,7 +13739,6 @@ void testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding() {
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
         });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == rootKey &&
               plan.renderEntries.front().renderKey == rootKey &&
@@ -15182,7 +13749,6 @@ void testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding() {
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: surface entries stay planned when imagery command binding is not ready");
 }
-
 void testTileRenderPlanFinalizerKeepsGltfRenderContentDirect() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
@@ -15191,7 +13757,6 @@ void testTileRenderPlanFinalizerKeepsGltfRenderContentDirect() {
         Mat4::identity());
     root.content.contentKind = TileContentKind::Render;
     root.content.loadState = TileLoadState::ContentLoaded;
-
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -15210,7 +13775,6 @@ void testTileRenderPlanFinalizerKeepsGltfRenderContentDirect() {
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
         });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == rootKey &&
               plan.renderEntries.front().renderKey == rootKey &&
@@ -15223,7 +13787,6 @@ void testTileRenderPlanFinalizerKeepsGltfRenderContentDirect() {
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: glTF render content stays direct for render-resource prep");
 }
-
 void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
@@ -15233,11 +13796,9 @@ void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
     parent.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
-
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
         {TileCacheKey::forTile(childKey), &child}};
-
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
     plan.visibleTiles.push_back(parentKey);
@@ -15258,7 +13819,6 @@ void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
         });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == parentKey &&
               plan.renderEntries.front().renderKey == parentKey &&
@@ -15269,13 +13829,11 @@ void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
               plan.renderEntryAncestorFallbackCount == 0,
           "TileRenderPlanFinalizer: full geometry replaces earlier clipped fallback for the same render tile");
 }
-
 void testTileRenderPlanFinalizerCountsRootPrepOnce() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
-
     TileRenderPlanFinalizer::refreshRenderEntries(
         plan,
         TileRenderPlanFinalizeOptions{
@@ -15295,7 +13853,6 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
             });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().renderKey == rootKey &&
               plan.renderEntries.front().reason ==
@@ -15305,17 +13862,14 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: root/no-ancestor direct prep is counted once to avoid blank frames");
 }
-
 void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
-
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
         {TileCacheKey::forTile(childKey), &child}};
-
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -15335,7 +13889,6 @@ void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
         [&parent](const TilesetTile& tile) {
             return tile.key == parent.key;
         });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == childKey &&
               plan.renderEntries.front().renderKey == parentKey &&
@@ -15348,15 +13901,12 @@ void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
               plan.renderEntryDeferredPrepCount == 1,
           "TileRenderPlanFinalizer: interaction fallback can defer ancestor mesh prep when base command binding is available");
 }
-
 void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
     root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
-
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
-
     TileRenderPlanFinalizer::refreshRenderEntries(
         plan,
         TileRenderPlanFinalizeOptions{
@@ -15376,14 +13926,12 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
             });
-
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().reason ==
                   TileRenderEntryReason::SynchronousPrep &&
               std::abs(plan.renderEntries.front().opacity - 0.25f) < 1e-6f,
           "TileRenderPlanFinalizer: visible tile opacity reads selection frame fade");
 }
-
 void testTileRenderEntryClassifiesFrontierRoles() {
     TileRenderEntry direct;
     direct.reason = TileRenderEntryReason::Direct;
@@ -15392,7 +13940,6 @@ void testTileRenderEntryClassifiesFrontierRoles() {
               !direct.hasSurfaceClip() &&
               direct.renderPass() == TileRenderEntryPass::Selected,
           "TileRenderEntry: direct entry has no fallback or fading role");
-
     TileRenderEntry fallback;
     fallback.reason = TileRenderEntryReason::AncestorFallback;
     fallback.usesAncestorFallback = true;
@@ -15402,7 +13949,6 @@ void testTileRenderEntryClassifiesFrontierRoles() {
               fallback.hasSurfaceClip() &&
               fallback.renderPass() == TileRenderEntryPass::Selected,
           "TileRenderEntry: fallback entry exposes clipped ancestor role");
-
     TileRenderEntry fading;
     fading.reason = TileRenderEntryReason::FadingOut;
     fading.selectedThisFrame = false;
@@ -15412,7 +13958,6 @@ void testTileRenderEntryClassifiesFrontierRoles() {
               fading.renderPass() == TileRenderEntryPass::Fading,
           "TileRenderEntry: fading entry exposes fade-out role");
 }
-
 void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
     const TileKey drawnKey{"test", 0, 0, 0};
     const TileKey noDrawKey{"test", 0, 1, 0};
@@ -15420,7 +13965,6 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
     const TileKey missingRenderSelectedKey{"test", 0, 3, 0};
     const TileKey missingRenderKey{"test", 1, 3, 0};
     const TileKey missingSelectedKey{"test", 0, 4, 0};
-
     TilesetTile drawn(drawnKey, Rectangle{});
     TilesetTile noDraw(noDrawKey, Rectangle{});
     TilesetTile deferred(deferredKey, Rectangle{});
@@ -15433,7 +13977,6 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
         {TileCacheKey::forTile(deferredKey), &deferred},
         {TileCacheKey::forTile(missingRenderSelectedKey),
          &missingRenderSelected}};
-
     TilePlan plan;
     auto addEntry = [&](const TileKey& selectedKey,
                         const TileKey& renderKey,
@@ -15449,7 +13992,6 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
     addEntry(deferredKey, deferredKey, false);
     addEntry(missingRenderSelectedKey, missingRenderKey);
     addEntry(missingSelectedKey, missingSelectedKey);
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     const TileRenderEntryCommandStats stats =
@@ -15479,7 +14021,6 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
                     outCommands.push_back(std::move(command));
                 }
             });
-
     check(commands.size() == 1 &&
               stats.plannedEntries == 5 &&
               stats.ensuredTiles == 4 &&
@@ -15490,7 +14031,6 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
               stats.missedDrawEntries == 1,
           "TileRenderEntryCommandBuilder: skipped render entries are counted by reason");
 }
-
 void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
     const TileKey selectedKey{"test", 1, 0, 0};
     const TileKey renderKey{"test", 0, 0, 0};
@@ -15499,7 +14039,6 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(selectedKey), &selected},
         {TileCacheKey::forTile(renderKey), &render}};
-
     TilePlan plan;
     TileRenderEntry entry;
     entry.selectedKey = selectedKey;
@@ -15508,7 +14047,6 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
     entry.surfaceClipEnabled = true;
     entry.surfaceClipUv = {0.0f, 0.5f, 0.5f, 0.5f};
     plan.renderEntries.push_back(entry);
-
     std::vector<std::string> ineligibleKeys;
     Renderer renderer(nullptr);
     RenderCommandList commands;
@@ -15543,7 +14081,6 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
                     outCommands.push_back(std::move(command));
                 }
             });
-
     check(commands.size() == 1 &&
               stats.plannedEntries == 1 &&
               stats.drawAttempts == 1 &&
@@ -15560,7 +14097,6 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
                   std::string::npos,
           "TileRenderEntryCommandBuilder: fallback command preserves selected patch identity");
 }
-
 void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
     const TileKey fadingKey{"test", 0, 0, 0};
     TilesetTile fading(fadingKey, Rectangle{});
@@ -15568,7 +14104,6 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
     fading.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
-
     TilePlan plan;
     plan.tilesFadingOut.push_back(TileTransition{fadingKey, 0.4f, 1});
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -15587,14 +14122,12 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
         });
-
     check(plan.renderEntries.size() == 1 &&
               !plan.renderEntries.front().selectedThisFrame &&
               plan.renderEntries.front().reason ==
                   TileRenderEntryReason::FadingOut &&
               std::abs(plan.renderEntries.front().opacity - 0.4f) < 1e-6f,
           "TileRenderPlanFinalizer: fading tiles become fade-pass render entries");
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     auto ensureTile = [&fading](const TileKey& key) -> TilesetTile* {
@@ -15617,7 +14150,6 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
         command.kind = RenderCommandKind::SurfaceTile;
         outCommands.push_back(std::move(command));
     };
-
     TileRenderEntryCommandStats selectedStats =
         TileRenderEntryCommandBuilder::build(
             plan,
@@ -15631,7 +14163,6 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
             buildCommand);
     check(commands.empty() && selectedStats.plannedEntries == 0,
           "TileRenderEntryCommandBuilder: selected pass skips fading render entries");
-
     TileRenderEntryCommandStats fadeStats =
         TileRenderEntryCommandBuilder::build(
             plan,
@@ -15651,7 +14182,6 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
               fading.referenceCount() == 1,
           "TileRenderEntryCommandBuilder: fade pass submits fading render entries with opacity");
 }
-
 void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
     const TileKey rootKey{"test", 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -15683,7 +14213,6 @@ void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
         [](const TilesetTile& tile) {
             return tile.content.contentKind == TileContentKind::Render;
         });
-
     check(fadingKeys.count("test:0:0:0") == 1 &&
               plan.tilesFadingOut.size() == 1 &&
               std::abs(tiles["test:0:0:0"]
@@ -15694,7 +14223,6 @@ void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
               plan.fadingNodeCount == 1,
           "TileLodTransitionController: previous render content fades out after leaving selection");
 }
-
 void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
     const TileKey rootKey{"test", 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -15727,7 +14255,6 @@ void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
         [](const TilesetTile& tile) {
             return tile.content.contentKind == TileContentKind::Render;
         });
-
     check(fadingKeys.empty() &&
               plan.tilesFadingOut.empty() &&
               plan.tileTransitions.size() == 1 &&
@@ -15738,10 +14265,8 @@ void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
               plan.fadingNodeCount == 1,
           "TileLodTransitionController: tile returning from fade-out restarts fade-in from zero");
 }
-
 void testTileEmptyContentRegistryOwnsEmptyCacheKeys() {
     TileEmptyContentRegistry registry;
-
     registry.insert("a");
     registry.insert("b");
     registry.insert("a");
@@ -15751,18 +14276,15 @@ void testTileEmptyContentRegistryOwnsEmptyCacheKeys() {
               !registry.contains("") &&
               registry.size() == 2,
           "TileEmptyContentRegistry: owns deduplicated non-empty cache keys");
-
     registry.erase("a");
     check(!registry.contains("a") &&
               registry.contains("b") &&
               registry.size() == 1,
           "TileEmptyContentRegistry: erases one empty content cache key");
-
     registry.clear();
     check(!registry.contains("b") && registry.size() == 0,
           "TileEmptyContentRegistry: clears all empty content cache keys");
 }
-
 void testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Empty;
@@ -15772,7 +14294,6 @@ void testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey() {
         terrainCache;
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
             tile,
@@ -15780,14 +14301,12 @@ void testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(result == TileCacheUnloadContentResult::Remove &&
               !emptyContentRegistry.contains(cacheKey) &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::Unloaded,
           "TileContentUnloadCoordinator: empty content unload clears empty registry and tile content state");
 }
-
 void testTileContentUnloadCoordinatorKeepsLoadingContent() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Unknown;
@@ -15798,7 +14317,6 @@ void testTileContentUnloadCoordinatorKeepsLoadingContent() {
     terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
             tile,
@@ -15806,7 +14324,6 @@ void testTileContentUnloadCoordinatorKeepsLoadingContent() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(result == TileCacheUnloadContentResult::Keep &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::ContentLoading &&
@@ -15814,7 +14331,6 @@ void testTileContentUnloadCoordinatorKeepsLoadingContent() {
               emptyContentRegistry.contains(cacheKey),
           "TileContentUnloadCoordinator: loading content unload is kept without clearing cache state");
 }
-
 void testTileContentUnloadCoordinatorRemovesFailedUnknownContent() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Unknown;
@@ -15824,7 +14340,6 @@ void testTileContentUnloadCoordinatorRemovesFailedUnknownContent() {
         terrainCache;
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
             tile,
@@ -15832,14 +14347,12 @@ void testTileContentUnloadCoordinatorRemovesFailedUnknownContent() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(result == TileCacheUnloadContentResult::Remove &&
               !emptyContentRegistry.contains(cacheKey) &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::Unloaded,
           "TileContentUnloadCoordinator: failed unknown content unload resets state and clears stale empty marker");
 }
-
 void testTileContentUnloadCoordinatorRemovesExternalContent() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::External;
@@ -15850,7 +14363,6 @@ void testTileContentUnloadCoordinatorRemovesExternalContent() {
         terrainCache;
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
             tile,
@@ -15858,7 +14370,6 @@ void testTileContentUnloadCoordinatorRemovesExternalContent() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(result == TileCacheUnloadContentResult::RemoveAndClearChildren &&
               !emptyContentRegistry.contains(cacheKey) &&
               tile.content.contentKind == TileContentKind::Unknown &&
@@ -15866,7 +14377,6 @@ void testTileContentUnloadCoordinatorRemovesExternalContent() {
               tile.unconditionallyRefine,
           "TileContentUnloadCoordinator: unreferenced external content unloads wrapper and clears stale empty marker");
 }
-
 void testTileContentUnloadCoordinatorKeepsReferencedExternalContent() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::External;
@@ -15877,7 +14387,6 @@ void testTileContentUnloadCoordinatorKeepsReferencedExternalContent() {
         terrainCache;
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
             tile,
@@ -15885,7 +14394,6 @@ void testTileContentUnloadCoordinatorKeepsReferencedExternalContent() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(result == TileCacheUnloadContentResult::Keep &&
               emptyContentRegistry.contains(cacheKey) &&
               tile.content.contentKind == TileContentKind::External &&
@@ -15893,7 +14401,6 @@ void testTileContentUnloadCoordinatorKeepsReferencedExternalContent() {
               tile.referenceCount() == 1,
           "TileContentUnloadCoordinator: referenced external content keeps cache state for retry");
 }
-
 void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
@@ -15905,7 +14412,6 @@ void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
         terrainCache;
     terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
     TileEmptyContentRegistry emptyContentRegistry;
-
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
             tile,
@@ -15913,7 +14419,6 @@ void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(result == TileCacheUnloadContentResult::Remove &&
               terrainCache.find(cacheKey) == terrainCache.end() &&
               tile.content.contentKind == TileContentKind::Unknown &&
@@ -15922,12 +14427,10 @@ void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
               !tile.content.renderContent.isMeshReady(),
           "TileContentUnloadCoordinator: render content unload clears terrain cache and render resources");
 }
-
 void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Done;
     parent.content.renderContent.setMeshReady(true);
@@ -15943,7 +14446,6 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
         terrainCache;
     terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
     TileEmptyContentRegistry emptyContentRegistry;
-
     const TileCacheUnloadContentResult firstResult =
         TileContentUnloadCoordinator::unloadContent(
             parent,
@@ -15951,7 +14453,6 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(firstResult == TileCacheUnloadContentResult::Keep &&
               parent.content.contentKind == TileContentKind::Render &&
               parent.content.loadState == TileLoadState::Unloading &&
@@ -15963,7 +14464,6 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
               !parent.selectionFrameState.renderable &&
               terrainCache.find(cacheKey) != terrainCache.end(),
           "TileContentUnloadCoordinator: protected upsample source enters Unloading after releasing main-thread resources");
-
     const TileCacheUnloadContentResult secondResult =
         TileContentUnloadCoordinator::unloadContent(
             parent,
@@ -15971,7 +14471,6 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(secondResult == TileCacheUnloadContentResult::Keep &&
               parent.content.contentKind == TileContentKind::Render &&
               parent.content.loadState == TileLoadState::Unloading &&
@@ -15979,13 +14478,11 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
               terrainCache.find(cacheKey) != terrainCache.end(),
           "TileContentUnloadCoordinator: protected upsample source remains kept while child is loading");
 }
-
 void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep() {
     auto scheme = TileScheme::createXYZWebMercator();
     DebugImageryProvider imagery;
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
     provider.setFrameNumber(1);
-
     TilesetTile parent(TileKey{scheme->id(), 0, 0, 0},
                        scheme->tileToRectangle(
                            TileKey{scheme->id(), 0, 0, 0}));
@@ -15994,14 +14491,12 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
                           TileKey{scheme->id(), 1, 0, 0}),
                       &parent);
     parent.children.push_back(&child);
-
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Done;
     parent.content.renderContent.setMeshReady(true);
     parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     child.content.upsampledFromParent = true;
     child.content.loadState = TileLoadState::ContentLoading;
-
     parent.rasterOverlayState.ensureMappingSlots(1);
     RasterOverlayDetails details = makeProviderDetails(*scheme, parent.bounds);
     std::vector<RasterOverlayProjection> missingProjections;
@@ -16036,13 +14531,11 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
               prep.attachCount == 1 &&
               TileCacheMetrics::estimateTileBytes(parent) == 8 * 4 * 4,
           "TileContentUnloadCoordinator: protected unload setup attaches raster mapping");
-
     const std::string cacheKey = "test:0:0:0";
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
     TileEmptyContentRegistry emptyContentRegistry;
-
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
             parent,
@@ -16050,7 +14543,6 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
             terrainCache,
             emptyContentRegistry,
             &prep);
-
     check(result == TileCacheUnloadContentResult::Keep &&
               parent.content.contentKind == TileContentKind::Render &&
               parent.content.loadState == TileLoadState::Unloading &&
@@ -16062,12 +14554,10 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
               terrainCache.find(cacheKey) != terrainCache.end(),
           "TileContentUnloadCoordinator: protected upsample source detaches raster mappings before keeping CPU content");
 }
-
 void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Unloading;
     parent.content.renderContent.setMeshReady(true);
@@ -16079,7 +14569,6 @@ void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
         terrainCache;
     terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
     TileEmptyContentRegistry emptyContentRegistry;
-
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
             parent,
@@ -16087,7 +14576,6 @@ void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
             terrainCache,
             emptyContentRegistry,
             nullptr);
-
     check(result == TileCacheUnloadContentResult::Remove &&
               parent.content.contentKind == TileContentKind::Unknown &&
               parent.content.loadState == TileLoadState::Unloaded &&
@@ -16096,7 +14584,6 @@ void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
               terrainCache.find(cacheKey) == terrainCache.end(),
           "TileContentUnloadCoordinator: completed protected source unload clears content and terrain cache");
 }
-
 void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -16105,7 +14592,6 @@ void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileLoadQueue loadQueue;
     TileLoadLifecycle lifecycle;
     const std::string cacheKey = "test:0:0:0";
-
     unloadQueue.pushBackIfAbsent(cacheKey);
     terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
     emptyContentRegistry.insert(cacheKey);
@@ -16113,7 +14599,6 @@ void testTileIndexStateErasesEmptyContentRegistryKey() {
         TileKey{"test", 0, 0, 0},
         TileLoadPriorityGroup::Normal,
         0.0);
-
     TileIndexState::eraseCacheKeyState(
         cacheKey,
         unloadQueue,
@@ -16127,30 +14612,25 @@ void testTileIndexStateErasesEmptyContentRegistryKey() {
                    std::to_string(key.x) + ":" +
                    std::to_string(key.y);
         });
-
     check(!unloadQueue.contains(cacheKey) &&
               terrainCache.count(cacheKey) == 0 &&
               !emptyContentRegistry.contains(cacheKey) &&
               loadQueue.empty(),
           "TileIndexState: cache-key cleanup removes empty content registry state with other indexes");
 }
-
 void testTileTerrainHeightRangePolicySetsAndInheritsRanges() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
-
     TileTerrainHeightRangePolicy::setTerrainHeightRange(parent, -12.5, 345.0);
     check(parent.content.renderContent.hasTerrainHeightRange() &&
               std::abs(parent.content.renderContent.terrainMinimumHeight() + 12.5) < 1e-9 &&
               std::abs(parent.content.renderContent.terrainMaximumHeight() - 345.0) < 1e-9,
           "TileTerrainHeightRangePolicy: explicit range is stored on the tile");
-
     TileTerrainHeightRangePolicy::inheritTerrainHeightRange(child, parent);
     check(child.content.renderContent.hasTerrainHeightRange() &&
               std::abs(child.content.renderContent.terrainMinimumHeight() + 12.5) < 1e-9 &&
               std::abs(child.content.renderContent.terrainMaximumHeight() - 345.0) < 1e-9,
           "TileTerrainHeightRangePolicy: child inherits parent terrain height range");
-
     TilesetTile missingParent(TileKey{"test", 0, 1, 0}, Rectangle{});
     TilesetTile fallbackChild(TileKey{"test", 1, 2, 0}, Rectangle{}, &missingParent);
     TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
@@ -16163,20 +14643,17 @@ void testTileTerrainHeightRangePolicySetsAndInheritsRanges() {
                   TileBoundsMetrics::kDefaultTerrainMaximumHeight,
           "TileTerrainHeightRangePolicy: missing parent range falls back to the central default range");
 }
-
 void testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     SurfaceTileMesh mesh;
     mesh.hasHeightRange = true;
     mesh.minimumHeight = -250.0;
     mesh.maximumHeight = 900.0;
-
     DecodedHeightmap heightmap;
     heightmap.tileSize = 2;
     heightmap.heights = {1.0f, 2.0f, 3.0f, 4.0f};
     heightmap.minHeight = -10.0f;
     heightmap.maxHeight = 25.0f;
-
     TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
         tile,
         &mesh,
@@ -16185,7 +14662,6 @@ void testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges() {
               std::abs(tile.content.renderContent.terrainMinimumHeight() + 250.0) < 1e-9 &&
               std::abs(tile.content.renderContent.terrainMaximumHeight() - 900.0) < 1e-9,
           "TileTerrainHeightRangePolicy: quantized mesh range wins over heightmap range");
-
     mesh.hasHeightRange = false;
     TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
         tile,
@@ -16195,7 +14671,6 @@ void testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges() {
               std::abs(tile.content.renderContent.terrainMinimumHeight() + 10.0) < 1e-9 &&
               std::abs(tile.content.renderContent.terrainMaximumHeight() - 25.0) < 1e-9,
           "TileTerrainHeightRangePolicy: valid heightmap range is used when mesh lacks a range");
-
     heightmap.heights.clear();
     TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
         tile,
@@ -16208,7 +14683,6 @@ void testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges() {
                   TileBoundsMetrics::kDefaultTerrainMaximumHeight,
           "TileTerrainHeightRangePolicy: missing mesh and invalid heightmap fall back to the central default range");
 }
-
 void testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile loadingChild(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
@@ -16229,10 +14703,8 @@ void testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren() {
         readyGltfChild,
         3.0,
         4.0);
-
     TileTerrainHeightRangePolicy::setTerrainHeightRange(parent, -100.0, 200.0);
     TileTerrainHeightRangePolicy::inheritHeightRangeForUnreadyChildren(parent);
-
     check(loadingChild.content.renderContent.hasTerrainHeightRange() &&
               std::abs(loadingChild.content.renderContent.terrainMinimumHeight() + 100.0) < 1e-9 &&
               std::abs(loadingChild.content.renderContent.terrainMaximumHeight() - 200.0) < 1e-9 &&
@@ -16242,7 +14714,6 @@ void testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren() {
               readyGltfChild.content.renderContent.terrainMaximumHeight() == 4.0,
           "TileTerrainHeightRangePolicy: only children without ready render content inherit parent height range");
 }
-
 GltfPrimitive makeBuilderTestPrimitive() {
     GltfPrimitive primitive;
     SurfaceVertex first;
@@ -16257,7 +14728,6 @@ GltfPrimitive makeBuilderTestPrimitive() {
     primitive.indices = {0, 1};
     return primitive;
 }
-
 void testGltfRenderGeometryBuilderPacksVertexPayload() {
     GltfPrimitive primitive = makeBuilderTestPrimitive();
     primitive.vertexTexCoords[1] = {
@@ -16277,7 +14747,6 @@ void testGltfRenderGeometryBuilderPacksVertexPayload() {
             0.0f,
             1.0f},
         std::array<float, 4>{1.0f, 0.0f, 0.0f, -1.0f}};
-
     const Mat4 transform = Mat4::scale(Vec3(2.0, 1.0, 1.0));
     const Vec3 localOrigin(2.0, 1.0, 1.0);
     const std::vector<GltfGpuVertex> vertices =
@@ -16286,7 +14755,6 @@ void testGltfRenderGeometryBuilderPacksVertexPayload() {
             transform,
             localOrigin,
             false);
-
     check(sizeof(GltfGpuVertex) == 120 && vertices.size() == 2,
           "GltfRenderGeometryBuilder: vertex ABI remains the renderer layout");
     check(std::abs(vertices[0].pos[0] - 0.0f) < 1e-6f &&
@@ -16308,7 +14776,6 @@ void testGltfRenderGeometryBuilderPacksVertexPayload() {
               std::abs(vertices[0].tangent[3] - 1.0f) < 1e-6f,
           "GltfRenderGeometryBuilder: tangent uses model linear transform under non-uniform scale");
 }
-
 void testGltfRenderGeometryBuilderComputesOriginsAndInstances() {
     GltfPrimitive primitive = makeBuilderTestPrimitive();
     GltfInstance firstInstance;
@@ -16318,7 +14785,6 @@ void testGltfRenderGeometryBuilderComputesOriginsAndInstances() {
         Mat4::translation(Vec3(20.0, 0.0, 0.0)) *
         Mat4::scale(Vec3(2.0, 3.0, 4.0));
     primitive.instances = {firstInstance, secondInstance};
-
     GltfModel model;
     model.primitives.push_back(primitive);
     const Vec3 origin =
@@ -16327,7 +14793,6 @@ void testGltfRenderGeometryBuilderComputesOriginsAndInstances() {
               std::abs(origin.y() - 6.0) < 1e-9 &&
               std::abs(origin.z() - 10.0) < 1e-9,
           "GltfRenderGeometryBuilder: instanced local origin is weighted by primitive vertex count");
-
     const std::vector<GltfGpuVertex> localVertices =
         GltfRenderGeometryBuilder::buildVertices(
             primitive,
@@ -16337,7 +14802,6 @@ void testGltfRenderGeometryBuilderComputesOriginsAndInstances() {
               std::abs(localVertices[0].pos[1] - 2.0f) < 1e-6f &&
               std::abs(localVertices[0].pos[2] - 3.0f) < 1e-6f,
           "GltfRenderGeometryBuilder: instanced primitive vertices stay model-local");
-
     const std::vector<GltfGpuInstance> instances =
         GltfRenderGeometryBuilder::buildInstances(
             primitive,
@@ -16355,7 +14819,6 @@ void testGltfRenderGeometryBuilderComputesOriginsAndInstances() {
               std::abs(instances[1].normal[8] - 0.25f) < 1e-6f,
           "GltfRenderGeometryBuilder: instance payload packs RTC model matrix and inverse-transpose normal matrix");
 }
-
 void testGltfRenderGeometryBuilderClassifiesSplitResources() {
     GltfPrimitive primitive = makeBuilderTestPrimitive();
     GltfInstance firstInstance;
@@ -16363,20 +14826,17 @@ void testGltfRenderGeometryBuilderClassifiesSplitResources() {
     GltfInstance secondInstance;
     secondInstance.transform = Mat4::translation(Vec3(0.0, 0.0, 25.0));
     primitive.instances = {firstInstance, secondInstance};
-
     check(!GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
               primitive) &&
               GltfRenderGeometryBuilder::primitiveRenderResourceCount(
                   primitive) == 1u,
           "GltfRenderGeometryBuilder: opaque instances remain one render resource");
-
     primitive.alphaMode = GltfAlphaMode::Blend;
     check(GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
               primitive) &&
               GltfRenderGeometryBuilder::primitiveRenderResourceCount(
                   primitive) == 2u,
           "GltfRenderGeometryBuilder: BLEND instances split into per-instance resources");
-
     const Vec3 sortCenter =
         GltfRenderGeometryBuilder::primitiveSortCenterEcef(
             primitive,
@@ -16385,46 +14845,36 @@ void testGltfRenderGeometryBuilderClassifiesSplitResources() {
               std::abs(sortCenter.y() - 3.0) < 1e-9 &&
               std::abs(sortCenter.z() - 19.0) < 1e-9,
           "GltfRenderGeometryBuilder: instanced sort center averages transformed primitive centroids");
-
     primitive.vertices.clear();
     check(GltfRenderGeometryBuilder::primitiveRenderResourceCount(
               primitive) == 0u,
           "GltfRenderGeometryBuilder: empty primitives produce no render resources");
 }
-
 void testTileUnloadPolicyClassifiesQueueEligibility() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-
     tile.content.contentKind = TileContentKind::Unknown;
     tile.content.loadState = TileLoadState::Unloaded;
     check(!TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
           "TileUnloadPolicy: unloaded unknown content is not queued for unloading");
-
     tile.content.loadState = TileLoadState::Failed;
     check(TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
           "TileUnloadPolicy: failed unknown content is queue eligible like cesium-native");
-
     tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::ContentLoading;
     check(!TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
           "TileUnloadPolicy: loading content is not queued for unloading");
-
     tile.content.loadState = TileLoadState::Unloading;
     check(!TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
           "TileUnloadPolicy: already-unloading content is not newly queued");
-
     tile.content.loadState = TileLoadState::Done;
     check(TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
           "TileUnloadPolicy: loaded render content is queue eligible");
-
     tile.content.contentKind = TileContentKind::Empty;
     check(TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
           "TileUnloadPolicy: loaded empty content is queue eligible");
 }
-
 void testTileRenderReferenceStateClampsAndClearsReferences() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-
     check(tile.referenceCount() == 0,
           "TileRenderReferenceState: starts without references");
     tile.addReference();
@@ -16446,10 +14896,8 @@ void testTileRenderReferenceStateClampsAndClearsReferences() {
     check(tile.lastUsedFrame() == 42,
           "TileRenderReferenceState: owns last used render frame");
 }
-
 void testTileRasterOverlayStateOwnsMappingsAndMissingProjections() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-
     tile.rasterOverlayState.ensureMappingSlots(2);
     check(tile.rasterOverlayState.mappings().size() == 2,
           "TileRasterOverlayState: compatibility mappings share state slots");
@@ -16457,7 +14905,6 @@ void testTileRasterOverlayStateOwnsMappingsAndMissingProjections() {
               tile.rasterOverlayState.mappingAt(0) == nullptr &&
               !tile.rasterOverlayState.hasReadyMapping(0),
           "TileRasterOverlayState: exposes empty mapping slots without leaking storage");
-
     RasterMappedToTilesetTile& mapping =
         tile.rasterOverlayState.ensureMapping(0);
     check(tile.rasterOverlayState.mappings()[0].get() == &mapping &&
@@ -16468,32 +14915,26 @@ void testTileRasterOverlayStateOwnsMappingsAndMissingProjections() {
     check(tile.rasterOverlayState.missingProjections().size() == 1 &&
               tile.rasterOverlayState.missingProjectionCount() == 1,
           "TileRasterOverlayState: compatibility missing projections share state");
-
     tile.rasterOverlayState.clearMissingProjections();
     check(tile.rasterOverlayState.missingProjections().empty(),
           "TileRasterOverlayState: clears missing projection state");
-
     tile.rasterOverlayState.releaseAndClearReferences(nullptr);
     check(tile.rasterOverlayState.mappings().empty() &&
               tile.rasterOverlayState.missingProjections().empty(),
           "TileRasterOverlayState: release-and-clear owns transient overlay state lifetime");
 }
-
 void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
     provider.setFrameNumber(1);
-
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
                          TileKey{scheme->id(), 0, 0, 0}));
     tile.rasterOverlayState.ensureMappingSlots(2);
-
     RasterOverlayDetails details = makeProviderDetails(*scheme, tile.bounds);
     std::vector<RasterOverlayProjection> missingProjections;
     RecordingPrepareRendererResources prep;
-
     RasterMappedToTilesetTile& removedMapping =
         tile.rasterOverlayState.ensureMapping(1);
     removedMapping.update(
@@ -16520,16 +14961,13 @@ void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
         missingProjections,
         nullptr,
         1);
-
     check(removedMapping.getState() ==
               RasterMappedToTilesetTile::State::Attached &&
               prep.attachCount == 1,
           "TileRasterOverlayState: setup mapping is attached before resize");
     check(TileCacheMetrics::estimateTileBytes(tile) == 8 * 4 * 4,
           "TileRasterOverlayState: setup mapping contributes raster cache bytes");
-
     tile.rasterOverlayState.resizeMappingSlots(1, &prep);
-
     check(tile.rasterOverlayState.mappingCount() == 1 &&
               tile.rasterOverlayState.mappingAt(1) == nullptr,
           "TileRasterOverlayState: resize drops slots beyond active overlays");
@@ -16539,14 +14977,12 @@ void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
     check(TileCacheMetrics::estimateTileBytes(tile) == 0,
           "TileRasterOverlayState: resize releases removed raster tile references");
 }
-
 void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto scheme = TileScheme::createXYZWebMercator();
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
@@ -16557,14 +14993,12 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
     tile.content.renderContent.setMeshReady(true);
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
-
     Renderer renderer(nullptr);
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
     RenderContentRasterOverlayStateUpdater::update(
@@ -16595,7 +15029,6 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
           "RenderContentRasterOverlayStateUpdater: visible overlay promotes ready mapping");
     check(TileCacheMetrics::estimateTileBytes(tile) == 8 * 4 * 4,
           "RenderContentRasterOverlayStateUpdater: visible mapping contributes retained bytes");
-
     overlay->setVisible(false);
     RenderContentRasterOverlayStateUpdater::update(
         renderer,
@@ -16605,20 +15038,17 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
         nullptr,
         16.0,
         budget);
-
     check(tile.rasterOverlayState.mappingAt(0) == nullptr,
           "RenderContentRasterOverlayStateUpdater: invisible overlay releases stale mapping");
     check(TileCacheMetrics::estimateTileBytes(tile) == 0,
           "RenderContentRasterOverlayStateUpdater: invisible overlay releases raster tile references");
 }
-
 void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     TilesetTile tile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-45.0, -25.0, 45.0, 25.0));
@@ -16631,14 +15061,12 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
     tile.contentBoundingVolume =
         TileBoundingVolume::fromRegion(contentRectangle, -10.0, 120.0);
     tile.geometricError = 100.0;
-
     Renderer renderer(nullptr);
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
     const RenderContentRasterOverlayUpdateAction action =
@@ -16650,7 +15078,6 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
         nullptr,
         16.0,
         budget);
-
     RasterMappedToTilesetTile* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
@@ -16661,7 +15088,6 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
     const Rectangle tileWebMercator = projectRectangleSimple(
         WebMercatorProjection(Ellipsoid::WGS84()),
         tileRectangle);
-
     check(loadingTile &&
               loadingTile->getRectangle() == expectedContentWebMercator &&
               loadingTile->getRectangle() != tileWebMercator,
@@ -16671,14 +15097,12 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
     check(tile.rasterOverlayState.missingProjections().empty(),
           "RenderContentRasterOverlayStateUpdater: bounding-volume fallback does not report missing render-content projection");
 }
-
 void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto scheme = TileScheme::createXYZWebMercator();
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
@@ -16689,14 +15113,12 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     tile.content.renderContent.setMeshReady(true);
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
-
     Renderer renderer(nullptr);
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
     RenderContentRasterOverlayStateUpdater::update(
@@ -16714,7 +15136,6 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     check(loadingTile != nullptr,
           "RenderContentRasterOverlayStateUpdater: drawable-gated upsample maps loading raster");
     if (!mapped || !loadingTile) return;
-
     loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
@@ -16727,14 +15148,12 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
             nullptr,
             16.0,
             budget);
-
     check(mapped->getReadyTile() == loadingTile,
           "RenderContentRasterOverlayStateUpdater: no-texture more-detail raster is cover-ready");
     check(!tile.rasterOverlayState.hasDrawableReadyMapping(0),
           "RenderContentRasterOverlayStateUpdater: no-texture more-detail raster is not drawable");
     check(noTextureAction.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: ready more-detail raster requests upsample children before GPU texture");
-
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
     const RenderContentRasterOverlayUpdateAction drawableAction =
         RenderContentRasterOverlayStateUpdater::update(
@@ -16745,20 +15164,17 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
             nullptr,
             16.0,
             budget);
-
     check(tile.rasterOverlayState.hasDrawableReadyMapping(0),
           "RenderContentRasterOverlayStateUpdater: textured more-detail raster is drawable");
     check(drawableAction.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
 }
-
 void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
-
     auto scheme = TileScheme::createXYZWebMercator();
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
@@ -16769,14 +15185,12 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
         ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
     tile.content.renderContent.setMeshReady(true);
     tile.content.contentKind = TileContentKind::Render;
-
     Renderer renderer(nullptr);
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
     tile.content.loadState = TileLoadState::Done;
@@ -16795,12 +15209,10 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
     check(loadingTile != nullptr,
           "RenderContentRasterOverlayStateUpdater: done-state gate fixture maps loading raster");
     if (!mapped || !loadingTile) return;
-
     loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
-
     tile.content.loadState = TileLoadState::ContentLoaded;
     const RenderContentRasterOverlayUpdateAction contentLoadedAction =
         RenderContentRasterOverlayStateUpdater::update(
@@ -16813,7 +15225,6 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
             budget);
     check(!contentLoadedAction.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: ContentLoaded tile does not create raster upsample children before Done like cesium-native");
-
     tile.content.loadState = TileLoadState::FailedTemporarily;
     const RenderContentRasterOverlayUpdateAction retryLaterAction =
         RenderContentRasterOverlayStateUpdater::update(
@@ -16826,7 +15237,6 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
             budget);
     check(!retryLaterAction.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: RetryLater-preserved render content does not create raster children while latent terrain may still resolve");
-
     tile.content.loadState = TileLoadState::Done;
     const RenderContentRasterOverlayUpdateAction doneAction =
         RenderContentRasterOverlayStateUpdater::update(
@@ -16840,7 +15250,6 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
     check(doneAction.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: Done tile creates raster upsample children like cesium-native updateDoneState");
 }
-
 void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
     auto firstOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -16852,7 +15261,6 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay firstActivated(*firstOverlay);
     ActivatedRasterOverlay secondActivated(*secondOverlay);
-
     auto scheme = TileScheme::createXYZWebMercator();
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
@@ -16864,14 +15272,12 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
     tile.content.renderContent.setMeshReady(true);
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
-
     Renderer renderer(nullptr);
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     std::vector<ActivatedRasterOverlay*> overlays{
         &firstActivated,
         &secondActivated};
@@ -16884,7 +15290,6 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
         nullptr,
         16.0,
         budget);
-
     RasterMappedToTilesetTile* firstMapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterMappedToTilesetTile* secondMapped =
@@ -16896,14 +15301,12 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
     check(firstTile && secondTile,
           "RenderContentRasterOverlayStateUpdater: processing-order fixture maps both overlays");
     if (!firstTile || !secondTile) return;
-
     firstTile->setState(RasterOverlayTile::LoadState::Loaded);
     firstTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     secondTile->setState(RasterOverlayTile::LoadState::Loaded);
     secondTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Unknown);
-
     const std::vector<size_t> unknownFirstOrder{1, 0};
     const RenderContentRasterOverlayUpdateAction blocked =
         RenderContentRasterOverlayStateUpdater::update(
@@ -16916,7 +15319,6 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
             budget);
     check(!blocked.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: earlier Unknown in processing order blocks later more-detail upsample like cesium-native");
-
     const RenderContentRasterOverlayUpdateAction allowed =
         RenderContentRasterOverlayStateUpdater::update(
             renderer,
@@ -16929,7 +15331,6 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
     check(allowed.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: earlier Yes in processing order allows upsample before later Unknown like cesium-native");
 }
-
 void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -16937,20 +15338,17 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     DummyRenderDevice device;
-
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         std::move(scheme),
         {&activated},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "TileRasterUpsampledChildMaterializer: glTF root tile is created");
     if (!root) return;
-
     RasterOverlayTileProvider* provider = activated.ensureTileProvider(&device);
     if (!provider) return;
     auto model = makeWebMercatorQuadTerrainGltfModel(root->bounds);
@@ -16964,14 +15362,12 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
         GltfPrimitiveRenderResources{});
     root->markRenderContentDone();
     root->geometricError = 100.0;
-
     Renderer renderer(nullptr);
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
     RenderContentRasterOverlayStateUpdater::update(
@@ -16989,7 +15385,6 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     check(loadingTile != nullptr,
           "TileRasterUpsampledChildMaterializer: glTF raster mapping starts loading");
     if (!mapped || !loadingTile) return;
-
     loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
@@ -17003,10 +15398,8 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
             &device,
             16.0,
             budget);
-
     check(action.createRasterOverlayUpsampledChildren,
           "TileRasterUpsampledChildMaterializer: glTF more-detail raster requests children");
-
     TileRasterUpsampledChildMaterializer::materialize(
         *root,
         64.0,
@@ -17016,7 +15409,6 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     check(root->children.size() == 4,
           "TileRasterUpsampledChildMaterializer: glTF render content creates raster upsample children");
     if (root->children.size() != 4) return;
-
     TilesetTile* child = root->children[1];
     check(child &&
               child->content.isRasterDetailUpsample() &&
@@ -17028,14 +15420,12 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
                   child->bounds.center().second),
           "TileRasterUpsampledChildMaterializer: glTF child keeps overlay projection and subdivision bounds");
 }
-
 void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
     TilesetTile grandchild(TileKey{"test", 2, 0, 0}, Rectangle{}, &child);
     parent.children.push_back(&child);
     child.children.push_back(&grandchild);
-
     check(!TileUnloadPolicy::hasReferencedDescendant(parent),
           "TileUnloadPolicy: subtree starts without referenced descendants");
     grandchild.addReference();
@@ -17044,7 +15434,6 @@ void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
     check(TileUnloadPolicy::shouldDeferForReferences(parent, false),
           "TileUnloadPolicy: referenced descendant defers unload");
     grandchild.clearReferences();
-
     parent.content.contentKind = TileContentKind::External;
     check(TileUnloadPolicy::shouldDeferForReferences(parent, true),
           "TileUnloadPolicy: external subtree active work defers unload");
@@ -17052,18 +15441,15 @@ void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
     check(!TileUnloadPolicy::shouldDeferForReferences(parent, true),
           "TileUnloadPolicy: non-external active-work flag does not defer unload");
 }
-
 void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
     TilesetTile grandchild(TileKey{"test", 2, 0, 0}, Rectangle{}, &child);
     parent.children.push_back(&child);
-
     child.content.upsampledFromParent = true;
     child.content.loadState = TileLoadState::ContentLoading;
     check(TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent),
           "TileUnloadPolicy: detects direct loading upsampled child");
-
     child.content.upsampledFromParent = false;
     child.content.loadState = TileLoadState::Done;
     child.children.push_back(&grandchild);
@@ -17071,14 +15457,12 @@ void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
     grandchild.content.loadState = TileLoadState::ContentLoading;
     check(!TileUnloadPolicy::hasContentLoadingUpsampledDirectChild(parent),
           "TileUnloadPolicy: non-source ancestors are not protected by nested upsample work");
-
     parent.content.renderContent.setSurfaceDrawable(true);
     parent.selectionFrameState.completeRenderable = true;
     parent.selectionFrameState.renderable = true;
     parent.content.renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
     parent.content.renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
     TileUnloadPolicy::releaseMainThreadRenderResourcesForProtectedUnload(parent);
-
     check(!parent.content.renderContent.isSurfaceDrawable() &&
               !parent.selectionFrameState.completeRenderable &&
               !parent.selectionFrameState.renderable &&
@@ -17087,14 +15471,12 @@ void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
               !parent.content.renderContent.hasGltfPrimitiveResources(),
           "TileUnloadPolicy: protected unload releases main-thread render resources");
 }
-
 void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
     TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile failedParent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &failedParent);
     grandparent.children.push_back(&failedParent);
     failedParent.children.push_back(&child);
-
     grandparent.content.contentKind = TileContentKind::Render;
     grandparent.content.loadState = TileLoadState::Done;
     grandparent.content.renderContent.setMeshReady(true);
@@ -17102,7 +15484,6 @@ void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
     failedParent.content.loadState = TileLoadState::Failed;
     failedParent.content.contentKind = TileContentKind::Unknown;
     child.content.upsampledFromParent = true;
-
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17117,7 +15498,6 @@ void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
                       double) {
             queuedKeys.push_back(key);
         });
-
     check(prepared &&
               ensuredMeshes == 0 &&
               queuedKeys.empty() &&
@@ -17128,16 +15508,13 @@ void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
                   true) == &grandparent,
           "TileUpsampleSourcePreparer: permanent failed ancestor is not retried when an older source is ready");
 }
-
 void testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor() {
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     parent.content.loadState = TileLoadState::FailedTemporarily;
     parent.content.contentKind = TileContentKind::Unknown;
     child.content.upsampledFromParent = true;
-
     int ensuredMeshes = 0;
     std::vector<TileLoadRequest> queuedRequests;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17152,7 +15529,6 @@ void testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor() {
                           double priority) {
             queuedRequests.push_back(TileLoadRequest{key, group, priority});
         });
-
     check(!prepared &&
               ensuredMeshes == 0 &&
               queuedRequests.size() == 1 &&
@@ -17161,16 +15537,13 @@ void testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor() {
               queuedRequests.front().priority == 7.0,
           "TileUpsampleSourcePreparer: temporary failed ancestor is queued urgently for retry");
 }
-
 void testTileUpsampleSourcePreparerQueuesUnloadedAncestor() {
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     parent.content.loadState = TileLoadState::Unloaded;
     parent.content.contentKind = TileContentKind::Unknown;
     child.content.upsampledFromParent = true;
-
     int ensuredMeshes = 0;
     std::vector<TileLoadRequest> queuedRequests;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17185,7 +15558,6 @@ void testTileUpsampleSourcePreparerQueuesUnloadedAncestor() {
                           double priority) {
             queuedRequests.push_back(TileLoadRequest{key, group, priority});
         });
-
     check(!prepared &&
               ensuredMeshes == 0 &&
               queuedRequests.size() == 1 &&
@@ -17194,16 +15566,13 @@ void testTileUpsampleSourcePreparerQueuesUnloadedAncestor() {
               queuedRequests.front().priority == 9.0,
           "TileUpsampleSourcePreparer: unloaded ancestor is queued urgently before upsample work starts");
 }
-
 void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::ContentLoaded;
     child.content.upsampledFromParent = true;
-
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17222,7 +15591,6 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
                       double) {
             queuedKeys.push_back(key);
         });
-
     check(prepared &&
               ensuredMeshes == 1 &&
               queuedKeys.empty() &&
@@ -17234,16 +15602,13 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
                   true) == &parent,
           "TileUpsampleSourcePreparer: content-loaded ancestor is finalized before upsample request proceeds");
 }
-
 void testTileUpsampleSourcePreparerFinalizesContentLoadedGltfTerrainParent() {
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::ContentLoaded;
     child.content.markTerrainAvailabilityUpsample();
-
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17263,7 +15628,6 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedGltfTerrainParent() {
                       double) {
             queuedKeys.push_back(key);
         });
-
     check(prepared &&
               ensuredMeshes == 1 &&
               queuedKeys.empty() &&
@@ -17275,19 +15639,16 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedGltfTerrainParent() {
                   false) == &parent,
           "TileUpsampleSourcePreparer: content-loaded glTF terrain parent is finalized before direct terrain upsample proceeds");
 }
-
 void testTileUpsampleSourcePreparerDoesNotQueueGrandparentForGltfUpsample() {
     TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     grandparent.children.push_back(&parent);
     parent.children.push_back(&child);
-
     grandparent.content.loadState = TileLoadState::Unloaded;
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::ContentLoaded;
     child.content.markTerrainAvailabilityUpsample();
-
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17302,21 +15663,17 @@ void testTileUpsampleSourcePreparerDoesNotQueueGrandparentForGltfUpsample() {
                       double) {
             queuedKeys.push_back(key);
         });
-
     check(!prepared &&
               ensuredMeshes == 1 &&
               queuedKeys.empty(),
           "TileUpsampleSourcePreparer: glTF terrain upsample only prepares the direct parent and does not queue grandparents like cesium-native");
 }
-
 void testTileUpsampleSourcePreparerWaitsForLoadingAncestor() {
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     parent.content.loadState = TileLoadState::ContentLoading;
     child.content.upsampledFromParent = true;
-
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17331,25 +15688,21 @@ void testTileUpsampleSourcePreparerWaitsForLoadingAncestor() {
                       double) {
             queuedKeys.push_back(key);
         });
-
     check(!prepared &&
               ensuredMeshes == 0 &&
               queuedKeys.empty(),
           "TileUpsampleSourcePreparer: loading ancestor waits without duplicate queue or mesh work");
 }
-
 void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     parent.content.loadState = TileLoadState::Unloading;
     parent.content.contentKind = TileContentKind::Render;
     parent.content.renderContent.setMeshReady(true);
     parent.content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
     child.content.upsampledFromParent = true;
-
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17364,7 +15717,6 @@ void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
                       double) {
             queuedKeys.push_back(key);
         });
-
     check(!prepared &&
               ensuredMeshes == 0 &&
               queuedKeys.empty() &&
@@ -17376,14 +15728,12 @@ void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
                   true) == &parent,
           "TileUpsampleSourcePreparer: unloading ancestor is usable only for existing protected work and not for new upsample requests");
 }
-
 void testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent() {
     TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     grandparent.children.push_back(&parent);
     parent.children.push_back(&child);
-
     grandparent.content.contentKind = TileContentKind::Render;
     grandparent.content.loadState = TileLoadState::Done;
     grandparent.content.renderContent.setMeshReady(true);
@@ -17392,7 +15742,6 @@ void testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent() {
     parent.content.loadState = TileLoadState::Failed;
     parent.content.contentKind = TileContentKind::Unknown;
     child.content.markRasterDetailUpsample();
-
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17407,7 +15756,6 @@ void testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent() {
                       double) {
             queuedKeys.push_back(key);
         });
-
     check(!prepared &&
               ensuredMeshes == 0 &&
               queuedKeys.empty() &&
@@ -17419,14 +15767,12 @@ void testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent() {
                   true) == nullptr,
           "TileUpsampleSourcePreparer: raster-detail upsample does not use legacy ancestor SurfaceMesh sources");
 }
-
 void testTileUpsampleSourcePreparerRasterDetailAcceptsContentLoadedDirectGltfParent() {
     TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
     TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
     grandparent.children.push_back(&parent);
     parent.children.push_back(&child);
-
     grandparent.content.contentKind = TileContentKind::Render;
     grandparent.content.loadState = TileLoadState::Done;
     grandparent.content.renderContent.setMeshReady(true);
@@ -17438,7 +15784,6 @@ void testTileUpsampleSourcePreparerRasterDetailAcceptsContentLoadedDirectGltfPar
         std::make_unique<GltfModel>());
     parent.content.renderContent.setTerrainRenderContent(true);
     child.content.markRasterDetailUpsample();
-
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
@@ -17453,7 +15798,6 @@ void testTileUpsampleSourcePreparerRasterDetailAcceptsContentLoadedDirectGltfPar
                       double) {
             queuedKeys.push_back(key);
         });
-
     check(prepared &&
               ensuredMeshes == 0 &&
               queuedKeys.empty() &&
@@ -17465,7 +15809,6 @@ void testTileUpsampleSourcePreparerRasterDetailAcceptsContentLoadedDirectGltfPar
                   false) == &parent,
           "TileUpsampleSourcePreparer: raster-detail upsample accepts ContentLoaded direct glTF terrain parent");
 }
-
 void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
@@ -17480,7 +15823,6 @@ void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     tile.content.renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
     tile.selectionFrameState.completeRenderable = true;
     tile.selectionFrameState.renderable = true;
-
     TileUnloadPolicy::releaseRenderContentResources(tile);
     check(!tile.content.renderContent.hasSurfaceMesh() &&
               !tile.content.renderContent.hasGltfModel() &&
@@ -17491,7 +15833,6 @@ void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
                   SurfaceDrawableSource::None &&
               tile.content.renderContent.gltfTransform() == Mat4::identity(),
           "TileUnloadPolicy: render content resource release clears tile-owned resources");
-
     TileUnloadPolicy::markContentUnloaded(tile);
     check(tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::Unloaded &&
@@ -17499,28 +15840,23 @@ void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
               !tile.selectionFrameState.renderable,
           "TileUnloadPolicy: unloaded marker clears renderable state");
 }
-
 void testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.rasterOverlayState.mappings().push_back(std::make_unique<RasterMappedToTilesetTile>());
     tile.rasterOverlayState.mappings().push_back(nullptr);
-
     TileUnloadPolicy::releaseRasterOverlayReferences(tile, nullptr);
     check(tile.rasterOverlayState.mappings().size() == 2,
           "TileUnloadPolicy: release-only keeps raster overlay mapping slots");
-
     TileUnloadPolicy::releaseAndClearRasterOverlayReferences(tile, nullptr);
     check(tile.rasterOverlayState.mappings().empty(),
           "TileUnloadPolicy: release-and-clear removes raster overlay mappings");
 }
-
 void testTileUnloadPolicyFindsQueuedTilesByLoadState() {
     TileUnloadQueue queue;
     queue.pushBackIfAbsent("missing");
     queue.pushBackIfAbsent("null");
     queue.pushBackIfAbsent("loaded");
     queue.pushBackIfAbsent("unloading");
-
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     tiles["null"] = nullptr;
     auto loaded = std::make_unique<TilesetTile>(
@@ -17533,7 +15869,6 @@ void testTileUnloadPolicyFindsQueuedTilesByLoadState() {
         Rectangle{});
     unloading->content.loadState = TileLoadState::Unloading;
     tiles["unloading"] = std::move(unloading);
-
     check(TileUnloadPolicy::hasQueuedTileInState(
               queue,
               tiles,
@@ -17545,7 +15880,6 @@ void testTileUnloadPolicyFindsQueuedTilesByLoadState() {
               TileLoadState::Failed),
           "TileUnloadPolicy: queued state scan ignores missing, null, and nonmatching tiles");
 }
-
 void testTileSubtreeTraversalCollectsRootAndDescendants() {
     TilesetTile root(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile first(TileKey{"test", 1, 0, 0}, Rectangle{}, &root);
@@ -17555,7 +15889,6 @@ void testTileSubtreeTraversalCollectsRootAndDescendants() {
     root.children.push_back(nullptr);
     root.children.push_back(&second);
     first.children.push_back(&grandchild);
-
     const std::vector<const TilesetTile*> tiles =
         TileSubtreeTraversal::collectTiles(root);
     check(tiles.size() == 4 &&
@@ -17564,7 +15897,6 @@ void testTileSubtreeTraversalCollectsRootAndDescendants() {
               tiles[2] == &first &&
               tiles[3] == &grandchild,
           "TileSubtreeTraversal: collects root and non-null descendants");
-
     const std::vector<std::string> keys =
         TileSubtreeTraversal::collectCacheKeys(
             root,
@@ -17581,7 +15913,6 @@ void testTileSubtreeTraversalCollectsRootAndDescendants() {
               keys[3] == "test:2:3:1",
           "TileSubtreeTraversal: maps collected tiles to cache keys");
 }
-
 void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
     TilesetTile root(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &root);
@@ -17592,13 +15923,11 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
     };
     const std::string rootCacheKey = cacheKeyForTile(root.key);
     const std::string childCacheKey = cacheKeyForTile(child.key);
-
     check(!TileSubtreeWorkTracker::hasActiveContentWork(
               root,
               lifecycle,
               cacheKeyForTile),
           "TileSubtreeWorkTracker: empty lifecycle has no active subtree work");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
@@ -17613,7 +15942,6 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
               lifecycle,
               cacheKeyForTile),
           "TileSubtreeWorkTracker: descendant pending upload marks subtree active");
-
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 1;
@@ -17637,7 +15965,6 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
               lifecycle,
               cacheKeyForTile),
           "TileSubtreeWorkTracker: descendant claimed upload marks subtree active");
-
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -17653,7 +15980,6 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
               lifecycle,
               cacheKeyForTile),
           "TileSubtreeWorkTracker: root terminal result marks subtree active");
-
     lifecycle.cancelAndEraseCacheKey(rootCacheKey);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -17666,7 +15992,6 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
               lifecycle,
               cacheKeyForTile),
           "TileSubtreeWorkTracker: descendant terrain request marks subtree active");
-
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -17682,7 +16007,6 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
               lifecycle,
               cacheKeyForTile),
           "TileSubtreeWorkTracker: descendant terrain terminal result marks subtree active");
-
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
     check(!TileSubtreeWorkTracker::hasActiveContentWork(
               root,
@@ -17690,7 +16014,6 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
               cacheKeyForTile),
           "TileSubtreeWorkTracker: erased terrain work leaves subtree inactive");
 }
-
 void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
     TilesetTile root(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile first(TileKey{"test", 1, 0, 0}, Rectangle{}, &root);
@@ -17700,7 +16023,6 @@ void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
     root.children.push_back(nullptr);
     root.children.push_back(&second);
     first.children.push_back(&grandchild);
-
     const std::vector<TileSubtreeRemovalEntry> removalPlan =
         TileSubtreeTraversal::collectDescendantsForRemoval(
             root,
@@ -17710,7 +16032,6 @@ void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
                        std::to_string(key.x) + ":" +
                        std::to_string(key.y);
             });
-
     check(removalPlan.size() == 3 &&
               removalPlan[0].tile == &second &&
               removalPlan[0].cacheKey == "test:1:1:0" &&
@@ -17726,7 +16047,6 @@ void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
     check(removalPlan.rbegin()->tile == &grandchild,
           "TileSubtreeTraversal: reverse removal starts with deepest planned descendant");
 }
-
 void testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles() {
     check(!TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
               TileSelectionState::RenderedAndKicked,
@@ -17758,21 +16078,18 @@ void testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles() {
               TileRefine::Replace,
               true),
           "TileTraversalDetails: kicked REPLACE refined tile does not inherit rendered descendants like cesium-native");
-
     const TileTraversalDetails rendered =
         TileTraversalDetailsPolicy::forSingleTile(true, true);
     check(rendered.allAreRenderable &&
               rendered.anyWereRenderedLastFrame &&
               rendered.notYetRenderableCount == 0,
           "TileTraversalDetails: renderable single tile carries previous render");
-
     const TileTraversalDetails missing =
         TileTraversalDetailsPolicy::forSingleTile(false, true);
     check(!missing.allAreRenderable &&
               !missing.anyWereRenderedLastFrame &&
               missing.notYetRenderableCount == 1,
           "TileTraversalDetails: missing single tile blocks renderability");
-
     const TileTraversalDetails ignoredCulled =
         TileTraversalDetailsPolicy::forCulledTile(
             false,
@@ -17783,7 +16100,6 @@ void testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles() {
               !ignoredCulled.anyWereRenderedLastFrame &&
               ignoredCulled.notYetRenderableCount == 0,
           "TileTraversalDetails: non-forbidHoles culled tile is ignored");
-
     const TileTraversalDetails forbidHolesCulled =
         TileTraversalDetailsPolicy::forCulledTile(
             true,
@@ -17795,7 +16111,6 @@ void testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles() {
               forbidHolesCulled.notYetRenderableCount == 1,
           "TileTraversalDetails: forbidHoles culled replacement tile constrains traversal");
 }
-
 void testTileTraversalDetailsPolicyAggregatesChildren() {
     TileTraversalDetails aggregate;
     TileTraversalDetailsPolicy::mergeChild(
@@ -17804,13 +16119,11 @@ void testTileTraversalDetailsPolicyAggregatesChildren() {
     TileTraversalDetailsPolicy::mergeChild(
         aggregate,
         TileTraversalDetailsPolicy::forSingleTile(false, false));
-
     check(!aggregate.allAreRenderable &&
               aggregate.anyWereRenderedLastFrame &&
               aggregate.notYetRenderableCount == 1,
           "TileTraversalDetails: child aggregate combines renderability and history");
 }
-
 void testTileSelectionHistoryReadsPreviousSelectionTree() {
     TilesetTile root(
         TileKey{"test", 0, 0, 0},
@@ -17827,19 +16140,16 @@ void testTileSelectionHistoryReadsPreviousSelectionTree() {
         TileKey{"test", 2, 2, 0},
         Rectangle{0.0, -1.0, 0.5, -0.5},
         &refinedChild);
-
     root.children.push_back(nullptr);
     root.children.push_back(&renderedChild);
     root.children.push_back(&refinedChild);
     refinedChild.children.push_back(&grandchild);
-
     renderedChild.selectionFrameState.previousSelectionState =
         TileSelectionState::Rendered;
     refinedChild.selectionFrameState.previousSelectionState =
         TileSelectionState::RefinedAndKicked;
     grandchild.selectionFrameState.previousSelectionState =
         TileSelectionState::NotVisited;
-
     check(TileSelectionHistory::wasRenderedLastFrame(renderedChild),
           "TileSelectionHistory: rendered tile is detected");
     renderedChild.selectionFrameState.previousSelectionState =
@@ -17852,7 +16162,6 @@ void testTileSelectionHistoryReadsPreviousSelectionTree() {
           "TileSelectionHistory: kicked refined child is not a refined child result");
     check(!TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
           "TileSelectionHistory: kicked rendered child is not a rendered descendant result");
-
     renderedChild.selectionFrameState.previousSelectionState =
         TileSelectionState::NotVisited;
     refinedChild.selectionFrameState.previousSelectionState =
@@ -17863,13 +16172,11 @@ void testTileSelectionHistoryReadsPreviousSelectionTree() {
         TileSelectionState::Rendered;
     check(TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
           "TileSelectionHistory: deep rendered descendant is detected");
-
     grandchild.selectionFrameState.previousSelectionState =
         TileSelectionState::NotVisited;
     check(!TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
           "TileSelectionHistory: missing rendered descendants returns false");
 }
-
 void testTileSelectionChildTraversalVisitsNonNullChildrenAndAggregates() {
     TilesetTile parent(
         TileKey{"test", 0, 0, 0},
@@ -17885,7 +16192,6 @@ void testTileSelectionChildTraversalVisitsNonNullChildrenAndAggregates() {
     parent.children.push_back(&childA);
     parent.children.push_back(nullptr);
     parent.children.push_back(&childB);
-
     std::vector<TileKey> visited;
     const TileTraversalDetails details =
         TileSelectionChildTraversal::visitChildren(
@@ -17896,7 +16202,6 @@ void testTileSelectionChildTraversalVisitsNonNullChildrenAndAggregates() {
                     ? TileTraversalDetailsPolicy::forSingleTile(true, true)
                     : TileTraversalDetailsPolicy::forSingleTile(false, false);
             });
-
     check(visited.size() == 2 &&
               visited[0] == childA.key &&
               visited[1] == childB.key,
@@ -17906,7 +16211,6 @@ void testTileSelectionChildTraversalVisitsNonNullChildrenAndAggregates() {
               details.notYetRenderableCount == 1,
           "TileSelectionChildTraversal: aggregates child traversal details");
 }
-
 void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
     TileTraversalDetails missingDescendants;
     missingDescendants.allAreRenderable = false;
@@ -17934,7 +16238,6 @@ void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
               false,
               1.0f),
           "TileSelectionKickPolicy: non-renderable ancestor waits below descendant limit");
-
     TileTraversalDetails fadingDescendants;
     fadingDescendants.allAreRenderable = true;
     fadingDescendants.anyWereRenderedLastFrame = true;
@@ -17972,7 +16275,6 @@ void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
               true,
               0.5f),
           "TileSelectionKickPolicy: kicked rendered state does not trigger fade-in kick like cesium-native");
-
     TileTraversalDetails unconditionalMissing;
     unconditionalMissing.allAreRenderable = false;
     unconditionalMissing.anyWereRenderedLastFrame = true;
@@ -17989,13 +16291,11 @@ void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
               1.0f),
           "TileSelectionKickPolicy: unconditional refine still requires renderable ancestor or descendant limit like cesium-native");
 }
-
 void testTileSelectionKickPolicyRestoresChildQueueForParentLoad() {
     TileTraversalDetails tooManyMissing;
     tooManyMissing.allAreRenderable = false;
     tooManyMissing.anyWereRenderedLastFrame = false;
     tooManyMissing.notYetRenderableCount = 3;
-
     check(TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
               tooManyMissing,
               false,
@@ -18032,13 +16332,11 @@ void testTileSelectionKickPolicyRestoresChildQueueForParentLoad() {
               true),
           "TileSelectionKickPolicy: unconditional refine keeps child queue");
 }
-
 void testTileSelectionKickPolicyPlansPostKickActions() {
     TileTraversalDetails manyMissing;
     manyMissing.allAreRenderable = false;
     manyMissing.anyWereRenderedLastFrame = false;
     manyMissing.notYetRenderableCount = 3;
-
     const TileSelectionKickPlan restorePlan =
         TileSelectionKickPolicy::planAfterKick(
             manyMissing,
@@ -18054,7 +16352,6 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
               restorePlan.addRenderableReplacementToPlan &&
               !restorePlan.preloadParent,
           "TileSelectionKickPolicy: restoring child queue loads parent without preload duplicate");
-
     const TileSelectionKickPlan addPlan =
         TileSelectionKickPolicy::planAfterKick(
             manyMissing,
@@ -18069,7 +16366,6 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
     check(addPlan.restoreChildLoadQueueAndLoadParent &&
               !addPlan.addRenderableReplacementToPlan,
           "TileSelectionKickPolicy: ADD parent is not re-added as replacement");
-
     TileTraversalDetails fewMissing;
     fewMissing.allAreRenderable = false;
     fewMissing.anyWereRenderedLastFrame = false;
@@ -18089,7 +16385,6 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
               !preloadPlan.addRenderableReplacementToPlan &&
               preloadPlan.preloadParent,
           "TileSelectionKickPolicy: kicked parent preloads when no other load was queued");
-
     const TileSelectionKickPlan noPreloadPlan =
         TileSelectionKickPolicy::planAfterKick(
             fewMissing,
@@ -18103,7 +16398,6 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false);
     check(!noPreloadPlan.preloadParent,
           "TileSelectionKickPolicy: kicked parent skips preload when ancestor preloading is disabled");
-
     const TileSelectionKickPlan alreadyQueuedPlan =
         TileSelectionKickPolicy::planAfterKick(
             fewMissing,
@@ -18118,13 +16412,11 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
     check(!alreadyQueuedPlan.preloadParent,
           "TileSelectionKickPolicy: already queued parent skips preload");
 }
-
 void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
     TileTraversalDetails manyMissing;
     manyMissing.allAreRenderable = false;
     manyMissing.anyWereRenderedLastFrame = false;
     manyMissing.notYetRenderableCount = 3;
-
     const TileSelectionPostTraversalResult result =
         TileSelectionPostTraversalPolicy::evaluate(
             TileSelectionPostTraversalInput{
@@ -18143,7 +16435,6 @@ void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
                 false,
                 false,
                 true});
-
     check(result.shouldKick &&
               !result.wasReallyRenderedLastFrame &&
               result.kickPlan.restoreChildLoadQueueAndLoadParent &&
@@ -18151,12 +16442,10 @@ void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
               !result.kickPlan.preloadParent &&
               !result.preloadRefinedAncestor,
           "TileSelectionPostTraversalPolicy: kicked replacement restores queue and plans parent");
-
     TileTraversalDetails fewMissing;
     fewMissing.allAreRenderable = false;
     fewMissing.anyWereRenderedLastFrame = false;
     fewMissing.notYetRenderableCount = 1;
-
     const TileSelectionPostTraversalResult noPreloadResult =
         TileSelectionPostTraversalPolicy::evaluate(
             TileSelectionPostTraversalInput{
@@ -18179,11 +16468,9 @@ void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
               !noPreloadResult.kickPlan.preloadParent,
           "TileSelectionPostTraversalPolicy: kicked parent obeys disabled ancestor preload option");
 }
-
 void testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload() {
     const TileTraversalDetails ready =
         TileTraversalDetailsPolicy::forSingleTile(true, false);
-
     TileSelectionPostTraversalResult result =
         TileSelectionPostTraversalPolicy::evaluate(
             TileSelectionPostTraversalInput{
@@ -18205,7 +16492,6 @@ void testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload() {
     check(!result.shouldKick &&
               result.preloadRefinedAncestor,
           "TileSelectionPostTraversalPolicy: refined ancestor preloads when enabled");
-
     result = TileSelectionPostTraversalPolicy::evaluate(
         TileSelectionPostTraversalInput{
             ready,
@@ -18227,11 +16513,9 @@ void testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload() {
               !result.preloadRefinedAncestor,
           "TileSelectionPostTraversalPolicy: queued refined ancestor skips preload");
 }
-
 void testTileSelectionPostTraversalPolicyPlansFadingKickWithoutParentReload() {
     const TileTraversalDetails ready =
         TileTraversalDetailsPolicy::forSingleTile(true, true);
-
     const TileSelectionPostTraversalResult result =
         TileSelectionPostTraversalPolicy::evaluate(
             TileSelectionPostTraversalInput{
@@ -18257,7 +16541,6 @@ void testTileSelectionPostTraversalPolicyPlansFadingKickWithoutParentReload() {
               !result.kickPlan.preloadParent,
           "TileSelectionPostTraversalPolicy: fading ADD tile kicks without duplicate parent load");
 }
-
 void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
     TileSelectionPostTraversalResult result;
     result.shouldKick = true;
@@ -18265,7 +16548,6 @@ void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
     result.kickPlan.restoreChildLoadQueueAndLoadParent = true;
     result.kickPlan.addRenderableReplacementToPlan = true;
     result.kickPlan.preloadParent = true;
-
     TileSelectionPostTraversalCommitPlan plan =
         TileSelectionPostTraversalPolicy::commitPlan(result, false);
     check(plan.kickVisitedDescendants && plan.trimRenderedDescendants,
@@ -18278,11 +16560,9 @@ void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
           "TileSelectionPostTraversalPolicy: commit plan returns kicked single-tile details");
     check(!plan.markTileRefined,
           "TileSelectionPostTraversalPolicy: kicked commit plan does not mark refined");
-
     plan = TileSelectionPostTraversalPolicy::commitPlan(result, true);
     check(plan.restoreChildLoadQueue && !plan.queueParentNormal,
           "TileSelectionPostTraversalPolicy: already queued parent avoids duplicate normal load");
-
     result = TileSelectionPostTraversalResult{};
     result.preloadRefinedAncestor = true;
     plan = TileSelectionPostTraversalPolicy::commitPlan(result, false);
@@ -18290,25 +16570,20 @@ void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
           "TileSelectionPostTraversalPolicy: non-kick commit marks refined and preloads ancestor");
     check(!plan.returnSingleTileDetails && !plan.kickVisitedDescendants,
           "TileSelectionPostTraversalPolicy: non-kick commit keeps traversal details");
-
     result.preloadRefinedAncestor = false;
     plan = TileSelectionPostTraversalPolicy::commitPlan(result, false);
     check(plan.markTileRefined && !plan.queueParentPreload,
           "TileSelectionPostTraversalPolicy: non-kick commit skips preload when policy declines");
 }
-
 void testTileSelectionPostTraversalCommitterReturnsParentDetailsAfterKick() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
     parent.children.push_back(&child);
-
     TilePlan tilePlan;
     tilePlan.visibleTiles.push_back(parent.key);
     tilePlan.visibleTiles.push_back(child.key);
-
     TileLoadQueue loadQueue;
     loadQueue.queue(child.key, TileLoadPriorityGroup::Normal, 2.0);
-
     TileSelectionCounters counters;
     TileSelectionPostTraversalCommitPlan plan;
     plan.kickVisitedDescendants = true;
@@ -18317,7 +16592,6 @@ void testTileSelectionPostTraversalCommitterReturnsParentDetailsAfterKick() {
     plan.restoreChildLoadQueue = true;
     plan.queueParentNormal = true;
     plan.wasReallyRenderedLastFrame = false;
-
     bool kicked = false;
     std::vector<TileLoadRequest> queuedRequests;
     const TileSelectionPostTraversalCommitResult result =
@@ -18342,7 +16616,6 @@ void testTileSelectionPostTraversalCommitterReturnsParentDetailsAfterKick() {
                 queuedRequests.push_back(TileLoadRequest{key, group, priority});
             },
             [](TilesetTile&, double, bool, double) {});
-
     check(kicked &&
               tilePlan.visibleTiles.size() == 1 &&
               tilePlan.visibleTiles.front() == parent.key &&
@@ -18357,12 +16630,10 @@ void testTileSelectionPostTraversalCommitterReturnsParentDetailsAfterKick() {
               result.details.notYetRenderableCount == 1,
           "TileSelectionPostTraversalCommitter: kicked missing parent returns single-tile details like cesium-native");
 }
-
 void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
     const std::optional<TileBoundingVolume> noVolume;
     check(!TileViewerRequestVolumePolicy::hasRequestVolume(noVolume),
           "TileViewerRequestVolumePolicy: missing volume imposes no gate");
-
     const TileBoundingVolume sphere =
         TileBoundingVolume::fromSphere(Vec3(10.0, 0.0, 0.0), 5.0);
     const std::optional<TileBoundingVolume> volume = sphere;
@@ -18376,7 +16647,6 @@ void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
               sphere,
               Vec3(20.1, 0.0, 0.0)),
           "TileViewerRequestVolumePolicy: camera outside request volume is rejected");
-
     const TileBoundingVolume box =
         TileBoundingVolume::fromBox(
             Vec3::zero(),
@@ -18391,7 +16661,6 @@ void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
               box,
               Vec3(1.0 + 1e-12, 0.0, 0.0)),
           "TileViewerRequestVolumePolicy: box containment is not distance-tolerance inflated");
-
     std::vector<SelectorView> views(2);
     views[0].position = Vec3(20.1, 0.0, 0.0);
     views[1].position = Vec3(12.0, 0.0, 0.0);
@@ -18406,7 +16675,6 @@ void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
     check(!TileViewerRequestVolumePolicy::allowsAnyView(volume, views),
           "TileViewerRequestVolumePolicy: present volume rejects empty selector views");
 }
-
 void testTileSelectionCullingPolicyChoosesChildrenBoundsLikeNative() {
     check(TileSelectionCullingPolicy::shouldUseChildrenBounds(
               TileRefine::Replace,
@@ -18429,7 +16697,6 @@ void testTileSelectionCullingPolicyChoosesChildrenBoundsLikeNative() {
               true),
           "TileSelectionCullingPolicy: unconditional child disables child bounds");
 }
-
 void testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates() {
     const TileSelectionCullResult outsideNoCull =
         TileSelectionCullingPolicy::evaluateFrustum(false, false);
@@ -18437,14 +16704,12 @@ void testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates() {
               outsideNoCull.shouldVisit &&
               outsideNoCull.reason == TileSelectionCullReason::Frustum,
           "TileSelectionCullingPolicy: disabled frustum culling still marks culled visit");
-
     const TileSelectionCullResult outsideCull =
         TileSelectionCullingPolicy::evaluateFrustum(false, true);
     check(outsideCull.culled &&
               !outsideCull.shouldVisit &&
               outsideCull.reason == TileSelectionCullReason::Frustum,
           "TileSelectionCullingPolicy: enabled frustum culling stops visit");
-
     const TileSelectionCullResult fogNoCull =
         TileSelectionCullingPolicy::evaluateFog(
             TileSelectionCullResult{},
@@ -18454,7 +16719,6 @@ void testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates() {
               fogNoCull.shouldVisit &&
               fogNoCull.reason == TileSelectionCullReason::Fog,
           "TileSelectionCullingPolicy: disabled fog culling still marks culled visit");
-
     const TileSelectionCullResult fogCull =
         TileSelectionCullingPolicy::evaluateFog(
             TileSelectionCullResult{},
@@ -18464,12 +16728,10 @@ void testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates() {
               !fogCull.shouldVisit &&
               fogCull.reason == TileSelectionCullReason::Fog,
           "TileSelectionCullingPolicy: enabled fog culling stops visit");
-
     const TileSelectionCullResult frustumStoppedFog =
         TileSelectionCullingPolicy::evaluateFog(outsideCull, false, true);
     check(frustumStoppedFog.reason == TileSelectionCullReason::Frustum,
           "TileSelectionCullingPolicy: fog does not replace prior frustum stop");
-
     const TileSelectionCullResult frustumVisitedFog =
         TileSelectionCullingPolicy::evaluateFog(outsideNoCull, false, true);
     check(frustumVisitedFog.culled &&
@@ -18477,7 +16739,6 @@ void testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates() {
               frustumVisitedFog.reason == TileSelectionCullReason::Frustum,
           "TileSelectionCullingPolicy: fog does not replace disabled-frustum cull");
 }
-
 void testTileSelectionCullingPolicyChecksAnyViewFogVisibility() {
     check(TileSelectionCullingPolicy::anyViewVisibleInFog(
               {1.0, 1.0e200},
@@ -18492,7 +16753,6 @@ void testTileSelectionCullingPolicyChecksAnyViewFogVisibility() {
               {}),
           "TileSelectionCullingPolicy: missing fog density has no visible view");
 }
-
 void testTileSelectionCullingPolicyPlansCulledTileLoads() {
     TileSelectionCullLoadPlan plan =
         TileSelectionCullingPolicy::planCulledTileLoad(
@@ -18501,28 +16761,24 @@ void testTileSelectionCullingPolicyPlansCulledTileLoads() {
             TileRefine::Replace);
     check(!plan.queueLoad,
           "TileSelectionCullingPolicy: culled tile is not loaded by default");
-
     plan = TileSelectionCullingPolicy::planCulledTileLoad(
         true,
         false,
         TileRefine::Replace);
     check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Preload,
           "TileSelectionCullingPolicy: preload siblings queues culled tile as preload");
-
     plan = TileSelectionCullingPolicy::planCulledTileLoad(
         false,
         true,
         TileRefine::Add);
     check(!plan.queueLoad,
           "TileSelectionCullingPolicy: forbid holes does not queue ADD culled tile");
-
     plan = TileSelectionCullingPolicy::planCulledTileLoad(
         false,
         true,
         TileRefine::Replace);
     check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Normal,
           "TileSelectionCullingPolicy: forbid holes queues REPLACE culled tile normally");
-
     plan = TileSelectionCullingPolicy::planCulledTileLoad(
         true,
         true,
@@ -18530,7 +16786,6 @@ void testTileSelectionCullingPolicyPlansCulledTileLoads() {
     check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Normal,
           "TileSelectionCullingPolicy: forbid holes takes priority over sibling preload");
 }
-
 void testTileSelectionCullingPolicyEvaluatesScreenSpaceError() {
     check(TileSelectionCullingPolicy::meetsScreenSpaceError(
               false,
@@ -18568,13 +16823,11 @@ void testTileSelectionCullingPolicyEvaluatesScreenSpaceError() {
               8.0),
           "TileSelectionCullingPolicy: culled tile uses strict culled SSE threshold");
 }
-
 void testTileSelectionVisitPreparationCombinesSelectionInputs() {
     TilesetTile tile(
         TileKey{"test", 0, 0, 0},
         Rectangle{-0.25, -0.25, 0.25, 0.25});
     tile.geometricError = 10.0;
-
     SelectorView view;
     view.position = TileBoundsMetrics::tileBoundsCenter(tile.bounds);
     view.direction = Vec3(1.0, 0.0, 0.0);
@@ -18585,7 +16838,6 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
         false,
         0.0,
         0.0};
-
     TileSelectionVisitPreparationResult result =
         TileSelectionVisitPreparation::prepare(
             tile,
@@ -18607,7 +16859,6 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
     check(result.culledLoadPlan.queueLoad &&
               result.culledLoadPlan.group == TileLoadPriorityGroup::Preload,
           "TileSelectionVisitPreparation: preload siblings returns preload plan");
-
     result = TileSelectionVisitPreparation::prepare(
         tile,
         std::vector<SelectorView>{SelectorView{
@@ -18633,7 +16884,6 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
     check(result.culledLoadPlan.queueLoad &&
               result.culledLoadPlan.group == TileLoadPriorityGroup::Normal,
           "TileSelectionVisitPreparation: forbid holes returns normal load plan");
-
     tile.viewerRequestVolume =
         TileBoundingVolume::fromSphere(Vec3(1000.0, 0.0, 0.0), 10.0);
     result = TileSelectionVisitPreparation::prepare(
@@ -18651,7 +16901,6 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
             64.0});
     check(!result.viewerRequestVolumeAllowed,
           "TileSelectionVisitPreparation: outside viewer request volume is rejected");
-
     tile.viewerRequestVolume.reset();
     tile.geometricError = 1.0e20;
     result = TileSelectionVisitPreparation::prepare(
@@ -18677,7 +16926,6 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
               result.inputSummary.screenSpaceError > 0.001 &&
               !result.meetsScreenSpaceError,
           "TileSelectionVisitPreparation: culled tile uses culled SSE threshold");
-
     tile.geometricError = 10.0;
     tile.unconditionallyRefine = true;
     result = TileSelectionVisitPreparation::prepare(
@@ -18696,7 +16944,6 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
     check(result.cullResult.culled &&
               result.cullResult.shouldVisit,
           "TileSelectionVisitPreparation: culled unconditionally refined root is still visited like cesium-native");
-
     TilesetTile child(
         TileKey{"test", 1, 0, 0},
         Rectangle{-0.25, -0.25, 0.0, 0.0},
@@ -18719,7 +16966,6 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
     check(result.cullResult.culled &&
               result.cullResult.shouldVisit,
           "TileSelectionVisitPreparation: forbid-holes replace child keeps unconditionally refined culled visit");
-
     child.refine = TileRefine::Add;
     result = TileSelectionVisitPreparation::prepare(
         child,
@@ -18738,7 +16984,6 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
               !result.cullResult.shouldVisit,
           "TileSelectionVisitPreparation: ADD unconditionally refined culled child still exits");
 }
-
 void testTileSelectionVisitPreparationPlansEarlyExitActions() {
     TileSelectionVisitPreparationResult preparation;
     preparation.cullResult.culled = true;
@@ -18746,7 +16991,6 @@ void testTileSelectionVisitPreparationPlansEarlyExitActions() {
     preparation.cullResult.reason = TileSelectionCullReason::Frustum;
     preparation.culledLoadPlan.queueLoad = true;
     preparation.culledLoadPlan.group = TileLoadPriorityGroup::Normal;
-
     TileSelectionVisitEarlyExitPlan plan =
         TileSelectionVisitPreparation::earlyExitPlan(preparation);
     check(plan.shouldExit &&
@@ -18758,7 +17002,6 @@ void testTileSelectionVisitPreparationPlansEarlyExitActions() {
               plan.queueCulledLoad &&
               plan.loadGroup == TileLoadPriorityGroup::Normal,
           "TileSelectionVisitPreparation: frustum stop plans culled load");
-
     preparation.cullResult.reason = TileSelectionCullReason::Fog;
     preparation.culledLoadPlan.queueLoad = false;
     plan = TileSelectionVisitPreparation::earlyExitPlan(preparation);
@@ -18766,7 +17009,6 @@ void testTileSelectionVisitPreparationPlansEarlyExitActions() {
               plan.counter == TileSelectionVisitEarlyExitCounter::FogCulled &&
               !plan.queueCulledLoad,
           "TileSelectionVisitPreparation: fog stop counts fog without load plan");
-
     preparation = TileSelectionVisitPreparationResult{};
     preparation.viewerRequestVolumeAllowed = false;
     plan = TileSelectionVisitPreparation::earlyExitPlan(preparation);
@@ -18777,14 +17019,12 @@ void testTileSelectionVisitPreparationPlansEarlyExitActions() {
               plan.resetScreenSpaceError &&
               plan.counter == TileSelectionVisitEarlyExitCounter::None,
           "TileSelectionVisitPreparation: viewer request volume rejection resets SSE");
-
     preparation = TileSelectionVisitPreparationResult{};
     plan = TileSelectionVisitPreparation::earlyExitPlan(preparation);
     check(!plan.shouldExit &&
               plan.reason == TileSelectionVisitEarlyExitReason::None,
           "TileSelectionVisitPreparation: visitable tile has no early exit");
 }
-
 void testTileSelectionVisitPreparationBuildsOutcomePlan() {
     TileSelectionVisitPreparationResult preparation;
     preparation.cullResult.culled = true;
@@ -18792,7 +17032,6 @@ void testTileSelectionVisitPreparationBuildsOutcomePlan() {
     preparation.cullResult.reason = TileSelectionCullReason::Frustum;
     preparation.culledLoadPlan.queueLoad = true;
     preparation.culledLoadPlan.group = TileLoadPriorityGroup::Normal;
-
     TileSelectionVisitOutcomePlan outcome =
         TileSelectionVisitPreparation::outcomePlan(preparation);
     check(outcome.shouldExit &&
@@ -18808,7 +17047,6 @@ void testTileSelectionVisitPreparationBuildsOutcomePlan() {
           "TileSelectionVisitPreparation: outcome plans culled load and details");
     check(!outcome.countCulledVisited,
           "TileSelectionVisitPreparation: early exit does not count visitable culled tile");
-
     preparation.cullResult.reason = TileSelectionCullReason::Fog;
     preparation.culledLoadPlan.queueLoad = false;
     outcome = TileSelectionVisitPreparation::outcomePlan(preparation);
@@ -18817,7 +17055,6 @@ void testTileSelectionVisitPreparationBuildsOutcomePlan() {
               !outcome.queueLoad &&
               outcome.returnCulledTraversalDetails,
           "TileSelectionVisitPreparation: outcome exits and counts fog cull");
-
     preparation = TileSelectionVisitPreparationResult{};
     preparation.viewerRequestVolumeAllowed = false;
     outcome = TileSelectionVisitPreparation::outcomePlan(preparation);
@@ -18829,7 +17066,6 @@ void testTileSelectionVisitPreparationBuildsOutcomePlan() {
               !outcome.queueLoad &&
               !outcome.returnCulledTraversalDetails,
           "TileSelectionVisitPreparation: outcome handles viewer request volume rejection");
-
     preparation = TileSelectionVisitPreparationResult{};
     preparation.cullResult.culled = true;
     preparation.cullResult.shouldVisit = true;
@@ -18838,14 +17074,12 @@ void testTileSelectionVisitPreparationBuildsOutcomePlan() {
               outcome.countCulledVisited &&
               !outcome.markTileCulled,
           "TileSelectionVisitPreparation: outcome counts culled tiles that still visit");
-
     preparation.cullResult.culled = false;
     outcome = TileSelectionVisitPreparation::outcomePlan(preparation);
     check(!outcome.shouldExit &&
               !outcome.countCulledVisited,
           "TileSelectionVisitPreparation: visible outcome continues without counters");
 }
-
 void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
     TileSelectionTraversalCounterPlan counters =
         TileSelectionTraversalCounterPolicy::planVisitAccepted();
@@ -18854,7 +17088,6 @@ void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
               counters.fogCulled == 0 &&
               counters.culledVisited == 0,
           "TileSelectionTraversalCounterPolicy: accepted visit increments only visited");
-
     TileSelectionVisitOutcomePlan outcome;
     outcome.shouldExit = true;
     outcome.counter = TileSelectionVisitEarlyExitCounter::FrustumCulled;
@@ -18863,14 +17096,12 @@ void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
               counters.fogCulled == 0 &&
               counters.culledVisited == 0,
           "TileSelectionTraversalCounterPolicy: frustum early exit increments frustum culled");
-
     outcome.counter = TileSelectionVisitEarlyExitCounter::FogCulled;
     counters = TileSelectionTraversalCounterPolicy::planOutcome(outcome);
     check(counters.frustumCulled == 0 &&
               counters.fogCulled == 1 &&
               counters.culledVisited == 0,
           "TileSelectionTraversalCounterPolicy: fog early exit increments fog culled");
-
     outcome = TileSelectionVisitOutcomePlan{};
     outcome.countCulledVisited = true;
     counters = TileSelectionTraversalCounterPolicy::planOutcome(outcome);
@@ -18878,33 +17109,28 @@ void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
               counters.fogCulled == 0 &&
               counters.culledVisited == 1,
           "TileSelectionTraversalCounterPolicy: visitable culled tile increments culled visited");
-
     outcome = TileSelectionVisitOutcomePlan{};
     counters = TileSelectionTraversalCounterPolicy::planOutcome(outcome);
     check(counters.frustumCulled == 0 &&
               counters.fogCulled == 0 &&
               counters.culledVisited == 0,
           "TileSelectionTraversalCounterPolicy: visible tile adds no outcome counters");
-
     TileSelectionRefineFlowResult refineFlow;
     refineFlow.counter = TileSelectionRefineFlowCounter::Occluded;
     counters = TileSelectionTraversalCounterPolicy::planRefineFlow(refineFlow);
     check(counters.occluded == 1 &&
               counters.waitingForOcclusion == 0,
           "TileSelectionTraversalCounterPolicy: occluded refine flow increments occluded");
-
     refineFlow.counter = TileSelectionRefineFlowCounter::WaitingForOcclusion;
     counters = TileSelectionTraversalCounterPolicy::planRefineFlow(refineFlow);
     check(counters.occluded == 0 &&
               counters.waitingForOcclusion == 1,
           "TileSelectionTraversalCounterPolicy: unavailable occlusion increments waiting");
-
     refineFlow.counter = TileSelectionRefineFlowCounter::None;
     counters = TileSelectionTraversalCounterPolicy::planRefineFlow(refineFlow);
     check(counters.occluded == 0 &&
               counters.waitingForOcclusion == 0,
           "TileSelectionTraversalCounterPolicy: refine flow without occlusion counter adds none");
-
     TileSelectionPostTraversalCommitPlan commitPlan;
     commitPlan.trimRenderedDescendants = true;
     counters =
@@ -18912,7 +17138,6 @@ void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
             commitPlan);
     check(counters.kicked == 1,
           "TileSelectionTraversalCounterPolicy: trim commit increments kicked counter");
-
     commitPlan.trimRenderedDescendants = false;
     counters =
         TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
@@ -18920,7 +17145,6 @@ void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
     check(counters.kicked == 0,
           "TileSelectionTraversalCounterPolicy: non-trim commit does not increment kicked counter");
 }
-
 void testTileSelectionRefinementPolicyInitialDecision() {
     TileSelectionRefineDecision decision =
         TileSelectionRefinementPolicy::initialRefineDecision(
@@ -18929,14 +17153,12 @@ void testTileSelectionRefinementPolicyInitialDecision() {
             false);
     check(decision.refine && !decision.meetsSse,
           "TileSelectionRefinementPolicy: unmet SSE starts refinement");
-
     decision = TileSelectionRefinementPolicy::initialRefineDecision(
         true,
         true,
         false);
     check(decision.refine && decision.meetsSse,
           "TileSelectionRefinementPolicy: unconditional refine overrides SSE");
-
     decision = TileSelectionRefinementPolicy::initialRefineDecision(
         false,
         false,
@@ -18944,7 +17166,6 @@ void testTileSelectionRefinementPolicyInitialDecision() {
     check(!decision.refine && !decision.meetsSse,
           "TileSelectionRefinementPolicy: ancestor meeting SSE stops SSE refine");
 }
-
 void testTileSelectionRefinementPolicyOcclusionGate() {
     check(TileSelectionRefinementPolicy::shouldCheckOcclusion(
               true,
@@ -18989,7 +17210,6 @@ void testTileSelectionRefinementPolicyOcclusionGate() {
               false),
           "TileSelectionRefinementPolicy: disabled occlusion does not check");
 }
-
 void testTileSelectionRefinementPolicyOcclusionAction() {
     check(TileSelectionRefinementPolicy::occlusionAction(
               TileOcclusionState::Occluded,
@@ -19021,7 +17241,6 @@ void testTileSelectionRefinementPolicyOcclusionAction() {
               TileSelectionState::Rendered) ==
               TileSelectionOcclusionAction::None,
           "TileSelectionRefinementPolicy: visible tile keeps refinement");
-
     const TileSelectionRefineDecision stopped =
         TileSelectionRefinementPolicy::applyOcclusionAction(
             TileSelectionRefineDecision{true, false},
@@ -19029,7 +17248,6 @@ void testTileSelectionRefinementPolicyOcclusionAction() {
     check(!stopped.refine && stopped.meetsSse,
           "TileSelectionRefinementPolicy: stop action marks tile as meeting SSE");
 }
-
 void testTileSelectionRefinementPolicyContinueDeeper() {
     TileSelectionContinueDeeperDecision decision =
         TileSelectionRefinementPolicy::continueDeeperDecision(
@@ -19040,7 +17258,6 @@ void testTileSelectionRefinementPolicyContinueDeeper() {
     check(decision.shouldContinue && decision.ancestorMeetsSse &&
               decision.queueUrgent,
           "TileSelectionRefinementPolicy: missing previously refined tile continues deeper urgently");
-
     decision = TileSelectionRefinementPolicy::continueDeeperDecision(
         false,
         TileSelectionState::Refined,
@@ -19049,7 +17266,6 @@ void testTileSelectionRefinementPolicyContinueDeeper() {
     check(decision.shouldContinue && decision.ancestorMeetsSse &&
               !decision.queueUrgent,
           "TileSelectionRefinementPolicy: existing ancestor SSE avoids urgent duplicate");
-
     decision = TileSelectionRefinementPolicy::continueDeeperDecision(
         false,
         TileSelectionState::Rendered,
@@ -19057,7 +17273,6 @@ void testTileSelectionRefinementPolicyContinueDeeper() {
         false);
     check(!decision.shouldContinue,
           "TileSelectionRefinementPolicy: only previous refinement continues deeper");
-
     decision = TileSelectionRefinementPolicy::continueDeeperDecision(
         false,
         TileSelectionState::Refined,
@@ -19065,7 +17280,6 @@ void testTileSelectionRefinementPolicyContinueDeeper() {
         false);
     check(!decision.shouldContinue,
           "TileSelectionRefinementPolicy: renderable tile does not continue deeper");
-
     decision = TileSelectionRefinementPolicy::continueDeeperDecision(
         false,
         TileSelectionState::RefinedAndKicked,
@@ -19075,7 +17289,6 @@ void testTileSelectionRefinementPolicyContinueDeeper() {
               decision.queueUrgent,
           "TileSelectionRefinementPolicy: kicked refined tile continues deeper using original refined state");
 }
-
 void testTileSelectionRefinementPolicyPreloadRefinedAncestor() {
     check(TileSelectionRefinementPolicy::shouldPreloadRefinedAncestor(
               true,
@@ -19090,28 +17303,24 @@ void testTileSelectionRefinementPolicyPreloadRefinedAncestor() {
               true),
           "TileSelectionRefinementPolicy: already queued refined ancestor is not duplicated");
 }
-
 void testTileSelectionRefineFlowPolicyAppliesOcclusionAndCounters() {
     const TileSelectionRefineFlowOptions options{true, true};
     TileSelectionRefineFlowInput input;
     input.meetsScreenSpaceError = false;
     input.renderable = true;
     input.previousSelectionState = TileSelectionState::Rendered;
-
     TileSelectionRefineFlowResult result =
         TileSelectionRefineFlowPolicy::evaluate(input, options);
     check(result.shouldCheckOcclusion &&
               result.refine &&
               !result.meetsScreenSpaceError,
           "TileSelectionRefineFlowPolicy: refining tile requests occlusion");
-
     input.occlusion = TileOcclusionState::Occluded;
     result = TileSelectionRefineFlowPolicy::evaluate(input, options);
     check(!result.refine &&
               result.meetsScreenSpaceError &&
               result.counter == TileSelectionRefineFlowCounter::Occluded,
           "TileSelectionRefineFlowPolicy: occluded tile stops refinement and counts occlusion");
-
     input.occlusion = TileOcclusionState::OcclusionUnavailable;
     result = TileSelectionRefineFlowPolicy::evaluate(input, options);
     check(!result.refine &&
@@ -19120,7 +17329,6 @@ void testTileSelectionRefineFlowPolicyAppliesOcclusionAndCounters() {
                   TileSelectionRefineFlowCounter::WaitingForOcclusion,
           "TileSelectionRefineFlowPolicy: unavailable occlusion can delay refinement");
 }
-
 void testTileSelectionRefineFlowPolicySkipsOcclusionForNativeCases() {
     TileSelectionRefineFlowInput input;
     input.unconditionallyRefine = true;
@@ -19134,7 +17342,6 @@ void testTileSelectionRefineFlowPolicySkipsOcclusionForNativeCases() {
               result.meetsScreenSpaceError &&
               !result.shouldCheckOcclusion,
           "TileSelectionRefineFlowPolicy: unconditional refine skips occlusion");
-
     input = TileSelectionRefineFlowInput{};
     input.meetsScreenSpaceError = false;
     input.renderable = true;
@@ -19145,7 +17352,6 @@ void testTileSelectionRefineFlowPolicySkipsOcclusionForNativeCases() {
         TileSelectionRefineFlowOptions{true, true});
     check(result.refine && !result.shouldCheckOcclusion,
           "TileSelectionRefineFlowPolicy: previously refined child skips occlusion");
-
     input.childWasRefinedLastFrame = false;
     result = TileSelectionRefineFlowPolicy::evaluate(
         input,
@@ -19153,14 +17359,12 @@ void testTileSelectionRefineFlowPolicySkipsOcclusionForNativeCases() {
     check(result.refine && !result.shouldCheckOcclusion,
           "TileSelectionRefineFlowPolicy: disabled occlusion skips checks");
 }
-
 void testTileSelectionRefineFlowPolicyContinuesDeeperForPreviousRefinement() {
     TileSelectionRefineFlowInput input;
     input.meetsScreenSpaceError = true;
     input.ancestorMeetsSse = false;
     input.renderable = false;
     input.previousSelectionState = TileSelectionState::Refined;
-
     TileSelectionRefineFlowResult result =
         TileSelectionRefineFlowPolicy::evaluate(
             input,
@@ -19170,7 +17374,6 @@ void testTileSelectionRefineFlowPolicyContinuesDeeperForPreviousRefinement() {
               result.queueUrgentLoad &&
               result.queuedForLoad,
           "TileSelectionRefineFlowPolicy: previous unrenderable refinement continues deeper urgently");
-
     input.ancestorMeetsSse = true;
     result = TileSelectionRefineFlowPolicy::evaluate(
         input,
@@ -19181,7 +17384,6 @@ void testTileSelectionRefineFlowPolicyContinuesDeeperForPreviousRefinement() {
               !result.queuedForLoad,
           "TileSelectionRefineFlowPolicy: ancestor meeting SSE avoids duplicate urgent load");
 }
-
 void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
     TilesetTile parent(
         TileKey{"test", 0, 0, 0},
@@ -19196,7 +17398,6 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
         &parent);
     parent.children.push_back(&outsideChild);
     parent.children.push_back(&cameraChild);
-
     const std::vector<SelectorView> noViews;
     const TileSelectionVisibilityContext cameraContext{
         true,
@@ -19209,7 +17410,6 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
             cameraContext);
     check(parentSample.visibleFromCamera && !parentSample.inFrustum,
           "TileSelectionVisibilitySampler: render-under-camera makes tile visible without frustum");
-
     const TileSelectionVisibilitySample childSample =
         TileSelectionVisibilitySampler::sampleChildBounds(
             parent.children,
@@ -19217,7 +17417,6 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
             cameraContext);
     check(childSample.visibleFromCamera && !childSample.inFrustum,
           "TileSelectionVisibilitySampler: child bounds use first visible child");
-
     TilesetTile cameraOnlyChild(
         TileKey{"test", 1, 2, 0},
         Rectangle{-0.02, -0.02, 0.02, 0.02},
@@ -19249,7 +17448,6 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
             cameraContext);
     check(mixedChildSample.visibleFromCamera && mixedChildSample.inFrustum,
           "TileSelectionVisibilitySampler: child bounds aggregate frustum visibility across visible children");
-
     const TileSelectionVisibilityContext disabledCameraContext{
         false,
         0.0,
@@ -19261,7 +17459,6 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
             disabledCameraContext);
     check(!disabledSample.visibleFromCamera && !disabledSample.inFrustum,
           "TileSelectionVisibilitySampler: disabled render-under-camera requires frustum");
-
     TilesetTile explicitVolumeTile(
         TileKey{"test", 0, 2, 0},
         Rectangle{2.0, 2.0, 3.0, 3.0});
@@ -19283,14 +17480,12 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
               cameraContext),
           "TileSelectionVisibilitySampler: camera-inside diagnostic uses explicit bounding volume like cesium-native");
 }
-
 void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
     const std::vector<SelectorView> noViews;
     const TileSelectionVisibilityContext cameraContext{
         true,
         0.0,
         0.0};
-
     TilesetTile replaceParent(
         TileKey{"test", 0, 0, 0},
         Rectangle{2.0, 2.0, 3.0, 3.0});
@@ -19300,7 +17495,6 @@ void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
         &replaceParent);
     replaceParent.refine = TileRefine::Replace;
     replaceParent.children.push_back(&replaceVisibleChild);
-
     TileSelectionVisibilitySample sample =
         TileSelectionVisibilitySampler::sampleForTileSelection(
             replaceParent,
@@ -19308,7 +17502,6 @@ void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
             cameraContext);
     check(sample.visibleFromCamera,
           "TileSelectionVisibilitySampler: replace-refined parent samples child bounds");
-
     TilesetTile addParent(
         TileKey{"test", 0, 0, 1},
         Rectangle{-0.25, -0.25, 0.25, 0.25});
@@ -19318,14 +17511,12 @@ void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
         &addParent);
     addParent.refine = TileRefine::Add;
     addParent.children.push_back(&addOutsideChild);
-
     sample = TileSelectionVisibilitySampler::sampleForTileSelection(
         addParent,
         noViews,
         cameraContext);
     check(sample.visibleFromCamera,
           "TileSelectionVisibilitySampler: add-refined parent samples own bounds");
-
     TilesetTile unconditionalParent(
         TileKey{"test", 0, 1, 0},
         Rectangle{-0.25, -0.25, 0.25, 0.25});
@@ -19336,7 +17527,6 @@ void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
     unconditionalOutsideChild.unconditionallyRefine = true;
     unconditionalParent.refine = TileRefine::Replace;
     unconditionalParent.children.push_back(&unconditionalOutsideChild);
-
     sample = TileSelectionVisibilitySampler::sampleForTileSelection(
         unconditionalParent,
         noViews,
@@ -19344,7 +17534,6 @@ void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
     check(sample.visibleFromCamera,
           "TileSelectionVisibilitySampler: unconditional child keeps parent bounds");
 }
-
 void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
     FrameState previousFrame;
     previousFrame.frameId = 10;
@@ -19355,12 +17544,10 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
     previousView.direction = Vec3(0.0, 1.0, 0.0);
     previousView.viewportHeightPixels = 600;
     previousFrame.selectorViews.push_back(previousView);
-
     FrameState movingFrame = previousFrame;
     movingFrame.frameId = 11;
     movingFrame.selectorViews[0].position = Vec3(1050.0, 0.0, 0.0);
     movingFrame.selectorViews[0].direction = Vec3(0.005, 0.9999875, 0.0);
-
     const auto makeInput =
         [&](const FrameState& frameState,
             bool allowStaleSelection) -> TileSelectionReuseInput {
@@ -19386,7 +17573,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
             true,
             true};
     };
-
     const TileSelectionReuseInput strictInput =
         makeInput(movingFrame, false);
     check(!TileSelectionReusePolicy::canReuseSelection(strictInput),
@@ -19398,7 +17584,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               .rejectReason ==
               TileSelectionReuseRejectReason::SelectorMovedStaleDisabled,
           "TileSelectionReusePolicy: moved strict reuse reports stale-disabled reject reason");
-
     const TileSelectionReuseInput staleInput =
         makeInput(movingFrame, true);
     check(TileSelectionReusePolicy::canReuseSelection(staleInput),
@@ -19406,7 +17591,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
     check(TileSelectionReusePolicy::classifyReuse(staleInput) ==
               TileSelectionReuseMode::Stale,
           "TileSelectionReusePolicy: small camera deltas classify as stale reuse");
-
     FrameState stillFrame = previousFrame;
     stillFrame.frameId = previousFrame.frameId + 1;
     TileSelectionReuseInput strictPendingInput =
@@ -19414,7 +17598,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
     check(TileSelectionReusePolicy::classifyReuse(strictPendingInput) ==
               TileSelectionReuseMode::Strict,
           "TileSelectionReusePolicy: equivalent selector views reuse while pending work drains");
-
     TileSelectionReuseInput strictResourceChangedInput =
         strictPendingInput;
     strictResourceChangedInput.currentResourceRevision = 8;
@@ -19425,7 +17608,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               strictResourceChangedInput).rejectReason ==
               TileSelectionReuseRejectReason::ResourceChanged,
           "TileSelectionReusePolicy: content resource refresh reports resource-changed reject reason");
-
     TileSelectionReuseInput overlayChangedInput =
         strictPendingInput;
     overlayChangedInput.currentOverlaySignature = 10;
@@ -19433,7 +17615,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               .rejectReason ==
               TileSelectionReuseRejectReason::ResourceChanged,
           "TileSelectionReusePolicy: overlay configuration changes still reject reuse");
-
     TileSelectionReuseInput strictEquivalentInput =
         makeInput(stillFrame, false);
     strictEquivalentInput.hasPendingTilesetWork = false;
@@ -19443,7 +17624,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
     check(TileSelectionReusePolicy::classifyReuse(strictEquivalentInput) ==
               TileSelectionReuseMode::Strict,
           "TileSelectionReusePolicy: equivalent selector views classify as strict reuse");
-
     FrameState oldFrame = movingFrame;
     oldFrame.frameId = previousFrame.frameId + 2;
     TileSelectionReuseInput oldStaleInput =
@@ -19455,11 +17635,9 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               .rejectReason ==
               TileSelectionReuseRejectReason::StaleAgeExceeded,
           "TileSelectionReusePolicy: old stale reuse reports age reject reason");
-
     TileSelectionReuseState reuseState;
     reuseState.commit(previousFrame, 7, 9);
     reuseState.recordRequestOutcome(true, true);
-
     FrameState thirdStaleFrame = movingFrame;
     thirdStaleFrame.frameId = previousFrame.frameId + 3;
     check(reuseState.classifyReuse(
@@ -19471,7 +17649,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               true,
               true) == TileSelectionReuseMode::Stale,
           "TileSelectionReuseState: default moving stale window spans three frames despite pending work");
-
     FrameState fourthStaleFrame = movingFrame;
     fourthStaleFrame.frameId = previousFrame.frameId + 4;
     check(reuseState.classifyReuse(
@@ -19483,7 +17660,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               true,
               true) == TileSelectionReuseMode::None,
           "TileSelectionReuseState: default moving stale window forces reselection after three frames");
-
     FrameState farFrame = movingFrame;
     farFrame.selectorViews[0].position = Vec3(1200.0, 0.0, 0.0);
     const TileSelectionReuseInput farStaleInput =
@@ -19495,24 +17671,20 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               TileSelectionReuseRejectReason::StaleViewTooDifferent,
           "TileSelectionReusePolicy: far stale reuse reports view-delta reject reason");
 }
-
 void testTileFrameDebugLogFormatterReportsReuseMode() {
     TileUpdateDebugLogInput input;
     input.reusedSelection = true;
     input.reuseMode = TileSelectionReuseMode::Stale;
     input.reuseRejectReason =
         TileSelectionReuseRejectReason::SelectorMovedStaleDisabled;
-
     const std::array<char, 640> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
     const std::string text(detail.data());
-
     check(text.find("reused=1") != std::string::npos &&
               text.find("reuseMode=2") != std::string::npos &&
               text.find("reuseReject=4") != std::string::npos,
           "TileFrameDebugLogFormatter: update detail reports selection reuse mode and reject reason");
 }
-
 void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
     TileRenderDebugLogInput input;
     input.renderStats.plannedEntries = 5;
@@ -19528,11 +17700,9 @@ void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
     input.fadingRenderStats.deferredEntries = 7;
     input.renderStats.missedDrawEntries = 9;
     input.renderStats.deferredEntries = 13;
-
     const std::array<char, 640> detail =
         TileFrameDebugLogFormatter::renderBuildDetail(input);
     const std::string text(detail.data());
-
     check(text.find("entries=5") != std::string::npos &&
               text.find("selectedEntries=2") != std::string::npos &&
               text.find("fadeEntries=3") != std::string::npos &&
@@ -19547,7 +17717,6 @@ void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
               text.find("fadeDeferred=7") != std::string::npos,
           "TileFrameDebugLogFormatter: render detail reports render entry pass counts");
 }
-
 void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
     TilePlan tilePlan;
     TileLoadQueue loadQueue;
@@ -19561,12 +17730,10 @@ void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
     budget.beginFrame(42, config);
     FrameState frameState;
     frameState.frameId = 42;
-
     bool refreshCalled = false;
     bool selectCalled = false;
     bool requestCalled = false;
     size_t requestCount = 0;
-
     TileUpdateSelectionWorkResult result =
         TileUpdateSelectionWorkRunner::run(
             TileUpdateSelectionWorkInput{
@@ -19596,7 +17763,6 @@ void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
                 outcome.issued = 1;
                 return outcome;
             });
-
     check(result.reusedSelection && refreshCalled && !selectCalled,
           "TileUpdateSelectionWorkRunner: reuse refreshes render entries without reselecting");
     check(loadQueue.size() == 1 && loadQueue.front().key == queuedKey,
@@ -19606,7 +17772,6 @@ void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
     check(reuseState.lastRequestIssuedWork,
           "TileUpdateSelectionWorkRunner: reuse records resource pump activity");
 }
-
 void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -19614,7 +17779,6 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     const TileKey key{"Geographic-TMS", 0, 0, 0};
     TilesetTile tile(
         key,
@@ -19629,7 +17793,6 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
     tile.content.contentKind = TileContentKind::Render;
     tile.geometricError = 100.0;
     tile.selectionFrameState.priority = 3.0;
-
     TilePlan tilePlan;
     tilePlan.visibleTiles.push_back(key);
     TileLoadQueue loadQueue;
@@ -19645,13 +17808,11 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     TileEmptyContentRegistry emptyContentRegistry;
-
     bool refreshCalled = false;
     bool unloadCalled = false;
     bool requestCalled = false;
     size_t requestCount = 0;
     TileKey requestedKey;
-
     TileUpdateSelectionWorkRunner::run(
         TileUpdateSelectionWorkInput{
             tilePlan,
@@ -19693,7 +17854,6 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
             outcome.issued = requests.empty() ? 0 : 1;
             return outcome;
         });
-
     check(refreshCalled && unloadCalled,
           "TileUpdateSelectionWorkRunner: reused selection prefetch unloads missing-projection content");
     check(requestCalled && requestCount == 1 && requestedKey == key,
@@ -19703,7 +17863,6 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
               tile.rasterOverlayState.missingProjections().empty(),
           "TileUpdateSelectionWorkRunner: prefetch reload leaves tile ready for content re-request");
 }
-
 void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
     FrameState previousFrame;
     previousFrame.frameId = 10;
@@ -19714,27 +17873,23 @@ void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
     previousView.direction = Vec3(0.0, 1.0, 0.0);
     previousView.viewportHeightPixels = 600;
     previousFrame.selectorViews.push_back(previousView);
-
     std::vector<ActivatedRasterOverlay*> overlays;
     TileSelectionReuseState reuseState;
     reuseState.commit(
         previousFrame,
         1,
         TileRasterOverlaySignature::configuration(overlays));
-
     Camera camera;
     camera.setView(
         Vec3(1050.0, 0.0, 0.0),
         Vec3(0.005, 0.9999875, 0.0),
         Vec3(0.0, 0.0, 1.0));
-
     FrameState movingFrame = previousFrame;
     movingFrame.frameId = 11;
     movingFrame.timeSeconds = 1.0;
     movingFrame.camera = &camera;
     movingFrame.selectorViews[0].position = Vec3(1050.0, 0.0, 0.0);
     movingFrame.selectorViews[0].direction = Vec3(0.005, 0.9999875, 0.0);
-
     TilePlan tilePlan;
     TileLoadQueue loadQueue;
     TileSelectionCounters counters;
@@ -19745,10 +17900,8 @@ void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
     bool interactionActive = false;
     bool resourceSmoothingActive = false;
     double lastInteractionActiveTimeSeconds = -1.0;
-
     bool refreshCalled = false;
     bool selectCalled = false;
-
     const TileFrameWorkResult result = TileFrameWorkCoordinator::run(
         TileFrameWorkInput{
             tilePlan,
@@ -19782,7 +17935,6 @@ void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
         [](const std::vector<TileLoadRequest>&, FrameResourceBudget*) {
             return TileLoadRequestOutcome{};
         });
-
     check(result.interactionActive && result.resourceSmoothingActive,
           "TileFrameWorkCoordinator: moving camera enters active resource smoothing");
     check(selectCalled && !refreshCalled &&
@@ -19791,7 +17943,6 @@ void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
                   TileSelectionReuseRejectReason::SelectorMovedStaleDisabled,
           "TileFrameWorkCoordinator: active interaction reselects instead of stale-reusing the previous view");
 }
-
 void testTilePendingLoadQueueUsesSharedPriorityOrder() {
     TilePendingLoadQueue queue;
     const TileKey terrainKey{"test", 1, 0, 0};
@@ -19800,7 +17951,6 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
     config.maxMainThreadFinalizesPerFrame = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainKey,
         "terrain",
@@ -19813,7 +17963,6 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
         TileLoadPriorityGroup::Urgent,
         100.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-
     std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(false, budget);
     check(first && first->domain == TileLoadDomain::Content,
@@ -19821,7 +17970,6 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
     check(queue.contentUploadCount() == 0 && queue.gltfTerrainUploadCount() == 1,
           "TilePendingLoadQueue: taking content upload removes only that upload");
 }
-
 void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
     TilePendingLoadQueue queue;
     const TileKey normalKey{"test", 1, 0, 0};
@@ -19830,7 +17978,6 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
     config.maxMainThreadFinalizesPerFrame = 4;
     FrameResourceBudget budget;
     budget.beginFrame(2, config);
-
     queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         normalKey,
         "normal",
@@ -19843,7 +17990,6 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
         TileLoadPriorityGroup::Urgent,
         100.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
-
     std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(true, budget);
     check(first && first->domain == TileLoadDomain::TerrainContent,
@@ -19858,7 +18004,6 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
     check(queue.gltfTerrainUploadCount() == 1,
           "TilePendingLoadQueue: skipped non-urgent upload remains queued");
 }
-
 void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
@@ -19866,20 +18011,17 @@ void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
     blockedConfig.maxMainThreadFinalizesPerFrame = 0;
     FrameResourceBudget blockedBudget;
     blockedBudget.beginFrame(1, blockedConfig);
-
     queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         key,
         "content",
         TileLoadPriorityGroup::Urgent,
         0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-
     std::optional<PendingTileLoad> blocked =
         queue.takeHighestPriorityUpload(false, blockedBudget);
     check(!blocked && queue.contentUploadCount() == 1 &&
               queue.containsCacheKey("content"),
           "TilePendingLoadQueue: finalize budget block keeps upload pending");
-
     FrameResourceBudgetConfig retryConfig;
     retryConfig.maxMainThreadFinalizesPerFrame = 1;
     FrameResourceBudget retryBudget;
@@ -19890,7 +18032,6 @@ void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
                             retry->cacheKey == "content",
           "TilePendingLoadQueue: upload blocked by previous frame budget remains retryable");
 }
-
 void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
     TilePendingLoadQueue queue;
     const TileKey firstKey{"test", 1, 0, 0};
@@ -19899,7 +18040,6 @@ void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
     config.maxMainThreadFinalizesPerFrame = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         firstKey,
         "terrain",
@@ -19924,22 +18064,18 @@ void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
         TileLoadPriorityGroup::Urgent,
         100.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
-
     check(queue.gltfTerrainUploadCount() == 1 &&
               queue.contentUploadCount() == 1,
           "TilePendingLoadQueue: duplicate upload cache keys are not queued twice per kind");
-
     std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(false, budget);
     std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityUpload(false, budget);
     std::optional<PendingTileLoad> third =
         queue.takeHighestPriorityUpload(false, budget);
-
     check(first && second && !third,
           "TilePendingLoadQueue: duplicate uploads leave only one finalize per kind");
 }
-
 void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
     TilePendingLoadQueue queue;
     const TileKey lowKey{"test", 1, 0, 0};
@@ -19949,7 +18085,6 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
     config.maxTerminalStateTransitionsPerFrame = 2;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         lowKey,
         "low",
@@ -19968,7 +18103,6 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
         TileLoadPriorityGroup::Urgent,
         50.0,
         TileLoadStatus::Empty});
-
     std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityTerminalResult(budget);
     check(first && first->domain == TileLoadDomain::Content &&
@@ -19983,7 +18117,6 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
               queue.contentTerminalResultCount() == 0,
           "TilePendingLoadQueue: shared terminal take removes only selected result");
 }
-
 void testTilePendingLoadQueueDeduplicatesTerminalResultsByKind() {
     TilePendingLoadQueue queue;
     const TileKey firstKey{"test", 1, 0, 0};
@@ -19992,7 +18125,6 @@ void testTilePendingLoadQueueDeduplicatesTerminalResultsByKind() {
     config.maxTerminalStateTransitionsPerFrame = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         firstKey,
         "terrain-terminal",
@@ -20017,22 +18149,18 @@ void testTilePendingLoadQueueDeduplicatesTerminalResultsByKind() {
         TileLoadPriorityGroup::Urgent,
         100.0,
         TileLoadStatus::Cancelled});
-
     check(queue.gltfTerrainTerminalResultCount() == 1 &&
               queue.contentTerminalResultCount() == 1,
           "TilePendingLoadQueue: duplicate terminal cache keys are not queued twice per kind");
-
     std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityTerminalResult(budget);
     std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityTerminalResult(budget);
     std::optional<PendingTileLoad> third =
         queue.takeHighestPriorityTerminalResult(budget);
-
     check(first && second && !third,
           "TilePendingLoadQueue: duplicate terminal results leave only one state transition per kind");
 }
-
 void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
     TilePendingLoadQueue queue;
     const TileKey terrainKey{"test", 1, 0, 0};
@@ -20042,7 +18170,6 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
     config.maxTerminalStateTransitionsPerFrame = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainKey,
         "terrain",
@@ -20067,13 +18194,11 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
         TileLoadPriorityGroup::Urgent,
         100.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
-
     check(queue.gltfTerrainUploadCount() == 1 &&
               queue.gltfTerrainTerminalResultCount() == 0 &&
               queue.contentUploadCount() == 0 &&
               queue.contentTerminalResultCount() == 1,
           "TilePendingLoadQueue: same-kind upload and terminal result are mutually exclusive");
-
     std::optional<PendingTileLoad> upload =
         queue.takeHighestPriorityUpload(false, budget);
     std::optional<PendingTileLoad> terminal =
@@ -20082,11 +18207,9 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
         queue.takeHighestPriorityUpload(false, budget);
     std::optional<PendingTileLoad> extraTerminal =
         queue.takeHighestPriorityTerminalResult(budget);
-
     check(upload && terminal && !extraUpload && !extraTerminal,
           "TilePendingLoadQueue: same-kind duplicate result shapes produce one action per cache key");
 }
-
 void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
@@ -20094,20 +18217,17 @@ void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
     blockedConfig.maxTerminalStateTransitionsPerFrame = 0;
     FrameResourceBudget blockedBudget;
     blockedBudget.beginFrame(1, blockedConfig);
-
     queue.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
         key,
         "terminal",
         TileLoadPriorityGroup::Urgent,
         0.0,
         TileLoadStatus::RetryLater});
-
     std::optional<PendingTileLoad> blocked =
         queue.takeHighestPriorityTerminalResult(blockedBudget);
     check(!blocked && queue.gltfTerrainTerminalResultCount() == 1 &&
               queue.containsCacheKey("terminal"),
           "TilePendingLoadQueue: terminal budget block keeps result pending");
-
     FrameResourceBudgetConfig retryConfig;
     retryConfig.maxTerminalStateTransitionsPerFrame = 1;
     FrameResourceBudget retryBudget;
@@ -20118,11 +18238,9 @@ void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
                             retry->cacheKey == "terminal",
           "TilePendingLoadQueue: terminal result blocked by previous frame budget remains retryable");
 }
-
 void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
-
     queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         key,
         "",
@@ -20147,7 +18265,6 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
         TileLoadPriorityGroup::Urgent,
         0.0,
         TileLoadStatus::Failed});
-
     check(!queue.hasWork() &&
               queue.gltfTerrainUploadCount() == 0 &&
               queue.contentUploadCount() == 0 &&
@@ -20157,14 +18274,12 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
     check(!queue.containsCacheKey(""),
           "TilePendingLoadQueue: empty cache key is never treated as pending");
 }
-
 void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
     TilePendingLoadQueue queue;
     const TileKey terrainUploadKey{"test", 1, 0, 0};
     const TileKey contentUploadKey{"test", 1, 1, 0};
     const TileKey terrainTerminalKey{"test", 1, 0, 1};
     const TileKey contentTerminalKey{"test", 1, 1, 1};
-
     queue.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         terrainUploadKey,
         "terrain-upload",
@@ -20189,9 +18304,7 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::RetryLater});
-
     queue.eraseCacheKey("missing");
-
     check(queue.containsCacheKey("terrain-upload") &&
               queue.containsCacheKey("content-upload") &&
               queue.containsCacheKey("terrain-terminal") &&
@@ -20202,7 +18315,6 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
               queue.contentTerminalResultCount() == 1,
           "TilePendingLoadQueue: erasing unknown key leaves all pending work untouched");
 }
-
 void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
     TileLoadLifecycle lifecycle;
     const TileKey terrainKey{"test", 1, 0, 0};
@@ -20212,7 +18324,6 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
     std::vector<std::string> events;
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
@@ -20240,7 +18351,6 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
-
     const bool changed =
         TilePendingLoadProcessor::processPendingLoads(
             TilePendingLoadProcessorInput{
@@ -20260,7 +18370,6 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
                         ? "content-upload"
                         : "terrain-upload");
             });
-
     check(changed,
           "TilePendingLoadProcessor: reports changed after draining work");
     check(events.size() == 3 &&
@@ -20272,7 +18381,6 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
     check(counts.gltfTerrainUploads == 1 && counts.contentUploads == 0,
           "TilePendingLoadProcessor: exhausted finalize budget leaves lower-priority upload pending");
 }
-
 void testTilePendingLoadProcessorBudgetsTerminalResults() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20283,7 +18391,6 @@ void testTilePendingLoadProcessorBudgetsTerminalResults() {
     const TileKey firstKey{"test", 1, 0, 0};
     const TileKey secondKey{"test", 1, 1, 0};
     std::vector<std::string> events;
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
@@ -20299,7 +18406,6 @@ void testTilePendingLoadProcessorBudgetsTerminalResults() {
                 0.0,
                 TileLoadStatus::RetryLater});
     }
-
     const bool changed =
         TilePendingLoadProcessor::processPendingLoads(
             TilePendingLoadProcessorInput{
@@ -20311,7 +18417,6 @@ void testTilePendingLoadProcessorBudgetsTerminalResults() {
                 events.push_back(result.cacheKey);
             },
             [](PendingTileLoad&) {});
-
     check(changed,
           "TilePendingLoadProcessor: reports changed after terminal work");
     check(events.size() == 1 && events[0] == "first-terminal",
@@ -20319,7 +18424,6 @@ void testTilePendingLoadProcessorBudgetsTerminalResults() {
     check(lifecycle.counts().gltfTerrainTerminalResults == 1,
           "TilePendingLoadProcessor: terminal budget leaves excess terminal results pending");
 }
-
 void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20330,7 +18434,6 @@ void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
     const TileKey terminalKey{"test", 1, 0, 0};
     const TileKey uploadKey{"test", 1, 1, 0};
     std::vector<std::string> events;
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
@@ -20346,7 +18449,6 @@ void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
-
     const bool changed =
         TilePendingLoadProcessor::processPendingLoads(
             TilePendingLoadProcessorInput{
@@ -20360,7 +18462,6 @@ void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
             [&events](PendingTileLoad&) {
                 events.push_back("upload");
             });
-
     const TileLoadLifecycleCounts counts = lifecycle.counts();
     check(!changed && events.empty(),
           "TilePendingLoadProcessor: budget-blocked pending work does not report changes");
@@ -20370,7 +18471,6 @@ void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
               lifecycle.containsWorkForCacheKey("upload"),
           "TilePendingLoadProcessor: budget-blocked pending work remains queued");
 }
-
 void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20382,7 +18482,6 @@ void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() 
     const TileKey firstKey{"test", 1, 0, 0};
     const TileKey secondKey{"test", 1, 1, 0};
     std::vector<std::string> events;
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
@@ -20398,7 +18497,6 @@ void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() 
                 1.0,
                 TileLoadStatus::RetryLater});
     }
-
     const bool changed =
         TilePendingLoadProcessor::processPendingLoads(
             TilePendingLoadProcessorInput{
@@ -20414,7 +18512,6 @@ void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() 
                 events.push_back(result.cacheKey);
             },
             [](PendingTileLoad&) {});
-
     check(changed,
           "TilePendingLoadProcessor: reports changed after timed terminal work");
     check(events.size() == 1 && events[0] == "first-terminal",
@@ -20424,7 +18521,6 @@ void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() 
     check(budget.mainThreadElapsedMs() > 0.0,
           "TilePendingLoadProcessor: terminal result records main-thread elapsed time");
 }
-
 void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20436,7 +18532,6 @@ void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
     const TileKey terminalKey{"test", 1, 0, 0};
     const TileKey uploadKey{"test", 1, 1, 0};
     std::vector<std::string> events;
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
@@ -20452,7 +18547,6 @@ void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
             100.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
-
     const bool changed =
         TilePendingLoadProcessor::processPendingLoads(
             TilePendingLoadProcessorInput{
@@ -20470,14 +18564,12 @@ void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
             [&events](PendingTileLoad&) {
                 events.push_back("upload");
             });
-
     check(changed && events.size() == 1 && events[0] == "terminal",
           "TilePendingLoadProcessor: terminal elapsed can exhaust shared main-thread time budget before uploads");
     check(lifecycle.counts().contentUploads == 1 &&
               budget.mainThreadElapsedMs() >= 1.0,
           "TilePendingLoadProcessor: upload remains pending after terminal time budget is exhausted");
 }
-
 void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20488,7 +18580,6 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
     const TileKey terminalKey{"test", 1, 0, 0};
     const TileKey uploadKey{"test", 1, 1, 0};
     std::vector<std::string> events;
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
@@ -20504,7 +18595,6 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
             0.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     }
-
     const bool changed =
         TilePendingLoadProcessor::processPendingLoads(
             TilePendingLoadProcessorInput{
@@ -20518,7 +18608,6 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
             [&events](PendingTileLoad& upload) {
                 events.push_back(upload.cacheKey);
             });
-
     check(changed && events.size() == 1 && events[0] == "terminal",
           "TilePendingLoadProcessor: interaction still drains terminal results");
     check(lifecycle.counts().gltfTerrainTerminalResults == 0 &&
@@ -20526,7 +18615,6 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
               lifecycle.containsWorkForCacheKey("upload"),
           "TilePendingLoadProcessor: interaction leaves non-urgent uploads pending after terminal drain");
 }
-
 void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20536,7 +18624,6 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
     const TileKey normalKey{"test", 1, 0, 0};
     const TileKey urgentKey{"test", 1, 1, 0};
     std::vector<std::string> events;
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
@@ -20552,7 +18639,6 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
             100.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     }
-
     const bool changed =
         TilePendingLoadProcessor::processPendingLoads(
             TilePendingLoadProcessorInput{
@@ -20564,7 +18650,6 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
             [&events](PendingTileLoad& upload) {
                 events.push_back(upload.cacheKey);
             });
-
     check(changed && events.size() == 1 && events[0] == "urgent",
           "TilePendingLoadProcessor: interaction still processes urgent uploads");
     check(lifecycle.counts().gltfTerrainUploads == 1 &&
@@ -20572,7 +18657,6 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
               lifecycle.containsWorkForCacheKey("urgent"),
           "TilePendingLoadProcessor: interaction leaves non-urgent upload queued and urgent upload claimed");
 }
-
 void testTilePendingUploadCompletionErasesUploadKeys() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20600,21 +18684,17 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
         check(first && second,
               "TilePendingUploadCompletion: test dequeues pending upload payloads before completion cleanup");
     }
-
     check(lifecycle.containsWorkForCacheKey("terrain") &&
               lifecycle.containsWorkForCacheKey("content"),
           "TilePendingUploadCompletion: dequeued uploads retain cache keys until completion cleanup");
-
     TilePendingUploadCompletion::eraseUpload(lifecycle, "terrain");
     check(!lifecycle.containsWorkForCacheKey("terrain") &&
               lifecycle.containsWorkForCacheKey("content"),
           "TilePendingUploadCompletion: erases terrain upload key without clearing content upload work");
-
     TilePendingUploadCompletion::eraseUpload(lifecycle, "content");
     check(!lifecycle.hasPendingWork(),
           "TilePendingUploadCompletion: erases content upload key and leaves lifecycle idle");
 }
-
 void testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20642,15 +18722,12 @@ void testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds() {
         check(first && !second,
               "TilePendingUploadCompletion: shared-key test keeps one claimed upload per cache key");
     }
-
     check(lifecycle.containsWorkForCacheKey("shared"),
           "TilePendingUploadCompletion: shared key remains pending while the claimed upload is active");
-
     TilePendingUploadCompletion::eraseUpload(lifecycle, "shared");
     check(!lifecycle.hasPendingWork(),
           "TilePendingUploadCompletion: shared key clears after the unified upload completes");
 }
-
 void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -20670,28 +18747,23 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
         check(upload && upload->domain == TileLoadDomain::TerrainContent,
               "TilePendingUploadCompletion: claimed-upload test dequeues upload payload");
     }
-
     check(lifecycle.containsWorkForCacheKey("terrain") &&
               lifecycle.hasPendingWork(),
           "TilePendingUploadCompletion: claimed upload key keeps lifecycle work visible until completion");
-
     TilePendingUploadCompletion::eraseUpload(lifecycle, "terrain");
     check(!lifecycle.hasPendingWork(),
           "TilePendingUploadCompletion: claimed upload completion leaves lifecycle idle");
 }
-
 void testTilePendingRequestStateCountsAndCompletesRequests() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
     CancellationToken contentToken;
-
     check(state.beginTerrainRequest("terrain", terrainToken),
           "TilePendingRequestState: begins terrain request");
     check(state.beginContentRequest("content", contentToken),
           "TilePendingRequestState: begins content request");
     check(!state.beginTerrainRequest("terrain", CancellationToken{}),
           "TilePendingRequestState: rejects duplicate request key");
-
     const PendingRequestCounts counts = state.counts();
     check(counts.totalRequests == 2,
           "TilePendingRequestState: counts total inflight requests");
@@ -20699,14 +18771,12 @@ void testTilePendingRequestStateCountsAndCompletesRequests() {
           "TilePendingRequestState: counts terrain requests");
     check(counts.contentRequests == 1,
           "TilePendingRequestState: counts content requests");
-
     state.completeContentRequest("content");
     check(!state.contains("content") && state.contains("terrain"),
           "TilePendingRequestState: completing content request clears only that key");
     state.completeTerrainRequest("terrain");
     check(state.empty(),
           "TilePendingRequestState: completes all requests");
-
     check(state.beginContentRequest("content-mismatched-complete",
                                     CancellationToken{}),
           "TilePendingRequestState: begins content request for invariant cleanup");
@@ -20716,7 +18786,6 @@ void testTilePendingRequestStateCountsAndCompletesRequests() {
               afterMismatchedComplete.contentRequests == 0 &&
               afterMismatchedComplete.totalRequests == 0,
           "TilePendingRequestState: completion cleanup preserves request-kind invariants");
-
     check(state.beginTerrainRequest("terrain-mismatched-complete",
                                     CancellationToken{}),
           "TilePendingRequestState: begins terrain request for inverse invariant cleanup");
@@ -20727,18 +18796,15 @@ void testTilePendingRequestStateCountsAndCompletesRequests() {
               afterInverseMismatchedComplete.totalRequests == 0,
           "TilePendingRequestState: inverse completion cleanup preserves request-kind invariants");
 }
-
 void testPendingLoadStateRejectsEmptyCacheKeys() {
     const TileKey key{"test", 0, 0, 0};
     TilePendingRequestState requestState;
     CancellationToken terrainToken;
     CancellationToken contentToken;
-
     check(!requestState.beginTerrainRequest("", terrainToken) &&
               !requestState.beginContentRequest("", contentToken) &&
               requestState.empty(),
           "TilePendingRequestState: empty cache keys are rejected without side effects");
-
     TilePendingLoadQueue pendingLoads;
     pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::TerrainContent,
         key,
@@ -20764,7 +18830,6 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::Failed});
-
     check(!pendingLoads.hasWork() &&
               !pendingLoads.containsCacheKey("") &&
               pendingLoads.gltfTerrainUploadCount() == 0 &&
@@ -20773,7 +18838,6 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
               pendingLoads.contentTerminalResultCount() == 0,
           "TilePendingLoadQueue: empty cache keys are ignored without queued work");
 }
-
 void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
@@ -20782,7 +18846,6 @@ void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
           "TilePendingRequestState: starts terrain request before destroy");
     check(state.beginContentRequest("content", contentToken),
           "TilePendingRequestState: starts content request before destroy");
-
     state.markDestroyingAndCancelRequests();
     check(state.destroying(),
           "TilePendingRequestState: exposes destroying state");
@@ -20795,7 +18858,6 @@ void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
           "TilePendingRequestState: destroy preserves pending request kinds until callbacks drain");
     check(!state.beginContentRequest("content", CancellationToken{}),
           "TilePendingRequestState: destroying state rejects new requests");
-
     state.completeContentRequest("content");
     state.completeTerrainRequest("terrain");
     check(state.empty(),
@@ -20807,16 +18869,13 @@ void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
           "TilePendingRequestState: accepts new requests after destroy drain completes");
     state.completeTerrainRequest("terrain-after-destroy");
 }
-
 void testTilePendingRequestStateClearWaitsForCallbackDrain() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
     check(state.beginTerrainRequest("terrain", terrainToken),
           "TilePendingRequestState: early-clear test starts terrain request");
-
     state.markDestroyingAndCancelRequests();
     state.clearAfterCallbacksComplete();
-
     const PendingRequestCounts counts = state.counts();
     check(state.destroying() &&
               state.contains("terrain") &&
@@ -20825,13 +18884,11 @@ void testTilePendingRequestStateClearWaitsForCallbackDrain() {
               !state.beginContentRequest("content-after-early-clear",
                                          CancellationToken{}),
           "TilePendingRequestState: clear before callback drain preserves destroying pending state");
-
     state.completeTerrainRequest("terrain");
     state.clearAfterCallbacksComplete();
     check(!state.destroying() && state.empty(),
           "TilePendingRequestState: clear reopens only after callbacks drain");
 }
-
 void testTilePendingRequestStateDestroyMarkIsIdempotent() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
@@ -20839,10 +18896,8 @@ void testTilePendingRequestStateDestroyMarkIsIdempotent() {
     check(state.beginTerrainRequest("terrain", terrainToken) &&
               state.beginContentRequest("content", contentToken),
           "TilePendingRequestState: idempotent destroy test starts requests");
-
     state.markDestroyingAndCancelRequests();
     state.markDestroyingAndCancelRequests();
-
     const PendingRequestCounts counts = state.counts();
     check(state.destroying() &&
               terrainToken.isCancelled() &&
@@ -20855,14 +18910,12 @@ void testTilePendingRequestStateDestroyMarkIsIdempotent() {
           "TilePendingRequestState: repeated destroy mark preserves pending callback state");
     check(!state.beginTerrainRequest("terrain-after-repeat", CancellationToken{}),
           "TilePendingRequestState: repeated destroy mark keeps rejecting new requests");
-
     state.completeTerrainRequest("terrain");
     state.completeContentRequest("content");
     state.clearAfterCallbacksComplete();
     check(!state.destroying() && state.empty(),
           "TilePendingRequestState: idempotent destroy test cleanup resets state");
 }
-
 void testTilePendingRequestStateCancelIgnoresUnknownKeys() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
@@ -20870,9 +18923,7 @@ void testTilePendingRequestStateCancelIgnoresUnknownKeys() {
     check(state.beginTerrainRequest("terrain", terrainToken) &&
               state.beginContentRequest("content", contentToken),
           "TilePendingRequestState: unknown cancel test starts requests");
-
     state.cancelAndErase("missing");
-
     const PendingRequestCounts counts = state.counts();
     check(!terrainToken.isCancelled() &&
               !contentToken.isCancelled() &&
@@ -20882,13 +18933,11 @@ void testTilePendingRequestStateCancelIgnoresUnknownKeys() {
               counts.contentRequests == 1 &&
               counts.totalRequests == 2,
           "TilePendingRequestState: unknown cancel leaves existing requests untouched");
-
     state.cancelAndErase("terrain");
     state.cancelAndErase("content");
     check(state.empty(),
           "TilePendingRequestState: unknown cancel test cleanup drains requests");
 }
-
 void testTileLoadLifecycleCountsAndFindsPendingWork() {
     TileLoadLifecycle lifecycle;
     CancellationToken token;
@@ -20905,7 +18954,6 @@ void testTileLoadLifecycleCountsAndFindsPendingWork() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
-
     const TileLoadLifecycleCounts counts = lifecycle.counts();
     check(counts.requests.terrainRequests == 1 &&
               counts.contentUploads == 1,
@@ -20915,7 +18963,6 @@ void testTileLoadLifecycleCountsAndFindsPendingWork() {
           "TileLoadLifecycle: finds pending work across cache key batch");
     check(lifecycle.hasPendingWork(),
           "TileLoadLifecycle: reports pending work");
-
     lifecycle.cancelAndEraseCacheKey("content-upload");
     check(!lifecycle.containsWorkForCacheKey("content-upload"),
           "TileLoadLifecycle: erases pending load state for cache key");
@@ -20926,7 +18973,6 @@ void testTileLoadLifecycleCountsAndFindsPendingWork() {
     check(!lifecycle.hasPendingWork(),
           "TileLoadLifecycle: reports idle after requests and loads drain");
 }
-
 void testTileLoadLifecycleEmptyBatchQueryIsNoOp() {
     TileLoadLifecycle lifecycle;
     CancellationToken token;
@@ -20943,20 +18989,17 @@ void testTileLoadLifecycleEmptyBatchQueryIsNoOp() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
-
     check(!lifecycle.containsWorkForAnyCacheKey({}),
           "TileLoadLifecycle: empty cache key batch query returns no work");
     check(!token.isCancelled() &&
               lifecycle.containsWorkForCacheKey("terrain-request") &&
               lifecycle.containsWorkForCacheKey("content-upload"),
           "TileLoadLifecycle: empty cache key batch query leaves existing work untouched");
-
     lifecycle.cancelAndEraseCacheKey("terrain-request");
     lifecycle.cancelAndEraseCacheKey("content-upload");
     check(!lifecycle.hasPendingWork(),
           "TileLoadLifecycle: empty batch query test cleanup drains work");
 }
-
 void testTileLoadLifecycleCancelErasesPendingUploads() {
     TileLoadLifecycle lifecycle;
     const TileKey terrainKey{"test", 0, 0, 0};
@@ -20976,17 +19019,14 @@ void testTileLoadLifecycleCancelErasesPendingUploads() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
-
     lifecycle.cancelAndEraseCacheKey("terrain-upload");
     check(!lifecycle.containsWorkForCacheKey("terrain-upload") &&
               lifecycle.containsWorkForCacheKey("content-upload"),
           "TileLoadLifecycle: cancel erases only matching terrain upload");
-
     lifecycle.cancelAndEraseCacheKey("content-upload");
     check(!lifecycle.hasPendingWork(),
           "TileLoadLifecycle: cancel erases content upload and leaves lifecycle idle");
 }
-
 void testTileLoadLifecycleCancelErasesClaimedUploads() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21021,17 +19061,14 @@ void testTileLoadLifecycleCancelErasesClaimedUploads() {
     check(lifecycle.containsWorkForCacheKey("terrain-upload") &&
               lifecycle.containsWorkForCacheKey("content-upload"),
           "TileLoadLifecycle: claimed upload keys remain visible before cancellation");
-
     lifecycle.cancelAndEraseCacheKey("terrain-upload");
     check(!lifecycle.containsWorkForCacheKey("terrain-upload") &&
               lifecycle.containsWorkForCacheKey("content-upload"),
           "TileLoadLifecycle: cancel erases only matching claimed terrain upload");
-
     lifecycle.cancelAndEraseCacheKey("content-upload");
     check(!lifecycle.hasPendingWork(),
           "TileLoadLifecycle: cancel erases claimed content upload and leaves lifecycle idle");
 }
-
 void testTileLoadLifecycleCancelIgnoresEmptyCacheKey() {
     TileLoadLifecycle lifecycle;
     CancellationToken requestToken;
@@ -21048,20 +19085,16 @@ void testTileLoadLifecycleCancelIgnoresEmptyCacheKey() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
-
     lifecycle.cancelAndEraseCacheKey("");
-
     check(!requestToken.isCancelled() &&
               lifecycle.containsWorkForCacheKey("terrain-request") &&
               lifecycle.containsWorkForCacheKey("content-upload"),
           "TileLoadLifecycle: empty cache key cancel has no side effects");
-
     lifecycle.cancelAndEraseCacheKey("terrain-request");
     lifecycle.cancelAndEraseCacheKey("content-upload");
     check(!lifecycle.hasPendingWork(),
           "TileLoadLifecycle: empty cancel test cleanup drains work");
 }
-
 void testTileLoadLifecycleCancelErasesTerminalResults() {
     TileLoadLifecycle lifecycle;
     const TileKey terrainKey{"test", 0, 0, 0};
@@ -21081,17 +19114,14 @@ void testTileLoadLifecycleCancelErasesTerminalResults() {
                 0.0,
                 TileLoadStatus::RetryLater});
     }
-
     lifecycle.cancelAndEraseCacheKey("terrain-terminal");
     check(!lifecycle.containsWorkForCacheKey("terrain-terminal") &&
               lifecycle.containsWorkForCacheKey("content-terminal"),
           "TileLoadLifecycle: cancel erases only matching terrain terminal result");
-
     lifecycle.cancelAndEraseCacheKey("content-terminal");
     check(!lifecycle.hasPendingWork(),
           "TileLoadLifecycle: cancel erases content terminal result and leaves lifecycle idle");
 }
-
 void testTileLoadLifecycleCancelErasesActiveRequests() {
     TileLoadLifecycle lifecycle;
     CancellationToken terrainToken;
@@ -21109,7 +19139,6 @@ void testTileLoadLifecycleCancelErasesActiveRequests() {
             "kept-request",
             keptToken);
     }
-
     lifecycle.cancelAndEraseCacheKey("terrain-request");
     check(terrainToken.isCancelled() &&
               !contentToken.isCancelled() &&
@@ -21118,19 +19147,16 @@ void testTileLoadLifecycleCancelErasesActiveRequests() {
               lifecycle.containsWorkForCacheKey("content-request") &&
               lifecycle.containsWorkForCacheKey("kept-request"),
           "TileLoadLifecycle: cancel erases active terrain request without touching other keys");
-
     lifecycle.cancelAndEraseCacheKey("content-request");
     check(contentToken.isCancelled() &&
               !keptToken.isCancelled() &&
               !lifecycle.containsWorkForCacheKey("content-request") &&
               lifecycle.containsWorkForCacheKey("kept-request"),
           "TileLoadLifecycle: cancel erases active content request and preserves unrelated request");
-
     lifecycle.cancelAndEraseCacheKey("kept-request");
     check(keptToken.isCancelled() && !lifecycle.hasPendingWork(),
           "TileLoadLifecycle: cancel drains final active request");
 }
-
 void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
     TileLoadLifecycle lifecycle;
     CancellationToken token;
@@ -21153,13 +19179,11 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
                 0.0,
                 TileLoadStatus::RetryLater});
     }
-
     std::atomic<bool> destroyReturned{false};
     std::thread destroyThread([&]() {
         lifecycle.markDestroyingCancelAndWait();
         destroyReturned.store(true);
     });
-
     for (int i = 0; i < 200 && !token.isCancelled(); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -21176,11 +19200,9 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
     }
     lifecycle.condition().notify_all();
     destroyThread.join();
-
     check(destroyReturned.load() && !lifecycle.hasPendingWork(),
           "TileLoadLifecycle: destroy clears loads and drains requests");
 }
-
 void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
     TileLoadLifecycle lifecycle;
     {
@@ -21198,9 +19220,7 @@ void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
                 0.0,
                 TileLoadStatus::RetryLater});
     }
-
     lifecycle.markDestroyingCancelAndWait();
-
     check(!lifecycle.hasPendingWork() &&
               lifecycle.pendingRequestCount() == 0,
           "TileLoadLifecycle: destroy without inflight requests clears queued work immediately");
@@ -21210,7 +19230,6 @@ void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
               "TileLoadLifecycle: destroy without inflight requests reopens state after cleanup");
     }
 }
-
 void testTileLoadLifecycleDestroyClearsClaimedUploadKeys() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21233,14 +19252,11 @@ void testTileLoadLifecycleDestroyClearsClaimedUploadKeys() {
     check(lifecycle.hasPendingWork() &&
               lifecycle.containsWorkForCacheKey("content-upload"),
           "TileLoadLifecycle: claimed upload key is visible before destroy");
-
     lifecycle.markDestroyingCancelAndWait();
-
     check(!lifecycle.hasPendingWork() &&
               !lifecycle.containsWorkForCacheKey("content-upload"),
           "TileLoadLifecycle: destroy clears claimed upload keys with pending load state");
 }
-
 void testTileContentLifecycleManagerOwnsLifecycleState() {
     TileContentLifecycleManager manager;
     CancellationToken token;
@@ -21251,16 +19267,13 @@ void testTileContentLifecycleManagerOwnsLifecycleState() {
                   token),
               "TileContentLifecycleManager: begins owned terrain request");
     }
-
     check(manager.pendingRequests() == 1 && manager.hasPendingWork(),
           "TileContentLifecycleManager: exposes owned pending request state");
-
     std::atomic<bool> shutdownReturned{false};
     std::thread shutdownThread([&]() {
         manager.shutdown();
         shutdownReturned.store(true);
     });
-
     for (int i = 0; i < 200 && !token.isCancelled(); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -21274,13 +19287,11 @@ void testTileContentLifecycleManagerOwnsLifecycleState() {
     }
     manager.loadLifecycle().condition().notify_all();
     shutdownThread.join();
-
     check(shutdownReturned.load() &&
               manager.pendingRequests() == 0 &&
               !manager.hasPendingWork(),
           "TileContentLifecycleManager: shutdown drains owned lifecycle state");
 }
-
 void testTileContentLifecycleManagerExposesClaimedUploadWork() {
     TileContentLifecycleManager manager;
     FrameResourceBudgetConfig config;
@@ -21301,20 +19312,16 @@ void testTileContentLifecycleManagerExposesClaimedUploadWork() {
                   .has_value(),
               "TileContentLifecycleManager: claimed upload test dequeues payload");
     }
-
     check(manager.hasPendingWork() &&
               manager.loadLifecycle().containsWorkForCacheKey(
                   "content-upload"),
           "TileContentLifecycleManager: claimed upload remains externally visible as pending work");
-
     TilePendingUploadCompletion::eraseUpload(
         manager.loadLifecycle(),
         "content-upload");
-
     check(!manager.hasPendingWork(),
           "TileContentLifecycleManager: claimed upload completion clears exposed pending work");
 }
-
 void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
     TileContentLifecycleManager manager;
     FrameResourceBudgetConfig config;
@@ -21339,15 +19346,12 @@ void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
               manager.loadLifecycle().containsWorkForCacheKey(
                   "terrain-upload"),
           "TileContentLifecycleManager: claimed upload is visible before shutdown");
-
     manager.shutdown();
-
     check(!manager.hasPendingWork() &&
               !manager.loadLifecycle().containsWorkForCacheKey(
                   "terrain-upload"),
           "TileContentLifecycleManager: shutdown clears claimed upload work");
 }
-
 void testTileLoadRequestDispatcherSkipsTerrainContentUpsampleWhenCacheKeyPending() {
     std::mutex mutex;
     TilePendingRequestState requestState;
@@ -21357,7 +19361,6 @@ void testTileLoadRequestDispatcherSkipsTerrainContentUpsampleWhenCacheKeyPending
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
     const TileKey key{"test", 0, 0, 0};
-
     {
         std::lock_guard<std::mutex> lock(mutex);
         pendingLoads.addTerminalResult(PendingTileLoad{TileLoadDomain::TerrainContent,
@@ -21367,7 +19370,6 @@ void testTileLoadRequestDispatcherSkipsTerrainContentUpsampleWhenCacheKeyPending
                 0.0,
                 TileLoadStatus::RetryLater});
     }
-
     const TileLoadDispatchResult result =
         TileLoadRequestDispatcher::queueUpsampledLoad(
             mutex,
@@ -21383,14 +19385,12 @@ void testTileLoadRequestDispatcherSkipsTerrainContentUpsampleWhenCacheKeyPending
                 result.status = TileLoadStatus::Renderable;
                 return result;
             }());
-
     check(result == TileLoadDispatchResult::Skipped,
           "TileLoadRequestDispatcher: pending cache key suppresses terrain content upsample enqueue");
     check(pendingLoads.gltfTerrainUploadCount() == 0 &&
               pendingLoads.gltfTerrainTerminalResultCount() == 1,
           "TileLoadRequestDispatcher: skipped terrain content upsample leaves existing pending work intact");
 }
-
 void testTileLoadRequestDispatcherRejectsTerrainContentUpsampleWithoutGltfPayload() {
     std::mutex mutex;
     TilePendingRequestState requestState;
@@ -21400,7 +19400,6 @@ void testTileLoadRequestDispatcherRejectsTerrainContentUpsampleWithoutGltfPayloa
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
     const TileKey key{"test", 0, 0, 0};
-
     const TileLoadDispatchResult result =
         TileLoadRequestDispatcher::queueUpsampledLoad(
             mutex,
@@ -21416,7 +19415,6 @@ void testTileLoadRequestDispatcherRejectsTerrainContentUpsampleWithoutGltfPayloa
                 result.status = TileLoadStatus::Renderable;
                 return result;
             }());
-
     check(result == TileLoadDispatchResult::Issued,
           "TileLoadRequestDispatcher: terrain content upsample without glTF payload queues failed terminal");
     check(requestState.empty() &&
@@ -21425,36 +19423,30 @@ void testTileLoadRequestDispatcherRejectsTerrainContentUpsampleWithoutGltfPayloa
               budget.networkRequestsIssued() == 0,
           "TileLoadRequestDispatcher: failed terrain content upsample terminal does not issue a network request");
 }
-
 void testTileLoadRequestPlannerClassifiesRequestKinds() {
     TileLoadRequestSnapshot snapshot;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: providerless terrain tile does not enter legacy terrain request path");
-
     snapshot.contentProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Content,
           "TileLoadRequestPlanner: content provider support takes content path");
-
     snapshot.hasTile = true;
     snapshot.hasRenderContent = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: existing render content is skipped");
-
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::Unloaded;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: unloaded providerless terrain tile is skipped");
-
     snapshot.contentProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Content,
           "TileLoadRequestPlanner: unloaded content tile remains requestable");
-
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.upsampledFromParent = true;
@@ -21462,59 +19454,49 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::TerrainContentUpsample,
           "TileLoadRequestPlanner: upsampled tile uses terrain content upsample path");
-
     snapshot = TileLoadRequestSnapshot{};
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: cached terrain tile is skipped");
-
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::ContentLoading;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: already loading tile is skipped");
-
     snapshot.loadState = TileLoadState::Unloading;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: unloading tile cannot be reloaded until unload finishes");
-
     snapshot.loadState = TileLoadState::Failed;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: permanently failed terrain tile is not retried");
-
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: temporarily failed providerless terrain tile is skipped");
-
     snapshot.contentProviderSupportsTile = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Content,
           "TileLoadRequestPlanner: temporarily failed content tile remains retryable");
-
     snapshot.hasRenderContent = true;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Content,
           "TileLoadRequestPlanner: temporarily failed content tile remains retryable with retained render content");
-
     snapshot.loadState = TileLoadState::Failed;
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: permanently failed content tile is not retried");
 }
-
 std::string testCacheKeyForTile(const TileKey& key) {
     return key.schemeId + ":" +
            std::to_string(key.z) + ":" +
            std::to_string(key.x) + ":" +
            std::to_string(key.y);
 }
-
 void testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull() {
     class CountingContentProvider final : public TilesetContentProvider {
     public:
@@ -21533,7 +19515,6 @@ void testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull() {
         }
         int requestCount = 0;
     };
-
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 1;
@@ -21548,7 +19529,6 @@ void testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull() {
     bool planned = false;
     bool marked = false;
     CountingContentProvider provider;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {TileLoadRequest{
@@ -21572,18 +19552,15 @@ void testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return false; },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && outcome.blockedByInflight,
           "TileLoadScheduler: full inflight budget blocks content request loop");
     check(planned && !marked && provider.requestCount == 0,
           "TileLoadScheduler: content inflight block happens after request classification without dispatch side effects");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
     }
 }
-
 void testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21599,7 +19576,6 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock() {
               "TileLoadScheduler: test starts one inflight request for pending key");
     }
     bool planned = false;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {TileLoadRequest{
@@ -21621,18 +19597,15 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return false; },
             [](const TileKey&) {});
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: pending cache key skip does not report inflight block");
     check(!planned,
           "TileLoadScheduler: pending cache key skip happens before request planning");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest(cacheKey);
     }
 }
-
 void testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21646,7 +19619,6 @@ void testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock() {
               "TileLoadScheduler: test starts one inflight request before empty key");
     }
     bool planned = false;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {TileLoadRequest{
@@ -21668,18 +19640,15 @@ void testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return false; },
             [](const TileKey&) {});
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: empty cache key skip does not report inflight block");
     check(!planned && lifecycle.pendingRequestCount() == 1,
           "TileLoadScheduler: empty cache key skip happens before request planning");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
     }
 }
-
 void testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21695,7 +19664,6 @@ void testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = testCacheKeyForTile(key);
     bool planned = false;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {TileLoadRequest{
@@ -21719,18 +19687,15 @@ void testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock() {
             },
             [](TilesetTile&, double) { return false; },
             [](const TileKey&) {});
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: known empty content skip does not report inflight block");
     check(!planned && lifecycle.pendingRequestCount() == 1,
           "TileLoadScheduler: known empty content skip happens before request planning");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
     }
 }
-
 void testTileLoadSchedulerQueuesTerrainContentUpsampleWhenNetworkInflightIsFull() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21744,13 +19709,11 @@ void testTileLoadSchedulerQueuesTerrainContentUpsampleWhenNetworkInflightIsFull(
         check(lifecycle.requestState().beginTerrainRequest("busy", token),
               "TileLoadScheduler: upsample test starts one network inflight request");
     }
-
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
     tile.content.upsampledFromParent = true;
     bool prepared = false;
     bool marked = false;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {TileLoadRequest{
@@ -21777,21 +19740,18 @@ void testTileLoadSchedulerQueuesTerrainContentUpsampleWhenNetworkInflightIsFull(
                 return true;
             },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: upsampled terrain without glTF source is not blocked by full network inflight capacity");
     check(prepared && !marked &&
               lifecycle.counts().gltfTerrainUploads == 0 &&
               lifecycle.pendingRequestCount() == 1,
           "TileLoadScheduler: terrain content upsample without glTF source waits instead of queuing legacy upload");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
         lifecycle.pendingLoads().clear();
     }
 }
-
 void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21804,11 +19764,9 @@ void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
         check(lifecycle.requestState().beginTerrainRequest("busy", token),
               "TileLoadScheduler: cached terrain test starts one network inflight request");
     }
-
     const TileKey key{"test", 1, 0, 0};
     bool planned = false;
     bool marked = false;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {TileLoadRequest{
@@ -21831,18 +19789,15 @@ void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return false; },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: cached terrain skip is not blocked by full network inflight capacity");
     check(planned && !marked && lifecycle.pendingRequestCount() == 1,
           "TileLoadScheduler: cached terrain skip has no dispatch side effects");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
     }
 }
-
 void testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21850,7 +19805,6 @@ void testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample() {
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey normalKey{"test", 1, 0, 0};
     const TileKey urgentKey{"test", 1, 1, 0};
     TilesetTile normalTile(normalKey, Rectangle{});
@@ -21859,7 +19813,6 @@ void testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample() {
     urgentTile.content.upsampledFromParent = true;
     std::vector<int> prepareOrder;
     std::vector<int> markedOrder;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {
@@ -21896,7 +19849,6 @@ void testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample() {
             [&markedOrder](const TileKey& key) {
                 markedOrder.push_back(key.x);
             });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: upsampled requests without glTF sources are not issued");
     check(prepareOrder.size() == 2 &&
@@ -21908,7 +19860,6 @@ void testTileLoadSchedulerSortsAndQueuesTerrainContentUpsample() {
     check(lifecycle.counts().gltfTerrainUploads == 0,
           "TileLoadScheduler: upsampled requests without glTF sources do not enter pending upload queue");
 }
-
 void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21916,7 +19867,6 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile parent(
@@ -21938,7 +19888,6 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
     parent.content.renderContent.setGltfContent(std::move(parentModel));
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
-
     bool marked = false;
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
@@ -21964,7 +19913,6 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return true; },
             [&marked](const TileKey&) { marked = true; });
-
     std::optional<PendingTileLoad> terminal;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -21972,7 +19920,6 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
             lifecycle.pendingLoads().takeHighestPriorityTerminalResult(
                 budget);
     }
-
     check(outcome.issued == 1 && !outcome.blockedByInflight && marked,
           "TileLoadScheduler: failed glTF terrain upsample dispatches terminal work like cesium-native");
     check(terminal.has_value() &&
@@ -21981,7 +19928,6 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
               lifecycle.counts().gltfTerrainUploads == 0,
           "TileLoadScheduler: failed glTF terrain upsample queues Failed terminal instead of retrying forever");
 }
-
 void testTileLoadSchedulerDoesNotStartUpsampleFromUnloadingParent() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -21989,7 +19935,6 @@ void testTileLoadSchedulerDoesNotStartUpsampleFromUnloadingParent() {
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile parent(
@@ -22006,10 +19951,8 @@ void testTileLoadSchedulerDoesNotStartUpsampleFromUnloadingParent() {
     parent.content.renderContent.setGltfContent(
         makeQuadTerrainGltfModel(parent.bounds));
     parent.content.renderContent.setTerrainRenderContent(true);
-
     check(TileGltfTerrainUpsampledChildMaterializer::canCreateLoadResult(child),
           "TileLoadScheduler: fixture exposes protected Unloading parent as a materializer source");
-
     bool prepared = false;
     bool ensured = false;
     bool marked = false;
@@ -22047,7 +19990,6 @@ void testTileLoadSchedulerDoesNotStartUpsampleFromUnloadingParent() {
                     [](const TileKey&, TileLoadPriorityGroup, double) {});
             },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight &&
               prepared && !ensured && !marked &&
               child.content.loadState == TileLoadState::Unloaded &&
@@ -22055,7 +19997,6 @@ void testTileLoadSchedulerDoesNotStartUpsampleFromUnloadingParent() {
               lifecycle.counts().gltfTerrainTerminalResults == 0,
           "TileLoadScheduler: new terrain upsample waits instead of starting from protected Unloading parent like cesium-native");
 }
-
 void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -22063,7 +20004,6 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey missingTileStateKey{"test", 2, 0, 0};
     const TileKey readyUpsampleKey{"test", 2, 1, 0};
     TilesetTile readyTile(readyUpsampleKey, Rectangle{});
@@ -22071,7 +20011,6 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
     std::vector<int> plannedColumns;
     std::vector<int> preparedColumns;
     std::vector<int> markedColumns;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {
@@ -22109,7 +20048,6 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
             [&markedColumns](const TileKey& key) {
                 markedColumns.push_back(key.x);
             });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: missing upsample tile state does not block later request");
     check(plannedColumns.size() == 2 &&
@@ -22122,7 +20060,6 @@ void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
               lifecycle.counts().gltfTerrainUploads == 0,
           "TileLoadScheduler: later upsampled tile without glTF source does not enter legacy upload queue");
 }
-
 void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -22130,13 +20067,11 @@ void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
     tile.content.upsampledFromParent = true;
     bool prepared = false;
     bool marked = false;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {TileLoadRequest{
@@ -22163,13 +20098,11 @@ void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
                 return true;
             },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: empty cache key skips upsampled terrain request");
     check(!prepared && !marked && !lifecycle.hasPendingWork(),
           "TileLoadScheduler: skipped empty upsampled key has no side effects");
 }
-
 void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -22177,7 +20110,6 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey key{"test", 1, 0, 0};
     TilesetTile tile(key, Rectangle{});
     tile.content.upsampledFromParent = true;
@@ -22193,7 +20125,6 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
     }
     bool prepared = false;
     bool marked = false;
-
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
             {TileLoadRequest{
@@ -22220,7 +20151,6 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
                 return true;
             },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: pending cache key skips upsampled terrain request");
     check(!prepared && !marked,
@@ -22229,14 +20159,12 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
               !lifecycle.containsWorkForCacheKey("unexpected"),
           "TileLoadScheduler: pending cache key skip preserves existing pending work");
 }
-
 void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey key{"test", 1, 0, 0};
     const std::string cacheKey = testCacheKeyForTile(key);
     {
@@ -22248,7 +20176,6 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
             0.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     }
-
     bool planned = false;
     bool marked = false;
     TileLoadRequestOutcome outcome =
@@ -22272,13 +20199,11 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return false; },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: pending upload key skips without reporting inflight block");
     check(!planned && !marked && lifecycle.containsWorkForCacheKey(cacheKey),
           "TileLoadScheduler: pending upload key skip happens before snapshot side effects");
 }
-
 void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -22286,7 +20211,6 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
     config.maxMainThreadFinalizesPerFrame = 1;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey key{"test", 1, 0, 0};
     const std::string cacheKey = testCacheKeyForTile(key);
     {
@@ -22302,7 +20226,6 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
                   .has_value(),
               "TileLoadScheduler: claimed upload test dequeues upload payload");
     }
-
     bool planned = false;
     bool marked = false;
     TileLoadRequestOutcome outcome =
@@ -22326,7 +20249,6 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return false; },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: claimed upload key skips without reporting inflight block");
     check(!planned &&
@@ -22335,14 +20257,12 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
               lifecycle.hasPendingWork(),
           "TileLoadScheduler: claimed upload key skip happens before snapshot side effects");
 }
-
 void testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey key{"test", 1, 0, 0};
     const std::string cacheKey = testCacheKeyForTile(key);
     {
@@ -22354,7 +20274,6 @@ void testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot() {
                 0.0,
                 TileLoadStatus::RetryLater});
     }
-
     bool planned = false;
     bool emptyChecked = false;
     bool marked = false;
@@ -22382,7 +20301,6 @@ void testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot() {
             },
             [](TilesetTile&, double) { return false; },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: pending terminal key skips without reporting inflight block");
     check(!planned && !emptyChecked && !marked &&
@@ -22390,14 +20308,12 @@ void testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot() {
               lifecycle.counts().contentTerminalResults == 1,
           "TileLoadScheduler: pending terminal key skip happens before snapshot side effects");
 }
-
 void testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey key{"test", 1, 0, 0};
     const std::string cacheKey = testCacheKeyForTile(key);
     CancellationToken token;
@@ -22406,7 +20322,6 @@ void testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot() {
         check(lifecycle.requestState().beginTerrainRequest(cacheKey, token),
               "TileLoadScheduler: test starts inflight request for pending key");
     }
-
     bool planned = false;
     bool emptyChecked = false;
     bool prepared = false;
@@ -22438,19 +20353,16 @@ void testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot() {
                 return true;
             },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: inflight cache key skips without reporting inflight block");
     check(!planned && !emptyChecked && !prepared && !marked &&
               lifecycle.containsWorkForCacheKey(cacheKey),
           "TileLoadScheduler: inflight cache key skip happens before snapshot side effects");
-
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest(cacheKey);
     }
 }
-
 void testTileLoadSchedulerStopsDuringDestroyBeforePlanning() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -22461,7 +20373,6 @@ void testTileLoadSchedulerStopsDuringDestroyBeforePlanning() {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().markDestroyingAndCancelRequests();
     }
-
     bool cacheKeyRequested = false;
     bool planned = false;
     bool emptyChecked = false;
@@ -22497,14 +20408,12 @@ void testTileLoadSchedulerStopsDuringDestroyBeforePlanning() {
                 return true;
             },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: destroying lifecycle stops without reporting inflight block");
     check(!cacheKeyRequested && !planned && !emptyChecked &&
               !prepared && !marked,
           "TileLoadScheduler: destroying lifecycle stops before planning side effects");
 }
-
 void testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning() {
     class CountingContentProvider final : public TilesetContentProvider {
     public:
@@ -22523,13 +20432,11 @@ void testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning() {
         }
         int requestCount = 0;
     };
-
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = testCacheKeyForTile(key);
     CountingContentProvider provider;
@@ -22570,14 +20477,12 @@ void testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return false; },
             [&marked](const TileKey&) { marked = true; });
-
     check(outcome.issued == 0 && !outcome.blockedByInflight,
           "TileLoadScheduler: dispatcher duplicate skip does not report inflight block");
     check(planned && !marked && provider.requestCount == 0 &&
               lifecycle.counts().contentTerminalResults == 1,
           "TileLoadScheduler: dispatcher duplicate skip avoids request side effects after planning");
 }
-
 void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
     class DeferredContentProvider final : public TilesetContentProvider {
     public:
@@ -22596,14 +20501,12 @@ void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
         }
         int requestCount = 0;
     };
-
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 1;
     config.maxNetworkInflight = 4;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     const TileKey firstKey{"test", 0, 0, 0};
     const TileKey blockedKey{"test", 0, 1, 0};
     const TileKey skippedKey{"test", 0, 2, 0};
@@ -22645,7 +20548,6 @@ void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
             [&markedKeys](const TileKey& key) {
                 markedKeys.push_back(key.x);
             });
-
     check(outcome.issued == 1 && !outcome.blockedByInflight,
           "TileLoadScheduler: dispatch budget block stops without inflight flag");
     check(provider.requestCount == 1 &&
@@ -22656,7 +20558,6 @@ void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
               markedKeys[0] == firstKey.x,
           "TileLoadScheduler: dispatch budget block stops before later request planning");
 }
-
 void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
     class RetryContentProvider final : public TilesetContentProvider {
     public:
@@ -22676,7 +20577,6 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
         }
         int requestCount = 0;
     };
-
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 4;
@@ -22688,7 +20588,6 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
-
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = testCacheKeyForTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
@@ -22696,7 +20595,6 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
     TilesetTile* tileRaw = tile.get();
     tiles[cacheKey] = std::move(tile);
     emptyContentRegistry.insert(cacheKey);
-
     auto requestOnce = [&]() {
         return TileMissingRequestScheduler::request(
             {TileLoadRequest{
@@ -22717,13 +20615,11 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
                 return it == tiles.end() ? nullptr : it->second.get();
             });
     };
-
     TileLoadRequestOutcome outcome = requestOnce();
     check(outcome.issued == 0 &&
               provider.requestCount == 0 &&
               tileRaw->content.loadState == TileLoadState::FailedTemporarily,
           "TileMissingRequestScheduler: stale empty marker blocks retry before terminal correction");
-
     TileTerminalLoadCommitter::commitTerminalResult(
         TileLoadDomain::Content,
         *tileRaw,
@@ -22738,15 +20634,12 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
               tileRaw->content.loadState == TileLoadState::ContentLoading,
           "TileMissingRequestScheduler: cleared empty marker allows retry request");
 }
-
 void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
     options.mainThreadLoadingTimeLimit = 1.0e-12;
-
     const TileKey terrainKey{"Geographic-TMS", 1, 0, 0};
     const TileKey contentKey{"Geographic-TMS", 1, 1, 0};
-
     auto contentProvider =
         std::make_unique<ManualCompletionContentProvider>(
             std::vector<TileKey>{terrainKey, contentKey});
@@ -22761,7 +20654,6 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
         &device,
         options,
         std::move(contentProvider));
-
     TilesetTestAccess::ensureTile(tileset, terrainKey);
     TilesetTestAccess::ensureTile(tileset, contentKey);
     TilesetTestAccess::requestMissingTilesWithPriorities(
@@ -22770,7 +20662,6 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
         100.0,
         contentKey,
         1.0);
-
     check(rawContentProvider->pendingRequests.size() == 2,
           "Tileset: content-owned terrain budget test queues terrain and content requests");
     check(rawContentProvider->completeWithTerrainModel(
@@ -22784,9 +20675,7 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     check(tileset.loadDiagnostics().pendingContentUploads == 0 &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 2,
           "Tileset: terrain-owned glTF uploads are tracked separately from heightmap terrain");
-
     TilesetTestAccess::processPendingUploads(tileset);
-
     TilesetTile* terrainTile =
         TilesetTestAccess::findTile(tileset, terrainKey);
     TilesetTile* contentTile =
@@ -22804,7 +20693,6 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
               diag.pendingContentUploads == 0,
           "Tileset: lower-priority terrain-owned glTF waits in glTF terrain upload diagnostics");
 }
-
 void testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane() {
     FrameResourceBudgetConfig defaultConfig =
         TileFrameResourceBudgetPlanner::plan(
@@ -22821,7 +20709,6 @@ void testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane() {
               defaultConfig.maxTerrainContentNetworkInflight == 20 &&
               defaultConfig.maxRasterNetworkInflight == 20,
           "TileFrameResourceBudgetPlanner: default raster budget is capped by transport lane");
-
     FrameResourceBudgetConfig tinyConfig =
         TileFrameResourceBudgetPlanner::plan(
             TileFrameResourceBudgetPlanInput::withTransportLimit(
@@ -22843,7 +20730,6 @@ void testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane() {
                   FrameResourcePriority::Normal,
                   1),
           "TileFrameResourceBudgetPlanner: small tile-load settings keep raster fanout within transport capacity");
-
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, tinyConfig);
     check(secondBudget.hasNetworkInflightCapacity(
@@ -22855,7 +20741,6 @@ void testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane() {
                   1,
                   20),
           "TileFrameResourceBudgetPlanner: raster fanout inflight capacity is bounded by transport capacity");
-
     FrameResourceBudgetConfig wideTransportConfig =
         TileFrameResourceBudgetPlanner::plan(
             TileFrameResourceBudgetPlanInput::withTransportLimit(
@@ -22868,7 +20753,6 @@ void testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane() {
               wideTransportConfig.maxRasterNetworkInflight == 32,
           "TileFrameResourceBudgetPlanner: wider transports can still run a full quadtree source raster fanout");
 }
-
 void testTileFrameResourceBudgetPlannerKeepsMainThreadFinalizesWhenWorkerLoadsDisabled() {
     FrameResourceBudgetConfig config =
         TileFrameResourceBudgetPlanner::plan(
@@ -22880,7 +20764,6 @@ void testTileFrameResourceBudgetPlannerKeepsMainThreadFinalizesWhenWorkerLoadsDi
                 false));
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(!budget.tryIssue(
               FrameResourceLane::TerrainRequest,
               FrameResourcePriority::Normal),
@@ -22895,7 +20778,6 @@ void testTileFrameResourceBudgetPlannerKeepsMainThreadFinalizesWhenWorkerLoadsDi
                   FrameResourcePriority::Normal),
           "TileFrameResourceBudgetPlanner: disabled worker loads still allow existing main-thread finalizes");
 }
-
 void testTileFrameResourceBudgetPlannerKeepsTerminalTransitionsWhenWorkerLoadsDisabled() {
     FrameResourceBudgetConfig config =
         TileFrameResourceBudgetPlanner::plan(
@@ -22907,7 +20789,6 @@ void testTileFrameResourceBudgetPlannerKeepsTerminalTransitionsWhenWorkerLoadsDi
                 false));
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-
     check(!budget.tryIssue(
               FrameResourceLane::ContentRequest,
               FrameResourcePriority::Normal),
@@ -22922,7 +20803,6 @@ void testTileFrameResourceBudgetPlannerKeepsTerminalTransitionsWhenWorkerLoadsDi
                   FrameResourcePriority::Normal),
           "TileFrameResourceBudgetPlanner: disabled worker loads still allow existing terminal transitions");
 }
-
 void testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled() {
     FrameResourceBudgetConfig requestConfig =
         TileFrameBudgetFallback::requestConfig(0, 0.0);
@@ -22932,7 +20812,6 @@ void testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled() {
               FrameResourceLane::TerrainRequest,
               FrameResourcePriority::Normal),
           "TileFrameBudgetFallback: maximumSimultaneousTileLoads=0 still blocks new worker requests");
-
     FrameResourceBudgetConfig uploadConfig =
         TileFrameBudgetFallback::uploadConfig(
             0,
@@ -22952,11 +20831,9 @@ void testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled() {
                   FrameResourcePriority::Normal),
           "TileFrameBudgetFallback: disabled worker loads do not block existing main-thread uploads");
 }
-
 void testTilesetFrameResourceBudgetUsesProviderTransportLane() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 20;
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto provider =
         std::make_unique<ManualTerrainQuadtreeContentProvider>(rootKey);
@@ -22969,21 +20846,17 @@ void testTilesetFrameResourceBudgetUsesProviderTransportLane() {
         nullptr,
         options,
         std::move(provider));
-
     Camera camera;
     camera.lookAt(Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
                   Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 401;
     frameState.camera = &camera;
     frameState.viewportWidthPixels = 800;
     frameState.viewportHeightPixels = 800;
     frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
-
     tileset.update(frameState);
-
     const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
     check(diag.resourceBudget.maxRasterNetworkRequestsPerFrame == 11 &&
               diag.resourceBudget.maxNetworkRequestsPerFrame == 20 &&
@@ -22998,7 +20871,6 @@ void testTilesetFrameResourceBudgetUsesProviderTransportLane() {
               "Tileset: transport-lane budget test completes pending content request");
     }
 }
-
 void testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks() {
     ProviderRequestDiagnostics total;
     total.requestsStarted = 1;
@@ -23010,7 +20882,6 @@ void testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks() {
     total.activeExternalResourceBlockingRequests = 4;
     total.peakExternalResourceBlockingRequests = 6;
     total.maximumTransportActiveRequests = -1;
-
     ProviderRequestDiagnostics first;
     first.requestsStarted = 5;
     first.requestsCompleted = 4;
@@ -23021,7 +20892,6 @@ void testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks() {
     first.activeExternalResourceBlockingRequests = 2;
     first.peakExternalResourceBlockingRequests = 9;
     first.maximumTransportActiveRequests = -1;
-
     ProviderRequestDiagnostics second;
     second.requestsStarted = 11;
     second.requestsCompleted = 10;
@@ -23032,10 +20902,8 @@ void testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks() {
     second.activeExternalResourceBlockingRequests = 5;
     second.peakExternalResourceBlockingRequests = 4;
     second.maximumTransportActiveRequests = 11;
-
     ProviderRequestDiagnosticsAggregator::add(total, first);
     ProviderRequestDiagnosticsAggregator::add(total, second);
-
     check(total.requestsStarted == 17 &&
               total.requestsCompleted == 15 &&
               total.activeWorkerBlockingRequests == 6 &&
@@ -23048,7 +20916,6 @@ void testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks() {
               total.peakExternalResourceBlockingRequests == 9,
           "ProviderRequestDiagnosticsAggregator: combines external resource counts and max lanes");
 }
-
 void testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes() {
     ProviderRequestDiagnostics first;
     first.requestsStarted = 2;
@@ -23060,7 +20927,6 @@ void testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes() {
     first.externalResourceRequestsCompleted = 2;
     first.activeExternalResourceBlockingRequests = 1;
     first.peakExternalResourceBlockingRequests = 5;
-
     ProviderRequestDiagnostics second;
     second.requestsStarted = 5;
     second.requestsCompleted = 4;
@@ -23071,12 +20937,10 @@ void testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes() {
     second.externalResourceRequestsCompleted = 3;
     second.activeExternalResourceBlockingRequests = 2;
     second.peakExternalResourceBlockingRequests = 4;
-
     SceneProviderRequestDiagnosticsSnapshot snapshot =
         SceneProviderRequestDiagnosticsSnapshot::fromProvider(first);
     snapshot.add(
         SceneProviderRequestDiagnosticsSnapshot::fromProvider(second));
-
     check(snapshot.requestsStarted == 7 &&
               snapshot.requestsCompleted == 5 &&
               snapshot.activeWorkerBlockingRequests == 3 &&
@@ -23089,7 +20953,6 @@ void testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes() {
               snapshot.peakExternalResourceBlockingRequests == 5,
           "SceneProviderRequestDiagnosticsSnapshot: aggregates external resource request lanes");
 }
-
 void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
     FrameResourceBudgetConfig firstConfig;
     firstConfig.maxNetworkRequestsPerFrame = 20;
@@ -23103,7 +20966,6 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
     firstConfig.maxRasterUploadsPerFrame = 4;
     firstConfig.mainThreadTimeMs = 2.5;
     firstConfig.interactionActive = true;
-
     FrameResourceBudget firstBudget;
     firstBudget.beginFrame(10, firstConfig);
     firstBudget.tryIssue(
@@ -23121,7 +20983,6 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
         FrameResourcePriority::Normal,
         2);
     firstBudget.recordElapsed(FrameResourceLane::TerrainFinalize, 0.75);
-
     FrameResourceBudgetConfig secondConfig;
     secondConfig.maxNetworkRequestsPerFrame = 6;
     secondConfig.maxTerrainContentNetworkRequestsPerFrame = 6;
@@ -23134,7 +20995,6 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
     secondConfig.maxRasterUploadsPerFrame = 2;
     secondConfig.mainThreadTimeMs = 4.0;
     secondConfig.smoothingActive = true;
-
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(11, secondConfig);
     secondBudget.tryIssue(
@@ -23149,13 +21009,11 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
         FrameResourceLane::TerminalState,
         FrameResourcePriority::Normal);
     secondBudget.recordElapsed(FrameResourceLane::ContentFinalize, 1.25);
-
     SceneFrameResourceBudgetDiagnosticsSnapshot snapshot =
         SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
             firstBudget.snapshot());
     snapshot.add(SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
         secondBudget.snapshot()));
-
     check(snapshot.networkRequestsIssued == 10 &&
               snapshot.networkRequestsLimit == 26 &&
               snapshot.terrainContentNetworkRequestsIssued == 3 &&
@@ -23183,21 +21041,18 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
               snapshot.smoothingActive,
           "SceneFrameResourceBudgetDiagnosticsSnapshot: preserves timing and frame mode flags");
 }
-
 void testSceneFrameResourceBudgetDiagnosticsSnapshotSaturatesUnlimitedLimits() {
     FrameResourceBudgetConfig unlimitedConfig;
     unlimitedConfig.maxMainThreadFinalizesPerFrame =
         std::numeric_limits<uint32_t>::max();
     FrameResourceBudget unlimitedBudget;
     unlimitedBudget.beginFrame(12, unlimitedConfig);
-
     SceneFrameResourceBudgetDiagnosticsSnapshot snapshot =
         SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
             unlimitedBudget.snapshot());
     check(snapshot.mainThreadFinalizesLimit ==
               std::numeric_limits<int>::max(),
           "SceneFrameResourceBudgetDiagnosticsSnapshot: unlimited uint32 limits saturate for diagnostics");
-
     FrameResourceBudgetConfig finiteConfig;
     finiteConfig.maxMainThreadFinalizesPerFrame = 8;
     FrameResourceBudget finiteBudget;
@@ -23208,46 +21063,37 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotSaturatesUnlimitedLimits() {
               std::numeric_limits<int>::max(),
           "SceneFrameResourceBudgetDiagnosticsSnapshot: aggregated unlimited limits remain saturated");
 }
-
 void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
     Texture* sharedTexture = reinterpret_cast<Texture*>(0x1);
     Texture* secondTexture = reinterpret_cast<Texture*>(0x2);
-
     RenderCommand firstSurface;
     firstSurface.kind = RenderCommandKind::SurfaceTile;
     firstSurface.terrainRenderContent = true;
     firstSurface.textures = {sharedTexture};
     firstSurface.surfaceGeometryZoom = 3;
     firstSurface.surfaceTextureZoom = 4;
-
     RenderCommand secondSurface;
     secondSurface.kind = RenderCommandKind::SurfaceTile;
     secondSurface.terrainRenderContent = true;
     secondSurface.textures = {sharedTexture, secondTexture};
     secondSurface.surfaceGeometryZoom = 7;
     secondSurface.surfaceTextureZoom = 6;
-
     RenderCommand missingImagerySurface;
     missingImagerySurface.kind = RenderCommandKind::SurfaceTile;
     missingImagerySurface.terrainRenderContent = true;
-
     RenderCommand terrainGltfPrimitive;
     terrainGltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
     terrainGltfPrimitive.terrainRenderContent = true;
-
     RenderCommand contentGltfPrimitive;
     contentGltfPrimitive.kind = RenderCommandKind::GltfPrimitiveInstanced;
-
     RenderCommandList commands = {
         firstSurface,
         secondSurface,
         missingImagerySurface,
         terrainGltfPrimitive,
         contentGltfPrimitive};
-
     const SceneRenderCommandDiagnosticsSnapshot snapshot =
         SceneRenderCommandDiagnosticsSnapshot::fromCommands(commands);
-
     check(snapshot.drawCalls == 5 &&
               snapshot.renderSurfaceTiles == 3 &&
               snapshot.surfaceMeshCount == 3 &&
@@ -23264,7 +21110,6 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
               snapshot.imageryMinTextureZoom == 4 &&
               snapshot.imageryMaxTextureZoom == 6,
           "SceneRenderCommandDiagnosticsSnapshot: tracks imagery attachments and zoom ranges");
-
     Diagnostics diagnostics;
     diagnostics.cachedTextures = 9;
     SceneRenderDiagnostics::addRenderCommands(commands, diagnostics);
@@ -23282,7 +21127,6 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
                   snapshot.terrainGltfPrimitiveCommands &&
               diagnostics.imageryAttachments == 2,
           "SceneRenderDiagnostics: flattens render command snapshot into diagnostics");
-
     RenderCommandList commandsWithoutTextures = {missingImagerySurface};
     SceneRenderDiagnostics::addRenderCommands(
         commandsWithoutTextures,
@@ -23293,34 +21137,28 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
               diagnostics.imageryAttachments == 0,
           "SceneRenderDiagnostics: preserves cached texture fallback for legacy diagnostics");
 }
-
 void testSceneSurfaceCommandGenerationDiagnosticsSnapshotTracksSurfaceGenerations() {
     RenderCommand currentSurface;
     currentSurface.kind = RenderCommandKind::SurfaceTile;
     currentSurface.frameId = 12;
     currentSurface.generation = 5;
-
     RenderCommand staleSurface;
     staleSurface.kind = RenderCommandKind::SurfaceTile;
     staleSurface.frameId = 11;
     staleSurface.generation = 9;
-
     RenderCommand missingGenerationSurface;
     missingGenerationSurface.kind = RenderCommandKind::SurfaceTile;
     missingGenerationSurface.frameId = 12;
     missingGenerationSurface.generation = 0;
-
     RenderCommand gltfPrimitive;
     gltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
     gltfPrimitive.frameId = 10;
     gltfPrimitive.generation = 2;
-
     const RenderCommandList commands = {
         currentSurface,
         staleSurface,
         missingGenerationSurface,
         gltfPrimitive};
-
     const SceneSurfaceCommandGenerationDiagnosticsSnapshot snapshot =
         SceneSurfaceCommandGenerationDiagnosticsSnapshot::fromCommands(
             commands,
@@ -23330,7 +21168,6 @@ void testSceneSurfaceCommandGenerationDiagnosticsSnapshotTracksSurfaceGeneration
               snapshot.minSurfaceGeneration == 5 &&
               snapshot.maxSurfaceGeneration == 9,
           "SceneSurfaceCommandGenerationDiagnosticsSnapshot: tracks stale, missing, and generation range for surface commands");
-
     Diagnostics diagnostics;
     diagnostics.staleSurfaceCommands = 7;
     diagnostics.missingGenerationSurfaceCommands = 8;
@@ -23348,7 +21185,6 @@ void testSceneSurfaceCommandGenerationDiagnosticsSnapshotTracksSurfaceGeneration
               diagnostics.maxSurfaceGeneration ==
                   snapshot.maxSurfaceGeneration,
           "SceneRenderDiagnostics: flattens surface generation snapshot into legacy diagnostics");
-
     SceneRenderDiagnostics::updateSurfaceCommandGeneration(
         RenderCommandList{},
         12,
@@ -23359,55 +21195,45 @@ void testSceneSurfaceCommandGenerationDiagnosticsSnapshotTracksSurfaceGeneration
               diagnostics.maxSurfaceGeneration == 0,
           "SceneRenderDiagnostics: resets surface generation diagnostics when no surface commands are present");
 }
-
 void testTilesetForbidHolesCarriesCulledTileRenderability() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-
     TilesetOptions options;
     options.forbidHoles = true;
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
-
     const TileKey key{"Geographic-TMS", 1, 0, 0};
     TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
     check(tile != nullptr,
           "Tileset: forbidHoles culled-detail tile is created");
     if (!tile) return;
-
     tile->refine = TileRefine::Replace;
     check(TilesetTestAccess::culledTileReportsMissingRenderableForForbidHoles(
               tileset,
               *tile),
           "Tileset: forbidHoles culled replacement tile reports missing content");
 }
-
 void testTilesetCulledTileDetailsIgnorePreloadOnlyTiles() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-
     TilesetOptions options;
     options.forbidHoles = false;
     options.preloadSiblings = true;
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
-
     const TileKey key{"Geographic-TMS", 1, 0, 0};
     TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
     check(tile != nullptr,
           "Tileset: preload-only culled-detail tile is created");
     if (!tile) return;
-
     tile->refine = TileRefine::Replace;
     check(TilesetTestAccess::culledTileIsIgnoredWithoutForbidHoles(
               tileset,
               *tile),
           "Tileset: preload-only culled tile does not constrain traversal details");
 }
-
 void testTilesetLoadDiagnosticsExposeNativeLifecycleStates() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const std::vector<TileKey> keys = {
         {"Geographic-TMS", 3, 0, 0},
         {"Geographic-TMS", 3, 1, 0},
@@ -23417,7 +21243,6 @@ void testTilesetLoadDiagnosticsExposeNativeLifecycleStates() {
         {"Geographic-TMS", 3, 5, 0},
         {"Geographic-TMS", 3, 6, 0}
     };
-
     std::vector<TilesetTile*> tiles;
     tiles.reserve(keys.size());
     for (const TileKey& key : keys) {
@@ -23429,9 +21254,7 @@ void testTilesetLoadDiagnosticsExposeNativeLifecycleStates() {
         check(false, "Tileset: load diagnostics setup creates tiles");
         return;
     }
-
     const TilesetLoadDiagnostics baseline = tileset.loadDiagnostics();
-
     tiles[0]->content.loadState = TileLoadState::Unloading;
     tiles[0]->content.contentKind = TileContentKind::Unknown;
     tiles[1]->content.loadState = TileLoadState::FailedTemporarily;
@@ -23448,12 +21271,10 @@ void testTilesetLoadDiagnosticsExposeNativeLifecycleStates() {
     tiles[6]->content.contentKind = TileContentKind::Unknown;
     tiles[6]->rasterOverlayState.missingProjections().push_back(
         RasterOverlayProjection::Geographic);
-
     TilesetTestAccess::queuePreload(tileset, keys[0]);
     TilesetTestAccess::queueNormal(tileset, keys[1]);
     TilesetTestAccess::queueUrgent(tileset, keys[2]);
     TilesetTestAccess::markEligibleForUnloading(tileset, keys[5]);
-
     const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
     check(diag.loadQueuePreloadRequests == 1 &&
               diag.loadQueueNormalRequests == 1 &&
@@ -23482,7 +21303,6 @@ void testTilesetLoadDiagnosticsExposeNativeLifecycleStates() {
               baseline.missingRasterOverlayProjections + 1,
           "Tileset: load diagnostics exposes missing raster overlay projections");
 }
-
 void prepareSparseRootChildrenRenderable(Tileset& tileset,
                                          TilesetTile& root,
                                          const TileKey& rootKey) {
@@ -23492,7 +21312,6 @@ void prepareSparseRootChildrenRenderable(Tileset& tileset,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, root);
     TilesetTestAccess::ensureTileChildren(tileset, root);
-
     for (TilesetTile* child : root.children) {
         if (!child) continue;
         if (!child->content.upsampledFromParent) {
@@ -23504,27 +21323,22 @@ void prepareSparseRootChildrenRenderable(Tileset& tileset,
         TilesetTestAccess::ensureTileMesh(tileset, *child);
     }
 }
-
 void testTilesetAdditiveRefinementRendersParentAndChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: additive-refine root tile is created");
     if (!root) return;
-
     prepareSparseRootChildrenRenderable(tileset, *root, rootKey);
     root->refine = TileRefine::Add;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 130;
     frameState.camera = &camera;
@@ -23536,7 +21350,6 @@ void testTilesetAdditiveRefinementRendersParentAndChildren() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     bool rootVisible = false;
     bool childVisible = false;
     for (const TileKey& key : tileset.tilePlan().visibleTiles) {
@@ -23547,14 +21360,12 @@ void testTilesetAdditiveRefinementRendersParentAndChildren() {
                         key.x / 2 == rootKey.x &&
                         key.y / 2 == rootKey.y);
     }
-
     check(rootVisible && childVisible,
           "Tileset: ADD refinement renders parent and descendants together");
     check(tileset.tilePlan().renderingNodeCount ==
               static_cast<int>(tileset.tilePlan().visibleTiles.size()),
           "Tileset: render diagnostics count ADD parent render list entries");
 }
-
 void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
     // Aligns cesium-native "Render any tiles even when one of children can't
     // be rendered for additive refinement": ADD keeps the parent and renders
@@ -23565,7 +21376,6 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
         {"Geographic-TMS", 1, 0, 0},
         {"Geographic-TMS", 1, 1, 0},
         {"Geographic-TMS", 1, 0, 1}};
-
     auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
@@ -23577,22 +21387,18 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: ADD failed-child root tile is created");
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Add;
     root->geometricError = 40000.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == childKeys.size(),
           "Tileset: ADD failed-child children are linked");
     if (root->children.size() != childKeys.size()) return;
-
     for (size_t i = 0; i < root->children.size(); ++i) {
         TilesetTile* child = root->children[i];
         if (!child) continue;
@@ -23606,7 +21412,6 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
             child->content.contentKind = TileContentKind::Empty;
         }
     }
-
     bool allChildrenRenderable = true;
     for (TilesetTile* child : root->children) {
         allChildrenRenderable =
@@ -23617,13 +21422,11 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
     check(TilesetTestAccess::isTileRenderable(tileset, *root) &&
               allChildrenRenderable,
           "Tileset: ADD failed-child setup is renderable before selection");
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 143;
     frameState.camera = &camera;
@@ -23635,7 +21438,6 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto& visibleTiles = tileset.tilePlan().visibleTiles;
     const auto visibleEnd = visibleTiles.end();
     const bool rootVisible =
@@ -23647,7 +21449,6 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
             ++visibleChildCount;
         }
     }
-
     check(rootVisible,
           "Tileset: ADD failed-child keeps additive parent visible");
     check(visibleChildCount == childKeys.size(),
@@ -23655,7 +21456,6 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
     check(tileset.tilePlan().selectionKickedCount == 0,
           "Tileset: ADD failed-child selection does not kick descendants");
 }
-
 void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
     // Aligns cesium-native "No refinement happen when tile meet SSE": a
     // REPLACE tile that satisfies SSE renders itself and does not visit or
@@ -23666,7 +21466,6 @@ void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
         {"Geographic-TMS", 1, 1, 0},
         {"Geographic-TMS", 1, 0, 1},
         {"Geographic-TMS", 1, 1, 1}};
-
     auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
@@ -23678,17 +21477,14 @@ void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: replace-parent-meets-SSE root tile is created");
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Replace;
     root->geometricError = 1.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == childKeys.size(),
           "Tileset: replace-parent-meets-SSE children are linked");
@@ -23699,13 +21495,11 @@ void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
         child->content.contentKind = TileContentKind::Unknown;
         child->geometricError = 0.0;
     }
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 80000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 145;
     frameState.camera = &camera;
@@ -23717,7 +21511,6 @@ void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto& visibleTiles = tileset.tilePlan().visibleTiles;
     const auto visibleEnd = visibleTiles.end();
     const bool rootVisible =
@@ -23736,7 +21529,6 @@ void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
             anyChildVisited |= record.key == childKey;
         }
     }
-
     check(rootVisible &&
               root->selectionFrameState.selectionState ==
                   TileSelectionState::Rendered,
@@ -23746,7 +21538,6 @@ void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
     check(TilesetTestAccess::loadQueueContainsNormal(tileset, rootKey),
           "Tileset: REPLACE parent meeting SSE queues only the parent load");
 }
-
 void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     // Aligns cesium-native "Child should be chosen when parent doesn't meet
     // SSE": with REPLACE refinement, loaded renderable children replace their
@@ -23754,13 +21545,11 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: replace-refine root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -23768,7 +21557,6 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->refine = TileRefine::Replace;
     root->geometricError = 40000.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     std::vector<TileKey> childKeys;
     for (TilesetTile* child : root->children) {
@@ -23790,13 +21578,11 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     }
     check(childKeys.size() == 4 && allChildrenRenderable,
           "Tileset: replace-refine children are ready before selection");
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 136;
     frameState.camera = &camera;
@@ -23808,7 +21594,6 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto& visibleTiles = tileset.tilePlan().visibleTiles;
     const auto visibleEnd = visibleTiles.end();
     const bool rootVisible =
@@ -23825,7 +21610,6 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     check(visibleChildCount == childKeys.size() && visibleChildCount > 0,
           "Tileset: REPLACE refinement renders all ready children like cesium-native");
 }
-
 void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
     // Aligns cesium-native REPLACE first-frame behavior: when the parent
     // needs refinement but none of its children are renderable yet, the
@@ -23836,7 +21620,6 @@ void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
         {"Geographic-TMS", 1, 1, 0},
         {"Geographic-TMS", 1, 0, 1},
         {"Geographic-TMS", 1, 1, 1}};
-
     auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
@@ -23848,17 +21631,14 @@ void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: replace-loading-children root tile is created");
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Replace;
     root->geometricError = 40000.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == childKeys.size(),
           "Tileset: replace-loading-children children are linked");
@@ -23869,13 +21649,11 @@ void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
         child->content.contentKind = TileContentKind::Unknown;
         child->geometricError = 0.0;
     }
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 144;
     frameState.camera = &camera;
@@ -23887,7 +21665,6 @@ void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto& visibleTiles = tileset.tilePlan().visibleTiles;
     const auto visibleEnd = visibleTiles.end();
     const bool rootVisible =
@@ -23901,7 +21678,6 @@ void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
             tileset,
             childKey);
     }
-
     check(rootVisible && root->selectionFrameState.selectionState == TileSelectionState::Rendered,
           "Tileset: REPLACE loading children render parent fallback first");
     check(!anyChildVisible,
@@ -23912,7 +21688,6 @@ void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
               static_cast<int>(childKeys.size()),
           "Tileset: REPLACE loading children mark descendants as kicked");
 }
-
 void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
     // Aligns cesium-native replace refinement: terminal Failed children are
     // renderable empty content, so they still replace the parent rather than
@@ -23920,13 +21695,11 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: replace-failed-children root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -23934,7 +21707,6 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->refine = TileRefine::Replace;
     root->geometricError = 40000.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     std::vector<TileKey> childKeys;
     for (TilesetTile* child : root->children) {
@@ -23955,13 +21727,11 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
     }
     check(childKeys.size() == 4 && allChildrenRenderable,
           "Tileset: failed replace children are renderable empty content before selection");
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 137;
     frameState.camera = &camera;
@@ -23973,7 +21743,6 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto& visibleTiles = tileset.tilePlan().visibleTiles;
     const auto visibleEnd = visibleTiles.end();
     const bool rootVisible =
@@ -23985,7 +21754,6 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
             ++visibleChildCount;
         }
     }
-
     check(!rootVisible && root->selectionFrameState.selectionState == TileSelectionState::Refined,
           "Tileset: REPLACE failed children prevent parent fallback like cesium-native");
     check(visibleChildCount == childKeys.size() && visibleChildCount > 0,
@@ -23993,7 +21761,6 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
     check(tileset.tilePlan().selectionKickedCount == 0,
           "Tileset: REPLACE failed children are not kicked as non-renderable descendants");
 }
-
 void runTilesetUnconditionallyRefinedChildSelectionTest(TilesetOptions options,
                                                         const char* label) {
     // Aligns cesium-native "An unconditionally-refined tile is not rendered":
@@ -24003,7 +21770,6 @@ void runTilesetUnconditionallyRefinedChildSelectionTest(TilesetOptions options,
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     const TileKey grandchildKey{"Geographic-TMS", 2, 0, 0};
-
     auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
@@ -24016,50 +21782,42 @@ void runTilesetUnconditionallyRefinedChildSelectionTest(TilesetOptions options,
         nullptr,
         options,
         std::move(contentProvider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           std::string("Tileset: unconditionally-refined selector root is created ") + label);
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Replace;
     root->geometricError = 40000.0;
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     root->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     TilesetTile* child = TilesetTestAccess::findTile(tileset, childKey);
     check(child != nullptr,
           std::string("Tileset: unconditionally-refined selector child is linked ") + label);
     if (!child) return;
-
     child->content.loadState = TileLoadState::Done;
     child->content.contentKind = TileContentKind::Empty;
     child->refine = TileRefine::Replace;
     child->unconditionallyRefine = true;
     child->geometricError = 0.0;
     child->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
-
     TilesetTestAccess::ensureTileChildren(tileset, *child);
     TilesetTile* grandchild =
         TilesetTestAccess::findTile(tileset, grandchildKey);
     check(grandchild != nullptr,
           std::string("Tileset: unconditionally-refined selector grandchild is linked ") + label);
     if (!grandchild) return;
-
     grandchild->content.loadState = TileLoadState::Unloaded;
     grandchild->content.contentKind = TileContentKind::Unknown;
     grandchild->geometricError = 0.0;
     grandchild->boundingVolume =
         TileBoundingVolume::fromSphere(center, 1000000.0);
-
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 145;
     frameState.camera = &camera;
@@ -24071,7 +21829,6 @@ void runTilesetUnconditionallyRefinedChildSelectionTest(TilesetOptions options,
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto& visibleTiles = tileset.tilePlan().visibleTiles;
     const auto visibleEnd = visibleTiles.end();
     const bool rootVisible =
@@ -24080,7 +21837,6 @@ void runTilesetUnconditionallyRefinedChildSelectionTest(TilesetOptions options,
         std::find(visibleTiles.begin(), visibleEnd, childKey) != visibleEnd;
     const bool grandchildVisible =
         std::find(visibleTiles.begin(), visibleEnd, grandchildKey) != visibleEnd;
-
     check(rootVisible,
           std::string("Tileset: unconditionally-refined selector falls back to ancestor ") + label);
     check(!childVisible,
@@ -24090,19 +21846,16 @@ void runTilesetUnconditionallyRefinedChildSelectionTest(TilesetOptions options,
     check(TilesetTestAccess::loadQueueContainsAny(tileset, grandchildKey),
           std::string("Tileset: unconditionally-refined grandchild is queued ") + label);
 }
-
 void testTilesetUnconditionallyRefinedChildIsNotSelected() {
     runTilesetUnconditionallyRefinedChildSelectionTest(
         TilesetOptions{},
         "default");
-
     TilesetOptions forbidHolesOptions;
     forbidHolesOptions.forbidHoles = true;
     runTilesetUnconditionallyRefinedChildSelectionTest(
         forbidHolesOptions,
         "forbidHoles");
 }
-
 void testTilesetExternalWrapperRefinesToChildSelection() {
     // Local equivalent of cesium-native external tileset traversal: external
     // content creates an unconditionally-refined wrapper, so selection must
@@ -24110,7 +21863,6 @@ void testTilesetExternalWrapperRefinesToChildSelection() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey externalKey{"Geographic-TMS", 1, 0, 0};
     const TileKey renderKey{"Geographic-TMS", 2, 0, 0};
-
     auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
@@ -24123,25 +21875,21 @@ void testTilesetExternalWrapperRefinesToChildSelection() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: external-wrapper selector root is created");
     if (!root) return;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Replace;
     root->geometricError = 40000.0;
     root->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     TilesetTile* external = TilesetTestAccess::findTile(tileset, externalKey);
     check(external != nullptr,
           "Tileset: external-wrapper selector external tile is linked");
     if (!external) return;
-
     external->content.loadState = TileLoadState::Done;
     external->content.contentKind = TileContentKind::External;
     external->refine = TileRefine::Replace;
@@ -24149,23 +21897,19 @@ void testTilesetExternalWrapperRefinesToChildSelection() {
     external->geometricError = 0.0;
     external->boundingVolume =
         TileBoundingVolume::fromSphere(center, 1000000.0);
-
     TilesetTestAccess::ensureTileChildren(tileset, *external);
     TilesetTile* render = TilesetTestAccess::findTile(tileset, renderKey);
     check(render != nullptr,
           "Tileset: external-wrapper selector render child is linked");
     if (!render) return;
-
     render->content.loadState = TileLoadState::Done;
     render->content.contentKind = TileContentKind::Empty;
     render->geometricError = 0.0;
     render->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
-
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 146;
     frameState.camera = &camera;
@@ -24177,14 +21921,12 @@ void testTilesetExternalWrapperRefinesToChildSelection() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto& visibleTiles = tileset.tilePlan().visibleTiles;
     const auto visibleEnd = visibleTiles.end();
     const bool externalVisible =
         std::find(visibleTiles.begin(), visibleEnd, externalKey) != visibleEnd;
     const bool renderVisible =
         std::find(visibleTiles.begin(), visibleEnd, renderKey) != visibleEnd;
-
     check(!externalVisible,
           "Tileset: external-wrapper selector does not render external wrapper");
     check(renderVisible,
@@ -24192,7 +21934,6 @@ void testTilesetExternalWrapperRefinesToChildSelection() {
     check(external->selectionFrameState.selectionState == TileSelectionState::Refined,
           "Tileset: external-wrapper selector records wrapper as refined");
 }
-
 void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
     // Aligns cesium-native "Parent meets sse but not renderable": a failed
     // child that refined last frame keeps its loaded descendant while it does
@@ -24205,7 +21946,6 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
         {"Geographic-TMS", 1, 1, 1}};
     const TileKey failedChildKey = childKeys.front();
     const TileKey grandchildKey{"Geographic-TMS", 2, 0, 0};
-
     auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
@@ -24218,22 +21958,18 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: replace-failed-child-continuation root tile is created");
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Replace;
     root->geometricError = 800000000.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: replace-failed-child-continuation root has four children");
     if (root->children.size() < 4) return;
-
     TilesetTile* failedChild =
         TilesetTestAccess::findTile(tileset, failedChildKey);
     check(failedChild != nullptr,
@@ -24242,7 +21978,6 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
     failedChild->content.loadState = TileLoadState::Failed;
     failedChild->content.contentKind = TileContentKind::Empty;
     failedChild->geometricError = 200000.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *failedChild);
     check(failedChild->children.size() == 1,
           "Tileset: replace-failed-child-continuation failed child has descendants");
@@ -24255,7 +21990,6 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
     grandchild->content.loadState = TileLoadState::Done;
     grandchild->content.contentKind = TileContentKind::Empty;
     grandchild->geometricError = 1.0;
-
     for (size_t i = 1; i < childKeys.size(); ++i) {
         TilesetTile* sibling =
             TilesetTestAccess::findTile(tileset, childKeys[i]);
@@ -24264,13 +21998,11 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
         sibling->content.contentKind = TileContentKind::Empty;
         sibling->geometricError = 1.0;
     }
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(failedChild->bounds);
     Camera nearCamera;
     nearCamera.lookAt(center + center.normalized() * 1000000.0,
                       center,
                       Vec3::unitZ());
-
     FrameState nearFrame;
     nearFrame.frameId = 138;
     nearFrame.camera = &nearCamera;
@@ -24282,7 +22014,6 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
         nearCamera.position(),
         nearCamera.direction());
     TilesetTestAccess::selectTiles(tileset, nearFrame);
-
     const auto nearVisibleEnd = tileset.tilePlan().visibleTiles.end();
     const bool nearFailedChildVisible =
         std::find(
@@ -24298,12 +22029,10 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
               nearGrandchildVisible &&
               failedChild->selectionFrameState.selectionState == TileSelectionState::Refined,
           "Tileset: failed child that misses SSE renders its loaded grandchild");
-
     Camera farCamera;
     farCamera.lookAt(center + center.normalized() * 30000000.0,
                      center,
                      Vec3::unitZ());
-
     FrameState farFrame;
     farFrame.frameId = 139;
     farFrame.camera = &farCamera;
@@ -24315,7 +22044,6 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
         farCamera.position(),
         farCamera.direction());
     TilesetTestAccess::selectTiles(tileset, farFrame);
-
     const auto farVisibleEnd = tileset.tilePlan().visibleTiles.end();
     const bool farFailedChildVisible =
         std::find(
@@ -24336,7 +22064,6 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
             ++visibleSiblingCount;
         }
     }
-
     check(failedChild->selectionFrameState.previousSelectionState == TileSelectionState::Refined,
           "Tileset: failed child carries real previous-frame refined state");
     check(farFailedChildVisible &&
@@ -24346,12 +22073,10 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
     check(visibleSiblingCount == childKeys.size() - 1,
           "Tileset: failed child continuation keeps ready siblings visible");
 }
-
 void testTilesetAdditiveRefinementCullsWithParentBounds() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -24359,7 +22084,6 @@ void testTilesetAdditiveRefinementCullsWithParentBounds() {
     check(root != nullptr && child != nullptr,
           "Tileset: ADD culling parent and child are created");
     if (!root || !child) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -24369,7 +22093,6 @@ void testTilesetAdditiveRefinementCullsWithParentBounds() {
     root->children.clear();
     root->children.push_back(child);
     child->parent = root;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
@@ -24379,7 +22102,6 @@ void testTilesetAdditiveRefinementCullsWithParentBounds() {
     child->boundingVolume = TileBoundingVolume::fromSphere(
         camera.position() - camera.direction() * 2000000.0,
         1000.0);
-
     FrameState frameState;
     frameState.frameId = 132;
     frameState.camera = &camera;
@@ -24391,7 +22113,6 @@ void testTilesetAdditiveRefinementCullsWithParentBounds() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const bool rootVisible = std::find(
         tileset.tilePlan().visibleTiles.begin(),
         tileset.tilePlan().visibleTiles.end(),
@@ -24399,30 +22120,25 @@ void testTilesetAdditiveRefinementCullsWithParentBounds() {
     check(rootVisible && root->selectionFrameState.selectionState == TileSelectionState::Rendered,
           "Tileset: ADD refinement culls with parent bounds like cesium-native");
 }
-
 void testTilesetAdditiveRefinedTileCountsAsPreviouslyRendered() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: ADD previous-refined root tile is created");
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Add;
     root->selectionFrameState.previousSelectionState = TileSelectionState::Refined;
     root->children.clear();
-
     check(TilesetTestAccess::singleTileDetailsAnyWereRenderedLastFrame(
               tileset,
               *root),
           "Tileset: ADD refined tile counts as previously rendered like cesium-native");
 }
-
 void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
     // Aligns cesium-native TilesetSelection::kickDescendantsAndRenderTile:
     // when too many descendants are not yet renderable, child load requests
@@ -24431,24 +22147,20 @@ void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
     TilesetOptions options;
     options.loadingDescendantLimit = 1;
     options.forbidHoles = true;
-
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: descendant-limit root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->geometricError = 100000000.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: descendant-limit root has four children");
@@ -24461,13 +22173,11 @@ void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
         child->content.renderContent.setMeshReady(false);
         child->geometricError = 1.0;
     }
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 134;
     frameState.camera = &camera;
@@ -24479,7 +22189,6 @@ void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     check(root->selectionFrameState.selectionState == TileSelectionState::Rendered,
           "Tileset: descendant-limit renders the ancestor after kicking descendants");
     const auto visibleEnd = tileset.tilePlan().visibleTiles.end();
@@ -24508,27 +22217,22 @@ void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
     check(!anyChildQueued,
           "Tileset: descendant-limit avoids flooding load queue with descendants");
 }
-
 void testTilesetUnconditionallyRefineIgnoresSatisfiedSse() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: unconditionally-refine root tile is created");
     if (!root) return;
-
     prepareSparseRootChildrenRenderable(tileset, *root, rootKey);
     root->unconditionallyRefine = true;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 80000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 131;
     frameState.camera = &camera;
@@ -24540,7 +22244,6 @@ void testTilesetUnconditionallyRefineIgnoresSatisfiedSse() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     bool rootVisible = false;
     bool childVisible = false;
     bool rootRecordedAsRefined = false;
@@ -24559,16 +22262,13 @@ void testTilesetUnconditionallyRefineIgnoresSatisfiedSse() {
             break;
         }
     }
-
     check(!rootVisible && childVisible && rootRecordedAsRefined,
           "Tileset: unconditionallyRefine visits children even when parent meets SSE");
 }
-
 void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -24576,7 +22276,6 @@ void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
     check(root != nullptr && child != nullptr,
           "Tileset: unconditional-child culling parent and child are created");
     if (!root || !child) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -24586,7 +22285,6 @@ void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
     root->children.push_back(child);
     child->parent = root;
     child->unconditionallyRefine = true;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 80000000.0,
@@ -24596,7 +22294,6 @@ void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
     child->boundingVolume = TileBoundingVolume::fromSphere(
         camera.position() - camera.direction() * 2000000.0,
         1000.0);
-
     FrameState frameState;
     frameState.frameId = 133;
     frameState.camera = &camera;
@@ -24608,7 +22305,6 @@ void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const bool rootVisible = std::find(
         tileset.tilePlan().visibleTiles.begin(),
         tileset.tilePlan().visibleTiles.end(),
@@ -24616,7 +22312,6 @@ void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
     check(rootVisible && root->selectionFrameState.selectionState == TileSelectionState::Rendered,
           "Tileset: unconditional child disables children-bounds culling like cesium-native");
 }
-
 void testTilesetEmptySelectorViewsShortCircuitTraversal() {
     // Aligns cesium-native no-frustum selection behavior for the native
     // selector path. gis-md's default render-under-camera fallback is tested
@@ -24625,29 +22320,24 @@ void testTilesetEmptySelectorViewsShortCircuitTraversal() {
     TilesetOptions options;
     options.renderTilesUnderCamera = false;
     options.preloadSiblings = false;
-
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: empty-selector root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 146;
     frameState.camera = &camera;
@@ -24658,7 +22348,6 @@ void testTilesetEmptySelectorViewsShortCircuitTraversal() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     check(frameState.selectorViews.empty(),
           "Tileset: empty-selector test keeps no selector views");
     check(tileset.tilePlan().visibleTiles.empty(),
@@ -24668,7 +22357,6 @@ void testTilesetEmptySelectorViewsShortCircuitTraversal() {
     check(!TilesetTestAccess::loadQueueContainsAny(tileset, rootKey),
           "Tileset: empty selector views do not queue culled root when sibling preload is disabled");
 }
-
 void testTilesetFogDensityTableIsConfigurable() {
     auto runWithFogTable =
         [](std::vector<FogDensityAtHeight> fogDensityTable) {
@@ -24677,7 +22365,6 @@ void testTilesetFogDensityTableIsConfigurable() {
         TilesetOptions options;
         options.fogDensityTable = std::move(fogDensityTable);
         Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
-
         const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
         TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
         check(root != nullptr,
@@ -24685,13 +22372,11 @@ void testTilesetFogDensityTableIsConfigurable() {
         if (!root) {
             return std::pair<TilePlan, TileSelectionCounters>{};
         }
-
         const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
         Camera camera;
         camera.lookAt(center + center.normalized() * 100000.0,
                       center,
                       Vec3::unitZ());
-
         FrameState frameState;
         frameState.frameId = 132;
         frameState.camera = &camera;
@@ -24707,11 +22392,9 @@ void testTilesetFogDensityTableIsConfigurable() {
             tileset.tilePlan(),
             TilesetTestAccess::selectionCounters(tileset)};
     };
-
     const auto [clearPlan, clearCounters] = runWithFogTable({{0.0, 0.0}});
     const auto [densePlan, denseCounters] =
         runWithFogTable({{0.0, 1.0}, {1000000.0, 1.0}});
-
     check(!clearPlan.visibleTiles.empty(),
           "Tileset: zero fog density table permits root selection");
     check(clearCounters.visited > 0 &&
@@ -24724,14 +22407,12 @@ void testTilesetFogDensityTableIsConfigurable() {
               denseCounters.fogCulled > 0,
           "Tileset: dense fog still visits the virtual terrain root before culling data tiles");
 }
-
 void testTileSelectionMetricsFogMatchesCesiumNativeRules() {
     const std::vector<FogDensityAtHeight> fogTable{
         {100.0, 0.001},
         {200.0, 0.003},
         {400.0, 0.007},
     };
-
     check(std::abs(TileSelectionMetrics::computeFogDensity(fogTable, 50.0) -
                    0.001) < 1e-12,
           "TileSelectionMetrics: fog density clamps below first height");
@@ -24750,37 +22431,31 @@ void testTileSelectionMetricsFogMatchesCesiumNativeRules() {
     check(!TileSelectionMetrics::isVisibleInFog(1.0e200, 1.0),
           "TileSelectionMetrics: overflowing dense fog culls tile");
 }
-
 void testTilesetRecordsAncestorMeetsSseForDescendants() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: ancestor-meets-SSE root tile is created");
     if (!root) return;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     const Vec3 cameraPosition = center + center.normalized() * 80000000.0;
     Camera camera;
     camera.lookAt(cameraPosition, center, Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 77;
     frameState.camera = &camera;
     frameState.viewportWidthPixels = 800;
     frameState.viewportHeightPixels = 800;
     frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
-
     root->selectionFrameState.selectionState = TileSelectionState::Refined;
     TilesetTestAccess::setLastCamera(
         tileset,
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     bool descendantRecorded = false;
     for (const TileSelectionRecord& record : tileset.tilePlan().selectionRecords) {
         if (record.key.z > rootKey.z && record.ancestorMeetsSse) {
@@ -24792,7 +22467,6 @@ void testTilesetRecordsAncestorMeetsSseForDescendants() {
               tileset.tilePlan().selectionAncestorMeetsSseCount > 0,
           "Tileset: descendants record ancestor-meets-SSE continuation like cesium-native");
 }
-
 void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
     // Aligns cesium-native mustContinueRefiningToDeeperTiles: a tile that
     // satisfied SSE but was refined last frame must keep its descendants
@@ -24800,13 +22474,11 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: previous-refined unrenderable root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -24817,7 +22489,6 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
     root->content.renderContent.setSurfaceMesh(nullptr);
     root->geometricError = 1.0;
     root->selectionFrameState.selectionState = TileSelectionState::Refined;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     std::vector<TileKey> childKeys;
     for (TilesetTile* child : root->children) {
@@ -24831,13 +22502,11 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
         TilesetTestAccess::ensureTileMesh(tileset, *child);
         child->geometricError = 0.0;
     }
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 80000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 135;
     frameState.camera = &camera;
@@ -24849,7 +22518,6 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto& visibleTiles = tileset.tilePlan().visibleTiles;
     const auto visibleEnd = visibleTiles.end();
     const bool rootVisible =
@@ -24867,7 +22535,6 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
                 record.ancestorMeetsSse;
         }
     }
-
     check(!rootVisible && root->selectionFrameState.selectionState == TileSelectionState::Refined,
           "Tileset: previous-refined unrenderable parent keeps refining after meeting SSE");
     check(visibleChildCount == childKeys.size() && visibleChildCount > 0,
@@ -24877,13 +22544,11 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
     check(TilesetTestAccess::loadQueueContainsUrgent(tileset, rootKey),
           "Tileset: previous-refined unrenderable parent is queued urgently");
 }
-
 void testTilesetUsesLargestSseAcrossSelectorViews() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto schemeForCenter = TileScheme::createGeographicTMS();
     const Rectangle rootBounds = schemeForCenter->tileToRectangle(rootKey);
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(rootBounds);
-
     Camera nearCamera;
     nearCamera.lookAt(center + center.normalized() * 1000000.0,
                       center,
@@ -24892,7 +22557,6 @@ void testTilesetUsesLargestSseAcrossSelectorViews() {
     farCamera.lookAt(center + center.normalized() * 80000000.0,
                      center,
                      Vec3::unitZ());
-
     auto runSelection = [&](std::vector<SelectorView> views) {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
@@ -24903,7 +22567,6 @@ void testTilesetUsesLargestSseAcrossSelectorViews() {
             nullptr,
             TilesetOptions{});
         TilesetTestAccess::ensureTile(tileset, rootKey);
-
         FrameState frameState;
         frameState.frameId = 91;
         frameState.camera = &nearCamera;
@@ -24917,26 +22580,22 @@ void testTilesetUsesLargestSseAcrossSelectorViews() {
         TilesetTestAccess::selectTiles(tileset, frameState);
         return tileset.tilePlan().maxVisibleZoom;
     };
-
     const int farOnlyZoom = runSelection({
         makeSelectorView(farCamera, 800, 800)});
     const int multiViewZoom = runSelection({
         makeSelectorView(farCamera, 800, 800),
         makeSelectorView(nearCamera, 800, 800)});
-
     check(farOnlyZoom == 0,
           "Tileset: far selector view alone keeps root when it meets SSE");
     check(multiViewZoom > farOnlyZoom,
           "Tileset: multiple selector views refine using largest SSE like cesium-native");
 }
-
 void testTilesetCullRequiresAllSelectorViewsToMissTile() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const std::vector<TileKey> childKeys = {
         {"Geographic-TMS", 1, 0, 0},
         {"Geographic-TMS", 1, 1, 0},
         {"Geographic-TMS", 1, 0, 1}};
-
     auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
@@ -24948,12 +22607,10 @@ void testTilesetCullRequiresAllSelectorViewsToMissTile() {
         nullptr,
         TilesetOptions{},
         std::move(contentProvider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: multi-frustum culling root tile is created");
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Replace;
@@ -24962,7 +22619,6 @@ void testTilesetCullRequiresAllSelectorViewsToMissTile() {
     check(root->children.size() == childKeys.size(),
           "Tileset: multi-frustum culling children are linked");
     if (root->children.size() != childKeys.size()) return;
-
     const Vec3 up = Vec3(1.0, 0.0, 0.0);
     const Vec3 east = Vec3(0.0, 1.0, 0.0);
     const Vec3 north = Vec3(0.0, 0.0, 1.0);
@@ -24972,7 +22628,6 @@ void testTilesetCullRequiresAllSelectorViewsToMissTile() {
     const Vec3 targetA = base;
     const Vec3 targetB = base + east * 100000.0;
     const Vec3 targetC = base - east * 100000.0;
-
     const std::array<Vec3, 3> centers = {targetA, targetB, targetC};
     for (size_t i = 0; i < childKeys.size(); ++i) {
         TilesetTile* child =
@@ -24987,14 +22642,12 @@ void testTilesetCullRequiresAllSelectorViewsToMissTile() {
             centers[i],
             1000.0);
     }
-
     Camera cameraA;
     cameraA.lookAt(targetA + up * 100000.0, targetA, north);
     cameraA.setPerspective(glm::radians(10.0), 1.0, 10000000.0);
     Camera cameraB;
     cameraB.lookAt(targetB + up * 100000.0, targetB, north);
     cameraB.setPerspective(glm::radians(10.0), 1.0, 10000000.0);
-
     FrameState frameState;
     frameState.frameId = 141;
     frameState.camera = &cameraA;
@@ -25008,7 +22661,6 @@ void testTilesetCullRequiresAllSelectorViewsToMissTile() {
         cameraA.position(),
         cameraA.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const auto visibleEnd = tileset.tilePlan().visibleTiles.end();
     const bool childAVisible =
         std::find(
@@ -25025,7 +22677,6 @@ void testTilesetCullRequiresAllSelectorViewsToMissTile() {
             tileset.tilePlan().visibleTiles.begin(),
             visibleEnd,
             childKeys[2]) != visibleEnd;
-
     check(childAVisible && childBVisible,
           "Tileset: tile visible to any selector view is not frustum-culled");
     check(!childCVisible,
@@ -25034,18 +22685,15 @@ void testTilesetCullRequiresAllSelectorViewsToMissTile() {
               tileset.tilePlan().notRenderingNodeCount >= 1,
           "Tileset: multi-frustum culling records only agreed misses as not rendered");
 }
-
 void testTilesetSseUsesProjectionMatrix() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto schemeForCenter = TileScheme::createGeographicTMS();
     const Rectangle rootBounds = schemeForCenter->tileToRectangle(rootKey);
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(rootBounds);
-
     Camera camera;
     camera.lookAt(center + center.normalized() * 80000000.0,
                   center,
                   Vec3::unitZ());
-
     auto runSelection = [&](SelectorView view) {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
@@ -25056,7 +22704,6 @@ void testTilesetSseUsesProjectionMatrix() {
             nullptr,
             TilesetOptions{});
         TilesetTestAccess::ensureTile(tileset, rootKey);
-
         FrameState frameState;
         frameState.frameId = 92;
         frameState.camera = &camera;
@@ -25070,21 +22717,17 @@ void testTilesetSseUsesProjectionMatrix() {
         TilesetTestAccess::selectTiles(tileset, frameState);
         return tileset.tilePlan().maxVisibleZoom;
     };
-
     SelectorView nativeProjection =
         makeSelectorView(camera, 800, 800);
     SelectorView strongerProjection = nativeProjection;
     strongerProjection.projectionMatrix(1, 1) *= 4.0;
-
     const int nativeZoom = runSelection(nativeProjection);
     const int strongerProjectionZoom = runSelection(strongerProjection);
-
     check(nativeZoom == 0,
           "Tileset: native projection matrix keeps root when it meets SSE");
     check(strongerProjectionZoom > nativeZoom,
           "Tileset: SSE follows projection-matrix vertical scale like cesium-native");
 }
-
 void testTilesetFogUsesEachSelectorViewDensity() {
     TilesetOptions options;
     options.fogDensityTable = {
@@ -25092,12 +22735,10 @@ void testTilesetFogUsesEachSelectorViewDensity() {
         {1000000.0, 1.0},
         {10000000.0, 0.0}
     };
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto schemeForCenter = TileScheme::createGeographicTMS();
     const Rectangle rootBounds = schemeForCenter->tileToRectangle(rootKey);
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(rootBounds);
-
     Camera lowFogCamera;
     lowFogCamera.lookAt(center + center.normalized() * 100000.0,
                         center,
@@ -25106,12 +22747,10 @@ void testTilesetFogUsesEachSelectorViewDensity() {
     highClearCamera.lookAt(center + center.normalized() * 80000000.0,
                            center,
                            Vec3::unitZ());
-
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
     TilesetTestAccess::ensureTile(tileset, rootKey);
-
     FrameState frameState;
     frameState.frameId = 92;
     frameState.camera = &lowFogCamera;
@@ -25126,15 +22765,12 @@ void testTilesetFogUsesEachSelectorViewDensity() {
         lowFogCamera.position(),
         lowFogCamera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     check(!tileset.tilePlan().visibleTiles.empty(),
           "Tileset: fog culling uses each selector view density like cesium-native");
 }
-
 void testSceneSelectorViewOverrideFeedsMultipleViews() {
     Scene scene;
     scene.setViewport(800, 600, 1.0f);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
     scene.camera().lookAt(
@@ -25144,7 +22780,6 @@ void testSceneSelectorViewOverrideFeedsMultipleViews() {
     scene.update(1.0 / 60.0);
     check(scene.frameState().selectorViews.size() == 1,
           "Scene: default selector view comes from the main camera");
-
     Camera secondCamera;
     secondCamera.lookAt(
         target + Vec3(0.0, 1000000.0, 0.0),
@@ -25156,18 +22791,15 @@ void testSceneSelectorViewOverrideFeedsMultipleViews() {
     scene.update(1.0 / 60.0);
     check(scene.frameState().selectorViews.size() == 2,
           "Scene: selector view override exposes real multi-view selection input");
-
     scene.setSelectorViewOverride({});
     scene.update(1.0 / 60.0);
     check(scene.frameState().selectorViews.empty(),
           "Scene: empty selector override preserves native no-frustum semantics");
-
     scene.clearSelectorViewOverride();
     scene.update(1.0 / 60.0);
     check(scene.frameState().selectorViews.size() == 1,
           "Scene: clearing selector override returns to main-camera selection");
 }
-
 void testSceneFrameDiagnosticsResetsTimingAndSmoothsFps() {
     Diagnostics diagnostics;
     diagnostics.fps = 30.0;
@@ -25180,7 +22812,6 @@ void testSceneFrameDiagnosticsResetsTimingAndSmoothsFps() {
     diagnostics.renderCommandBuildMs = 17.0;
     diagnostics.renderSubmitMs = 18.0;
     diagnostics.drawCalls = 9;
-
     SceneFrameDiagnostics::resetPerFrame(diagnostics);
     check(diagnostics.cameraUpdateMs == 0.0 &&
               diagnostics.environmentUpdateMs == 0.0 &&
@@ -25191,17 +22822,14 @@ void testSceneFrameDiagnosticsResetsTimingAndSmoothsFps() {
               diagnostics.renderSubmitMs == 0.0 &&
               diagnostics.drawCalls == 9,
           "SceneFrameDiagnostics: per-frame timing reset preserves non-timing counters");
-
     SceneFrameDiagnostics::updateFrameRate(diagnostics, 0.5);
     check(std::abs(diagnostics.frameTimeMs - 500.0) < 1e-9 &&
               std::abs(diagnostics.fps - 27.2) < 1e-9,
           "SceneFrameDiagnostics: fps smoothing updates frame timing");
-
     SceneFrameDiagnostics::updateFrameRate(diagnostics, 0.0);
     check(std::abs(diagnostics.frameTimeMs - 500.0) < 1e-9 &&
               std::abs(diagnostics.fps - 27.2) < 1e-9,
           "SceneFrameDiagnostics: non-positive delta leaves fps unchanged");
-
     SceneFrameDiagnostics::recordEngineTiming(
         diagnostics,
         SceneFrameDiagnostics::EngineTimingScope::BeginFrame,
@@ -25226,7 +22854,6 @@ void testSceneFrameDiagnosticsResetsTimingAndSmoothsFps() {
               std::abs(diagnostics.engineFrameCpuMs - 11.5) < 1e-9,
           "SceneFrameDiagnostics: records engine frame timing scopes");
 }
-
 void testSceneFrameStateBuilderPopulatesPerFrameState() {
     Camera camera;
     const auto& ellipsoid = Ellipsoid::WGS84();
@@ -25235,7 +22862,6 @@ void testSceneFrameStateBuilderPopulatesPerFrameState() {
         target + Vec3(1000000.0, 0.0, 0.0),
         target,
         Vec3::unitZ());
-
     FrameState frameState;
     frameState.viewportWidthPixels = 800;
     frameState.viewportHeightPixels = 600;
@@ -25272,7 +22898,6 @@ void testSceneFrameStateBuilderPopulatesPerFrameState() {
               diagnostics.cameraUpdateMs == 12.0 &&
               diagnostics.renderCommandBuildMs == 7.0,
           "SceneFrameStateBuilder: frame build does not own diagnostics lifecycle");
-
     std::vector<SelectorView> overrideViews{
         makeSelectorView(camera, 320, 240),
         makeSelectorView(camera, 640, 480)};
@@ -25296,7 +22921,6 @@ void testSceneFrameStateBuilderPopulatesPerFrameState() {
     check(!frameState.hasInteractionFocus &&
               frameState.interactionFocusDirection == Vec3::zero(),
           "SceneFrameStateBuilder: stale interaction focus expires");
-
     SceneFrameStateBuilder::build(SceneFrameStateBuildInput{
         frameState,
         &camera,
@@ -25313,12 +22937,10 @@ void testSceneFrameStateBuilderPopulatesPerFrameState() {
     check(frameState.selectorViews.empty(),
           "SceneFrameStateBuilder: missing override payload preserves empty no-frustum state");
 }
-
 void testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets() {
     Scene scene;
     scene.setOcclusionCallback(
         [](const TilesetTile&) { return TileOcclusionState::Occluded; });
-
     auto makeTileset = []() {
         return TilesetTestAccess::makeLegacyTerrainTilesetPtr(
             std::make_unique<SparseTerrainProvider>(),
@@ -25327,15 +22949,12 @@ void testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets() {
             nullptr,
             TilesetOptions{});
     };
-
     auto primaryTileset = makeTileset();
     Tileset* primaryRaw = primaryTileset.get();
     scene.setTileset(std::move(primaryTileset));
-
     auto additionalTileset = makeTileset();
     Tileset* additionalRaw = additionalTileset.get();
     scene.addTileset(std::move(additionalTileset));
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* primaryRoot =
         TilesetTestAccess::ensureTile(*primaryRaw, rootKey);
@@ -25344,14 +22963,12 @@ void testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets() {
     check(primaryRoot && additionalRoot,
           "Scene: occlusion callback test creates both tileset roots");
     if (!primaryRoot || !additionalRoot) return;
-
     check(TilesetTestAccess::checkOcclusion(*primaryRaw, *primaryRoot) ==
               TileOcclusionState::Occluded,
           "Scene: occlusion callback reaches primary tileset");
     check(TilesetTestAccess::checkOcclusion(*additionalRaw, *additionalRoot) ==
               TileOcclusionState::Occluded,
           "Scene: occlusion callback reaches additional tileset");
-
     scene.setOcclusionCallback(
         [](const TilesetTile&) { return TileOcclusionState::NotOccluded; });
     check(TilesetTestAccess::checkOcclusion(*primaryRaw, *primaryRoot) ==
@@ -25361,7 +22978,6 @@ void testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets() {
               TileOcclusionState::NotOccluded,
           "Scene: occlusion callback update reaches additional tileset");
 }
-
 void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -25369,17 +22985,14 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(scene.setRenderDevice(&device),
           "Scene: dummy render device initializes full renderer path");
     scene.setViewport(800, 600, 1.0f);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
     scene.camera().lookAt(
         target + Vec3(1000000.0, 0.0, 0.0),
         target,
         Vec3::unitZ());
-
     const TileKey westRoot{"Geographic-TMS", 0, 0, 0};
     const TileKey eastRoot{"Geographic-TMS", 0, 1, 0};
-
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto terrainTileset = TilesetTestAccess::makeLegacyTerrainTilesetPtr(
         std::move(terrainProvider),
@@ -25398,14 +23011,12 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
         *terrainRaw,
         eastRoot,
         makeFlatHeightmap(123.0f));
-
     scene.setTileset(std::move(terrainTileset));
     check(scene.tileset() == terrainRaw,
           "Scene: setTileset installs the primary terrain tileset");
     check(std::abs(scene.tileset()->sampleHeight(0.0, 0.0) - 123.0f) <
               1e-6f,
           "Scene: primary terrain tileset remains the height sampling source");
-
     auto contentTileset = std::make_unique<Tileset>(
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
@@ -25418,14 +23029,12 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(westContent != nullptr && eastContent != nullptr,
           "Scene: additional glTF tileset roots are created");
     if (!westContent || !eastContent) return;
-
     westContent->content.renderContent.setGltfContent(makeTriangleGltfModel());
     westContent->content.loadState = TileLoadState::Done;
     westContent->content.contentKind = TileContentKind::Render;
     eastContent->content.renderContent.setGltfContent(makeTriangleGltfModel());
     eastContent->content.loadState = TileLoadState::Done;
     eastContent->content.contentKind = TileContentKind::Render;
-
     scene.addTileset(std::move(contentTileset));
     check(scene.tileset() == terrainRaw &&
               scene.additionalTilesetCount() == 1,
@@ -25433,10 +23042,8 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(std::abs(scene.tileset()->sampleHeight(0.0, 0.0) - 123.0f) <
               1e-6f,
           "Scene: adding glTF tileset does not replace terrain sampling");
-
     scene.update(1.0 / 60.0);
     scene.render();
-
     const bool submittedGltf = std::any_of(
         device.submittedCommands.begin(),
         device.submittedCommands.end(),
@@ -25484,21 +23091,18 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
               1e-6f,
           "Scene: terrain sampling is still owned by primary tileset after render");
 }
-
 void testSceneTerrainContentCountsAsTerrainRenderContent() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
           "Scene: glTF terrain diagnostics initialize renderer");
     scene.setViewport(800, 600, 1.0f);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
     scene.camera().lookAt(
         target + Vec3(1000000.0, 0.0, 0.0),
         target,
         Vec3::unitZ());
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto terrainTileset = std::make_unique<Tileset>(
         TileScheme::createGeographicTMS(),
@@ -25511,16 +23115,13 @@ void testSceneTerrainContentCountsAsTerrainRenderContent() {
     check(root != nullptr,
           "Scene: glTF terrain root tile is created");
     if (!root) return;
-
     root->content.renderContent.setGltfContent(makeTriangleGltfModel());
     root->content.renderContent.setTerrainRenderContent(true);
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     scene.setTileset(std::move(terrainTileset));
-
     scene.update(1.0 / 60.0);
     scene.render();
-
     const int terrainGltfCommands = static_cast<int>(std::count_if(
         device.submittedCommands.begin(),
         device.submittedCommands.end(),
@@ -25538,21 +23139,18 @@ void testSceneTerrainContentCountsAsTerrainRenderContent() {
                       scene.diagnostics().terrainSurfaceCommandsSubmitted,
           "Scene: glTF terrain diagnostics count glTF and surface terrain render content");
 }
-
 void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
           "Scene: render-entry reason diagnostics initialize renderer");
     scene.setViewport(800, 600, 1.0f);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
     scene.camera().lookAt(
         target + Vec3(1000000.0, 0.0, 0.0),
         target,
         Vec3::unitZ());
-
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createGeographicTMS(),
@@ -25565,7 +23163,6 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
         &device,
         TilesetOptions{});
     Tileset* terrainRaw = terrainTileset.get();
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
@@ -25573,7 +23170,6 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
     check(root != nullptr && child != nullptr,
           "Scene: render-entry reason diagnostics create fallback tiles");
     if (!root || !child) return;
-
     TilesetTestAccess::putTerrainCache(
         *terrainRaw,
         rootKey,
@@ -25593,14 +23189,12 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
     TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
     TilesetTestAccess::beginTilePlan(*terrainRaw);
     TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *child);
     scene.render();
-
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesFadingPlanned == 0 &&
@@ -25615,21 +23209,18 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
               scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
           "Scene: diagnostics expose nonzero terrain render-entry fallback reasons");
 }
-
 void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
           "Scene: synchronous-prep diagnostics initialize renderer");
     scene.setViewport(800, 600, 1.0f);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
     scene.camera().lookAt(
         target + Vec3(1000000.0, 0.0, 0.0),
         target,
         Vec3::unitZ());
-
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createGeographicTMS(),
@@ -25642,13 +23233,11 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
         &device,
         TilesetOptions{});
     Tileset* terrainRaw = terrainTileset.get();
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
     check(root != nullptr,
           "Scene: synchronous-prep diagnostics create root tile");
     if (!root) return;
-
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -25665,7 +23254,6 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     check(!root->hasSurfaceDrawable(),
           "Scene: synchronous-prep diagnostics starts before root mesh is ready");
-
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
     TilesetTestAccess::putTerrainCache(
@@ -25675,7 +23263,6 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
     TilesetTestAccess::beginTilePlan(*terrainRaw);
     TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
     scene.render();
-
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesAncestorFallback == 1 &&
@@ -25689,21 +23276,18 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
               scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
           "Scene: diagnostics classify legacy terrain render resolution as ancestor fallback");
 }
-
 void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
           "Scene: imagery-only fallback diagnostics initialize renderer");
     scene.setViewport(800, 600, 1.0f);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
     scene.camera().lookAt(
         target + Vec3(1000000.0, 0.0, 0.0),
         target,
         Vec3::unitZ());
-
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createGeographicTMS(),
@@ -25716,7 +23300,6 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
         &device,
         TilesetOptions{});
     Tileset* terrainRaw = terrainTileset.get();
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
@@ -25724,7 +23307,6 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
     check(root != nullptr && child != nullptr,
           "Scene: imagery-only fallback diagnostics create fallback tiles");
     if (!root || !child) return;
-
     TilesetTestAccess::putTerrainCache(
         *terrainRaw,
         childKey,
@@ -25748,14 +23330,12 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
           "Scene: imagery-only fallback diagnostics starts before ancestor mesh is ready");
     check(child->hasSurfaceDrawable(),
           "Scene: imagery-only fallback diagnostics selected child has drawable terrain");
-
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
     TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
     TilesetTestAccess::beginTilePlan(*terrainRaw);
     TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *child);
     scene.render();
-
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1,
           "Scene: imagery-only ancestor fallback plans one selected render entry");
@@ -25765,19 +23345,16 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 1,
           "Scene: imagery-only ancestor fallback draws selected surface");
 }
-
 void testSceneSortsTransparentGltfByCameraDepth() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
           "Scene: dummy render device initializes transparent glTF path");
     scene.setViewport(800, 600, 1.0f);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
     const Vec3 cameraPosition = target + Vec3(1000000.0, 0.0, 0.0);
     scene.camera().lookAt(cameraPosition, target, Vec3::unitZ());
-
     auto contentTileset = std::make_unique<Tileset>(
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
@@ -25790,7 +23367,6 @@ void testSceneSortsTransparentGltfByCameraDepth() {
     check(root != nullptr,
           "Scene: transparent glTF root tile is created");
     if (!root) return;
-
     auto model = std::make_unique<GltfModel>();
     model->primitives.push_back(
         makeTransparentTrianglePrimitiveAt(target + Vec3(900000.0, 0.0, 0.0)));
@@ -25799,10 +23375,8 @@ void testSceneSortsTransparentGltfByCameraDepth() {
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     scene.setTileset(std::move(contentTileset));
-
     scene.update(1.0 / 60.0);
     scene.render();
-
     std::vector<RenderCommand> transparentGltf;
     for (const RenderCommand& cmd : device.submittedCommands) {
         if (cmd.kind == RenderCommandKind::GltfPrimitive && cmd.blend) {
@@ -25812,7 +23386,6 @@ void testSceneSortsTransparentGltfByCameraDepth() {
     check(transparentGltf.size() == 2u,
           "Scene: transparent glTF primitives are submitted");
     if (transparentGltf.size() != 2u) return;
-
     check(transparentGltf[0].hasTranslucentSortDepth &&
               transparentGltf[1].hasTranslucentSortDepth,
           "Scene: transparent glTF world centers resolve to camera sort depths");
@@ -25825,12 +23398,10 @@ void testSceneSortsTransparentGltfByCameraDepth() {
                   1.0,
           "Scene: transparent glTF sort depths are computed from camera direction");
 }
-
 void testTilesetLodTransitionsUseNativeDeltaState() {
     TilesetOptions options;
     options.enableLodTransitionPeriod = true;
     options.lodTransitionLength = 1.0f;
-
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -25839,19 +23410,16 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
         {},
         nullptr,
         options);
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: LOD transition root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-
     TilesetTestAccess::beginTilePlan(tileset);
     root->selectionFrameState.previousSelectionState =
         TileSelectionState::NotVisited;
@@ -25863,7 +23431,6 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
           "Tileset: selected tile fades in by delta / transition length");
     check(TilesetTestAccess::tilePlan(tileset).fadingNodeCount == 1,
           "Tileset: fade-in contributes to transition diagnostics");
-
     TilesetTestAccess::beginTilePlan(tileset);
     root->selectionFrameState.selectionState = TileSelectionState::NotVisited;
     root->selectionFrameState.previousSelectionState =
@@ -25878,7 +23445,6 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
           "Tileset: fading-out render opacity is the inverse native fade percentage");
     check(TilesetTestAccess::fadingOutSetSize(tileset) == 1,
           "Tileset: fading-out tile stays tracked across frames");
-
     TilesetTestAccess::beginTilePlan(tileset);
     root->selectionFrameState.previousSelectionState =
         TileSelectionState::NotVisited;
@@ -25887,22 +23453,18 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
               !TilesetTestAccess::tilePlan(tileset).tilesFadingOut.empty() &&
               TilesetTestAccess::tilePlan(tileset).tilesFadingOut.front().opacity <= 0.001f,
           "Tileset: fading-out tile reaches zero opacity before removal");
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::updateLodTransitions(tileset, 0.016);
     check(TilesetTestAccess::fadingOutSetSize(tileset) == 0,
           "Tileset: completed fading-out tile is removed like cesium-native");
 }
-
 void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
     TilesetOptions options;
     options.enableLodTransitionPeriod = true;
     options.lodTransitionLength = 1.0f;
-
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -25910,7 +23472,6 @@ void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
     check(root != nullptr && child != nullptr,
           "Tileset: ADD refined fade-out parent and child are created");
     if (!root || !child) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -25921,16 +23482,13 @@ void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
         childKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *child);
-
     child->refine = TileRefine::Add;
     child->selectionFrameState.previousSelectionState =
         TileSelectionState::Refined;
     child->selectionFrameState.selectionState = TileSelectionState::NotVisited;
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     TilesetTestAccess::updateLodTransitions(tileset, 0.25);
-
     const TilePlan& plan = TilesetTestAccess::tilePlan(tileset);
     bool childFadingOut = false;
     float childOpacity = 0.0f;
@@ -25941,18 +23499,15 @@ void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
             break;
         }
     }
-
     check(childFadingOut,
           "Tileset: ADD refined previous tile enters tilesFadingOut like cesium-native");
     check(std::abs(childOpacity - 0.75f) < 1e-6f,
           "Tileset: ADD refined fade-out uses native opacity progression");
 }
-
 void testTilesetLodTransitionsIgnoreEmptyContent() {
     TilesetOptions options;
     options.enableLodTransitionPeriod = true;
     options.lodTransitionLength = 1.0f;
-
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
@@ -25961,17 +23516,14 @@ void testTilesetLodTransitionsIgnoreEmptyContent() {
         {},
         nullptr,
         options);
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: empty-content LOD transition root tile is created");
     if (!root) return;
-
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
     root->content.renderContent.setMeshReady(false);
-
     TilesetTestAccess::beginTilePlan(tileset);
     root->selectionFrameState.previousSelectionState =
         TileSelectionState::NotVisited;
@@ -25983,7 +23535,6 @@ void testTilesetLodTransitionsIgnoreEmptyContent() {
                   root->selectionFrameState.lodTransitionFadePercentage -
                   1.0f) < 1e-6f,
           "Tileset: Empty content does not create fake fade-in render content");
-
     TilesetTestAccess::beginTilePlan(tileset);
     root->selectionFrameState.selectionState = TileSelectionState::NotVisited;
     root->selectionFrameState.previousSelectionState =
@@ -25993,24 +23544,20 @@ void testTilesetLodTransitionsIgnoreEmptyContent() {
               TilesetTestAccess::fadingOutSetSize(tileset) == 0,
           "Tileset: Empty content does not create fake fade-out render content");
 }
-
 void testTilesetOcclusionStopsRefinementBeforeChildLoads() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: occlusion root tile is created");
     if (!root) return;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 101;
     frameState.camera = &camera;
@@ -26025,30 +23572,25 @@ void testTilesetOcclusionStopsRefinementBeforeChildLoads() {
         tileset,
         TileOcclusionState::Occluded);
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     check(tileset.tilePlan().maxVisibleZoom == 0 && root->children.empty(),
           "Tileset: occluded tile renders current level instead of refining");
     check(tileset.tilePlan().selectionOccludedCount == 1,
           "Tileset: occluded tile increments native occlusion diagnostics");
 }
-
 void testTilesetOcclusionUnavailableDelaysNewRefinement() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: occlusion-unavailable root tile is created");
     if (!root) return;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 102;
     frameState.camera = &camera;
@@ -26063,30 +23605,25 @@ void testTilesetOcclusionUnavailableDelaysNewRefinement() {
         tileset,
         TileOcclusionState::OcclusionUnavailable);
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     check(tileset.tilePlan().maxVisibleZoom == 0 && root->children.empty(),
           "Tileset: unavailable occlusion delays new refinement like cesium-native");
     check(tileset.tilePlan().selectionWaitingForOcclusionResultsCount == 1,
           "Tileset: unavailable occlusion increments native waiting diagnostics");
 }
-
 void testTilesetOcclusionUnavailableDoesNotDelayPreviouslyRefinedTile() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: previous-refined occlusion root tile is created");
     if (!root) return;
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 103;
     frameState.camera = &camera;
@@ -26102,27 +23639,22 @@ void testTilesetOcclusionUnavailableDoesNotDelayPreviouslyRefinedTile() {
         tileset,
         TileOcclusionState::OcclusionUnavailable);
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     check(!root->children.empty() && tileset.tilePlan().maxVisibleZoom > 0,
           "Tileset: previously refined tile continues refinement while occlusion is unavailable");
 }
-
 void testTilesetOcclusionAggregatesOccludedChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: child-aggregate occlusion root tile is created");
     if (!root) return;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(!root->children.empty(),
           "Tileset: child-aggregate occlusion has child bounds");
     if (root->children.empty()) return;
-
     std::unordered_map<TileKey, TileOcclusionState> states;
     states[rootKey] = TileOcclusionState::NotOccluded;
     for (const TilesetTile* child : root->children) {
@@ -26136,28 +23668,23 @@ void testTilesetOcclusionAggregatesOccludedChildren() {
                 ? TileOcclusionState::NotOccluded
                 : it->second;
         });
-
     check(TilesetTestAccess::checkOcclusion(tileset, *root) ==
               TileOcclusionState::Occluded,
           "Tileset: parent uses occluded child union like cesium-native");
 }
-
 void testTilesetOcclusionVisibleChildKeepsParentRefining() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: visible-child occlusion root tile is created");
     if (!root) return;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(!root->children.empty(),
           "Tileset: visible-child occlusion has child bounds");
     if (root->children.empty()) return;
-
     std::unordered_map<TileKey, TileOcclusionState> states;
     states[rootKey] = TileOcclusionState::NotOccluded;
     for (const TilesetTile* child : root->children) {
@@ -26172,17 +23699,14 @@ void testTilesetOcclusionVisibleChildKeepsParentRefining() {
                 ? TileOcclusionState::NotOccluded
                 : it->second;
         });
-
     check(TilesetTestAccess::checkOcclusion(tileset, *root) ==
               TileOcclusionState::NotOccluded,
           "Tileset: one visible child keeps parent unoccluded");
 }
-
 void testTileOcclusionResolverMissingChildProxyKeepsParentVisible() {
     TilesetTile root;
     root.key = TileKey{"Geographic-TMS", 0, 0, 0};
     root.children.push_back(nullptr);
-
     int checkedTiles = 0;
     const TileOcclusionState result = TileOcclusionResolver::check(
         root,
@@ -26190,11 +23714,9 @@ void testTileOcclusionResolverMissingChildProxyKeepsParentVisible() {
             ++checkedTiles;
             return TileOcclusionState::NotOccluded;
         });
-
     check(result == TileOcclusionState::NotOccluded && checkedTiles == 1,
           "TileOcclusionResolver: missing child proxy keeps parent visible like cesium-native");
 }
-
 void testTileOcclusionResolverTerminalParentStateSkipsChildren() {
     auto checkTerminalState = [](TileOcclusionState state) {
         TilesetTile root;
@@ -26202,7 +23724,6 @@ void testTileOcclusionResolverTerminalParentStateSkipsChildren() {
         TilesetTile child;
         child.key = TileKey{"Geographic-TMS", 1, 0, 0};
         root.children.push_back(&child);
-
         int checkedTiles = 0;
         const TileOcclusionState result = TileOcclusionResolver::check(
             root,
@@ -26210,32 +23731,26 @@ void testTileOcclusionResolverTerminalParentStateSkipsChildren() {
                 ++checkedTiles;
                 return state;
             });
-
         return result == state && checkedTiles == 1;
     };
-
     check(checkTerminalState(TileOcclusionState::Occluded),
           "TileOcclusionResolver: parent occluded state skips child proxies like cesium-native");
     check(checkTerminalState(TileOcclusionState::OcclusionUnavailable),
           "TileOcclusionResolver: parent unavailable state skips child proxies like cesium-native");
 }
-
 void testTilesetOcclusionUnavailableChildDelaysNewRefinement() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: unavailable-child occlusion root tile is created");
     if (!root) return;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(!root->children.empty(),
           "Tileset: unavailable-child occlusion has child bounds");
     if (root->children.empty()) return;
-
     std::unordered_map<TileKey, TileOcclusionState> states;
     states[rootKey] = TileOcclusionState::NotOccluded;
     for (const TilesetTile* child : root->children) {
@@ -26251,13 +23766,11 @@ void testTilesetOcclusionUnavailableChildDelaysNewRefinement() {
                 ? TileOcclusionState::NotOccluded
                 : it->second;
         });
-
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
     camera.lookAt(center + center.normalized() * 1000000.0,
                   center,
                   Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 104;
     frameState.camera = &camera;
@@ -26269,7 +23782,6 @@ void testTilesetOcclusionUnavailableChildDelaysNewRefinement() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     const bool childrenNotVisited = std::all_of(
         root->children.begin(),
         root->children.end(),
@@ -26281,23 +23793,19 @@ void testTilesetOcclusionUnavailableChildDelaysNewRefinement() {
               tileset.tilePlan().selectionWaitingForOcclusionResultsCount == 1,
           "Tileset: unavailable child union delays new refinement");
 }
-
 void testTilesetOcclusionUnconditionalChildSkipsAggregation() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: unconditional-child occlusion root tile is created");
     if (!root) return;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(!root->children.empty(),
           "Tileset: unconditional-child occlusion has child bounds");
     if (root->children.empty()) return;
-
     root->children.front()->unconditionallyRefine = true;
     std::unordered_map<TileKey, TileOcclusionState> states;
     states[rootKey] = TileOcclusionState::NotOccluded;
@@ -26312,23 +23820,19 @@ void testTilesetOcclusionUnconditionalChildSkipsAggregation() {
                 ? TileOcclusionState::NotOccluded
                 : it->second;
         });
-
     check(TilesetTestAccess::checkOcclusion(tileset, *root) ==
               TileOcclusionState::NotOccluded,
           "Tileset: unconditionally refined child disables child occlusion union");
 }
-
 void testTilesetCameraInsideDiagnosticUsesExplicitRootVolume() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: camera-inside explicit root-volume tile is created");
     if (!root) return;
-
     root->bounds = Rectangle{2.0, 2.0, 3.0, 3.0};
     root->boundingVolume =
         TileBoundingVolume::fromRegion(
@@ -26343,7 +23847,6 @@ void testTilesetCameraInsideDiagnosticUsesExplicitRootVolume() {
               *root,
               cameraContext),
           "Tileset: camera-inside explicit root-volume helper sees camera");
-
     const Cartographic cameraCartographic(0.0, 0.0, 1000000.0);
     const Vec3 cameraPosition =
         Ellipsoid::WGS84().cartographicToCartesian(cameraCartographic);
@@ -26352,7 +23855,6 @@ void testTilesetCameraInsideDiagnosticUsesExplicitRootVolume() {
             Cartographic(0.0, 0.0, 0.0));
     Camera camera;
     camera.lookAt(cameraPosition, target, Vec3::unitZ());
-
     FrameState frameState;
     frameState.frameId = 106;
     frameState.camera = &camera;
@@ -26364,36 +23866,30 @@ void testTilesetCameraInsideDiagnosticUsesExplicitRootVolume() {
         camera.position(),
         camera.direction());
     TilesetTestAccess::selectTiles(tileset, frameState);
-
     check(root->selectionFrameState.selectionState != TileSelectionState::NotVisited,
           "Tileset: camera-inside explicit root-volume tile is visited");
     check(root->selectionFrameState.cameraInside,
           "Tileset: camera-inside diagnostic uses explicit bounding volume like cesium-native");
 }
-
 void testTilesetDefaultSoftwareOcclusionCanCullFarSideTile() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey farSideKey{"Geographic-TMS", 2, 7, 1};
     TilesetTile* farSide = TilesetTestAccess::ensureTile(tileset, farSideKey);
     check(farSide != nullptr,
           "Tileset: software-occlusion far-side tile is created");
     if (!farSide) return;
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 cameraPosition(ellipsoid.semiMajorAxis() + 1000000.0, 0.0, 0.0);
     TilesetTestAccess::setLastCamera(
         tileset,
         cameraPosition,
         Vec3(-1.0, 0.0, 0.0));
-
     check(TilesetTestAccess::checkOcclusion(tileset, *farSide) ==
               TileOcclusionState::Occluded,
           "Tileset: default software ellipsoid occlusion culls far-side tile");
 }
-
 void testTilesetSoftwareOcclusionKeepsNonBoxVolumeUnderCameraVisible() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey key{"Geographic-TMS", 2, 4, 2};
@@ -26402,29 +23898,24 @@ void testTilesetSoftwareOcclusionKeepsNonBoxVolumeUnderCameraVisible() {
     tile.bounds = scheme->tileToRectangle(key);
     tile.boundingVolume = TileBoundingVolume::fromS2Cell(
         S2CellBoundingVolume(S2CellID::fromToken("1"), 0.0, 100000.0));
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
         Cartographic::fromRadians(0.0, 0.0, 1000000.0));
-
     check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
               TileOcclusionState::NotOccluded,
           "Tileset: software occlusion keeps non-box tile under camera visible");
 }
-
 void testTilesetSoftwareOcclusionUsesExplicitVolumeRectangleForUnderCamera() {
     TilesetTile tile;
     tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
     tile.bounds = Rectangle::fromDegrees(170.0, -10.0, 179.0, 10.0);
     tile.boundingVolume = TileBoundingVolume::fromS2Cell(
         S2CellBoundingVolume(S2CellID::fromToken("1"), 0.0, 100000.0));
-
     const std::optional<Rectangle> volumeRectangle =
         tile.boundingVolume->estimateGlobeRectangle();
     check(volumeRectangle.has_value(),
           "Tileset: software occlusion explicit-volume test has estimated rectangle");
     if (!volumeRectangle) return;
-
     const double cameraLongitude =
         (volumeRectangle->west() + volumeRectangle->east()) * 0.5;
     const double cameraLatitude =
@@ -26432,18 +23923,15 @@ void testTilesetSoftwareOcclusionUsesExplicitVolumeRectangleForUnderCamera() {
     check(volumeRectangle->contains(cameraLongitude, cameraLatitude) &&
               !tile.bounds.contains(cameraLongitude, cameraLatitude),
           "Tileset: software occlusion test camera is inside explicit volume but outside tile bounds");
-
     const Vec3 cameraPosition = Ellipsoid::WGS84().cartographicToCartesian(
         Cartographic::fromRadians(
             cameraLongitude,
             cameraLatitude,
             1000000.0));
-
     check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
               TileOcclusionState::NotOccluded,
           "Tileset: software occlusion uses explicit volume rectangle for under-camera visibility");
 }
-
 void testTilesetSoftwareOcclusionUsesExplicitRegionHeightForFallbackSamples() {
     TilesetTile tile;
     tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
@@ -26453,16 +23941,13 @@ void testTilesetSoftwareOcclusionUsesExplicitRegionHeightForFallbackSamples() {
             Rectangle::fromDegrees(34.8, -0.05, 35.2, 0.05),
             0.0,
             2000000.0);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
         Cartographic::fromRadians(0.0, 0.0, 1000000.0));
-
     check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
               TileOcclusionState::NotOccluded,
           "Tileset: software occlusion samples explicit region height before culling");
 }
-
 void testTilesetSoftwareOcclusionDoesNotInflateExplicitRegionToDefaultTerrainHeight() {
     TilesetTile tile;
     tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
@@ -26472,16 +23957,13 @@ void testTilesetSoftwareOcclusionDoesNotInflateExplicitRegionToDefaultTerrainHei
             Rectangle::fromDegrees(30.35, -0.01, 30.45, 0.01),
             0.0,
             0.0);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
         Cartographic::fromRadians(0.0, 0.0, 1000000.0));
-
     check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
               TileOcclusionState::Occluded,
           "Tileset: software occlusion does not inflate explicit region to default terrain height");
 }
-
 void testTilesetSoftwareOcclusionPreservesNegativeExplicitRegionHeight() {
     TilesetTile tile;
     tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
@@ -26491,16 +23973,13 @@ void testTilesetSoftwareOcclusionPreservesNegativeExplicitRegionHeight() {
             Rectangle::fromDegrees(30.0, -0.01, 30.1, 0.01),
             -1000.0,
             -1000.0);
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
         Cartographic::fromRadians(0.0, 0.0, 1000000.0));
-
     check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
               TileOcclusionState::Occluded,
           "Tileset: software occlusion preserves negative explicit region height");
 }
-
 void testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height() {
     TilesetTile tile;
     tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
@@ -26510,7 +23989,6 @@ void testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height() {
             S2CellID::fromQuadtreeTileID(0, 4, 14, 7),
             -1000.0,
             -1000.0));
-
     const std::optional<Rectangle> volumeRectangle =
         tile.boundingVolume->estimateGlobeRectangle();
     check(volumeRectangle.has_value(),
@@ -26518,16 +23996,13 @@ void testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height() {
     if (!volumeRectangle) return;
     check(!volumeRectangle->contains(0.0, 0.0),
           "Tileset: software occlusion negative S2 test is away from camera longitude");
-
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
         Cartographic::fromRadians(0.0, 0.0, 1000000.0));
-
     check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
               TileOcclusionState::Occluded,
           "Tileset: software occlusion preserves negative explicit S2 height");
 }
-
 void testTilesetSampleHeightUsesBestLoadedTerrainTile() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -26541,7 +24016,6 @@ void testTilesetSampleHeightUsesBestLoadedTerrainTile() {
         nullptr,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
     check(root != nullptr && child != nullptr,
@@ -26559,14 +24033,11 @@ void testTilesetSampleHeightUsesBestLoadedTerrainTile() {
         Mat4::identity());
     child->content.renderContent.setTerrainRenderContent(true);
     child->markRenderContentDone();
-
     const double lng = (childBounds.west() + childBounds.east()) * 0.5;
     const double lat = (childBounds.south() + childBounds.north()) * 0.5;
-
     check(std::abs(tileset.sampleHeight(lng, lat) - 42.0f) < 1e-6f,
           "Tileset: sampleHeight uses the most detailed loaded glTF terrain tile");
 }
-
 void testTilesetSampleHeightFallsBackToLoadedAncestorTerrain() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -26580,7 +24051,6 @@ void testTilesetSampleHeightFallsBackToLoadedAncestorTerrain() {
         nullptr,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr &&
               TilesetTestAccess::ensureTile(tileset, childKey) != nullptr,
@@ -26593,20 +24063,16 @@ void testTilesetSampleHeightFallsBackToLoadedAncestorTerrain() {
         Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
     root->markRenderContentDone();
-
     const double lng = (childBounds.west() + childBounds.east()) * 0.5;
     const double lat = (childBounds.south() + childBounds.north()) * 0.5;
-
     check(std::abs(tileset.sampleHeight(lng, lat) - 123.0f) < 1e-6f,
           "Tileset: sampleHeight falls back to a loaded glTF ancestor terrain tile");
 }
-
 void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr, "Tileset: root tile is created for sparse provider");
@@ -26616,11 +24082,9 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
     check(root->content.renderContent.isMeshReady() &&
               root->content.renderContent.hasSurfaceMesh(),
           "Tileset: parent render mesh is ready before upsample children");
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: partial availability creates all four children");
-
     TilesetTile* sw = root->children[0];
     TilesetTile* se = root->children[1];
     TilesetTile* nw = root->children[2];
@@ -26651,7 +24115,6 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
           "Tileset: Geographic-TMS terrain children preserve cesium-native order and rectangles");
     check(se && !TilesetTestAccess::isTileRenderable(tileset, *se),
           "Tileset: upsampled child waits for main-thread upsample finish before becoming renderable");
-
     TilesetTestAccess::requestMissingTile(tileset, se->key);
     check(se->content.loadState == TileLoadState::Unloaded &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 0 &&
@@ -26662,7 +24125,6 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
               !TilesetTestAccess::isTileRenderable(tileset, *se),
           "Tileset: upsampled child no longer builds a legacy mesh from parent render mesh");
 }
-
 void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -26672,18 +24134,15 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
     };
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: non-root terrain child setup creates root tile");
     if (!root) return;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: non-root terrain child setup creates root children");
     if (root->children.size() < 3 || !root->children[2]) return;
-
     TilesetTile* nw = root->children[2];
     check(nw->key == TileKey{"Geographic-TMS", 1, 0, 1} &&
               !nw->content.upsampledFromParent,
@@ -26692,7 +24151,6 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
         tileset,
         nw->key,
         makeFlatHeightmap(123.0f));
-
     TilesetTestAccess::ensureTileChildren(tileset, *nw);
     check(nw->children.size() == 4,
           "Tileset: non-root terrain tile creates four children like cesium-native");
@@ -26720,7 +24178,6 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
               childNe && childNe->content.upsampledFromParent,
           "Tileset: non-root partial terrain availability still materializes unavailable siblings as upsampled children");
 }
-
 void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -26730,23 +24187,19 @@ void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
     };
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: non-root upsample sibling setup creates root tile");
     if (!root) return;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: non-root upsample sibling setup creates root children");
     if (root->children.size() < 2 || !root->children[1]) return;
-
     TilesetTile* se = root->children[1];
     check(se->key == TileKey{"Geographic-TMS", 1, 1, 0} &&
               !se->content.upsampledFromParent,
           "Tileset: non-root upsample sibling setup uses a real available parent tile");
-
     TilesetTestAccess::ensureTileChildren(tileset, *se);
     check(se->children.size() == 4,
           "Tileset: non-root partial availability creates four terrain children like cesium-native");
@@ -26754,7 +24207,6 @@ void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
     TilesetTile* childSe = se->children.size() == 4 ? se->children[1] : nullptr;
     TilesetTile* childNw = se->children.size() == 4 ? se->children[2] : nullptr;
     TilesetTile* childNe = se->children.size() == 4 ? se->children[3] : nullptr;
-
     check(childSw && childSe && childNw && childNe &&
               childSw->key == TileKey{"Geographic-TMS", 2, 2, 0} &&
               childSe->key == TileKey{"Geographic-TMS", 2, 3, 0} &&
@@ -26767,7 +24219,6 @@ void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
               childNe && childNe->content.upsampledFromParent,
           "Tileset: non-root unavailable terrain siblings are UpsampledQuadtreeNode equivalents");
 }
-
 void testTilesetAncestorFallbackIsClippedToMissingChild() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -26781,7 +24232,6 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -26789,7 +24239,6 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
     check(root != nullptr && child != nullptr,
           "Tileset: clipped fallback test creates ancestor and child tiles");
     if (!root || !child) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -26800,7 +24249,6 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
           "Tileset: clipped fallback ancestor has drawable GPU geometry");
     check(child->content.renderContent.surfaceVertexBuffer() == nullptr,
           "Tileset: clipped fallback child starts without drawable GPU geometry");
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty() ? nullptr : root->rasterOverlayState.mappings()[0].get();
@@ -26818,10 +24266,8 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
     check(rootBinding.kind == SurfaceRasterBindingKind::RealTile &&
               rootBinding.tile == rootRaster,
           "Tileset: clipped fallback ancestor has a legal real base imagery binding");
-
     TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *child);
-
     const TilePlan& plan = tileset.tilePlan();
     check(plan.visibleTiles.size() == 1 &&
               plan.visibleTiles.front() == childKey,
@@ -26832,14 +24278,11 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
               plan.renderEntries.front().usesAncestorFallback &&
               plan.renderEntries.front().surfaceClipEnabled,
           "Tileset: clipped fallback is resolved explicitly in TilePlan render entries");
-
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
-
     check(commands.size() == 1,
           "Tileset: clipped fallback emits one ancestor patch command for one missing child");
     if (commands.empty()) return;
-
     const RenderCommand& command = commands.front();
     check(command.kind == RenderCommandKind::SurfaceTile &&
               command.surfaceGeometryZoom == 0 &&
@@ -26854,7 +24297,6 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
               std::abs(command.surfaceClipUv[3] - 0.5f) < 1e-6f,
           "Tileset: clipped fallback only fills the selected child quadrant");
 }
-
 void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -26868,13 +24310,11 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: placeholder-base strategy creates root tile");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -26882,7 +24322,6 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     check(root->hasSurfaceDrawable(),
           "TileRenderPlanFrameRefresher: test root has drawable surface geometry");
-
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     check(tileset.tilePlan().visibleTiles.size() == 1 &&
               tileset.tilePlan().renderEntries.size() == 1 &&
@@ -26890,7 +24329,6 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
                   rootKey &&
               tileset.tilePlan().renderEntries.front().renderKey == rootKey,
           "TileRenderPlanFrameRefresher: surface geometry is planned before base raster is drawable");
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -26905,7 +24343,6 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     check(tileset.tilePlan().renderEntries.size() == 1 &&
@@ -26914,7 +24351,6 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
               tileset.tilePlan().renderEntries.front().renderKey == rootKey,
           "TileRenderPlanFrameRefresher: drawable base raster restores surface render entry");
 }
-
 void testTileRenderPlanFrameRefresherCollectsReadyRasterCredits() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -26928,19 +24364,16 @@ void testTileRenderPlanFrameRefresherCollectsReadyRasterCredits() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: credit fixture creates root tile");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -26951,16 +24384,13 @@ void testTileRenderPlanFrameRefresherCollectsReadyRasterCredits() {
     check(rootRaster != nullptr,
           "TileRenderPlanFrameRefresher: credit fixture maps base imagery");
     if (!rootRaster) return;
-
     rootRaster->setCredits({"Imagery credit", "Imagery credit"});
     rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-
     const TilePlan& plan = tileset.tilePlan();
     check(plan.renderEntries.size() == 1,
           "TileRenderPlanFrameRefresher: credit fixture has one render entry");
@@ -26968,7 +24398,6 @@ void testTileRenderPlanFrameRefresherCollectsReadyRasterCredits() {
               plan.frameCredits.front() == "Imagery credit",
           "TileRenderPlanFrameRefresher: ready mapped raster credits are aggregated once per frame like cesium-native");
 }
-
 void testTileRenderPlanFrameRefresherCollectsProviderRasterCredits() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -26982,22 +24411,18 @@ void testTileRenderPlanFrameRefresherCollectsProviderRasterCredits() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: provider credit fixture creates root tile");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-
     const TilePlan& plan = tileset.tilePlan();
     check(plan.renderEntries.size() == 1,
           "TileRenderPlanFrameRefresher: provider credit fixture has one render entry");
@@ -27005,7 +24430,6 @@ void testTileRenderPlanFrameRefresherCollectsProviderRasterCredits() {
               plan.frameCredits.front() == "Provider credit",
           "TileRenderPlanFrameRefresher: provider raster credits are aggregated before tile imagery loads like cesium-native");
 }
-
 void testTileRenderPlanFrameRefresherCollectsRenderContentCredits() {
     InitializedRendererHarness harness;
     auto scheme = TileScheme::createGeographicTMS();
@@ -27014,13 +24438,11 @@ void testTileRenderPlanFrameRefresherCollectsRenderContentCredits() {
         {},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: render content credit fixture creates root tile");
     if (!root) return;
-
     auto model = std::make_unique<GltfModel>();
     model->credits = {"Content credit", "Content credit"};
     root->content.renderContent.setGltfContent(std::move(model));
@@ -27033,10 +24455,8 @@ void testTileRenderPlanFrameRefresherCollectsRenderContentCredits() {
     root->content.renderContent.setSurfaceDrawable(true);
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-
     const TilePlan& plan = tileset.tilePlan();
     check(plan.renderEntries.size() == 1,
           "TileRenderPlanFrameRefresher: render content credit fixture has one render entry");
@@ -27044,7 +24464,6 @@ void testTileRenderPlanFrameRefresherCollectsRenderContentCredits() {
               plan.frameCredits.front() == "Content credit",
           "TileRenderPlanFrameRefresher: glTF render content credits are aggregated once per frame like cesium-native");
 }
-
 void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27058,19 +24477,16 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: progress fixture creates root tile");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -27081,7 +24497,6 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
     check(rootMapped != nullptr && rootRaster != nullptr,
           "TileRenderPlanFrameRefresher: progress fixture maps loading base imagery");
     if (!rootMapped || !rootRaster) return;
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& loadingPlan = tileset.tilePlan();
@@ -27093,12 +24508,10 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
               std::abs(loadingPlan.frameLoadProgressPercentage - 50.0) <
                   1e-6,
           "TileRenderPlanFrameRefresher: frame progress includes mapped raster loading percentage like cesium-native");
-
     rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& readyBeforeAttachPlan = tileset.tilePlan();
@@ -27107,7 +24520,6 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
               readyBeforeAttachPlan.frameMappedRasterTileCount == 1 &&
               readyBeforeAttachPlan.frameMappedRasterTileLoadingCount == 1,
           "TileRenderPlanFrameRefresher: ready but unattached mapped raster still contributes to loading progress like cesium-native");
-
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -27118,7 +24530,6 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
         1.0f);
     check(rootMapped->getState() == RasterMappedToTilesetTile::State::Attached,
           "TileRenderPlanFrameRefresher: progress fixture attaches mapped raster during draw command preparation");
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& attachedPlan = tileset.tilePlan();
@@ -27131,16 +24542,13 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
                   1e-6,
           "TileRenderPlanFrameRefresher: frame progress returns to complete after mapped raster attaches");
 }
-
 void testPresentationTraceRecordsDeterministicCameraState() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
-
     Scene scene;
     check(scene.setRenderDevice(&device),
           "Presentation trace: scene renderer initializes");
     scene.setViewport(1024, 768, 2.0f);
-
     constexpr double kLngDeg = 116.3913;
     constexpr double kLatDeg = 39.9075;
     constexpr double kRangeMeters = 750000.0;
@@ -27152,10 +24560,8 @@ void testPresentationTraceRecordsDeterministicCameraState() {
         kRangeMeters,
         pitch,
         heading);
-
     scene.update(1.0 / 60.0);
     scene.render();
-
     const PresentationTrace& trace = scene.presentationTrace();
     check(trace.camera.frameId == scene.frameState().frameId &&
               trace.camera.viewportWidthPixels == 1024 &&
@@ -27174,7 +24580,6 @@ void testPresentationTraceRecordsDeterministicCameraState() {
     check(!trace.commands.empty(),
           "Presentation trace: submitted command summary is captured");
 }
-
 void testPresentationTraceLinksTilePlanToSurfaceCommand() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27188,7 +24593,6 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -27196,7 +24600,6 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
     check(root != nullptr && child != nullptr,
           "Presentation trace: tile plan setup creates selected child and fallback ancestor");
     if (!root || !child) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -27214,14 +24617,11 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *child);
-
     const TilePlan& plan = tileset.tilePlan();
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
-
     check(plan.visibleTiles.size() == 1 &&
               plan.visibleTiles.front() == childKey &&
               plan.renderEntries.size() == 1 &&
@@ -27238,7 +24638,6 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
     if (commands.empty()) return;
     check(plan.renderEntries.front().surfaceClipUv == commands.front().surfaceClipUv,
           "Presentation trace: render-entry clip UV is preserved in the surface command");
-
     FrameState frameState;
     frameState.frameId = 1;
     frameState.camera = nullptr;
@@ -27276,7 +24675,6 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
                   "clip:Geographic-TMS/1/0/0") != std::string::npos,
           "Presentation trace: command stable key preserves clipped child patch identity");
 }
-
 void testPresentationTraceCopiesRenderEntryPassFailures() {
     Tileset tileset(
         TileScheme::createGeographicTMS(),
@@ -27290,7 +24688,6 @@ void testPresentationTraceCopiesRenderEntryPassFailures() {
     plan.renderEntryCommandDeferredCount = 7;
     plan.renderEntrySelectedCommandDeferredCount = 4;
     plan.renderEntryFadingCommandDeferredCount = 3;
-
     FrameState frameState;
     frameState.frameId = 3;
     frameState.camera = nullptr;
@@ -27302,7 +24699,6 @@ void testPresentationTraceCopiesRenderEntryPassFailures() {
                 &tileset,
                 emptyContentTilesets(),
                 commands});
-
     check(trace.tilesets.size() == 1,
           "Presentation trace: pass failure copy includes one tileset");
     if (trace.tilesets.empty()) return;
@@ -27315,7 +24711,6 @@ void testPresentationTraceCopiesRenderEntryPassFailures() {
               tilesetTrace.renderEntryFadingCommandDeferredCount == 3,
           "Presentation trace: render-entry missed and deferred counts preserve selected/fading pass attribution");
 }
-
 void testPresentationTraceCopiesFrameCreditsAndProgress() {
     Tileset tileset(
         TileScheme::createGeographicTMS(),
@@ -27329,7 +24724,6 @@ void testPresentationTraceCopiesFrameCreditsAndProgress() {
     plan.frameProgressTotalCount = 5;
     plan.frameProgressLoadingCount = 2;
     plan.frameLoadProgressPercentage = 60.0;
-
     FrameState frameState;
     frameState.frameId = 4;
     frameState.camera = nullptr;
@@ -27341,7 +24735,6 @@ void testPresentationTraceCopiesFrameCreditsAndProgress() {
                 &tileset,
                 emptyContentTilesets(),
                 commands});
-
     check(trace.tilesets.size() == 1,
           "Presentation trace: frame credit/progress copy includes one tileset");
     if (trace.tilesets.empty()) return;
@@ -27358,7 +24751,6 @@ void testPresentationTraceCopiesFrameCreditsAndProgress() {
                   1e-8,
           "Presentation trace: mapped raster progress exposes cesium-native style frame load percentage");
 }
-
 void testPresentationTraceExposesFadingRenderEntry() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27375,13 +24767,11 @@ void testPresentationTraceExposesFadingRenderEntry() {
         {&baseActivated},
         &harness.device,
         options);
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Presentation trace: fading render entry setup creates root tile");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -27401,14 +24791,12 @@ void testPresentationTraceExposesFadingRenderEntry() {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     TilesetTestAccess::beginTilePlan(tileset);
     root->selectionFrameState.selectionState =
         TileSelectionState::NotVisited;
     root->selectionFrameState.previousSelectionState =
         TileSelectionState::Rendered;
     TilesetTestAccess::updateLodTransitions(tileset, 0.25);
-
     const TilePlan& plan = tileset.tilePlan();
     check(plan.visibleTiles.empty() &&
               plan.tilesFadingOut.size() == 1 &&
@@ -27417,7 +24805,6 @@ void testPresentationTraceExposesFadingRenderEntry() {
               plan.renderEntries.front().reason ==
                   TileRenderEntryReason::FadingOut,
           "Presentation trace: fading render entry is planned before rendering");
-
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
     check(commands.size() == 1 &&
@@ -27426,7 +24813,6 @@ void testPresentationTraceExposesFadingRenderEntry() {
                   1e-6f,
           "Presentation trace: fading render entry emits a translucent surface command");
     if (commands.empty()) return;
-
     FrameState frameState;
     frameState.frameId = 7;
     frameState.camera = nullptr;
@@ -27465,7 +24851,6 @@ void testPresentationTraceExposesFadingRenderEntry() {
               tilesetTrace.renderEntryFadingCommandDeferredCount == 0,
           "Presentation trace: fading render entry remains visible in the draw funnel");
 }
-
 void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27479,7 +24864,6 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -27487,7 +24871,6 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
     check(root != nullptr && child != nullptr,
           "Presentation trace: ADD selected entry setup creates parent and child");
     if (!root || !child) return;
-
     auto makeDrawableSurfaceTile =
         [&](TilesetTile& tile, const TileKey& key) -> bool {
         TilesetTestAccess::putTerrainCache(
@@ -27514,28 +24897,23 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
         TilesetTestAccess::prefetchRasterOverlays(tileset, tile);
         return tile.hasSurfaceDrawable();
     };
-
     check(makeDrawableSurfaceTile(*root, rootKey) &&
               makeDrawableSurfaceTile(*child, childKey),
           "Presentation trace: ADD selected entries have drawable parent and child surfaces");
-
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *child);
-
     const TilePlan& plan = tileset.tilePlan();
     check(plan.visibleTiles.size() == 2 &&
               plan.renderEntries.size() == 2 &&
               plan.renderEntryAncestorFallbackCount == 0,
           "Presentation trace: ADD parent and child stay as direct selected render entries");
     if (plan.renderEntries.size() != 2) return;
-
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
     check(commands.size() == 2,
           "Presentation trace: ADD selected entries emit parent and child commands");
     if (commands.size() != 2) return;
-
     FrameState frameState;
     frameState.frameId = 11;
     frameState.camera = nullptr;
@@ -27549,7 +24927,6 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
     check(trace.tilesets.size() == 1,
           "Presentation trace: ADD selected draw funnel includes one tileset");
     if (trace.tilesets.empty()) return;
-
     const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
     check(tilesetTrace.renderEntries.size() == 2 &&
               tilesetTrace.renderEntryPlannedCommandCount == 2 &&
@@ -27567,7 +24944,6 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
               tilesetTrace.renderEntryFadingCommandDeferredCount == 0,
           "Presentation trace: ADD selected render entries remain separate through the draw funnel");
 }
-
 void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27581,7 +24957,6 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childAKey{"Geographic-TMS", 1, 0, 0};
     const TileKey childBKey{"Geographic-TMS", 1, 1, 0};
@@ -27591,7 +24966,6 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
     check(root && childA && childB,
           "Tileset: clipped fallback stable-key setup creates root and children");
     if (!root || !childA || !childB) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -27611,14 +24985,11 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *childA);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *childB);
-
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
-
     check(commands.size() == 2,
           "Tileset: clipped fallback emits separate commands for separate child patches");
     if (commands.size() < 2) return;
@@ -27629,7 +25000,6 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
                   std::string::npos,
           "Tileset: clipped fallback stable keys include the selected child patch identity");
 }
-
 void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27643,13 +25013,11 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Surface command: setup creates root tile");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -27659,7 +25027,6 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
     check(mesh != nullptr && mesh->indices.size() >= 12,
           "Surface command: terrain mesh is available for skirt range setup");
     if (!mesh || mesh->indices.size() < 12) return;
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty() ? nullptr : root->rasterOverlayState.mappings()[0].get();
@@ -27675,24 +25042,20 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
     check(chooseSurfaceRasterBinding(rootMapped).kind ==
               SurfaceRasterBindingKind::RealTile,
           "Surface command: no-skirt draw uses a legal real base imagery binding");
-
     mesh->skirtMeta.noSkirtIndicesBegin = 0;
     mesh->skirtMeta.noSkirtIndicesCount =
         static_cast<uint32_t>(mesh->indices.size() - 6);
     mesh->skirtMeta.noSkirtVerticesBegin = 0;
     mesh->skirtMeta.noSkirtVerticesCount =
         static_cast<uint32_t>(mesh->vertices.size());
-
     TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
     check(commands.size() == 1 &&
               commands.front().kind == RenderCommandKind::SurfaceTile,
           "Surface command: terrain tile produces one surface draw command");
     if (commands.empty()) return;
-
     const RenderCommand& command = commands.front();
     check(command.indexOffset == 0 &&
               command.indexCount ==
@@ -27704,7 +25067,6 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
               command.surfaceSkirtIndexCount == 6,
           "Surface command: trace fields expose skipped skirt index count");
 }
-
 void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
     InitializedRendererHarness harness;
     auto scheme = TileScheme::createGeographicTMS();
@@ -27713,13 +25075,11 @@ void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
         {},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Surface command: missing-index-buffer setup creates root tile");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -27729,7 +25089,6 @@ void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
     check(mesh != nullptr && !mesh->vertices.empty() && !mesh->indices.empty(),
           "Surface command: missing-index-buffer test has explicit mesh geometry");
     if (!mesh || mesh->vertices.empty() || mesh->indices.empty()) return;
-
     BufferDesc vbDesc;
     vbDesc.size = mesh->vertices.size() * sizeof(SurfaceVertex);
     vbDesc.data = mesh->vertices.data();
@@ -27737,16 +25096,13 @@ void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
     root->content.renderContent.setSurfaceGpuBuffers(
         harness.device.createBuffer(vbDesc),
         nullptr);
-
     TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
     check(commands.empty(),
           "Surface command: explicit mesh without GPU index buffer does not fall back to renderer default indices");
 }
-
 void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27760,13 +25116,11 @@ void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
         {&baseActivated},
         &harness.device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Surface command: overflowing no-skirt setup creates root tile");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -27776,7 +25130,6 @@ void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
     check(mesh != nullptr && !mesh->indices.empty(),
           "Surface command: overflowing no-skirt test has terrain indices");
     if (!mesh || mesh->indices.empty()) return;
-
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty() ? nullptr : root->rasterOverlayState.mappings()[0].get();
@@ -27789,14 +25142,11 @@ void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
     mesh->skirtMeta.noSkirtIndicesBegin =
         std::numeric_limits<uint32_t>::max();
     mesh->skirtMeta.noSkirtIndicesCount = 2;
-
     TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
     check(commands.size() == 1 &&
@@ -27811,28 +25161,23 @@ void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
               commands.front().surfaceSkirtIndexCount == 0,
           "Surface command: overflowing no-skirt range is ignored instead of wrapping");
 }
-
 void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: parent-wait upsample root tile is created");
     if (!root) return;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: parent-wait setup creates partial-availability children");
     if (root->children.size() < 2 || !root->children[1]) return;
-
     TilesetTile* upsampledChild = root->children[1];
     check(upsampledChild->content.upsampledFromParent,
           "Tileset: parent-wait child is marked as upsampled terrain");
-
     TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
     const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
     check(upsampledChild->content.loadState == TileLoadState::Unloaded &&
@@ -27843,35 +25188,29 @@ void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
               diag.loadQueueNormalRequests == 0,
           "Tileset: upsampled child queues its parent urgently until a source mesh is ready");
 }
-
 void testTilesetUpsampledChildFinalizesContentLoadedParent() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: content-loaded-parent upsample root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
         makeFlatHeightmap(33.0f));
     root->content.loadState = TileLoadState::ContentLoaded;
     root->content.contentKind = TileContentKind::Render;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: content-loaded-parent setup creates partial-availability children");
     if (root->children.size() < 2 || !root->children[1]) return;
-
     TilesetTile* upsampledChild = root->children[1];
     check(upsampledChild->content.upsampledFromParent,
           "Tileset: content-loaded-parent child is marked as upsampled terrain");
-
     TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
     check(upsampledChild->content.loadState == TileLoadState::Unloaded &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 0 &&
@@ -27880,7 +25219,6 @@ void testTilesetUpsampledChildFinalizesContentLoadedParent() {
     check(!TilesetTestAccess::isTileRenderable(tileset, *upsampledChild),
           "Tileset: upsampled child remains non-renderable until a glTF terrain source exists");
 }
-
 void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -27892,13 +25230,11 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: glTF-parent upsample root tile is created");
     if (!root) return;
-
     auto parentModel = makeQuadTerrainGltfModel(root->bounds);
     const Rectangle parentOverlayRectangle =
         Rectangle::fromDegrees(10.0, 20.0, 18.0, 28.0);
@@ -27917,23 +25253,19 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     root->markRenderContentDone();
     check(!root->content.renderContent.hasGltfResources(),
           "Tileset: glTF-parent source does not need renderer resources before upsample");
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: glTF-parent upsample setup creates partial-availability children");
     if (root->children.size() < 2 || !root->children[1]) return;
-
     TilesetTile* child = root->children[1];
     check(child->content.upsampledFromParent,
           "Tileset: glTF-parent child is marked as upsampled terrain");
-
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
               tileset.loadDiagnostics().pendingContentUploads == 0 &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
               rawProvider->requestCount == 0,
           "Tileset: glTF-parent child enters local glTF terrain upload without provider request");
-
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =
         child->content.renderContent.gltfModelForRead();
@@ -27944,7 +25276,6 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
               TilesetTestAccess::isTileRenderable(tileset, *child),
           "Tileset: glTF-parent upsampled child becomes renderable as glTF content");
     if (!childModel || childModel->primitives.empty()) return;
-
     bool clippedToSouthEast = true;
     const GltfPrimitive& primitive = childModel->primitives.front();
     check(childModel->nodes.size() == 1 &&
@@ -27981,7 +25312,6 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     }
     check(clippedToSouthEast,
           "Tileset: glTF-parent upsample clips child geometry to child raster quadrant");
-
     const Rectangle* childOverlay =
         childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::Geographic);
@@ -28023,7 +25353,6 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
                        25.0) < 1e-12,
           "Tileset: glTF-parent upsampled child derives raster overlay details from parent content");
 }
-
 void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -28035,13 +25364,11 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: WebMercator glTF-parent upsample root tile is created");
     if (!root) return;
-
     auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
     const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
     parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
@@ -28061,12 +25388,10 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     root->markRenderContentDone();
     check(!root->content.renderContent.hasGltfResources(),
           "Tileset: WebMercator glTF-parent source does not need renderer resources before upsample");
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: WebMercator glTF-parent upsample setup creates children");
     if (root->children.size() < 3 || !root->children[2]) return;
-
     auto imageryScheme = TileScheme::createXYZWebMercator();
     DebugImageryProvider imagery;
     RasterOverlayTileProvider rasterProvider(
@@ -28104,7 +25429,6 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     check(mapped.isMoreDetailAvailable() &&
               mapped.getTextureCoordinateID() == 1,
           "Tileset: WebMercator glTF-parent source mapping marks projection texcoord as more-detail");
-
     TilesetTile* child = root->children[2];
     child->content.markRasterDetailUpsample();
     TilesetTestAccess::requestMissingTile(tileset, child->key);
@@ -28113,7 +25437,6 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
               rawProvider->requestCount == 0,
           "Tileset: WebMercator glTF-parent child queues local glTF terrain upsample");
-
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =
         child->content.renderContent.gltfModelForRead();
@@ -28123,7 +25446,6 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
               !child->content.renderContent.hasSurfaceMesh(),
           "Tileset: WebMercator glTF-parent upsample uses available overlay texcoord");
     if (!childModel || childModel->primitives.empty()) return;
-
     const GltfPrimitive& primitive = childModel->primitives.front();
     bool clippedToNorthWestTexcoord = true;
     for (const auto& texCoord : primitive.vertexTexCoords[1]) {
@@ -28134,7 +25456,6 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     }
     check(clippedToNorthWestTexcoord,
           "Tileset: WebMercator glTF-parent clips with projection texcoord");
-
     const Rectangle* childOverlay =
         childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
@@ -28176,7 +25497,6 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
                        45.0) < 1e-12,
           "Tileset: WebMercator glTF-parent derives child projection overlay details from parent");
 }
-
 void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -28188,13 +25508,11 @@ void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: stale raster-detail upsample root tile is created");
     if (!root) return;
-
     auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
     const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
     parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
@@ -28212,12 +25530,10 @@ void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
         Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
     root->markRenderContentDone();
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: stale raster-detail upsample setup creates children");
     if (root->children.empty() || !root->children.front()) return;
-
     auto imageryScheme = TileScheme::createXYZWebMercator();
     DebugImageryProvider imagery;
     RasterOverlayTileProvider rasterProvider(
@@ -28255,13 +25571,11 @@ void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
     check(mapped.isMoreDetailAvailable() &&
               mapped.getTextureCoordinateID() == 1,
           "Tileset: stale raster-detail upsample fixture has ready more-detail raster");
-
     TilesetTile* child = root->children.front();
     child->content.markRasterDetailUpsample();
     GltfModel* currentParentModel = root->content.renderContent.gltfContent();
     if (!currentParentModel) return;
     currentParentModel->rasterOverlayDetails = RasterOverlayDetails{};
-
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
     check(child->content.loadState == TileLoadState::Unloaded &&
@@ -28271,7 +25585,6 @@ void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
               rawProvider->requestCount == 0,
           "Tileset: raster-detail glTF upsample waits for current parent projection details without legacy fallback");
 }
-
 void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMappingTexcoord() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -28283,13 +25596,11 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: stale texcoord raster-detail upsample root tile is created");
     if (!root) return;
-
     auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
     const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
     parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
@@ -28309,18 +25620,15 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
         parentWebMercatorOverlay,
         root->bounds};
     staleMappingDetails.rasterOverlayInvertedVCoordinates = {false, false};
-
     root->content.renderContent.prepareGltfContent(
         std::move(parentModel),
         Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
     root->markRenderContentDone();
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: stale texcoord raster-detail upsample setup creates children");
     if (root->children.empty() || !root->children.front()) return;
-
     auto imageryScheme = TileScheme::createXYZWebMercator();
     DebugImageryProvider imagery;
     RasterOverlayTileProvider rasterProvider(
@@ -28358,7 +25666,6 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
     check(mapped.isMoreDetailAvailable() &&
               mapped.getTextureCoordinateID() == 0,
           "Tileset: stale texcoord fixture keeps old mapping texcoord id");
-
     TilesetTile* child = root->children.front();
     child->content.markRasterDetailUpsample();
     TilesetTestAccess::requestMissingTile(tileset, child->key);
@@ -28366,7 +25673,6 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
               rawProvider->requestCount == 0,
           "Tileset: raster-detail glTF upsample ignores stale mapping texcoord and queues locally like cesium-native");
-
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =
         child->content.renderContent.gltfModelForRead();
@@ -28375,7 +25681,6 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
               !child->content.renderContent.hasSurfaceMesh(),
           "Tileset: raster-detail glTF upsample succeeds from current projection details");
     if (!childModel || childModel->primitives.empty()) return;
-
     bool clippedWithCurrentWebMercatorTexcoord = true;
     for (const auto& texCoord :
          childModel->primitives.front().vertexTexCoords[1]) {
@@ -28387,7 +25692,6 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
     check(clippedWithCurrentWebMercatorTexcoord,
           "Tileset: raster-detail glTF upsample clips with current parent projection texcoord");
 }
-
 void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail() {
     const TileKey parentKey{"TMS-WebMercator", 0, 0, 0};
     const TileKey childKey{"TMS-WebMercator", 1, 0, 1};
@@ -28397,7 +25701,6 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
     TilesetTile parent(parentKey, parentBounds);
     TilesetTile child(childKey, childBounds, &parent);
     child.content.markTerrainAvailabilityUpsample();
-
     auto parentModel = makeWebMercatorQuadTerrainGltfModel(parent.bounds);
     const Rectangle parentWebMercatorOverlay =
         projectRectangleSimple(
@@ -28416,7 +25719,6 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
         Mat4::identity());
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
-
     std::optional<TileLoadResult> loadResult =
         TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
     const GltfModel* childModel =
@@ -28425,7 +25727,6 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
         ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
               RasterOverlayProjection::WebMercator)
         : nullptr;
-
     bool clippedWithWebMercatorTexcoord = true;
     if (childModel && !childModel->primitives.empty()) {
         const GltfPrimitive& primitive = childModel->primitives.front();
@@ -28440,7 +25741,6 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
     } else {
         clippedWithWebMercatorTexcoord = false;
     }
-
     const Rectangle expectedChildWebMercator =
         projectRectangleSimple(
             WebMercatorProjection(Ellipsoid::WGS84()),
@@ -28464,7 +25764,6 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
                        42.0) < 1e-12,
           "Tileset: WebMercator terrain availability upsample uses terrain projection like cesium-native");
 }
-
 void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
@@ -28472,7 +25771,6 @@ void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
     TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
     TilesetTile child(childKey, scheme->tileToRectangle(childKey), &parent);
     child.content.markTerrainAvailabilityUpsample();
-
     auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
     if (parentModel && !parentModel->primitives.empty()) {
         parentModel->primitives.front().vertexTexCoords[1] = {
@@ -28497,7 +25795,6 @@ void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
         Mat4::identity());
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
-
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider rasterProvider(
@@ -28535,12 +25832,10 @@ void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
     check(mapped.isMoreDetailAvailable() &&
               mapped.getTextureCoordinateID() == 1,
           "Tileset: terrain-availability fixture has WebMercator raster more detail");
-
     std::optional<TileLoadResult> loadResult =
         TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
     const GltfModel* childModel =
         loadResult ? loadResult->content.gltfModel.get() : nullptr;
-
     bool clippedWithGeographicTexcoord = true;
     bool retainedUnclippedWebMercatorRange = true;
     if (childModel && !childModel->primitives.empty()) {
@@ -28567,7 +25862,6 @@ void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
         clippedWithGeographicTexcoord = false;
         retainedUnclippedWebMercatorRange = false;
     }
-
     check(loadResult.has_value() &&
               loadResult->status == TileLoadStatus::Renderable &&
               childModel != nullptr &&
@@ -28575,7 +25869,6 @@ void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
               retainedUnclippedWebMercatorRange,
           "Tileset: terrain availability upsample uses terrain projection even when raster more detail is WebMercator");
 }
-
 void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
@@ -28587,7 +25880,6 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
         Rectangle::fromDegrees(0.0, -10.0, 10.0, 0.0),
         &parent);
     child.content.markTerrainAvailabilityUpsample();
-
     const Rectangle tightContent =
         Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0);
     auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
@@ -28600,7 +25892,6 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
         Mat4::identity());
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
-
     std::optional<TileLoadResult> loadResult =
         TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
     const GltfModel* childModel =
@@ -28609,7 +25900,6 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
         ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
               RasterOverlayProjection::Geographic)
         : nullptr;
-
     check(loadResult.has_value() &&
               loadResult->status == TileLoadStatus::Renderable &&
               loadResult->content.terrainRenderContent &&
@@ -28626,7 +25916,6 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
                        33.0) < 1e-12,
           "Tileset: glTF terrain availability upsample derives raster details from parent model region");
 }
-
 void testTerrainContentUpsampleUsesProtectedUnloadingParentSource() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
@@ -28638,14 +25927,12 @@ void testTerrainContentUpsampleUsesProtectedUnloadingParentSource() {
         Rectangle{-MathUtils::PiOverTwo, -MathUtils::PiOverTwo, 0.0, 0.0},
         &parent);
     child.content.markTerrainAvailabilityUpsample();
-
     parent.content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(parent.bounds),
         Mat4::identity());
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Unloading;
-
     std::optional<TileLoadResult> unloadingResult =
         TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
     check(TileGltfTerrainUpsampledChildMaterializer::
@@ -28654,20 +25941,17 @@ void testTerrainContentUpsampleUsesProtectedUnloadingParentSource() {
               unloadingResult->status == TileLoadStatus::Renderable &&
               unloadingResult->content.hasGltfTerrainPayload(),
           "Tileset: glTF terrain upsample can finish from protected Unloading parent content like cesium-native");
-
     parent.content.loadState = TileLoadState::ContentLoaded;
     check(TileGltfTerrainUpsampledChildMaterializer::
               findGltfTerrainSource(child) == nullptr &&
               !TileGltfTerrainUpsampledChildMaterializer::
                   createLoadResult(child).has_value(),
           "Tileset: glTF terrain upsample waits for parent Done after ContentLoaded like cesium-native");
-
     parent.content.loadState = TileLoadState::Done;
     check(TileGltfTerrainUpsampledChildMaterializer::
               findGltfTerrainSource(child) == &parent,
           "Tileset: glTF terrain upsample accepts Done parent source like cesium-native");
 }
-
 void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -28680,7 +25964,6 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
                   -MathUtils::PiOverTwo, 0.0},
         &parent);
     child.content.markTerrainAvailabilityUpsample();
-
     auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
     for (GltfPrimitive& primitive : parentModel->primitives) {
         for (SurfaceVertex& vertex : primitive.vertices) {
@@ -28697,12 +25980,10 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
         Mat4::identity());
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
-
     std::optional<TileLoadResult> loadResult =
         TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
     const GltfModel* childModel =
         loadResult ? loadResult->content.gltfModel.get() : nullptr;
-
     bool clippedWithInvertedV = true;
     if (childModel && !childModel->primitives.empty()) {
         for (const GltfPrimitive& primitive : childModel->primitives) {
@@ -28716,7 +25997,6 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
     } else {
         clippedWithInvertedV = false;
     }
-
     check(loadResult.has_value() &&
               loadResult->status == TileLoadStatus::Renderable &&
               loadResult->content.terrainRenderContent &&
@@ -28727,7 +26007,6 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
                       RasterOverlayProjection::Geographic),
           "Tileset: glTF terrain upsample propagates inverted V coordinate like cesium-native");
 }
-
 void testTerrainContentUpsampleRejectsOrdinaryGltfContentParent() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
@@ -28739,18 +26018,15 @@ void testTerrainContentUpsampleRejectsOrdinaryGltfContentParent() {
         Rectangle{-MathUtils::PiOverTwo, -MathUtils::PiOverTwo, 0.0, 0.0},
         &parent);
     child.content.markTerrainAvailabilityUpsample();
-
     parent.content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(parent.bounds),
         Mat4::identity());
     parent.markRenderContentDone();
-
     std::optional<TileLoadResult> loadResult =
         TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
     check(!loadResult.has_value(),
           "Tileset: ordinary glTF content parent is not a terrain upsample source");
 }
-
 void testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
@@ -28762,7 +26038,6 @@ void testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails() {
         Rectangle{-MathUtils::PiOverTwo, -MathUtils::PiOverTwo, 0.0, 0.0},
         &parent);
     child.content.markTerrainAvailabilityUpsample();
-
     auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
     parentModel->rasterOverlayDetails = RasterOverlayDetails{};
     parent.content.renderContent.prepareGltfContent(
@@ -28770,44 +26045,37 @@ void testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails() {
         Mat4::identity());
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
-
     std::optional<TileLoadResult> loadResult =
         TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
     check(!loadResult.has_value(),
           "Tileset: glTF terrain upsample requires raster overlay projection details like cesium-native");
 }
-
 void testTilesetClearChildrenErasesFlatMapDescendants() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: clear-children root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset, rootKey, makeFlatHeightmap(1.0f));
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: clear-children setup creates child tiles");
-
     const TileKey childKey = root->children[1]->key;
     TilesetTestAccess::clearChildrenRecursively(tileset, *root);
     check(root->children.empty(),
           "Tileset: clear-children empties parent child list");
     check(TilesetTestAccess::findTile(tileset, childKey) == nullptr,
           "Tileset: clear-children removes descendants from flat tile map");
-
     TilesetTile* recreated = TilesetTestAccess::ensureTile(tileset, childKey);
     check(recreated && recreated->parent == root,
           "Tileset: recreated child is relinked to parent");
     check(root->children.size() == 1 && root->children.front() == recreated,
           "Tileset: recreated child is present in parent child list");
 }
-
 void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey availableChild{"Geographic-TMS", 1, 0, 0};
@@ -28817,7 +26085,6 @@ void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
     ManualTerrainQuadtreeContentProvider* rawProvider = provider.get();
     rawProvider->availableKeys.push_back(availableChild);
     rawProvider->availableKeys.push_back(availableGrandchild);
-
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         std::move(scheme),
@@ -28825,14 +26092,12 @@ void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
         nullptr,
         TilesetOptions{},
         std::move(provider));
-
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: clear-upsample-state root tile is created");
     if (!root) return;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Empty;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: clear-upsample-state setup creates terrain children");
@@ -28841,17 +26106,14 @@ void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
     child->content.loadState = TileLoadState::Done;
     child->content.contentKind = TileContentKind::Empty;
     TilesetTestAccess::ensureTileChildren(tileset, *child);
-
     check(child->children.size() == 4,
           "Tileset: clear-upsample-state setup creates nested terrain children");
     check(rawProvider->notedUpsampledParents.size() == 2 &&
               rawProvider->notedUpsampledParents[0] == rootKey &&
               rawProvider->notedUpsampledParents[1] == child->key,
           "Tileset: terrain provider records existing upsampled children");
-
     const TileKey childKey = child->key;
     TilesetTestAccess::clearChildrenRecursively(tileset, *root);
-
     check(root->children.empty(),
           "Tileset: clear-upsample-state removes child list");
     const bool clearedRoot =
@@ -28865,40 +26127,33 @@ void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
     check(clearedRoot && clearedRemovedChild,
           "Tileset: clear children clears provider upsampled-child state for removed subtree like cesium-native current children");
 }
-
 void testTilesetClearChildrenErasesClaimedUploadDescendantWork() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: clear-children claimed upload root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset, rootKey, makeFlatHeightmap(1.0f));
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(!root->children.empty(),
           "Tileset: clear-children claimed upload setup creates child");
     if (root->children.empty()) return;
-
     const TileKey childKey = root->children.front()->key;
     TilesetTestAccess::queueNormal(tileset, childKey);
     check(TilesetTestAccess::claimContentUpload(tileset, childKey) &&
               TilesetTestAccess::containsPendingWorkFor(tileset, childKey),
           "Tileset: clear-children claimed upload test creates active descendant work");
-
     TilesetTestAccess::clearChildrenRecursively(tileset, *root);
-
     check(root->children.empty() &&
               TilesetTestAccess::findTile(tileset, childKey) == nullptr &&
               !TilesetTestAccess::loadQueueContainsAny(tileset, childKey) &&
               !TilesetTestAccess::containsPendingWorkFor(tileset, childKey),
           "Tileset: clear-children removes claimed descendant work with tile indexes");
 }
-
 void testTilesetClearChildrenIgnoresStaleContentCallback() {
     const TileKey contentKey{"Geographic-TMS", 1, 0, 0};
     auto provider = std::make_unique<ManualCompletionContentProvider>(
@@ -28912,26 +26167,21 @@ void testTilesetClearChildrenIgnoresStaleContentCallback() {
         &device,
         TilesetOptions{},
         std::move(provider));
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     TilesetTile* child = TilesetTestAccess::ensureTile(tileset, contentKey);
     check(root && child && child->parent == root,
           "Tileset: stale content callback setup links child");
     if (!root || !child) return;
-
     TilesetTestAccess::requestMissingTile(tileset, contentKey);
     check(rawProvider->pendingRequests.size() == 1,
           "Tileset: stale content callback has one pending request");
-
     TilesetTestAccess::clearChildrenRecursively(tileset, *root);
     check(TilesetTestAccess::findTile(tileset, contentKey) == nullptr,
           "Tileset: stale content callback child is removed before callback");
-
     check(rawProvider->completeWithModel(contentKey, makeTriangleGltfModel()),
           "Tileset: stale content callback can still arrive after clear");
     TilesetTestAccess::processPendingUploads(tileset);
-
     check(TilesetTestAccess::findTile(tileset, contentKey) == nullptr,
           "Tileset: stale content callback does not recreate cleared child");
     const TilesetLoadDiagnostics contentDiag = tileset.loadDiagnostics();
@@ -28939,18 +26189,15 @@ void testTilesetClearChildrenIgnoresStaleContentCallback() {
               contentDiag.pendingContentTotal() == 0,
           "Tileset: stale content callback drains pending lifecycle queues");
 }
-
 void testTilesetUnloadKeepsParentWithReferencedDescendant() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: referenced-descendant unload root tile is created");
     if (!root) return;
-
     auto heightmap = makeFlatHeightmap(1.0f);
     heightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
@@ -28961,52 +26208,43 @@ void testTilesetUnloadKeepsParentWithReferencedDescendant() {
     check(!root->children.empty(),
           "Tileset: referenced-descendant unload setup creates children");
     if (root->children.empty() || !root->children.front()) return;
-
     const TileKey childKey = root->children.front()->key;
     root->children.front()->addReference();
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
     check(TilesetTestAccess::findTile(tileset, rootKey) == root,
           "Tileset: unload skips parent while descendant is referenced");
     check(TilesetTestAccess::findTile(tileset, childKey) != nullptr,
           "Tileset: unload preserves referenced descendant subtree");
 }
-
 void testTilesetUnloadQueueIgnoresUnloadedUnknownTiles() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: unload-queue filter root tile is created");
     if (!root) return;
-
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     check(tileset.loadDiagnostics().unloadQueueTiles == 0,
           "Tileset: unloaded unknown tile is not queued for content unloading");
-
     root->content.contentKind = TileContentKind::Empty;
     root->content.loadState = TileLoadState::Done;
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     check(tileset.loadDiagnostics().unloadQueueTiles == 1,
           "Tileset: loaded empty content remains eligible for content unloading");
 }
-
 void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: upsample-child-loading unload root tile is created");
     if (!root) return;
-
     TilesetTestAccess::putTerrainCache(
         tileset, rootKey, makeFlatHeightmap(1.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
@@ -29022,19 +26260,16 @@ void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
     check(!root->children.empty(),
           "Tileset: upsample-child-loading setup creates children");
     if (root->children.empty() || !root->children.front()) return;
-
     TilesetTile* child = root->children.front();
     child->content.upsampledFromParent = true;
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::Unloaded &&
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 0,
           "Tileset: upsample child without glTF source does not create a pending legacy upload before parent unload");
-
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     const int64_t bytesBeforeUnload = tileset.totalBytesUsed();
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
     check(root->content.loadState == TileLoadState::Unloaded &&
               root->content.contentKind == TileContentKind::Unknown &&
               !root->content.renderContent.isMeshReady() &&
@@ -29045,7 +26280,6 @@ void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
     check(tileset.loadDiagnostics().unloadQueueTiles == 0,
           "Tileset: parent leaves unload queue immediately without pending legacy upsample child");
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
     check(root->content.loadState == TileLoadState::Unloaded &&
               root->content.contentKind == TileContentKind::Unknown &&
               !root->content.renderContent.isMeshReady() &&
@@ -29054,7 +26288,6 @@ void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
     check(tileset.loadDiagnostics().unloadQueueTiles == 0,
           "Tileset: finished Unloading parent is removed from the unload queue");
 }
-
 void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -29066,13 +26299,11 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
         {},
         &device,
         TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: raster-detail unload glTF root tile is created");
     if (!root) return;
-
     auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
     const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
     parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
@@ -29093,12 +26324,10 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
         GltfPrimitiveRenderResources{});
     root->markRenderContentDone();
     root->geometricError = 100.0;
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: raster-detail unload setup creates children");
     if (root->children.size() < 2 || !root->children[1]) return;
-
     auto imageryScheme = TileScheme::createXYZWebMercator();
     DebugImageryProvider imagery;
     RasterOverlayTileProvider rasterProvider(
@@ -29138,7 +26367,6 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
     check(mapped.isMoreDetailAvailable() &&
               mapped.getTextureCoordinateID() == 1,
           "Tileset: raster-detail unload fixture has ready more-detail raster");
-
     TilesetTile* child = root->children[1];
     child->content.markRasterDetailUpsample(
         RasterOverlayProjection::WebMercator);
@@ -29147,12 +26375,10 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
               rawProvider->requestCount == 0,
           "Tileset: raster-detail glTF child queues local upsample before parent unload");
-
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     const int64_t bytesBeforeUnload = tileset.totalBytesUsed();
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
     check(root->content.loadState == TileLoadState::Unloading &&
               root->content.contentKind == TileContentKind::Render &&
               root->content.renderContent.hasGltfContent() &&
@@ -29164,7 +26390,6 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
           "Tileset: raster-detail protected unload updates retained byte accounting");
     check(tileset.loadDiagnostics().unloadQueueTiles == 1,
           "Tileset: raster-detail protected parent remains queued for retry");
-
     TilesetTile* sibling = root->children[2];
     sibling->content.markRasterDetailUpsample(
         RasterOverlayProjection::WebMercator);
@@ -29175,7 +26400,6 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 1 &&
               rawProvider->requestCount == 0,
           "Tileset: raster-detail sibling waits instead of starting from protected Unloading parent");
-
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =
         child->content.renderContent.gltfModelForRead();
@@ -29204,18 +26428,15 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
     check(tileset.loadDiagnostics().unloadQueueTiles == 0,
           "Tileset: raster-detail parent leaves unload queue after protected work completes");
 }
-
 void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: render-content unload-preserve root tile is created");
     if (!root) return;
-
     auto rootHeightmap = makeFlatHeightmap(1.0f);
     rootHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
@@ -29223,12 +26444,10 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
     root->content.renderContent.setMeshReady(true);
-
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(!root->children.empty(),
           "Tileset: render-content unload-preserve setup creates children");
     if (root->children.empty() || !root->children.front()) return;
-
     TilesetTile* child = root->children.front();
     const TileKey childKey = child->key;
     auto childHeightmap = makeFlatHeightmap(2.0f);
@@ -29238,11 +26457,9 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     child->content.contentKind = TileContentKind::Render;
     child->content.loadState = TileLoadState::Done;
     child->content.renderContent.setMeshReady(true);
-
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
     TilesetTile* childAfter = TilesetTestAccess::findTile(tileset, childKey);
     check(rootAfter == root &&
@@ -29256,18 +26473,15 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
               childAfter->parent == rootAfter,
           "Tileset: render-content cache unload preserves loaded children");
 }
-
 void testTilesetUnloadExternalContentClearsChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: external-content unload root tile is created");
     if (!root) return;
-
     root->content.contentKind = TileContentKind::External;
     root->content.loadState = TileLoadState::Done;
     root->unconditionallyRefine = true;
@@ -29275,17 +26489,14 @@ void testTilesetUnloadExternalContentClearsChildren() {
     check(!root->children.empty(),
           "Tileset: external-content unload setup creates children");
     if (root->children.empty() || !root->children.front()) return;
-
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(3.0f);
     childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset, childKey, std::move(childHeightmap));
-
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
-
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
     check(rootAfter == root &&
               rootAfter->children.empty() &&
@@ -29295,18 +26506,15 @@ void testTilesetUnloadExternalContentClearsChildren() {
     check(TilesetTestAccess::findTile(tileset, childKey) == nullptr,
           "Tileset: external-content cache unload removes descendants from flat map");
 }
-
 void testTilesetDirectExternalContentUnloadClearsChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
           "Tileset: direct external-content unload root tile is created");
     if (!root) return;
-
     root->content.contentKind = TileContentKind::External;
     root->content.loadState = TileLoadState::Done;
     root->unconditionallyRefine = true;
@@ -29314,13 +26522,11 @@ void testTilesetDirectExternalContentUnloadClearsChildren() {
     check(!root->children.empty(),
           "Tileset: direct external-content unload setup creates children");
     if (root->children.empty() || !root->children.front()) return;
-
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(5.0f);
     childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset, childKey, std::move(childHeightmap));
-
     root->addReference();
     TilesetTestAccess::unloadTileContent(tileset, *root, nullptr);
     check(root->content.loadState == TileLoadState::Done &&
@@ -29329,9 +26535,7 @@ void testTilesetDirectExternalContentUnloadClearsChildren() {
               TilesetTestAccess::findTile(tileset, childKey) != nullptr,
           "Tileset: direct external-content unload keeps referenced wrapper");
     root->clearReferences();
-
     TilesetTestAccess::unloadTileContent(tileset, *root, nullptr);
-
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
     check(rootAfter == root &&
               rootAfter->children.empty() &&
@@ -29341,9 +26545,7 @@ void testTilesetDirectExternalContentUnloadClearsChildren() {
     check(TilesetTestAccess::findTile(tileset, childKey) == nullptr,
           "Tileset: direct external-content unload removes descendants from flat map");
 }
-
 } // namespace
-
 int main() {
     std::cout << "=== Engine Regression Tests ===\n\n";
     testTileSelectionKickedStatePreservesOriginalResult();
@@ -29821,7 +27023,6 @@ int main() {
     testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative();
     testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder();
     testRasterUpsampledChildrenMaterializeFromGltfRenderContent();
-
     std::cout << "\n=== " << gFailures << " failures ===\n";
     return gFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

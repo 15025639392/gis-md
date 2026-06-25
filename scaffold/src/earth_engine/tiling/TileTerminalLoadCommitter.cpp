@@ -1,14 +1,9 @@
 #include "TileTerminalLoadCommitter.h"
-
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadResultMetadataApplicator.h"
-
 #include <utility>
-
 namespace earth_engine {
-
 namespace {
-
 TileTerminalLoadAction commitTerrainTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
@@ -17,7 +12,8 @@ TileTerminalLoadAction commitTerrainTerminalResult(
     IPrepareRendererResources* pPrepRenderer,
     TilesetContentProvider* contentProvider) {
     TileTerminalLoadAction action =
-        TileTerminalLoadPolicy::applyTerrainTerminalResult(
+        TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::TerrainContent,
             tile,
             result.status,
             pPrepRenderer);
@@ -41,7 +37,6 @@ TileTerminalLoadAction commitTerrainTerminalResult(
     }
     return action;
 }
-
 TileTerminalLoadAction commitContentTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
@@ -49,7 +44,8 @@ TileTerminalLoadAction commitContentTerminalResult(
     TileEmptyContentRegistry& emptyContentRegistry,
     IPrepareRendererResources* pPrepRenderer) {
     TileTerminalLoadAction action =
-        TileTerminalLoadPolicy::applyContentTerminalResult(
+        TileTerminalLoadPolicy::applyTerminalResult(
+        TileLoadDomain::Content,
             tile,
             result.status,
             pPrepRenderer);
@@ -65,9 +61,7 @@ TileTerminalLoadAction commitContentTerminalResult(
     }
     return action;
 }
-
 } // namespace
-
 TileTerminalLoadAction
 TileTerminalLoadCommitter::commitTerminalResult(
     TileLoadDomain domain,
@@ -93,5 +87,4 @@ TileTerminalLoadCommitter::commitTerminalResult(
         emptyContentRegistry,
         pPrepRenderer);
 }
-
 } // namespace earth_engine
