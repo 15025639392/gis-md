@@ -4517,7 +4517,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool gltfEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentUpload(
+    TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
         nullptr,
@@ -4691,7 +4691,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool gltfEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentUpload(
+    TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
         nullptr,
@@ -4771,7 +4771,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool gltfEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentUpload(
+    TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
         nullptr,

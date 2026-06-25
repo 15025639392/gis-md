@@ -105,7 +105,7 @@ public:
               typename EnsureChildrenFn,
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
-    static void commitContentUpload(
+    static void commitUpload(
         PendingTileLoad& upload,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
@@ -217,36 +217,6 @@ public:
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty),
                 contentProvider);
         }
-    }
-
-    template <typename EnsureTileFn,
-              typename EnsureChildrenFn,
-              typename EnsureGltfResourcesFn,
-              typename MarkResourcesDirtyFn>
-    static void commitUpload(
-        PendingTileLoad& upload,
-        TilesetContentProvider* contentProvider,
-        RenderDevice* device,
-        IPrepareRendererResources* pPrepRenderer,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        TileEmptyContentRegistry& emptyContentRegistry,
-        TileLoadLifecycle& lifecycle,
-        EnsureTileFn&& ensureTile,
-        EnsureChildrenFn&& ensureChildren,
-        EnsureGltfResourcesFn&& ensureGltfResources,
-        MarkResourcesDirtyFn&& markResourcesDirty) {
-        commitContentUpload(
-            upload,
-            contentProvider,
-            device,
-            pPrepRenderer,
-            rasterOverlays,
-            emptyContentRegistry,
-            lifecycle,
-            std::forward<EnsureTileFn>(ensureTile),
-            std::forward<EnsureChildrenFn>(ensureChildren),
-            std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
-            std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
     }
 
 };

@@ -14802,7 +14802,7 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
     bool gltfEnsured = false;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitContentUpload(
+    TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
         nullptr,
