@@ -1,4 +1,5 @@
 #include "TileTerminalLoadCommitter.h"
+#include "TileAvailabilityUpdateCommitter.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadResultMetadataApplicator.h"
 #include <utility>
@@ -48,14 +49,11 @@ TileTerminalLoadCommitter::commitTerminalResult(
     IPrepareRendererResources* pPrepRenderer,
     TilesetContentProvider* contentProvider) {
     std::vector<QuantizedMeshAvailabilityUpdate> terrainAvailabilityUpdates;
-    if (domain == TileLoadDomain::TerrainContent &&
-        contentProvider &&
-        contentProvider->providesTerrainQuadtree() &&
-        result.status == TileLoadStatus::Failed &&
-        !result.quantizedMeshAvailabilityUpdates.empty()) {
-        terrainAvailabilityUpdates =
-            std::move(result.quantizedMeshAvailabilityUpdates);
-    }
+    terrainAvailabilityUpdates =
+        TileAvailabilityUpdateCommitter::extractTerrainAvailabilityUpdates(
+            domain,
+            result,
+            contentProvider);
     TileTerminalLoadAction action = commitTerminalResultImpl(
         domain,
         tile,
@@ -64,8 +62,6 @@ TileTerminalLoadCommitter::commitTerminalResult(
         emptyContentRegistry,
         pPrepRenderer);
     if (!terrainAvailabilityUpdates.empty()) {
-        // Availability updates must remain on the terrain path, but the
-        // terminal policy itself is now shared.
         contentProvider->applyTerrainAvailabilityUpdates(
             terrainAvailabilityUpdates);
     }

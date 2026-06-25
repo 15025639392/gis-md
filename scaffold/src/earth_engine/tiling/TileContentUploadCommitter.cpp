@@ -1,6 +1,7 @@
 #include "TileContentUploadCommitter.h"
 
 #include "RasterMappedToTilesetTile.h"
+#include "TileAvailabilityUpdateCommitter.h"
 #include "TileContentUploadPolicy.h"
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "TilesetTile.h"
@@ -46,13 +47,9 @@ void restoreInitialBoundingVolumesAfterResourceFailure(TilesetTile& tile) {
 void TileContentUploadCommitter::applyTerrainAvailabilityUpdates(
     const TileLoadedContent& content,
     TilesetContentProvider* contentProvider) {
-    if (contentProvider &&
-        contentProvider->providesTerrainQuadtree() &&
-        content.satisfiesContentTerrainPayloadContract() &&
-        !content.quantizedMeshAvailabilityUpdates.empty()) {
-        contentProvider->applyTerrainAvailabilityUpdates(
-            content.quantizedMeshAvailabilityUpdates);
-    }
+    TileAvailabilityUpdateCommitter::applyTerrainAvailabilityUpdates(
+        content,
+        contentProvider);
 }
 
 void TileContentUploadCommitter::prepareRenderContent(
