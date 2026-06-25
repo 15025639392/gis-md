@@ -32,6 +32,35 @@ bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
     return true;
 }
 
+bool initializeTerrainChild(
+    TilesetTile& parent,
+    TilesetTile& child,
+    bool clearResidue,
+    IPrepareRendererResources* pPrepRenderer) {
+    bool changed = false;
+    if (!child.boundingVolume) {
+        child.boundingVolume = TileBoundingVolume::fromLooseRegion(
+            child.bounds,
+            TileBoundsMetrics::terrainMinimumHeight(parent),
+            TileBoundsMetrics::terrainMaximumHeight(parent));
+        changed = true;
+    }
+
+    const bool hasAcceptedTerrainContent =
+        TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(child);
+    if (!hasAcceptedTerrainContent) {
+        TileTerrainHeightRangePolicy::inheritTerrainHeightRange(child, parent);
+    }
+    if (clearResidue &&
+        TileContentTerrainResiduePolicy::clearRejectableResidue(
+            child,
+            pPrepRenderer)) {
+        TileTerrainHeightRangePolicy::inheritTerrainHeightRange(child, parent);
+        changed = true;
+    }
+    return changed;
+}
+
 } // namespace
 
 TileContentAccess TileContentAccess::forContentTerrain(
@@ -121,29 +150,11 @@ TileContentAccess::ensureTileChildren(
             if (!child) {
                 continue;
             }
-            if (!child->boundingVolume) {
-                child->boundingVolume = TileBoundingVolume::fromLooseRegion(
-                    child->bounds,
-                    TileBoundsMetrics::terrainMinimumHeight(tile),
-                    TileBoundsMetrics::terrainMaximumHeight(tile));
-            }
-            const bool hasAcceptedTerrainContent =
-                TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
-                    *child);
-            if (!hasAcceptedTerrainContent) {
-                TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
-                    *child,
-                    tile);
-            }
-            if (contentProviderOwnsTerrainQuadtree()) {
-                if (TileContentTerrainResiduePolicy::clearRejectableResidue(
-                        *child,
-                        pPrepRenderer)) {
-                    TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
-                        *child,
-                        tile);
-                }
-            }
+            changed |= initializeTerrainChild(
+                tile,
+                *child,
+                contentProviderOwnsTerrainQuadtree(),
+                pPrepRenderer);
             changed |= linkChildIfMissing(tile, *child);
         }
         return TileChildFrameMaterializeResult{changed, false};
