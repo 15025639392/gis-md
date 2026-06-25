@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfContentProvider.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -80,6 +83,29 @@ public:
 };
 
 } // namespace
+
+TEST(TilesetLifecycleTest,
+     NewUnloadedTileDoesNotPreallocateRasterMappingsLikeCesiumNative) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+
+    Tileset tileset(
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&activated},
+        nullptr,
+        TilesetOptions{});
+
+    TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
+
+    ASSERT_NE(nullptr, tile);
+    EXPECT_EQ(TileLoadState::Unloaded, tile->content.loadState);
+    EXPECT_EQ(0u, tile->rasterOverlayState.mappingCount());
+    EXPECT_TRUE(tile->rasterOverlayState.missingProjections().empty());
+}
 
 TEST(TilesetLifecycleTest, DestructorWaitsForPendingContentCallbacks) {
     const TileKey key{"Geographic-TMS", 0, 0, 0};
