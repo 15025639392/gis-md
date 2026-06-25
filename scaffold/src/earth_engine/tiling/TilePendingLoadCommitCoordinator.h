@@ -157,21 +157,13 @@ public:
         }
 
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
-        const bool shouldApplyTerrainAvailability =
-            upload.content().satisfiesContentTerrainPayloadContract() &&
-            !upload.content().quantizedMeshAvailabilityUpdates.empty() &&
-            contentProvider &&
-            contentProvider->providesTerrainQuadtree();
-        if (shouldApplyTerrainAvailability) {
-            contentProvider->applyTerrainAvailabilityUpdates(
-                upload.content().quantizedMeshAvailabilityUpdates);
-        }
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
             std::move(upload.content()),
             rasterOverlays,
             device,
-            pPrepRenderer);
+            pPrepRenderer,
+            contentProvider);
         ensureGltfResources(*tile);
         const bool renderResourcesReady =
             tile->content.renderContent.isRenderContentReady();

@@ -23,7 +23,8 @@ struct TileContentUploadCommitter {
         TileLoadedContent&& content,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays = {},
         RenderDevice* device = nullptr,
-        IPrepareRendererResources* pPrepRenderer = nullptr);
+        IPrepareRendererResources* pPrepRenderer = nullptr,
+        TilesetContentProvider* contentProvider = nullptr);
     static TileContentUploadCommitAction finishRenderResourcePreparation(
         TilesetTile& tile,
         bool resourcesReady,

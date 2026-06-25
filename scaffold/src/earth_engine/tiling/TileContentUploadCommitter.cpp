@@ -48,9 +48,17 @@ void TileContentUploadCommitter::prepareRenderContent(
     TileLoadedContent&& content,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    TilesetContentProvider* contentProvider) {
     const std::optional<TileBoundingVolume> effectiveContentBoundingVolume =
         effectiveContentBoundingVolumeForLoad(tile, content);
+    if (contentProvider &&
+        contentProvider->providesTerrainQuadtree() &&
+        content.satisfiesContentTerrainPayloadContract() &&
+        !content.quantizedMeshAvailabilityUpdates.empty()) {
+        contentProvider->applyTerrainAvailabilityUpdates(
+            content.quantizedMeshAvailabilityUpdates);
+    }
     // cesium-native RasterOverlayCollection::addTileOverlays clears old
     // mappings before a new render-content generation maps overlays.
     tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
