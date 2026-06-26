@@ -43,7 +43,7 @@ Tileset::Tileset(std::unique_ptr<TileScheme> tileScheme,
                  RenderDevice* device,
                  TilesetOptions options)
     : Tileset(
-          TilesetTerrainProviders(nullptr, nullptr),
+          TilesetTerrainProviders(nullptr),
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,
@@ -79,8 +79,7 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
           tileRegistry_.tiles(),
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
-          options_.tileCacheUnloadTimeLimit,
-          false),
+          options_.tileCacheUnloadTimeLimit),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),
@@ -95,8 +94,7 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
           contentLifecycle_,
           contentAccess_,
           meshPreparation_,
-          resourceInvalidator_,
-          false),
+          resourceInvalidator_),
       renderCommands_(
           meshPreparation_,
           cacheOwnership_,
@@ -121,7 +119,7 @@ Tileset::Tileset(
     TilesetOptions options,
     std::unique_ptr<TilesetContentProvider> contentProvider)
     : Tileset(
-          TilesetTerrainProviders(nullptr, std::move(contentProvider)),
+          TilesetTerrainProviders(std::move(contentProvider)),
           std::move(tileScheme),
           std::move(rasterOverlays),
           device,
@@ -252,10 +250,8 @@ TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {
 float Tileset::sampleHeight(double lngRad, double latRad) const {
     return LoadedTerrainHeightSampler::sampleHeight(
         tileRegistry_.tiles(),
-        contentLifecycle_.legacyHeightmapTerrainCache(),
         lngRad,
-        latRad,
-        false);
+        latRad);
 }
 
 void Tileset::update(

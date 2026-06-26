@@ -83,7 +83,7 @@ struct TilesetTestAccess {
         RenderDevice* device = nullptr,
         TilesetOptions options = {}) {
         return Tileset(
-            TilesetTerrainProviders(std::move(terrainProvider), nullptr),
+            TilesetTerrainProviders(nullptr),
             std::move(scheme),
             std::move(overlays),
             device,
@@ -132,24 +132,10 @@ struct TilesetTestAccess {
         return TileCacheKey::forTile(key);
     }
 
-    static void putTerrainCache(
-        Tileset& tileset,
-        const TileKey& key,
-        std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.legacyHeightmapTerrainCache()[
-            terrainCacheKey(tileset, key)] =
-            std::move(heightmap);
-    }
-
     static bool containsPendingWorkFor(Tileset& tileset, const TileKey& key) {
         return tileset.contentLifecycle_
             .loadLifecycle()
             .containsWorkForCacheKey(terrainCacheKey(tileset, key));
-    }
-
-    static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
-        return tileset.contentLifecycle_.legacyHeightmapTerrainCache().count(
-                   terrainCacheKey(tileset, key)) > 0;
     }
 
     static bool claimContentUpload(Tileset& tileset, const TileKey& key) {
@@ -321,12 +307,10 @@ struct TilesetTestAccess {
             std::make_unique<RetryLaterContentProvider>());
     }
 
-    static std::unique_ptr<Tileset> makeWithBothTerrainOwners(
-        std::unique_ptr<TerrainProvider> legacyTerrainProvider,
+    static std::unique_ptr<Tileset> makeWithContentProvider(
         std::unique_ptr<TilesetContentProvider> contentProvider) {
         return std::unique_ptr<Tileset>(new Tileset(
             TilesetTerrainProviders(
-                std::move(legacyTerrainProvider),
                 std::move(contentProvider)),
             TileScheme::createGeographicTMS(),
             {},
@@ -334,10 +318,6 @@ struct TilesetTestAccess {
             TilesetOptions{}));
     }
 
-    static bool hasLegacyTerrainProvider(const Tileset& tileset) {
-        return tileset.terrainProviders_.legacyHeightmapTerrainProvider() !=
-               nullptr;
-    }
 };
 } // namespace earth_engine
 
@@ -1271,63 +1251,6 @@ TEST(
 
 TEST(
     TilesetRequestMissingBudgetTest,
-    ContentTerrainQuadtreeIgnoresLegacyHeightmapTerrainCacheForByteAccounting) {
-    const TileKey key{"Geographic-TMS", 0, 0, 0};
-    auto contentProvider =
-        std::make_unique<ManualCompletionContentProvider>(key);
-    contentProvider->ownsTerrainQuadtree = true;
-    ManualCompletionContentProvider* rawContentProvider =
-        contentProvider.get();
-
-    Tileset tileset(
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{},
-        std::move(contentProvider));
-    TilesetTestAccess::ensureTile(tileset, key);
-
-    auto heightmap = makeFlatHeightmap(42.0f);
-    heightmap->metadataAvailability.resize(8);
-    TilesetTestAccess::putTerrainCache(tileset, key, std::move(heightmap));
-
-    TilesetTestAccess::updateTotalBytesUsed(tileset);
-
-    EXPECT_EQ(tileset.totalBytesUsed(), 0);
-    EXPECT_EQ(tileset.cachedHeightmapTerrainTilesForLegacySurfacePath(), 0);
-    EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, key));
-
-    Diagnostics sceneDiagnostics;
-    SceneTilesetDiagnostics::reset(sceneDiagnostics);
-    SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, true);
-    EXPECT_EQ(sceneDiagnostics.surfaceMeshBytes, 0);
-    EXPECT_EQ(sceneDiagnostics.terrainCachedTiles, 0);
-
-    Camera camera;
-    camera.lookAt(
-        Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
-        Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
-        Vec3::unitZ());
-
-    FrameState frameState;
-    frameState.frameId = 403;
-    frameState.camera = &camera;
-    frameState.viewportWidthPixels = 800;
-    frameState.viewportHeightPixels = 800;
-    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
-
-    const TilesetUpdateFrameRuntimeResult updateResult =
-        TilesetTestAccess::runUpdateFrameRuntime(tileset, frameState);
-    EXPECT_EQ(updateResult.debugLog.terrainCacheSize, 0u);
-    while (!rawContentProvider->pendingRequests.empty()) {
-        const TileKey pendingKey =
-            rawContentProvider->pendingRequests.front().key;
-        EXPECT_TRUE(rawContentProvider->completeWithEmpty(pendingKey));
-    }
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
     LoadDiagnosticsExposeContentProviderRequestDiagnostics) {
     const TileKey contentKey{"Geographic-TMS", 0, 0, 0};
     auto contentProvider =
@@ -1389,38 +1312,6 @@ TEST(
             .contentProviderRequests
             .peakWorkerBlockingRequests,
         0);
-}
-
-TEST(
-    TilesetRequestMissingBudgetTest,
-    ContentTerrainQuadtreeDropsLegacyTerrainOwnerAtConstruction) {
-    const TileKey key{"Geographic-TMS", 0, 0, 0};
-    bool legacyDestroyed = false;
-    auto legacyTerrainProvider =
-        std::make_unique<LifetimeTrackedTerrainProvider>(legacyDestroyed);
-    auto contentProvider =
-        std::make_unique<ManualCompletionContentProvider>(key);
-    contentProvider->ownsTerrainQuadtree = true;
-    contentProvider->diagnostics.requestsStarted = 7;
-    contentProvider->diagnostics.maximumTransportActiveRequests = 7;
-
-    std::unique_ptr<Tileset> tileset =
-        TilesetTestAccess::makeWithBothTerrainOwners(
-            std::move(legacyTerrainProvider),
-            std::move(contentProvider));
-
-    EXPECT_TRUE(legacyDestroyed);
-    EXPECT_FALSE(TilesetTestAccess::hasLegacyTerrainProvider(*tileset));
-
-    const TilesetLoadDiagnostics diagnostics = tileset->loadDiagnostics();
-    EXPECT_EQ(diagnostics.terrainProviderRequests.requestsStarted, 0);
-    EXPECT_EQ(
-        diagnostics.terrainProviderRequests.maximumTransportActiveRequests,
-        -1);
-    EXPECT_EQ(diagnostics.contentProviderRequests.requestsStarted, 7);
-    EXPECT_EQ(
-        diagnostics.contentProviderRequests.maximumTransportActiveRequests,
-        7);
 }
 
 TEST(

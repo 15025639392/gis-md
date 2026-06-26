@@ -33,8 +33,7 @@ public:
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
-        const TileContentLifecycleManager& lifecycle,
-        bool includeLegacyHeightmapTerrainCache);
+        const TileContentLifecycleManager& lifecycle);
 
     void markEligibleForUnloading(
         const std::unordered_map<
@@ -46,21 +45,18 @@ public:
     void eraseTileIndexState(
         const std::string& cacheKey,
         TileContentLifecycleManager& lifecycle,
-        TileLoadQueue& loadQueue,
-        bool includeLegacyHeightmapTerrainCache = false);
+        TileLoadQueue& loadQueue);
 
     TileCacheUnloadContentResult unloadTileContent(
         TilesetTile& tile,
         TileContentLifecycleManager& lifecycle,
-        IPrepareRendererResources* pPrepRenderer,
-        bool includeLegacyHeightmapTerrainCache = false);
+        IPrepareRendererResources* pPrepRenderer);
 
     template <typename ClearChildrenFn>
     void unloadCachedBytes(
         int64_t maximumCachedBytes,
         double unloadTimeLimitMs,
         bool resourceSmoothingActive,
-        bool includeLegacyHeightmapTerrainCache,
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
@@ -85,13 +81,11 @@ public:
             },
             [this,
              &lifecycle,
-             includeLegacyHeightmapTerrainCache,
              pPrepRenderer](TilesetTile& tile) {
                 return unloadTileContent(
                     tile,
                     lifecycle,
-                    pPrepRenderer,
-                    includeLegacyHeightmapTerrainCache);
+                    pPrepRenderer);
             },
             [this](const std::string& key) {
                 markIneligibleForUnloading(key);
@@ -101,10 +95,7 @@ public:
         cacheBytesDirty_ = result.cacheBytesDirty;
 
         if (result.shouldRefreshTotalBytes) {
-            updateTotalBytesUsed(
-                tiles,
-                lifecycle,
-                includeLegacyHeightmapTerrainCache);
+            updateTotalBytesUsed(tiles, lifecycle);
             cacheBytesDirty_ = false;
         }
     }

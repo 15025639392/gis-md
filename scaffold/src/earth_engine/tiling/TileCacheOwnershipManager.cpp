@@ -19,25 +19,17 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     bool& resourceSmoothingActiveForFrame,
     int64_t& maximumCachedBytes,
-    double& tileCacheUnloadTimeLimit,
-    bool includeLegacyHeightmapTerrainCache)
+    double& tileCacheUnloadTimeLimit)
     : contentCache_(contentCache),
       contentLifecycle_(contentLifecycle),
       loadQueue_(loadQueue),
       tiles_(tiles),
       resourceSmoothingActiveForFrame_(resourceSmoothingActiveForFrame),
       maximumCachedBytes_(maximumCachedBytes),
-      tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit),
-      includeLegacyHeightmapTerrainCache_(includeLegacyHeightmapTerrainCache) {}
+      tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit) {}
 
 void TileCacheOwnershipManager::updateTotalBytesUsed() {
-    if (!includeLegacyHeightmapTerrainCache_) {
-        contentLifecycle_.legacyHeightmapTerrainCache().clear();
-    }
-    contentCache_.updateTotalBytesUsed(
-        tiles_,
-        contentLifecycle_,
-        includeLegacyHeightmapTerrainCache_);
+    contentCache_.updateTotalBytesUsed(tiles_, contentLifecycle_);
 }
 
 void TileCacheOwnershipManager::markEligibleForUnloading(
@@ -54,8 +46,7 @@ void TileCacheOwnershipManager::eraseTileIndexState(const std::string& key) {
     contentCache_.eraseTileIndexState(
         key,
         contentLifecycle_,
-        loadQueue_,
-        includeLegacyHeightmapTerrainCache_);
+        loadQueue_);
 }
 
 void TileCacheOwnershipManager::clearChildrenRecursively(
@@ -79,8 +70,7 @@ TileCacheUnloadContentResult TileCacheOwnershipManager::unloadTileContent(
     const TileCacheUnloadContentResult result = contentCache_.unloadTileContent(
         tile,
         contentLifecycle_,
-        pPrepRenderer,
-        includeLegacyHeightmapTerrainCache_);
+        pPrepRenderer);
     if (result == TileCacheUnloadContentResult::RemoveAndClearChildren) {
         clearChildrenRecursively(&tile, pPrepRenderer);
     }
@@ -97,7 +87,6 @@ void TileCacheOwnershipManager::unloadCachedBytes(
         maximumCachedBytes,
         tileCacheUnloadTimeLimit_,
         resourceSmoothingActiveForFrame_,
-        includeLegacyHeightmapTerrainCache_,
         tiles_,
         contentLifecycle_,
         pPrepRenderer,

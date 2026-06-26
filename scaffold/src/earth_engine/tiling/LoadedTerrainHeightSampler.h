@@ -6,7 +6,6 @@
 
 namespace earth_engine {
 
-struct DecodedHeightmap;
 struct TilesetTile;
 
 class LoadedTerrainHeightSampler {
@@ -15,12 +14,8 @@ public:
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
-        const std::unordered_map<
-            std::string,
-            std::unique_ptr<DecodedHeightmap>>& terrainCache,
         double longitudeRadians,
-        double latitudeRadians,
-        bool includeLegacyHeightmapTerrainCache);
+        double latitudeRadians);
 };
 
 } // namespace earth_engine

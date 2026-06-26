@@ -54,8 +54,7 @@ public:
         TileContentLifecycleManager& lifecycle,
         TileContentAccess& contentAccess,
         TileMeshPreparationManager& meshPreparation,
-        TileContentResourceInvalidator& resourceInvalidator,
-        bool retainLegacyHeightmapTerrainCacheForLegacySurfacePath);
+        TileContentResourceInvalidator& resourceInvalidator);
 
     TileLoadRequestOutcome requestMissingTiles(
         const std::vector<TileLoadRequest>& loadRequests,
@@ -75,7 +74,6 @@ private:
     TileContentAccess& contentAccess_;
     TileMeshPreparationManager& meshPreparation_;
     TileContentResourceInvalidator& resourceInvalidator_;
-    bool retainLegacyHeightmapTerrainCacheForLegacySurfacePath_ = false;
 };
 
 } // namespace earth_engine

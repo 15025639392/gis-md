@@ -213,15 +213,12 @@ float LoadedTerrainHeightSampler::sampleHeight(
     const std::unordered_map<
         std::string,
         std::unique_ptr<TilesetTile>>& tiles,
-        const std::unordered_map<
-            std::string,
-            std::unique_ptr<DecodedHeightmap>>& terrainCache,
         double longitudeRadians,
-        double latitudeRadians,
-        bool includeLegacyHeightmapTerrainCache) {
+        double latitudeRadians) {
     std::optional<LoadedTerrainSample> bestSample;
 
     for (const auto& [cacheKey, tile] : tiles) {
+        (void)cacheKey;
         if (!tile ||
             (bestSample && tile->key.z < bestSample->zoom) ||
             !tile->bounds.contains(longitudeRadians, latitudeRadians)) {
@@ -245,21 +242,6 @@ float LoadedTerrainHeightSampler::sampleHeight(
                     continue;
                 }
             }
-        }
-
-        auto terrainIt = includeLegacyHeightmapTerrainCache
-            ? terrainCache.find(cacheKey)
-            : terrainCache.end();
-        if (includeLegacyHeightmapTerrainCache &&
-            terrainIt != terrainCache.end() &&
-            terrainIt->second && terrainIt->second->valid()) {
-            commitBestSample(bestSample, LoadedTerrainSample{
-                DecodedHeightmapSampler::sampleHeight(
-                    *terrainIt->second,
-                    tile->bounds,
-                    longitudeRadians,
-                    latitudeRadians),
-                tile->key.z});
         }
     }
 

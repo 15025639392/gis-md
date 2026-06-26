@@ -47,14 +47,6 @@ struct TilesetTestAccess {
         tileset.meshPreparation_.prepareRenderableTile(tile);
     }
 
-    static void putTerrainCache(
-        Tileset& tileset,
-        const TileKey& key,
-        std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.legacyHeightmapTerrainCache()[TileCacheKey::forTile(key)] =
-            std::move(heightmap);
-    }
-
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
         return TileSelectionRasterOverlayPreparer::isRenderable(
             tile,
@@ -2449,34 +2441,4 @@ TEST(
     EXPECT_TRUE(root->children[1]->content.isTerrainAvailabilityUpsample());
     EXPECT_TRUE(root->children[2]->content.isTerrainAvailabilityUpsample());
     EXPECT_TRUE(root->children[3]->content.isTerrainAvailabilityUpsample());
-}
-
-TEST(
-    TilesetSelectionRefinementTest,
-    ContentTerrainQuadtreeIgnoresLegacyHeightmapTerrainCacheForRefinement) {
-    auto contentProvider = std::make_unique<TerrainQuadtreeContentProvider>();
-
-    Tileset tileset(
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{},
-        std::move(contentProvider));
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey cachedLegacyChildKey{"Geographic-TMS", 1, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    ASSERT_NE(root, nullptr);
-    root->geometricError = 100.0;
-    root->refine = TileRefine::Replace;
-    setLoadedTerrainGltfContent(*root);
-
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        cachedLegacyChildKey,
-        std::make_unique<DecodedHeightmap>());
-
-    EXPECT_FALSE(TilesetTestAccess::canRefine(tileset, *root));
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    EXPECT_TRUE(root->children.empty());
 }

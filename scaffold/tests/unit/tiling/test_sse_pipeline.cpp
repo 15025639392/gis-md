@@ -211,7 +211,7 @@ struct TilesetTestAccess {
         RenderDevice* device = nullptr,
         TilesetOptions options = {}) {
         return Tileset(
-            TilesetTerrainProviders(std::move(terrainProvider), nullptr),
+            TilesetTerrainProviders(nullptr),
             std::move(scheme),
             std::move(overlays),
             device,
@@ -225,7 +225,7 @@ struct TilesetTestAccess {
         TilesetOptions options = {}) {
         return std::unique_ptr<Tileset>(
             new Tileset(
-                TilesetTerrainProviders(std::move(terrainProvider), nullptr),
+                TilesetTerrainProviders(nullptr),
                 std::move(scheme),
                 std::move(overlays),
                 device,

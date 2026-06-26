@@ -9,14 +9,8 @@ void TileContentCacheManager::markResourcesDirty() {
 
 void TileContentCacheManager::updateTotalBytesUsed(
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
-    const TileContentLifecycleManager& lifecycle,
-    bool includeLegacyHeightmapTerrainCache) {
-    totalBytesUsed_ =
-        includeLegacyHeightmapTerrainCache
-        ? TileCacheMetrics::estimateTotalBytes(
-              tiles,
-              lifecycle.legacyHeightmapTerrainCache())
-        : TileCacheMetrics::estimateTotalBytes(tiles, {});
+    const TileContentLifecycleManager& /*lifecycle*/) {
+    totalBytesUsed_ = TileCacheMetrics::estimateTotalBytes(tiles, {});
 }
 
 void TileContentCacheManager::markEligibleForUnloading(
@@ -33,14 +27,11 @@ void TileContentCacheManager::markIneligibleForUnloading(
 void TileContentCacheManager::eraseTileIndexState(
     const std::string& cacheKey,
     TileContentLifecycleManager& lifecycle,
-    TileLoadQueue& loadQueue,
-    bool includeLegacyHeightmapTerrainCache) {
+    TileLoadQueue& loadQueue) {
     TileIndexState::eraseCacheKeyState(
         cacheKey,
         unloadQueue_,
-        includeLegacyHeightmapTerrainCache
-            ? &lifecycle.legacyHeightmapTerrainCache()
-            : nullptr,
+        nullptr,
         lifecycle.emptyContentRegistry(),
         loadQueue,
         lifecycle.loadLifecycle(),
@@ -52,14 +43,11 @@ void TileContentCacheManager::eraseTileIndexState(
 TileCacheUnloadContentResult TileContentCacheManager::unloadTileContent(
     TilesetTile& tile,
     TileContentLifecycleManager& lifecycle,
-    IPrepareRendererResources* pPrepRenderer,
-    bool includeLegacyHeightmapTerrainCache) {
+    IPrepareRendererResources* pPrepRenderer) {
     return TileContentUnloadCoordinator::unloadContent(
         tile,
         TileCacheKey::forTile(tile.key),
-        includeLegacyHeightmapTerrainCache
-            ? &lifecycle.legacyHeightmapTerrainCache()
-            : nullptr,
+        nullptr,
         lifecycle.emptyContentRegistry(),
         pPrepRenderer);
 }

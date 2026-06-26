@@ -17,9 +17,7 @@ struct TilesetTestAccess {
         std::unique_ptr<TerrainProvider> terrainProvider,
         std::unique_ptr<TileScheme> tileScheme) {
         return Tileset(
-            TilesetTerrainProviders(
-                std::move(terrainProvider),
-                nullptr),
+            TilesetTerrainProviders(nullptr),
             std::move(tileScheme),
             {},
             nullptr,
