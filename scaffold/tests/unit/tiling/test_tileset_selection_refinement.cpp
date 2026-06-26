@@ -2480,37 +2480,3 @@ TEST(
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_TRUE(root->children.empty());
 }
-
-TEST(
-    TilesetSelectionRefinementTest,
-    ResolverIgnoresLegacyHeightmapTerrainCacheForRefinement) {
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey cachedHeightmapChildKey{"Geographic-TMS", 1, 0, 0};
-    SelectionTreeContentProvider nonTerrainContentProvider(
-        {rootKey},
-        {{rootKey, {cachedHeightmapChildKey}}});
-    auto tileScheme = TileScheme::createGeographicTMS();
-    TilesetTile root(
-        rootKey,
-        tileScheme->tileToRectangle(rootKey));
-    root.geometricError = 100.0;
-    setLoadedTerrainGltfContent(root);
-
-    auto canRefineWithProvider =
-        [&](const TilesetContentProvider* provider) {
-            return TileRefinementAvailabilityResolver::
-                canRefineLegacyHeightmapSurfaceOrExternalContent(
-                root,
-                provider,
-                nullptr,
-                *tileScheme,
-                [](const TilesetTile&) { return false; },
-                [](const TilesetTile& tile) {
-                    return tile.content.renderContent
-                        .hasRenderableTerrainContent();
-                });
-        };
-
-    EXPECT_FALSE(canRefineWithProvider(nullptr));
-    EXPECT_TRUE(canRefineWithProvider(&nonTerrainContentProvider));
-}

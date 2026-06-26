@@ -5,9 +5,6 @@
 #include "TileScheme.h"
 #include "TilesetTile.h"
 #include "../content/GltfContentProvider.h"
-#include "../providers/TerrainProvider.h"
-
-#include <vector>
 
 namespace earth_engine {
 
@@ -34,37 +31,6 @@ public:
                 tileScheme.maxZoom()},
             [&contentProvider](const TileKey& key) {
                 return contentProvider.availabilityState(key);
-            });
-    }
-
-    template <typename IsAvailabilityBoundaryFn,
-              typename HasLoadedTerrainContentFn>
-    static bool canRefineLegacyHeightmapSurfaceOrExternalContent(
-        const TilesetTile& tile,
-        const TilesetContentProvider* contentProvider,
-        const TerrainProvider* legacyHeightmapTerrainProvider,
-        const TileScheme& tileScheme,
-        IsAvailabilityBoundaryFn&& isAvailabilityBoundary,
-        HasLoadedTerrainContentFn&& hasLoadedTerrainContent) {
-        const std::vector<TileKey> contentChildren =
-            contentProvider
-                ? contentProvider->childTiles(tile.key)
-                : std::vector<TileKey>{};
-
-        return TileChildMaterializer::canRefine(
-            tile,
-            TileRefinementAvailabilityOptions{
-                !tile.children.empty(),
-                !contentChildren.empty(),
-                contentProvider &&
-                    contentProvider->supportsTile(tile.key),
-                isAvailabilityBoundary(tile) && !hasLoadedTerrainContent(tile),
-                legacyHeightmapTerrainProvider != nullptr,
-                tileScheme.maxZoom()},
-            [legacyHeightmapTerrainProvider](const TileKey& key) {
-                return legacyHeightmapTerrainProvider
-                    ? legacyHeightmapTerrainProvider->availabilityState(key)
-                    : TileAvailabilityState::NotAvailable;
             });
     }
 };

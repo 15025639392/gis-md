@@ -89,7 +89,6 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
           resourceInvalidator_,
           loadQueue_,
           terrainProviders_.hasTerrainQuadtree(),
-          TileMeshPreparationMode::ContentTerrain,
           device_,
           rasterOverlays_),
       contentRuntime_(
