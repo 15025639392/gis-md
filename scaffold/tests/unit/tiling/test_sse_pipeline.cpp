@@ -5511,6 +5511,70 @@ void testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch() {
     check(ensureCalls == 1,
           "TileRasterOverlayFrameProcessor: duplicate visible/load request prefetch is skipped in the same frame");
 }
+void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: prebuild raster promotion root tile is created");
+    if (!root) return;
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
+    root->bounds = preciseRectangle;
+    auto gltfPromo = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfPromo->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfPromo), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
+    root->geometricError = 100.0;
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+    root->rasterOverlayState.mappings().resize(1);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "Tileset: prebuild raster promotion creates loading raster");
+    if (!mapped || !loadingTile) return;
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    check(mapped->getReadyTile() == loadingTile &&
+              mapped->getState() == RasterMappedToTilesetTile::State::Unattached,
+          "Tileset: prebuild raster promotion makes tile ready before resource prep");
+    check(TilesetTestAccess::isTileRenderable(tileset, *root),
+          "Tileset: selector renderability sees promoted raster before build");
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+    check(!commands.empty() &&
+              mapped->getState() == RasterMappedToTilesetTile::State::Attached &&
+              commands.front().kind == RenderCommandKind::SurfaceTile &&
+              commands.front().textures.size() == 1 &&
+              commands.front().textures.front() == loadingTile->getTexture(),
+          "Tileset: build command emits a surface command from the core ready raster");
+}
 void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -5623,6 +5687,173 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
               childMapped.getReadyTile() == loadingTile &&
               !childMapped.isMoreDetailAvailable(),
           "Tileset: failed pending child raster converges to ancestor without more detail");
+}
+void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        std::move(scheme),
+        {&baseActivated},
+        nullptr,
+        TilesetOptions{});
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: placeholder-base root tile is created");
+    if (!root) return;
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
+    root->bounds = preciseRectangle;
+    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    root->content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails =
+            makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.allLand = false;
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.allWater = false;
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.data.resize(
+        256u * 256u * 4u,
+        192);
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.translationX = 0.25;
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.translationY = 0.5;
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.scale = 0.5;
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(96),
+        std::make_unique<DummyBuffer>(12));
+    auto waterMaskTexture = std::make_unique<DummyTexture>(256, 256);
+    Texture* rawWaterMaskTexture = waterMaskTexture.get();
+    root->content.renderContent.setSurfaceWaterMaskTexture(
+        std::move(waterMaskTexture));
+    root->geometricError = 100.0;
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+    root->rasterOverlayState.mappings().resize(1);
+    check(!TilesetTestAccess::isTileRenderable(tileset, *root),
+          "Tileset: required base imagery keeps complete renderable false while loading");
+    InitializedRendererHarness rendererHarness;
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        rendererHarness.renderer,
+        *root,
+        commands,
+        1.0f);
+    check(!commands.empty() &&
+              commands.front().kind == RenderCommandKind::SurfaceTile &&
+              commands.front().textures.size() > 5 &&
+              commands.front().textures[0] ==
+                  rendererHarness.renderer.surfacePlaceholderTexture() &&
+              commands.front().surfaceTextureZoom == -1,
+          "Tileset: blocking base imagery draws surface geometry with the shared placeholder texture");
+    check(!commands.empty() &&
+              commands.front().surfaceHasWaterMask == 1.0f &&
+              commands.front().surfaceWaterMaskState[0] == 0.0f &&
+              commands.front().surfaceWaterMaskState[1] == 0.0f &&
+              commands.front().surfaceWaterMaskState[2] == 1.0f &&
+              std::abs(commands.front().surfaceWaterMaskTranslationScale[0] -
+                       0.25f) < 1e-6f &&
+              std::abs(commands.front().surfaceWaterMaskTranslationScale[1] -
+                       0.5f) < 1e-6f &&
+              std::abs(commands.front().surfaceWaterMaskTranslationScale[2] -
+                       0.5f) < 1e-6f,
+          "Tileset: surface command carries quantized-mesh water mask state");
+    check(commands.front().textures.size() > 5 &&
+              commands.front().textures[5] == rawWaterMaskTexture,
+          "Tileset: surface command binds quantized-mesh water mask texture to unit 5");
+    check(!TilesetTestAccess::isTileRenderable(tileset, *root),
+          "Tileset: missing blocking base imagery keeps strict complete renderable false");
+}
+void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        std::move(scheme),
+        {&baseActivated},
+        nullptr,
+        TilesetOptions{});
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* parent = TilesetTestAccess::ensureTile(tileset, parentKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    check(parent != nullptr && child != nullptr && child->parent == parent,
+          "Tileset: failed-child base imagery setup creates parent/child tiles");
+    if (!parent || !child) return;
+    auto makeRenderableSurface = [&](TilesetTile& tile) {
+        tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+        tile.content.renderContent.mutableSurfaceMesh()
+            ->rasterOverlayDetails =
+                makeProviderDetails(baseOverlay->getTileScheme(), tile.bounds);
+        tile.content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
+        tile.content.renderContent.setMeshReady(true);
+        tile.content.renderContent.setSurfaceGpuBuffers(
+            std::make_unique<DummyBuffer>(96),
+            std::make_unique<DummyBuffer>(12));
+        tile.geometricError = 100.0;
+        tile.content.loadState = TileLoadState::Done;
+        tile.content.contentKind = TileContentKind::Render;
+        tile.rasterOverlayState.mappings().resize(1);
+    };
+    makeRenderableSurface(*parent);
+    makeRenderableSurface(*child);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *parent);
+    RasterMappedToTilesetTile* parentMapped =
+        parent->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* parentLoading =
+        parentMapped ? parentMapped->getLoadingTile() : nullptr;
+    check(parentLoading != nullptr,
+          "Tileset: failed-child base imagery setup creates parent raster");
+    if (!parentMapped || !parentLoading) return;
+    parentLoading->setTexture(std::make_unique<DummyTexture>(8, 8));
+    Texture* parentTexture = parentLoading->getTexture();
+    parentLoading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *parent);
+    check(parentMapped->getReadyTile() == parentLoading,
+          "Tileset: failed-child base imagery setup promotes parent raster");
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *child);
+    RasterMappedToTilesetTile* childMapped = child->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* childLoading =
+        childMapped ? childMapped->getLoadingTile() : nullptr;
+    check(childLoading != nullptr,
+          "Tileset: failed-child base imagery setup creates child raster");
+    if (!childMapped || !childLoading || !parentTexture) return;
+    childLoading->setTexture(std::make_unique<DummyTexture>(2, 2));
+    Texture* failedChildTexture = childLoading->getTexture();
+    childLoading->setState(RasterOverlayTile::LoadState::Failed);
+    InitializedRendererHarness rendererHarness;
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        rendererHarness.renderer,
+        *child,
+        commands,
+        1.0f);
+    check(commands.size() == 1 &&
+              commands.front().kind == RenderCommandKind::SurfaceTile,
+          "Tileset: failed child imagery still draws using a real ancestor texture");
+    if (commands.empty()) return;
+    check(commands.front().textures.size() == 1 &&
+              commands.front().textures.front() == parentTexture &&
+              commands.front().textures.front() != failedChildTexture &&
+              commands.front().surfaceBaseRasterState ==
+                  static_cast<int>(RasterOverlayTile::LoadState::Done),
+          "Tileset: failed child surface command consumes parent texture without renderer fallback");
+    const SurfaceRasterBinding binding =
+        chooseSurfaceRasterBinding(childMapped);
+    check(binding.kind == SurfaceRasterBindingKind::AncestorTile &&
+              binding.tile == parentLoading,
+          "Tileset: failed child surface binding is the logical ancestor raster");
 }
 void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -25715,7 +25946,10 @@ int main() {
     testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch();
     testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReload();
     testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch();
+    testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testRasterSelectionPrefetchSkipHonorsMoreDetail();
+    testTilesetBlockingBaseImageryDrawsPlaceholderSurface();
+    testTilesetFailedChildBaseImageryUsesAncestorCommandTexture();
     testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw();
     testTilesetSurfaceOverlaysCompositeIntoSingleCommand();
     testTilesetRasterMoreDetailCreatesUpsampledChildren();

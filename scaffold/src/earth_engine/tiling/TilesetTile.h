@@ -135,10 +135,6 @@ struct TilesetTile {
     }
 
     bool hasRasterOverlayHostContent() const {
-        if (!content.renderContent.hasGltfContent() &&
-            content.renderContent.isTerrainRenderContent()) {
-            return false;
-        }
         return content.renderContent.hasRenderableTerrainContent();
     }
 
