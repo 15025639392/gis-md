@@ -5333,12 +5333,19 @@ void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch()
     TilesetTile tile(
         key,
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0));
-    tile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
-            RasterOverlayProjection::Geographic);
-    tile.content.renderContent.setMeshReady(true);
+    auto gltfModel1 = makeQuadTerrainGltfModel(tile.bounds);
+    gltfModel1->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel1), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res1;
+    res1.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res1.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res1.indexCount = 6;
+    res1.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res1));
+    tile.content.renderContent.markRenderContentReady();
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
     tile.geometricError = 100.0;
@@ -5415,12 +5422,19 @@ void testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReloa
     TilesetTile tile(
         key,
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0));
-    tile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
-            RasterOverlayProjection::Geographic);
-    tile.content.renderContent.setMeshReady(true);
+    auto gltfModel2 = makeQuadTerrainGltfModel(tile.bounds);
+    gltfModel2->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel2), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res2;
+    res2.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res2.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res2.indexCount = 6;
+    res2.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res2));
+    tile.content.renderContent.markRenderContentReady();
     tile.content.loadState = TileLoadState::ContentLoaded;
     tile.content.contentKind = TileContentKind::Render;
     tile.geometricError = 100.0;
@@ -6043,7 +6057,7 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     const Rectangle overlayRectangle =
         Rectangle::fromDegrees(-30.0, -40.0, 10.0, 60.0);
     root->bounds = contentRectangle;
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    auto gltfModel = makeQuadTerrainGltfModel(contentRectangle);
     RasterOverlayDetails rasterDetails;
     rasterDetails.rasterOverlayProjections = {
         RasterOverlayProjection::WebMercator};
@@ -6052,12 +6066,16 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
             WebMercatorProjection(Ellipsoid::WGS84()),
             overlayRectangle)};
     rasterDetails.boundingRegion = {contentRectangle, 0.0, 0.0};
-    root->content.renderContent.mutableSurfaceMesh()->rasterOverlayDetails =
-        rasterDetails;
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
+    gltfModel->rasterOverlayDetails = rasterDetails;
+    root->content.renderContent.prepareGltfContent(std::move(gltfModel), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res;
+    res.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res.indexCount = 6;
+    res.vertexCount = 4;
+    root->content.renderContent.addGltfPrimitiveResource(std::move(res));
+    root->content.renderContent.markRenderContentReady();
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
@@ -14981,10 +14999,18 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
                          TileKey{scheme->id(), 0, 0, 0}));
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
-    tile.content.renderContent.setMeshReady(true);
+    auto gltfModel3 = makeQuadTerrainGltfModel(tile.bounds);
+    gltfModel3->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel3), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res3;
+    res3.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res3.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res3.indexCount = 6;
+    res3.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res3));
+    tile.content.renderContent.markRenderContentReady();
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
     Renderer renderer(nullptr);
@@ -15101,10 +15127,18 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
                          TileKey{scheme->id(), 0, 0, 0}));
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
-    tile.content.renderContent.setMeshReady(true);
+    auto gltfModel4 = makeQuadTerrainGltfModel(tile.bounds);
+    gltfModel4->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel4), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res4;
+    res4.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res4.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res4.indexCount = 6;
+    res4.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res4));
+    tile.content.renderContent.markRenderContentReady();
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
     Renderer renderer(nullptr);
@@ -15173,11 +15207,18 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
                          TileKey{scheme->id(), 0, 0, 0}));
-    tile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
-    tile.content.renderContent.setMeshReady(true);
+    auto gltfModel5 = makeQuadTerrainGltfModel(tile.bounds);
+    gltfModel5->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel5), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res5;
+    res5.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res5.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res5.indexCount = 6;
+    res5.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res5));
+    tile.content.renderContent.markRenderContentReady();
     tile.content.contentKind = TileContentKind::Render;
     Renderer renderer(nullptr);
     FrameResourceBudgetConfig config;
@@ -15259,11 +15300,18 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
     TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
                      scheme->tileToRectangle(
                          TileKey{scheme->id(), 0, 0, 0}));
-    tile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
-    tile.content.renderContent.setMeshReady(true);
+    auto gltfModel6 = makeQuadTerrainGltfModel(tile.bounds);
+    gltfModel6->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel6), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res6;
+    res6.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res6.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res6.indexCount = 6;
+    res6.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res6));
+    tile.content.renderContent.markRenderContentReady();
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
     Renderer renderer(nullptr);
@@ -15473,8 +15521,16 @@ void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
     failedParent.children.push_back(&child);
     grandparent.content.contentKind = TileContentKind::Render;
     grandparent.content.loadState = TileLoadState::Done;
-    grandparent.content.renderContent.setMeshReady(true);
-    grandparent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    auto gltfModel2 = makeQuadTerrainGltfModel(Rectangle{});
+    grandparent.content.renderContent.prepareGltfContent(std::move(gltfModel2), Mat4::identity());
+    grandparent.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res2;
+    res2.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res2.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res2.indexCount = 6;
+    res2.vertexCount = 4;
+    grandparent.content.renderContent.addGltfPrimitiveResource(std::move(res2));
+    grandparent.content.renderContent.markRenderContentReady();
     failedParent.content.loadState = TileLoadState::Failed;
     failedParent.content.contentKind = TileContentKind::Unknown;
     child.content.markTerrainAvailabilityUpsample();
@@ -15576,9 +15632,16 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
         [&ensuredMeshes](TilesetTile& tile) {
             ++ensuredMeshes;
             tile.content.loadState = TileLoadState::Done;
-            tile.content.renderContent.setMeshReady(true);
-            tile.content.renderContent.setSurfaceMesh(
-                std::make_unique<SurfaceTileMesh>());
+            auto gltfModel3 = makeQuadTerrainGltfModel(Rectangle{});
+            tile.content.renderContent.prepareGltfContent(std::move(gltfModel3), Mat4::identity());
+            tile.content.renderContent.setTerrainRenderContent(true);
+            GltfPrimitiveRenderResources res3;
+            res3.vertexBuffer = std::make_unique<DummyBuffer>(64);
+            res3.indexBuffer = std::make_unique<DummyBuffer>(12);
+            res3.indexCount = 6;
+            res3.vertexCount = 4;
+            tile.content.renderContent.addGltfPrimitiveResource(std::move(res3));
+            tile.content.renderContent.markRenderContentReady();
         },
         [&queuedKeys](const TileKey& key,
                       TileLoadPriorityGroup,
@@ -15693,9 +15756,16 @@ void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
     parent.children.push_back(&child);
     parent.content.loadState = TileLoadState::Unloading;
     parent.content.contentKind = TileContentKind::Render;
-    parent.content.renderContent.setMeshReady(true);
-    parent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
+    auto gltfModel4 = makeQuadTerrainGltfModel(Rectangle{});
+    parent.content.renderContent.prepareGltfContent(std::move(gltfModel4), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res4;
+    res4.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res4.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res4.indexCount = 6;
+    res4.vertexCount = 4;
+    parent.content.renderContent.addGltfPrimitiveResource(std::move(res4));
+    parent.content.renderContent.markRenderContentReady();
     child.content.markTerrainAvailabilityUpsample();
     int ensuredMeshes = 0;
     std::vector<TileKey> queuedKeys;
@@ -15730,9 +15800,16 @@ void testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent() {
     parent.children.push_back(&child);
     grandparent.content.contentKind = TileContentKind::Render;
     grandparent.content.loadState = TileLoadState::Done;
-    grandparent.content.renderContent.setMeshReady(true);
-    grandparent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
+    auto gltfModel5 = makeQuadTerrainGltfModel(Rectangle{});
+    grandparent.content.renderContent.prepareGltfContent(std::move(gltfModel5), Mat4::identity());
+    grandparent.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res5;
+    res5.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res5.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res5.indexCount = 6;
+    res5.vertexCount = 4;
+    grandparent.content.renderContent.addGltfPrimitiveResource(std::move(res5));
+    grandparent.content.renderContent.markRenderContentReady();
     parent.content.loadState = TileLoadState::Failed;
     parent.content.contentKind = TileContentKind::Unknown;
     child.content.markRasterDetailUpsample();
@@ -15769,9 +15846,16 @@ void testTileUpsampleSourcePreparerRasterDetailAcceptsContentLoadedDirectGltfPar
     parent.children.push_back(&child);
     grandparent.content.contentKind = TileContentKind::Render;
     grandparent.content.loadState = TileLoadState::Done;
-    grandparent.content.renderContent.setMeshReady(true);
-    grandparent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
+    auto gltfModel6 = makeQuadTerrainGltfModel(Rectangle{});
+    grandparent.content.renderContent.prepareGltfContent(std::move(gltfModel6), Mat4::identity());
+    grandparent.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res6;
+    res6.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res6.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res6.indexCount = 6;
+    res6.vertexCount = 4;
+    grandparent.content.renderContent.addGltfPrimitiveResource(std::move(res6));
+    grandparent.content.renderContent.markRenderContentReady();
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::ContentLoaded;
     parent.content.renderContent.setGltfContent(
@@ -17777,12 +17861,19 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
     TilesetTile tile(
         key,
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0));
-    tile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
-            RasterOverlayProjection::Geographic);
-    tile.content.renderContent.setMeshReady(true);
+    auto gltfModel7 = makeQuadTerrainGltfModel(tile.bounds);
+    gltfModel7->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel7), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res7;
+    res7.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res7.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res7.indexCount = 6;
+    res7.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res7));
+    tile.content.renderContent.markRenderContentReady();
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
     tile.geometricError = 100.0;
@@ -21690,7 +21781,7 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
         child->content.loadState = TileLoadState::Failed;
         child->content.contentKind = TileContentKind::Empty;
         child->content.renderContent.setMeshReady(false);
-        child->content.renderContent.setSurfaceMesh(nullptr);
+        child->content.renderContent.prepareGltfContent(nullptr, Mat4::identity());
     }
     bool allChildrenRenderable = !childKeys.empty();
     for (TilesetTile* child : root->children) {
@@ -22440,7 +22531,7 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
     root->content.loadState = TileLoadState::ContentLoaded;
     root->content.contentKind = TileContentKind::Render;
     root->content.renderContent.setMeshReady(false);
-    root->content.renderContent.setSurfaceMesh(nullptr);
+    root->content.renderContent.prepareGltfContent(nullptr, Mat4::identity());
     root->geometricError = 1.0;
     root->selectionFrameState.selectionState = TileSelectionState::Refined;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
@@ -24333,13 +24424,14 @@ void testTileRenderPlanFrameRefresherCollectsRenderContentCredits() {
     auto model = std::make_unique<GltfModel>();
     model->credits = {"Content credit", "Content credit"};
     root->content.renderContent.setGltfContent(std::move(model));
-    root->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
-    root->content.renderContent.setSurfaceDrawable(true);
+    root->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res8;
+    res8.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res8.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res8.indexCount = 6;
+    res8.vertexCount = 4;
+    root->content.renderContent.addGltfPrimitiveResource(std::move(res8));
+    root->content.renderContent.markRenderContentReady();
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     TilesetTestAccess::beginTilePlan(tileset);
