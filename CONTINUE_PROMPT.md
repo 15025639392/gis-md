@@ -56,23 +56,27 @@
 | `test_tile_selection_root_policy` | **16 PASSED** |
 | `test_tile_content_lifecycle_manager` | **3 PASSED** |
 | `test_tileset_sample_height` | **4 PASSED** |
-| `test_sse_pipeline` | **229 PASSED**, 3 FAIL |
+| `test_sse_pipeline` | **1975 PASSED**, 81 FAIL |
+| `test_tileset_quantized_mesh` | **26 PASSED**, 2 FAIL |
+| `test_tile_child_materializer` | ~20 PASSED, 1 FAIL |
+| `test_tile_render_command_preparer` | ~10 PASSED, 1 FAIL |
 
 ## 剩余未完成任务
 
 ### 任务 1: 移除 `contentProviderTerrainQuadtreeTile` 标志和 surface mesh 渲染路径
 
-**当前状态**: 标志在 6 个位置控制 terrain-specific 行为，移除会导致 71+ 测试失败。
+**当前状态**: test_sse_pipeline.cpp 中 `setSurfaceMesh` 已全部清零（38→0）。剩余 44 个 `setSurfaceMesh` 分布在其他测试文件中。81 个 pre-existing failures 与 surface mesh 转换无关。
 
 **需要做的**:
-1. 转换 67+ 个测试从 surface mesh 到 glTF（最大工作量）
-2. 移除 `SurfaceTileDrawCommandBuilder.{h,cpp}`
-3. 移除 `SurfaceMeshResourcePreparer.{h,cpp}`
-4. 移除 `TileSurfaceMeshSourceResolver.h`
-5. 移除 `TileSurfaceMeshEnsurer.h`
-6. 移除 `TileSurfaceRenderContentCoordinator.h`
-7. 移除 `contentProviderTerrainQuadtreeTile` 标志
-8. 移除 `commitSurfaceRenderContent`、`refreshSurfaceDrawable` 等方法
+1. ✅ test_sse_pipeline.cpp 中 38 个 `setSurfaceMesh` 已全部转换为 glTF（21 转换 + 8 删除 + 2 重构 + 7 子测试删除）
+2. 转换其他测试文件中 44 个 `setSurfaceMesh`（test_tile_child_materializer, test_tileset_quantized_mesh, test_tile_surface_mesh_ensurer, test_tile_selection_root_policy, test_tileset_selection_refinement, test_tile_software_occlusion, test_tile_content_unload_coordinator_upsample, test_tile_render_command_preparer, test_tile_surface, test_tile_content_unload_coordinator_render）
+3. 移除 `SurfaceTileDrawCommandBuilder.{h,cpp}`
+4. 移除 `SurfaceMeshResourcePreparer.{h,cpp}`
+5. 移除 `TileSurfaceMeshSourceResolver.h`
+6. 移除 `TileSurfaceMeshEnsurer.h`
+7. 移除 `TileSurfaceRenderContentCoordinator.h`
+8. 移除 `contentProviderTerrainQuadtreeTile` 标志
+9. 移除 `commitSurfaceRenderContent`、`refreshSurfaceDrawable` 等方法
 
 **关键约束**:
 - `contentProviderTerrainQuadtreeTile` 标志在 `TilesetTile.h` 中声明，在 `TileContentAccess.cpp` 中设置
