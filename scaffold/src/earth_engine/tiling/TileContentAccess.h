@@ -3,15 +3,11 @@
 #include "TileKey.h"
 #include "TileChildFrameMaterializer.h"
 #include "TileContentLifecycleManager.h"
-#include "TileLegacyHeightmapContentResolver.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TilesetTile.h"
 
-#include <cstddef>
-
 namespace earth_engine {
 
-class TerrainProvider;
 class TileContentLifecycleManager;
 class IPrepareRendererResources;
 class TileScheme;
@@ -30,13 +26,6 @@ public:
         const TileScheme& tileScheme,
         const TilesetContentProvider* contentProvider);
 
-    static TileContentAccess forHeightmapTerrainSurfacePath(
-        TilesetTileRegistry& tileRegistry,
-        const TileScheme& tileScheme,
-        const TerrainProvider* legacyHeightmapTerrainProvider,
-        const TilesetContentProvider* contentProvider,
-        const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache);
-
     TilesetTile* ensureTile(const TileKey& key,
                             IPrepareRendererResources* pPrepRenderer = nullptr);
     TileChildFrameMaterializeResult ensureTileChildren(
@@ -47,18 +36,10 @@ public:
     bool canRefine(const TilesetTile& tile) const;
 
 private:
-    enum class TerrainOwnership {
-        None,
-        HeightmapSurface,
-        ContentProvider,
-    };
-
     TileContentAccess(TilesetTileRegistry& tileRegistry,
                       const TileScheme& tileScheme,
-                      const TerrainProvider* legacyHeightmapTerrainProvider,
                       const TilesetContentProvider* contentProvider,
-                      const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache,
-                      TerrainOwnership terrainOwnership);
+                      bool contentProviderOwnsTerrainQuadtree);
 
     bool contentProviderOwnsTerrainQuadtree() const;
     bool hasTerrainQuadtree() const;
@@ -70,8 +51,7 @@ private:
     TilesetTileRegistry& tileRegistry_;
     const TileScheme& tileScheme_;
     const TilesetContentProvider* contentProvider_ = nullptr;
-    TerrainOwnership terrainOwnership_ = TerrainOwnership::None;
-    TileLegacyHeightmapContentResolver legacyHeightmapContent_;
+    bool contentProviderOwnsTerrainQuadtree_ = false;
 };
 
 } // namespace earth_engine

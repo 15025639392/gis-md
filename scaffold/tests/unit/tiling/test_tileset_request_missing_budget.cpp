@@ -39,6 +39,42 @@
 using namespace earth_engine;
 
 namespace earth_engine {
+
+class RetryLaterContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "retry-later-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    std::vector<TileKey> rootTiles() const override {
+        return {TileKey{schemeId_, 0, 0, 0}};
+    }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        if (key.z >= maxZoom_) return {};
+        return {TileKey{schemeId_, key.z + 1, key.x * 2, key.y * 2},
+                TileKey{schemeId_, key.z + 1, key.x * 2 + 1, key.y * 2},
+                TileKey{schemeId_, key.z + 1, key.x * 2, key.y * 2 + 1},
+                TileKey{schemeId_, key.z + 1, key.x * 2 + 1, key.y * 2 + 1}};
+    }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback({}, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        if (key.schemeId != schemeId_ || key.z < 0 || key.z > maxZoom_) {
+            return TileAvailabilityState::NotAvailable;
+        }
+        return TileAvailabilityState::Available;
+    }
+    std::string schemeId_ = "Geographic-TMS";
+    int maxZoom_ = 18;
+};
+
 struct TilesetTestAccess {
     static Tileset makeLegacyTerrainTileset(
         std::unique_ptr<TerrainProvider> terrainProvider,
@@ -270,6 +306,19 @@ struct TilesetTestAccess {
         Tileset& tileset,
         FrameResourceBudget& budget) {
         tileset.processPendingLoads(false, false, nullptr, &budget);
+    }
+
+    static Tileset makeContentTerrainTileset(
+        std::unique_ptr<TileScheme> scheme,
+        std::vector<ActivatedRasterOverlay*> overlays = {},
+        RenderDevice* device = nullptr,
+        TilesetOptions options = {}) {
+        return Tileset(
+            std::move(scheme),
+            std::move(overlays),
+            device,
+            std::move(options),
+            std::make_unique<RetryLaterContentProvider>());
     }
 
     static std::unique_ptr<Tileset> makeWithBothTerrainOwners(
@@ -1522,13 +1571,8 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     LoadDiagnosticsExposeNativeLifecycleStates) {
-    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
 
     const std::vector<TileKey> keys = {
         {"Geographic-TMS", 3, 0, 0},
@@ -1678,22 +1722,16 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     ClearChildrenErasesFlatMapDescendants) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
 
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(1.0f));
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::Done;
+    root->content.renderContent.setMeshReady(true);
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     ASSERT_EQ(root->children.size(), 4u);
     ASSERT_NE(root->children[1], nullptr);
@@ -1714,22 +1752,16 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     ClearChildrenErasesClaimedUploadDescendantWork) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
 
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(1.0f));
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::Done;
+    root->content.renderContent.setMeshReady(true);
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     ASSERT_FALSE(root->children.empty());
     ASSERT_NE(root->children.front(), nullptr);
@@ -1789,21 +1821,13 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     UnloadKeepsParentWithReferencedDescendant) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
 
-    auto heightmap = makeFlatHeightmap(1.0f);
-    heightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
     root->content.renderContent.setMeshReady(true);
@@ -1824,13 +1848,8 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     UnloadQueueIgnoresUnloadedUnknownTiles) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -1848,24 +1867,13 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     UnloadRenderContentPreservesLoadedChildren) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
 
-    auto rootHeightmap = makeFlatHeightmap(1.0f);
-    rootHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        std::move(rootHeightmap));
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
     root->content.renderContent.setMeshReady(true);
@@ -1876,12 +1884,6 @@ TEST(
 
     TilesetTile* child = root->children.front();
     const TileKey childKey = child->key;
-    auto childHeightmap = makeFlatHeightmap(2.0f);
-    childHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        childKey,
-        std::move(childHeightmap));
     child->content.contentKind = TileContentKind::Render;
     child->content.loadState = TileLoadState::Done;
     child->content.renderContent.setMeshReady(true);
@@ -1905,13 +1907,8 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     UnloadExternalContentClearsChildren) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -1925,12 +1922,6 @@ TEST(
     ASSERT_NE(root->children.front(), nullptr);
 
     const TileKey childKey = root->children.front()->key;
-    auto childHeightmap = makeFlatHeightmap(3.0f);
-    childHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        childKey,
-        std::move(childHeightmap));
 
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
@@ -1947,13 +1938,8 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     DirectExternalContentUnloadClearsChildrenAfterReferencesRelease) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
-        TileScheme::createGeographicTMS(),
-        {},
-        nullptr,
-        TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -1967,12 +1953,6 @@ TEST(
     ASSERT_NE(root->children.front(), nullptr);
 
     const TileKey childKey = root->children.front()->key;
-    auto childHeightmap = makeFlatHeightmap(5.0f);
-    childHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        childKey,
-        std::move(childHeightmap));
 
     root->addReference();
     TilesetTestAccess::unloadTileContent(tileset, *root);

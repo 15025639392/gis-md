@@ -15,7 +15,6 @@
 
 #include <vector>
 #include <algorithm>
-#include <cassert>
 
 namespace earth_engine {
 
@@ -70,10 +69,8 @@ TileContentAccess TileContentAccess::forContentTerrain(
     return TileContentAccess(
         tileRegistry,
         tileScheme,
-        nullptr,
         &contentProvider,
-        nullptr,
-        TerrainOwnership::ContentProvider);
+        true);
 }
 
 TileContentAccess TileContentAccess::forNoTerrain(
@@ -83,45 +80,19 @@ TileContentAccess TileContentAccess::forNoTerrain(
     return TileContentAccess(
         tileRegistry,
         tileScheme,
-        nullptr,
         contentProvider,
-        nullptr,
-        TerrainOwnership::None);
-}
-
-TileContentAccess TileContentAccess::forHeightmapTerrainSurfacePath(
-    TilesetTileRegistry& tileRegistry,
-    const TileScheme& tileScheme,
-    const TerrainProvider* legacyHeightmapTerrainProvider,
-    const TilesetContentProvider* contentProvider,
-    const LegacyHeightmapTerrainCache& legacyHeightmapTerrainCache) {
-    assert(legacyHeightmapTerrainProvider &&
-           "forHeightmapTerrainSurfacePath requires a heightmap TerrainProvider");
-    return TileContentAccess(
-        tileRegistry,
-        tileScheme,
-        legacyHeightmapTerrainProvider,
-        contentProvider,
-        &legacyHeightmapTerrainCache,
-        TerrainOwnership::HeightmapSurface);
+        false);
 }
 
 TileContentAccess::TileContentAccess(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TerrainProvider* legacyHeightmapTerrainProvider,
     const TilesetContentProvider* contentProvider,
-    const LegacyHeightmapTerrainCache* legacyHeightmapTerrainCache,
-    TerrainOwnership terrainOwnership)
+    bool contentProviderOwnsTerrainQuadtree)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
       contentProvider_(contentProvider),
-      terrainOwnership_(terrainOwnership),
-      legacyHeightmapContent_(
-          legacyHeightmapTerrainProvider,
-          contentProvider,
-          tileScheme,
-          legacyHeightmapTerrainCache) {}
+      contentProviderOwnsTerrainQuadtree_(contentProviderOwnsTerrainQuadtree) {}
 
 TilesetTile* TileContentAccess::ensureTile(
     const TileKey& key,
@@ -198,11 +169,12 @@ bool TileContentAccess::isAvailabilityBoundaryTile(
     if (contentProviderOwnsTerrainQuadtree()) {
         return contentTerrainAvailabilityBoundaryTile(tile);
     }
-    return legacyHeightmapContent_.isAvailabilityBoundaryTile(tile);
+    return contentProvider_ &&
+           contentProvider_->isTerrainAvailabilityBoundaryLevel(tile.key.z);
 }
 
 bool TileContentAccess::contentProviderOwnsTerrainQuadtree() const {
-    return terrainOwnership_ == TerrainOwnership::ContentProvider;
+    return contentProviderOwnsTerrainQuadtree_;
 }
 
 bool TileContentAccess::contentTerrainAvailabilityBoundaryTile(
@@ -211,8 +183,7 @@ bool TileContentAccess::contentTerrainAvailabilityBoundaryTile(
 }
 
 bool TileContentAccess::hasTerrainQuadtree() const {
-    return contentProviderOwnsTerrainQuadtree() ||
-           terrainOwnership_ == TerrainOwnership::HeightmapSurface;
+    return contentProviderOwnsTerrainQuadtree();
 }
 
 bool TileContentAccess::canRefine(const TilesetTile& tile) const {
@@ -235,7 +206,25 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
             });
     }
 
-    return legacyHeightmapContent_.canRefine(tile);
+    if (contentProvider_) {
+        const std::vector<TileKey> contentChildren =
+            contentProvider_->childTiles(tile.key);
+        return TileChildMaterializer::canRefine(
+            tile,
+            TileRefinementAvailabilityOptions{
+                !tile.children.empty(),
+                !contentChildren.empty(),
+                contentProvider_->supportsTile(tile.key),
+                isAvailabilityBoundaryTile(tile) &&
+                    !hasResolvedAvailabilityBoundaryContent(tile),
+                false,
+                tileScheme_.maxZoom()},
+            [](const TileKey&) {
+                return TileAvailabilityState::NotAvailable;
+            });
+    }
+
+    return false;
 }
 
 TileAvailabilityState TileContentAccess::availabilityState(
@@ -243,7 +232,7 @@ TileAvailabilityState TileContentAccess::availabilityState(
     if (contentProviderOwnsTerrainQuadtree()) {
         return contentTerrainAvailabilityState(key);
     }
-    return legacyHeightmapContent_.availabilityState(key);
+    return TileAvailabilityState::NotAvailable;
 }
 
 TileAvailabilityState TileContentAccess::contentTerrainAvailabilityState(
