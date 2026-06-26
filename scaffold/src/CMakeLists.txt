@@ -234,7 +234,14 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/RenderContentRasterOverlayStateUpdater.cpp
     earth_engine/tiling/TileRasterOverlayDetailsGenerator.h
     earth_engine/tiling/TileRasterOverlayDetailsGenerator.cpp
+    earth_engine/tiling/SurfaceTileDrawCommandBuilder.h
+    earth_engine/tiling/SurfaceTileDrawCommandBuilder.cpp
+    earth_engine/tiling/SurfaceMeshResourcePreparer.h
+    earth_engine/tiling/SurfaceMeshResourcePreparer.cpp
+    earth_engine/tiling/TileSurfaceRenderContentCoordinator.h
     earth_engine/tiling/TileSurfaceMeshResolutionPolicy.h
+    earth_engine/tiling/TileSurfaceMeshSourceResolver.h
+    earth_engine/tiling/TileSurfaceMeshEnsurer.h
     earth_engine/tiling/TileKey.h
     earth_engine/tiling/TileKey.cpp
     earth_engine/tiling/TileID.h

@@ -105,7 +105,10 @@
 #include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/TileMeshFrameEnsurer.h"
+#include "earth_engine/tiling/TileSurfaceMeshEnsurer.h"
 #include "earth_engine/tiling/TileSurfaceMeshResolutionPolicy.h"
+#include "earth_engine/tiling/TileSurfaceMeshSourceResolver.h"
+#include "earth_engine/tiling/TileSurfaceRenderContentCoordinator.h"
 #include "earth_engine/tiling/TileUnloadPolicy.h"
 #include "earth_engine/tiling/TileUnloadQueue.h"
 #include "earth_engine/tiling/TileUpdateSelectionWorkRunner.h"
@@ -11442,6 +11445,477 @@ void testTilesetTileSelectionFrameStateOwnsTraversalFields() {
     check(tile.selectionFrameState.renderable &&
               !tile.selectionFrameState.completeRenderable,
           "TilesetTile: traversal renderability helper updates traversal-only renderable state");
+}
+void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle{});
+    tile.markRenderContentDone();
+    TileRenderableSnapshot blockedSnapshot = tile.renderableSnapshot(false);
+    check(blockedSnapshot.loadState == TileLoadState::Done &&
+              blockedSnapshot.contentKind == TileContentKind::Render &&
+              blockedSnapshot.meshReady &&
+              !blockedSnapshot.requiredRasterOverlaysReady,
+          "TilesetTile: renderable snapshot carries render content readiness and raster readiness");
+    check(!TileRenderablePolicy::isCompleteRenderable(blockedSnapshot),
+          "TilesetTile: renderable snapshot preserves required raster overlay blocking");
+    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    check(tile.canPrepareRasterOverlays(),
+          "TilesetTile: ready terrain render content can prepare raster overlays");
+    check(!tile.hasSurfaceDrawable(),
+          "TilesetTile: ready render resources without GPU buffer is not surface drawable");
+    tile.content.renderContent.setMeshReady(false);
+    check(!tile.canPrepareRasterOverlays(),
+          "TilesetTile: raster overlay preparation waits for ready render resources");
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.renderContent.setSurfaceMesh(nullptr);
+    check(!tile.canPrepareRasterOverlays(),
+          "TilesetTile: raster overlay preparation requires terrain mesh details");
+    TilesetTile contentTerrainResidue(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle{});
+    contentTerrainResidue.markRenderContentDone();
+    contentTerrainResidue.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    contentTerrainResidue.content.renderContent.setMeshReady(true);
+    check(!TileRasterOverlayReadinessPolicy::
+              doneTileCannotHoldRasterOverlays(contentTerrainResidue),
+          "TileRasterOverlayReadinessPolicy: terrain with surface mesh can hold raster overlays");
+    tile.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+    tile.content.loadState = TileLoadState::ContentLoaded;
+    tile.commitSurfaceRenderContent(
+        SurfaceDrawableSource::HeightmapTerrain,
+        true,
+        [](const TilesetTile& committedTile) {
+            return committedTile.content.loadState == TileLoadState::Done &&
+                   committedTile.hasSurfaceDrawable();
+        });
+    check(tile.content.loadState == TileLoadState::Done &&
+              tile.content.contentKind == TileContentKind::Render &&
+              tile.content.renderContent.isSurfaceSource(
+                  SurfaceDrawableSource::HeightmapTerrain) &&
+              tile.content.renderContent.isSurfaceDrawable() &&
+              tile.selectionFrameState.completeRenderable &&
+              tile.selectionFrameState.renderable,
+          "TilesetTile: surface commit updates source, done state, drawable, and frame renderability");
+    tile.content.loadState = TileLoadState::ContentLoaded;
+    tile.clearFrameRenderability();
+    TileSurfaceRenderContentCoordinator::commitSurface(
+        tile,
+        TileSurfaceRenderContentCommit{
+            SurfaceDrawableSource::AncestorUpsample,
+            false},
+        [](const TilesetTile& committedTile) {
+            return committedTile.content.loadState == TileLoadState::ContentLoaded &&
+                   committedTile.hasSurfaceDrawable();
+        });
+    check(tile.content.loadState == TileLoadState::ContentLoaded &&
+              tile.content.contentKind == TileContentKind::Render &&
+              tile.content.renderContent.isSurfaceSource(
+                  SurfaceDrawableSource::AncestorUpsample) &&
+              tile.content.renderContent.isSurfaceDrawable() &&
+              tile.selectionFrameState.completeRenderable &&
+              tile.selectionFrameState.renderable,
+          "TileSurfaceRenderContentCoordinator: surface commit can refresh drawable render content without forcing Done");
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle{},
+        &tile);
+    tile.children = {&child};
+    auto rangedMesh = std::make_unique<SurfaceTileMesh>();
+    rangedMesh->hasHeightRange = true;
+    rangedMesh->minimumHeight = -50.0;
+    rangedMesh->maximumHeight = 125.0;
+    tile.content.renderContent.setSurfaceMesh(std::move(rangedMesh));
+    TileSurfaceRenderContentCoordinator::commitSurface(
+        tile,
+        TileSurfaceRenderContentCommit{
+            SurfaceDrawableSource::HeightmapTerrain,
+            true,
+            nullptr},
+        [](const TilesetTile& committedTile) {
+            return committedTile.hasSurfaceDrawable();
+        });
+    check(tile.content.renderContent.hasTerrainHeightRange() &&
+              std::abs(tile.content.renderContent.terrainMinimumHeight() + 50.0) < 1e-9 &&
+              std::abs(tile.content.renderContent.terrainMaximumHeight() - 125.0) < 1e-9 &&
+              child.content.renderContent.hasTerrainHeightRange() &&
+              std::abs(child.content.renderContent.terrainMinimumHeight() + 50.0) < 1e-9 &&
+              std::abs(child.content.renderContent.terrainMaximumHeight() - 125.0) < 1e-9,
+          "TileSurfaceRenderContentCoordinator: surface commit applies mesh height range and inherits it to unready children");
+    DummyRenderDevice device;
+    TilesetTile gpuTile(
+        TileKey{"Geographic-TMS", 0, 1, 0},
+        Rectangle{});
+    auto gpuMesh = std::make_unique<SurfaceTileMesh>();
+    SurfaceVertex firstVertex;
+    firstVertex.positionEcef = Vec3(1.0, 0.0, 0.0);
+    firstVertex.normalEcef = Vec3(1.0, 0.0, 0.0);
+    SurfaceVertex secondVertex;
+    secondVertex.positionEcef = Vec3(0.0, 1.0, 0.0);
+    secondVertex.normalEcef = Vec3(0.0, 1.0, 0.0);
+    SurfaceVertex thirdVertex;
+    thirdVertex.positionEcef = Vec3(0.0, 0.0, 1.0);
+    thirdVertex.normalEcef = Vec3(0.0, 0.0, 1.0);
+    gpuMesh->vertices = {firstVertex, secondVertex, thirdVertex};
+    gpuMesh->indices = {0, 1, 2};
+    gpuTile.content.renderContent.setSurfaceMesh(std::move(gpuMesh));
+    TileSurfaceRenderContentCoordinator::commitSurface(
+        gpuTile,
+        TileSurfaceRenderContentCommit{
+            SurfaceDrawableSource::HeightmapTerrain,
+            true,
+            nullptr,
+            &device},
+        [](const TilesetTile& committedTile) {
+            return committedTile.hasSurfaceDrawable();
+        });
+    check(gpuTile.content.renderContent.surfaceVertexBuffer() != nullptr &&
+              gpuTile.content.renderContent.surfaceIndexBuffer() != nullptr &&
+              gpuTile.content.renderContent.isSurfaceDrawable() &&
+              gpuTile.selectionFrameState.completeRenderable,
+          "TileSurfaceRenderContentCoordinator: surface commit prepares GPU buffers before drawable/renderability update");
+    TileSurfaceMeshResolution missingResolution;
+    TileSurfaceMeshResolution ownResolution;
+    ownResolution.source = SurfaceDrawableSource::HeightmapTerrain;
+    ownResolution.markDone = true;
+    TileSurfaceMeshResolution ownContext =
+        TileSurfaceMeshResolution::forContext(
+            true,
+            TileContentUpsampleKind::None,
+            true);
+    TileSurfaceMeshResolution upsampleContext =
+        TileSurfaceMeshResolution::forContext(
+            false,
+            TileContentUpsampleKind::TerrainAvailability,
+            true);
+    TileSurfaceMeshResolution rasterDetailUpsampleContext =
+        TileSurfaceMeshResolution::forContext(
+            false,
+            TileContentUpsampleKind::RasterDetail,
+            true);
+    TileSurfaceMeshResolution noProviderContext =
+        TileSurfaceMeshResolution::forContext(
+            false,
+            TileContentUpsampleKind::None,
+            false);
+    TileSurfaceMeshResolution pendingQuadtreeContext =
+        TileSurfaceMeshResolution::forContext(
+            false,
+            TileContentUpsampleKind::None,
+            true);
+    check(missingResolution.resolvedSource() ==
+              SurfaceDrawableSource::EllipsoidFallback &&
+              ownResolution.resolvedSource() ==
+                  SurfaceDrawableSource::HeightmapTerrain &&
+              ownResolution.markDone &&
+              ownContext.markDone &&
+              upsampleContext.markDone &&
+              rasterDetailUpsampleContext.markDone &&
+              noProviderContext.markDone &&
+              !pendingQuadtreeContext.markDone,
+          "TileSurfaceMeshResolution: source fallback and done decision are explicit");
+    gpuTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::AncestorUpsample);
+    check(TileSurfaceMeshResolutionPolicy::shouldReplaceReadySurface(
+              gpuTile,
+              true) &&
+              !TileSurfaceMeshResolutionPolicy::shouldReplaceReadySurface(
+                  gpuTile,
+                  false),
+          "TileSurfaceMeshResolutionPolicy: ready non-own terrain is replaced only when own terrain arrives");
+    TilesetTile fallbackTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    TileSurfaceMeshResolution fallbackResolution =
+        TileSurfaceMeshSourceResolver::resolve(
+            fallbackTile,
+            nullptr,
+            false,
+            true,
+            [](const TilesetTile&, bool) -> const TilesetTile* {
+                return nullptr;
+            },
+            [](TilesetTile&) {});
+    check(fallbackTile.content.renderContent.hasSurfaceMesh() &&
+              fallbackResolution.resolvedSource() ==
+                  SurfaceDrawableSource::EllipsoidFallback &&
+              fallbackResolution.markDone,
+          "TileSurfaceMeshSourceResolver: no-provider tile resolves to done ellipsoid fallback");
+    TilesetTile contentTerrainFallbackTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    TileSurfaceMeshResolution contentTerrainFallbackResolution =
+        TileSurfaceMeshSourceResolver::resolve(
+            contentTerrainFallbackTile,
+            nullptr,
+            true,
+            false,
+            [](const TilesetTile&, bool) -> const TilesetTile* {
+                return nullptr;
+            },
+            [](TilesetTile&) {});
+    check(!contentTerrainFallbackTile.content.renderContent.hasSurfaceMesh() &&
+              contentTerrainFallbackResolution.source ==
+                  SurfaceDrawableSource::None &&
+              !contentTerrainFallbackResolution.markDone,
+          "TileSurfaceMeshSourceResolver: content terrain quadtree waits for content instead of creating an ellipsoid fallback");
+    TilesetTile upsampleParent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    upsampleParent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(upsampleParent.bounds, 4)));
+    TilesetTile upsampleChild(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &upsampleParent);
+    bool ancestorEnsured = false;
+    TileSurfaceMeshResolution upsampleResolution =
+        TileSurfaceMeshSourceResolver::resolve(
+            upsampleChild,
+            nullptr,
+            true,
+            true,
+            [&upsampleParent](const TilesetTile&, bool)
+                -> const TilesetTile* {
+                return &upsampleParent;
+            },
+            [&ancestorEnsured](TilesetTile&) {
+                ancestorEnsured = true;
+            });
+    check(upsampleChild.content.renderContent.hasSurfaceMesh() &&
+              upsampleResolution.resolvedSource() ==
+                  SurfaceDrawableSource::AncestorUpsample &&
+              !upsampleResolution.markDone &&
+              !ancestorEnsured,
+          "TileSurfaceMeshSourceResolver: child resolves ancestor upsample without forcing Done while provider is pending");
+    TilesetTile contentOwnedLegacyParent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    contentOwnedLegacyParent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(
+                contentOwnedLegacyParent.bounds,
+                4)));
+    contentOwnedLegacyParent.markRenderContentDone();
+    TilesetTile contentOwnedUpsampleChild(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &contentOwnedLegacyParent);
+    contentOwnedUpsampleChild.content.markTerrainAvailabilityUpsample();
+    bool contentOwnedAncestorEnsured = false;
+    TileSurfaceMeshResolution contentOwnedUpsampleResolution =
+        TileSurfaceMeshSourceResolver::resolve(
+            contentOwnedUpsampleChild,
+            nullptr,
+            true,
+            false,
+            [&contentOwnedLegacyParent](const TilesetTile&, bool)
+                -> const TilesetTile* {
+                return &contentOwnedLegacyParent;
+            },
+            [&contentOwnedAncestorEnsured](TilesetTile&) {
+                contentOwnedAncestorEnsured = true;
+            });
+    check(!contentOwnedUpsampleChild.content.renderContent.hasSurfaceMesh() &&
+              contentOwnedUpsampleResolution.source ==
+                  SurfaceDrawableSource::None &&
+              !contentOwnedUpsampleResolution.markDone &&
+              !contentOwnedAncestorEnsured,
+          "TileSurfaceMeshSourceResolver: content-owned terrain does not upsample from legacy SurfaceMesh ancestors");
+    TilesetTile gltfParent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    gltfParent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(gltfParent.bounds),
+        Mat4::identity());
+    gltfParent.content.renderContent.setTerrainRenderContent(true);
+    gltfParent.markRenderContentDone();
+    TilesetTile gltfChild(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle::fromDegrees(0.0, 0.0, 180.0, 90.0),
+        &gltfParent);
+    gltfChild.content.markTerrainAvailabilityUpsample();
+    bool gltfAncestorEnsured = false;
+    TileSurfaceMeshResolution gltfUpsampleResolution =
+        TileSurfaceMeshSourceResolver::resolve(
+            gltfChild,
+            nullptr,
+            true,
+            false,
+            [](const TilesetTile&, bool) -> const TilesetTile* {
+                return nullptr;
+            },
+            [&gltfAncestorEnsured](TilesetTile&) {
+                gltfAncestorEnsured = true;
+            });
+    check(!gltfChild.content.renderContent.hasSurfaceMesh() &&
+              gltfUpsampleResolution.source == SurfaceDrawableSource::None &&
+              !gltfUpsampleResolution.markDone &&
+              !gltfAncestorEnsured,
+          "TileSurfaceMeshSourceResolver: glTF terrain ancestor defers to glTF upsample instead of SurfaceMesh fallback");
+    bool gltfEnsureIngested = false;
+    bool gltfEnsureAncestorEnsured = false;
+    bool gltfEnsureCompletenessChecked = false;
+    TileSurfaceMeshEnsureResult gltfEnsureResult =
+        TileSurfaceMeshEnsurer::ensure(
+            TileSurfaceMeshEnsureInput{
+                gltfChild,
+                nullptr,
+                nullptr,
+                true,
+                false},
+            [&gltfEnsureIngested](const TileKey&, DecodedHeightmap*) {
+                gltfEnsureIngested = true;
+            },
+            [](const TilesetTile&, bool) -> const TilesetTile* {
+                return nullptr;
+            },
+            [&gltfEnsureAncestorEnsured](TilesetTile&) {
+                gltfEnsureAncestorEnsured = true;
+            },
+            [&gltfEnsureCompletenessChecked](const TilesetTile&) {
+                gltfEnsureCompletenessChecked = true;
+                return false;
+            });
+    check(!gltfEnsureResult.resourcesDirty &&
+              !gltfChild.content.renderContent.hasSurfaceMesh() &&
+              !gltfEnsureIngested &&
+              !gltfEnsureAncestorEnsured &&
+              !gltfEnsureCompletenessChecked,
+          "TileSurfaceMeshEnsurer: glTF terrain upsample source bypasses SurfaceMesh commit path");
+    TilesetTile gltfFrameTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    gltfFrameTile.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(gltfFrameTile.bounds),
+        Mat4::identity());
+    gltfFrameTile.content.renderContent.setTerrainRenderContent(true);
+    gltfFrameTile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    gltfFrameTile.markRenderContentDone();
+    bool frameResourcesDirty = false;
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
+            gltfFrameTile},
+        [&frameResourcesDirty]() {
+            frameResourcesDirty = true;
+        });
+    check(!frameResourcesDirty &&
+              !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
+          "TileMeshFrameEnsurer: glTF terrain render content has no SurfaceMesh frame path");
+    TilesetTile gltfWithStaleHeightmapSurface(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    gltfWithStaleHeightmapSurface.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(gltfWithStaleHeightmapSurface.bounds),
+        Mat4::identity());
+    gltfWithStaleHeightmapSurface.content.renderContent
+        .setTerrainRenderContent(true);
+    gltfWithStaleHeightmapSurface.content.renderContent.setTerrainHeightRange(
+        -25.0,
+        875.0);
+    gltfWithStaleHeightmapSurface.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    gltfWithStaleHeightmapSurface.markRenderContentDone();
+    gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    gltfWithStaleHeightmapSurface.content.renderContent.setMeshReady(true);
+    gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    bool gltfStaleResourcesDirty = false;
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
+            gltfWithStaleHeightmapSurface},
+        [&gltfStaleResourcesDirty]() {
+            gltfStaleResourcesDirty = true;
+        });
+    check(!gltfStaleResourcesDirty &&
+              gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
+              !gltfWithStaleHeightmapSurface.content.renderContent.hasSurfaceMesh() &&
+              !gltfWithStaleHeightmapSurface.content.renderContent.hasRetainedHeightmap() &&
+              gltfWithStaleHeightmapSurface.content.renderContent.isSurfaceSource(
+                  SurfaceDrawableSource::GltfContent) &&
+              gltfWithStaleHeightmapSurface.content.renderContent.hasTerrainHeightRange() &&
+              std::abs(gltfWithStaleHeightmapSurface.content.renderContent
+                           .terrainMinimumHeight() -
+                       -25.0) < 1e-12 &&
+              std::abs(gltfWithStaleHeightmapSurface.content.renderContent
+                           .terrainMaximumHeight() -
+                       875.0) < 1e-12,
+          "TileMeshFrameEnsurer: glTF terrain rejects stale heightmap surface residue before frame cleanup");
+    TilesetTile staleHeightmapSurfaceTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    staleHeightmapSurfaceTile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    staleHeightmapSurfaceTile.content.renderContent.setMeshReady(true);
+    staleHeightmapSurfaceTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    bool staleResourcesDirty = false;
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
+            staleHeightmapSurfaceTile},
+        [&staleResourcesDirty]() {
+            staleResourcesDirty = true;
+        });
+    check(staleResourcesDirty &&
+              !staleHeightmapSurfaceTile.content.renderContent.hasSurfaceMesh() &&
+              !staleHeightmapSurfaceTile.content.renderContent.hasRetainedHeightmap(),
+          "TileMeshFrameEnsurer: content terrain quadtree clears stale heightmap surface residue");
+    TilesetTile staleRasterResidueTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    staleRasterResidueTile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    staleRasterResidueTile.content.renderContent.setMeshReady(true);
+    staleRasterResidueTile.content.renderContent.mutableRasterOverlayDetails()
+        ->setGeographicRectangle(staleRasterResidueTile.bounds);
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider rasterProvider(imagery, *scheme, nullptr);
+    RasterMappedToTilesetTile& mapped =
+        staleRasterResidueTile.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        staleRasterResidueTile.key,
+        staleRasterResidueTile.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        rasterProvider,
+        nullptr,
+        missingProjections);
+    check(mapped.getLoadingTile() != nullptr,
+          "TileMeshFrameEnsurer: stale raster residue starts mapped raster load");
+    mapped.getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(4, 4));
+    RecordingPrepareRendererResources prep;
+    mapped.update(
+        staleRasterResidueTile.key,
+        staleRasterResidueTile.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        rasterProvider,
+        &prep,
+        missingProjections);
+    bool staleRasterResourcesDirty = false;
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
+            staleRasterResidueTile,
+            &prep},
+        [&staleRasterResourcesDirty]() {
+            staleRasterResourcesDirty = true;
+        });
+    check(staleRasterResourcesDirty &&
+              prep.detachCount == 1 &&
+              prep.lastDetachedGeometryKey == staleRasterResidueTile.key &&
+              prep.lastDetachedOverlayIndex == 0 &&
+              staleRasterResidueTile.rasterOverlayState.mappingCount() == 0 &&
+              !staleRasterResidueTile.content.renderContent.hasSurfaceMesh(),
+          "TileMeshFrameEnsurer: content terrain residue cleanup detaches stale raster mappings like cesium-native");
 }
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
     TileSelectionRefineFlowResult refineFlow;
@@ -26054,6 +26528,7 @@ int main() {
     testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes();
     testTileRenderablePolicyClassifiesRenderableContent();
     testTilesetTileSelectionFrameStateOwnsTraversalFields();
+    testTilesetTileRenderableSnapshotAndRasterPreparationEligibility();
     testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit();
     testTileSelectionRenderEntryPolicyPlansRenderedTileWrites();
     testTileSelectionRootPolicyChoosesTraversalRoots();

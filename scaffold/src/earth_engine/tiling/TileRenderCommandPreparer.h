@@ -3,6 +3,7 @@
 #include "GltfDrawCommandBuilder.h"
 #include "GltfRenderResourcePreparer.h"
 #include "RenderContentRasterOverlayStateUpdater.h"
+#include "SurfaceTileDrawCommandBuilder.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TilesetTile.h"
 #include "../core/resources/FrameResourceBudget.h"
@@ -47,10 +48,63 @@ public:
         UnloadTileContentFn&& unloadTileContent,
         CreateRasterOverlayUpsampledChildrenFn&&
             createRasterOverlayUpsampledChildren) {
-        (void)ensureTileMesh;
+        if (tile.content.renderContent.hasGltfContent()) {
+            const std::vector<size_t> overlayOrder =
+                TileSelectionRasterOverlayPreparer::processingOrder(
+                    rasterOverlays);
+            const RenderContentRasterOverlayUpdateAction overlayAction =
+                RenderContentRasterOverlayStateUpdater::update(
+                    renderer,
+                    tile,
+                    rasterOverlays,
+                    overlayOrder,
+                    device,
+                    context.maximumScreenSpaceError,
+                    frameResourceBudget);
+            if (overlayAction.unloadTileContent) {
+                unloadTileContent(tile);
+                return;
+            }
+            if (overlayAction.createRasterOverlayUpsampledChildren &&
+                tile.children.empty()) {
+                createRasterOverlayUpsampledChildren(tile);
+            }
 
-        if (!tile.content.renderContent.hasGltfContent()) {
+            GltfRenderResourcePreparer::prepare(
+                tile,
+                device,
+                context.currentFrameTimeSeconds);
+            tile.updateFrameRenderability(
+                tile.content.renderContent.isGltfRenderReady(),
+                TileSelectionRasterOverlayPreparer::isCompleteRenderable(
+                    tile,
+                    rasterOverlays));
+            GltfDrawCommandBuilder::build(
+                renderer,
+                tile,
+                rasterOverlays,
+                commands,
+                GltfDrawCommandBuildContext{
+                    context.frameNumber,
+                    context.generation,
+                    context.transitionOpacity,
+                    context.surfaceClipUv});
+            return;
+        }
+
+        if (tile.contentProviderTerrainQuadtreeTile &&
+            !tile.content.renderContent.hasGltfContent()) {
             tile.clearFrameRenderability();
+            return;
+        }
+
+        if (!tile.content.renderContent.isMeshReady()) {
+            if (!context.allowSynchronousMeshPrep) {
+                return;
+            }
+            ensureTileMesh(tile);
+        }
+        if (!tile.hasSurfaceDrawable()) {
             return;
         }
 
@@ -70,26 +124,24 @@ public:
             unloadTileContent(tile);
             return;
         }
+
+        tile.updateFrameRenderability(
+            tile.hasSurfaceDrawable(),
+            TileSelectionRasterOverlayPreparer::isCompleteRenderable(
+                tile,
+                rasterOverlays));
+
         if (overlayAction.createRasterOverlayUpsampledChildren &&
             tile.children.empty()) {
             createRasterOverlayUpsampledChildren(tile);
         }
 
-        GltfRenderResourcePreparer::prepare(
-            tile,
-            device,
-            context.currentFrameTimeSeconds);
-        tile.updateFrameRenderability(
-            tile.content.renderContent.isGltfRenderReady(),
-            TileSelectionRasterOverlayPreparer::isCompleteRenderable(
-                tile,
-                rasterOverlays));
-        GltfDrawCommandBuilder::build(
+        SurfaceTileDrawCommandBuilder::build(
             renderer,
             tile,
             rasterOverlays,
             commands,
-            GltfDrawCommandBuildContext{
+            SurfaceTileDrawCommandBuildContext{
                 context.frameNumber,
                 context.generation,
                 context.transitionOpacity,
