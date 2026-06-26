@@ -5535,14 +5535,20 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
+    auto gltfModel = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfModel->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources primResources;
+    primResources.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    primResources.indexBuffer = std::make_unique<DummyBuffer>(12);
+    primResources.indexCount = 6;
+    primResources.vertexCount = 4;
+    root->content.renderContent.addGltfPrimitiveResource(
+        std::move(primResources));
+    root->content.renderContent.markRenderContentReady();
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
@@ -5572,9 +5578,12 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
         1.0f);
     check(!commands.empty() &&
               mapped->getState() == RasterMappedToTilesetTile::State::Attached &&
-              commands.front().kind == RenderCommandKind::SurfaceTile &&
-              commands.front().textures.size() == 1 &&
-              commands.front().textures.front() == loadingTile->getTexture(),
+              commands.front().kind == RenderCommandKind::GltfPrimitive &&
+              commands.front().gltfRasterOverlayTextureCount == 1 &&
+              commands.front().textures.size() >
+                  static_cast<size_t>(kGltfRasterOverlayTextureBase) &&
+              commands.front().textures[kGltfRasterOverlayTextureBase] ==
+                  loadingTile->getTexture(),
           "Tileset: build command emits a surface command from the core ready raster");
 }
 void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
@@ -5711,34 +5720,33 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
-    root->content.renderContent.mutableSurfaceMesh()->waterMask.allLand = false;
-    root->content.renderContent.mutableSurfaceMesh()->waterMask.allWater = false;
-    root->content.renderContent.mutableSurfaceMesh()->waterMask.data.resize(
-        256u * 256u * 4u,
-        192);
-    root->content.renderContent.mutableSurfaceMesh()->waterMask.translationX = 0.25;
-    root->content.renderContent.mutableSurfaceMesh()->waterMask.translationY = 0.5;
-    root->content.renderContent.mutableSurfaceMesh()->waterMask.scale = 0.5;
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(96),
-        std::make_unique<DummyBuffer>(12));
+    auto gltfModel = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfModel->rasterOverlayDetails =
+        makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
     auto waterMaskTexture = std::make_unique<DummyTexture>(256, 256);
     Texture* rawWaterMaskTexture = waterMaskTexture.get();
-    root->content.renderContent.setSurfaceWaterMaskTexture(
-        std::move(waterMaskTexture));
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources resources;
+    resources.vertexBuffer = std::make_unique<DummyBuffer>(96);
+    resources.indexBuffer = std::make_unique<DummyBuffer>(12);
+    resources.indexCount = 6;
+    resources.vertexCount = 4;
+    resources.hasTerrainWaterMaskMetadata = true;
+    resources.terrainOnlyLand = false;
+    resources.terrainOnlyWater = false;
+    resources.terrainWaterMaskTexture = rawWaterMaskTexture;
+    resources.terrainWaterMaskTranslationScale = {0.25f, 0.5f, 0.5f, 0.0f};
+    root->content.renderContent.addGltfPrimitiveResource(std::move(resources));
+    root->content.renderContent.markRenderContentReady();
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
+    InitializedRendererHarness rendererHarness;
     root->rasterOverlayState.mappings().resize(1);
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: required base imagery keeps complete renderable false while loading");
-    InitializedRendererHarness rendererHarness;
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
@@ -5747,26 +5755,25 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
         commands,
         1.0f);
     check(!commands.empty() &&
-              commands.front().kind == RenderCommandKind::SurfaceTile &&
-              commands.front().textures.size() > 5 &&
-              commands.front().textures[0] ==
-                  rendererHarness.renderer.surfacePlaceholderTexture() &&
-              commands.front().surfaceTextureZoom == -1,
+              commands.front().kind == RenderCommandKind::GltfPrimitive &&
+              commands.front().gltfRasterOverlayTextureCount == 0,
           "Tileset: blocking base imagery draws surface geometry with the shared placeholder texture");
     check(!commands.empty() &&
-              commands.front().surfaceHasWaterMask == 1.0f &&
-              commands.front().surfaceWaterMaskState[0] == 0.0f &&
-              commands.front().surfaceWaterMaskState[1] == 0.0f &&
-              commands.front().surfaceWaterMaskState[2] == 1.0f &&
-              std::abs(commands.front().surfaceWaterMaskTranslationScale[0] -
+              commands.front().gltfHasWaterMask == 1.0f &&
+              commands.front().gltfWaterMaskState[0] == 0.0f &&
+              commands.front().gltfWaterMaskState[1] == 0.0f &&
+              commands.front().gltfWaterMaskState[2] == 1.0f &&
+              std::abs(commands.front().gltfWaterMaskTranslationScale[0] -
                        0.25f) < 1e-6f &&
-              std::abs(commands.front().surfaceWaterMaskTranslationScale[1] -
+              std::abs(commands.front().gltfWaterMaskTranslationScale[1] -
                        0.5f) < 1e-6f &&
-              std::abs(commands.front().surfaceWaterMaskTranslationScale[2] -
+              std::abs(commands.front().gltfWaterMaskTranslationScale[2] -
                        0.5f) < 1e-6f,
           "Tileset: surface command carries quantized-mesh water mask state");
-    check(commands.front().textures.size() > 5 &&
-              commands.front().textures[5] == rawWaterMaskTexture,
+    check(commands.front().textures.size() >
+              static_cast<size_t>(kGltfWaterMaskTextureSlot) &&
+              commands.front().textures[kGltfWaterMaskTextureSlot] ==
+                  rawWaterMaskTexture,
           "Tileset: surface command binds quantized-mesh water mask texture to unit 5");
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: missing blocking base imagery keeps strict complete renderable false");
