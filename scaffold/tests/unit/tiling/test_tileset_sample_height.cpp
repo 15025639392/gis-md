@@ -28,14 +28,6 @@ struct TilesetTestAccess {
         return tileset.contentAccess_.ensureTile(key);
     }
 
-    static void putTerrainCache(
-        Tileset& tileset,
-        const TileKey& key,
-        std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.legacyHeightmapTerrainCache()[TileCacheKey::forTile(key)] =
-            std::move(heightmap);
-    }
-
     static void setLoadedGltfTerrainContent(
         TilesetTile& tile,
         std::unique_ptr<GltfModel> model) {
@@ -181,73 +173,12 @@ Tileset makeContentTerrainSamplingTileset() {
 
 } // namespace
 
-TEST(TilesetSampleHeightTest, UsesMostDetailedLoadedTerrainTile) {
-    Tileset tileset = makeHeightSamplingTileset();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
-
-    TilesetTestAccess::ensureTile(tileset, rootKey);
-    TilesetTestAccess::ensureTile(tileset, childKey);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(10.0f));
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        childKey,
-        makeFlatHeightmap(42.0f));
-
-    const auto [longitude, latitude] =
-        tileCenter(tileset.tileScheme(), childKey);
-
-    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 42.0f, 1e-6f);
-}
-
-TEST(TilesetSampleHeightTest, FallsBackToLoadedAncestorTerrain) {
-    Tileset tileset = makeHeightSamplingTileset();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
-
-    TilesetTestAccess::ensureTile(tileset, rootKey);
-    TilesetTestAccess::ensureTile(tileset, childKey);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(123.0f));
-
-    const auto [longitude, latitude] =
-        tileCenter(tileset.tileScheme(), childKey);
-
-    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 123.0f, 1e-6f);
-}
-
-TEST(TilesetSampleHeightTest,
-     ContentTerrainQuadtreeIgnoresLegacyHeightmapTerrainCache) {
-    Tileset tileset = makeContentTerrainSamplingTileset();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-
-    TilesetTestAccess::ensureTile(tileset, rootKey);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(321.0f));
-
-    const auto [longitude, latitude] =
-        tileCenter(tileset.tileScheme(), rootKey);
-
-    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 0.0f, 1e-6f);
-}
-
 TEST(TilesetSampleHeightTest, ContentTerrainQuadtreeSamplesLoadedGltfTerrain) {
     Tileset tileset = makeContentTerrainSamplingTileset();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
 
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(321.0f));
     const Rectangle bounds = tileset.tileScheme().tileToRectangle(rootKey);
     TilesetTestAccess::setLoadedGltfTerrainContent(
         *root,
