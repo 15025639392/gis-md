@@ -5813,15 +5813,18 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
           "Tileset: failed-child base imagery setup creates parent/child tiles");
     if (!parent || !child) return;
     auto makeRenderableSurface = [&](TilesetTile& tile) {
-        tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-        tile.content.renderContent.mutableSurfaceMesh()
-            ->rasterOverlayDetails =
-                makeProviderDetails(baseOverlay->getTileScheme(), tile.bounds);
-        tile.content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
-        tile.content.renderContent.setMeshReady(true);
-        tile.content.renderContent.setSurfaceGpuBuffers(
-            std::make_unique<DummyBuffer>(96),
-            std::make_unique<DummyBuffer>(12));
+        auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+        gltfModel->rasterOverlayDetails =
+            makeProviderDetails(baseOverlay->getTileScheme(), tile.bounds);
+        tile.content.renderContent.prepareGltfContent(std::move(gltfModel), Mat4::identity());
+        tile.content.renderContent.setTerrainRenderContent(true);
+        GltfPrimitiveRenderResources res;
+        res.vertexBuffer = std::make_unique<DummyBuffer>(64);
+        res.indexBuffer = std::make_unique<DummyBuffer>(12);
+        res.indexCount = 6;
+        res.vertexCount = 4;
+        tile.content.renderContent.addGltfPrimitiveResource(std::move(res));
+        tile.content.renderContent.markRenderContentReady();
         tile.geometricError = 100.0;
         tile.content.loadState = TileLoadState::Done;
         tile.content.contentKind = TileContentKind::Render;
@@ -5863,14 +5866,12 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
         commands,
         1.0f);
     check(commands.size() == 1 &&
-              commands.front().kind == RenderCommandKind::SurfaceTile,
+              commands.front().kind == RenderCommandKind::GltfPrimitive,
           "Tileset: failed child imagery still draws using a real ancestor texture");
     if (commands.empty()) return;
-    check(commands.front().textures.size() == 1 &&
-              commands.front().textures.front() == parentTexture &&
-              commands.front().textures.front() != failedChildTexture &&
-              commands.front().surfaceBaseRasterState ==
-                  static_cast<int>(RasterOverlayTile::LoadState::Done),
+    check(commands.front().gltfRasterOverlayTextureCount > 0 &&
+              commands.front().textures[kGltfRasterOverlayTextureBase] == parentTexture &&
+              commands.front().textures[kGltfRasterOverlayTextureBase] != failedChildTexture,
           "Tileset: failed child surface command consumes parent texture without renderer fallback");
     const SurfaceRasterBinding binding =
         chooseSurfaceRasterBinding(childMapped);
@@ -5910,15 +5911,18 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(96),
-        std::make_unique<DummyBuffer>(12));
+    auto gltfModel = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfModel->rasterOverlayDetails =
+        makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.prepareGltfContent(std::move(gltfModel), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res;
+    res.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res.indexCount = 6;
+    res.vertexCount = 4;
+    root->content.renderContent.addGltfPrimitiveResource(std::move(res));
+    root->content.renderContent.markRenderContentReady();
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
@@ -5951,10 +5955,9 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
           "Tileset: missing annotation overlay does not suppress surface draw");
     if (commands.empty()) return;
     const RenderCommand& command = commands.front();
-    check(command.kind == RenderCommandKind::SurfaceTile &&
-              command.textures.size() == 1 &&
-              command.textures.front() == baseLoading->getTexture() &&
-              command.surfaceOverlayTextureCount == 0,
+    check(command.kind == RenderCommandKind::GltfPrimitive &&
+              command.gltfRasterOverlayTextureCount == 1 &&
+              command.textures[kGltfRasterOverlayTextureBase] == baseLoading->getTexture(),
           "Tileset: base imagery draws alone until annotation overlay is ready");
 }
 void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
@@ -5985,14 +5988,18 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
+    auto gltfModel = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfModel->rasterOverlayDetails =
+        makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.prepareGltfContent(std::move(gltfModel), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res;
+    res.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res.indexCount = 6;
+    res.vertexCount = 4;
+    root->content.renderContent.addGltfPrimitiveResource(std::move(res));
+    root->content.renderContent.markRenderContentReady();
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
@@ -6025,13 +6032,12 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
           "Tileset: visible raster overlays composite into one surface draw command");
     if (commands.empty()) return;
     const RenderCommand& command = commands.front();
-    check(command.kind == RenderCommandKind::SurfaceTile &&
-              command.textures.size() == 2 &&
-              command.textures[0] == baseLoading->getTexture() &&
-              command.textures[1] == roadLoading->getTexture() &&
-              command.surfaceOverlayTextureCount == 1,
+    check(command.kind == RenderCommandKind::GltfPrimitive &&
+              command.gltfRasterOverlayTextureCount == 2 &&
+              command.textures[kGltfRasterOverlayTextureBase] == baseLoading->getTexture() &&
+              command.textures[kGltfRasterOverlayTextureBase + 1] == roadLoading->getTexture(),
           "Tileset: composite command carries basemap plus one overlay texture");
-    check(command.surfaceOverlayOpacities[0] == roadOptions.opacity,
+    check(command.gltfRasterOverlayOpacities[1] == roadOptions.opacity,
           "Tileset: composite command preserves overlay opacity");
 }
 void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
