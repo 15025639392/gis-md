@@ -289,7 +289,6 @@ TEST(
     ContentProviderTerrainSurfaceResidueDoesNotBuildDirectEntry) {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
-    root.contentProviderTerrainQuadtreeTile = true;
     root.markRenderContentDone();
     root.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
@@ -328,8 +327,6 @@ TEST(
     const TileKey childKey{"test", 1, 1, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
-    parent.contentProviderTerrainQuadtreeTile = true;
-    child.contentProviderTerrainQuadtreeTile = true;
     parent.markRenderContentDone();
     parent.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),

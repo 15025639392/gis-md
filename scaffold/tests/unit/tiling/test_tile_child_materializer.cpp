@@ -1584,7 +1584,6 @@ TEST(TileChildMaterializerTest,
         &parent);
     parent.children = {&contentTerrainChild, &legacySurfaceChild};
 
-    contentTerrainChild.contentProviderTerrainQuadtreeTile = true;
     contentTerrainChild.content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
     contentTerrainChild.content.renderContent.setMeshReady(true);

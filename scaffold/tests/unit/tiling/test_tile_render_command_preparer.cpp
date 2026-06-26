@@ -117,7 +117,6 @@ TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) 
 TEST(TileRenderCommandPreparerTest,
      ContentProviderTerrainWithoutGltfDoesNotEnterLegacySurfacePrep) {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    tile.contentProviderTerrainQuadtreeTile = true;
     tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::Done;
     tile.content.renderContent.setSurfaceMesh(

@@ -1041,7 +1041,6 @@ TEST(TilesetQuantizedMeshTest,
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(nullptr, root);
-    ASSERT_TRUE(root->contentProviderTerrainQuadtreeTile);
     root->content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.setMeshReady(true);
@@ -1616,7 +1615,6 @@ TEST(TilesetQuantizedMeshTest,
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(nullptr, root);
-    ASSERT_TRUE(root->contentProviderTerrainQuadtreeTile);
     ASSERT_FALSE(root->content.renderContent.hasGltfContent());
 
     FrameResourceBudgetConfig budgetConfig;

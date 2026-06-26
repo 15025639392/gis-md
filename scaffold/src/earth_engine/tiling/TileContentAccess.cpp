@@ -102,9 +102,7 @@ TilesetTile* TileContentAccess::ensureTile(
         tileScheme_,
         contentProvider_);
     if (tile && contentProviderOwnsTerrainQuadtree()) {
-        if (!tile->content.renderContent.hasSurfaceMesh()) {
-            tile->contentProviderTerrainQuadtreeTile = true;
-        }
+        tile->contentProviderTerrainQuadtreeTile = true;
         TileContentTerrainResiduePolicy::clearRejectableResidue(
             *tile,
             pPrepRenderer);

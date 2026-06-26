@@ -221,7 +221,6 @@ TEST(RasterOverlayDetailsTest,
     TilesetTile tile(
         TileKey{"test", 0, 0, 0},
         tileRectangle);
-    tile.contentProviderTerrainQuadtreeTile = true;
     prepareTerrainQuadRenderContent(
         tile.content.renderContent,
         tileRectangle,
@@ -258,7 +257,6 @@ TEST(RasterOverlayDetailsTest,
     TilesetTile tile(
         TileKey{"test", 0, 0, 0},
         tileRectangle);
-    tile.contentProviderTerrainQuadtreeTile = true;
     prepareTerrainQuadRenderContent(
         tile.content.renderContent,
         tileRectangle,

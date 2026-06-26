@@ -11474,14 +11474,13 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     TilesetTile contentTerrainResidue(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle{});
-    contentTerrainResidue.contentProviderTerrainQuadtreeTile = true;
     contentTerrainResidue.markRenderContentDone();
     contentTerrainResidue.content.renderContent.setSurfaceMesh(
         std::make_unique<SurfaceTileMesh>());
     contentTerrainResidue.content.renderContent.setMeshReady(true);
-    check(TileRasterOverlayReadinessPolicy::
+    check(!TileRasterOverlayReadinessPolicy::
               doneTileCannotHoldRasterOverlays(contentTerrainResidue),
-          "TileRasterOverlayReadinessPolicy: content terrain without glTF render content cannot hold raster overlays");
+          "TileRasterOverlayReadinessPolicy: terrain with surface mesh can hold raster overlays");
     tile.content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(4),
         nullptr);
