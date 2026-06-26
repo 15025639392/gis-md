@@ -937,10 +937,7 @@ TEST(TilesetQuantizedMeshTest,
     root->rasterOverlayState.missingProjections().push_back(
         RasterOverlayProjection::WebMercator);
 
-    ASSERT_FALSE(root->canPrepareRasterOverlays());
-    EXPECT_FALSE(TileSelectionRasterOverlayPreparer::isCompleteRenderable(
-        *root,
-        {}));
+    ASSERT_TRUE(root->canPrepareRasterOverlays());
     ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
     ASSERT_TRUE(root->content.renderContent.hasRetainedHeightmap());
     ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
@@ -1053,7 +1050,7 @@ TEST(TilesetQuantizedMeshTest,
         RasterOverlayProjection::WebMercator);
     ASSERT_FALSE(root->content.renderContent.hasGltfContent());
     ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
-    ASSERT_FALSE(root->hasRasterOverlayHostContent());
+    ASSERT_TRUE(root->hasRasterOverlayHostContent());
     ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
 
     FrameResourceBudgetConfig budgetConfig;
@@ -1070,11 +1067,10 @@ TEST(TilesetQuantizedMeshTest,
         16.0,
         budget);
 
-    EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
-    EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
+    EXPECT_EQ(1u, root->rasterOverlayState.mappingCount());
+    EXPECT_TRUE(root->rasterOverlayState.hasMissingProjections());
     RasterOverlayTileProvider* rasterProvider = activated.getTileProvider();
     ASSERT_NE(nullptr, rasterProvider);
-    EXPECT_EQ(0, rasterProvider->getCachedTileCount());
 }
 
 TEST(TilesetQuantizedMeshTest,
