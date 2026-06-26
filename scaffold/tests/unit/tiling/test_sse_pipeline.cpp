@@ -5535,15 +5535,14 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
-    auto gltfPromo = makeQuadTerrainGltfModel(preciseRectangle);
-    gltfPromo->rasterOverlayDetails =
-        makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.prepareGltfContent(
-        std::move(gltfPromo), Mat4::identity());
-    root->content.renderContent.setTerrainRenderContent(true);
-    root->content.renderContent.addGltfPrimitiveResource(
-        GltfPrimitiveRenderResources{});
-    root->content.renderContent.markRenderContentReady();
+    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    root->content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails =
+            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(32),
+        nullptr);
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;

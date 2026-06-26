@@ -164,7 +164,8 @@ struct TilesetTile {
 
     bool hasRasterOverlayHostContent() const {
         if (contentProviderTerrainQuadtreeTile &&
-            !content.renderContent.hasGltfContent()) {
+            !content.renderContent.hasGltfContent() &&
+            !content.renderContent.hasSurfaceMesh()) {
             return false;
         }
         return content.renderContent.hasRenderableTerrainContent();
