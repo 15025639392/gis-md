@@ -75,6 +75,93 @@ public:
     int maxZoom_ = 18;
 };
 
+/// Content provider with sparse availability: only z=0 and z=1,x=0,y=0 are
+/// available by default. Matches SparseTerrainProvider behavior.
+class SparseContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "sparse-content"; }
+    bool supportsTile(const TileKey& key) const override {
+        return availabilityState(key) == TileAvailabilityState::Available;
+    }
+    bool providesTerrainQuadtree() const override { return true; }
+    std::vector<TileKey> rootTiles() const override {
+        return {TileKey{schemeId_, 0, 0, 0}};
+    }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        if (key.z >= maxZoom_) return {};
+        return {TileKey{schemeId_, key.z + 1, key.x * 2, key.y * 2},
+                TileKey{schemeId_, key.z + 1, key.x * 2 + 1, key.y * 2},
+                TileKey{schemeId_, key.z + 1, key.x * 2, key.y * 2 + 1},
+                TileKey{schemeId_, key.z + 1, key.x * 2 + 1, key.y * 2 + 1}};
+    }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        callback({}, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        if (key.schemeId != schemeId_) return TileAvailabilityState::NotAvailable;
+        if (key.z == 0) return TileAvailabilityState::Available;
+        if (key.z == 1 && key.x == 0 && key.y == 0) {
+            return TileAvailabilityState::Available;
+        }
+        for (const TileKey& availableKey : extraAvailableKeys) {
+            if (key == availableKey) return TileAvailabilityState::Available;
+        }
+        return TileAvailabilityState::NotAvailable;
+    }
+    std::string schemeId_ = "Geographic-TMS";
+    int maxZoom_ = 4;
+    int requestCount = 0;
+    std::vector<TileKey> extraAvailableKeys;
+};
+
+/// Content provider with availability boundary at level 0.
+/// Matches ContractTerrainProvider behavior.
+class BoundaryContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "boundary-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    bool isTerrainAvailabilityBoundaryLevel(int level) const override {
+        return level == 0;
+    }
+    std::vector<TileKey> rootTiles() const override {
+        return {TileKey{schemeId_, 0, 0, 0}};
+    }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        if (key.z >= maxZoom_) return {};
+        return {TileKey{schemeId_, key.z + 1, key.x * 2, key.y * 2},
+                TileKey{schemeId_, key.z + 1, key.x * 2 + 1, key.y * 2},
+                TileKey{schemeId_, key.z + 1, key.x * 2, key.y * 2 + 1},
+                TileKey{schemeId_, key.z + 1, key.x * 2 + 1, key.y * 2 + 1}};
+    }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback({}, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        if (key.schemeId != schemeId_ || key.z < 0 || key.z > maxZoom_) {
+            return TileAvailabilityState::NotAvailable;
+        }
+        return TileAvailabilityState::Available;
+    }
+    std::string schemeId_ = "Geographic-TMS";
+    int maxZoom_ = 2;
+};
+
 struct TilesetTestAccess {
     static Tileset makeLegacyTerrainTileset(
         std::unique_ptr<TerrainProvider> terrainProvider,
@@ -1557,14 +1644,14 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     UpsampledChildQueuesParentUntilSourceReady) {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    SparseTerrainProvider* rawProvider = provider.get();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    auto provider = std::make_unique<SparseContentProvider>();
+    SparseContentProvider* rawProvider = provider.get();
+    Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
-        TilesetOptions{});
+        TilesetOptions{},
+        std::move(provider));
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -1590,13 +1677,13 @@ TEST(
 TEST(
     TilesetRequestMissingBudgetTest,
     TerrainAvailabilityBoundaryUsesProviderContract) {
-    auto provider = std::make_unique<ContractTerrainProvider>();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    auto provider = std::make_unique<BoundaryContentProvider>();
+    Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
-        TilesetOptions{});
+        TilesetOptions{},
+        std::move(provider));
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -1767,7 +1854,10 @@ TEST(
 
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
-    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setGltfContent(makeTriangleGltfModel());
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
 
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     ASSERT_FALSE(root->children.empty());
@@ -1777,7 +1867,10 @@ TEST(
     const TileKey childKey = child->key;
     child->content.contentKind = TileContentKind::Render;
     child->content.loadState = TileLoadState::Done;
-    child->content.renderContent.setMeshReady(true);
+    child->content.renderContent.setGltfContent(makeTriangleGltfModel());
+    child->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    child->content.renderContent.markRenderContentReady();
 
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
@@ -1814,9 +1907,7 @@ TEST(
 
     const TileKey childKey = root->children.front()->key;
 
-    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
-    TilesetTestAccess::updateTotalBytesUsed(tileset);
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+    TilesetTestAccess::unloadTileContent(tileset, *root);
 
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
     ASSERT_EQ(rootAfter, root);
