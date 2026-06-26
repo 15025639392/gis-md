@@ -39,8 +39,6 @@ struct TilesetTile {
     std::optional<TileBoundingVolume> contentBoundingVolume;
     std::optional<TileBoundingVolume> initialBoundingVolume;
     std::optional<TileBoundingVolume> initialContentBoundingVolume;
-    bool contentProviderTerrainQuadtreeTile = false;
-
     // ---- Tree structure (cesium-native parent/child) ----
     // DIFF from cesium-native: children are raw pointers, ownership is in
     // Tileset::tiles_ flat map (not tree-owned). This enables O(1) key-based
@@ -99,27 +97,6 @@ struct TilesetTile {
             content.contentKind);
     }
 
-    template <typename IsCompleteRenderableFn>
-    void commitSurfaceRenderContent(SurfaceDrawableSource source,
-                                    bool markDone,
-                                    IsCompleteRenderableFn&&
-                                        isCompleteRenderable) {
-        content.renderContent.setTerrainRenderContent(true);
-        content.renderContent.setMeshReady(true);
-        content.renderContent.setSurfaceSource(source);
-        content.contentKind = TileContentKind::Render;
-        if (markDone) {
-            content.loadState = TileLoadState::Done;
-        }
-        updateFrameRenderability(
-            hasSurfaceDrawable(),
-            isCompleteRenderable(*this));
-    }
-
-    void refreshSurfaceDrawable(bool drawable) {
-        content.renderContent.setSurfaceDrawable(drawable);
-    }
-
     void updateFrameRenderability(bool drawable, bool complete) {
         content.renderContent.setSurfaceDrawable(drawable);
         selectionFrameState.updateFrameRenderability(complete);
@@ -135,18 +112,13 @@ struct TilesetTile {
 
     TileRenderableSnapshot renderableSnapshot(
         bool requiredRasterOverlaysReady) const {
-        const bool renderContentReady =
-            contentProviderTerrainQuadtreeTile &&
-                    !content.renderContent.hasGltfContent()
-                ? false
-                : content.renderContent.isRenderContentReady();
         return TileRenderableSnapshot{
             content.loadState,
             content.contentKind,
             unconditionallyRefine,
             !children.empty(),
             requiredRasterOverlaysReady,
-            renderContentReady};
+            content.renderContent.isRenderContentReady()};
     }
 
     bool canPrepareRasterOverlays() const {
@@ -163,24 +135,16 @@ struct TilesetTile {
     }
 
     bool hasRasterOverlayHostContent() const {
-        if (contentProviderTerrainQuadtreeTile &&
-            !content.renderContent.hasGltfContent()) {
-            return false;
-        }
         return content.renderContent.hasRenderableTerrainContent();
     }
 
     bool waitsForContentTerrainRasterDetails() const {
-        return contentProviderTerrainQuadtreeTile &&
+        return content.renderContent.isTerrainRenderContent() &&
                hasCommittedRenderContent() &&
                !content.renderContent.hasRasterOverlayDetailsContent();
     }
 
     bool hasSurfaceDrawable() const {
-        if (contentProviderTerrainQuadtreeTile &&
-            !content.renderContent.hasGltfContent()) {
-            return false;
-        }
         return TileRenderablePolicy::hasSurfaceDrawable(
             content.contentKind,
             content.loadState,

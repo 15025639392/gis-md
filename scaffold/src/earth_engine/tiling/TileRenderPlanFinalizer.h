@@ -173,8 +173,7 @@ private:
     }
 
     static bool canAttemptSurfaceGeometryPrep(const TilesetTile& tile) {
-        return !tile.content.renderContent.hasGltfContent() &&
-               !tile.contentProviderTerrainQuadtreeTile;
+        return !tile.content.renderContent.hasGltfContent();
     }
 
     static bool canAttemptRenderResourcePrep(const TilesetTile& tile) {
@@ -183,10 +182,6 @@ private:
     }
 
     static bool hasRenderableSurfaceForPlan(const TilesetTile& tile) {
-        if (tile.contentProviderTerrainQuadtreeTile &&
-            !tile.content.renderContent.hasGltfContent()) {
-            return false;
-        }
         return tile.hasSurfaceDrawable();
     }
 
@@ -241,10 +236,6 @@ private:
         for (TilesetTile* ancestor = tile.parent;
              ancestor;
              ancestor = ancestor->parent) {
-            if (ancestor->contentProviderTerrainQuadtreeTile &&
-                !ancestor->content.renderContent.hasGltfContent()) {
-                continue;
-            }
             if (isFallbackRenderable(*ancestor)) {
                 return ancestor;
             }
