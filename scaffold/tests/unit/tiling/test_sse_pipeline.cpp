@@ -4922,11 +4922,13 @@ void testTilesetMissingRasterProjectionRequestsReload() {
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
     root->boundingVolume =
         TileBoundingVolume::fromRegion(terrainRectangle, -25.0, 125.0);
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
+    root->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(terrainRectangle),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
@@ -4942,7 +4944,7 @@ void testTilesetMissingRasterProjectionRequestsReload() {
           "Tileset: missing raster projection stops draw command creation");
     check(root->content.loadState != TileLoadState::Done ||
               root->content.contentKind != TileContentKind::Render ||
-              !root->content.renderContent.hasSurfaceMesh(),
+              !root->content.renderContent.hasGltfContent(),
           "Tileset: missing raster projection unloads render content for reload like cesium-native");
     const RasterOverlayDetails& generatedDetails =
         root->content.renderContent.rasterOverlayDetails();
@@ -4985,14 +4987,15 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
     if (!root) return;
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
+    auto gltfTarget = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfTarget->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfTarget), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
@@ -5035,14 +5038,15 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
     if (!root) return;
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 5.0);
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
+    auto gltfLazy = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfLazy->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfLazy), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
@@ -5089,6 +5093,10 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
         0.0,
         10.0);
     root->geometricError = 100.0;
+    root->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(regionRectangle),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
     root->rasterOverlayState.mappings().resize(1);
     FrameResourceBudgetConfig budgetConfig;
     budgetConfig.maxRasterNetworkRequestsPerFrame = 64;
@@ -5152,6 +5160,10 @@ void testTilesetPrefetchUsesContentBoundingVolumeFallback() {
     root->contentBoundingVolume =
         TileBoundingVolume::fromRegion(contentRectangle, -10.0, 120.0);
     root->geometricError = 100.0;
+    root->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(contentRectangle),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
     root->rasterOverlayState.mappings().resize(1);
     FrameResourceBudgetConfig budgetConfig;
     budgetConfig.maxRasterNetworkRequestsPerFrame = 64;
@@ -5196,11 +5208,16 @@ void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
     root->boundingVolume =
         TileBoundingVolume::fromRegion(regionRectangle, -25.0, 125.0);
     root->geometricError = 100.0;
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
-            RasterOverlayProjection::Geographic);
-    root->content.renderContent.setMeshReady(true);
+    auto gltfRegion = makeQuadTerrainGltfModel(regionRectangle);
+    gltfRegion->rasterOverlayDetails = RasterOverlayDetails{};
+    gltfRegion->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfRegion), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
@@ -5251,20 +5268,26 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
     if (!edge || !center) return;
     edge->bounds = Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0);
     center->bounds = Rectangle::fromDegrees(1.0, 0.0, 2.0, 1.0);
-    edge->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    edge->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(overlay->getTileScheme(), edge->bounds);
-    edge->content.renderContent.setMeshReady(true);
+    auto edgeGltf = makeQuadTerrainGltfModel(edge->bounds);
+    edgeGltf->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), edge->bounds);
+    edge->content.renderContent.prepareGltfContent(
+        std::move(edgeGltf), Mat4::identity());
+    edge->content.renderContent.setTerrainRenderContent(true);
+    edge->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    edge->content.renderContent.markRenderContentReady();
     edge->content.loadState = TileLoadState::Done;
     edge->content.contentKind = TileContentKind::Render;
-    center->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    center->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(overlay->getTileScheme(), center->bounds);
-    center->content.renderContent.setMeshReady(true);
+    auto centerGltf = makeQuadTerrainGltfModel(center->bounds);
+    centerGltf->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), center->bounds);
+    center->content.renderContent.prepareGltfContent(
+        std::move(centerGltf), Mat4::identity());
+    center->content.renderContent.setTerrainRenderContent(true);
+    center->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    center->content.renderContent.markRenderContentReady();
     center->content.loadState = TileLoadState::Done;
     center->content.contentKind = TileContentKind::Render;
     edge->boundingVolume =
@@ -5512,14 +5535,15 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
+    auto gltfPromo = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfPromo->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfPromo), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
@@ -5575,14 +5599,15 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->bounds = preciseRectangle;
-    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
+    auto gltfSkip = makeQuadTerrainGltfModel(preciseRectangle);
+    gltfSkip->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfSkip), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;

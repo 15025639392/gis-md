@@ -172,8 +172,8 @@ struct TilesetTile {
 
     bool waitsForContentTerrainRasterDetails() const {
         return contentProviderTerrainQuadtreeTile &&
-               !(hasCommittedRenderContent() &&
-                 content.renderContent.hasRasterOverlayDetailsContent());
+               hasCommittedRenderContent() &&
+               !content.renderContent.hasRasterOverlayDetailsContent();
     }
 
     bool hasSurfaceDrawable() const {
