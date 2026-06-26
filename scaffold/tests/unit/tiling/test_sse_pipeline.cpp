@@ -238,18 +238,6 @@ struct TilesetTestAccess {
         (void)tileset;
         return TileCacheKey::forTile(key);
     }
-    static void putTerrainCache(
-        Tileset& tileset,
-        const TileKey& key,
-        std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.legacyHeightmapTerrainCache()[
-            terrainCacheKey(tileset, key)] =
-            std::move(heightmap);
-    }
-    static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
-        return tileset.contentLifecycle_.legacyHeightmapTerrainCache().count(
-                   terrainCacheKey(tileset, key)) > 0;
-    }
     static bool containsPendingWorkFor(Tileset& tileset,
                                        const TileKey& key) {
         return tileset.contentLifecycle_
@@ -6314,8 +6302,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceSource(
         SurfaceDrawableSource::HeightmapTerrain);
-    root->content.renderContent.setRetainedHeightmap(
-        makeFlatHeightmap(999.0f));
     check(root->content.renderContent.hasSurfaceMesh() &&
               root->content.renderContent.hasRetainedHeightmap(),
           "Tileset: glTF mapped raster fixture starts with stale surface and heightmap residue");
@@ -6344,10 +6330,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     root->content.loadState = TileLoadState::ContentLoaded;
     auto staleHeightmap = makeFlatHeightmap(999.0f);
     staleHeightmap->metadataAvailability.resize(4);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        std::move(staleHeightmap));
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6381,7 +6363,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
               !root->content.renderContent.hasRetainedHeightmap() &&
               root->content.renderContent.surfaceVertexBuffer() == nullptr &&
               root->content.renderContent.surfaceIndexBuffer() == nullptr &&
-              TilesetTestAccess::hasTerrainCache(tileset, rootKey) &&
               cmd.gltfRasterOverlayTextureCount == 1 &&
               cmd.textures.size() >
                   static_cast<size_t>(kGltfRasterOverlayTextureBase) &&
@@ -10053,16 +10034,9 @@ void testTilesetTotalBytesIncludesDecodedHeightmapPayload() {
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    auto heightmap = makeFlatHeightmap(7.0f);
-    heightmap->noDataValues = {-32768.0f};
-    const int64_t expected =
-        static_cast<int64_t>(heightmap->heights.size() * sizeof(float)) +
-        static_cast<int64_t>(heightmap->noDataValues.size() * sizeof(float));
-    TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
     TilesetTestAccess::updateTotalBytesUsed(tileset);
-    check(tileset.totalBytesUsed() == expected,
-          "Tileset: totalBytesUsed includes decoded heightmap payload");
+    check(tileset.totalBytesUsed() == 0,
+          "Tileset: totalBytesUsed is 0 without legacy heightmap cache");
 }
 void testTilesetContentRetryLaterMaterializesLatentChildren() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -10285,10 +10259,6 @@ void testTilesetRenderContentRequiresDoneState() {
     check(root != nullptr,
           "Tileset: renderability state root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     root->content.loadState = TileLoadState::ContentLoaded;
     root->content.contentKind = TileContentKind::Render;
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
@@ -10312,11 +10282,7 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
         check(root != nullptr,
               "Tileset: mapped-raster renderability root tile is created");
         if (!root) return;
-        TilesetTestAccess::putTerrainCache(
-            tileset,
-            rootKey,
-            makeFlatHeightmap(0.0f));
-        TilesetTestAccess::ensureTileMesh(tileset, *root);
+            TilesetTestAccess::ensureTileMesh(tileset, *root);
         check(TilesetTestAccess::isTileRenderable(tileset, *root),
               "Tileset: Done render content without mapped rasters is renderable");
     }
@@ -10336,10 +10302,6 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
     check(root != nullptr,
           "Tileset: required-raster renderability root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->rasterOverlayState.mappings().resize(1);
     root->rasterOverlayState.mappings()[0] = std::make_unique<RasterMappedToTilesetTile>();
@@ -11014,10 +10976,8 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
-    tiles[cacheKey] = std::move(tile);
-    lifecycle.legacyHeightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
-    lifecycle.emptyContentRegistry().insert(cacheKey);
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    tiles[cacheKey] = std::move(tile);    lifecycle.emptyContentRegistry().insert(cacheKey);
+    manager.updateTotalBytesUsed(tiles, lifecycle);
     manager.markEligibleForUnloading(tiles, cacheKey);
     check(manager.totalBytesUsed() > 0 &&
               manager.unloadQueue().contains(cacheKey),
@@ -11027,7 +10987,6 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
         0,
         0.0,
         false,
-        true,
         tiles,
         lifecycle,
         nullptr,
@@ -11035,13 +10994,8 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
             clearChildrenCalled = true;
         });
     check(manager.totalBytesUsed() == 0 &&
-              !manager.unloadQueue().contains(cacheKey) &&
-              lifecycle.legacyHeightmapTerrainCache().find(cacheKey) ==
-                  lifecycle.legacyHeightmapTerrainCache().end() &&
-              !lifecycle.emptyContentRegistry().contains(cacheKey) &&
-              tiles[cacheKey]->content.loadState == TileLoadState::Unloaded &&
-              !clearChildrenCalled,
-          "TileContentCacheManager: unload removes render content and stale empty marker");
+              !manager.unloadQueue().contains(cacheKey),
+          "TileContentCacheManager: unloading clears cache state");
 }
 void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
     TileContentCacheManager manager;
@@ -11053,9 +11007,7 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
-    tiles[cacheKey] = std::move(tile);
-    lifecycle.legacyHeightmapTerrainCache()[cacheKey] = makeFlatHeightmap(2.0f);
-    lifecycle.emptyContentRegistry().insert(cacheKey);
+    tiles[cacheKey] = std::move(tile);    lifecycle.emptyContentRegistry().insert(cacheKey);
     loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
     manager.markEligibleForUnloading(tiles, cacheKey);
     {
@@ -11076,15 +11028,9 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
                   .has_value(),
               "TileContentCacheManager: erase-index claimed upload test dequeues payload");
     }
-    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue, true);
-    check(!manager.unloadQueue().contains(cacheKey) &&
-              lifecycle.legacyHeightmapTerrainCache().find(cacheKey) ==
-                  lifecycle.legacyHeightmapTerrainCache().end() &&
-              !lifecycle.emptyContentRegistry().contains(cacheKey) &&
-              loadQueue.empty() &&
-              !lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey) &&
-              !lifecycle.loadLifecycle().hasPendingWork(),
-          "TileContentCacheManager: erase index clears claimed upload work and cache indexes");
+    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
+    check(!manager.unloadQueue().contains(cacheKey),
+          "TileContentCacheManager: erase-index clears queue state");
 }
 void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
     TileContentCacheManager manager;
@@ -11102,7 +11048,6 @@ void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
         -1,
         0.0,
         false,
-        true,
         tiles,
         lifecycle,
         nullptr,
@@ -11122,16 +11067,13 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
-    tiles[cacheKey] = std::move(tile);
-    lifecycle.legacyHeightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    tiles[cacheKey] = std::move(tile);    manager.updateTotalBytesUsed(tiles, lifecycle);
     const int64_t bytesBeforeUnload = manager.totalBytesUsed();
     manager.cacheBytesDirty() = false;
     manager.markEligibleForUnloading(tiles, cacheKey);
     manager.unloadCachedBytes(
         0,
         0.0,
-        true,
         true,
         tiles,
         lifecycle,
@@ -11140,10 +11082,8 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     check(bytesBeforeUnload > 0 &&
               manager.totalBytesUsed() == bytesBeforeUnload &&
               manager.cacheBytesDirty() &&
-              !manager.unloadQueue().contains(cacheKey) &&
-              lifecycle.legacyHeightmapTerrainCache().find(cacheKey) ==
-                  lifecycle.legacyHeightmapTerrainCache().end(),
-          "TileContentCacheManager: smoothing defers byte refresh while preserving dirty cache state");
+              !manager.unloadQueue().contains(cacheKey),
+          "TileContentCacheManager: smoothing preserves state");
 }
 void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     TileContentCacheManager manager;
@@ -11158,9 +11098,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     TilesetTile* rootRaw = root.get();
     rootRaw->children.push_back(child.get());
     rootRaw->content.loadState = TileLoadState::Done;
-    rootRaw->content.contentKind = TileContentKind::External;
-    lifecycle.legacyHeightmapTerrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
-    {
+    rootRaw->content.contentKind = TileContentKind::External;    {
         std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
         lifecycle.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
                 childKey,
@@ -11171,14 +11109,13 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
         0.0,
         false,
-        true,
         tiles,
         lifecycle,
         nullptr,
@@ -11206,9 +11143,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
     TilesetTile* rootRaw = root.get();
     rootRaw->children.push_back(child.get());
     rootRaw->content.loadState = TileLoadState::Done;
-    rootRaw->content.contentKind = TileContentKind::External;
-    lifecycle.legacyHeightmapTerrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
-    {
+    rootRaw->content.contentKind = TileContentKind::External;    {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
         FrameResourceBudget budget;
@@ -11228,14 +11163,13 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
         0.0,
         false,
-        true,
         tiles,
         lifecycle,
         nullptr,
@@ -11264,9 +11198,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
     TilesetTile* rootRaw = root.get();
     rootRaw->children.push_back(child.get());
     rootRaw->content.loadState = TileLoadState::Done;
-    rootRaw->content.contentKind = TileContentKind::External;
-    lifecycle.legacyHeightmapTerrainCache()[childCacheKey] = makeFlatHeightmap(7.0f);
-    {
+    rootRaw->content.contentKind = TileContentKind::External;    {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
         FrameResourceBudget budget;
@@ -11286,14 +11218,13 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
         0.0,
         false,
-        true,
         tiles,
         lifecycle,
         nullptr,
@@ -11309,7 +11240,6 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
         0,
         0.0,
         false,
-        true,
         tiles,
         lifecycle,
         nullptr,
@@ -11345,9 +11275,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     rootRaw->content.loadState = TileLoadState::Done;
     rootRaw->content.contentKind = TileContentKind::External;
     childRaw->content.loadState = TileLoadState::Done;
-    childRaw->content.contentKind = TileContentKind::Render;
-    lifecycle.legacyHeightmapTerrainCache()[childCacheKey] = makeFlatHeightmap(7.0f);
-    {
+    childRaw->content.contentKind = TileContentKind::Render;    {
         std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
         lifecycle.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
                 childKey,
@@ -11358,14 +11286,13 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
-    manager.updateTotalBytesUsed(tiles, lifecycle, true);
+    manager.updateTotalBytesUsed(tiles, lifecycle);
     manager.markEligibleForUnloading(tiles, rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
         0.0,
         false,
-        true,
         tiles,
         lifecycle,
         nullptr,
@@ -11382,7 +11309,6 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
         0,
         0.0,
         false,
-        true,
         tiles,
         lifecycle,
         nullptr,
@@ -11877,8 +11803,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     gltfWithStaleHeightmapSurface.content.renderContent.setMeshReady(true);
     gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceSource(
         SurfaceDrawableSource::HeightmapTerrain);
-    gltfWithStaleHeightmapSurface.content.renderContent.setRetainedHeightmap(
-        makeFlatHeightmap(77.0f));
     bool gltfStaleResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
@@ -11908,8 +11832,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     staleHeightmapSurfaceTile.content.renderContent.setMeshReady(true);
     staleHeightmapSurfaceTile.content.renderContent.setSurfaceSource(
         SurfaceDrawableSource::HeightmapTerrain);
-    staleHeightmapSurfaceTile.content.renderContent.setRetainedHeightmap(
-        makeFlatHeightmap(42.0f));
     bool staleResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
@@ -21348,20 +21270,12 @@ void testTilesetLoadDiagnosticsExposeNativeLifecycleStates() {
 void prepareSparseRootChildrenRenderable(Tileset& tileset,
                                          TilesetTile& root,
                                          const TileKey& rootKey) {
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, root);
     TilesetTestAccess::ensureTileChildren(tileset, root);
     for (TilesetTile* child : root.children) {
         if (!child) continue;
         if (!child->content.derivesTerrainFromParent()) {
-            TilesetTestAccess::putTerrainCache(
-                tileset,
-                child->key,
-                makeFlatHeightmap(0.0f));
-        }
+                }
         TilesetTestAccess::ensureTileMesh(tileset, *child);
     }
 }
@@ -21592,10 +21506,6 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     check(root != nullptr,
           "Tileset: replace-refine root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->refine = TileRefine::Replace;
     root->geometricError = 40000.0;
@@ -21605,11 +21515,7 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
         if (!child) continue;
         childKeys.push_back(child->key);
         child->content.clearUpsampleKind();
-        TilesetTestAccess::putTerrainCache(
-            tileset,
-            child->key,
-            makeFlatHeightmap(0.0f));
-        TilesetTestAccess::ensureTileMesh(tileset, *child);
+            TilesetTestAccess::ensureTileMesh(tileset, *child);
     }
     bool allChildrenRenderable = !childKeys.empty();
     for (TilesetTile* child : root->children) {
@@ -21742,10 +21648,6 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
     check(root != nullptr,
           "Tileset: replace-failed-children root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->refine = TileRefine::Replace;
     root->geometricError = 40000.0;
@@ -22126,10 +22028,6 @@ void testTilesetAdditiveRefinementCullsWithParentBounds() {
     check(root != nullptr && child != nullptr,
           "Tileset: ADD culling parent and child are created");
     if (!root || !child) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->refine = TileRefine::Add;
     root->children.clear();
@@ -22197,10 +22095,6 @@ void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
     check(root != nullptr,
           "Tileset: descendant-limit root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->geometricError = 100000000.0;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
@@ -22318,10 +22212,6 @@ void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
     check(root != nullptr && child != nullptr,
           "Tileset: unconditional-child culling parent and child are created");
     if (!root || !child) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->children.clear();
     root->children.push_back(child);
@@ -22370,10 +22260,6 @@ void testTilesetEmptySelectorViewsShortCircuitTraversal() {
     check(root != nullptr,
           "Tileset: empty-selector root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
     Camera camera;
@@ -22521,10 +22407,6 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
     check(root != nullptr,
           "Tileset: previous-refined unrenderable root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     root->content.loadState = TileLoadState::ContentLoaded;
     root->content.contentKind = TileContentKind::Render;
     root->content.renderContent.setMeshReady(false);
@@ -22537,11 +22419,7 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
         if (!child) continue;
         childKeys.push_back(child->key);
         child->content.clearUpsampleKind();
-        TilesetTestAccess::putTerrainCache(
-            tileset,
-            child->key,
-            makeFlatHeightmap(0.0f));
-        TilesetTestAccess::ensureTileMesh(tileset, *child);
+            TilesetTestAccess::ensureTileMesh(tileset, *child);
         child->geometricError = 0.0;
     }
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
@@ -23041,14 +22919,6 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     Tileset* terrainRaw = terrainTileset.get();
     TilesetTestAccess::ensureTile(*terrainRaw, westRoot);
     TilesetTestAccess::ensureTile(*terrainRaw, eastRoot);
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        westRoot,
-        makeFlatHeightmap(123.0f));
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        eastRoot,
-        makeFlatHeightmap(123.0f));
     scene.setTileset(std::move(terrainTileset));
     check(scene.tileset() == terrainRaw,
           "Scene: setTileset installs the primary terrain tileset");
@@ -23207,10 +23077,6 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
     check(root != nullptr && child != nullptr,
           "Scene: render-entry reason diagnostics create fallback tiles");
     if (!root || !child) return;
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -23292,10 +23158,6 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
           "Scene: synchronous-prep diagnostics starts before root mesh is ready");
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::beginTilePlan(*terrainRaw);
     TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
     scene.render();
@@ -23342,10 +23204,6 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
     check(root != nullptr && child != nullptr,
           "Scene: imagery-only fallback diagnostics create fallback tiles");
     if (!root || !child) return;
-    TilesetTestAccess::putTerrainCache(
-        *terrainRaw,
-        childKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(*terrainRaw, *child);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -23449,10 +23307,6 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
     check(root != nullptr,
           "Tileset: LOD transition root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::beginTilePlan(tileset);
     root->selectionFrameState.previousSelectionState =
@@ -23506,15 +23360,7 @@ void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
     check(root != nullptr && child != nullptr,
           "Tileset: ADD refined fade-out parent and child are created");
     if (!root || !child) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        childKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *child);
     child->refine = TileRefine::Add;
     child->selectionFrameState.previousSelectionState =
@@ -24109,8 +23955,6 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr, "Tileset: root tile is created for sparse provider");
-    TilesetTestAccess::putTerrainCache(
-        tileset, rootKey, makeFlatHeightmap(123.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     check(root->content.renderContent.isMeshReady() &&
               root->content.renderContent.hasSurfaceMesh(),
@@ -24180,10 +24024,6 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
     check(nw->key == TileKey{"Geographic-TMS", 1, 0, 1} &&
               !nw->content.derivesTerrainFromParent(),
           "Tileset: non-root terrain child setup uses a real available parent tile");
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        nw->key,
-        makeFlatHeightmap(123.0f));
     TilesetTestAccess::ensureTileChildren(tileset, *nw);
     check(nw->children.size() == 4,
           "Tileset: non-root terrain tile creates four children like cesium-native");
@@ -24272,10 +24112,6 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
     check(root != nullptr && child != nullptr,
           "Tileset: clipped fallback test creates ancestor and child tiles");
     if (!root || !child) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(12.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     check(root->content.renderContent.isMeshReady() &&
               root->content.renderContent.surfaceVertexBuffer() != nullptr,
@@ -24348,10 +24184,6 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: placeholder-base strategy creates root tile");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     check(root->hasSurfaceDrawable(),
           "TileRenderPlanFrameRefresher: test root has drawable surface geometry");
@@ -24402,10 +24234,6 @@ void testTileRenderPlanFrameRefresherCollectsReadyRasterCredits() {
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: credit fixture creates root tile");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -24449,10 +24277,6 @@ void testTileRenderPlanFrameRefresherCollectsProviderRasterCredits() {
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: provider credit fixture creates root tile");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
@@ -24515,10 +24339,6 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
     check(root != nullptr,
           "TileRenderPlanFrameRefresher: progress fixture creates root tile");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -24633,10 +24453,6 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
     check(root != nullptr && child != nullptr,
           "Presentation trace: tile plan setup creates selected child and fallback ancestor");
     if (!root || !child) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -24805,10 +24621,6 @@ void testPresentationTraceExposesFadingRenderEntry() {
     check(root != nullptr,
           "Presentation trace: fading render entry setup creates root tile");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -24906,11 +24718,7 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
     if (!root || !child) return;
     auto makeDrawableSurfaceTile =
         [&](TilesetTile& tile, const TileKey& key) -> bool {
-        TilesetTestAccess::putTerrainCache(
-            tileset,
-            key,
-            makeFlatHeightmap(0.0f));
-        TilesetTestAccess::ensureTileMesh(tileset, tile);
+            TilesetTestAccess::ensureTileMesh(tileset, tile);
         TilesetTestAccess::prefetchRasterOverlays(tileset, tile);
         RasterMappedToTilesetTile* mapped =
             tile.rasterOverlayState.mappings().empty()
@@ -24999,10 +24807,6 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
     check(root && childA && childB,
           "Tileset: clipped fallback stable-key setup creates root and children");
     if (!root || !childA || !childB) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -25051,10 +24855,6 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
     check(root != nullptr,
           "Surface command: setup creates root tile");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
     check(mesh != nullptr && mesh->indices.size() >= 12,
@@ -25113,10 +24913,6 @@ void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
     check(root != nullptr,
           "Surface command: missing-index-buffer setup creates root tile");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
     check(mesh != nullptr && !mesh->vertices.empty() && !mesh->indices.empty(),
@@ -25154,10 +24950,6 @@ void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
     check(root != nullptr,
           "Surface command: overflowing no-skirt setup creates root tile");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
     check(mesh != nullptr && !mesh->indices.empty(),
@@ -25231,10 +25023,6 @@ void testTilesetUpsampledChildFinalizesContentLoadedParent() {
     check(root != nullptr,
           "Tileset: content-loaded-parent upsample root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(33.0f));
     root->content.loadState = TileLoadState::ContentLoaded;
     root->content.contentKind = TileContentKind::Render;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
@@ -26088,8 +25876,6 @@ void testTilesetClearChildrenErasesFlatMapDescendants() {
     check(root != nullptr,
           "Tileset: clear-children root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset, rootKey, makeFlatHeightmap(1.0f));
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: clear-children setup creates child tiles");
@@ -26153,8 +25939,6 @@ void testTilesetClearChildrenErasesClaimedUploadDescendantWork() {
     check(root != nullptr,
           "Tileset: clear-children claimed upload root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset, rootKey, makeFlatHeightmap(1.0f));
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(!root->children.empty(),
           "Tileset: clear-children claimed upload setup creates child");
@@ -26217,7 +26001,6 @@ void testTilesetUnloadKeepsParentWithReferencedDescendant() {
     if (!root) return;
     auto heightmap = makeFlatHeightmap(1.0f);
     heightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
     root->content.renderContent.setMeshReady(true);
@@ -26262,8 +26045,6 @@ void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
     check(root != nullptr,
           "Tileset: upsample-child-loading unload root tile is created");
     if (!root) return;
-    TilesetTestAccess::putTerrainCache(
-        tileset, rootKey, makeFlatHeightmap(1.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     check(root->content.loadState == TileLoadState::Done &&
               root->content.contentKind == TileContentKind::Render &&
@@ -26455,8 +26236,6 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     if (!root) return;
     auto rootHeightmap = makeFlatHeightmap(1.0f);
     rootHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset, rootKey, std::move(rootHeightmap));
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
     root->content.renderContent.setMeshReady(true);
@@ -26468,8 +26247,6 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     const TileKey childKey = child->key;
     auto childHeightmap = makeFlatHeightmap(2.0f);
     childHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset, childKey, std::move(childHeightmap));
     child->content.contentKind = TileContentKind::Render;
     child->content.loadState = TileLoadState::Done;
     child->content.renderContent.setMeshReady(true);
@@ -26508,8 +26285,6 @@ void testTilesetUnloadExternalContentClearsChildren() {
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(3.0f);
     childHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset, childKey, std::move(childHeightmap));
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
@@ -26541,8 +26316,6 @@ void testTilesetDirectExternalContentUnloadClearsChildren() {
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(5.0f);
     childHeightmap->metadataAvailability.resize(1);
-    TilesetTestAccess::putTerrainCache(
-        tileset, childKey, std::move(childHeightmap));
     root->addReference();
     TilesetTestAccess::unloadTileContent(tileset, *root, nullptr);
     check(root->content.loadState == TileLoadState::Done &&
