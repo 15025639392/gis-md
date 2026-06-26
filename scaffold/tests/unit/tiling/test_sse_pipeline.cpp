@@ -143,7 +143,67 @@
 #include <utility>
 using namespace earth_engine;
 namespace earth_engine {
+
+class RetryLaterContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "retry-later-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    std::vector<TileKey> rootTiles() const override {
+        return {TileKey{schemeId_, 0, 0, 0}};
+    }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        if (key.z >= maxZoom_) return {};
+        return {TileKey{schemeId_, key.z + 1, key.x * 2, key.y * 2},
+                TileKey{schemeId_, key.z + 1, key.x * 2 + 1, key.y * 2},
+                TileKey{schemeId_, key.z + 1, key.x * 2, key.y * 2 + 1},
+                TileKey{schemeId_, key.z + 1, key.x * 2 + 1, key.y * 2 + 1}};
+    }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback({}, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        if (key.schemeId != schemeId_ || key.z < 0 || key.z > maxZoom_) {
+            return TileAvailabilityState::NotAvailable;
+        }
+        return TileAvailabilityState::Available;
+    }
+    std::string schemeId_ = "Geographic-TMS";
+    int maxZoom_ = 18;
+};
+
 struct TilesetTestAccess {
+    static Tileset makeContentTerrainTileset(
+        std::unique_ptr<TileScheme> scheme,
+        std::vector<ActivatedRasterOverlay*> overlays = {},
+        RenderDevice* device = nullptr,
+        TilesetOptions options = {}) {
+        return Tileset(
+            std::move(scheme),
+            std::move(overlays),
+            device,
+            std::move(options),
+            std::make_unique<RetryLaterContentProvider>());
+    }
+    static std::unique_ptr<Tileset> makeContentTerrainTilesetPtr(
+        std::unique_ptr<TileScheme> scheme,
+        std::vector<ActivatedRasterOverlay*> overlays = {},
+        RenderDevice* device = nullptr,
+        TilesetOptions options = {}) {
+        return std::unique_ptr<Tileset>(new Tileset(
+            std::move(scheme),
+            std::move(overlays),
+            device,
+            std::move(options),
+            std::make_unique<RetryLaterContentProvider>()));
+    }
     static Tileset makeLegacyTerrainTileset(
         std::unique_ptr<TerrainProvider> terrainProvider,
         std::unique_ptr<TileScheme> scheme,
@@ -4534,8 +4594,7 @@ Tileset makeLegacySurfaceFixtureTileset(
     std::vector<ActivatedRasterOverlay*> overlays = {},
     RenderDevice* device = nullptr,
     TilesetOptions options = {}) {
-    return TilesetTestAccess::makeLegacyTerrainTileset(
-        std::make_unique<SparseTerrainProvider>(),
+    return TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         std::move(overlays),
         device,
@@ -4861,8 +4920,7 @@ void testTilesetMissingRasterProjectionRequestsReload() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -4927,8 +4985,7 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -4978,8 +5035,7 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -5027,8 +5083,7 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -5089,8 +5144,7 @@ void testTilesetPrefetchUsesContentBoundingVolumeFallback() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -5138,8 +5192,7 @@ void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -5196,8 +5249,7 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -5459,8 +5511,7 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -5523,8 +5574,7 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -5636,8 +5686,7 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&baseActivated},
         nullptr,
@@ -5718,8 +5767,7 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&baseActivated},
         nullptr,
@@ -5816,8 +5864,7 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     ActivatedRasterOverlay roadActivated(*roadOverlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&baseActivated, &roadActivated},
         nullptr,
@@ -5892,8 +5939,7 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     ActivatedRasterOverlay roadActivated(*roadOverlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&baseActivated, &roadActivated},
         nullptr,
@@ -5963,8 +6009,7 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     ActivatedRasterOverlay activated(*overlay);
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -9975,8 +10020,7 @@ void testTilesetViewerRequestVolumeGatesContentLoadQueue() {
 void testTilesetUnloadRenderContentReleasesGltfResources() {
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(terrainProvider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {},
         nullptr,
@@ -10008,7 +10052,7 @@ void testTilesetUnloadRenderContentReleasesGltfResources() {
 void testTilesetTotalBytesIncludesDecodedHeightmapPayload() {
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto heightmap = makeFlatHeightmap(7.0f);
     heightmap->noDataValues = {-32768.0f};
@@ -10235,7 +10279,7 @@ void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
 void testTilesetRenderContentRequiresDoneState() {
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -10259,8 +10303,7 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
     {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
-        Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-            std::move(provider),
+        Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
             std::move(scheme),
             {},
             nullptr,
@@ -10284,8 +10327,7 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
     ActivatedRasterOverlay activated(*overlay);
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {&activated},
         nullptr,
@@ -10307,7 +10349,7 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
 void testTilesetUnconditionallyRefineRenderableOnlyWithoutChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -21200,7 +21242,7 @@ void testTilesetForbidHolesCarriesCulledTileRenderability() {
     auto scheme = TileScheme::createGeographicTMS();
     TilesetOptions options;
     options.forbidHoles = true;
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme), {}, nullptr, options);
     const TileKey key{"Geographic-TMS", 1, 0, 0};
     TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
     check(tile != nullptr,
@@ -21218,7 +21260,7 @@ void testTilesetCulledTileDetailsIgnorePreloadOnlyTiles() {
     TilesetOptions options;
     options.forbidHoles = false;
     options.preloadSiblings = true;
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme), {}, nullptr, options);
     const TileKey key{"Geographic-TMS", 1, 0, 0};
     TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
     check(tile != nullptr,
@@ -21233,7 +21275,7 @@ void testTilesetCulledTileDetailsIgnorePreloadOnlyTiles() {
 void testTilesetLoadDiagnosticsExposeNativeLifecycleStates() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const std::vector<TileKey> keys = {
         {"Geographic-TMS", 3, 0, 0},
         {"Geographic-TMS", 3, 1, 0},
@@ -21326,7 +21368,7 @@ void prepareSparseRootChildrenRenderable(Tileset& tileset,
 void testTilesetAdditiveRefinementRendersParentAndChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -21544,7 +21586,7 @@ void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     // parent once the parent requires refinement.
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -21694,7 +21736,7 @@ void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
     // forcing a parent fallback.
     auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -22076,7 +22118,7 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
 void testTilesetAdditiveRefinementCullsWithParentBounds() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -22123,7 +22165,7 @@ void testTilesetAdditiveRefinementCullsWithParentBounds() {
 void testTilesetAdditiveRefinedTileCountsAsPreviouslyRendered() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -22149,7 +22191,7 @@ void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
     options.forbidHoles = true;
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme), {}, nullptr, options);
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -22220,7 +22262,7 @@ void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
 void testTilesetUnconditionallyRefineIgnoresSatisfiedSse() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -22268,7 +22310,7 @@ void testTilesetUnconditionallyRefineIgnoresSatisfiedSse() {
 void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -22322,7 +22364,7 @@ void testTilesetEmptySelectorViewsShortCircuitTraversal() {
     options.preloadSiblings = false;
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme), {}, nullptr, options);
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -22364,7 +22406,7 @@ void testTilesetFogDensityTableIsConfigurable() {
         auto scheme = TileScheme::createGeographicTMS();
         TilesetOptions options;
         options.fogDensityTable = std::move(fogDensityTable);
-        Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+        Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme), {}, nullptr, options);
         const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
         TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
         check(root != nullptr,
@@ -22434,7 +22476,7 @@ void testTileSelectionMetricsFogMatchesCesiumNativeRules() {
 void testTilesetRecordsAncestorMeetsSseForDescendants() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -22473,7 +22515,7 @@ void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
     // visible while its own render content is still not renderable.
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -22560,8 +22602,7 @@ void testTilesetUsesLargestSseAcrossSelectorViews() {
     auto runSelection = [&](std::vector<SelectorView> views) {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
-        Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-            std::move(provider),
+        Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
             std::move(scheme),
             {},
             nullptr,
@@ -22697,8 +22738,7 @@ void testTilesetSseUsesProjectionMatrix() {
     auto runSelection = [&](SelectorView view) {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
-        Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-            std::move(provider),
+        Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
             std::move(scheme),
             {},
             nullptr,
@@ -22749,7 +22789,7 @@ void testTilesetFogUsesEachSelectorViewDensity() {
                            Vec3::unitZ());
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme), {}, nullptr, options);
     TilesetTestAccess::ensureTile(tileset, rootKey);
     FrameState frameState;
     frameState.frameId = 92;
@@ -22942,8 +22982,7 @@ void testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets() {
     scene.setOcclusionCallback(
         [](const TilesetTile&) { return TileOcclusionState::Occluded; });
     auto makeTileset = []() {
-        return TilesetTestAccess::makeLegacyTerrainTilesetPtr(
-            std::make_unique<SparseTerrainProvider>(),
+        return TilesetTestAccess::makeContentTerrainTilesetPtr(
             TileScheme::createGeographicTMS(),
             std::vector<ActivatedRasterOverlay*>{},
             nullptr,
@@ -22994,8 +23033,7 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     const TileKey westRoot{"Geographic-TMS", 0, 0, 0};
     const TileKey eastRoot{"Geographic-TMS", 0, 1, 0};
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
-    auto terrainTileset = TilesetTestAccess::makeLegacyTerrainTilesetPtr(
-        std::move(terrainProvider),
+    auto terrainTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
@@ -23156,8 +23194,7 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
         TileScheme::createGeographicTMS(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = TilesetTestAccess::makeLegacyTerrainTilesetPtr(
-        std::make_unique<SparseTerrainProvider>(),
+    auto terrainTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -23226,8 +23263,7 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
         TileScheme::createGeographicTMS(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = TilesetTestAccess::makeLegacyTerrainTilesetPtr(
-        std::make_unique<SparseTerrainProvider>(),
+    auto terrainTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -23293,8 +23329,7 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
         TileScheme::createGeographicTMS(),
         makeRasterOverlayOptions());
     ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto terrainTileset = TilesetTestAccess::makeLegacyTerrainTilesetPtr(
-        std::make_unique<SparseTerrainProvider>(),
+    auto terrainTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{&baseActivated},
         &device,
@@ -23404,8 +23439,7 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
     options.lodTransitionLength = 1.0f;
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {},
         nullptr,
@@ -23464,7 +23498,7 @@ void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
     options.lodTransitionLength = 1.0f;
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme), {}, nullptr, options);
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -23510,8 +23544,7 @@ void testTilesetLodTransitionsIgnoreEmptyContent() {
     options.lodTransitionLength = 1.0f;
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {},
         nullptr,
@@ -23547,7 +23580,7 @@ void testTilesetLodTransitionsIgnoreEmptyContent() {
 void testTilesetOcclusionStopsRefinementBeforeChildLoads() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23580,7 +23613,7 @@ void testTilesetOcclusionStopsRefinementBeforeChildLoads() {
 void testTilesetOcclusionUnavailableDelaysNewRefinement() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23613,7 +23646,7 @@ void testTilesetOcclusionUnavailableDelaysNewRefinement() {
 void testTilesetOcclusionUnavailableDoesNotDelayPreviouslyRefinedTile() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23645,7 +23678,7 @@ void testTilesetOcclusionUnavailableDoesNotDelayPreviouslyRefinedTile() {
 void testTilesetOcclusionAggregatesOccludedChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23675,7 +23708,7 @@ void testTilesetOcclusionAggregatesOccludedChildren() {
 void testTilesetOcclusionVisibleChildKeepsParentRefining() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23741,7 +23774,7 @@ void testTileOcclusionResolverTerminalParentStateSkipsChildren() {
 void testTilesetOcclusionUnavailableChildDelaysNewRefinement() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23796,7 +23829,7 @@ void testTilesetOcclusionUnavailableChildDelaysNewRefinement() {
 void testTilesetOcclusionUnconditionalChildSkipsAggregation() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23827,7 +23860,7 @@ void testTilesetOcclusionUnconditionalChildSkipsAggregation() {
 void testTilesetCameraInsideDiagnosticUsesExplicitRootVolume() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23874,7 +23907,7 @@ void testTilesetCameraInsideDiagnosticUsesExplicitRootVolume() {
 void testTilesetDefaultSoftwareOcclusionCanCullFarSideTile() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey farSideKey{"Geographic-TMS", 2, 7, 1};
     TilesetTile* farSide = TilesetTestAccess::ensureTile(tileset, farSideKey);
     check(farSide != nullptr,
@@ -24072,7 +24105,7 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr, "Tileset: root tile is created for sparse provider");
@@ -24133,7 +24166,7 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
         TileKey{"Geographic-TMS", 2, 0, 2},
     };
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -24186,7 +24219,7 @@ void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
         TileKey{"Geographic-TMS", 2, 2, 0},
     };
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -25165,7 +25198,7 @@ void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -25192,7 +25225,7 @@ void testTilesetUpsampledChildFinalizesContentLoadedParent() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -25224,8 +25257,7 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     SparseTerrainProvider* rawProvider = provider.get();
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {},
         &device,
@@ -25358,8 +25390,7 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     SparseTerrainProvider* rawProvider = provider.get();
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {},
         &device,
@@ -25502,8 +25533,7 @@ void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
     SparseTerrainProvider* rawProvider = provider.get();
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {},
         &device,
@@ -25590,8 +25620,7 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
     SparseTerrainProvider* rawProvider = provider.get();
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {},
         &device,
@@ -26053,7 +26082,7 @@ void testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails() {
 void testTilesetClearChildrenErasesFlatMapDescendants() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -26118,7 +26147,7 @@ void testTilesetClearChildrenClearsTerrainUpsampledChildProviderState() {
 void testTilesetClearChildrenErasesClaimedUploadDescendantWork() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -26180,7 +26209,7 @@ void testTilesetClearChildrenIgnoresStaleContentCallback() {
 void testTilesetUnloadKeepsParentWithReferencedDescendant() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -26209,7 +26238,7 @@ void testTilesetUnloadKeepsParentWithReferencedDescendant() {
 void testTilesetUnloadQueueIgnoresUnloadedUnknownTiles() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -26227,7 +26256,7 @@ void testTilesetUnloadQueueIgnoresUnloadedUnknownTiles() {
 void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -26281,8 +26310,7 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
     SparseTerrainProvider* rawProvider = provider.get();
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(
-        std::move(provider),
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         std::move(scheme),
         {},
         &device,
@@ -26419,7 +26447,7 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
 void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -26464,7 +26492,7 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
 void testTilesetUnloadExternalContentClearsChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -26497,7 +26525,7 @@ void testTilesetUnloadExternalContentClearsChildren() {
 void testTilesetDirectExternalContentUnloadClearsChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeLegacyTerrainTileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
