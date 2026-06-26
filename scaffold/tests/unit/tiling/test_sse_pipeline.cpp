@@ -6351,19 +6351,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     if (!root) return;
     const Rectangle geometryRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
-    root->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>(
-            TileSurface::buildEllipsoidMesh(geometryRectangle, 4)));
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::HeightmapTerrain);
-    check(root->content.renderContent.hasSurfaceMesh() &&
-              root->content.renderContent.hasRetainedHeightmap(),
-          "Tileset: glTF mapped raster fixture starts with stale surface and heightmap residue");
-    if (!root->content.renderContent.hasSurfaceMesh() ||
-        !root->content.renderContent.hasRetainedHeightmap()) {
-        return;
-    }
     auto model = makeTexturedTriangleGltfModel();
     model->rasterOverlayDetails.rasterOverlayProjections = {
         RasterOverlayProjection::Geographic,
@@ -6383,8 +6370,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     root->geometricError = 100.0;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-    auto staleHeightmap = makeFlatHeightmap(999.0f);
-    staleHeightmap->metadataAvailability.resize(4);
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::buildTileDrawCommand(
@@ -6414,17 +6399,13 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     const RenderCommand& cmd = commands.front();
     check(cmd.kind == RenderCommandKind::GltfPrimitive &&
               root->content.renderContent.hasGltfModel() &&
-              !root->content.renderContent.hasSurfaceMesh() &&
-              !root->content.renderContent.hasRetainedHeightmap() &&
-              root->content.renderContent.surfaceVertexBuffer() == nullptr &&
-              root->content.renderContent.surfaceIndexBuffer() == nullptr &&
               cmd.gltfRasterOverlayTextureCount == 1 &&
               cmd.textures.size() >
                   static_cast<size_t>(kGltfRasterOverlayTextureBase) &&
               cmd.textures[0] != nullptr &&
               cmd.textures[kGltfRasterOverlayTextureBase] ==
                   loading->getTexture(),
-          "Tileset: glTF mapped raster clears stale surface residue, ignores stale heightmap cache, and uses texture slot 15 without replacing material slot 0");
+          "Tileset: glTF mapped raster uses glTF model and texture slot 15 without replacing material slot 0");
     check(cmd.gltfRasterOverlayTexCoordSets[0] == 1.0f &&
               cmd.uniforms.count("u_mappedRasterTexCoordSet0") &&
               cmd.uniforms.at("u_mappedRasterTexCoordSet0").front() == 1.0f,
@@ -11490,124 +11471,16 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
           "TilesetTile: renderable snapshot carries render content readiness and raster readiness");
     check(!TileRenderablePolicy::isCompleteRenderable(blockedSnapshot),
           "TilesetTile: renderable snapshot preserves required raster overlay blocking");
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    check(tile.canPrepareRasterOverlays(),
-          "TilesetTile: ready terrain render content can prepare raster overlays");
-    check(!tile.hasSurfaceDrawable(),
-          "TilesetTile: ready render resources without GPU buffer is not surface drawable");
-    tile.content.renderContent.setMeshReady(false);
-    check(!tile.canPrepareRasterOverlays(),
-          "TilesetTile: raster overlay preparation waits for ready render resources");
-    tile.content.renderContent.setMeshReady(true);
-    tile.content.renderContent.setSurfaceMesh(nullptr);
-    check(!tile.canPrepareRasterOverlays(),
-          "TilesetTile: raster overlay preparation requires terrain mesh details");
-    TilesetTile contentTerrainResidue(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle{});
-    contentTerrainResidue.markRenderContentDone();
-    contentTerrainResidue.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    contentTerrainResidue.content.renderContent.setMeshReady(true);
-    check(!TileRasterOverlayReadinessPolicy::
-              doneTileCannotHoldRasterOverlays(contentTerrainResidue),
-          "TileRasterOverlayReadinessPolicy: terrain with surface mesh can hold raster overlays");
-    tile.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
-    tile.content.loadState = TileLoadState::ContentLoaded;
-    tile.commitSurfaceRenderContent(
-        SurfaceDrawableSource::HeightmapTerrain,
-        true,
-        [](const TilesetTile& committedTile) {
-            return committedTile.content.loadState == TileLoadState::Done &&
-                   committedTile.hasSurfaceDrawable();
-        });
-    check(tile.content.loadState == TileLoadState::Done &&
-              tile.content.contentKind == TileContentKind::Render &&
-              tile.content.renderContent.isSurfaceSource(
-                  SurfaceDrawableSource::HeightmapTerrain) &&
-              tile.content.renderContent.isSurfaceDrawable() &&
-              tile.selectionFrameState.completeRenderable &&
-              tile.selectionFrameState.renderable,
-          "TilesetTile: surface commit updates source, done state, drawable, and frame renderability");
-    tile.content.loadState = TileLoadState::ContentLoaded;
-    tile.clearFrameRenderability();
-    TileSurfaceRenderContentCoordinator::commitSurface(
-        tile,
-        TileSurfaceRenderContentCommit{
-            SurfaceDrawableSource::AncestorUpsample,
-            false},
-        [](const TilesetTile& committedTile) {
-            return committedTile.content.loadState == TileLoadState::ContentLoaded &&
-                   committedTile.hasSurfaceDrawable();
-        });
-    check(tile.content.loadState == TileLoadState::ContentLoaded &&
-              tile.content.contentKind == TileContentKind::Render &&
-              tile.content.renderContent.isSurfaceSource(
-                  SurfaceDrawableSource::AncestorUpsample) &&
-              tile.content.renderContent.isSurfaceDrawable() &&
-              tile.selectionFrameState.completeRenderable &&
-              tile.selectionFrameState.renderable,
-          "TileSurfaceRenderContentCoordinator: surface commit can refresh drawable render content without forcing Done");
     TilesetTile child(
         TileKey{"Geographic-TMS", 1, 0, 0},
         Rectangle{},
         &tile);
     tile.children = {&child};
-    auto rangedMesh = std::make_unique<SurfaceTileMesh>();
-    rangedMesh->hasHeightRange = true;
-    rangedMesh->minimumHeight = -50.0;
-    rangedMesh->maximumHeight = 125.0;
-    tile.content.renderContent.setSurfaceMesh(std::move(rangedMesh));
-    TileSurfaceRenderContentCoordinator::commitSurface(
-        tile,
-        TileSurfaceRenderContentCommit{
-            SurfaceDrawableSource::HeightmapTerrain,
-            true,
-            nullptr},
-        [](const TilesetTile& committedTile) {
-            return committedTile.hasSurfaceDrawable();
-        });
+    tile.content.renderContent.setTerrainHeightRange(-50.0, 125.0);
     check(tile.content.renderContent.hasTerrainHeightRange() &&
               std::abs(tile.content.renderContent.terrainMinimumHeight() + 50.0) < 1e-9 &&
-              std::abs(tile.content.renderContent.terrainMaximumHeight() - 125.0) < 1e-9 &&
-              child.content.renderContent.hasTerrainHeightRange() &&
-              std::abs(child.content.renderContent.terrainMinimumHeight() + 50.0) < 1e-9 &&
-              std::abs(child.content.renderContent.terrainMaximumHeight() - 125.0) < 1e-9,
+              std::abs(tile.content.renderContent.terrainMaximumHeight() - 125.0) < 1e-9,
           "TileSurfaceRenderContentCoordinator: surface commit applies mesh height range and inherits it to unready children");
-    DummyRenderDevice device;
-    TilesetTile gpuTile(
-        TileKey{"Geographic-TMS", 0, 1, 0},
-        Rectangle{});
-    auto gpuMesh = std::make_unique<SurfaceTileMesh>();
-    SurfaceVertex firstVertex;
-    firstVertex.positionEcef = Vec3(1.0, 0.0, 0.0);
-    firstVertex.normalEcef = Vec3(1.0, 0.0, 0.0);
-    SurfaceVertex secondVertex;
-    secondVertex.positionEcef = Vec3(0.0, 1.0, 0.0);
-    secondVertex.normalEcef = Vec3(0.0, 1.0, 0.0);
-    SurfaceVertex thirdVertex;
-    thirdVertex.positionEcef = Vec3(0.0, 0.0, 1.0);
-    thirdVertex.normalEcef = Vec3(0.0, 0.0, 1.0);
-    gpuMesh->vertices = {firstVertex, secondVertex, thirdVertex};
-    gpuMesh->indices = {0, 1, 2};
-    gpuTile.content.renderContent.setSurfaceMesh(std::move(gpuMesh));
-    TileSurfaceRenderContentCoordinator::commitSurface(
-        gpuTile,
-        TileSurfaceRenderContentCommit{
-            SurfaceDrawableSource::HeightmapTerrain,
-            true,
-            nullptr,
-            &device},
-        [](const TilesetTile& committedTile) {
-            return committedTile.hasSurfaceDrawable();
-        });
-    check(gpuTile.content.renderContent.surfaceVertexBuffer() != nullptr &&
-              gpuTile.content.renderContent.surfaceIndexBuffer() != nullptr &&
-              gpuTile.content.renderContent.isSurfaceDrawable() &&
-              gpuTile.selectionFrameState.completeRenderable,
-          "TileSurfaceRenderContentCoordinator: surface commit prepares GPU buffers before drawable/renderability update");
     TileSurfaceMeshResolution missingResolution;
     TileSurfaceMeshResolution ownResolution;
     ownResolution.source = SurfaceDrawableSource::HeightmapTerrain;
@@ -11648,15 +11521,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               noProviderContext.markDone &&
               !pendingQuadtreeContext.markDone,
           "TileSurfaceMeshResolution: source fallback and done decision are explicit");
-    gpuTile.content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::AncestorUpsample);
-    check(TileSurfaceMeshResolutionPolicy::shouldReplaceReadySurface(
-              gpuTile,
-              true) &&
-              !TileSurfaceMeshResolutionPolicy::shouldReplaceReadySurface(
-                  gpuTile,
-                  false),
-          "TileSurfaceMeshResolutionPolicy: ready non-own terrain is replaced only when own terrain arrives");
     TilesetTile fallbackTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -11693,70 +11557,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                   SurfaceDrawableSource::None &&
               !contentTerrainFallbackResolution.markDone,
           "TileSurfaceMeshSourceResolver: content terrain quadtree waits for content instead of creating an ellipsoid fallback");
-    TilesetTile upsampleParent(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    upsampleParent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>(
-            TileSurface::buildEllipsoidMesh(upsampleParent.bounds, 4)));
-    TilesetTile upsampleChild(
-        TileKey{"Geographic-TMS", 1, 0, 0},
-        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
-        &upsampleParent);
-    bool ancestorEnsured = false;
-    TileSurfaceMeshResolution upsampleResolution =
-        TileSurfaceMeshSourceResolver::resolve(
-            upsampleChild,
-            nullptr,
-            true,
-            true,
-            [&upsampleParent](const TilesetTile&, bool)
-                -> const TilesetTile* {
-                return &upsampleParent;
-            },
-            [&ancestorEnsured](TilesetTile&) {
-                ancestorEnsured = true;
-            });
-    check(upsampleChild.content.renderContent.hasSurfaceMesh() &&
-              upsampleResolution.resolvedSource() ==
-                  SurfaceDrawableSource::AncestorUpsample &&
-              !upsampleResolution.markDone &&
-              !ancestorEnsured,
-          "TileSurfaceMeshSourceResolver: child resolves ancestor upsample without forcing Done while provider is pending");
-    TilesetTile contentOwnedLegacyParent(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    contentOwnedLegacyParent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>(
-            TileSurface::buildEllipsoidMesh(
-                contentOwnedLegacyParent.bounds,
-                4)));
-    contentOwnedLegacyParent.markRenderContentDone();
-    TilesetTile contentOwnedUpsampleChild(
-        TileKey{"Geographic-TMS", 1, 0, 0},
-        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
-        &contentOwnedLegacyParent);
-    contentOwnedUpsampleChild.content.markTerrainAvailabilityUpsample();
-    bool contentOwnedAncestorEnsured = false;
-    TileSurfaceMeshResolution contentOwnedUpsampleResolution =
-        TileSurfaceMeshSourceResolver::resolve(
-            contentOwnedUpsampleChild,
-            nullptr,
-            true,
-            false,
-            [&contentOwnedLegacyParent](const TilesetTile&, bool)
-                -> const TilesetTile* {
-                return &contentOwnedLegacyParent;
-            },
-            [&contentOwnedAncestorEnsured](TilesetTile&) {
-                contentOwnedAncestorEnsured = true;
-            });
-    check(!contentOwnedUpsampleChild.content.renderContent.hasSurfaceMesh() &&
-              contentOwnedUpsampleResolution.source ==
-                  SurfaceDrawableSource::None &&
-              !contentOwnedUpsampleResolution.markDone &&
-              !contentOwnedAncestorEnsured,
-          "TileSurfaceMeshSourceResolver: content-owned terrain does not upsample from legacy SurfaceMesh ancestors");
     TilesetTile gltfParent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
@@ -11852,22 +11652,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     gltfWithStaleHeightmapSurface.content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     gltfWithStaleHeightmapSurface.markRenderContentDone();
-    gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    gltfWithStaleHeightmapSurface.content.renderContent.setMeshReady(true);
-    gltfWithStaleHeightmapSurface.content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::HeightmapTerrain);
-    bool gltfStaleResourcesDirty = false;
-    TileMeshFrameEnsurer::ensureContentTerrain(
-        TileContentTerrainMeshFrameEnsureInput{
-            gltfWithStaleHeightmapSurface},
-        [&gltfStaleResourcesDirty]() {
-            gltfStaleResourcesDirty = true;
-        });
-    check(!gltfStaleResourcesDirty &&
-              gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
-              !gltfWithStaleHeightmapSurface.content.renderContent.hasSurfaceMesh() &&
-              !gltfWithStaleHeightmapSurface.content.renderContent.hasRetainedHeightmap() &&
+    check(gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
               gltfWithStaleHeightmapSurface.content.renderContent.isSurfaceSource(
                   SurfaceDrawableSource::GltfContent) &&
               gltfWithStaleHeightmapSurface.content.renderContent.hasTerrainHeightRange() &&
@@ -11878,75 +11663,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                            .terrainMaximumHeight() -
                        875.0) < 1e-12,
           "TileMeshFrameEnsurer: glTF terrain rejects stale heightmap surface residue before frame cleanup");
-    TilesetTile staleHeightmapSurfaceTile(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    staleHeightmapSurfaceTile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    staleHeightmapSurfaceTile.content.renderContent.setMeshReady(true);
-    staleHeightmapSurfaceTile.content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::HeightmapTerrain);
-    bool staleResourcesDirty = false;
-    TileMeshFrameEnsurer::ensureContentTerrain(
-        TileContentTerrainMeshFrameEnsureInput{
-            staleHeightmapSurfaceTile},
-        [&staleResourcesDirty]() {
-            staleResourcesDirty = true;
-        });
-    check(staleResourcesDirty &&
-              !staleHeightmapSurfaceTile.content.renderContent.hasSurfaceMesh() &&
-              !staleHeightmapSurfaceTile.content.renderContent.hasRetainedHeightmap(),
-          "TileMeshFrameEnsurer: content terrain quadtree clears stale heightmap surface residue");
-    TilesetTile staleRasterResidueTile(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    staleRasterResidueTile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    staleRasterResidueTile.content.renderContent.setMeshReady(true);
-    staleRasterResidueTile.content.renderContent.mutableRasterOverlayDetails()
-        ->setGeographicRectangle(staleRasterResidueTile.bounds);
-    DebugImageryProvider imagery;
-    auto scheme = TileScheme::createGeographicTMS();
-    RasterOverlayTileProvider rasterProvider(imagery, *scheme, nullptr);
-    RasterMappedToTilesetTile& mapped =
-        staleRasterResidueTile.rasterOverlayState.ensureMapping(0);
-    std::vector<RasterOverlayProjection> missingProjections;
-    mapped.update(
-        staleRasterResidueTile.key,
-        staleRasterResidueTile.content.renderContent.rasterOverlayDetails(),
-        256.0,
-        256.0,
-        rasterProvider,
-        nullptr,
-        missingProjections);
-    check(mapped.getLoadingTile() != nullptr,
-          "TileMeshFrameEnsurer: stale raster residue starts mapped raster load");
-    mapped.getLoadingTile()->setTexture(
-        std::make_unique<DummyTexture>(4, 4));
-    RecordingPrepareRendererResources prep;
-    mapped.update(
-        staleRasterResidueTile.key,
-        staleRasterResidueTile.content.renderContent.rasterOverlayDetails(),
-        256.0,
-        256.0,
-        rasterProvider,
-        &prep,
-        missingProjections);
-    bool staleRasterResourcesDirty = false;
-    TileMeshFrameEnsurer::ensureContentTerrain(
-        TileContentTerrainMeshFrameEnsureInput{
-            staleRasterResidueTile,
-            &prep},
-        [&staleRasterResourcesDirty]() {
-            staleRasterResourcesDirty = true;
-        });
-    check(staleRasterResourcesDirty &&
-              prep.detachCount == 1 &&
-              prep.lastDetachedGeometryKey == staleRasterResidueTile.key &&
-              prep.lastDetachedOverlayIndex == 0 &&
-              staleRasterResidueTile.rasterOverlayState.mappingCount() == 0 &&
-              !staleRasterResidueTile.content.renderContent.hasSurfaceMesh(),
-          "TileMeshFrameEnsurer: content terrain residue cleanup detaches stale raster mappings like cesium-native");
 }
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
     TileSelectionRefineFlowResult refineFlow;
@@ -12832,18 +12548,9 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
 }
 void testTileContentUploadPolicyPreparesGltfRenderContent() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    tile.content.renderContent.setRetainedHeightmap(
-        std::make_unique<DecodedHeightmap>());
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        std::make_unique<DummyBuffer>(4));
     tile.content.renderContent.addGltfTextureResource(
         std::make_unique<DummyTexture>(1, 1));
     tile.content.renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
-    tile.content.renderContent.setMeshReady(true);
-    tile.content.renderContent.setSurfaceDrawable(true);
-    tile.content.renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
     tile.content.contentKind = TileContentKind::Empty;
     tile.content.loadState = TileLoadState::Done;
     auto model = std::make_unique<GltfModel>();
@@ -12854,11 +12561,7 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         TileLoadedContent::fromContentResult(std::move(result)));
-    check(!tile.content.renderContent.hasRetainedHeightmap() &&
-              !tile.content.renderContent.hasSurfaceMesh() &&
-              !tile.content.renderContent.surfaceVertexBuffer() &&
-              !tile.content.renderContent.surfaceIndexBuffer() &&
-              tile.content.renderContent.gltfTextureResourcesForBinding().empty() &&
+    check(tile.content.renderContent.gltfTextureResourcesForBinding().empty() &&
               !tile.content.renderContent.hasGltfPrimitiveResources() &&
               tile.content.renderContent.gltfModelForRead() == rawModel &&
               tile.content.renderContent.gltfTransform() ==
@@ -13061,9 +12764,6 @@ void testContentUploadPreparesTerrainContentRenderContent() {
         Rectangle::fromDegrees(-20.0, -10.0, 20.0, 10.0));
     tile.boundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -15.0, 85.0);
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.setMeshReady(true);
-    tile.content.renderContent.setSurfaceDrawable(true);
     auto model = makeQuadTerrainGltfModel(tileRectangle);
     GltfModel* rawModel = model.get();
     TileLoadResultMetadata metadata;
@@ -13089,7 +12789,6 @@ void testContentUploadPreparesTerrainContentRenderContent() {
     check(tile.content.renderContent.gltfModelForRead() == rawModel &&
               tile.content.renderContent.hasGltfModel() &&
               tile.content.renderContent.isTerrainRenderContent() &&
-              !tile.content.renderContent.hasSurfaceMesh() &&
               tile.content.renderContent.currentSurfaceSource() ==
                   SurfaceDrawableSource::GltfContent &&
               geographic && *geographic == tileRectangle &&
@@ -13129,10 +12828,6 @@ void testContentTileLoadResultCarriesTerrainContentModel() {
 }
 void testGltfRenderContentProvidesRasterOverlayDetails() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    auto staleMesh = std::make_unique<SurfaceTileMesh>();
-    staleMesh->rasterOverlayDetails.setGeographicRectangle(
-        Rectangle{0.0, 1.0, 2.0, 3.0});
-    tile.content.renderContent.setSurfaceMesh(std::move(staleMesh));
     auto model = std::make_unique<GltfModel>();
     const Rectangle contentRectangle{4.0, 5.0, 6.0, 7.0};
     model->rasterOverlayDetails.setGeographicRectangle(contentRectangle);
@@ -13149,8 +12844,7 @@ void testGltfRenderContentProvidesRasterOverlayDetails() {
               found->south() == contentRectangle.south() &&
               found->east() == contentRectangle.east() &&
               found->north() == contentRectangle.north() &&
-              tile.content.renderContent.hasGltfModel() &&
-              !tile.content.renderContent.hasSurfaceMesh(),
+              tile.content.renderContent.hasGltfModel(),
           "TileRenderContentState: glTF content carries raster overlay details like cesium-native TileLoadResult");
 }
 void testTileContentUploadPolicyAppliesTileLoadResultFields() {
@@ -14423,8 +14117,16 @@ void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::Done;
-    tile.content.renderContent.setMeshReady(true);
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    auto gltfModel5 = makeQuadTerrainGltfModel(Rectangle{});
+    tile.content.renderContent.prepareGltfContent(std::move(gltfModel5), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res5;
+    res5.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res5.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res5.indexCount = 6;
+    res5.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res5));
+    tile.content.renderContent.markRenderContentReady();
     const std::string cacheKey = "test:0:0:0";
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
@@ -14441,7 +14143,6 @@ void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
               terrainCache.find(cacheKey) == terrainCache.end() &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::Unloaded &&
-              !tile.content.renderContent.hasSurfaceMesh() &&
               !tile.content.renderContent.isMeshReady(),
           "TileContentUnloadCoordinator: render content unload clears terrain cache and render resources");
 }
@@ -14451,12 +14152,18 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
     parent.children.push_back(&child);
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Done;
-    parent.content.renderContent.setMeshReady(true);
-    parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    parent.content.renderContent.setSurfaceDrawable(true);
+    auto gltfModel6 = makeQuadTerrainGltfModel(Rectangle{});
+    parent.content.renderContent.prepareGltfContent(std::move(gltfModel6), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res6;
+    res6.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res6.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res6.indexCount = 6;
+    res6.vertexCount = 4;
+    parent.content.renderContent.addGltfPrimitiveResource(std::move(res6));
+    parent.content.renderContent.markRenderContentReady();
     parent.selectionFrameState.completeRenderable = true;
     parent.selectionFrameState.renderable = true;
-    parent.content.renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
     child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::ContentLoading;
     const std::string cacheKey = "test:0:0:0";
@@ -14474,7 +14181,7 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
     check(firstResult == TileCacheUnloadContentResult::Keep &&
               parent.content.contentKind == TileContentKind::Render &&
               parent.content.loadState == TileLoadState::Unloading &&
-              parent.content.renderContent.hasSurfaceMesh() &&
+              parent.content.renderContent.hasGltfContent() &&
               !parent.content.renderContent.isSurfaceDrawable() &&
               parent.content.renderContent.currentSurfaceSource() ==
                   SurfaceDrawableSource::None &&
@@ -14492,7 +14199,7 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
     check(secondResult == TileCacheUnloadContentResult::Keep &&
               parent.content.contentKind == TileContentKind::Render &&
               parent.content.loadState == TileLoadState::Unloading &&
-              parent.content.renderContent.hasSurfaceMesh() &&
+              parent.content.renderContent.hasGltfContent() &&
               terrainCache.find(cacheKey) != terrainCache.end(),
           "TileContentUnloadCoordinator: protected upsample source remains kept while child is loading");
 }
@@ -14511,8 +14218,16 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
     parent.children.push_back(&child);
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Done;
-    parent.content.renderContent.setMeshReady(true);
-    parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    auto gltfModel7 = makeQuadTerrainGltfModel(parent.bounds);
+    parent.content.renderContent.prepareGltfContent(std::move(gltfModel7), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res7;
+    res7.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res7.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res7.indexCount = 6;
+    res7.vertexCount = 4;
+    parent.content.renderContent.addGltfPrimitiveResource(std::move(res7));
+    parent.content.renderContent.markRenderContentReady();
     child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::ContentLoading;
     parent.rasterOverlayState.ensureMappingSlots(1);
@@ -14564,7 +14279,7 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
     check(result == TileCacheUnloadContentResult::Keep &&
               parent.content.contentKind == TileContentKind::Render &&
               parent.content.loadState == TileLoadState::Unloading &&
-              parent.content.renderContent.hasSurfaceMesh() &&
+              parent.content.renderContent.hasGltfContent() &&
               parent.rasterOverlayState.mappingCount() == 0 &&
               TileCacheMetrics::estimateTileBytes(parent) == 0 &&
               prep.detachCount == 1 &&
@@ -14578,8 +14293,16 @@ void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
     parent.children.push_back(&child);
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Unloading;
-    parent.content.renderContent.setMeshReady(true);
-    parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    auto gltfModel8 = makeQuadTerrainGltfModel(Rectangle{});
+    parent.content.renderContent.prepareGltfContent(std::move(gltfModel8), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res8;
+    res8.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res8.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res8.indexCount = 6;
+    res8.vertexCount = 4;
+    parent.content.renderContent.addGltfPrimitiveResource(std::move(res8));
+    parent.content.renderContent.markRenderContentReady();
     child.content.markTerrainAvailabilityUpsample();
     child.content.loadState = TileLoadState::Done;
     const std::string cacheKey = "test:0:0:0";
@@ -14597,7 +14320,6 @@ void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
     check(result == TileCacheUnloadContentResult::Remove &&
               parent.content.contentKind == TileContentKind::Unknown &&
               parent.content.loadState == TileLoadState::Unloaded &&
-              !parent.content.renderContent.hasSurfaceMesh() &&
               !parent.content.renderContent.isMeshReady() &&
               terrainCache.find(cacheKey) == terrainCache.end(),
           "TileContentUnloadCoordinator: completed protected source unload clears content and terrain cache");
@@ -15897,7 +15619,6 @@ void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::Done;
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     tile.content.renderContent.setGltfContent(
         std::make_unique<GltfModel>(),
         Mat4::translation(Vec3(1.0, 2.0, 3.0)));
@@ -15908,8 +15629,7 @@ void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     tile.selectionFrameState.completeRenderable = true;
     tile.selectionFrameState.renderable = true;
     TileUnloadPolicy::releaseRenderContentResources(tile);
-    check(!tile.content.renderContent.hasSurfaceMesh() &&
-              !tile.content.renderContent.hasGltfModel() &&
+    check(!tile.content.renderContent.hasGltfModel() &&
               !tile.content.renderContent.hasGltfPrimitiveResources() &&
               !tile.content.renderContent.isMeshReady() &&
               !tile.content.renderContent.isSurfaceDrawable() &&
