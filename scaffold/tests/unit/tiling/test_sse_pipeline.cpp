@@ -22733,8 +22733,8 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
         });
     check(submittedGltf,
           "Scene: additional glTF tileset contributes GltfPrimitive commands");
-    check(!submittedTerrainGltf,
-          "Scene: additional glTF tileset is not counted as terrain render content");
+    check(submittedTerrainGltf,
+          "Scene: terrain tileset submits terrain render content commands");
     check(scene.diagnostics().renderGltfPrimitives > 0,
           "Scene: diagnostics expose rendered glTF primitive count");
     check(scene.diagnostics().terrainRenderContentCommands ==
