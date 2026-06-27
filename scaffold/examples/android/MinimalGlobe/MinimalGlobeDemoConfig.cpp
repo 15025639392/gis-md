@@ -28,58 +28,52 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     };
 
     if (kUseGaodeSatelliteForDemo) {
-        config.rasterOverlays.push_back({
-            ImagerySourceKind::Xyz,
-            kGaodeSatelliteTemplate,
-            "Gaode/Amap satellite",
-            0,
-            18,
-            0,
-            0,
-            20,
-            2.0,
-            1.0f,
-            RasterOverlayRole::BaseImagery,
-            RasterOverlayPriority::High,
-            RasterOverlayFallbackPolicy::AncestorOrPlaceholder,
-            true,
-        });
+        RasterOverlaySourceConfig satellite;
+        satellite.imageryKind = ImagerySourceKind::Xyz;
+        satellite.urlTemplate = kGaodeSatelliteTemplate;
+        satellite.attribution = "Gaode/Amap satellite";
+        satellite.minimumZoom = 0;
+        satellite.maximumZoom = 18;
+        satellite.overlayMinimumZoom = 0;
+        satellite.overlayMaximumZoom = 0;
+        satellite.maximumSimultaneousTileLoads = 20;
+        satellite.maximumScreenSpaceError = 2.0;
+        satellite.opacity = 1.0f;
+        satellite.role = RasterOverlayRole::BaseImagery;
+        satellite.priority = RasterOverlayPriority::High;
+        satellite.fallbackPolicy = RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
+        satellite.blocksCompleteRenderable = true;
+        config.rasterOverlays.push_back(satellite);
 
         if (kEnableGaodeRoadNetOverlayForDemo) {
-            config.rasterOverlays.push_back({
-                ImagerySourceKind::Xyz,
-                kGaodeRoadNetTemplate,
-                "Gaode/Amap road network",
-                0,
-                18,
-                0,
-                0,
-                20,
-                2.0,
-                0.92f,
-                RasterOverlayRole::AnnotationOverlay,
-                RasterOverlayPriority::Low,
-                RasterOverlayFallbackPolicy::SkipUntilReady,
-                false,
-            });
+            RasterOverlaySourceConfig roadNet;
+            roadNet.imageryKind = ImagerySourceKind::Xyz;
+            roadNet.urlTemplate = kGaodeRoadNetTemplate;
+            roadNet.attribution = "Gaode/Amap road network";
+            roadNet.minimumZoom = 0;
+            roadNet.maximumZoom = 18;
+            roadNet.overlayMinimumZoom = 0;
+            roadNet.overlayMaximumZoom = 0;
+            roadNet.maximumSimultaneousTileLoads = 20;
+            roadNet.maximumScreenSpaceError = 2.0;
+            roadNet.opacity = 0.92f;
+            roadNet.role = RasterOverlayRole::AnnotationOverlay;
+            roadNet.priority = RasterOverlayPriority::Low;
+            roadNet.fallbackPolicy = RasterOverlayFallbackPolicy::SkipUntilReady;
+            roadNet.blocksCompleteRenderable = false;
+            config.rasterOverlays.push_back(roadNet);
         }
     } else {
-        config.rasterOverlays.push_back({
-            ImagerySourceKind::Debug,
-            "",
-            "",
-            0,
-            0,
-            0,
-            0,
-            20,
-            2.0,
-            1.0f,
-            RasterOverlayRole::BaseImagery,
-            RasterOverlayPriority::High,
-            RasterOverlayFallbackPolicy::AncestorOrPlaceholder,
-            true,
-        });
+        RasterOverlaySourceConfig debug;
+        debug.imageryKind = ImagerySourceKind::Debug;
+        debug.maximumSimultaneousTileLoads = 20;
+        debug.maximumScreenSpaceError = 2.0;
+        debug.opacity = 1.0f;
+        debug.role = RasterOverlayRole::BaseImagery;
+        debug.priority = RasterOverlayPriority::High;
+        debug.fallbackPolicy = RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
+        debug.blocksCompleteRenderable = true;
+        config.rasterOverlays.push_back(debug);
     }
 
     config.gltf = {
