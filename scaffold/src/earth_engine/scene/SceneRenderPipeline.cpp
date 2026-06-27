@@ -24,8 +24,8 @@ namespace earth_engine {
 namespace {
 
 bool isTerrainSurfaceCommand(const RenderCommand& command) {
-    return command.kind == RenderCommandKind::SurfaceTile &&
-           command.stableKey.rfind("terrain:", 0) == 0;
+    return command.kind == RenderCommandKind::GltfPrimitive &&
+           command.terrainRenderContent;
 }
 
 int countTerrainSurfaceCommands(const RenderCommandList& commands) {
@@ -324,7 +324,8 @@ void SceneRenderPipeline::buildLayerCommands(
         std::any_of(context.commands.begin(),
                     context.commands.end(),
                     [](const RenderCommand& cmd) {
-                        return cmd.kind == RenderCommandKind::SurfaceTile;
+                        return cmd.kind == RenderCommandKind::GltfPrimitive &&
+                               cmd.terrainRenderContent;
                     });
     if (!hasSurfaceTile) {
         context.commands.insert(

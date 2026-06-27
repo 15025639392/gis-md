@@ -13629,7 +13629,7 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
                         const std::optional<std::array<float, 4>>&) {
                 if (tile.key == drawnKey) {
                     RenderCommand command;
-                    command.kind = RenderCommandKind::SurfaceTile;
+                    command.kind = RenderCommandKind::GltfPrimitive;
                     outCommands.push_back(std::move(command));
                 }
             });
@@ -13687,7 +13687,7 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
                          const std::optional<std::array<float, 4>>& clipUv) {
                 if (tile.key == renderKey && clipUv) {
                     RenderCommand command;
-                    command.kind = RenderCommandKind::SurfaceTile;
+                    command.kind = RenderCommandKind::GltfPrimitive;
                     command.surfaceClipEnabled = 1.0f;
                     command.surfaceClipUv = *clipUv;
                     outCommands.push_back(std::move(command));
@@ -13762,7 +13762,7 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
                                                 std::array<float, 4>>&) {
         submittedOpacity = opacity;
         RenderCommand command;
-        command.kind = RenderCommandKind::SurfaceTile;
+        command.kind = RenderCommandKind::GltfPrimitive;
         outCommands.push_back(std::move(command));
     };
     TileRenderEntryCommandStats selectedStats =
@@ -20782,19 +20782,19 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
     Texture* sharedTexture = reinterpret_cast<Texture*>(0x1);
     Texture* secondTexture = reinterpret_cast<Texture*>(0x2);
     RenderCommand firstSurface;
-    firstSurface.kind = RenderCommandKind::SurfaceTile;
+    firstSurface.kind = RenderCommandKind::GltfPrimitive;
     firstSurface.terrainRenderContent = true;
     firstSurface.textures = {sharedTexture};
     firstSurface.surfaceGeometryZoom = 3;
     firstSurface.surfaceTextureZoom = 4;
     RenderCommand secondSurface;
-    secondSurface.kind = RenderCommandKind::SurfaceTile;
+    secondSurface.kind = RenderCommandKind::GltfPrimitive;
     secondSurface.terrainRenderContent = true;
     secondSurface.textures = {sharedTexture, secondTexture};
     secondSurface.surfaceGeometryZoom = 7;
     secondSurface.surfaceTextureZoom = 6;
     RenderCommand missingImagerySurface;
-    missingImagerySurface.kind = RenderCommandKind::SurfaceTile;
+    missingImagerySurface.kind = RenderCommandKind::GltfPrimitive;
     missingImagerySurface.terrainRenderContent = true;
     RenderCommand terrainGltfPrimitive;
     terrainGltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
@@ -20810,16 +20810,16 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
     const SceneRenderCommandDiagnosticsSnapshot snapshot =
         SceneRenderCommandDiagnosticsSnapshot::fromCommands(commands);
     check(snapshot.drawCalls == 5 &&
-              snapshot.renderSurfaceTiles == 3 &&
-              snapshot.surfaceMeshCount == 3 &&
-              snapshot.terrainSurfaceTileCommands == 3 &&
-              snapshot.terrainGltfPrimitiveCommands == 1 &&
+              snapshot.renderSurfaceTiles == 4 &&
+              snapshot.surfaceMeshCount == 4 &&
+              snapshot.terrainSurfaceTileCommands == 4 &&
+              snapshot.terrainGltfPrimitiveCommands == 4 &&
               snapshot.terrainRenderContentCommands == 4 &&
-              snapshot.renderGltfPrimitives == 2,
+              snapshot.renderGltfPrimitives == 5,
           "SceneRenderCommandDiagnosticsSnapshot: counts render command lanes");
     check(snapshot.gpuTextureCount == 2 &&
               snapshot.imageryExactAttachments == 2 &&
-              snapshot.imageryMissingTiles == 1 &&
+              snapshot.imageryMissingTiles == 2 &&
               snapshot.imageryMinTargetZoom == 3 &&
               snapshot.imageryMaxTargetZoom == 7 &&
               snapshot.imageryMinTextureZoom == 4 &&
@@ -20854,15 +20854,15 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
 }
 void testSceneSurfaceCommandGenerationDiagnosticsSnapshotTracksSurfaceGenerations() {
     RenderCommand currentSurface;
-    currentSurface.kind = RenderCommandKind::SurfaceTile;
+    currentSurface.kind = RenderCommandKind::GltfPrimitive;
     currentSurface.frameId = 12;
     currentSurface.generation = 5;
     RenderCommand staleSurface;
-    staleSurface.kind = RenderCommandKind::SurfaceTile;
+    staleSurface.kind = RenderCommandKind::GltfPrimitive;
     staleSurface.frameId = 11;
     staleSurface.generation = 9;
     RenderCommand missingGenerationSurface;
-    missingGenerationSurface.kind = RenderCommandKind::SurfaceTile;
+    missingGenerationSurface.kind = RenderCommandKind::GltfPrimitive;
     missingGenerationSurface.frameId = 12;
     missingGenerationSurface.generation = 0;
     RenderCommand gltfPrimitive;
@@ -22661,15 +22661,30 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
         Vec3::unitZ());
     const TileKey westRoot{"Geographic-TMS", 0, 0, 0};
     const TileKey eastRoot{"Geographic-TMS", 0, 1, 0};
-    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto terrainTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
         TileScheme::createGeographicTMS(),
         std::vector<ActivatedRasterOverlay*>{},
         &device,
         TilesetOptions{});
     Tileset* terrainRaw = terrainTileset.get();
-    TilesetTestAccess::ensureTile(*terrainRaw, westRoot);
-    TilesetTestAccess::ensureTile(*terrainRaw, eastRoot);
+    TilesetTile* westTerrain = TilesetTestAccess::ensureTile(*terrainRaw, westRoot);
+    TilesetTile* eastTerrain = TilesetTestAccess::ensureTile(*terrainRaw, eastRoot);
+    auto setupTerrainTile = [&](TilesetTile* tile) {
+        if (!tile) return;
+        auto model = makeFlatGeographicTerrainGltfModel(tile->bounds, 123.0);
+        tile->content.renderContent.prepareGltfContent(
+            std::move(model), Mat4::identity());
+        tile->content.renderContent.setTerrainRenderContent(true);
+        GltfPrimitiveRenderResources res;
+        res.vertexBuffer = std::make_unique<DummyBuffer>(64);
+        res.indexBuffer = std::make_unique<DummyBuffer>(12);
+        res.indexCount = 6;
+        res.vertexCount = 4;
+        tile->content.renderContent.addGltfPrimitiveResource(std::move(res));
+        tile->markRenderContentDone();
+    };
+    setupTerrainTile(westTerrain);
+    setupTerrainTile(eastTerrain);
     scene.setTileset(std::move(terrainTileset));
     check(scene.tileset() == terrainRaw,
           "Scene: setTileset installs the primary terrain tileset");

@@ -55,13 +55,7 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
     bool sawSurfaceTextureZoom = false;
 
     for (const RenderCommand& command : commands) {
-        if (command.kind == RenderCommandKind::SurfaceTile) {
-            ++snapshot.renderSurfaceTiles;
-            ++snapshot.surfaceMeshCount;
-            if (command.terrainRenderContent) {
-                ++snapshot.terrainRenderContentCommands;
-                ++snapshot.terrainSurfaceTileCommands;
-            }
+        if (command.kind == RenderCommandKind::GltfPrimitive) {
             if (!command.textures.empty()) {
                 ++snapshot.imageryExactAttachments;
                 for (const Texture* texture : command.textures) {
@@ -104,12 +98,22 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
             } else {
                 ++snapshot.imageryMissingTiles;
             }
-        } else if (command.kind == RenderCommandKind::GltfPrimitive ||
-                   command.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             ++snapshot.renderGltfPrimitives;
             if (command.terrainRenderContent) {
                 ++snapshot.terrainRenderContentCommands;
                 ++snapshot.terrainGltfPrimitiveCommands;
+                ++snapshot.terrainSurfaceTileCommands;
+                ++snapshot.renderSurfaceTiles;
+                ++snapshot.surfaceMeshCount;
+            }
+        } else if (command.kind == RenderCommandKind::GltfPrimitiveInstanced) {
+            ++snapshot.renderGltfPrimitives;
+            if (command.terrainRenderContent) {
+                ++snapshot.terrainRenderContentCommands;
+                ++snapshot.terrainGltfPrimitiveCommands;
+                ++snapshot.terrainSurfaceTileCommands;
+                ++snapshot.renderSurfaceTiles;
+                ++snapshot.surfaceMeshCount;
             }
         }
     }
@@ -128,7 +132,7 @@ SceneSurfaceCommandGenerationDiagnosticsSnapshot::fromCommands(
     bool sawGeneration = false;
 
     for (const RenderCommand& command : commands) {
-        if (command.kind != RenderCommandKind::SurfaceTile) {
+        if (command.kind != RenderCommandKind::GltfPrimitive) {
             continue;
         }
         if (expectedFrameId != 0 && command.frameId != expectedFrameId) {
