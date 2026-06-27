@@ -1,4 +1,4 @@
-# 继续提示词 — 修复剩余 31 个测试失败
+# 继续提示词 — 修复剩余 18 个测试失败
 
 ## 背景
 
@@ -50,16 +50,19 @@ Surface mesh 已完全移除，所有 terrain 内容现在走 glTF 路径。
 
 9. **`test_sse_pipeline.cpp` — cache manager tests**: 2 个测试添加 `makeGltfRenderReady`。
 
-## 剩余 31 个测试失败
+## 已修复（本会话，13 个）
+
+| 测试 | 修复方式 |
+|---|---|
+| TileUpsampleSourcePreparer ×3 | `TileUpsampleSourcePreparer.h`: 将 `hasTerrainMesh() && isSurfaceMeshReady()` 替换为 `hasGltfContent()` |
+| Presentation trace ×3 | `RenderCommandKind::SurfaceTile` → `GltfPrimitive`，更新断言适配 glTF 路径 |
+| Clipped fallback ×2 | `ensureTileMesh` 添加 DummyBuffer + `rasterOverlayDetails`，`GltfDrawCommandBuilder` 设置 `surfaceTransitionOpacity` |
+| RenderContentRasterOverlayStateUpdater ×2 | 修复 byte accounting 用相对增量检查 |
+| TileRenderPlanFrameRefresher ×3 | `ensureTileMesh` 的 DummyBuffer 和 `rasterOverlayDetails` 修复后自动通过 |
+
+## 剩余 18 个测试失败
 
 ### 分类
-
-**A. Clipped fallback 命令生成 (2)**
-```
-FAIL  Tileset: clipped fallback emits one ancestor patch command for one missing child
-FAIL  Tileset: clipped fallback emits separate commands for separate child patches
-```
-原因: `buildRenderCommands` 没有生成命令。可能因为 glTF path 的 `buildTileDrawCommand` 流程不同，或者 `ensureTileMesh` 创建的 minimal model 没有被正确处理。
 
 **B. Scene tests (6)**
 ```
@@ -76,7 +79,7 @@ FAIL  Scene: imagery-only ancestor fallback draws selected surface
 - `terrainSurfaceCommandsSubmitted` 只统计 `SurfaceTile` 命令，glTF 用 `GltfPrimitive`
 - 部分测试用 `ensureTile` 但不调用 `ensureTileMesh`，tile 没有 content
 
-**C. Cache/unload tests (5)**
+**C. Cache/unload tests (6)**
 ```
 FAIL  TileContentCacheManager: smoothing preserves state
 FAIL  TileContentCacheManager: external subtree unload retries after claimed upload work completes
@@ -93,28 +96,6 @@ FAIL  TileContentUnloadCoordinator: protected unload setup attaches raster mappi
 FAIL  TileContentUnloadCoordinator: protected upsample source detaches raster mappings before keeping CPU content
 ```
 
-**E. RenderContentRasterOverlayStateUpdater (2)**
-```
-FAIL  RenderContentRasterOverlayStateUpdater: visible mapping contributes retained bytes
-FAIL  RenderContentRasterOverlayStateUpdater: invisible overlay releases raster tile references
-```
-
-**F. TileRenderPlanFrameRefresher (3)**
-```
-FAIL  TileRenderPlanFrameRefresher: attached mapped raster is no longer counted as loading
-FAIL  TileRenderPlanFrameRefresher: frame progress returns to complete after mapped raster attaches
-FAIL  TileRenderPlanFrameRefresher: progress fixture attaches mapped raster during draw command preparation
-```
-原因: glTF 命令构建器可能不触发 raster attachment 与旧 SurfaceTile 路径相同的方式。
-
-**G. Presentation trace (3)**
-```
-FAIL  Presentation trace: draw command consumes the resolved render entry without reselecting LOD
-FAIL  Presentation trace: fading render entry emits a translucent surface command
-FAIL  Presentation trace: ADD selected entries emit parent and child commands
-```
-原因: 检查 `RenderCommandKind::SurfaceTile` 需要改为 `GltfPrimitive`。
-
 **H. Selection/fog (3)**
 ```
 FAIL  Tileset: descendant-limit marks visited descendants as kicked
@@ -122,42 +103,36 @@ FAIL  Tileset: dense fog still visits the virtual terrain root before culling da
 FAIL  Tileset: multiple selector views refine using largest SSE like cesium-native
 ```
 
-**I. TileUpsampleSourcePreparer (3)**
-```
-FAIL  TileUpsampleSourcePreparer: permanent failed ancestor is not retried when an older source is ready
-FAIL  TileUpsampleSourcePreparer: content-loaded ancestor is finalized before upsample request proceeds
-FAIL  TileUpsampleSourcePreparer: unloading ancestor is usable only for existing protected work and not for new upsample requests
-```
-原因: `prepareSourceTile` 使用 `useHeightmapSurfacePath = true`，但 glTF tile 没有 `hasTerrainMesh() && isSurfaceMeshReady()`。
-
 ## 修复策略
 
-### 优先级 1: TileUpsampleSourcePreparer (3 个)
+### 优先级 1: Scene tests (6 个)
 
-在 `test_sse_pipeline.cpp` 中搜索 `TileUpsampleSourcePreparer` 测试函数，找到 `prepareSourceTile` 调用。将 `useHeightmapSurfacePath` 参数从 `true` 改为 `false`，或者将 `allowGltfTerrainSource` 从 `false` 改为 `true`。
-
-查看 `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/TileUpsampleSourcePreparer.h` 的 `findSourceTile` 函数理解参数含义。
-
-### 优先级 2: Presentation trace (3 个)
-
-搜索 `RenderCommandKind::SurfaceTile` 在 presentation trace 测试中的使用，改为 `RenderCommandKind::GltfPrimitive`，并检查 `surfaceClipEnabled`、`surfaceTransitionOpacity` 等属性是否在 GltfPrimitive 命令上可用（它们在 `RenderCommand` 结构体上，与 kind 无关）。
-
-### 优先级 3: Scene tests (6 个)
-
-- `sampleHeight` 问题: 测试中调用 `ensureTile` 后需要调用 `ensureTileMesh` 来设置 glTF content
+- `sampleHeight` 问题: 测试中调用 `ensureTile` 后需要调用 `ensureTileMesh` 来设置 glTF content，或者设置 `isTerrainRenderContent` + glTF model
 - `terrainSurfaceCommandsSubmitted` 问题: 检查是否有 `terrainGltfPrimitiveCommands` 或 `terrainRenderContentCommands` 计数器可用
 - 查看 `Diagnostics.h` 中有哪些计数器: `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/scene/Diagnostics.h`
 
-### 优先级 4: Clipped fallback 命令 (2 个)
-
-调试 `buildRenderCommands` 为什么没有生成命令。可能需要在 `GltfDrawCommandBuilder::build` 中检查条件。查看 `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/GltfDrawCommandBuilder.cpp`。
-
-### 优先级 5: Cache/unload + raster overlay + frame refresher (12 个)
+### 优先级 2: Cache/unload + TileContentUnloadCoordinator (8 个)
 
 这些需要逐个调查。常见模式:
 - 创建 tile 时需要调用 `makeGltfRenderReady` 而不是只设置 `loadState = Done`
 - 检查 `estimateTileBytes` 对 glTF tile 的计算是否正确
 - 检查 raster overlay mapping attachment 在 glTF 路径下的行为
+
+### 优先级 3: Selection/fog (3 个)
+
+- `descendant-limit`: 检查 kicked 状态设置是否与 glTF 路径兼容
+- `dense fog`: 检查 virtual terrain root 访问逻辑
+- `multiple selector views`: 检查 SSE 比较逻辑
+
+## 关键修复模式
+
+本会话发现的关键模式:
+1. **`ensureTileMesh` 需要 DummyBuffer**: `GltfDrawCommandBuilder::build` 跳过没有 vertex/index buffer 的 primitive
+2. **`ensureTileMesh` 需要 `rasterOverlayDetails`**: `RenderContentRasterOverlayStateUpdater::update` 检测 missing projections 时会 unload content
+3. **`hasTerrainMesh()/isSurfaceMeshReady()` 已删除**: 所有引用需要改为 `hasGltfContent()`
+4. **`RenderCommandKind::SurfaceTile` 已删除**: 所有引用需要改为 `GltfPrimitive`
+5. **`surfaceTransitionOpacity`**: `GltfDrawCommandBuilder` 需要设置此字段
+6. **Byte accounting**: glTF resource bytes 需要纳入 `estimateRetainedBytes`
 
 ## 关键约束
 
