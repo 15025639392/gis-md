@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/GltfModel.h"
+#include "earth_engine/core/math/Mat4.h"
+#include "earth_engine/core/math/Vec3.h"
+#include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileLodTransitionController.h"
 #include "earth_engine/tiling/TileLodTransitionFrameUpdater.h"
@@ -14,26 +18,46 @@
 
 using namespace earth_engine;
 
+namespace {
+
+class DummyBuffer final : public Buffer {
+public:
+    explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
+    size_t size() const override { return byteSize_; }
+private:
+    size_t byteSize_ = 0;
+};
+
+} // namespace
+
 namespace earth_engine {
 struct TilesetTestAccess {
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
     }
 
-    static std::string terrainCacheKey(const TileKey& key) {
-        return TileCacheKey::forTile(key);
-    }
-
-    static void putTerrainCache(
-        Tileset& tileset,
-        const TileKey& key,
-        std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.legacyHeightmapTerrainCache()[terrainCacheKey(key)] =
-            std::move(heightmap);
-    }
-
-    static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
-        tileset.meshPreparation_.prepareRenderableTile(tile);
+    static void ensureTileMesh(Tileset& /*tileset*/, TilesetTile& tile) {
+        auto model = std::make_unique<GltfModel>();
+        GltfPrimitive primitive;
+        primitive.vertices.resize(4);
+        primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+        primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+        primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+        primitive.vertices[3].positionEcef = Vec3(1.0, 1.0, 0.0);
+        primitive.indices = {0, 1, 2, 1, 3, 2};
+        primitive.runtime.nodeIndex = 0;
+        model->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+        model->primitives.push_back(std::move(primitive));
+        tile.content.renderContent.prepareGltfContent(
+            std::move(model), Mat4::identity());
+        tile.content.renderContent.setTerrainRenderContent(true);
+        GltfPrimitiveRenderResources res;
+        res.vertexBuffer = std::make_unique<DummyBuffer>(64);
+        res.indexBuffer = std::make_unique<DummyBuffer>(12);
+        res.indexCount = 6;
+        res.vertexCount = 4;
+        tile.content.renderContent.addGltfPrimitiveResource(std::move(res));
+        tile.markRenderContentDone();
     }
 
     static void beginTilePlan(Tileset& tileset) {
@@ -203,10 +227,6 @@ TEST(TileLodTransitionsTest, UsesNativeDeltaState) {
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
 
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
 
     TilesetTestAccess::beginTilePlan(tileset);
@@ -257,15 +277,7 @@ TEST(TileLodTransitionsTest, AdditiveRefinedTileFadesOutAfterLeavingSelection) {
     ASSERT_NE(root, nullptr);
     ASSERT_NE(child, nullptr);
 
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        childKey,
-        makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *child);
 
     child->refine = TileRefine::Add;

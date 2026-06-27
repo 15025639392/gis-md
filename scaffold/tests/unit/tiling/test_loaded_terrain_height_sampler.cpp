@@ -25,15 +25,6 @@ std::string cacheKeyFor(const TileKey& key) {
            std::to_string(key.y);
 }
 
-std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float height) {
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->tileSize = 2;
-    heightmap->heights.assign(4, height);
-    heightmap->minHeight = height;
-    heightmap->maxHeight = height;
-    return heightmap;
-}
-
 std::unique_ptr<GltfModel> makeTerrainGltfTriangle(
     const Rectangle& bounds,
     double southwestHeight,
@@ -165,13 +156,6 @@ std::unique_ptr<GltfModel> makeTransformedTerrainGltfTriangle(
     return model;
 }
 
-void putTile(
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
-    const TileKey& key,
-    const Rectangle& bounds) {
-    tiles.emplace(cacheKeyFor(key), std::make_unique<TilesetTile>(key, bounds));
-}
-
 void putLoadedGltfTerrainTile(
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     const TileKey& key,
@@ -192,17 +176,18 @@ void putLoadedGltfTerrainTile(
 TEST(LoadedTerrainHeightSamplerTest, UsesBestLoadedTerrainTile) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
-    putTile(tiles, rootKey, scheme->tileToRectangle(rootKey));
-    putTile(tiles, childKey, scheme->tileToRectangle(childKey));
-    terrainCache.emplace(cacheKeyFor(rootKey), makeFlatHeightmap(10.0f));
-    terrainCache.emplace(cacheKeyFor(childKey), makeFlatHeightmap(42.0f));
-
+    const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
     const Rectangle childBounds = scheme->tileToRectangle(childKey);
+    putLoadedGltfTerrainTile(
+        tiles, rootKey, rootBounds,
+        makeTerrainGltfTriangle(rootBounds, 10.0, 10.0, 10.0));
+    putLoadedGltfTerrainTile(
+        tiles, childKey, childBounds,
+        makeTerrainGltfTriangle(childBounds, 42.0, 42.0, 42.0));
+
     const double longitude = (childBounds.west() + childBounds.east()) * 0.5;
     const double latitude = (childBounds.south() + childBounds.north()) * 0.5;
 
@@ -210,26 +195,26 @@ TEST(LoadedTerrainHeightSamplerTest, UsesBestLoadedTerrainTile) {
         42.0f,
         LoadedTerrainHeightSampler::sampleHeight(
             tiles,
-            terrainCache,
             longitude,
-            latitude,
-            true),
-        1e-6f);
+            latitude),
+        1e-4f);
 }
 
 TEST(LoadedTerrainHeightSamplerTest, FallsBackToLoadedAncestorTerrain) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
-    putTile(tiles, rootKey, scheme->tileToRectangle(rootKey));
-    putTile(tiles, childKey, scheme->tileToRectangle(childKey));
-    terrainCache.emplace(cacheKeyFor(rootKey), makeFlatHeightmap(123.0f));
-
+    const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
     const Rectangle childBounds = scheme->tileToRectangle(childKey);
+    // Only root has glTF content; child is empty.
+    putLoadedGltfTerrainTile(
+        tiles, rootKey, rootBounds,
+        makeTerrainGltfTriangle(rootBounds, 123.0, 123.0, 123.0));
+    tiles.emplace(cacheKeyFor(childKey),
+                  std::make_unique<TilesetTile>(childKey, childBounds));
+
     const double longitude = (childBounds.west() + childBounds.east()) * 0.5;
     const double latitude = (childBounds.south() + childBounds.north()) * 0.5;
 
@@ -237,18 +222,14 @@ TEST(LoadedTerrainHeightSamplerTest, FallsBackToLoadedAncestorTerrain) {
         123.0f,
         LoadedTerrainHeightSampler::sampleHeight(
             tiles,
-            terrainCache,
             longitude,
-            latitude,
-            true),
-        1e-6f);
+            latitude),
+        1e-4f);
 }
 
 TEST(LoadedTerrainHeightSamplerTest, SamplesLoadedGltfTerrainTile) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const Rectangle bounds = scheme->tileToRectangle(rootKey);
@@ -265,70 +246,8 @@ TEST(LoadedTerrainHeightSamplerTest, SamplesLoadedGltfTerrainTile) {
         17.5f,
         LoadedTerrainHeightSampler::sampleHeight(
             tiles,
-            terrainCache,
             longitude,
-            latitude,
-            false),
-        1e-4f);
-}
-
-TEST(LoadedTerrainHeightSamplerTest,
-     ContentOwnedTerrainModeIgnoresLegacyHeightmapCache) {
-    auto scheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    putLoadedGltfTerrainTile(
-        tiles,
-        rootKey,
-        bounds,
-        makeTerrainGltfTriangle(bounds, 10.0, 20.0, 30.0));
-    terrainCache.emplace(cacheKeyFor(rootKey), makeFlatHeightmap(321.0f));
-
-    const double longitude = bounds.west() + bounds.width() * 0.25;
-    const double latitude = bounds.south() + bounds.height() * 0.25;
-
-    EXPECT_NEAR(
-        17.5f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            terrainCache,
-            longitude,
-            latitude,
-            false),
-        1e-4f);
-}
-
-TEST(LoadedTerrainHeightSamplerTest,
-     GltfTerrainContentTakesPrecedenceOverLegacyHeightmapCache) {
-    auto scheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    putLoadedGltfTerrainTile(
-        tiles,
-        rootKey,
-        bounds,
-        makeTerrainGltfTriangle(bounds, 10.0, 20.0, 30.0));
-    terrainCache.emplace(cacheKeyFor(rootKey), makeFlatHeightmap(321.0f));
-
-    const double longitude = bounds.west() + bounds.width() * 0.25;
-    const double latitude = bounds.south() + bounds.height() * 0.25;
-
-    EXPECT_NEAR(
-        17.5f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            terrainCache,
-            longitude,
-            latitude,
-            true),
+            latitude),
         1e-4f);
 }
 
@@ -336,8 +255,6 @@ TEST(LoadedTerrainHeightSamplerTest,
      SamplesHighestGltfTerrainSurfaceWithinTileLikeCesiumNative) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const Rectangle bounds = scheme->tileToRectangle(rootKey);
@@ -354,10 +271,8 @@ TEST(LoadedTerrainHeightSamplerTest,
         83.0f,
         LoadedTerrainHeightSampler::sampleHeight(
             tiles,
-            terrainCache,
             longitude,
-            latitude,
-            false),
+            latitude),
         1e-4f);
 }
 
@@ -365,8 +280,6 @@ TEST(LoadedTerrainHeightSamplerTest,
      SamplesHighestGltfTerrainSurfaceAcrossEqualDetailTilesLikeCesiumNative) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey lowerKey{"Geographic-TMS", 1, 0, 0};
     const TileKey upperKey{"Geographic-TMS", 1, 1, 0};
@@ -389,10 +302,8 @@ TEST(LoadedTerrainHeightSamplerTest,
         83.0f,
         LoadedTerrainHeightSampler::sampleHeight(
             tiles,
-            terrainCache,
             longitude,
-            latitude,
-            false),
+            latitude),
         1e-4f);
 }
 
@@ -400,8 +311,6 @@ TEST(LoadedTerrainHeightSamplerTest,
      SamplesLoadedGltfTerrainTriangleStripLikeCesiumNative) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const Rectangle bounds = scheme->tileToRectangle(rootKey);
@@ -422,10 +331,8 @@ TEST(LoadedTerrainHeightSamplerTest,
         42.0f,
         LoadedTerrainHeightSampler::sampleHeight(
             tiles,
-            terrainCache,
             longitude,
-            latitude,
-            false),
+            latitude),
         1e-4f);
 }
 
@@ -433,8 +340,6 @@ TEST(LoadedTerrainHeightSamplerTest,
      SamplesLoadedGltfTerrainTriangleFanLikeCesiumNative) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const Rectangle bounds = scheme->tileToRectangle(rootKey);
@@ -455,10 +360,8 @@ TEST(LoadedTerrainHeightSamplerTest,
         24.0f,
         LoadedTerrainHeightSampler::sampleHeight(
             tiles,
-            terrainCache,
             longitude,
-            latitude,
-            false),
+            latitude),
         1e-4f);
 }
 
@@ -468,8 +371,6 @@ TEST(LoadedTerrainHeightSamplerTest,
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>
         transformedTiles;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> bakedTiles;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const Rectangle bounds = scheme->tileToRectangle(rootKey);
@@ -495,16 +396,12 @@ TEST(LoadedTerrainHeightSamplerTest,
     const double latitude = bounds.south() + bounds.height() * 0.25;
     const float transformedHeight = LoadedTerrainHeightSampler::sampleHeight(
         transformedTiles,
-        terrainCache,
         longitude,
-        latitude,
-        false);
+        latitude);
     const float bakedHeight = LoadedTerrainHeightSampler::sampleHeight(
         bakedTiles,
-        terrainCache,
         longitude,
-        latitude,
-        false);
+        latitude);
 
     EXPECT_GT(transformedHeight, 17.5f);
     EXPECT_NEAR(transformedHeight, bakedHeight, 1e-4f);

@@ -278,7 +278,7 @@ TEST(QuantizedMeshContentLoaderVertexDecodeTest,
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
     ASSERT_GE(primitive.vertexTexCoords[0].size(), 2u);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
 }
 
 TEST(QuantizedMeshContentLoaderVertexDecodeTest,

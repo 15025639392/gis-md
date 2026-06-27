@@ -47,6 +47,11 @@ public:
         UnloadTileContentFn&& unloadTileContent,
         CreateRasterOverlayUpsampledChildrenFn&&
             createRasterOverlayUpsampledChildren) {
+        if (!tile.content.renderContent.hasGltfContent() &&
+            context.allowSynchronousMeshPrep) {
+            ensureTileMesh(tile);
+        }
+
         if (tile.content.renderContent.hasGltfContent()) {
             const std::vector<size_t> overlayOrder =
                 TileSelectionRasterOverlayPreparer::processingOrder(

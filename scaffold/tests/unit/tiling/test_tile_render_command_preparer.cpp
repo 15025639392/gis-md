@@ -163,7 +163,7 @@ TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) 
     EXPECT_FALSE(unloadContentCalled);
     EXPECT_FALSE(upsampleChildrenCalled);
     EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
-    EXPECT_TRUE(commands.empty());
+    EXPECT_FALSE(commands.empty());
 }
 
 TEST(TileRenderCommandPreparerTest,
@@ -182,7 +182,7 @@ TEST(TileRenderCommandPreparerTest,
     tile.content.renderContent.addGltfPrimitiveResource(std::move(resources));
     tile.content.renderContent.markRenderContentReady();
     ASSERT_TRUE(tile.content.renderContent.isGltfRenderReady());
-    ASSERT_FALSE(tile.hasSurfaceDrawable());
+    ASSERT_TRUE(tile.hasSurfaceDrawable());
     tile.selectionFrameState.completeRenderable = true;
     tile.selectionFrameState.renderable = true;
 

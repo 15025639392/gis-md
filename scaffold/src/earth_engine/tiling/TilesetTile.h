@@ -161,8 +161,17 @@ struct TilesetTile {
     }
 
     bool waitsForContentTerrainRasterDetails() const {
-        return hasCommittedRenderContent() &&
-               content.renderContent.isTerrainRenderContent() &&
+        if (content.contentKind != TileContentKind::Render ||
+            !content.renderContent.isTerrainRenderContent()) {
+            return false;
+        }
+        // ContentLoading tiles always wait — the glTF residue may have
+        // stale overlay details from a previous load cycle.
+        if (content.loadState == TileLoadState::ContentLoading) {
+            return true;
+        }
+        return (content.loadState == TileLoadState::ContentLoaded ||
+                content.loadState == TileLoadState::Done) &&
                !content.renderContent.hasRasterOverlayDetailsContent();
     }
 

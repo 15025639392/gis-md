@@ -9,21 +9,21 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     Texture* secondTexture = reinterpret_cast<Texture*>(0x2);
 
     RenderCommand firstSurface;
-    firstSurface.kind = RenderCommandKind::SurfaceTile;
+    firstSurface.kind = RenderCommandKind::GltfPrimitive;
     firstSurface.terrainRenderContent = true;
     firstSurface.textures = {sharedTexture};
     firstSurface.surfaceGeometryZoom = 3;
     firstSurface.surfaceTextureZoom = 4;
 
     RenderCommand secondSurface;
-    secondSurface.kind = RenderCommandKind::SurfaceTile;
+    secondSurface.kind = RenderCommandKind::GltfPrimitive;
     secondSurface.terrainRenderContent = true;
     secondSurface.textures = {sharedTexture, secondTexture};
     secondSurface.surfaceGeometryZoom = 7;
     secondSurface.surfaceTextureZoom = 6;
 
     RenderCommand missingImagerySurface;
-    missingImagerySurface.kind = RenderCommandKind::SurfaceTile;
+    missingImagerySurface.kind = RenderCommandKind::GltfPrimitive;
     missingImagerySurface.terrainRenderContent = true;
 
     RenderCommand terrainGltfPrimitive;
@@ -44,15 +44,15 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
         SceneRenderCommandDiagnosticsSnapshot::fromCommands(commands);
 
     EXPECT_EQ(snapshot.drawCalls, 5);
-    EXPECT_EQ(snapshot.renderSurfaceTiles, 3);
-    EXPECT_EQ(snapshot.surfaceMeshCount, 3);
-    EXPECT_EQ(snapshot.terrainSurfaceTileCommands, 3);
-    EXPECT_EQ(snapshot.terrainGltfPrimitiveCommands, 1);
+    EXPECT_EQ(snapshot.renderSurfaceTiles, 4);
+    EXPECT_EQ(snapshot.surfaceMeshCount, 4);
+    EXPECT_EQ(snapshot.terrainSurfaceTileCommands, 4);
+    EXPECT_EQ(snapshot.terrainGltfPrimitiveCommands, 4);
     EXPECT_EQ(snapshot.terrainRenderContentCommands, 4);
-    EXPECT_EQ(snapshot.renderGltfPrimitives, 2);
+    EXPECT_EQ(snapshot.renderGltfPrimitives, 5);
     EXPECT_EQ(snapshot.gpuTextureCount, 2);
     EXPECT_EQ(snapshot.imageryExactAttachments, 2);
-    EXPECT_EQ(snapshot.imageryMissingTiles, 1);
+    EXPECT_EQ(snapshot.imageryMissingTiles, 2);
     EXPECT_EQ(snapshot.imageryMinTargetZoom, 3);
     EXPECT_EQ(snapshot.imageryMaxTargetZoom, 7);
     EXPECT_EQ(snapshot.imageryMinTextureZoom, 4);
@@ -95,13 +95,13 @@ TEST(
     Texture* texture = reinterpret_cast<Texture*>(0x1);
 
     RenderCommand invalidZoomSurface;
-    invalidZoomSurface.kind = RenderCommandKind::SurfaceTile;
+    invalidZoomSurface.kind = RenderCommandKind::GltfPrimitive;
     invalidZoomSurface.textures = {nullptr, texture, texture};
     invalidZoomSurface.surfaceGeometryZoom = -1;
     invalidZoomSurface.surfaceTextureZoom = -1;
 
     RenderCommand missingImagerySurface;
-    missingImagerySurface.kind = RenderCommandKind::SurfaceTile;
+    missingImagerySurface.kind = RenderCommandKind::GltfPrimitive;
     missingImagerySurface.surfaceGeometryZoom = 5;
     missingImagerySurface.surfaceTextureZoom = 6;
 
@@ -110,7 +110,7 @@ TEST(
             {invalidZoomSurface, missingImagerySurface});
 
     EXPECT_EQ(snapshot.drawCalls, 2);
-    EXPECT_EQ(snapshot.renderSurfaceTiles, 2);
+    EXPECT_EQ(snapshot.renderSurfaceTiles, 0);
     EXPECT_EQ(snapshot.imageryExactAttachments, 1);
     EXPECT_EQ(snapshot.imageryMissingTiles, 1);
     EXPECT_EQ(snapshot.gpuTextureCount, 1);
@@ -124,22 +124,25 @@ TEST(
     SceneSurfaceCommandGenerationDiagnosticsSnapshotTest,
     TracksSurfaceGenerations) {
     RenderCommand currentSurface;
-    currentSurface.kind = RenderCommandKind::SurfaceTile;
+    currentSurface.kind = RenderCommandKind::GltfPrimitive;
+    currentSurface.terrainRenderContent = true;
     currentSurface.frameId = 12;
     currentSurface.generation = 5;
 
     RenderCommand staleSurface;
-    staleSurface.kind = RenderCommandKind::SurfaceTile;
+    staleSurface.kind = RenderCommandKind::GltfPrimitive;
+    staleSurface.terrainRenderContent = true;
     staleSurface.frameId = 11;
     staleSurface.generation = 9;
 
     RenderCommand missingGenerationSurface;
-    missingGenerationSurface.kind = RenderCommandKind::SurfaceTile;
+    missingGenerationSurface.kind = RenderCommandKind::GltfPrimitive;
+    missingGenerationSurface.terrainRenderContent = true;
     missingGenerationSurface.frameId = 12;
     missingGenerationSurface.generation = 0;
 
     RenderCommand gltfPrimitive;
-    gltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
+    gltfPrimitive.kind = RenderCommandKind::GltfPrimitiveInstanced;
     gltfPrimitive.frameId = 10;
     gltfPrimitive.generation = 2;
 

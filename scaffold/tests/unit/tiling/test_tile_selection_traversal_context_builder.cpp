@@ -32,8 +32,7 @@ struct TraversalContextFixture {
         TileContentAccess::forNoTerrain(
             registry,
             *scheme,
-            nullptr,
-            0);
+            nullptr);
     TileSelectionTraversalContextBinding binding{
         tilePlan,
         loadQueue,
