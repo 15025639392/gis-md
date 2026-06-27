@@ -132,7 +132,8 @@ SceneSurfaceCommandGenerationDiagnosticsSnapshot::fromCommands(
     bool sawGeneration = false;
 
     for (const RenderCommand& command : commands) {
-        if (command.kind != RenderCommandKind::GltfPrimitive) {
+        if (command.kind != RenderCommandKind::GltfPrimitive ||
+            !command.terrainRenderContent) {
             continue;
         }
         if (expectedFrameId != 0 && command.frameId != expectedFrameId) {

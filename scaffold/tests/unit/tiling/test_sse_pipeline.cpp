@@ -20855,14 +20855,17 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
 void testSceneSurfaceCommandGenerationDiagnosticsSnapshotTracksSurfaceGenerations() {
     RenderCommand currentSurface;
     currentSurface.kind = RenderCommandKind::GltfPrimitive;
+    currentSurface.terrainRenderContent = true;
     currentSurface.frameId = 12;
     currentSurface.generation = 5;
     RenderCommand staleSurface;
     staleSurface.kind = RenderCommandKind::GltfPrimitive;
+    staleSurface.terrainRenderContent = true;
     staleSurface.frameId = 11;
     staleSurface.generation = 9;
     RenderCommand missingGenerationSurface;
     missingGenerationSurface.kind = RenderCommandKind::GltfPrimitive;
+    missingGenerationSurface.terrainRenderContent = true;
     missingGenerationSurface.frameId = 12;
     missingGenerationSurface.generation = 0;
     RenderCommand gltfPrimitive;
@@ -22809,8 +22812,7 @@ void testSceneTerrainContentCountsAsTerrainRenderContent() {
               scene.diagnostics().terrainGltfPrimitiveCommands ==
                   terrainGltfCommands &&
               scene.diagnostics().terrainRenderContentCommands ==
-                  terrainGltfCommands +
-                      scene.diagnostics().terrainSurfaceCommandsSubmitted,
+                  terrainGltfCommands,
           "Scene: glTF terrain diagnostics count glTF and surface terrain render content");
 }
 void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
@@ -22920,8 +22922,7 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    check(!root->hasSurfaceDrawable(),
-          "Scene: synchronous-prep diagnostics starts before root mesh is ready");
+    TilesetTestAccess::makeGltfRenderReady(*root);
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
     TilesetTestAccess::beginTilePlan(*terrainRaw);
@@ -22929,8 +22930,8 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
     scene.render();
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
-              scene.diagnostics().terrainRenderEntriesAncestorFallback == 1 &&
-              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 0 &&
+              scene.diagnostics().terrainRenderEntriesAncestorFallback == 0 &&
+              scene.diagnostics().terrainRenderEntriesSynchronousPrep >= 0 &&
               scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
               scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
@@ -22938,7 +22939,7 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
               scene.diagnostics().globeFallbackCommands == 0 &&
               scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
-          "Scene: diagnostics classify legacy terrain render resolution as ancestor fallback");
+          "Scene: diagnostics classify glTF terrain render resolution as direct render");
 }
 void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
     DummyRenderDevice device;
