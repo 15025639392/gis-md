@@ -1,4 +1,4 @@
-# 继续提示词 — 修复剩余 18 个测试失败
+# 继续提示词 — 修复剩余 14 个测试失败
 
 ## 背景
 
@@ -60,26 +60,18 @@ Surface mesh 已完全移除，所有 terrain 内容现在走 glTF 路径。
 | RenderContentRasterOverlayStateUpdater ×2 | 修复 byte accounting 用相对增量检查 |
 | TileRenderPlanFrameRefresher ×3 | `ensureTileMesh` 的 DummyBuffer 和 `rasterOverlayDetails` 修复后自动通过 |
 
-## 剩余 18 个测试失败
+## 剩余 14 个测试失败
 
 ### 分类
 
-**B. Scene tests (6)**
+**Scene diagnostics (3)**
 ```
-FAIL  Scene: primary terrain tileset remains the height sampling source
-FAIL  Scene: adding glTF tileset does not replace terrain sampling
-FAIL  Scene: no-base-imagery terrain still submits placeholder surface render entries
-FAIL  Scene: terrain sampling is still owned by primary tileset after render
-FAIL  Scene: diagnostics expose nonzero terrain render-entry fallback reasons
 FAIL  Scene: diagnostics classify legacy terrain render resolution as ancestor fallback
-FAIL  Scene: imagery-only ancestor fallback draws selected surface
+FAIL  Scene: glTF terrain diagnostics count glTF and surface terrain render content
+FAIL  SceneSurfaceCommandGenerationDiagnosticsSnapshot: tracks stale, missing, and generation range for surface commands
 ```
-原因:
-- `sampleHeight` 需要 tile 有 glTF content + height data
-- `terrainSurfaceCommandsSubmitted` 只统计 `SurfaceTile` 命令，glTF 用 `GltfPrimitive`
-- 部分测试用 `ensureTile` 但不调用 `ensureTileMesh`，tile 没有 content
 
-**C. Cache/unload tests (6)**
+**Cache/unload tests (6)**
 ```
 FAIL  TileContentCacheManager: smoothing preserves state
 FAIL  TileContentCacheManager: external subtree unload retries after claimed upload work completes
@@ -88,15 +80,14 @@ FAIL  Tileset: cache unload removes only the render parent's content
 FAIL  Tileset: external-content cache unload clears wrapper children
 FAIL  Tileset: external-content cache unload removes descendants from flat map
 ```
-原因: byte accounting 或 unload 逻辑在 glTF 路径下行为不同。
 
-**D. TileContentUnloadCoordinator (2)**
+**TileContentUnloadCoordinator (2)**
 ```
 FAIL  TileContentUnloadCoordinator: protected unload setup attaches raster mapping
 FAIL  TileContentUnloadCoordinator: protected upsample source detaches raster mappings before keeping CPU content
 ```
 
-**H. Selection/fog (3)**
+**Selection/fog (3)**
 ```
 FAIL  Tileset: descendant-limit marks visited descendants as kicked
 FAIL  Tileset: dense fog still visits the virtual terrain root before culling data tiles
