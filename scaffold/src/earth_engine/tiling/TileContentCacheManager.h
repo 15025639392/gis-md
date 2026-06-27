@@ -63,6 +63,34 @@ public:
         TileContentLifecycleManager& lifecycle,
         IPrepareRendererResources* pPrepRenderer,
         ClearChildrenFn&& clearChildren) {
+        // When resource smoothing is active and the cache is still over
+        // budget, skip unloading tiles that are not already in the
+        // Unloading state. This avoids a large single-frame spike in
+        // freed GPU/CPU bytes. Tiles already mid-unload continue to
+        // make progress.
+        if (resourceSmoothingActive &&
+            totalBytesUsed_ > maximumCachedBytes) {
+            size_t candidates = unloadQueue_.size();
+            while (candidates > 0 && !unloadQueue_.empty()) {
+                --candidates;
+                const std::string key = unloadQueue_.front();
+                auto it = tiles.find(key);
+                if (it == tiles.end()) {
+                    unloadQueue_.popFront();
+                    continue;
+                }
+                TilesetTile& tile = *it->second;
+                if (tile.content.loadState == TileLoadState::Unloading) {
+                    // Already mid-unload; let it continue through the
+                    // normal coordinator path below.
+                    break;
+                }
+                // Defer: remove from queue without unloading.
+                unloadQueue_.popFront();
+            }
+            cacheBytesDirty_ = true;
+            return;
+        }
         const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
             unloadQueue_,
             tiles,

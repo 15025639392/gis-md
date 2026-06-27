@@ -60,11 +60,28 @@ public:
                 tiles,
                 TileLoadState::Unloading);
         };
+        const auto hasQueuedTileNeedingUnload = [&]() {
+            for (const std::string& k : unloadQueue.keys()) {
+                auto it = tiles.find(k);
+                if (it != tiles.end() && it->second) {
+                    const TileLoadState s =
+                        it->second->content.loadState;
+                    if (s == TileLoadState::Done ||
+                        s == TileLoadState::ContentLoaded ||
+                        s == TileLoadState::Failed ||
+                        s == TileLoadState::Unloading) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
 
         std::vector<TilesetTile*> tilesNeedingChildrenCleared;
         size_t remainingCandidates = unloadQueue.size();
         while ((totalBytesUsed > maximumCachedBytes ||
-                hasQueuedUnloadingTile()) &&
+                hasQueuedUnloadingTile() ||
+                hasQueuedTileNeedingUnload()) &&
                !unloadQueue.empty() &&
                remainingCandidates > 0) {
             --remainingCandidates;
