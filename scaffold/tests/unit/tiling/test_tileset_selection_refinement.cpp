@@ -1120,7 +1120,6 @@ TEST(
     root->content.loadState = TileLoadState::ContentLoaded;
     root->content.contentKind = TileContentKind::Render;
     root->content.renderContent.setMeshReady(false);
-    root->content.renderContent.setSurfaceMesh(nullptr);
     root->refine = TileRefine::Replace;
     root->geometricError = 1.0;
     root->selectionFrameState.selectionState = TileSelectionState::Refined;

@@ -1,8 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash",
-      "Bash(*)\rEdit\rWrite\rRead"
+      "Bash(*)",
+      "Edit",
+      "Write",
+      "Read"
     ]
   }
 }

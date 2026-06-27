@@ -176,7 +176,7 @@ void expectRectangleNear(const Rectangle& expected,
 } // namespace
 
 TEST(RasterOverlayDetailsTest,
-     GltfTerrainRejectsLaterLegacySurfaceResidue) {
+     PreparingGltfTerrainReplacesPreviousGltfContent) {
     TileRenderContentState renderContent;
     auto model = std::make_unique<GltfModel>();
     RasterOverlayDetails gltfDetails;
@@ -186,15 +186,18 @@ TEST(RasterOverlayDetailsTest,
     renderContent.prepareGltfContent(std::move(model), Mat4::identity());
     renderContent.setTerrainRenderContent(true);
 
-    auto staleSurface = std::make_unique<SurfaceTileMesh>();
+    const Rectangle staleRectangle(2.0, 2.0, 3.0, 3.0);
+    auto staleModel = makeTerrainQuadModel(staleRectangle);
     RasterOverlayDetails staleDetails;
     staleDetails.setGeographicRectangle(
-        Rectangle(2.0, 2.0, 3.0, 3.0),
+        staleRectangle,
         10.0,
         20.0);
-    staleSurface->rasterOverlayDetails = std::move(staleDetails);
-
-    renderContent.setSurfaceMesh(std::move(staleSurface));
+    staleModel->rasterOverlayDetails = std::move(staleDetails);
+    renderContent.prepareGltfContent(std::move(staleModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+    renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
+    renderContent.markRenderContentReady();
     renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
     renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
 
@@ -208,7 +211,7 @@ TEST(RasterOverlayDetailsTest,
               renderContent.rasterOverlayDetails()
                   .rasterOverlayRectangles.size());
     expectRectangleNear(
-        gltfRectangle,
+        staleRectangle,
         renderContent.rasterOverlayDetails().rasterOverlayRectangles.front());
 }
 
@@ -282,15 +285,18 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsTest,
-     PreparingGltfTerrainClearsLegacySurfaceWaterMaskTexture) {
+     PreparingGltfTerrainClearsPreviousWaterMaskTexture) {
     TileRenderContentState renderContent;
-    renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    renderContent.setSurfaceWaterMaskTexture(
-        std::make_unique<TestTexture>(8, 4));
-    const int64_t retainedWithLegacyWater =
+    auto legacyModel = makeTerrainQuadModel(Rectangle(0.0, 0.0, 0.5, 0.5));
+    renderContent.prepareGltfContent(std::move(legacyModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+    renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
+    renderContent.markRenderContentReady();
+
+    const int64_t retainedWithLegacy =
         renderContent.estimateRetainedBytes();
-    ASSERT_NE(nullptr, renderContent.surfaceWaterMaskTexture());
-    ASSERT_GE(retainedWithLegacyWater, 8 * 4 * 4);
+    ASSERT_TRUE(renderContent.hasGltfContent());
+    EXPECT_EQ(nullptr, renderContent.surfaceWaterMaskTexture());
 
     auto model = std::make_unique<GltfModel>();
     model->rasterOverlayDetails.setGeographicRectangle(
@@ -304,8 +310,8 @@ TEST(RasterOverlayDetailsTest,
     EXPECT_TRUE(renderContent.isTerrainRenderContent());
     EXPECT_EQ(nullptr, renderContent.surfaceWaterMaskTexture());
     EXPECT_FALSE(renderContent.hasSurfaceMesh());
-    EXPECT_LT(renderContent.estimateRetainedBytes(),
-              retainedWithLegacyWater);
+    EXPECT_LE(renderContent.estimateRetainedBytes(),
+              retainedWithLegacy);
 }
 
 TEST(RasterOverlayDetailsTest,
@@ -339,7 +345,7 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsTest,
-     ClearingGltfTerrainContentDoesNotExposeStaleSurfaceState) {
+     ClearingGltfTerrainContentDoesNotExposeStaleGltfState) {
     TileRenderContentState renderContent;
     auto model = std::make_unique<GltfModel>();
     RasterOverlayDetails gltfDetails;
@@ -349,14 +355,17 @@ TEST(RasterOverlayDetailsTest,
     renderContent.prepareGltfContent(std::move(model), Mat4::identity());
     renderContent.setTerrainRenderContent(true);
 
-    auto staleSurface = std::make_unique<SurfaceTileMesh>();
+    auto staleModel = makeTerrainQuadModel(Rectangle(2.0, 2.0, 3.0, 3.0));
     RasterOverlayDetails staleSurfaceDetails;
     staleSurfaceDetails.setGeographicRectangle(
         Rectangle(2.0, 2.0, 3.0, 3.0),
         10.0,
         20.0);
-    staleSurface->rasterOverlayDetails = std::move(staleSurfaceDetails);
-    renderContent.setSurfaceMesh(std::move(staleSurface));
+    staleModel->rasterOverlayDetails = std::move(staleSurfaceDetails);
+    renderContent.prepareGltfContent(std::move(staleModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+    renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
+    renderContent.markRenderContentReady();
     renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
     renderContent.setSurfaceDrawable(true);
     renderContent.setSurfaceSource(SurfaceDrawableSource::GltfContent);
@@ -401,18 +410,20 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsTest,
-     ClearingRetainedHeightmapKeepsSurfaceMeshTerrainHeightRange) {
+     ClearingRetainedHeightmapKeepsGltfTerrainHeightRange) {
     TileRenderContentState renderContent;
-    renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
+    auto terrainModel = makeTerrainQuadModel(Rectangle(0.0, 0.0, 1.0, 1.0));
+    renderContent.prepareGltfContent(std::move(terrainModel), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+    renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
+    renderContent.markRenderContentReady();
     renderContent.setTerrainHeightRange(11.0, 22.0);
-    ASSERT_TRUE(renderContent.hasSurfaceMesh());
-    ASSERT_TRUE(renderContent.hasRetainedHeightmap());
+    ASSERT_TRUE(renderContent.hasGltfContent());
     ASSERT_TRUE(renderContent.hasTerrainHeightRange());
 
     renderContent.clearRetainedHeightmap();
 
-    EXPECT_TRUE(renderContent.hasSurfaceMesh());
+    EXPECT_TRUE(renderContent.hasGltfContent());
     EXPECT_FALSE(renderContent.hasRetainedHeightmap());
     EXPECT_TRUE(renderContent.hasTerrainHeightRange());
     EXPECT_DOUBLE_EQ(11.0, renderContent.terrainMinimumHeight());

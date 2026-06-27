@@ -3,7 +3,6 @@
 #include "GltfDrawCommandBuilder.h"
 #include "GltfRenderResourcePreparer.h"
 #include "RenderContentRasterOverlayStateUpdater.h"
-#include "SurfaceTileDrawCommandBuilder.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TilesetTile.h"
 #include "../core/resources/FrameResourceBudget.h"
@@ -92,60 +91,8 @@ public:
             return;
         }
 
-        if (tile.contentProviderTerrainQuadtreeTile &&
-            !tile.content.renderContent.hasGltfContent()) {
-            tile.clearFrameRenderability();
-            return;
-        }
-
-        if (!tile.content.renderContent.isMeshReady()) {
-            if (!context.allowSynchronousMeshPrep) {
-                return;
-            }
-            ensureTileMesh(tile);
-        }
-        if (!tile.hasSurfaceDrawable()) {
-            return;
-        }
-
-        const std::vector<size_t> overlayOrder =
-            TileSelectionRasterOverlayPreparer::processingOrder(
-                rasterOverlays);
-        const RenderContentRasterOverlayUpdateAction overlayAction =
-            RenderContentRasterOverlayStateUpdater::update(
-                renderer,
-                tile,
-                rasterOverlays,
-                overlayOrder,
-                device,
-                context.maximumScreenSpaceError,
-                frameResourceBudget);
-        if (overlayAction.unloadTileContent) {
-            unloadTileContent(tile);
-            return;
-        }
-
-        tile.updateFrameRenderability(
-            tile.hasSurfaceDrawable(),
-            TileSelectionRasterOverlayPreparer::isCompleteRenderable(
-                tile,
-                rasterOverlays));
-
-        if (overlayAction.createRasterOverlayUpsampledChildren &&
-            tile.children.empty()) {
-            createRasterOverlayUpsampledChildren(tile);
-        }
-
-        SurfaceTileDrawCommandBuilder::build(
-            renderer,
-            tile,
-            rasterOverlays,
-            commands,
-            SurfaceTileDrawCommandBuildContext{
-                context.frameNumber,
-                context.generation,
-                context.transitionOpacity,
-                context.surfaceClipUv});
+        // No glTF content - nothing to render
+        tile.clearFrameRenderability();
     }
 };
 

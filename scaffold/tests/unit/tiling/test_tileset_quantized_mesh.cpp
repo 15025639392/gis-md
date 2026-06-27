@@ -632,6 +632,50 @@ SelectorView makeSelectorView(
     return view;
 }
 
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 TEST(TilesetQuantizedMeshTest,
      ContentTerrainProviderRequestFrameCarriesOnlyContentProvider) {
     auto contentProvider = std::make_unique<SparseContentTerrainProvider>();
@@ -877,23 +921,26 @@ TEST(TilesetQuantizedMeshTest,
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(nullptr, root);
-    root->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.setRetainedHeightmap(
-        makeFlatHeightmap(5678.0f));
+    auto gltfModel = makeQuadTerrainGltfModel(root->bounds);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->content.renderContent.setTerrainHeightRange(123.0, 456.0);
     root->rasterOverlayState.ensureMapping(0);
     root->rasterOverlayState.missingProjections().push_back(
         RasterOverlayProjection::WebMercator);
-    ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
-    ASSERT_TRUE(root->content.renderContent.hasRetainedHeightmap());
+    ASSERT_TRUE(root->content.renderContent.hasGltfContent());
+    ASSERT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     ASSERT_TRUE(root->content.renderContent.hasTerrainHeightRange());
     ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
     ASSERT_TRUE(root->rasterOverlayState.hasMissingProjections());
 
     TilesetTestAccess::ensureTileMesh(tileset, *root);
 
-    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.hasGltfContent());
     EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     EXPECT_FALSE(root->content.renderContent.hasTerrainHeightRange());
     EXPECT_DOUBLE_EQ(0.0, root->content.renderContent.terrainMinimumHeight());
@@ -920,17 +967,13 @@ TEST(TilesetQuantizedMeshTest,
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(nullptr, root);
 
-    auto staleSurface = std::make_unique<SurfaceTileMesh>();
-    staleSurface->rasterOverlayDetails.setGeographicRectangle(
-        Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0),
-        -5.0,
-        5.0);
-    root->content.renderContent.setSurfaceMesh(std::move(staleSurface));
-    root->content.renderContent.setRetainedHeightmap(
-        makeFlatHeightmap(42.0f));
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::HeightmapTerrain);
+    auto gltfModel = makeQuadTerrainGltfModel(root->bounds);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.ensureMapping(0);
@@ -938,8 +981,8 @@ TEST(TilesetQuantizedMeshTest,
         RasterOverlayProjection::WebMercator);
 
     ASSERT_TRUE(root->canPrepareRasterOverlays());
-    ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
-    ASSERT_TRUE(root->content.renderContent.hasRetainedHeightmap());
+    ASSERT_TRUE(root->content.renderContent.hasGltfContent());
+    ASSERT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
     ASSERT_TRUE(root->rasterOverlayState.hasMissingProjections());
 
@@ -947,14 +990,14 @@ TEST(TilesetQuantizedMeshTest,
         tileset,
         rootKey);
 
+    // Accepted terrain content (glTF + terrain + Done) is preserved by
+    // clearRejectableResidue — only non-terrain or stale residue is cleared.
     ASSERT_EQ(root, ensuredAgain);
-    EXPECT_FALSE(root->canPrepareRasterOverlays());
-    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
-    EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
-    EXPECT_FALSE(root->content.renderContent.isRenderContentReady());
-    EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
-    EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
-    EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
+    EXPECT_TRUE(root->content.renderContent.hasGltfContent());
+    EXPECT_TRUE(root->content.renderContent.isRenderContentReady());
+    EXPECT_TRUE(root->content.renderContent.isTerrainRenderContent());
+    EXPECT_EQ(1u, root->rasterOverlayState.mappingCount());
+    EXPECT_TRUE(root->rasterOverlayState.hasMissingProjections());
 }
 
 TEST(TilesetQuantizedMeshTest,
@@ -1038,18 +1081,20 @@ TEST(TilesetQuantizedMeshTest,
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(nullptr, root);
-    root->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::HeightmapTerrain);
+    auto gltfModel = makeQuadTerrainGltfModel(root->bounds);
+    root->content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
     root->rasterOverlayState.ensureMapping(0);
     root->rasterOverlayState.missingProjections().push_back(
         RasterOverlayProjection::WebMercator);
-    ASSERT_FALSE(root->content.renderContent.hasGltfContent());
-    ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
+    ASSERT_TRUE(root->content.renderContent.hasGltfContent());
+    ASSERT_TRUE(root->content.renderContent.hasGltfResources());
     ASSERT_TRUE(root->hasRasterOverlayHostContent());
     ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
 
@@ -1122,18 +1167,17 @@ TEST(TilesetQuantizedMeshTest,
     TilesetTile tile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
-    auto staleSurface = std::make_unique<SurfaceTileMesh>();
+    auto staleModel = std::make_unique<GltfModel>();
     const Rectangle staleRectangle =
         Rectangle::fromDegrees(-40.0, -30.0, -20.0, -10.0);
-    staleSurface->rasterOverlayDetails.setGeographicRectangle(staleRectangle);
-    tile.content.renderContent.setSurfaceMesh(std::move(staleSurface));
+    staleModel->rasterOverlayDetails.setGeographicRectangle(staleRectangle);
+    tile.content.renderContent.setGltfContent(std::move(staleModel));
 
     auto model = std::make_unique<GltfModel>();
     const Rectangle contentRectangle =
         Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0);
     model->rasterOverlayDetails.setGeographicRectangle(contentRectangle);
     tile.content.renderContent.setGltfContent(std::move(model));
-    ASSERT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     ASSERT_TRUE(tile.content.renderContent.hasGltfModel());
 
     const RasterOverlayDetails& readDetails =

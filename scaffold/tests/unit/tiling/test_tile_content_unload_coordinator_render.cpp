@@ -99,6 +99,50 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     return model;
 }
 
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 RasterOverlayDetails makeWebMercatorDetails(const Rectangle& rectangle) {
     RasterOverlayDetails details;
     details.rasterOverlayProjections = {RasterOverlayProjection::WebMercator};
@@ -118,11 +162,11 @@ TEST(
     tile.content.loadState = TileLoadState::Done;
     tile.content.renderContent.setMeshReady(true);
     tile.content.renderContent.setSurfaceDrawable(true);
-    tile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    tile.content.renderContent.prepareGltfContent(std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
+    tile.content.renderContent.markRenderContentReady();
     tile.selectionFrameState.updateFrameRenderability(true);
 
     const std::string cacheKey = "test:0:0:0";
@@ -145,7 +189,8 @@ TEST(
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_EQ(tile.content.contentKind, TileContentKind::Unknown);
     EXPECT_EQ(tile.content.loadState, TileLoadState::Unloaded);
-    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(tile.content.renderContent.hasGltfContent());
+    EXPECT_FALSE(tile.content.renderContent.hasGltfPrimitiveResources());
     EXPECT_FALSE(tile.content.renderContent.isMeshReady());
     EXPECT_FALSE(tile.content.renderContent.isSurfaceDrawable());
     EXPECT_FALSE(tile.selectionFrameState.renderable);
@@ -409,8 +454,11 @@ TEST(
     parent.content.contentKind = TileContentKind::Render;
     parent.content.loadState = TileLoadState::Done;
     parent.content.renderContent.setMeshReady(true);
-    parent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
+    auto gltfModel = makeQuadTerrainGltfModel(parent.bounds);
+    parent.content.renderContent.prepareGltfContent(std::move(gltfModel), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
 
     TilesetTile child(
         childKey,
@@ -468,7 +516,7 @@ TEST(
     EXPECT_EQ(TileCacheUnloadContentResult::Keep, result);
     EXPECT_EQ(TileContentKind::Render, parent.content.contentKind);
     EXPECT_EQ(TileLoadState::Unloading, parent.content.loadState);
-    EXPECT_TRUE(parent.content.renderContent.hasSurfaceMesh());
+    EXPECT_TRUE(parent.content.renderContent.hasGltfContent());
     EXPECT_EQ(0u, parent.rasterOverlayState.mappingCount());
     EXPECT_EQ(1, prep.detachCount);
     EXPECT_EQ(parent.key, prep.lastDetachedGeometryKey);
@@ -486,7 +534,7 @@ TEST(
     EXPECT_EQ(TileCacheUnloadContentResult::Keep, secondResult);
     EXPECT_EQ(TileContentKind::Render, parent.content.contentKind);
     EXPECT_EQ(TileLoadState::Unloading, parent.content.loadState);
-    EXPECT_TRUE(parent.content.renderContent.hasSurfaceMesh());
+    EXPECT_TRUE(parent.content.renderContent.hasGltfContent());
     EXPECT_EQ(0u, parent.rasterOverlayState.mappingCount());
     EXPECT_EQ(1, prep.detachCount);
     EXPECT_NE(terrainCache.end(), terrainCache.find(cacheKey));

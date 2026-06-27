@@ -24,7 +24,6 @@
 #include "earth_engine/tiling/TileMeshPreparationManager.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileSurface.h"
-#include "earth_engine/tiling/SurfaceTileDrawCommandBuilder.h"
 #include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -5710,7 +5709,6 @@ TEST(RasterOverlayLifecycleTest,
         invalidator,
         loadQueue,
         true,
-        TileMeshPreparationMode::ContentTerrain,
         nullptr,
         overlays);
 
@@ -7569,17 +7567,11 @@ TEST(RasterOverlayLifecycleTest,
 
     ASSERT_TRUE(tile.rasterOverlayState.hasReadyMapping(0));
     ASSERT_FALSE(tile.rasterOverlayState.hasDrawableReadyMapping(0));
-    EXPECT_FALSE(SurfaceTileDrawCommandBuilder::hasDrawableBaseRaster(
-        tile,
-        std::vector<ActivatedRasterOverlay*>{&activated}));
 
     failedTile->setState(RasterOverlayTile::LoadState::Loaded);
     failedTile->setTexture(std::make_unique<TestTexture>(4, 4));
 
     EXPECT_TRUE(tile.rasterOverlayState.hasDrawableReadyMapping(0));
-    EXPECT_TRUE(SurfaceTileDrawCommandBuilder::hasDrawableBaseRaster(
-        tile,
-        std::vector<ActivatedRasterOverlay*>{&activated}));
 }
 
 TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesSharedReadyTileAsRealTile) {

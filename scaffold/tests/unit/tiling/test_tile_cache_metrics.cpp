@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/GltfModel.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheMetrics.h"
 #include "earth_engine/tiling/TilesetTile.h"
@@ -10,24 +11,64 @@
 
 using namespace earth_engine;
 
+namespace {
+
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
+}  // namespace
+
 TEST(TileCacheMetricsTest, EstimateTileBytesUsesActualMeshPayload) {
     TilesetTile tile;
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    SurfaceTileMesh* mesh = tile.content.renderContent.mutableSurfaceMesh();
-    ASSERT_NE(nullptr, mesh);
-
-    mesh->vertices.resize(3);
-    mesh->indices.resize(6);
-    mesh->waterMask.data.resize(8);
-    mesh->metadataAvailability.resize(2);
-
-    const int64_t expected =
-        static_cast<int64_t>(mesh->vertices.size() * sizeof(SurfaceVertex)) +
-        static_cast<int64_t>(mesh->indices.size() * sizeof(uint32_t)) +
-        static_cast<int64_t>(mesh->waterMask.data.size()) +
-        static_cast<int64_t>(
-            mesh->metadataAvailability.size() *
-            sizeof(QuantizedMeshAvailabilityRange));
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    const int64_t expected = gltfModel->byteSize();
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.markRenderContentReady();
 
     EXPECT_EQ(expected, TileCacheMetrics::estimateTileBytes(tile));
 }
@@ -48,26 +89,16 @@ TEST(TileCacheMetricsTest, CountsHeightmapAndRetainedTilePayloads) {
 
     TilesetTile tile;
     tile.key = TileKey{"test", 0, 0, 0};
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    SurfaceTileMesh* mesh = tile.content.renderContent.mutableSurfaceMesh();
-    ASSERT_NE(nullptr, mesh);
-    mesh->vertices.resize(2);
-    mesh->indices.resize(5);
-    mesh->waterMask.data.resize(6);
-    mesh->metadataAvailability.resize(1);
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    const int64_t gltfBytes = gltfModel->byteSize();
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.markRenderContentReady();
 
-    auto retainedHeightmap = std::make_unique<DecodedHeightmap>();
-    retainedHeightmap->heights.resize(3);
-    retainedHeightmap->noDataValues.resize(2);
-    retainedHeightmap->metadataAvailability.resize(4);
-    tile.content.renderContent.setRetainedHeightmap(std::move(retainedHeightmap));
-
-    const int64_t expectedTileBytes =
-        static_cast<int64_t>(2 * sizeof(SurfaceVertex)) +
-        static_cast<int64_t>(5 * sizeof(uint32_t)) +
-        6 +
-        static_cast<int64_t>(sizeof(QuantizedMeshAvailabilityRange)) +
-        expectedHeightmapBytes;
+    const int64_t expectedTileBytes = gltfBytes;
     EXPECT_EQ(expectedTileBytes, TileCacheMetrics::estimateTileBytes(tile));
 }
 
@@ -76,10 +107,14 @@ TEST(TileCacheMetricsTest, TotalsTileAndTerrainCachePayloads) {
     auto tile = std::make_unique<TilesetTile>(
         TileKey{"test", 0, 0, 0},
         Rectangle{});
-    tile->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    tile->content.renderContent.mutableSurfaceMesh()->vertices.resize(1);
-    const int64_t expectedTileBytes =
-        static_cast<int64_t>(sizeof(SurfaceVertex));
+    auto gltfModel = makeQuadTerrainGltfModel(tile->bounds);
+    const int64_t expectedTileBytes = gltfModel->byteSize();
+    tile->content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    tile->content.renderContent.setTerrainRenderContent(true);
+    tile->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile->content.renderContent.markRenderContentReady();
     tiles["tile"] = std::move(tile);
     tiles["null-tile"] = nullptr;
 

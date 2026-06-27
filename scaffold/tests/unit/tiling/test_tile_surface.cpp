@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/tiling/SurfaceMeshResourcePreparer.h"
+#include "earth_engine/content/GltfModel.h"
+#include "earth_engine/tiling/GltfRenderResourcePreparer.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TilesetTile.h"
@@ -220,6 +221,50 @@ Vec3 ellipsoidOriginForBounds(const Rectangle& bounds) {
     const double latitude = mixDouble(bounds.south(), bounds.north(), 0.5);
     return Ellipsoid::WGS84().cartographicToCartesian(
         Cartographic::fromRadians(longitude, latitude, 0.0));
+}
+
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
 }
 
 } // namespace
@@ -905,67 +950,58 @@ TEST(TileSurfaceTest, NormalMapUsesNoSkirtVertexRangeBegin) {
 }
 
 TEST(TileSurfaceTest, SurfaceResourceLocalOriginUsesNoSkirtVertexRange) {
-    auto mesh = std::make_unique<SurfaceTileMesh>();
-    SurfaceVertex surfaceA;
-    surfaceA.positionEcef = Vec3(0.0, 0.0, 0.0);
-    SurfaceVertex surfaceB;
-    surfaceB.positionEcef = Vec3(2.0, 0.0, 0.0);
-    SurfaceVertex skirt;
-    skirt.positionEcef = Vec3(1000.0, 0.0, 0.0);
-    mesh->vertices = {surfaceA, surfaceB, skirt};
-    mesh->skirtMeta.noSkirtVerticesBegin = 0;
-    mesh->skirtMeta.noSkirtVerticesCount = 2;
-
     TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
-    tile.content.renderContent.setSurfaceMesh(std::move(mesh));
-
-    SurfaceMeshResourcePreparer::prepare(tile, nullptr);
-
-    EXPECT_NEAR(1.0, tile.content.renderContent.renderLocalOrigin().x(), 1e-12);
-    EXPECT_NEAR(0.0, tile.content.renderContent.renderLocalOrigin().y(), 1e-12);
-    EXPECT_NEAR(0.0, tile.content.renderContent.renderLocalOrigin().z(), 1e-12);
-}
-
-TEST(TileSurfaceTest, SurfaceResourcePreparerUploadsOnlyMixedWaterMaskTexture) {
-    auto mesh = std::make_unique<SurfaceTileMesh>();
-    SurfaceVertex a;
-    a.positionEcef = Vec3(6378137.0, 0.0, 0.0);
-    SurfaceVertex b;
-    b.positionEcef = Vec3(0.0, 6378137.0, 0.0);
-    SurfaceVertex c;
-    c.positionEcef = Vec3(0.0, 0.0, 6356752.314245);
-    mesh->vertices = {a, b, c};
-    mesh->indices = {0, 1, 2};
-    mesh->waterMask.allLand = false;
-    mesh->waterMask.allWater = false;
-    mesh->waterMask.data.resize(256u * 256u * 4u, 127);
-
-    TilesetTile mixed(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
-    mixed.content.renderContent.setSurfaceMesh(std::move(mesh));
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.markRenderContentReady();
 
     RecordingRenderDevice device;
-    SurfaceMeshResourcePreparer::prepare(mixed, &device);
+    GltfRenderResourcePreparer::prepare(tile, &device, 0.0);
 
-    ASSERT_NE(nullptr, mixed.content.renderContent.surfaceWaterMaskTexture());
-    EXPECT_EQ(1, device.textureCreateCount);
-    EXPECT_EQ(256, device.lastTextureDesc.width);
-    EXPECT_EQ(256, device.lastTextureDesc.height);
-    EXPECT_EQ(TextureDesc::Format::RGBA8, device.lastTextureDesc.format);
-    EXPECT_EQ(TextureDesc::Wrap::Clamp, device.lastTextureDesc.wrapS);
-    EXPECT_EQ(TextureDesc::Wrap::Clamp, device.lastTextureDesc.wrapT);
-    EXPECT_TRUE(device.lastTextureDesc.mipmap);
+    // makeQuadTerrainGltfModel creates vertices at nodeOrigin + offsets.
+    // Node origin = (100, 200, 300).
+    // Vertices: (100,200,300), (102,200,300), (100,202,300), (102,202,300).
+    // GltfRenderGeometryBuilder::localOrigin averages all primitive vertex
+    // positions: mean = (101, 201, 300).
+    EXPECT_NEAR(101.0, tile.content.renderContent.renderLocalOrigin().x(), 1e-12);
+    EXPECT_NEAR(201.0, tile.content.renderContent.renderLocalOrigin().y(), 1e-12);
+    EXPECT_NEAR(300.0, tile.content.renderContent.renderLocalOrigin().z(), 1e-12);
+}
 
-    auto waterOnlyMesh = std::make_unique<SurfaceTileMesh>();
-    waterOnlyMesh->vertices = {a, b, c};
-    waterOnlyMesh->indices = {0, 1, 2};
-    waterOnlyMesh->waterMask.allLand = false;
-    waterOnlyMesh->waterMask.allWater = true;
+TEST(TileSurfaceTest, GltfResourcePreparerCreatesVertexAndIndexBuffers) {
+    TilesetTile mixed(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+    auto gltfModel1 = makeQuadTerrainGltfModel(mixed.bounds);
+    mixed.content.renderContent.prepareGltfContent(
+        std::move(gltfModel1), Mat4::identity());
+    mixed.content.renderContent.setTerrainRenderContent(true);
+    mixed.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    mixed.content.renderContent.markRenderContentReady();
+
+    RecordingRenderDevice device;
+    GltfRenderResourcePreparer::prepare(mixed, &device, 0.0);
+
+    EXPECT_EQ(2, device.bufferCreateCount);
+    EXPECT_EQ(0, device.textureCreateCount);
+    EXPECT_EQ(nullptr, mixed.content.renderContent.surfaceWaterMaskTexture());
+
     TilesetTile waterOnly(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
-    waterOnly.content.renderContent.setSurfaceMesh(std::move(waterOnlyMesh));
+    auto gltfModel2 = makeQuadTerrainGltfModel(waterOnly.bounds);
+    waterOnly.content.renderContent.prepareGltfContent(
+        std::move(gltfModel2), Mat4::identity());
+    waterOnly.content.renderContent.setTerrainRenderContent(true);
+    waterOnly.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    waterOnly.content.renderContent.markRenderContentReady();
 
     RecordingRenderDevice waterOnlyDevice;
-    SurfaceMeshResourcePreparer::prepare(waterOnly, &waterOnlyDevice);
+    GltfRenderResourcePreparer::prepare(waterOnly, &waterOnlyDevice, 0.0);
 
-    EXPECT_EQ(nullptr, waterOnly.content.renderContent.surfaceWaterMaskTexture());
+    EXPECT_EQ(2, waterOnlyDevice.bufferCreateCount);
     EXPECT_EQ(0, waterOnlyDevice.textureCreateCount);
+    EXPECT_EQ(nullptr, waterOnly.content.renderContent.surfaceWaterMaskTexture());
 }

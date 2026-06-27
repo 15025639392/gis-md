@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/GltfModel.h"
+#include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileRenderPlanFinalizer.h"
 
+#include <array>
 #include <memory>
 #include <unordered_map>
 
@@ -20,6 +23,50 @@ public:
 private:
     size_t byteSize_ = 0;
 };
+
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
 
 TilesetTile* findTile(
     const std::unordered_map<std::string, TilesetTile*>& tiles,
@@ -54,10 +101,13 @@ TEST(
     const TileKey childKey{"test", 1, 1, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.markRenderContentDone();
-    parent.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
 
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
@@ -105,10 +155,13 @@ TEST(
     const TileKey childKey{"test", 1, 0, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.markRenderContentDone();
-    parent.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
 
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
@@ -246,9 +299,16 @@ TEST(
     const TileKey childKey{"test", 1, 1, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+    // Parent has glTF content but no primitive resources — not render-ready.
     parent.content.renderContent.setGltfContent(makeEmptyGltfModel());
     parent.content.loadState = TileLoadState::Done;
     parent.content.contentKind = TileContentKind::Render;
+    // Child has glTF content at ContentLoaded so canAttemptRenderResourcePrep
+    // returns true, allowing a direct render entry.
+    child.content.renderContent.setGltfContent(makeEmptyGltfModel());
+    child.content.renderContent.setTerrainRenderContent(true);
+    child.content.loadState = TileLoadState::ContentLoaded;
+    child.content.contentKind = TileContentKind::Render;
 
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
@@ -273,14 +333,16 @@ TEST(
             return isDrawableRenderContent(tile);
         });
 
+    // Parent is not drawable (no resources), so child gets a direct entry.
+    // SynchronousPrep is dead — the entry reason is Direct.
     ASSERT_EQ(plan.renderEntries.size(), 1u);
     const TileRenderEntry& entry = plan.renderEntries.front();
     EXPECT_EQ(entry.selectedKey, childKey);
     EXPECT_EQ(entry.renderKey, childKey);
-    EXPECT_EQ(entry.reason, TileRenderEntryReason::SynchronousPrep);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::Direct);
     EXPECT_FALSE(entry.usesAncestorFallback);
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
-    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
 }
 
@@ -290,9 +352,6 @@ TEST(
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
     root.markRenderContentDone();
-    root.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
     ASSERT_FALSE(root.hasSurfaceDrawable());
     ASSERT_FALSE(root.content.renderContent.hasGltfContent());
 
@@ -328,9 +387,6 @@ TEST(
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
     parent.markRenderContentDone();
-    parent.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
     ASSERT_FALSE(parent.hasSurfaceDrawable());
     ASSERT_FALSE(parent.content.renderContent.hasGltfContent());
 
@@ -365,6 +421,7 @@ TEST(
 TEST(TileRenderPlanFinalizerTest, CountsRootPrepOnceToAvoidBlankFrame) {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
+    makeGltfRenderReady(root);
 
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
@@ -385,12 +442,12 @@ TEST(TileRenderPlanFinalizerTest, CountsRootPrepOnceToAvoidBlankFrame) {
             return tile.hasSurfaceDrawable();
         });
 
+    // With glTF content the root is directly renderable.
     ASSERT_EQ(plan.renderEntries.size(), 1u);
     const TileRenderEntry& entry = plan.renderEntries.front();
     EXPECT_EQ(entry.renderKey, rootKey);
-    EXPECT_EQ(entry.reason, TileRenderEntryReason::SynchronousPrep);
-    EXPECT_TRUE(entry.allowSynchronousMeshPrep);
-    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::Direct);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
 }
 
@@ -399,6 +456,7 @@ TEST(TileRenderPlanFinalizerTest, DefersFallbackPrepDuringInteraction) {
     const TileKey childKey{"test", 1, 0, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    makeGltfRenderReady(parent);
 
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
@@ -423,16 +481,18 @@ TEST(TileRenderPlanFinalizerTest, DefersFallbackPrepDuringInteraction) {
             return tile.key == parent.key;
         });
 
+    // With glTF content on parent, ancestor fallback works.
+    // Deferred prep is dead — allowSynchronousMeshPrep is always true.
     ASSERT_EQ(plan.renderEntries.size(), 1u);
     const TileRenderEntry& entry = plan.renderEntries.front();
     EXPECT_EQ(entry.selectedKey, childKey);
     EXPECT_EQ(entry.renderKey, parentKey);
     EXPECT_EQ(entry.reason, TileRenderEntryReason::AncestorFallback);
     EXPECT_TRUE(entry.usesAncestorFallback);
-    EXPECT_FALSE(entry.allowSynchronousMeshPrep);
+    EXPECT_TRUE(entry.allowSynchronousMeshPrep);
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
     EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
-    EXPECT_EQ(plan.renderEntryDeferredPrepCount, 1);
+    EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
 }
 
 TEST(
@@ -440,6 +500,7 @@ TEST(
     ReadsSelectionFrameFadeWhenLodTransitionEnabled) {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
+    makeGltfRenderReady(root);
     root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
 
     TilePlan plan;
@@ -461,20 +522,24 @@ TEST(
             return tile.hasSurfaceDrawable();
         });
 
+    // With glTF content the root is directly renderable.
     ASSERT_EQ(plan.renderEntries.size(), 1u);
     EXPECT_EQ(
         plan.renderEntries.front().reason,
-        TileRenderEntryReason::SynchronousPrep);
+        TileRenderEntryReason::Direct);
     EXPECT_NEAR(plan.renderEntries.front().opacity, 0.25f, 1e-6f);
 }
 
 TEST(TileRenderPlanFinalizerTest, FadingTilesBecomeFadePassEntries) {
     const TileKey fadingKey{"test", 0, 0, 0};
     TilesetTile fading(fadingKey, Rectangle{});
+    fading.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(fading.bounds), Mat4::identity());
+    fading.content.renderContent.setTerrainRenderContent(true);
+    fading.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    fading.content.renderContent.markRenderContentReady();
     fading.markRenderContentDone();
-    fading.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
 
     TilePlan plan;
     plan.tilesFadingOut.push_back(TileTransition{fadingKey, 0.4f, 1});

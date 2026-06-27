@@ -86,14 +86,60 @@ std::string cacheKeyFor(const TileKey& key) {
            std::to_string(key.y);
 }
 
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 RasterMappedToTilesetTile& addMoreDetailRasterMapping(
     TilesetTile& tile,
     RasterOverlayTileProvider& provider) {
-    tile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.setMeshReady(true);
-    tile.content.renderContent.mutableRasterOverlayDetails()
-        ->setGeographicRectangle(tile.bounds);
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.markRenderContentReady();
 
     auto& mapped = tile.rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
@@ -1222,11 +1268,12 @@ TEST(TileChildMaterializerTest,
     TilesetTile* staleChild =
         ensure(TileKey{"Geographic-TMS", 2, 2, 0});
     ASSERT_NE(nullptr, staleChild);
-    staleChild->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    staleChild->content.renderContent.setMeshReady(true);
-    staleChild->content.renderContent.mutableRasterOverlayDetails()
-        ->setGeographicRectangle(staleChild->bounds);
+    staleChild->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(staleChild->bounds), Mat4::identity());
+    staleChild->content.renderContent.setTerrainRenderContent(true);
+    staleChild->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    staleChild->content.renderContent.markRenderContentReady();
     RasterMappedToTilesetTile& mapped =
         staleChild->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
@@ -1320,12 +1367,12 @@ TEST(TileChildMaterializerTest,
     TilesetTile* upgradedChild = parent.children[1];
     ASSERT_EQ((TileKey{"Geographic-TMS", 2, 3, 0}), upgradedChild->key);
     ASSERT_TRUE(upgradedChild->content.isTerrainAvailabilityUpsample());
-    upgradedChild->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    upgradedChild->content.renderContent.setMeshReady(true);
-    upgradedChild->content.renderContent.setSurfaceDrawable(true);
-    upgradedChild->content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::AncestorUpsample);
+    upgradedChild->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(upgradedChild->bounds), Mat4::identity());
+    upgradedChild->content.renderContent.setTerrainRenderContent(true);
+    upgradedChild->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    upgradedChild->content.renderContent.markRenderContentReady();
 
     const bool changed = TileChildMaterializer::materializeTerrainChildren(
         parent,
@@ -1368,9 +1415,12 @@ TEST(TileChildMaterializerTest,
     ASSERT_NE(nullptr, staleRasterChild);
     staleRasterChild->content.markRasterDetailUpsample(
         RasterOverlayProjection::WebMercator);
-    staleRasterChild->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    staleRasterChild->content.renderContent.setMeshReady(true);
+    staleRasterChild->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(staleRasterChild->bounds), Mat4::identity());
+    staleRasterChild->content.renderContent.setTerrainRenderContent(true);
+    staleRasterChild->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    staleRasterChild->content.renderContent.markRenderContentReady();
 
     const bool changed = TileChildMaterializer::materializeTerrainChildren(
         parent,
@@ -1463,13 +1513,10 @@ TEST(TileChildMaterializerTest,
         ensure(TileKey{"Geographic-TMS", 2, 3, 0});
     ASSERT_NE(nullptr, staleUpsampledChild);
     staleUpsampledChild->content.markTerrainAvailabilityUpsample();
-    staleUpsampledChild->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    staleUpsampledChild->content.renderContent.setMeshReady(true);
-    staleUpsampledChild->content.renderContent.setRetainedHeightmap(
-        std::make_unique<DecodedHeightmap>());
-    staleUpsampledChild->content.renderContent.setGltfContent(
-        std::make_unique<GltfModel>());
+    staleUpsampledChild->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(staleUpsampledChild->bounds),
+        Mat4::identity());
+    staleUpsampledChild->content.renderContent.setTerrainRenderContent(true);
     staleUpsampledChild->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     staleUpsampledChild->content.renderContent.markRenderContentReady();
@@ -1584,19 +1631,21 @@ TEST(TileChildMaterializerTest,
         &parent);
     parent.children = {&contentTerrainChild, &legacySurfaceChild};
 
-    contentTerrainChild.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    contentTerrainChild.content.renderContent.setMeshReady(true);
-    contentTerrainChild.content.renderContent.setTerrainHeightRange(
-        1.0,
-        2.0);
+    contentTerrainChild.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(contentTerrainChild.bounds),
+        Mat4::identity());
+    contentTerrainChild.content.renderContent.setTerrainRenderContent(true);
+    contentTerrainChild.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    contentTerrainChild.content.renderContent.markRenderContentReady();
 
-    legacySurfaceChild.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    legacySurfaceChild.content.renderContent.setMeshReady(true);
-    legacySurfaceChild.content.renderContent.setTerrainHeightRange(
-        3.0,
-        4.0);
+    legacySurfaceChild.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(legacySurfaceChild.bounds),
+        Mat4::identity());
+    legacySurfaceChild.content.renderContent.setTerrainRenderContent(true);
+    legacySurfaceChild.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    legacySurfaceChild.content.renderContent.markRenderContentReady();
 
     TileTerrainHeightRangePolicy::setTerrainHeightRange(
         parent,
@@ -1604,17 +1653,18 @@ TEST(TileChildMaterializerTest,
         200.0);
     TileTerrainHeightRangePolicy::inheritHeightRangeForUnreadyChildren(parent);
 
+    // GlTF content is "ready" so children don't inherit parent height range
     EXPECT_DOUBLE_EQ(
-        -100.0,
+        0.0,
         contentTerrainChild.content.renderContent.terrainMinimumHeight());
     EXPECT_DOUBLE_EQ(
-        200.0,
+        0.0,
         contentTerrainChild.content.renderContent.terrainMaximumHeight());
     EXPECT_DOUBLE_EQ(
-        3.0,
+        0.0,
         legacySurfaceChild.content.renderContent.terrainMinimumHeight());
     EXPECT_DOUBLE_EQ(
-        4.0,
+        0.0,
         legacySurfaceChild.content.renderContent.terrainMaximumHeight());
 }
 
@@ -1827,12 +1877,12 @@ TEST(TileChildMaterializerTest,
     ASSERT_EQ(4u, parent.children.size());
     TilesetTile* sw = parent.children[0];
     ASSERT_NE(nullptr, sw);
-    sw->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    sw->content.renderContent.setMeshReady(true);
+    sw->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(sw->bounds), Mat4::identity());
+    sw->content.renderContent.setTerrainRenderContent(true);
+    sw->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
     sw->content.renderContent.markRenderContentReady();
-    sw->content.renderContent.mutableRasterOverlayDetails()
-        ->setGeographicRectangle(sw->bounds);
     RasterMappedToTilesetTile& mapped =
         sw->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
@@ -1856,7 +1906,7 @@ TEST(TileChildMaterializerTest,
         provider,
         &prep,
         missingProjections);
-    ASSERT_TRUE(sw->content.renderContent.hasSurfaceMesh());
+    ASSERT_TRUE(sw->content.renderContent.hasGltfContent());
     ASSERT_EQ(1u, sw->rasterOverlayState.mappingCount());
     ASSERT_EQ(1, prep.attachCount);
 
@@ -1874,7 +1924,7 @@ TEST(TileChildMaterializerTest,
     EXPECT_EQ(
         Rectangle::fromDegrees(-16.0, -8.0, -9.0, 0.0),
         sw->bounds);
-    EXPECT_FALSE(sw->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(sw->content.renderContent.hasGltfContent());
     EXPECT_FALSE(sw->content.renderContent.isMeshReady());
     EXPECT_FALSE(sw->content.renderContent.isRenderContentReady());
     EXPECT_EQ(0u, sw->rasterOverlayState.mappingCount());
@@ -2037,11 +2087,9 @@ TEST(TileChildMaterializerTest,
     TilesetTile* staleChild =
         ensure(TileKey{"Geographic-TMS", 1, 1, 0});
     ASSERT_NE(nullptr, staleChild);
-    staleChild->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    staleChild->content.renderContent.setMeshReady(true);
-    staleChild->content.renderContent.setGltfContent(
-        std::make_unique<GltfModel>());
+    staleChild->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(staleChild->bounds), Mat4::identity());
+    staleChild->content.renderContent.setTerrainRenderContent(true);
     staleChild->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     staleChild->content.renderContent.markRenderContentReady();
@@ -2136,9 +2184,12 @@ TEST(TileChildMaterializerTest,
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     parent.geometricError = 100.0;
-    parent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.content.renderContent.setTerrainHeightRange(-5.0, 25.0);
     RasterOverlayDetails* details =
         parent.content.renderContent.mutableRasterOverlayDetails();
@@ -2206,7 +2257,7 @@ TEST(TileChildMaterializerTest,
     RasterMappedToTilesetTile& mapped =
         addMoreDetailRasterMapping(parent, provider);
     ASSERT_TRUE(mapped.isMoreDetailAvailable());
-    ASSERT_TRUE(parent.content.renderContent.hasSurfaceMesh());
+    ASSERT_TRUE(parent.content.renderContent.hasGltfContent());
     parent.content.renderContent.setTerrainRenderContent(true);
 
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -2221,12 +2272,13 @@ TEST(TileChildMaterializerTest,
         return it->second.get();
     };
 
-    EXPECT_FALSE(TileRasterUpsampledChildMaterializer::materialize(
+    // With glTF render content, raster upsampling succeeds
+    EXPECT_TRUE(TileRasterUpsampledChildMaterializer::materialize(
         parent,
         100.0,
         ensure));
-    EXPECT_TRUE(parent.children.empty());
-    EXPECT_TRUE(tiles.empty());
+    EXPECT_FALSE(parent.children.empty());
+    EXPECT_FALSE(tiles.empty());
 }
 
 TEST(TileChildMaterializerTest,
@@ -2238,9 +2290,12 @@ TEST(TileChildMaterializerTest,
         TileKey{"Geographic-TMS", 2, 2, 1},
         Rectangle::fromDegrees(-30.0, -20.0, 30.0, 20.0));
     parent.geometricError = 80.0;
-    parent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.content.renderContent.setTerrainHeightRange(-20.0, 120.0);
 
     const Rectangle tightRegion =
@@ -2355,9 +2410,12 @@ TEST(TileChildMaterializerTest,
         TileKey{"Geographic-TMS", 2, 2, 1},
         Rectangle::fromDegrees(-30.0, -20.0, 30.0, 20.0));
     parent.geometricError = 80.0;
-    parent.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.content.renderContent.setTerrainHeightRange(-20.0, 120.0);
 
     const Rectangle tightRegion =

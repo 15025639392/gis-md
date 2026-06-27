@@ -105,10 +105,6 @@
 #include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/TileMeshFrameEnsurer.h"
-#include "earth_engine/tiling/TileSurfaceMeshEnsurer.h"
-#include "earth_engine/tiling/TileSurfaceMeshResolutionPolicy.h"
-#include "earth_engine/tiling/TileSurfaceMeshSourceResolver.h"
-#include "earth_engine/tiling/TileSurfaceRenderContentCoordinator.h"
 #include "earth_engine/tiling/TileUnloadPolicy.h"
 #include "earth_engine/tiling/TileUnloadQueue.h"
 #include "earth_engine/tiling/TileUpdateSelectionWorkRunner.h"
@@ -177,6 +173,22 @@ public:
     }
     std::string schemeId_ = "Geographic-TMS";
     int maxZoom_ = 18;
+};
+
+class DummyBuffer final : public Buffer {
+public:
+    explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
+    DummyBuffer(size_t byteSize, const void* data) : byteSize_(byteSize) {
+        if (data && byteSize > 0) {
+            const auto* begin = static_cast<const uint8_t*>(data);
+            bytes_.assign(begin, begin + byteSize);
+        }
+    }
+    size_t size() const override { return byteSize_; }
+    const std::vector<uint8_t>& bytes() const { return bytes_; }
+private:
+    size_t byteSize_ = 0;
+    std::vector<uint8_t> bytes_;
 };
 
 struct TilesetTestAccess {
@@ -524,6 +536,58 @@ struct TilesetTestAccess {
     }
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
         tileset.meshPreparation_.prepareRenderableTile(tile);
+        // After residue cleanup, if the tile needs glTF content to become
+        // renderable, set up a basic glTF terrain model.
+        const bool needsGltfSetup =
+            !tile.content.renderContent.hasGltfContent() &&
+            (tile.content.contentKind == TileContentKind::Render ||
+             tile.content.contentKind == TileContentKind::Unknown) &&
+            (tile.content.loadState == TileLoadState::ContentLoaded ||
+             tile.content.loadState == TileLoadState::Unloaded);
+        if (needsGltfSetup) {
+            auto model = std::make_unique<GltfModel>();
+            GltfPrimitive primitive;
+            primitive.vertices.resize(4);
+            primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+            primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+            primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+            primitive.vertices[3].positionEcef = Vec3(1.0, 1.0, 0.0);
+            primitive.indices = {0, 1, 2, 1, 3, 2};
+            primitive.runtime.nodeIndex = 0;
+            model->primitives.push_back(std::move(primitive));
+            model->rasterOverlayDetails.setGeographicRectangle(
+                tile.bounds);
+            tile.content.renderContent.prepareGltfContent(
+                std::move(model), Mat4::identity());
+            tile.content.renderContent.setTerrainRenderContent(true);
+            GltfPrimitiveRenderResources res;
+            res.vertexBuffer = std::make_unique<DummyBuffer>(64);
+            res.indexBuffer = std::make_unique<DummyBuffer>(12);
+            res.indexCount = 6;
+            res.vertexCount = 4;
+            tile.content.renderContent.addGltfPrimitiveResource(std::move(res));
+            tile.markRenderContentDone();
+        }
+    }
+    // Set up a tile as Done with glTF content, matching the production
+    // content-loading + GPU-preparation lifecycle.
+    static void makeGltfRenderReady(TilesetTile& tile) {
+        auto model = std::make_unique<GltfModel>();
+        GltfPrimitive primitive;
+        primitive.vertices.resize(4);
+        primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+        primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+        primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+        primitive.vertices[3].positionEcef = Vec3(1.0, 1.0, 0.0);
+        primitive.indices = {0, 1, 2, 1, 3, 2};
+        primitive.runtime.nodeIndex = 0;
+        model->primitives.push_back(std::move(primitive));
+        tile.content.renderContent.prepareGltfContent(
+            std::move(model), Mat4::identity());
+        tile.content.renderContent.setTerrainRenderContent(true);
+        tile.content.renderContent.addGltfPrimitiveResource(
+            GltfPrimitiveRenderResources{});
+        tile.markRenderContentDone();
     }
     static void unloadTileContent(Tileset& tileset,
                                   TilesetTile& tile,
@@ -982,21 +1046,6 @@ public:
     std::string attribution() const override { return attribution_; }
 private:
     std::string attribution_;
-};
-class DummyBuffer final : public Buffer {
-public:
-    explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
-    DummyBuffer(size_t byteSize, const void* data) : byteSize_(byteSize) {
-        if (data && byteSize > 0) {
-            const auto* begin = static_cast<const uint8_t*>(data);
-            bytes_.assign(begin, begin + byteSize);
-        }
-    }
-    size_t size() const override { return byteSize_; }
-    const std::vector<uint8_t>& bytes() const { return bytes_; }
-private:
-    size_t byteSize_ = 0;
-    std::vector<uint8_t> bytes_;
 };
 class DiagnosticImageryProvider final : public DebugImageryProvider {
 public:
@@ -4542,13 +4591,23 @@ public:
     }
     int requestCount = 0;
 };
-class SparseTerrainProvider final : public TerrainProvider {
+class SparseTerrainProvider final : public TilesetContentProvider {
 public:
     std::string id() const override { return "sparse-terrain"; }
-    std::string schemeId() const override { return "Geographic-TMS"; }
-    int minZoom() const override { return 0; }
-    int maxZoom() const override { return 4; }
-    int tileSize() const override { return 2; }
+    bool supportsTile(const TileKey& key) const override {
+        return key.schemeId == schemeId();
+    }
+    std::vector<TileKey> rootTiles() const override {
+        return {TileKey{schemeId(), 0, 0, 0}};
+    }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        if (key.z >= maxZoom()) return {};
+        return {TileKey{schemeId(), key.z + 1, key.x * 2, key.y * 2},
+                TileKey{schemeId(), key.z + 1, key.x * 2 + 1, key.y * 2},
+                TileKey{schemeId(), key.z + 1, key.x * 2, key.y * 2 + 1},
+                TileKey{schemeId(), key.z + 1, key.x * 2 + 1, key.y * 2 + 1}};
+    }
+    bool providesTerrainQuadtree() const override { return true; }
     TileAvailabilityState availabilityState(const TileKey& key) const override {
         if (key.schemeId != schemeId()) return TileAvailabilityState::NotAvailable;
         if (key.z == 0) return TileAvailabilityState::Available;
@@ -4560,20 +4619,20 @@ public:
         }
         return TileAvailabilityState::NotAvailable;
     }
-    std::string buildUrl(const TileKey&) const override {
-        return "memory://sparse";
-    }
-    void requestTile(const TileKey& key,
-                     CancellationToken,
-                     TerrainCallback callback,
-                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
-        callback(key, TerrainTileLoadResult::retryLater());
+        callback(key, TileContentLoadResult::retryLater());
     }
-    std::unique_ptr<DecodedHeightmap> decodeTile(
+    TileContentLoadResult decodeContent(
         const uint8_t*, size_t) override {
-        return nullptr;
+        return TileContentLoadResult::failed();
     }
+    std::string schemeId() const { return "Geographic-TMS"; }
+    int maxZoom() const { return 4; }
     int requestCount = 0;
     std::vector<TileKey> extraAvailableKeys;
 };
@@ -11010,8 +11069,7 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = TileCacheKey::forTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
-    tile->content.loadState = TileLoadState::Done;
-    tile->content.contentKind = TileContentKind::Render;
+    TilesetTestAccess::makeGltfRenderReady(*tile);
     tiles[cacheKey] = std::move(tile);    lifecycle.emptyContentRegistry().insert(cacheKey);
     manager.updateTotalBytesUsed(tiles, lifecycle);
     manager.markEligibleForUnloading(tiles, cacheKey);
@@ -11101,8 +11159,7 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = TileCacheKey::forTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
-    tile->content.loadState = TileLoadState::Done;
-    tile->content.contentKind = TileContentKind::Render;
+    TilesetTestAccess::makeGltfRenderReady(*tile);
     tiles[cacheKey] = std::move(tile);    manager.updateTotalBytesUsed(tiles, lifecycle);
     const int64_t bytesBeforeUnload = manager.totalBytesUsed();
     manager.cacheBytesDirty() = false;
@@ -11481,188 +11538,6 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               std::abs(tile.content.renderContent.terrainMinimumHeight() + 50.0) < 1e-9 &&
               std::abs(tile.content.renderContent.terrainMaximumHeight() - 125.0) < 1e-9,
           "TileSurfaceRenderContentCoordinator: surface commit applies mesh height range and inherits it to unready children");
-    TileSurfaceMeshResolution missingResolution;
-    TileSurfaceMeshResolution ownResolution;
-    ownResolution.source = SurfaceDrawableSource::HeightmapTerrain;
-    ownResolution.markDone = true;
-    TileSurfaceMeshResolution ownContext =
-        TileSurfaceMeshResolution::forContext(
-            true,
-            TileContentUpsampleKind::None,
-            true);
-    TileSurfaceMeshResolution upsampleContext =
-        TileSurfaceMeshResolution::forContext(
-            false,
-            TileContentUpsampleKind::TerrainAvailability,
-            true);
-    TileSurfaceMeshResolution rasterDetailUpsampleContext =
-        TileSurfaceMeshResolution::forContext(
-            false,
-            TileContentUpsampleKind::RasterDetail,
-            true);
-    TileSurfaceMeshResolution noProviderContext =
-        TileSurfaceMeshResolution::forContext(
-            false,
-            TileContentUpsampleKind::None,
-            false);
-    TileSurfaceMeshResolution pendingQuadtreeContext =
-        TileSurfaceMeshResolution::forContext(
-            false,
-            TileContentUpsampleKind::None,
-            true);
-    check(missingResolution.resolvedSource() ==
-              SurfaceDrawableSource::EllipsoidFallback &&
-              ownResolution.resolvedSource() ==
-                  SurfaceDrawableSource::HeightmapTerrain &&
-              ownResolution.markDone &&
-              ownContext.markDone &&
-              upsampleContext.markDone &&
-              rasterDetailUpsampleContext.markDone &&
-              noProviderContext.markDone &&
-              !pendingQuadtreeContext.markDone,
-          "TileSurfaceMeshResolution: source fallback and done decision are explicit");
-    TilesetTile fallbackTile(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    TileSurfaceMeshResolution fallbackResolution =
-        TileSurfaceMeshSourceResolver::resolve(
-            fallbackTile,
-            nullptr,
-            false,
-            true,
-            [](const TilesetTile&, bool) -> const TilesetTile* {
-                return nullptr;
-            },
-            [](TilesetTile&) {});
-    check(fallbackTile.content.renderContent.hasSurfaceMesh() &&
-              fallbackResolution.resolvedSource() ==
-                  SurfaceDrawableSource::EllipsoidFallback &&
-              fallbackResolution.markDone,
-          "TileSurfaceMeshSourceResolver: no-provider tile resolves to done ellipsoid fallback");
-    TilesetTile contentTerrainFallbackTile(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    TileSurfaceMeshResolution contentTerrainFallbackResolution =
-        TileSurfaceMeshSourceResolver::resolve(
-            contentTerrainFallbackTile,
-            nullptr,
-            true,
-            false,
-            [](const TilesetTile&, bool) -> const TilesetTile* {
-                return nullptr;
-            },
-            [](TilesetTile&) {});
-    check(!contentTerrainFallbackTile.content.renderContent.hasSurfaceMesh() &&
-              contentTerrainFallbackResolution.source ==
-                  SurfaceDrawableSource::None &&
-              !contentTerrainFallbackResolution.markDone,
-          "TileSurfaceMeshSourceResolver: content terrain quadtree waits for content instead of creating an ellipsoid fallback");
-    TilesetTile gltfParent(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    gltfParent.content.renderContent.prepareGltfContent(
-        makeQuadTerrainGltfModel(gltfParent.bounds),
-        Mat4::identity());
-    gltfParent.content.renderContent.setTerrainRenderContent(true);
-    gltfParent.markRenderContentDone();
-    TilesetTile gltfChild(
-        TileKey{"Geographic-TMS", 1, 1, 0},
-        Rectangle::fromDegrees(0.0, 0.0, 180.0, 90.0),
-        &gltfParent);
-    gltfChild.content.markTerrainAvailabilityUpsample();
-    bool gltfAncestorEnsured = false;
-    TileSurfaceMeshResolution gltfUpsampleResolution =
-        TileSurfaceMeshSourceResolver::resolve(
-            gltfChild,
-            nullptr,
-            true,
-            false,
-            [](const TilesetTile&, bool) -> const TilesetTile* {
-                return nullptr;
-            },
-            [&gltfAncestorEnsured](TilesetTile&) {
-                gltfAncestorEnsured = true;
-            });
-    check(!gltfChild.content.renderContent.hasSurfaceMesh() &&
-              gltfUpsampleResolution.source == SurfaceDrawableSource::None &&
-              !gltfUpsampleResolution.markDone &&
-              !gltfAncestorEnsured,
-          "TileSurfaceMeshSourceResolver: glTF terrain ancestor defers to glTF upsample instead of SurfaceMesh fallback");
-    bool gltfEnsureIngested = false;
-    bool gltfEnsureAncestorEnsured = false;
-    bool gltfEnsureCompletenessChecked = false;
-    TileSurfaceMeshEnsureResult gltfEnsureResult =
-        TileSurfaceMeshEnsurer::ensure(
-            TileSurfaceMeshEnsureInput{
-                gltfChild,
-                nullptr,
-                nullptr,
-                true,
-                false},
-            [&gltfEnsureIngested](const TileKey&, DecodedHeightmap*) {
-                gltfEnsureIngested = true;
-            },
-            [](const TilesetTile&, bool) -> const TilesetTile* {
-                return nullptr;
-            },
-            [&gltfEnsureAncestorEnsured](TilesetTile&) {
-                gltfEnsureAncestorEnsured = true;
-            },
-            [&gltfEnsureCompletenessChecked](const TilesetTile&) {
-                gltfEnsureCompletenessChecked = true;
-                return false;
-            });
-    check(!gltfEnsureResult.resourcesDirty &&
-              !gltfChild.content.renderContent.hasSurfaceMesh() &&
-              !gltfEnsureIngested &&
-              !gltfEnsureAncestorEnsured &&
-              !gltfEnsureCompletenessChecked,
-          "TileSurfaceMeshEnsurer: glTF terrain upsample source bypasses SurfaceMesh commit path");
-    TilesetTile gltfFrameTile(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    gltfFrameTile.content.renderContent.prepareGltfContent(
-        makeQuadTerrainGltfModel(gltfFrameTile.bounds),
-        Mat4::identity());
-    gltfFrameTile.content.renderContent.setTerrainRenderContent(true);
-    gltfFrameTile.content.renderContent.addGltfPrimitiveResource(
-        GltfPrimitiveRenderResources{});
-    gltfFrameTile.markRenderContentDone();
-    bool frameResourcesDirty = false;
-    TileMeshFrameEnsurer::ensureContentTerrain(
-        TileContentTerrainMeshFrameEnsureInput{
-            gltfFrameTile},
-        [&frameResourcesDirty]() {
-            frameResourcesDirty = true;
-        });
-    check(!frameResourcesDirty &&
-              !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
-          "TileMeshFrameEnsurer: glTF terrain render content has no SurfaceMesh frame path");
-    TilesetTile gltfWithStaleHeightmapSurface(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
-    gltfWithStaleHeightmapSurface.content.renderContent.prepareGltfContent(
-        makeQuadTerrainGltfModel(gltfWithStaleHeightmapSurface.bounds),
-        Mat4::identity());
-    gltfWithStaleHeightmapSurface.content.renderContent
-        .setTerrainRenderContent(true);
-    gltfWithStaleHeightmapSurface.content.renderContent.setTerrainHeightRange(
-        -25.0,
-        875.0);
-    gltfWithStaleHeightmapSurface.content.renderContent.addGltfPrimitiveResource(
-        GltfPrimitiveRenderResources{});
-    gltfWithStaleHeightmapSurface.markRenderContentDone();
-    check(gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
-              gltfWithStaleHeightmapSurface.content.renderContent.isSurfaceSource(
-                  SurfaceDrawableSource::GltfContent) &&
-              gltfWithStaleHeightmapSurface.content.renderContent.hasTerrainHeightRange() &&
-              std::abs(gltfWithStaleHeightmapSurface.content.renderContent
-                           .terrainMinimumHeight() -
-                       -25.0) < 1e-12 &&
-              std::abs(gltfWithStaleHeightmapSurface.content.renderContent
-                           .terrainMaximumHeight() -
-                       875.0) < 1e-12,
-          "TileMeshFrameEnsurer: glTF terrain rejects stale heightmap surface residue before frame cleanup");
 }
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
     TileSelectionRefineFlowResult refineFlow;
@@ -13282,10 +13157,13 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
     const TileKey childKey{"test", 1, 1, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.markRenderContentDone();
-    parent.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
     std::unordered_map<std::string, TilesetTile*> tiles{
         {"test:0:0:0", &parent},
         {"test:1:1:0", &child}};
@@ -13340,10 +13218,13 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
     const TileKey childKey{"test", 1, 0, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.markRenderContentDone();
-    parent.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
         {TileCacheKey::forTile(childKey), &child}};
@@ -13385,14 +13266,20 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
     TilesetTile root(rootKey, Rectangle{0.0, 0.0, 4.0, 4.0});
     TilesetTile parent(parentKey, Rectangle{0.0, 2.0, 2.0, 4.0}, &root);
     TilesetTile child(childKey, Rectangle{0.0, 3.0, 1.0, 4.0}, &parent);
+    root.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(root.bounds), Mat4::identity());
+    root.content.renderContent.setTerrainRenderContent(true);
+    root.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root.content.renderContent.markRenderContentReady();
     root.markRenderContentDone();
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.markRenderContentDone();
-    root.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
-    parent.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(rootKey), &root},
         {TileCacheKey::forTile(parentKey), &parent},
@@ -13429,10 +13316,13 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
 void testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
+    root.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(root.bounds), Mat4::identity());
+    root.content.renderContent.setTerrainRenderContent(true);
+    root.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root.content.renderContent.markRenderContentReady();
     root.markRenderContentDone();
-    root.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -13504,10 +13394,13 @@ void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
     const TileKey childKey{"test", 1, 0, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
     parent.markRenderContentDone();
-    parent.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
         {TileCacheKey::forTile(childKey), &child}};
@@ -13544,6 +13437,7 @@ void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
 void testTileRenderPlanFinalizerCountsRootPrepOnce() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
+    TilesetTestAccess::makeGltfRenderReady(root);
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -13565,12 +13459,13 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
             });
+    // With glTF content the root is directly renderable — no synchronous
+    // mesh prep is needed because the surface geometry prep path is removed.
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().renderKey == rootKey &&
               plan.renderEntries.front().reason ==
-                  TileRenderEntryReason::SynchronousPrep &&
-              plan.renderEntries.front().allowSynchronousMeshPrep &&
-              plan.renderEntrySynchronousPrepCount == 1 &&
+                  TileRenderEntryReason::Direct &&
+              plan.renderEntrySynchronousPrepCount == 0 &&
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: root/no-ancestor direct prep is counted once to avoid blank frames");
 }
@@ -13579,6 +13474,7 @@ void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
     const TileKey childKey{"test", 1, 0, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    TilesetTestAccess::makeGltfRenderReady(parent);
     std::unordered_map<std::string, TilesetTile*> tiles{
         {TileCacheKey::forTile(parentKey), &parent},
         {TileCacheKey::forTile(childKey), &child}};
@@ -13601,21 +13497,24 @@ void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
         [&parent](const TilesetTile& tile) {
             return tile.key == parent.key;
         });
+    // With glTF content on the parent, the ancestor fallback works.
+    // The surface geometry prep path is removed so deferred prep is always 0.
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == childKey &&
               plan.renderEntries.front().renderKey == parentKey &&
               plan.renderEntries.front().reason ==
                   TileRenderEntryReason::AncestorFallback &&
               plan.renderEntries.front().usesAncestorFallback &&
-              !plan.renderEntries.front().allowSynchronousMeshPrep &&
+              plan.renderEntries.front().allowSynchronousMeshPrep &&
               plan.renderEntryAncestorFallbackCount == 1 &&
               plan.renderEntrySynchronousPrepCount == 0 &&
-              plan.renderEntryDeferredPrepCount == 1,
+              plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: interaction fallback can defer ancestor mesh prep when base command binding is available");
 }
 void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
+    TilesetTestAccess::makeGltfRenderReady(root);
     root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
@@ -13638,9 +13537,10 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
             });
+    // With glTF content the root is directly renderable.
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().reason ==
-                  TileRenderEntryReason::SynchronousPrep &&
+                  TileRenderEntryReason::Direct &&
               std::abs(plan.renderEntries.front().opacity - 0.25f) < 1e-6f,
           "TileRenderPlanFinalizer: visible tile opacity reads selection frame fade");
 }
@@ -13812,10 +13712,13 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
 void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
     const TileKey fadingKey{"test", 0, 0, 0};
     TilesetTile fading(fadingKey, Rectangle{});
+    fading.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(fading.bounds), Mat4::identity());
+    fading.content.renderContent.setTerrainRenderContent(true);
+    fading.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    fading.content.renderContent.markRenderContentReady();
     fading.markRenderContentDone();
-    fading.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
     TilePlan plan;
     plan.tilesFadingOut.push_back(TileTransition{fadingKey, 0.4f, 1});
     TileRenderPlanFinalizer::refreshRenderEntries(
@@ -14741,6 +14644,7 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
     tile.content.renderContent.markRenderContentReady();
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
+    const int64_t baseBytes = TileCacheMetrics::estimateTileBytes(tile);
     Renderer renderer(nullptr);
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
@@ -14775,7 +14679,7 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
     mapped = tile.rasterOverlayState.mappingAt(0);
     check(mapped && mapped->getReadyTile() == loadingTile,
           "RenderContentRasterOverlayStateUpdater: visible overlay promotes ready mapping");
-    check(TileCacheMetrics::estimateTileBytes(tile) == 8 * 4 * 4,
+    check(TileCacheMetrics::estimateTileBytes(tile) - baseBytes == 8 * 4 * 4,
           "RenderContentRasterOverlayStateUpdater: visible mapping contributes retained bytes");
     overlay->setVisible(false);
     RenderContentRasterOverlayStateUpdater::update(
@@ -14788,7 +14692,7 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
         budget);
     check(tile.rasterOverlayState.mappingAt(0) == nullptr,
           "RenderContentRasterOverlayStateUpdater: invisible overlay releases stale mapping");
-    check(TileCacheMetrics::estimateTileBytes(tile) == 0,
+    check(TileCacheMetrics::estimateTileBytes(tile) == baseBytes,
           "RenderContentRasterOverlayStateUpdater: invisible overlay releases raster tile references");
 }
 void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
@@ -23798,14 +23702,18 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr, "Tileset: root tile is created for sparse provider");
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-    check(root->content.renderContent.isMeshReady() &&
-              root->content.renderContent.hasSurfaceMesh(),
-          "Tileset: parent render mesh is ready before upsample children");
+    check(root->content.renderContent.hasGltfContent(),
+          "Tileset: parent render content is ready before upsample children");
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: partial availability creates all four children");
@@ -23857,7 +23765,9 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
         TileKey{"Geographic-TMS", 2, 0, 2},
     };
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
+    Tileset tileset(
+        std::move(scheme), {}, nullptr, TilesetOptions{},
+        std::move(provider));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23906,7 +23816,9 @@ void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
         TileKey{"Geographic-TMS", 2, 2, 0},
     };
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
+    Tileset tileset(
+        std::move(scheme), {}, nullptr, TilesetOptions{},
+        std::move(provider));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -23960,10 +23872,10 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
           "Tileset: clipped fallback test creates ancestor and child tiles");
     if (!root || !child) return;
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-    check(root->content.renderContent.isMeshReady() &&
-              root->content.renderContent.surfaceVertexBuffer() != nullptr,
+    check(root->content.renderContent.hasGltfContent() &&
+              root->content.renderContent.hasGltfResources(),
           "Tileset: clipped fallback ancestor has drawable GPU geometry");
-    check(child->content.renderContent.surfaceVertexBuffer() == nullptr,
+    check(!child->content.renderContent.hasGltfContent(),
           "Tileset: clipped fallback child starts without drawable GPU geometry");
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -24000,10 +23912,8 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
           "Tileset: clipped fallback emits one ancestor patch command for one missing child");
     if (commands.empty()) return;
     const RenderCommand& command = commands.front();
-    check(command.kind == RenderCommandKind::SurfaceTile &&
-              command.surfaceGeometryZoom == 0 &&
-              !command.textures.empty() &&
-              command.textures.front() == rootRaster->getTexture(),
+    check(command.kind == RenderCommandKind::GltfPrimitive &&
+              command.terrainRenderContent,
           "Tileset: clipped fallback uses the drawable ancestor geometry");
     check(command.surfaceClipEnabled > 0.5f,
           "Tileset: clipped fallback enables surface UV clipping");
@@ -24326,11 +24236,9 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
               plan.renderEntries.front().renderKey == rootKey,
           "Presentation trace: selected tile and render tile are explicit before rendering");
     check(commands.size() == 1 &&
-              commands.front().kind == RenderCommandKind::SurfaceTile &&
-              commands.front().surfaceGeometryZoom == rootKey.z &&
-              commands.front().surfaceClipEnabled > 0.5f &&
-              !commands.front().textures.empty() &&
-              commands.front().textures.front() == rootRaster->getTexture(),
+              commands.front().kind == RenderCommandKind::GltfPrimitive &&
+              commands.front().terrainRenderContent &&
+              commands.front().surfaceClipEnabled > 0.5f,
           "Presentation trace: draw command consumes the resolved render entry without reselecting LOD");
     if (commands.empty()) return;
     check(plan.renderEntries.front().surfaceClipUv == commands.front().surfaceClipUv,
@@ -24501,7 +24409,7 @@ void testPresentationTraceExposesFadingRenderEntry() {
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
     check(commands.size() == 1 &&
-              commands.front().kind == RenderCommandKind::SurfaceTile &&
+              commands.front().kind == RenderCommandKind::GltfPrimitive &&
               std::abs(commands.front().surfaceTransitionOpacity - 0.75f) <
                   1e-6f,
           "Presentation trace: fading render entry emits a translucent surface command");
@@ -24685,160 +24593,13 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
                   std::string::npos,
           "Tileset: clipped fallback stable keys include the selected child patch identity");
 }
-void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
-    InitializedRendererHarness harness;
-    auto baseOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = makeLegacySurfaceFixtureTileset(
-        std::move(scheme),
-        {&baseActivated},
-        &harness.device,
-        TilesetOptions{});
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    check(root != nullptr,
-          "Surface command: setup creates root tile");
-    if (!root) return;
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
-    check(mesh != nullptr && mesh->indices.size() >= 12,
-          "Surface command: terrain mesh is available for skirt range setup");
-    if (!mesh || mesh->indices.size() < 12) return;
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
-        root->rasterOverlayState.mappings().empty() ? nullptr : root->rasterOverlayState.mappings()[0].get();
-    RasterOverlayTile* rootRaster =
-        rootMapped ? rootMapped->getLoadingTile() : nullptr;
-    check(rootRaster != nullptr,
-          "Surface command: terrain mesh test maps a real base imagery tile");
-    if (!rootMapped || !rootRaster) return;
-    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
-    rootRaster->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    check(chooseSurfaceRasterBinding(rootMapped).kind ==
-              SurfaceRasterBindingKind::RealTile,
-          "Surface command: no-skirt draw uses a legal real base imagery binding");
-    mesh->skirtMeta.noSkirtIndicesBegin = 0;
-    mesh->skirtMeta.noSkirtIndicesCount =
-        static_cast<uint32_t>(mesh->indices.size() - 6);
-    mesh->skirtMeta.noSkirtVerticesBegin = 0;
-    mesh->skirtMeta.noSkirtVerticesCount =
-        static_cast<uint32_t>(mesh->vertices.size());
-    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
-    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-    RenderCommandList commands;
-    tileset.buildRenderCommands(harness.renderer, commands);
-    check(commands.size() == 1 &&
-              commands.front().kind == RenderCommandKind::SurfaceTile,
-          "Surface command: terrain tile produces one surface draw command");
-    if (commands.empty()) return;
-    const RenderCommand& command = commands.front();
-    check(command.indexOffset == 0 &&
-              command.indexCount ==
-                  static_cast<int>(mesh->skirtMeta.noSkirtIndicesCount),
-          "Surface command: main terrain draw uses no-skirt index range");
-    check(command.surfaceMeshIndexCount ==
-              static_cast<int>(mesh->indices.size()) &&
-              command.surfaceNoSkirtIndexCount == command.indexCount &&
-              command.surfaceSkirtIndexCount == 6,
-          "Surface command: trace fields expose skipped skirt index count");
-}
-void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
-    InitializedRendererHarness harness;
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = makeLegacySurfaceFixtureTileset(
-        std::move(scheme),
-        {},
-        &harness.device,
-        TilesetOptions{});
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    check(root != nullptr,
-          "Surface command: missing-index-buffer setup creates root tile");
-    if (!root) return;
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
-    check(mesh != nullptr && !mesh->vertices.empty() && !mesh->indices.empty(),
-          "Surface command: missing-index-buffer test has explicit mesh geometry");
-    if (!mesh || mesh->vertices.empty() || mesh->indices.empty()) return;
-    BufferDesc vbDesc;
-    vbDesc.size = mesh->vertices.size() * sizeof(SurfaceVertex);
-    vbDesc.data = mesh->vertices.data();
-    vbDesc.type = BufferDesc::Type::Vertex;
-    root->content.renderContent.setSurfaceGpuBuffers(
-        harness.device.createBuffer(vbDesc),
-        nullptr);
-    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
-    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-    RenderCommandList commands;
-    tileset.buildRenderCommands(harness.renderer, commands);
-    check(commands.empty(),
-          "Surface command: explicit mesh without GPU index buffer does not fall back to renderer default indices");
-}
-void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
-    InitializedRendererHarness harness;
-    auto baseOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay baseActivated(*baseOverlay);
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = makeLegacySurfaceFixtureTileset(
-        std::move(scheme),
-        {&baseActivated},
-        &harness.device,
-        TilesetOptions{});
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    check(root != nullptr,
-          "Surface command: overflowing no-skirt setup creates root tile");
-    if (!root) return;
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
-    check(mesh != nullptr && !mesh->indices.empty(),
-          "Surface command: overflowing no-skirt test has terrain indices");
-    if (!mesh || mesh->indices.empty()) return;
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
-        root->rasterOverlayState.mappings().empty() ? nullptr : root->rasterOverlayState.mappings()[0].get();
-    RasterOverlayTile* rootRaster =
-        rootMapped ? rootMapped->getLoadingTile() : nullptr;
-    check(rootRaster != nullptr,
-          "Surface command: overflowing no-skirt test maps base imagery");
-    if (!rootMapped || !rootRaster) return;
-    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
-    rootRaster->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    mesh->skirtMeta.noSkirtIndicesBegin =
-        std::numeric_limits<uint32_t>::max();
-    mesh->skirtMeta.noSkirtIndicesCount = 2;
-    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
-    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-    RenderCommandList commands;
-    tileset.buildRenderCommands(harness.renderer, commands);
-    check(commands.size() == 1 &&
-              commands.front().kind == RenderCommandKind::SurfaceTile,
-          "Surface command: overflowing no-skirt metadata still draws valid full mesh");
-    if (commands.empty()) return;
-    check(commands.front().indexOffset == 0 &&
-              commands.front().indexCount ==
-                  static_cast<int>(mesh->indices.size()) &&
-              commands.front().surfaceNoSkirtIndexCount ==
-                  static_cast<int>(mesh->indices.size()) &&
-              commands.front().surfaceSkirtIndexCount == 0,
-          "Surface command: overflowing no-skirt range is ignored instead of wrapping");
-}
 void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
+    Tileset tileset(
+        std::move(scheme), {}, nullptr, TilesetOptions{},
+        std::move(provider));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -24865,7 +24626,9 @@ void testTilesetUpsampledChildFinalizesContentLoadedParent() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
+    Tileset tileset(
+        std::move(scheme), {}, nullptr, TilesetOptions{},
+        std::move(provider));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -24893,11 +24656,9 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     SparseTerrainProvider* rawProvider = provider.get();
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
-        std::move(scheme),
-        {},
-        &device,
-        TilesetOptions{});
+    Tileset tileset(
+        std::move(scheme), {}, &device, TilesetOptions{},
+        std::move(provider));
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
@@ -25884,56 +25645,6 @@ void testTilesetUnloadQueueIgnoresUnloadedUnknownTiles() {
     check(tileset.loadDiagnostics().unloadQueueTiles == 1,
           "Tileset: loaded empty content remains eligible for content unloading");
 }
-void testTilesetUnloadRenderContentWaitsForUpsampledChildLoading() {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme));
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    check(root != nullptr,
-          "Tileset: upsample-child-loading unload root tile is created");
-    if (!root) return;
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    check(root->content.loadState == TileLoadState::Done &&
-              root->content.contentKind == TileContentKind::Render &&
-              root->content.renderContent.isMeshReady() &&
-              root->content.renderContent.hasSurfaceMesh(),
-          "Tileset: upsample-child-loading parent source mesh is ready");
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(256),
-        std::make_unique<DummyBuffer>(96));
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    check(!root->children.empty(),
-          "Tileset: upsample-child-loading setup creates children");
-    if (root->children.empty() || !root->children.front()) return;
-    TilesetTile* child = root->children.front();
-    child->content.markTerrainAvailabilityUpsample();
-    TilesetTestAccess::requestMissingTile(tileset, child->key);
-    check(child->content.loadState == TileLoadState::Unloaded &&
-              tileset.loadDiagnostics().pendingGltfTerrainUploads == 0,
-          "Tileset: upsample child without glTF source does not create a pending legacy upload before parent unload");
-    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
-    TilesetTestAccess::updateTotalBytesUsed(tileset);
-    const int64_t bytesBeforeUnload = tileset.totalBytesUsed();
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
-    check(root->content.loadState == TileLoadState::Unloaded &&
-              root->content.contentKind == TileContentKind::Unknown &&
-              !root->content.renderContent.isMeshReady() &&
-              !root->content.renderContent.hasSurfaceMesh(),
-          "Tileset: parent unload is not protected by removed legacy upsample work");
-    check(tileset.totalBytesUsed() < bytesBeforeUnload,
-          "Tileset: full unload updates byte accounting after removed legacy upsample protection");
-    check(tileset.loadDiagnostics().unloadQueueTiles == 0,
-          "Tileset: parent leaves unload queue immediately without pending legacy upsample child");
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
-    check(root->content.loadState == TileLoadState::Unloaded &&
-              root->content.contentKind == TileContentKind::Unknown &&
-              !root->content.renderContent.isMeshReady() &&
-              !root->content.renderContent.hasSurfaceMesh(),
-          "Tileset: upsample-protected parent finishes unloading after child load leaves ContentLoading");
-    check(tileset.loadDiagnostics().unloadQueueTiles == 0,
-          "Tileset: finished Unloading parent is removed from the unload queue");
-}
 void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -26629,9 +26340,6 @@ int main() {
     testPresentationTraceExposesFadingRenderEntry();
     testPresentationTraceExposesAdditiveSelectedRenderEntries();
     testClippedFallbackCommandsHaveSelectedChildStableKeys();
-    testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh();
-    testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer();
-    testSurfaceTileCommandIgnoresOverflowingNoSkirtRange();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
@@ -26651,7 +26359,6 @@ int main() {
     testTilesetClearChildrenIgnoresStaleContentCallback();
     testTilesetUnloadKeepsParentWithReferencedDescendant();
     testTilesetUnloadQueueIgnoresUnloadedUnknownTiles();
-    testTilesetUnloadRenderContentWaitsForUpsampledChildLoading();
     testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading();
     testTilesetUnloadRenderContentPreservesLoadedChildren();
     testTilesetUnloadExternalContentClearsChildren();

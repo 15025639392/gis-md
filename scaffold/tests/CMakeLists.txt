@@ -286,12 +286,6 @@ add_executable(test_tile_child_materializer
 target_link_libraries(test_tile_child_materializer PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_child_materializer COMMAND test_tile_child_materializer)
 
-add_executable(test_tile_surface_mesh_ensurer
-    unit/tiling/test_tile_surface_mesh_ensurer.cpp
-)
-target_link_libraries(test_tile_surface_mesh_ensurer PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_tile_surface_mesh_ensurer COMMAND test_tile_surface_mesh_ensurer)
-
 add_executable(test_loaded_terrain_height_sampler
     unit/tiling/test_loaded_terrain_height_sampler.cpp
 )

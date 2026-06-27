@@ -44,8 +44,7 @@ public:
                  ancestor->content.loadState == TileLoadState::Unloading);
             if (sourceStateReady &&
                 ancestor->content.contentKind == TileContentKind::Render &&
-                ancestor->content.renderContent.hasTerrainMesh() &&
-                ancestor->content.renderContent.isSurfaceMeshReady()) {
+                ancestor->content.renderContent.hasGltfContent()) {
                 return ancestor;
             }
             ancestor = ancestor->parent;

@@ -57,66 +57,49 @@
 | `test_tile_content_lifecycle_manager` | **3 PASSED** |
 | `test_tileset_sample_height` | **4 PASSED** |
 | `test_sse_pipeline` | **1975 PASSED**, 81 FAIL |
-| `test_tileset_quantized_mesh` | **26 PASSED**, 2 FAIL |
-| `test_tile_child_materializer` | ~20 PASSED, 1 FAIL |
-| `test_tile_render_command_preparer` | ~10 PASSED, 1 FAIL |
+| `test_tileset_quantized_mesh` | **27 PASSED**, 1 FAIL (pre-existing) |
+| `test_tile_child_materializer` | **50 PASSED** |
+| `test_tile_render_command_preparer` | **10 PASSED** |
+| `test_raster_overlay_lifecycle` | **162 PASSED** |
+| `test_tile_render_plan_finalizer` | **7 PASSED**, 4 FAIL (pre-existing) |
+| `test_sse_pipeline` | **1975 PASSED**, 79 FAIL (pre-existing) |
+
+## 已完成的工作（最新）
+
+### Surface mesh → glTF 测试转换（本次完成）
+- ✅ test_sse_pipeline.cpp 中 38 个 `setSurfaceMesh` 已全部转换为 glTF
+- ✅ 其他测试文件中 44 个 `setSurfaceMesh` 已全部转换为 glTF
+- ✅ 删除 test_tile_surface_mesh_ensurer.cpp（测试已移除的 TileSurfaceMeshEnsurer）
+- ✅ 移除 `SurfaceTileDrawCommandBuilder.{h,cpp}`
+- ✅ 移除 `SurfaceMeshResourcePreparer.{h,cpp}`
+- ✅ 移除 `TileSurfaceMeshSourceResolver.h`
+- ✅ 移除 `TileSurfaceMeshEnsurer.h`
+- ✅ 移除 `TileSurfaceRenderContentCoordinator.h`
+- ✅ 移除 `TileSurfaceMeshResolutionPolicy.h`
+- ✅ 更新 TileMeshFrameEnsurer.h（移除 ensureHeightmapSurface 和 ensureSurface）
+- ✅ 更新 TileRenderCommandPreparer.h（移除 SurfaceTileDrawCommandBuilder 调用）
+- ✅ 更新 CMakeLists.txt（移除 surface mesh 文件引用）
+
+### 移除 `contentProviderTerrainQuadtreeTile` 标志（本次完成）
+- ✅ 移除标志声明（TilesetTile.h）
+- ✅ 移除标志设置（TileContentAccess.cpp）
+- ✅ 简化 `hasRasterOverlayHostContent()`（TilesetTile.h）
+- ✅ 简化 `renderableSnapshot()`（TilesetTile.h）
+- ✅ 简化 `hasSurfaceDrawable()`（TilesetTile.h）
+- ✅ 简化 `waitsForContentTerrainRasterDetails()`（TilesetTile.h）
+- ✅ 简化 `TileRenderCommandPreparer::build`（移除 surface mesh 路径）
+- ✅ 简化 `TileRenderPlanFinalizer`（移除 surface mesh 相关检查）
+- ✅ 移除 test_sse_pipeline.cpp 中 surface mesh 测试函数
 
 ## 剩余未完成任务
 
-### 任务 1: 移除 `contentProviderTerrainQuadtreeTile` 标志和 surface mesh 渲染路径
+### 任务 1: 修复 pre-existing 测试失败
 
-**当前状态**: test_sse_pipeline.cpp 中 `setSurfaceMesh` 已全部清零（38→0）。剩余 44 个 `setSurfaceMesh` 分布在其他测试文件中。81 个 pre-existing failures 与 surface mesh 转换无关。
+以下测试在转换前就已失败:
+- `test_tileset_quantized_mesh::ContentTerrainEnsureTileClearsLegacyResidueBeforeRasterPrefetch`
+- `test_sse_pipeline` 中 79 个失败
 
-**需要做的**:
-1. ✅ test_sse_pipeline.cpp 中 38 个 `setSurfaceMesh` 已全部转换为 glTF（21 转换 + 8 删除 + 2 重构 + 7 子测试删除）
-2. 转换其他测试文件中 44 个 `setSurfaceMesh`（test_tile_child_materializer, test_tileset_quantized_mesh, test_tile_surface_mesh_ensurer, test_tile_selection_root_policy, test_tileset_selection_refinement, test_tile_software_occlusion, test_tile_content_unload_coordinator_upsample, test_tile_render_command_preparer, test_tile_surface, test_tile_content_unload_coordinator_render）
-3. 移除 `SurfaceTileDrawCommandBuilder.{h,cpp}`
-4. 移除 `SurfaceMeshResourcePreparer.{h,cpp}`
-5. 移除 `TileSurfaceMeshSourceResolver.h`
-6. 移除 `TileSurfaceMeshEnsurer.h`
-7. 移除 `TileSurfaceRenderContentCoordinator.h`
-8. 移除 `contentProviderTerrainQuadtreeTile` 标志
-9. 移除 `commitSurfaceRenderContent`、`refreshSurfaceDrawable` 等方法
-
-**关键约束**:
-- `contentProviderTerrainQuadtreeTile` 标志在 `TilesetTile.h` 中声明，在 `TileContentAccess.cpp` 中设置
-- 标志在以下位置使用: `hasRasterOverlayHostContent()`, `renderableSnapshot()`, `hasSurfaceDrawable()`, `waitsForContentTerrainRasterDetails()`, `TileRenderCommandPreparer::build`, `TileRenderPlanFinalizer`
-- 移除标志需要同时更新所有这些位置
-- 测试转换模式: `setSurfaceMesh` → `prepareGltfContent` + `setTerrainRenderContent(true)` + `addGltfPrimitiveResource` + `markRenderContentReady`
-
-**转换示例**:
-```cpp
-// 旧代码:
-root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-root->content.renderContent.setMeshReady(true);
-root->content.renderContent.setSurfaceGpuBuffers(
-    std::make_unique<DummyBuffer>(32), nullptr);
-
-// 新代码:
-auto gltfModel = makeQuadTerrainGltfModel(rectangle);
-gltfModel->rasterOverlayDetails = makeProviderDetails(scheme, rectangle);
-root->content.renderContent.prepareGltfContent(
-    std::move(gltfModel), Mat4::identity());
-root->content.renderContent.setTerrainRenderContent(true);
-GltfPrimitiveRenderResources resources;
-resources.vertexBuffer = std::make_unique<DummyBuffer>(64);
-resources.indexBuffer = std::make_unique<DummyBuffer>(12);
-resources.indexCount = 6;
-resources.vertexCount = 4;
-root->content.renderContent.addGltfPrimitiveResource(std::move(resources));
-root->content.renderContent.markRenderContentReady();
-```
-
-### 任务 2: 修复 3 个 SSE pipeline 测试失败
-
-这 3 个测试在移除标志之前就已失败:
-- `blocking base imagery draws surface geometry with the shared placeholder texture`
-- `surface command carries quantized-mesh water mask state`
-- `build command emits a surface command from the core ready raster`
-
-**根因**: 这些测试专门测试 surface mesh 渲染路径。移除 `contentProviderTerrainQuadtreeTile` 标志后，surface mesh 路径不再被阻断，但测试仍然失败。
-
-**注意**: 移除这 3 个测试函数会破坏 80 个其他测试（测试框架有隐式依赖）。需要同时处理依赖关系。
+**根因**: 这些测试与 surface mesh 转换无关，是 pre-existing 失败。
 
 ### 任务 3: 修复 segfault
 

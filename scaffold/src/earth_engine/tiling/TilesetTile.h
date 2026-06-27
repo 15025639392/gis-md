@@ -39,7 +39,6 @@ struct TilesetTile {
     std::optional<TileBoundingVolume> contentBoundingVolume;
     std::optional<TileBoundingVolume> initialBoundingVolume;
     std::optional<TileBoundingVolume> initialContentBoundingVolume;
-    bool contentProviderTerrainQuadtreeTile = false;
 
     // ---- Tree structure (cesium-native parent/child) ----
     // DIFF from cesium-native: children are raw pointers, ownership is in
@@ -135,18 +134,13 @@ struct TilesetTile {
 
     TileRenderableSnapshot renderableSnapshot(
         bool requiredRasterOverlaysReady) const {
-        const bool renderContentReady =
-            contentProviderTerrainQuadtreeTile &&
-                    !content.renderContent.hasGltfContent()
-                ? false
-                : content.renderContent.isRenderContentReady();
         return TileRenderableSnapshot{
             content.loadState,
             content.contentKind,
             unconditionallyRefine,
             !children.empty(),
             requiredRasterOverlaysReady,
-            renderContentReady};
+            content.renderContent.isRenderContentReady()};
     }
 
     bool canPrepareRasterOverlays() const {
@@ -163,29 +157,18 @@ struct TilesetTile {
     }
 
     bool hasRasterOverlayHostContent() const {
-        if (contentProviderTerrainQuadtreeTile &&
-            !content.renderContent.hasGltfContent()) {
-            return false;
-        }
         return content.renderContent.hasRenderableTerrainContent();
     }
 
     bool waitsForContentTerrainRasterDetails() const {
-        return contentProviderTerrainQuadtreeTile &&
-               hasCommittedRenderContent() &&
+        return hasCommittedRenderContent() &&
+               content.renderContent.isTerrainRenderContent() &&
                !content.renderContent.hasRasterOverlayDetailsContent();
     }
 
     bool hasSurfaceDrawable() const {
-        if (contentProviderTerrainQuadtreeTile &&
-            !content.renderContent.hasGltfContent()) {
-            return false;
-        }
-        return TileRenderablePolicy::hasSurfaceDrawable(
-            content.contentKind,
-            content.loadState,
-            content.renderContent.isMeshReady(),
-            content.renderContent.surfaceVertexBuffer() != nullptr);
+        return content.renderContent.hasGltfContent() &&
+               content.renderContent.isRenderContentReady();
     }
 
     void markRenderContentFailedTemporarily() {

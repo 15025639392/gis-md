@@ -4,6 +4,11 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileRenderCommandPreparer.h"
 
+#include "earth_engine/content/GltfModel.h"
+#include "earth_engine/core/math/Mat4.h"
+#include "earth_engine/core/math/Vec3.h"
+#include "earth_engine/tiling/SurfaceTile.h"
+
 #include <array>
 #include <memory>
 #include <vector>
@@ -32,6 +37,50 @@ TileRenderCommandPrepareContext makeContext(
     context.allowSynchronousMeshPrep = allowSynchronousMeshPrep;
     context.surfaceClipUv = std::array<float, 4>{0.25f, 0.0f, 0.5f, 1.0f};
     return context;
+}
+
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
 }
 
 } // namespace
@@ -92,12 +141,16 @@ TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) 
         [&ensureMeshCalled](TilesetTile& meshTile) {
             ensureMeshCalled = true;
             meshTile.markRenderContentDone();
-            meshTile.content.renderContent.setSurfaceMesh(
-                std::make_unique<SurfaceTileMesh>());
-            meshTile.content.renderContent.setMeshReady(true);
-            meshTile.content.renderContent.setSurfaceGpuBuffers(
-                std::make_unique<DummyBuffer>(4),
-                nullptr);
+            auto gltfModel = makeQuadTerrainGltfModel(meshTile.bounds);
+            meshTile.content.renderContent.prepareGltfContent(std::move(gltfModel), Mat4::identity());
+            meshTile.content.renderContent.setTerrainRenderContent(true);
+            GltfPrimitiveRenderResources resources;
+            resources.vertexBuffer = std::make_unique<DummyBuffer>(64);
+            resources.indexBuffer = std::make_unique<DummyBuffer>(12);
+            resources.indexCount = 6;
+            resources.vertexCount = 4;
+            meshTile.content.renderContent.addGltfPrimitiveResource(std::move(resources));
+            meshTile.content.renderContent.markRenderContentReady();
         },
         [&unloadContentCalled](TilesetTile&) {
             unloadContentCalled = true;
@@ -109,8 +162,7 @@ TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) 
     EXPECT_TRUE(ensureMeshCalled);
     EXPECT_FALSE(unloadContentCalled);
     EXPECT_FALSE(upsampleChildrenCalled);
-    EXPECT_TRUE(tile.content.renderContent.isMeshReady());
-    EXPECT_TRUE(tile.hasSurfaceDrawable());
+    EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
     EXPECT_TRUE(commands.empty());
 }
 
@@ -119,15 +171,17 @@ TEST(TileRenderCommandPreparerTest,
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::Done;
-    tile.content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    tile.content.renderContent.setMeshReady(true);
-    tile.content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::HeightmapTerrain);
-    tile.content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(4),
-        nullptr);
-    ASSERT_TRUE(tile.content.renderContent.isMeshReady());
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    tile.content.renderContent.prepareGltfContent(std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources resources;
+    resources.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    resources.indexBuffer = std::make_unique<DummyBuffer>(12);
+    resources.indexCount = 6;
+    resources.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(resources));
+    tile.content.renderContent.markRenderContentReady();
+    ASSERT_TRUE(tile.content.renderContent.isGltfRenderReady());
     ASSERT_FALSE(tile.hasSurfaceDrawable());
     tile.selectionFrameState.completeRenderable = true;
     tile.selectionFrameState.renderable = true;
@@ -150,7 +204,7 @@ TEST(TileRenderCommandPreparerTest,
         makeContext(true),
         [&ensureMeshCalled](TilesetTile& meshTile) {
             ensureMeshCalled = true;
-            meshTile.content.renderContent.clearSurfaceMeshResources();
+            meshTile.content.renderContent.clearGltfContent();
             meshTile.content.loadState = TileLoadState::Unloaded;
         },
         [&unloadContentCalled](TilesetTile&) {
@@ -163,12 +217,14 @@ TEST(TileRenderCommandPreparerTest,
     EXPECT_FALSE(ensureMeshCalled);
     EXPECT_FALSE(unloadContentCalled);
     EXPECT_FALSE(upsampleChildrenCalled);
-    EXPECT_TRUE(tile.content.renderContent.hasSurfaceMesh());
-    EXPECT_TRUE(tile.content.renderContent.isMeshReady());
-    EXPECT_FALSE(tile.renderableSnapshot(true).meshReady);
-    EXPECT_FALSE(tile.selectionFrameState.completeRenderable);
-    EXPECT_FALSE(tile.selectionFrameState.renderable);
-    EXPECT_TRUE(commands.empty());
+    EXPECT_TRUE(tile.content.renderContent.hasGltfContent());
+    EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
+    EXPECT_TRUE(tile.renderableSnapshot(true).meshReady);
+    EXPECT_TRUE(tile.selectionFrameState.completeRenderable);
+    EXPECT_TRUE(tile.selectionFrameState.renderable);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands.front().kind, RenderCommandKind::GltfPrimitive);
+    EXPECT_TRUE(commands.front().terrainRenderContent);
 }
 
 TEST(TileRenderCommandPreparerTest,

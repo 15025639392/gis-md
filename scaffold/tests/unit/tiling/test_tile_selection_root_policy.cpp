@@ -236,6 +236,50 @@ struct ProviderOrderedRootFixture {
             provider);
 };
 
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 } // namespace
 
 TEST(TileSelectionRootPolicyTest, ExplicitContentRootsTakePriority) {
@@ -427,9 +471,13 @@ TEST(TileSelectionRootPolicyTest,
     const TileKey levelZeroKey{"Geographic-TMS", 0, 1, 0};
     TilesetTile* levelZero = fixture.contentAccess.ensureTile(levelZeroKey);
     ASSERT_NE(nullptr, levelZero);
-    levelZero->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    levelZero->content.renderContent.setMeshReady(true);
+    auto gltfModelClear = makeQuadTerrainGltfModel(levelZero->bounds);
+    levelZero->content.renderContent.prepareGltfContent(
+        std::move(gltfModelClear), Mat4::identity());
+    levelZero->content.renderContent.setTerrainRenderContent(true);
+    levelZero->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    levelZero->content.renderContent.markRenderContentReady();
     levelZero->content.renderContent.setRetainedHeightmap(
         std::make_unique<DecodedHeightmap>());
     levelZero->rasterOverlayState.ensureMapping(0);
@@ -464,9 +512,13 @@ TEST(TileSelectionRootPolicyTest,
     const TileKey levelZeroKey{"Geographic-TMS", 0, 1, 0};
     TilesetTile* levelZero = fixture.contentAccess.ensureTile(levelZeroKey);
     ASSERT_NE(nullptr, levelZero);
-    levelZero->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
-    levelZero->content.renderContent.setMeshReady(true);
+    auto gltfModelDetach = makeQuadTerrainGltfModel(levelZero->bounds);
+    levelZero->content.renderContent.prepareGltfContent(
+        std::move(gltfModelDetach), Mat4::identity());
+    levelZero->content.renderContent.setTerrainRenderContent(true);
+    levelZero->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    levelZero->content.renderContent.markRenderContentReady();
     levelZero->content.renderContent.mutableRasterOverlayDetails()
         ->setGeographicRectangle(levelZero->bounds);
 
