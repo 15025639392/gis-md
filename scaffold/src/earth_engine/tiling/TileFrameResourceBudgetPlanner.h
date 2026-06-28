@@ -3,6 +3,7 @@
 #include "../core/resources/FrameResourceBudget.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -81,23 +82,44 @@ public:
         config.maxTerrainContentNetworkInflight =
             input.maximumSimultaneousTileLoads;
         config.maxRasterNetworkInflight = rasterNetworkLimit;
-        config.maxMainThreadFinalizesPerFrame =
-            input.resourceSmoothingActive ? 1u
-                                          : input.maximumSimultaneousTileLoads == 0
-                                              ? std::numeric_limits<uint32_t>::max()
-                                              : input.maximumSimultaneousTileLoads;
-        config.maxTerminalStateTransitionsPerFrame =
-            input.resourceSmoothingActive
-                ? std::max<uint32_t>(1u, input.maximumSimultaneousTileLoads / 2u)
-                : input.maximumSimultaneousTileLoads == 0
+        if (input.resourceSmoothingActive) {
+            if (input.mainThreadLoadingTimeLimit > 0.0) {
+                // Time-based smoothing: compute per-frame budgets from
+                // available main-thread time. Matches cesium-native
+                // FrameResourceBudget smoothing formula.
+                constexpr double kMsPerFinalize = 2.5;
+                constexpr double kMsPerTransition = 0.625;
+                config.maxMainThreadFinalizesPerFrame = std::max<uint32_t>(
+                    1u,
+                    static_cast<uint32_t>(std::ceil(
+                        input.mainThreadLoadingTimeLimit / kMsPerFinalize)));
+                config.maxTerminalStateTransitionsPerFrame = std::max<uint32_t>(
+                    1u,
+                    static_cast<uint32_t>(std::ceil(
+                        input.mainThreadLoadingTimeLimit / kMsPerTransition)));
+                config.maxRasterUploadsPerFrame =
+                    config.maxTerminalStateTransitionsPerFrame;
+            } else {
+                // Fallback when no timing data yet
+                config.maxMainThreadFinalizesPerFrame = 4u;
+                config.maxTerminalStateTransitionsPerFrame =
+                    std::max<uint32_t>(4u, input.maximumSimultaneousTileLoads / 2u);
+                config.maxRasterUploadsPerFrame = std::min<uint32_t>(
+                    8u,
+                    input.maximumSimultaneousTileLoads);
+            }
+        } else {
+            config.maxMainThreadFinalizesPerFrame =
+                input.maximumSimultaneousTileLoads == 0
                     ? std::numeric_limits<uint32_t>::max()
                     : input.maximumSimultaneousTileLoads;
-        config.maxRasterUploadsPerFrame =
-            input.resourceSmoothingActive
-                ? std::min<uint32_t>(
-                      4u,
-                      input.maximumSimultaneousTileLoads)
-                : input.maximumSimultaneousTileLoads;
+            config.maxTerminalStateTransitionsPerFrame =
+                input.maximumSimultaneousTileLoads == 0
+                    ? std::numeric_limits<uint32_t>::max()
+                    : input.maximumSimultaneousTileLoads;
+            config.maxRasterUploadsPerFrame =
+                input.maximumSimultaneousTileLoads;
+        }
         config.mainThreadTimeMs = input.mainThreadLoadingTimeLimit;
         config.interactionActive = input.interactionActive;
         config.smoothingActive = input.resourceSmoothingActive;

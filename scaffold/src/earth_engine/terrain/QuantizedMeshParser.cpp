@@ -262,7 +262,13 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
 
     // --- Parse indices ---
     bool idx32 = (vc > 65536);
-    if (idx32 && (offset % 4) != 0) offset += 2;
+    // 32-bit indices use 4-byte alignment. When vertexCount > 65536
+    // and offset is not 4-byte aligned, insert 2-byte padding before
+    // triCount. Matches cesium-native QuantizedMeshLoader.cpp.
+    // NOTE: 16-bit indices NEVER have padding — skip only for idx32.
+    if (idx32 && (offset % 4) != 0) {
+        offset += 2;  // Skip intentional zero padding for 4-byte alignment
+    }
     if (offset + 4 > len) {
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_ERROR, "QMParser",

@@ -6,6 +6,7 @@
 #include "../core/geodesy/Projection.h"
 #include "../core/math/MathUtils.h"
 #include "../terrain/QuantizedMeshParser.h"
+#include "../tiling/GltfRenderGeometryBuilder.h"
 
 #include <algorithm>
 #include <array>
@@ -114,8 +115,30 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     primitive.runtime.hasNormals = true;
 
     model->primitives.push_back(std::move(primitive));
+    // Pre-build TerrainGpuVertex data so main-thread GPU upload can create
+    // vertex buffers directly.  Matches cesium-native: vertex format
     if (!model->rebuildRuntime()) {
         return nullptr;
+    }
+    // Pre-build TerrainGpuVertex data AFTER rebuildRuntime so vertex positions
+    // are in ECEF (world) coordinates — matching the sync prepare() path.
+    // Without this, the async pipeline's vertex positions are off by
+    // localOrigin, shifting overlay UV and creating stripe artifacts.
+    {
+        GltfPrimitive& p = model->primitives.back();
+        std::vector<TerrainGpuVertex> terrainVerts =
+            GltfRenderGeometryBuilder::buildTerrainVertices(
+                p,
+                Mat4::identity(),
+                decodedTile.localOriginEcef);
+        if (!terrainVerts.empty()) {
+            p.terrainGpuVertexBytes.resize(
+                terrainVerts.size() * sizeof(TerrainGpuVertex));
+            std::memcpy(
+                p.terrainGpuVertexBytes.data(),
+                terrainVerts.data(),
+                p.terrainGpuVertexBytes.size());
+        }
     }
     return model;
 }

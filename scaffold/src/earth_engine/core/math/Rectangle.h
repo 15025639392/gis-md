@@ -31,8 +31,14 @@ public:
     double eastDegrees() const;
     double northDegrees() const;
 
-    double width() const;   // 经度跨度 (rad)
+    double width() const;   // 经度跨度 (rad)，含反子午线处理
     double height() const;  // 纬度跨度 (rad)
+
+    /// 投影空间宽度 — 无反子午线处理的直接减法。
+    /// 用于 WebMercator 等投影坐标系中（宽度总是 east - west）。
+    /// 对应 cesium-native Rectangle::computeWidth。
+    double computeWidth() const noexcept { return east_ - west_; }
+    double computeHeight() const noexcept { return north_ - south_; }
     std::pair<double, double> center() const;
     std::pair<double, double> normalizedCoordinates(double lngRad,
                                                     double latRad) const;
