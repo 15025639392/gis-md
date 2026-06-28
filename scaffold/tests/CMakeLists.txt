@@ -124,6 +124,12 @@ add_executable(test_uri
 target_link_libraries(test_uri PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_uri COMMAND test_uri)
 
+add_executable(test_credit_system
+    unit/layers/test_credit_system.cpp
+)
+target_link_libraries(test_credit_system PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_credit_system COMMAND test_credit_system)
+
 add_executable(test_frame_resource_budget
     unit/core/test_frame_resource_budget.cpp
 )

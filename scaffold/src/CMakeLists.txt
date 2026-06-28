@@ -533,6 +533,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/layers/RasterOverlay.cpp
     earth_engine/layers/ActivatedRasterOverlay.h
     earth_engine/layers/ActivatedRasterOverlay.cpp
+    earth_engine/layers/CreditSystem.h
+    earth_engine/layers/CreditSystem.cpp
 )
 
 # ============================================================
