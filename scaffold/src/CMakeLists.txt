@@ -90,6 +90,14 @@ target_sources(earth_engine_core PRIVATE
 )
 
 # ============================================================
+# core/net
+# ============================================================
+target_sources(earth_engine_core PRIVATE
+    earth_engine/core/net/Uri.h
+    earth_engine/core/net/Uri.cpp
+)
+
+# ============================================================
 # globe
 # ============================================================
 target_sources(earth_engine_core PRIVATE
