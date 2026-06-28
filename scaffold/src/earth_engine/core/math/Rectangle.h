@@ -6,6 +6,8 @@
 
 namespace earth_engine {
 
+class Cartographic;
+
 /// 经纬度矩形包围盒。
 /// 单位：radian（内部）；构造时支持 degree（通过 fromDegrees）。
 /// 跨反经线时 west > east。
@@ -52,6 +54,12 @@ public:
     std::optional<Rectangle> computeIntersection(const Rectangle& other) const;
     Rectangle computeUnion(const Rectangle& other) const;
     std::pair<Rectangle, std::optional<Rectangle>> splitAtAntimeridian() const;
+
+    /// 四个角点（cesium-native GlobeRectangle API 对齐）
+    Cartographic getSouthwest() const;
+    Cartographic getSoutheast() const;
+    Cartographic getNorthwest() const;
+    Cartographic getNortheast() const;
 
     /// 跨反经线（west > east）
     bool crossesAntimeridian() const;

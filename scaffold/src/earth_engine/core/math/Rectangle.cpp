@@ -1,5 +1,6 @@
 #include "Rectangle.h"
 #include "MathUtils.h"
+#include "../geodesy/Cartographic.h"
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <array>
@@ -235,6 +236,22 @@ bool Rectangle::crossesAntimeridian() const {
 bool Rectangle::operator==(const Rectangle& rhs) const {
     return west_ == rhs.west_ && south_ == rhs.south_ &&
            east_ == rhs.east_ && north_ == rhs.north_;
+}
+
+Cartographic Rectangle::getSouthwest() const {
+    return Cartographic::fromRadians(west_, south_);
+}
+
+Cartographic Rectangle::getSoutheast() const {
+    return Cartographic::fromRadians(east_, south_);
+}
+
+Cartographic Rectangle::getNorthwest() const {
+    return Cartographic::fromRadians(west_, north_);
+}
+
+Cartographic Rectangle::getNortheast() const {
+    return Cartographic::fromRadians(east_, north_);
 }
 
 bool Rectangle::operator!=(const Rectangle& rhs) const { return !(*this == rhs); }

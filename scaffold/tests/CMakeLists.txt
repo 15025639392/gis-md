@@ -112,6 +112,12 @@ add_executable(test_rectangle
 target_link_libraries(test_rectangle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_rectangle COMMAND test_rectangle)
 
+add_executable(test_accessor_view
+    unit/core/test_accessor_view.cpp
+)
+target_link_libraries(test_accessor_view PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_accessor_view COMMAND test_accessor_view)
+
 add_executable(test_frame_resource_budget
     unit/core/test_frame_resource_budget.cpp
 )
