@@ -49,6 +49,7 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/core/cache/HttpCache.h
     earth_engine/core/cache/PersistentCache.h
+    earth_engine/core/cache/SharedAssetDepot.h
 )
 
 # ============================================================

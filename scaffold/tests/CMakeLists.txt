@@ -130,6 +130,12 @@ add_executable(test_credit_system
 target_link_libraries(test_credit_system PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_credit_system COMMAND test_credit_system)
 
+add_executable(test_shared_asset_depot
+    unit/core/test_shared_asset_depot.cpp
+)
+target_link_libraries(test_shared_asset_depot PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_shared_asset_depot COMMAND test_shared_asset_depot)
+
 add_executable(test_frame_resource_budget
     unit/core/test_frame_resource_budget.cpp
 )
