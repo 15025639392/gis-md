@@ -2101,7 +2101,10 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     impl_->gltfShader = dev->createShader(gltfSd);
     if (!impl_->gltfShader) {
         fprintf(stderr, "[Renderer] gltfShader failed\n");
-        return false;
+        // Non-fatal on Metal: complex PBR shader may fail due to buffer
+        // limit (max 31) or fn ordering; globe + tiles still render.
+        if (!isMetal) return false;
+        fprintf(stderr, "[Renderer] gltfShader skipped (Metal) — glTF models unavailable\n");
     }
 
     ShaderDesc gltfInstancedSd;
@@ -2112,7 +2115,7 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     impl_->gltfInstancedShader = dev->createShader(gltfInstancedSd);
     if (!impl_->gltfInstancedShader) {
         fprintf(stderr, "[Renderer] gltfInstancedShader failed\n");
-        return false;
+        if (!isMetal) return false;
     }
 
     // Shared index buffer for surface tiles (64×64 grid)
