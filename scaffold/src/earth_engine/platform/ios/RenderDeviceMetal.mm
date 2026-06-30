@@ -491,12 +491,27 @@ void RenderDeviceMetal::beginFrame() {
     // 获取 current drawable
     id<CAMetalDrawable> drawable = [impl_->metalLayer nextDrawable];
     if (!drawable) {
-        fprintf(stderr, "[Metal] beginFrame: nextDrawable returned NIL!\n");
-        fprintf(stderr, "[Metal] metalLayer=%p viewport=%dx%d\n",
-            (__bridge void*)impl_->metalLayer,
-            impl_->viewportWidth, impl_->viewportHeight);
+        static int nilCount = 0;
+        if (nilCount < 3 || nilCount % 300 == 0) {
+            NSLog(@"[Metal] beginFrame: nextDrawable returned NIL! "
+                  "layer=%p drawableSize=%.0fx%.0f viewport=%dx%d count=%d",
+                  impl_->metalLayer,
+                  impl_->metalLayer.drawableSize.width,
+                  impl_->metalLayer.drawableSize.height,
+                  impl_->viewportWidth, impl_->viewportHeight, nilCount);
+        }
+        ++nilCount;
         impl_->currentCommandBuffer = nil;
         return;
+    }
+    static bool firstFrame = true;
+    if (firstFrame) {
+        NSLog(@"[Metal] beginFrame: first drawable obtained. "
+              "texture=%dx%d drawableSize=%.0fx%.0f",
+              (int)drawable.texture.width, (int)drawable.texture.height,
+              impl_->metalLayer.drawableSize.width,
+              impl_->metalLayer.drawableSize.height);
+        firstFrame = false;
     }
 
     MTLRenderPassDescriptor* passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -535,7 +550,20 @@ void RenderDeviceMetal::beginFrame() {
 }
 
 void RenderDeviceMetal::submit(const RenderCommandList& commands) {
-    if (!impl_->currentEncoder) return;
+    if (!impl_->currentEncoder) {
+        static int skipCount = 0;
+        if (skipCount < 3) {
+            NSLog(@"[Metal] submit: no currentEncoder, skipping %zu commands",
+                  commands.size());
+        }
+        ++skipCount;
+        return;
+    }
+    static bool firstSubmit = true;
+    if (firstSubmit) {
+        NSLog(@"[Metal] submit: first submit with %zu commands", commands.size());
+        firstSubmit = false;
+    }
 
     for (const auto& cmd : commands) {
         auto* program = static_cast<MetalShaderProgram*>(cmd.shader);

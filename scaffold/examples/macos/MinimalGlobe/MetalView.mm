@@ -24,33 +24,21 @@
     self = [super initWithFrame:frameRect];
     if (self) {
         self.wantsLayer = YES;
-        self.layer = [CAMetalLayer layer];
-        _metalLayer = (CAMetalLayer*)self.layer;
+        _metalLayer = [CAMetalLayer layer];
         _metalLayer.device = MTLCreateSystemDefaultDevice();
         _metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         _metalLayer.framebufferOnly = NO;
+        _metalLayer.drawableSize = frameRect.size;
+        // macOS-specific: ensure drawables are always available
+        _metalLayer.allowsNextDrawableTimeout = NO;
+        _metalLayer.displaySyncEnabled = YES;
+        self.layer = _metalLayer;
 
-        // Engine + RenderDevice
+        // Engine + RenderDevice (created early, surface inited in viewDidMoveToWindow)
         _renderDevice = std::make_unique<earth_engine::RenderDeviceMetal>(
             (__bridge void*)_metalLayer);
         _platformBridge = std::make_unique<earth_engine::MacPlatformBridge>();
         _engine = std::make_unique<earth_engine::Engine>(_renderDevice.get());
-
-        _engine->onSurfaceCreated();
-        _engine->onSurfaceChanged(
-            (int)frameRect.size.width,
-            (int)frameRect.size.height, 1.0f);
-
-        // SDK scene config — Beijing viewpoint
-        _sdkFacade = std::make_unique<earth_engine::EarthEngineSdkFacade>(
-            *_engine, *_renderDevice, *_platformBridge);
-
-        earth_engine::EarthSceneConfig config;
-        config.initialCamera = {116.3913, 39.9039, 15000000.0};
-        config.tileset = {4.0, 2.0};
-        _sdkFacade->installScene(config);
-
-        _engineReady = _engine->isReady();
         _frameCount = 0;
     }
     return self;
@@ -58,6 +46,47 @@
 
 - (void)viewDidMoveToWindow {
     [super viewDidMoveToWindow];
+    if (self.window && !_engineReady) {
+        NSRect frame = self.frame;
+        _metalLayer.drawableSize = frame.size;
+
+        _engine->onSurfaceCreated();
+        _engine->onSurfaceChanged(
+            (int)frame.size.width,
+            (int)frame.size.height, 1.0f);
+
+        _sdkFacade = std::make_unique<earth_engine::EarthEngineSdkFacade>(
+            *_engine, *_renderDevice, *_platformBridge);
+
+        earth_engine::EarthSceneConfig config;
+        config.initialCamera = {106.508, 29.617, 30000.0};
+        config.terrain = {
+            earth_engine::TerrainSourceKind::QuantizedMesh,
+            "http://192.168.1.6:8090/{z}/{x}/{y}.terrain",
+            "http://192.168.1.6:8090/layer.json",
+            "QuantizedMesh Terrain",
+            0, 12, 65, false
+        };
+        config.tileset = {4.0, 2.0};
+
+        // Debug imagery as base layer (always works, no network needed)
+        earth_engine::RasterOverlaySourceConfig debugLayer;
+        debugLayer.imageryKind = earth_engine::ImagerySourceKind::Debug;
+        debugLayer.maximumSimultaneousTileLoads = 20;
+        debugLayer.maximumScreenSpaceError = 2.0;
+        debugLayer.opacity = 1.0f;
+        debugLayer.role = earth_engine::RasterOverlayRole::BaseImagery;
+        debugLayer.priority = earth_engine::RasterOverlayPriority::High;
+        debugLayer.fallbackPolicy =
+            earth_engine::RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
+        debugLayer.blocksCompleteRenderable = false;
+        config.rasterOverlays.push_back(debugLayer);
+
+        _sdkFacade->installScene(config);
+        _engineReady = _engine->isReady();
+        NSLog(@"[MinimalGlobe] Scene installed. Engine ready=%d drawSize=%.0fx%.0f",
+              _engineReady, frame.size.width, frame.size.height);
+    }
     if (self.window) {
         [self startRenderLoop];
     }
@@ -100,23 +129,39 @@ static CVReturn displayLinkCallback(
     _engine->render(0.0);
     ++_frameCount;
 
+    // First frame diagnostic
+    if (_frameCount == 1) {
+        const auto& diag = _engine->diagnostics();
+        NSLog(@"[MinimalGlobe] FIRST FRAME: draw=%d tiles=%d fps=%.1f "
+              "surface=%d globe=%d surfCmd=%d terrSurf=%d terrGltf=%d",
+              diag.drawCalls, diag.visibleTiles, diag.fps,
+              diag.surfaceMeshCount, diag.globeFallbackCommands,
+              diag.terrainSurfaceCommandsSubmitted,
+              diag.terrainSurfaceTileCommands,
+              diag.terrainGltfPrimitiveCommands);
+    }
+
     // Periodic log
     if (_frameCount % 60 == 0 && _engine) {
+        const auto& diag = _engine->diagnostics();
         auto pos = _engine->camera().position();
         auto carto = earth_engine::Ellipsoid::WGS84()
             .cartesianToCartographic(pos);
-        NSLog(@"[MinimalGlobe] frame=%d alt=%.0fm lng=%.2f lat=%.2f",
-              _frameCount, carto.height(),
+        NSLog(@"[MinimalGlobe] frame=%d FPS=%.1f draw=%d tiles=%d alt=%.0fm lng=%.2f lat=%.2f",
+              _frameCount, diag.fps, diag.drawCalls, diag.visibleTiles,
+              carto.height(),
               carto.longitudeDegrees(), carto.latitudeDegrees());
     }
 }
 
 - (void)dealloc {
     [self stopRenderLoop];
+    _engineReady = false;
     _sdkFacade.reset();
     _engine.reset();
     _platformBridge.reset();
     _renderDevice.reset();
+    [super dealloc];
 }
 
 @end
