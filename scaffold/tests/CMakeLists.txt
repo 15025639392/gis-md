@@ -136,6 +136,18 @@ add_executable(test_shared_asset_depot
 target_link_libraries(test_shared_asset_depot PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_shared_asset_depot COMMAND test_shared_asset_depot)
 
+# ============================================================
+# test_platform_integration — macOS 平台层集成测试
+# ============================================================
+add_executable(test_platform_integration
+    unit/platform/test_platform_integration.cpp
+)
+target_include_directories(test_platform_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/helpers
+)
+target_link_libraries(test_platform_integration PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_platform_integration COMMAND test_platform_integration)
+
 add_executable(test_frame_resource_budget
     unit/core/test_frame_resource_budget.cpp
 )
