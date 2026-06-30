@@ -1,32 +1,25 @@
 #import "AppDelegate.h"
 #import "MetalView.h"
 
-@interface AppDelegate ()
-@property (nonatomic, retain) NSWindow* window;
-@end
-
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
-    NSRect frame = NSMakeRect(0, 0, 1024, 768);
+    NSRect frame = NSMakeRect(0, 0, 1280, 720);
+    NSUInteger style = NSWindowStyleMaskTitled
+                     | NSWindowStyleMaskClosable
+                     | NSWindowStyleMaskMiniaturizable
+                     | NSWindowStyleMaskResizable;
+
     self.window = [[NSWindow alloc] initWithContentRect:frame
-                                              styleMask:NSWindowStyleMaskTitled |
-                                                       NSWindowStyleMaskClosable |
-                                                       NSWindowStyleMaskMiniaturizable |
-                                                       NSWindowStyleMaskResizable
+                                              styleMask:style
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
-    [self.window setTitle:@"earth-md — 3D Globe"];
+    self.window.title = @"Earth Engine — Minimal Globe";
     [self.window center];
-
-    MetalView* metalView = [[MetalView alloc] initWithFrame:self.window.contentView.bounds];
-    metalView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    self.window.contentView = metalView;
-
     [self.window makeKeyAndOrderFront:nil];
 
-    // Engine setup after view is in window
-    [metalView startEngineWithScale:self.window.backingScaleFactor];
+    MetalView* view = [[MetalView alloc] initWithFrame:frame];
+    self.window.contentView = view;
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {

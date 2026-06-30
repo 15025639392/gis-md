@@ -588,6 +588,8 @@ elseif(APPLE)
     target_sources(earth_engine_core PRIVATE
         earth_engine/platform/ios/RenderDeviceMetal.h
         earth_engine/platform/ios/RenderDeviceMetal.mm
+        earth_engine/platform/macos/MacPlatformBridge.h
+        earth_engine/platform/macos/MacPlatformBridge.mm
     )
     # 启用 Objective-C++ 编译
     set_source_files_properties(
@@ -595,14 +597,36 @@ elseif(APPLE)
         PROPERTIES
         COMPILE_FLAGS "-x objective-c++"
     )
+    # MacPlatformBridge uses ARC
+    set_source_files_properties(
+        earth_engine/platform/macos/MacPlatformBridge.mm
+        PROPERTIES
+        COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
+    )
     # 链接 Metal 和 QuartzCore frameworks
     find_library(METAL_LIBRARY Metal)
     find_library(QUARTZCORE_LIBRARY QuartzCore)
+    find_library(FOUNDATION_LIBRARY Foundation)
+    find_library(SECURITY_LIBRARY Security)
+    find_library(COREGRAPHICS_LIBRARY CoreGraphics)
+    find_library(IMAGEIO_LIBRARY ImageIO)
     if(METAL_LIBRARY)
         target_link_libraries(earth_engine_core PRIVATE ${METAL_LIBRARY})
     endif()
     if(QUARTZCORE_LIBRARY)
         target_link_libraries(earth_engine_core PRIVATE ${QUARTZCORE_LIBRARY})
+    endif()
+    if(FOUNDATION_LIBRARY)
+        target_link_libraries(earth_engine_core PRIVATE ${FOUNDATION_LIBRARY})
+    endif()
+    if(SECURITY_LIBRARY)
+        target_link_libraries(earth_engine_core PRIVATE ${SECURITY_LIBRARY})
+    endif()
+    if(COREGRAPHICS_LIBRARY)
+        target_link_libraries(earth_engine_core PRIVATE ${COREGRAPHICS_LIBRARY})
+    endif()
+    if(IMAGEIO_LIBRARY)
+        target_link_libraries(earth_engine_core PRIVATE ${IMAGEIO_LIBRARY})
     endif()
 endif()
 

@@ -1,8 +1,18 @@
-#import <AppKit/AppKit.h>
+#pragma once
+
+#import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
+#import <Cocoa/Cocoa.h>
+
+namespace earth_engine {
+class Engine;
+class RenderDeviceMetal;
+class MacPlatformBridge;
+class EarthEngineSdkFacade;
+}
 
 @interface MetalView : NSView
-
-- (instancetype)initWithFrame:(NSRect)frame;
-- (void)startEngineWithScale:(CGFloat)scale;
-
+- (void)startRenderLoop;
+- (void)stopRenderLoop;
+@property (readonly) CAMetalLayer* metalLayer;
 @end
