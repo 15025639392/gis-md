@@ -91,7 +91,7 @@ public:
 
     void beginFrame() override { ++frameCount; }
     void submit(const RenderCommandList& commands) override {
-        lastSubmitted = commands;
+        submittedCommands = commands;
         ++submitCount;
     }
     void endFrame() override {}
@@ -100,7 +100,7 @@ public:
     void onSurfaceDestroyed() override {}
 
     // --- 记录字段 ---
-    RenderCommandList lastSubmitted;
+    RenderCommandList submittedCommands;
     TextureDesc lastTextureDesc;
     int createdTextureCount = 0;
     int createdBufferCount = 0;
