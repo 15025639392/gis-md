@@ -14933,6 +14933,90 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     check(drawableAction.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
 }
+void testSurfaceRasterUpdaterUpsampleUsesNaturalOverlayOrderNotPriority() {
+    // Regression for the raster-overlay audit S5-01: doSubdivide must compare the
+    // FIRST (minimum) mapped-raster index in overlay ADD order (cesium
+    // RasterOverlayCollection.cpp:234-242), not the priority-sorted traversal
+    // position. Overlay A (added first, natural index 0) stays loading (Unknown);
+    // overlay B (added second, index 1) becomes ready with more detail (Yes).
+    // Because an earlier-added overlay is still Unknown, cesium does NOT create
+    // upsample children. With the buggy orderIndex, higher-priority B is visited
+    // first (orderIndex 0) and would look like the first index, flipping the
+    // decision to subdivide.
+    auto scheme = TileScheme::createXYZWebMercator();
+
+    RasterOverlay::Options lowOptions = makeRasterOverlayOptions();
+    lowOptions.priority = RasterOverlayPriority::Low;
+    auto overlayA = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        lowOptions);
+    RasterOverlay::Options highOptions = makeRasterOverlayOptions();
+    highOptions.priority = RasterOverlayPriority::High;
+    auto overlayB = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        highOptions);
+    ActivatedRasterOverlay activatedA(*overlayA);
+    ActivatedRasterOverlay activatedB(*overlayB);
+
+    TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
+                     scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0}));
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    gltfModel->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources res;
+    res.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    res.indexBuffer = std::make_unique<DummyBuffer>(12);
+    res.indexCount = 6;
+    res.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(res));
+    tile.content.renderContent.markRenderContentReady();
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+
+    Renderer renderer(nullptr);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activatedA, &activatedB};
+    const std::vector<size_t> order =
+        TileRasterOverlayReadinessPolicy::processingOrder(overlays);
+    check(order.size() == 2 && order[0] == 1 && order[1] == 0,
+          "S5-01 fixture: priority order visits overlay B (index 1) before A (index 0)");
+
+    // First update: create loading mappings for both overlays.
+    RenderContentRasterOverlayStateUpdater::update(
+        renderer, tile, overlays, order, nullptr, 16.0, budget);
+    RasterMappedToTilesetTile* mappedA = tile.rasterOverlayState.mappingAt(0);
+    RasterMappedToTilesetTile* mappedB = tile.rasterOverlayState.mappingAt(1);
+    RasterOverlayTile* loadingB = mappedB ? mappedB->getLoadingTile() : nullptr;
+    check(mappedA && mappedA->getLoadingTile() != nullptr,
+          "S5-01 fixture: overlay A maps a loading raster");
+    check(loadingB != nullptr, "S5-01 fixture: overlay B maps a loading raster");
+    if (!mappedA || !loadingB) return;
+
+    // Overlay B (index 1) becomes ready with more detail; overlay A (index 0)
+    // stays loading, so it reports Unknown on the next update.
+    loadingB->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingB->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    loadingB->setTexture(std::make_unique<DummyTexture>(8, 4));
+
+    const RenderContentRasterOverlayUpdateAction action =
+        RenderContentRasterOverlayStateUpdater::update(
+            renderer, tile, overlays, order, nullptr, 16.0, budget);
+
+    check(tile.rasterOverlayState.hasReadyMapping(1),
+          "S5-01 fixture: overlay B is ready with more detail");
+    check(!action.createRasterOverlayUpsampledChildren,
+          "RenderContentRasterOverlayStateUpdater: an earlier-added overlay still Unknown blocks upsample (natural index order, not priority)");
+}
 void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -15021,7 +15105,7 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
     check(doneAction.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: Done tile creates raster upsample children like cesium-native updateDoneState");
 }
-void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
+void testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder() {
     auto firstOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -15085,19 +15169,26 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
     secondTile->setState(RasterOverlayTile::LoadState::Loaded);
     secondTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Unknown);
-    const std::vector<size_t> unknownFirstOrder{1, 0};
-    const RenderContentRasterOverlayUpdateAction blocked =
+    // cesium RasterOverlayCollection.cpp:193-242 compares the first more-detail
+    // and first-unknown mapped rasters by their ADD-order (natural) index; the
+    // decision is independent of the order overlays are traversed. Overlay 0 (Yes)
+    // precedes overlay 1 (Unknown) in add order, so upsample children are created
+    // for BOTH traversal orders. Before the S5-01 fix, the reversed order wrongly
+    // blocked upsampling because the priority-sorted position leaked into the
+    // comparison.
+    const std::vector<size_t> reversedOrder{1, 0};
+    const RenderContentRasterOverlayUpdateAction reversed =
         RenderContentRasterOverlayStateUpdater::update(
             renderer,
             tile,
             overlays,
-            unknownFirstOrder,
+            reversedOrder,
             nullptr,
             16.0,
             budget);
-    check(!blocked.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: earlier Unknown in processing order blocks later more-detail upsample like cesium-native");
-    const RenderContentRasterOverlayUpdateAction allowed =
+    check(reversed.createRasterOverlayUpsampledChildren,
+          "RenderContentRasterOverlayStateUpdater: more-detail at earlier add-order index creates upsample children regardless of processing order like cesium-native");
+    const RenderContentRasterOverlayUpdateAction natural =
         RenderContentRasterOverlayStateUpdater::update(
             renderer,
             tile,
@@ -15106,8 +15197,8 @@ void testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder() {
             nullptr,
             16.0,
             budget);
-    check(allowed.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: earlier Yes in processing order allows upsample before later Unknown like cesium-native");
+    check(natural.createRasterOverlayUpsampledChildren,
+          "RenderContentRasterOverlayStateUpdater: more-detail at earlier add-order index creates upsample children in natural order like cesium-native");
 }
 void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     auto overlay = std::make_unique<RasterOverlay>(
@@ -26755,8 +26846,9 @@ int main() {
     testTilesetUnloadExternalContentClearsChildren();
     testTilesetDirectExternalContentUnloadClearsChildren();
     testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction();
+    testSurfaceRasterUpdaterUpsampleUsesNaturalOverlayOrderNotPriority();
     testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative();
-    testSurfaceRasterUpdaterComparesMoreDetailInProcessingOrder();
+    testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder();
     testRasterUpsampledChildrenMaterializeFromGltfRenderContent();
     std::cout << "\n=== " << gFailures << " failures ===\n";
     return gFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

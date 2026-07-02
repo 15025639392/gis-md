@@ -106,14 +106,21 @@ RenderContentRasterOverlayStateUpdater::update(
             action.unloadTileContent = true;
             return action;
         }
+        // cesium RasterOverlayCollection.cpp:234-242 records the FIRST (=minimum)
+        // mapped-raster index in overlay-add order. gis traverses in priority
+        // order, so track the minimum natural overlay index i explicitly instead
+        // of the priority-sorted orderIndex; otherwise the doSubdivide comparison
+        // below inverts when overlay priorities differ from their add order.
         if (moreDetail == RasterMappedToTilesetTile::MoreDetail::Yes &&
-            tile.rasterOverlayState.hasReadyMapping(i) &&
-            !firstMoreDetailAvailable) {
-            firstMoreDetailAvailable = orderIndex;
+            tile.rasterOverlayState.hasReadyMapping(i)) {
+            if (!firstMoreDetailAvailable || i < *firstMoreDetailAvailable) {
+                firstMoreDetailAvailable = i;
+            }
         } else if (
-            moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown &&
-            !firstUnknownAvailability) {
-            firstUnknownAvailability = orderIndex;
+            moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown) {
+            if (!firstUnknownAvailability || i < *firstUnknownAvailability) {
+                firstUnknownAvailability = i;
+            }
         }
         overlay.loadThrottled(*activeProvider, &frameResourceBudget);
     }
