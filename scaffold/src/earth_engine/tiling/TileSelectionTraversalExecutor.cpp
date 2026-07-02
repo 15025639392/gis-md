@@ -263,7 +263,8 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                 loadQueueBeforeChildren,
                 tileSse,
                 tilePriority,
-                renderable},
+                renderable,
+                traversalDetails.notYetRenderableCount},
             [](TilesetTile& kickedTile) {
                 kickVisitedDescendants(kickedTile);
             },

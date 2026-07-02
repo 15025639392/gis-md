@@ -9,6 +9,7 @@
 #include "TilesetTile.h"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace earth_engine {
 
@@ -18,6 +19,10 @@ struct TileSelectionPostTraversalCommitContext {
     double tileSse = 0.0;
     double tilePriority = 0.0;
     bool renderable = false;
+    // Children's aggregated notYetRenderableCount (pre-kick). cesium keeps this
+    // count in the kicked tile's returned details unless the restore branch
+    // resets it — see commit() / TilesetSelection.cpp:769.
+    uint32_t childrenNotYetRenderableCount = 0;
 };
 
 struct TileSelectionPostTraversalCommitResult {
@@ -86,11 +91,23 @@ struct TileSelectionPostTraversalCommitter {
                     TileLoadPriorityGroup::Preload,
                     context.tilePriority);
             }
-            return TileSelectionPostTraversalCommitResult{
-                true,
+            TileTraversalDetails singleTileDetails =
                 TileTraversalDetailsPolicy::forSingleTile(
                     context.renderable,
-                    plan.wasReallyRenderedLastFrame)};
+                    plan.wasReallyRenderedLastFrame);
+            if (!plan.restoreChildLoadQueue) {
+                // cesium TilesetSelection.cpp:769 resets notYetRenderableCount
+                // to isRenderable?0:1 ONLY inside the restore branch. When
+                // restore is not taken, the children's accumulated count keeps
+                // propagating upward so an ancestor kick still sees how many
+                // descendants are pending (forSingleTile already handled the
+                // restore case's renderable?0:1).
+                singleTileDetails.notYetRenderableCount =
+                    context.childrenNotYetRenderableCount;
+            }
+            return TileSelectionPostTraversalCommitResult{
+                true,
+                singleTileDetails};
         }
 
         if (plan.markTileRefined) {

@@ -533,6 +533,129 @@ TEST(
 
 TEST(
     TileSelectionPostTraversalCommitterTest,
+    KickWithoutRestorePropagatesChildrenNotYetRenderableCount) {
+    // cesium TilesetSelection.cpp:769 only resets notYetRenderableCount inside
+    // the restore branch. When restore is NOT taken (e.g. renderable / additive
+    // / external / unconditionallyRefine parent, or notYet <= limit), the
+    // children's accumulated count must keep propagating upward so an ancestor
+    // kick still sees how many descendants are pending. (The upward aggregation
+    // itself is TileTraversalDetailsPolicy::mergeChild, exercised by the
+    // end-to-end selection tests; this pins the per-tile value it aggregates.)
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    TilePlan tilePlan;
+    TileLoadQueue loadQueue;
+    TileSelectionCounters counters;
+    TileSelectionPostTraversalCommitPlan plan;
+    plan.returnSingleTileDetails = true;
+    plan.restoreChildLoadQueue = false;  // non-restore kick path
+    plan.wasReallyRenderedLastFrame = false;
+
+    const TileSelectionPostTraversalCommitResult result =
+        TileSelectionPostTraversalCommitter::commit(
+            parent,
+            tilePlan,
+            loadQueue,
+            counters,
+            plan,
+            TileSelectionPostTraversalCommitContext{
+                0,
+                0,
+                4.0,
+                5.0,
+                false,  // renderable
+                7u},    // childrenNotYetRenderableCount
+            [](TilesetTile&) {},
+            [](const TileKey&, TileLoadPriorityGroup, double) {},
+            [](TilesetTile&, double, bool, double) {});
+
+    EXPECT_TRUE(result.returnedSingleTileDetails);
+    EXPECT_FALSE(result.details.allAreRenderable);
+    // Non-restore keeps the children's accumulated count (7), NOT renderable?0:1.
+    EXPECT_EQ(result.details.notYetRenderableCount, 7u);
+}
+
+TEST(
+    TileSelectionPostTraversalCommitterTest,
+    KickWithRestoreResetsNotYetRenderableCountIgnoringChildren) {
+    // In the restore branch cesium sets notYetRenderableCount = isRenderable?0:1
+    // ("we're only waiting on this tile now"), deliberately dropping the
+    // children's count. The children's count must be ignored here.
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    TilePlan tilePlan;
+    TileLoadQueue loadQueue;
+    TileSelectionCounters counters;
+    TileSelectionPostTraversalCommitPlan plan;
+    plan.returnSingleTileDetails = true;
+    plan.restoreChildLoadQueue = true;   // restore kick path
+    plan.wasReallyRenderedLastFrame = false;
+
+    const TileSelectionPostTraversalCommitResult result =
+        TileSelectionPostTraversalCommitter::commit(
+            parent,
+            tilePlan,
+            loadQueue,
+            counters,
+            plan,
+            TileSelectionPostTraversalCommitContext{
+                0,
+                0,
+                4.0,
+                5.0,
+                false,  // renderable → reset to 1
+                7u},    // childrenNotYetRenderableCount (must be ignored)
+            [](TilesetTile&) {},
+            [](const TileKey&, TileLoadPriorityGroup, double) {},
+            [](TilesetTile&, double, bool, double) {});
+
+    EXPECT_TRUE(result.returnedSingleTileDetails);
+    // Restore resets to renderable?0:1 = 1, ignoring the children's count (7).
+    EXPECT_EQ(result.details.notYetRenderableCount, 1u);
+}
+
+TEST(
+    TileSelectionPostTraversalCommitterTest,
+    KickWithRestoreRenderableParentReportsZeroNotYet) {
+    // Companion to the renderable=false restore case: a renderable parent in the
+    // restore branch reports notYetRenderableCount = 0 (isRenderable?0:1), still
+    // ignoring the children's accumulated count. This pins BOTH values of the
+    // restore reset (0 here, 1 in the sibling test), so the reset semantics —
+    // not merely "children ignored" — are independently covered.
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    TilePlan tilePlan;
+    TileLoadQueue loadQueue;
+    TileSelectionCounters counters;
+    TileSelectionPostTraversalCommitPlan plan;
+    plan.returnSingleTileDetails = true;
+    plan.restoreChildLoadQueue = true;
+    plan.wasReallyRenderedLastFrame = false;
+
+    const TileSelectionPostTraversalCommitResult result =
+        TileSelectionPostTraversalCommitter::commit(
+            parent,
+            tilePlan,
+            loadQueue,
+            counters,
+            plan,
+            TileSelectionPostTraversalCommitContext{
+                0,
+                0,
+                4.0,
+                5.0,
+                true,   // renderable → reset to 0
+                7u},    // childrenNotYetRenderableCount (must be ignored)
+            [](TilesetTile&) {},
+            [](const TileKey&, TileLoadPriorityGroup, double) {},
+            [](TilesetTile&, double, bool, double) {});
+
+    EXPECT_TRUE(result.returnedSingleTileDetails);
+    EXPECT_EQ(result.details.notYetRenderableCount, 0u);
+}
+
+TEST(
+    TileSelectionPostTraversalCommitterTest,
     KickCanAddRenderableReplacementAndPreloadParent) {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
 
