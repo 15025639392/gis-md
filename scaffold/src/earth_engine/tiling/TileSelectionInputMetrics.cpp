@@ -6,7 +6,6 @@
 #include "TilesetTile.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <cmath>
 #include <limits>
 #include <glm/glm.hpp>
@@ -86,19 +85,6 @@ TileSelectionInputSummary TileSelectionInputMetrics::summarizeForViews(
                 view.projectionMatrix,
                 view.viewportHeightPixels,
                 summary.distances[i]));
-    }
-
-    if (tile.key.z >= 2 && tile.key.z <= 10) {  // [SSEDIAG] TEMP
-        static int sn = 0;
-        if (sn < 400) {
-            ++sn;
-            std::fprintf(stderr,
-                "[SSEDIAG] z=%d x=%d y=%d geomErr=%.1f dist=%.0f sse=%.2f\n",
-                tile.key.z, tile.key.x, tile.key.y,
-                tile.geometricError,
-                summary.distances.empty() ? -1.0 : summary.distances[0],
-                summary.screenSpaceError);
-        }
     }
 
     return summary;

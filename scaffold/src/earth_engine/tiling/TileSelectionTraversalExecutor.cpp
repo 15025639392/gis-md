@@ -1,5 +1,4 @@
 #include "TileSelectionTraversalExecutor.h"
-#include <cstdio>
 #include "Tileset.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -246,23 +245,6 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                 context.options.enableLodTransitionPeriod,
                 context.options.kickDescendantsWhileFadingIn,
                 context.options.preloadAncestors});
-
-    if (tile.key.z >= 4 && tile.key.z <= 9) {  // [KICKDIAG] TEMP
-        static int kn = 0;
-        if (kn >= 300 && kn < 600) {
-            std::fprintf(stderr,
-                "[KICKDIAG] z=%d x=%d y=%d refine=%d renderable=%d KICK=%d "
-                "allRend=%d notYetRend=%u anyRendLast=%d sse=%.1f\n",
-                tile.key.z, tile.key.x, tile.key.y,
-                (int)refineFlow.refine, renderable ? 1 : 0,
-                postTraversal.shouldKick ? 1 : 0,
-                traversalDetails.allAreRenderable ? 1 : 0,
-                traversalDetails.notYetRenderableCount,
-                traversalDetails.anyWereRenderedLastFrame ? 1 : 0,
-                tileSse);
-        }
-        ++kn;
-    }
 
     const TileSelectionPostTraversalCommitPlan postCommit =
         TileSelectionPostTraversalPolicy::commitPlan(
