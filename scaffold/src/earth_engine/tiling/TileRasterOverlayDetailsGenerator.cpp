@@ -16,7 +16,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <optional>
+#include <vector>
 
 namespace earth_engine {
 namespace {
@@ -245,7 +247,18 @@ TileRasterOverlayDetailsGenerator::computeTightModelBoundingRegion(
 
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     BoundingRegionBuilder builder;
-    bool hasPosition = false;
+
+    // Gather cartographic positions once, tracking the latitude span so the
+    // pole tolerance can be set before expanding the bounds. This matches
+    // cesium RasterOverlayUtilities.cpp:106-110, which ignores vertices within
+    // 1/1000th of a tile height of the North/South pole because longitudes are
+    // untrustworthy at extreme latitudes. cesium derives the height from the
+    // tile's known rectangle; the model fills the tile, so its latitude span is
+    // equivalent. Without this, the default poleTolerance (Epsilon10) never
+    // triggers and near-pole tiles get a west/east bound polluted by noise.
+    std::vector<Cartographic> positions;
+    double minLatitude = std::numeric_limits<double>::max();
+    double maxLatitude = std::numeric_limits<double>::lowest();
     for (const GltfPrimitive& primitive : model->primitives) {
         for (size_t i = 0; i < primitive.vertices.size(); ++i) {
             if (!contributesToComputedBounds(primitive, i)) {
@@ -263,9 +276,22 @@ TileRasterOverlayDetailsGenerator::computeTightModelBoundingRegion(
             if (!cartographic) {
                 continue;
             }
-            hasPosition =
-                builder.expandToIncludePosition(*cartographic) || hasPosition;
+            minLatitude = std::min(minLatitude, cartographic->latitude());
+            maxLatitude = std::max(maxLatitude, cartographic->latitude());
+            positions.push_back(*cartographic);
         }
+    }
+
+    if (positions.empty()) {
+        return std::nullopt;
+    }
+
+    builder.setPoleTolerance(0.001 * (maxLatitude - minLatitude));
+
+    bool hasPosition = false;
+    for (const Cartographic& cartographic : positions) {
+        hasPosition =
+            builder.expandToIncludePosition(cartographic) || hasPosition;
     }
 
     if (!hasPosition) {

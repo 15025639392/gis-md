@@ -887,6 +887,54 @@ TEST(RasterOverlayDetailsGeneratorTest,
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
+     ModelBoundsGenerationExcludesNearPoleLongitudesLikeCesiumNative) {
+    // cesium RasterOverlayUtilities.cpp:106-110 sets the pole tolerance to
+    // 1/1000th of the tile height and ignores vertices within that distance of
+    // a pole, because their longitudes are untrustworthy. Without the tolerance
+    // the default (Epsilon10) never triggers and a near-pole noise longitude
+    // pollutes the computed bounding region's east/west.
+    TileRenderContentState renderContent;
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const std::array<Cartographic, 4> corners = {
+        Cartographic::fromDegrees(0.0, 80.0, 0.0),
+        Cartographic::fromDegrees(10.0, 80.0, 0.0),
+        Cartographic::fromDegrees(10.0, 89.0, 0.0),
+        Cartographic::fromDegrees(0.0, 89.0, 0.0)};
+    for (const Cartographic& corner : corners) {
+        SurfaceVertex vertex;
+        vertex.positionEcef = ellipsoid.cartographicToCartesian(corner);
+        primitive.vertices.push_back(vertex);
+    }
+    // Near-pole vertex (< 1/1000th of the ~10deg tile height from the pole)
+    // whose longitude (170deg) is far outside the tile and must be ignored.
+    SurfaceVertex nearPole;
+    nearPole.positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromDegrees(170.0, 89.995, 0.0));
+    primitive.vertices.push_back(nearPole);
+    primitive.indices = {0, 1, 2, 0, 2, 3};
+    model->primitives.push_back(std::move(primitive));
+    renderContent.prepareGltfContent(std::move(model), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    const bool generated = TileRasterOverlayDetailsGenerator::
+        ensureProjectionDetailsFromModelBounds(
+            renderContent,
+            RasterOverlayProjection::Geographic);
+
+    ASSERT_TRUE(generated);
+    const Rectangle& region =
+        renderContent.rasterOverlayDetails().boundingRegion.rectangle;
+    const double west0 = Cartographic::fromDegrees(0.0, 0.0).longitude();
+    const double east10 = Cartographic::fromDegrees(10.0, 0.0).longitude();
+    // The near-pole 170deg longitude is excluded, so east stays at the tile
+    // edge (10deg). Before the poleTolerance fix, east would jump to ~170deg.
+    EXPECT_NEAR(west0, region.west(), 1e-6);
+    EXPECT_NEAR(east10, region.east(), 1e-3);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
      ModelBoundsGenerationSkipsExistingProjectionSlotWithoutRectangleLikeCesiumNative) {
     TileRenderContentState renderContent;
     RasterOverlayDetails existingDetails;
