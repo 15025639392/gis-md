@@ -1,12 +1,15 @@
 #include "GltfRenderResourcePreparer.h"
 
 #include "GltfRenderGeometryBuilder.h"
+#include "GpuReadyData.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TilesetTile.h"
+#include "../content/GltfModel.h"
 #include "../renderer/RenderDevice.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -227,11 +230,15 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
 
         const bool instanced = !primitive.instances.empty();
 
+        // Determine if this primitive should use terrain-specific lightweight vertex format
+        const bool useTerrainFormat = primitive.hasTerrainWaterMaskMetadata;
+
         auto appendPrimitiveResource =
             [&](std::vector<GltfGpuVertex>&& verts,
                 const Vec3& sortCenter,
                 const std::vector<GltfGpuInstance>* instanceData) {
                 GltfPrimitiveRenderResources resources;
+                resources.useTerrainVertexFormat = false;
                 BufferDesc vbDesc;
                 vbDesc.size = verts.size() * sizeof(GltfGpuVertex);
                 vbDesc.data = verts.data();
@@ -480,6 +487,73 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
             continue;
         }
 
+        // Use lightweight terrain vertex format for terrain content
+        if (useTerrainFormat && !instanced) {
+            std::vector<TerrainGpuVertex> terrainVerts =
+                GltfRenderGeometryBuilder::buildTerrainVertices(
+                    primitive,
+                    tile.content.renderContent.gltfTransform(),
+                    tile.content.renderContent.renderLocalOrigin());
+
+            GltfPrimitiveRenderResources resources;
+            resources.useTerrainVertexFormat = true;
+            BufferDesc vbDesc;
+            vbDesc.size = terrainVerts.size() * sizeof(TerrainGpuVertex);
+            vbDesc.data = terrainVerts.data();
+            vbDesc.usage = BufferDesc::Usage::Static;
+            vbDesc.type = BufferDesc::Type::Vertex;
+            resources.vertexBuffer = device->createBuffer(vbDesc);
+
+            BufferDesc ibDesc;
+            ibDesc.size = primitive.indices.size() * sizeof(uint32_t);
+            ibDesc.data = primitive.indices.data();
+            ibDesc.usage = BufferDesc::Usage::Static;
+            ibDesc.type = BufferDesc::Type::Index;
+            resources.indexBuffer = device->createBuffer(ibDesc);
+            resources.vertexCount = static_cast<int>(primitive.vertices.size());
+            resources.indexCount = static_cast<int>(primitive.indices.size());
+            resources.primitiveMode = primitive.primitiveMode;
+            resources.sortCenterEcef = GltfRenderGeometryBuilder::primitiveSortCenterEcef(
+                primitive, tile.content.renderContent.gltfTransform());
+            // Set minimal material properties for terrain
+            resources.baseColorFactor = primitive.baseColorFactor;
+            resources.metallicFactor = 0.0f;
+            resources.roughnessFactor = 1.0f;
+            resources.unlit = false;
+            resources.hasTerrainWaterMaskMetadata = true;
+            resources.terrainOnlyWater = primitive.terrainOnlyWater;
+            resources.terrainOnlyLand = primitive.terrainOnlyLand;
+            resources.terrainWaterMaskTranslationScale = {
+                static_cast<float>(primitive.terrainWaterMaskTranslationX),
+                static_cast<float>(primitive.terrainWaterMaskTranslationY),
+                static_cast<float>(primitive.terrainWaterMaskScale),
+                0.0f};
+            if (primitive.terrainWaterMaskTextureIndex &&
+                *primitive.terrainWaterMaskTextureIndex <
+                    tile.content.renderContent.gltfTextureResourcesForBinding().size()) {
+                resources.terrainWaterMaskTexture =
+                    tile.content.renderContent.gltfTextureResourcesForBinding()
+                    [*primitive.terrainWaterMaskTextureIndex].get();
+            }
+            // Set base color texture for terrain
+            std::optional<GltfTextureBinding> baseColorBinding = primitive.baseColorTexture;
+            if (!baseColorBinding && primitive.baseColorTextureIndex) {
+                GltfTextureBinding binding;
+                binding.textureIndex = *primitive.baseColorTextureIndex;
+                baseColorBinding = binding;
+            }
+            resources.baseColorTexture = makeGltfTextureBinding(
+                baseColorBinding,
+                tile.content.renderContent.gltfTextureResourcesForBinding());
+
+            if (!resources.vertexBuffer || !resources.indexBuffer) {
+                resourceFailure = true;
+                break;
+            }
+            tile.content.renderContent.addGltfPrimitiveResource(std::move(resources));
+            continue;
+        }
+
         std::vector<GltfGpuVertex> verts =
             GltfRenderGeometryBuilder::buildVertices(
                 primitive,
@@ -518,5 +592,419 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
     }
 }
 
+// ============================================================
+// Phase 1: CPU preparation (Worker Thread)
+// ============================================================
+
+std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
+    const TilesetTile& tile,
+    double currentFrameTimeSeconds) {
+    const GltfModel* model = tile.content.renderContent.gltfModelForRead();
+    if (!model || model->primitives.empty()) return std::nullopt;
+
+    GpuReadyData ready;
+    const Mat4& transform = tile.content.renderContent.gltfTransform();
+    const Vec3& localOrigin = tile.content.renderContent.renderLocalOrigin();
+
+    for (const GltfPrimitive& primitive : model->primitives) {
+        if (primitive.vertices.empty() || primitive.indices.empty()) {
+            continue;
+        }
+
+        GpuReadyPrimitive gpuPrim;
+        const bool useTerrainFormat = primitive.hasTerrainWaterMaskMetadata;
+        const bool instanced = !primitive.instances.empty();
+
+        // CPU work: build vertex data
+        if (useTerrainFormat && !instanced) {
+            auto terrainVerts = GltfRenderGeometryBuilder::buildTerrainVertices(
+                primitive, transform, localOrigin);
+            gpuPrim.vertexBytes.resize(terrainVerts.size() * sizeof(TerrainGpuVertex));
+            memcpy(gpuPrim.vertexBytes.data(), terrainVerts.data(), gpuPrim.vertexBytes.size());
+            gpuPrim.vertexStride = sizeof(TerrainGpuVertex);
+            gpuPrim.vertexCount = terrainVerts.size();
+        } else {
+            auto gltfVerts = GltfRenderGeometryBuilder::buildVertices(
+                primitive, transform, localOrigin);
+            gpuPrim.vertexBytes.resize(gltfVerts.size() * sizeof(GltfGpuVertex));
+            memcpy(gpuPrim.vertexBytes.data(), gltfVerts.data(), gpuPrim.vertexBytes.size());
+            gpuPrim.vertexStride = sizeof(GltfGpuVertex);
+            gpuPrim.vertexCount = gltfVerts.size();
+
+            // Build instance data if needed
+            if (instanced) {
+                auto instanceData = GltfRenderGeometryBuilder::buildInstances(
+                    primitive, transform, localOrigin);
+                GpuReadyPrimitive::InstanceData inst;
+                inst.bytes.resize(instanceData.size() * sizeof(GltfGpuInstance));
+                memcpy(inst.bytes.data(), instanceData.data(), inst.bytes.size());
+                inst.count = instanceData.size();
+                inst.stride = sizeof(GltfGpuInstance);
+                gpuPrim.instances = std::move(inst);
+            }
+        }
+
+        // Index data (just copy)
+        gpuPrim.indices = primitive.indices;
+        gpuPrim.indexCount = primitive.indices.size();
+
+        // Sort center
+        gpuPrim.sortCenterEcef =
+            GltfRenderGeometryBuilder::primitiveSortCenterEcef(primitive, transform);
+
+        // CPU work: decode textures (only for non-terrain, terrain textures
+        // are already uploaded by the raster overlay system)
+        if (!useTerrainFormat) {
+            for (const GltfTexture& tex : model->textures) {
+                GpuReadyPrimitive::TextureData texData;
+                if (tex.image.width <= 0 || tex.image.height <= 0 ||
+                    tex.image.pixels.empty()) {
+                    continue;
+                }
+                const size_t pixelCount =
+                    static_cast<size_t>(tex.image.width) *
+                    static_cast<size_t>(tex.image.height);
+                texData.width = tex.image.width;
+                texData.height = tex.image.height;
+                texData.mipmap = tex.sampler.mipmap;
+
+                if (tex.image.channels == 1) {
+                    if (tex.image.pixels.size() < pixelCount) continue;
+                    texData.channels = 1;
+                    texData.pixels.assign(
+                        tex.image.pixels.begin(),
+                        tex.image.pixels.begin() + pixelCount);
+                } else if (tex.image.channels == 3) {
+                    if (tex.image.pixels.size() < pixelCount * 3u) continue;
+                    texData.channels = 4;
+                    texData.pixels.resize(pixelCount * 4u);
+                    for (size_t p = 0; p < pixelCount; ++p) {
+                        texData.pixels[p * 4u + 0] = tex.image.pixels[p * 3u + 0];
+                        texData.pixels[p * 4u + 1] = tex.image.pixels[p * 3u + 1];
+                        texData.pixels[p * 4u + 2] = tex.image.pixels[p * 3u + 2];
+                        texData.pixels[p * 4u + 3] = 255u;
+                    }
+                } else if (tex.image.channels == 4) {
+                    if (tex.image.pixels.size() < pixelCount * 4u) continue;
+                    texData.channels = 4;
+                    texData.pixels = tex.image.pixels;
+                } else {
+                    continue;
+                }
+                gpuPrim.textures.push_back(std::move(texData));
+            }
+        }
+
+        // Extract metadata (material properties, etc.)
+        // This copies all the scalar/vector properties but leaves
+        // GPU pointers (vertexBuffer, indexBuffer, texture) as nullptr.
+        GltfPrimitiveRenderResources& meta = gpuPrim.metadata;
+        meta.useTerrainVertexFormat = useTerrainFormat;
+        meta.vertexCount = static_cast<int>(primitive.vertices.size());
+        meta.indexCount = static_cast<int>(primitive.indices.size());
+        meta.instanceCount = instanced
+            ? static_cast<int>(primitive.instances.size()) : 0;
+        meta.primitiveMode = primitive.primitiveMode;
+        meta.sortCenterEcef = gpuPrim.sortCenterEcef;
+        meta.baseColorFactor = primitive.baseColorFactor;
+        meta.metallicFactor = primitive.metallicFactor;
+        meta.roughnessFactor = primitive.roughnessFactor;
+        meta.dielectricSpecularF0 = primitive.dielectricSpecularF0;
+        meta.specularFactor = primitive.specularFactor;
+        meta.specularColorFactor = primitive.specularColorFactor;
+        meta.specularGlossinessWorkflow = primitive.specularGlossinessWorkflow;
+        meta.specularGlossinessSpecularFactor = primitive.specularGlossinessSpecularFactor;
+        meta.specularGlossinessGlossinessFactor = primitive.specularGlossinessGlossinessFactor;
+        meta.transmissionFactor = primitive.transmissionFactor;
+        meta.anisotropyStrength = primitive.anisotropyStrength;
+        meta.anisotropyRotation = primitive.anisotropyRotation;
+        meta.clearcoatFactor = primitive.clearcoatFactor;
+        meta.clearcoatRoughnessFactor = primitive.clearcoatRoughnessFactor;
+        meta.clearcoatNormalTextureScale = primitive.clearcoatNormalTextureScale;
+        meta.sheenColorFactor = primitive.sheenColorFactor;
+        meta.sheenRoughnessFactor = primitive.sheenRoughnessFactor;
+        meta.normalTextureScale = primitive.normalTextureScale;
+        meta.occlusionTextureStrength = primitive.occlusionTextureStrength;
+        meta.emissiveFactor = primitive.emissiveFactor;
+        meta.alphaMode = primitive.alphaMode;
+        meta.alphaCutoff = primitive.alphaCutoff;
+        meta.doubleSided = primitive.doubleSided;
+        meta.unlit = primitive.unlit;
+        meta.hasTerrainWaterMaskMetadata = primitive.hasTerrainWaterMaskMetadata;
+        meta.terrainOnlyWater = primitive.terrainOnlyWater;
+        meta.terrainOnlyLand = primitive.terrainOnlyLand;
+        meta.terrainWaterMaskTranslationScale = {
+            static_cast<float>(primitive.terrainWaterMaskTranslationX),
+            static_cast<float>(primitive.terrainWaterMaskTranslationY),
+            static_cast<float>(primitive.terrainWaterMaskScale),
+            0.0f};
+
+        ready.primitives.push_back(std::move(gpuPrim));
+    }
+
+    return ready.valid() ? std::make_optional(std::move(ready)) : std::nullopt;
+}
+
+std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
+    const GltfModel& model,
+    const Mat4& transform,
+    const Vec3& localOrigin,
+    double /*currentFrameTimeSeconds*/) {
+    if (model.primitives.empty()) return std::nullopt;
+
+    GpuReadyData ready;
+
+    for (const GltfPrimitive& primitive : model.primitives) {
+        if (primitive.vertices.empty() || primitive.indices.empty()) {
+            continue;
+        }
+
+        GpuReadyPrimitive gpuPrim;
+        const bool useTerrainFormat = primitive.hasTerrainWaterMaskMetadata;
+        const bool instanced = !primitive.instances.empty();
+
+        // CPU work: build vertex data
+        if (useTerrainFormat && !instanced) {
+            auto terrainVerts = GltfRenderGeometryBuilder::buildTerrainVertices(
+                primitive, transform, localOrigin);
+            gpuPrim.vertexBytes.resize(terrainVerts.size() * sizeof(TerrainGpuVertex));
+            memcpy(gpuPrim.vertexBytes.data(), terrainVerts.data(), gpuPrim.vertexBytes.size());
+            gpuPrim.vertexStride = sizeof(TerrainGpuVertex);
+            gpuPrim.vertexCount = terrainVerts.size();
+        } else {
+            auto gltfVerts = GltfRenderGeometryBuilder::buildVertices(
+                primitive, transform, localOrigin);
+            gpuPrim.vertexBytes.resize(gltfVerts.size() * sizeof(GltfGpuVertex));
+            memcpy(gpuPrim.vertexBytes.data(), gltfVerts.data(), gpuPrim.vertexBytes.size());
+            gpuPrim.vertexStride = sizeof(GltfGpuVertex);
+            gpuPrim.vertexCount = gltfVerts.size();
+
+            // Build instance data if needed
+            if (instanced) {
+                auto instanceData = GltfRenderGeometryBuilder::buildInstances(
+                    primitive, transform, localOrigin);
+                GpuReadyPrimitive::InstanceData inst;
+                inst.bytes.resize(instanceData.size() * sizeof(GltfGpuInstance));
+                memcpy(inst.bytes.data(), instanceData.data(), inst.bytes.size());
+                inst.count = instanceData.size();
+                inst.stride = sizeof(GltfGpuInstance);
+                gpuPrim.instances = std::move(inst);
+            }
+        }
+
+        // Index data (just copy)
+        gpuPrim.indices = primitive.indices;
+        gpuPrim.indexCount = primitive.indices.size();
+
+        // Sort center
+        gpuPrim.sortCenterEcef =
+            GltfRenderGeometryBuilder::primitiveSortCenterEcef(primitive, transform);
+
+        // CPU work: decode textures (only for non-terrain)
+        if (!useTerrainFormat) {
+            for (const GltfTexture& tex : model.textures) {
+                GpuReadyPrimitive::TextureData texData;
+                if (tex.image.width <= 0 || tex.image.height <= 0 ||
+                    tex.image.pixels.empty()) {
+                    continue;
+                }
+                const size_t pixelCount =
+                    static_cast<size_t>(tex.image.width) *
+                    static_cast<size_t>(tex.image.height);
+                texData.width = tex.image.width;
+                texData.height = tex.image.height;
+                texData.mipmap = tex.sampler.mipmap;
+
+                if (tex.image.channels == 1) {
+                    if (tex.image.pixels.size() < pixelCount) continue;
+                    texData.channels = 1;
+                    texData.pixels.assign(
+                        tex.image.pixels.begin(),
+                        tex.image.pixels.begin() + pixelCount);
+                } else if (tex.image.channels == 3) {
+                    if (tex.image.pixels.size() < pixelCount * 3u) continue;
+                    texData.channels = 4;
+                    texData.pixels.resize(pixelCount * 4u);
+                    for (size_t p = 0; p < pixelCount; ++p) {
+                        texData.pixels[p * 4u + 0] = tex.image.pixels[p * 3u + 0];
+                        texData.pixels[p * 4u + 1] = tex.image.pixels[p * 3u + 1];
+                        texData.pixels[p * 4u + 2] = tex.image.pixels[p * 3u + 2];
+                        texData.pixels[p * 4u + 3] = 255u;
+                    }
+                } else if (tex.image.channels == 4) {
+                    if (tex.image.pixels.size() < pixelCount * 4u) continue;
+                    texData.channels = 4;
+                    texData.pixels = tex.image.pixels;
+                } else {
+                    continue;
+                }
+                gpuPrim.textures.push_back(std::move(texData));
+            }
+        }
+
+        // Copy all scalar/vector metadata but leave GPU pointers as nullptr.
+        GltfPrimitiveRenderResources& meta = gpuPrim.metadata;
+        meta.useTerrainVertexFormat = useTerrainFormat;
+        meta.vertexCount = static_cast<int>(primitive.vertices.size());
+        meta.indexCount = static_cast<int>(primitive.indices.size());
+        meta.instanceCount = instanced
+            ? static_cast<int>(primitive.instances.size()) : 0;
+        meta.primitiveMode = primitive.primitiveMode;
+        meta.sortCenterEcef = gpuPrim.sortCenterEcef;
+        meta.baseColorFactor = primitive.baseColorFactor;
+        meta.metallicFactor = primitive.metallicFactor;
+        meta.roughnessFactor = primitive.roughnessFactor;
+        meta.dielectricSpecularF0 = primitive.dielectricSpecularF0;
+        meta.specularFactor = primitive.specularFactor;
+        meta.specularColorFactor = primitive.specularColorFactor;
+        meta.specularGlossinessWorkflow = primitive.specularGlossinessWorkflow;
+        meta.specularGlossinessSpecularFactor = primitive.specularGlossinessSpecularFactor;
+        meta.specularGlossinessGlossinessFactor = primitive.specularGlossinessGlossinessFactor;
+        meta.transmissionFactor = primitive.transmissionFactor;
+        meta.anisotropyStrength = primitive.anisotropyStrength;
+        meta.anisotropyRotation = primitive.anisotropyRotation;
+        meta.clearcoatFactor = primitive.clearcoatFactor;
+        meta.clearcoatRoughnessFactor = primitive.clearcoatRoughnessFactor;
+        meta.clearcoatNormalTextureScale = primitive.clearcoatNormalTextureScale;
+        meta.sheenColorFactor = primitive.sheenColorFactor;
+        meta.sheenRoughnessFactor = primitive.sheenRoughnessFactor;
+        meta.normalTextureScale = primitive.normalTextureScale;
+        meta.occlusionTextureStrength = primitive.occlusionTextureStrength;
+        meta.emissiveFactor = primitive.emissiveFactor;
+        meta.alphaMode = primitive.alphaMode;
+        meta.alphaCutoff = primitive.alphaCutoff;
+        meta.doubleSided = primitive.doubleSided;
+        meta.unlit = primitive.unlit;
+        meta.hasTerrainWaterMaskMetadata = primitive.hasTerrainWaterMaskMetadata;
+        meta.terrainOnlyWater = primitive.terrainOnlyWater;
+        meta.terrainOnlyLand = primitive.terrainOnlyLand;
+        meta.terrainWaterMaskTranslationScale = {
+            static_cast<float>(primitive.terrainWaterMaskTranslationX),
+            static_cast<float>(primitive.terrainWaterMaskTranslationY),
+            static_cast<float>(primitive.terrainWaterMaskScale),
+            0.0f};
+
+        ready.primitives.push_back(std::move(gpuPrim));
+    }
+
+    return ready.valid() ? std::make_optional(std::move(ready)) : std::nullopt;
+}
+
+// ============================================================
+// Phase 2: GPU upload (Main Thread — GL context)
+// ============================================================
+
+bool GltfRenderResourcePreparer::uploadToGpu(
+    TilesetTile& tile,
+    RenderDevice* device,
+    GpuReadyData&& ready) {
+    if (!device || !ready.valid()) return false;
+
+    // Upload textures first (they're referenced by index in metadata)
+    std::vector<std::unique_ptr<Texture>> gpuTextures;
+    if (!ready.primitives.empty() && !ready.primitives[0].textures.empty()) {
+        gpuTextures.reserve(ready.primitives[0].textures.size());
+        for (const auto& texData : ready.primitives[0].textures) {
+            TextureDesc td;
+            td.width = texData.width;
+            td.height = texData.height;
+            td.format = texData.channels == 1
+                ? TextureDesc::Format::R8
+                : TextureDesc::Format::RGBA8;
+            td.data = texData.pixels.data();
+            td.dataSize = texData.pixels.size();
+            td.mipmap = texData.mipmap;
+            td.minFilter = texData.mipmap
+                ? TextureDesc::Filter::Linear
+                : TextureDesc::Filter::Nearest;
+            td.magFilter = TextureDesc::Filter::Linear;
+            gpuTextures.push_back(device->createTexture(td));
+        }
+    }
+
+    bool success = true;
+    for (auto& prim : ready.primitives) {
+        // GPU: create vertex buffer
+        BufferDesc vbDesc;
+        vbDesc.size = prim.vertexBytes.size();
+        vbDesc.data = prim.vertexBytes.data();
+        vbDesc.usage = prim.metadata.dynamicVertices
+            ? BufferDesc::Usage::Dynamic
+            : BufferDesc::Usage::Static;
+        vbDesc.type = BufferDesc::Type::Vertex;
+        prim.metadata.vertexBuffer = device->createBuffer(vbDesc);
+
+        // GPU: create index buffer
+        BufferDesc ibDesc;
+        ibDesc.size = prim.indices.size() * sizeof(uint32_t);
+        ibDesc.data = prim.indices.data();
+        ibDesc.usage = BufferDesc::Usage::Static;
+        ibDesc.type = BufferDesc::Type::Index;
+        prim.metadata.indexBuffer = device->createBuffer(ibDesc);
+
+        // GPU: create instance buffer if needed
+        if (prim.instances) {
+            BufferDesc instDesc;
+            instDesc.size = prim.instances->bytes.size();
+            instDesc.data = prim.instances->bytes.data();
+            instDesc.usage = BufferDesc::Usage::Static;
+            instDesc.type = BufferDesc::Type::Vertex;
+            prim.metadata.instanceBuffer = device->createBuffer(instDesc);
+        }
+
+        // Validate
+        if (!prim.metadata.vertexBuffer || !prim.metadata.indexBuffer) {
+            success = false;
+            continue;
+        }
+
+        // Set texture bindings (raw pointers into gpuTextures)
+        if (!gpuTextures.empty()) {
+            auto bindTexture = [&](GltfPrimitiveRenderResources::TextureBinding& binding,
+                                   const std::optional<GltfTextureBinding>& modelBinding) {
+                if (modelBinding && modelBinding->textureIndex < gpuTextures.size()) {
+                    binding.texture = gpuTextures[modelBinding->textureIndex].get();
+                    binding.texCoord = modelBinding->texCoord;
+                    binding.offsetScale = {
+                        modelBinding->transform.offset[0],
+                        modelBinding->transform.offset[1],
+                        modelBinding->transform.scale[0],
+                        modelBinding->transform.scale[1]};
+                    binding.rotationSinCos = {
+                        static_cast<float>(std::sin(modelBinding->transform.rotation)),
+                        static_cast<float>(std::cos(modelBinding->transform.rotation))};
+                }
+            };
+            // For terrain, only bind base color
+            if (prim.metadata.useTerrainVertexFormat) {
+                std::optional<GltfTextureBinding> baseColorBinding;
+                // Terrain textures are handled by raster overlay system,
+                // not by the GLTF texture system. Skip texture binding.
+            }
+        }
+
+        tile.content.renderContent.addGltfPrimitiveResource(
+            std::move(prim.metadata));
+    }
+
+    // Store textures in the tile's texture resource list
+    if (!gpuTextures.empty()) {
+        for (auto& tex : gpuTextures) {
+            tile.content.renderContent.addGltfTextureResource(std::move(tex));
+        }
+    }
+
+    // Clear async flag
+    tile.content.renderContent.asyncGpuUploadPending = false;
+
+    // Mark tile as ready for rendering
+    if (success && tile.content.renderContent.hasGltfPrimitiveResources()) {
+        tile.markRenderContentDone();
+    } else {
+        tile.markRenderContentFailedTemporarily();
+    }
+
+    return success;
+}
 
 } // namespace earth_engine

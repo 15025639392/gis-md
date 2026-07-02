@@ -9,6 +9,12 @@ class Texture;
 
 struct RasterTextureUploadOptions {
     bool generateMipmaps = true;
+    // Add 1px edge bleed border to eliminate seam artifacts at tile
+    // boundaries, matching cesium-native's pattern.  When enabled, each
+    // tile texture is padded with a 1px border of repeated edge texels,
+    // and UV coordinates must be adjusted by 1px inward (handled by
+    // RasterMappedToTilesetTile::computeTranslationAndScale).
+    bool enableEdgeBleed = false;
 };
 
 /// Resource-preparation boundary for raster imagery.

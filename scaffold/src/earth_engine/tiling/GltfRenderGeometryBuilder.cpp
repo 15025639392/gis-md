@@ -222,6 +222,37 @@ std::vector<GltfGpuVertex> GltfRenderGeometryBuilder::buildVertices(
     return verts;
 }
 
+std::vector<TerrainGpuVertex> GltfRenderGeometryBuilder::buildTerrainVertices(
+    const GltfPrimitive& primitive,
+    const Mat4& contentTransform,
+    const Vec3& localOrigin) {
+    std::vector<TerrainGpuVertex> verts(primitive.vertices.size());
+    const glm::dmat3 normalMatrix = glm::inverseTranspose(
+        glm::dmat3(contentTransform.raw()));
+    for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+        const SurfaceVertex& src = primitive.vertices[i];
+        const Vec3 rel = (contentTransform * src.positionEcef) - localOrigin;
+        verts[i].pos[0] = static_cast<float>(rel.x());
+        verts[i].pos[1] = static_cast<float>(rel.y());
+        verts[i].pos[2] = static_cast<float>(rel.z());
+
+        Vec3 nrm = Vec3(normalMatrix * src.normalEcef.raw());
+        if (nrm.lengthSquared() > 0.0) {
+            nrm = nrm.normalized();
+        } else {
+            nrm = Vec3::unitZ();
+        }
+        verts[i].nrm[0] = static_cast<float>(nrm.x());
+        verts[i].nrm[1] = static_cast<float>(nrm.y());
+        verts[i].nrm[2] = static_cast<float>(nrm.z());
+
+        const auto uv = texCoordForVertex(primitive, 0, i);
+        verts[i].texcoord[0] = uv[0];
+        verts[i].texcoord[1] = uv[1];
+    }
+    return verts;
+}
+
 std::vector<GltfGpuInstance> GltfRenderGeometryBuilder::buildInstances(
     const GltfPrimitive& primitive,
     const Mat4& contentTransform,

@@ -178,8 +178,6 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.terrainRenderEntriesSelectedDeferred = 0;
     diagnostics.terrainRenderEntriesFadingDeferred = 0;
     diagnostics.terrainSurfaceCommandsSubmitted = 0;
-    diagnostics.globeFallbackCommands = 0;
-    diagnostics.globeFallbackMaskedTerrainEntries = 0;
     diagnostics.surfaceMeshCount = 0;
     diagnostics.imageryAttachments = 0;
     diagnostics.imageryExactAttachments = 0;
@@ -196,9 +194,6 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.terrainGeneration = 0;
     diagnostics.terrainSurfaceTileCommands = 0;
     diagnostics.terrainGltfPrimitiveCommands = 0;
-    diagnostics.terrainParentFallbackMeshes = 0;
-    diagnostics.terrainTransitionSurfaceMeshes = 0;
-    diagnostics.ellipsoidSurfaceMeshes = 0;
 }
 
 void SceneRenderDiagnostics::updateSurfaceCommandGeneration(

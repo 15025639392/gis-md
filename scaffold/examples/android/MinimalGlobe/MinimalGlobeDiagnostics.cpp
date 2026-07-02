@@ -23,7 +23,6 @@ const char* renderCommandKindLabel(RenderCommandKind kind) {
     switch (kind) {
         case RenderCommandKind::SkyBackground: return "sky";
         case RenderCommandKind::AtmosphereBackground: return "atmo";
-        case RenderCommandKind::GlobeSurface: return "globe";
         case RenderCommandKind::SurfaceTile: return "surface";
         case RenderCommandKind::GltfPrimitive: return "gltf";
         case RenderCommandKind::GltfPrimitiveInstanced: return "gltf-i";
@@ -52,10 +51,8 @@ std::string buildRenderEntryDiagnosticsLine(const Diagnostics& diagnostics) {
         << ")  fallback " << diagnostics.terrainRenderEntriesAncestorFallback
         << "  prep " << diagnostics.terrainRenderEntriesSynchronousPrep
         << "/" << diagnostics.terrainRenderEntriesDeferredPrep
-        << "  surface/globe/masked "
+        << "  surface "
         << diagnostics.terrainSurfaceCommandsSubmitted
-        << "/" << diagnostics.globeFallbackCommands
-        << "/" << diagnostics.globeFallbackMaskedTerrainEntries
         << "  load " << static_cast<int>(
                diagnostics.frameLoadProgressPercentage)
         << "% work " << diagnostics.frameProgressLoadingCount

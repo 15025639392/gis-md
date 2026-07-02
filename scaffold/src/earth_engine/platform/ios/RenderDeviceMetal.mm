@@ -43,16 +43,24 @@ class MetalShaderProgram : public ShaderProgram {
 public:
     MetalShaderProgram(id<MTLRenderPipelineState> opaquePso,
                        id<MTLRenderPipelineState> blendedPso,
-                       id<MTLDepthStencilState> depthState)
-        : opaquePso_(opaquePso), blendedPso_(blendedPso), depthState_(depthState) {}
+                       id<MTLDepthStencilState> depthState,
+                       bool isTerrain = false)
+        : opaquePso_(opaquePso), blendedPso_(blendedPso),
+          depthState_(depthState), isTerrain_(isTerrain) {}
     id<MTLRenderPipelineState> pso(bool blend) const {
         return blend ? blendedPso_ : opaquePso_;
     }
     id<MTLDepthStencilState> depthState() const { return depthState_; }
+    // True when this program uses the lightweight terrain shader
+    // (terrainVertex/terrainFragment). The terrain shader uses a compact
+    // fragment buffer table distinct from the glTF one, so submit() must bind
+    // its uniforms at the terrain indices instead of the glTF indices.
+    bool isTerrain() const { return isTerrain_; }
 private:
     id<MTLRenderPipelineState> opaquePso_;
     id<MTLRenderPipelineState> blendedPso_;
     id<MTLDepthStencilState> depthState_;
+    bool isTerrain_ = false;
 };
 
 // ============================================================
@@ -278,6 +286,7 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
 
     enum class PipelineLayout {
         Surface,
+        Terrain,
         Tile,
         Gltf,
         GltfInstanced,
@@ -286,17 +295,22 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     };
     PipelineLayout layout = PipelineLayout::Surface;
 
-    // 尝试识别 shader 类型（globe / tile / vector color / debug line）
-    id<MTLFunction> vertexFunc = [library newFunctionWithName:@"globeVertex"];
-    id<MTLFunction> fragmentFunc = [library newFunctionWithName:@"globeFragment"];
+    // Probe the terrain lightweight shader FIRST (unique entry points) so it is
+    // never mis-detected as tile/gltf. It uses the Surface stride-32 descriptor.
+    id<MTLFunction> vertexFunc = [library newFunctionWithName:@"terrainVertex"];
+    id<MTLFunction> fragmentFunc = [library newFunctionWithName:@"terrainFragment"];
+    if (vertexFunc && fragmentFunc) {
+        layout = PipelineLayout::Terrain;
+    }
 
+    // 尝试识别 shader 类型（tile / gltf / vector color / debug line）
     if (!vertexFunc || !fragmentFunc) {
         fprintf(stderr, "[createShader] trying tileVertex / tileFragment\n");
         vertexFunc = [library newFunctionWithName:@"tileVertex"];
         fragmentFunc = [library newFunctionWithName:@"tileFragment"];
         if (vertexFunc && fragmentFunc) layout = PipelineLayout::Tile;
-        fprintf(stderr, "[createShader] tileVertex=%p tileFragment=%p\n", (void*)vertexFunc, (void*)fragmentFunc);
     }
+    fprintf(stderr, "[createShader] tileVertex=%p tileFragment=%p\n", (void*)vertexFunc, (void*)fragmentFunc);
     if (!vertexFunc || !fragmentFunc) {
         fprintf(stderr, "[createShader] tile not found, trying colorVertex / colorFragment\n");
     }
@@ -326,7 +340,7 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         return nullptr;
     }
 
-    // Vertex descriptor: Globe and SurfaceTile share position/normal/uv layout.
+    // Vertex descriptor: SurfaceTile uses the position/normal/uv layout.
     MTLVertexDescriptor* vd = [MTLVertexDescriptor vertexDescriptor];
     if (layout == PipelineLayout::DebugLine) {
         vd.attributes[0].format = MTLVertexFormatFloat2;   // texcoord
@@ -346,7 +360,10 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
         vd.layouts[0].stride = 12;
-    } else if (layout == PipelineLayout::Surface) {
+    } else if (layout == PipelineLayout::Surface ||
+               layout == PipelineLayout::Terrain) {
+        // Both use the 32-byte TerrainGpuVertex/surface layout:
+        // POSITION(12) + NORMAL(12) + TEXCOORD_0(8).
         vd.attributes[0].format = MTLVertexFormatFloat3;   // position
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
@@ -474,7 +491,8 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     return std::make_unique<MetalShaderProgram>(
         opaquePso,
         blendedPso,
-        impl_->depthReadWrite);
+        impl_->depthReadWrite,
+        layout == PipelineLayout::Terrain);
 }
 
 std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const FramebufferDesc& /*desc*/) {
@@ -516,6 +534,15 @@ void RenderDeviceMetal::beginFrame() {
                                   static_cast<double>(impl_->viewportWidth),
                                   static_cast<double>(impl_->viewportHeight),
                                   0.0, 1.0}];
+
+    // Front-face winding is Metal's default MTLWindingClockwise. This MUST stay
+    // opposite to the GLES backend's GL_CCW. Both backends draw the same geometry
+    // with the same (non-y-flipped) projection matrix; Metal's top-left / y-down
+    // framebuffer origin reverses on-screen triangle winding relative to GL's
+    // bottom-left / y-up origin, and the opposite front-face conventions cancel
+    // that out so both backends cull the same geometric face. Do NOT "unify" the
+    // two backends onto the same winding — that would invert culling on one side.
+    [impl_->currentEncoder setFrontFacingWinding:MTLWindingClockwise];
 
     // 存储 drawable 以便 endFrame 时 present
     [impl_->currentCommandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
@@ -584,6 +611,45 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
             setUniform("u_tileUV", 3);
             setUniform("u_cameraRelativeOrigin", 4);
         }
+
+        // Terrain lightweight shader uses its own compact fragment buffer table
+        // (indices 0-23, all <=30) distinct from the glTF table below. Bind by
+        // name at the terrain indices and skip the glTF fragment binds.
+        if (program->isTerrain()) {
+            auto setTerrainUniform = [&](const char* name, NSUInteger index) {
+                auto it = cmd.uniforms.find(name);
+                if (it != cmd.uniforms.end()) {
+                    [impl_->currentEncoder
+                        setFragmentBytes:it->second.data()
+                                  length:it->second.size() * sizeof(float)
+                                 atIndex:index];
+                }
+            };
+            setTerrainUniform("u_lightDir", 0);
+            setTerrainUniform("u_baseColor", 1);
+            setTerrainUniform("u_renderOpacity", 2);
+            setTerrainUniform("u_hasBaseColorTexture", 3);
+            setTerrainUniform("u_alphaMode", 4);
+            setTerrainUniform("u_alphaCutoff", 5);
+            setTerrainUniform("u_mappedRasterTextureCount", 6);
+            setTerrainUniform("u_mappedRasterTileUV0", 7);
+            setTerrainUniform("u_mappedRasterTileUV1", 8);
+            setTerrainUniform("u_mappedRasterTileUV2", 9);
+            setTerrainUniform("u_mappedRasterTileUV3", 10);
+            setTerrainUniform("u_mappedRasterOpacity0", 11);
+            setTerrainUniform("u_mappedRasterOpacity1", 12);
+            setTerrainUniform("u_mappedRasterOpacity2", 13);
+            setTerrainUniform("u_mappedRasterOpacity3", 14);
+            setTerrainUniform("u_mappedRasterTexCoordSet0", 15);
+            setTerrainUniform("u_mappedRasterTexCoordSet1", 16);
+            setTerrainUniform("u_mappedRasterTexCoordSet2", 17);
+            setTerrainUniform("u_mappedRasterTexCoordSet3", 18);
+            setTerrainUniform("u_gltfHasWaterMask", 19);
+            setTerrainUniform("u_gltfWaterMaskTranslationScale", 20);
+            setTerrainUniform("u_gltfWaterMaskState", 21);
+            setTerrainUniform("u_clipUV", 22);
+            setTerrainUniform("u_clipEnabled", 23);
+        } else {
 
         // Fragment uniforms
         auto fragIt = cmd.uniforms.find("u_lightDir");
@@ -741,11 +807,14 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         setFragmentUniform("u_gltfHasWaterMask", 81);
         setFragmentUniform("u_gltfWaterMaskTranslationScale", 82);
         setFragmentUniform("u_gltfWaterMaskState", 83);
+        }  // end else (non-terrain fragment uniform table)
 
-        // 纹理绑定
+        // 纹理绑定 (shared: raster overlays at 15-18, water mask at 19; the
+        // terrain shader also samples texture(0) for base color)
         const NSUInteger maxMaterialTextures = kGltfWaterMaskTextureSlot + 1;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
+        id<MTLSamplerState> terrainSharedSampler = nil;
         for (NSUInteger textureIndex = 0;
              textureIndex < materialTextureCount;
              ++textureIndex) {
@@ -754,8 +823,28 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                 static_cast<MetalTexture*>(cmd.textures[textureIndex]);
             [impl_->currentEncoder setFragmentTexture:metalTex->mtl()
                                               atIndex:textureIndex];
-            [impl_->currentEncoder setFragmentSamplerState:metalTex->sampler()
-                                                   atIndex:textureIndex];
+            if (program->isTerrain()) {
+                // Metal caps samplers at 0-15; the terrain shader declares a
+                // single shared sampler at slot 0. Bind textures at their slots
+                // (15-19 allowed) but only one sampler at slot 0.
+                if (!terrainSharedSampler) {
+                    terrainSharedSampler = metalTex->sampler();
+                }
+            } else {
+                [impl_->currentEncoder
+                    setFragmentSamplerState:metalTex->sampler()
+                                    atIndex:textureIndex];
+            }
+        }
+        if (program->isTerrain()) {
+            // Always bind a sampler at slot 0 — the terrain fragment declares
+            // u_terrainSampler[[sampler(0)]] unconditionally, so a tile with no
+            // texture yet still needs one bound or the draw is invalid.
+            [impl_->currentEncoder
+                setFragmentSamplerState:(terrainSharedSampler
+                                             ? terrainSharedSampler
+                                             : impl_->linearClampSampler)
+                                atIndex:0];
         }
 
         // 混合状态

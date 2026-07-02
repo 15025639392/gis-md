@@ -203,7 +203,6 @@ TEST(RasterOverlayDetailsTest,
 
     EXPECT_TRUE(renderContent.hasGltfContent());
     EXPECT_TRUE(renderContent.isTerrainRenderContent());
-    EXPECT_FALSE(renderContent.hasSurfaceMesh());
     EXPECT_FALSE(renderContent.hasRetainedHeightmap());
     EXPECT_EQ(SurfaceDrawableSource::GltfContent,
               renderContent.currentSurfaceSource());
@@ -309,7 +308,6 @@ TEST(RasterOverlayDetailsTest,
     EXPECT_TRUE(renderContent.hasGltfContent());
     EXPECT_TRUE(renderContent.isTerrainRenderContent());
     EXPECT_EQ(nullptr, renderContent.surfaceWaterMaskTexture());
-    EXPECT_FALSE(renderContent.hasSurfaceMesh());
     EXPECT_LE(renderContent.estimateRetainedBytes(),
               retainedWithLegacy);
 }
@@ -379,7 +377,6 @@ TEST(RasterOverlayDetailsTest,
     EXPECT_FALSE(renderContent.hasGltfContent());
     EXPECT_FALSE(renderContent.hasRenderableTerrainContent());
     EXPECT_FALSE(renderContent.hasRasterOverlayDetailsContent());
-    EXPECT_FALSE(renderContent.hasSurfaceMesh());
     EXPECT_FALSE(renderContent.hasRetainedHeightmap());
     EXPECT_FALSE(renderContent.isSurfaceDrawable());
     EXPECT_FALSE(renderContent.isSurfaceMeshReady());

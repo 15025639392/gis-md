@@ -3,9 +3,7 @@
 #include <chrono>
 #include <cstdio>
 
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
+#include "PlatformLog.h"
 
 namespace earth_engine {
 namespace perf {
@@ -27,20 +25,12 @@ inline void logTiming(uint64_t frameId,
     constexpr double kSlowFrameMs = 25.0;
     if (!shouldLog(frameId) && elapsedMs < kSlowFrameMs) return;
 
-#ifdef __ANDROID__
-    __android_log_print(ANDROID_LOG_INFO, "EarthPerf",
+    platformLog(LogLevel::Info, "EarthPerf",
         "frame=%llu scope=%s ms=%.3f %s",
         static_cast<unsigned long long>(frameId),
         scope,
         elapsedMs,
         detail ? detail : "");
-#else
-    std::fprintf(stderr, "[EarthPerf] frame=%llu scope=%s ms=%.3f %s\n",
-        static_cast<unsigned long long>(frameId),
-        scope,
-        elapsedMs,
-        detail ? detail : "");
-#endif
 }
 
 inline void logTimingAtLeast(uint64_t frameId,
@@ -50,20 +40,12 @@ inline void logTimingAtLeast(uint64_t frameId,
                              const char* detail = "") {
     if (!shouldLog(frameId) && elapsedMs < thresholdMs) return;
 
-#ifdef __ANDROID__
-    __android_log_print(ANDROID_LOG_INFO, "EarthPerf",
+    platformLog(LogLevel::Info, "EarthPerf",
         "frame=%llu scope=%s ms=%.3f %s",
         static_cast<unsigned long long>(frameId),
         scope,
         elapsedMs,
         detail ? detail : "");
-#else
-    std::fprintf(stderr, "[EarthPerf] frame=%llu scope=%s ms=%.3f %s\n",
-        static_cast<unsigned long long>(frameId),
-        scope,
-        elapsedMs,
-        detail ? detail : "");
-#endif
 }
 
 class ScopedTimer {

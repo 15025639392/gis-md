@@ -5,6 +5,7 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TileRasterOverlayPrefetcher.h"
 #include "TileRasterOverlayReadinessPolicy.h"
+#include "TileRasterOverlaySignature.h"
 #include "TileRenderablePolicy.h"
 #include "TilesetTile.h"
 

@@ -43,6 +43,8 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
         return action;
     }
 
+
+
     const TileRasterOverlayMappingContext mappingContext =
         TileRasterOverlayMappingPolicy::contextFor(tile);
     const RasterOverlayDetails& overlayDetails = mappingContext.details();
@@ -80,6 +82,12 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
                 tile,
                 geometryRectangle,
                 boundingVolumeRectangle);
+        // cesium-native: pass the TILESET maximumScreenSpaceError (16.0) to
+        // computeDesiredScreenPixels, NOT the overlay's MSE (2.0).
+        // The overlay's MSE is divided again inside
+        // computeLevelFromTargetScreenPixels, creating intentional headroom
+        // for higher zoom overlays.  Using overlay MSE in both places
+        // underestimates the desired zoom by ~3 levels (factor 16/2 = 8).
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,

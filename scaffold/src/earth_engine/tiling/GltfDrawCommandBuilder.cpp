@@ -58,19 +58,33 @@ void GltfDrawCommandBuilder::build(
             continue;
         }
 
-        RenderCommand cmd = primitive.instanceCount > 0
-            ? renderer.makeGltfPrimitiveInstancedCommand(
-                  primitive.vertexBuffer.get(),
-                  primitive.indexBuffer.get(),
-                  primitive.instanceBuffer.get(),
-                  primitive.indexCount,
-                  primitive.vertexCount,
-                  primitive.instanceCount)
-            : renderer.makeGltfPrimitiveCommand(
-                  primitive.vertexBuffer.get(),
-                  primitive.indexBuffer.get(),
-                  primitive.indexCount,
-                  primitive.vertexCount);
+        RenderCommand cmd;
+        if (primitive.instanceCount > 0) {
+            cmd = renderer.makeGltfPrimitiveInstancedCommand(
+                primitive.vertexBuffer.get(),
+                primitive.indexBuffer.get(),
+                primitive.instanceBuffer.get(),
+                primitive.indexCount,
+                primitive.vertexCount,
+                primitive.instanceCount);
+        } else if (primitive.useTerrainVertexFormat) {
+            // Terrain quantized-mesh primitive: 32-byte TerrainGpuVertex VBO
+            // drawn with the dedicated lightweight terrain shader. The
+            // per-command population below (raster overlays, water mask, clip,
+            // lighting, opacity) stays identical — the terrain shader consumes
+            // the subset of uniforms it declares and ignores the rest.
+            cmd = renderer.makeTerrainPrimitiveCommand(
+                primitive.vertexBuffer.get(),
+                primitive.indexBuffer.get(),
+                primitive.indexCount,
+                primitive.vertexCount);
+        } else {
+            cmd = renderer.makeGltfPrimitiveCommand(
+                primitive.vertexBuffer.get(),
+                primitive.indexBuffer.get(),
+                primitive.indexCount,
+                primitive.vertexCount);
+        }
         cmd.frameId = context.frameNumber;
         cmd.generation = context.generation;
         cmd.terrainRenderContent =

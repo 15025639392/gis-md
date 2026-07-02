@@ -13,6 +13,7 @@
 #include "TileLoadQueue.h"
 #include "TileLoadTypes.h"
 #include "TileOcclusionCallback.h"
+#include "GpuUploadQueue.h"
 #include "TileMeshPreparationManager.h"
 #include "TileOcclusionState.h"
 #include "TileRasterUpsampledChildCoordinator.h"
@@ -154,6 +155,13 @@ private:
         bool resourceSmoothingActive,
         IPrepareRendererResources* pPrepRenderer,
         FrameResourceBudget* budget = nullptr);
+
+    /// Drain the async GPU upload queue.  Must be called after
+    /// processPendingLoads in each frame update.
+    bool drainGpuUploadQueue(
+        IPrepareRendererResources* pPrepRenderer = nullptr,
+        uint32_t maxUploadsPerFrame = 4);
+
     void markContentResourcesDirty();
     TileOcclusionState checkSingleTileOcclusion(
         const TilesetTile& tile) const;
@@ -176,6 +184,7 @@ private:
     TileContentLifecycleManager contentLifecycle_;
     TileContentAccess contentAccess_;
     TileContentCacheManager contentCache_;
+    GpuUploadQueue gpuUploadQueue_;  // async CPU→GPU pipeline
     uint64_t resourceRevision_ = 1;
     TileSelectionReuseState selectionReuseState_;
     TileContentResourceInvalidator resourceInvalidator_;

@@ -13,6 +13,7 @@
 #include "../tiling/TilesetRenderFrameExecutor.h"
 #include "../tiling/TilesetUpdateFrameFacade.h"
 #include "../layers/ActivatedRasterOverlay.h"
+#include "../debug/PlatformLog.h"
 
 #include <memory>
 #include <optional>
@@ -22,7 +23,7 @@ namespace earth_engine {
 
 namespace {
 
-constexpr int kSmoothedMainThreadUploadLimit = 1;
+constexpr int kSmoothedMainThreadUploadLimit = 4;
 
 FrameResourceBudgetConfig makeFrameResourceBudgetConfig(
     const TilesetOptions& options,
@@ -195,6 +196,7 @@ TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
     frame.contentProvider = terrainProviders_.contentProvider();
     frame.device = device_;
     frame.pPrepRenderer = pPrepRenderer;
+    frame.gpuUploadQueue = &gpuUploadQueue_;
     frame.frameNumber = frameNumber_;
     frame.maximumSimultaneousTileLoads =
         options_.maximumSimultaneousTileLoads;
@@ -227,6 +229,15 @@ bool Tileset::processPendingLoads(
         budget);
 }
 
+bool Tileset::drainGpuUploadQueue(
+    IPrepareRendererResources* pPrepRenderer,
+    uint32_t maxUploadsPerFrame) {
+    return contentRuntime_.drainGpuUploadQueue(
+        makeContentRuntimeUploadFrame(pPrepRenderer),
+        nullptr,
+        maxUploadsPerFrame);
+}
+
 void Tileset::markContentResourcesDirty() {
     contentRuntime_.markResourcesDirty();
 }
@@ -257,7 +268,13 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
 void Tileset::update(
     const FrameState& frameState,
     IPrepareRendererResources* pPrepRenderer) {
+    const double t0 = perf::nowMs();
     TilesetUpdateFrameFacade::update(*this, frameState, pPrepRenderer);
+    const double t_tot = perf::nowMs() - t0;
+    if (t_tot > 5.0) {
+        platformLog(LogLevel::Info, "EarthPerf",
+            "Tileset.update_real: %.2f ms", t_tot);
+    }
 }
 
 void Tileset::buildRenderCommands(Renderer& renderer,

@@ -22,7 +22,6 @@ enum class RenderCommandKind {
     Unknown,
     SkyBackground,        // order 0: skybox / starfield
     AtmosphereBackground,  // order 5: atmospheric scattering
-    GlobeSurface,          // order 10
     SurfaceTile,           // order 10
     GltfPrimitive,         // order 15
     GltfPrimitiveInstanced, // order 15
@@ -56,7 +55,7 @@ struct RenderCommand {
     // 绘制参数
     int vertexCount = 0;       // glDrawArrays 的顶点数（indexBuffer 为 null 时使用）
     int indexCount = 0;        // glDrawElements 的索引数
-    int indexOffset = 0;
+    int indexOffset = 0;       // 起始索引偏移，单位为“索引个数”（非字节）；各后端按 indexType 大小自行换算字节偏移
     int vertexStride = 0;      // bytes per vertex (0=auto, 32=surface, 120=glTF)
     int instanceCount = 0;
     int instanceStride = 0;

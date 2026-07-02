@@ -5,9 +5,9 @@
 namespace earth_engine::minimal_globe_demo {
 
 constexpr const char* kQuantizedMeshTerrainTemplate =
-    "http://192.168.1.8:8090/{z}/{x}/{y}.terrain";
+    "http://192.168.3.3:8090/{z}/{x}/{y}.terrain";
 constexpr const char* kQuantizedMeshTerrainLayerJson =
-    "http://192.168.1.8:8090/layer.json";
+    "http://192.168.3.3:8090/layer.json";
 constexpr const char* kGaodeSatelliteTemplate =
     "http://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 constexpr const char* kGaodeRoadNetTemplate =
@@ -17,7 +17,7 @@ constexpr const char* kRobotExpressiveGlbUrl =
 
 constexpr bool kEnableTerrainForDemo = true;
 constexpr bool kUseGaodeSatelliteForDemo = true;
-constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
+constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
 constexpr bool kEnableRobotExpressiveGltfDemo = false;
 
 constexpr double kDemoCameraLongitudeDegrees = 106.508;

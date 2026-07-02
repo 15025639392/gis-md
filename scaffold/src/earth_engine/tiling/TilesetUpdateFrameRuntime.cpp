@@ -8,6 +8,7 @@
 #include "Tileset.h"
 #include "TilesetProviderDiagnosticsCollector.h"
 #include "TilesetSelectionFrameFacade.h"
+#include "../debug/PlatformLog.h"
 
 namespace earth_engine {
 
@@ -96,6 +97,17 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
                 budget,
                 pPrepRenderer);
         });
+    // Drain the async GPU upload queue.  Terrain CPU work dispatched to
+    // worker threads by processPendingLoads lands here for GPU upload.
+    {   const double t_drain = perf::nowMs();
+        tileset.drainGpuUploadQueue(pPrepRenderer);
+        const double drainMs = perf::nowMs() - t_drain;
+        if (drainMs > 1.0) {
+            platformLog(LogLevel::Info, "EarthPerf",
+                "drainGpuUpload: %.2f ms", drainMs);
+        }
+    }
+
     const TileUpdateUploadRunResult& uploadWork = frameWork.uploadWork;
     const TileUpdateSelectionWorkResult& selectionWork =
         frameWork.selectionWork;

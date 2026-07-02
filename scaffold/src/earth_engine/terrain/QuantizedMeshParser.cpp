@@ -1,7 +1,5 @@
 #include "QuantizedMeshParser.h"
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
+#include "../debug/PlatformLog.h"
 #include "../core/math/AttributeCompression.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -116,7 +114,19 @@ QuantizedMeshParser::parseMetadataAvailabilityWithDiagnostics(
 
         const bool idx32 = vertexCount > 65536;
         const size_t indexSize = idx32 ? sizeof(uint32_t) : sizeof(uint16_t);
-        if (idx32 && (offset % 4) != 0) offset += 2;
+        // Same 4-byte-alignment detection as parseToDecodedTile: some
+        // generators 4-byte-align 16-bit index data (non-spec).
+        auto triFits = [&](size_t o) -> bool {
+            if (o + sizeof(uint32_t) > len) return false;
+            uint32_t tc;
+            std::memcpy(&tc, data + o, sizeof(uint32_t));
+            return static_cast<size_t>(tc) * 3u <=
+                   (len - (o + sizeof(uint32_t))) / indexSize;
+        };
+        if ((offset % 4) != 0) {
+            if (idx32) offset += 2;
+            else if (!triFits(offset) && triFits(offset + 2)) offset += 2;
+        }
         if (offset + sizeof(uint32_t) > len) return std::nullopt;
 
         uint32_t triangleCount = 0;
@@ -199,11 +209,9 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
     bool enableWaterMask) {
 
     if (len < kHeaderSize || !data) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+        platformLog(LogLevel::Error, "QMParser",
             "parseToDecodedTile fail: invalid input len=%zu data=%p",
             len, static_cast<const void*>(data));
-#endif
         return nullptr;
     }
 
@@ -224,11 +232,9 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
 
     const uint32_t vc = hdr.vertexCount;
     if (vc == 0 || vc > 500000) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+        platformLog(LogLevel::Error, "QMParser",
             "parseToDecodedTile fail: vertexCount=%u len=%zu off=%zu",
             vc, len, offset);
-#endif
         return nullptr;
     }
 
@@ -241,11 +247,9 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
     };
     auto uBuf = readU16s(vc), vBuf = readU16s(vc), hBuf = readU16s(vc);
     if (uBuf.empty() || vBuf.empty() || hBuf.empty()) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+        platformLog(LogLevel::Error, "QMParser",
             "parseToDecodedTile fail: u/v/h buffer truncated vc=%u off=%zu len=%zu u=%zu v=%zu h=%zu",
             vc, offset, len, uBuf.size(), vBuf.size(), hBuf.size());
-#endif
         return nullptr;
     }
 
@@ -262,30 +266,39 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
 
     // --- Parse indices ---
     bool idx32 = (vc > 65536);
-    // 32-bit indices use 4-byte alignment. When vertexCount > 65536
-    // and offset is not 4-byte aligned, insert 2-byte padding before
-    // triCount. Matches cesium-native QuantizedMeshLoader.cpp.
-    // NOTE: 16-bit indices NEVER have padding — skip only for idx32.
-    if (idx32 && (offset % 4) != 0) {
-        offset += 2;  // Skip intentional zero padding for 4-byte alignment
+    size_t idxByte = idx32 ? 4 : 2;
+    // Index-data alignment. Per the quantized-mesh spec, 32-bit index data is
+    // 4-byte aligned and 16-bit index data only 2-byte aligned. But some
+    // generators (this project's terrain server, ctb/FABDEM-style builds)
+    // 4-byte-align the 16-bit index data too, inserting a 2-byte pad before
+    // triangleCount. Detect it: if reading triangleCount un-padded does NOT
+    // fit the remaining bytes but reading it after a 2-byte pad does, the tile
+    // is 4-byte-aligned. This handles both spec-compliant and padded tiles.
+    auto triCountFits = [&](size_t o) -> bool {
+        if (o + 4 > len) return false;
+        uint32_t tc;
+        std::memcpy(&tc, data + o, 4);
+        return static_cast<size_t>(tc) * 3u <= (len - (o + 4)) / idxByte;
+    };
+    if ((offset % 4) != 0) {
+        if (idx32) {
+            offset += 2;  // spec: 4-byte-align 32-bit index data
+        } else if (!triCountFits(offset) && triCountFits(offset + 2)) {
+            offset += 2;  // non-spec 4-byte-aligned 16-bit index data
+        }
     }
     if (offset + 4 > len) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+        platformLog(LogLevel::Error, "QMParser",
             "parseToDecodedTile fail: missing triCount vc=%u off=%zu len=%zu",
             vc, offset, len);
-#endif
         return nullptr;
     }
     uint32_t triCount = readU32();
     const size_t idxCount = static_cast<size_t>(triCount) * 3u;
-    size_t idxByte = idx32 ? 4 : 2;
     if (idxCount > (len - offset) / idxByte) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+        platformLog(LogLevel::Error, "QMParser",
             "parseToDecodedTile fail: index overflow vc=%u tri=%u idxCount=%zu idxByte=%zu off=%zu len=%zu",
             vc, triCount, idxCount, idxByte, offset, len);
-#endif
         return nullptr;
     }
 
@@ -300,11 +313,9 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
         if (code == 0) ++highest;
     }
     if (std::any_of(indices.begin(), indices.end(), [&](uint32_t idx) { return idx >= vc; })) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+        platformLog(LogLevel::Error, "QMParser",
             "parseToDecodedTile fail: decoded index outside vertex range vc=%u tri=%u",
             vc, triCount);
-#endif
         return nullptr;
     }
 
@@ -332,15 +343,13 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
     auto northEdge = readEdge();
 
     if (!westEdge || !southEdge || !eastEdge || !northEdge) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+        platformLog(LogLevel::Error, "QMParser",
             "parseToDecodedTile fail: edge read overflow vc=%u tri=%u off=%zu len=%zu west=%zu south=%zu east=%zu north=%zu",
             vc, triCount, offset, len,
             westEdge ? westEdge->size() : 0,
             southEdge ? southEdge->size() : 0,
             eastEdge ? eastEdge->size() : 0,
             northEdge ? northEdge->size() : 0);
-#endif
         return nullptr;
     }
     const std::vector<uint32_t>& west = *westEdge;
@@ -352,11 +361,9 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
     };
     if (edgeHasInvalidIndex(west) || edgeHasInvalidIndex(south) ||
         edgeHasInvalidIndex(east) || edgeHasInvalidIndex(north)) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+        platformLog(LogLevel::Error, "QMParser",
             "parseToDecodedTile fail: edge index outside vertex range vc=%u",
             vc);
-#endif
         return nullptr;
     }
 
@@ -597,11 +604,10 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
             return uBuf[a] < uBuf[b];
         });
 
-#ifdef __ANDROID__
     auto edgeUvSummary = [&](const char* name, const std::vector<uint32_t>& edge) {
         if (edge.empty()) {
-            __android_log_print(
-                ANDROID_LOG_INFO,
+            platformLog(
+                LogLevel::Info,
                 "QMParser",
                 "edge %s count=0",
                 name);
@@ -609,8 +615,8 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
         }
         const uint32_t first = edge.front();
         const uint32_t last = edge.back();
-        __android_log_print(
-            ANDROID_LOG_INFO,
+        platformLog(
+            LogLevel::Info,
             "QMParser",
             "edge %s count=%zu first=%u uv=%u/%u last=%u uv=%u/%u",
             name,
@@ -622,8 +628,8 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
             static_cast<unsigned>(uBuf[last]),
             static_cast<unsigned>(vBuf[last]));
     };
-    __android_log_print(
-        ANDROID_LOG_INFO,
+    platformLog(
+        LogLevel::Info,
         "QMParser",
         "skirt summary vc=%u tri=%u west=%zu south=%zu east=%zu north=%zu skirtH=%.3f lonOff=%.7f latOff=%.7f",
         vc,
@@ -639,7 +645,6 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
     edgeUvSummary("south", sortedSouth);
     edgeUvSummary("east", sortedEast);
     edgeUvSummary("north", sortedNorth);
-#endif
 
     addSkirtEdge(sortedWest,  -lonOff, 0,       false);
     addSkirtEdge(sortedSouth, 0,       -latOff, false);

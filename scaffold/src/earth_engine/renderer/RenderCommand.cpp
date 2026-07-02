@@ -115,9 +115,8 @@ bool mvpCommandLess(const RenderCommand& a, const RenderCommand& b) {
 
 bool surfaceTileCullStateAllowed(const RenderCommand& cmd) {
     // Terrain-primary Quantized Mesh tiles may include skirts and mixed LOD
-    // borders whose visibility relies on two-sided rendering. GlobeSurface and
-    // other passes keep their fixed cull state; only SurfaceTile permits this
-    // opt-out.
+    // borders whose visibility relies on two-sided rendering. Other passes keep
+    // their fixed cull state; only SurfaceTile permits this opt-out.
     return cmd.cullFace || cmd.hasSurfaceTileUniforms;
 }
 
@@ -136,8 +135,6 @@ int mvpRenderOrder(RenderCommandKind kind) {
     switch (kind) {
         case RenderCommandKind::SkyBackground:
             return 0;
-        case RenderCommandKind::GlobeSurface:
-            return 10;
         case RenderCommandKind::SurfaceTile:
             return 10;
         case RenderCommandKind::GltfPrimitive:
@@ -171,11 +168,6 @@ validateMvpRenderCommands(const RenderCommandList& commands,
         lastOrder = order;
 
         switch (cmd.kind) {
-            case RenderCommandKind::GlobeSurface:
-                if (!requireColorPass(i, cmd, error)) return error;
-                if (!requireState(i, cmd, true, true, true, false, "GlobeSurface", error)) return error;
-                break;
-
             case RenderCommandKind::SurfaceTile:
                 if (!requireColorPass(i, cmd, error)) return error;
                 if (terrainPrimaryOverlayStateAllowed(cmd)) {

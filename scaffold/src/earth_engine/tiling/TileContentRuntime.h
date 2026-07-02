@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GpuUploadQueue.h"
 #include "TileLoadTypes.h"
 
 #include <cstdint>
@@ -41,6 +42,7 @@ struct TileContentRuntimeUploadFrame {
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
     IPrepareRendererResources* pPrepRenderer = nullptr;
+    GpuUploadQueue* gpuUploadQueue = nullptr;  // async CPU→GPU pipeline
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 0;
     double mainThreadLoadingTimeLimit = 0.0;
@@ -65,6 +67,10 @@ public:
         bool interactionActive,
         bool resourceSmoothingActive,
         FrameResourceBudget* budget);
+    bool drainGpuUploadQueue(
+        const TileContentRuntimeUploadFrame& frame,
+        FrameResourceBudget* budget,
+        uint32_t maxUploadsPerFrame);
     void markResourcesDirty();
 
 private:

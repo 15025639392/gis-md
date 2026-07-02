@@ -2,6 +2,7 @@
 
 #include "FrameState.h"
 #include "../debug/PerfTimer.h"
+#include "../debug/PlatformLog.h"
 #include "../tiling/Tileset.h"
 
 #include <utility>
@@ -61,10 +62,18 @@ SceneTilesetUpdateResult SceneTilesetCoordinator::update(
     }
     if (!contentTilesets_.empty()) {
         const double startMs = perf::nowMs();
+        int idx = 0;
         for (auto& tileset : contentTilesets_) {
             if (tileset) {
+                const double t0 = perf::nowMs();
                 tileset->update(frameState, pPrepRenderer);
+                const double t_tile = perf::nowMs() - t0;
+                if (t_tile > 5.0) {
+                    platformLog(LogLevel::Info, "EarthPerf",
+                        "ContentTileset[%d].update: %.2f ms", idx, t_tile);
+                }
             }
+            ++idx;
         }
         result.contentTilesetUpdateMs = perf::nowMs() - startMs;
     }

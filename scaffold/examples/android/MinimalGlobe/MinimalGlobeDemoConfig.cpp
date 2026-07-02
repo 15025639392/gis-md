@@ -72,7 +72,7 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         debug.role = RasterOverlayRole::BaseImagery;
         debug.priority = RasterOverlayPriority::High;
         debug.fallbackPolicy = RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
-        debug.blocksCompleteRenderable = true;
+        debug.blocksCompleteRenderable = false;  // 允许地形立即渲染
         config.rasterOverlays.push_back(debug);
     }
 

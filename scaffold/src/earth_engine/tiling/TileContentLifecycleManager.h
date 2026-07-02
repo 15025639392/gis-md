@@ -35,6 +35,40 @@ public:
     bool hasPendingWork() const;
     void shutdown();
 
+    template <typename EnsureTileFn, typename MarkResourcesDirtyFn>
+    bool drainGpuUploadQueue(
+        TilesetContentProvider* contentProvider,
+        RenderDevice* device,
+        IPrepareRendererResources* pPrepRenderer,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        GpuUploadQueue* gpuUploadQueue,
+        uint64_t frameNumber,
+        uint32_t maximumSimultaneousTileLoads,
+        double mainThreadLoadingTimeLimit,
+        double currentFrameTimeSeconds,
+        uint32_t smoothedMainThreadUploadLimit,
+        FrameResourceBudget* budget,
+        uint32_t maxUploadsPerFrame,
+        EnsureTileFn&& ensureTile,
+        MarkResourcesDirtyFn&& markResourcesDirty) {
+        return TilesetContentLifecycleCoordinator::drainGpuUploadQueue(
+            makeUploadContext(
+                contentProvider,
+                device,
+                pPrepRenderer,
+                rasterOverlays,
+                gpuUploadQueue,
+                frameNumber,
+                maximumSimultaneousTileLoads,
+                mainThreadLoadingTimeLimit,
+                currentFrameTimeSeconds,
+                smoothedMainThreadUploadLimit),
+            budget,
+            maxUploadsPerFrame,
+            std::forward<EnsureTileFn>(ensureTile),
+            std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+    }
+
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(
         const std::vector<TileLoadRequest>& loadRequests,
@@ -77,6 +111,7 @@ public:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        GpuUploadQueue* gpuUploadQueue,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -94,6 +129,7 @@ public:
                 device,
                 pPrepRenderer,
                 rasterOverlays,
+                gpuUploadQueue,
                 frameNumber,
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
@@ -138,6 +174,7 @@ private:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        GpuUploadQueue* gpuUploadQueue,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -150,6 +187,7 @@ private:
             pPrepRenderer,
             rasterOverlays,
             emptyContentRegistry_,
+            gpuUploadQueue,
             frameNumber,
             maximumSimultaneousTileLoads,
             mainThreadLoadingTimeLimit,

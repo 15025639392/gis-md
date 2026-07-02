@@ -62,8 +62,8 @@
         config.initialCamera = {106.508, 29.617, 30000.0};
         config.terrain = {
             earth_engine::TerrainSourceKind::QuantizedMesh,
-            "http://192.168.1.6:8090/{z}/{x}/{y}.terrain",
-            "http://192.168.1.6:8090/layer.json",
+            "http://127.0.0.1:8099/{z}/{x}/{y}.terrain",
+            "http://127.0.0.1:8099/layer.json",
             "QuantizedMesh Terrain",
             0, 12, 65, false
         };
@@ -86,7 +86,7 @@
         satellite.priority = earth_engine::RasterOverlayPriority::High;
         satellite.fallbackPolicy =
             earth_engine::RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
-        satellite.blocksCompleteRenderable = true;
+        satellite.blocksCompleteRenderable = false;  // [SELDIAG] TEMP test
         config.rasterOverlays.push_back(satellite);
 
         _sdkFacade->installScene(config);
@@ -140,9 +140,9 @@ static CVReturn displayLinkCallback(
     if (_frameCount == 1) {
         const auto& diag = _engine->diagnostics();
         NSLog(@"[MinimalGlobe] FIRST FRAME: draw=%d tiles=%d fps=%.1f "
-              "surface=%d globe=%d surfCmd=%d terrSurf=%d terrGltf=%d",
+              "surface=%d surfCmd=%d terrSurf=%d terrGltf=%d",
               diag.drawCalls, diag.visibleTiles, diag.fps,
-              diag.surfaceMeshCount, diag.globeFallbackCommands,
+              diag.surfaceMeshCount,
               diag.terrainSurfaceCommandsSubmitted,
               diag.terrainSurfaceTileCommands,
               diag.terrainGltfPrimitiveCommands);

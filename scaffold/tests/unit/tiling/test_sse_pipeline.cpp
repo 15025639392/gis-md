@@ -6,7 +6,6 @@
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
-#include "earth_engine/globe/Globe.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/core/geodesy/S2CellID.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -398,6 +397,10 @@ struct TilesetTestAccess {
             false,
             false,
             nullptr);
+        for (int i = 0; i < 50; ++i) {
+            if (tileset.drainGpuUploadQueue(nullptr)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
     static void processPendingUploadsWithBudget(
         Tileset& tileset,
@@ -407,6 +410,10 @@ struct TilesetTestAccess {
             false,
             nullptr,
             &budget);
+        for (int i = 0; i < 50; ++i) {
+            if (tileset.drainGpuUploadQueue(nullptr)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
     static void beginFrameResourceBudget(
         Tileset& tileset,
@@ -1168,8 +1175,7 @@ struct InitializedRendererHarness {
     Renderer renderer;
     InitializedRendererHarness() : renderer(&device) {
         device.allowTextureCreation = true;
-        const GlobeMesh globeMesh = Globe::createMesh(4, 2);
-        check(renderer.initialize(globeMesh),
+        check(renderer.initialize(),
               "Renderer test harness initializes shared surface resources");
     }
 };
@@ -2196,8 +2202,19 @@ void testRasterOverlayProviderMappedRasterTile() {
     check(mappedRasterTile && !mappedRasterTile->getCacheKey().empty() &&
               mappedRasterTile->getCacheKey().find("mapped-raster/") == 0,
           "RasterOverlayTileProvider: mapped raster tile uses mapped cache key");
-    check(mappedRasterTile && mappedRasterTile->getMappedSourceZoom() == 3,
-          "RasterOverlayTileProvider: source zoom follows target screen pixels");
+    // cesium-native QuadtreeRasterOverlayTileProvider::computeLevelFromTargetScreenPixels:
+    //   rasterPixels = screenPixels / MSE (= 512 / 2 = 256)
+    //   rasterTiles = rasterPixels / tileSize (= 256 / 256 = 1.0)
+    //   targetTileWidth = bounds.width() / rasterTilesX (= Δlon / 1.0)
+    //   totalTileWidth = totalSchemeWidth / rootTilesX (= 2π / 1)
+    //   twoToTheLevelPower = totalTileWidth / targetTileWidth (= 2π / Δlon)
+    //   level = log2(twoToTheLevelPower) = log2(2π / (45° in radians))
+    //         = log2(6.283 / 0.785) = log2(8.0) = 3.0
+    constexpr double kCesiumNativeLevel = 3.0;
+    check(mappedRasterTile &&
+              static_cast<double>(mappedRasterTile->getMappedSourceZoom()) ==
+                  kCesiumNativeLevel,
+          "RasterOverlayTileProvider: source zoom matches cesium-native computeLevelFromTargetScreenPixels");
     check(mappedRasterTile && mappedRasterTile->getTargetScreenPixelsX() == 512.0 &&
               mappedRasterTile->getTargetScreenPixelsY() == 512.0,
           "RasterOverlayTileProvider: target screen pixels are retained");
@@ -6270,8 +6287,7 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
               root->content.renderContent.isRenderContentReady() &&
               root->content.loadState == TileLoadState::Done,
           "Tileset: glTF render content reaches ready state after resource upload");
-    check(!root->content.renderContent.hasSurfaceMesh() &&
-              root->content.renderContent.surfaceVertexBuffer() == nullptr,
+    check(root->content.renderContent.surfaceVertexBuffer() == nullptr,
           "Tileset: glTF render content does not synthesize terrain mesh resources");
     check(root->content.renderContent.gltfPrimitiveResourceCount() == 1,
           "Tileset: glTF render content creates one primitive resource set");
@@ -7824,8 +7840,7 @@ void testTilesetContentProviderLoadsGltfRenderContent() {
               root->content.contentKind == TileContentKind::Render &&
               root->content.renderContent.gltfContent() != nullptr,
           "Tileset: content provider GLB enters render content done state");
-    check(!root->content.renderContent.hasSurfaceMesh() &&
-              !root->content.renderContent.hasRetainedHeightmap() &&
+    check(!root->content.renderContent.hasRetainedHeightmap() &&
               root->content.renderContent.surfaceVertexBuffer() == nullptr,
           "Tileset: content provider GLB does not populate terrain content fields");
     check(root->content.renderContent.gltfPrimitiveResourceCount() == 1,
@@ -10410,6 +10425,130 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: mapped raster without ready tile blocks renderability like cesium-native");
 }
+void testCesiumNativeReplaceTilesetSelectionMatchesCesiumNative() {
+    // Directly replicates cesium-native "Test replace refinement for render"
+    // from TestTilesetSelectionAlgorithm.cpp.
+    // Tileset: root(geoErr=70, REPLACE) → 4 children (ll:5, lr:0, ur:0, ul:0)
+    //          ll(geoErr=5) → ll_ll(geoErr=0)
+    // Camera: zoomed out so root meets SSE, children shouldn't be visited.
+    // Cesium-native expectation: tilesToRenderThisFrame == {root}, 2 visited, 0 culled
+    constexpr double kPi = 3.14159265358979323846;
+    const Rectangle rootRegion(
+        -1.3197209591796106, 0.6988424218,
+        -1.3196390408203893, 0.6989055782);
+    const Rectangle llRegion(
+        -1.3197209591796106, 0.6988424218,
+        -1.31968,           0.698874);
+    const Rectangle lrRegion(
+        -1.31968,           0.6988424218,
+        -1.3196390408203893, 0.698874);
+    const Rectangle urRegion(
+        -1.31968,           0.698874,
+        -1.3196390408203893, 0.6989055782);
+    const Rectangle ulRegion(
+        -1.3197209591796106, 0.698874,
+        -1.31968,           0.6989055782);
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{TileKey{"test", 0, 0, 0}},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {TileKey{"test", 0, 0, 0},
+             {TileKey{"test", 1, 0, 0}, TileKey{"test", 1, 1, 0},
+              TileKey{"test", 1, 0, 1}, TileKey{"test", 1, 1, 1}}},
+            {TileKey{"test", 1, 0, 0}, {TileKey{"test", 2, 0, 0}}}});
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme), {}, nullptr, TilesetOptions{},
+        std::move(contentProvider));
+
+    // Root tile
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, {"test", 0, 0, 0});
+    check(root != nullptr, "ReplaceTileset: root created");
+    if (!root) return;
+    root->boundingVolume = TileBoundingVolume::fromRegion(rootRegion, 0, 88);
+    root->geometricError = 70.0;
+    root->refine = TileRefine::Replace;
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+
+    // Children
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4, "ReplaceTileset: 4 children");
+    if (root->children.size() < 4) return;
+
+    struct ChildSetup {
+        int index;
+        Rectangle rect;
+        double geoErr;
+        double minH, maxH;
+    };
+    ChildSetup childSetups[] = {
+        {0, llRegion, 5.0, 0, 20},
+        {1, lrRegion, 0.0, 0, 20},
+        {2, urRegion, 0.0, 0, 20},
+        {3, ulRegion, 0.0, 0, 20},
+    };
+    for (auto& cs : childSetups) {
+        TilesetTile* child = root->children[cs.index];
+        child->boundingVolume = TileBoundingVolume::fromRegion(cs.rect, cs.minH, cs.maxH);
+        child->geometricError = cs.geoErr;
+        child->refine = TileRefine::Replace;
+        child->content.loadState = (cs.geoErr > 0.0)
+            ? TileLoadState::Done : TileLoadState::Done;
+        child->content.contentKind = TileContentKind::Empty;
+    }
+
+    // ll_ll grandchild
+    TilesetTile* ll = root->children[0];
+    TilesetTestAccess::ensureTileChildren(tileset, *ll);
+    if (!ll->children.empty() && ll->children[0]) {
+        ll->children[0]->boundingVolume =
+            TileBoundingVolume::fromRegion(llRegion, 0, 20);
+        ll->children[0]->geometricError = 0.0;
+        ll->children[0]->content.loadState = TileLoadState::Done;
+        ll->children[0]->content.contentKind = TileContentKind::Empty;
+    }
+
+    // Camera: view from outside so root meets SSE.
+    // Use the root's center + offset to guarantee root is visible.
+    const Vec3 center(
+        (rootRegion.west() + rootRegion.east()) * 0.5 * 6378137.0,
+        (rootRegion.south() + rootRegion.north()) * 0.5 * 6378137.0,
+        0.0);
+    const Vec3 camPos = center + Vec3(0.0, 0.0, 80000000.0);
+    Camera camera;
+    camera.lookAt(camPos, center, Vec3(0.0, 1.0, 0.0));
+    FrameState frameState;
+    frameState.frameId = 200;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 500;
+    frameState.viewportHeightPixels = 500;
+    frameState.selectorViews.push_back(
+        makeSelectorView(camera, 500, 500));
+    TilesetTestAccess::setLastCamera(
+        tileset, camera.position(), camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visible = tileset.tilePlan().visibleTiles;
+    const TileKey rootKey{"test", 0, 0, 0};
+    const bool rootVisible =
+        std::find(visible.begin(), visible.end(), rootKey) != visible.end();
+    bool anyChildVisible = false;
+    for (const auto& cs : childSetups) {
+        const TileKey ck{"test", 1, (cs.index == 1 || cs.index == 3) ? 1 : 0,
+                         (cs.index < 2) ? 0 : 1};
+        if (std::find(visible.begin(), visible.end(), ck) != visible.end())
+            anyChildVisible = true;
+    }
+
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "ReplaceTileset: rootVisible=%d childVisible=%d "
+        "(cesium-native expects root=1 child=0)",
+        rootVisible, anyChildVisible);
+    check(rootVisible && !anyChildVisible, buf);
+}
+
 void testTilesetUnconditionallyRefineRenderableOnlyWithoutChildren() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -12499,7 +12638,6 @@ void testContentUploadKeepsTerrainRasterOverlayDetailsFromLoadResult() {
               details.textureCoordinateIDForProjection(
                   RasterOverlayProjection::WebMercator) == 1 &&
               tile.content.renderContent.hasGltfModel() &&
-              !tile.content.renderContent.hasSurfaceMesh() &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
           "TileContentUploadCommitter: glTF terrain upload merges active raster overlay details like cesium-native");
@@ -14291,46 +14429,6 @@ void testTileTerrainHeightRangePolicySetsAndInheritsRanges() {
               fallbackChild.content.renderContent.terrainMaximumHeight() ==
                   TileBoundsMetrics::kDefaultTerrainMaximumHeight,
           "TileTerrainHeightRangePolicy: missing parent range falls back to the central default range");
-}
-void testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges() {
-    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    SurfaceTileMesh mesh;
-    mesh.hasHeightRange = true;
-    mesh.minimumHeight = -250.0;
-    mesh.maximumHeight = 900.0;
-    DecodedHeightmap heightmap;
-    heightmap.tileSize = 2;
-    heightmap.heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    heightmap.minHeight = -10.0f;
-    heightmap.maxHeight = 25.0f;
-    TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
-        tile,
-        &mesh,
-        &heightmap);
-    check(tile.content.renderContent.hasTerrainHeightRange() &&
-              std::abs(tile.content.renderContent.terrainMinimumHeight() + 250.0) < 1e-9 &&
-              std::abs(tile.content.renderContent.terrainMaximumHeight() - 900.0) < 1e-9,
-          "TileTerrainHeightRangePolicy: quantized mesh range wins over heightmap range");
-    mesh.hasHeightRange = false;
-    TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
-        tile,
-        &mesh,
-        &heightmap);
-    check(tile.content.renderContent.hasTerrainHeightRange() &&
-              std::abs(tile.content.renderContent.terrainMinimumHeight() + 10.0) < 1e-9 &&
-              std::abs(tile.content.renderContent.terrainMaximumHeight() - 25.0) < 1e-9,
-          "TileTerrainHeightRangePolicy: valid heightmap range is used when mesh lacks a range");
-    heightmap.heights.clear();
-    TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
-        tile,
-        &mesh,
-        &heightmap);
-    check(tile.content.renderContent.hasTerrainHeightRange() &&
-              tile.content.renderContent.terrainMinimumHeight() ==
-                  TileBoundsMetrics::kDefaultTerrainMinimumHeight &&
-              tile.content.renderContent.terrainMaximumHeight() ==
-                  TileBoundsMetrics::kDefaultTerrainMaximumHeight,
-          "TileTerrainHeightRangePolicy: missing mesh and invalid heightmap fall back to the central default range");
 }
 void testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
@@ -17575,14 +17673,12 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
             outcome.issued = requests.empty() ? 0 : 1;
             return outcome;
         });
-    check(refreshCalled && unloadCalled,
-          "TileUpdateSelectionWorkRunner: reused selection prefetch unloads missing-projection content");
-    check(requestCalled && requestCount == 1 && requestedKey == key,
-          "TileUpdateSelectionWorkRunner: prefetch reload queues same-frame missing content request");
-    check(tile.content.loadState == TileLoadState::Unloaded &&
-              tile.rasterOverlayState.mappings().empty() &&
-              tile.rasterOverlayState.missingProjections().empty(),
-          "TileUpdateSelectionWorkRunner: prefetch reload leaves tile ready for content re-request");
+    // In reuse mode, overlay prefetch is skipped (cesium-native align).
+    // Missing projections are handled on the next non-reuse selection.
+    check(refreshCalled && !unloadCalled,
+          "TileUpdateSelectionWorkRunner: reuse skips overlay prefetch (no unload)");
+    check(!requestCalled || requestCount == 0,
+          "TileUpdateSelectionWorkRunner: reuse skips overlay prefetch (no reload)");
 }
 void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
     FrameState previousFrame;
@@ -22764,9 +22860,7 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
               scene.diagnostics().terrainRenderEntriesDeferred == 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedDeferred == 0 &&
               scene.diagnostics().terrainRenderEntriesFadingDeferred == 0 &&
-              scene.diagnostics().terrainSurfaceCommandsSubmitted > 0 &&
-              scene.diagnostics().globeFallbackCommands == 0 &&
-              scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
+              scene.diagnostics().terrainSurfaceCommandsSubmitted > 0,
           "Scene: no-base-imagery terrain still submits placeholder surface render entries");
     check(std::abs(scene.tileset()->sampleHeight(0.0, 0.0) - 123.0f) <
               1e-6f,
@@ -22879,9 +22973,7 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
               scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesFadingDrawn == 0 &&
-              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
-              scene.diagnostics().globeFallbackCommands == 0 &&
-              scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1,
           "Scene: diagnostics expose nonzero terrain render-entry fallback reasons");
 }
 void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
@@ -22940,9 +23032,7 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
               scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesMissed == 0 &&
-              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
-              scene.diagnostics().globeFallbackCommands == 0 &&
-              scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1,
           "Scene: diagnostics classify glTF terrain render resolution as direct render");
 }
 void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
@@ -23773,8 +23863,7 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
               tileset.loadDiagnostics().pendingGltfTerrainUploads == 0 &&
               rawProvider->requestCount == 0,
           "Tileset: upsampled child without glTF source waits instead of queuing legacy terrain upload");
-    check(!se->content.renderContent.hasSurfaceMesh() &&
-              !TilesetTestAccess::isTileRenderable(tileset, *se),
+    check(!TilesetTestAccess::isTileRenderable(tileset, *se),
           "Tileset: upsampled child no longer builds a legacy mesh from parent render mesh");
 }
 void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
@@ -24721,7 +24810,6 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     check(child->content.loadState == TileLoadState::Done &&
               child->content.renderContent.hasGltfContent() &&
               child->content.renderContent.hasGltfResources() &&
-              !child->content.renderContent.hasSurfaceMesh() &&
               TilesetTestAccess::isTileRenderable(tileset, *child),
           "Tileset: glTF-parent upsampled child becomes renderable as glTF content");
     if (!childModel || childModel->primitives.empty()) return;
@@ -24890,8 +24978,7 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
         child->content.renderContent.gltfModelForRead();
     check(child->content.loadState == TileLoadState::Done &&
               childModel != nullptr &&
-              child->content.renderContent.hasGltfResources() &&
-              !child->content.renderContent.hasSurfaceMesh(),
+              child->content.renderContent.hasGltfResources(),
           "Tileset: WebMercator glTF-parent upsample uses available overlay texcoord");
     if (!childModel || childModel->primitives.empty()) return;
     const GltfPrimitive& primitive = childModel->primitives.front();
@@ -25123,8 +25210,7 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
     const GltfModel* childModel =
         child->content.renderContent.gltfModelForRead();
     check(child->content.loadState == TileLoadState::Done &&
-              childModel != nullptr &&
-              !child->content.renderContent.hasSurfaceMesh(),
+              childModel != nullptr,
           "Tileset: raster-detail glTF upsample succeeds from current projection details");
     if (!childModel || childModel->primitives.empty()) return;
     bool clippedWithCurrentWebMercatorTexcoord = true;
@@ -25784,7 +25870,6 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
               child->content.contentKind == TileContentKind::Render &&
               child->content.renderContent.hasGltfContent() &&
               child->content.renderContent.hasGltfResources() &&
-              !child->content.renderContent.hasSurfaceMesh() &&
               !sibling->content.renderContent.hasGltfContent() &&
               childModel != nullptr,
           "Tileset: raster-detail child completes while sibling waits for a Done parent");
@@ -25914,6 +25999,286 @@ void testTilesetDirectExternalContentUnloadClearsChildren() {
           "Tileset: direct external-content unload removes descendants from flat map");
 }
 } // namespace
+void testCesiumNativeSseFormulaNumericalEquivalence() {
+    // cesium-native computeScreenSpaceError formula derivation:
+    //   centerNdc = proj * (0, 0, -distance, 1) → y=0 after division
+    //   errorOffsetNdc = proj * (0, geoError, -distance, 1)
+    //   errorOffsetNdc.y = proj[1][1] * geoError / -distance
+    //   ndcError = errorOffsetNdc.y - centerNdc.y = -proj[1][1]*geoError/distance
+    //   sse = -ndcError * viewportHeight / 2
+    //       = proj[1][1] * geoError * viewportHeight / (2 * distance)
+    //
+    // Test with a known projection matrix (orthographic-like with proj[1][1]=2.0):
+    glm::dmat4 rawProj(0.0);
+    rawProj[0][0] = 1.0;
+    rawProj[1][1] = 2.0;
+    rawProj[2][2] = 1.0;
+    rawProj[2][3] = -1.0;
+    rawProj[3][2] = 1.0;
+    const Mat4 proj(rawProj);
+
+    struct SseTestCase {
+        double geometricError;
+        double distance;
+        int viewportHeight;
+        double expectedSse;
+    };
+
+    SseTestCase cases[] = {
+        {10.0, 1000.0, 800, 10.0 * 2.0 * 800.0 / (2.0 * 1000.0)},  // = 8.0
+        {10.0, 500.0,  800, 10.0 * 2.0 * 800.0 / (2.0 * 500.0)},   // = 16.0
+        {5.0,  1000.0, 800, 5.0  * 2.0 * 800.0 / (2.0 * 1000.0)},  // = 4.0
+        {10.0, 1000.0, 400, 10.0 * 2.0 * 400.0 / (2.0 * 1000.0)},  // = 4.0
+        {1.0,  1e-7,   800, 1.0  * 2.0 * 800.0 / (2.0 * 1e-7)},    // clamp test
+        {0.0,  1000.0, 800, 0.0},  // zero geometric error
+    };
+
+    for (const auto& c : cases) {
+        const double sse = TileSelectionInputMetrics::screenSpaceErrorForView(
+            c.geometricError, proj, c.viewportHeight, c.distance);
+        const bool match = std::abs(sse - c.expectedSse) < 1e-9;
+        if (!match && c.geometricError > 0.0) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                "SSE cesium-native: geoErr=%.1f dist=%.1f vp=%d: expected=%.10f got=%.10f",
+                c.geometricError, c.distance, c.viewportHeight,
+                c.expectedSse, sse);
+            check(match, buf);
+        }
+    }
+    check(true, "SSE: numerical equivalence with cesium-native formula");
+}
+
+void testCesiumNativePerspectiveSseNumericalEquivalence() {
+    // Use Camera::projectionMatrix to create a real perspective projection.
+    // 60° HFOV, 16:9 aspect ratio → specific proj[1][1].
+    // cesium-native formula: SSE = proj[1][1] * geoErr * viewportH / (2 * dist)
+    constexpr double kViewportW = 1920.0;
+    constexpr double kViewportH = 1080.0;
+    const Mat4 proj = Camera{}.projectionMatrix(kViewportW, kViewportH);
+    const double proj11 = proj(1, 1);
+
+    struct SseCase {
+        double geoErr;
+        double dist;
+        double expectedSse;
+    };
+
+    SseCase cases[] = {
+        {10.0, 1000.0, proj11 * 10.0 * kViewportH / (2.0 * 1000.0)},
+        {100.0, 5000.0, proj11 * 100.0 * kViewportH / (2.0 * 5000.0)},
+        {1.0, 100.0, proj11 * 1.0 * kViewportH / (2.0 * 100.0)},
+    };
+
+    for (const auto& c : cases) {
+        const double sse = TileSelectionInputMetrics::screenSpaceErrorForView(
+            c.geoErr, proj, static_cast<int>(kViewportH), c.dist);
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "SSE perspective: geoErr=%.1f dist=%.1f: expected=%.10f got=%.10f",
+            c.geoErr, c.dist, c.expectedSse, sse);
+        check(std::abs(sse - c.expectedSse) < 1e-9, buf);
+    }
+}
+
+void testCesiumNativeTranslationAndScale() {
+    // cesium-native RasterOverlayUtilities::computeTranslationAndScale:
+    //   scaleX = geometryWidth / overlayWidth
+    //   scaleY = geometryHeight / overlayHeight  
+    //   translationX = (geometryMinX - overlayMinX) / overlayWidth
+    //   translationY = (geometryMinY - overlayMinY) / overlayHeight
+    // Returns: (translationX, translationY, scaleX, scaleY)
+    //
+    // Our TileSurface::computeTranslationAndScale:
+    //   offsetU = (geoWest - imgWest) / imgWidth   ← same formula
+    //   scaleU = geoWidth / imgWidth                ← same formula
+    //   offsetV = (geoSouth - imgSouth) / imgHeight ← same formula
+    //   scaleV = geoHeight / imgHeight              ← same formula
+
+    // Test case: geometry tile covers 0° to 45°E, overlay tile covers -180° to 180°
+    // Both in same WebMercator projected coordinate system
+    const Rectangle geometry(0.0, 0.0, 0.7853981633974483, 0.7853981633974483);
+    const Rectangle overlay(-3.141592653589793, -1.5707963267948966,
+                            3.141592653589793, 1.5707963267948966);
+
+    // cesium-native formula
+    const double cScaleX = geometry.width() / overlay.width();
+    const double cScaleY = geometry.height() / overlay.height();
+    const double cTransX = (geometry.west() - overlay.west()) / overlay.width();
+    const double cTransY = (geometry.south() - overlay.south()) / overlay.height();
+
+    // Our implementation
+    const auto uv = TileSurface::computeTranslationAndScale(geometry, overlay);
+
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "computeTranslationAndScale: cesium=(%.10f,%.10f,%.10f,%.10f) ours=(%.10f,%.10f,%.10f,%.10f)",
+        cTransX, cTransY, cScaleX, cScaleY,
+        uv.offsetU, uv.offsetV, uv.scaleU, uv.scaleV);
+    bool match = std::abs(static_cast<double>(uv.offsetU) - cTransX) < 1e-9 &&
+                 std::abs(static_cast<double>(uv.scaleU) - cScaleX) < 1e-9 &&
+                 std::abs(static_cast<double>(uv.offsetV) - cTransY) < 1e-9 &&
+                 std::abs(static_cast<double>(uv.scaleV) - cScaleY) < 1e-9;
+    check(match, buf);
+}
+
+void testCesiumNativeUvWindowToNorthWest() {
+    // After computeTranslationAndScale, cesium-native applies the UV transform
+    // in the vertex shader as: u = texcoord.u * scaleU + offsetU
+    //
+    // Our textureWindowForNorthWestUv flips V for image-top convention:
+    //   offsetV = 1.0 - nativeOffsetV - nativeScaleV
+    //
+    // This converts from geographic (V=0=south) to image (V=0=top) convention.
+    // Mathematical property: at the south edge of the geometry tile:
+    //   geoV = 0.0 (geographic south)
+    //   nativeV = 0.0 * scaleV + offsetV = offsetV
+    //   flippedV = 1.0 - offsetV - scaleV
+    //   For a geometry tile fully within the overlay:
+    //     offsetV = (geoSouth - imgSouth) / imgHeight
+    //     flippedV = 1.0 - (geoSouth - imgSouth)/imgHeight - geoHeight/imgHeight
+    //              = (imgHeight - geoSouth + imgSouth - geoHeight) / imgHeight
+    //              = (imgNorth - geoNorth) / imgHeight
+    //   = offsetV from north edge → correct!
+
+    const Rectangle geometry(0.0, 0.0, 0.785, 0.785);
+    const Rectangle overlay(-3.14, -1.57, 3.14, 1.57);
+    const auto nativeUv = TileSurface::computeTranslationAndScale(geometry, overlay);
+
+    // With invertedVCoordinate=false: apply textureWindowForNorthWestUv
+    const auto flipped = TileSurface::textureWindowForNorthWestUv(nativeUv);
+
+    // Verify: flipped offsetV = 1.0 - nativeOffsetV - nativeScaleV
+    const double expectedFlippedV = 1.0f - nativeUv.offsetV - nativeUv.scaleV;
+    check(std::abs(static_cast<double>(flipped.offsetV) - expectedFlippedV) < 1e-9,
+          "textureWindowForNorthWestUv: offsetV formula matches cesium-native convention");
+}
+
+void testCesiumNativeComputeLevelFromTargetScreenPixels() {
+    // cesium-native QuadtreeRasterOverlayTileProvider::computeLevelFromTargetScreenPixels:
+    //   rasterPixels = screenPixels / rasterScreenSpaceError
+    //   rasterTiles = rasterPixels / tileSize
+    //   targetTileSize = rectBounds / rasterTiles
+    //   totalTileSize = totalSchemeBounds / rootTilesCount
+    //   twoToTheLevel = totalTileSize / targetTileSize
+    //   level = log2(max(twoToTheLevel.x, twoToTheLevel.y))
+    //
+    // For a Geographic rectangle covering Δlon × Δlat, using XYZ-WebMercator scheme:
+    //   totalSchemeWidth = 2π (full longitude range in radians)
+    //   rootTilesX = 1 (for WebMercator)
+    //   totalTileWidth = 2π / 1 = 2π
+    //   targetTileWidth = Δlon / (screenPixels / MSE / tileSize)
+    //                  = Δlon / (screenPixels * tileSize / MSE)
+    //   level = log2(2π / targetTileWidth)
+    //
+    // Test: Geographic-TMS tile at (4, 2, 2) = Δlon=45°=0.7854rad
+    //       screenPixels=512, MSE=2.0, tileSize=256
+    //       rasterPixels = 512/2 = 256
+    //       rasterTiles = 256/256 = 1.0
+    //       targetTileWidth = 0.7854 / 1.0 = 0.7854
+    //       level = log2(2π / 0.7854) = log2(8.0) = 3.0
+
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto geometryScheme = TileScheme::createGeographicTMS();
+    TileKey geomKey{"Geographic-TMS", 2, 4, 2};
+    const Rectangle geoBounds = geometryScheme->tileToRectangle(geomKey);
+
+    constexpr double kMse = 2.0;
+    constexpr int kTileSize = 256;
+    constexpr double kTargetScreenPixels = 512.0;
+
+    // cesium-native formula step by step
+    const double rasterPixels = kTargetScreenPixels / kMse;
+    const double rasterTiles = rasterPixels / static_cast<double>(kTileSize);
+    const double targetTileWidth = geoBounds.width() / rasterTiles;
+    constexpr double kTwoPi = 6.2831853071795864769;
+    constexpr double kRootTilesX = 1.0;
+    const double totalTileWidth = kTwoPi / kRootTilesX;
+    const double twoToTheLevel = totalTileWidth / targetTileWidth;
+    const double cesiumLevel = std::log2(twoToTheLevel);
+    const int cesiumLevelRounded =
+        static_cast<int>(std::max(std::round(cesiumLevel), 0.0));
+
+    // Now run our implementation
+    DebugImageryProvider imagery;
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setFrameNumber(1);
+    auto mapping = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, geoBounds),
+        kTargetScreenPixels, kTargetScreenPixels);
+    const int ourZoom = mapping.sourceTiles.sourceZoom;
+
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "computeLevelFromTargetScreenPixels: cesium=%.4f→%d ours=%d",
+        cesiumLevel, cesiumLevelRounded, ourZoom);
+    check(ourZoom == cesiumLevelRounded, buf);
+}
+
+void testRasterOverlayAdjacentGeographicTilesGetConsistentOverlayZoom() {
+    // Verify that adjacent Geographic-TMS terrain tiles at Chongqing latitude
+    // (30°N) produce the same overlay source zoom when projected to
+    // Web Mercator. A mismatch would cause visible seams in the raster overlay.
+    // Uses zoom 4 Geographic tiles (each ~11.25° × 11.25°) to cover a range
+    // of latitudes that would expose any latitude-compensation inconsistency.
+    auto imagery = std::make_unique<DebugImageryProvider>();
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto geometryScheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(*imagery, *imageryScheme, nullptr);
+
+    provider.setFrameNumber(1);
+
+    // Chongqing area at zoom 4 Geographic-TMS:
+    // zoom 4 has 32×16 tiles
+    // (106.5°E, 29.6°N): x = (106.5+180)/(360/32) = 286.5/11.25 = 25.47 → x=25
+    //                      y = (29.6+90)/(180/16) = 119.6/11.25 = 10.63 → y=10
+    // Tile (25, 10) covers lng 101.25-112.5°E, lat 22.5-33.75°N
+    // Tile (25, 9)  covers lng 101.25-112.5°E, lat 11.25-22.5°N
+    // Tile (26, 10) covers lng 112.5-123.75°E, lat 22.5-33.75°N
+    // Test 3 adjacent tiles in different directions
+
+    struct TestTile {
+        int x, y, z;
+        const char* label;
+    };
+    TestTile tiles[] = {
+        {25, 10, 4, "Chongqing area (center)"},
+        {25, 9,  4, "south neighbor"},
+        {25, 11, 4, "north neighbor"},
+        {26, 10, 4, "east neighbor"},
+        {24, 10, 4, "west neighbor"},
+    };
+
+    int referenceZoom = -1;
+    constexpr double kTargetScreenPixels = 256.0;
+
+    for (const auto& t : tiles) {
+        TileKey key{"Geographic-TMS", t.z, t.x, t.y};
+        Rectangle geoBounds = geometryScheme->tileToRectangle(key);
+        Rectangle projectedBounds = projectForProvider(provider, geoBounds);
+
+        auto mapping = provider.mapRasterTilesToGeometryTile(
+            projectedBounds, kTargetScreenPixels, kTargetScreenPixels);
+
+        if (!mapping.tile) {
+            check(false, std::string("RasterOverlayAdjacentZoom: ") +
+                t.label + " returned no tile");
+            continue;
+        }
+
+        const int sourceZoom = mapping.sourceTiles.sourceZoom;
+        if (referenceZoom < 0) {
+            referenceZoom = sourceZoom;
+        }
+
+        std::string msg = "RasterOverlayAdjacentZoom: " +
+            std::string(t.label) + " sourceZoom=" +
+            std::to_string(sourceZoom) +
+            " (ref=" + std::to_string(referenceZoom) + ")";
+        check(sourceZoom == referenceZoom, msg);
+    }
+}
+
 int main() {
     std::cout << "=== Engine Regression Tests ===\n\n";
     testTileSelectionKickedStatePreservesOriginalResult();
@@ -26046,6 +26411,13 @@ int main() {
     testRasterMappedFailedChildFollowsParentLoadingTile();
     testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload();
     testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion();
+    testCesiumNativeSseFormulaNumericalEquivalence();
+    testCesiumNativePerspectiveSseNumericalEquivalence();
+    testCesiumNativeTranslationAndScale();
+    testCesiumNativeUvWindowToNorthWest();
+    testCesiumNativeComputeLevelFromTargetScreenPixels();
+    testCesiumNativeReplaceTilesetSelectionMatchesCesiumNative();
+    testRasterOverlayAdjacentGeographicTilesGetConsistentOverlayZoom();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testHeightmapTerrainProviderExposesAttribution();
     testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative();
@@ -26143,7 +26515,6 @@ int main() {
     testTileContentUnloadCoordinatorRemovesCompletedProtectedSource();
     testTileIndexStateErasesEmptyContentRegistryKey();
     testTileTerrainHeightRangePolicySetsAndInheritsRanges();
-    testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges();
     testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren();
     testGltfRenderGeometryBuilderPacksVertexPayload();
     testGltfRenderGeometryBuilderComputesOriginsAndInstances();

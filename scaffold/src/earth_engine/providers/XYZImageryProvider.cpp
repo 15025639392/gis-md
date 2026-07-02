@@ -2,10 +2,7 @@
 #include "../core/async/AsyncSystem.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
-
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
+#include "../debug/PlatformLog.h"
 
 #if __has_include(<stb_image.h>)
 #include <stb_image.h>
@@ -38,7 +35,6 @@ struct RequestCompletionGuard {
     }
 };
 
-#ifdef __ANDROID__
 constexpr int kMaxAndroidFailureLogs = 24;
 
 void logAndroidXyzFailure(const char* stage,
@@ -51,8 +47,8 @@ void logAndroidXyzFailure(const char* stage,
         kMaxAndroidFailureLogs) {
         return;
     }
-    __android_log_print(
-        ANDROID_LOG_WARN,
+    platformLog(
+        LogLevel::Warning,
         "XYZImagery",
         "%s failed z=%d x=%d y=%d status=%d bytes=%zu url=%s",
         stage,
@@ -63,13 +59,6 @@ void logAndroidXyzFailure(const char* stage,
         bodySize,
         url.c_str());
 }
-#else
-void logAndroidXyzFailure(const char*,
-                          const TileKey&,
-                          int,
-                          size_t,
-                          const std::string&) {}
-#endif
 
 int64_t xTileCountForScheme(const std::string& schemeId, int z) {
     if (z < 0 || z >= 62) return 0;

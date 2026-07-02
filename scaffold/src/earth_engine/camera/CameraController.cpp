@@ -1,7 +1,5 @@
 #include "CameraController.h"
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
+#include "../debug/PlatformLog.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../scene/Camera.h"
@@ -167,11 +165,9 @@ void CameraController::onPinchGesture(float scale,
         Vec3 anchorPoint;
         grabbedRadiusMeters_ = kEarthRadiusMeters;
         hasPinchAnchor_ = pickSurfacePoint(centerX, centerY, anchorPoint);
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_INFO, "CameraCtrl",
+        platformLog(LogLevel::Info, "CameraCtrl",
             "pinchStart hasAnchor=%d center=(%.0f,%.0f)",
             hasPinchAnchor_, centerX, centerY);
-#endif
         if (hasPinchAnchor_) {
             grabbedRadiusMeters_ = anchorPoint.length();
             pinchAnchorNormal_ = anchorPoint.normalized();

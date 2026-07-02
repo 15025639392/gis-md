@@ -117,9 +117,7 @@ public:
     static CompositeImageResult composeQuadtreeSourceImagesWithDetails(
         const TileScheme& scheme,
         const Rectangle& targetBounds,
-        int sourceZoom,
-        std::vector<QuadtreeSourceImage>&& sources,
-        int maximumSourceZoom);
+        std::vector<QuadtreeSourceImage>&& sources);
 
     static double projectedVForLatitude(
         const TileScheme& scheme,

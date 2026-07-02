@@ -729,8 +729,6 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDeferred, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDeferred, 0);
     EXPECT_GT(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
-    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
-    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
     EXPECT_EQ(scene.tileset(), terrainRaw);
     EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
 }
@@ -974,8 +972,6 @@ TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
     EXPECT_GT(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
     EXPECT_EQ(scene.diagnostics().renderGltfPrimitives, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderContentCommands, 1);
-    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
-    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
 }
 
 TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {
@@ -1043,8 +1039,6 @@ TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDeferred, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDeferred, 0);
     EXPECT_GE(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
-    EXPECT_GE(scene.diagnostics().globeFallbackCommands, 0);
-    EXPECT_GE(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
 }
 
 TEST(SceneFrameStateTest, SortsTransparentGltfByCameraDepth) {

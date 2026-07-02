@@ -29,7 +29,7 @@ public:
     /// Decoded Quantized-Mesh terrain payload, before choosing a renderer
     /// representation. This mirrors cesium-native's QuantizedMeshLoader path:
     /// decode the terrain content once, then let the content loader build a
-    /// glTF terrain model without routing through SurfaceTileMesh.
+    /// glTF terrain model directly.
     struct DecodedTile {
         std::vector<SurfaceVertex> vertices;
         std::vector<uint32_t> indices;

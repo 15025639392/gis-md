@@ -13,7 +13,6 @@ namespace earth_engine {
 class Camera;
 class CameraController;
 struct Diagnostics;
-struct GlobeMesh;
 struct InputEvent;
 struct PickResult;
 struct PresentationTrace;
@@ -103,7 +102,6 @@ private:
     std::unique_ptr<CameraController> cameraController_;
     std::unique_ptr<Renderer> renderer_;
     std::unique_ptr<SceneRenderPipeline> renderPipeline_;
-    std::unique_ptr<GlobeMesh> globeMesh_;
     SceneFrameRuntime frameRuntime_;
     RenderDevice* renderDevice_ = nullptr;
 

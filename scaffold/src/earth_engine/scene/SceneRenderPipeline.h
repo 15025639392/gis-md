@@ -53,7 +53,6 @@ private:
     void buildAtmosphereCommands(Context& context, double& atmosphereMs) const;
     void buildLayerCommands(Context& context,
                             const RenderCommandList& stableLayerCommands,
-                            double& fallbackGlobeMs,
                             double& vectorCommandsMs) const;
     void applyMvpUniforms(Context& context, double& mvpUniformsMs) const;
     void sortAndValidate(Context& context,

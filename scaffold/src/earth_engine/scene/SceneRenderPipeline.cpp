@@ -36,16 +36,6 @@ int countTerrainSurfaceCommands(const RenderCommandList& commands) {
             isTerrainSurfaceCommand));
 }
 
-int countGlobeFallbackCommands(const RenderCommandList& commands) {
-    return static_cast<int>(
-        std::count_if(
-            commands.begin(),
-            commands.end(),
-            [](const RenderCommand& command) {
-                return command.kind == RenderCommandKind::GlobeSurface;
-            }));
-}
-
 int terrainRenderEntryCount(const Tileset* tileset) {
     if (!tileset) {
         return 0;
@@ -116,7 +106,6 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     double skyMs = 0.0;
     double atmosphereMs = 0.0;
     double layerCommandsMs = 0.0;
-    double fallbackGlobeMs = 0.0;
     double vectorCommandsMs = 0.0;
     double mvpUniformsMs = 0.0;
     double sortMs = 0.0;
@@ -132,7 +121,6 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     buildLayerCommands(
         context,
         stableLayerCommands,
-        fallbackGlobeMs,
         vectorCommandsMs);
     applyMvpUniforms(context, mvpUniformsMs);
     sortAndValidate(context, sortMs, surfaceDiagnosticsMs, validateMs);
@@ -154,11 +142,10 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
     char buildDetail[384];
     std::snprintf(buildDetail, sizeof(buildDetail),
-        "sky=%.2f atmo=%.2f layers=%.2f fallback=%.2f vector=%.2f mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
+        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
         skyMs,
         atmosphereMs,
         layerCommandsMs,
-        fallbackGlobeMs,
         vectorCommandsMs,
         mvpUniformsMs,
         sortMs,
@@ -312,27 +299,11 @@ RenderCommandList SceneRenderPipeline::buildStableLayerCommands(
 void SceneRenderPipeline::buildLayerCommands(
     Context& context,
     const RenderCommandList& stableLayerCommands,
-    double& fallbackGlobeMs,
     double& vectorCommandsMs) const {
     context.commands.insert(
         context.commands.end(),
         stableLayerCommands.begin(),
         stableLayerCommands.end());
-
-    const double fallbackStartMs = perf::nowMs();
-    const bool hasSurfaceTile =
-        std::any_of(context.commands.begin(),
-                    context.commands.end(),
-                    [](const RenderCommand& cmd) {
-                        return cmd.kind == RenderCommandKind::GltfPrimitive &&
-                               cmd.terrainRenderContent;
-                    });
-    if (!hasSurfaceTile) {
-        context.commands.insert(
-            context.commands.begin(),
-            context.renderer.makeGlobeCommand(context.frameState));
-    }
-    fallbackGlobeMs = perf::nowMs() - fallbackStartMs;
 
     const double vectorStartMs = perf::nowMs();
     for (auto& vLayer : context.vectorLayers) {
@@ -418,14 +389,6 @@ void SceneRenderPipeline::aggregateDiagnostics(
         context.diagnostics);
     context.diagnostics.terrainSurfaceCommandsSubmitted =
         countTerrainSurfaceCommands(context.commands);
-    context.diagnostics.globeFallbackCommands =
-        countGlobeFallbackCommands(context.commands);
-    context.diagnostics.globeFallbackMaskedTerrainEntries =
-        context.diagnostics.terrainRenderEntriesPlanned > 0 &&
-                context.diagnostics.terrainSurfaceCommandsSubmitted == 0 &&
-                context.diagnostics.globeFallbackCommands > 0
-            ? context.diagnostics.terrainRenderEntriesPlanned
-            : 0;
     diagnosticsMs = perf::nowMs() - startMs;
 }
 

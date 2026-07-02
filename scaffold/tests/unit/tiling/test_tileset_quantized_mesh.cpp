@@ -86,7 +86,14 @@ struct TilesetTestAccess {
     }
 
     static bool processPendingLoads(Tileset& tileset) {
-        return tileset.processPendingLoads(false, false, nullptr);
+        const bool result = tileset.processPendingLoads(false, false, nullptr);
+        // Wait for async GPU pipeline to complete. Worker thread processes
+        // terrain CPU work nearly instantly for test-sized data.
+        for (int i = 0; i < 50; ++i) {
+            if (tileset.drainGpuUploadQueue(nullptr)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return result;
     }
 
     static TileLoadLifecycleCounts contentLoadLifecycleCounts(
@@ -1777,7 +1784,6 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_EQ(TileContentKind::Render, tile->content.contentKind);
     EXPECT_TRUE(tile->content.renderContent.isTerrainRenderContent());
     ASSERT_NE(nullptr, tile->content.renderContent.gltfContent());
-    EXPECT_FALSE(tile->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(tile->content.renderContent.hasRetainedHeightmap());
     EXPECT_TRUE(tile->content.renderContent.hasGltfResources());
 

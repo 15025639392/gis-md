@@ -34,19 +34,6 @@ void TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
     }
 }
 
-void TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
-    TilesetTile& tile,
-    const SurfaceTileMesh* mesh,
-    const DecodedHeightmap* heightmap) {
-    if (mesh && mesh->hasHeightRange) {
-        setTerrainHeightRange(tile, mesh->minimumHeight, mesh->maximumHeight);
-    } else if (heightmap && heightmap->valid()) {
-        setTerrainHeightRange(tile, heightmap->minHeight, heightmap->maxHeight);
-    } else {
-        setDefaultTerrainHeightRange(tile);
-    }
-}
-
 void TileTerrainHeightRangePolicy::inheritHeightRangeForUnreadyChildren(
     TilesetTile& parent) {
     for (TilesetTile* child : parent.children) {

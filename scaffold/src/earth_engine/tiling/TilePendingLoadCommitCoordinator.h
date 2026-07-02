@@ -127,6 +127,16 @@ public:
             device,
             pPrepRenderer);
         ensureGltfResources(*tile);
+
+        // Async pipeline: CPU work dispatched to worker thread; GPU upload
+        // and finalization happen in drainGpuUploadQueue.  Keep the tile
+        // alive by NOT erasing the upload from the lifecycle — the upload
+        // stays as a pending claim that protects the tile from unloading.
+        if (tile->content.renderContent.asyncGpuUploadPending) {
+            emptyContentRegistry.erase(upload.cacheKey);
+            return;
+        }
+
         const bool renderResourcesReady =
             tile->content.renderContent.isRenderContentReady();
         const TileContentUploadCommitAction action =

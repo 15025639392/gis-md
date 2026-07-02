@@ -27,8 +27,6 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     diagnostics.terrainRenderEntriesSynchronousPrep = 4;
     diagnostics.terrainRenderEntriesDeferredPrep = 5;
     diagnostics.terrainSurfaceCommandsSubmitted = 6;
-    diagnostics.globeFallbackCommands = 7;
-    diagnostics.globeFallbackMaskedTerrainEntries = 8;
     diagnostics.frameLoadProgressPercentage = 75.0;
     diagnostics.frameProgressLoadingCount = 3;
     diagnostics.frameProgressTotalCount = 12;
@@ -45,7 +43,7 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     EXPECT_NE(std::string::npos, line.find("defer 1 (sel 1, fade 0)"));
     EXPECT_NE(std::string::npos, line.find("fallback 3"));
     EXPECT_NE(std::string::npos, line.find("prep 4/5"));
-    EXPECT_NE(std::string::npos, line.find("surface/globe/masked 6/7/8"));
+    EXPECT_NE(std::string::npos, line.find("surface 6"));
     EXPECT_NE(std::string::npos, line.find("load 75%"));
     EXPECT_NE(std::string::npos, line.find("work 3/12"));
     EXPECT_NE(std::string::npos, line.find("mapped 2/5"));

@@ -1919,7 +1919,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
               provider.availabilityState(unavailableSiblingKey));
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
     EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
-    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_EQ(1, ensureGltfCalls);
     EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
@@ -2456,7 +2455,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
-    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     ASSERT_TRUE(tile.boundingVolume.has_value());
     EXPECT_EQ(TileBoundingVolumeKind::Region, tile.boundingVolume->kind);
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
@@ -3436,7 +3434,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
-    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(tile.content.renderContent.isMeshReady());
     EXPECT_TRUE(tile.content.renderContent.hasGltfResources());
     EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
@@ -4070,7 +4067,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
-    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
     EXPECT_EQ(1, ensureGltfCalls);
@@ -4498,7 +4494,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(gltfEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(child.content.renderContent.hasGltfModel());
-    EXPECT_FALSE(child.content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(child.content.renderContent.isTerrainRenderContent());
     EXPECT_EQ(TileLoadState::FailedTemporarily, child.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, child.content.contentKind);
@@ -4573,7 +4568,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(TileContentKind::Unknown, child.content.contentKind);
     EXPECT_TRUE(child.content.isTerrainAvailabilityUpsample());
     EXPECT_FALSE(child.content.renderContent.hasGltfModel());
-    EXPECT_FALSE(child.content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(child.content.renderContent.isTerrainRenderContent());
     EXPECT_FALSE(child.content.renderContent.hasRasterOverlayDetailsContent());
 }
@@ -4817,7 +4811,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
     EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
     EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
-    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
     EXPECT_EQ(1, ensureGltfCalls);
     EXPECT_TRUE(resourcesDirty);

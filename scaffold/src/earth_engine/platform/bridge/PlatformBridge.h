@@ -7,6 +7,8 @@
 #include <vector>
 #include <utility>
 
+#include "../../debug/PlatformLog.h"  // earth_engine::LogLevel（引擎统一日志级别）
+
 namespace earth_engine {
 
 /// 解码后的图片（像素缓冲区）。
@@ -31,7 +33,8 @@ struct DeviceInfo {
     int64_t totalMemoryBytes = 0;
 };
 
-enum class LogLevel { Debug, Info, Warning, Error };
+// LogLevel 已上移到 debug/PlatformLog.h（引擎统一日志级别），经上面的 include 复用，
+// 成员保持 { Debug, Info, Warning, Error } 不变。
 
 enum class NetworkStatus { Online, Metered, Offline };
 

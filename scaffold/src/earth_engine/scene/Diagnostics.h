@@ -106,8 +106,6 @@ struct Diagnostics {
     int terrainRenderEntriesSelectedDeferred = 0;
     int terrainRenderEntriesFadingDeferred = 0;
     int terrainSurfaceCommandsSubmitted = 0;
-    int globeFallbackCommands = 0;
-    int globeFallbackMaskedTerrainEntries = 0;
     int surfaceMeshCount = 0;
     int imageryAttachments = 0;
     int imageryExactAttachments = 0;
@@ -163,9 +161,6 @@ struct Diagnostics {
     uint64_t terrainGeneration = 0;
     int terrainSurfaceTileCommands = 0;
     int terrainGltfPrimitiveCommands = 0;
-    int terrainParentFallbackMeshes = 0;
-    int terrainTransitionSurfaceMeshes = 0;
-    int ellipsoidSurfaceMeshes = 0;
     int staleSurfaceCommands = 0;
     int missingGenerationSurfaceCommands = 0;
     uint64_t minSurfaceGeneration = 0;

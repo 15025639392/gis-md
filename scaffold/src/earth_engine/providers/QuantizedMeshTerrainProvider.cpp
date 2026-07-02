@@ -1,8 +1,6 @@
 #include "QuantizedMeshTerrainProvider.h"
 #include "QuantizedMeshLayerJsonFetcher.h"
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
+#include "../debug/PlatformLog.h"
 #include "../core/async/AsyncSystem.h"
 #include "../core/cache/HttpCache.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -1157,12 +1155,10 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
             return false;
         }
         syncPublicStateFromLayers();
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
+        platformLog(LogLevel::Info, "QMTerrain",
             "layer.json OK: url=%s z=%d-%d layers=%zu ranges=%zu",
             urlTemplate_.c_str(), minZoom_, maxZoom_, layers_.size(),
             availabilityRanges_.size());
-#endif
         return !urlTemplate_.empty();
     } catch (...) {
         restorePreviousState();
@@ -1818,9 +1814,8 @@ void QuantizedMeshTerrainProvider::requestTileContent(
                 }
 
                 std::vector<uint8_t> body = readFileUrl(url);
-#ifdef __ANDROID__
-                __android_log_print(
-                    ANDROID_LOG_INFO,
+                platformLog(
+                    LogLevel::Info,
                     "QMTerrain",
                     "requestTile: z=%d x=%d y=%d body=%zu canceled=%d",
                     key.z,
@@ -1828,7 +1823,6 @@ void QuantizedMeshTerrainProvider::requestTileContent(
                     key.y,
                     body.size(),
                     tokenPtr->isCancelled());
-#endif
                 handleAsyncTileBody(
                     key,
                     contentLayerIndex,
@@ -2154,9 +2148,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 (*callback)(key, std::move(result));
                 return;
             }
-#ifdef __ANDROID__
-            __android_log_print(
-                ANDROID_LOG_INFO,
+            platformLog(
+                LogLevel::Info,
                 "QMTerrain",
                 "requestTile: z=%d x=%d y=%d body=%zu canceled=%d",
                 key.z,
@@ -2164,7 +2157,6 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 key.y,
                 body->size(),
                 token->isCancelled());
-#endif
             std::vector<QuantizedMeshMetadataContent> metadata;
             metadata.reserve(availabilityRequests->size());
             std::optional<QuantizedMeshAvailabilityUpdate>

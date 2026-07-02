@@ -9,7 +9,6 @@
 #include "SceneTilesetCoordinator.h"
 #include "../camera/CameraController.h"
 #include "../environment/SkyGradient.h"
-#include "../globe/Globe.h"
 #include "../interaction/InputEvent.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/Renderer.h"
@@ -22,7 +21,6 @@ namespace earth_engine {
 Scene::Scene()
     : camera_(std::make_unique<Camera>()),
       cameraController_(std::make_unique<CameraController>(camera_.get())),
-      globeMesh_(std::make_unique<GlobeMesh>(Globe::createMesh(96, 48))),
       layers_(std::make_unique<SceneLayerCoordinator>()),
       tilesets_(std::make_unique<SceneTilesetCoordinator>()),
       interaction_(std::make_unique<SceneInteractionCoordinator>()),
@@ -59,7 +57,7 @@ bool Scene::setRenderDevice(RenderDevice* device) {
 
     renderer_ = std::make_unique<Renderer>(device);
     renderPipeline_ = std::make_unique<SceneRenderPipeline>();
-    if (!renderer_->initialize(*globeMesh_)) {
+    if (!renderer_->initialize()) {
         fprintf(stderr, "[Scene] renderer_->initialize() FAILED\n");
         renderPipeline_.reset();
         return false;

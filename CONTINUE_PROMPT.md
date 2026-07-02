@@ -1,248 +1,215 @@
-# gis-md Terrain-as-Tileset-Content 对齐 — 继续提示词
+# 继续任务提示词
 
-## 背景
+请在新窗口中使用以下提示词继续当前任务：
 
-你在 `/Users/ldy/Desktop/work/gis-md` 工作，参考实现是 `/Users/ldy/Desktop/work/cesium-native`。
+---
 
-**长期目标**: 系统性完成 gis-md native terrain + raster overlay 与 cesium-native 的架构和行为对齐。核心是把 gis-md 收敛到 cesium-native 的 terrain-as-tileset-content 地板上。
+## 提示词
 
-**当前分支**: `codex/surface-instancing-gpu-batch`
+我在 `/Users/ldy/Desktop/work/gis-md` 项目的 `codex/surface-instancing-gpu-batch` 分支上优化 Android MinimalGlobe Demo。当前连接设备 `7e045e39`。
 
-**开始前必须执行**:
-1. `cd /Users/ldy/Desktop/work/gis-md && git status --short --branch` — 预期干净工作树
-2. 阅读 `AGENTS.md`
-3. 涉及算法时先读 `/Users/ldy/Desktop/work/cesium-native/AI_INDEX.md`
-4. 运行测试: `cd scaffold && ./test_native.sh <test_target>`
+### 已完成的修复（全部 ✅）
 
-## 已完成的工作（19 个提交）
+**1. Shader 纹理采样器超限**（黑屏）
+- `Renderer.cpp`: 注释掉 10 个 PBR 扩展纹理采样器
 
-### Domain policy 下沉
-- `TileLoadDomainPolicy` 新增 `availabilityUpdatesForDomain` + `shouldCreateTerrainChildren`
-- `TileAvailabilityUpdateCommitter` 简化为纯执行者
-- `TileChildFrameMaterializer` 不再直接检查 `isTerrainAvailabilityUpsample()`
+**2. 地形 glTF 瓦片不渲染**
+- `MinimalGlobeDemoConfig.h`: 服务器地址更新为 `192.168.1.6:8090`
+- `QuantizedMeshParser.cpp:265`: 修复 4 字节对齐填充
 
-### Provider 接口统一
-- 基类 `TilesetContentProvider`: `terrainAvailabilityState` → `availabilityState`, `applyTerrainAvailabilityUpdates` → `applyAvailabilityUpdates`
-- `QuantizedMeshTerrainProvider` / `EllipsoidTerrainContentProvider`: 移除 wrapper，直接 override
+**3. 性能优化（FPS 从 ~5 提升到 ~25）**
 
-### Legacy heightmap surface path 移除
-- `TileContentAccess`: 移除 `forHeightmapTerrainSurfacePath`、`TerrainOwnership::HeightmapSurface`、`legacyHeightmapContent_`
-- `Tileset.cpp`: 移除 legacy 路由
-- `TileMeshPreparationManager`: 移除 `LegacyHeightmapSurface` mode
-- `TileRefinementAvailabilityResolver`: 移除 `canRefineLegacyHeightmapSurfaceOrExternalContent`
-- 删除 4 个文件: `TileLegacyHeightmapContentResolver.{h,cpp}`, `TileLegacyHeightmapSurfacePreparer.{h,cpp}`
+| 修改 | 文件 | 内容 |
+|---|---|---|
+| 上传限制 | `Tileset.cpp:25` | `kSmoothedMainThreadUploadLimit` 1→4 |
+| 预算放宽 | `TileFrameResourceBudgetPlanner.h:84-95` | 平滑模式限制 1→4, 栅格 4→8 |
+| 移除 glFlush | `RenderDeviceGLES.cpp:952` | 删除 `glFlush()` |
+| 地形轻量顶点 | `GltfRenderGeometryBuilder.h/cpp` | 新增 `TerrainGpuVertex`(32字节) |
+| 地形轻量顶点 | `GltfRenderResourcePreparer.cpp:488` | 地形使用 32 字节格式 |
+| 地形轻量顶点 | `GltfDrawCommandBuilder.cpp:80` | 设置 `vertexStride=32` + 地形 shader |
+| 地形轻量顶点 | `Renderer.cpp` | 新增 `kTerrainVertexGLSL/kTerrainFragmentGLSL` |
+| 地形轻量顶点 | `TileRenderContentState.h` | 新增 `useTerrainVertexFormat` 标志 |
+| 禁用性能杀手 | `LoadedTerrainHeightSampler.cpp:212` | 禁用 O(N×M) 地形高度采样 |
 
-### LegacyHeightmapTerrainCache 移除
-- `TileContentLifecycleManager`: 移除 `legacyHeightmapTerrainCache_`
-- `TileContentCacheManager` / `TileCacheOwnershipManager` / `TileContentRuntime` / `LoadedTerrainHeightSampler`: 移除 legacy cache 引用
+**4. 调试日志**（临时，待清理）
+- `TilePendingLoadProcessor.h`: 添加 `processPendingLoads` 计数日志
+- `TileLoadLifecycle.cpp`: 添加 `containsWorkForCacheKey` 状态日志
 
-### Legacy terrain provider 移除
-- `TilesetTerrainProviders`: 简化为只接受 `TilesetContentProvider`
+### 当前状态
 
-### 测试转换
-- 70+ SSE pipeline 测试从 `makeLegacyTerrainTileset` → `makeContentTerrainTileset`
-- 10+ budget 测试转换为 content provider path
-- 2 sample height 测试移除（legacy cache 依赖）
-- 多个 raster overlay 测试从 surface mesh → glTF
-
-## 当前测试状态
-
-| 测试目标 | 结果 |
-|----------|------|
-| `test_tile_pending_load_commit_coordinator` | **75 PASSED** |
-| `test_tileset_request_missing_budget` | **20 PASSED** |
-| `test_tileset_selection_refinement` | **30 PASSED** |
-| `test_tileset_quantized_mesh` | **28 PASSED** |
-| `test_tile_selection_root_policy` | **16 PASSED** |
-| `test_tile_content_lifecycle_manager` | **3 PASSED** |
-| `test_tileset_sample_height` | **4 PASSED** |
-| `test_sse_pipeline` | **1975 PASSED**, 81 FAIL |
-| `test_tileset_quantized_mesh` | **27 PASSED**, 1 FAIL (pre-existing) |
-| `test_tile_child_materializer` | **50 PASSED** |
-| `test_tile_render_command_preparer` | **10 PASSED** |
-| `test_raster_overlay_lifecycle` | **162 PASSED** |
-| `test_tile_render_plan_finalizer` | **7 PASSED**, 4 FAIL (pre-existing) |
-| `test_sse_pipeline` | **1975 PASSED**, 79 FAIL (pre-existing) |
-
-## 已完成的工作（最新）
-
-### Surface mesh → glTF 测试转换（本次完成）
-- ✅ test_sse_pipeline.cpp 中 38 个 `setSurfaceMesh` 已全部转换为 glTF
-- ✅ 其他测试文件中 44 个 `setSurfaceMesh` 已全部转换为 glTF
-- ✅ 删除 test_tile_surface_mesh_ensurer.cpp（测试已移除的 TileSurfaceMeshEnsurer）
-- ✅ 移除 `SurfaceTileDrawCommandBuilder.{h,cpp}`
-- ✅ 移除 `SurfaceMeshResourcePreparer.{h,cpp}`
-- ✅ 移除 `TileSurfaceMeshSourceResolver.h`
-- ✅ 移除 `TileSurfaceMeshEnsurer.h`
-- ✅ 移除 `TileSurfaceRenderContentCoordinator.h`
-- ✅ 移除 `TileSurfaceMeshResolutionPolicy.h`
-- ✅ 更新 TileMeshFrameEnsurer.h（移除 ensureHeightmapSurface 和 ensureSurface）
-- ✅ 更新 TileRenderCommandPreparer.h（移除 SurfaceTileDrawCommandBuilder 调用）
-- ✅ 更新 CMakeLists.txt（移除 surface mesh 文件引用）
-
-### 移除 `contentProviderTerrainQuadtreeTile` 标志（本次完成）
-- ✅ 移除标志声明（TilesetTile.h）
-- ✅ 移除标志设置（TileContentAccess.cpp）
-- ✅ 简化 `hasRasterOverlayHostContent()`（TilesetTile.h）
-- ✅ 简化 `renderableSnapshot()`（TilesetTile.h）
-- ✅ 简化 `hasSurfaceDrawable()`（TilesetTile.h）
-- ✅ 简化 `waitsForContentTerrainRasterDetails()`（TilesetTile.h）
-- ✅ 简化 `TileRenderCommandPreparer::build`（移除 surface mesh 路径）
-- ✅ 简化 `TileRenderPlanFinalizer`（移除 surface mesh 相关检查）
-- ✅ 移除 test_sse_pipeline.cpp 中 surface mesh 测试函数
-
-## 剩余未完成任务
-
-### 任务 1: 修复 pre-existing 测试失败
-
-以下测试在转换前就已失败:
-- `test_tileset_quantized_mesh::ContentTerrainEnsureTileClearsLegacyResidueBeforeRasterPrefetch`
-- `test_sse_pipeline` 中 79 个失败
-
-**根因**: 这些测试与 surface mesh 转换无关，是 pre-existing 失败。
-
-### 任务 3: 修复 segfault
-
-Segfault 发生在 `testTilesetBlockingBaseImageryDrawsPlaceholderSurface` 清理阶段。`RasterMappedToTilesetTile` 的 null unique_ptr 访问。与任务 2 相关。
-
-## 架构参考
-
-### 数据流
-
+**性能数据**（相机静止时）：
 ```
-QuantizedMeshTerrainProvider::requestTileContent()
-  → QuantizedMeshContentLoader::loadTileContent() → GltfModel
-  → TileContentLoadResult::renderTerrain(gltfModel)
-  → TileLoadResult::fromContentResult()
-  → TilePendingLoadCommitCoordinator::commitUpload()
-    → TileLoadDomainPolicy::availabilityUpdatesForDomain()
-    → TileContentUploadCommitter::prepareRenderContent()
-    → ensureGltfResources() → GPU upload
-    → TileContentUploadCommitter::finishRenderResourcePreparation()
-  → TileRenderCommandPreparer::build()
-    → GltfDrawCommandBuilder::build() → RenderCommand (GltfPrimitive)
+FPS: ~25 (目标 60)
+帧时间: ~40ms
+├── update: 4-8ms (正常)
+│   ├── camera: 0ms ✅ (禁用高度采样后)
+│   ├── selector: 0.6-1.2ms ✅ (Strict reuse)
+│   ├── prefetch: 3-10ms ❌ (仍然慢)
+│   └── request: 0.26ms ✅
+├── render: 10-16ms
+│   ├── layers: 8-12ms
+│   └── submit: 0.5-1.5ms ✅
+瓦片数: 6-9 个
+渲染命令: 8-11 个
 ```
 
-### 关键文件
-
-| 文件 | 用途 |
-|------|------|
-| `TileLoadDomainPolicy.h` | Domain-specific 决策: upload/terminal/metadata/availability/child-creation |
-| `TileAvailabilityUpdateCommitter.h` | Availability update 执行 |
-| `TilePendingLoadCommitCoordinator.h` | 内容提交协调 |
-| `TileContentUploadCommitter.h` | glTF 内容上传 |
-| `TileRenderCommandPreparer.h` | 渲染命令构建 |
-| `TilesetTile.h` | 瓦片状态和属性 |
-| `TileContentAccess.h` | 瓦片创建和子节点管理 |
-| `TileContentLifecycleManager.h` | 内容生命周期 |
-| `QuantizedMeshTerrainProvider.h` | 地形内容提供者 |
-
-## 规则
-
-- **不留技术债**: 彻底移除旧实现，不保留旧主路径、旧实现、兼容 shim 或死代码。如果移除会影响测试，必须同步转换测试，不能跳过。
-- **每次闭环必须完整**: 每个提交必须是完整、可验证的闭环。不能留"后续再处理"的尾巴。
-- **不要为了测试作假**: 测试必须验证真实行为，不能用 mock 或 skip 掩盖问题。
-- **不要 push**，除非用户明确要求。
-- **commit message 格式**: `动作 + 对象`（如 `Move availability update selection into domain policy`）。
-- **遇到大规模重构时**: 可以分批提交，但每批必须是完整闭环。不能把半成品留在代码里。
-- **测试失败必须修复**: 如果修改导致测试失败，必须修复测试或更新测试期望。不能忽略失败。
-- **死代码必须删除**: 如果代码不再被生产路径调用，必须删除。不能留着"以防万一"。
-
-## 动态 Agent 分配与回收策略
-
-### 核心原则
-
-根据任务实际复杂度、并行度和依赖关系动态调整 agent 数量，而不是固定使用 N 个 agent。目标是最小化 wall-clock 时间，同时避免浪费 token。
-
-### 何时增加 Agent（分配）
-
-**立即分配更多 agent 的信号**:
-
-1. **可并行独立文件批量修改**: 当需要修改 10+ 个文件且每个文件的修改是独立的（如批量测试转换），按文件组分配 agent。每组 5-8 个文件为宜。
-2. **多维度分析需求**: 当需要同时从多个角度分析问题（如 bug 根因、影响范围、修复方案），每个维度一个 agent。
-3. **测试失败数量 > 5**: 批量测试失败时，按失败原因分组（相同根因的归为一组），每组一个 agent 并行修复。
-4. **探索阶段**: 对未知代码区域的探索，使用 2-3 个 agent 从不同入口点并行搜索（如按文件名搜索、按符号搜索、按调用链搜索）。
-
-**分配示例**:
+**性能数据**（相机移动时）：
 ```
-场景: 需要将 67 个测试从 surface mesh 转换为 glTF
-→ 分析: 按测试文件分组，每组 8-10 个测试函数
-→ 分配: 8 个 agent 并行转换，每个 agent 负责一个文件的测试
-→ 汇总: 等待所有 agent 完成，运行全量测试验证
+FPS: ~15
+帧时间: ~65ms
+├── update: 35-45ms ❌
+│   ├── camera: 0ms ✅
+│   ├── selector: 11-14ms ❌ (遍历 19 个瓦片)
+│   ├── prefetch: 6-7ms ❌
+│   └── terrainUpload: 35-40ms ❌ (164 个加载请求)
+├── render: 25-30ms ❌ (69-89 个渲染命令)
+瓦片数: 35-40 个
+渲染命令: 69-89 个
 ```
 
-### 何时减少 Agent（回收）
+### 待解决的 3 个核心问题
 
-**立即回收 agent 的信号**:
+**问题 1：高德卫星影像不能加载到 zoom 18（最关键）**
+- 现象：相机拉到地面时，卫星影像仍是低分辨率（高空瓦片）
+- 地形数据最高 zoom 12（`layer.json` 确认）
+- 栅格叠加 `overlayMaximumZoom=0` → `getMaximumLevel()` 返回 scheme 的 maxZoom=25
+- `computeDesiredScreenPixels` 计算表明 zoom 应该能到 18+
+- 调试日志显示 `requestState=0, pendingLoads=0`（lifecycle 为空）
+- `load=31` 是 loadQueue 大小，每帧由 prefetch 添加，被 `requestMissingTiles` 正确跳过
 
-1. **任务完成**: agent 完成其分配的工作后，立即回收，不要保留空闲 agent。
-2. **依赖阻塞**: 当 agent 的工作依赖于另一个 agent 的输出时，暂停等待，不要让 agent 空转。
-3. **结果收敛**: 当连续 2 轮探索没有发现新信息时，停止探索 agent。
-4. **错误率过高**: 当某个 agent 连续 3 次修改导致测试失败，停止该 agent，由主 agent 接管。
-5. **工作量不均衡**: 当某个 agent 完成速度是其他 agent 的 3 倍以上，将慢 agent 的剩余工作重新分配。
+**已追查并修复的 3 个根因：**
+1. **MSE 双重计算**（已修复）：`TileUpdateSelectionWorkRunner` 传递瓦片集 MSE（16.0）给 `computeDesiredScreenPixels`，但 `chooseQuadtreeSourceZoom` 再次除以 provider MSE（2.0），导致 `targetScreenPixels` 被除以 8 倍
+   - 修复：`TileRasterOverlayPrefetcher::prefetch()` 改用 `activeProvider->getMaximumScreenSpaceError()`（2.0）
+2. **地形几何误差过大**（已修复）：zoom-12 地形瓦片 `geometricError ≈ 150m`，导致 `targetScreenPixels ≈ 453`，仅计算到 zoom 13
+   - 修复：`RasterOverlayScreenSpaceMetrics.cpp` 添加 `kMaximumEffectiveGeometricError = 5.0` 上限
+3. **WebMercator 坐标系不匹配**（已修复）：`schemeDimensionsForRectangle` 对 WebMercator 使用地理弧度宽度，但 `rootTileWidth` 使用投影弧度（2π），导致 zoom 计算偏差
+   - 修复：WebMercator 方案改用投影米制宽度/高度
 
-**回收策略**:
+**剩余限制：地理瓦片网格**
+- 修复后 zoom 从 13 提升到 **15**（2→24 个源瓦片，分辨率提升 4 倍）
+- zoom 18 在纬度 30° 不可行：0.044° 经度 = 32 个瓦片 = 8192 像素 > 2048 纹理限制
+- `computeCoverage` 使用地理坐标计算瓦片数，在高纬度地区瓦片数被放大（cos(30°) ≈ 0.87）
+- 若要达到 zoom 18，需要将 `maximumTextureSize` 提升到 8192（需验证 GPU 支持）
+
+**问题 2：瓦片选择器在相机移动时 11-14ms（应该是 <1ms）**
+- 根因：`visitTile` 中调用 `TileSelectionRasterOverlayPreparer::prepare()`
+- 每个瓦片 0.58ms 来自 `TileRasterOverlayPrefetcher::prefetch()`
+- prefetch 内部调用 `overlay->ensureTileProvider()` + `mapped.update()`
+- **需要优化**：将栅格叠加预取从选择遍历中移出
+
+**问题 3：prefetch 在 Strict reuse 时仍然 3-10ms**
+- 根因：`TileUpdateSelectionWorkRunner::run()` 中即使 `reusedSelection=true` 也执行 prefetch
+- 代码位置：`TileUpdateSelectionWorkRunner.h:86-106`
+- **需要优化**：Strict reuse 时跳过 prefetch
+
+### 关键代码路径
+
 ```
-场景: 8 个 agent 并行转换测试
-→ Agent 1-3 快速完成 → 回收，不等待
-→ Agent 4-6 正常完成 → 回收
-→ Agent 7 遇到困难 → 主 agent 接管其剩余工作
-→ Agent 8 完成 → 回收
-→ 最终: 运行测试验证所有转换
+帧循环:
+Engine::render(deltaSeconds)
+├── beginFrame()                    // RenderDeviceGLES
+├── scene_->update(deltaSeconds)    // SceneFrameUpdateCoordinator
+│   ├── cameraController->update()  // 0ms (高度采样已禁用)
+│   ├── tilesets->update()          // TilesetUpdateFrameFacade
+│   │   └── TilesetUpdateFrameRuntime::run()
+│   │       ├── reuseMode 判断       // TileSelectionReusePolicy
+│   │       ├── 选择/刷新            // TileUpdateSelectionWorkRunner
+│   │       │   ├── selectTiles()    // 仅非 reuse 时
+│   │       │   ├── prefetchSelection()  // 每帧都执行 ← 问题 3
+│   │       │   └── requestMissingTiles() // TileLoadScheduler
+│   │       └── processPendingLoads()    // TilePendingLoadProcessor
+│   └── scene_->render()           // SceneRenderPipeline
+│       ├── buildStableLayerCommands()  // TilesetRenderFrameExecutor
+│       │   └── TileRenderEntryCommandBuilder::build()
+│       ├── applyMvpUniforms()
+│       └── renderer->submit()     // RenderDeviceGLES::submit
+└── endFrame()                     // 已移除 glFlush
 ```
 
-### 动态调度决策树
+### 地形数据
 
 ```
-开始任务
-├─ 任务是否可拆分为独立子任务？
-│  ├─ 是 → 子任务数量？
-│  │  ├─ 1-3 个 → 串行执行，不分配 agent
-│  │  ├─ 4-10 个 → 分配 N 个 agent（N = min(子任务数, CPU核心数-2)）
-│  │  └─ 10+ 个 → 分批处理，每批 8 个 agent
-│  └─ 否 → 单 agent 执行
-│
-├─ 执行过程中
-│  ├─ 某 agent 完成 → 立即回收，检查是否有新任务可分配
-│  ├─ 某 agent 失败 3 次 → 回收，主 agent 接管
-│  ├─ 所有 agent 空闲 → 进入下一阶段
-│  └─ 某 agent 进度严重落后 → 重新分配其工作
-│
-└─ 阶段完成
-   ├─ 运行测试验证
-   ├─ 测试通过 → 进入下一阶段
-   └─ 测试失败 → 分析失败原因，分配修复 agent
+服务器: http://192.168.1.6:8090
+数据: /Users/ldy/Desktop/work/dem_test/data/tiles/fabdem-quantized-mesh-chongqing
+Zoom 范围: 0-12 (layer.json)
+Bounds: [105.17, 28.1, 110.2, 32.25] (重庆)
+Tile scheme: Geographic-TMS
+高德卫星: zoom 0-18, webst0{s}.is.autonavi.com
+高德路网: zoom 0-18, webst0{s}.is.autonavi.com
 ```
 
-### Agent 通信协议
+### 快速开始
 
-**分配任务时必须明确**:
-1. 该 agent 负责的具体文件或函数列表
-2. 预期输出格式（修改的文件列表、测试结果等）
-3. 超时时间（默认 5 分钟无进展则回收）
-4. 依赖关系（是否需要等待其他 agent 的结果）
+```bash
+# 启动地形服务器
+cd /Users/ldy/Desktop/work/dem_test/data/tiles/fabdem-quantized-mesh-chongqing
+python3 -m http.server 8090
 
-**回收 agent 时必须收集**:
-1. 完成状态（成功/失败/部分完成）
-2. 修改的文件列表
-3. 遇到的问题和决策
-4. 未完成的工作（如有）
+# 构建并安装
+cd /Users/ldy/Desktop/work/gis-md/scaffold/examples/android
+./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.earthengine.minimalglobe/.MainActivity
 
-### 常见场景的 Agent 策略
+# 查看性能日志
+adb logcat -s MinimalGlobe GLES EarthPerf Lifecycle PendingLoad | grep -E "submit|update|selector|prefetch|Lifecycle|PendingLoad"
 
-| 场景 | 推荐策略 |
-|------|----------|
-| 批量测试转换 | 按文件分组，8 个 agent 并行 |
-| Bug 调查 | 2-3 个 agent 从不同角度探索 |
-| 架构重构 | 串行为主，关键路径并行 |
-| 代码审查 | 2 个 agent 独立审查，取交集 |
-| 性能优化 | 1 个 agent 分析，1 个 agent 实施 |
-| 文档更新 | 单 agent 串行 |
+# 触发相机移动测试
+adb shell input swipe 500 1000 500 500 200
+```
 
-### 反模式（避免）
+### 下一步任务（按优先级）
 
-1. **不要过度并行**: 不是所有任务都适合并行。有强依赖的任务串行执行。
-2. **不要固定 agent 数量**: 根据实际进度动态调整，不要一开始就分配 8 个 agent 然后不管。
-3. **不要忽略失败 agent**: 失败的 agent 必须被回收，其工作必须被重新分配或由主 agent 接管。
-4. **不要重复工作**: 确保每个 agent 的工作范围不重叠，避免多个 agent 修改同一个文件。
-5. **不要跳过验证**: 每个 agent 完成后必须验证其工作，不能假设"看起来对"就是对的。
+1. ~~**追查高德卫星影像 zoom 问题**~~ ✅ 已修复（zoom 13→15），剩余限制是地理瓦片网格
+2. ~~**优化 Strict reuse 时的 prefetch**~~ ✅ 已修复（`TileUpdateSelectionWorkRunner.h` reuse 时跳过 prefetch+request，3-10ms→0ms）
+3. ~~**清理调试日志**~~ ✅ 已清理（`TilePendingLoadProcessor.h`、`TileLoadLifecycle.cpp`）
+4. **验证 zoom 15 影像视觉效果**：安装最新 APK，确认卫星影像在地面视角是否清晰
+5. ~~**优化 rasterUpload 瓶颈**~~ ✅ 已修复（架构改造完成）
+   - 根因：`GltfRenderResourcePreparer::prepare()` 在主线程同步执行 CPU+GPU 工作
+   - **改造方案：CPU/GPU 三阶段流水线**
+     - 新增 `GpuReadyData.h` — GPU 就绪数据结构
+     - 新增 `GpuUploadQueue.h` — 线程安全队列
+     - 改造 `GltfRenderResourcePreparer` — 拆分 `prepareCpuWork()` + `uploadToGpu()`
+     - 改造 `TilesetContentLifecycleCoordinator` — 地形内容通过 `AsyncSystem::run()` 在 Worker Thread 执行 CPU 工作
+     - 改造 `TileContentRuntime.h/cpp` — 传递 `GpuUploadQueue`
+     - 改造 `TileContentLifecycleManager.h` — 传递 `GpuUploadQueue`
+     - 改造 `Tileset.h/cpp` — 持有 `GpuUploadQueue` 实例
+   - **效果**：`terrainUpload` 从 40-80ms 降到 0.02ms（提升 2000-4000 倍）
+   - **线程安全**：修复 use-after-free bug — Worker Thread 深拷贝 `GltfPrimitive` 数据而非捕获裸指针
+
+6. **优化瓦片选择器性能**（相机移动时 21ms）：
+   - 根因：`visitTile` 中 `TileSelectionRasterOverlayPreparer::prepare()` 对每个瓦片调用 `TileRasterOverlayPrefetcher::prefetch()`
+   - 每瓦片 0.58ms，36 瓦片 = 21ms
+   - 注意：不能完全移除 `prepare()`，否则瓦片永远不会变为 ready（已验证）
+   - 方案：优化 `canSkipReadyOverlayPrefetch` 快速路径，减少不必要的 prefetch 调用
+
+### 最优架构设计：三阶段流水线
+
+**问题根因**：OpenGL ES 要求 GL 调用在 GL context 线程，但代码把 CPU 工作（buildVertices）和 GPU 工作（createBuffer）捆绑在一起，导致 CPU 工作也阻塞主线程。
+
+**架构**：
+```
+阶段 1: 网络加载（已有 ✅）
+  线程: Worker Thread (curl)
+  耗时: 10-100ms（不阻塞主线程）
+
+阶段 2: CPU 准备（需要改造）
+  线程: AsyncSystem::pool()（已有线程池）
+  工作: buildVertices + decodeTexture + computeProjection
+  耗时: 5-20ms（不阻塞主线程）
+  输出: GpuReadyData（顶点字节 + 索引字节 + 纹理像素）
+
+阶段 3: GPU 上传（需要改造）
+  线程: Main Thread（GL context）
+  工作: glBufferData + glTexImage2D
+  耗时: 3-8ms（阻塞主线程，但很短）
+  输入: GpuReadyData
+```
+
+**需要修改的文件**：
+1. 新增: `GpuReadyData.h`（GPU 就绪数据结构）
+2. 修改: `GltfRenderResourcePreparer.cpp`（拆分 prepareCpuWork + uploadToGpu）
+3. 修改: `TilePendingLoadProcessor.h`（两阶段处理）
+4. 修改: `TilesetContentLifecycleCoordinator.h`（异步 CPU 准备）
+5. 修改: `TilePendingLoadCommitCoordinator.h`（GPU 上传阶段）
+
+---

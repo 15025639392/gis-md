@@ -1,5 +1,4 @@
 #include "Renderer.h"
-#include "../globe/Globe.h"
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
 #include "../core/math/Vec3.h"
@@ -15,53 +14,6 @@
 #include <vector>
 
 namespace earth_engine {
-
-// ============================================================
-// Globe Shader — GLSL ES 3.0
-// ============================================================
-
-static const char* kGlobeVertexGLSL = R"glsl(
-#version 300 es
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec2 a_texcoord;
-
-uniform mat4 u_modelViewProjection;
-uniform mat4 u_model;
-
-out vec3 v_normal;
-out vec2 v_texcoord;
-
-void main() {
-    v_normal = normalize(mat3(u_model) * a_normal);
-    v_texcoord = a_texcoord;
-    gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
-}
-)glsl";
-
-static const char* kGlobeFragmentGLSL = R"glsl(
-#version 300 es
-precision mediump float;
-
-in vec3 v_normal;
-in vec2 v_texcoord;
-
-uniform vec3 u_lightDir;
-
-out vec4 fragColor;
-
-void main() {
-    vec3 n = normalize(v_normal);
-    float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
-    vec3 ocean = vec3(0.05, 0.26, 0.58);
-    vec3 land = vec3(0.18, 0.48, 0.24);
-    float band = smoothstep(0.42, 0.58,
-        sin(v_texcoord.x * 37.0) * 0.5 + sin(v_texcoord.y * 23.0) * 0.5 + 0.5);
-    vec3 base = mix(ocean, land, band * 0.45);
-    vec3 color = base * (0.22 + diffuse * 0.88);
-    fragColor = vec4(color, 1.0);
-}
-)glsl";
 
 // ============================================================
 // Unified SurfaceTile Shader — cesium-native glTF vertex layout
@@ -892,6 +844,175 @@ void main() {
 )glsl";
 
 // ============================================================
+// Terrain lightweight shader — 32-byte TerrainGpuVertex layout
+// POSITION(vec3@0) + NORMAL(vec3@12) + TEXCOORD_0(vec2@24) = 32 bytes
+// This is the glTF shader MINUS all PBR-extension uniforms: it keeps only
+// base color, raster-overlay compositing (slots 15-18), water mask (slot 19),
+// terrain clip, directional lighting and render opacity. RTC origin stays
+// baked into u_modelViewProjection (double precision on the CPU side).
+// ============================================================
+
+static const char* kTerrainVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_texcoord;
+
+uniform mat4 u_modelViewProjection;
+
+out vec3 v_normal;
+out vec2 v_texcoord;
+
+void main() {
+    // cesium-native RTC: tile origin is baked into the MVP matrix (computed in
+    // CPU double precision). a_position is relative to the tile center.
+    v_normal = normalize(a_normal);
+    v_texcoord = a_texcoord;
+    gl_PointSize = 1.0;
+    gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
+}
+)glsl";
+
+static const char* kTerrainFragmentGLSL = R"glsl(
+#version 300 es
+precision highp float;
+
+in vec3 v_normal;
+in vec2 v_texcoord;
+
+uniform vec3 u_lightDir;
+uniform vec4 u_baseColor;
+uniform float u_hasBaseColorTexture;
+uniform sampler2D u_baseColorTexture;
+uniform float u_alphaMode;
+uniform float u_alphaCutoff;
+uniform float u_renderOpacity;
+uniform sampler2D u_mappedRasterTexture0;
+uniform sampler2D u_mappedRasterTexture1;
+uniform sampler2D u_mappedRasterTexture2;
+uniform sampler2D u_mappedRasterTexture3;
+uniform sampler2D u_gltfWaterMaskTexture;
+uniform float u_mappedRasterTextureCount;
+uniform vec4 u_mappedRasterTileUV0;
+uniform vec4 u_mappedRasterTileUV1;
+uniform vec4 u_mappedRasterTileUV2;
+uniform vec4 u_mappedRasterTileUV3;
+uniform float u_mappedRasterOpacity0;
+uniform float u_mappedRasterOpacity1;
+uniform float u_mappedRasterOpacity2;
+uniform float u_mappedRasterOpacity3;
+uniform float u_mappedRasterTexCoordSet0;
+uniform float u_mappedRasterTexCoordSet1;
+uniform float u_mappedRasterTexCoordSet2;
+uniform float u_mappedRasterTexCoordSet3;
+uniform float u_gltfHasWaterMask;
+uniform vec4 u_gltfWaterMaskTranslationScale;
+uniform vec4 u_gltfWaterMaskState;
+uniform vec4 u_clipUV;
+uniform float u_clipEnabled;
+
+out vec4 fragColor;
+
+vec2 uvFromSet(float texCoordSet) {
+    // Terrain vertices only carry TEXCOORD_0; all raster overlays reference it.
+    return v_texcoord;
+}
+
+vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
+    overlay.a *= clamp(opacity, 0.0, 1.0);
+    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
+    base.a = max(base.a, overlay.a);
+    return base;
+}
+
+vec4 applyMappedRaster(
+    vec4 base,
+    sampler2D rasterTexture,
+    float texCoordSet,
+    vec4 tileUV,
+    float opacity) {
+    vec2 overlayUv = tileUV.xy + uvFromSet(texCoordSet) * tileUV.zw;
+    return alphaOver(base, texture(rasterTexture, overlayUv), opacity);
+}
+
+vec4 applyGltfWaterMask(vec4 base) {
+    if (u_gltfHasWaterMask < 0.5 || u_gltfWaterMaskState.x > 0.5) {
+        return base;
+    }
+    float water = u_gltfWaterMaskState.y;
+    if (u_gltfWaterMaskState.z > 0.5) {
+        vec2 waterUv = u_gltfWaterMaskTranslationScale.xy +
+            uvFromSet(0.0) * u_gltfWaterMaskTranslationScale.z;
+        water = texture(u_gltfWaterMaskTexture, waterUv).r;
+    }
+    return vec4(mix(base.rgb, base.rgb, clamp(water, 0.0, 1.0)), base.a);
+}
+
+void main() {
+    vec2 terrainUv = uvFromSet(0.0);
+    if (u_clipEnabled > 0.5 &&
+        (terrainUv.x < u_clipUV.x ||
+         terrainUv.x > u_clipUV.x + u_clipUV.z ||
+         terrainUv.y < u_clipUV.y ||
+         terrainUv.y > u_clipUV.y + u_clipUV.w)) {
+        discard;
+    }
+    float faceSign = gl_FrontFacing ? 1.0 : -1.0;
+    vec3 N = normalize(v_normal) * faceSign;
+    vec3 L = normalize(u_lightDir);
+    float NdotL = max(dot(N, L), 0.0);
+
+    vec4 base = u_baseColor;
+    if (u_hasBaseColorTexture > 0.5) {
+        base *= texture(u_baseColorTexture, terrainUv);
+    }
+    if (u_mappedRasterTextureCount > 0.5) {
+        base = applyMappedRaster(
+            base,
+            u_mappedRasterTexture0,
+            u_mappedRasterTexCoordSet0,
+            u_mappedRasterTileUV0,
+            u_mappedRasterOpacity0);
+    }
+    if (u_mappedRasterTextureCount > 1.5) {
+        base = applyMappedRaster(
+            base,
+            u_mappedRasterTexture1,
+            u_mappedRasterTexCoordSet1,
+            u_mappedRasterTileUV1,
+            u_mappedRasterOpacity1);
+    }
+    if (u_mappedRasterTextureCount > 2.5) {
+        base = applyMappedRaster(
+            base,
+            u_mappedRasterTexture2,
+            u_mappedRasterTexCoordSet2,
+            u_mappedRasterTileUV2,
+            u_mappedRasterOpacity2);
+    }
+    if (u_mappedRasterTextureCount > 3.5) {
+        base = applyMappedRaster(
+            base,
+            u_mappedRasterTexture3,
+            u_mappedRasterTexCoordSet3,
+            u_mappedRasterTileUV3,
+            u_mappedRasterOpacity3);
+    }
+    base = applyGltfWaterMask(base);
+    if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
+        discard;
+    }
+    float alpha = u_alphaMode > 1.5 ? base.a : 1.0;
+
+    // Directional shade: keep imagery readable even when the light vector is
+    // behind the tile (matches kSurfaceTileFragmentGLSL curvature hint).
+    float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
+    vec3 color = base.rgb * shade;
+    fragColor = vec4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+}
+)glsl";
+
+// ============================================================
 // Deprecated shaders (kept for reference)
 // ============================================================
 
@@ -989,50 +1110,6 @@ void main() {
 // ============================================================
 // Metal Shading Language 源码
 // ============================================================
-
-static const char* kGlobeVertexMSL = R"msl(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexIn {
-    float3 position [[attribute(0)]];
-    float3 normal   [[attribute(1)]];
-    float2 texcoord [[attribute(2)]];
-};
-
-struct VertexOut {
-    float4 position [[position]];
-    float3 normal;
-    float2 texcoord;
-};
-
-vertex VertexOut globeVertex(VertexIn in [[stage_in]],
-                             constant float4x4& u_modelViewProjection [[buffer(1)]],
-                             constant float4x4& u_model [[buffer(2)]]) {
-    VertexOut out;
-    out.position = u_modelViewProjection * float4(in.position, 1.0);
-    out.normal = normalize((u_model * float4(in.normal, 0.0)).xyz);
-    out.texcoord = in.texcoord;
-    return out;
-}
-)msl";
-
-static const char* kGlobeFragmentMSL = R"msl(
-#include <metal_stdlib>
-using namespace metal;
-fragment float4 globeFragment(VertexOut in [[stage_in]],
-                              constant float3& u_lightDir [[buffer(0)]]) {
-    float3 n = normalize(in.normal);
-    float diffuse = max(dot(n, normalize(u_lightDir)), 0.0f);
-    float3 ocean = float3(0.05, 0.26, 0.58);
-    float3 land = float3(0.18, 0.48, 0.24);
-    float band = smoothstep(0.42, 0.58,
-        sin(in.texcoord.x * 37.0) * 0.5 + sin(in.texcoord.y * 23.0) * 0.5 + 0.5);
-    float3 base = mix(ocean, land, band * 0.45);
-    float3 color = base * (0.22 + diffuse * 0.88);
-    return float4(color, 1.0);
-}
-)msl";
 
 static const char* kTileVertexMSL = R"msl(
 #include <metal_stdlib>
@@ -1864,6 +1941,181 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
 }
 )msl";
 
+// ============================================================
+// Terrain lightweight shader — MSL
+// 32-byte TerrainGpuVertex: position(vec3@0) normal(vec3@12) texcoord(vec2@24).
+// Fragment uses a compact buffer table (0-23, all <=30) so it stays well
+// under Metal's 31-buffer cap — unlike gltfFragment which reaches buffer(85).
+// Entry points terrainVertex / terrainFragment are UNIQUE; helper functions
+// are defined BEFORE use.
+// ============================================================
+
+static const char* kTerrainVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct TerrainVertexIn {
+    float3 position [[attribute(0)]];
+    float3 normal   [[attribute(1)]];
+    float2 texcoord [[attribute(2)]];
+};
+
+struct TerrainVertexOut {
+    float4 position [[position]];
+    float3 normal;
+    float2 texcoord;
+};
+
+vertex TerrainVertexOut terrainVertex(
+    TerrainVertexIn in [[stage_in]],
+    constant float4x4& u_modelViewProjection [[buffer(1)]]) {
+    TerrainVertexOut out;
+    out.position = u_modelViewProjection * float4(in.position, 1.0);
+    out.normal = normalize(in.normal);
+    out.texcoord = in.texcoord;
+    return out;
+}
+)msl";
+
+static const char* kTerrainFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+// TerrainVertexOut is provided by the vertex MSL (the backend concatenates the
+// vertex and fragment sources into a single library), so it must NOT be
+// redefined here.
+
+float4 terrainAlphaOver(float4 base, float4 overlay, float opacity) {
+    overlay.a *= clamp(opacity, 0.0, 1.0);
+    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
+    base.a = max(base.a, overlay.a);
+    return base;
+}
+
+float4 terrainApplyMappedRaster(float4 base,
+                                TerrainVertexOut in,
+                                texture2d<float> rasterTexture,
+                                sampler rasterSampler,
+                                float4 tileUV,
+                                float opacity) {
+    // Terrain vertices only carry TEXCOORD_0; overlays reference in.texcoord.
+    float2 overlayUv = tileUV.xy + in.texcoord * tileUV.zw;
+    return terrainAlphaOver(
+        base,
+        rasterTexture.sample(rasterSampler, overlayUv),
+        opacity);
+}
+
+float4 terrainApplyWaterMask(float4 base,
+                             TerrainVertexOut in,
+                             texture2d<float> waterMaskTexture,
+                             sampler waterMaskSampler,
+                             float hasWaterMask,
+                             float4 translationScale,
+                             float4 state) {
+    if (hasWaterMask < 0.5 || state.x > 0.5) {
+        return base;
+    }
+    float water = state.y;
+    if (state.z > 0.5) {
+        float2 waterUv =
+            translationScale.xy + in.texcoord * translationScale.z;
+        water = waterMaskTexture.sample(waterMaskSampler, waterUv).r;
+    }
+    return float4(mix(base.rgb, base.rgb, clamp(water, 0.0, 1.0)), base.a);
+}
+
+fragment float4 terrainFragment(
+    TerrainVertexOut in [[stage_in]],
+    bool frontFacing [[front_facing]],
+    constant packed_float3& u_lightDir [[buffer(0)]],  // 12 bytes (matches CPU-bound 3 floats; plain float3 would be 16-byte-aligned)
+    constant float4& u_baseColor [[buffer(1)]],
+    constant float& u_renderOpacity [[buffer(2)]],
+    constant float& u_hasBaseColorTexture [[buffer(3)]],
+    constant float& u_alphaMode [[buffer(4)]],
+    constant float& u_alphaCutoff [[buffer(5)]],
+    constant float& u_mappedRasterTextureCount [[buffer(6)]],
+    constant float4& u_mappedRasterTileUV0 [[buffer(7)]],
+    constant float4& u_mappedRasterTileUV1 [[buffer(8)]],
+    constant float4& u_mappedRasterTileUV2 [[buffer(9)]],
+    constant float4& u_mappedRasterTileUV3 [[buffer(10)]],
+    constant float& u_mappedRasterOpacity0 [[buffer(11)]],
+    constant float& u_mappedRasterOpacity1 [[buffer(12)]],
+    constant float& u_mappedRasterOpacity2 [[buffer(13)]],
+    constant float& u_mappedRasterOpacity3 [[buffer(14)]],
+    constant float& u_mappedRasterTexCoordSet0 [[buffer(15)]],
+    constant float& u_mappedRasterTexCoordSet1 [[buffer(16)]],
+    constant float& u_mappedRasterTexCoordSet2 [[buffer(17)]],
+    constant float& u_mappedRasterTexCoordSet3 [[buffer(18)]],
+    constant float& u_gltfHasWaterMask [[buffer(19)]],
+    constant float4& u_gltfWaterMaskTranslationScale [[buffer(20)]],
+    constant float4& u_gltfWaterMaskState [[buffer(21)]],
+    constant float4& u_clipUV [[buffer(22)]],
+    constant float& u_clipEnabled [[buffer(23)]],
+    texture2d<float> u_baseColorTexture [[texture(0)]],
+    texture2d<float> u_mappedRasterTexture0 [[texture(15)]],
+    texture2d<float> u_mappedRasterTexture1 [[texture(16)]],
+    texture2d<float> u_mappedRasterTexture2 [[texture(17)]],
+    texture2d<float> u_mappedRasterTexture3 [[texture(18)]],
+    texture2d<float> u_gltfWaterMaskTexture [[texture(19)]],
+    // Metal argument tables cap samplers at 0-15; terrain imagery all uses the
+    // same clamp/linear sampling, so a single shared sampler at slot 0 covers
+    // the base color, raster overlay (textures 15-18) and water mask (19)
+    // textures without exceeding the sampler limit.
+    sampler u_terrainSampler [[sampler(0)]]) {
+    return float4(0.1, 0.8, 0.2, 1.0); // [SELDIAG] TEMP green isolate coverage
+    float2 terrainUv = in.texcoord;
+    if (u_clipEnabled > 0.5 &&
+        (terrainUv.x < u_clipUV.x ||
+         terrainUv.x > u_clipUV.x + u_clipUV.z ||
+         terrainUv.y < u_clipUV.y ||
+         terrainUv.y > u_clipUV.y + u_clipUV.w)) {
+        discard_fragment();
+    }
+    float faceSign = frontFacing ? 1.0 : -1.0;
+    float3 n = normalize(in.normal) * faceSign;
+    float3 light = normalize(float3(u_lightDir));
+    float NdotL = max(dot(n, light), 0.0);
+
+    float4 base = u_baseColor;
+    if (u_hasBaseColorTexture > 0.5) {
+        base *= u_baseColorTexture.sample(u_terrainSampler, terrainUv);
+    }
+    if (u_mappedRasterTextureCount > 0.5) {
+        base = terrainApplyMappedRaster(
+            base, in, u_mappedRasterTexture0, u_terrainSampler,
+            u_mappedRasterTileUV0, u_mappedRasterOpacity0);
+    }
+    if (u_mappedRasterTextureCount > 1.5) {
+        base = terrainApplyMappedRaster(
+            base, in, u_mappedRasterTexture1, u_terrainSampler,
+            u_mappedRasterTileUV1, u_mappedRasterOpacity1);
+    }
+    if (u_mappedRasterTextureCount > 2.5) {
+        base = terrainApplyMappedRaster(
+            base, in, u_mappedRasterTexture2, u_terrainSampler,
+            u_mappedRasterTileUV2, u_mappedRasterOpacity2);
+    }
+    if (u_mappedRasterTextureCount > 3.5) {
+        base = terrainApplyMappedRaster(
+            base, in, u_mappedRasterTexture3, u_terrainSampler,
+            u_mappedRasterTileUV3, u_mappedRasterOpacity3);
+    }
+    base = terrainApplyWaterMask(
+        base, in, u_gltfWaterMaskTexture, u_terrainSampler,
+        u_gltfHasWaterMask, u_gltfWaterMaskTranslationScale,
+        u_gltfWaterMaskState);
+    if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
+        discard_fragment();
+    }
+    float alpha = u_alphaMode > 1.5 ? base.a : 1.0;
+
+    float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
+    float3 color = base.rgb * shade;
+    return float4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+}
+)msl";
+
 static const char* kGltfInstancedVertexMSL = R"msl(
 #include <metal_stdlib>
 using namespace metal;
@@ -1994,6 +2246,22 @@ const char* gltfInstancedVertexMSL() {
     return kGltfInstancedVertexMSL;
 }
 
+const char* terrainVertexGLSL() {
+    return kTerrainVertexGLSL;
+}
+
+const char* terrainFragmentGLSL() {
+    return kTerrainFragmentGLSL;
+}
+
+const char* terrainVertexMSL() {
+    return kTerrainVertexMSL;
+}
+
+const char* terrainFragmentMSL() {
+    return kTerrainFragmentMSL;
+}
+
 } // namespace renderer_testing
 
 // ============================================================
@@ -2002,12 +2270,6 @@ const char* gltfInstancedVertexMSL() {
 
 struct Renderer::Impl {
     RenderDevice* device = nullptr;
-
-    // Globe
-    std::unique_ptr<ShaderProgram> globeShader;
-    std::unique_ptr<Buffer> globeVertexBuffer;
-    std::unique_ptr<Buffer> globeIndexBuffer;
-    int globeIndexCount = 0;
 
     // Surface tile (unified, cesium-native glTF layout)
     std::unique_ptr<ShaderProgram> surfaceTileShader;
@@ -2018,6 +2280,9 @@ struct Renderer::Impl {
     // glTF TileRenderContent
     std::unique_ptr<ShaderProgram> gltfShader;
     std::unique_ptr<ShaderProgram> gltfInstancedShader;
+
+    // Terrain lightweight shader (32-byte vertex, no PBR extensions)
+    std::unique_ptr<ShaderProgram> terrainShader;
 
     // Color (vector)
     std::unique_ptr<ShaderProgram> colorShader;
@@ -2038,38 +2303,12 @@ Renderer::~Renderer() {
     dispose();
 }
 
-bool Renderer::initialize(const GlobeMesh& mesh) {
+bool Renderer::initialize() {
     if (impl_->initialized) dispose();
     auto* dev = impl_->device;
     if (!dev) return false;
 
     bool isMetal = (dev->backendType() == RenderDevice::Backend::Metal);
-
-    // ---- Globe shader ----
-    ShaderDesc globeSd;
-    globeSd.vertexSource = isMetal ? kGlobeVertexMSL : kGlobeVertexGLSL;
-    globeSd.fragmentSource = isMetal ? kGlobeFragmentMSL : kGlobeFragmentGLSL;
-    impl_->globeShader = dev->createShader(globeSd);
-    if (!impl_->globeShader) { fprintf(stderr, "[Renderer] globeShader failed\n"); return false; }
-
-    // Globe vertex buffer
-    BufferDesc vbDesc;
-    vbDesc.size = mesh.vertices.size() * sizeof(GlobeVertex);
-    vbDesc.data = mesh.vertices.data();
-    vbDesc.usage = BufferDesc::Usage::Static;
-    vbDesc.type = BufferDesc::Type::Vertex;
-    impl_->globeVertexBuffer = dev->createBuffer(vbDesc);
-    if (!impl_->globeVertexBuffer) return false;
-
-    // Globe index buffer
-    BufferDesc ibDesc;
-    ibDesc.size = mesh.indices.size() * sizeof(uint32_t);
-    ibDesc.data = mesh.indices.data();
-    ibDesc.usage = BufferDesc::Usage::Static;
-    ibDesc.type = BufferDesc::Type::Index;
-    impl_->globeIndexBuffer = dev->createBuffer(ibDesc);
-    if (!impl_->globeIndexBuffer) return false;
-    impl_->globeIndexCount = static_cast<int>(mesh.indices.size());
 
     // ---- Unified SurfaceTile shader (cesium-native glTF layout) ----
     if (!isMetal) {
@@ -2102,9 +2341,22 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     if (!impl_->gltfShader) {
         fprintf(stderr, "[Renderer] gltfShader failed\n");
         // Non-fatal on Metal: complex PBR shader may fail due to buffer
-        // limit (max 31) or fn ordering; globe + tiles still render.
+        // limit (max 31) or fn ordering; surface tiles still render.
         if (!isMetal) return false;
         fprintf(stderr, "[Renderer] gltfShader skipped (Metal) — glTF models unavailable\n");
+    }
+
+    // ---- Terrain lightweight shader (32-byte TerrainGpuVertex) ----
+    // Unlike gltfShader, this is a small shader (<=31 Metal buffers) so it must
+    // compile on BOTH backends. Treat failure as fatal like surfaceTileShader.
+    ShaderDesc terrainSd;
+    terrainSd.vertexSource = isMetal ? kTerrainVertexMSL : kTerrainVertexGLSL;
+    terrainSd.fragmentSource =
+        isMetal ? kTerrainFragmentMSL : kTerrainFragmentGLSL;
+    impl_->terrainShader = dev->createShader(terrainSd);
+    if (!impl_->terrainShader) {
+        fprintf(stderr, "[Renderer] terrainShader failed\n");
+        return false;
     }
 
     ShaderDesc gltfInstancedSd;
@@ -2136,7 +2388,7 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     colorSd.vertexSource = isMetal ? kColorVertexMSL : kColorVertexGLSL;
     colorSd.fragmentSource = isMetal ? kColorFragmentMSL : kColorFragmentGLSL;
     impl_->colorShader = dev->createShader(colorSd);
-    // colorShader failure is non-fatal (vector layers won't render but globe still works)
+    // colorShader failure is non-fatal (vector layers won't render but tiles still work)
 
     impl_->initialized = true;
     return true;
@@ -2148,26 +2400,18 @@ void Renderer::submit(const RenderCommandList& commands) {
 }
 
 void Renderer::dispose() {
-    impl_->globeShader.reset();
-    impl_->globeVertexBuffer.reset();
-    impl_->globeIndexBuffer.reset();
     impl_->surfaceTileShader.reset();
     impl_->tileIndexBuffer.reset();
     impl_->surfacePlaceholderTexture.reset();
     impl_->gltfShader.reset();
     impl_->gltfInstancedShader.reset();
+    impl_->terrainShader.reset();
     impl_->colorShader.reset();
-    impl_->globeIndexCount = 0;
     impl_->tileIndexCount = 0;
     impl_->initialized = false;
 }
 
 // ---- 共享资源访问 ----
-
-ShaderProgram* Renderer::globeShader() const { return impl_->globeShader.get(); }
-Buffer* Renderer::globeVertexBuffer() const { return impl_->globeVertexBuffer.get(); }
-Buffer* Renderer::globeIndexBuffer() const { return impl_->globeIndexBuffer.get(); }
-int Renderer::globeIndexCount() const { return impl_->globeIndexCount; }
 
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
@@ -2181,50 +2425,11 @@ ShaderProgram* Renderer::gltfInstancedShader() const {
     return impl_->gltfInstancedShader.get();
 }
 
-// ---- Command builders ----
-
-RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
-    RenderCommand cmd;
-    cmd.kind = RenderCommandKind::GlobeSurface;
-    cmd.owner = "globe";
-    cmd.pass = "color";
-    cmd.shader = impl_->globeShader.get();
-    cmd.vertexBuffer = impl_->globeVertexBuffer.get();
-    cmd.indexBuffer = impl_->globeIndexBuffer.get();
-    cmd.indexCount = impl_->globeIndexCount;
-    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
-    cmd.indexType = RenderCommand::IndexType::UInt32;
-    cmd.depthTest = true;
-    cmd.depthWrite = true;
-    cmd.blend = false;
-    cmd.cullFace = true;
-
-    if (frameState.camera) {
-        const Camera& cam = *frameState.camera;
-        float vpW = static_cast<float>(frameState.viewportWidthPixels);
-        float vpH = static_cast<float>(frameState.viewportHeightPixels);
-
-        glm::mat4 model = glm::make_mat4(earthModelMatrix().data());
-        glm::mat4 view(cam.viewMatrix().raw());
-        glm::mat4 proj(cam.projectionMatrix(vpW, vpH).raw());
-        glm::mat4 mvp = proj * view * model;
-
-        auto& mvpU = cmd.uniforms["u_modelViewProjection"];
-        mvpU.resize(16);
-        std::memcpy(mvpU.data(), glm::value_ptr(mvp), 16 * sizeof(float));
-
-        auto& modelU = cmd.uniforms["u_model"];
-        modelU.resize(16);
-        std::memcpy(modelU.data(), glm::value_ptr(model), 16 * sizeof(float));
-    }
-
-    cmd.uniforms["u_lightDir"] = {
-        frameState.lightDir.x,
-        frameState.lightDir.y,
-        frameState.lightDir.z
-    };
-    return cmd;
+ShaderProgram* Renderer::terrainShader() const {
+    return impl_->terrainShader.get();
 }
+
+// ---- Command builders ----
 
 RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
                                                 Buffer* vertexBuffer,
@@ -2381,6 +2586,51 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     setTextureTransformDefaults(
         "u_emissiveTexOffsetScale",
         "u_emissiveTexRotationSinCos");
+    return cmd;
+}
+
+RenderCommand Renderer::makeTerrainPrimitiveCommand(Buffer* vertexBuffer,
+                                                    Buffer* indexBuffer,
+                                                    int indexCount,
+                                                    int vertexCount) const {
+    RenderCommand cmd;
+    // Command kind stays GltfPrimitive: GLES keys the vertex layout on
+    // vertexStride (32 -> 2-float texcoord path, attribs 10-14 disabled) and
+    // Metal keys the PSO on the terrainVertex/terrainFragment entry points.
+    cmd.kind = RenderCommandKind::GltfPrimitive;
+    cmd.owner = "terrain_primitive";
+    cmd.pass = "color";
+    cmd.shader = impl_->terrainShader.get();
+    cmd.vertexBuffer = vertexBuffer;
+    cmd.indexBuffer = indexBuffer;
+    cmd.indexCount = indexCount;
+    cmd.vertexCount = vertexCount;
+    cmd.vertexStride = 32;  // POSITION(12) + NORMAL(12) + TEXCOORD_0(8)
+    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+    cmd.indexType = RenderCommand::IndexType::UInt32;
+    cmd.depthTest = true;
+    cmd.depthWrite = true;
+    cmd.blend = false;
+    cmd.cullFace = true;
+    // Only the terrain uniform defaults — no PBR-extension uniforms. The
+    // per-command population in GltfDrawCommandBuilder overwrites these.
+    cmd.uniforms["u_baseColor"] = {0.82f, 0.84f, 0.88f, 1.0f};
+    cmd.uniforms["u_hasBaseColorTexture"] = {0.0f};
+    cmd.uniforms["u_alphaMode"] = {0.0f};
+    cmd.uniforms["u_alphaCutoff"] = {0.5f};
+    cmd.uniforms["u_renderOpacity"] = {1.0f};
+    cmd.uniforms["u_mappedRasterTextureCount"] = {0.0f};
+    cmd.uniforms["u_gltfHasWaterMask"] = {0.0f};
+    cmd.uniforms["u_gltfWaterMaskTranslationScale"] = {0.0f, 0.0f, 1.0f, 0.0f};
+    cmd.uniforms["u_gltfWaterMaskState"] = {1.0f, 0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_clipUV"] = {0.0f, 0.0f, 1.0f, 1.0f};
+    cmd.uniforms["u_clipEnabled"] = {0.0f};
+    for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
+        cmd.uniforms["u_mappedRasterTileUV" + std::to_string(i)] = {
+            0.0f, 0.0f, 1.0f, 1.0f};
+        cmd.uniforms["u_mappedRasterOpacity" + std::to_string(i)] = {1.0f};
+        cmd.uniforms["u_mappedRasterTexCoordSet" + std::to_string(i)] = {0.0f};
+    }
     return cmd;
 }
 

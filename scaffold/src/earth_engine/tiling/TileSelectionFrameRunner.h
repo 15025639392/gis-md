@@ -40,7 +40,7 @@ public:
         EnsureTileFn&& ensureTile,
         VisitTileIfNeededFn&& visitTileIfNeeded,
         FinalizeSelectedTilePlanFn&& finalizeSelectedTilePlan) {
-        const double selectorStartMs = perf::nowMs();
+        [[maybe_unused]] const double selectorStartMs = perf::nowMs();
         input.tilePlan = TilePlan{};
         input.tilePlan.frameId = input.frameState.frameId;
         input.loadQueue.clear();
@@ -48,20 +48,15 @@ public:
 
         const double resetStartMs = perf::nowMs();
         resetTileSelectionState();
-        const double resetMs = perf::nowMs() - resetStartMs;
+        [[maybe_unused]] const double resetMs = perf::nowMs() - resetStartMs;
 
         const double viewsStartMs = perf::nowMs();
         const SelectorFrame selectorFrame =
             TileSelectionFrameBuilder::build(
                 input.frameState,
                 input.fogDensityTable);
-        const double viewsMs = perf::nowMs() - viewsStartMs;
+        [[maybe_unused]] const double viewsMs = perf::nowMs() - viewsStartMs;
         if (selectorFrame.views.empty()) {
-#ifndef __ANDROID__
-            (void)selectorStartMs;
-            (void)resetMs;
-            (void)viewsMs;
-#endif
             return;
         }
 
@@ -77,18 +72,10 @@ public:
                 visitTileIfNeeded(*root, selectorFrame);
             }
         }
-        const double traversalMs = perf::nowMs() - traversalStartMs;
+        [[maybe_unused]] const double traversalMs = perf::nowMs() - traversalStartMs;
 
-        const auto finalizeTimings = finalizeSelectedTilePlan(
+        [[maybe_unused]] const auto finalizeTimings = finalizeSelectedTilePlan(
             input.frameState);
-
-#ifndef __ANDROID__
-        (void)selectorStartMs;
-        (void)resetMs;
-        (void)viewsMs;
-        (void)traversalMs;
-        (void)finalizeTimings;
-#endif
     }
 };
 

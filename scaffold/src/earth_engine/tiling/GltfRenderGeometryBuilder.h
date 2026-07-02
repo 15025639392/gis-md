@@ -26,6 +26,18 @@ static_assert(
     sizeof(GltfGpuVertex) == 120,
     "glTF GPU vertices pack POSITION, NORMAL, eight TEXCOORD sets, COLOR_0 and TANGENT");
 
+/// Terrain-specific lightweight vertex format (32 bytes).
+/// Used for terrain tiles that only need position, normal, and one texcoord set.
+struct TerrainGpuVertex {
+    float pos[3];
+    float nrm[3];
+    float texcoord[2];
+};
+
+static_assert(
+    sizeof(TerrainGpuVertex) == 32,
+    "Terrain GPU vertices pack POSITION, NORMAL, and TEXCOORD_0 only");
+
 struct GltfGpuInstance {
     float model[16];
     float normal[9];
@@ -56,6 +68,15 @@ struct GltfRenderGeometryBuilder {
         const Mat4& contentTransform,
         const Vec3& localOrigin,
         std::optional<bool> keepInstanceLocalVertices = std::nullopt);
+
+    /// Build terrain-specific lightweight vertices (32 bytes per vertex).
+    /// Only includes position, normal, and texcoord0 - skips color, tangent,
+    /// and texcoord sets 1-7 which terrain doesn't need.
+    static std::vector<TerrainGpuVertex> buildTerrainVertices(
+        const GltfPrimitive& primitive,
+        const Mat4& contentTransform,
+        const Vec3& localOrigin);
+
     static std::vector<GltfGpuInstance> buildInstances(
         const GltfPrimitive& primitive,
         const Mat4& contentTransform,

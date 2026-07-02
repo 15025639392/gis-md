@@ -4,14 +4,10 @@
 #include <cmath>
 #include <cstring>
 
-#ifdef ANDROID
-#include <android/log.h>
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "AtmosPass", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "AtmosPass", __VA_ARGS__)
-#else
-#define LOGI(...)
-#define LOGE(...)
-#endif
+#include "../debug/PlatformLog.h"
+// LOGI/LOGE 现为统一 platformLog 的薄别名（Android -> logcat，其它平台 -> stderr）。
+#define LOGI(...) ::earth_engine::platformLog(::earth_engine::LogLevel::Info, "AtmosPass", __VA_ARGS__)
+#define LOGE(...) ::earth_engine::platformLog(::earth_engine::LogLevel::Error, "AtmosPass", __VA_ARGS__)
 
 namespace earth_engine {
 

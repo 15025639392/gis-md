@@ -1276,9 +1276,7 @@ TEST(RasterOverlayLifecycleTest, MappedRasterProviderLoadStoresComposedRectangle
     auto expected = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         coveredNorthHalf,
-        sourceKey.z,
-        std::move(sources),
-        provider.getMaximumLevel());
+        std::move(sources));
     ASSERT_NE(nullptr, expected.image);
     EXPECT_TRUE(mappedRasterTile->getRectangle().equalsEpsilon(
         projectForProvider(provider, expected.rectangle),
@@ -7651,9 +7649,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageCompletesNoCoverageLikeCesiumNati
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
-            2,
-            std::move(noCoverage),
-            2);
+            std::move(noCoverage));
     EXPECT_EQ(nullptr, noCoverageResult.image);
     EXPECT_EQ(target, noCoverageResult.rectangle);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
@@ -7670,9 +7666,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageCompletesNoCoverageLikeCesiumNati
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
-            1,
-            std::move(full),
-            1);
+            std::move(full));
     ASSERT_NE(nullptr, fullResult.image);
     EXPECT_GT(fullResult.image->width, 0);
     EXPECT_GT(fullResult.image->height, 0);
@@ -7701,9 +7695,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageRejectsMalformedSourceImages) {
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
-            1,
-            std::move(sources),
-            1);
+            std::move(sources));
     EXPECT_EQ(nullptr, result.image);
 }
 
@@ -7739,9 +7731,7 @@ TEST(RasterOverlayLifecycleTest,
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
-            1,
-            std::move(sources),
-            1);
+            std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(2u, result.diagnostics.size());
@@ -7761,9 +7751,7 @@ TEST(RasterOverlayLifecycleTest,
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
-            1,
-            std::move(ancestorOnly),
-            1);
+            std::move(ancestorOnly));
 
     ASSERT_NE(nullptr, emptyResult.image);
     EXPECT_TRUE(emptyResult.image->pixels.empty());
@@ -7787,9 +7775,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageUsesSourceMoreDetailFlagLikeCesiu
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        1,
-        std::move(sources),
-        4);
+        std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
@@ -7812,9 +7798,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImagePreservesRgbSourceChannelsLikeCes
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        1,
-        std::move(sources),
-        1);
+        std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(3, result.image->channels);
@@ -7846,9 +7830,7 @@ TEST(RasterOverlayLifecycleTest,
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
-            1,
-            std::move(sources),
-            1);
+            std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(1, result.image->channels);
@@ -7889,9 +7871,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageUsesLargestSourceChannelCountLike
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        2,
-        std::move(sources),
-        2);
+        std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(4, result.image->channels);
@@ -7931,9 +7911,7 @@ TEST(RasterOverlayLifecycleTest,
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             bounds,
-            1,
-            std::move(sources),
-            1);
+            std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(1, result.image->channels);
@@ -7976,9 +7954,7 @@ TEST(RasterOverlayLifecycleTest,
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
-            2,
-            std::move(sources),
-            2);
+            std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     ASSERT_EQ(2u, result.credits.size());
@@ -8024,9 +8000,7 @@ TEST(RasterOverlayLifecycleTest,
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             bounds,
-            1,
-            std::move(sources),
-            1);
+            std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(3, result.image->channels);
@@ -8071,9 +8045,7 @@ TEST(RasterOverlayLifecycleTest,
         RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
-            westKey.z,
-            std::move(sources),
-            westKey.z);
+            std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(1024, result.image->width);
@@ -8100,9 +8072,7 @@ TEST(RasterOverlayLifecycleTest,
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        1,
-        std::move(sources),
-        4);
+        std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(0, result.image->width);
@@ -8135,9 +8105,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageReturnsCoveredRectangleLikeCesium
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        2,
-        std::move(sources),
-        2);
+        std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(2, result.image->width);
@@ -8190,9 +8158,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageBlitsSourcePixelBlocksLikeCesiumN
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        westKey.z,
-        std::move(sources),
-        westKey.z);
+        std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     ASSERT_EQ(4, result.image->width);
@@ -8239,9 +8205,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageUsesAncestorSubsetLikeCesiumNativ
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        westKey.z,
-        std::move(sources),
-        westKey.z);
+        std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     ASSERT_EQ(4, result.image->width);
@@ -8276,9 +8240,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageKeepsTinyProjectedOverlap) {
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        sourceKey.z,
-        std::move(sources),
-        sourceKey.z);
+        std::move(sources));
 
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(64, result.image->width);
@@ -8308,9 +8270,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageUsesProjectedWebMercatorHeight) {
     auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
-        sourceKey.z,
-        std::move(sources),
-        sourceKey.z);
+        std::move(sources));
 
     const double sourceProjectedHeight =
         std::log(std::tan(sourceBounds.north() * 0.5 + M_PI * 0.25)) -

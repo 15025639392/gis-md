@@ -55,6 +55,7 @@ bool TileContentRuntime::processPendingUploads(
         frame.device,
         frame.pPrepRenderer,
         frame.rasterOverlays,
+        frame.gpuUploadQueue,
         frame.frameNumber,
         frame.maximumSimultaneousTileLoads,
         frame.mainThreadLoadingTimeLimit,
@@ -68,6 +69,31 @@ bool TileContentRuntime::processPendingUploads(
         },
         [this, &frame](TilesetTile& tile) {
             contentAccess_.ensureTileChildren(tile, frame.pPrepRenderer);
+        },
+        [this]() {
+            markResourcesDirty();
+        });
+}
+
+bool TileContentRuntime::drainGpuUploadQueue(
+    const TileContentRuntimeUploadFrame& frame,
+    FrameResourceBudget* budget,
+    uint32_t maxUploadsPerFrame) {
+    return lifecycle_.drainGpuUploadQueue(
+        frame.contentProvider,
+        frame.device,
+        frame.pPrepRenderer,
+        frame.rasterOverlays,
+        frame.gpuUploadQueue,
+        frame.frameNumber,
+        frame.maximumSimultaneousTileLoads,
+        frame.mainThreadLoadingTimeLimit,
+        frame.currentFrameTimeSeconds,
+        frame.smoothedMainThreadUploadLimit,
+        budget,
+        maxUploadsPerFrame,
+        [this](const TileKey& key) {
+            return contentAccess_.ensureTile(key);
         },
         [this]() {
             markResourcesDirty();

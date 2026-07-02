@@ -5,6 +5,7 @@
 #include "TileSelectionCullingPolicy.h"
 #include "TilesetTile.h"
 
+#include <cstdio>
 #include <optional>
 
 namespace earth_engine {
@@ -92,9 +93,22 @@ TileSelectionVisibilitySampler::sampleForTileSelection(
             !tile.children.empty(),
             hasUnconditionallyRefinedChild);
 
-    return cullWithChildrenBounds
+    TileSelectionVisibilitySample s = cullWithChildrenBounds
         ? sampleChildBounds(tile.children, views, context)
         : sampleTileBounds(tile, views, context);
+    if (tile.key.z == 10 && s.visibleFromCamera) {  // [SELDIAG] TEMP
+        static int sdn = 0;
+        if (sdn >= 600 && sdn < 1400) {  // converged window
+            std::fprintf(stderr,
+                "[SELDIAG] z=%d x=%d y=%d vis=1 loadState=%d contentKind=%d children=%zu\n",
+                tile.key.z, tile.key.x, tile.key.y,
+                static_cast<int>(tile.content.loadState),
+                static_cast<int>(tile.content.contentKind),
+                tile.children.size());
+        }
+        ++sdn;
+    }
+    return s;
 }
 
 } // namespace earth_engine

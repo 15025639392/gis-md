@@ -5,6 +5,7 @@
 #include "TilesetTile.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <array>
 #include <optional>
 #include <string>
@@ -48,6 +49,21 @@ struct TileRenderPlanFinalizer {
                                      bool selectedThisFrame) {
             TilesetTile* selectedTile = ensureTile(key);
             if (!selectedTile) return;
+
+            if (selectedThisFrame) {  // [RPLAN] TEMP
+                static int rpn = 0;
+                ++rpn;
+                if (rpn >= 20000 && rpn < 20140) {
+                    std::fprintf(stderr,
+                        "[RPLAN] sel z=%d x=%d y=%d directOk=%d hasGltf=%d gltfReady=%d\n",
+                        selectedTile->key.z, selectedTile->key.x, selectedTile->key.y,
+                        canBuildRenderEntryDirectly(*selectedTile) ? 1 : 0,
+                        selectedTile->content.renderContent.hasGltfContent() ? 1 : 0,
+                        selectedTile->content.renderContent.hasGltfContent()
+                            ? (selectedTile->content.renderContent.isGltfRenderReady() ? 1 : 0)
+                            : -1);
+                }
+            }
 
             TilesetTile* commandTile = selectedTile;
             std::optional<std::array<float, 4>> surfaceClipUv;

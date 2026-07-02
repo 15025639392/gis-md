@@ -15,15 +15,6 @@ namespace earth_engine {
 using TileAvailabilityRect = std::array<uint32_t, 4>;
 using QuantizedMeshAvailabilityRange = std::array<uint32_t, 5>;
 
-enum class SurfaceTileMeshWinding {
-    Outward
-};
-
-enum class SurfaceTileSampling {
-    WebMercatorVToWgs84Ecef,
-    GeographicVToWgs84Ecef
-};
-
 enum class RasterOverlayProjection {
     Geographic = 0,
     WebMercator = 1
@@ -185,53 +176,6 @@ struct RasterOverlayDetails {
         } else if (otherHasRegion) {
             boundingRegion = other.boundingRegion;
         }
-    }
-};
-
-struct SurfaceTileMesh {
-    std::vector<SurfaceVertex> vertices;
-    std::vector<uint32_t> indices;
-    std::vector<SurfaceGpuVertex> gpuVertices;
-    int gridSize = 0;
-    SurfaceTileMeshWinding winding = SurfaceTileMeshWinding::Outward;
-    SurfaceTileSampling sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;
-    /// cesium-native quantized-mesh meshCenter / RTC origin.
-    /// Geometry vertices remain absolute ECEF in this project; upload code
-    /// subtracts this origin to produce small GPU coordinates.
-    bool hasLocalOriginEcef = false;
-    Vec3 localOriginEcef = Vec3::zero();
-    /// cesium-native QuantizedMeshLoadResult::updatedBoundingVolume height range.
-    /// These are the QuantizedMesh header minimum/maximum heights, not
-    /// necessarily the min/max of the simplified vertex set.
-    bool hasHeightRange = false;
-    double minimumHeight = 0.0;
-    double maximumHeight = 0.0;
-    /// Quantized-mesh header horizon occlusion point, expressed in
-    /// ellipsoid-scaled ECEF like cesium-native.
-    bool hasHorizonOcclusionPoint = false;
-    Vec3 horizonOcclusionPoint = Vec3::zero();
-    SkirtMetadata skirtMeta;
-    WaterMask waterMask;
-    // cesium-native: availability rectangles from QM metadata (extension ID=4).
-    // Each entry: {levelOffset, startX, startY, endX, endY}
-    // levelOffset = sub-array index in the "available" JSON.
-    // Actual absolute level = tileLevel + levelOffset
-    // Aligned with cesium-native loadAvailabilityRectangles startingLevel + i.
-    bool hasMetadataAvailability = false;
-    std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
-    /// cesium-native TileRenderContent::getRasterOverlayDetails equivalent.
-    RasterOverlayDetails rasterOverlayDetails;
-};
-
-struct SurfaceNormalMap {
-    int width = 0;
-    int height = 0;
-    std::vector<uint8_t> rgba;
-
-    bool valid() const {
-        return width > 0 &&
-               height > 0 &&
-               rgba.size() == static_cast<size_t>(width * height * 4);
     }
 };
 

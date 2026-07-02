@@ -9,13 +9,14 @@
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileScheme.h"
 #include "../tiling/TileSelectionRootPolicy.h"
-#include "../tiling/TileSurface.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace earth_engine {
 namespace {
@@ -135,13 +136,80 @@ RasterOverlayDetails makeRasterOverlayDetails(
     return details;
 }
 
+double mixValue(double a, double b, double t) {
+    return a + (b - a) * t;
+}
+
+// Ported from the former TileSurface::buildEllipsoidMesh / vertexForUnitUv /
+// setPosition. Generates a regular ellipsoid-surface grid over the geographic
+// rectangle. Vertices carry absolute ECEF positions (with high/low split),
+// geodetic surface normals, and unit-UV texture coordinates. Index winding
+// matches the original (a, c, b, b, c, d).
+void buildEllipsoidGrid(const Rectangle& tileBounds,
+                        int gridSize,
+                        std::vector<SurfaceVertex>& outVertices,
+                        std::vector<uint32_t>& outIndices) {
+    const int safeGrid = std::max(1, gridSize);
+    const int n = safeGrid + 1;
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+
+    outVertices.clear();
+    outIndices.clear();
+    outVertices.reserve(static_cast<size_t>(n * n));
+    outIndices.reserve(static_cast<size_t>(safeGrid * safeGrid * 6));
+
+    for (int y = 0; y < n; ++y) {
+        const double v = static_cast<double>(y) / static_cast<double>(safeGrid);
+        const double clampedV = std::clamp(v, 0.0, 1.0);
+        // Linear latitude sampling: north at v=0, south at v=1.
+        const double lat = mixValue(tileBounds.north(), tileBounds.south(),
+                                    clampedV);
+        for (int x = 0; x < n; ++x) {
+            const double u =
+                static_cast<double>(x) / static_cast<double>(safeGrid);
+            const double clampedU = std::clamp(u, 0.0, 1.0);
+            const double lng = mixValue(tileBounds.west(), tileBounds.east(),
+                                        clampedU);
+            const Vec3 ecef = ellipsoid.cartographicToCartesian(
+                Cartographic::fromRadians(lng, lat, 0.0));
+
+            SurfaceVertex vertex;
+            setLocalPosition(vertex, ecef);
+            vertex.normalEcef = ellipsoid.geodeticSurfaceNormal(ecef);
+            vertex.uv = {
+                static_cast<float>(clampedU),
+                static_cast<float>(clampedV)};
+            outVertices.push_back(vertex);
+        }
+    }
+
+    for (int y = 0; y < safeGrid; ++y) {
+        for (int x = 0; x < safeGrid; ++x) {
+            const uint32_t a = static_cast<uint32_t>(y * n + x);
+            const uint32_t b = static_cast<uint32_t>(y * n + x + 1);
+            const uint32_t c = static_cast<uint32_t>((y + 1) * n + x);
+            const uint32_t d = static_cast<uint32_t>((y + 1) * n + x + 1);
+            outIndices.push_back(a);
+            outIndices.push_back(c);
+            outIndices.push_back(b);
+            outIndices.push_back(b);
+            outIndices.push_back(c);
+            outIndices.push_back(d);
+        }
+    }
+}
+
 std::unique_ptr<GltfModel> makeEllipsoidTerrainModel(
     const Rectangle& geographicRectangle,
     RasterOverlayProjection projection,
     int gridSize) {
-    SurfaceTileMesh mesh = TileSurface::buildEllipsoidMesh(
+    std::vector<SurfaceVertex> gridVertices;
+    std::vector<uint32_t> gridIndices;
+    buildEllipsoidGrid(
         geographicRectangle,
-        gridSize);
+        gridSize,
+        gridVertices,
+        gridIndices);
     auto model = std::make_unique<GltfModel>();
     const Cartographic center = Cartographic::fromRadians(
         (geographicRectangle.west() + geographicRectangle.east()) * 0.5,
@@ -167,8 +235,8 @@ std::unique_ptr<GltfModel> makeEllipsoidTerrainModel(
     model->sceneRootNodes.push_back(0);
 
     GltfPrimitive primitive;
-    primitive.vertices = mesh.vertices;
-    primitive.indices = mesh.indices;
+    primitive.vertices = std::move(gridVertices);
+    primitive.indices = std::move(gridIndices);
     primitive.primitiveMode = GltfPrimitiveMode::Triangles;
     primitive.doubleSided = false;
     primitive.metallicFactor = 0.0f;

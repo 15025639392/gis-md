@@ -8,7 +8,6 @@
 
 namespace earth_engine {
 
-struct GlobeMesh;
 struct FrameState;
 class RasterOverlayTile;
 struct TileKey;
@@ -28,7 +27,7 @@ public:
 
     /// 初始化所有共享渲染资源（shader 编译、mesh 上传）。
     /// 必须在 RenderDevice::onSurfaceCreated() 之后调用。
-    bool initialize(const GlobeMesh& globeMesh);
+    bool initialize();
 
     /// 提交渲染命令列表
     void submit(const RenderCommandList& commands);
@@ -37,14 +36,6 @@ public:
     void dispose();
 
     // ---- 共享资源访问 ----
-
-    /// Globe shader（地球椭球背景）
-    ShaderProgram* globeShader() const;
-
-    /// Globe 顶点/索引 buffer
-    Buffer* globeVertexBuffer() const;
-    Buffer* globeIndexBuffer() const;
-    int globeIndexCount() const;
 
     /// 简单颜色 shader（矢量图层线/面渲染）
     ShaderProgram* colorShader() const;
@@ -62,11 +53,11 @@ public:
     /// glTF primitive shader with EXT_mesh_gpu_instancing-style instance data.
     ShaderProgram* gltfInstancedShader() const;
 
+    /// Terrain lightweight shader (32-byte vertex format, no PBR extensions).
+    ShaderProgram* terrainShader() const;
+
     /// 地球模型矩阵（单位球 → ECEF meters）
     static std::array<float, 16> earthModelMatrix();
-
-    /// 构建 globe 背景 RenderCommand
-    RenderCommand makeGlobeCommand(const FrameState& frameState) const;
 
     /// Build surface tile command (unified, cesium-native glTF vertex layout).
     /// vertexStride=32: POSITION(12) + NORMAL(12) + TEXCOORD_0(8)
@@ -82,6 +73,14 @@ public:
                                             Buffer* indexBuffer,
                                             int indexCount,
                                             int vertexCount) const;
+
+    /// Build a terrain primitive command using the lightweight terrain shader.
+    /// Vertex layout: POSITION(12) + NORMAL(12) + TEXCOORD_0(8) = 32 bytes.
+    /// kind stays GltfPrimitive; the 32-byte stride selects the terrain path.
+    RenderCommand makeTerrainPrimitiveCommand(Buffer* vertexBuffer,
+                                              Buffer* indexBuffer,
+                                              int indexCount,
+                                              int vertexCount) const;
 
     /// Build an instanced glTF primitive command. The per-instance layout is:
     /// mat4 relative model matrix (64 bytes) + mat3 normal matrix (36 bytes).

@@ -370,6 +370,14 @@ void RenderDeviceGLES::beginFrame() {
     glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
+    // Front-face winding is GL's default GL_CCW. This MUST stay opposite to the
+    // Metal backend's MTLWindingClockwise. Both backends draw the same geometry
+    // with the same (non-y-flipped) projection matrix; Metal's top-left / y-down
+    // framebuffer origin reverses on-screen triangle winding relative to GL's
+    // bottom-left / y-up origin, and the opposite front-face conventions cancel
+    // that out so both backends cull the same geometric face. Do NOT "unify" the
+    // two backends onto the same winding — that would invert culling on one side.
+    glFrontFace(GL_CCW);
 }
 
 void RenderDeviceGLES::submit(const RenderCommandList& commands) {
@@ -419,7 +427,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     for (const auto& cmd : commands) {
         switch (cmd.kind) {
             case RenderCommandKind::SurfaceTile:
-            case RenderCommandKind::GlobeSurface:
                 ++surfaceCommands;
                 break;
             case RenderCommandKind::GltfPrimitive:
@@ -634,16 +641,16 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glVertexAttribDivisor(13, 0);
             glVertexAttribDivisor(14, 0);
         } else {
-            // Globe vertex: float3 pos + float3 normal + float2 tex = 32 bytes
-            constexpr int kGlobeStride = 32;
+            // SurfaceTile vertex: float3 pos + float3 normal + float2 tex = 32 bytes
+            constexpr int kSurfaceStride = 32;
             setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kGlobeStride,
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(0));
             setAttribEnabled(1, attrib1Enabled, true);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, kGlobeStride,
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(12));
             setAttribEnabled(2, attrib2Enabled, true);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kGlobeStride,
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(24));
             glVertexAttribDivisor(0, 0);
             glVertexAttribDivisor(1, 0);
@@ -853,16 +860,26 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             GLenum indexType = (cmd.indexType == RenderCommand::IndexType::UInt32)
                                    ? GL_UNSIGNED_INT
                                    : GL_UNSIGNED_SHORT;
+            // cmd.indexOffset counts indices (elements), matching the Metal
+            // backend which multiplies it by the index size. glDrawElements takes
+            // a byte offset, so scale by the index size here for parity. (Today
+            // indexOffset is always 0, so 0 * size == 0 and behavior is unchanged;
+            // this keeps the two backends consistent if a nonzero offset is ever
+            // set upstream.)
+            const GLsizei indexSizeBytes =
+                (cmd.indexType == RenderCommand::IndexType::UInt32) ? 4 : 2;
+            const intptr_t indexByteOffset =
+                static_cast<intptr_t>(cmd.indexOffset) * indexSizeBytes;
             if (cmd.instanceCount > 0) {
                 glDrawElementsInstanced(
                     mode,
                     cmd.indexCount,
                     indexType,
-                    reinterpret_cast<void*>(static_cast<intptr_t>(cmd.indexOffset)),
+                    reinterpret_cast<void*>(indexByteOffset),
                     cmd.instanceCount);
             } else {
                 glDrawElements(mode, cmd.indexCount, indexType,
-                               reinterpret_cast<void*>(static_cast<intptr_t>(cmd.indexOffset)));
+                               reinterpret_cast<void*>(indexByteOffset));
             }
         } else {
             if (cmd.instanceCount > 0) {
@@ -951,8 +968,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
 void RenderDeviceGLES::endFrame() {
     // EGL swap 由外部调用者处理（eglSwapBuffers）
-    // 这里可以添加 flush 确保命令提交
-    glFlush();
+    // eglSwapBuffers() 会隐式等待 GPU 完成，不需要显式 glFlush()
+    // 移除 glFlush() 避免阻塞 CPU→GPU 并行
 }
 
 // ============================================================

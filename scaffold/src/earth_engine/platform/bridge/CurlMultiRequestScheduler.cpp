@@ -14,9 +14,7 @@
 #include <thread>
 #include <unordered_map>
 
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
+#include "../../debug/PlatformLog.h"
 
 namespace earth_engine {
 namespace {
@@ -506,13 +504,12 @@ private:
             const int statusCode = curlResult == CURLE_OK
                 ? static_cast<int>(httpCode)
                 : -1;
-#ifdef __ANDROID__
             if (statusCode != 200) {
                 const char* detail = request->errorBuffer[0] != '\0'
                     ? request->errorBuffer.data()
                     : curl_easy_strerror(curlResult);
-                __android_log_print(
-                    ANDROID_LOG_WARN,
+                platformLog(
+                    LogLevel::Warning,
                     "CurlScheduler",
                     "request failed curl=%d (%s) http=%ld bytes=%zu url=%s",
                     static_cast<int>(curlResult),
@@ -521,7 +518,6 @@ private:
                     request->body.size(),
                     request->url.c_str());
             }
-#endif
             cleanupEasy(request);
             request->easy = nullptr;
             request->active = false;

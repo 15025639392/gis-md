@@ -2,8 +2,6 @@
 
 namespace earth_engine {
 
-struct DecodedHeightmap;
-struct SurfaceTileMesh;
 struct TilesetTile;
 
 struct TileTerrainHeightRangePolicy {
@@ -15,10 +13,6 @@ struct TileTerrainHeightRangePolicy {
     static void inheritTerrainHeightRange(
         TilesetTile& child,
         const TilesetTile& parent);
-    static void applyMeshOrHeightmapRange(
-        TilesetTile& tile,
-        const SurfaceTileMesh* mesh,
-        const DecodedHeightmap* heightmap);
     static void inheritHeightRangeForUnreadyChildren(TilesetTile& parent);
 };
 

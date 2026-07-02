@@ -882,14 +882,15 @@ TEST(RendererCommandTest, MvpSortEnforcesSurfaceVectorOrder) {
     tile.blend = false;
     tile.generation = 1;
 
-    RenderCommand globe;
-    globe.kind = RenderCommandKind::GlobeSurface;
-    globe.owner = "globe";
-    globe.pass = "color";
-    globe.depthTest = true;
-    globe.depthWrite = true;
-    globe.cullFace = true;
-    globe.blend = false;
+    RenderCommand tile2;
+    tile2.kind = RenderCommandKind::SurfaceTile;
+    tile2.owner = "surface_tile";
+    tile2.pass = "color";
+    tile2.depthTest = true;
+    tile2.depthWrite = true;
+    tile2.cullFace = true;
+    tile2.blend = false;
+    tile2.generation = 1;
 
     RenderCommand vector;
     vector.kind = RenderCommandKind::VectorOverlay;
@@ -906,7 +907,7 @@ TEST(RendererCommandTest, MvpSortEnforcesSurfaceVectorOrder) {
     gltf.blend = false;
     gltf.generation = 1;
 
-    RenderCommandList commands{vector, gltf, tile, globe};
+    RenderCommandList commands{vector, gltf, tile, tile2};
     sortMvpRenderCommands(commands);
 
     EXPECT_EQ(10, mvpRenderOrder(commands[0].kind));

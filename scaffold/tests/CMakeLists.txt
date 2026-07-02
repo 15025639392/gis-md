@@ -268,6 +268,12 @@ add_executable(test_quantized_mesh_header_vertex
 target_link_libraries(test_quantized_mesh_header_vertex PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_quantized_mesh_header_vertex COMMAND test_quantized_mesh_header_vertex)
 
+add_executable(test_terrain_nadir_projection
+    unit/terrain/test_terrain_nadir_projection.cpp
+)
+target_link_libraries(test_terrain_nadir_projection PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_nadir_projection COMMAND test_terrain_nadir_projection)
+
 add_executable(test_quantized_mesh_metadata_availability
     unit/terrain/test_quantized_mesh_metadata_availability.cpp
 )
@@ -730,12 +736,6 @@ add_executable(test_scene_frame_state
 target_link_libraries(test_scene_frame_state PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_scene_frame_state COMMAND test_scene_frame_state)
 
-add_executable(test_globe
-    unit/globe/test_globe.cpp
-)
-target_link_libraries(test_globe PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_globe COMMAND test_globe)
-
 add_executable(test_camera_controller
     unit/camera/test_camera_controller.cpp
 )
@@ -747,12 +747,6 @@ add_executable(test_earth_scene_config
 )
 target_link_libraries(test_earth_scene_config PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_earth_scene_config COMMAND test_earth_scene_config)
-
-add_executable(test_tile_surface
-    unit/tiling/test_tile_surface.cpp
-)
-target_link_libraries(test_tile_surface PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_tile_surface COMMAND test_tile_surface)
 
 add_executable(test_raster_overlay_screen_space_metrics
     unit/tiling/test_raster_overlay_screen_space_metrics.cpp
@@ -781,6 +775,12 @@ add_executable(test_renderer_commands
 )
 target_link_libraries(test_renderer_commands PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_renderer_commands COMMAND test_renderer_commands)
+
+add_executable(test_terrain_shader_command
+    unit/renderer/test_terrain_shader_command.cpp
+)
+target_link_libraries(test_terrain_shader_command PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_shader_command COMMAND test_terrain_shader_command)
 
 add_executable(test_render_command_streaming_set
     unit/renderer/test_render_command_streaming_set.cpp

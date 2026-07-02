@@ -84,6 +84,14 @@ public:
                 if (!prefetchedTiles.insert(item.key).second) {
                     continue;
                 }
+                // cesium-native: Done tiles with existing overlay mappings
+                // don't need per-frame geometry recomputation.  The initial
+                // mapping was created when the tile first entered the visible
+                // plan (mappingCount transitions 0→1).  Skip full prefetch.
+                if (item.tile->content.loadState == TileLoadState::Done &&
+                    item.tile->rasterOverlayState.mappingCount() > 0) {
+                    continue;
+                }
                 const TileRasterOverlayPrefetchAction action =
                     TileRasterOverlayPrefetcher::prefetch(
                     *item.tile,

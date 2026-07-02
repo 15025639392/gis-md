@@ -101,10 +101,6 @@ target_sources(earth_engine_core PRIVATE
 # ============================================================
 # globe
 # ============================================================
-target_sources(earth_engine_core PRIVATE
-    earth_engine/globe/Globe.h
-    earth_engine/globe/Globe.cpp
-)
 
 # ============================================================
 # content

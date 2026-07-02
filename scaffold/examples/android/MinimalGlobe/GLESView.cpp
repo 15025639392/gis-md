@@ -439,7 +439,7 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
          "exact=%d parent=%d missing=%d unsupported=%d kicked=%d retained=%d "
-         "entry plan=%d/%d/%d draw=%d/%d/%d miss=%d/%d/%d defer=%d/%d/%d fallback=%d prep=%d/%d surface/globe/masked=%d/%d/%d "
+         "entry plan=%d/%d/%d draw=%d/%d/%d miss=%d/%d/%d defer=%d/%d/%d fallback=%d prep=%d/%d surface=%d "
          "z=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d qBal=%d "
          "qFrustum=%d qHz=%d qEq2=%d grp=%d/%d/%d "
          "center=%.6f,%.6f targetH=%.2f camH=%.2f pitch=%.6f heading=%.6f vp=%dx%d "
@@ -470,8 +470,6 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
          diag.terrainRenderEntriesSynchronousPrep,
          diag.terrainRenderEntriesDeferredPrep,
          diag.terrainSurfaceCommandsSubmitted,
-         diag.globeFallbackCommands,
-         diag.globeFallbackMaskedTerrainEntries,
          diag.minVisibleZoom,
          diag.maxVisibleZoom,
          diag.imageryMinTargetZoom,
@@ -527,7 +525,7 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         "Update: cam %.1f env %.1f base %.1f terr %.1f content %.1f\n"
         "Draw calls: %d  |  GPU tex: %d  |  glTF prim: %d\n"
         "Visible tiles: terrain %d content %d/%d  |  Cached: %d\n"
-        "Surface meshes: %d (%d ellip, %d terrSurfCmd, %d terrGltfCmd, %d parent, %d trans)\n"
+        "Surface meshes: %d (%d terrSurfCmd, %d terrGltfCmd)\n"
         "Attachments: %d exact, %d parent, %d missing, %d unsup, %d kicked, %d retained\n"
         "Zoom: %d-%d  |  Img: %d-%d -> tex %d-%d\n"
         "LOD: %.0f px  |  EqZoom: %d\n"
@@ -560,9 +558,8 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         diag.drawCalls, diag.gpuTextureCount, diag.renderGltfPrimitives,
         diag.visibleTiles, diag.contentVisibleTiles, diag.contentTilesets,
         diag.cachedTextures,
-        diag.surfaceMeshCount, diag.ellipsoidSurfaceMeshes,
+        diag.surfaceMeshCount,
         diag.terrainSurfaceTileCommands, diag.terrainGltfPrimitiveCommands,
-        diag.terrainParentFallbackMeshes, diag.terrainTransitionSurfaceMeshes,
         diag.imageryExactAttachments, diag.imageryParentFallbackAttachments,
         diag.imageryMissingTiles, diag.imageryUnsupportedTiles,
         diag.imageryKickedTiles,

@@ -553,6 +553,9 @@ void RasterMappedToTilesetTile::computeTranslationAndScale(
         return;
     }
 
+    // cesium-native: pure rectangle-ratio UV transform, no tile-size assumption.
+    // Edge bleed is handled at the GL level (CLAMP_TO_EDGE + optional padding
+    // in RenderDeviceRasterTextureUploader) rather than via UV shrinkage.
     const TileTextureWindow nativeUv = TileSurface::computeTranslationAndScale(
         geometryBounds, imageryBounds);
     TileTextureWindow uv = invertedVCoordinate

@@ -90,7 +90,7 @@ public:
 
         const double cameraHeight = Ellipsoid::WGS84().cartesianToCartographic(
             input.lastCameraPosition).height();
-        const double fogDensity =
+        [[maybe_unused]] const double fogDensity =
             TileSelectionMetrics::computeFogDensity(
                 input.fogDensityTable,
                 cameraHeight);
@@ -214,13 +214,6 @@ public:
             perf::nowMs() - buildCommandsStartMs,
             20.0,
             buildBreakdown.data());
-
-#ifndef __ANDROID__
-        (void)commandsBeforeTileset;
-        (void)fogDensity;
-        (void)input.fogCulled;
-        (void)renderStats;
-#endif
     }
 };
 

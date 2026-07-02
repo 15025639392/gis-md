@@ -11,10 +11,7 @@
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
 #include "../core/math/MathUtils.h"
-
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
+#include "../debug/PlatformLog.h"
 
 #include <algorithm>
 #include <cmath>
@@ -46,7 +43,6 @@ constexpr double kPixelTolerance = 0.01;
 
 double webMercatorY(double latRad);
 
-#ifdef __ANDROID__
 void logAndroidRasterPipeline(const char* stage,
                               const std::string& cacheKey,
                               int sourceCount,
@@ -55,8 +51,8 @@ void logAndroidRasterPipeline(const char* stage,
     if (logged.fetch_add(1, std::memory_order_relaxed) >= 48) {
         return;
     }
-    __android_log_print(
-        ANDROID_LOG_INFO,
+    platformLog(
+        LogLevel::Info,
         "RasterOverlayPipe",
         "%s cache=%s sources=%d sourceZoom=%d",
         stage,
@@ -64,12 +60,6 @@ void logAndroidRasterPipeline(const char* stage,
         sourceCount,
         sourceZoom);
 }
-#else
-void logAndroidRasterPipeline(const char*,
-                              const std::string&,
-                              int,
-                              int) {}
-#endif
 
 void decrementActiveRasterTileLoads(std::atomic<uint32_t>& activeLoads) {
     uint32_t current = activeLoads.load(
@@ -3575,9 +3565,6 @@ int RasterOverlayTileProvider::processPendingUploads(
                 tile.setState(RasterOverlayTile::LoadState::Failed);
                 continue;
             }
-#ifndef __ANDROID__
-            (void)uploadMs;
-#endif
             const int sourceLevel =
                 tile.isMappedRasterTile() ? tile.getMappedSourceZoom() : tile.getTileID().z;
             const RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
@@ -3594,14 +3581,13 @@ int RasterOverlayTileProvider::processPendingUploads(
             // cesium-native: transfer texture ownership to the tile.
             // The tile owns its texture; no external cache needed.
             tile.setTexture(std::move(tex));
-#ifdef __ANDROID__
-            __android_log_print(ANDROID_LOG_INFO, "RasterOverlayTileProvider",
+            platformLog(LogLevel::Info, "RasterOverlayTileProvider",
                 "Tile loaded: %d/%d/%d", tile.getTileID().z,
                 tile.getTileID().x, tile.getTileID().y);
             if (uploadMs >= 8.0 ||
                 uploadImage->width > 1024 ||
                 uploadImage->height > 1024) {
-                __android_log_print(ANDROID_LOG_INFO, "RasterOverlayTileProvider",
+                platformLog(LogLevel::Info, "RasterOverlayTileProvider",
                     "upload %.2fms size=%dx%d mapped=%d mipmap=%d cache=%s",
                     uploadMs,
                     uploadImage->width,
@@ -3610,7 +3596,6 @@ int RasterOverlayTileProvider::processPendingUploads(
                     generateMipmaps ? 1 : 0,
                     tile.getCacheKey().c_str());
             }
-#endif
         }
         budget->recordElapsed(FrameResourceLane::RasterTextureUpload, uploadMs);
         asyncState_->revision.fetch_add(1, std::memory_order_relaxed);

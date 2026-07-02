@@ -83,27 +83,35 @@ public:
         }
         result.computeMs = perf::nowMs() - computeStartMs;
 
-        const double prefetchStartMs = perf::nowMs();
-        const std::vector<size_t> overlayOrder =
-            TileSelectionRasterOverlayPreparer::processingOrder(
-                input.rasterOverlays);
-        TileRasterOverlayFrameProcessor::prefetchSelection(
-            input.tilePlan,
-            input.loadQueue.requests(),
-            input.rasterOverlays,
-            overlayOrder,
-            input.device,
-            input.maximumScreenSpaceError,
-            input.frameResourceBudget,
-            ensureTile,
-            nullptr,
-            std::forward<UnloadTileContentFn>(unloadTileContent),
-            [&input](const TileKey& key,
-                     TileLoadPriorityGroup group,
-                     double priority) {
-                input.loadQueue.queue(key, group, priority);
-            });
-        result.prefetchMs = perf::nowMs() - prefetchStartMs;
+        // During reuse, the tile plan hasn't changed so rerunning the full
+        // overlay prefetch is redundant.  Individual tile overlay states
+        // (missing projections, failed tiles) are handled lazily: they will
+        // be detected on the next non-reuse frame's prefetch or by the
+        // overlay provider's incremental tile update system.  Matching
+        // cesium-native where updateTileOverlays runs outside selection.
+        if (!input.reusedSelection) {
+            const double prefetchStartMs = perf::nowMs();
+            const std::vector<size_t> overlayOrder =
+                TileSelectionRasterOverlayPreparer::processingOrder(
+                    input.rasterOverlays);
+            TileRasterOverlayFrameProcessor::prefetchSelection(
+                input.tilePlan,
+                input.loadQueue.requests(),
+                input.rasterOverlays,
+                overlayOrder,
+                input.device,
+                input.maximumScreenSpaceError,
+                input.frameResourceBudget,
+                ensureTile,
+                nullptr,
+                std::forward<UnloadTileContentFn>(unloadTileContent),
+                [&input](const TileKey& key,
+                         TileLoadPriorityGroup group,
+                         double priority) {
+                    input.loadQueue.queue(key, group, priority);
+                });
+            result.prefetchMs = perf::nowMs() - prefetchStartMs;
+        }
 
         const double requestStartMs = perf::nowMs();
         TileLoadRequestOutcome requestOutcome;

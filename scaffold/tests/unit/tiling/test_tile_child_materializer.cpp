@@ -1386,7 +1386,6 @@ TEST(TileChildMaterializerTest,
 
     EXPECT_TRUE(changed);
     EXPECT_FALSE(upgradedChild->content.derivesTerrainFromParent());
-    EXPECT_FALSE(upgradedChild->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(upgradedChild->content.renderContent.isMeshReady());
     EXPECT_FALSE(upgradedChild->content.renderContent.isSurfaceDrawable());
     EXPECT_EQ(4u, parent.children.size());
@@ -1438,7 +1437,6 @@ TEST(TileChildMaterializerTest,
     EXPECT_TRUE(staleRasterChild->content.isTerrainAvailabilityUpsample());
     EXPECT_FALSE(staleRasterChild->content.isRasterDetailUpsample());
     EXPECT_FALSE(staleRasterChild->content.rasterDetailSourceProjection);
-    EXPECT_FALSE(staleRasterChild->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(staleRasterChild->content.renderContent.isMeshReady());
 }
 
@@ -1539,8 +1537,6 @@ TEST(TileChildMaterializerTest,
     ASSERT_EQ(4u, parent.children.size());
     EXPECT_EQ(staleUpsampledChild, parent.children[1]);
     EXPECT_TRUE(staleUpsampledChild->content.isTerrainAvailabilityUpsample());
-    EXPECT_FALSE(
-        staleUpsampledChild->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(
         staleUpsampledChild->content.renderContent.hasRetainedHeightmap());
     EXPECT_FALSE(staleUpsampledChild->content.renderContent.hasGltfModel());
@@ -2105,7 +2101,6 @@ TEST(TileChildMaterializerTest,
     ASSERT_EQ(4u, parent.children.size());
     EXPECT_EQ(staleChild, parent.children[1]);
     EXPECT_TRUE(staleChild->content.isRasterDetailUpsample());
-    EXPECT_FALSE(staleChild->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(staleChild->content.renderContent.isMeshReady());
     EXPECT_FALSE(staleChild->content.renderContent.hasGltfModel());
     EXPECT_FALSE(staleChild->content.renderContent.hasGltfResources());

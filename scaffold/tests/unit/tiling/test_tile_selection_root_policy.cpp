@@ -492,7 +492,6 @@ TEST(TileSelectionRootPolicyTest,
 
     ASSERT_EQ(2u, root->children.size());
     EXPECT_EQ(levelZero, root->children[1]);
-    EXPECT_FALSE(levelZero->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(levelZero->content.renderContent.hasRetainedHeightmap());
     EXPECT_FALSE(levelZero->content.renderContent.isRenderContentReady());
     EXPECT_EQ(0u, levelZero->rasterOverlayState.mappingCount());
@@ -564,7 +563,6 @@ TEST(TileSelectionRootPolicyTest,
     EXPECT_EQ(levelZeroKey, prep.lastDetachedGeometryKey);
     EXPECT_EQ(0, prep.lastDetachedOverlayIndex);
     EXPECT_EQ(0u, levelZero->rasterOverlayState.mappingCount());
-    EXPECT_FALSE(levelZero->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(levelZero->content.renderContent.isRenderContentReady());
 }
 

@@ -24,7 +24,6 @@ enum class SurfaceDrawableSource {
 
 struct TileSurfaceContentState {
     std::unique_ptr<DecodedHeightmap> heightmap;
-    std::unique_ptr<SurfaceTileMesh> mesh;
     std::unique_ptr<Buffer> gpuVertexBuffer;
     std::unique_ptr<Buffer> gpuIndexBuffer;
     Vec3 localOrigin = Vec3::zero();
@@ -108,11 +107,13 @@ struct GltfPrimitiveRenderResources {
     bool doubleSided = false;
     bool unlit = false;
     bool dynamicVertices = false;
+    bool useTerrainVertexFormat = false;  // true = 32-byte TerrainGpuVertex, false = 120-byte GltfGpuVertex
 };
 
 class TileRenderContentState {
 public:
-    bool hasTerrainMesh() const { return surface_.mesh != nullptr; }
+    bool asyncGpuUploadPending = false;  // true = CPU work dispatched to worker, GPU upload pending next frame
+public:
     bool hasGltfContent() const { return gltfModel != nullptr; }
     bool hasGltfModel() const { return gltfModel != nullptr; }
     GltfModel* gltfContent() { return gltfModel.get(); }
@@ -138,15 +139,12 @@ public:
         return gltfModel ? isGltfRenderReady() : surface_.meshReady;
     }
     bool hasRenderableTerrainContent() const {
-        return hasSurfaceMesh() || hasGltfContent();
+        return hasGltfContent();
     }
     bool hasRasterOverlayDetailsContent() const {
         return !rasterOverlayDetails().empty();
     }
     bool isTerrainRenderContent() const { return terrainRenderContent_; }
-    const SurfaceTileMesh* surfaceMesh() const { return surface_.mesh.get(); }
-    SurfaceTileMesh* surfaceMesh() { return surface_.mesh.get(); }
-    bool hasSurfaceMesh() const { return surface_.mesh != nullptr; }
     const DecodedHeightmap* retainedHeightmap() const {
         return surface_.heightmap.get();
     }
@@ -165,14 +163,6 @@ public:
                hasOwnTerrain &&
                surface_.surfaceSource != SurfaceDrawableSource::HeightmapTerrain;
     }
-    void setSurfaceMesh(std::unique_ptr<SurfaceTileMesh> surfaceMesh) {
-        if (isGltfOwnedContentState()) {
-            clearLegacySurfacePayloadPreservingGltfMetadata();
-            return;
-        }
-        surface_.horizonOcclusionPoint.reset();
-        surface_.mesh = std::move(surfaceMesh);
-    }
     void setRetainedHeightmap(std::unique_ptr<DecodedHeightmap> decoded) {
         if (isGltfOwnedContentState()) {
             surface_.heightmap.reset();
@@ -182,7 +172,7 @@ public:
     }
     void clearRetainedHeightmap() {
         surface_.heightmap.reset();
-        if (!surface_.mesh && !gltfModel) {
+        if (!gltfModel) {
             clearTerrainHeightRange();
         }
     }
@@ -229,31 +219,22 @@ public:
     void setHorizonOcclusionPoint(const Vec3& point) {
         surface_.horizonOcclusionPoint = point;
     }
-    SurfaceTileMesh* mutableSurfaceMesh() { return surface_.mesh.get(); }
     const Vec3* horizonOcclusionPoint() const {
         if (surface_.horizonOcclusionPoint) {
             return &*surface_.horizonOcclusionPoint;
         }
-        return surface_.mesh && surface_.mesh->hasHorizonOcclusionPoint
-            ? &surface_.mesh->horizonOcclusionPoint
-            : nullptr;
+        return nullptr;
     }
     const RasterOverlayDetails& rasterOverlayDetails() const {
         static const RasterOverlayDetails emptyDetails;
         if (gltfModel) {
             return gltfModel->rasterOverlayDetails;
         }
-        if (surface_.mesh) {
-            return surface_.mesh->rasterOverlayDetails;
-        }
         return emptyDetails;
     }
     RasterOverlayDetails* mutableRasterOverlayDetails() {
         if (gltfModel) {
             return &gltfModel->rasterOverlayDetails;
-        }
-        if (surface_.mesh) {
-            return &surface_.mesh->rasterOverlayDetails;
         }
         return nullptr;
     }
@@ -350,17 +331,6 @@ public:
 
     int64_t estimateRetainedBytes() const {
         int64_t bytes = 0;
-        if (surface_.mesh) {
-            bytes += static_cast<int64_t>(
-                surface_.mesh->vertices.size() * sizeof(SurfaceVertex));
-            bytes += static_cast<int64_t>(
-                surface_.mesh->indices.size() * sizeof(uint32_t));
-            bytes += static_cast<int64_t>(
-                surface_.mesh->waterMask.data.size());
-            bytes += static_cast<int64_t>(
-                surface_.mesh->metadataAvailability.size() *
-                sizeof(QuantizedMeshAvailabilityRange));
-        }
         if (gltfModel) {
             bytes += gltfModel->byteSize();
         }
@@ -426,7 +396,6 @@ public:
     }
 
     void clearSurfaceMeshResources() {
-        surface_.mesh.reset();
         surface_.gpuVertexBuffer.reset();
         surface_.gpuIndexBuffer.reset();
         surfaceWaterMaskTexture_.reset();
@@ -467,7 +436,6 @@ public:
     void prepareGltfContent(std::unique_ptr<GltfModel> model,
                             const Mat4& contentTransform) {
         surface_.heightmap.reset();
-        surface_.mesh.reset();
         surfaceWaterMaskTexture_.reset();
         surface_.horizonOcclusionPoint.reset();
         surface_.meshReady = false;
@@ -510,17 +478,6 @@ private:
     bool isGltfOwnedContentState() const {
         return gltfModel != nullptr ||
                surface_.surfaceSource == SurfaceDrawableSource::GltfContent;
-    }
-
-    void clearLegacySurfacePayloadPreservingGltfMetadata() {
-        surface_.mesh.reset();
-        surface_.gpuVertexBuffer.reset();
-        surface_.gpuIndexBuffer.reset();
-        surfaceWaterMaskTexture_.reset();
-        surface_.horizonOcclusionPoint.reset();
-        surface_.meshReady = false;
-        surface_.surfaceDrawable = false;
-        surface_.surfaceSource = SurfaceDrawableSource::GltfContent;
     }
 
     TileSurfaceContentState surface_;

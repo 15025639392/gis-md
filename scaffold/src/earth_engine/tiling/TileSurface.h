@@ -1,25 +1,10 @@
 #pragma once
 
-#include "SurfaceTile.h"
-#include "TileKey.h"
 #include "../core/math/Rectangle.h"
-#include "../core/math/Vec3.h"
-
-#include <array>
-#include <optional>
 
 namespace earth_engine {
 
-class TileScheme;
-class TerrainTile;
-
-/// CPU-side contract for draping a raster tile on the WGS84 ellipsoid.
-/// Coordinates are radians, ECEF is meters, UV origin is texture top-left.
-struct TileSurfaceVertex {
-    Vec3 ecef;
-    std::array<float, 2> uv;
-};
-
+/// Raster-overlay texture window (translation/scale in overlay UV space).
 struct TileTextureWindow {
     float offsetU = 0.0f;
     float offsetV = 0.0f;
@@ -27,15 +12,14 @@ struct TileTextureWindow {
     float scaleV = 1.0f;
 };
 
+/// CPU-side helpers for mapping raster-overlay tiles onto geometry tiles.
 class TileSurface {
 public:
-    static TileSurfaceVertex vertexForUnitUv(const Rectangle& tileBounds,
-                                             double u,
-                                             double v);
-
     // cesium-native: RasterOverlayUtilities::computeTranslationAndScale.
     // Returns translation/scale in projected overlay UV space, where V grows
     // from the projection rectangle's minimumY (south) to maximumY (north).
+    // Does NOT embed tile-size or edge-bleed assumptions — those are handled
+    // by the rendering layer (CLAMP_TO_EDGE + optional padding).
     static TileTextureWindow computeTranslationAndScale(const Rectangle& geometryBounds,
                                                          const Rectangle& imageryBounds);
 
@@ -43,40 +27,6 @@ public:
     /// current mesh UV convention: V=0 at the north edge and V=1 at the south.
     static TileTextureWindow textureWindowForNorthWestUv(
         const TileTextureWindow& nativeWindow);
-
-    static SurfaceTileMesh buildEllipsoidMesh(const Rectangle& tileBounds,
-                                              int gridSize);
-
-    /// 构建 ECEF SurfaceTile 地形网格。tileBounds 与 terrainTile 均为 WGS84
-    /// cartographic bounds，height 单位 meter，输出 ECEF 单位 meter。
-    /// WebMercator 有效纬度内按 Mercator-v 采样，OpenGlobus 极区 LonLat
-    /// group 按 geographic-v 采样，避免极区被 Mercator clamp。
-    static SurfaceTileMesh buildTerrainMesh(const Rectangle& tileBounds,
-                                            const TerrainTile* terrainTile,
-                                            int gridSize,
-                                            double skirtHeightMeters = 0.0,
-                                            const TerrainTile* parentTile = nullptr);
-
-    /// cesium-native RasterOverlayUtilities::upsampleGltfForRasterOverlays
-    /// equivalent for this engine's native SurfaceTileMesh content.
-    ///
-    /// The child mesh is cut from the parent's rendered triangles in parent
-    /// overlay UV space, with all floating vertex attributes interpolated from
-    /// the parent. It does not resample an ancestor heightmap or rebuild an
-    /// ellipsoid grid.
-    static std::optional<SurfaceTileMesh> upsampleChildMeshFromParent(
-        const SurfaceTileMesh& parentMesh,
-        const Rectangle& parentBounds,
-        const Rectangle& childBounds);
-
-    /// 从 SurfaceTile mesh 顶点法线派生 OpenGlobus-style normal map。
-    /// normal 以 ECEF/world space 单位向量编码到 RGBA8：rgb = normal * 0.5 + 0.5。
-    /// 只使用规则 surface grid 顶点，terrain skirt 不进入 normal map。
-    static SurfaceNormalMap buildNormalMap(const SurfaceTileMesh& mesh);
-
-    static bool trianglesFaceOutward(const Rectangle& tileBounds);
-
-    static Rectangle boundsForKey(const TileScheme& scheme, const TileKey& key);
 };
 
 } // namespace earth_engine
