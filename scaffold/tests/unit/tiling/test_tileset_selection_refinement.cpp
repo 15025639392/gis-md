@@ -785,6 +785,93 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
+    KickMarksNonRenderableParentRendered) {
+    // cesium TilesetSelection.cpp:734-735: kickDescendantsAndRenderTile sets the
+    // kicked parent's selection state to Rendered UNCONDITIONALLY, even when the
+    // parent is not renderable. This keeps next-frame wasRenderedLastFrame
+    // bookkeeping aligned with cesium. Here the parent is non-renderable
+    // (Done + unconditionallyRefine + children), so it never enters the
+    // renderable-replacement append path yet must still be marked Rendered
+    // after its descendants are kicked.
+    TilesetOptions options;
+    options.loadingDescendantLimit = 1;
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1},
+        {"Geographic-TMS", 1, 1, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    Tileset tileset(
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        options,
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->unconditionallyRefine = true;
+    root->geometricError = 100000000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), childKeys.size());
+    for (TilesetTile* child : root->children) {
+        ASSERT_NE(child, nullptr);
+        child->content.loadState = TileLoadState::Unloaded;
+        child->content.contentKind = TileContentKind::Unknown;
+        child->geometricError = 1.0;
+    }
+
+    // Precondition: the parent is genuinely non-renderable
+    // (Done + unconditionallyRefine + children → not complete-renderable).
+    ASSERT_FALSE(TilesetTestAccess::isTileRenderable(tileset, *root));
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 1000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 421;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    // cesium: the non-renderable parent is kicked-and-"rendered" — its selection
+    // state becomes Rendered even though it is not appended to the draw list.
+    EXPECT_EQ(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::Rendered);
+
+    // Its descendants were kicked out of the render list.
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    for (const TileKey& childKey : childKeys) {
+        EXPECT_EQ(
+            std::find(visibleTiles.begin(), visibleEnd, childKey),
+            visibleEnd);
+    }
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
     UnconditionallyRefineIgnoresSatisfiedSse) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const std::vector<TileKey> childKeys = {
