@@ -76,11 +76,15 @@ void decrementActiveRasterTileLoads(std::atomic<uint32_t>& activeLoads) {
 bool uploadAllowedDuringInteraction(
     const std::string& cacheKey,
     const DecodedImage* image) {
+    // 交互期只按单次上传成本（尺寸）过滤；节奏由 budget 的
+    // RasterTextureUpload lane 控制（TileFrameResourceBudgetPlanner 在
+    // smoothing/交互下给出时间基或 ≤8/帧 的涓流额度）。此前对
+    // "mapped-raster/" 前缀无条件排除：长交互把影像上传全量积压
+    // （真机 60+ pendUp），交互期影像完全停更。≤512² 的 mapped raster
+    // 单次上传 <1ms，交由 lane 限额涓流即可。
+    (void)cacheKey;
     if (!image) {
         return true;
-    }
-    if (cacheKey.rfind("mapped-raster/", 0) == 0) {
-        return false;
     }
     if (image->width > kInteractionRasterUploadMaxDimension ||
         image->height > kInteractionRasterUploadMaxDimension) {
@@ -2336,11 +2340,10 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
 
 RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     asyncState_->alive.store(false, std::memory_order_release);
-    size_t abandonedUploads = 0;
     std::vector<std::shared_ptr<MappedSourceImageSet>> abandonedSourceSets;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        abandonedUploads = asyncState_->pendingUploads.size();
+        // pendingUploads 的节流名额已在加载完成入队时释放，直接丢弃
         asyncState_->pendingUploads.clear();
         for (auto& [_, sourceSet] : asyncState_->activeMappedSourceSets) {
             if (sourceSet) {
@@ -2354,9 +2357,6 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     }
     for (const auto& sourceSet : abandonedSourceSets) {
         sourceSet->markAbandoned();
-        decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
-    }
-    for (size_t i = 0; i < abandonedUploads; ++i) {
         decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
     }
     asyncState_->resolveDestructionIfComplete();
@@ -2390,7 +2390,6 @@ void RasterOverlayTileProvider::setReady(bool ready) {
 
     abandonActiveMappedSourceSets();
 
-    size_t abandonedUploads = 0;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         ++asyncState_->sourceTileDepotEpoch;
@@ -2400,12 +2399,8 @@ void RasterOverlayTileProvider::setReady(bool ready) {
         asyncState_->inFlightRequests.clear();
         asyncState_->activeMappedSourceSetOrder.clear();
         asyncState_->pendingSourceFallbacks.clear();
-        abandonedUploads = asyncState_->pendingUploads.size();
+        // pendingUploads 的节流名额已在加载完成入队时释放，直接丢弃
         asyncState_->pendingUploads.clear();
-    }
-
-    for (size_t i = 0; i < abandonedUploads; ++i) {
-        decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
     }
 
     for (auto& entry : tiles_) {
@@ -3205,6 +3200,13 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                  moreDetailAvailable,
                  std::move(diagnostics),
                  std::move(credits)});
+            // cesium _totalTilesCurrentlyLoading 语义：节流名额在加载
+            // （下载+合成）完成时释放；GPU 上传属主线程 prepare 阶段，
+            // 由 RasterTextureUpload lane 单独限速。此前名额持有到上传
+            // 消费，交互期上传被 defer 时节流被积压占满（真机 54/20），
+            // 新加载全部被卡。
+            decrementActiveRasterTileLoads(state->activeRasterTileLoads);
+            state->resolveDestructionIfComplete();
         },
         [state, cacheKey, tileWeak, requestSourceDepotEpoch](
             std::vector<std::string> diagnostics) {
@@ -3491,9 +3493,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             targetTiles.push_back(it->second);
         }
         if (targetTiles.empty()) {
-            decrementActiveRasterTileLoads(
-                asyncState_->activeRasterTileLoads);
-            asyncState_->resolveDestructionIfComplete();
+            // 节流名额已在加载完成入队时释放，这里只丢弃孤儿上传
             continue;
         }
 
@@ -3516,9 +3516,6 @@ int RasterOverlayTileProvider::processPendingUploads(
                 target->markLoadedWithoutTexture();
             }
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
-            decrementActiveRasterTileLoads(
-                asyncState_->activeRasterTileLoads);
-            asyncState_->resolveDestructionIfComplete();
             ++processed;
             continue;
         }
@@ -3532,9 +3529,6 @@ int RasterOverlayTileProvider::processPendingUploads(
                 target->setState(RasterOverlayTile::LoadState::Failed);
             }
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
-            decrementActiveRasterTileLoads(
-                asyncState_->activeRasterTileLoads);
-            asyncState_->resolveDestructionIfComplete();
             ++processed;
             continue;
         }
@@ -3599,9 +3593,6 @@ int RasterOverlayTileProvider::processPendingUploads(
         }
         budget->recordElapsed(FrameResourceLane::RasterTextureUpload, uploadMs);
         asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
-        decrementActiveRasterTileLoads(
-            asyncState_->activeRasterTileLoads);
-        asyncState_->resolveDestructionIfComplete();
         ++processed;
     }
     return processed;

@@ -8316,3 +8316,65 @@ TEST(RasterOverlayLifecycleTest, WebMercatorSourceSamplingUsesProjectedY) {
     EXPECT_NEAR(0.5, linearV, 1e-12);
     EXPECT_GT(std::abs(centerV - linearV), 0.02);
 }
+
+// cesium _totalTilesCurrentlyLoading 语义：节流名额在加载（下载+合成）
+// 完成时释放，GPU 上传由 RasterTextureUpload lane 单独限速。名额若持有
+// 到上传消费，交互期上传被 defer 时节流会被积压占满（真机 54/20），
+// 新加载全部被卡。
+TEST(RasterOverlayLifecycleTest,
+     ThrottleSlotReleasedWhenLoadCompletesBeforeUploadLikeCesiumNative) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey key{scheme->id(), 2, 1, 1};
+    provider.setCoverageRectangle(scheme->tileToRectangle(key));
+    auto tile = provider.getTile(key);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider.loadTile(*tile));
+
+    // 加载完成（pendingUploads 入队）后、上传消费前：名额已释放
+    ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(0, provider.getThrottledTilesCurrentlyLoading());
+
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, provider.getThrottledTilesCurrentlyLoading());
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+}
+
+// 交互期 mapped raster 上传按 budget lane 涓流消费，而不是无条件 defer
+// （旧行为对 "mapped-raster/" 前缀一律拒绝，长交互积压 60+ 影像停更）。
+TEST(RasterOverlayLifecycleTest,
+     InteractionConsumesMappedRasterUploadWithinSizeGate) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey coveredKey{scheme->id(), 1, 0, 0};
+    provider.setCoverageRectangle(scheme->tileToRectangle(coveredKey));
+    const Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+
+    RasterOverlayTileProvider::TilePtr tile =
+        provider
+            .mapRasterTilesToGeometryTile(
+                projectForProvider(provider, rootBounds),
+                256.0,
+                256.0)
+            .tile;
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(tile->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
+
+    // interactionActive = true：≤512² 的 mapped raster 必须被消费
+    int processed = 0;
+    for (int attempt = 0; attempt < 200 && processed < 1; ++attempt) {
+        processed += provider.processPendingUploads(true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_EQ(1, processed)
+        << "交互期 mapped raster 上传仍被无条件 defer（积压回归）";
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(0, provider.getThrottledTilesCurrentlyLoading());
+}
