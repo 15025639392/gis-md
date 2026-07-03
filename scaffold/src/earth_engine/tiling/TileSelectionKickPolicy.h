@@ -10,7 +10,7 @@ namespace earth_engine {
 
 struct TileSelectionKickPlan {
     bool restoreChildLoadQueueAndLoadParent = false;
-    bool addRenderableReplacementToPlan = false;
+    bool addReplacementToPlan = false;
     bool preloadParent = false;
 };
 
@@ -40,7 +40,6 @@ struct TileSelectionKickPolicy {
         bool isExternalContent,
         bool unconditionallyRefine,
         TileRefine refineMode,
-        bool renderable,
         bool queuedForLoad,
         bool preloadAncestors);
 };

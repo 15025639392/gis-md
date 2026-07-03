@@ -47,7 +47,6 @@ TileSelectionKickPlan TileSelectionKickPolicy::planAfterKick(
     bool isExternalContent,
     bool unconditionallyRefine,
     TileRefine refineMode,
-    bool renderable,
     bool queuedForLoad,
     bool preloadAncestors) {
     TileSelectionKickPlan plan;
@@ -61,8 +60,12 @@ TileSelectionKickPlan TileSelectionKickPolicy::planAfterKick(
 
     const bool willQueueParent =
         queuedForLoad || plan.restoreChildLoadQueueAndLoadParent;
-    plan.addRenderableReplacementToPlan =
-        refineMode != TileRefine::Add && renderable;
+    // cesium TilesetSelection.cpp:730-732: the kicked tile replaces its
+    // descendants in the render list for ANY non-additive refine — even a
+    // not-yet-renderable one (it draws nothing this frame). Gating on
+    // renderable diverged: S2 对拍 restore 帧 cesium render=[0-0-0] 而
+    // gis-md render=[]。
+    plan.addReplacementToPlan = refineMode != TileRefine::Add;
     plan.preloadParent = preloadAncestors && !willQueueParent;
     return plan;
 }

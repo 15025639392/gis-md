@@ -144,12 +144,11 @@ TEST(
             false,
             false,
             TileRefine::Add,
-            true,
             false,
             true);
 
     EXPECT_TRUE(plan.restoreChildLoadQueueAndLoadParent);
-    EXPECT_FALSE(plan.addRenderableReplacementToPlan);
+    EXPECT_FALSE(plan.addReplacementToPlan);
     EXPECT_FALSE(plan.preloadParent);
 }
 
@@ -260,12 +259,11 @@ TEST(
             false,
             false,
             TileRefine::Replace,
-            true,
             false,
             true);
 
     EXPECT_TRUE(plan.restoreChildLoadQueueAndLoadParent);
-    EXPECT_TRUE(plan.addRenderableReplacementToPlan);
+    EXPECT_TRUE(plan.addReplacementToPlan);
     EXPECT_FALSE(plan.preloadParent);
 }
 
@@ -339,7 +337,7 @@ TEST(
     EXPECT_TRUE(result.shouldKick);
     EXPECT_FALSE(result.wasReallyRenderedLastFrame);
     EXPECT_TRUE(result.kickPlan.restoreChildLoadQueueAndLoadParent);
-    EXPECT_TRUE(result.kickPlan.addRenderableReplacementToPlan);
+    EXPECT_TRUE(result.kickPlan.addReplacementToPlan);
     EXPECT_FALSE(result.kickPlan.preloadParent);
     EXPECT_FALSE(result.preloadRefinedAncestor);
 
@@ -350,7 +348,7 @@ TEST(
     EXPECT_TRUE(plan.trimRenderedDescendants);
     EXPECT_TRUE(plan.restoreChildLoadQueue);
     EXPECT_TRUE(plan.queueParentNormal);
-    EXPECT_TRUE(plan.addRenderableReplacementToPlan);
+    EXPECT_TRUE(plan.addReplacementToPlan);
     EXPECT_TRUE(plan.returnSingleTileDetails);
     EXPECT_FALSE(plan.markTileRefined);
 }
@@ -462,7 +460,7 @@ TEST(
     EXPECT_TRUE(result.shouldKick);
     EXPECT_TRUE(result.wasReallyRenderedLastFrame);
     EXPECT_FALSE(result.kickPlan.restoreChildLoadQueueAndLoadParent);
-    EXPECT_FALSE(result.kickPlan.addRenderableReplacementToPlan);
+    EXPECT_FALSE(result.kickPlan.addReplacementToPlan);
     EXPECT_FALSE(result.kickPlan.preloadParent);
 }
 
@@ -664,7 +662,7 @@ TEST(
     TileSelectionCounters counters;
     TileSelectionPostTraversalCommitPlan plan;
     plan.returnSingleTileDetails = true;
-    plan.addRenderableReplacementToPlan = true;
+    plan.addReplacementToPlan = true;
     plan.queueParentPreload = true;
     plan.wasReallyRenderedLastFrame = true;
 

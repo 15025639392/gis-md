@@ -16247,11 +16247,10 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             false,
             TileRefine::Replace,
-            true,
             false,
             true);
     check(restorePlan.restoreChildLoadQueueAndLoadParent &&
-              restorePlan.addRenderableReplacementToPlan &&
+              restorePlan.addReplacementToPlan &&
               !restorePlan.preloadParent,
           "TileSelectionKickPolicy: restoring child queue loads parent without preload duplicate");
     const TileSelectionKickPlan addPlan =
@@ -16262,11 +16261,10 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             false,
             TileRefine::Add,
-            true,
             false,
             true);
     check(addPlan.restoreChildLoadQueueAndLoadParent &&
-              !addPlan.addRenderableReplacementToPlan,
+              !addPlan.addReplacementToPlan,
           "TileSelectionKickPolicy: ADD parent is not re-added as replacement");
     TileTraversalDetails fewMissing;
     fewMissing.allAreRenderable = false;
@@ -16281,12 +16279,11 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             TileRefine::Replace,
             false,
-            false,
             true);
     check(!preloadPlan.restoreChildLoadQueueAndLoadParent &&
-              !preloadPlan.addRenderableReplacementToPlan &&
+              preloadPlan.addReplacementToPlan &&
               preloadPlan.preloadParent,
-          "TileSelectionKickPolicy: kicked parent preloads when no other load was queued");
+          "TileSelectionKickPolicy: kicked parent preloads when no other load was queued and still replaces descendants (cesium :730-732)");
     const TileSelectionKickPlan noPreloadPlan =
         TileSelectionKickPolicy::planAfterKick(
             fewMissing,
@@ -16295,7 +16292,6 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             false,
             TileRefine::Replace,
-            false,
             false,
             false);
     check(!noPreloadPlan.preloadParent,
@@ -16308,7 +16304,6 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             false,
             TileRefine::Replace,
-            false,
             true,
             true);
     check(!alreadyQueuedPlan.preloadParent,
@@ -16340,7 +16335,7 @@ void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
     check(result.shouldKick &&
               !result.wasReallyRenderedLastFrame &&
               result.kickPlan.restoreChildLoadQueueAndLoadParent &&
-              result.kickPlan.addRenderableReplacementToPlan &&
+              result.kickPlan.addReplacementToPlan &&
               !result.kickPlan.preloadParent &&
               !result.preloadRefinedAncestor,
           "TileSelectionPostTraversalPolicy: kicked replacement restores queue and plans parent");
@@ -16439,7 +16434,7 @@ void testTileSelectionPostTraversalPolicyPlansFadingKickWithoutParentReload() {
     check(result.shouldKick &&
               result.wasReallyRenderedLastFrame &&
               !result.kickPlan.restoreChildLoadQueueAndLoadParent &&
-              !result.kickPlan.addRenderableReplacementToPlan &&
+              !result.kickPlan.addReplacementToPlan &&
               !result.kickPlan.preloadParent,
           "TileSelectionPostTraversalPolicy: fading ADD tile kicks without duplicate parent load");
 }
@@ -16448,7 +16443,7 @@ void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
     result.shouldKick = true;
     result.wasReallyRenderedLastFrame = true;
     result.kickPlan.restoreChildLoadQueueAndLoadParent = true;
-    result.kickPlan.addRenderableReplacementToPlan = true;
+    result.kickPlan.addReplacementToPlan = true;
     result.kickPlan.preloadParent = true;
     TileSelectionPostTraversalCommitPlan plan =
         TileSelectionPostTraversalPolicy::commitPlan(result, false);
@@ -16456,7 +16451,7 @@ void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
           "TileSelectionPostTraversalPolicy: commit plan kicks and trims descendants");
     check(plan.restoreChildLoadQueue && plan.queueParentNormal,
           "TileSelectionPostTraversalPolicy: commit plan restores child queue and queues parent");
-    check(plan.addRenderableReplacementToPlan && plan.queueParentPreload,
+    check(plan.addReplacementToPlan && plan.queueParentPreload,
           "TileSelectionPostTraversalPolicy: commit plan preserves replacement and preload actions");
     check(plan.returnSingleTileDetails && plan.wasReallyRenderedLastFrame,
           "TileSelectionPostTraversalPolicy: commit plan returns kicked single-tile details");

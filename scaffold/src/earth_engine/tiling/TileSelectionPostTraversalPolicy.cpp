@@ -29,7 +29,6 @@ TileSelectionPostTraversalResult TileSelectionPostTraversalPolicy::evaluate(
             input.isExternalContent,
             input.unconditionallyRefine,
             input.refineMode,
-            input.renderable,
             input.queuedForLoad,
             options.preloadAncestors);
         return result;
@@ -58,8 +57,8 @@ TileSelectionPostTraversalPolicy::commitPlan(
         plan.queueParentNormal =
             result.kickPlan.restoreChildLoadQueueAndLoadParent &&
             !queuedForLoad;
-        plan.addRenderableReplacementToPlan =
-            result.kickPlan.addRenderableReplacementToPlan;
+        plan.addReplacementToPlan =
+            result.kickPlan.addReplacementToPlan;
         plan.queueParentPreload = result.kickPlan.preloadParent;
         return plan;
     }

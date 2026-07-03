@@ -58,9 +58,10 @@ struct TileSelectionPostTraversalCommitter {
             // cesium TilesetSelection.cpp:734-735: kickDescendantsAndRenderTile
             // sets the kicked tile's selection state to Rendered
             // UNCONDITIONALLY — even when the tile is not renderable or is
-            // additive-refined. addTileToCurrentPlan (below) only runs for a
-            // renderable non-additive replacement, so mark the state here to
-            // keep next-frame wasRenderedLastFrame bookkeeping aligned.
+            // additive-refined. addTileToCurrentPlan (below) runs for any
+            // non-additive replacement (renderable or not, cesium :730-732),
+            // so mark the state here to keep next-frame wasRenderedLastFrame
+            // bookkeeping aligned for the additive case too.
             tile.selectionFrameState.selectionState =
                 TileSelectionState::Rendered;
             if (plan.restoreChildLoadQueue) {
@@ -79,7 +80,7 @@ struct TileSelectionPostTraversalCommitter {
                 }
             }
 
-            if (plan.addRenderableReplacementToPlan) {
+            if (plan.addReplacementToPlan) {
                 addTileToCurrentPlan(
                     tile,
                     context.tileSse,

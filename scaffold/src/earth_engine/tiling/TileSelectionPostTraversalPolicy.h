@@ -40,7 +40,7 @@ struct TileSelectionPostTraversalCommitPlan {
     bool trimRenderedDescendants = false;
     bool restoreChildLoadQueue = false;
     bool queueParentNormal = false;
-    bool addRenderableReplacementToPlan = false;
+    bool addReplacementToPlan = false;
     bool queueParentPreload = false;
     bool markTileRefined = false;
     bool returnSingleTileDetails = false;
