@@ -30,7 +30,9 @@ cesium-native 的在途计数递减挂在 Future 链的保证性 continuation �
 | M4 | B3DM `RTC_CENTER` → RTC extension 转换缺失（cesium B3dmToGltfConverter.cpp:168-183 有） | content/GltfContentProvider | 仅影响含 RTC 的第三方 3D Tiles；当前 QM 地形主线不受影响 |
 | M5 | GeoJSON 解析无环闭合校验/洞最小点数校验/错误上报（cesium 校验+自动闭合+Result 携带 warning），GeometryCollection 无递归深度限制（cesium 限 8 层） | [GeoJsonParser.cpp:88-161](../../scaffold/src/earth_engine/data/GeoJsonParser.cpp) | 非法输入静默产出破碎几何；深嵌套可栈溢出（对抗性输入） |
 
-已知技术债（本次确认现状未变，不重复展开）：FrameResourceBudget smoothing 公式未对齐；QM metadata 3 个边界测试失败；上采样 child bounds 粗一级 LOD（cesium 在 upsample 时同样不重算 elevation range，此点两边一致）。
+已知技术债（本次确认现状未变，不重复展开）：FrameResourceBudget smoothing 公式未对齐；上采样 child bounds 粗一级 LOD（cesium 在 upsample 时同样不重算 elevation range，此点两边一致）。~~QM metadata 3 个边界测试失败~~——2026-07-04 复核证伪：QM/metadata 相关测试二进制全绿（terrain_provider 204 + metadata_availability 9 + parser_validation 8 + tileset_qm 28 + content_loader 15），系陈旧记载。
+
+**2026-07-04 后续更新**：上文"高"级 1/2（metadata 聚合无兜底 + 共享 URL 毒丸）已根修（commit b198ce703，含析构后迟到 completion 的 UAF 修复），故障注入测试先复现后修复；3（ThreadPool try/catch）已修（bed25f510）。
 
 ### 【低】
 
