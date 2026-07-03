@@ -187,6 +187,9 @@ private:
     GpuUploadQueue gpuUploadQueue_;  // async CPU→GPU pipeline
     uint64_t resourceRevision_ = 1;
     TileSelectionReuseState selectionReuseState_;
+    // Last requestMissingContent outcome, surfaced via loadDiagnostics()
+    // to diagnose load-queue stalls (which branch dropped the requests).
+    TileLoadRequestOutcome lastRequestOutcome_;
     TileContentResourceInvalidator resourceInvalidator_;
     TileCacheOwnershipManager cacheOwnership_;
     TileRasterUpsampledChildCoordinator rasterUpsampledChildren_;

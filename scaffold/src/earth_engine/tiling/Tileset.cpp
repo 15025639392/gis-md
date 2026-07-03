@@ -168,6 +168,7 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
         terrainProviders_.contentProvider(),
         rasterOverlays_)
         .applyTo(diagnostics);
+    diagnostics.lastRequestOutcome = lastRequestOutcome_;
     return diagnostics;
 }
 
@@ -211,10 +212,11 @@ TileLoadRequestOutcome Tileset::requestMissingContent(
     const std::vector<TileLoadRequest>& loadRequests,
     FrameResourceBudget* budget,
     IPrepareRendererResources* pPrepRenderer) {
-    return contentRuntime_.requestMissingTiles(
+    lastRequestOutcome_ = contentRuntime_.requestMissingTiles(
         loadRequests,
         makeContentRuntimeRequestFrame(pPrepRenderer),
         budget);
+    return lastRequestOutcome_;
 }
 
 bool Tileset::processPendingLoads(

@@ -64,6 +64,18 @@ struct Diagnostics {
     int pendingContentRequests = 0;
     int pendingContentUploads = 0;
     int pendingContentTerminalResults = 0;
+    // Last-frame requestMissingTiles outcome (load-stall diagnosis).
+    int requestIssued = 0;
+    int requestBlockedByInflight = 0;
+    int reqSkipEmptyKey = 0;
+    int reqSkipAlreadyPending = 0;
+    int reqSkipEmptyTile = 0;
+    int reqSkipClassified = 0;
+    int reqSkipUpsampleSrc = 0;
+    int reqSkipUpsampleNoContent = 0;
+    int reqSkipDispatch = 0;
+    int reqSkipNoProvider = 0;
+    int reqStopDispatch = 0;
     int contentProviderRequestsStarted = 0;
     int contentProviderRequestsCompleted = 0;
     int contentProviderActiveWorkerBlockingRequests = 0;

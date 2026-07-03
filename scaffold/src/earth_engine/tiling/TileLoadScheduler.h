@@ -58,12 +58,15 @@ public:
             const TileKey requestKey = request.key;
             const std::string cacheKey = cacheKeyForTile(requestKey);
             if (cacheKey.empty()) {
+                ++outcome.skippedEmptyCacheKey;
                 continue;
             }
             if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
+                ++outcome.skippedAlreadyPending;
                 continue;
             }
             if (isEmptyTile(cacheKey)) {
+                ++outcome.skippedEmptyTile;
                 continue;
             }
 
@@ -74,6 +77,7 @@ public:
                 TileLoadRequestPlanner::classify(snapshot);
 
             if (requestKind == TileLoadRequestKind::Skip) {
+                ++outcome.skippedClassified;
                 continue;
             }
 
@@ -82,6 +86,7 @@ public:
                     !prepareUpsampleSourceTile(
                         *tileState,
                         request.priority)) {
+                    ++outcome.skippedUpsampleSourceNotReady;
                     continue;
                 }
 
@@ -92,9 +97,11 @@ public:
                         canCreateLoadResult(*tileState);
                 if (needsRasterDetailUpsample &&
                     !hasTerrainContentSource) {
+                    ++outcome.skippedUpsampleNoContentSource;
                     continue;
                 }
                 if (!hasTerrainContentSource) {
+                    ++outcome.skippedUpsampleNoContentSource;
                     continue;
                 }
                 std::optional<TileLoadResult> gltfUpsample =
@@ -116,9 +123,11 @@ public:
                         TileLoadDomain::TerrainContent,
                         std::move(*gltfUpsample));
                 if (shouldStopAfterDispatch(dispatchResult)) {
+                    ++outcome.stoppedAtDispatch;
                     break;
                 }
                 if (dispatchResult == TileLoadDispatchResult::Skipped) {
+                    ++outcome.skippedDispatch;
                     continue;
                 }
                 markTileContentLoading(requestKey);
@@ -128,6 +137,7 @@ public:
 
             if (requestKind == TileLoadRequestKind::Content) {
                 if (!input.contentProvider) {
+                    ++outcome.skippedNoContentProvider;
                     continue;
                 }
                 const int estimatedFanout =
@@ -167,7 +177,11 @@ public:
                         },
                         requestOptionsForTile(*input.contentProvider, tileState));
                 if (shouldStopAfterDispatch(dispatchResult)) {
+                    ++outcome.stoppedAtDispatch;
                     break;
+                }
+                if (dispatchResult == TileLoadDispatchResult::Skipped) {
+                    ++outcome.skippedDispatch;
                 }
                 continue;
             }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TileLoadTypes.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../providers/ProviderRequestDiagnostics.h"
 
@@ -44,6 +45,7 @@ struct TilesetLoadDiagnostics {
     ProviderRequestDiagnostics contentProviderRequests;
     ProviderRequestDiagnostics rasterProviderRequests;
     FrameResourceBudgetSnapshot resourceBudget;
+    TileLoadRequestOutcome lastRequestOutcome;
 
     int loadQueueTotal() const;
     int pendingTerrainTotal() const;

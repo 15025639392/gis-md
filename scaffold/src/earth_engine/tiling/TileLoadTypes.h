@@ -23,6 +23,18 @@ struct TileLoadRequest {
 struct TileLoadRequestOutcome {
     size_t issued = 0;
     bool blockedByInflight = false;
+    // Per-reason drop counters for the request loop. A stalled load queue
+    // (entries present, nothing issued) is diagnosed by which counter eats
+    // the requests; surfaced on the debug overlay.
+    size_t skippedEmptyCacheKey = 0;
+    size_t skippedAlreadyPending = 0;
+    size_t skippedEmptyTile = 0;
+    size_t skippedClassified = 0;
+    size_t skippedUpsampleSourceNotReady = 0;
+    size_t skippedUpsampleNoContentSource = 0;
+    size_t skippedDispatch = 0;
+    size_t skippedNoContentProvider = 0;
+    size_t stoppedAtDispatch = 0;
 };
 
 struct TileLoadedContent {

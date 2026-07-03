@@ -535,6 +535,7 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
         "LoadQ: %d pre, %d norm, %d urgent  |  Terrain pending: %d req, %d upload, %d terminal\n"
         "Content pending: %d req, %d upload, %d terminal\n"
+        "ReqDrop: iss %d%s | key %d dup %d empty %d cls %d upSrc %d upNoC %d disp %d noProv %d stop %d\n"
         "Budget: net %d/%d, terrain-content %d/%d, content %d/%d, raster %d/%d\n"
         "Main budget: fin %d/%d, term %d/%d, rasUp %d/%d, %.1f/%.1f ms, mode %c/%c\n"
         "Provider: terr %d/%d wb %d/%d | cont %d/%d wb %d/%d ext %d/%d | rast %d/%d wb %d/%d\n"
@@ -586,6 +587,17 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         diag.pendingContentRequests,
         diag.pendingContentUploads,
         diag.pendingContentTerminalResults,
+        diag.requestIssued,
+        diag.requestBlockedByInflight ? " BLK" : "",
+        diag.reqSkipEmptyKey,
+        diag.reqSkipAlreadyPending,
+        diag.reqSkipEmptyTile,
+        diag.reqSkipClassified,
+        diag.reqSkipUpsampleSrc,
+        diag.reqSkipUpsampleNoContent,
+        diag.reqSkipDispatch,
+        diag.reqSkipNoProvider,
+        diag.reqStopDispatch,
         diag.budgetNetworkRequestsIssued,
         diag.budgetNetworkRequestsLimit,
         diag.budgetTerrainContentNetworkRequestsIssued,

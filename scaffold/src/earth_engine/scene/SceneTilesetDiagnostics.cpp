@@ -347,6 +347,22 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
     snapshot.pendingContentUploads = loadDiag.pendingContentUploads;
     snapshot.pendingContentTerminalResults =
         loadDiag.pendingContentTerminalResults;
+    const TileLoadRequestOutcome& outcome = loadDiag.lastRequestOutcome;
+    snapshot.requestIssued = static_cast<int>(outcome.issued);
+    snapshot.requestBlockedByInflight = outcome.blockedByInflight ? 1 : 0;
+    snapshot.reqSkipEmptyKey = static_cast<int>(outcome.skippedEmptyCacheKey);
+    snapshot.reqSkipAlreadyPending =
+        static_cast<int>(outcome.skippedAlreadyPending);
+    snapshot.reqSkipEmptyTile = static_cast<int>(outcome.skippedEmptyTile);
+    snapshot.reqSkipClassified = static_cast<int>(outcome.skippedClassified);
+    snapshot.reqSkipUpsampleSrc =
+        static_cast<int>(outcome.skippedUpsampleSourceNotReady);
+    snapshot.reqSkipUpsampleNoContent =
+        static_cast<int>(outcome.skippedUpsampleNoContentSource);
+    snapshot.reqSkipDispatch = static_cast<int>(outcome.skippedDispatch);
+    snapshot.reqSkipNoProvider =
+        static_cast<int>(outcome.skippedNoContentProvider);
+    snapshot.reqStopDispatch = static_cast<int>(outcome.stoppedAtDispatch);
     snapshot.rasterOverlayTilesLoading =
         loadDiag.rasterOverlayTilesLoading;
     snapshot.rasterSourceRequestsInFlight =
@@ -401,6 +417,17 @@ void SceneTilesetDiagnosticsSnapshot::add(
     pendingContentRequests += next.pendingContentRequests;
     pendingContentUploads += next.pendingContentUploads;
     pendingContentTerminalResults += next.pendingContentTerminalResults;
+    requestIssued += next.requestIssued;
+    requestBlockedByInflight += next.requestBlockedByInflight;
+    reqSkipEmptyKey += next.reqSkipEmptyKey;
+    reqSkipAlreadyPending += next.reqSkipAlreadyPending;
+    reqSkipEmptyTile += next.reqSkipEmptyTile;
+    reqSkipClassified += next.reqSkipClassified;
+    reqSkipUpsampleSrc += next.reqSkipUpsampleSrc;
+    reqSkipUpsampleNoContent += next.reqSkipUpsampleNoContent;
+    reqSkipDispatch += next.reqSkipDispatch;
+    reqSkipNoProvider += next.reqSkipNoProvider;
+    reqStopDispatch += next.reqStopDispatch;
     rasterOverlayTilesLoading += next.rasterOverlayTilesLoading;
     rasterSourceRequestsInFlight += next.rasterSourceRequestsInFlight;
     rasterPendingUploads += next.rasterPendingUploads;
@@ -540,6 +567,17 @@ void SceneTilesetDiagnosticsSnapshot::applyTo(Diagnostics& diag) const {
     diag.pendingContentRequests += pendingContentRequests;
     diag.pendingContentUploads += pendingContentUploads;
     diag.pendingContentTerminalResults += pendingContentTerminalResults;
+    diag.requestIssued += requestIssued;
+    diag.requestBlockedByInflight += requestBlockedByInflight;
+    diag.reqSkipEmptyKey += reqSkipEmptyKey;
+    diag.reqSkipAlreadyPending += reqSkipAlreadyPending;
+    diag.reqSkipEmptyTile += reqSkipEmptyTile;
+    diag.reqSkipClassified += reqSkipClassified;
+    diag.reqSkipUpsampleSrc += reqSkipUpsampleSrc;
+    diag.reqSkipUpsampleNoContent += reqSkipUpsampleNoContent;
+    diag.reqSkipDispatch += reqSkipDispatch;
+    diag.reqSkipNoProvider += reqSkipNoProvider;
+    diag.reqStopDispatch += reqStopDispatch;
     diag.rasterOverlayTilesLoading += rasterOverlayTilesLoading;
     diag.rasterSourceRequestsInFlight += rasterSourceRequestsInFlight;
     diag.rasterPendingUploads += rasterPendingUploads;
@@ -644,6 +682,17 @@ void SceneTilesetDiagnostics::reset(Diagnostics& diag) {
     diag.pendingContentRequests = 0;
     diag.pendingContentUploads = 0;
     diag.pendingContentTerminalResults = 0;
+    diag.requestIssued = 0;
+    diag.requestBlockedByInflight = 0;
+    diag.reqSkipEmptyKey = 0;
+    diag.reqSkipAlreadyPending = 0;
+    diag.reqSkipEmptyTile = 0;
+    diag.reqSkipClassified = 0;
+    diag.reqSkipUpsampleSrc = 0;
+    diag.reqSkipUpsampleNoContent = 0;
+    diag.reqSkipDispatch = 0;
+    diag.reqSkipNoProvider = 0;
+    diag.reqStopDispatch = 0;
     resetProviderDiagnostics(diag);
     diag.rasterOverlayTilesLoading = 0;
     diag.rasterSourceRequestsInFlight = 0;
