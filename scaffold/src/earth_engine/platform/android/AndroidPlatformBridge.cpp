@@ -217,16 +217,20 @@ std::unique_ptr<DecodedImage> AndroidPlatformBridge::decodeImage(
     return img;
 }
 
-void AndroidPlatformBridge::log(LogLevel /*level*/, const std::string& tag,
+void AndroidPlatformBridge::log(LogLevel level, const std::string& tag,
                                  const std::string& message) {
-    __android_log_print(ANDROID_LOG_INFO, tag.c_str(), "%s", message.c_str());
+    int priority = ANDROID_LOG_INFO;
+    switch (level) {
+        case LogLevel::Debug:   priority = ANDROID_LOG_DEBUG; break;
+        case LogLevel::Info:    priority = ANDROID_LOG_INFO;  break;
+        case LogLevel::Warning: priority = ANDROID_LOG_WARN;  break;
+        case LogLevel::Error:   priority = ANDROID_LOG_ERROR; break;
+    }
+    __android_log_print(priority, tag.c_str(), "%s", message.c_str());
 }
 
 DeviceInfo AndroidPlatformBridge::deviceInfo() const {
-    DeviceInfo info;
-    info.platform = "Android";
-    info.cpuCores = 4;
-    return info;
+    return impl_->deviceInfo;
 }
 
 std::string AndroidPlatformBridge::getToken(const std::string&) const {

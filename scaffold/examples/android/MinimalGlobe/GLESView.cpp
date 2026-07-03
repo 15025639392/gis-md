@@ -181,11 +181,6 @@ static void renderFrame() {
     gEngine->advanceTime(dt);
     gEngine->render(0.0);  // auto-delta（内部 beginFrame→update 计算 clearColor→render→endFrame）
 
-    // 读取本帧计算的 clear color，设置为下一帧的 glClear 颜色（1 帧滞后，视觉无感）
-    float cr, cg, cb, ca;
-    gEngine->getClearColor(cr, cg, cb, ca);
-    glClearColor(cr, cg, cb, ca);
-
     eglSwapBuffers(gDisplay, gSurface);
     ++gFrameCount;
 }
