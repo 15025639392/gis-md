@@ -65,17 +65,27 @@ void Engine::render(double deltaSeconds) {
     }
 
     {
-        const double startMs = perf::nowMs();
-        device_->beginFrame();
-        scene_->recordEngineTiming(
-            Scene::EngineTimingScope::BeginFrame,
-            perf::nowMs() - startMs);
-    }
-    {
+        // Update first so this frame's FrameState (camera + sky clear color) is
+        // ready before beginFrame() clears the color/depth attachments. GPU
+        // uploads during update use createTexture/createBuffer, which need no
+        // active frame on either backend, so running update ahead of beginFrame
+        // is safe.
         const double startMs = perf::nowMs();
         scene_->update(deltaSeconds);
         scene_->recordEngineTiming(
             Scene::EngineTimingScope::SceneUpdate,
+            perf::nowMs() - startMs);
+    }
+    {
+        const double startMs = perf::nowMs();
+        // Push this frame's sky clear color into the device before beginFrame()
+        // performs the clear (replaces the previously hardcoded sky-blue).
+        float clearR, clearG, clearB, clearA;
+        getClearColor(clearR, clearG, clearB, clearA);
+        device_->setClearColor(clearR, clearG, clearB, clearA);
+        device_->beginFrame();
+        scene_->recordEngineTiming(
+            Scene::EngineTimingScope::BeginFrame,
             perf::nowMs() - startMs);
     }
     {

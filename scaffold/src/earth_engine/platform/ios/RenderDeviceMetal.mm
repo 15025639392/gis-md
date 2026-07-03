@@ -80,6 +80,12 @@ struct RenderDeviceMetal::Impl {
     id<MTLDepthStencilState> depthDisabled = nil;
     int viewportWidth = 0;
     int viewportHeight = 0;
+    // Sky clear color pushed by Engine each frame via setClearColor().
+    // Defaults match FrameState (dark night blue) until the first update.
+    double clearR = 0.02;
+    double clearG = 0.02;
+    double clearB = 0.08;
+    double clearA = 1.0;
 };
 
 static id<MTLDepthStencilState> makeDepthState(id<MTLDevice> device,
@@ -503,6 +509,13 @@ std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const Framebuf
 // 帧操作
 // ============================================================
 
+void RenderDeviceMetal::setClearColor(float r, float g, float b, float a) {
+    impl_->clearR = r;
+    impl_->clearG = g;
+    impl_->clearB = b;
+    impl_->clearA = a;
+}
+
 void RenderDeviceMetal::beginFrame() {
     impl_->currentCommandBuffer = [impl_->commandQueue commandBuffer];
 
@@ -516,9 +529,11 @@ void RenderDeviceMetal::beginFrame() {
     MTLRenderPassDescriptor* passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
     passDesc.colorAttachments[0].texture = drawable.texture;
     passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
-    // Clear color: sky-horizon blue (fullscreen atmosphere pass covers this).
-    // TODO: pass frameState.clearR/G/B from Engine after beginFrame() reorder.
-    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(0.1, 0.3, 0.6, 1.0);
+    // Clear color: sky color for this frame, pushed by Engine via setClearColor()
+    // from FrameState before beginFrame(). The fullscreen atmosphere pass covers
+    // this on the globe; it shows through at the horizon and empty sky.
+    passDesc.colorAttachments[0].clearColor =
+        MTLClearColorMake(impl_->clearR, impl_->clearG, impl_->clearB, impl_->clearA);
     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
     passDesc.depthAttachment.texture = impl_->depthTexture;
     passDesc.depthAttachment.loadAction = MTLLoadActionClear;

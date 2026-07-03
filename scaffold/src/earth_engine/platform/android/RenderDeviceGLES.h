@@ -40,6 +40,7 @@ public:
     std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) override;
 
     // ---- 帧操作 ----
+    void setClearColor(float r, float g, float b, float a) override;
     void beginFrame() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;
@@ -52,6 +53,12 @@ public:
 private:
     int viewportWidth_ = 0;
     int viewportHeight_ = 0;
+    // Sky clear color pushed by Engine each frame via setClearColor().
+    // Defaults match FrameState (dark night blue) until the first update.
+    float clearR_ = 0.02f;
+    float clearG_ = 0.02f;
+    float clearB_ = 0.08f;
+    float clearA_ = 1.0f;
 };
 
 // ============================================================

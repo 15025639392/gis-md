@@ -38,6 +38,7 @@ public:
     std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) override;
 
     // ---- 帧操作 ----
+    void setClearColor(float r, float g, float b, float a) override;
     void beginFrame() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;

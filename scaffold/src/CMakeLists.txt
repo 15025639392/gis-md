@@ -581,11 +581,10 @@ if(ANDROID)
         target_link_libraries(earth_engine_core PRIVATE ${JNIGRAPHICS_LIBRARY})
     endif()
 elseif(APPLE)
+    # Metal 渲染后端在 iOS / macOS 共用同一套实现
     target_sources(earth_engine_core PRIVATE
         earth_engine/platform/ios/RenderDeviceMetal.h
         earth_engine/platform/ios/RenderDeviceMetal.mm
-        earth_engine/platform/macos/MacPlatformBridge.h
-        earth_engine/platform/macos/MacPlatformBridge.mm
     )
     # 启用 Objective-C++ 编译
     set_source_files_properties(
@@ -593,12 +592,34 @@ elseif(APPLE)
         PROPERTIES
         COMPILE_FLAGS "-x objective-c++"
     )
-    # MacPlatformBridge uses ARC
-    set_source_files_properties(
-        earth_engine/platform/macos/MacPlatformBridge.mm
-        PROPERTIES
-        COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
-    )
+    # PlatformBridge 按平台二选一：iOS -> IosPlatformBridge（UIKit 设备信息），
+    # macOS -> MacPlatformBridge。两者结构一致（NSURLSession/ImageIO/Keychain），
+    # 均使用 ARC。
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        target_sources(earth_engine_core PRIVATE
+            earth_engine/platform/ios/IosPlatformBridge.h
+            earth_engine/platform/ios/IosPlatformBridge.mm
+        )
+        set_source_files_properties(
+            earth_engine/platform/ios/IosPlatformBridge.mm
+            PROPERTIES
+            COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
+        )
+        find_library(UIKIT_LIBRARY UIKit)
+        if(UIKIT_LIBRARY)
+            target_link_libraries(earth_engine_core PRIVATE ${UIKIT_LIBRARY})
+        endif()
+    else()
+        target_sources(earth_engine_core PRIVATE
+            earth_engine/platform/macos/MacPlatformBridge.h
+            earth_engine/platform/macos/MacPlatformBridge.mm
+        )
+        set_source_files_properties(
+            earth_engine/platform/macos/MacPlatformBridge.mm
+            PROPERTIES
+            COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
+        )
+    endif()
     # 链接 Metal 和 QuartzCore frameworks
     find_library(METAL_LIBRARY Metal)
     find_library(QUARTZCORE_LIBRARY QuartzCore)

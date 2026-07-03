@@ -8,6 +8,7 @@
 #include "earth_engine/interaction/InputEvent.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/platform/ios/RenderDeviceMetal.h"
+#include "earth_engine/platform/ios/IosPlatformBridge.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/layers/RasterOverlay.h"
@@ -31,106 +32,9 @@ constexpr const char* kGaodeSatelliteTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 constexpr bool kUseGaodeSatelliteForDemo = true;
 
-class IosDemoHttpRequest : public HttpRequest {
-public:
-    void cancel() override {}
-};
-
-class IosDemoPlatformBridge : public PlatformBridge {
-public:
-    void onMemoryPressure() override {}
-    void onEnterBackground() override {}
-    void onEnterForeground() override {}
-
-    std::unique_ptr<HttpRequest> get(
-        const std::string& url,
-        std::function<void(int statusCode, std::vector<uint8_t> body)> callback) override {
-        std::thread([url, callback = std::move(callback)]() {
-            @autoreleasepool {
-                NSURL* nsUrl = [NSURL URLWithString:[NSString stringWithUTF8String:url.c_str()]];
-                if (!nsUrl) {
-                    callback(-1, {});
-                    return;
-                }
-
-                NSURLRequest* request = [NSURLRequest requestWithURL:nsUrl
-                                                         cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
-                                                     timeoutInterval:15.0];
-                NSHTTPURLResponse* response = nil;
-                NSError* error = nil;
-                NSData* data = [NSURLConnection sendSynchronousRequest:request
-                                                      returningResponse:&response
-                                                                  error:&error];
-                if (error || !data || response.statusCode != 200) {
-                    callback(error ? -1 : static_cast<int>(response.statusCode), {});
-                    return;
-                }
-
-                const uint8_t* bytes = static_cast<const uint8_t*>(data.bytes);
-                callback(static_cast<int>(response.statusCode),
-                         std::vector<uint8_t>(bytes, bytes + data.length));
-            }
-        }).detach();
-        return std::make_unique<IosDemoHttpRequest>();
-    }
-
-    std::string cacheDirectory() const override { return NSTemporaryDirectory().UTF8String ?: "/tmp"; }
-    std::string documentsDirectory() const override { return NSHomeDirectory().UTF8String ?: "."; }
-
-    std::unique_ptr<DecodedImage> decodeImage(const uint8_t* data, size_t len) override {
-        @autoreleasepool {
-            NSData* nsData = [NSData dataWithBytes:data length:len];
-            UIImage* image = [UIImage imageWithData:nsData];
-            CGImageRef cgImage = image.CGImage;
-            if (!cgImage) return nullptr;
-
-            const size_t width = CGImageGetWidth(cgImage);
-            const size_t height = CGImageGetHeight(cgImage);
-            if (width == 0 || height == 0) return nullptr;
-
-            auto decoded = std::make_unique<DecodedImage>();
-            decoded->width = static_cast<int>(width);
-            decoded->height = static_cast<int>(height);
-            decoded->channels = 4;
-            decoded->pixels.resize(width * height * 4);
-
-            CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-            CGContextRef context = CGBitmapContextCreate(
-                decoded->pixels.data(),
-                width,
-                height,
-                8,
-                width * 4,
-                colorSpace,
-                kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
-            CGColorSpaceRelease(colorSpace);
-            if (!context) return nullptr;
-
-            CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
-            CGContextRelease(context);
-            return decoded;
-        }
-    }
-
-    void log(LogLevel /*level*/, const std::string& tag, const std::string& message) override {
-        NSLog(@"[%s] %s", tag.c_str(), message.c_str());
-    }
-
-    DeviceInfo deviceInfo() const override {
-        DeviceInfo info;
-        info.platform = "iOS";
-        info.model = UIDevice.currentDevice.model.UTF8String ?: "iOS";
-        info.osVersion = UIDevice.currentDevice.systemVersion.UTF8String ?: "";
-        info.screenDensity = static_cast<float>(UIScreen.mainScreen.scale);
-        info.screenWidthPx = static_cast<int>(UIScreen.mainScreen.bounds.size.width * UIScreen.mainScreen.scale);
-        info.screenHeightPx = static_cast<int>(UIScreen.mainScreen.bounds.size.height * UIScreen.mainScreen.scale);
-        info.cpuCores = static_cast<int>([NSProcessInfo processInfo].processorCount);
-        info.totalMemoryBytes = static_cast<int64_t>([NSProcessInfo processInfo].physicalMemory);
-        return info;
-    }
-
-    std::string getToken(const std::string& /*providerId*/) const override { return ""; }
-};
+// PlatformBridge 现由引擎提供：earth_engine::IosPlatformBridge
+// （NSURLSession 网络 / ImageIO 解码 / Keychain 鉴权 / UIKit 设备信息）。
+// 原先此处的 IosDemoPlatformBridge 内联桩已移除。
 
 } // namespace
 
@@ -138,7 +42,7 @@ public:
     CADisplayLink *_displayLink;
     std::unique_ptr<RenderDeviceMetal> _renderDevice;
     std::unique_ptr<Engine> _engine;
-    std::unique_ptr<IosDemoPlatformBridge> _platformBridge;
+    std::unique_ptr<IosPlatformBridge> _platformBridge;
     std::vector<std::unique_ptr<RasterOverlay>> _rasterOverlays;
     std::vector<std::unique_ptr<ActivatedRasterOverlay>> _activatedRasterOverlays;
     BOOL _engineReady;
@@ -197,7 +101,7 @@ public:
         std::unique_ptr<ImageryProvider> provider;
         std::unique_ptr<TileScheme> scheme;
         if (kUseGaodeSatelliteForDemo) {
-            _platformBridge = std::make_unique<IosDemoPlatformBridge>();
+            _platformBridge = std::make_unique<IosPlatformBridge>();
             auto xyz = std::make_unique<XYZImageryProvider>(
                 kGaodeSatelliteTemplate,
                 "Gaode/Amap satellite imagery");

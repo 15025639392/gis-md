@@ -198,16 +198,28 @@ uniform sampler2D u_metallicRoughnessTexture;
 uniform sampler2D u_normalTexture;
 uniform sampler2D u_occlusionTexture;
 uniform sampler2D u_emissiveTexture;
-uniform sampler2D u_anisotropyTexture;
-uniform sampler2D u_specularTexture;
-uniform sampler2D u_specularColorTexture;
-uniform sampler2D u_specularGlossinessTexture;
-uniform sampler2D u_transmissionTexture;
-uniform sampler2D u_clearcoatTexture;
-uniform sampler2D u_clearcoatRoughnessTexture;
-uniform sampler2D u_clearcoatNormalTexture;
-uniform sampler2D u_sheenColorTexture;
-uniform sampler2D u_sheenRoughnessTexture;
+// GLES ≤16-texture-unit compatibility (e.g. Adreno reports
+// GL_MAX_TEXTURE_IMAGE_UNITS==16, the GLES spec floor). The full PBR material
+// otherwise declares 20 sampler2D, overflowing the fragment texture-unit limit
+// so the program fails to link ("Sampler location or component exceeds max
+// allowed") and, with no fallback globe, the screen stays black. The advanced
+// KHR-extension textures below are never populated by this engine's content —
+// QM terrain draws through the terrain shader, and 3D-Tiles glTF uses only
+// baseColor / normal / metallicRoughness — so their u_has*Texture flags stay
+// 0.0 and these sampler reads never execute. Aliasing them to the base-color
+// sampler drops the active-sampler count to 10 while leaving every factor-based
+// extension path (u_specularFactor, u_clearcoatFactors, u_sheen*, …) intact.
+// Metal (kGltfFragmentMSL) keeps the full independent sampler set.
+#define u_anisotropyTexture u_baseColorTexture
+#define u_specularTexture u_baseColorTexture
+#define u_specularColorTexture u_baseColorTexture
+#define u_specularGlossinessTexture u_baseColorTexture
+#define u_transmissionTexture u_baseColorTexture
+#define u_clearcoatTexture u_baseColorTexture
+#define u_clearcoatRoughnessTexture u_baseColorTexture
+#define u_clearcoatNormalTexture u_baseColorTexture
+#define u_sheenColorTexture u_baseColorTexture
+#define u_sheenRoughnessTexture u_baseColorTexture
 uniform sampler2D u_mappedRasterTexture0;
 uniform sampler2D u_mappedRasterTexture1;
 uniform sampler2D u_mappedRasterTexture2;
@@ -2339,11 +2351,12 @@ bool Renderer::initialize() {
     gltfSd.fragmentSource = isMetal ? kGltfFragmentMSL : kGltfFragmentGLSL;
     impl_->gltfShader = dev->createShader(gltfSd);
     if (!impl_->gltfShader) {
-        fprintf(stderr, "[Renderer] gltfShader failed\n");
-        // Non-fatal on Metal: complex PBR shader may fail due to buffer
-        // limit (max 31) or fn ordering; surface tiles still render.
-        if (!isMetal) return false;
-        fprintf(stderr, "[Renderer] gltfShader skipped (Metal) — glTF models unavailable\n");
+        // Non-fatal on BOTH backends: a PBR shader link failure (Metal buffer
+        // limit / fn ordering, or a GLES texture-unit overflow on an
+        // unexpectedly tight driver) must not blank the globe. Terrain still
+        // renders via terrainShader; only glTF model content is skipped, and
+        // the null shader is dropped safely by the backend draw loop.
+        fprintf(stderr, "[Renderer] gltfShader failed — glTF models unavailable\n");
     }
 
     // ---- Terrain lightweight shader (32-byte TerrainGpuVertex) ----
@@ -2366,8 +2379,9 @@ bool Renderer::initialize() {
         isMetal ? kGltfFragmentMSL : kGltfFragmentGLSL;
     impl_->gltfInstancedShader = dev->createShader(gltfInstancedSd);
     if (!impl_->gltfInstancedShader) {
-        fprintf(stderr, "[Renderer] gltfInstancedShader failed\n");
-        if (!isMetal) return false;
+        // Non-fatal on both backends (see gltfShader above): instanced glTF
+        // content is skipped, the globe still renders.
+        fprintf(stderr, "[Renderer] gltfInstancedShader failed — instanced glTF unavailable\n");
     }
 
     // Shared index buffer for surface tiles (64×64 grid)

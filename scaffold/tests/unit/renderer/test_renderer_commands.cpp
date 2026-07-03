@@ -235,7 +235,7 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsTransmission) {
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_transmissionTexture"));
+        glsl.find("#define u_transmissionTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
         glsl.find("uniform float u_transmissionFactor"));
@@ -271,7 +271,7 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsPbrSpecularGlossin
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_specularGlossinessTexture"));
+        glsl.find("#define u_specularGlossinessTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
         glsl.find("u_specularGlossinessWorkflow > 0.5"));
@@ -319,7 +319,7 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsAnisotropy) {
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_anisotropyTexture"));
+        glsl.find("#define u_anisotropyTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
         glsl.find("anisotropySample.rg * 2.0 - 1.0"));
@@ -349,10 +349,10 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSpecular) {
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_specularTexture"));
+        glsl.find("#define u_specularTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_specularColorTexture"));
+        glsl.find("#define u_specularColorTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
         glsl.find("specularStrength *= texture(u_specularTexture"));
@@ -391,13 +391,13 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsClearcoat) {
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_clearcoatTexture"));
+        glsl.find("#define u_clearcoatTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_clearcoatRoughnessTexture"));
+        glsl.find("#define u_clearcoatRoughnessTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_clearcoatNormalTexture"));
+        glsl.find("#define u_clearcoatNormalTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
         glsl.find("clearcoat *= texture(u_clearcoatTexture"));
@@ -456,10 +456,10 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSheen) {
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_sheenColorTexture"));
+        glsl.find("#define u_sheenColorTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
-        glsl.find("uniform sampler2D u_sheenRoughnessTexture"));
+        glsl.find("#define u_sheenRoughnessTexture u_baseColorTexture"));
     EXPECT_NE(
         std::string::npos,
         glsl.find("sheenColor *= texture(u_sheenColorTexture"));
@@ -486,6 +486,46 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSheen) {
     EXPECT_NE(
         std::string::npos,
         msl.find("color += sheenColor * sheen"));
+}
+
+// GLES fragment shaders may declare at most GL_MAX_TEXTURE_IMAGE_UNITS
+// sampler2D (spec floor 16; Adreno enforces exactly 16). The full PBR material
+// needs 20, so the GLES glTF shader aliases its advanced KHR-extension textures
+// to u_baseColorTexture (keeping factor-based extension math) and compacts the
+// live samplers to 10 — base color, metallic-roughness, normal, occlusion,
+// emissive, four raster overlays and the water mask. This guard fails loudly if
+// a future edit reintroduces enough sampler2D to overflow a 16-unit device.
+TEST(RendererCommandTest, GltfFragmentShaderStaysWithinGlesSamplerLimit) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+
+    const std::string kSamplerDecl = "uniform sampler2D ";
+    size_t samplerCount = 0;
+    for (size_t pos = glsl.find(kSamplerDecl);
+         pos != std::string::npos;
+         pos = glsl.find(kSamplerDecl, pos + kSamplerDecl.size())) {
+        ++samplerCount;
+    }
+
+    EXPECT_LE(samplerCount, 16u)
+        << "GLES glTF fragment shader declares " << samplerCount
+        << " sampler2D; must stay <= 16 to link on GL_MAX_TEXTURE_IMAGE_UNITS==16";
+    EXPECT_EQ(samplerCount, 10u);
+
+    // The samplers the engine actually feeds must remain real declarations.
+    for (const char* kept : {
+             "uniform sampler2D u_baseColorTexture",
+             "uniform sampler2D u_metallicRoughnessTexture",
+             "uniform sampler2D u_normalTexture",
+             "uniform sampler2D u_occlusionTexture",
+             "uniform sampler2D u_emissiveTexture",
+             "uniform sampler2D u_mappedRasterTexture0",
+             "uniform sampler2D u_mappedRasterTexture1",
+             "uniform sampler2D u_mappedRasterTexture2",
+             "uniform sampler2D u_mappedRasterTexture3",
+             "uniform sampler2D u_gltfWaterMaskTexture"}) {
+        EXPECT_NE(std::string::npos, glsl.find(kept))
+            << "missing required GLES glTF sampler: " << kept;
+    }
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersUseBaseColorForUnlitMaterials) {

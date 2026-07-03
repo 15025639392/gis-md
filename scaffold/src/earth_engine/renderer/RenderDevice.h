@@ -54,6 +54,15 @@ public:
     virtual std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) = 0;
 
     // ---- 帧操作 ----
+    /// 设置后续 beginFrame() 清除颜色缓冲所用的 RGBA（分量 0..1）。
+    /// 由引擎在每帧 beginFrame() 前用当前 FrameState 的天空色调用。
+    /// 默认实现忽略——离屏 / 测试设备无需清屏色，因此不是纯虚（避免破坏 mock）。
+    virtual void setClearColor(float r, float g, float b, float a) {
+        (void)r;
+        (void)g;
+        (void)b;
+        (void)a;
+    }
     virtual void beginFrame() = 0;
     virtual void submit(const RenderCommandList& commands) = 0;
     virtual void endFrame() = 0;

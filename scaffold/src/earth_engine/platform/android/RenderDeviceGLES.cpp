@@ -26,6 +26,31 @@ bool supportsTextureAnisotropy() {
            std::string(extensions).find("GL_EXT_texture_filter_anisotropic") != std::string::npos;
 }
 
+// GLES fragment shaders are limited to GL_MAX_TEXTURE_IMAGE_UNITS texture units
+// (spec floor 16; Adreno enforces exactly 16). The backend-shared textures
+// vector (see RenderCommand.h) places advanced PBR-extension textures at indices
+// 5-14, raster overlays at kGltfRasterOverlayTextureBase..(+3) and the water
+// mask at kGltfWaterMaskTextureSlot (15-19). The GLES glTF fragment shader
+// aliases the extension samplers to the base-color sampler, so those 10 slots
+// carry no live sampler and the raster/water textures can be compacted into the
+// freed 5-9 range to stay within 16 units. Metal keeps the full 0-19 layout.
+constexpr int kGltfExtensionSamplerSlots = kGltfRasterOverlayTextureBase - 5;  // 10
+constexpr int kGlesGltfRasterUnitBase =
+    kGltfRasterOverlayTextureBase - kGltfExtensionSamplerSlots;  // 5
+constexpr int kGlesGltfWaterUnit =
+    kGltfWaterMaskTextureSlot - kGltfExtensionSamplerSlots;      // 9
+
+// Maps a shared textures-vector index to the compacted GLES fragment texture
+// unit for glTF / terrain commands. Returns -1 for the aliased extension slots
+// (5-14), which carry no live sampler on GLES and must not be bound.
+int glesGltfTextureUnit(size_t vecIndex) {
+    if (vecIndex <= 4) return static_cast<int>(vecIndex);
+    if (vecIndex >= static_cast<size_t>(kGltfRasterOverlayTextureBase)) {
+        return static_cast<int>(vecIndex) - kGltfExtensionSamplerSlots;
+    }
+    return -1;
+}
+
 } // namespace
 
 // ============================================================
@@ -353,6 +378,13 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(const Framebuff
 // 帧操作
 // ============================================================
 
+void RenderDeviceGLES::setClearColor(float r, float g, float b, float a) {
+    clearR_ = r;
+    clearG_ = g;
+    clearB_ = b;
+    clearA_ = a;
+}
+
 void RenderDeviceGLES::beginFrame() {
     glViewport(0, 0, viewportWidth_, viewportHeight_);
     // Restore frame-global state before clear. Previous overlay/background
@@ -361,9 +393,10 @@ void RenderDeviceGLES::beginFrame() {
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
     glDisable(GL_POLYGON_OFFSET_FILL);
-    // Clear color: sky-horizon blue (fullscreen atmosphere pass covers this).
-    // TODO: pass frameState.clearR/G/B from Engine after beginFrame() reorder.
-    glClearColor(0.1f, 0.3f, 0.6f, 1.0f);
+    // Clear color: sky color for this frame, pushed by Engine via setClearColor()
+    // from FrameState before beginFrame(). The fullscreen atmosphere pass covers
+    // this on the globe; it shows through at the horizon and empty sky.
+    glClearColor(clearR_, clearG_, clearB_, clearA_);
     glClearDepthf(0.0f);   // Reverse-Z: clear to 0 (farthest)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
@@ -685,15 +718,28 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         }
 
         // ---- 纹理绑定 ----
+        // glTF / terrain commands compact their material textures into GLES's
+        // ≤16-unit range (see glesGltfTextureUnit): raster overlays move from
+        // shared slots 15-18 to units 5-8, the water mask from 19 to 9, and the
+        // aliased extension slots 5-14 are skipped. Every other command kind
+        // (SurfaceTile, vector, environment) binds 1:1 at its vector index.
+        const bool compactGltfUnits =
+            cmd.kind == RenderCommandKind::GltfPrimitive ||
+            cmd.kind == RenderCommandKind::GltfPrimitiveInstanced;
         const size_t textureCount =
             std::min(cmd.textures.size(), currentTextures.size());
         for (size_t textureIndex = 0; textureIndex < textureCount; ++textureIndex) {
             if (!cmd.textures[textureIndex]) continue;
+            const int unit = compactGltfUnits
+                ? glesGltfTextureUnit(textureIndex)
+                : static_cast<int>(textureIndex);
+            if (unit < 0) continue;  // aliased extension slot — no live sampler
             auto* glTex = static_cast<GLTexture*>(cmd.textures[textureIndex]);
-            if (currentTextures[textureIndex] != glTex->glId()) {
-                currentTextures[textureIndex] = glTex->glId();
-                glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(textureIndex));
-                glBindTexture(GL_TEXTURE_2D, currentTextures[textureIndex]);
+            const size_t unitIdx = static_cast<size_t>(unit);
+            if (currentTextures[unitIdx] != glTex->glId()) {
+                currentTextures[unitIdx] = glTex->glId();
+                glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));
+                glBindTexture(GL_TEXTURE_2D, currentTextures[unitIdx]);
             }
         }
         auto setSampler = [&](const char* name, int unit) {
@@ -707,24 +753,17 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setSampler("u_normalTexture", 2);
             setSampler("u_occlusionTexture", 3);
             setSampler("u_emissiveTexture", 4);
-            setSampler("u_specularTexture", 5);
-            setSampler("u_specularColorTexture", 6);
-            setSampler("u_clearcoatTexture", 7);
-            setSampler("u_clearcoatRoughnessTexture", 8);
-            setSampler("u_clearcoatNormalTexture", 9);
-            setSampler("u_sheenColorTexture", 10);
-            setSampler("u_sheenRoughnessTexture", 11);
-            setSampler("u_anisotropyTexture", 12);
-            setSampler("u_specularGlossinessTexture", 13);
-            setSampler("u_transmissionTexture", 14);
+            // Advanced PBR-extension samplers (specular / clearcoat / sheen /
+            // anisotropy / transmission / specular-glossiness) are aliased to
+            // u_baseColorTexture in the GLES glTF shader, so they need no unit
+            // of their own. Raster overlays and the water mask are compacted
+            // into the freed 5-9 range (mirrors glesGltfTextureUnit above).
             for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
                 std::string name =
                     "u_mappedRasterTexture" + std::to_string(i);
-                setSampler(
-                    name.c_str(),
-                    kGltfRasterOverlayTextureBase + i);
+                setSampler(name.c_str(), kGlesGltfRasterUnitBase + i);
             }
-            setSampler("u_gltfWaterMaskTexture", kGltfWaterMaskTextureSlot);
+            setSampler("u_gltfWaterMaskTexture", kGlesGltfWaterUnit);
         }
         for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
             std::string name = "u_overlayTexture" + std::to_string(i);
@@ -945,7 +984,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     }
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    for (int textureUnit = 5; textureUnit >= 0; --textureUnit) {
+    // Unbind every unit the frame may have touched — SurfaceTile uses 0-4/5,
+    // compacted glTF/terrain uses 0-9 (kGlesGltfWaterUnit).
+    for (int textureUnit = kGlesGltfWaterUnit; textureUnit >= 0; --textureUnit) {
         glActiveTexture(GL_TEXTURE0 + textureUnit);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
@@ -982,6 +1023,18 @@ void RenderDeviceGLES::onSurfaceCreated() {
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
+
+    // Fragment texture-unit caps gate how many sampler2D a fragment shader may
+    // declare. The GLES glTF shader is compacted to ≤16 samplers so it links at
+    // the GLES floor (GL_MAX_TEXTURE_IMAGE_UNITS==16, e.g. Adreno). Log both
+    // caps once so the assumption is verifiable on-device.
+    GLint maxFragUnits = 0;
+    GLint maxCombinedUnits = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &maxFragUnits);
+    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &maxCombinedUnits);
+    __android_log_print(ANDROID_LOG_INFO, "GLES",
+        "GL_MAX_TEXTURE_IMAGE_UNITS=%d GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS=%d",
+        maxFragUnits, maxCombinedUnits);
 }
 
 void RenderDeviceGLES::onSurfaceChanged(int width, int height) {
