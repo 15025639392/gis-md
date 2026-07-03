@@ -664,6 +664,20 @@ add_executable(test_tileset_selection_refinement
 target_link_libraries(test_tileset_selection_refinement PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_selection_refinement COMMAND test_tileset_selection_refinement)
 
+# selector 对拍回放测试：include 共享场景头，golden 路径编译期注入
+# （golden 由 tools/selector_diff/cesium_golden_gen 离线生成后提交入库）
+add_executable(test_selector_cesium_golden_diff
+    unit/tiling/test_selector_cesium_golden_diff.cpp
+)
+target_include_directories(test_selector_cesium_golden_diff PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tools/selector_diff
+)
+target_compile_definitions(test_selector_cesium_golden_diff PRIVATE
+    SELECTOR_DIFF_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tools/selector_diff/golden"
+)
+target_link_libraries(test_selector_cesium_golden_diff PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_selector_cesium_golden_diff COMMAND test_selector_cesium_golden_diff)
+
 add_executable(test_tileset_quantized_mesh
     unit/tiling/test_tileset_quantized_mesh.cpp
 )
