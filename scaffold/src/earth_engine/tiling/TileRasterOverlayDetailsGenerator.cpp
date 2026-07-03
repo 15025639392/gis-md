@@ -417,16 +417,22 @@ int TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays
             continue;
         }
         const RasterOverlayProjection projection = provider->getProjection();
+        // Normalize overlay texcoords against the actual mesh's projected bounds
+        // (cesium computes the overlay rectangle from the loaded vertices). The
+        // declared tile bounding-volume region is only a reliable substitute
+        // when it matches the mesh; for glTF-terrain-upsampled tiles the region
+        // is the coarser ancestor rectangle (a full LOD larger and offset), so
+        // using it collapses the texcoord V range and smears imagery into
+        // vertical streaks. Prefer model bounds whenever geometry is present and
+        // fall back to the declared region only when the model has no vertices.
         const bool generatedDetails =
-            boundingVolume &&
-                boundingVolume->kind == TileBoundingVolumeKind::Region
-            ? ensureProjectionDetailsFromRegion(
-                  renderContent,
-                  *boundingVolume,
-                  projection)
-            : ensureProjectionDetailsFromModelBounds(
-                  renderContent,
-                  projection);
+            ensureProjectionDetailsFromModelBounds(renderContent, projection) ||
+            (boundingVolume &&
+             boundingVolume->kind == TileBoundingVolumeKind::Region &&
+             ensureProjectionDetailsFromRegion(
+                 renderContent,
+                 *boundingVolume,
+                 projection));
         if (generatedDetails) {
             ++generated;
         }

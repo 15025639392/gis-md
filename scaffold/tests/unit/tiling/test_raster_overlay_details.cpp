@@ -1113,6 +1113,71 @@ TEST(RasterOverlayDetailsGeneratorTest,
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
+     ActiveOverlayGenerationUsesModelBoundsWhenRegionVolumeExceedsMesh) {
+    // Regression: a glTF-terrain-upsampled tile carries a declared bounding
+    // volume region that is a full LOD coarser than its mesh (twice the size in
+    // each axis, centered here). Normalizing overlay texcoords against that loose
+    // region compresses U/V into the middle band and — when the mesh sits at a
+    // region edge — collapses V to a constant, smearing imagery into vertical
+    // streaks on-device. The overlay rectangle must come from the mesh's own
+    // projected bounds (cesium's behavior) so texcoords span the full [0,1].
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(106.0, 29.0, 106.5, 29.5);
+    prepareTerrainQuadRenderContent(renderContent, modelRegion);
+
+    RasterOverlay::Options options{};
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    ActivatedRasterOverlay activated(*overlay);
+    ASSERT_NE(nullptr, activated.ensureTileProvider(nullptr));
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    // 2x-larger region centered on the mesh (the upsampled-tile failure mode).
+    const Rectangle looseRegion =
+        Rectangle::fromDegrees(105.75, 28.75, 106.75, 29.75);
+    const TileBoundingVolume bounds =
+        TileBoundingVolume::fromRegion(looseRegion, -25.0, 125.0);
+
+    const int generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays(
+            renderContent,
+            &bounds,
+            overlays,
+            nullptr);
+
+    EXPECT_EQ(1, generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+
+    // Rectangle comes from the mesh bounds (projected), not the loose region.
+    const Rectangle projectedModel = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        modelRegion);
+    expectRectangleNear(projectedModel, details.rasterOverlayRectangles[0], 1e-3);
+
+    // Texcoords span the full [0,1] — no compression / V collapse.
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
+    for (const std::array<float, 2>& tc : primitive.vertexTexCoords[0]) {
+        minU = std::min(minU, tc[0]);
+        maxU = std::max(maxU, tc[0]);
+        minV = std::min(minV, tc[1]);
+        maxV = std::max(maxV, tc[1]);
+    }
+    EXPECT_NEAR(0.0f, minU, 1e-3f);
+    EXPECT_NEAR(1.0f, maxU, 1e-3f);
+    EXPECT_NEAR(0.0f, minV, 1e-3f);
+    EXPECT_NEAR(1.0f, maxV, 1e-3f);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
      ActiveOverlayGenerationSkipsInvisibleOverlayLikeCesiumNative) {
     TileRenderContentState renderContent;
     const Rectangle modelRegion =
