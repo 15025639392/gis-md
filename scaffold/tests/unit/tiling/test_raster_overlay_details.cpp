@@ -95,10 +95,13 @@ std::unique_ptr<GltfModel> makeRtcTerrainQuadModel(const Rectangle& rectangle) {
 
     GltfPrimitive& primitive = model->primitives.front();
     primitive.runtime.nodeIndex = 0;
-    for (SurfaceVertex& vertex : primitive.vertices) {
+    // Committed render-content convention (GltfModel::rebuildRuntime):
+    // primitive.vertices hold WORLD ECEF, runtime.baseVertices hold the
+    // node-local copy used for GPU upload.
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
         vertex.positionEcef = vertex.positionEcef - origin;
     }
-    primitive.runtime.baseVertices = primitive.vertices;
     return model;
 }
 
@@ -832,18 +835,10 @@ TEST(RasterOverlayDetailsGeneratorTest,
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
 
-    const WebMercatorProjection projection(Ellipsoid::WGS84());
-    const Rectangle projectedRegion =
-        projectRectangleSimple(projection, region);
-    const Cartographic localOnlyCartographic =
-        Ellipsoid::WGS84().cartesianToCartographic(
-            primitive.vertices[2].positionEcef);
-    const Vec3 localOnlyProjected =
-        projectPosition(projection, localOnlyCartographic);
-    const double wrongV =
-        (localOnlyProjected.y() - projectedRegion.south()) /
-        projectedRegion.height();
-    EXPECT_GT(std::abs(wrongV - primitive.vertexTexCoords[0][2][1]), 1e-3);
+    // Committed models store primitive.vertices in world ECEF, so the
+    // texcoord equality checks above fully pin the expected mapping; the
+    // former "local-only position must disagree" guard is meaningless now
+    // that world positions ARE the vertex payload.
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
@@ -1007,15 +1002,13 @@ TEST(RasterOverlayDetailsGeneratorTest,
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
 
-    const Cartographic localOnlyCartographic =
-        Ellipsoid::WGS84().cartesianToCartographic(
-            primitive.vertices[2].positionEcef);
-    const Vec3 localOnlyProjected = projectPosition(
-        WebMercatorProjection(Ellipsoid::WGS84()),
-        localOnlyCartographic);
-    const double wrongV =
-        (localOnlyProjected.y() - projected.south()) / projected.height();
-    EXPECT_GT(std::abs(wrongV - primitive.vertexTexCoords[0][2][1]), 1e-3);
+    // Regression guard for the double origin application: re-applying the
+    // node transform on top of the already-world vertices keeps lon/lat
+    // intact (radial direction unchanged) but inflates heights to
+    // ~earth-radius, which poisoned upsampled children's bounding volumes.
+    // The generated region heights must be surface heights.
+    EXPECT_NEAR(0.0, details.boundingRegion.minimumHeight, 1.0);
+    EXPECT_NEAR(0.0, details.boundingRegion.maximumHeight, 1.0);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,

@@ -1,4 +1,5 @@
 #include "TileRasterOverlayDetailsGenerator.h"
+#include "../debug/PlatformLog.h"
 
 #include "RasterMappedToTilesetTile.h"
 #include "TileBoundingVolume.h"
@@ -99,16 +100,16 @@ Vec3 worldPositionForVertex(const TileRenderContentState& renderContent,
                             const GltfModel& model,
                             const GltfPrimitive& primitive,
                             const SurfaceVertex& vertex) {
-    Vec3 position = vertex.positionEcef;
-    if (primitive.runtime.nodeIndex >= 0 &&
-        static_cast<size_t>(primitive.runtime.nodeIndex) <
-            model.nodes.size()) {
-        position =
-            model.nodes[static_cast<size_t>(primitive.runtime.nodeIndex)]
-                 .globalTransform
-                 .transformPoint(position);
-    }
-    return renderContent.gltfTransform().transformPoint(position);
+    // Committed render-content models store primitive.vertices in WORLD ECEF:
+    // GltfModel::rebuildRuntime bakes node.globalTransform into vertices and
+    // keeps the local copy in runtime.baseVertices for GPU upload. Applying
+    // the node transform here again double-counts the tile origin. Longitude/
+    // latitude survive that (the radial direction is unchanged) but heights
+    // become ~earth-radius, which poisons upsampled children's bounding
+    // volumes and gets deep-zoom tiles frustum/fog-culled (z13+ black screen).
+    (void)model;
+    (void)primitive;
+    return renderContent.gltfTransform().transformPoint(vertex.positionEcef);
 }
 
 Vec3 projectPositionForOverlay(const Cartographic& cartographic,
