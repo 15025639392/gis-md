@@ -8,6 +8,7 @@
 #include "../core/geodesy/Ellipsoid.h"
 #include "../providers/TerrainProvider.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -42,6 +43,36 @@ std::optional<CartographicVertex> cartographicVertex(
         cartographic->latitude(),
         cartographic->height()};
 }
+
+/// Per-query cache: the ECEF->geodetic conversion dominates this sampler
+/// (indexed triangles revisit each vertex ~6x), so convert each vertex at
+/// most once per primitive/transform scan.
+class CartographicVertexCache {
+public:
+    CartographicVertexCache(const std::vector<SurfaceVertex>& vertices,
+                            const Mat4& transform)
+        : vertices_(vertices),
+          transform_(transform),
+          entries_(vertices.size()) {}
+
+    const std::optional<CartographicVertex>& get(uint32_t index) {
+        Entry& entry = entries_[index];
+        if (!entry.computed) {
+            entry.computed = true;
+            entry.value = cartographicVertex(vertices_[index], transform_);
+        }
+        return entry.value;
+    }
+
+private:
+    struct Entry {
+        bool computed = false;
+        std::optional<CartographicVertex> value;
+    };
+    const std::vector<SurfaceVertex>& vertices_;
+    const Mat4& transform_;
+    std::vector<Entry> entries_;
+};
 
 std::optional<float> sampleTriangleHeight(
     const CartographicVertex& a,
@@ -92,20 +123,17 @@ std::optional<float> sampleGltfTerrainHeight(
             [&](uint32_t ia,
                 uint32_t ib,
                 uint32_t ic,
-                const Mat4& transform) -> std::optional<float> {
+                CartographicVertexCache& cache) -> std::optional<float> {
             if (ia >= vertices.size() || ib >= vertices.size() ||
                 ic >= vertices.size()) {
                 return std::nullopt;
             }
-            std::optional<CartographicVertex> a =
-                cartographicVertex(vertices[ia], transform);
-            std::optional<CartographicVertex> b =
-                cartographicVertex(vertices[ib], transform);
-            std::optional<CartographicVertex> c =
-                cartographicVertex(vertices[ic], transform);
-            if (!a || !b || !c) {
-                return std::nullopt;
-            }
+            const std::optional<CartographicVertex>& a = cache.get(ia);
+            if (!a) return std::nullopt;
+            const std::optional<CartographicVertex>& b = cache.get(ib);
+            if (!b) return std::nullopt;
+            const std::optional<CartographicVertex>& c = cache.get(ic);
+            if (!c) return std::nullopt;
             return sampleTriangleHeight(
                 *a,
                 *b,
@@ -127,14 +155,14 @@ std::optional<float> sampleGltfTerrainHeight(
             [&](size_t a,
                 size_t b,
                 size_t c,
-                const Mat4& transform) -> std::optional<float> {
+                CartographicVertexCache& cache) -> std::optional<float> {
             std::optional<uint32_t> ia = sourceIndex(a);
             std::optional<uint32_t> ib = sourceIndex(b);
             std::optional<uint32_t> ic = sourceIndex(c);
             if (!ia || !ib || !ic) {
                 return std::nullopt;
             }
-            return sampleIndexedTriangle(*ia, *ib, *ic, transform);
+            return sampleIndexedTriangle(*ia, *ib, *ic, cache);
         };
 
         std::vector<Mat4> transforms;
@@ -151,10 +179,11 @@ std::optional<float> sampleGltfTerrainHeight(
             primitive.indices.empty() ? vertices.size()
                                       : primitive.indices.size();
         for (const Mat4& transform : transforms) {
+            CartographicVertexCache cache(vertices, transform);
             if (primitive.primitiveMode == GltfPrimitiveMode::Triangles) {
                 for (size_t i = 0; i + 2 < indexCount; i += 3) {
                     std::optional<float> height =
-                        samplePrimitiveTriangle(i, i + 1, i + 2, transform);
+                        samplePrimitiveTriangle(i, i + 1, i + 2, cache);
                     if (height && (!highestHeight ||
                                    *height > *highestHeight)) {
                         highestHeight = height;
@@ -169,12 +198,12 @@ std::optional<float> sampleGltfTerrainHeight(
                               i + 1,
                               i,
                               i + 2,
-                              transform)
+                              cache)
                         : samplePrimitiveTriangle(
                               i,
                               i + 1,
                               i + 2,
-                              transform);
+                              cache);
                     if (height && (!highestHeight ||
                                    *height > *highestHeight)) {
                         highestHeight = height;
@@ -184,7 +213,7 @@ std::optional<float> sampleGltfTerrainHeight(
                        GltfPrimitiveMode::TriangleFan) {
                 for (size_t i = 1; i + 1 < indexCount; ++i) {
                     std::optional<float> height =
-                        samplePrimitiveTriangle(0, i, i + 1, transform);
+                        samplePrimitiveTriangle(0, i, i + 1, cache);
                     if (height && (!highestHeight ||
                                    *height > *highestHeight)) {
                         highestHeight = height;
@@ -215,14 +244,29 @@ float LoadedTerrainHeightSampler::sampleHeight(
         std::unique_ptr<TilesetTile>>& tiles,
         double longitudeRadians,
         double latitudeRadians) {
-    std::optional<LoadedTerrainSample> bestSample;
-
+    // Gather the candidate tiles first (a point lies inside one tile per
+    // zoom level plus its ancestors) and scan them deepest-first so a hit at
+    // the finest level lets every coarser candidate be skipped. Registry
+    // iteration order is random; without the sort every ancestor's full
+    // triangle list may be scanned before the deepest tile is reached.
+    std::vector<const TilesetTile*> candidates;
     for (const auto& [cacheKey, tile] : tiles) {
         (void)cacheKey;
-        if (!tile ||
-            (bestSample && tile->key.z < bestSample->zoom) ||
-            !tile->bounds.contains(longitudeRadians, latitudeRadians)) {
-            continue;
+        if (tile && tile->bounds.contains(longitudeRadians, latitudeRadians)) {
+            candidates.push_back(tile.get());
+        }
+    }
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const TilesetTile* a, const TilesetTile* b) {
+            return a->key.z > b->key.z;
+        });
+
+    std::optional<LoadedTerrainSample> bestSample;
+    for (const TilesetTile* tile : candidates) {
+        if (bestSample && tile->key.z < bestSample->zoom) {
+            break;
         }
 
         const TileRenderContentState& renderContent =

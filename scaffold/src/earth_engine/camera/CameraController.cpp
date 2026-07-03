@@ -34,7 +34,6 @@ constexpr float kMinDistanceEarthRadii =
                        kEarthRadiusMeters);
 constexpr float kMaxDistanceEarthRadii = 30.0f;
 constexpr double kTouchJerkLimit = 0.3;
-constexpr double kTouchInertiaDecayStep = 0.007;
 constexpr double kTouchMinSlope = 0.1;
 constexpr double kPinchIntentThresholdPixels = 4.0;
 constexpr double kPinchTiltThresholdPixels = 10.0;
@@ -134,8 +133,6 @@ void CameraController::onDragStart(float xPixels, float yPixels, double timestam
     dragLastX_ = xPixels;
     dragLastY_ = yPixels;
     inertiaAngularVelocity_ = 0.0;
-    touchInertiaScale_ = 0.0;
-    touchInertiaRotation_ = glm::dquat(1.0, 0.0, 0.0, 0.0);
     lastDragTimestamp_ = timestamp;
 }
 
@@ -166,8 +163,6 @@ void CameraController::onPinchGesture(float scale,
 
     // Pinch starts/updates interrupt drag inertia; mixed inertias feel unstable.
     inertiaAngularVelocity_ = 0.0;
-    touchInertiaScale_ = 0.0;
-    touchInertiaRotation_ = glm::dquat(1.0, 0.0, 0.0, 0.0);
     dragging_ = false;
     hasGrabbedPoint_ = false;
 
@@ -300,31 +295,13 @@ void CameraController::onPinchEnd() {
 }
 
 void CameraController::update(double deltaSeconds) {
-    if (!dragging_ && touchInertiaScale_ > 0.0 && deltaSeconds > 0.0) {
-        touchInertiaScale_ -= kTouchInertiaDecayStep;
-        if (touchInertiaScale_ <= 0.0) {
-            touchInertiaScale_ = 0.0;
-        } else {
-            const double t = 1.0 - touchInertiaScale_ * touchInertiaScale_ * touchInertiaScale_;
-            const glm::dquat delta = glm::normalize(glm::slerp(
-                touchInertiaRotation_,
-                glm::dquat(1.0, 0.0, 0.0, 0.0),
-                t));
-            if (std::abs(delta.x) > 1e-12 ||
-                std::abs(delta.y) > 1e-12 ||
-                std::abs(delta.z) > 1e-12) {
-                applyCameraRotation(delta);
-                glm::dvec3 clampedEye = clampEyeAltitude(
-                    camera_->position().raw());
-                if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
-                    camera_->setView(Vec3(clampedEye), camera_->direction(),
-                                     camera_->up());
-                }
-            } else {
-                touchInertiaScale_ = 0.0;
-            }
-        }
-    } else if (!dragging_ && inertiaAngularVelocity_ > 0.0001 && deltaSeconds > 0.0) {
+    // Flick inertia is velocity-based only: the released angular velocity
+    // (rad/s, dt-scaled and exponentially damped below) continues the pan.
+    // The previous quaternion "touch inertia" re-applied ~s^3 of the LAST
+    // drag event's full rotation EVERY FRAME (~36x the event delta in total,
+    // frame-rate dependent), which flung the camera hundreds of kilometers
+    // after one swipe when input events were coalesced under load.
+    if (!dragging_ && inertiaAngularVelocity_ > 0.0001 && deltaSeconds > 0.0) {
         double angle = inertiaAngularVelocity_ * deltaSeconds;
         glm::dquat delta = glm::angleAxis(angle, inertiaAxis_);
         if (orbitMode_) {
@@ -376,14 +353,12 @@ void CameraController::setDistance(float earthRadii) {
         kMinDistanceEarthRadii,
         kMaxDistanceEarthRadii);
     inertiaAngularVelocity_ = 0.0;
-    touchInertiaScale_ = 0.0;
 }
 
 void CameraController::setRotation(const glm::dquat& q) {
     orbitMode_ = true;
     rotation_ = glm::normalize(q);
     inertiaAngularVelocity_ = 0.0;
-    touchInertiaScale_ = 0.0;
 }
 
 void CameraController::viewDistance(const Vec3& targetWorld, double distanceMeters) {
@@ -405,7 +380,6 @@ void CameraController::viewDistance(const Vec3& targetWorld, double distanceMete
     camera_->lookAt(Vec3(eye), targetWorld, camera_->up());
     orbitMode_ = false;
     inertiaAngularVelocity_ = 0.0;
-    touchInertiaScale_ = 0.0;
     syncDistanceFromCamera();
 }
 
@@ -611,8 +585,6 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
             syncDistanceFromCamera();
         }
     }
-    touchInertiaRotation_ = delta;
-    touchInertiaScale_ = 1.0;
 
     // 更新惯性（使用事件时间戳，而非渲染时钟）
     double dt = timestamp - lastDragTimestamp_;

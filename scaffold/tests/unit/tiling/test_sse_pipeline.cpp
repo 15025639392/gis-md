@@ -6206,54 +6206,21 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     }
     check(allUpsampled,
           "Tileset: raster more-detail children carry upsample metadata and region bounds");
-    const Rectangle expectedRegion =
-        contentRectangle.computeUnion(overlayRectangle);
-    const auto projectedCenter =
-        rasterDetails.rasterOverlayRectangles[0].center();
-    const Cartographic center = unprojectPosition(
-        WebMercatorProjection(Ellipsoid::WGS84()),
-        Vec3(projectedCenter.first, projectedCenter.second, 0.0));
-    const std::array<Rectangle, 4> expectedChildBounds{
-        Rectangle(
-            expectedRegion.west(),
-            expectedRegion.south(),
-            center.longitude(),
-            center.latitude()),
-        Rectangle(
-            center.longitude(),
-            expectedRegion.south(),
-            expectedRegion.east(),
-            center.latitude()),
-        Rectangle(
-            expectedRegion.west(),
-            center.latitude(),
-            center.longitude(),
-            expectedRegion.north()),
-        Rectangle(
-            center.longitude(),
-            center.latitude(),
-            expectedRegion.east(),
-            expectedRegion.north())};
-    auto rectangleNear = [](const Rectangle& a, const Rectangle& b) {
-        constexpr double epsilon = 1e-12;
-        return std::abs(a.west() - b.west()) < epsilon &&
-            std::abs(a.south() - b.south()) < epsilon &&
-            std::abs(a.east() - b.east()) < epsilon &&
-            std::abs(a.north() - b.north()) < epsilon;
-    };
-    bool hasExpectedChildBounds = root->children.size() == 4;
-    for (const Rectangle& expected : expectedChildBounds) {
-        hasExpectedChildBounds =
-            hasExpectedChildBounds &&
-            std::any_of(
-                root->children.begin(),
-                root->children.end(),
-                [&](const TilesetTile* child) {
-                    return child && rectangleNear(child->bounds, expected);
-                });
+    // Children are REAL registry tiles: they keep the scheme rectangles
+    // the registry ensureTile assigned, regardless of the content/overlay
+    // details rectangles (content-derived subdivision rects drift per
+    // upsample level and poisoned the children bounding-volume union used
+    // for ancestor culling).
+    auto childScheme = TileScheme::createGeographicTMS();
+    bool keepsSchemeRectangles = root->children.size() == 4;
+    for (const TilesetTile* child : root->children) {
+        keepsSchemeRectangles = keepsSchemeRectangles && child &&
+            child->bounds == childScheme->tileToRectangle(child->key) &&
+            child->boundingVolume &&
+            child->boundingVolume->region == child->bounds;
     }
-    check(hasExpectedChildBounds,
-          "Tileset: raster more-detail children split the Cesium-native content/overlay union at projection center");
+    check(keepsSchemeRectangles,
+          "Tileset: raster more-detail children keep scheme rectangles");
 }
 void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
     DummyRenderDevice device;
@@ -13349,9 +13316,12 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
               plan.renderEntrySynchronousPrepCount == 0 &&
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: interaction fallback renders clipped drawable ancestor without sync prep");
+    // Clip V is south-up (terrain texcoord0 keeps V=0 at the projected
+    // south edge), so the north-east child quadrant starts at v=0.5.
     check(std::abs(plan.renderEntries.front().surfaceClipUv[0] - 0.5f) <
                   1e-6f &&
-              std::abs(plan.renderEntries.front().surfaceClipUv[1]) < 1e-6f &&
+              std::abs(plan.renderEntries.front().surfaceClipUv[1] - 0.5f) <
+                  1e-6f &&
               std::abs(plan.renderEntries.front().surfaceClipUv[2] - 0.5f) <
                   1e-6f &&
               std::abs(plan.renderEntries.front().surfaceClipUv[3] - 0.5f) <
@@ -24117,8 +24087,10 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
           "Tileset: clipped fallback uses the drawable ancestor geometry");
     check(command.surfaceClipEnabled > 0.5f,
           "Tileset: clipped fallback enables surface UV clipping");
+    // Clip V is south-up (terrain texcoord0 keeps V=0 at the projected
+    // south edge), so the south-west child quadrant starts at v=0.0.
     check(std::abs(command.surfaceClipUv[0] - 0.0f) < 1e-6f &&
-              std::abs(command.surfaceClipUv[1] - 0.5f) < 1e-6f &&
+              std::abs(command.surfaceClipUv[1] - 0.0f) < 1e-6f &&
               std::abs(command.surfaceClipUv[2] - 0.5f) < 1e-6f &&
               std::abs(command.surfaceClipUv[3] - 0.5f) < 1e-6f,
           "Tileset: clipped fallback only fills the selected child quadrant");

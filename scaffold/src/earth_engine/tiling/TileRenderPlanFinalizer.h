@@ -4,8 +4,11 @@
 #include "TilePlan.h"
 #include "TilesetTile.h"
 
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
+#include "../core/geodesy/WebMercatorProjection.h"
+
 #include <algorithm>
-#include <cstdio>
 #include <array>
 #include <optional>
 #include <string>
@@ -50,21 +53,6 @@ struct TileRenderPlanFinalizer {
             TilesetTile* selectedTile = ensureTile(key);
             if (!selectedTile) return;
 
-            if (selectedThisFrame) {  // [RPLAN] TEMP
-                static int rpn = 0;
-                ++rpn;
-                if (rpn >= 20000 && rpn < 20140) {
-                    std::fprintf(stderr,
-                        "[RPLAN] sel z=%d x=%d y=%d directOk=%d hasGltf=%d gltfReady=%d\n",
-                        selectedTile->key.z, selectedTile->key.x, selectedTile->key.y,
-                        canBuildRenderEntryDirectly(*selectedTile) ? 1 : 0,
-                        selectedTile->content.renderContent.hasGltfContent() ? 1 : 0,
-                        selectedTile->content.renderContent.hasGltfContent()
-                            ? (selectedTile->content.renderContent.isGltfRenderReady() ? 1 : 0)
-                            : -1);
-                }
-            }
-
             TilesetTile* commandTile = selectedTile;
             std::optional<std::array<float, 4>> surfaceClipUv;
             bool usesAncestorFallback = false;
@@ -78,7 +66,7 @@ struct TileRenderPlanFinalizer {
                 if (renderableAncestor) {
                     commandTile = renderableAncestor;
                     surfaceClipUv = clipUvForDescendantBounds(
-                        commandTile->bounds,
+                        *commandTile,
                         selectedTile->bounds);
                     if (!surfaceClipUv) {
                         return;
@@ -201,32 +189,67 @@ private:
     }
 
     static std::optional<std::array<float, 4>> clipUvForDescendantBounds(
-        const Rectangle& ancestorBounds,
+        const TilesetTile& commandTile,
         const Rectangle& descendantBounds) {
+        // The terrain shader clips against texcoord set 0, which is
+        // normalized against the tile content's FIRST overlay-projection
+        // rectangle in PROJECTED space with V growing south->north (both QM
+        // native UVs and the rewritten web-mercator texcoords keep V=0 at
+        // the south edge — see rewriteTerrainProjectionTexCoords). The clip
+        // window must be computed in that same space: a linear-geographic,
+        // north-down window discards a vertically mirrored region and, on
+        // web-mercator groups, drifts with latitude.
         constexpr double kTwoPiForLongitudeWrap =
             3.14159265358979323846264338327950288 * 2.0;
-        const double ancestorWidth = ancestorBounds.width();
-        const double ancestorHeight = ancestorBounds.height();
+
+        Rectangle texcoordRect = commandTile.bounds;
+        RasterOverlayProjection projection =
+            RasterOverlayProjection::Geographic;
+        if (commandTile.content.renderContent
+                .hasRasterOverlayDetailsContent()) {
+            const RasterOverlayDetails& details =
+                commandTile.content.renderContent.rasterOverlayDetails();
+            if (!details.rasterOverlayProjections.empty() &&
+                !details.rasterOverlayRectangles.empty() &&
+                !details.rasterOverlayRectangles[0].isEmpty()) {
+                projection = details.rasterOverlayProjections[0];
+                texcoordRect = details.rasterOverlayRectangles[0];
+            }
+        }
+
+        const Rectangle descendantProjected =
+            projection == RasterOverlayProjection::WebMercator
+                ? projectRectangleSimple(
+                      WebMercatorProjection(Ellipsoid::WGS84()),
+                      descendantBounds.splitAtAntimeridian().first)
+                : descendantBounds;
+
+        // Mercator x equals longitude radians, so wrap-aware width works for
+        // both projections; projected height needs the plain subtraction.
+        const double ancestorWidth = texcoordRect.width();
+        const double ancestorHeight = texcoordRect.computeHeight();
         if (ancestorWidth <= 0.0 || ancestorHeight <= 0.0) {
             return std::nullopt;
         }
 
-        auto longitudeOffset = [&](double longitude) {
-            double offset = longitude - ancestorBounds.west();
-            if (ancestorBounds.crossesAntimeridian() && offset < 0.0) {
+        auto horizontalOffset = [&](double x) {
+            double offset = x - texcoordRect.west();
+            if (texcoordRect.crossesAntimeridian() && offset < 0.0) {
                 offset += kTwoPiForLongitudeWrap;
             }
             return offset;
         };
 
-        double uMin = longitudeOffset(descendantBounds.west()) / ancestorWidth;
-        double uMax = longitudeOffset(descendantBounds.east()) / ancestorWidth;
-        if (ancestorBounds.crossesAntimeridian() && uMax < uMin) {
+        double uMin =
+            horizontalOffset(descendantProjected.west()) / ancestorWidth;
+        double uMax =
+            horizontalOffset(descendantProjected.east()) / ancestorWidth;
+        if (texcoordRect.crossesAntimeridian() && uMax < uMin) {
             uMax += 1.0;
         }
-        double vMin = (ancestorBounds.north() - descendantBounds.north()) /
+        double vMin = (descendantProjected.south() - texcoordRect.south()) /
                       ancestorHeight;
-        double vMax = (ancestorBounds.north() - descendantBounds.south()) /
+        double vMax = (descendantProjected.north() - texcoordRect.south()) /
                       ancestorHeight;
 
         uMin = std::clamp(uMin, 0.0, 1.0);

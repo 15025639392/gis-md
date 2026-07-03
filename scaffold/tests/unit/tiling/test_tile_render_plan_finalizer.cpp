@@ -142,8 +142,10 @@ TEST(
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
     EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
+    // Clip V is south-up (terrain texcoord0 keeps V=0 at the projected
+    // south edge), so the north-east child quadrant starts at v=0.5.
     EXPECT_NEAR(entry.surfaceClipUv[0], 0.5f, 1e-6f);
-    EXPECT_NEAR(entry.surfaceClipUv[1], 0.0f, 1e-6f);
+    EXPECT_NEAR(entry.surfaceClipUv[1], 0.5f, 1e-6f);
     EXPECT_NEAR(entry.surfaceClipUv[2], 0.5f, 1e-6f);
     EXPECT_NEAR(entry.surfaceClipUv[3], 0.5f, 1e-6f);
 }

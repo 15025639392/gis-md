@@ -166,24 +166,6 @@ struct TileChildMaterializer {
     template <typename EnsureTileFn>
     static bool materializeRasterUpsampledChildren(
         TilesetTile& parent,
-        const Rectangle& subdivisionRectangle,
-        double defaultGeometricError,
-        EnsureTileFn&& ensureTile,
-        IPrepareRendererResources* pPrepRenderer = nullptr) {
-        return materializeRasterUpsampledChildren(
-            parent,
-            subdivisionRectangle,
-            subdivisionRectangle.center(),
-            defaultGeometricError,
-            std::forward<EnsureTileFn>(ensureTile),
-            pPrepRenderer);
-    }
-
-    template <typename EnsureTileFn>
-    static bool materializeRasterUpsampledChildren(
-        TilesetTile& parent,
-        const Rectangle& subdivisionRectangle,
-        const std::pair<double, double>& subdivisionCenter,
         double defaultGeometricError,
         EnsureTileFn&& ensureTile,
         IPrepareRendererResources* pPrepRenderer = nullptr,
@@ -204,9 +186,6 @@ struct TileChildMaterializer {
             }
         }
 
-        const double centerLng = subdivisionCenter.first;
-        const double centerLat = subdivisionCenter.second;
-
         const int64_t childZ64 = static_cast<int64_t>(parent.key.z) + 1;
         const int64_t childX64 = static_cast<int64_t>(parent.key.x) * 2;
         const int64_t childY64 = static_cast<int64_t>(parent.key.y) * 2;
@@ -218,28 +197,6 @@ struct TileChildMaterializer {
         const int childZ = static_cast<int>(childZ64);
         const int childX = static_cast<int>(childX64);
         const int childY = static_cast<int>(childY64);
-        const std::array<Rectangle, 4> childBounds = {
-            Rectangle(
-                subdivisionRectangle.west(),
-                subdivisionRectangle.south(),
-                centerLng,
-                centerLat),
-            Rectangle(
-                centerLng,
-                subdivisionRectangle.south(),
-                subdivisionRectangle.east(),
-                centerLat),
-            Rectangle(
-                subdivisionRectangle.west(),
-                centerLat,
-                centerLng,
-                subdivisionRectangle.north()),
-            Rectangle(
-                centerLng,
-                centerLat,
-                subdivisionRectangle.east(),
-                subdivisionRectangle.north())
-        };
 
         parent.refine = TileRefine::Replace;
         if (parent.geometricError <= 0.0) {
@@ -247,7 +204,7 @@ struct TileChildMaterializer {
         }
 
         bool changed = false;
-        for (size_t i = 0; i < childBounds.size(); ++i) {
+        for (size_t i = 0; i < 4; ++i) {
             const int dx = static_cast<int>(i % 2);
             const int dy = static_cast<int>(i / 2);
             TileKey childKey{
@@ -264,13 +221,24 @@ struct TileChildMaterializer {
             const bool wasRasterDetailUpsample =
                 child->content.isRasterDetailUpsample();
             const bool childGeometryChanged =
-                child->bounds != childBounds[i] ||
                 child->geometricError != childGeometricError;
 
             child->parent = &parent;
-            child->bounds = childBounds[i];
+            // The child keeps its registry/scheme rectangle (ensureTile
+            // computed it from the tile key). These are REAL quadtree tiles
+            // that may later receive real content, and selection culls
+            // ancestors through the union of children bounding volumes —
+            // overwriting bounds with content-derived subdivision quadrants
+            // (which drift per upsample level via the imagery-rect union and
+            // content-center split) poisons that union and frustum-culls
+            // visible tiles. cesium-native avoids this by giving upsampled
+            // children separate UpsampledQuadtreeNode IDs that never alias a
+            // real tile; this engine reuses the real tile, so the real
+            // rectangle must stay authoritative. The upsampled MESH itself is
+            // still split at the parent's overlay-texcoord 0.5 independently
+            // of these bounds (GltfTerrainUpsampler).
             child->boundingVolume = TileBoundingVolume::fromRegion(
-                childBounds[i],
+                child->bounds,
                 TileBoundsMetrics::terrainMinimumHeight(parent),
                 TileBoundsMetrics::terrainMaximumHeight(parent));
             child->contentBoundingVolume = child->boundingVolume;

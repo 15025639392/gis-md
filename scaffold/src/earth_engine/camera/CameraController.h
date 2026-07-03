@@ -113,8 +113,6 @@ private:
     glm::dvec3 inertiaAxis_{0.0, 1.0, 0.0};
     double inertiaAngularVelocity_ = 0.0;
     double lastDragTimestamp_ = 0.0;  // 最近一次 drag 事件的时间戳
-    glm::dquat touchInertiaRotation_{1.0, 0.0, 0.0, 0.0};
-    double touchInertiaScale_ = 0.0;
 
     // pinch 状态
     bool pinching_ = false;
