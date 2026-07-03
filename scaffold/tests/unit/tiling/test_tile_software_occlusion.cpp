@@ -293,10 +293,41 @@ TEST(TileSoftwareOcclusionTest, KeepsVisibleQuantizedMeshHorizonPoint) {
         TileOcclusionState::NotOccluded);
 }
 
-TEST(TileSoftwareOcclusionTest, UsesZeroQuantizedMeshHorizonPoint) {
+// A (0,0,0) horizon occlusion point is the sentinel some terrain servers write
+// when they do not compute it. In ellipsoid-scaled space it is the ellipsoid
+// center, which is trivially behind the horizon, so the fast horizon test would
+// wrongly cull an obviously visible tile. The policy must ignore the degenerate
+// point and fall back to the geometric ellipsoid test, which keeps a near-nadir
+// tile visible.
+TEST(TileSoftwareOcclusionTest, IgnoresZeroHorizonPointForVisibleTile) {
     TilesetTile tile;
     tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
     tile.bounds = Rectangle::fromDegrees(10.0, -0.01, 10.1, 0.01);
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setHorizonOcclusionPoint(Vec3::zero());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.markRenderContentReady();
+
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    EXPECT_EQ(
+        TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
+        TileOcclusionState::NotOccluded);
+}
+
+// Ignoring the degenerate horizon point must not disable occlusion culling: a
+// zero-point tile that is genuinely on the far side of the globe still has to
+// be culled through the geometric ellipsoid fallback.
+TEST(TileSoftwareOcclusionTest, ZeroHorizonPointStillCullsFarSideTile) {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(170.0, -0.01, 170.1, 0.01);
     auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
     tile.content.renderContent.prepareGltfContent(
         std::move(gltfModel), Mat4::identity());

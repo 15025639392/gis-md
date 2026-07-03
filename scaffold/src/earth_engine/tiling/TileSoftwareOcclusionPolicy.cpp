@@ -17,6 +17,15 @@ namespace {
 constexpr double kPiForLongitudeWrap = 3.14159265358979323846264338327950288;
 constexpr double kTwoPiForLongitudeWrap = kPiForLongitudeWrap * 2.0;
 
+// A genuine quantized-mesh horizon occlusion point is expressed in
+// ellipsoid-scaled space and therefore has magnitude near 1. The (0,0,0)
+// sentinel written by servers that do not compute the point is not usable:
+// it maps to the ellipsoid center and would report every tile occluded.
+bool isUsableHorizonOcclusionPoint(const Vec3& scaledPoint) {
+    constexpr double kMinUsableMagnitudeSquared = 1e-12;
+    return scaledPoint.lengthSquared() > kMinUsableMagnitudeSquared;
+}
+
 bool scaledPointOccludedByHorizon(const Vec3& pointScaled,
                                   const Vec3& cameraScaled,
                                   double vhMagnitudeSquared) {
@@ -176,7 +185,16 @@ TileOcclusionState TileSoftwareOcclusionPolicy::check(
     }
 
     if (const Vec3* horizonOcclusionPoint =
-            tile.content.renderContent.horizonOcclusionPoint()) {
+            tile.content.renderContent.horizonOcclusionPoint();
+        horizonOcclusionPoint &&
+        isUsableHorizonOcclusionPoint(*horizonOcclusionPoint)) {
+        // A valid quantized-mesh horizon occlusion point lives in
+        // ellipsoid-scaled space (magnitude ~1). Some terrain servers omit it
+        // and write the (0,0,0) sentinel; that scaled point is the ellipsoid
+        // center, which is trivially behind the horizon, so it would wrongly
+        // occlude every visible tile. Skip the fast horizon test for a
+        // degenerate point and fall through to the geometric ellipsoid tests
+        // below.
         return scaledPointOccludedByHorizon(*horizonOcclusionPoint,
                                             cameraScaled,
                                             vhMagnitudeSquared)
