@@ -6,10 +6,12 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <thread>
 #include <vector>
 #include <android/bitmap.h>
 #include <android/log.h>
 #include <jni.h>
+#include <unistd.h>
 
 #define LOG_TAG "AndroidBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -53,6 +55,90 @@ static bool clearPendingJniException(JNIEnv* env, const char* context) {
     return true;
 }
 
+/// RAII JNI env：仅当本次是自己 attach 的线程才在析构时 detach。
+/// 在已附着的 Java 线程（如 UI 线程）上使用时绝不 detach，
+/// 避免把宿主线程从 JVM 上摘下来。
+struct JniScope {
+    JNIEnv* env = nullptr;
+    JniScope() {
+        if (!gJvm) return;
+        jint res = gJvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+        if (res == JNI_EDETACHED) {
+            if (gJvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+                attached_ = true;
+            } else {
+                env = nullptr;
+            }
+        }
+    }
+    ~JniScope() {
+        if (attached_ && gJvm) {
+            gJvm->DetachCurrentThread();
+        }
+    }
+    JniScope(const JniScope&) = delete;
+    JniScope& operator=(const JniScope&) = delete;
+
+private:
+    bool attached_ = false;
+};
+
+static std::string jstringToStd(JNIEnv* env, jstring value) {
+    if (!value) return {};
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    std::string result = chars ? chars : "";
+    if (chars) env->ReleaseStringUTFChars(value, chars);
+    return result;
+}
+
+/// 调 Context.getCacheDir()/getFilesDir() 并取绝对路径。失败返回空串。
+static std::string contextDirPath(JNIEnv* env, jobject context,
+                                  const char* methodName) {
+    jclass contextClass = env->GetObjectClass(context);
+    jmethodID dirMethod = env->GetMethodID(
+        contextClass, methodName, "()Ljava/io/File;");
+    if (clearPendingJniException(env, methodName)) {
+        env->DeleteLocalRef(contextClass);
+        return {};
+    }
+    jobject file = env->CallObjectMethod(context, dirMethod);
+    env->DeleteLocalRef(contextClass);
+    if (clearPendingJniException(env, methodName) || !file) {
+        if (file) env->DeleteLocalRef(file);
+        return {};
+    }
+    jclass fileClass = env->GetObjectClass(file);
+    jmethodID absPathMethod = env->GetMethodID(
+        fileClass, "getAbsolutePath", "()Ljava/lang/String;");
+    auto path = static_cast<jstring>(env->CallObjectMethod(file, absPathMethod));
+    env->DeleteLocalRef(fileClass);
+    env->DeleteLocalRef(file);
+    if (clearPendingJniException(env, "getAbsolutePath")) {
+        if (path) env->DeleteLocalRef(path);
+        return {};
+    }
+    std::string result = jstringToStd(env, path);
+    if (path) env->DeleteLocalRef(path);
+    return result;
+}
+
+/// 读 Build 类静态 String 字段（MODEL / VERSION.RELEASE）。失败返回空串。
+static std::string buildStaticString(JNIEnv* env, const char* className,
+                                     const char* fieldName) {
+    jclass cls = env->FindClass(className);
+    if (clearPendingJniException(env, className) || !cls) return {};
+    jfieldID field = env->GetStaticFieldID(cls, fieldName, "Ljava/lang/String;");
+    if (clearPendingJniException(env, fieldName)) {
+        env->DeleteLocalRef(cls);
+        return {};
+    }
+    auto value = static_cast<jstring>(env->GetStaticObjectField(cls, field));
+    env->DeleteLocalRef(cls);
+    std::string result = jstringToStd(env, value);
+    if (value) env->DeleteLocalRef(value);
+    return result;
+}
+
 // ============================================================
 // AndroidPlatformBridge
 // ============================================================
@@ -61,12 +147,104 @@ struct AndroidPlatformBridge::Impl {
     explicit Impl(void* jvmPtr) : jvm(jvmPtr) {}
     void* jvm = nullptr;
     CurlPlatformBridge networkBridge;
+
+    // 构造时缓存的平台信息。无 Context 时保留默认值。
+    std::string cacheDir = "/data/data/com.earthengine.minimalglobe/cache";
+    std::string documentsDir = "/data/data/com.earthengine.minimalglobe/files";
+    DeviceInfo deviceInfo;
+
+    void initNativeDeviceInfo() {
+        deviceInfo.platform = "Android";
+        const int cores = static_cast<int>(std::thread::hardware_concurrency());
+        deviceInfo.cpuCores = cores > 0 ? cores : 1;
+        const long pages = sysconf(_SC_PHYS_PAGES);
+        const long pageSize = sysconf(_SC_PAGE_SIZE);
+        if (pages > 0 && pageSize > 0) {
+            deviceInfo.totalMemoryBytes =
+                static_cast<int64_t>(pages) * static_cast<int64_t>(pageSize);
+        }
+    }
+
+    void queryAppContext(jobject appContext) {
+        JniScope scope;
+        JNIEnv* env = scope.env;
+        if (!env) {
+            LOGE("queryAppContext: no JNIEnv, keeping defaults");
+            return;
+        }
+
+        const std::string cache = contextDirPath(env, appContext, "getCacheDir");
+        if (!cache.empty()) cacheDir = cache;
+        const std::string files = contextDirPath(env, appContext, "getFilesDir");
+        if (!files.empty()) documentsDir = files;
+
+        deviceInfo.model = buildStaticString(env, "android/os/Build", "MODEL");
+        deviceInfo.osVersion =
+            buildStaticString(env, "android/os/Build$VERSION", "RELEASE");
+
+        // Context.getResources().getDisplayMetrics() → density / widthPixels / heightPixels
+        jclass contextClass = env->GetObjectClass(appContext);
+        jmethodID getResources = env->GetMethodID(
+            contextClass, "getResources", "()Landroid/content/res/Resources;");
+        env->DeleteLocalRef(contextClass);
+        if (!clearPendingJniException(env, "getResources lookup")) {
+            jobject resources = env->CallObjectMethod(appContext, getResources);
+            if (!clearPendingJniException(env, "getResources") && resources) {
+                jclass resourcesClass = env->GetObjectClass(resources);
+                jmethodID getDisplayMetrics = env->GetMethodID(
+                    resourcesClass, "getDisplayMetrics",
+                    "()Landroid/util/DisplayMetrics;");
+                env->DeleteLocalRef(resourcesClass);
+                if (!clearPendingJniException(env, "getDisplayMetrics lookup")) {
+                    jobject metrics =
+                        env->CallObjectMethod(resources, getDisplayMetrics);
+                    if (!clearPendingJniException(env, "getDisplayMetrics") &&
+                        metrics) {
+                        jclass metricsClass = env->GetObjectClass(metrics);
+                        jfieldID densityField =
+                            env->GetFieldID(metricsClass, "density", "F");
+                        jfieldID widthField =
+                            env->GetFieldID(metricsClass, "widthPixels", "I");
+                        jfieldID heightField =
+                            env->GetFieldID(metricsClass, "heightPixels", "I");
+                        if (!clearPendingJniException(env,
+                                                      "DisplayMetrics fields")) {
+                            deviceInfo.screenDensity =
+                                env->GetFloatField(metrics, densityField);
+                            deviceInfo.screenWidthPx =
+                                env->GetIntField(metrics, widthField);
+                            deviceInfo.screenHeightPx =
+                                env->GetIntField(metrics, heightField);
+                        }
+                        env->DeleteLocalRef(metricsClass);
+                        env->DeleteLocalRef(metrics);
+                    }
+                }
+                env->DeleteLocalRef(resources);
+            }
+        }
+
+        LOGI("Platform context: cacheDir=%s model=%s os=%s density=%.1f "
+             "screen=%dx%d cores=%d mem=%lldMB",
+             cacheDir.c_str(),
+             deviceInfo.model.c_str(),
+             deviceInfo.osVersion.c_str(),
+             deviceInfo.screenDensity,
+             deviceInfo.screenWidthPx,
+             deviceInfo.screenHeightPx,
+             deviceInfo.cpuCores,
+             static_cast<long long>(deviceInfo.totalMemoryBytes / (1024 * 1024)));
+    }
 };
 
-AndroidPlatformBridge::AndroidPlatformBridge(void* jvm)
+AndroidPlatformBridge::AndroidPlatformBridge(void* jvm, void* appContext)
     : impl_(std::make_unique<Impl>(jvm)) {
     if (!gJvm) {
         gJvm = static_cast<JavaVM*>(jvm);
+    }
+    impl_->initNativeDeviceInfo();
+    if (appContext) {
+        impl_->queryAppContext(static_cast<jobject>(appContext));
     }
 }
 
@@ -108,11 +286,11 @@ int AndroidPlatformBridge::maximumActiveRequests() const {
 }
 
 std::string AndroidPlatformBridge::cacheDirectory() const {
-    return "/data/data/com.earthengine.minimalglobe/cache";
+    return impl_->cacheDir;
 }
 
 std::string AndroidPlatformBridge::documentsDirectory() const {
-    return "/data/data/com.earthengine.minimalglobe/files";
+    return impl_->documentsDir;
 }
 
 std::unique_ptr<DecodedImage> AndroidPlatformBridge::decodeImage(

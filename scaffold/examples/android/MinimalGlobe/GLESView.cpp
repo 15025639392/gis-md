@@ -53,6 +53,10 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_VERSION_1_6;
 }
 
+// Application Context 的 global ref（GLESView 构造时经 nativeInit 传入），
+// 供 AndroidPlatformBridge 查询目录 / 设备信息。
+static jobject gAppContext = nullptr;
+
 // Touch state
 static bool gTouching = false;
 static bool gDragStarted = false;
@@ -152,7 +156,7 @@ static bool createEngine() {
              gEngine->camera().position().z());
 
         // 创建 Android 平台桥接；网络由 native curl scheduler 调度。
-        gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm);
+        gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm, gAppContext);
         gSdkFacade =
             std::make_unique<EarthEngineSdkFacade>(
                 *gEngine,
@@ -190,6 +194,18 @@ static void renderFrame() {
 // ============================================================
 
 extern "C" {
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeInit(
+    JNIEnv* env, jclass /* clazz */, jobject appContext) {
+    if (gAppContext) {
+        env->DeleteGlobalRef(gAppContext);
+        gAppContext = nullptr;
+    }
+    if (appContext) {
+        gAppContext = env->NewGlobalRef(appContext);
+    }
+}
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeSurfaceCreated(

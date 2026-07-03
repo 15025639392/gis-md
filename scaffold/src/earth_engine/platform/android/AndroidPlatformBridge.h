@@ -12,7 +12,12 @@ void AndroidPlatformBridge_InitJvm(void* jvm);
 class AndroidPlatformBridge : public PlatformBridge {
 public:
     /// @param jvm JavaVM 指针（从 JNI_OnLoad 获取）
-    explicit AndroidPlatformBridge(void* jvm);
+    /// @param appContext Android Context 的 JNI global ref（建议传
+    ///        applicationContext）。构造时经 JNI 一次性查询缓存/文件目录与
+    ///        设备信息并缓存，之后不再触碰。可为空：空时目录退回内置默认
+    ///        路径、设备信息退回 native 可得的字段。所有权归调用方，桥不
+    ///        释放该 global ref。
+    explicit AndroidPlatformBridge(void* jvm, void* appContext = nullptr);
     ~AndroidPlatformBridge() override;
 
     // ---- 系统信号 ----

@@ -27,6 +27,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
 
     public GLESView(Context context) {
         super(context);
+        nativeInit(context.getApplicationContext());
         getHolder().addCallback(this);
         setFocusable(true);
         setFocusableInTouchMode(true);
@@ -233,6 +234,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
         return angle;
     }
 
+    private static native void nativeInit(Context appContext);
     private static native void nativeSurfaceCreated(Surface surface);
     private static native void nativeSurfaceChanged(int width, int height);
     private static native void nativeRenderFrame();
