@@ -22,6 +22,13 @@ constexpr double kVelocitySmoothing = 0.35;
 constexpr double kEarthRadiusMeters = 6378137.0;
 // Keep a small visual floor to avoid clipping the ellipsoid surface near ground.
 constexpr double kMinAltitudeMeters = 50.0;
+// Real-world terrain never exceeds ~8849 m (Everest); use a margin above it.
+// When the eye is already higher than this plus the altitude floor, the terrain
+// clamp can never trigger, so the (expensive, per-frame) terrain height query is
+// pure waste — skip it. This is what keeps panning/zooming smooth at altitude:
+// the query scans every loaded tile's mesh triangles (each with ECEF→geodetic
+// round-trips) and otherwise costs >150 ms/frame.
+constexpr double kMaxTerrainHeightMeters = 9000.0;
 constexpr float kMinDistanceEarthRadii =
     static_cast<float>((kEarthRadiusMeters + kMinAltitudeMeters) /
                        kEarthRadiusMeters);
@@ -67,9 +74,16 @@ glm::dvec3 clampEyeToMinAltitude(const glm::dvec3& eye,
 
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Vec3 eyeVec(eye);
+    const Cartographic cart = ellipsoid.cartesianToCartographic(eyeVec);
+
+    // Fast path: already above the tallest possible terrain + floor, so the
+    // clamp below can never change the eye. Skip the costly terrain query.
+    if (cart.height() >= kMaxTerrainHeightMeters + kMinAltitudeMeters) {
+        return eye;
+    }
+
     const Vec3 surface = ellipsoid.projectToSurface(eyeVec);
     const Vec3 normal = ellipsoid.geodeticSurfaceNormal(surface);
-    const Cartographic cart = ellipsoid.cartesianToCartographic(eyeVec);
 
     double terrainHeight = 0.0;
     if (terrainFunc) {

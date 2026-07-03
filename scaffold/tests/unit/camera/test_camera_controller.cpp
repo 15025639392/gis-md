@@ -380,6 +380,28 @@ TEST_F(CameraControllerTest, PinchZoomClampsToMinAltitudeInsteadOfStopping) {
     EXPECT_LT(altitude, beforeAltitude);
 }
 
+TEST_F(CameraControllerTest, HighAltitudePinchSkipsTerrainHeightQuery) {
+    // Perf regression: the terrain-height clamp scans every loaded tile's mesh
+    // triangles, so it must NOT run when the eye is far above any terrain
+    // (Everest ~8.8 km). Otherwise panning/zooming at altitude costs >150 ms/fr.
+    int terrainCalls = 0;
+    controller_->setTerrainHeightFunc([&](const Vec3&) -> double {
+        ++terrainCalls;
+        return 0.0;
+    });
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(1.02f);  // ~127 km altitude — well above terrain
+    controller_->update(0.0);
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 5; ++i) {
+        controller_->onPinchGesture(1.1f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->update(0.016);
+
+    EXPECT_EQ(0, terrainCalls);
+}
+
 TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);
