@@ -84,9 +84,14 @@ public:
             provider.providesTerrainQuadtree()
                 ? TileLoadDomain::TerrainContent
                 : TileLoadDomain::Content;
-        provider.requestTileContent(
-            key,
-            token,
+        // The in-flight gate (requestState) and the destroy-time wait in
+        // TileLoadLifecycle::markDestroyingCancelAndWait both require this
+        // completion to run exactly once on every path. cesium-native gets
+        // that from guaranteed Future continuations; here a guard completes
+        // with a failed result if the provider drops the callback without
+        // invoking it (otherwise the key leaks, the gate blocks forever and
+        // engine destruction deadlocks).
+        auto complete =
             [&mutex,
              &condition,
              &requestState,
@@ -96,7 +101,7 @@ public:
              token,
              group,
              priority,
-             domain](const TileKey&, TileContentLoadResult result) mutable {
+             domain](TileContentLoadResult result) mutable {
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
@@ -117,6 +122,14 @@ public:
                     requestState.completeContentRequest(cacheKey);
                 }
                 condition.notify_all();
+            };
+        auto guard = std::make_shared<ContentCompletionGuard>(
+            std::move(complete));
+        provider.requestTileContent(
+            key,
+            token,
+            [guard](const TileKey&, TileContentLoadResult result) mutable {
+                guard->fire(std::move(result));
             },
             toHttpPriority(group),
             options);
@@ -124,6 +137,35 @@ public:
     }
 
 private:
+    /// Invokes the wrapped completion exactly once: either with the
+    /// provider's real result, or with a failed result from the destructor
+    /// when the provider destroys the callback without ever calling it.
+    class ContentCompletionGuard {
+    public:
+        explicit ContentCompletionGuard(
+            std::function<void(TileContentLoadResult)> complete)
+            : complete_(std::move(complete)) {}
+        ContentCompletionGuard(const ContentCompletionGuard&) = delete;
+        ContentCompletionGuard& operator=(const ContentCompletionGuard&) =
+            delete;
+        ~ContentCompletionGuard() {
+            if (complete_) {
+                fire(TileContentLoadResult::failed());
+            }
+        }
+        void fire(TileContentLoadResult result) {
+            if (!complete_) {
+                return;
+            }
+            auto fn = std::move(complete_);
+            complete_ = nullptr;
+            fn(std::move(result));
+        }
+
+    private:
+        std::function<void(TileContentLoadResult)> complete_;
+    };
+
     static void enqueueCompletedLoadResult(
         TilePendingLoadQueue& pendingLoads,
         TileLoadDomain domain,

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../debug/PlatformLog.h"
+
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -32,7 +34,19 @@ public:
                         task = std::move(tasks_.front());
                         tasks_.pop();
                     }
-                    task();
+                    // An escaped exception would std::terminate the whole
+                    // process and strand any completion callbacks the task
+                    // owned. cesium-native's async++ swallows into the
+                    // task state; we log and keep the worker alive.
+                    try {
+                        task();
+                    } catch (const std::exception& e) {
+                        platformLog(LogLevel::Error, "AsyncSystem",
+                            "worker task threw: %s", e.what());
+                    } catch (...) {
+                        platformLog(LogLevel::Error, "AsyncSystem",
+                            "worker task threw unknown exception");
+                    }
                 }
             });
         }
@@ -101,30 +115,6 @@ public:
     bool isReady() const {
         return impl_ && impl_->valid() &&
                impl_->wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-    }
-
-    /// Chain a transformation on the result.  Returns a new Future.
-    template <typename F>
-    auto then(F&& func) -> Future<decltype(func(std::declval<T>()))> {
-        using R = decltype(func(std::declval<T>()));
-        auto shared = impl_;
-        auto p = std::make_shared<std::promise<R>>();
-        auto f = p->get_future();
-        std::thread([shared = std::move(shared), p = std::move(p),
-                     func = std::forward<F>(func)]() mutable {
-            try {
-                if constexpr (std::is_void_v<R>) {
-                    shared->get();
-                    func();
-                    p->set_value();
-                } else {
-                    p->set_value(func(shared->get()));
-                }
-            } catch (...) {
-                p->set_exception(std::current_exception());
-            }
-        }).detach();
-        return Future<R>(std::move(f));
     }
 
     explicit operator bool() const { return impl_ && impl_->valid(); }
