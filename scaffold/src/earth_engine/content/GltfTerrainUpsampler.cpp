@@ -35,6 +35,66 @@ bool childKeepsNorth(const UpsampledQuadtreeNode& childID) {
     return (childID.tileID.y & 1) != 0;
 }
 
+// Which half of the parent the child keeps, derived from the clip-set window
+// itself (the interior boundary is the one away from the parent edge) instead
+// of tile-key parity, so schemes whose y axis grows southward stay correct.
+struct ClipSides {
+    // Keep the greater-U / greater-V side of the interior threshold, in raw
+    // UV coordinates of the clip texcoord set.
+    bool keepGreaterU = false;
+    bool keepGreaterV = false;
+    // Geographic halves (south-up), used for water mask and skirt metadata.
+    bool eastHalf = false;
+    bool northHalf = false;
+};
+
+ClipSides clipSidesForWindow(const GltfUpsampleUvWindow& window,
+                             bool hasInvertedVCoordinate) {
+    ClipSides sides;
+    sides.keepGreaterU = window.u0 + window.u1 > 1.0;
+    sides.keepGreaterV = window.v0 + window.v1 > 1.0;
+    sides.eastHalf = sides.keepGreaterU;
+    sides.northHalf = hasInvertedVCoordinate ? !sides.keepGreaterV
+                                             : sides.keepGreaterV;
+    return sides;
+}
+
+float renormalizeCoordinate(float value, double low, double high) {
+    const double size = high - low;
+    if (!(size > 0.0)) {
+        return value;
+    }
+    return static_cast<float>(
+        std::clamp((static_cast<double>(value) - low) / size, 0.0, 1.0));
+}
+
+// Maps the kept parent-subrange coordinates onto the child's own [0,1] span.
+// cesium-native reaches the same result by dropping the overlay texcoords and
+// regenerating them against the child rectangle; texcoords are linear in
+// their projected space, so the linear remap is equivalent.
+void renormalizeTexCoords(GltfPrimitive& primitive,
+                          const GltfUpsampleWindows& windows) {
+    const size_t setCount =
+        std::min(windows.texCoordSetCount, kGltfMaxTexCoordSets);
+    for (size_t set = 0; set < setCount; ++set) {
+        const GltfUpsampleUvWindow& window = windows.texCoordSets[set];
+        for (std::array<float, 2>& uv : primitive.vertexTexCoords[set]) {
+            uv[0] = renormalizeCoordinate(uv[0], window.u0, window.u1);
+            uv[1] = renormalizeCoordinate(uv[1], window.v0, window.v1);
+        }
+    }
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.uv[0] = renormalizeCoordinate(
+            vertex.uv[0],
+            windows.nativeUv.u0,
+            windows.nativeUv.u1);
+        vertex.uv[1] = renormalizeCoordinate(
+            vertex.uv[1],
+            windows.nativeUv.v0,
+            windows.nativeUv.v1);
+    }
+}
+
 double component(const ClipVertex& vertex, int axis, int texCoord) {
     return axis == 0 ? vertex.texCoords[texCoord][0]
                      : vertex.texCoords[texCoord][1];
@@ -324,7 +384,6 @@ double shortestSkirtHeight(const SkirtMetadata& skirt) {
 void collectEdge(EdgeIndices& edges,
                  const GltfPrimitive& primitive,
                  int textureCoordinateIndex,
-                 const UpsampledQuadtreeNode& childID,
                  bool hasInvertedVCoordinate) {
     if (textureCoordinateIndex < 0 ||
         textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets)) {
@@ -336,16 +395,13 @@ void collectEdge(EdgeIndices& edges,
         return;
     }
 
-    const bool eastChild = childKeepsEast(childID);
-    const bool northChild = childKeepsNorth(childID);
-    const double westU = eastChild ? 0.5 : 0.0;
-    const double eastU = eastChild ? 1.0 : 0.5;
-    const bool keepGreaterV =
-        hasInvertedVCoordinate ? !northChild : northChild;
-    const double lowV = keepGreaterV ? 0.5 : 0.0;
-    const double highV = keepGreaterV ? 1.0 : 0.5;
-    const double southV = hasInvertedVCoordinate ? highV : lowV;
-    const double northV = hasInvertedVCoordinate ? lowV : highV;
+    // Texcoords are renormalized to the child before skirts are added, so
+    // every boundary (parent outer edges and the interior clip line) sits at
+    // exactly 0 or 1.
+    const double westU = 0.0;
+    const double eastU = 1.0;
+    const double southV = hasInvertedVCoordinate ? 1.0 : 0.0;
+    const double northV = hasInvertedVCoordinate ? 0.0 : 1.0;
 
     for (uint32_t i = 0; i < texCoords.size(); ++i) {
         const auto& uv = texCoords[i];
@@ -453,7 +509,7 @@ void appendSkirtEdge(GltfPrimitive& primitive,
 }
 
 void addSkirts(GltfPrimitive& primitive,
-               const UpsampledQuadtreeNode& childID,
+               const ClipSides& sides,
                int textureCoordinateIndex,
                bool hasInvertedVCoordinate) {
     if (!primitive.skirtMetadata) {
@@ -473,20 +529,19 @@ void addSkirts(GltfPrimitive& primitive,
         edges,
         primitive,
         textureCoordinateIndex,
-        childID,
         hasInvertedVCoordinate);
 
     const double shortestHeight = shortestSkirtHeight(parentSkirt);
-    primitive.skirtMetadata->skirtWestHeight = childKeepsEast(childID)
+    primitive.skirtMetadata->skirtWestHeight = sides.eastHalf
         ? shortestHeight * 0.5
         : parentSkirt.skirtWestHeight;
-    primitive.skirtMetadata->skirtSouthHeight = childKeepsNorth(childID)
+    primitive.skirtMetadata->skirtSouthHeight = sides.northHalf
         ? shortestHeight * 0.5
         : parentSkirt.skirtSouthHeight;
-    primitive.skirtMetadata->skirtEastHeight = childKeepsEast(childID)
+    primitive.skirtMetadata->skirtEastHeight = sides.eastHalf
         ? parentSkirt.skirtEastHeight
         : shortestHeight * 0.5;
-    primitive.skirtMetadata->skirtNorthHeight = childKeepsNorth(childID)
+    primitive.skirtMetadata->skirtNorthHeight = sides.northHalf
         ? parentSkirt.skirtNorthHeight
         : shortestHeight * 0.5;
 
@@ -550,9 +605,9 @@ void addSkirts(GltfPrimitive& primitive,
 
 bool upsamplePointsPrimitive(const GltfPrimitive& parent,
                              GltfPrimitive& output,
-                             const UpsampledQuadtreeNode& childID,
-                             int textureCoordinateIndex,
-                             bool hasInvertedVCoordinate) {
+                             const GltfUpsampleWindows& windows,
+                             const ClipSides& sides,
+                             int textureCoordinateIndex) {
     if (textureCoordinateIndex < 0 ||
         textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets) ||
         parent.vertices.empty() ||
@@ -577,10 +632,8 @@ bool upsamplePointsPrimitive(const GltfPrimitive& parent,
     output.runtime.skinning.clear();
     output.runtime.morphTargets.clear();
 
-    const bool keepEast = childKeepsEast(childID);
-    const bool keepNorth = childKeepsNorth(childID);
-    const bool keepGreaterV =
-        hasInvertedVCoordinate ? !keepNorth : keepNorth;
+    const GltfUpsampleUvWindow& clipWindow =
+        windows.texCoordSets[static_cast<size_t>(textureCoordinateIndex)];
     const bool hasExplicitIndices = !parent.indices.empty();
     const uint32_t sourceIndexCount = hasExplicitIndices
         ? static_cast<uint32_t>(parent.indices.size())
@@ -592,8 +645,12 @@ bool upsamplePointsPrimitive(const GltfPrimitive& parent,
             continue;
         }
         const auto& uv = parent.vertexTexCoords[textureCoordinateIndex][index];
-        const bool insideU = keepEast ? uv[0] > 0.5f : uv[0] < 0.5f;
-        const bool insideV = keepGreaterV ? uv[1] > 0.5f : uv[1] < 0.5f;
+        // Strictly inside the interior boundary, like cesium-native: points
+        // exactly on the split line belong to neither child.
+        const bool insideU = sides.keepGreaterU ? uv[0] > clipWindow.u0
+                                                : uv[0] < clipWindow.u1;
+        const bool insideV = sides.keepGreaterV ? uv[1] > clipWindow.v0
+                                                : uv[1] < clipWindow.v1;
         if (insideU && insideV) {
             appendPoint(output, parent, index, hasExplicitIndices);
         }
@@ -603,21 +660,23 @@ bool upsamplePointsPrimitive(const GltfPrimitive& parent,
         (hasExplicitIndices && output.indices.empty())) {
         return false;
     }
+    renormalizeTexCoords(output, windows);
     return true;
 }
 
 bool upsamplePrimitive(const GltfPrimitive& parent,
                        GltfPrimitive& output,
-                       const UpsampledQuadtreeNode& childID,
+                       const GltfUpsampleWindows& windows,
+                       const ClipSides& sides,
                        int textureCoordinateIndex,
                        bool hasInvertedVCoordinate) {
     if (parent.primitiveMode == GltfPrimitiveMode::Points) {
         return upsamplePointsPrimitive(
             parent,
             output,
-            childID,
-            textureCoordinateIndex,
-            hasInvertedVCoordinate);
+            windows,
+            sides,
+            textureCoordinateIndex);
     }
 
     const bool isTrianglePrimitive =
@@ -650,10 +709,14 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
     output.runtime.morphTargets.clear();
     output.primitiveMode = GltfPrimitiveMode::Triangles;
 
-    const bool keepEast = childKeepsEast(childID);
-    const bool keepNorth = childKeepsNorth(childID);
-    const bool keepGreaterV =
-        hasInvertedVCoordinate ? !keepNorth : keepNorth;
+    const GltfUpsampleUvWindow& clipWindow =
+        windows.texCoordSets[static_cast<size_t>(textureCoordinateIndex)];
+    // The interior boundary of the child window is the clip line; the outer
+    // boundary coincides with the parent edge, where no geometry lies beyond.
+    const double uThreshold =
+        sides.keepGreaterU ? clipWindow.u0 : clipWindow.u1;
+    const double vThreshold =
+        sides.keepGreaterV ? clipWindow.v0 : clipWindow.v1;
 
     const bool hasExplicitIndices = !parent.indices.empty();
     const uint32_t implicitIndexCount =
@@ -694,14 +757,14 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
             polygon,
             0,
             textureCoordinateIndex,
-            keepEast,
-            0.5);
+            sides.keepGreaterU,
+            uThreshold);
         polygon = clipPolygon(
             polygon,
             1,
             textureCoordinateIndex,
-            keepGreaterV,
-            0.5);
+            sides.keepGreaterV,
+            vThreshold);
         appendPolygon(
             output,
             polygon,
@@ -744,20 +807,27 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
         return false;
     }
 
+    // Renormalize before skirts so skirt vertices copy child-space texcoords
+    // and edge collection sees boundaries at exactly 0/1.
+    renormalizeTexCoords(output, windows);
+
     output.skirtMetadata = parent.skirtMetadata;
-    addSkirts(output, childID, textureCoordinateIndex, hasInvertedVCoordinate);
+    addSkirts(output, sides, textureCoordinateIndex, hasInvertedVCoordinate);
     return true;
 }
 
-void scaleWaterMask(WaterMask& waterMask, const UpsampledQuadtreeNode& childID) {
+// Water mask windows stay 0.5-quadrant based (cesium-native scaleWaterMask
+// semantics). The shader applies a single scalar scale, so the tiny V offset
+// between a projected mercator midpoint and 0.5 cannot be expressed anyway.
+void scaleWaterMask(WaterMask& waterMask, const ClipSides& sides) {
     waterMask.scale *= 0.5;
-    waterMask.translationX += waterMask.scale * (childKeepsEast(childID) ? 1.0 : 0.0);
-    waterMask.translationY += waterMask.scale * (childKeepsNorth(childID) ? 1.0 : 0.0);
+    waterMask.translationX += waterMask.scale * (sides.eastHalf ? 1.0 : 0.0);
+    waterMask.translationY += waterMask.scale * (sides.northHalf ? 1.0 : 0.0);
 }
 
 void scalePrimitiveWaterMask(GltfPrimitive& primitive,
                              const GltfPrimitive& parent,
-                             const UpsampledQuadtreeNode& childID) {
+                             const ClipSides& sides) {
     primitive.hasTerrainWaterMaskMetadata = true;
     primitive.terrainOnlyWater = parent.terrainOnlyWater;
     primitive.terrainOnlyLand = parent.terrainOnlyLand;
@@ -773,12 +843,10 @@ void scalePrimitiveWaterMask(GltfPrimitive& primitive,
     primitive.terrainWaterMaskScale = 0.5 * parentScale;
     primitive.terrainWaterMaskTranslationX =
         parent.terrainWaterMaskTranslationX +
-        primitive.terrainWaterMaskScale *
-            (childKeepsEast(childID) ? 1.0 : 0.0);
+        primitive.terrainWaterMaskScale * (sides.eastHalf ? 1.0 : 0.0);
     primitive.terrainWaterMaskTranslationY =
         parent.terrainWaterMaskTranslationY +
-        primitive.terrainWaterMaskScale *
-            (childKeepsNorth(childID) ? 1.0 : 0.0);
+        primitive.terrainWaterMaskScale * (sides.northHalf ? 1.0 : 0.0);
 }
 
 void rebuildRuntimeBaseVerticesForNode(GltfPrimitive& primitive,
@@ -804,25 +872,63 @@ void rebuildRuntimeBaseVerticesForNode(GltfPrimitive& primitive,
 
 } // namespace
 
+GltfUpsampleUvWindow GltfTerrainUpsampler::quadrantUvWindow(
+    const UpsampledQuadtreeNode& childID,
+    bool hasInvertedVCoordinate) {
+    GltfUpsampleUvWindow window;
+    const bool east = childKeepsEast(childID);
+    const bool north = childKeepsNorth(childID);
+    const bool greaterV = hasInvertedVCoordinate ? !north : north;
+    window.u0 = east ? 0.5 : 0.0;
+    window.u1 = east ? 1.0 : 0.5;
+    window.v0 = greaterV ? 0.5 : 0.0;
+    window.v1 = greaterV ? 1.0 : 0.5;
+    return window;
+}
+
 std::unique_ptr<GltfModel> GltfTerrainUpsampler::upsampleForRasterOverlay(
     const GltfModel& parentModel,
     const UpsampledQuadtreeNode& childID,
     int textureCoordinateIndex,
-    bool hasInvertedVCoordinate) {
+    bool hasInvertedVCoordinate,
+    const GltfUpsampleWindows* windows) {
+    if (textureCoordinateIndex < 0 ||
+        textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets)) {
+        return nullptr;
+    }
+
+    GltfUpsampleWindows effectiveWindows;
+    if (windows) {
+        effectiveWindows = *windows;
+    } else {
+        effectiveWindows.texCoordSetCount = kGltfMaxTexCoordSets;
+        for (GltfUpsampleUvWindow& setWindow :
+             effectiveWindows.texCoordSets) {
+            setWindow = quadrantUvWindow(childID, hasInvertedVCoordinate);
+        }
+        effectiveWindows.nativeUv = quadrantUvWindow(childID, false);
+    }
+
+    const ClipSides sides = clipSidesForWindow(
+        effectiveWindows.texCoordSets[
+            static_cast<size_t>(textureCoordinateIndex)],
+        hasInvertedVCoordinate);
+
     auto result = std::make_unique<GltfModel>(parentModel);
     result->primitives.clear();
     result->terrainWaterMask = parentModel.terrainWaterMask;
-    scaleWaterMask(result->terrainWaterMask, childID);
+    scaleWaterMask(result->terrainWaterMask, sides);
 
     for (const GltfPrimitive& primitive : parentModel.primitives) {
         GltfPrimitive upsampled;
         if (upsamplePrimitive(
                 primitive,
                 upsampled,
-                childID,
+                effectiveWindows,
+                sides,
                 textureCoordinateIndex,
                 hasInvertedVCoordinate)) {
-            scalePrimitiveWaterMask(upsampled, primitive, childID);
+            scalePrimitiveWaterMask(upsampled, primitive, sides);
             rebuildRuntimeBaseVerticesForNode(upsampled, *result);
             result->primitives.push_back(std::move(upsampled));
         }

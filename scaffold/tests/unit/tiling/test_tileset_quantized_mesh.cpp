@@ -2050,7 +2050,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainAvailabilityUpsamplePreservesRasterOverlayProjectionUvLikeCesiumNative) {
+     ContentTerrainAvailabilityUpsampleRenormalizesRasterOverlayProjectionUvLikeCesiumNative) {
     auto provider = std::make_unique<SparseContentTerrainProvider>(
         "XYZ-WebMercator");
     auto scheme = TileScheme::createXYZWebMercator();
@@ -2075,14 +2075,17 @@ TEST(TilesetQuantizedMeshTest,
         root->children.begin(),
         root->children.end(),
         [](const TilesetTile* child) {
+            // XYZ schemes have y = 0 as the NORTH row, so (1,0,1) is the
+            // south-west child -- the quadrant the fixture's south-west
+            // half-triangle mesh actually covers.
             return child &&
                    child->key ==
-                       TileKey{"XYZ-WebMercator", 1, 1, 0};
+                       TileKey{"XYZ-WebMercator", 1, 0, 1};
         });
     ASSERT_NE(root->children.end(), childIt);
     TilesetTile* upsampledChild = *childIt;
     ASSERT_NE(nullptr, upsampledChild);
-    ASSERT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 0}), upsampledChild->key);
+    ASSERT_EQ((TileKey{"XYZ-WebMercator", 1, 0, 1}), upsampledChild->key);
     ASSERT_TRUE(upsampledChild->content.isTerrainAvailabilityUpsample());
 
     std::optional<TileLoadResult> childLoad =
@@ -2109,14 +2112,22 @@ TEST(TilesetQuantizedMeshTest,
             primitive.vertexTexCoords[static_cast<size_t>(
                 webMercatorTexCoord)];
         ASSERT_EQ(primitive.vertices.size(), texCoords.size());
+        // The kept texcoords are renormalized onto the child's own [0,1]
+        // span (cesium-native regenerates them against the child rectangle).
+        float maxU = 0.0f;
+        float maxV = 0.0f;
         for (const auto& uv : texCoords) {
-            EXPECT_GE(uv[0], 0.5f - 1e-6f);
+            EXPECT_GE(uv[0], 0.0f - 1e-6f);
             EXPECT_LE(uv[0], 1.0f + 1e-6f);
             EXPECT_GE(uv[1], 0.0f - 1e-6f);
-            EXPECT_LE(uv[1], 0.5f + 1e-6f);
+            EXPECT_LE(uv[1], 1.0f + 1e-6f);
+            maxU = std::max(maxU, uv[0]);
+            maxV = std::max(maxV, uv[1]);
             sawNonDegenerateTexCoords |=
                 std::abs(uv[0]) > 1e-6f || std::abs(uv[1]) > 1e-6f;
         }
+        EXPECT_NEAR(1.0f, maxU, 1e-6f);
+        EXPECT_NEAR(1.0f, maxV, 1e-6f);
     }
     EXPECT_TRUE(sawNonDegenerateTexCoords);
 

@@ -122,6 +122,46 @@ bool sameUv(const SurfaceVertex& a, const SurfaceVertex& b) {
            std::abs(a.uv[1] - b.uv[1]) <= 1e-6f;
 }
 
+// New contract: kept texcoords are renormalized onto the child's own [0,1]
+// span (cesium-native regenerates them against the child rectangle; the
+// linear remap is equivalent). A child clipped from a full-tile parent must
+// therefore span the whole unit square.
+void expectCoordsSpanUnitSquare(
+    const std::vector<std::array<float, 2>>& coords,
+    size_t count) {
+    float minU = 1.0f, maxU = 0.0f, minV = 1.0f, maxV = 0.0f;
+    for (size_t i = 0; i < count && i < coords.size(); ++i) {
+        EXPECT_GE(coords[i][0], -1e-6f);
+        EXPECT_LE(coords[i][0], 1.0f + 1e-6f);
+        EXPECT_GE(coords[i][1], -1e-6f);
+        EXPECT_LE(coords[i][1], 1.0f + 1e-6f);
+        minU = std::min(minU, coords[i][0]);
+        maxU = std::max(maxU, coords[i][0]);
+        minV = std::min(minV, coords[i][1]);
+        maxV = std::max(maxV, coords[i][1]);
+    }
+    EXPECT_NEAR(0.0f, minU, 1e-6f);
+    EXPECT_NEAR(1.0f, maxU, 1e-6f);
+    EXPECT_NEAR(0.0f, minV, 1e-6f);
+    EXPECT_NEAR(1.0f, maxV, 1e-6f);
+}
+
+void expectUvSpansUnitSquare(const GltfPrimitive& primitive) {
+    const size_t vertexCount = primitive.skirtMetadata
+        ? primitive.skirtMetadata->noSkirtVerticesCount
+        : primitive.vertices.size();
+    std::vector<std::array<float, 2>> nativeUvs;
+    nativeUvs.reserve(vertexCount);
+    for (size_t i = 0; i < vertexCount && i < primitive.vertices.size();
+         ++i) {
+        nativeUvs.push_back(primitive.vertices[i].uv);
+    }
+    expectCoordsSpanUnitSquare(nativeUvs, vertexCount);
+    if (primitive.vertexTexCoords[0].size() == primitive.vertices.size()) {
+        expectCoordsSpanUnitSquare(primitive.vertexTexCoords[0], vertexCount);
+    }
+}
+
 void expectRasterOverlaySkirtsMatchCesiumNative(const GltfPrimitive& primitive,
                                                 const SkirtMetadata& skirt) {
     ASSERT_TRUE(primitive.skirtMetadata.has_value());
@@ -289,10 +329,7 @@ TEST(GltfTerrainUpsamplerTest,
     const GltfPrimitive& primitive = upsampled->primitives.front();
     ASSERT_FALSE(primitive.vertices.empty());
     ASSERT_FALSE(primitive.indices.empty());
-    for (const SurfaceVertex& vertex : primitive.vertices) {
-        EXPECT_LE(vertex.uv[0], 0.5f);
-        EXPECT_LE(vertex.uv[1], 0.5f);
-    }
+    expectUvSpansUnitSquare(primitive);
     ASSERT_TRUE(primitive.skirtMetadata.has_value());
     EXPECT_EQ(0u, primitive.skirtMetadata->noSkirtIndicesBegin);
     EXPECT_EQ(0u, primitive.skirtMetadata->noSkirtVerticesBegin);
@@ -339,10 +376,7 @@ TEST(GltfTerrainUpsamplerTest,
     const GltfPrimitive& primitive = upsampled->primitives.front();
     ASSERT_FALSE(primitive.vertices.empty());
     ASSERT_FALSE(primitive.indices.empty());
-    for (const SurfaceVertex& vertex : primitive.vertices) {
-        EXPECT_GE(vertex.uv[0], 0.5f);
-        EXPECT_GE(vertex.uv[1], 0.5f);
-    }
+    expectUvSpansUnitSquare(primitive);
     EXPECT_DOUBLE_EQ(0.5, upsampled->terrainWaterMask.translationX);
     EXPECT_DOUBLE_EQ(0.375, upsampled->terrainWaterMask.translationY);
     EXPECT_DOUBLE_EQ(0.25, upsampled->terrainWaterMask.scale);
@@ -498,10 +532,7 @@ TEST(GltfTerrainUpsamplerTest,
     for (uint32_t index : primitive.indices) {
         EXPECT_LT(index, primitive.vertices.size());
     }
-    for (const SurfaceVertex& vertex : primitive.vertices) {
-        EXPECT_LE(vertex.uv[0], 0.5f);
-        EXPECT_LE(vertex.uv[1], 0.5f);
-    }
+    expectUvSpansUnitSquare(primitive);
 }
 
 TEST(GltfTerrainUpsamplerTest,
@@ -524,10 +555,7 @@ TEST(GltfTerrainUpsamplerTest,
     ASSERT_FALSE(out.vertices.empty());
     ASSERT_FALSE(out.indices.empty());
     EXPECT_EQ(0u, out.indices.size() % 3u);
-    for (const SurfaceVertex& outVertex : out.vertices) {
-        EXPECT_LE(outVertex.uv[0], 0.5f);
-        EXPECT_LE(outVertex.uv[1], 0.5f);
-    }
+    expectUvSpansUnitSquare(out);
 }
 
 TEST(GltfTerrainUpsamplerTest,
@@ -550,10 +578,7 @@ TEST(GltfTerrainUpsamplerTest,
     ASSERT_FALSE(out.vertices.empty());
     ASSERT_FALSE(out.indices.empty());
     EXPECT_EQ(0u, out.indices.size() % 3u);
-    for (const SurfaceVertex& outVertex : out.vertices) {
-        EXPECT_LE(outVertex.uv[0], 0.5f);
-        EXPECT_LE(outVertex.uv[1], 0.5f);
-    }
+    expectUvSpansUnitSquare(out);
 }
 
 TEST(GltfTerrainUpsamplerTest,
@@ -618,7 +643,9 @@ TEST(GltfTerrainUpsamplerTest,
     bool foundEastMidpoint = false;
     for (size_t i = 0; i < primitive.vertices.size(); ++i) {
         const SurfaceVertex& vertex = primitive.vertices[i];
-        if (std::abs(vertex.uv[0] - 0.5f) < 1e-6f &&
+        // The parent-space east midpoint (0.5, 0) renormalizes onto the
+        // lower-left child's east edge (1, 0).
+        if (std::abs(vertex.uv[0] - 1.0f) < 1e-6f &&
             std::abs(vertex.uv[1]) < 1e-6f) {
             foundEastMidpoint = true;
             expectArrayNear(
@@ -653,7 +680,9 @@ TEST(GltfTerrainUpsamplerTest,
 
     bool foundEastMidpoint = false;
     for (const SurfaceVertex& vertex : primitive.vertices) {
-        if (std::abs(vertex.uv[0] - 0.5f) < 1e-6f &&
+        // The parent-space east midpoint (0.5, 0) renormalizes onto the
+        // lower-left child's east edge (1, 0).
+        if (std::abs(vertex.uv[0] - 1.0f) < 1e-6f &&
             std::abs(vertex.uv[1]) < 1e-6f) {
             foundEastMidpoint = true;
             EXPECT_NEAR(0.5, vertex.normalEcef.x(), 1e-12);
@@ -841,9 +870,10 @@ TEST(GltfTerrainUpsamplerTest,
 TEST(GltfTerrainUpsamplerTest,
      ClipsLowerLeftChildWithInvertedVCoordinateLikeCesiumNative) {
     GltfModel parent = makeParentModel();
+    // hasInvertedVCoordinate refers to the overlay texcoord set; the native
+    // SurfaceVertex::uv stays south-up like production quantized-mesh data.
     for (GltfPrimitive& primitive : parent.primitives) {
         for (size_t i = 0; i < primitive.vertices.size(); ++i) {
-            primitive.vertices[i].uv[1] = 1.0f - primitive.vertices[i].uv[1];
             primitive.vertexTexCoords[0][i][1] =
                 1.0f - primitive.vertexTexCoords[0][i][1];
         }
@@ -858,10 +888,7 @@ TEST(GltfTerrainUpsamplerTest,
     const GltfPrimitive& primitive = upsampled->primitives.front();
     ASSERT_FALSE(primitive.vertices.empty());
     ASSERT_FALSE(primitive.indices.empty());
-    for (const SurfaceVertex& vertex : primitive.vertices) {
-        EXPECT_LE(vertex.uv[0], 0.5f);
-        EXPECT_GE(vertex.uv[1], 0.5f);
-    }
+    expectUvSpansUnitSquare(primitive);
     EXPECT_DOUBLE_EQ(0.25, upsampled->terrainWaterMask.translationX);
     EXPECT_DOUBLE_EQ(0.125, upsampled->terrainWaterMask.translationY);
     EXPECT_DOUBLE_EQ(0.25, upsampled->terrainWaterMask.scale);
@@ -877,4 +904,98 @@ TEST(GltfTerrainUpsamplerTest,
         GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
 
     EXPECT_EQ(nullptr, upsampled);
+}
+
+TEST(GltfTerrainUpsamplerTest,
+     ClipsAtChildWindowBoundaryAndRenormalizesPerSetWindow) {
+    GltfModel parent = makeParentModel();
+    parent.primitives.front().skirtMetadata.reset();
+
+    // South-west child whose interior V boundary sits at 0.4 of the parent
+    // texcoord space (a WebMercator-style asymmetric split), while the native
+    // uv keeps its exact geographic quadrant window.
+    GltfUpsampleWindows windows;
+    windows.texCoordSetCount = 1;
+    windows.texCoordSets[0] = GltfUpsampleUvWindow{0.0, 0.0, 0.5, 0.4};
+    windows.nativeUv = GltfUpsampleUvWindow{0.0, 0.0, 0.5, 0.5};
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(
+            parent,
+            child,
+            0,
+            false,
+            &windows);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& primitive = upsampled->primitives.front();
+    ASSERT_FALSE(primitive.vertices.empty());
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+
+    double maxY = 0.0;
+    double maxTexU = 0.0;
+    double maxTexV = 0.0;
+    double maxNativeV = 0.0;
+    for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+        maxY = std::max(maxY, primitive.vertices[i].positionEcef.y());
+        maxTexU = std::max(
+            maxTexU,
+            static_cast<double>(primitive.vertexTexCoords[0][i][0]));
+        maxTexV = std::max(
+            maxTexV,
+            static_cast<double>(primitive.vertexTexCoords[0][i][1]));
+        maxNativeV = std::max(
+            maxNativeV,
+            static_cast<double>(primitive.vertices[i].uv[1]));
+    }
+    // The parent quad spans y in [0,2] with texcoord v = y/2; clipping at the
+    // window boundary v = 0.4 (not 0.5) keeps y <= 0.8.
+    EXPECT_NEAR(0.8, maxY, 1e-6);
+    // The kept texcoord subrange [0,0.5]x[0,0.4] renormalizes to the unit
+    // square of the clip set's window.
+    EXPECT_NEAR(1.0, maxTexU, 1e-6);
+    EXPECT_NEAR(1.0, maxTexV, 1e-6);
+    // The native uv renormalizes by its own window: kept v in [0,0.4] over a
+    // [0,0.5] window becomes [0,0.8].
+    EXPECT_NEAR(0.8, maxNativeV, 1e-6);
+}
+
+TEST(GltfTerrainUpsamplerTest,
+     DerivesKeptHalfFromWindowNotTileKeyParity) {
+    GltfModel parent = makeParentModel();
+    parent.primitives.front().skirtMetadata.reset();
+
+    // XYZ-style schemes have y = 0 as the NORTH child. The window carries the
+    // geometric truth, so the clip must keep the northern half even though
+    // TMS parity (even y) would suggest the south half.
+    GltfUpsampleWindows windows;
+    windows.texCoordSetCount = 1;
+    windows.texCoordSets[0] = GltfUpsampleUvWindow{0.5, 0.5, 1.0, 1.0};
+    windows.nativeUv = GltfUpsampleUvWindow{0.5, 0.5, 1.0, 1.0};
+
+    const UpsampledQuadtreeNode child{TileKey{"XYZ-WebMercator", 1, 1, 0}};
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(
+            parent,
+            child,
+            0,
+            false,
+            &windows);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& primitive = upsampled->primitives.front();
+    ASSERT_FALSE(primitive.vertices.empty());
+    double minX = 2.0;
+    double minY = 2.0;
+    for (const SurfaceVertex& vertex : primitive.vertices) {
+        minX = std::min(minX, vertex.positionEcef.x());
+        minY = std::min(minY, vertex.positionEcef.y());
+    }
+    // Keeping u >= 0.5 and v >= 0.5 keeps x >= 1 and y >= 1 of the [0,2] quad.
+    EXPECT_NEAR(1.0, minX, 1e-6);
+    EXPECT_NEAR(1.0, minY, 1e-6);
+    expectUvSpansUnitSquare(primitive);
 }

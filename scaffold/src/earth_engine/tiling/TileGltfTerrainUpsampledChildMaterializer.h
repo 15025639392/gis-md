@@ -115,15 +115,6 @@ private:
                 .rasterOverlayInvertedVCoordinates[
                     static_cast<size_t>(textureCoordinateIndex)];
 
-        std::unique_ptr<GltfModel> childModel =
-            GltfTerrainUpsampler::upsampleForRasterOverlay(
-                *parentModel,
-                UpsampledQuadtreeNode{tile.key},
-                textureCoordinateIndex,
-                hasInvertedVCoordinate);
-        if (!childModel) {
-            return nullptr;
-        }
         const double minimumHeight =
             parentModel->rasterOverlayDetails.boundingRegion.minimumHeight;
         const double maximumHeight =
@@ -132,14 +123,120 @@ private:
             parentModel->rasterOverlayDetails.boundingRegion.rectangle.isEmpty()
             ? source->bounds
             : parentModel->rasterOverlayDetails.boundingRegion.rectangle;
-        childModel->rasterOverlayDetails =
+        // Derive the child's details before upsampling: the upsampler
+        // renormalizes the kept texcoords to the child window, so the windows
+        // and the derived rectangles must come from the same mapping to keep
+        // the "UV [0,1] spans rasterOverlayRectangles[set]" invariant.
+        RasterOverlayDetails childDetails =
             TileRasterOverlayDetailsDeriver::deriveChildFromParent(
+                parentModel->rasterOverlayDetails,
+                parentRasterBounds,
+                tile.bounds,
+                minimumHeight,
+                maximumHeight);
+        const GltfUpsampleWindows windows = buildUpsampleWindows(
             parentModel->rasterOverlayDetails,
+            childDetails,
             parentRasterBounds,
             tile.bounds,
-            minimumHeight,
-            maximumHeight);
+            UpsampledQuadtreeNode{tile.key});
+
+        std::unique_ptr<GltfModel> childModel =
+            GltfTerrainUpsampler::upsampleForRasterOverlay(
+                *parentModel,
+                UpsampledQuadtreeNode{tile.key},
+                textureCoordinateIndex,
+                hasInvertedVCoordinate,
+                &windows);
+        if (!childModel) {
+            return nullptr;
+        }
+        childModel->rasterOverlayDetails = std::move(childDetails);
         return childModel;
+    }
+
+    // Child window inside the parent's UV space for one texcoord set: the
+    // relative position of the derived child rectangle within the parent's
+    // rectangle, both in that set's projected coordinates. Falls back to the
+    // exact half-split quadrant when rectangles are unusable.
+    static GltfUpsampleUvWindow uvWindowFromRects(
+        const Rectangle& parentRect,
+        const Rectangle& childRect,
+        RasterOverlayProjection projection,
+        bool invertedV,
+        const GltfUpsampleUvWindow& fallback) {
+        if (parentRect.isEmpty() || childRect.isEmpty()) {
+            return fallback;
+        }
+        const double width = parentRect.width();
+        const double height = parentRect.height();
+        if (!(width > 0.0) || !(height > 0.0)) {
+            return fallback;
+        }
+        const bool crosses =
+            projection == RasterOverlayProjection::Geographic &&
+            parentRect.crossesAntimeridian();
+        const auto relativeX = [&](double x) {
+            double offset = x - parentRect.west();
+            if (crosses && offset < 0.0) {
+                offset += MathUtils::TwoPi;
+            }
+            return offset / width;
+        };
+        GltfUpsampleUvWindow window;
+        window.u0 = relativeX(childRect.west());
+        window.u1 = relativeX(childRect.east());
+        double v0 = (childRect.south() - parentRect.south()) / height;
+        double v1 = (childRect.north() - parentRect.south()) / height;
+        if (invertedV) {
+            const double flipped = 1.0 - v1;
+            v1 = 1.0 - v0;
+            v0 = flipped;
+        }
+        window.v0 = v0;
+        window.v1 = v1;
+        if (!(window.u1 > window.u0) || !(window.v1 > window.v0)) {
+            return fallback;
+        }
+        return window;
+    }
+
+    static GltfUpsampleWindows buildUpsampleWindows(
+        const RasterOverlayDetails& parentDetails,
+        const RasterOverlayDetails& childDetails,
+        const Rectangle& parentGeographicBounds,
+        const Rectangle& childGeographicBounds,
+        const UpsampledQuadtreeNode& childID) {
+        GltfUpsampleWindows windows;
+        windows.texCoordSetCount = std::min(
+            parentDetails.rasterOverlayProjections.size(),
+            kGltfMaxTexCoordSets);
+        for (size_t i = 0; i < windows.texCoordSetCount; ++i) {
+            const bool invertedV =
+                i < parentDetails.rasterOverlayInvertedVCoordinates.size() &&
+                parentDetails.rasterOverlayInvertedVCoordinates[i];
+            const Rectangle parentRect =
+                i < parentDetails.rasterOverlayRectangles.size()
+                    ? parentDetails.rasterOverlayRectangles[i]
+                    : Rectangle::EMPTY;
+            const Rectangle childRect =
+                i < childDetails.rasterOverlayRectangles.size()
+                    ? childDetails.rasterOverlayRectangles[i]
+                    : Rectangle::EMPTY;
+            windows.texCoordSets[i] = uvWindowFromRects(
+                parentRect,
+                childRect,
+                parentDetails.rasterOverlayProjections[i],
+                invertedV,
+                GltfTerrainUpsampler::quadrantUvWindow(childID, invertedV));
+        }
+        windows.nativeUv = uvWindowFromRects(
+            parentGeographicBounds,
+            childGeographicBounds,
+            RasterOverlayProjection::Geographic,
+            false,
+            GltfTerrainUpsampler::quadrantUvWindow(childID, false));
+        return windows;
     }
 
     static bool modelHasTextureCoordinate(const GltfModel& model,

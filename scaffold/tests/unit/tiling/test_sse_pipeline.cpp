@@ -1347,6 +1347,35 @@ std::unique_ptr<GltfModel> makeWebMercatorQuadTerrainGltfModel(
     model->rasterOverlayDetails.boundingRegion = {rectangle, 0.0, 0.0};
     return model;
 }
+// New upsample contract: kept texcoords are renormalized onto the child's own
+// [0,1] span (cesium-native regenerates them against the child rectangle).
+bool texCoordsSpanUnitSquare(
+    const std::vector<std::array<float, 2>>& coords) {
+    if (coords.empty()) {
+        return false;
+    }
+    float minU = 1.0f, maxU = 0.0f, minV = 1.0f, maxV = 0.0f;
+    for (const auto& uv : coords) {
+        if (uv[0] < -1e-6f || uv[0] > 1.0f + 1e-6f ||
+            uv[1] < -1e-6f || uv[1] > 1.0f + 1e-6f) {
+            return false;
+        }
+        minU = std::min(minU, uv[0]);
+        maxU = std::max(maxU, uv[0]);
+        minV = std::min(minV, uv[1]);
+        maxV = std::max(maxV, uv[1]);
+    }
+    return std::abs(minU) <= 1e-6f && std::abs(maxU - 1.0f) <= 1e-6f &&
+           std::abs(minV) <= 1e-6f && std::abs(maxV - 1.0f) <= 1e-6f;
+}
+bool nativeUvSpansUnitSquare(const GltfPrimitive& primitive) {
+    std::vector<std::array<float, 2>> coords;
+    coords.reserve(primitive.vertices.size());
+    for (const SurfaceVertex& vertex : primitive.vertices) {
+        coords.push_back(vertex.uv);
+    }
+    return texCoordsSpanUnitSquare(coords);
+}
 GltfPrimitive makeTransparentTrianglePrimitiveAt(const Vec3& center) {
     GltfPrimitive primitive;
     primitive.vertices.resize(3);
@@ -24904,12 +24933,16 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     }
     check(runtimeVerticesAreNodeLocal,
           "Tileset: glTF-parent upsampled child stores node-local runtime vertices like Cesium native");
+    // The quad spans [0,2]^2 offset by the node origin (100,200,300); the
+    // south-east child keeps x >= 1, y <= 1 and its uv renormalizes to [0,1].
     for (const SurfaceVertex& vertex : primitive.vertices) {
         clippedToSouthEast =
             clippedToSouthEast &&
-            vertex.uv[0] >= 0.5f &&
-            vertex.uv[1] <= 0.5f;
+            vertex.positionEcef.x() >= 101.0 - 1e-9 &&
+            vertex.positionEcef.y() <= 201.0 + 1e-9;
     }
+    clippedToSouthEast =
+        clippedToSouthEast && nativeUvSpansUnitSquare(primitive);
     check(clippedToSouthEast,
           "Tileset: glTF-parent upsample clips child geometry to child raster quadrant");
     const Rectangle* childOverlay =
@@ -25045,12 +25078,15 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
           "Tileset: WebMercator glTF-parent upsample uses available overlay texcoord");
     if (!childModel || childModel->primitives.empty()) return;
     const GltfPrimitive& primitive = childModel->primitives.front();
-    bool clippedToNorthWestTexcoord = true;
-    for (const auto& texCoord : primitive.vertexTexCoords[1]) {
+    // North-west child of the [0,2]^2 quad (node origin 100,200,300): the
+    // WebMercator clip set keeps x <= 1, y >= 1 and renormalizes to [0,1].
+    bool clippedToNorthWestTexcoord =
+        texCoordsSpanUnitSquare(primitive.vertexTexCoords[1]);
+    for (const SurfaceVertex& vertex : primitive.vertices) {
         clippedToNorthWestTexcoord =
             clippedToNorthWestTexcoord &&
-            texCoord[0] <= 0.5f &&
-            texCoord[1] >= 0.5f;
+            vertex.positionEcef.x() <= 101.0 + 1e-9 &&
+            vertex.positionEcef.y() >= 201.0 - 1e-9;
     }
     check(clippedToNorthWestTexcoord,
           "Tileset: WebMercator glTF-parent clips with projection texcoord");
@@ -25276,13 +25312,16 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
               childModel != nullptr,
           "Tileset: raster-detail glTF upsample succeeds from current projection details");
     if (!childModel || childModel->primitives.empty()) return;
-    bool clippedWithCurrentWebMercatorTexcoord = true;
-    for (const auto& texCoord :
-         childModel->primitives.front().vertexTexCoords[1]) {
+    // South-west child of the [0,2]^2 quad (node origin 100,200,300): the
+    // WebMercator clip set keeps x <= 1, y <= 1 and renormalizes to [0,1].
+    bool clippedWithCurrentWebMercatorTexcoord = texCoordsSpanUnitSquare(
+        childModel->primitives.front().vertexTexCoords[1]);
+    for (const SurfaceVertex& vertex :
+         childModel->primitives.front().vertices) {
         clippedWithCurrentWebMercatorTexcoord =
             clippedWithCurrentWebMercatorTexcoord &&
-            texCoord[0] <= 0.5f &&
-            texCoord[1] <= 0.5f;
+            vertex.positionEcef.x() <= 101.0 + 1e-9 &&
+            vertex.positionEcef.y() <= 201.0 + 1e-9;
     }
     check(clippedWithCurrentWebMercatorTexcoord,
           "Tileset: raster-detail glTF upsample clips with current parent projection texcoord");
@@ -25325,13 +25364,16 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
     bool clippedWithWebMercatorTexcoord = true;
     if (childModel && !childModel->primitives.empty()) {
         const GltfPrimitive& primitive = childModel->primitives.front();
+        // North-west child of the [0,2]^2 quad (node origin 100,200,300):
+        // the terrain-projection clip keeps x <= 1, y >= 1 and renormalizes
+        // the kept texcoords to [0,1].
         clippedWithWebMercatorTexcoord =
-            !primitive.vertexTexCoords[1].empty();
-        for (const auto& texCoord : primitive.vertexTexCoords[1]) {
+            texCoordsSpanUnitSquare(primitive.vertexTexCoords[1]);
+        for (const SurfaceVertex& vertex : primitive.vertices) {
             clippedWithWebMercatorTexcoord =
                 clippedWithWebMercatorTexcoord &&
-                texCoord[0] <= 0.5f &&
-                texCoord[1] >= 0.5f;
+                vertex.positionEcef.x() <= 101.0 + 1e-9 &&
+                vertex.positionEcef.y() >= 201.0 - 1e-9;
         }
     } else {
         clippedWithWebMercatorTexcoord = false;
@@ -25432,36 +25474,33 @@ void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
     const GltfModel* childModel =
         loadResult ? loadResult->content.gltfModel.get() : nullptr;
     bool clippedWithGeographicTexcoord = true;
-    bool retainedUnclippedWebMercatorRange = true;
+    bool carriedWebMercatorTexcoords = true;
     if (childModel && !childModel->primitives.empty()) {
         const GltfPrimitive& primitive = childModel->primitives.front();
+        // South-east child of the [0,2]^2 quad (node origin 100,200,300):
+        // clipping with the geographic terrain set keeps x >= 1, y <= 1 and
+        // renormalizes the kept texcoords to [0,1].
         clippedWithGeographicTexcoord =
-            !primitive.vertexTexCoords[0].empty();
-        retainedUnclippedWebMercatorRange =
-            !primitive.vertexTexCoords[1].empty();
-        for (const auto& texCoord : primitive.vertexTexCoords[0]) {
+            texCoordsSpanUnitSquare(primitive.vertexTexCoords[0]);
+        for (const SurfaceVertex& vertex : primitive.vertices) {
             clippedWithGeographicTexcoord =
                 clippedWithGeographicTexcoord &&
-                texCoord[0] >= 0.5f - 1e-6f &&
-                texCoord[0] <= 1.0f + 1e-6f &&
-                texCoord[1] >= 0.0f - 1e-6f &&
-                texCoord[1] <= 0.5f + 1e-6f;
+                vertex.positionEcef.x() >= 101.0 - 1e-9 &&
+                vertex.positionEcef.y() <= 201.0 + 1e-9;
         }
-        for (const auto& texCoord : primitive.vertexTexCoords[1]) {
-            retainedUnclippedWebMercatorRange =
-                retainedUnclippedWebMercatorRange &&
-                texCoord[0] <= 0.5f + 1e-6f &&
-                texCoord[1] <= 0.5f + 1e-6f;
-        }
+        // The unrelated WebMercator set is still carried per vertex.
+        carriedWebMercatorTexcoords =
+            primitive.vertexTexCoords[1].size() ==
+                primitive.vertices.size();
     } else {
         clippedWithGeographicTexcoord = false;
-        retainedUnclippedWebMercatorRange = false;
+        carriedWebMercatorTexcoords = false;
     }
     check(loadResult.has_value() &&
               loadResult->status == TileLoadStatus::Renderable &&
               childModel != nullptr &&
               clippedWithGeographicTexcoord &&
-              retainedUnclippedWebMercatorRange,
+              carriedWebMercatorTexcoords,
           "Tileset: terrain availability upsample uses terrain projection even when raster more detail is WebMercator");
 }
 void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
@@ -25560,10 +25599,9 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
         &parent);
     child.content.markTerrainAvailabilityUpsample();
     auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
+    // The inverted-V flag refers to the overlay texcoord set; the native
+    // SurfaceVertex::uv stays south-up like production quantized-mesh data.
     for (GltfPrimitive& primitive : parentModel->primitives) {
-        for (SurfaceVertex& vertex : primitive.vertices) {
-            vertex.uv[1] = 1.0f - vertex.uv[1];
-        }
         for (auto& texCoord : primitive.vertexTexCoords[0]) {
             texCoord[1] = 1.0f - texCoord[1];
         }
@@ -25581,12 +25619,17 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
         loadResult ? loadResult->content.gltfModel.get() : nullptr;
     bool clippedWithInvertedV = true;
     if (childModel && !childModel->primitives.empty()) {
+        // The child covers the western half of the parent (full latitude
+        // span): clipping the [0,2]^2 quad (node origin 100,200,300) keeps
+        // x <= 1, and the kept inverted-V texcoords renormalize to [0,1].
         for (const GltfPrimitive& primitive : childModel->primitives) {
+            clippedWithInvertedV =
+                clippedWithInvertedV &&
+                texCoordsSpanUnitSquare(primitive.vertexTexCoords[0]);
             for (const SurfaceVertex& vertex : primitive.vertices) {
                 clippedWithInvertedV =
                     clippedWithInvertedV &&
-                    vertex.uv[0] <= 0.5f + 1e-6f &&
-                    vertex.uv[1] >= 0.5f - 1e-6f;
+                    vertex.positionEcef.x() <= 101.0 + 1e-9;
             }
         }
     } else {
