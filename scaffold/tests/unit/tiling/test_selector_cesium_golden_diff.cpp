@@ -2,15 +2,38 @@
 //
 // 按 tools/selector_diff/scenarios.h 的场景规格展开 4 层满四叉树（85 瓦片）
 // 与 12 帧相机序列，逐帧跑 gis-md 选择管线并用共享 traceLine() 生成轨迹行。
-// 双场景参数化：
-//   - S1：nadir 阶梯下降（8000km→200km），对 golden/s1.trace；
-//   - S2：冷启动深观察（12 帧全 200km，loadingDescendantLimit=8，覆盖
-//     restore/kick 计数面），对 golden/s2.trace。
-// 每个场景独立 TEST：
-//   - golden/<scenario>.trace 存在 → 逐帧 EXPECT_EQ（行数也断言）；
-//   - 不存在 → GTEST_SKIP（golden 由 cesium 侧生成器离线产出后提交入库）；
-//   - 环境变量 SELECTOR_DIFF_DUMP=<path> → 无论 golden 是否存在都把 gis-md
-//     轨迹写到 <path>.<scenario>（如 /tmp/t.s1、/tmp/t.s2），便于人工 diff。
+// 四场景参数化（各自独立 TEST，对 golden/<scenario>.trace）：
+//   - S1：nadir 阶梯下降（8000km→200km），D=1；
+//   - S2：冷启动深观察（12 帧全 400km，loadingDescendantLimit=8，
+//     覆盖 restore/kick 计数面），D=1；
+//   - S3：S2 相机/选项 + 加载延迟 D=2（restore/kick 多帧渐进收敛面，
+//     覆盖 wasReallyRenderedLastFrame 时序）；
+//   - S4：fog 边界（region 南缘低空 80° 俯仰朝北看地平线，800m→320km，
+//     穿越 fog 必然剔除/临界/不可达三段），D=1。
+// 相机统一由 scenarios.h 的 pitchedDirection/pitchedUp 构造（pitch=0 与
+// nadir 逐位一致）；kS1CenterLon 含 +0.0037 rad 偏移消灭精确并列优先级
+// （DESIGN 白名单 7——并列项顺序是 stdlib introsort 产物，无对拍语义）。
+// 各 TEST：golden 存在 → 逐帧 EXPECT_EQ（行数也断言）；不存在 →
+// GTEST_SKIP；SELECTOR_DIFF_DUMP=<path> → 无论 golden 是否存在都把轨迹
+// 写到 <path>.<scenario>（四文件），便于人工 diff。
+//
+// loads 保序（P3）：gis-md 侧 loads 顺序 = 生产分发排序——对 selectTiles
+// 后的 loadQueue_ 快照复制，用生产 TileLoadPriorityPolicy::sortByPriority
+// （TileLoadScheduler.h requestMissingTiles 同款）排序，再按 Unloaded
+// 过滤 + 保序去重（保留首次出现 = 该 key 最高优先级实例）。
+//
+// culled 映射（P3）：cesium 把 fog 剔除计入 tilesCulled（无独立 fog
+// 计数），gis-md 的 counters.culled 只含 frustum 剔除、fogCulled 独立
+// ——trace 的 culled 字段 = counters.culled + counters.fogCulled
+// （所有场景统一；S1/S2/S3 相机高度下 fogCulled 恒 0，不影响旧轨迹）。
+//
+// 加载模型（时序契约见 scenarios.h S3 注释，D=loadDelayFrames）：
+//   1. 帧 N 选择前：完成"发起帧 + D <= N"的请求（loadState=Done）；
+//   2. selectTiles；
+//   3. 发起本帧请求并记录（loads 输出）：post-restore 存活队列中仍
+//      Unloaded 的瓦片；发起后置 ContentLoading（与 cesium 在途请求的
+//      tile 状态一致，天然防止延迟窗口内重复发起）。
+//   D=1 等价于 P1 的"帧 N 请求 → 帧 N+1 可渲染"。
 //
 // 选择复用（TileSelectionReusePolicy，DESIGN 白名单 5）在本驱动下天然禁用：
 // TilesetSelectionFrameFacade::selectTiles 直接走 TileSelectionFrameRunner
@@ -21,11 +44,6 @@
 // 仅在 notYetRenderableCount > loadingDescendantLimit 的 restore 分支按
 // 恢复移除的 load-queue 条数累加（TileSelectionPostTraversalCommitter），
 // 普通 kick（父替子渲染）不计数。全行 byte 级严格对拍，无豁免字段。
-//
-// 加载模型（DESIGN）：帧 N selectTiles 后把 loadQueue 里仍 Unloaded 的瓦片
-// 帧末置 Done（下一帧才可渲染）。restore 分支在 selectTiles 内部已把被
-// 放弃的子孙请求从 loadQueue 移除，因此"帧末应用集合"天然是 post-restore
-// 队列——与 cesium 侧 mock loader 只见到存活请求一致。
 
 #include <gtest/gtest.h>
 
@@ -35,7 +53,9 @@
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
+#include "earth_engine/tiling/TileLoadPriorityPolicy.h"
 #include "earth_engine/tiling/TileLoadQueue.h"
+#include "earth_engine/tiling/TileLoadTypes.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TileSelectionCounters.h"
 #include "earth_engine/tiling/TileSelectionRootPolicy.h"
@@ -101,12 +121,17 @@ namespace {
 constexpr const char* kSchemeId = "Geographic-TMS";
 
 /// 场景参数包：name 同时决定 golden 文件名（golden/<name>.trace）与
-/// SELECTOR_DIFF_DUMP 导出后缀（<path>.<name>）。
+/// SELECTOR_DIFF_DUMP 导出后缀（<path>.<name>）。loadDelayFrames = 帧 N
+/// 发起的请求在帧 N+D 的选择开始前完成（scenarios.h S3 时序契约）。
 struct ScenarioSpec {
     std::string name;
     const selector_diff::QuadtreeSpec& tree;
     const selector_diff::OptionsSpec& options;
     std::vector<selector_diff::CameraFrameSpec> frames;
+    int loadDelayFrames = 1;
+    // 尾帧应渲染 z=maxDepth 叶（golden 缺失时的合理性断言）。S4 尾帧是
+    // 320km 倾斜相机看地平线，叶层覆盖非场景意图，不作此断言。
+    bool expectFinalLeaf = true;
 };
 
 ScenarioSpec makeS1Scenario() {
@@ -114,7 +139,8 @@ ScenarioSpec makeS1Scenario() {
         "s1",
         selector_diff::kS1Tree,
         selector_diff::kS1Options,
-        {selector_diff::kS1Frames.begin(), selector_diff::kS1Frames.end()}};
+        {selector_diff::kS1Frames.begin(), selector_diff::kS1Frames.end()},
+        1};
 }
 
 ScenarioSpec makeS2Scenario() {
@@ -122,7 +148,27 @@ ScenarioSpec makeS2Scenario() {
         "s2",
         selector_diff::kS1Tree,  // S2 复用 S1 树
         selector_diff::kS2Options,
-        {selector_diff::kS2Frames.begin(), selector_diff::kS2Frames.end()}};
+        {selector_diff::kS2Frames.begin(), selector_diff::kS2Frames.end()},
+        1};
+}
+
+ScenarioSpec makeS3Scenario() {
+    return ScenarioSpec{
+        "s3",
+        selector_diff::kS1Tree,  // S3 复用 S1 树 + S2 相机/选项
+        selector_diff::kS3Options,
+        {selector_diff::kS3Frames.begin(), selector_diff::kS3Frames.end()},
+        selector_diff::kS3LoadDelayFrames};
+}
+
+ScenarioSpec makeS4Scenario() {
+    return ScenarioSpec{
+        "s4",
+        selector_diff::kS1Tree,  // S4 复用 S1 树
+        selector_diff::kS4Options,
+        {selector_diff::kS4Frames.begin(), selector_diff::kS4Frames.end()},
+        1,
+        /*expectFinalLeaf=*/false};
 }
 
 /// 由 QuadtreeSpec 程序化枚举整棵满四叉树的内容 provider
@@ -170,7 +216,7 @@ public:
         CancellationToken,
         ContentCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
-        // 加载完成由测试驱动在帧末显式推进（DESIGN 加载模型），
+        // 加载完成由测试驱动按时序契约显式推进（DESIGN 加载模型），
         // 真实请求路径不参与。
         callback(key, TileContentLoadResult::retryLater());
     }
@@ -302,6 +348,7 @@ struct ScenarioFrameResult {
     std::string traceLine;
     std::vector<std::string> renderKeys;
     int visited = 0;
+    int fogCulled = 0;
 };
 
 /// 逐帧跑场景，返回逐帧轨迹（traceLine 由 scenarios.h 共享函数拼行）。
@@ -322,17 +369,43 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
     const int viewportWidth = static_cast<int>(spec.viewportWidth);
     const int viewportHeight = static_cast<int>(spec.viewportHeight);
 
+    // 在途请求：帧 N 发起 → 帧 N+D 选择前完成（scenarios.h S3 时序契约）。
+    struct PendingLoadBatch {
+        size_t issueFrame;
+        std::vector<TilesetTile*> tiles;
+    };
+    std::vector<PendingLoadBatch> pendingLoads;
+
     std::vector<ScenarioFrameResult> results;
     for (size_t frame = 0; frame < scenario.frames.size(); ++frame) {
+        // 1) 完成到期请求（发起帧 + D <= 当前帧）。
+        for (auto it = pendingLoads.begin(); it != pendingLoads.end();) {
+            if (it->issueFrame +
+                    static_cast<size_t>(scenario.loadDelayFrames) <=
+                frame) {
+                for (TilesetTile* tile : it->tiles) {
+                    tile->content.loadState = TileLoadState::Done;
+                    tile->content.contentKind = TileContentKind::Empty;
+                }
+                it = pendingLoads.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        // 2) 选择。
         const selector_diff::CameraFrameSpec& frameSpec =
             scenario.frames[frame];
         const selector_diff::Vec3d posD = selector_diff::cartographicToEcef(
             frameSpec.lonRad,
             frameSpec.latRad,
             frameSpec.heightMeters);
-        const selector_diff::Vec3d dirD = selector_diff::nadirDirection(posD);
+        // 所有场景统一用共享 pitchedDirection/pitchedUp（pitch=0 与旧
+        // nadir 构造逐位一致；S4 为 80° 朝北看地平线的倾斜相机）。
+        const selector_diff::Vec3d dirD =
+            selector_diff::pitchedDirection(posD, frameSpec.pitchRad);
         const selector_diff::Vec3d upD =
-            selector_diff::nadirUpLocalNorth(posD);
+            selector_diff::pitchedUp(posD, frameSpec.pitchRad);
 
         Camera camera;
         // near/far 取 0.1 / 1e8：gis-md Frustum 含 near/far 平面，取极小
@@ -362,33 +435,43 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
                 selector_diff::tileKeyString(key.z, key.x, key.y));
         }
 
-        // loads = 本帧 loadQueue 中仍 Unloaded 的瓦片 key 去重集合；
-        // 随后帧末完成加载（Done + Empty），下一帧才可渲染（DESIGN 加载模型）。
-        // selectTiles 内部 restore 分支已把被放弃的子孙请求移出 loadQueue，
-        // 此处读到的即 post-restore 存活集合（与 cesium loader 视角一致）。
-        std::set<std::string> loadKeySet;
-        std::vector<TilesetTile*> loadedThisFrame;
-        for (const TileLoadRequest& request :
-             TilesetTestAccess::loadQueue(tileset)) {
+        // 3) 发起本帧请求并记录（loads 保序输出，P3）：
+        //    对 post-restore 存活的 loadQueue 快照复制，用生产
+        //    TileLoadPriorityPolicy::sortByPriority（TileLoadScheduler.h
+        //    requestMissingTiles 同款）排序 = 分发实际发起顺序；再过滤仍
+        //    Unloaded 的瓦片并保序去重（保留首次出现 = 该 key 最高优先级
+        //    实例）。发起后置 ContentLoading（cesium 在途请求同状态），
+        //    到期前不会被再次发起。
+        std::vector<TileLoadRequest> sortedRequests(
+            TilesetTestAccess::loadQueue(tileset).begin(),
+            TilesetTestAccess::loadQueue(tileset).end());
+        TileLoadPriorityPolicy::sortByPriority(sortedRequests);
+
+        std::vector<std::string> loadKeysInIssueOrder;
+        std::set<std::string> seenLoadKeys;
+        std::vector<TilesetTile*> issuedThisFrame;
+        for (const TileLoadRequest& request : sortedRequests) {
             TilesetTile* tile =
                 TilesetTestAccess::findTile(tileset, request.key);
             if (!tile || tile->content.loadState != TileLoadState::Unloaded) {
                 continue;
             }
-            const bool inserted =
-                loadKeySet
-                    .insert(selector_diff::tileKeyString(
-                        request.key.z,
-                        request.key.x,
-                        request.key.y))
-                    .second;
-            if (inserted) {
-                loadedThisFrame.push_back(tile);
+            const std::string keyString = selector_diff::tileKeyString(
+                request.key.z,
+                request.key.x,
+                request.key.y);
+            if (!seenLoadKeys.insert(keyString).second) {
+                continue;
             }
+            loadKeysInIssueOrder.push_back(keyString);
+            issuedThisFrame.push_back(tile);
         }
-        for (TilesetTile* tile : loadedThisFrame) {
-            tile->content.loadState = TileLoadState::Done;
-            tile->content.contentKind = TileContentKind::Empty;
+        for (TilesetTile* tile : issuedThisFrame) {
+            tile->content.loadState = TileLoadState::ContentLoading;
+        }
+        if (!issuedThisFrame.empty()) {
+            pendingLoads.push_back(
+                PendingLoadBatch{frame, std::move(issuedThisFrame)});
         }
 
         const TileSelectionCounters& counters =
@@ -396,12 +479,15 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
         ScenarioFrameResult result;
         result.renderKeys = renderKeys;
         result.visited = counters.visited;
+        result.fogCulled = counters.fogCulled;
+        // culled 映射（P3）：cesium tilesCulled 含 fog 剔除，gis-md 的
+        // frustum/fog 计数分离 —— trace culled = culled + fogCulled。
         result.traceLine = selector_diff::traceLine(
             static_cast<int>(frame),
             std::move(renderKeys),
-            std::vector<std::string>(loadKeySet.begin(), loadKeySet.end()),
+            std::move(loadKeysInIssueOrder),
             counters.visited,
-            counters.culled,
+            counters.culled + counters.fogCulled,
             counters.culledVisited,
             counters.kicked);
         results.push_back(std::move(result));
@@ -445,20 +531,24 @@ void runGoldenDiffScenario(const ScenarioSpec& scenario) {
         EXPECT_GT(results[i].visited, 0)
             << "frame " << i << " visited=0，疑似选择复用被引入 facade 路径";
     }
-    // 2) 两场景尾帧相机均位于 200km，终态应细化到叶层（z=3）。
-    const std::vector<std::string>& finalRender = results.back().renderKeys;
-    bool finalHasLeaf = false;
-    for (const std::string& key : finalRender) {
-        if (key.rfind("3-", 0) == 0) {
-            finalHasLeaf = true;
-            break;
+    // 2) 尾帧相机低于 z3 细化阈值的场景（S1 200km、S2/S3 400km nadir），
+    //    终态应渲染到叶层（z=3）。
+    if (scenario.expectFinalLeaf) {
+        const std::vector<std::string>& finalRender =
+            results.back().renderKeys;
+        bool finalHasLeaf = false;
+        for (const std::string& key : finalRender) {
+            if (key.rfind("3-", 0) == 0) {
+                finalHasLeaf = true;
+                break;
+            }
         }
+        EXPECT_TRUE(finalHasLeaf)
+            << "尾帧未渲染任何 z=3 叶瓦片：" << results.back().traceLine;
     }
-    EXPECT_TRUE(finalHasLeaf)
-        << "尾帧未渲染任何 z=3 叶瓦片：" << results.back().traceLine;
 
     // SELECTOR_DIFF_DUMP=<path>：无论 golden 是否存在都写出完整轨迹到
-    // <path>.<scenario>（双场景各自独立文件）。
+    // <path>.<scenario>（四场景各自独立文件）。
     if (const char* dumpPath = std::getenv("SELECTOR_DIFF_DUMP")) {
         const std::string scenarioDumpPath =
             std::string(dumpPath) + "." + scenario.name;
@@ -513,4 +603,12 @@ TEST(SelectorCesiumGoldenDiffTest, S1TraceMatchesCesiumGolden) {
 
 TEST(SelectorCesiumGoldenDiffTest, S2TraceMatchesCesiumGolden) {
     runGoldenDiffScenario(makeS2Scenario());
+}
+
+TEST(SelectorCesiumGoldenDiffTest, S3TraceMatchesCesiumGolden) {
+    runGoldenDiffScenario(makeS3Scenario());
+}
+
+TEST(SelectorCesiumGoldenDiffTest, S4TraceMatchesCesiumGolden) {
+    runGoldenDiffScenario(makeS4Scenario());
 }

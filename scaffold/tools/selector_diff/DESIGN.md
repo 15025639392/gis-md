@@ -81,6 +81,26 @@ frame=3 render=[2-0-1,2-1-1] loads=[3-0-2,3-1-2] visited=9 culled=4 culledVisite
    viewProjection 含 near/far——gis-md driver 用极小 near/极大 far
    （0.1 / 1e8）使其在场景内永不参与剔除。
 
+## P3（2026-07-04 启动）
+
+- **loads 保序**：traceLine 的 loads 不再排序，两侧按发起顺序输出
+  （cesium = mock loader 调用序；gis-md = TileLoadPriorityPolicy::
+  sortByPriority 后的顺序）——优先级公式与排序语义入对拍面。
+  s1/s2 golden 随格式变更重新生成。
+- **S3**：S2 相机/选项 + kLoadDelayFrames=2（帧 N 请求 → 帧 N+2 选择
+  前完成）——restore/kick 多帧渐进收敛面。
+- **S4**：fog 边界。首版 nadir 方案证伪——cesium fog 剔除条件
+  `exp(-(d·ρ)²)==0`（double 下溢）需 d·ρ≳27.3，nadir 低空视锥内无此
+  距离；改为南缘低空 80° 俯仰朝北（800m→320km 穿越可达/临界/不可达
+  三段）。cesium 把 fog 剔除计入 tilesCulled；gis-md trace 的 culled
+  映射为 frustum+fog 之和。
+
+白名单新增：
+
+7. 并列加载优先级的顺序无语义（stdlib introsort 产物，跨实现可变）：
+   场景层面消灭精确并列（相机经度偏离对称轴 +0.0037 rad），不做
+   tie-breaker 对拍。设计新场景时避开对称轴。
+
 ## 首轮对拍战果（2026-07-04，P1/S1）
 
 - render/loads/visited/culled/culledVisited 12 帧全部 byte 级一致，零豁免。

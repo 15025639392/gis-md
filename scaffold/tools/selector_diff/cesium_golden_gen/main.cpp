@@ -5,15 +5,21 @@
 // 行格式完全由 scenarios.h 的 traceLine()/tileKeyString()/joinSorted() 生成，
 // 保证与 gis-md 侧 driver byte 级同构。
 //
-// 用法：cesium_golden_gen <输出目录>
-// 每个场景一个全新 Tileset（冷启动隔离），依次跑 S1 → s1.trace、
-// S2 → s2.trace（树复用 kS1Tree，选项 kS2Options）。
+// 用法：cesium_golden_gen <输出目录> [--with-fog-sanity]
+// 每个场景一个全新 Tileset（冷启动隔离），依次跑 S1→s1.trace、S2→s2.trace、
+// S3→s3.trace（加载延迟 D=2）、S4→s4.trace（fog 边界）；树均复用 kS1Tree。
+// --with-fog-sanity 额外产出 s4_nofog.trace（S4 关 fog 的 sanity 对照，
+// 非入库对拍面，仅用于验证 fog 剔除确实发生）。
 //
-// 加载模型（DESIGN.md「加载模型」）：
+// 加载模型（DESIGN.md「加载模型」+ scenarios.h S3 时序契约）：
 //   - InlineTaskProcessor 内联执行 worker 任务；
-//   - GoldenQuadtreeLoader::loadTileContent 立即 resolve TileEmptyContent；
-//   - 帧 N 内 loadTiles() 发起的加载在帧 N+1 帧首 dispatchMainThreadTasks()
-//     时完成 → 「帧 N 请求 → 帧 N+1 可渲染」。
+//   - D=1（S1/S2/S4）：loadTileContent 立即 resolve TileEmptyContent，
+//     帧 N 末 loadTiles() 发起的加载在帧 N+1 帧首 dispatchMainThreadTasks()
+//     时完成 → 「帧 N 请求 → 帧 N+1 可渲染」；
+//   - D>=2（S3）：loadTileContent 返回未 resolve 的 promise 并按发起顺序
+//     挂账（发起帧 = 帧 N）；每帧循环开头先按发起顺序 resolve
+//     「发起帧 + D <= 当前帧」的请求，再 dispatchMainThreadTasks，
+//     再 updateViewGroup。
 
 #include "scenarios.h"
 
@@ -33,6 +39,7 @@
 #include <CesiumAsync/IAssetAccessor.h>
 #include <CesiumAsync/IAssetRequest.h>
 #include <CesiumAsync/ITaskProcessor.h>
+#include <CesiumAsync/Promise.h>
 #include <CesiumGeometry/QuadtreeTileID.h>
 #include <CesiumGeospatial/BoundingRegion.h>
 #include <CesiumGeospatial/Ellipsoid.h>
@@ -160,15 +167,34 @@ public:
 };
 
 // 场景四叉树 loader：
-//   - loadTileContent：记录被请求瓦片 key（loads 对拍面），立即 resolve
-//     TileEmptyContent（照 test/TestTilesetSelection.cpp EmptyLoader）；
+//   - loadTileContent：记录被请求瓦片 key（loads 对拍面，**保序**——记录序
+//     即 cesium load queue 排序后的实际发起序）；D=1 立即 resolve
+//     TileEmptyContent（照 test/TestTilesetSelection.cpp EmptyLoader），
+//     D>=2 挂账 promise 由 resolveDueRequests 按帧脚本完成；
 //   - createTileChildren：按 scenarios.h 的 childRegion/geometricErrorForLevel
 //     生成 4 个子瓦；父 region 取自父瓦片自己的 BoundingRegion（构造时写入的
 //     同一批 double，与 gis-md 侧递归展开逐位一致）；到 maxDepth 返回空。
 class GoldenQuadtreeLoader : public TilesetContentLoader {
 public:
-  explicit GoldenQuadtreeLoader(const selector_diff::QuadtreeSpec& tree)
-      : _tree(tree) {}
+  GoldenQuadtreeLoader(
+      const selector_diff::QuadtreeSpec& tree,
+      int loadDelayFrames)
+      : _tree(tree), _loadDelayFrames(loadDelayFrames) {}
+
+  static TileLoadResult
+  makeSuccessResult(std::shared_ptr<IAssetAccessor> pAssetAccessor) {
+    return TileLoadResult{
+        .contentKind = TileEmptyContent(),
+        .glTFUpAxis = CesiumGeometry::Axis::Z,
+        .updatedBoundingVolume = std::nullopt,
+        .updatedContentBoundingVolume = std::nullopt,
+        .rasterOverlayDetails = std::nullopt,
+        .pAssetAccessor = std::move(pAssetAccessor),
+        .pCompletedRequest = nullptr,
+        .tileInitializer = {},
+        .state = TileLoadResultState::Success,
+        .ellipsoid = Ellipsoid::WGS84};
+  }
 
   Future<TileLoadResult> loadTileContent(const TileLoadInput& input) override {
     const QuadtreeTileID* pID =
@@ -182,17 +208,44 @@ public:
       ++this->nonQuadtreeLoadCount;
     }
 
-    return input.asyncSystem.createResolvedFuture(TileLoadResult{
-        .contentKind = TileEmptyContent(),
-        .glTFUpAxis = CesiumGeometry::Axis::Z,
-        .updatedBoundingVolume = std::nullopt,
-        .updatedContentBoundingVolume = std::nullopt,
-        .rasterOverlayDetails = std::nullopt,
-        .pAssetAccessor = input.pAssetAccessor,
-        .pCompletedRequest = nullptr,
-        .tileInitializer = {},
-        .state = TileLoadResultState::Success,
-        .ellipsoid = Ellipsoid::WGS84});
+    if (this->_loadDelayFrames <= 1) {
+      // D=1：立即 resolve；完成时点由帧循环的 dispatchMainThreadTasks 决定
+      return input.asyncSystem.createResolvedFuture(
+          makeSuccessResult(input.pAssetAccessor));
+    }
+
+    // D>=2：挂账（按发起顺序 push_back），由 resolveDueRequests 到期完成
+    Promise<TileLoadResult> promise =
+        input.asyncSystem.createPromise<TileLoadResult>();
+    this->_pending.push_back(
+        PendingLoad{this->_currentFrame, promise, input.pAssetAccessor});
+    return promise.getFuture();
+  }
+
+  // 帧循环开头调用：设定「发起帧」记账基准（本帧 loadTiles() 发起的请求
+  // 记为帧 frame 发起）。
+  void beginFrame(int frame) { this->_currentFrame = frame; }
+
+  // 时序契约步骤 1：按发起顺序 resolve「发起帧 + D <= 当前帧」的请求。
+  // D=1 路径无挂账，天然空操作。
+  void resolveDueRequests(int currentFrame) {
+    auto it = this->_pending.begin();
+    while (it != this->_pending.end() &&
+           it->issueFrame + this->_loadDelayFrames <= currentFrame) {
+      it->promise.resolve(makeSuccessResult(std::move(it->pAssetAccessor)));
+      ++it;
+    }
+    this->_pending.erase(this->_pending.begin(), it);
+  }
+
+  // 场景收尾：把仍未到期的挂账全部 resolve（Tileset 析构会等待在途加载，
+  // 悬空 promise 会卡住析构）。不影响 trace——此时所有帧已输出完毕。
+  void resolveAllRemaining() {
+    for (PendingLoad& pending : this->_pending) {
+      pending.promise.resolve(
+          makeSuccessResult(std::move(pending.pAssetAccessor)));
+    }
+    this->_pending.clear();
   }
 
   TileChildrenResult createTileChildren(
@@ -255,8 +308,17 @@ public:
   int nonRegionBoundsCount = 0;
 
 private:
+  struct PendingLoad {
+    int issueFrame;
+    Promise<TileLoadResult> promise;
+    std::shared_ptr<IAssetAccessor> pAssetAccessor;
+  };
+
   selector_diff::QuadtreeSpec _tree;
+  int _loadDelayFrames = 1;
+  int _currentFrame = 0;
   std::vector<std::string> _requestedThisFrame;
+  std::vector<PendingLoad> _pending;
 };
 
 TilesetOptions makeOptions(const selector_diff::OptionsSpec& spec) {
@@ -286,12 +348,14 @@ ViewState makeViewState(
     const selector_diff::CameraFrameSpec& frame,
     const selector_diff::OptionsSpec& spec) {
   // position/direction/up 一律用 scenarios.h 的实现计算后逐分量转 glm。
+  // 所有场景统一 pitchedDirection/pitchedUp（pitch=0 与 nadir 函数逐位一致）。
   const selector_diff::Vec3d p = selector_diff::cartographicToEcef(
       frame.lonRad,
       frame.latRad,
       frame.heightMeters);
-  const selector_diff::Vec3d d = selector_diff::nadirDirection(p);
-  const selector_diff::Vec3d u = selector_diff::nadirUpLocalNorth(p);
+  const selector_diff::Vec3d d =
+      selector_diff::pitchedDirection(p, frame.pitchRad);
+  const selector_diff::Vec3d u = selector_diff::pitchedUp(p, frame.pitchRad);
 
   const glm::dvec3 position(p.x, p.y, p.z);
   const glm::dvec3 direction(d.x, d.y, d.z);
@@ -305,6 +369,7 @@ ViewState makeViewState(
 }
 
 // 跑一个场景（全新 Tileset 冷启动），写出 trace 并打印每帧概览。
+// loadDelayFrames = D（1 = 次帧完成模型；>=2 = 延迟脚本，见文件头）。
 // 返回 0 = 正常；非 0 = 出现与「已探明事实」不符的异常路径。
 int runScenario(
     const std::string& name,
@@ -312,8 +377,9 @@ int runScenario(
     const selector_diff::CameraFrameSpec* frames,
     size_t frameCount,
     const selector_diff::OptionsSpec& optionsSpec,
+    int loadDelayFrames,
     const std::string& outPath) {
-  auto pLoader = std::make_unique<GoldenQuadtreeLoader>(tree);
+  auto pLoader = std::make_unique<GoldenQuadtreeLoader>(tree, loadDelayFrames);
   GoldenQuadtreeLoader* pLoaderRaw = pLoader.get();
 
   // 根瓦片：Unloaded 状态（走加载管线），BV/GE/refine 按场景（仿
@@ -355,7 +421,10 @@ int runScenario(
   for (size_t i = 0; i < frameCount; ++i) {
     const ViewState viewState = makeViewState(frames[i], optionsSpec);
 
-    // 帧循环（TestTilesetSelection.cpp:155-215 模式；见文件头「加载模型」）。
+    // 帧循环（TestTilesetSelection.cpp:155-215 模式 + S3 时序契约，
+    // 见文件头「加载模型」）：先 resolve 到期请求，再 dispatch，再选择。
+    pLoaderRaw->beginFrame(static_cast<int>(i));
+    pLoaderRaw->resolveDueRequests(static_cast<int>(i));
     externals.asyncSystem.dispatchMainThreadTasks();
     const ViewUpdateResult& result =
         tileset.updateViewGroup(tileset.getDefaultViewGroup(), {viewState});
@@ -400,6 +469,10 @@ int runScenario(
         static_cast<long>(result.tilesKicked)));
   }
 
+  // 收尾：清空未到期挂账，避免 Tileset 析构等待在途加载（不影响已输出帧）
+  pLoaderRaw->resolveAllRemaining();
+  externals.asyncSystem.dispatchMainThreadTasks();
+
   std::ofstream out(outPath, std::ios::binary);
   if (!out) {
     std::cerr << "cannot open output file: " << outPath << std::endl;
@@ -442,22 +515,62 @@ int runScenario(
 
 int main(int argc, char** argv) {
   const std::string outDir = argc > 1 ? argv[1] : ".";
+  bool withFogSanity = false;
+  for (int i = 2; i < argc; ++i) {
+    if (std::string(argv[i]) == "--with-fog-sanity") {
+      withFogSanity = true;
+    }
+  }
 
-  const int rcS1 = runScenario(
+  int rc = 0;
+  // 树均复用 kS1Tree（场景规格），仅相机序列/选项/加载延迟不同
+  rc |= runScenario(
       "s1",
       selector_diff::kS1Tree,
       selector_diff::kS1Frames.data(),
       selector_diff::kS1Frames.size(),
       selector_diff::kS1Options,
+      /*loadDelayFrames=*/1,
       outDir + "/s1.trace");
-  // S2 复用 kS1Tree（场景规格），仅相机序列与选项不同
-  const int rcS2 = runScenario(
+  rc |= runScenario(
       "s2",
       selector_diff::kS1Tree,
       selector_diff::kS2Frames.data(),
       selector_diff::kS2Frames.size(),
       selector_diff::kS2Options,
+      /*loadDelayFrames=*/1,
       outDir + "/s2.trace");
+  rc |= runScenario(
+      "s3",
+      selector_diff::kS1Tree,
+      selector_diff::kS3Frames.data(),
+      selector_diff::kS3Frames.size(),
+      selector_diff::kS3Options,
+      selector_diff::kS3LoadDelayFrames,
+      outDir + "/s3.trace");
+  rc |= runScenario(
+      "s4",
+      selector_diff::kS1Tree,
+      selector_diff::kS4Frames.data(),
+      selector_diff::kS4Frames.size(),
+      selector_diff::kS4Options,
+      /*loadDelayFrames=*/1,
+      outDir + "/s4.trace");
 
-  return (rcS1 != 0 || rcS2 != 0) ? 1 : 0;
+  if (withFogSanity) {
+    // S4 sanity 对照：仅关 fog 剔除，其余同 kS4Options。非入库对拍面，
+    // 用于验证 s4.trace 的 culled 升高确实来自 fog（见 build_golden.sh）。
+    selector_diff::OptionsSpec s4NoFog = selector_diff::kS4Options;
+    s4NoFog.enableFogCulling = false;
+    rc |= runScenario(
+        "s4_nofog(sanity)",
+        selector_diff::kS1Tree,
+        selector_diff::kS4Frames.data(),
+        selector_diff::kS4Frames.size(),
+        s4NoFog,
+        /*loadDelayFrames=*/1,
+        outDir + "/s4_nofog.trace");
+  }
+
+  return rc != 0 ? 1 : 0;
 }

@@ -58,6 +58,32 @@ inline Vec3d nadirUpLocalNorth(const Vec3d& position) {
     return normalize(north);
 }
 
+// 带俯仰的相机基（pitch=0 时退化为 nadir + local-north up，与旧函数
+// 逐位一致；两侧 driver 对所有场景统一使用这一对函数）：
+//   dir(p) = down·cos(p) + north·sin(p)
+//   up(p)  = north·cos(p) − down·sin(p)
+inline Vec3d pitchedDirection(const Vec3d& position, double pitchRad) {
+    const Vec3d down = nadirDirection(position);
+    const Vec3d north = nadirUpLocalNorth(position);
+    const double c = std::cos(pitchRad);
+    const double s = std::sin(pitchRad);
+    return normalize(Vec3d{
+        down.x * c + north.x * s,
+        down.y * c + north.y * s,
+        down.z * c + north.z * s});
+}
+
+inline Vec3d pitchedUp(const Vec3d& position, double pitchRad) {
+    const Vec3d down = nadirDirection(position);
+    const Vec3d north = nadirUpLocalNorth(position);
+    const double c = std::cos(pitchRad);
+    const double s = std::sin(pitchRad);
+    return normalize(Vec3d{
+        north.x * c - down.x * s,
+        north.y * c - down.y * s,
+        north.z * c - down.z * s});
+}
+
 // ---- 场景 S1：4 层满四叉树 + nadir 阶梯下降 ----
 
 struct QuadtreeSpec {
@@ -74,6 +100,9 @@ struct CameraFrameSpec {
     double lonRad;
     double latRad;
     double heightMeters;
+    // 从 nadir 向本地北方地平线的俯仰（弧度）。0 = 正俯视（nadir）。
+    // 所有场景统一用 pitchedDirection/pitchedUp 构造相机。
+    double pitchRad = 0.0;
 };
 
 struct OptionsSpec {
@@ -126,8 +155,13 @@ inline constexpr QuadtreeSpec kS1Tree{
 // S1 相机：region 中心上空 nadir 阶梯下降。
 // SSE 参考（viewport 720 / fovY 60°）：refine 当 distance < ~39 × GE，
 // 即 z0 需 d<3.9e6、z3 叶 d<4.9e5——序列覆盖"看根→看到叶"全程。
+//
+// 相机经度整体偏离 region 中心 +0.0037 rad（~13'）：打破东西镜像对称，
+// 消灭精确并列的加载优先级对——并列项的排序顺序是 stdlib introsort 的
+// 产物（无语义、跨实现可变），loads 保序对拍必须在场景层面避开
+// （DESIGN 白名单 7）。
 inline constexpr double kS1CenterLon =
-    (kS1Tree.west + kS1Tree.east) / 2.0;
+    (kS1Tree.west + kS1Tree.east) / 2.0 + 0.0037;
 inline constexpr double kS1CenterLat =
     (kS1Tree.south + kS1Tree.north) / 2.0;
 
@@ -205,17 +239,72 @@ inline double geometricErrorForLevel(const QuadtreeSpec& tree, int z) {
     return tree.rootGeometricError / static_cast<double>(1 << z);
 }
 
+// ---- 场景 S3：加载延迟脚本（多帧渐进 restore/kick）----
+//
+// 与 S2 同相机（400km 冷启动）同选项（limit=8），但加载模型改为
+// kS3LoadDelayFrames=2：**帧 N 发起的请求在帧 N+D 的选择开始前完成**
+// （S1/S2 是 D=1 的次帧模型）。root 帧 0 restore（kicked>0），帧 1
+// root 仍不可渲染 → 再次 restore（kicked 再次非零）——kick/restore 面
+// 从单帧扩展到多帧渐进收敛，覆盖 wasReallyRenderedLastFrame 时序。
+//
+// 两侧时序契约（每帧）：
+//   1. 完成"发起帧 + D <= 当前帧"的请求（cesium：resolve promise 后
+//      dispatchMainThreadTasks；gis-md：置 loadState=Done）
+//   2. 选择（updateViewGroup / selectTiles）
+//   3. 发起本帧请求并记录（loads 输出）
+
+inline constexpr int kS3LoadDelayFrames = 2;
+inline constexpr const std::array<CameraFrameSpec, 12>& kS3Frames =
+    kS2Frames;
+inline const OptionsSpec& kS3Options = kS2Options;
+
+// ---- 场景 S4：fog 边界（低空倾斜相机看地平线）----
+//
+// cesium 的 fog 剔除条件是 exp(-(d·ρ)²) == 0.0（double 下溢），需要
+// d·ρ ≳ 27.3：nadir 相机低空视锥内没有那么远的瓦片（首版方案证伪，
+// 与关 fog 对照 byte 级一致）。改为：相机在 region 南缘内侧低空、
+// 80° 俯仰朝北看地平线——region 纵深 ~1250km，北部远瓦片入锥。
+// 各高度的可达性（ρ 取 fog 表插值，d 需 ≥ 27.3/ρ）：
+//   800m: ρ=2.0e-4 → d≥137km ✓   3km: ρ=5e-5 → d≥546km ✓
+//   6km:  ρ=3e-5  → d≥910km ✓(临界)   12km: ρ=1.9e-5 → d≥1437km ✗
+// ——序列穿越"必然剔除 / 临界 / 不可达"三段，覆盖 computeFogDensity
+// 插值与剔除判定边界。cesium 把 fog 剔除计入 tilesCulled（无独立
+// 计数），gis-md 侧 trace 的 culled 字段映射为 frustum+fog 之和。
+
+inline constexpr double kS4Pitch = 80.0 * 3.14159265358979323846 / 180.0;
+inline constexpr double kS4Lat = kS1Tree.south + 0.008;  // 南缘内侧 ~51km
+
+inline constexpr std::array<CameraFrameSpec, 12> kS4Frames{{
+    {kS1CenterLon, kS4Lat, 800.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 800.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 1500.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 3000.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 3000.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 6000.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 6000.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 12000.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 12000.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 50000.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 120000.0, kS4Pitch},
+    {kS1CenterLon, kS4Lat, 320000.0, kS4Pitch},
+}};
+
+inline constexpr OptionsSpec kS4Options{};
+
 // ---- 轨迹行格式（两侧 driver 都用这一份，保证 byte 级一致）----
 //   frame=N render=[a,b,...] loads=[c,...] visited=V culled=C culledVisited=CV kicked=K
-// 瓦片 key 统一 "z-x-y"；render/loads 排序后输出。
+// 瓦片 key 统一 "z-x-y"。render 排序输出（遍历序不作为对拍面）；
+// loads **保序输出**（P3 起）：两侧都按传输/分发层实际发起顺序——
+// cesium = mock loader 被调用顺序（load queue 按 group/priority 排序后
+// 依次发起），gis-md = 生产分发排序后的顺序。这使加载优先级公式与
+// 排序语义成为对拍面。
 
 inline std::string tileKeyString(int z, int x, int y) {
     return std::to_string(z) + "-" + std::to_string(x) + "-" +
            std::to_string(y);
 }
 
-inline std::string joinSorted(std::vector<std::string> keys) {
-    std::sort(keys.begin(), keys.end());
+inline std::string joinList(const std::vector<std::string>& keys) {
     std::string out;
     for (size_t i = 0; i < keys.size(); ++i) {
         if (i > 0) {
@@ -226,17 +315,22 @@ inline std::string joinSorted(std::vector<std::string> keys) {
     return out;
 }
 
+inline std::string joinSorted(std::vector<std::string> keys) {
+    std::sort(keys.begin(), keys.end());
+    return joinList(keys);
+}
+
 inline std::string traceLine(
     int frame,
     std::vector<std::string> renderKeys,
-    std::vector<std::string> loadKeys,
+    std::vector<std::string> loadKeysInIssueOrder,
     long visited,
     long culled,
     long culledVisited,
     long kicked) {
     return "frame=" + std::to_string(frame) + " render=[" +
            joinSorted(std::move(renderKeys)) + "] loads=[" +
-           joinSorted(std::move(loadKeys)) + "] visited=" +
+           joinList(loadKeysInIssueOrder) + "] visited=" +
            std::to_string(visited) + " culled=" + std::to_string(culled) +
            " culledVisited=" + std::to_string(culledVisited) +
            " kicked=" + std::to_string(kicked);
