@@ -54,11 +54,6 @@ struct TileSelectionPostTraversalCommitter {
                         context.firstRenderedDescendant),
                 tilePlan.visibleTiles.end());
         }
-        const TileSelectionTraversalCounterPlan postCommitCounters =
-            TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
-                plan);
-        selectionCounters.kicked += postCommitCounters.kicked;
-
         if (plan.returnSingleTileDetails) {
             // cesium TilesetSelection.cpp:734-735: kickDescendantsAndRenderTile
             // sets the kicked tile's selection state to Rendered
@@ -69,6 +64,12 @@ struct TileSelectionPostTraversalCommitter {
             tile.selectionFrameState.selectionState =
                 TileSelectionState::Rendered;
             if (plan.restoreChildLoadQueue) {
+                // cesium TilesetSelection.cpp:756: tilesKicked counts ONLY the
+                // load-queue entries removed by the restore branch (descendant
+                // limit exceeded) — an ordinary kick that trims descendants
+                // from the render list does not increment it.
+                selectionCounters.kicked += static_cast<int>(
+                    loadQueue.size() - context.loadQueueBeforeChildren);
                 loadQueue.resize(context.loadQueueBeforeChildren);
                 if (plan.queueParentNormal) {
                     queueTileLoad(

@@ -66,17 +66,8 @@ TEST(TileSelectionTraversalCounterPolicyTest, CountsRefineFlowOcclusion) {
     EXPECT_EQ(counters.waitingForOcclusion, 0);
 }
 
-TEST(TileSelectionTraversalCounterPolicyTest, CountsPostTraversalKicks) {
-    TileSelectionPostTraversalCommitPlan commitPlan;
-    commitPlan.trimRenderedDescendants = true;
-
-    TileSelectionTraversalCounterPlan counters =
-        TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
-            commitPlan);
-    EXPECT_EQ(counters.kicked, 1);
-
-    commitPlan.trimRenderedDescendants = false;
-    counters = TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
-        commitPlan);
-    EXPECT_EQ(counters.kicked, 0);
-}
+// planPostTraversalCommit was removed: the kicked counter follows cesium
+// semantics (TilesetSelection.cpp:756 — count restored load-queue entries)
+// and is accumulated directly by TileSelectionPostTraversalCommitter's
+// restore branch; see
+// TileSelectionPostTraversalCommitterTest.KickTrimsDescendantsRestoresQueue*.

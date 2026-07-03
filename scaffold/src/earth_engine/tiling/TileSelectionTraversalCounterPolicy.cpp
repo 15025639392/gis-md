@@ -39,14 +39,4 @@ TileSelectionTraversalCounterPolicy::planRefineFlow(
     return plan;
 }
 
-TileSelectionTraversalCounterPlan
-TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
-    const TileSelectionPostTraversalCommitPlan& commitPlan) {
-    TileSelectionTraversalCounterPlan plan;
-    if (commitPlan.trimRenderedDescendants) {
-        plan.kicked = 1;
-    }
-    return plan;
-}
-
 } // namespace earth_engine

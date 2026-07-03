@@ -17033,19 +17033,9 @@ void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
     check(counters.occluded == 0 &&
               counters.waitingForOcclusion == 0,
           "TileSelectionTraversalCounterPolicy: refine flow without occlusion counter adds none");
-    TileSelectionPostTraversalCommitPlan commitPlan;
-    commitPlan.trimRenderedDescendants = true;
-    counters =
-        TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
-            commitPlan);
-    check(counters.kicked == 1,
-          "TileSelectionTraversalCounterPolicy: trim commit increments kicked counter");
-    commitPlan.trimRenderedDescendants = false;
-    counters =
-        TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
-            commitPlan);
-    check(counters.kicked == 0,
-          "TileSelectionTraversalCounterPolicy: non-trim commit does not increment kicked counter");
+    // kicked no longer flows through a counter plan: cesium semantics
+    // (TilesetSelection.cpp:756) are accumulated directly by
+    // TileSelectionPostTraversalCommitter's restore branch.
 }
 void testTileSelectionRefinementPolicyInitialDecision() {
     TileSelectionRefineDecision decision =
