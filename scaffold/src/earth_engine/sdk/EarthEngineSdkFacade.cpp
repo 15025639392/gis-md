@@ -547,7 +547,23 @@ void EarthEngineSdkFacade::resetCamera() {
         Cartographic::fromDegrees(config_.initialCamera.longitudeDegrees,
                                   config_.initialCamera.latitudeDegrees,
                                   config_.initialCamera.heightMeters));
-    Vec3 up = ellipsoid.geodeticSurfaceNormal(targetEcef);
+    Vec3 normal = ellipsoid.geodeticSurfaceNormal(targetEcef);
+    // The camera sits directly overhead (same lon/lat as the target), so the
+    // view direction is anti-parallel to the surface normal. Passing up=normal
+    // makes lookAt degenerate: right = dir × up ≈ 0, and float cancellation of
+    // the near-parallel cross product yields a near-collapsed camera basis that
+    // smears the terrain into vertical streaks. Use local north as screen-up for
+    // this nadir case (falls back to the ECEF X axis at the poles).
+    Vec3 up = normal;
+    Vec3 viewDir = (targetEcef - camEcef).normalized();
+    const double align = viewDir.dot(normal);
+    if (align * align > 0.998) {  // |cos| > ~0.999 → view ∥ normal
+        Vec3 east = Vec3::unitZ().cross(normal);
+        if (east.lengthSquared() < 1e-12) {
+            east = Vec3::unitX();
+        }
+        up = normal.cross(east.normalized());
+    }
     engine_.camera().lookAt(camEcef, targetEcef, up);
 }
 
