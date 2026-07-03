@@ -85,7 +85,22 @@ QuantizedMeshTerrainProvider::QuantizedMeshTerrainProvider(
     resetFallbackLayerFromFields();
 }
 
-QuantizedMeshTerrainProvider::~QuantizedMeshTerrainProvider() = default;
+QuantizedMeshTerrainProvider::~QuantizedMeshTerrainProvider() {
+    // 在成员析构前清算在途共享 metadata 请求：providerAlive=false 使
+    // 传输层迟到的 completion（或回调被销毁时触发的兜底 guard）经由
+    // 强引用的注册表安全 no-op。等待者被丢弃而**不被调用**——在濒死的
+    // provider 上跑聚合会向线程池投递捕获 this 的任务，寿命越界；丢弃
+    // 即释放瓦片 ContentCallback，上游 TileLoadRequestDispatcher 的
+    // ContentCompletionGuard 恰以此信号兜底 failed 完成。
+    std::unordered_map<std::string, std::shared_ptr<InFlightMetadataRequest>>
+        inFlight;
+    {
+        std::lock_guard<std::mutex> lock(metadataRegistry_->mutex);
+        metadataRegistry_->providerAlive = false;
+        inFlight.swap(metadataRegistry_->inFlight);
+    }
+    // inFlight 在此析构：HttpRequest 句柄取消传输请求，等待者随之释放
+}
 
 QuantizedMeshTerrainProvider::TileRectangleAvailability::Node::Node(
     const TileKey& tileKey,
@@ -1985,6 +2000,43 @@ void QuantizedMeshTerrainProvider::startAsyncMetadataRequests(
     }
 }
 
+namespace {
+
+/// 与 TileLoadRequestDispatcher::ContentCompletionGuard 同构的恰好一次
+/// 保证：传输层可能销毁回调而从不调用（curl worker 静默丢弃 cancelled
+/// 请求、shutdown 丢弃无 notifyCallbackOnShutdown 的 active 请求、平台
+/// 桥后端取消）。聚合计数（remainingMetadata）与共享在途条目都要求
+/// completion 恰好一次，否则该瓦片永久卡死且同 URL 被永久毒化——
+/// 析构时未被调用则以失败状态补发。
+class SharedMetadataCompletionGuard {
+public:
+    explicit SharedMetadataCompletionGuard(
+        std::function<void(int, std::vector<uint8_t>)> complete)
+        : complete_(std::move(complete)) {}
+    SharedMetadataCompletionGuard(const SharedMetadataCompletionGuard&) =
+        delete;
+    SharedMetadataCompletionGuard& operator=(
+        const SharedMetadataCompletionGuard&) = delete;
+    ~SharedMetadataCompletionGuard() {
+        if (complete_) {
+            fire(-1, {});
+        }
+    }
+    void fire(int statusCode, std::vector<uint8_t> body) {
+        if (!complete_) {
+            return;
+        }
+        auto fn = std::move(complete_);
+        complete_ = nullptr;
+        fn(statusCode, std::move(body));
+    }
+
+private:
+    std::function<void(int, std::vector<uint8_t>)> complete_;
+};
+
+} // namespace
+
 void QuantizedMeshTerrainProvider::requestSharedMetadataTile(
     const std::string& url,
     HttpRequestPriority priority,
@@ -1992,8 +2044,8 @@ void QuantizedMeshTerrainProvider::requestSharedMetadataTile(
     InFlightMetadataRequest::Waiter waiter) {
     std::shared_ptr<InFlightMetadataRequest> request;
     {
-        std::lock_guard<std::mutex> lock(metadataRequestMutex_);
-        auto [it, inserted] = inFlightMetadataRequests_.try_emplace(
+        std::lock_guard<std::mutex> lock(metadataRegistry_->mutex);
+        auto [it, inserted] = metadataRegistry_->inFlight.try_emplace(
             url,
             std::make_shared<InFlightMetadataRequest>());
         it->second->waiters.push_back(std::move(waiter));
@@ -2004,19 +2056,30 @@ void QuantizedMeshTerrainProvider::requestSharedMetadataTile(
     }
 
     requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+    // 注册表按 shared_ptr 捕获：completion 在 provider 析构后到达时经
+    // providerAlive == false 安全退出，不触碰 this。this 的计数器只在
+    // 注册表锁内且 alive 时访问（析构函数在同一锁下翻转 alive，构成
+    // happens-before）。等待者在锁外调用：provider 存续由引擎的销毁
+    // 等待契约保证（瓦片完成回调正是等待者链的下游）。
+    auto registry = metadataRegistry_;
     auto completeSharedRequest =
-        [this, url](int statusCode, std::vector<uint8_t> body) mutable {
-            requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
-            if (!isCesiumSuccessfulHttpStatus(statusCode)) {
-                requestsFailed_.fetch_add(1, std::memory_order_relaxed);
-            }
+        [this, registry, url](
+            int statusCode,
+            std::vector<uint8_t> body) mutable {
             std::vector<InFlightMetadataRequest::Waiter> waiters;
             {
-                std::lock_guard<std::mutex> lock(metadataRequestMutex_);
-                auto it = inFlightMetadataRequests_.find(url);
-                if (it != inFlightMetadataRequests_.end()) {
+                std::lock_guard<std::mutex> lock(registry->mutex);
+                if (!registry->providerAlive) {
+                    return;
+                }
+                requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+                if (!isCesiumSuccessfulHttpStatus(statusCode)) {
+                    requestsFailed_.fetch_add(1, std::memory_order_relaxed);
+                }
+                auto it = registry->inFlight.find(url);
+                if (it != registry->inFlight.end()) {
                     waiters = std::move(it->second->waiters);
-                    inFlightMetadataRequests_.erase(it);
+                    registry->inFlight.erase(it);
                 }
             }
             for (auto& sharedWaiter : waiters) {
@@ -2024,13 +2087,19 @@ void QuantizedMeshTerrainProvider::requestSharedMetadataTile(
             }
         };
 
+    auto guard = std::make_shared<SharedMetadataCompletionGuard>(
+        std::move(completeSharedRequest));
+    auto transportCallback =
+        [guard](int statusCode, std::vector<uint8_t> body) mutable {
+            guard->fire(statusCode, std::move(body));
+        };
+
     if (!usePlatformBridge && isFileUrl(url)) {
         AsyncSystem::pool().enqueue(
             [url,
-             completeSharedRequest = std::move(completeSharedRequest)]()
-                mutable {
+             transportCallback = std::move(transportCallback)]() mutable {
                 std::vector<uint8_t> metadataBody = readFileUrl(url);
-                completeSharedRequest(
+                transportCallback(
                     metadataBody.empty() ? 0 : 200,
                     std::move(metadataBody));
             });
@@ -2040,14 +2109,14 @@ void QuantizedMeshTerrainProvider::requestSharedMetadataTile(
     if (usePlatformBridge) {
         request->handle = platformBridge_->get(
             url,
-            std::move(completeSharedRequest),
+            std::move(transportCallback),
             {priority, requestHeaders_});
         return;
     }
 
     request->handle = CurlMultiRequestScheduler::shared().get(
         url,
-        std::move(completeSharedRequest),
+        std::move(transportCallback),
         {priority, requestHeaders_});
 }
 

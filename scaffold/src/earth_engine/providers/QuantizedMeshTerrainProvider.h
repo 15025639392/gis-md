@@ -222,6 +222,17 @@ private:
         std::vector<Waiter> waiters;
         std::unique_ptr<HttpRequest> handle;
     };
+    /// 共享 metadata 请求注册表。独立 shared_ptr 生命周期：传输层完成
+    /// 回调（或其兜底 guard）可能在 provider 析构后才触发，届时经由
+    /// 强引用的注册表看到 providerAlive == false 安全 no-op，而不是
+    /// 触碰已析构的 provider 成员（互斥量/计数器）。
+    struct MetadataRequestRegistry {
+        std::mutex mutex;
+        bool providerAlive = true;
+        std::unordered_map<std::string,
+                           std::shared_ptr<InFlightMetadataRequest>>
+            inFlight;
+    };
 
     bool appendLayerFromJson(const nlohmann::json& j,
                              const std::string& layerJsonUrl,
@@ -337,9 +348,8 @@ private:
     std::atomic<int> requestsFailed_{0};
     std::atomic<int> activeWorkerBlockingRequests_{0};
     std::atomic<int> peakWorkerBlockingRequests_{0};
-    std::mutex metadataRequestMutex_;
-    std::unordered_map<std::string, std::shared_ptr<InFlightMetadataRequest>>
-        inFlightMetadataRequests_;
+    std::shared_ptr<MetadataRequestRegistry> metadataRegistry_ =
+        std::make_shared<MetadataRequestRegistry>();
 };
 
 } // namespace earth_engine

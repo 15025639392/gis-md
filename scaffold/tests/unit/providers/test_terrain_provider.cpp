@@ -235,6 +235,23 @@ public:
         return true;
     }
 
+    /// 故障注入：销毁回调而不调用（模拟传输层丢 completion——curl 侧
+    /// cancelled 请求被 worker 静默丢弃 / shutdown 时 active 请求无
+    /// notifyCallbackOnShutdown / 平台桥后端取消等价路径）。
+    bool dropAt(size_t index) {
+        std::function<void(int, std::vector<uint8_t>)> callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (index >= pending_.size()) {
+                return false;
+            }
+            callback = std::move(pending_[index].callback);
+            pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(index));
+        }
+        // callback 在此析构且从未被调用
+        return true;
+    }
+
     size_t pendingCount() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return pending_.size();
@@ -4347,6 +4364,226 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
     EXPECT_EQ(0, doneDiag.peakWorkerBlockingRequests);
 
     std::filesystem::remove_all(root);
+}
+
+namespace {
+
+/// 公共脚手架：child layer（无 metadataAvailability）+ parent layer
+/// （metadataAvailability=1），tile (0,0,0) 的内容请求 + parent metadata
+/// 子请求经 QueuedStatusPlatformBridge 聚合。供丢 completion 兜底测试复用。
+struct AsyncMetadataFixture {
+    std::filesystem::path root;
+    std::string parentMetadata;
+    std::unique_ptr<QuantizedMeshTerrainProvider> provider;
+
+    explicit AsyncMetadataFixture(const std::string& tag) {
+        root = std::filesystem::temp_directory_path() /
+               ("earth_md_qm_metadata_guard_" + tag);
+        std::filesystem::remove_all(root);
+        const std::string parentLayerJson = R"json({
+          "format": "quantized-mesh-1.0",
+          "projection": "EPSG:4326",
+          "scheme": "tms",
+          "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+          "minzoom": 0,
+          "maxzoom": 4,
+          "metadataAvailability": 1,
+          "available": [
+            [{"startX":0,"startY":0,"endX":1,"endY":0}]
+          ]
+        })json";
+        {
+            std::filesystem::create_directories(root / "parent");
+            std::ofstream out(root / "parent" / "layer.json");
+            out << parentLayerJson;
+        }
+        const std::string childLayerJson = R"json({
+          "format": "quantized-mesh-1.0",
+          "projection": "EPSG:4326",
+          "scheme": "tms",
+          "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+          "parentUrl": "../parent",
+          "minzoom": 0,
+          "maxzoom": 4,
+          "available": [
+            [{"startX":0,"startY":0,"endX":1,"endY":0}]
+          ]
+        })json";
+        parentMetadata = R"json({
+          "available": [
+            [{"startX":2,"startY":0,"endX":2,"endY":0}]
+          ]
+        })json";
+        provider = std::make_unique<QuantizedMeshTerrainProvider>(
+            "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+        EXPECT_TRUE(provider->configureFromLayerJson(
+            childLayerJson,
+            "file://" + (root / "child" / "layer.json").generic_string()));
+    }
+
+    ~AsyncMetadataFixture() {
+        provider.reset();
+        std::filesystem::remove_all(root);
+    }
+};
+
+struct CompletionProbe {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult result = TileContentLoadResult::retryLater();
+
+    TilesetContentProvider::ContentCallback callback() {
+        return [this](const TileKey&, TileContentLoadResult r) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                result = std::move(r);
+                done = true;
+            }
+            cv.notify_one();
+        };
+    }
+
+    bool wait(std::chrono::seconds timeout = std::chrono::seconds(5)) {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, timeout, [&] { return done; });
+    }
+};
+
+} // namespace
+
+// 传输层丢 metadata completion（销毁回调不调用）时，聚合必须由兜底
+// guard 以失败元数据收尾，瓦片主回调仍然触发——而不是 remainingMetadata
+// 永不归零导致该瓦片永久卡死（cesium 的等价保证来自 Future 链的保证性
+// continuation）。
+TEST(QuantizedMeshTerrainProviderTest,
+     DroppedMetadataCompletionStillCompletesTileRequest) {
+    AsyncMetadataFixture fixture("dropped_completion");
+    QueuedStatusPlatformBridge bridge;
+    fixture.provider->setPlatformBridge(&bridge);
+
+    CompletionProbe probe;
+    fixture.provider->requestTileContent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        probe.callback());
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(2));
+    // 内容正常完成，metadata 子请求被传输层丢弃
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata("")));
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.dropAt(0));
+
+    ASSERT_TRUE(probe.wait()) << "metadata completion 丢失后瓦片请求卡死";
+    // 内容本身成功：瓦片可渲染，只是缺 metadata 可用性更新
+    EXPECT_EQ(TileLoadStatus::Renderable, probe.result.status);
+    ASSERT_NE(nullptr, probe.result.gltfModel);
+}
+
+// 共享 URL 去重的毒丸：第一次请求的 completion 被丢后，在途条目必须被
+// 兜底清算（等待者全部收尾 + 条目移除），后续同 URL 请求发起全新传输
+// 请求——而不是静默挂到死条目上永久挂死。
+TEST(QuantizedMeshTerrainProviderTest,
+     DroppedMetadataCompletionDoesNotPoisonSharedUrl) {
+    AsyncMetadataFixture fixture("poison_shared_url");
+    QueuedStatusPlatformBridge bridge;
+    fixture.provider->setPlatformBridge(&bridge);
+
+    // 请求 A、B 同一瓦片：B 的 metadata 子请求去重挂到 A 的在途条目
+    CompletionProbe probeA;
+    fixture.provider->requestTileContent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        probeA.callback());
+    ASSERT_TRUE(bridge.waitUntilPendingCount(2));
+
+    CompletionProbe probeB;
+    fixture.provider->requestTileContent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        probeB.callback());
+    ASSERT_TRUE(bridge.waitUntilPendingCount(3));
+    EXPECT_EQ(3u, bridge.pendingCount())
+        << "同 URL metadata 应去重共享，不应发起第二个传输请求";
+
+    // 两个内容请求正常完成（此时只剩共享 metadata 请求在途）
+    ASSERT_TRUE(bridge.completeAt(
+        0,
+        206,
+        makeQuantizedMeshBytesWithMetadata("")));
+    ASSERT_TRUE(bridge.completeAt(
+        1,
+        206,
+        makeQuantizedMeshBytesWithMetadata("")));
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+
+    // 丢弃共享 metadata completion：A、B 都必须收尾
+    ASSERT_TRUE(bridge.dropAt(0));
+    ASSERT_TRUE(probeA.wait()) << "等待者 A 卡死";
+    ASSERT_TRUE(probeB.wait()) << "等待者 B 卡死";
+
+    // 毒丸已清：请求 C 的 metadata 子请求应发起全新传输请求并可正常完成
+    CompletionProbe probeC;
+    fixture.provider->requestTileContent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        probeC.callback());
+    ASSERT_TRUE(bridge.waitUntilPendingCount(2));
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata("")));
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(0).find("parentTiles/0/0/0.terrain"))
+        << "同 URL 应重新发起传输请求（在途条目未被清除 = 毒丸残留）";
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata(fixture.parentMetadata)));
+    ASSERT_TRUE(probeC.wait());
+    EXPECT_EQ(TileLoadStatus::Renderable, probeC.result.status);
+    ASSERT_EQ(1u, probeC.result.quantizedMeshAvailabilityUpdates.size());
+}
+
+// provider 携带在途 metadata 请求析构后，传输层迟到的 completion（或
+// 回调销毁触发的 guard）必须安全 no-op；被丢弃的等待者所持瓦片回调
+// 必须被释放（上层 TileLoadRequestDispatcher 的 ContentCompletionGuard
+// 以此兜底 failed）。
+TEST(QuantizedMeshTerrainProviderTest,
+     DestroyWithInFlightMetadataThenLateCompletionIsSafe) {
+    QueuedStatusPlatformBridge bridge;
+    auto invoked = std::make_shared<std::atomic<bool>>(false);
+    std::weak_ptr<std::atomic<bool>> callbackAlive;
+
+    {
+        AsyncMetadataFixture fixture("destroy_inflight");
+        fixture.provider->setPlatformBridge(&bridge);
+
+        auto token = std::make_shared<std::atomic<bool>>(false);
+        callbackAlive = token;
+        fixture.provider->requestTileContent(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            CancellationToken{},
+            [token, invoked](const TileKey&, TileContentLoadResult) {
+                invoked->store(true);
+            });
+
+        ASSERT_TRUE(bridge.waitUntilPendingCount(2));
+        ASSERT_TRUE(bridge.completeNext(
+            206,
+            makeQuantizedMeshBytesWithMetadata("")));
+        ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+        // fixture 析构：provider 携带在途 metadata 请求死亡
+    }
+
+    // 等待者被丢弃（不得在半析构的 provider 上运行聚合），瓦片回调释放
+    EXPECT_FALSE(invoked->load());
+    EXPECT_TRUE(callbackAlive.expired())
+        << "provider 析构后仍持有瓦片回调（上层析构等待将永久阻塞）";
+
+    // 迟到的 completion 安全 no-op，不得崩溃/UAF
+    ASSERT_TRUE(bridge.completeAt(0, 200, {}));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
