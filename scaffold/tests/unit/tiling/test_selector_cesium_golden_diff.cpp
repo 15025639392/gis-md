@@ -1,12 +1,16 @@
 // Selector 对拍差分测试 —— gis-md 回放侧（见 tools/selector_diff/DESIGN.md）。
 //
-// 按 tools/selector_diff/scenarios.h 的 S1 规格展开 4 层满四叉树（85 瓦片）
-// 与 12 帧 nadir 阶梯下降相机，逐帧跑 gis-md 选择管线并用共享 traceLine()
-// 生成轨迹行：
-//   - golden/s1.trace 存在 → 逐帧 EXPECT_EQ（行数也断言）；
+// 按 tools/selector_diff/scenarios.h 的场景规格展开 4 层满四叉树（85 瓦片）
+// 与 12 帧相机序列，逐帧跑 gis-md 选择管线并用共享 traceLine() 生成轨迹行。
+// 双场景参数化：
+//   - S1：nadir 阶梯下降（8000km→200km），对 golden/s1.trace；
+//   - S2：冷启动深观察（12 帧全 200km，loadingDescendantLimit=8，覆盖
+//     restore/kick 计数面），对 golden/s2.trace。
+// 每个场景独立 TEST：
+//   - golden/<scenario>.trace 存在 → 逐帧 EXPECT_EQ（行数也断言）；
 //   - 不存在 → GTEST_SKIP（golden 由 cesium 侧生成器离线产出后提交入库）；
 //   - 环境变量 SELECTOR_DIFF_DUMP=<path> → 无论 golden 是否存在都把 gis-md
-//     轨迹完整写到该文件，便于人工 diff。
+//     轨迹写到 <path>.<scenario>（如 /tmp/t.s1、/tmp/t.s2），便于人工 diff。
 //
 // 选择复用（TileSelectionReusePolicy，DESIGN 白名单 5）在本驱动下天然禁用：
 // TilesetSelectionFrameFacade::selectTiles 直接走 TileSelectionFrameRunner
@@ -17,6 +21,11 @@
 // 仅在 notYetRenderableCount > loadingDescendantLimit 的 restore 分支按
 // 恢复移除的 load-queue 条数累加（TileSelectionPostTraversalCommitter），
 // 普通 kick（父替子渲染）不计数。全行 byte 级严格对拍，无豁免字段。
+//
+// 加载模型（DESIGN）：帧 N selectTiles 后把 loadQueue 里仍 Unloaded 的瓦片
+// 帧末置 Done（下一帧才可渲染）。restore 分支在 selectTiles 内部已把被
+// 放弃的子孙请求从 loadQueue 移除，因此"帧末应用集合"天然是 post-restore
+// 队列——与 cesium 侧 mock loader 只见到存活请求一致。
 
 #include <gtest/gtest.h>
 
@@ -90,6 +99,31 @@ namespace {
 #endif
 
 constexpr const char* kSchemeId = "Geographic-TMS";
+
+/// 场景参数包：name 同时决定 golden 文件名（golden/<name>.trace）与
+/// SELECTOR_DIFF_DUMP 导出后缀（<path>.<name>）。
+struct ScenarioSpec {
+    std::string name;
+    const selector_diff::QuadtreeSpec& tree;
+    const selector_diff::OptionsSpec& options;
+    std::vector<selector_diff::CameraFrameSpec> frames;
+};
+
+ScenarioSpec makeS1Scenario() {
+    return ScenarioSpec{
+        "s1",
+        selector_diff::kS1Tree,
+        selector_diff::kS1Options,
+        {selector_diff::kS1Frames.begin(), selector_diff::kS1Frames.end()}};
+}
+
+ScenarioSpec makeS2Scenario() {
+    return ScenarioSpec{
+        "s2",
+        selector_diff::kS1Tree,  // S2 复用 S1 树
+        selector_diff::kS2Options,
+        {selector_diff::kS2Frames.begin(), selector_diff::kS2Frames.end()}};
+}
 
 /// 由 QuadtreeSpec 程序化枚举整棵满四叉树的内容 provider
 /// （仿 test_tileset_selection_refinement.cpp 的 SelectionTreeContentProvider，
@@ -165,7 +199,7 @@ SelectorView makeSelectorView(
     return view;
 }
 
-TilesetOptions makeS1TilesetOptions(const selector_diff::OptionsSpec& spec) {
+TilesetOptions makeTilesetOptions(const selector_diff::OptionsSpec& spec) {
     TilesetOptions options;
     options.maximumScreenSpaceError = spec.maximumScreenSpaceError;
     options.enableFrustumCulling = spec.enableFrustumCulling;
@@ -186,11 +220,21 @@ TilesetOptions makeS1TilesetOptions(const selector_diff::OptionsSpec& spec) {
     return options;
 }
 
-/// 物化整棵 S1 树并按场景规格逐瓦片覆写属性。
+int expectedTileCount(const selector_diff::QuadtreeSpec& tree) {
+    int count = 0;
+    for (int z = 0; z <= tree.maxDepth; ++z) {
+        count += 1 << (2 * z);
+    }
+    return count;
+}
+
+/// 物化整棵场景树并按规格逐瓦片覆写属性。
 /// 区域配对：子 region 由 childRegion(parent, dx, dy) 递推，dx/dy 从
 /// provider 返回的子 key 反推（dx = child.x - 2*parent.x），不依赖 scheme
 /// 的 y 方向约定——key (2y+dy) 与显式计算的 bounds 恒定配对。
-int materializeS1Tree(Tileset& tileset, const selector_diff::QuadtreeSpec& tree) {
+int materializeScenarioTree(
+    Tileset& tileset,
+    const selector_diff::QuadtreeSpec& tree) {
     struct PendingTile {
         TilesetTile* tile;
         selector_diff::RegionSpec region;
@@ -254,34 +298,34 @@ int materializeS1Tree(Tileset& tileset, const selector_diff::QuadtreeSpec& tree)
     return materialized;
 }
 
-struct S1FrameResult {
+struct ScenarioFrameResult {
     std::string traceLine;
     std::vector<std::string> renderKeys;
     int visited = 0;
 };
 
-/// 逐帧跑 S1 场景，返回逐帧轨迹（traceLine 由 scenarios.h 共享函数拼行）。
-std::vector<S1FrameResult> runS1Scenario() {
-    const selector_diff::QuadtreeSpec& tree = selector_diff::kS1Tree;
-    const selector_diff::OptionsSpec& spec = selector_diff::kS1Options;
+/// 逐帧跑场景，返回逐帧轨迹（traceLine 由 scenarios.h 共享函数拼行）。
+std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
+    const selector_diff::QuadtreeSpec& tree = scenario.tree;
+    const selector_diff::OptionsSpec& spec = scenario.options;
 
     Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
-        makeS1TilesetOptions(spec),
+        makeTilesetOptions(spec),
         std::make_unique<QuadtreeSpecContentProvider>(tree));
 
-    const int materialized = materializeS1Tree(tileset, tree);
-    EXPECT_EQ(materialized, 85);
+    const int materialized = materializeScenarioTree(tileset, tree);
+    EXPECT_EQ(materialized, expectedTileCount(tree));
 
     const int viewportWidth = static_cast<int>(spec.viewportWidth);
     const int viewportHeight = static_cast<int>(spec.viewportHeight);
 
-    std::vector<S1FrameResult> results;
-    for (size_t frame = 0; frame < selector_diff::kS1Frames.size(); ++frame) {
+    std::vector<ScenarioFrameResult> results;
+    for (size_t frame = 0; frame < scenario.frames.size(); ++frame) {
         const selector_diff::CameraFrameSpec& frameSpec =
-            selector_diff::kS1Frames[frame];
+            scenario.frames[frame];
         const selector_diff::Vec3d posD = selector_diff::cartographicToEcef(
             frameSpec.lonRad,
             frameSpec.latRad,
@@ -320,6 +364,8 @@ std::vector<S1FrameResult> runS1Scenario() {
 
         // loads = 本帧 loadQueue 中仍 Unloaded 的瓦片 key 去重集合；
         // 随后帧末完成加载（Done + Empty），下一帧才可渲染（DESIGN 加载模型）。
+        // selectTiles 内部 restore 分支已把被放弃的子孙请求移出 loadQueue，
+        // 此处读到的即 post-restore 存活集合（与 cesium loader 视角一致）。
         std::set<std::string> loadKeySet;
         std::vector<TilesetTile*> loadedThisFrame;
         for (const TileLoadRequest& request :
@@ -347,7 +393,7 @@ std::vector<S1FrameResult> runS1Scenario() {
 
         const TileSelectionCounters& counters =
             TilesetTestAccess::selectionCounters(tileset);
-        S1FrameResult result;
+        ScenarioFrameResult result;
         result.renderKeys = renderKeys;
         result.visited = counters.visited;
         result.traceLine = selector_diff::traceLine(
@@ -363,26 +409,29 @@ std::vector<S1FrameResult> runS1Scenario() {
     return results;
 }
 
-std::vector<std::string> traceLines(const std::vector<S1FrameResult>& results) {
+std::vector<std::string> traceLines(
+    const std::vector<ScenarioFrameResult>& results) {
     std::vector<std::string> lines;
     lines.reserve(results.size());
-    for (const S1FrameResult& result : results) {
+    for (const ScenarioFrameResult& result : results) {
         lines.push_back(result.traceLine);
     }
     return lines;
 }
 
-} // namespace
+/// 完整的单场景对拍流程：确定性重跑、合理性断言、可选 dump、golden 逐帧
+/// 对拍（缺失则 GTEST_SKIP——在子函数里跳过后调用方 TEST 体已无后续逻辑）。
+void runGoldenDiffScenario(const ScenarioSpec& scenario) {
+    SCOPED_TRACE("scenario " + scenario.name);
 
-TEST(SelectorCesiumGoldenDiffTest, S1TraceMatchesCesiumGolden) {
-    const std::vector<S1FrameResult> results = runS1Scenario();
+    const std::vector<ScenarioFrameResult> results = runScenario(scenario);
     const std::vector<std::string> lines = traceLines(results);
-    ASSERT_EQ(lines.size(), selector_diff::kS1Frames.size());
+    ASSERT_EQ(lines.size(), scenario.frames.size());
 
     // 确定性：同一场景独立重跑 byte 级一致。
     {
         const std::vector<std::string> rerunLines =
-            traceLines(runS1Scenario());
+            traceLines(runScenario(scenario));
         ASSERT_EQ(rerunLines.size(), lines.size());
         for (size_t i = 0; i < lines.size(); ++i) {
             EXPECT_EQ(lines[i], rerunLines[i]) << "frame " << i
@@ -396,7 +445,7 @@ TEST(SelectorCesiumGoldenDiffTest, S1TraceMatchesCesiumGolden) {
         EXPECT_GT(results[i].visited, 0)
             << "frame " << i << " visited=0，疑似选择复用被引入 facade 路径";
     }
-    // 2) 相机降至 200km 后终态应细化到叶层（z=3）。
+    // 2) 两场景尾帧相机均位于 200km，终态应细化到叶层（z=3）。
     const std::vector<std::string>& finalRender = results.back().renderKeys;
     bool finalHasLeaf = false;
     for (const std::string& key : finalRender) {
@@ -408,18 +457,24 @@ TEST(SelectorCesiumGoldenDiffTest, S1TraceMatchesCesiumGolden) {
     EXPECT_TRUE(finalHasLeaf)
         << "尾帧未渲染任何 z=3 叶瓦片：" << results.back().traceLine;
 
-    // SELECTOR_DIFF_DUMP=<path>：无论 golden 是否存在都写出完整轨迹。
+    // SELECTOR_DIFF_DUMP=<path>：无论 golden 是否存在都写出完整轨迹到
+    // <path>.<scenario>（双场景各自独立文件）。
     if (const char* dumpPath = std::getenv("SELECTOR_DIFF_DUMP")) {
-        std::ofstream dump(dumpPath, std::ios::binary | std::ios::trunc);
+        const std::string scenarioDumpPath =
+            std::string(dumpPath) + "." + scenario.name;
+        std::ofstream dump(
+            scenarioDumpPath,
+            std::ios::binary | std::ios::trunc);
         ASSERT_TRUE(dump.is_open())
-            << "无法写 SELECTOR_DIFF_DUMP 文件: " << dumpPath;
+            << "无法写 SELECTOR_DIFF_DUMP 文件: " << scenarioDumpPath;
         for (const std::string& line : lines) {
             dump << line << "\n";
         }
     }
 
     const std::filesystem::path goldenPath =
-        std::filesystem::path(SELECTOR_DIFF_GOLDEN_DIR) / "s1.trace";
+        std::filesystem::path(SELECTOR_DIFF_GOLDEN_DIR) /
+        (scenario.name + ".trace");
     if (std::string(SELECTOR_DIFF_GOLDEN_DIR).empty() ||
         !std::filesystem::exists(goldenPath)) {
         GTEST_SKIP() << "golden 未生成（" << goldenPath.string()
@@ -448,4 +503,14 @@ TEST(SelectorCesiumGoldenDiffTest, S1TraceMatchesCesiumGolden) {
             << "frame " << i << " 轨迹不一致\n  gis-md: " << lines[i]
             << "\n  golden: " << goldenLines[i];
     }
+}
+
+} // namespace
+
+TEST(SelectorCesiumGoldenDiffTest, S1TraceMatchesCesiumGolden) {
+    runGoldenDiffScenario(makeS1Scenario());
+}
+
+TEST(SelectorCesiumGoldenDiffTest, S2TraceMatchesCesiumGolden) {
+    runGoldenDiffScenario(makeS2Scenario());
 }

@@ -148,6 +148,38 @@ inline constexpr std::array<CameraFrameSpec, 12> kS1Frames{{
 
 inline constexpr OptionsSpec kS1Options{};
 
+// ---- 场景 S2：冷启动深缩放 + 低 loadingDescendantLimit 触发 restore/kick ----
+//
+// 相机从第 0 帧起即位于 region 中心上空 400km（需要 z3 叶，视锥内可见
+// ~24 个叶瓦片），全树 Unloaded 起步：not-yet-renderable 后代数远超
+// loadingDescendantLimit=8（条件为严格大于；首轮 200km 方案恰好 8 个
+// 可见叶差一不触发，故抬到 400km 远离边界），祖先必然走"restore 子孙
+// load queue + 改载父瓦片"分支（cesium TilesetSelection.cpp:748-771），
+// golden 的 kicked 计数非零——差分覆盖 kick/restore 面（2026-07-04 对齐
+// 的 kicked 恢复条数语义）。加载模型与 S1 相同（帧 N 请求 → 帧 N+1 可
+// 渲染），restore 使每帧只放行一层，收敛逐级向下、kick 连续多帧非零。
+
+inline constexpr std::array<CameraFrameSpec, 12> kS2Frames{{
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+    {kS1CenterLon, kS1CenterLat, 400000.0},
+}};
+
+inline const OptionsSpec kS2Options = [] {
+    OptionsSpec options{};
+    options.loadingDescendantLimit = 8;
+    return options;
+}();
+
 // ---- 子瓦片切分（两侧统一语义：dx=0 西半，dy=0 南半）----
 
 struct RegionSpec {

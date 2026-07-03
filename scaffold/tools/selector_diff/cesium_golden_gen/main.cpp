@@ -5,6 +5,10 @@
 // 行格式完全由 scenarios.h 的 traceLine()/tileKeyString()/joinSorted() 生成，
 // 保证与 gis-md 侧 driver byte 级同构。
 //
+// 用法：cesium_golden_gen <输出目录>
+// 每个场景一个全新 Tileset（冷启动隔离），依次跑 S1 → s1.trace、
+// S2 → s2.trace（树复用 kS1Tree，选项 kS2Options）。
+//
 // 加载模型（DESIGN.md「加载模型」）：
 //   - InlineTaskProcessor 内联执行 worker 任务；
 //   - GoldenQuadtreeLoader::loadTileContent 立即 resolve TileEmptyContent；
@@ -300,14 +304,15 @@ ViewState makeViewState(
   return ViewState(position, direction, up, viewportSize, hFov, vFov);
 }
 
-} // namespace
-
-int main(int argc, char** argv) {
-  const std::string outPath = argc > 1 ? argv[1] : "s1.trace";
-
-  const selector_diff::QuadtreeSpec& tree = selector_diff::kS1Tree;
-  const selector_diff::OptionsSpec& optionsSpec = selector_diff::kS1Options;
-
+// 跑一个场景（全新 Tileset 冷启动），写出 trace 并打印每帧概览。
+// 返回 0 = 正常；非 0 = 出现与「已探明事实」不符的异常路径。
+int runScenario(
+    const std::string& name,
+    const selector_diff::QuadtreeSpec& tree,
+    const selector_diff::CameraFrameSpec* frames,
+    size_t frameCount,
+    const selector_diff::OptionsSpec& optionsSpec,
+    const std::string& outPath) {
   auto pLoader = std::make_unique<GoldenQuadtreeLoader>(tree);
   GoldenQuadtreeLoader* pLoaderRaw = pLoader.get();
 
@@ -337,17 +342,18 @@ int main(int argc, char** argv) {
       makeOptions(optionsSpec));
 
   std::vector<std::string> lines;
-  lines.reserve(selector_diff::kS1Frames.size());
+  lines.reserve(frameCount);
   struct FrameSummary {
     size_t renderCount;
+    size_t loadCount;
     int maxRenderLevel;
+    long kicked;
   };
   std::vector<FrameSummary> summaries;
   bool sawNonQuadtreeRenderID = false;
 
-  for (size_t i = 0; i < selector_diff::kS1Frames.size(); ++i) {
-    const ViewState viewState =
-        makeViewState(selector_diff::kS1Frames[i], optionsSpec);
+  for (size_t i = 0; i < frameCount; ++i) {
+    const ViewState viewState = makeViewState(frames[i], optionsSpec);
 
     // 帧循环（TestTilesetSelection.cpp:155-215 模式；见文件头「加载模型」）。
     externals.asyncSystem.dispatchMainThreadTasks();
@@ -363,7 +369,7 @@ int main(int argc, char** argv) {
       const QuadtreeTileID* pID =
           std::get_if<QuadtreeTileID>(&pTile->getTileID());
       if (!pID) {
-        std::cerr << "frame " << i
+        std::cerr << name << " frame " << i
                   << ": non-QuadtreeTileID tile in tilesToRenderThisFrame"
                   << std::endl;
         sawNonQuadtreeRenderID = true;
@@ -377,12 +383,17 @@ int main(int argc, char** argv) {
           std::max(maxRenderLevel, static_cast<int>(pID->level));
     }
 
-    summaries.push_back(FrameSummary{renderKeys.size(), maxRenderLevel});
+    std::vector<std::string> loadKeys = pLoaderRaw->takeRequestedThisFrame();
+    summaries.push_back(FrameSummary{
+        renderKeys.size(),
+        loadKeys.size(),
+        maxRenderLevel,
+        static_cast<long>(result.tilesKicked)});
 
     lines.push_back(selector_diff::traceLine(
         static_cast<int>(i),
         std::move(renderKeys),
-        pLoaderRaw->takeRequestedThisFrame(),
+        std::move(loadKeys),
         static_cast<long>(result.tilesVisited),
         static_cast<long>(result.tilesCulled),
         static_cast<long>(result.culledTilesVisited),
@@ -399,11 +410,14 @@ int main(int argc, char** argv) {
   }
   out.close();
 
-  std::cout << "wrote " << lines.size() << " frames to " << outPath
+  std::cout << name << ": wrote " << lines.size() << " frames to " << outPath
             << std::endl;
   for (size_t i = 0; i < summaries.size(); ++i) {
-    std::cout << "frame " << i << ": render=" << summaries[i].renderCount
-              << " maxZ=" << summaries[i].maxRenderLevel << std::endl;
+    std::cout << name << " frame " << i
+              << ": render=" << summaries[i].renderCount
+              << " loads=" << summaries[i].loadCount
+              << " maxZ=" << summaries[i].maxRenderLevel
+              << " kicked=" << summaries[i].kicked << std::endl;
   }
 
   // 异常路径校验：任何一项非零都说明与「已探明事实」不符，返回失败。
@@ -411,7 +425,7 @@ int main(int argc, char** argv) {
       pLoaderRaw->nonQuadtreeLoadCount != 0 ||
       pLoaderRaw->nonQuadtreeChildrenCount != 0 ||
       pLoaderRaw->nonRegionBoundsCount != 0) {
-    std::cerr << "anomalies detected: nonQuadtreeRenderID="
+    std::cerr << name << " anomalies detected: nonQuadtreeRenderID="
               << sawNonQuadtreeRenderID
               << " assetAccessorCalls=" << pAssetAccessor->callCount
               << " nonQuadtreeLoads=" << pLoaderRaw->nonQuadtreeLoadCount
@@ -422,4 +436,28 @@ int main(int argc, char** argv) {
     return 1;
   }
   return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+  const std::string outDir = argc > 1 ? argv[1] : ".";
+
+  const int rcS1 = runScenario(
+      "s1",
+      selector_diff::kS1Tree,
+      selector_diff::kS1Frames.data(),
+      selector_diff::kS1Frames.size(),
+      selector_diff::kS1Options,
+      outDir + "/s1.trace");
+  // S2 复用 kS1Tree（场景规格），仅相机序列与选项不同
+  const int rcS2 = runScenario(
+      "s2",
+      selector_diff::kS1Tree,
+      selector_diff::kS2Frames.data(),
+      selector_diff::kS2Frames.size(),
+      selector_diff::kS2Options,
+      outDir + "/s2.trace");
+
+  return (rcS1 != 0 || rcS2 != 0) ? 1 : 0;
 }
