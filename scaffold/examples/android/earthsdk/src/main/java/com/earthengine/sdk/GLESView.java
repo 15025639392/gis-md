@@ -1,19 +1,21 @@
 package com.earthengine.sdk;
 
 import android.content.Context;
-import android.view.Choreographer;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
-public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Choreographer.FrameCallback {
+/**
+ * 渲染循环由 native 渲染线程驱动（AChoreographer 帧节拍）；
+ * 本类只负责 surface 生命周期转发与触摸事件整形。
+ */
+public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     static {
         System.loadLibrary("earth_engine_android_jni");
     }
 
-    private boolean rendering;
     private float lastX;
     private float lastY;
     private float lastPinchDistance;
@@ -38,8 +40,6 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     public void surfaceCreated(SurfaceHolder holder) {
         Surface surface = holder.getSurface();
         nativeSurfaceCreated(surface);
-        rendering = true;
-        Choreographer.getInstance().postFrameCallback(this);
     }
 
     @Override
@@ -49,32 +49,15 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
-        rendering = false;
-        Choreographer.getInstance().removeFrameCallback(this);
         nativeSurfaceDestroyed();
     }
 
-    @Override
-    public void doFrame(long frameTimeNanos) {
-        if (!rendering) {
-            return;
-        }
-        nativeRenderFrame();
-        Choreographer.getInstance().postFrameCallback(this);
-    }
-
     public void onPause() {
-        rendering = false;
-        Choreographer.getInstance().removeFrameCallback(this);
         nativePause();
     }
 
     public void onResume() {
         nativeResume();
-        if (getHolder().getSurface().isValid()) {
-            rendering = true;
-            Choreographer.getInstance().postFrameCallback(this);
-        }
     }
 
     @Override
@@ -237,7 +220,6 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     private static native void nativeInit(Context appContext);
     private static native void nativeSurfaceCreated(Surface surface);
     private static native void nativeSurfaceChanged(int width, int height);
-    private static native void nativeRenderFrame();
     private static native void nativeSurfaceDestroyed();
     private static native void nativeTouchDown();
     private static native void nativeDrag(float startX, float startY, float endX, float endY, int width, int height);

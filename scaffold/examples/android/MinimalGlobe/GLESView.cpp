@@ -4,9 +4,17 @@
 #include <android/log.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include <android/choreographer.h>
+#include <android/looper.h>
+#include <atomic>
 #include <chrono>
+#include <deque>
+#include <functional>
+#include <future>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #include "earth_engine/Engine.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -36,7 +44,8 @@ static EGLDisplay gDisplay = EGL_NO_DISPLAY;
 static EGLSurface gSurface = EGL_NO_SURFACE;
 static EGLContext gContext = EGL_NO_CONTEXT;
 static ANativeWindow* gWindow = nullptr;
-static int gWidth = 0, gHeight = 0;
+// 宽高被 UI 线程（触摸事件整形）与渲染线程（EGL/引擎）两侧读写，用原子避免撕裂
+static std::atomic<int> gWidth{0}, gHeight{0};
 
 // Engine + RenderDevice
 static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
@@ -66,14 +75,15 @@ static bool gTouchMoved = false;
 static bool gDebugPinchActive = false;
 
 static double androidUptimeSeconds();
+static void postInputEvent(const InputEvent& event);
 
+// UI 线程调用：投递 Cancel 事件到渲染线程，并复位 UI 侧触摸状态。
 static void cancelInputIfNeeded() {
-    if (!gEngine) return;
     InputEvent event;
     event.type = InputEvent::Type::Cancel;
     event.pointerType = InputEvent::PointerType::Touch;
     event.timestamp = androidUptimeSeconds();
-    gEngine->onInputEvent(event);
+    postInputEvent(event);
     gTouching = false;
     gDragStarted = false;
     gTouchMoved = false;
@@ -117,11 +127,14 @@ static bool initEGL(ANativeWindow* window) {
 
     if (!eglMakeCurrent(gDisplay, gSurface, gSurface, gContext)) return false;
 
-    eglQuerySurface(gDisplay, gSurface, EGL_WIDTH, &gWidth);
-    eglQuerySurface(gDisplay, gSurface, EGL_HEIGHT, &gHeight);
+    EGLint surfaceWidth = 0, surfaceHeight = 0;
+    eglQuerySurface(gDisplay, gSurface, EGL_WIDTH, &surfaceWidth);
+    eglQuerySurface(gDisplay, gSurface, EGL_HEIGHT, &surfaceHeight);
+    gWidth = surfaceWidth;
+    gHeight = surfaceHeight;
 
     LOGI("EGL initialized: %dx%d, GL: %s, GLSL: %s",
-         gWidth, gHeight,
+         surfaceWidth, surfaceHeight,
          glGetString(GL_VERSION),
          glGetString(GL_SHADING_LANGUAGE_VERSION));
 
@@ -190,6 +203,148 @@ static void renderFrame() {
 }
 
 // ============================================================
+// 渲染线程：EGL + Engine 全部归本线程所有，帧节拍来自 AChoreographer。
+// UI 线程只做事件整形，经任务队列投递到本线程执行；引擎与 GPU 资源
+// 在线程退出前、EGL context 仍有效时销毁。
+// ============================================================
+
+class RenderThread {
+public:
+    void start(ANativeWindow* window) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            tasks_.clear();  // 丢弃上一轮 surface 生命周期遗留的任务
+        }
+        running_.store(true);
+        paused_.store(false);
+        thread_ = std::thread([this, window]() { threadMain(window); });
+    }
+
+    /// 停止并 join。线程内先销毁引擎（需有效 context）再拆 EGL。
+    void stop() {
+        running_.store(false);
+        wake();
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+    void post(std::function<void()> task) {
+        if (!running_.load()) return;  // 线程未运行时任务直接丢弃
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            tasks_.push_back(std::move(task));
+        }
+        wake();
+    }
+
+    /// 投递任务并等待其在渲染线程执行完（诊断读取等需要返回值的场景）。
+    /// 超时返回 false。任务捕获必须按值 / shared_ptr——超时后任务仍可能
+    /// 被执行，引用捕获会悬垂。
+    bool runSync(std::function<void()> task, std::chrono::milliseconds timeout) {
+        if (!running_.load()) return false;
+        auto done = std::make_shared<std::promise<void>>();
+        auto future = done->get_future();
+        post([done, task = std::move(task)]() {
+            task();
+            done->set_value();
+        });
+        return future.wait_for(timeout) == std::future_status::ready;
+    }
+
+    void setPaused(bool paused) {
+        paused_.store(paused);
+        if (!paused) {
+            // AChoreographer 绑定注册线程，恢复帧回调必须投递过去做
+            post([this]() { postFrameIfNeeded(); });
+        }
+    }
+
+private:
+    void wake() {
+        if (ALooper* looper = looper_.load()) {
+            ALooper_wake(looper);
+        }
+    }
+
+    static void frameCallbackThunk(long /*frameTimeNanos*/, void* data) {
+        static_cast<RenderThread*>(data)->onFrame();
+    }
+
+    // 仅渲染线程调用
+    void postFrameIfNeeded() {
+        if (!running_.load() || paused_.load() || framePending_) return;
+        if (!choreographer_) return;
+        AChoreographer_postFrameCallback(choreographer_, &frameCallbackThunk, this);
+        framePending_ = true;
+    }
+
+    void onFrame() {
+        framePending_ = false;
+        if (!running_.load() || paused_.load()) return;
+        drainTasks();   // 输入先于渲染，保证事件同帧生效
+        renderFrame();
+        postFrameIfNeeded();
+    }
+
+    void drainTasks() {
+        std::deque<std::function<void()>> tasks;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            tasks.swap(tasks_);
+        }
+        for (auto& task : tasks) {
+            task();
+        }
+    }
+
+    void threadMain(ANativeWindow* window) {
+        looper_.store(ALooper_prepare(0));
+        if (!initEGL(window)) {
+            LOGE("Failed to initialize EGL on render thread");
+        } else if (!createEngine()) {
+            LOGE("Failed to create Engine on render thread");
+        }
+        choreographer_ = AChoreographer_getInstance();
+        postFrameIfNeeded();
+
+        while (running_.load()) {
+            int events = 0;
+            void* data = nullptr;
+            // 帧回调在 pollOnce 内部分发；post()/stop() 经 ALooper_wake 唤醒
+            ALooper_pollOnce(-1, nullptr, &events, &data);
+            drainTasks();
+        }
+
+        drainTasks();
+        // destroyEGL 内部先清引擎对象（GPU 资源析构需当前 context），再拆 EGL
+        destroyEGL();
+        choreographer_ = nullptr;
+        looper_.store(nullptr);
+    }
+
+    std::thread thread_;
+    std::mutex mutex_;
+    std::deque<std::function<void()>> tasks_;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> paused_{false};
+    std::atomic<ALooper*> looper_{nullptr};
+    AChoreographer* choreographer_ = nullptr;  // 仅渲染线程访问
+    bool framePending_ = false;                // 仅渲染线程访问
+};
+
+static RenderThread gRenderThread;
+
+// UI 线程整形好的输入事件统一从这里投递到渲染线程。
+static void postInputEvent(const InputEvent& event) {
+    gRenderThread.post([event]() {
+        if (gEngine) {
+            gEngine->onInputEvent(event);
+        }
+    });
+}
+
+// ============================================================
 // JNI 桥接
 // ============================================================
 
@@ -212,13 +367,12 @@ Java_com_earthengine_sdk_GLESView_nativeSurfaceCreated(
     JNIEnv* env, jobject /* this */, jobject surface) {
 
     gWindow = ANativeWindow_fromSurface(env, surface);
-    if (!initEGL(gWindow)) {
-        LOGE("Failed to initialize EGL");
+    if (!gWindow) {
+        LOGE("ANativeWindow_fromSurface failed");
         return;
     }
-    if (!createEngine()) {
-        LOGE("Failed to create Engine");
-    }
+    // EGL / Engine 全部在渲染线程内创建
+    gRenderThread.start(gWindow);
 }
 
 JNIEXPORT void JNICALL
@@ -226,22 +380,18 @@ Java_com_earthengine_sdk_GLESView_nativeSurfaceChanged(
     JNIEnv* /* env */, jobject /* this */, jint width, jint height) {
     gWidth = width;
     gHeight = height;
-    if (gEngine) {
-        gEngine->onSurfaceChanged(width, height, 1.0f);
-    }
-}
-
-JNIEXPORT void JNICALL
-Java_com_earthengine_sdk_GLESView_nativeRenderFrame(
-    JNIEnv* /* env */, jobject /* this */) {
-    renderFrame();
+    gRenderThread.post([width, height]() {
+        if (gEngine) {
+            gEngine->onSurfaceChanged(width, height, 1.0f);
+        }
+    });
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeSurfaceDestroyed(
     JNIEnv* /* env */, jobject /* this */) {
     cancelInputIfNeeded();
-    destroyEGL();
+    gRenderThread.stop();  // join；引擎与 EGL 已在线程内销毁
     if (gWindow) {
         ANativeWindow_release(gWindow);
         gWindow = nullptr;
@@ -257,7 +407,7 @@ static double androidUptimeSeconds() {
 }
 
 static void endDebugPinchIfNeeded(float centerX, float centerY) {
-    if (!gDebugPinchActive || !gEngine) return;
+    if (!gDebugPinchActive) return;
 
     InputEvent event;
     event.type = InputEvent::Type::PinchEnd;
@@ -267,7 +417,7 @@ static void endDebugPinchIfNeeded(float centerX, float centerY) {
     event.pointerType = InputEvent::PointerType::Touch;
     event.pointerCount = 2;
     event.timestamp = androidUptimeSeconds();
-    gEngine->onInputEvent(event);
+    postInputEvent(event);
     gDebugPinchActive = false;
 }
 
@@ -286,7 +436,6 @@ Java_com_earthengine_sdk_GLESView_nativeDrag(
     JNIEnv* /* env */, jobject /* this */,
     jfloat startX, jfloat startY, jfloat endX, jfloat endY,
     jint /*width*/, jint /*height*/) {
-    if (!gEngine) return;
     gTouchMoved = true;
 
     double ts = androidUptimeSeconds();
@@ -299,7 +448,7 @@ Java_com_earthengine_sdk_GLESView_nativeDrag(
         event.screenY = startY;
         event.pointerType = InputEvent::PointerType::Touch;
         event.timestamp = ts;
-        gEngine->onInputEvent(event);
+        postInputEvent(event);
     }
 
     InputEvent event;
@@ -308,14 +457,13 @@ Java_com_earthengine_sdk_GLESView_nativeDrag(
     event.screenY = endY;
     event.pointerType = InputEvent::PointerType::Touch;
     event.timestamp = ts;
-    gEngine->onInputEvent(event);
+    postInputEvent(event);
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeTouchUp(
     JNIEnv* /* env */, jobject /* this */, jfloat x, jfloat y) {
     gTouching = false;
-    if (!gEngine) return;
 
     double ts = androidUptimeSeconds();
 
@@ -325,23 +473,27 @@ Java_com_earthengine_sdk_GLESView_nativeTouchUp(
     upEvent.screenY = y;
     upEvent.pointerType = InputEvent::PointerType::Touch;
     upEvent.timestamp = ts;
-    gEngine->onInputEvent(upEvent);
+    postInputEvent(upEvent);
 
-    // 诊断日志（pick 和选择由 InputManager → Scene 回调处理）
+    // 诊断日志（pick 和选择由 InputManager → Scene 回调处理）；
+    // pick 读渲染态，投递到渲染线程执行
     if (!gTouchMoved) {
-        PickResult result = gEngine->pick(x, y);
-        if (result.isValid()) {
-            const double lngDeg = result.cartographic.longitudeDegrees();
-            const double latDeg = result.cartographic.latitudeDegrees();
-            LOGI("Tap at (%.0f,%.0f) → lng=%.6f lat=%.6f height=%.2f "
-                 "layer=%s feature=%s",
-                 x, y, lngDeg, latDeg,
-                 result.cartographic.height(),
-                 result.layerId.c_str(),
-                 result.featureId.c_str());
-        } else {
-            LOGI("Tap at (%.0f,%.0f) → no hit", x, y);
-        }
+        gRenderThread.post([x, y]() {
+            if (!gEngine) return;
+            PickResult result = gEngine->pick(x, y);
+            if (result.isValid()) {
+                const double lngDeg = result.cartographic.longitudeDegrees();
+                const double latDeg = result.cartographic.latitudeDegrees();
+                LOGI("Tap at (%.0f,%.0f) → lng=%.6f lat=%.6f height=%.2f "
+                     "layer=%s feature=%s",
+                     x, y, lngDeg, latDeg,
+                     result.cartographic.height(),
+                     result.layerId.c_str(),
+                     result.featureId.c_str());
+            } else {
+                LOGI("Tap at (%.0f,%.0f) → no hit", x, y);
+            }
+        });
     }
 }
 
@@ -352,7 +504,6 @@ Java_com_earthengine_sdk_GLESView_nativePinchStart(
     gTouching = true;
     gDragStarted = false;
     gTouchMoved = true;
-    if (!gEngine) return;
 
     InputEvent event;
     event.type = InputEvent::Type::PinchStart;
@@ -362,14 +513,13 @@ Java_com_earthengine_sdk_GLESView_nativePinchStart(
     event.pointerType = InputEvent::PointerType::Touch;
     event.pointerCount = 2;
     event.timestamp = androidUptimeSeconds();
-    gEngine->onInputEvent(event);
+    postInputEvent(event);
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativePinchEnd(
     JNIEnv* /* env */, jobject /* this */, jfloat centerX, jfloat centerY) {
     gTouching = false;
-    if (!gEngine) return;
 
     InputEvent event;
     event.type = InputEvent::Type::PinchEnd;
@@ -378,7 +528,7 @@ Java_com_earthengine_sdk_GLESView_nativePinchEnd(
     event.pinchScale = 1.0f;
     event.pointerType = InputEvent::PointerType::Touch;
     event.timestamp = androidUptimeSeconds();
-    gEngine->onInputEvent(event);
+    postInputEvent(event);
 }
 
 JNIEXPORT void JNICALL
@@ -388,7 +538,6 @@ Java_com_earthengine_sdk_GLESView_nativePinchRotateTilt(
     jfloat centerX, jfloat centerY, jfloat centerDx, jfloat centerDy,
     jfloat pointer0X, jfloat pointer0Y, jfloat pointer1X, jfloat pointer1Y,
     jint /*width*/, jint /*height*/) {
-    if (!gEngine) return;
     InputEvent event;
     event.type = InputEvent::Type::PinchMove;
     event.screenX = centerX;
@@ -405,15 +554,13 @@ Java_com_earthengine_sdk_GLESView_nativePinchRotateTilt(
     event.pointer1X = pointer1X;
     event.pointer1Y = pointer1Y;
     event.timestamp = androidUptimeSeconds();
-    gEngine->onInputEvent(event);
+    postInputEvent(event);
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
     JNIEnv* /* env */, jobject /* this */,
     jfloat scale, jint width, jint height) {
-    if (!gEngine) return;
-
     const float centerX = static_cast<float>(width) * 0.5f;
     const float centerY = static_cast<float>(height) * 0.5f;
     const double ts = androidUptimeSeconds();
@@ -427,7 +574,7 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
         start.pointerType = InputEvent::PointerType::Touch;
         start.pointerCount = 2;
         start.timestamp = ts;
-        gEngine->onInputEvent(start);
+        postInputEvent(start);
         gDebugPinchActive = true;
     }
 
@@ -439,8 +586,11 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
     move.pointerType = InputEvent::PointerType::Touch;
     move.pointerCount = 2;
     move.timestamp = ts + 0.016;
-    gEngine->onInputEvent(move);
+    postInputEvent(move);
 
+    // 诊断快照读渲染态，投递到渲染线程打印
+    gRenderThread.post([scale]() {
+    if (!gEngine) return;
     const auto& diag = gEngine->diagnostics();
     const auto& trace = gEngine->presentationTrace();
     const auto& cameraTrace = trace.camera;
@@ -511,17 +661,15 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
          cameraRadius,
          diag.fps,
          diag.drawCalls);
+    });
 }
 
 // ============================================================
 // Debug panel JNI
 // ============================================================
 
-JNIEXPORT jstring JNICALL
-Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
-    JNIEnv* env, jobject /* this */) {
-    if (!gEngine) return env->NewStringUTF("Engine not ready");
-
+// 渲染线程上执行：读 gEngine 各状态面拼诊断文本
+static std::string buildDiagnosticsText() {
     const auto& diag = gEngine->diagnostics();
     const double cameraRadius = gEngine->camera().position().length();
     const double sphericalAltitude = cameraRadius - 6378137.0;
@@ -664,39 +812,63 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
     text += minimal_globe_demo::buildRenderEntryDiagnosticsLine(diag);
     text += minimal_globe_demo::buildPresentationTraceSummary(
         gEngine->presentationTrace());
-    return env->NewStringUTF(text.c_str());
+    return text;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
+    JNIEnv* env, jobject /* this */) {
+    // 同步投递到渲染线程读取；shared_ptr 捕获防超时后悬垂
+    auto text = std::make_shared<std::string>();
+    const bool ok = gRenderThread.runSync(
+        [text]() {
+            *text = gEngine ? buildDiagnosticsText()
+                            : std::string("Engine not ready");
+        },
+        std::chrono::milliseconds(100));
+    return env->NewStringUTF(ok ? text->c_str() : "Engine not ready");
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeAddDemoVectorLayer(
     JNIEnv* /* env */, jobject /* this */) {
-    if (!gEngine || !gRenderDevice) return;
-    minimal_globe_demo::addDemoVectorLayer(*gEngine, *gRenderDevice);
+    gRenderThread.post([]() {
+        if (!gEngine || !gRenderDevice) return;
+        minimal_globe_demo::addDemoVectorLayer(*gEngine, *gRenderDevice);
+    });
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeResetCamera(
     JNIEnv* /* env */, jobject /* this */) {
-    if (!gSdkFacade) return;
-    gSdkFacade->resetCamera();
-    LOGI("Camera reset to Chongqing demo viewpoint");
+    gRenderThread.post([]() {
+        if (!gSdkFacade) return;
+        gSdkFacade->resetCamera();
+        LOGI("Camera reset to Chongqing demo viewpoint");
+    });
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativePause(
     JNIEnv* /* env */, jobject /* this */) {
     cancelInputIfNeeded();
-    if (gPlatformBridge) {
-        gPlatformBridge->onEnterBackground();
-    }
+    gRenderThread.setPaused(true);  // 暂停帧回调；任务队列仍在服务
+    gRenderThread.post([]() {
+        if (gPlatformBridge) {
+            gPlatformBridge->onEnterBackground();
+        }
+    });
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeResume(
     JNIEnv* /* env */, jobject /* this */) {
-    if (gPlatformBridge) {
-        gPlatformBridge->onEnterForeground();
-    }
+    gRenderThread.post([]() {
+        if (gPlatformBridge) {
+            gPlatformBridge->onEnterForeground();
+        }
+    });
+    gRenderThread.setPaused(false);
 }
 
 } // extern "C"
