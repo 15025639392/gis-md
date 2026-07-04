@@ -3691,22 +3691,26 @@ void RasterOverlayTileProvider::trimUnusedTiles() {
     // raster tiles via intrusive references and a cache budget; this local
     // provider owns tiles directly, so immediate one-frame eviction would
     // churn active mapping handles and waste in-flight IO.
+    // 一次加锁快照 in-flight/待上传 key 集合后无锁遍历。原实现每瓦片一次
+    // mutex 往返 + O(待上传) 线性字符串比较（300 缓存 × 50 待上传 ≈ 1.5 万
+    // 次比较/帧，P2-8）。
+    std::unordered_set<std::string> busyKeys;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        busyKeys.reserve(asyncState_->inFlightRequests.size() +
+                         asyncState_->pendingUploads.size());
+        busyKeys.insert(asyncState_->inFlightRequests.begin(),
+                        asyncState_->inFlightRequests.end());
+        for (const PendingUpload& upload : asyncState_->pendingUploads) {
+            busyKeys.insert(upload.cacheKey);
+        }
+    }
     for (auto it = tiles_.begin(); it != tiles_.end(); ) {
         RasterOverlayTile& tile = *it->second;
         const uint64_t age = frameNumber_ > tile.lastUsedFrame
             ? frameNumber_ - tile.lastUsedFrame
             : 0;
-        bool inFlight = false;
-        {
-            std::lock_guard<std::mutex> lock(asyncState_->mutex);
-            inFlight = asyncState_->inFlightRequests.count(it->first) > 0 ||
-                std::any_of(
-                    asyncState_->pendingUploads.begin(),
-                    asyncState_->pendingUploads.end(),
-                    [&it](const PendingUpload& upload) {
-                        return upload.cacheKey == it->first;
-                    });
-        }
+        const bool inFlight = busyKeys.count(it->first) > 0;
         const bool retainedOutsideProvider = it->second.use_count() > 1;
         if (age > kRetainedUnusedFrames && !inFlight &&
             !retainedOutsideProvider) {

@@ -160,26 +160,47 @@ double occlusionSampleHeightForTile(const TilesetTile& tile) {
 
 } // namespace
 
+TileSoftwareOcclusionPolicy::CameraContext
+TileSoftwareOcclusionPolicy::CameraContext::fromCameraPosition(
+    const Vec3& cameraPosition) {
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    CameraContext context;
+    context.cameraPosition = cameraPosition;
+    const Cartographic cameraCart =
+        ellipsoid.cartesianToCartographic(cameraPosition);
+    context.cameraLongitude = cameraCart.longitude();
+    context.cameraLatitude = cameraCart.latitude();
+    context.cameraHeight = cameraCart.height();
+    context.cameraScaled = Vec3(
+        cameraPosition.x() / ellipsoid.semiMajorAxis(),
+        cameraPosition.y() / ellipsoid.semiMajorAxis(),
+        cameraPosition.z() / ellipsoid.semiMinorAxis());
+    context.vhMagnitudeSquared = context.cameraScaled.lengthSquared() - 1.0;
+    return context;
+}
+
 TileOcclusionState TileSoftwareOcclusionPolicy::check(
     const TilesetTile& tile,
     const Vec3& cameraPosition) {
+    return check(tile, CameraContext::fromCameraPosition(cameraPosition));
+}
+
+TileOcclusionState TileSoftwareOcclusionPolicy::check(
+    const TilesetTile& tile,
+    const CameraContext& camera) {
     const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3& cameraPosition = camera.cameraPosition;
     const Rectangle occlusionRectangle = occlusionRectangleForTile(tile);
-    const Cartographic cameraCart =
-        ellipsoid.cartesianToCartographic(cameraPosition);
     const bool cameraInsideTileRegion =
-        occlusionRectangle.contains(cameraCart.longitude(),
-                                    cameraCart.latitude());
-    if (cameraCart.height() <= 0.0 ||
+        occlusionRectangle.contains(camera.cameraLongitude,
+                                    camera.cameraLatitude);
+    if (camera.cameraHeight <= 0.0 ||
         cameraInsideTileRegion) {
         return TileOcclusionState::NotOccluded;
     }
 
-    const Vec3 cameraScaled(
-        cameraPosition.x() / ellipsoid.semiMajorAxis(),
-        cameraPosition.y() / ellipsoid.semiMajorAxis(),
-        cameraPosition.z() / ellipsoid.semiMinorAxis());
-    const double vhMagnitudeSquared = cameraScaled.lengthSquared() - 1.0;
+    const Vec3& cameraScaled = camera.cameraScaled;
+    const double vhMagnitudeSquared = camera.vhMagnitudeSquared;
     if (vhMagnitudeSquared <= 0.0) {
         return TileOcclusionState::NotOccluded;
     }

@@ -249,7 +249,19 @@ TileOcclusionState Tileset::checkSingleTileOcclusion(
     if (occlusionCallback_) {
         return occlusionCallback_(tile);
     }
-    return TileSoftwareOcclusionPolicy::check(tile, lastCameraPosition_);
+    // 相机派生量（迭代法测地转换等）按相机位置记忆化：一帧内逐瓦片
+    // 调用共享同一份 CameraContext（P2-11）。
+    const Vec3& cameraPosition = lastCameraPosition_;
+    if (!occlusionCameraContextValid_ ||
+        occlusionCameraContext_.cameraPosition.x() != cameraPosition.x() ||
+        occlusionCameraContext_.cameraPosition.y() != cameraPosition.y() ||
+        occlusionCameraContext_.cameraPosition.z() != cameraPosition.z()) {
+        occlusionCameraContext_ =
+            TileSoftwareOcclusionPolicy::CameraContext::fromCameraPosition(
+                cameraPosition);
+        occlusionCameraContextValid_ = true;
+    }
+    return TileSoftwareOcclusionPolicy::check(tile, occlusionCameraContext_);
 }
 
 TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {

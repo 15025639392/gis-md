@@ -13,6 +13,7 @@
 #include "TileLoadQueue.h"
 #include "TileLoadTypes.h"
 #include "TileOcclusionCallback.h"
+#include "TileSoftwareOcclusionPolicy.h"
 #include "GpuUploadQueue.h"
 #include "TileMeshPreparationManager.h"
 #include "TileOcclusionState.h"
@@ -205,6 +206,10 @@ private:
     double lastInteractionActiveTimeSeconds_ = -1.0;
     Vec3 lastCameraPosition_ = Vec3::zero();
     Vec3 lastCameraDirection_ = Vec3::zero();  // for view-weighted priority
+    // 遮挡检查的相机派生量缓存（按 lastCameraPosition_ 记忆化，P2-11）。
+    // checkSingleTileOcclusion 为 const 查询路径，故 mutable。
+    mutable TileSoftwareOcclusionPolicy::CameraContext occlusionCameraContext_;
+    mutable bool occlusionCameraContextValid_ = false;
     double currentFrameTimeSeconds_ = 0.0;
     OcclusionCallback occlusionCallback_;
     bool cameraMoving_ = false;
