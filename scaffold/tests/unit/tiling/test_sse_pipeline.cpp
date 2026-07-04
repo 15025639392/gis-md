@@ -331,11 +331,27 @@ struct TilesetTestAccess {
             tileset.rasterOverlays_)
             .anyWereRenderedLastFrame;
     }
+    // clip worker 化后上采样 clip 走 AsyncSystem::pool 异步:beginTerrainRequest
+    // 占 in-flight 名额、completeTerrainRequest 在 worker 完成时释放。
+    // pendingTerrainRequests 只被上采样 clip 占用(网络请求走 pendingContent-
+    // Requests),故等它归零即"所有已派发上采样 clip 已产出并入队"。非上采样
+    // 请求恒为 0,该等待立即返回,对既有测试零影响。
+    static void waitForUpsampleClips(Tileset& tileset) {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (tileset.loadDiagnostics().pendingTerrainRequests == 0) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
     static void requestMissingTile(Tileset& tileset, const TileKey& key) {
         tileset.requestMissingContent({
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Normal}});
+        waitForUpsampleClips(tileset);
     }
     static TileLoadRequestOutcome requestMissingTileWithBudget(
         Tileset& tileset,
@@ -19839,6 +19855,15 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return true; },
             [&marked](const TileKey&) { marked = true; });
+    // clip worker 化:失败终态由 worker 异步入队,自旋等 worker 完成。
+    {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (std::chrono::steady_clock::now() < deadline &&
+               lifecycle.counts().gltfTerrainTerminalResults == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
     std::optional<PendingTileLoad> terminal;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());

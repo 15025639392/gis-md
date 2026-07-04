@@ -17,10 +17,28 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 using namespace earth_engine;
 
 namespace {
+
+// clip worker 化后上采样结果由 AsyncSystem::pool worker 异步入队;自旋等
+// pending 计数到位(worker 完成),超时返回 false。
+template <typename Predicate>
+bool waitForUpsampleAsync(Predicate&& predicate) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return predicate();
+}
 
 std::string cacheKeyForTile(const TileKey& key) {
     return key.schemeId + ":" +
@@ -796,6 +814,9 @@ TEST(TileLoadSchedulerTest,
     EXPECT_TRUE(marked);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(legacyProvider.requestCount, 0);
+    ASSERT_TRUE(waitForUpsampleAsync([&]() {
+        return lifecycle.counts().gltfTerrainUploads == 1u;
+    }));
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 1u);
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
 
@@ -826,6 +847,133 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(
         details.boundingRegion.rectangle,
         childBounds);
+}
+
+// clip worker 化去重:worker 产出入 pendingLoads 后未被消费前,同一 child
+// 再次请求应被 containsWorkForCacheKey 命中跳过——不重复派发 clip。
+TEST(TileLoadSchedulerTest,
+     TerrainUpsampleDeduplicatesQueuedClipOnResubmit) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.markTerrainAvailabilityUpsample();
+    parent.content.renderContent.setGltfContent(
+        makeSchedulerQuadTerrainGltfModel(parentBounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    TerrainQuadtreeContentProvider provider;
+    const auto makeSnapshotFn =
+        [&child](const TileKey&, const std::string&, TilesetTile*& tileState) {
+            tileState = &child;
+            TileLoadRequestSnapshot snapshot;
+            snapshot.hasTile = true;
+            snapshot.upsampleKind =
+                TileContentUpsampleKind::TerrainAvailability;
+            snapshot.contentProviderOwnsTerrainQuadtree = true;
+            return snapshot;
+        };
+    const std::vector<TileLoadRequest> requests{
+        TileLoadRequest{childKey, TileLoadPriorityGroup::Urgent, 100.0}};
+
+    const TileLoadRequestOutcome first =
+        TileLoadScheduler::requestMissingTiles(
+            requests,
+            TileLoadSchedulerInput{lifecycle, budget, &provider},
+            cacheKeyForTile,
+            makeSnapshotFn,
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return true; },
+            [](const TileKey&) {});
+    EXPECT_EQ(first.issued, 1u);
+    ASSERT_TRUE(waitForUpsampleAsync([&]() {
+        return lifecycle.counts().gltfTerrainUploads == 1u;
+    }));
+
+    // 结果仍在 pendingLoads(未消费)。同一 child 再请求 → 跳过、不重复派发。
+    budget.beginFrame(2, config);
+    const TileLoadRequestOutcome second =
+        TileLoadScheduler::requestMissingTiles(
+            requests,
+            TileLoadSchedulerInput{lifecycle, budget, &provider},
+            cacheKeyForTile,
+            makeSnapshotFn,
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return true; },
+            [](const TileKey&) {});
+    EXPECT_EQ(second.issued, 0u);
+    EXPECT_EQ(second.skippedAlreadyPending, 1u);
+    EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 1u);
+}
+
+// clip worker 化析构安全:派发 clip 后立即析构,markDestroyingCancelAndWait
+// 必须在有限时间内返回——UpsampleClipCompletionGuard 保证 worker exactly-once
+// 完成 → completeTerrainRequest 排空 requestState → 析构等待放行,不死锁。
+TEST(TileLoadSchedulerTest,
+     TerrainUpsampleClipDoesNotDeadlockLifecycleDestruction) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.markTerrainAvailabilityUpsample();
+    parent.content.renderContent.setGltfContent(
+        makeSchedulerQuadTerrainGltfModel(parentBounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    TerrainQuadtreeContentProvider provider;
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{childKey, TileLoadPriorityGroup::Urgent, 100.0}},
+            TileLoadSchedulerInput{lifecycle, budget, &provider},
+            cacheKeyForTile,
+            [&child](
+                const TileKey&, const std::string&, TilesetTile*& tileState) {
+                tileState = &child;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampleKind =
+                    TileContentUpsampleKind::TerrainAvailability;
+                snapshot.contentProviderOwnsTerrainQuadtree = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return true; },
+            [](const TileKey&) {});
+    EXPECT_EQ(outcome.issued, 1u);
+
+    std::atomic<bool> returned{false};
+    std::thread destroyer([&]() {
+        lifecycle.markDestroyingCancelAndWait();
+        returned.store(true);
+    });
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline && !returned.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_TRUE(returned.load());
+    destroyer.join();
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 0);
 }
 
 TEST(TileLoadSchedulerTest,
@@ -899,6 +1047,9 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(TileLoadState::ContentLoaded, parent.content.loadState);
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(legacyProvider.requestCount, 0);
+    ASSERT_TRUE(waitForUpsampleAsync([&]() {
+        return lifecycle.counts().gltfTerrainUploads == 1u;
+    }));
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 1u);
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
 
@@ -989,6 +1140,9 @@ TEST(
     EXPECT_EQ(1u, outcome.issued);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_TRUE(marked);
+    ASSERT_TRUE(waitForUpsampleAsync([&]() {
+        return lifecycle.counts().gltfTerrainTerminalResults == 1u;
+    }));
     EXPECT_EQ(1u, lifecycle.counts().gltfTerrainTerminalResults);
     EXPECT_EQ(0u, lifecycle.counts().gltfTerrainUploads);
 

@@ -22,6 +22,20 @@ namespace earth_engine {
 
 class TileGltfTerrainUpsampledChildMaterializer {
 public:
+    // clip worker 化:主线程 dispatch 前从父/子瓦片拷出的 clip 输入快照。
+    // worker 只消费自有快照,**零 TilesetTile/GltfModel 指针**——父瓦片被
+    // 主线程 unload(clearRenderContent)或重载(prepareGltfContent)析构都
+    // 与 worker 输入解耦,从根上消除跨线程读父模型的 UAF。parentModel 是
+    // 父级 CPU 模型的独立整拷(纯 vector 聚合,拷贝=memcpy 级)。
+    struct UpsampleClipInput {
+        std::unique_ptr<GltfModel> parentModel;
+        TileKey childKey;
+        Rectangle tileBounds;
+        Rectangle sourceBounds;
+        int textureCoordinateIndex = -1;
+        bool hasInvertedVCoordinate = false;
+    };
+
     static const TilesetTile* findGltfTerrainSource(const TilesetTile& tile) {
         const TilesetTile* parent = tile.parent;
         if (!parent) {
@@ -38,25 +52,104 @@ public:
                tile.content.renderContent.hasGltfContent();
     }
 
-    static std::optional<TileLoadResult> createLoadResult(
-        TilesetTile& tile) {
-        // 口子A 插桩:clip 目前在主线程 TileLoadScheduler 内执行,单次
-        // 耗时是否值得 worker 化尚无数据——每次上采样记录一条,真机深
-        // 缩放跑一轮即可判断(见审计 P1-10 注记)。
+    // 主线程侧:读父瓦片 gltfModel 与 overlay 映射(chooseUpsampleTexture-
+    // Coordinate 读 source.rasterOverlayState.mappings() 里的 RasterOverlayTile
+    // 有独立生命周期,只能主线程读),把 clip 所需输入整拷进快照。返回
+    // nullopt 表示前置不满足(与旧同步路径的早退条件逐一等价)。
+    static std::optional<UpsampleClipInput> buildClipInput(TilesetTile& tile) {
+        const double startMs = perf::nowMs();
+        if (!tile.content.derivesTerrainFromParent()) {
+            return std::nullopt;
+        }
+        const TilesetTile* source = findGltfTerrainSource(tile);
+        if (!source) {
+            return std::nullopt;
+        }
+        const GltfModel* parentModel =
+            source->content.renderContent.gltfModelForRead();
+        if (!parentModel) {
+            return std::nullopt;
+        }
+        const int textureCoordinateIndex =
+            chooseUpsampleTextureCoordinate(*parentModel, *source, tile);
+        if (textureCoordinateIndex < 0) {
+            return std::nullopt;
+        }
+        const bool hasInvertedVCoordinate =
+            parentModel->rasterOverlayDetails
+                .rasterOverlayInvertedVCoordinates.size() >
+                    static_cast<size_t>(textureCoordinateIndex) &&
+            parentModel->rasterOverlayDetails
+                .rasterOverlayInvertedVCoordinates[
+                    static_cast<size_t>(textureCoordinateIndex)];
+
+        UpsampleClipInput input;
+        input.parentModel = std::make_unique<GltfModel>(*parentModel);
+        input.childKey = tile.key;
+        input.tileBounds = tile.bounds;
+        input.sourceBounds = source->bounds;
+        input.textureCoordinateIndex = textureCoordinateIndex;
+        input.hasInvertedVCoordinate = hasInvertedVCoordinate;
+        platformLog(LogLevel::Info, "EarthPerf",
+            "scope=Tileset.upsampleClipInput ms=%.3f tile=%d/%d/%d",
+            perf::nowMs() - startMs, tile.key.z, tile.key.x, tile.key.y);
+        return input;
+    }
+
+    // worker 侧:从快照跑裁剪主体(40-66ms 的重活)。只读 input,不碰任何
+    // TilesetTile 或共享 GltfModel。契约一(rebuildTerrainGpuVertexBytes 公
+    // 式)与契约二(子 bounds=tileBounds scheme 矩形)公式一字不动。
+    static std::unique_ptr<GltfModel> clipToModel(
+        const UpsampleClipInput& input) {
         const double clipStartMs = perf::nowMs();
-        std::unique_ptr<GltfModel> childModel = createUpsampledModel(tile);
-        const double clipMs = perf::nowMs() - clipStartMs;
+        const GltfModel& parentModel = *input.parentModel;
+        const double minimumHeight =
+            parentModel.rasterOverlayDetails.boundingRegion.minimumHeight;
+        const double maximumHeight =
+            parentModel.rasterOverlayDetails.boundingRegion.maximumHeight;
+        const Rectangle parentRasterBounds =
+            parentModel.rasterOverlayDetails.boundingRegion.rectangle.isEmpty()
+            ? input.sourceBounds
+            : parentModel.rasterOverlayDetails.boundingRegion.rectangle;
+        RasterOverlayDetails childDetails =
+            TileRasterOverlayDetailsDeriver::deriveChildFromParent(
+                parentModel.rasterOverlayDetails,
+                parentRasterBounds,
+                input.tileBounds,
+                minimumHeight,
+                maximumHeight);
+        const GltfUpsampleWindows windows = buildUpsampleWindows(
+            parentModel.rasterOverlayDetails,
+            childDetails,
+            parentRasterBounds,
+            input.tileBounds,
+            UpsampledQuadtreeNode{input.childKey});
+        std::unique_ptr<GltfModel> childModel =
+            GltfTerrainUpsampler::upsampleForRasterOverlay(
+                parentModel,
+                UpsampledQuadtreeNode{input.childKey},
+                input.textureCoordinateIndex,
+                input.hasInvertedVCoordinate,
+                &windows);
+        if (childModel) {
+            childModel->rasterOverlayDetails = std::move(childDetails);
+            rebuildTerrainGpuVertexBytes(*childModel);
+        }
+        // 口子A 插桩:worker 化后测的是 worker 线程耗时(主线程该测点在
+        // buildClipInput 的 upsampleClipInput,只剩快照拷贝成本)。
         platformLog(LogLevel::Info, "EarthPerf",
             "scope=Tileset.upsampleClip ms=%.3f tile=%d/%d/%d ok=%d",
-            clipMs,
-            tile.key.z,
-            tile.key.x,
-            tile.key.y,
+            perf::nowMs() - clipStartMs,
+            input.childKey.z, input.childKey.x, input.childKey.y,
             childModel ? 1 : 0);
+        return childModel;
+    }
+
+    static std::optional<TileLoadResult> wrapUpsampledModel(
+        std::unique_ptr<GltfModel> childModel) {
         if (!childModel) {
             return std::nullopt;
         }
-
         TileLoadResultMetadata metadata;
         const auto& region = childModel->rasterOverlayDetails.boundingRegion;
         metadata.rasterOverlayDetails = childModel->rasterOverlayDetails;
@@ -66,6 +159,12 @@ public:
         return TileLoadResult::createRenderableGltfTerrain(
             std::move(childModel),
             std::move(metadata));
+    }
+
+    // 同步入口(现仅测试与 createUpsampledModel 等价性校验用):经统一的
+    // buildClipInput+clipToModel 单一逻辑源,与 worker 化路径产出逐字节一致。
+    static std::optional<TileLoadResult> createLoadResult(TilesetTile& tile) {
+        return wrapUpsampledModel(createUpsampledModel(tile));
     }
 
     static bool canCreateLoadResult(const TilesetTile& tile) {
@@ -102,75 +201,17 @@ private:
                source.content.renderContent.hasGltfContent();
     }
 
+    // 同步 clip:经 buildClipInput(主线程读+快照)→ clipToModel(裁剪)单一
+    // 逻辑源。worker 化路径复用同一对函数,保证两路产出逐字节一致。
+    // Derive-before-upsample 的不变量("UV [0,1] spans rasterOverlay-
+    // Rectangles[set]",窗口与派生矩形须同源)由 clipToModel 内维持。
     static std::unique_ptr<GltfModel> createUpsampledModel(
         TilesetTile& tile) {
-        if (!tile.content.derivesTerrainFromParent()) {
+        std::optional<UpsampleClipInput> input = buildClipInput(tile);
+        if (!input) {
             return nullptr;
         }
-
-        const TilesetTile* source = findGltfTerrainSource(tile);
-        if (!source) {
-            return nullptr;
-        }
-
-        const GltfModel* parentModel =
-            source->content.renderContent.gltfModelForRead();
-        if (!parentModel) {
-            return nullptr;
-        }
-
-        const int textureCoordinateIndex =
-            chooseUpsampleTextureCoordinate(*parentModel, *source, tile);
-        if (textureCoordinateIndex < 0) {
-            return nullptr;
-        }
-        const bool hasInvertedVCoordinate =
-            parentModel->rasterOverlayDetails
-                .rasterOverlayInvertedVCoordinates.size() >
-                    static_cast<size_t>(textureCoordinateIndex) &&
-            parentModel->rasterOverlayDetails
-                .rasterOverlayInvertedVCoordinates[
-                    static_cast<size_t>(textureCoordinateIndex)];
-
-        const double minimumHeight =
-            parentModel->rasterOverlayDetails.boundingRegion.minimumHeight;
-        const double maximumHeight =
-            parentModel->rasterOverlayDetails.boundingRegion.maximumHeight;
-        const Rectangle parentRasterBounds =
-            parentModel->rasterOverlayDetails.boundingRegion.rectangle.isEmpty()
-            ? source->bounds
-            : parentModel->rasterOverlayDetails.boundingRegion.rectangle;
-        // Derive the child's details before upsampling: the upsampler
-        // renormalizes the kept texcoords to the child window, so the windows
-        // and the derived rectangles must come from the same mapping to keep
-        // the "UV [0,1] spans rasterOverlayRectangles[set]" invariant.
-        RasterOverlayDetails childDetails =
-            TileRasterOverlayDetailsDeriver::deriveChildFromParent(
-                parentModel->rasterOverlayDetails,
-                parentRasterBounds,
-                tile.bounds,
-                minimumHeight,
-                maximumHeight);
-        const GltfUpsampleWindows windows = buildUpsampleWindows(
-            parentModel->rasterOverlayDetails,
-            childDetails,
-            parentRasterBounds,
-            tile.bounds,
-            UpsampledQuadtreeNode{tile.key});
-
-        std::unique_ptr<GltfModel> childModel =
-            GltfTerrainUpsampler::upsampleForRasterOverlay(
-                *parentModel,
-                UpsampledQuadtreeNode{tile.key},
-                textureCoordinateIndex,
-                hasInvertedVCoordinate,
-                &windows);
-        if (!childModel) {
-            return nullptr;
-        }
-        childModel->rasterOverlayDetails = std::move(childDetails);
-        rebuildTerrainGpuVertexBytes(*childModel);
-        return childModel;
+        return clipToModel(*input);
     }
 
     /// P1-10:clip 后为子瓦片重建 TerrainGpuVertex 预置字节。子 primitive

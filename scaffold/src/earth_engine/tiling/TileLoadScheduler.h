@@ -104,34 +104,76 @@ public:
                     ++outcome.skippedUpsampleNoContentSource;
                     continue;
                 }
-                std::optional<TileLoadResult> gltfUpsample =
-                    TileGltfTerrainUpsampledChildMaterializer::
-                        createLoadResult(*tileState);
-                if (!gltfUpsample) {
-                    gltfUpsample =
-                        TileLoadResult::createTerminal(TileLoadStatus::Failed);
+
+                // clip worker 化:主线程只建输入快照(整拷父 CPU 模型 + 读
+                // overlay 映射),把 40-66ms 的裁剪主体派到 worker。快照失败
+                // =source 竞态失效,投失败终态(与旧 createLoadResult 返回
+                // nullopt 后 fallback Failed 逐一等价)。
+                std::optional<TileGltfTerrainUpsampledChildMaterializer::
+                                  UpsampleClipInput>
+                    clipInput = TileGltfTerrainUpsampledChildMaterializer::
+                        buildClipInput(*tileState);
+                if (!clipInput) {
+                    const TileLoadDispatchResult terminalResult =
+                        TileLoadRequestDispatcher::queueUpsampledLoad(
+                            input.lifecycle.mutex(),
+                            input.lifecycle.requestState(),
+                            input.lifecycle.pendingLoads(),
+                            requestKey,
+                            cacheKey,
+                            request.group,
+                            request.priority,
+                            TileLoadDomain::TerrainContent,
+                            TileLoadResult::createTerminal(
+                                TileLoadStatus::Failed));
+                    if (shouldStopAfterDispatch(terminalResult)) {
+                        ++outcome.stoppedAtDispatch;
+                        break;
+                    }
+                    if (terminalResult == TileLoadDispatchResult::Skipped) {
+                        ++outcome.skippedDispatch;
+                        continue;
+                    }
+                    markTileContentLoading(requestKey);
+                    ++outcome.issued;
+                    continue;
                 }
+
                 const TileLoadDispatchResult dispatchResult =
-                    TileLoadRequestDispatcher::queueUpsampledLoad(
+                    TileLoadRequestDispatcher::requestUpsampleClip(
                         input.lifecycle.mutex(),
+                        input.lifecycle.condition(),
                         input.lifecycle.requestState(),
                         input.lifecycle.pendingLoads(),
+                        input.budget,
                         requestKey,
                         cacheKey,
                         request.group,
                         request.priority,
-                        TileLoadDomain::TerrainContent,
-                        std::move(*gltfUpsample));
+                        std::move(*clipInput),
+                        [](const TileGltfTerrainUpsampledChildMaterializer::
+                               UpsampleClipInput& in) -> TileLoadResult {
+                            std::optional<TileLoadResult> wrapped =
+                                TileGltfTerrainUpsampledChildMaterializer::
+                                    wrapUpsampledModel(
+                                        TileGltfTerrainUpsampledChildMaterializer::
+                                            clipToModel(in));
+                            return wrapped
+                                ? std::move(*wrapped)
+                                : TileLoadResult::createTerminal(
+                                      TileLoadStatus::Failed);
+                        },
+                        [&markTileContentLoading, &requestKey, &outcome]() {
+                            markTileContentLoading(requestKey);
+                            ++outcome.issued;
+                        });
                 if (shouldStopAfterDispatch(dispatchResult)) {
                     ++outcome.stoppedAtDispatch;
                     break;
                 }
                 if (dispatchResult == TileLoadDispatchResult::Skipped) {
                     ++outcome.skippedDispatch;
-                    continue;
                 }
-                markTileContentLoading(requestKey);
-                ++outcome.issued;
                 continue;
             }
 
