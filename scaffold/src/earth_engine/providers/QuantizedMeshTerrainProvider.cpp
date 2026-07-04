@@ -2082,8 +2082,15 @@ void QuantizedMeshTerrainProvider::requestSharedMetadataTile(
                     registry->inFlight.erase(it);
                 }
             }
-            for (auto& sharedWaiter : waiters) {
-                sharedWaiter(statusCode, body);
+            // 最后一个 waiter move、其余拷贝：单 waiter（绝大多数）时
+            // 75KB 级 body 零拷贝，N 个 waiter 时 N→N-1 次拷贝（P2-5）。
+            for (size_t waiterIndex = 0; waiterIndex < waiters.size();
+                 ++waiterIndex) {
+                if (waiterIndex + 1 == waiters.size()) {
+                    waiters[waiterIndex](statusCode, std::move(body));
+                } else {
+                    waiters[waiterIndex](statusCode, body);
+                }
             }
         };
 
