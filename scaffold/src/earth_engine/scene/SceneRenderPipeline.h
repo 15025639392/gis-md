@@ -3,7 +3,6 @@
 #include "Diagnostics.h"
 #include "FrameState.h"
 #include "../renderer/RenderCommand.h"
-#include "../renderer/RenderCommandStreamingSet.h"
 
 #include <functional>
 #include <memory>
@@ -47,12 +46,10 @@ public:
 
 private:
     void reserveCommands(Context& context) const;
-    RenderCommandList buildStableLayerCommands(Context& context,
-                                               double& layerCommandsMs);
     void buildSkyCommands(Context& context, double& skyMs) const;
     void buildAtmosphereCommands(Context& context, double& atmosphereMs) const;
     void buildLayerCommands(Context& context,
-                            const RenderCommandList& stableLayerCommands,
+                            double& layerCommandsMs,
                             double& vectorCommandsMs) const;
     void applyMvpUniforms(Context& context, double& mvpUniformsMs) const;
     void sortAndValidate(Context& context,
@@ -61,9 +58,6 @@ private:
                          double& validateMs) const;
     void aggregateDiagnostics(Context& context, double& diagnosticsMs) const;
     void releaseRenderReferences(Context& context) const;
-
-    RenderCommandStreamingSet tileCommandSet_;
-    RenderCommandList tileCommandCandidates_;
 };
 
 } // namespace earth_engine

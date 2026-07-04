@@ -796,11 +796,11 @@ add_executable(test_terrain_shader_command
 target_link_libraries(test_terrain_shader_command PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_terrain_shader_command COMMAND test_terrain_shader_command)
 
-add_executable(test_render_command_streaming_set
-    unit/renderer/test_render_command_streaming_set.cpp
+add_executable(test_gltf_draw_command_cache
+    unit/tiling/test_gltf_draw_command_cache.cpp
 )
-target_link_libraries(test_render_command_streaming_set PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_render_command_streaming_set COMMAND test_render_command_streaming_set)
+target_link_libraries(test_gltf_draw_command_cache PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_gltf_draw_command_cache COMMAND test_gltf_draw_command_cache)
 
 # ============================================================
 # stage 5 tests

@@ -2,10 +2,12 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "SurfaceRasterBinding.h"
+#include "TileCacheKey.h"
 #include "TilesetTile.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../renderer/Renderer.h"
 
+#include <string>
 #include <utility>
 
 namespace earth_engine {
@@ -40,17 +42,16 @@ RenderCommand::PrimitiveType renderPrimitiveType(GltfPrimitiveMode mode) {
     }
 }
 
-} // namespace
-
-void GltfDrawCommandBuilder::build(
-    Renderer& renderer,
-    TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& overlays,
-    RenderCommandList& commands,
-    const GltfDrawCommandBuildContext& context) {
-    if (!tile.content.renderContent.hasGltfResources()) {
-        return;
-    }
+/// 内容不变式重建:几何/材质/水面掩码/stableKey 一次性写进 tile 常驻缓存
+/// (cesium per-tile DrawCommand 语义)。仅在缓存失效时执行——GPU 资源
+/// (重)创建、动画改写、内容卸载都会经 TileRenderContentState 的失效点。
+/// 每帧字段(frameId/opacity/blend 派生/clip/overlay 绑定)一律不写在常驻
+/// 命令上,由 applyPerFrameCommandState 盖在帧列表副本上。
+void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
+    RenderCommandList& cached =
+        tile.content.renderContent.restartCachedDrawCommands();
+    const std::string tileCacheKey = TileCacheKey::forTile(tile.key);
+    size_t stableIndex = 0;
     for (const GltfPrimitiveRenderResources& primitive :
          tile.content.renderContent.gltfPrimitiveResourcesForDraw()) {
         if (!primitive.vertexBuffer || !primitive.indexBuffer ||
@@ -70,9 +71,9 @@ void GltfDrawCommandBuilder::build(
         } else if (primitive.useTerrainVertexFormat) {
             // Terrain quantized-mesh primitive: 32-byte TerrainGpuVertex VBO
             // drawn with the dedicated lightweight terrain shader. The
-            // per-command population below (raster overlays, water mask, clip,
-            // lighting, opacity) stays identical — the terrain shader consumes
-            // the subset of uniforms it declares and ignores the rest.
+            // per-command population below (water mask, material subset)
+            // stays identical — the terrain shader consumes the subset of
+            // uniforms it declares and ignores the rest.
             cmd = renderer.makeTerrainPrimitiveCommand(
                 primitive.vertexBuffer.get(),
                 primitive.indexBuffer.get(),
@@ -85,8 +86,7 @@ void GltfDrawCommandBuilder::build(
                 primitive.indexCount,
                 primitive.vertexCount);
         }
-        cmd.frameId = context.frameNumber;
-        cmd.generation = context.generation;
+        cmd.stableKey = tileCacheKey + "#" + std::to_string(stableIndex++);
         cmd.terrainRenderContent =
             tile.content.renderContent.isTerrainRenderContent();
         cmd.primitive = renderPrimitiveType(primitive.primitiveMode);
@@ -101,14 +101,6 @@ void GltfDrawCommandBuilder::build(
             primitive.sortCenterEcef.x(),
             primitive.sortCenterEcef.y(),
             primitive.sortCenterEcef.z()};
-        cmd.surfaceTransitionOpacity = context.transitionOpacity;
-        u.renderOpacity = context.transitionOpacity;
-        if (cmd.terrainRenderContent && context.surfaceClipUv) {
-            cmd.surfaceClipUv = *context.surfaceClipUv;
-            cmd.surfaceClipEnabled = 1.0f;
-            u.clipUv = *context.surfaceClipUv;
-            u.clipEnabled = 1.0f;
-        }
         u.baseColor = {
             primitive.baseColorFactor[0],
             primitive.baseColorFactor[1],
@@ -265,73 +257,119 @@ void GltfDrawCommandBuilder::build(
         u.hasWaterMask = cmd.gltfHasWaterMask;
         u.waterMaskTranslationScale = cmd.gltfWaterMaskTranslationScale;
         u.waterMaskState = cmd.gltfWaterMaskState;
-        int rasterOverlayTextureCount = 0;
-        for (size_t i = 0;
-             i < overlays.size() && i < tile.rasterOverlayState.mappingCount();
-             ++i) {
-            if (rasterOverlayTextureCount >= kMaxGltfRasterOverlays) {
-                break;
-            }
-            ActivatedRasterOverlay* activeOverlay = overlays[i];
-            const RasterMappedToTilesetTile* mapped =
-                tile.rasterOverlayState.mappingAt(i);
-            const SurfaceRasterBinding binding =
-                chooseSurfaceRasterBinding(mapped);
-            if (!rasterOverlayBindingAllowedByPolicy(
-                    activeOverlay,
-                    mapped,
-                    binding)) {
-                continue;
-            }
-            const int32_t textureCoordinateID =
-                mapped ? mapped->getTextureCoordinateID() : -1;
-            if (textureCoordinateID < 0 ||
-                textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
-                continue;
-            }
-            Texture* texture = binding.tile->getTexture();
-            if (!texture) {
-                continue;
-            }
-            const size_t textureSlot =
-                static_cast<size_t>(kGltfRasterOverlayTextureBase +
-                                    rasterOverlayTextureCount);
-            if (cmd.textures.size() <= textureSlot) {
-                cmd.textures.resize(textureSlot + 1u, nullptr);
-            }
-            cmd.textures[textureSlot] = texture;
-            if (binding.tileHandle) {
-                cmd.resourceKeepAlive.push_back(binding.tileHandle);
-            }
-            cmd.gltfRasterOverlayTileUvs[rasterOverlayTextureCount] = {
-                binding.offsetU,
-                binding.offsetV,
-                binding.scaleU,
-                binding.scaleV};
-            cmd.gltfRasterOverlayOpacities[rasterOverlayTextureCount] =
-                activeOverlay ? activeOverlay->opacity() : 1.0f;
-            cmd.gltfRasterOverlayTexCoordSets[rasterOverlayTextureCount] =
-                static_cast<float>(textureCoordinateID);
-            ++rasterOverlayTextureCount;
-        }
-        cmd.gltfRasterOverlayTextureCount = rasterOverlayTextureCount;
-        u.mappedRasterTextureCount =
-            static_cast<float>(rasterOverlayTextureCount);
-        for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
-            u.mappedRasterTileUv[i] = cmd.gltfRasterOverlayTileUvs[i];
-            u.mappedRasterOpacity[i] = cmd.gltfRasterOverlayOpacities[i];
-            u.mappedRasterTexCoordSet[i] = cmd.gltfRasterOverlayTexCoordSets[i];
-        }
         cmd.cullFace = !primitive.doubleSided;
-        if (context.transitionOpacity < 0.999f ||
-            primitive.alphaMode == GltfAlphaMode::Blend ||
-            primitive.transmissionFactor > 0.0f) {
-            cmd.blend = true;
-            cmd.depthWrite = false;
-            cmd.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
-            cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
+        cached.push_back(std::move(cmd));
+    }
+}
+
+/// 每帧盖章:frameId/generation、过渡透明度及其 blend 派生态、clip 窗口、
+/// raster overlay 绑定(纹理指针/UV 窗口/透明度随加载逐帧变化)。
+/// 只写帧列表副本;常驻命令保持内容不变式,拷贝出来即处于默认每帧状态。
+void applyPerFrameCommandState(
+    RenderCommand& cmd,
+    TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& overlays,
+    const GltfDrawCommandBuildContext& context) {
+    cmd.frameId = context.frameNumber;
+    cmd.generation = context.generation;
+    GltfUniformBlock& u = cmd.gltfUniforms;
+    cmd.surfaceTransitionOpacity = context.transitionOpacity;
+    u.renderOpacity = context.transitionOpacity;
+    if (cmd.terrainRenderContent && context.surfaceClipUv) {
+        cmd.surfaceClipUv = *context.surfaceClipUv;
+        cmd.surfaceClipEnabled = 1.0f;
+        u.clipUv = *context.surfaceClipUv;
+        u.clipEnabled = 1.0f;
+    }
+
+    int rasterOverlayTextureCount = 0;
+    for (size_t i = 0;
+         i < overlays.size() && i < tile.rasterOverlayState.mappingCount();
+         ++i) {
+        if (rasterOverlayTextureCount >= kMaxGltfRasterOverlays) {
+            break;
         }
-        commands.push_back(std::move(cmd));
+        ActivatedRasterOverlay* activeOverlay = overlays[i];
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlayState.mappingAt(i);
+        const SurfaceRasterBinding binding =
+            chooseSurfaceRasterBinding(mapped);
+        if (!rasterOverlayBindingAllowedByPolicy(
+                activeOverlay,
+                mapped,
+                binding)) {
+            continue;
+        }
+        const int32_t textureCoordinateID =
+            mapped ? mapped->getTextureCoordinateID() : -1;
+        if (textureCoordinateID < 0 ||
+            textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
+            continue;
+        }
+        Texture* texture = binding.tile->getTexture();
+        if (!texture) {
+            continue;
+        }
+        const size_t textureSlot =
+            static_cast<size_t>(kGltfRasterOverlayTextureBase +
+                                rasterOverlayTextureCount);
+        if (cmd.textures.size() <= textureSlot) {
+            cmd.textures.resize(textureSlot + 1u, nullptr);
+        }
+        cmd.textures[textureSlot] = texture;
+        if (binding.tileHandle) {
+            cmd.resourceKeepAlive.push_back(binding.tileHandle);
+        }
+        cmd.gltfRasterOverlayTileUvs[rasterOverlayTextureCount] = {
+            binding.offsetU,
+            binding.offsetV,
+            binding.scaleU,
+            binding.scaleV};
+        cmd.gltfRasterOverlayOpacities[rasterOverlayTextureCount] =
+            activeOverlay ? activeOverlay->opacity() : 1.0f;
+        cmd.gltfRasterOverlayTexCoordSets[rasterOverlayTextureCount] =
+            static_cast<float>(textureCoordinateID);
+        ++rasterOverlayTextureCount;
+    }
+    cmd.gltfRasterOverlayTextureCount = rasterOverlayTextureCount;
+    u.mappedRasterTextureCount =
+        static_cast<float>(rasterOverlayTextureCount);
+    for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
+        u.mappedRasterTileUv[i] = cmd.gltfRasterOverlayTileUvs[i];
+        u.mappedRasterOpacity[i] = cmd.gltfRasterOverlayOpacities[i];
+        u.mappedRasterTexCoordSet[i] = cmd.gltfRasterOverlayTexCoordSets[i];
+    }
+    // alphaMode/transmission 是内容量(缓存里),透明度是每帧量:blend 状态
+    // 必须每帧重新派生,否则 fade 结束后命令会卡在半透明状态。
+    if (context.transitionOpacity < 0.999f ||
+        u.alphaMode == 2.0f ||
+        u.transmissionFactor > 0.0f) {
+        cmd.blend = true;
+        cmd.depthWrite = false;
+        cmd.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
+        cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
+    }
+}
+
+} // namespace
+
+void GltfDrawCommandBuilder::build(
+    Renderer& renderer,
+    TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& overlays,
+    RenderCommandList& commands,
+    const GltfDrawCommandBuildContext& context) {
+    TileRenderContentState& renderContent = tile.content.renderContent;
+    if (!renderContent.hasGltfResources()) {
+        return;
+    }
+    if (!renderContent.hasCachedDrawCommands()) {
+        rebuildCachedDrawCommands(renderer, tile);
+    }
+    for (const RenderCommand& cachedCommand :
+         renderContent.cachedDrawCommands()) {
+        commands.push_back(cachedCommand);
+        applyPerFrameCommandState(commands.back(), tile, overlays, context);
     }
 }
 

@@ -113,15 +113,9 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     double validateMs = 0.0;
     double diagnosticsMs = 0.0;
 
-    RenderCommandList stableLayerCommands =
-        buildStableLayerCommands(context, layerCommandsMs);
-
     buildSkyCommands(context, skyMs);
     buildAtmosphereCommands(context, atmosphereMs);
-    buildLayerCommands(
-        context,
-        stableLayerCommands,
-        vectorCommandsMs);
+    buildLayerCommands(context, layerCommandsMs, vectorCommandsMs);
     applyMvpUniforms(context, mvpUniformsMs);
     sortAndValidate(context, sortMs, surfaceDiagnosticsMs, validateMs);
     aggregateDiagnostics(context, diagnosticsMs);
@@ -257,53 +251,23 @@ void SceneRenderPipeline::buildAtmosphereCommands(
     atmosphereMs = perf::nowMs() - startMs;
 }
 
-RenderCommandList SceneRenderPipeline::buildStableLayerCommands(
-    Context& context,
-    double& layerCommandsMs) {
-    const double layerStartMs = perf::nowMs();
-    tileCommandCandidates_.clear();
-    reserveCommands(context);
-    auto appendTilesetCommands = [&](Tileset& tileset,
-                                     const std::string& stablePrefix) {
-        const size_t before = tileCommandCandidates_.size();
-        tileset.buildRenderCommands(context.renderer, tileCommandCandidates_);
-        for (size_t i = before; i < tileCommandCandidates_.size(); ++i) {
-            RenderCommand& command = tileCommandCandidates_[i];
-            if (!command.stableKey.empty()) {
-                command.stableKey = stablePrefix + command.stableKey;
-            }
-        }
-    };
-    if (context.terrainTileset) {
-        appendTilesetCommands(*context.terrainTileset, "terrain:");
-    }
-    size_t tilesetIndex = 0;
-    for (auto& tileset : context.additionalTilesets) {
-        if (tileset) {
-            appendTilesetCommands(
-                *tileset,
-                "content:" + std::to_string(tilesetIndex) + ":");
-        }
-        ++tilesetIndex;
-    }
-    RenderCommandList activeTileCommands;
-    activeTileCommands.reserve(tileCommandCandidates_.size());
-    tileCommandSet_.update(
-        tileCommandCandidates_,
-        context.frameState.frameId,
-        activeTileCommands);
-    layerCommandsMs = perf::nowMs() - layerStartMs;
-    return activeTileCommands;
-}
-
 void SceneRenderPipeline::buildLayerCommands(
     Context& context,
-    const RenderCommandList& stableLayerCommands,
+    double& layerCommandsMs,
     double& vectorCommandsMs) const {
-    context.commands.insert(
-        context.commands.end(),
-        stableLayerCommands.begin(),
-        stableLayerCommands.end());
+    // Tileset 命令来自各 tile 的常驻命令缓存(见 GltfDrawCommandBuilder),
+    // 直接追加进帧列表:每命令每帧一次拷贝,无中转缓存。
+    const double layerStartMs = perf::nowMs();
+    if (context.terrainTileset) {
+        context.terrainTileset->buildRenderCommands(
+            context.renderer, context.commands);
+    }
+    for (auto& tileset : context.additionalTilesets) {
+        if (tileset) {
+            tileset->buildRenderCommands(context.renderer, context.commands);
+        }
+    }
+    layerCommandsMs = perf::nowMs() - layerStartMs;
 
     const double vectorStartMs = perf::nowMs();
     for (auto& vLayer : context.vectorLayers) {

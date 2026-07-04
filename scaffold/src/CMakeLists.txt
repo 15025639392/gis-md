@@ -134,8 +134,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderDevice.h
     earth_engine/renderer/RenderCommand.h
     earth_engine/renderer/RenderCommand.cpp
-    earth_engine/renderer/RenderCommandStreamingSet.h
-    earth_engine/renderer/RenderCommandStreamingSet.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
     earth_engine/renderer/RenderDeviceRasterTextureUploader.h

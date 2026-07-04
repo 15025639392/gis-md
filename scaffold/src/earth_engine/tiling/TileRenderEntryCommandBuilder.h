@@ -90,15 +90,19 @@ public:
                 ++stats.meshReadyTiles;
             }
             if (commands.size() > before) {
-                size_t stableIndex = 0;
-                std::string baseStableKey = cacheKey(commandTile->key);
+                // 非 clip 命令的 stableKey 由 tile 常驻缓存一次性生成
+                // (cacheKey + "#i",见 GltfDrawCommandBuilder)。同一渲染瓦片
+                // 的多个 clip 实例可在一帧内共存,必须在 key 里保留被选中
+                // 子片的身份,这里每帧改写(罕见路径)。
                 if (entry.hasSurfaceClip()) {
+                    size_t stableIndex = 0;
+                    std::string baseStableKey = cacheKey(commandTile->key);
                     baseStableKey += "|clip:";
                     baseStableKey += cacheKey(entry.selectedKey);
-                }
-                for (size_t i = before; i < commands.size(); ++i) {
-                    commands[i].stableKey =
-                        baseStableKey + "#" + std::to_string(stableIndex++);
+                    for (size_t i = before; i < commands.size(); ++i) {
+                        commands[i].stableKey =
+                            baseStableKey + "#" + std::to_string(stableIndex++);
+                    }
                 }
                 ++stats.drawAttempts;
             } else if (entry.allowSynchronousMeshPrep) {

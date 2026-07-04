@@ -1,7 +1,7 @@
 # 平台层架构与策略性能审计（2026-07-04）
 
 **分支**：`codex/surface-instancing-gpu-batch`
-**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建。未修：P0-4、P1-4/5/6/7/8/10、P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分。
+**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P1-4/5/6/7/8/10、P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分。
 **方法**：四路并行只读审计（GLES 后端 / Metal 后端 / 网络桥接层 / 帧循环与上传策略层），交叉核对后合并。
 **范围**：`platform/`（RenderDeviceGLES、RenderDeviceMetal、CurlMultiRequestScheduler、Android/iOS/Mac 桥）+ 与平台层耦合的中层（RenderCommand 契约、SceneRenderPipeline、上传预算/节流策略、HttpCache）。
 **不含**：已修项（相机高空早退、budget lane 涓流、节流令牌、touchInertia、glFlush 移除、GLES sampler 压缩等，见 MEMORY）；低空高度查询 O(瓦片×三角形) 为已知 TODO 未重复。
@@ -34,8 +34,10 @@
 ### ✅[已修复 8d4d79e1f] P0-3 curl_multi_wait 唤不醒 + DNS 阶段忙旋（一行修）
 `CurlMultiRequestScheduler.cpp:335` 用 `curl_multi_wait`，但 `curl_multi_wakeup`（:106、:273）按 curl API 契约**只作用于 `curl_multi_poll`**。只要有传输在飞，新请求/取消平均白等 25ms（最多 50ms）。同一行还有第二个坑：numFds==0（DNS 解析/建连窗口）时 `curl_multi_wait` 立即返回，无补睡 → 网络线程满核自旋。**修复：`curl_multi_wait` → `curl_multi_poll`，两个问题同灭。**
 
-### P0-4 渲染命令每帧从零重建 + StreamingSet 是假缓存
+### ✅[已修复 2026-07-04] P0-4 渲染命令每帧从零重建 + StreamingSet 是假缓存
 `RenderCommandStreamingSet.cpp:21-42`：每帧无条件用新 candidate 覆盖 entry——它不是缓存，是纯开销的复制中转站（输出≡输入）。地形瓦片命令内容 100% 可跨帧复用（只有 MVP/light/opacity 每帧变），与 cesium-native"per-tile 常驻 DrawCommand + 每帧只更 per-frame uniform"背离。`stableKey` 基础设施本为缓存而生（每帧还付字符串拼接成本）却没被用作缓存。
+
+**修复**：常驻命令缓存下沉到 `TileRenderContentState`（cesium per-tile DrawCommand 语义，生命周期与内容资源严格对齐，mutator 即失效点）；`GltfDrawCommandBuilder` 拆为"内容不变式重建（仅缓存失效时）"+"每帧盖章（frameId/generation/opacity+blend 派生/clip/overlay 绑定，盖在帧列表副本上）"；`RenderCommandStreamingSet` 删除，tileset 命令直接追加帧列表——每帧 3 次深拷贝→1 次、非 clip stableKey 字符串构建移入缓存重建（每帧零字符串）。验证：140/140 native（新增 test_gltf_draw_command_cache 锁缓存/失效/每帧盖章语义）+ macOS/Android 真机 A/B 截图像素级一致 + Adreno 730 render 段稳态 5.3-7.5ms→4.3-7.0ms。
 
 ---
 
@@ -113,7 +115,7 @@
 
 1. **一行修三连**（合计 <1h，立即可做）：`curl_multi_wait`→`curl_multi_poll`（P0-3）；`CURLOPT_ACCEPT_ENCODING`（P2-1）；`framebufferOnly=YES`（P2-16）+ 删空 completedHandler（P2-20）+ anisotropy 查询缓存（P2-13）+ 热路径 glGetError 移除（P2-14）。
 2. **uniform 句柄化 / POD block**（P0-1+P0-2+P1-2+P1-3，约 1-2 天 AI 协作）：一次改动消掉上游 5 万分配/帧、GLES 6000 调用/帧、Metal 绑定风暴与 31-buffer 死胡同。SurfaceTile 定长块是现成模板。做完后 GLES submit GL 调用预计 ~10k→~1-1.5k/帧。
-3. **StreamingSet 真缓存化**（P0-4，半天-1 天）：内容未变只更 frameId + per-frame uniform；依赖 2 的结构化 uniform 更顺。
+3. ✅ **StreamingSet 真缓存化**（P0-4，半天-1 天）：内容未变只更 frameId + per-frame uniform；依赖 2 的结构化 uniform 更顺。→ 已修（见 §1 P0-4）。
 4. **VAO**（P1-1，半天）：与 2 正交可并行。
 5. **上传策略时间闸门默认开 + 字节加权**（P1-9，半天）+ 上采样瓦片异步化（P1-10，1 天）。
 6. **HttpCache shared_ptr 化 + 移出网络线程**（P1-7，半天）；Android JNI 解码缓存/native 化（P1-8，半天-1 天）。

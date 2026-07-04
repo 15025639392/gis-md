@@ -3,6 +3,7 @@
 #include "../content/GltfModel.h"
 #include "../core/math/Mat4.h"
 #include "../providers/TerrainProvider.h"
+#include "../renderer/RenderCommand.h"
 #include "../renderer/RenderDevice.h"
 #include "SurfaceTile.h"
 
@@ -185,13 +186,16 @@ public:
     }
     void setGltfResourcesReady(bool ready) {
         gltfResourcesReady_ = ready;
+        invalidateCachedDrawCommands();
     }
     void setTerrainRenderContent(bool terrain) {
         terrainRenderContent_ = terrain;
+        invalidateCachedDrawCommands();
     }
     void markRenderContentReady() {
         if (gltfModel) {
             gltfResourcesReady_ = true;
+            invalidateCachedDrawCommands();
         } else {
             surface_.meshReady = true;
         }
@@ -272,13 +276,38 @@ public:
     }
     GltfPrimitiveRenderResources* gltfPrimitiveResourceForBuildAt(
         size_t index) {
+        // 可变访问口(动画路径每帧改写 sortCenterEcef/animationRevision),
+        // 保守失效:动画瓦片本就需要每帧重建命令。
+        invalidateCachedDrawCommands();
         return index < gltfPrimitiveResources.size()
             ? &gltfPrimitiveResources[index]
             : nullptr;
     }
 
+    // ── per-tile 常驻 draw command 缓存(cesium per-tile DrawCommand 语义)──
+    // GltfDrawCommandBuilder 把内容不变式命令(几何/材质/水面掩码/stableKey)
+    // 一次性构建进这里;后续帧仅把缓存命令拷入帧列表并盖章每帧字段(frameId/
+    // opacity/clip/overlay 绑定,MVP 由 Scene 统一重算)。缓存命令持有本状态内
+    // GPU 资源的裸指针,因此凡是改变命令读取集(gltfPrimitiveResources、
+    // gltfResourcesReady_、terrainRenderContent_、surface_.localOrigin)的
+    // mutator 都必须调用 invalidateCachedDrawCommands()。
+    bool hasCachedDrawCommands() const { return cachedDrawCommandsValid_; }
+    const RenderCommandList& cachedDrawCommands() const {
+        return cachedDrawCommands_;
+    }
+    RenderCommandList& restartCachedDrawCommands() {
+        cachedDrawCommands_.clear();
+        cachedDrawCommandsValid_ = true;
+        return cachedDrawCommands_;
+    }
+    void invalidateCachedDrawCommands() {
+        cachedDrawCommands_.clear();
+        cachedDrawCommandsValid_ = false;
+    }
+
     void setSurfaceLocalOrigin(const Vec3& origin) {
         surface_.localOrigin = origin;
+        invalidateCachedDrawCommands();
     }
 
     void setSurfaceGpuBuffers(std::unique_ptr<Buffer> vertexBuffer,
@@ -302,6 +331,7 @@ public:
 
     void setGltfLocalOrigin(const Vec3& origin) {
         surface_.localOrigin = origin;
+        invalidateCachedDrawCommands();
     }
 
     void setGltfContent(std::unique_ptr<GltfModel> model,
@@ -315,6 +345,7 @@ public:
 
     void addGltfPrimitiveResource(GltfPrimitiveRenderResources resources) {
         gltfPrimitiveResources.push_back(std::move(resources));
+        invalidateCachedDrawCommands();
     }
 
     static int64_t estimateHeightmapBytes(const DecodedHeightmap& heightmap) {
@@ -371,6 +402,7 @@ public:
     void clearGltfPrimitiveResources() {
         gltfPrimitiveResources.clear();
         gltfResourcesReady_ = false;
+        invalidateCachedDrawCommands();
     }
 
     void clearGltfGpuResources() {
@@ -393,6 +425,7 @@ public:
         gltfResourcesReady_ = false;
         surface_.surfaceDrawable = false;
         surface_.surfaceSource = SurfaceDrawableSource::None;
+        invalidateCachedDrawCommands();
     }
 
     void clearSurfaceMeshResources() {
@@ -431,6 +464,7 @@ public:
         gltfPrimitiveResources.clear();
         gltfResourcesReady_ = false;
         terrainRenderContent_ = false;
+        invalidateCachedDrawCommands();
     }
 
     void prepareGltfContent(std::unique_ptr<GltfModel> model,
@@ -481,6 +515,8 @@ private:
     }
 
     TileSurfaceContentState surface_;
+    RenderCommandList cachedDrawCommands_;
+    bool cachedDrawCommandsValid_ = false;
     std::unique_ptr<Texture> surfaceWaterMaskTexture_;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 gltfContentTransform = Mat4::identity();
