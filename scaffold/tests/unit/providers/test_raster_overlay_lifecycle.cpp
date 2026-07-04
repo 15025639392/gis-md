@@ -8467,3 +8467,160 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, provider.getThrottledTilesCurrentlyLoading())
         << "A 的迟到回调重复释放名额，偷走了 B 的在途名额";
 }
+
+namespace {
+
+// 每张源瓦片把每个像素行涂成"全局 mercator 像素行号 % 251"，
+// 合成输出的任何竖向内容位移都会变成可解码的数值偏移
+class GroundTruthRowImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "ground-truth-rows"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 13; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 256;
+        image->height = 256;
+        image->channels = 1;
+        image->pixels.resize(256u * 256u);
+        for (int r = 0; r < 256; ++r) {
+            const uint8_t value = static_cast<uint8_t>(
+                (static_cast<long long>(key.y) * 256 + r) % 251);
+            std::fill_n(image->pixels.begin() + r * 256, 256, value);
+        }
+        callback(key, std::move(image));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+    std::vector<TileKey> requestedKeys;
+};
+
+// 用声明矩形（provider 投影空间）把纬度映射到合成图行，解码行号编码，
+// 返回 内容行号 − 期望行号（mod 251 折回带符号），即竖向位移（源像素）
+double composedRowShiftAtLatitude(const RasterOverlayTileProvider& provider,
+                                  const DecodedImage& composed,
+                                  const Rectangle& projectedRect,
+                                  const Rectangle& geographicRect,
+                                  double lat) {
+    // 该纬度（弧度）的投影 y：用工具函数投影一个以 lat 为北界的退化矩形
+    const Rectangle probe(
+        geographicRect.west(),
+        geographicRect.south(),
+        geographicRect.east(),
+        lat);
+    const double projY = projectForProvider(provider, probe).north();
+    const double v =
+        (projectedRect.north() - projY) /
+        std::max(1e-12, projectedRect.height());
+    const int row = std::clamp(
+        static_cast<int>(std::floor(v * composed.height)),
+        0,
+        composed.height - 1);
+    const size_t idx =
+        (static_cast<size_t>(row) * composed.width +
+         composed.width / 2) * static_cast<size_t>(composed.channels);
+    const int sampled = composed.pixels[idx];
+
+    // 期望：该纬度落在的全局 z13 mercator 像素行
+    constexpr double kPi = 3.14159265358979323846;
+    const double mercY =
+        std::log(std::tan(lat * 0.5 + kPi * 0.25));
+    const double topDown = (kPi - mercY) / (2.0 * kPi);
+    const long long globalRow = static_cast<long long>(
+        std::floor(topDown * 8192.0 * 256.0));
+    const int expected = static_cast<int>(globalRow % 251);
+
+    int delta = (sampled - expected) % 251;
+    if (delta > 125) delta -= 251;
+    if (delta < -125) delta += 251;
+    return static_cast<double>(delta);
+}
+
+} // namespace
+
+// 真机横带假设的 CPU 裁定：z12 地理地形瓦片 ↔ srcz13 webmercator 1×2 行
+// 合成。若 blit 锚定丢失瓦片在源纹素网格中的分数相位（1.152 行/瓦片，
+// 相位每行 +0.152 ≈ 39 源像素），合成内容会整体竖移且相邻地形行位移
+// 不同——这正是 30km 屏上 394px 横带的预测机制。本测试用行号编码源
+// 逐纬度核对合成内容与声明矩形自洽，并核对相邻两行地形瓦片。
+TEST(RasterOverlayLifecycleTest,
+     MappedComposeContentMatchesDeclaredRectAcrossAdjacentTerrainRows) {
+    auto scheme = TileScheme::createXYZWebMercator();
+
+    // 重庆 demo 视角纬度上的两个相邻 z12 地理地形瓦片行（引擎内部弧度）
+    constexpr double kPi = 3.14159265358979323846;
+    constexpr double kDegToRad = kPi / 180.0;
+    const double tileSize = kPi / 4096.0;  // geographic z12 格（弧度）
+    const double demoLat = 29.617 * kDegToRad;
+    const int rowIndex = static_cast<int>((kPi * 0.5 - demoLat) / tileSize);
+    const double northA = kPi * 0.5 - rowIndex * tileSize;
+    // 经度吸附到 z12 地理网格（与 z13 mercator 列同网格 → 1 列源计划）
+    const int colIndex = static_cast<int>(
+        (106.508 * kDegToRad + kPi) / tileSize);
+    const double west = -kPi + colIndex * tileSize;
+    const Rectangle terrainA(west, northA - tileSize, west + tileSize,
+                             northA);
+    const Rectangle terrainB(west, northA - 2.0 * tileSize,
+                             west + tileSize, northA - tileSize);
+
+    for (const Rectangle& terrainRect : {terrainA, terrainB}) {
+        GroundTruthRowImageryProvider imagery;
+        auto uploader = std::make_unique<CountingRasterUploader>();
+        CountingRasterUploader* uploaderPtr = uploader.get();
+        RasterOverlayTileProvider provider(imagery, *scheme,
+                                           std::move(uploader));
+
+        RasterOverlayTileProvider::TilePtr tile =
+            provider
+                .mapRasterTilesToGeometryTile(
+                    projectForProvider(provider, terrainRect),
+                    453.0,
+                    518.0)
+                .tile;
+        ASSERT_NE(nullptr, tile);
+        ASSERT_TRUE(tile->isMappedRasterTile());
+        ASSERT_TRUE(provider.loadTile(*tile));
+        ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
+        ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+
+        // 场景前提自检：srcz13、单列多行（与真机 30km 视角一致；
+        // 1.152 行/瓦片按相位落 2 或 3 行）
+        ASSERT_GE(imagery.requestedKeys.size(), 2u);
+        ASSERT_LE(imagery.requestedKeys.size(), 3u);
+        for (const TileKey& k : imagery.requestedKeys) {
+            EXPECT_EQ(13, k.z);
+            EXPECT_EQ(imagery.requestedKeys.front().x, k.x);
+        }
+
+        const DecodedImage& composed = uploaderPtr->lastUpload;
+        ASSERT_GT(composed.width, 0);
+        ASSERT_GT(composed.height, 0);
+        const Rectangle projectedRect = tile->getRectangle();
+        ASSERT_FALSE(projectedRect.isEmpty());
+
+        // 逐纬度核对（避开上下边缘半纹素）
+        double maxAbsShift = 0.0;
+        for (int i = 5; i <= 95; ++i) {
+            const double lat =
+                terrainRect.south() +
+                terrainRect.height() * (static_cast<double>(i) / 100.0);
+            const double shift = composedRowShiftAtLatitude(
+                provider, composed, projectedRect, terrainRect, lat);
+            maxAbsShift = std::max(maxAbsShift, std::abs(shift));
+        }
+        EXPECT_LE(maxAbsShift, 2.0)
+            << "合成内容相对声明矩形竖移 " << maxAbsShift
+            << " 源像素（terrain north=" << terrainRect.north()
+            << "）——blit 锚定丢相位？";
+    }
+}
