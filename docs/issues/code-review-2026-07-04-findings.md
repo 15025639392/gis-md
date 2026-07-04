@@ -5,13 +5,16 @@
 
 ## CONFIRMED 正确性（合并 main 前建议全修）
 
-- [ ] **1. framePending_ 线程重启不复位 → 旋转/后台恢复后永久冻屏**
+- [x] **1. framePending_ 线程重启不复位 → 旋转/后台恢复后永久冻屏**（8375a41ac；
+  注：demo manifest 有 configChanges，旋转不重建 surface，实际触发面=后台恢复；
+  竞态窗口 <1 vsync，真机 5 轮 BACK-finish 未自然复现，修复依据代码推理+压测无回归）
   `scaffold/examples/android/MinimalGlobe/GLESView.cpp:276` 区域。
   stop() 时挂起的 AChoreographer 回调随旧线程死亡，flag 留 true；start() 只重置
   tasks_/running_/paused_。新线程 postFrameIfNeeded() 与 setPaused(false) 全部早退，
   无任何路径再注册帧回调。修复：start() 或 threadMain 入口 `framePending_ = false;`。
 
-- [ ] **2. raster 节流名额双重释放（abandon vs 完成回调竞态）**
+- [x] **2. raster 节流名额双重释放（abandon vs 完成回调竞态）**（14a14e0b7，
+  共享 atomic 令牌 + 9 处释放点全过 exchange；回归测试确定性复现已双向验证）
   `scaffold/src/earth_engine/providers/RasterOverlayTileProvider.cpp:2645`。
   finishOneSource 置 completed=true 后、回调 erase 条目前的窗口内，
   abandonActiveMappedSourceSets（setReady/dtor 触发）移出条目并无条件递减；
@@ -20,26 +23,29 @@
   名额。dtor 变体同样（:2358 + finishAbandonedTileLoad :2203）。
   修复：以 completed/erase 结果的原子交换决定唯一递减方。
 
-- [ ] **3. golden 对拍套件 skip-as-pass 退化**
+- [x] **3. golden 对拍套件 skip-as-pass 退化**（6f258d55e，SKIP→ASSERT；
+  负向验证：移走 golden 目录 4 测试 FAIL）
   `scaffold/tests/unit/tiling/test_selector_cesium_golden_diff.cpp:568` +
   `scaffold/tests/CMakeLists.txt:676/679`。
   golden 已入库后，宏拼错/tools 目录移动/golden 误删 → 4 测试全 SKIP，普通 add_test
   无 SKIP_REGULAR_EXPRESSION，CTest 报绿。修复：缺 golden 改 ASSERT 失败（或
   add_test 加 skip 检测属性）。
 
-- [ ] **4. IosHttpRequest 缺析构 cancel（RAII 契约破坏）**
+- [x] **4. IosHttpRequest 缺析构 cancel（RAII 契约破坏）**（8a6f708dd）
   `scaffold/src/earth_engine/platform/ios/IosPlatformBridge.mm:20`。
   PlatformBridge.h:108 文档契约"析构时取消"；Curl 侧 ~RequestHandle{cancel()} 已实现；
   iOS 句柄销毁后 NSURLSessionDataTask 继续下载到完成，QM provider 析构假设失效。
   修复：一行 `~IosHttpRequest() override { cancel(); }`。
 
-- [ ] **5. IosPlatformBridge 全文件无 @autoreleasepool**
+- [x] **5. IosPlatformBridge 全文件无 @autoreleasepool**（8a6f708dd，六个
+  创建 ObjC 对象的方法全包；iphoneos SDK syntax-only 编译通过）
   `scaffold/src/earth_engine/platform/ios/IosPlatformBridge.mm:126`（decodeImage）
   及 get()/getToken/cacheDirectory。被删的 demo 桥有 pool，移植时丢失。
   AsyncSystem 池线程（裸 std::thread 永不退出）每瓦片解码累积 autoreleased 对象。
   修复：四个方法体包 @autoreleasepool。
 
-- [ ] **6. ALooper_wake 跨线程 UAF（无 ALooper_acquire）**
+- [x] **6. ALooper_wake 跨线程 UAF（无 ALooper_acquire）**（7f3510fd7，
+  改互斥保护 looper 生命周期而非 acquire/release——见 commit body）
   `scaffold/examples/android/MinimalGlobe/GLESView.cpp:266`。
   渲染线程可自行观察 running_==false 退出并释放 TLS looper；调用方 wake() 加载
   looper_ 非空后被抢占 → 对已释放 looper 调 ALooper_wake（eventfd 可能已复用）。
