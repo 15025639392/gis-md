@@ -22,17 +22,19 @@ SurfaceVertex vertex(double x, double y, double u, double v) {
 GltfModel makeParentModel() {
     GltfModel model;
     GltfPrimitive primitive;
+    // 原生 uv 与 overlay set 0 均为 NW 约定（v=0 在北缘 y=2）：
+    // QuantizedMeshParser 解码时已翻转原生 uv，set 0 为其直拷贝
     primitive.vertices = {
-        vertex(0.0, 0.0, 0.0, 0.0),
-        vertex(2.0, 0.0, 1.0, 0.0),
-        vertex(0.0, 2.0, 0.0, 1.0),
-        vertex(2.0, 2.0, 1.0, 1.0)};
+        vertex(0.0, 0.0, 0.0, 1.0),
+        vertex(2.0, 0.0, 1.0, 1.0),
+        vertex(0.0, 2.0, 0.0, 0.0),
+        vertex(2.0, 2.0, 1.0, 0.0)};
     primitive.indices = {0, 1, 2, 1, 3, 2};
     primitive.vertexTexCoords[0] = {
-        {0.0f, 0.0f},
-        {1.0f, 0.0f},
         {0.0f, 1.0f},
-        {1.0f, 1.0f}};
+        {1.0f, 1.0f},
+        {0.0f, 0.0f},
+        {1.0f, 0.0f}};
     primitive.runtime.baseVertices = primitive.vertices;
     primitive.runtime.hasNormals = true;
     primitive.hasTerrainWaterMaskMetadata = true;
@@ -171,14 +173,10 @@ void expectRasterOverlaySkirtsMatchCesiumNative(const GltfPrimitive& primitive,
         currentSkirt.noSkirtVerticesBegin + currentSkirt.noSkirtVerticesCount,
         primitive.vertices.size());
 
-    const double westU = std::numeric_limits<double>::infinity();
-    const double eastU = -std::numeric_limits<double>::infinity();
-    const double southV = std::numeric_limits<double>::infinity();
-    const double northV = -std::numeric_limits<double>::infinity();
-    double minU = westU;
-    double maxU = eastU;
-    double minV = southV;
-    double maxV = northV;
+    double minU = std::numeric_limits<double>::infinity();
+    double maxU = -std::numeric_limits<double>::infinity();
+    double minV = std::numeric_limits<double>::infinity();
+    double maxV = -std::numeric_limits<double>::infinity();
     const size_t topBegin = currentSkirt.noSkirtVerticesBegin;
     const size_t topEnd = topBegin + currentSkirt.noSkirtVerticesCount;
     for (size_t i = topBegin; i < topEnd; ++i) {
@@ -197,11 +195,13 @@ void expectRasterOverlaySkirtsMatchCesiumNative(const GltfPrimitive& primitive,
         if (std::abs(static_cast<double>(vertex.uv[0]) - maxU) <= 1e-5) {
             heights.push_back(currentSkirt.skirtEastHeight);
         }
+        // NW native uv: the smallest V is the child's north edge and the
+        // largest V its south edge.
         if (std::abs(static_cast<double>(vertex.uv[1]) - minV) <= 1e-5) {
-            heights.push_back(currentSkirt.skirtSouthHeight);
+            heights.push_back(currentSkirt.skirtNorthHeight);
         }
         if (std::abs(static_cast<double>(vertex.uv[1]) - maxV) <= 1e-5) {
-            heights.push_back(currentSkirt.skirtNorthHeight);
+            heights.push_back(currentSkirt.skirtSouthHeight);
         }
         return heights;
     };
@@ -501,20 +501,22 @@ TEST(GltfTerrainUpsamplerTest,
     GltfPrimitive& parentPrimitive = parent.primitives.front();
     parentPrimitive.indices.clear();
     parentPrimitive.skirtMetadata.reset();
+    // Native uv and overlay set 0 share the NW convention (v=0 at the north
+    // edge y=2).
     parentPrimitive.vertices = {
-        vertex(0.0, 0.0, 0.0, 0.0),
-        vertex(2.0, 0.0, 1.0, 0.0),
-        vertex(0.0, 2.0, 0.0, 1.0),
-        vertex(0.0, 2.0, 0.0, 1.0),
-        vertex(2.0, 0.0, 1.0, 0.0),
-        vertex(2.0, 2.0, 1.0, 1.0)};
+        vertex(0.0, 0.0, 0.0, 1.0),
+        vertex(2.0, 0.0, 1.0, 1.0),
+        vertex(0.0, 2.0, 0.0, 0.0),
+        vertex(0.0, 2.0, 0.0, 0.0),
+        vertex(2.0, 0.0, 1.0, 1.0),
+        vertex(2.0, 2.0, 1.0, 0.0)};
     parentPrimitive.vertexTexCoords[0] = {
+        {0.0f, 1.0f},
+        {1.0f, 1.0f},
         {0.0f, 0.0f},
-        {1.0f, 0.0f},
-        {0.0f, 1.0f},
-        {0.0f, 1.0f},
-        {1.0f, 0.0f},
-        {1.0f, 1.0f}};
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {1.0f, 0.0f}};
     parentPrimitive.runtime.baseVertices = parentPrimitive.vertices;
 
     const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
@@ -585,16 +587,18 @@ TEST(GltfTerrainUpsamplerTest,
      ReusesSharedOriginalTriangleVerticesLikeCesiumNative) {
     GltfModel parent;
     GltfPrimitive primitive;
+    // NW convention (native uv and set 0 alike): the geometric south-west
+    // interior block sits at v in [0.6,0.9], inside the SW child window.
     primitive.vertices = {
-        vertex(0.0, 0.0, 0.1, 0.1),
-        vertex(1.0, 0.0, 0.4, 0.1),
-        vertex(0.0, 1.0, 0.1, 0.4),
-        vertex(1.0, 1.0, 0.4, 0.4)};
+        vertex(0.0, 0.0, 0.1, 0.9),
+        vertex(1.0, 0.0, 0.4, 0.9),
+        vertex(0.0, 1.0, 0.1, 0.6),
+        vertex(1.0, 1.0, 0.4, 0.6)};
     primitive.vertexTexCoords[0] = {
-        {0.1f, 0.1f},
-        {0.4f, 0.1f},
-        {0.1f, 0.4f},
-        {0.4f, 0.4f}};
+        {0.1f, 0.9f},
+        {0.4f, 0.9f},
+        {0.1f, 0.6f},
+        {0.4f, 0.6f}};
     primitive.indices = {0, 1, 2, 1, 3, 2};
     primitive.runtime.baseVertices = primitive.vertices;
     parent.primitives.push_back(std::move(primitive));
@@ -643,10 +647,10 @@ TEST(GltfTerrainUpsamplerTest,
     bool foundEastMidpoint = false;
     for (size_t i = 0; i < primitive.vertices.size(); ++i) {
         const SurfaceVertex& vertex = primitive.vertices[i];
-        // The parent-space east midpoint (0.5, 0) renormalizes onto the
-        // lower-left child's east edge (1, 0).
+        // The parent-space south-edge east midpoint (0.5, 1) (NW native uv)
+        // renormalizes onto the lower-left child's south-east corner (1, 1).
         if (std::abs(vertex.uv[0] - 1.0f) < 1e-6f &&
-            std::abs(vertex.uv[1]) < 1e-6f) {
+            std::abs(vertex.uv[1] - 1.0f) < 1e-6f) {
             foundEastMidpoint = true;
             expectArrayNear(
                 primitive.vertexColors[i],
@@ -680,10 +684,10 @@ TEST(GltfTerrainUpsamplerTest,
 
     bool foundEastMidpoint = false;
     for (const SurfaceVertex& vertex : primitive.vertices) {
-        // The parent-space east midpoint (0.5, 0) renormalizes onto the
-        // lower-left child's east edge (1, 0).
+        // The parent-space south-edge east midpoint (0.5, 1) (NW native uv)
+        // renormalizes onto the lower-left child's south-east corner (1, 1).
         if (std::abs(vertex.uv[0] - 1.0f) < 1e-6f &&
-            std::abs(vertex.uv[1]) < 1e-6f) {
+            std::abs(vertex.uv[1] - 1.0f) < 1e-6f) {
             foundEastMidpoint = true;
             EXPECT_NEAR(0.5, vertex.normalEcef.x(), 1e-12);
             EXPECT_NEAR(0.5, vertex.normalEcef.y(), 1e-12);
@@ -748,16 +752,18 @@ TEST(GltfTerrainUpsamplerTest,
     GltfModel parent;
     GltfPrimitive primitive;
     primitive.primitiveMode = GltfPrimitiveMode::Points;
+    // Native uv and overlay set 0 share the NW convention (v=0 at the north
+    // edge y=2).
     primitive.vertices = {
-        vertex(0.0, 0.0, 0.0, 0.0),
-        vertex(0.0, 2.0, 0.0, 1.0),
-        vertex(2.0, 0.0, 1.0, 0.0),
-        vertex(2.0, 2.0, 1.0, 1.0)};
+        vertex(0.0, 0.0, 0.0, 1.0),
+        vertex(0.0, 2.0, 0.0, 0.0),
+        vertex(2.0, 0.0, 1.0, 1.0),
+        vertex(2.0, 2.0, 1.0, 0.0)};
     primitive.vertexTexCoords[0] = {
-        {0.0f, 0.0f},
         {0.0f, 1.0f},
-        {1.0f, 0.0f},
-        {1.0f, 1.0f}};
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {1.0f, 0.0f}};
     primitive.vertexColors = {
         {0.5f, 0.1f, 0.2f, 1.0f},
         {0.1f, 0.2f, 0.3f, 1.0f},
@@ -794,16 +800,18 @@ TEST(GltfTerrainUpsamplerTest,
     GltfModel parent;
     GltfPrimitive primitive;
     primitive.primitiveMode = GltfPrimitiveMode::Points;
+    // Native uv and overlay set 0 share the NW convention (v=0 at the north
+    // edge y=2).
     primitive.vertices = {
-        vertex(0.0, 0.0, 0.0, 0.0),
-        vertex(0.0, 2.0, 0.0, 1.0),
-        vertex(2.0, 0.0, 1.0, 0.0),
-        vertex(2.0, 2.0, 1.0, 1.0)};
+        vertex(0.0, 0.0, 0.0, 1.0),
+        vertex(0.0, 2.0, 0.0, 0.0),
+        vertex(2.0, 0.0, 1.0, 1.0),
+        vertex(2.0, 2.0, 1.0, 0.0)};
     primitive.vertexTexCoords[0] = {
-        {0.0f, 0.0f},
         {0.0f, 1.0f},
-        {1.0f, 0.0f},
-        {1.0f, 1.0f}};
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {1.0f, 0.0f}};
     primitive.vertexColors = {
         {0.5f, 0.1f, 0.2f, 1.0f},
         {0.1f, 0.2f, 0.3f, 1.0f},
@@ -838,14 +846,17 @@ TEST(GltfTerrainUpsamplerTest,
     GltfModel parent;
     GltfPrimitive primitive;
     primitive.primitiveMode = GltfPrimitiveMode::Points;
+    // NW convention (native uv and set 0 alike): the SW-quadrant interior
+    // sample sits at v > 0.5; the v = 0.5 samples are exactly on the split
+    // line and must be dropped.
     primitive.vertices = {
-        vertex(0.0, 0.0, 0.25, 0.25),
-        vertex(1.0, 0.0, 0.5, 0.25),
+        vertex(0.0, 0.0, 0.25, 0.75),
+        vertex(1.0, 0.0, 0.5, 0.75),
         vertex(0.0, 1.0, 0.25, 0.5),
         vertex(1.0, 1.0, 0.5, 0.5)};
     primitive.vertexTexCoords[0] = {
-        {0.25f, 0.25f},
-        {0.5f, 0.25f},
+        {0.25f, 0.75f},
+        {0.5f, 0.75f},
         {0.25f, 0.5f},
         {0.5f, 0.5f}};
     primitive.featureIds = {7, 8, 9, 10};
@@ -870,8 +881,10 @@ TEST(GltfTerrainUpsamplerTest,
 TEST(GltfTerrainUpsamplerTest,
      ClipsLowerLeftChildWithInvertedVCoordinateLikeCesiumNative) {
     GltfModel parent = makeParentModel();
-    // hasInvertedVCoordinate refers to the overlay texcoord set; the native
-    // SurfaceVertex::uv stays south-up like production quantized-mesh data.
+    // hasInvertedVCoordinate=true means the overlay texcoord set is
+    // south-based (v=0 at the south edge) instead of the default NW
+    // convention; flip the NW texcoords built by makeParentModel. The native
+    // SurfaceVertex::uv stays NW-based either way and is left untouched.
     for (GltfPrimitive& primitive : parent.primitives) {
         for (size_t i = 0; i < primitive.vertices.size(); ++i) {
             primitive.vertexTexCoords[0][i][1] =
@@ -911,13 +924,14 @@ TEST(GltfTerrainUpsamplerTest,
     GltfModel parent = makeParentModel();
     parent.primitives.front().skirtMetadata.reset();
 
-    // South-west child whose interior V boundary sits at 0.4 of the parent
-    // texcoord space (a WebMercator-style asymmetric split), while the native
-    // uv keeps its exact geographic quadrant window.
+    // South-west child whose interior V boundary sits at NW-based v = 0.6 of
+    // the parent texcoord space (a WebMercator-style asymmetric split, 0.4 up
+    // from the south edge), while the NW-based native uv keeps its exact
+    // geographic quadrant window (SW = v in [0.5,1]).
     GltfUpsampleWindows windows;
     windows.texCoordSetCount = 1;
-    windows.texCoordSets[0] = GltfUpsampleUvWindow{0.0, 0.0, 0.5, 0.4};
-    windows.nativeUv = GltfUpsampleUvWindow{0.0, 0.0, 0.5, 0.5};
+    windows.texCoordSets[0] = GltfUpsampleUvWindow{0.0, 0.6, 0.5, 1.0};
+    windows.nativeUv = GltfUpsampleUvWindow{0.0, 0.5, 0.5, 1.0};
 
     const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
     std::unique_ptr<GltfModel> upsampled =
@@ -937,7 +951,7 @@ TEST(GltfTerrainUpsamplerTest,
     double maxY = 0.0;
     double maxTexU = 0.0;
     double maxTexV = 0.0;
-    double maxNativeV = 0.0;
+    double minNativeV = 1.0;
     for (size_t i = 0; i < primitive.vertices.size(); ++i) {
         maxY = std::max(maxY, primitive.vertices[i].positionEcef.y());
         maxTexU = std::max(
@@ -946,20 +960,21 @@ TEST(GltfTerrainUpsamplerTest,
         maxTexV = std::max(
             maxTexV,
             static_cast<double>(primitive.vertexTexCoords[0][i][1]));
-        maxNativeV = std::max(
-            maxNativeV,
+        minNativeV = std::min(
+            minNativeV,
             static_cast<double>(primitive.vertices[i].uv[1]));
     }
-    // The parent quad spans y in [0,2] with texcoord v = y/2; clipping at the
-    // window boundary v = 0.4 (not 0.5) keeps y <= 0.8.
+    // The parent quad spans y in [0,2] with NW texcoord v = 1 - y/2; clipping
+    // at the window boundary v = 0.6 (not 0.5) keeps y <= 0.8.
     EXPECT_NEAR(0.8, maxY, 1e-6);
-    // The kept texcoord subrange [0,0.5]x[0,0.4] renormalizes to the unit
+    // The kept texcoord subrange [0,0.5]x[0.6,1] renormalizes to the unit
     // square of the clip set's window.
     EXPECT_NEAR(1.0, maxTexU, 1e-6);
     EXPECT_NEAR(1.0, maxTexV, 1e-6);
-    // The native uv renormalizes by its own window: kept v in [0,0.4] over a
-    // [0,0.5] window becomes [0,0.8].
-    EXPECT_NEAR(0.8, maxNativeV, 1e-6);
+    // The native uv renormalizes by its own NW window: kept v in [0.6,1] over
+    // the [0.5,1] window becomes [0.2,1], so the interior (north) clip
+    // boundary lands at 0.2 instead of 0.
+    EXPECT_NEAR(0.2, minNativeV, 1e-6);
 }
 
 TEST(GltfTerrainUpsamplerTest,
@@ -969,11 +984,12 @@ TEST(GltfTerrainUpsamplerTest,
 
     // XYZ-style schemes have y = 0 as the NORTH child. The window carries the
     // geometric truth, so the clip must keep the northern half even though
-    // TMS parity (even y) would suggest the south half.
+    // TMS parity (even y) would suggest the south half. In the NW convention
+    // (overlay set and native uv alike) the northern half is v in [0,0.5].
     GltfUpsampleWindows windows;
     windows.texCoordSetCount = 1;
-    windows.texCoordSets[0] = GltfUpsampleUvWindow{0.5, 0.5, 1.0, 1.0};
-    windows.nativeUv = GltfUpsampleUvWindow{0.5, 0.5, 1.0, 1.0};
+    windows.texCoordSets[0] = GltfUpsampleUvWindow{0.5, 0.0, 1.0, 0.5};
+    windows.nativeUv = GltfUpsampleUvWindow{0.5, 0.0, 1.0, 0.5};
 
     const UpsampledQuadtreeNode child{TileKey{"XYZ-WebMercator", 1, 1, 0}};
     std::unique_ptr<GltfModel> upsampled =
@@ -994,7 +1010,8 @@ TEST(GltfTerrainUpsamplerTest,
         minX = std::min(minX, vertex.positionEcef.x());
         minY = std::min(minY, vertex.positionEcef.y());
     }
-    // Keeping u >= 0.5 and v >= 0.5 keeps x >= 1 and y >= 1 of the [0,2] quad.
+    // Keeping u >= 0.5 and NW v <= 0.5 keeps x >= 1 and y >= 1 of the [0,2]
+    // quad.
     EXPECT_NEAR(1.0, minX, 1e-6);
     EXPECT_NEAR(1.0, minY, 1e-6);
     expectUvSpansUnitSquare(primitive);

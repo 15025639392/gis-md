@@ -1264,15 +1264,18 @@ std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     for (SurfaceVertex& vertex : primitive.vertices) {
         vertex.normalEcef = Vec3::unitZ();
     }
-    primitive.vertices[0].uv = {0.0f, 0.0f};
-    primitive.vertices[1].uv = {1.0f, 0.0f};
-    primitive.vertices[2].uv = {0.0f, 1.0f};
-    primitive.vertices[3].uv = {1.0f, 1.0f};
+    // Native uv and overlay texcoord set 0 are both NW-based (v=0 at the
+    // north edge = position y=2); QuantizedMeshParser decodes native uv
+    // into the same convention.
+    primitive.vertices[0].uv = {0.0f, 1.0f};
+    primitive.vertices[1].uv = {1.0f, 1.0f};
+    primitive.vertices[2].uv = {0.0f, 0.0f};
+    primitive.vertices[3].uv = {1.0f, 0.0f};
     primitive.vertexTexCoords[0] = {
-        std::array<float, 2>{0.0f, 0.0f},
-        std::array<float, 2>{1.0f, 0.0f},
         std::array<float, 2>{0.0f, 1.0f},
-        std::array<float, 2>{1.0f, 1.0f}};
+        std::array<float, 2>{1.0f, 1.0f},
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f}};
     primitive.indices = {0, 1, 2, 1, 3, 2};
     primitive.runtime.baseVertices = primitive.vertices;
     for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
@@ -1326,16 +1329,17 @@ std::unique_ptr<GltfModel> makeWebMercatorQuadTerrainGltfModel(
         return model;
     }
     GltfPrimitive& primitive = model->primitives.front();
+    // Both overlay sets are NW-based (v=0 at the north edge = position y=2).
     primitive.vertexTexCoords[0] = {
-        std::array<float, 2>{0.0f, 0.0f},
-        std::array<float, 2>{0.25f, 0.0f},
-        std::array<float, 2>{0.0f, 0.25f},
-        std::array<float, 2>{0.25f, 0.25f}};
-    primitive.vertexTexCoords[1] = {
-        std::array<float, 2>{0.0f, 0.0f},
-        std::array<float, 2>{1.0f, 0.0f},
         std::array<float, 2>{0.0f, 1.0f},
-        std::array<float, 2>{1.0f, 1.0f}};
+        std::array<float, 2>{0.25f, 1.0f},
+        std::array<float, 2>{0.0f, 0.75f},
+        std::array<float, 2>{0.25f, 0.75f}};
+    primitive.vertexTexCoords[1] = {
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f},
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f}};
     model->rasterOverlayDetails.rasterOverlayProjections = {
         RasterOverlayProjection::Geographic,
         RasterOverlayProjection::WebMercator};
@@ -13345,11 +13349,11 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
               plan.renderEntrySynchronousPrepCount == 0 &&
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: interaction fallback renders clipped drawable ancestor without sync prep");
-    // Clip V is south-up (terrain texcoord0 keeps V=0 at the projected
-    // south edge), so the north-east child quadrant starts at v=0.5.
+    // Clip V is NW-based (terrain texcoord0 keeps V=0 at the projected
+    // north edge), so the north-east child quadrant starts at v=0.
     check(std::abs(plan.renderEntries.front().surfaceClipUv[0] - 0.5f) <
                   1e-6f &&
-              std::abs(plan.renderEntries.front().surfaceClipUv[1] - 0.5f) <
+              std::abs(plan.renderEntries.front().surfaceClipUv[1] - 0.0f) <
                   1e-6f &&
               std::abs(plan.renderEntries.front().surfaceClipUv[2] - 0.5f) <
                   1e-6f &&
@@ -19772,11 +19776,13 @@ void testTileLoadSchedulerQueuesFailedTerminalWhenGltfUpsampleFails() {
     child.content.markTerrainAvailabilityUpsample();
     auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
     GltfPrimitive& primitive = parentModel->primitives.front();
+    // NE-corner-only texcoord window (NW-based V) that cannot overlap the
+    // south-west child's clip window, forcing the upsample to fail.
     primitive.vertexTexCoords[0] = {
-        std::array<float, 2>{0.75f, 0.75f},
-        std::array<float, 2>{1.0f, 0.75f},
-        std::array<float, 2>{0.75f, 1.0f},
-        std::array<float, 2>{1.0f, 1.0f}};
+        std::array<float, 2>{0.75f, 0.25f},
+        std::array<float, 2>{1.0f, 0.25f},
+        std::array<float, 2>{0.75f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f}};
     parent.content.renderContent.setGltfContent(std::move(parentModel));
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
@@ -24101,10 +24107,10 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
           "Tileset: clipped fallback uses the drawable ancestor geometry");
     check(command.surfaceClipEnabled > 0.5f,
           "Tileset: clipped fallback enables surface UV clipping");
-    // Clip V is south-up (terrain texcoord0 keeps V=0 at the projected
-    // south edge), so the south-west child quadrant starts at v=0.0.
+    // Clip V is NW-based (terrain texcoord0 keeps V=0 at the projected
+    // north edge), so the south-west child quadrant starts at v=0.5.
     check(std::abs(command.surfaceClipUv[0] - 0.0f) < 1e-6f &&
-              std::abs(command.surfaceClipUv[1] - 0.0f) < 1e-6f &&
+              std::abs(command.surfaceClipUv[1] - 0.5f) < 1e-6f &&
               std::abs(command.surfaceClipUv[2] - 0.5f) < 1e-6f &&
               std::abs(command.surfaceClipUv[3] - 0.5f) < 1e-6f,
           "Tileset: clipped fallback only fills the selected child quadrant");
@@ -25395,11 +25401,13 @@ void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
     child.content.markTerrainAvailabilityUpsample();
     auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
     if (parentModel && !parentModel->primitives.empty()) {
+        // Deliberately mirrored-U set; V follows the NW convention (v=0 at
+        // the north edge = position y=2) like every non-inverted overlay set.
         parentModel->primitives.front().vertexTexCoords[1] = {
-            std::array<float, 2>{1.0f, 0.0f},
-            std::array<float, 2>{0.0f, 0.0f},
             std::array<float, 2>{1.0f, 1.0f},
-            std::array<float, 2>{0.0f, 1.0f}};
+            std::array<float, 2>{0.0f, 1.0f},
+            std::array<float, 2>{1.0f, 0.0f},
+            std::array<float, 2>{0.0f, 0.0f}};
     }
     parentModel->rasterOverlayDetails.rasterOverlayProjections = {
         RasterOverlayProjection::Geographic,
@@ -25584,8 +25592,9 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
         &parent);
     child.content.markTerrainAvailabilityUpsample();
     auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
-    // The inverted-V flag refers to the overlay texcoord set; the native
-    // SurfaceVertex::uv stays south-up like production quantized-mesh data.
+    // Flip the overlay set to south-based V and declare it inverted
+    // (inverted=true means v=0 at the south edge under the NW convention);
+    // the native SurfaceVertex::uv stays NW-based like parsed QM data.
     for (GltfPrimitive& primitive : parentModel->primitives) {
         for (auto& texCoord : primitive.vertexTexCoords[0]) {
             texCoord[1] = 1.0f - texCoord[1];

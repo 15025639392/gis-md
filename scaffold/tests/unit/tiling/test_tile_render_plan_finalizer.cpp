@@ -47,15 +47,18 @@ std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     for (SurfaceVertex& vertex : primitive.vertices) {
         vertex.normalEcef = Vec3::unitZ();
     }
-    primitive.vertices[0].uv = {0.0f, 0.0f};
-    primitive.vertices[1].uv = {1.0f, 0.0f};
-    primitive.vertices[2].uv = {0.0f, 1.0f};
-    primitive.vertices[3].uv = {1.0f, 1.0f};
+    // Native uv and overlay texcoord set 0 are both NW-based (v=0 at the
+    // north edge = position y=2); QuantizedMeshParser decodes native uv
+    // into the same convention.
+    primitive.vertices[0].uv = {0.0f, 1.0f};
+    primitive.vertices[1].uv = {1.0f, 1.0f};
+    primitive.vertices[2].uv = {0.0f, 0.0f};
+    primitive.vertices[3].uv = {1.0f, 0.0f};
     primitive.vertexTexCoords[0] = {
-        std::array<float, 2>{0.0f, 0.0f},
-        std::array<float, 2>{1.0f, 0.0f},
         std::array<float, 2>{0.0f, 1.0f},
-        std::array<float, 2>{1.0f, 1.0f}};
+        std::array<float, 2>{1.0f, 1.0f},
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f}};
     primitive.indices = {0, 1, 2, 1, 3, 2};
     primitive.runtime.baseVertices = primitive.vertices;
     for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
@@ -142,10 +145,10 @@ TEST(
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
     EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
-    // Clip V is south-up (terrain texcoord0 keeps V=0 at the projected
-    // south edge), so the north-east child quadrant starts at v=0.5.
+    // Clip V is NW-based (terrain texcoord0 keeps V=0 at the projected
+    // north edge), so the north-east child quadrant starts at v=0.
     EXPECT_NEAR(entry.surfaceClipUv[0], 0.5f, 1e-6f);
-    EXPECT_NEAR(entry.surfaceClipUv[1], 0.5f, 1e-6f);
+    EXPECT_NEAR(entry.surfaceClipUv[1], 0.0f, 1e-6f);
     EXPECT_NEAR(entry.surfaceClipUv[2], 0.5f, 1e-6f);
     EXPECT_NEAR(entry.surfaceClipUv[3], 0.5f, 1e-6f);
 }

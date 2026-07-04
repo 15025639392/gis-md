@@ -77,6 +77,11 @@ struct RasterOverlayDetails {
 
     /// Whether each projection's V texture coordinate is inverted.
     /// Index-aligned with rasterOverlayProjections.
+    /// 约定：false = NW-based（v=0 在矩形北缘，同 glTF 图像行序 row0=北；
+    /// QM 原生 uv 亦已在 QuantizedMeshParser 解码时翻成 NW）；
+    /// true = south-based（v=0 在南缘）。窗口换算
+    /// （TileSurface::textureWindowForNorthWestUv）、上采样切分与
+    /// 祖先裁剪窗全部依赖该约定，勿单独改任一侧。
     std::vector<bool> rasterOverlayInvertedVCoordinates;
 
     /// cesium-native RasterOverlayDetails::boundingRegion equivalent.

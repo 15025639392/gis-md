@@ -54,8 +54,9 @@ ClipSides clipSidesForWindow(const GltfUpsampleUvWindow& window,
     sides.keepGreaterU = window.u0 + window.u1 > 1.0;
     sides.keepGreaterV = window.v0 + window.v1 > 1.0;
     sides.eastHalf = sides.keepGreaterU;
-    sides.northHalf = hasInvertedVCoordinate ? !sides.keepGreaterV
-                                             : sides.keepGreaterV;
+    // NW 约定（invertedV=false）：v=0 在北，北半 = 较小的 V
+    sides.northHalf = hasInvertedVCoordinate ? sides.keepGreaterV
+                                             : !sides.keepGreaterV;
     return sides;
 }
 
@@ -400,8 +401,9 @@ void collectEdge(EdgeIndices& edges,
     // exactly 0 or 1.
     const double westU = 0.0;
     const double eastU = 1.0;
-    const double southV = hasInvertedVCoordinate ? 1.0 : 0.0;
-    const double northV = hasInvertedVCoordinate ? 0.0 : 1.0;
+    // NW 约定（invertedV=false）：v=0 在北
+    const double southV = hasInvertedVCoordinate ? 0.0 : 1.0;
+    const double northV = hasInvertedVCoordinate ? 1.0 : 0.0;
 
     for (uint32_t i = 0; i < texCoords.size(); ++i) {
         const auto& uv = texCoords[i];
@@ -556,7 +558,7 @@ void addSkirts(GltfPrimitive& primitive,
         return a.uv[0] > b.uv[0] ||
                (a.uv[0] == b.uv[0] && a.index < b.index);
     });
-    if (hasInvertedVCoordinate) {
+    if (!hasInvertedVCoordinate) {
         std::reverse(edges.south.begin(), edges.south.end());
     }
     uniqueSortedEdge(edges.south);
@@ -571,7 +573,7 @@ void addSkirts(GltfPrimitive& primitive,
         return a.uv[0] < b.uv[0] ||
                (a.uv[0] == b.uv[0] && a.index < b.index);
     });
-    if (hasInvertedVCoordinate) {
+    if (!hasInvertedVCoordinate) {
         std::reverse(edges.north.begin(), edges.north.end());
     }
     uniqueSortedEdge(edges.north);
@@ -878,7 +880,8 @@ GltfUpsampleUvWindow GltfTerrainUpsampler::quadrantUvWindow(
     GltfUpsampleUvWindow window;
     const bool east = childKeepsEast(childID);
     const bool north = childKeepsNorth(childID);
-    const bool greaterV = hasInvertedVCoordinate ? !north : north;
+    // NW 约定（invertedV=false）：v=0 在北，北半 = 较小的 V
+    const bool greaterV = hasInvertedVCoordinate ? north : !north;
     window.u0 = east ? 0.5 : 0.0;
     window.u1 = east ? 1.0 : 0.5;
     window.v0 = greaterV ? 0.5 : 0.0;
@@ -906,6 +909,7 @@ std::unique_ptr<GltfModel> GltfTerrainUpsampler::upsampleForRasterOverlay(
              effectiveWindows.texCoordSets) {
             setWindow = quadrantUvWindow(childID, hasInvertedVCoordinate);
         }
+        // 原生 uv 同为 NW 约定（QuantizedMeshParser 解码时已翻转）
         effectiveWindows.nativeUv = quadrantUvWindow(childID, false);
     }
 

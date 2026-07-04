@@ -793,14 +793,15 @@ TEST(RasterOverlayDetailsGeneratorTest,
     const GltfPrimitive& primitive =
         model->primitives.front();
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    // NW-based V (v=0 at north): corners are WS, ES, EN, WN.
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
@@ -826,14 +827,15 @@ TEST(RasterOverlayDetailsGeneratorTest,
     ASSERT_EQ(1u, model->primitives.size());
     const GltfPrimitive& primitive = model->primitives.front();
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    // NW-based V (v=0 at north): corners are WS, ES, EN, WN.
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
 
     // Committed models store primitive.vertices in world ECEF, so the
     // texcoord equality checks above fully pin the expected mapping; the
@@ -871,14 +873,15 @@ TEST(RasterOverlayDetailsGeneratorTest,
     ASSERT_EQ(1u, model->primitives.size());
     const GltfPrimitive& primitive = model->primitives.front();
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    // NW-based V (v=0 at north): corners are WS, ES, EN, WN.
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
@@ -993,14 +996,15 @@ TEST(RasterOverlayDetailsGeneratorTest,
     ASSERT_EQ(1u, model->primitives.size());
     const GltfPrimitive& primitive = model->primitives.front();
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    // NW-based V (v=0 at north): corners are WS, ES, EN, WN.
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
 
     // Regression guard for the double origin application: re-applying the
     // node transform on top of the already-world vertices keeps lon/lat
@@ -1042,14 +1046,15 @@ TEST(RasterOverlayDetailsGeneratorTest,
     ASSERT_EQ(1u, model->primitives.size());
     const GltfPrimitive& primitive = model->primitives.front();
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    // NW-based V (v=0 at north): corners are WS, ES, EN, WN.
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
-    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
@@ -1241,8 +1246,9 @@ TEST(RasterOverlayDetailsGeneratorTest,
     ASSERT_TRUE(primitive.skirtMetadata.has_value());
     ASSERT_EQ(5u, primitive.vertices.size());
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    // Skirt vertex sits under the SW corner: NW-based V puts it at v=1.
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][4][0], 1e-6f);
-    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][4][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][4][1], 1e-6f);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
@@ -1281,9 +1287,10 @@ TEST(RasterOverlayDetailsGeneratorTest,
             looseRegion.width()),
         primitive.vertexTexCoords[0][0][0],
         1e-6f);
+    // NW-based V: distance from the loose rectangle's north edge.
     EXPECT_NEAR(
         static_cast<float>(
-            (modelRegion.south() - looseRegion.south()) /
+            (looseRegion.north() - modelRegion.south()) /
             looseRegion.height()),
         primitive.vertexTexCoords[0][0][1],
         1e-6f);
@@ -1295,7 +1302,7 @@ TEST(RasterOverlayDetailsGeneratorTest,
         1e-6f);
     EXPECT_NEAR(
         static_cast<float>(
-            (modelRegion.north() - looseRegion.south()) /
+            (looseRegion.north() - modelRegion.north()) /
             looseRegion.height()),
         primitive.vertexTexCoords[0][2][1],
         1e-6f);

@@ -114,8 +114,9 @@ void rewriteProjectionTexCoords(GltfPrimitive& primitive,
                 (projected.x() - projectedRectangle.west()) / width,
                 0.0,
                 1.0)),
+            // NW 约定（v=0 在北），与纹理行序及 UV 窗口换算一致
             static_cast<float>(std::clamp(
-                (projected.y() - projectedRectangle.south()) / height,
+                (projectedRectangle.north() - projected.y()) / height,
                 0.0,
                 1.0))});
     }

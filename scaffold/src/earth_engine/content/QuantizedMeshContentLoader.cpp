@@ -102,6 +102,9 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     primitive.unlit = false;
     primitive.vertexTexCoords[0].reserve(decodedTile.vertices.size());
     for (const SurfaceVertex& vertex : decodedTile.vertices) {
+        // QuantizedMeshParser 已把 uv 翻成 NW 约定（v=0 在北），直接
+        // 拷贝即满足 overlay texcoord 约定；WebMercator 地形投影下
+        // 随后会被 rewriteTerrainProjectionTexCoords 整体重写。
         primitive.vertexTexCoords[0].push_back(vertex.uv);
     }
     primitive.runtime.nodeIndex = 0;
@@ -251,10 +254,11 @@ void rewriteTerrainProjectionTexCoords(GltfModel& model,
                          projectedRectangle->west()) / width,
                         0.0,
                         1.0)),
+                // NW 约定（v=0 在北），与纹理行序及 UV 窗口换算一致
                 static_cast<float>(
                     std::clamp(
-                        (adjustedProjected.y() -
-                         projectedRectangle->south()) /
+                        (projectedRectangle->north() -
+                         adjustedProjected.y()) /
                             height,
                         0.0,
                         1.0))};

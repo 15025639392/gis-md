@@ -247,9 +247,10 @@ private:
         if (texcoordRect.crossesAntimeridian() && uMax < uMin) {
             uMax += 1.0;
         }
-        double vMin = (descendantProjected.south() - texcoordRect.south()) /
+        // NW 约定（v=0 在北）：与 overlay texcoord 同基准
+        double vMin = (texcoordRect.north() - descendantProjected.north()) /
                       ancestorHeight;
-        double vMax = (descendantProjected.north() - texcoordRect.south()) /
+        double vMax = (texcoordRect.north() - descendantProjected.south()) /
                       ancestorHeight;
 
         uMin = std::clamp(uMin, 0.0, 1.0);

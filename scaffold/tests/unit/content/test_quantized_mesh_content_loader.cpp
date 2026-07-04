@@ -437,10 +437,14 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_EQ(geographicRootWestRectangle(), *modelRasterRectangle);
     EXPECT_FALSE(primitive.vertices.empty());
     EXPECT_FALSE(primitive.indices.empty());
+    // 原生 uv 已是 NW 约定（QuantizedMeshParser 解码翻转），set 0
+    // 直接拷贝；Geographic 地形投影不做进一步重写。
     EXPECT_EQ(primitive.vertices.front().uv,
               primitive.vertexTexCoords[0].front());
-    EXPECT_EQ(primitive.vertices.back().uv,
-              primitive.vertexTexCoords[0].back());
+    EXPECT_EQ(primitive.vertices.back().uv[0],
+              primitive.vertexTexCoords[0].back()[0]);
+    EXPECT_EQ(primitive.vertices.back().uv[1],
+              primitive.vertexTexCoords[0].back()[1]);
     ASSERT_EQ(primitive.vertices.size(), primitive.runtime.baseVertices.size());
     EXPECT_LT((primitive.runtime.baseVertices.front().positionEcef -
                (primitive.vertices.front().positionEcef -
@@ -606,8 +610,9 @@ TEST(QuantizedMeshContentLoaderTest,
     const double expectedU =
         (projectedInterior.x() - expectedProjectedRectangle.west()) /
         expectedProjectedRectangle.width();
+    // NW convention: v = 0 at the projected rectangle's north edge.
     const double expectedV =
-        (projectedInterior.y() - expectedProjectedRectangle.south()) /
+        (expectedProjectedRectangle.north() - projectedInterior.y()) /
         expectedProjectedRectangle.height();
     EXPECT_NEAR(expectedU,
                 primitive.vertexTexCoords[0][interiorVertexIndex][0],
@@ -753,8 +758,9 @@ TEST(QuantizedMeshContentLoaderTest,
     const double expectedU =
         (projectedInterior.x() - expectedProjectedRectangle.west()) /
         expectedProjectedRectangle.width();
+    // NW convention: v = 0 at the projected rectangle's north edge.
     const double expectedV =
-        (projectedInterior.y() - expectedProjectedRectangle.south()) /
+        (expectedProjectedRectangle.north() - projectedInterior.y()) /
         expectedProjectedRectangle.height();
 
     EXPECT_NEAR(expectedU,
@@ -770,8 +776,10 @@ TEST(QuantizedMeshContentLoaderTest,
         Ellipsoid::WGS84().cartesianToCartographic(localPosition);
     const Vec3 incorrectlyProjectedLocal =
         projectPosition(projection, localCartographic);
+    // Same NW convention as expectedV, but derived from the (wrong) local
+    // position; the actual texcoord must differ measurably from it.
     const double wrongV =
-        (incorrectlyProjectedLocal.y() - expectedProjectedRectangle.south()) /
+        (expectedProjectedRectangle.north() - incorrectlyProjectedLocal.y()) /
         expectedProjectedRectangle.height();
     EXPECT_GT(std::abs(wrongV -
                        primitive.vertexTexCoords[0][interiorVertexIndex][1]),

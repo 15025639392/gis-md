@@ -186,8 +186,9 @@ private:
         GltfUpsampleUvWindow window;
         window.u0 = relativeX(childRect.west());
         window.u1 = relativeX(childRect.east());
-        double v0 = (childRect.south() - parentRect.south()) / height;
-        double v1 = (childRect.north() - parentRect.south()) / height;
+        // NW 约定（invertedV=false）：v=0 在北；inverted 时翻成 south-based
+        double v0 = (parentRect.north() - childRect.north()) / height;
+        double v1 = (parentRect.north() - childRect.south()) / height;
         if (invertedV) {
             const double flipped = 1.0 - v1;
             v1 = 1.0 - v0;
@@ -230,6 +231,7 @@ private:
                 invertedV,
                 GltfTerrainUpsampler::quadrantUvWindow(childID, invertedV));
         }
+        // 原生 uv 同为 NW 约定（QuantizedMeshParser 解码时已翻转）
         windows.nativeUv = uvWindowFromRects(
             parentGeographicBounds,
             childGeographicBounds,

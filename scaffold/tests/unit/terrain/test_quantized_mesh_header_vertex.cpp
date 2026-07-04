@@ -278,6 +278,8 @@ TEST(QuantizedMeshContentLoaderVertexDecodeTest,
     ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
     ASSERT_GE(primitive.vertexTexCoords[0].size(), 2u);
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
+    // mode None 不生成 raster details，set 0 = 原生 uv 直拷贝；
+    // parser 已按 NW 约定存储（东南角顶点 uv[1]=1）。
     EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
 }
 
