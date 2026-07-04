@@ -953,17 +953,45 @@ RasterOverlayDetails makeProviderDetails(const TileScheme& scheme,
     }
     return details;
 }
+// P0-1 uniform 句柄化：glTF/terrain 命令的 uniform 现从定长块
+// cmd.gltfUniforms 读取。借用生产侧 GLES 描述表（name → float offset/count）
+// 按原 uniform 名取值，让既有按名断言不改业务预期直接迁移。
+// u_modelOrigin 是 CPU-only 字段，不在描述表内，单独处理。
+std::vector<float> gltfUniform(const RenderCommand& cmd,
+                               const std::string& name) {
+    if (!cmd.hasGltfUniforms) {
+        return {};
+    }
+    if (name == "u_modelOrigin") {
+        return std::vector<float>(cmd.gltfUniforms.modelOrigin.begin(),
+                                  cmd.gltfUniforms.modelOrigin.end());
+    }
+    for (const GltfUniformTableEntry& entry : gltfUniformTable()) {
+        if (name == entry.name) {
+            const float* base =
+                reinterpret_cast<const float*>(&cmd.gltfUniforms);
+            return std::vector<float>(base + entry.floatOffset,
+                                      base + entry.floatOffset + entry.count);
+        }
+    }
+    return {};
+}
+// 原“键存在”断言的等价物：块字段恒存在，此处表达“该名字属于 glTF 块契约
+// 且命令确实携带块”。真正的取值预期由相邻的值断言承担。
+bool hasGltfUniform(const RenderCommand& cmd, const std::string& name) {
+    return !gltfUniform(cmd, name).empty();
+}
 bool uniformNear(const RenderCommand& cmd,
                  const char* name,
                  std::initializer_list<float> expected,
                  float epsilon = 1e-6f) {
-    auto it = cmd.uniforms.find(name);
-    if (it == cmd.uniforms.end() || it->second.size() != expected.size()) {
+    const std::vector<float> value = gltfUniform(cmd, name);
+    if (value.size() != expected.size()) {
         return false;
     }
     size_t index = 0;
-    for (float value : expected) {
-        if (std::abs(it->second[index] - value) >= epsilon) {
+    for (float expectedValue : expected) {
+        if (std::abs(value[index] - expectedValue) >= epsilon) {
             return false;
         }
         ++index;
@@ -6352,37 +6380,37 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
                   (primitiveResources
                        ? primitiveResources->baseColorTexture.texture
                        : nullptr) &&
-              cmd.uniforms.count("u_hasBaseColorTexture") &&
-              cmd.uniforms.at("u_hasBaseColorTexture").front() == 1.0f &&
-              cmd.uniforms.count("u_textureCoordSets") &&
-              cmd.uniforms.at("u_textureCoordSets").size() == 4 &&
-              cmd.uniforms.at("u_textureCoordSets")[0] == 1.0f,
+              hasGltfUniform(cmd, "u_hasBaseColorTexture") &&
+              gltfUniform(cmd, "u_hasBaseColorTexture").front() == 1.0f &&
+              hasGltfUniform(cmd, "u_textureCoordSets") &&
+              gltfUniform(cmd, "u_textureCoordSets").size() == 4 &&
+              gltfUniform(cmd, "u_textureCoordSets")[0] == 1.0f,
           "Tileset: glTF draw command binds baseColorTexture with TEXCOORD_1");
-    check(cmd.uniforms.count("u_baseColorTexOffsetScale") &&
-              cmd.uniforms.at("u_baseColorTexOffsetScale").size() == 4 &&
-              std::abs(cmd.uniforms.at("u_baseColorTexOffsetScale")[0] - 0.25f) <
+    check(hasGltfUniform(cmd, "u_baseColorTexOffsetScale") &&
+              gltfUniform(cmd, "u_baseColorTexOffsetScale").size() == 4 &&
+              std::abs(gltfUniform(cmd, "u_baseColorTexOffsetScale")[0] - 0.25f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_baseColorTexOffsetScale")[1] - 0.5f) <
+              std::abs(gltfUniform(cmd, "u_baseColorTexOffsetScale")[1] - 0.5f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_baseColorTexOffsetScale")[2] - 2.0f) <
+              std::abs(gltfUniform(cmd, "u_baseColorTexOffsetScale")[2] - 2.0f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_baseColorTexOffsetScale")[3] - 3.0f) <
+              std::abs(gltfUniform(cmd, "u_baseColorTexOffsetScale")[3] - 3.0f) <
                   1e-6f &&
-              cmd.uniforms.count("u_baseColorTexRotationSinCos") &&
-              cmd.uniforms.at("u_baseColorTexRotationSinCos").size() == 2 &&
-              std::abs(cmd.uniforms.at("u_baseColorTexRotationSinCos")[0] - 1.0f) <
+              hasGltfUniform(cmd, "u_baseColorTexRotationSinCos") &&
+              gltfUniform(cmd, "u_baseColorTexRotationSinCos").size() == 2 &&
+              std::abs(gltfUniform(cmd, "u_baseColorTexRotationSinCos")[0] - 1.0f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_baseColorTexRotationSinCos")[1]) <
+              std::abs(gltfUniform(cmd, "u_baseColorTexRotationSinCos")[1]) <
                   1e-6f,
           "Tileset: glTF draw command uploads KHR_texture_transform uniforms");
     check(cmd.blend &&
               !cmd.depthWrite &&
-              cmd.uniforms.count("u_renderOpacity") &&
-              std::abs(cmd.uniforms.at("u_renderOpacity").front() - 0.5f) <
+              hasGltfUniform(cmd, "u_renderOpacity") &&
+              std::abs(gltfUniform(cmd, "u_renderOpacity").front() - 0.5f) <
                   1e-6f,
           "Tileset: glTF draw command applies LOD transition opacity");
-    check(cmd.uniforms.count("u_modelOrigin") &&
-              cmd.uniforms.at("u_modelOrigin").size() == 3,
+    check(hasGltfUniform(cmd, "u_modelOrigin") &&
+              gltfUniform(cmd, "u_modelOrigin").size() == 3,
           "Tileset: glTF draw command exposes RTC model origin to Scene MVP");
     check(cmd.hasWorldSortCenter &&
               std::abs(cmd.worldSortCenter[0] -
@@ -6489,8 +6517,8 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
                   loading->getTexture(),
           "Tileset: glTF mapped raster uses glTF model and texture slot 15 without replacing material slot 0");
     check(cmd.gltfRasterOverlayTexCoordSets[0] == 1.0f &&
-              cmd.uniforms.count("u_mappedRasterTexCoordSet0") &&
-              cmd.uniforms.at("u_mappedRasterTexCoordSet0").front() == 1.0f,
+              hasGltfUniform(cmd, "u_mappedRasterTexCoordSet0") &&
+              gltfUniform(cmd, "u_mappedRasterTexCoordSet0").front() == 1.0f,
           "Tileset: glTF mapped raster uses the matching _CESIUMOVERLAY texture coordinate ID");
     check(std::abs(cmd.gltfRasterOverlayTileUvs[0][0] -
                    mapped->getTranslationU()) < 1e-6f &&
@@ -6500,13 +6528,13 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
                        mapped->getScaleU()) < 1e-6f &&
               std::abs(cmd.gltfRasterOverlayTileUvs[0][3] -
                        mapped->getScaleV()) < 1e-6f &&
-              cmd.uniforms.count("u_mappedRasterTileUV0") &&
-              cmd.uniforms.at("u_mappedRasterTileUV0").size() == 4,
+              hasGltfUniform(cmd, "u_mappedRasterTileUV0") &&
+              gltfUniform(cmd, "u_mappedRasterTileUV0").size() == 4,
           "Tileset: glTF mapped raster uploads translation and scale");
     check(std::abs(cmd.gltfRasterOverlayOpacities[0] - overlayOptions.opacity) <
               1e-6f &&
-              cmd.uniforms.count("u_mappedRasterOpacity0") &&
-              std::abs(cmd.uniforms.at("u_mappedRasterOpacity0").front() -
+              hasGltfUniform(cmd, "u_mappedRasterOpacity0") &&
+              std::abs(gltfUniform(cmd, "u_mappedRasterOpacity0").front() -
                        overlayOptions.opacity) < 1e-6f,
           "Tileset: glTF mapped raster preserves overlay opacity");
     check(!cmd.resourceKeepAlive.empty(),
@@ -6622,12 +6650,12 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
               std::abs(cmd.gltfWaterMaskTranslationScale[2] - 0.5f) <
                   1e-6f,
           "Tileset: glTF terrain water mask command preserves Cesium water mask state");
-    check(cmd.uniforms.count("u_gltfHasWaterMask") &&
-              cmd.uniforms.at("u_gltfHasWaterMask").front() == 1.0f &&
-              cmd.uniforms.count("u_gltfWaterMaskTranslationScale") &&
-              cmd.uniforms.at("u_gltfWaterMaskTranslationScale").size() == 4 &&
-              cmd.uniforms.count("u_gltfWaterMaskState") &&
-              cmd.uniforms.at("u_gltfWaterMaskState").size() == 4,
+    check(hasGltfUniform(cmd, "u_gltfHasWaterMask") &&
+              gltfUniform(cmd, "u_gltfHasWaterMask").front() == 1.0f &&
+              hasGltfUniform(cmd, "u_gltfWaterMaskTranslationScale") &&
+              gltfUniform(cmd, "u_gltfWaterMaskTranslationScale").size() == 4 &&
+              hasGltfUniform(cmd, "u_gltfWaterMaskState") &&
+              gltfUniform(cmd, "u_gltfWaterMaskState").size() == 4,
           "Tileset: glTF terrain water mask uploads shader uniforms");
 }
 void testTilesetGltfTangentsUseModelLinearTransform() {
@@ -6724,10 +6752,10 @@ void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
     const RenderCommand& cmd = commands.front();
     check(!cmd.blend && cmd.depthWrite,
           "Tileset: glTF MASK material remains an opaque depth-writing command");
-    check(cmd.uniforms.count("u_alphaMode") &&
-              cmd.uniforms.at("u_alphaMode").front() == 1.0f &&
-              cmd.uniforms.count("u_alphaCutoff") &&
-              std::abs(cmd.uniforms.at("u_alphaCutoff").front() - 0.35f) <
+    check(hasGltfUniform(cmd, "u_alphaMode") &&
+              gltfUniform(cmd, "u_alphaMode").front() == 1.0f &&
+              hasGltfUniform(cmd, "u_alphaCutoff") &&
+              std::abs(gltfUniform(cmd, "u_alphaCutoff").front() - 0.35f) <
                   1e-6f,
           "Tileset: glTF MASK material uploads alpha cutoff uniforms");
 }
@@ -6769,13 +6797,13 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
           "Tileset: glTF unlit material emits one primitive draw command");
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
-    check(cmd.uniforms.count("u_unlit") &&
-              cmd.uniforms.at("u_unlit").front() == 1.0f,
+    check(hasGltfUniform(cmd, "u_unlit") &&
+              gltfUniform(cmd, "u_unlit").front() == 1.0f,
           "Tileset: glTF unlit material uploads the unlit shader switch");
-    check(cmd.uniforms.count("u_materialFactors") &&
-              std::abs(cmd.uniforms.at("u_materialFactors")[0] - 0.9f) <
+    check(hasGltfUniform(cmd, "u_materialFactors") &&
+              std::abs(gltfUniform(cmd, "u_materialFactors")[0] - 0.9f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_materialFactors")[1] - 0.1f) <
+              std::abs(gltfUniform(cmd, "u_materialFactors")[1] - 0.1f) <
                   1e-6f,
           "Tileset: glTF unlit command keeps source material factors for diagnostics");
 }
@@ -6824,18 +6852,18 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
           "Tileset: glTF emissive material emits one primitive draw command");
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
-    check(cmd.uniforms.count("u_emissiveFactor") &&
-              cmd.uniforms.at("u_emissiveFactor").size() == 3 &&
-              std::abs(cmd.uniforms.at("u_emissiveFactor")[0] - 0.25f) <
+    check(hasGltfUniform(cmd, "u_emissiveFactor") &&
+              gltfUniform(cmd, "u_emissiveFactor").size() == 3 &&
+              std::abs(gltfUniform(cmd, "u_emissiveFactor")[0] - 0.25f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_emissiveFactor")[1] - 0.5f) <
+              std::abs(gltfUniform(cmd, "u_emissiveFactor")[1] - 0.5f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_emissiveFactor")[2] - 0.75f) <
+              std::abs(gltfUniform(cmd, "u_emissiveFactor")[2] - 0.75f) <
                   1e-6f,
           "Tileset: glTF emissive material uploads emissiveFactor");
-    check(cmd.uniforms.count("u_hasMaterialTextures") &&
-              cmd.uniforms.at("u_hasMaterialTextures").size() == 4 &&
-              cmd.uniforms.at("u_hasMaterialTextures")[3] == 1.0f,
+    check(hasGltfUniform(cmd, "u_hasMaterialTextures") &&
+              gltfUniform(cmd, "u_hasMaterialTextures").size() == 4 &&
+              gltfUniform(cmd, "u_hasMaterialTextures")[3] == 1.0f,
           "Tileset: glTF emissive material reports emissive texture presence");
     const GltfPrimitiveRenderResources* primitiveResources =
         root->content.renderContent.gltfPrimitiveResourceForReadAt(0);
@@ -6845,21 +6873,21 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
                        ? primitiveResources->emissiveTexture.texture
                        : nullptr),
           "Tileset: glTF emissive texture binds to material slot 4");
-    check(cmd.uniforms.count("u_emissiveTexCoordSet") &&
-              cmd.uniforms.at("u_emissiveTexCoordSet").front() == 1.0f,
+    check(hasGltfUniform(cmd, "u_emissiveTexCoordSet") &&
+              gltfUniform(cmd, "u_emissiveTexCoordSet").front() == 1.0f,
           "Tileset: glTF emissive material uploads texture coordinate set");
-    check(cmd.uniforms.count("u_emissiveTexOffsetScale") &&
-              cmd.uniforms.at("u_emissiveTexOffsetScale").size() == 4 &&
-              std::abs(cmd.uniforms.at("u_emissiveTexOffsetScale")[0] -
+    check(hasGltfUniform(cmd, "u_emissiveTexOffsetScale") &&
+              gltfUniform(cmd, "u_emissiveTexOffsetScale").size() == 4 &&
+              std::abs(gltfUniform(cmd, "u_emissiveTexOffsetScale")[0] -
                        0.125f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_emissiveTexOffsetScale")[1] -
+              std::abs(gltfUniform(cmd, "u_emissiveTexOffsetScale")[1] -
                        0.25f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_emissiveTexOffsetScale")[2] -
+              std::abs(gltfUniform(cmd, "u_emissiveTexOffsetScale")[2] -
                        0.5f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_emissiveTexOffsetScale")[3] -
+              std::abs(gltfUniform(cmd, "u_emissiveTexOffsetScale")[3] -
                        0.75f) < 1e-6f &&
-              cmd.uniforms.count("u_emissiveTexRotationSinCos") &&
-              std::abs(cmd.uniforms.at("u_emissiveTexRotationSinCos")[0] -
+              hasGltfUniform(cmd, "u_emissiveTexRotationSinCos") &&
+              std::abs(gltfUniform(cmd, "u_emissiveTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF emissive texture uploads KHR_texture_transform uniforms");
 }
@@ -6902,14 +6930,14 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
           "Tileset: glTF IOR materials emit primitive draw commands");
     if (commands.size() < 2) return;
     const RenderCommand& cmd = commands.front();
-    check(cmd.uniforms.count("u_dielectricSpecularF0") &&
-              std::abs(cmd.uniforms.at("u_dielectricSpecularF0").front() -
+    check(hasGltfUniform(cmd, "u_dielectricSpecularF0") &&
+              std::abs(gltfUniform(cmd, "u_dielectricSpecularF0").front() -
                        1.0f / 9.0f) < 1e-6f,
           "Tileset: glTF IOR material uploads dielectric specular F0");
     const RenderCommand& fullReflectanceCmd = commands[1];
-    check(fullReflectanceCmd.uniforms.count("u_dielectricSpecularF0") &&
+    check(hasGltfUniform(fullReflectanceCmd, "u_dielectricSpecularF0") &&
               std::abs(
-                  fullReflectanceCmd.uniforms.at("u_dielectricSpecularF0")
+                  gltfUniform(fullReflectanceCmd, "u_dielectricSpecularF0")
                       .front() - 1.0f) < 1e-6f,
           "Tileset: glTF IOR zero material uploads full-reflectance F0");
 }
@@ -6958,15 +6986,15 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
           "Tileset: glTF anisotropy material emits one primitive draw command");
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
-    check(cmd.uniforms.count("u_anisotropyFactors") &&
-              cmd.uniforms.at("u_anisotropyFactors").size() == 2 &&
-              std::abs(cmd.uniforms.at("u_anisotropyFactors")[0] - 0.8f) <
+    check(hasGltfUniform(cmd, "u_anisotropyFactors") &&
+              gltfUniform(cmd, "u_anisotropyFactors").size() == 2 &&
+              std::abs(gltfUniform(cmd, "u_anisotropyFactors")[0] - 0.8f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_anisotropyFactors")[1] - 0.25f) <
+              std::abs(gltfUniform(cmd, "u_anisotropyFactors")[1] - 0.25f) <
                   1e-6f,
           "Tileset: glTF anisotropy material uploads factors");
-    check(cmd.uniforms.count("u_hasAnisotropyTexture") &&
-              cmd.uniforms.at("u_hasAnisotropyTexture").front() == 1.0f,
+    check(hasGltfUniform(cmd, "u_hasAnisotropyTexture") &&
+              gltfUniform(cmd, "u_hasAnisotropyTexture").front() == 1.0f,
           "Tileset: glTF anisotropy material reports texture presence");
     const GltfPrimitiveRenderResources* primitiveResources =
         root->content.renderContent.gltfPrimitiveResourceForReadAt(0);
@@ -6976,21 +7004,21 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
                        ? primitiveResources->anisotropyTexture.texture
                        : nullptr),
           "Tileset: glTF anisotropy texture binds to material slot 12");
-    check(cmd.uniforms.count("u_anisotropyTexCoordSet") &&
-              cmd.uniforms.at("u_anisotropyTexCoordSet").front() == 1.0f,
+    check(hasGltfUniform(cmd, "u_anisotropyTexCoordSet") &&
+              gltfUniform(cmd, "u_anisotropyTexCoordSet").front() == 1.0f,
           "Tileset: glTF anisotropy material uploads texture coordinate set");
-    check(cmd.uniforms.count("u_anisotropyTexOffsetScale") &&
-              cmd.uniforms.at("u_anisotropyTexOffsetScale").size() == 4 &&
-              std::abs(cmd.uniforms.at("u_anisotropyTexOffsetScale")[0] -
+    check(hasGltfUniform(cmd, "u_anisotropyTexOffsetScale") &&
+              gltfUniform(cmd, "u_anisotropyTexOffsetScale").size() == 4 &&
+              std::abs(gltfUniform(cmd, "u_anisotropyTexOffsetScale")[0] -
                        0.125f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_anisotropyTexOffsetScale")[1] -
+              std::abs(gltfUniform(cmd, "u_anisotropyTexOffsetScale")[1] -
                        0.25f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_anisotropyTexOffsetScale")[2] -
+              std::abs(gltfUniform(cmd, "u_anisotropyTexOffsetScale")[2] -
                        0.5f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_anisotropyTexOffsetScale")[3] -
+              std::abs(gltfUniform(cmd, "u_anisotropyTexOffsetScale")[3] -
                        0.75f) < 1e-6f &&
-              cmd.uniforms.count("u_anisotropyTexRotationSinCos") &&
-              std::abs(cmd.uniforms.at("u_anisotropyTexRotationSinCos")[0] -
+              hasGltfUniform(cmd, "u_anisotropyTexRotationSinCos") &&
+              std::abs(gltfUniform(cmd, "u_anisotropyTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF anisotropy texture uploads KHR_texture_transform uniforms");
 }
@@ -7041,23 +7069,23 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
           "Tileset: glTF spec-gloss material emits one primitive draw command");
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
-    check(cmd.uniforms.count("u_specularGlossinessWorkflow") &&
-              cmd.uniforms.at("u_specularGlossinessWorkflow").front() ==
+    check(hasGltfUniform(cmd, "u_specularGlossinessWorkflow") &&
+              gltfUniform(cmd, "u_specularGlossinessWorkflow").front() ==
                   1.0f,
           "Tileset: glTF spec-gloss workflow flag is uploaded");
-    check(cmd.uniforms.count("u_specularGlossinessFactor") &&
-              cmd.uniforms.at("u_specularGlossinessFactor").size() == 4 &&
-              std::abs(cmd.uniforms.at("u_specularGlossinessFactor")[0] -
+    check(hasGltfUniform(cmd, "u_specularGlossinessFactor") &&
+              gltfUniform(cmd, "u_specularGlossinessFactor").size() == 4 &&
+              std::abs(gltfUniform(cmd, "u_specularGlossinessFactor")[0] -
                        0.6f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularGlossinessFactor")[1] -
+              std::abs(gltfUniform(cmd, "u_specularGlossinessFactor")[1] -
                        0.7f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularGlossinessFactor")[2] -
+              std::abs(gltfUniform(cmd, "u_specularGlossinessFactor")[2] -
                        0.8f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularGlossinessFactor")[3] -
+              std::abs(gltfUniform(cmd, "u_specularGlossinessFactor")[3] -
                        0.9f) < 1e-6f,
           "Tileset: glTF spec-gloss factors are uploaded");
-    check(cmd.uniforms.count("u_hasSpecularGlossinessTexture") &&
-              cmd.uniforms.at("u_hasSpecularGlossinessTexture").front() ==
+    check(hasGltfUniform(cmd, "u_hasSpecularGlossinessTexture") &&
+              gltfUniform(cmd, "u_hasSpecularGlossinessTexture").front() ==
                   1.0f,
           "Tileset: glTF spec-gloss material reports texture presence");
     const GltfPrimitiveRenderResources* primitiveResources =
@@ -7068,24 +7096,24 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
                        ? primitiveResources->specularGlossinessTexture.texture
                        : nullptr),
           "Tileset: glTF spec-gloss texture binds to material slot 13");
-    check(cmd.uniforms.count("u_specularGlossinessTexCoordSet") &&
-              cmd.uniforms.at("u_specularGlossinessTexCoordSet").front() ==
+    check(hasGltfUniform(cmd, "u_specularGlossinessTexCoordSet") &&
+              gltfUniform(cmd, "u_specularGlossinessTexCoordSet").front() ==
                   1.0f,
           "Tileset: glTF spec-gloss material uploads texture coordinate set");
-    check(cmd.uniforms.count("u_specularGlossinessTexOffsetScale") &&
-              cmd.uniforms.at("u_specularGlossinessTexOffsetScale").size() ==
+    check(hasGltfUniform(cmd, "u_specularGlossinessTexOffsetScale") &&
+              gltfUniform(cmd, "u_specularGlossinessTexOffsetScale").size() ==
                   4 &&
-              std::abs(cmd.uniforms.at("u_specularGlossinessTexOffsetScale")[0] -
+              std::abs(gltfUniform(cmd, "u_specularGlossinessTexOffsetScale")[0] -
                        0.125f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularGlossinessTexOffsetScale")[1] -
+              std::abs(gltfUniform(cmd, "u_specularGlossinessTexOffsetScale")[1] -
                        0.25f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularGlossinessTexOffsetScale")[2] -
+              std::abs(gltfUniform(cmd, "u_specularGlossinessTexOffsetScale")[2] -
                        0.5f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularGlossinessTexOffsetScale")[3] -
+              std::abs(gltfUniform(cmd, "u_specularGlossinessTexOffsetScale")[3] -
                        0.75f) < 1e-6f &&
-              cmd.uniforms.count("u_specularGlossinessTexRotationSinCos") &&
+              hasGltfUniform(cmd, "u_specularGlossinessTexRotationSinCos") &&
               std::abs(
-                  cmd.uniforms.at("u_specularGlossinessTexRotationSinCos")[0] -
+                  gltfUniform(cmd, "u_specularGlossinessTexRotationSinCos")[0] -
                   1.0f) < 1e-6f,
           "Tileset: glTF spec-gloss texture uploads KHR_texture_transform uniforms");
 }
@@ -7136,12 +7164,12 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
     const RenderCommand& cmd = commands.front();
     check(cmd.blend && !cmd.depthWrite,
           "Tileset: glTF transmission material becomes a translucent command");
-    check(cmd.uniforms.count("u_transmissionFactor") &&
-              std::abs(cmd.uniforms.at("u_transmissionFactor").front() -
+    check(hasGltfUniform(cmd, "u_transmissionFactor") &&
+              std::abs(gltfUniform(cmd, "u_transmissionFactor").front() -
                        0.65f) < 1e-6f,
           "Tileset: glTF transmission material uploads transmissionFactor");
-    check(cmd.uniforms.count("u_hasTransmissionTexture") &&
-              cmd.uniforms.at("u_hasTransmissionTexture").front() == 1.0f,
+    check(hasGltfUniform(cmd, "u_hasTransmissionTexture") &&
+              gltfUniform(cmd, "u_hasTransmissionTexture").front() == 1.0f,
           "Tileset: glTF transmission material reports texture presence");
     const GltfPrimitiveRenderResources* primitiveResources =
         root->content.renderContent.gltfPrimitiveResourceForReadAt(0);
@@ -7151,21 +7179,21 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
                        ? primitiveResources->transmissionTexture.texture
                        : nullptr),
           "Tileset: glTF transmission texture binds to material slot 14");
-    check(cmd.uniforms.count("u_transmissionTexCoordSet") &&
-              cmd.uniforms.at("u_transmissionTexCoordSet").front() == 1.0f,
+    check(hasGltfUniform(cmd, "u_transmissionTexCoordSet") &&
+              gltfUniform(cmd, "u_transmissionTexCoordSet").front() == 1.0f,
           "Tileset: glTF transmission material uploads texture coordinate set");
-    check(cmd.uniforms.count("u_transmissionTexOffsetScale") &&
-              cmd.uniforms.at("u_transmissionTexOffsetScale").size() == 4 &&
-              std::abs(cmd.uniforms.at("u_transmissionTexOffsetScale")[0] -
+    check(hasGltfUniform(cmd, "u_transmissionTexOffsetScale") &&
+              gltfUniform(cmd, "u_transmissionTexOffsetScale").size() == 4 &&
+              std::abs(gltfUniform(cmd, "u_transmissionTexOffsetScale")[0] -
                        0.125f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_transmissionTexOffsetScale")[1] -
+              std::abs(gltfUniform(cmd, "u_transmissionTexOffsetScale")[1] -
                        0.25f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_transmissionTexOffsetScale")[2] -
+              std::abs(gltfUniform(cmd, "u_transmissionTexOffsetScale")[2] -
                        0.5f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_transmissionTexOffsetScale")[3] -
+              std::abs(gltfUniform(cmd, "u_transmissionTexOffsetScale")[3] -
                        0.75f) < 1e-6f &&
-              cmd.uniforms.count("u_transmissionTexRotationSinCos") &&
-              std::abs(cmd.uniforms.at("u_transmissionTexRotationSinCos")[0] -
+              hasGltfUniform(cmd, "u_transmissionTexRotationSinCos") &&
+              std::abs(gltfUniform(cmd, "u_transmissionTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF transmission texture uploads KHR_texture_transform uniforms");
 }
@@ -7221,23 +7249,23 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
           "Tileset: glTF specular material emits one primitive draw command");
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
-    check(cmd.uniforms.count("u_specularFactor") &&
-              std::abs(cmd.uniforms.at("u_specularFactor").front() - 0.25f) <
+    check(hasGltfUniform(cmd, "u_specularFactor") &&
+              std::abs(gltfUniform(cmd, "u_specularFactor").front() - 0.25f) <
                   1e-6f,
           "Tileset: glTF specular material uploads specularFactor");
-    check(cmd.uniforms.count("u_specularColorFactor") &&
-              cmd.uniforms.at("u_specularColorFactor").size() == 3 &&
-              std::abs(cmd.uniforms.at("u_specularColorFactor")[0] - 2.0f) <
+    check(hasGltfUniform(cmd, "u_specularColorFactor") &&
+              gltfUniform(cmd, "u_specularColorFactor").size() == 3 &&
+              std::abs(gltfUniform(cmd, "u_specularColorFactor")[0] - 2.0f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularColorFactor")[1] - 0.5f) <
+              std::abs(gltfUniform(cmd, "u_specularColorFactor")[1] - 0.5f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularColorFactor")[2] - 0.25f) <
+              std::abs(gltfUniform(cmd, "u_specularColorFactor")[2] - 0.25f) <
                   1e-6f,
           "Tileset: glTF specular material uploads specularColorFactor");
-    check(cmd.uniforms.count("u_hasSpecularTextures") &&
-              cmd.uniforms.at("u_hasSpecularTextures").size() == 2 &&
-              cmd.uniforms.at("u_hasSpecularTextures")[0] == 1.0f &&
-              cmd.uniforms.at("u_hasSpecularTextures")[1] == 1.0f,
+    check(hasGltfUniform(cmd, "u_hasSpecularTextures") &&
+              gltfUniform(cmd, "u_hasSpecularTextures").size() == 2 &&
+              gltfUniform(cmd, "u_hasSpecularTextures")[0] == 1.0f &&
+              gltfUniform(cmd, "u_hasSpecularTextures")[1] == 1.0f,
           "Tileset: glTF specular material reports both specular textures");
     const GltfPrimitiveRenderResources* primitiveResources =
         root->content.renderContent.gltfPrimitiveResourceForReadAt(0);
@@ -7251,23 +7279,23 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
                        ? primitiveResources->specularColorTexture.texture
                        : nullptr),
           "Tileset: glTF specular textures bind to material slots 5 and 6");
-    check(cmd.uniforms.count("u_specularTexCoordSets") &&
-              cmd.uniforms.at("u_specularTexCoordSets").size() == 2 &&
-              cmd.uniforms.at("u_specularTexCoordSets")[0] == 1.0f &&
-              cmd.uniforms.at("u_specularTexCoordSets")[1] == 0.0f,
+    check(hasGltfUniform(cmd, "u_specularTexCoordSets") &&
+              gltfUniform(cmd, "u_specularTexCoordSets").size() == 2 &&
+              gltfUniform(cmd, "u_specularTexCoordSets")[0] == 1.0f &&
+              gltfUniform(cmd, "u_specularTexCoordSets")[1] == 0.0f,
           "Tileset: glTF specular material uploads texture coordinate sets");
-    check(cmd.uniforms.count("u_specularTexOffsetScale") &&
-              cmd.uniforms.at("u_specularTexOffsetScale").size() == 4 &&
-              std::abs(cmd.uniforms.at("u_specularTexOffsetScale")[0] -
+    check(hasGltfUniform(cmd, "u_specularTexOffsetScale") &&
+              gltfUniform(cmd, "u_specularTexOffsetScale").size() == 4 &&
+              std::abs(gltfUniform(cmd, "u_specularTexOffsetScale")[0] -
                        0.125f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularTexOffsetScale")[1] -
+              std::abs(gltfUniform(cmd, "u_specularTexOffsetScale")[1] -
                        0.25f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularTexOffsetScale")[2] -
+              std::abs(gltfUniform(cmd, "u_specularTexOffsetScale")[2] -
                        0.5f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_specularTexOffsetScale")[3] -
+              std::abs(gltfUniform(cmd, "u_specularTexOffsetScale")[3] -
                        0.75f) < 1e-6f &&
-              cmd.uniforms.count("u_specularTexRotationSinCos") &&
-              std::abs(cmd.uniforms.at("u_specularTexRotationSinCos")[0] -
+              hasGltfUniform(cmd, "u_specularTexRotationSinCos") &&
+              std::abs(gltfUniform(cmd, "u_specularTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF specular texture uploads KHR_texture_transform uniforms");
     checkTextureTransformUniforms(
@@ -7336,20 +7364,20 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
           "Tileset: glTF clearcoat material emits one primitive draw command");
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
-    check(cmd.uniforms.count("u_clearcoatFactors") &&
-              cmd.uniforms.at("u_clearcoatFactors").size() == 3 &&
-              std::abs(cmd.uniforms.at("u_clearcoatFactors")[0] - 0.75f) <
+    check(hasGltfUniform(cmd, "u_clearcoatFactors") &&
+              gltfUniform(cmd, "u_clearcoatFactors").size() == 3 &&
+              std::abs(gltfUniform(cmd, "u_clearcoatFactors")[0] - 0.75f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_clearcoatFactors")[1] - 0.25f) <
+              std::abs(gltfUniform(cmd, "u_clearcoatFactors")[1] - 0.25f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_clearcoatFactors")[2] - 0.6f) <
+              std::abs(gltfUniform(cmd, "u_clearcoatFactors")[2] - 0.6f) <
                   1e-6f,
           "Tileset: glTF clearcoat material uploads clearcoat factors");
-    check(cmd.uniforms.count("u_hasClearcoatTextures") &&
-              cmd.uniforms.at("u_hasClearcoatTextures").size() == 3 &&
-              cmd.uniforms.at("u_hasClearcoatTextures")[0] == 1.0f &&
-              cmd.uniforms.at("u_hasClearcoatTextures")[1] == 1.0f &&
-              cmd.uniforms.at("u_hasClearcoatTextures")[2] == 1.0f,
+    check(hasGltfUniform(cmd, "u_hasClearcoatTextures") &&
+              gltfUniform(cmd, "u_hasClearcoatTextures").size() == 3 &&
+              gltfUniform(cmd, "u_hasClearcoatTextures")[0] == 1.0f &&
+              gltfUniform(cmd, "u_hasClearcoatTextures")[1] == 1.0f &&
+              gltfUniform(cmd, "u_hasClearcoatTextures")[2] == 1.0f,
           "Tileset: glTF clearcoat material reports all clearcoat textures");
     const GltfPrimitiveRenderResources* primitiveResources =
         root->content.renderContent.gltfPrimitiveResourceForReadAt(0);
@@ -7367,24 +7395,24 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
                        ? primitiveResources->clearcoatNormalTexture.texture
                        : nullptr),
           "Tileset: glTF clearcoat textures bind to material slots 7, 8, and 9");
-    check(cmd.uniforms.count("u_clearcoatTexCoordSets") &&
-              cmd.uniforms.at("u_clearcoatTexCoordSets").size() == 3 &&
-              cmd.uniforms.at("u_clearcoatTexCoordSets")[0] == 1.0f &&
-              cmd.uniforms.at("u_clearcoatTexCoordSets")[1] == 0.0f &&
-              cmd.uniforms.at("u_clearcoatTexCoordSets")[2] == 1.0f,
+    check(hasGltfUniform(cmd, "u_clearcoatTexCoordSets") &&
+              gltfUniform(cmd, "u_clearcoatTexCoordSets").size() == 3 &&
+              gltfUniform(cmd, "u_clearcoatTexCoordSets")[0] == 1.0f &&
+              gltfUniform(cmd, "u_clearcoatTexCoordSets")[1] == 0.0f &&
+              gltfUniform(cmd, "u_clearcoatTexCoordSets")[2] == 1.0f,
           "Tileset: glTF clearcoat material uploads texture coordinate sets");
-    check(cmd.uniforms.count("u_clearcoatTexOffsetScale") &&
-              cmd.uniforms.at("u_clearcoatTexOffsetScale").size() == 4 &&
-              std::abs(cmd.uniforms.at("u_clearcoatTexOffsetScale")[0] -
+    check(hasGltfUniform(cmd, "u_clearcoatTexOffsetScale") &&
+              gltfUniform(cmd, "u_clearcoatTexOffsetScale").size() == 4 &&
+              std::abs(gltfUniform(cmd, "u_clearcoatTexOffsetScale")[0] -
                        0.125f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_clearcoatTexOffsetScale")[1] -
+              std::abs(gltfUniform(cmd, "u_clearcoatTexOffsetScale")[1] -
                        0.25f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_clearcoatTexOffsetScale")[2] -
+              std::abs(gltfUniform(cmd, "u_clearcoatTexOffsetScale")[2] -
                        0.5f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_clearcoatTexOffsetScale")[3] -
+              std::abs(gltfUniform(cmd, "u_clearcoatTexOffsetScale")[3] -
                        0.75f) < 1e-6f &&
-              cmd.uniforms.count("u_clearcoatTexRotationSinCos") &&
-              std::abs(cmd.uniforms.at("u_clearcoatTexRotationSinCos")[0] -
+              hasGltfUniform(cmd, "u_clearcoatTexRotationSinCos") &&
+              std::abs(gltfUniform(cmd, "u_clearcoatTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF clearcoat texture uploads KHR_texture_transform uniforms");
     checkTextureTransformUniforms(
@@ -7450,24 +7478,24 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
           "Tileset: glTF sheen material emits one primitive draw command");
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
-    check(cmd.uniforms.count("u_sheenColorFactor") &&
-              cmd.uniforms.at("u_sheenColorFactor").size() == 3 &&
-              std::abs(cmd.uniforms.at("u_sheenColorFactor")[0] - 0.2f) <
+    check(hasGltfUniform(cmd, "u_sheenColorFactor") &&
+              gltfUniform(cmd, "u_sheenColorFactor").size() == 3 &&
+              std::abs(gltfUniform(cmd, "u_sheenColorFactor")[0] - 0.2f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_sheenColorFactor")[1] - 0.4f) <
+              std::abs(gltfUniform(cmd, "u_sheenColorFactor")[1] - 0.4f) <
                   1e-6f &&
-              std::abs(cmd.uniforms.at("u_sheenColorFactor")[2] - 0.6f) <
+              std::abs(gltfUniform(cmd, "u_sheenColorFactor")[2] - 0.6f) <
                   1e-6f,
           "Tileset: glTF sheen material uploads sheenColorFactor");
-    check(cmd.uniforms.count("u_sheenRoughnessFactor") &&
+    check(hasGltfUniform(cmd, "u_sheenRoughnessFactor") &&
               std::abs(
-                  cmd.uniforms.at("u_sheenRoughnessFactor").front() -
+                  gltfUniform(cmd, "u_sheenRoughnessFactor").front() -
                   0.35f) < 1e-6f,
           "Tileset: glTF sheen material uploads sheenRoughnessFactor");
-    check(cmd.uniforms.count("u_hasSheenTextures") &&
-              cmd.uniforms.at("u_hasSheenTextures").size() == 2 &&
-              cmd.uniforms.at("u_hasSheenTextures")[0] == 1.0f &&
-              cmd.uniforms.at("u_hasSheenTextures")[1] == 1.0f,
+    check(hasGltfUniform(cmd, "u_hasSheenTextures") &&
+              gltfUniform(cmd, "u_hasSheenTextures").size() == 2 &&
+              gltfUniform(cmd, "u_hasSheenTextures")[0] == 1.0f &&
+              gltfUniform(cmd, "u_hasSheenTextures")[1] == 1.0f,
           "Tileset: glTF sheen material reports both sheen textures");
     const GltfPrimitiveRenderResources* primitiveResources =
         root->content.renderContent.gltfPrimitiveResourceForReadAt(0);
@@ -7479,23 +7507,23 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
               cmd.textures[11] ==
                   primitiveResources->sheenRoughnessTexture.texture,
           "Tileset: glTF sheen textures bind to material slots 10 and 11");
-    check(cmd.uniforms.count("u_sheenTexCoordSets") &&
-              cmd.uniforms.at("u_sheenTexCoordSets").size() == 2 &&
-              cmd.uniforms.at("u_sheenTexCoordSets")[0] == 1.0f &&
-              cmd.uniforms.at("u_sheenTexCoordSets")[1] == 0.0f,
+    check(hasGltfUniform(cmd, "u_sheenTexCoordSets") &&
+              gltfUniform(cmd, "u_sheenTexCoordSets").size() == 2 &&
+              gltfUniform(cmd, "u_sheenTexCoordSets")[0] == 1.0f &&
+              gltfUniform(cmd, "u_sheenTexCoordSets")[1] == 0.0f,
           "Tileset: glTF sheen material uploads texture coordinate sets");
-    check(cmd.uniforms.count("u_sheenColorTexOffsetScale") &&
-              cmd.uniforms.at("u_sheenColorTexOffsetScale").size() == 4 &&
-              std::abs(cmd.uniforms.at("u_sheenColorTexOffsetScale")[0] -
+    check(hasGltfUniform(cmd, "u_sheenColorTexOffsetScale") &&
+              gltfUniform(cmd, "u_sheenColorTexOffsetScale").size() == 4 &&
+              std::abs(gltfUniform(cmd, "u_sheenColorTexOffsetScale")[0] -
                        0.125f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_sheenColorTexOffsetScale")[1] -
+              std::abs(gltfUniform(cmd, "u_sheenColorTexOffsetScale")[1] -
                        0.25f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_sheenColorTexOffsetScale")[2] -
+              std::abs(gltfUniform(cmd, "u_sheenColorTexOffsetScale")[2] -
                        0.5f) < 1e-6f &&
-              std::abs(cmd.uniforms.at("u_sheenColorTexOffsetScale")[3] -
+              std::abs(gltfUniform(cmd, "u_sheenColorTexOffsetScale")[3] -
                        0.75f) < 1e-6f &&
-              cmd.uniforms.count("u_sheenColorTexRotationSinCos") &&
-              std::abs(cmd.uniforms.at("u_sheenColorTexRotationSinCos")[0] -
+              hasGltfUniform(cmd, "u_sheenColorTexRotationSinCos") &&
+              std::abs(gltfUniform(cmd, "u_sheenColorTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF sheen color texture uploads KHR_texture_transform uniforms");
     checkTextureTransformUniforms(
@@ -7794,8 +7822,8 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
             cmd.blend &&
             !cmd.depthWrite &&
             cmd.hasWorldSortCenter &&
-            cmd.uniforms.count("u_transmissionFactor") &&
-            std::abs(cmd.uniforms.at("u_transmissionFactor").front() -
+            hasGltfUniform(cmd, "u_transmissionFactor") &&
+            std::abs(gltfUniform(cmd, "u_transmissionFactor").front() -
                      0.5f) < 1e-6f;
     }
     check(splitCommands,

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include "GltfUniformBlock.h"
 #include "RenderDevice.h"  // for Texture/Buffer/ShaderProgram/Framebuffer forward decls
 
 namespace earth_engine {
@@ -78,9 +79,17 @@ struct RenderCommand {
     bool hasTranslucentSortDepth = false;
     double translucentSortDepth = 0.0;
 
-    // Uniform 数据（name → float 数组）
-    // 平台后端根据 shader uniform layout 解释
+    // Uniform 数据（name → float 数组）。
+    // 仅供冷路径命令使用（SkyBackground / AtmosphereBackground /
+    // VectorOverlay 等，每帧个位数条目）。glTF/terrain 热路径命令必须走
+    // 下方 gltfUniforms 定长块并保持本 map 为空——空 map 拷贝零分配。
     std::unordered_map<std::string, std::vector<float>> uniforms;
+
+    // glTF / terrain 命令的定长 uniform 块（热路径，见 GltfUniformBlock.h）。
+    // hasGltfUniforms=true 时后端整块消费：Metal 一次 setBytes 绑
+    // fragment buffer(0)，GLES 经 program 级 location 表直传。
+    bool hasGltfUniforms = false;
+    GltfUniformBlock gltfUniforms;
 
     // Render-chain step 10: SurfaceTile command organization lives here.
     // These fields describe draw order inputs, depth/cull/blend state, base

@@ -1288,6 +1288,80 @@ static const char* kGltfFragmentMSL = R"msl(
 #include <metal_stdlib>
 using namespace metal;
 
+// 逐字节镜像 C++ GltfUniformBlock（GltfUniformBlock.h）。所有成员 4 字节对
+// 齐（float / packed_*），唯一 16 字节对齐成员 float4x4 固定在 offset 0，
+// 两侧自然布局逐字节一致。改字段时三方同步（C++ 块 / 本 struct / GLES
+// name→offset 描述表）。
+struct GltfTextureTransform {
+    packed_float4 offsetScale;
+    packed_float2 rotationSinCos;
+};
+struct GltfUniforms {
+    float4x4 modelViewProjection;   // 仅 vertex 语义占位，fragment 不读
+    packed_float3 modelOrigin;      // CPU-only，shader 不读
+    float _reservedOrigin;
+    packed_float3 lightDir;
+    float useNormalMap;
+    float debugNormalMap;
+    packed_float4 baseColor;
+    float hasBaseColorTexture;
+    packed_float4 materialFactors;
+    float dielectricSpecularF0;
+    packed_float4 hasMaterialTextures;
+    packed_float2 anisotropyFactors;
+    float hasAnisotropyTexture;
+    packed_float2 hasSpecularTextures;
+    float specularFactor;
+    packed_float3 specularColorFactor;
+    float specularGlossinessWorkflow;
+    packed_float4 specularGlossinessFactor;
+    float hasSpecularGlossinessTexture;
+    float transmissionFactor;
+    float hasTransmissionTexture;
+    packed_float3 clearcoatFactors;
+    packed_float3 hasClearcoatTextures;
+    packed_float3 sheenColorFactor;
+    float sheenRoughnessFactor;
+    packed_float2 hasSheenTextures;
+    packed_float3 emissiveFactor;
+    packed_float4 textureCoordSets;
+    float emissiveTexCoordSet;
+    float anisotropyTexCoordSet;
+    packed_float2 specularTexCoordSets;
+    float specularGlossinessTexCoordSet;
+    float transmissionTexCoordSet;
+    packed_float3 clearcoatTexCoordSets;
+    packed_float2 sheenTexCoordSets;
+    float alphaMode;
+    float alphaCutoff;
+    float renderOpacity;
+    float unlit;
+    GltfTextureTransform baseColorTex;
+    GltfTextureTransform metallicRoughnessTex;
+    GltfTextureTransform anisotropyTex;
+    GltfTextureTransform specularTex;
+    GltfTextureTransform specularColorTex;
+    GltfTextureTransform specularGlossinessTex;
+    GltfTextureTransform transmissionTex;
+    GltfTextureTransform clearcoatTex;
+    GltfTextureTransform clearcoatRoughnessTex;
+    GltfTextureTransform clearcoatNormalTex;
+    GltfTextureTransform sheenColorTex;
+    GltfTextureTransform sheenRoughnessTex;
+    GltfTextureTransform normalTex;
+    GltfTextureTransform occlusionTex;
+    GltfTextureTransform emissiveTex;
+    float mappedRasterTextureCount;
+    packed_float4 mappedRasterTileUV[4];
+    float mappedRasterOpacity[4];
+    float mappedRasterTexCoordSet[4];
+    float hasWaterMask;
+    packed_float4 waterMaskTranslationScale;
+    packed_float4 waterMaskState;
+    packed_float4 clipUV;
+    float clipEnabled;
+};
+
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
     float2 scaled = uv * offsetScale.zw;
     return float2(
@@ -1301,6 +1375,8 @@ float4 gltfAlphaOver(float4 base, float4 overlay, float opacity) {
     base.a = max(base.a, overlay.a);
     return base;
 }
+
+float2 gltfUvFromSet(GltfVertexOut in, float texCoordSet);
 
 float4 gltfApplyMappedRaster(float4 base,
                              GltfVertexOut in,
@@ -1494,88 +1570,7 @@ float gltfAnisotropicSpecular(float isotropicSpecular,
 
 fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              bool frontFacing [[front_facing]],
-                             constant float3& u_lightDir [[buffer(0)]],
-                             constant float4& u_baseColor [[buffer(5)]],
-                             constant float& u_renderOpacity [[buffer(6)]],
-                             constant float& u_hasBaseColorTexture [[buffer(7)]],
-                             constant float& u_alphaMode [[buffer(8)]],
-                             constant float& u_alphaCutoff [[buffer(9)]],
-                             constant float4& u_materialFactors [[buffer(10)]],
-                             constant float4& u_hasMaterialTextures [[buffer(11)]],
-                             constant float3& u_emissiveFactor [[buffer(12)]],
-                             constant float4& u_baseColorTexOffsetScale [[buffer(13)]],
-                             constant float2& u_baseColorTexRotationSinCos [[buffer(14)]],
-                             constant float4& u_metallicRoughnessTexOffsetScale [[buffer(15)]],
-                             constant float2& u_metallicRoughnessTexRotationSinCos [[buffer(16)]],
-                             constant float4& u_normalTexOffsetScale [[buffer(17)]],
-                             constant float2& u_normalTexRotationSinCos [[buffer(18)]],
-                             constant float4& u_occlusionTexOffsetScale [[buffer(19)]],
-                             constant float2& u_occlusionTexRotationSinCos [[buffer(20)]],
-                             constant float4& u_emissiveTexOffsetScale [[buffer(21)]],
-                             constant float2& u_emissiveTexRotationSinCos [[buffer(22)]],
-                             constant float4& u_textureCoordSets [[buffer(23)]],
-                             constant float& u_emissiveTexCoordSet [[buffer(24)]],
-                             constant float& u_unlit [[buffer(25)]],
-                             constant float& u_dielectricSpecularF0 [[buffer(26)]],
-                             constant float2& u_hasSpecularTextures [[buffer(27)]],
-                             constant float& u_specularFactor [[buffer(28)]],
-                             constant float3& u_specularColorFactor [[buffer(29)]],
-                             constant float4& u_specularTexOffsetScale [[buffer(30)]],
-                             constant float2& u_specularTexRotationSinCos [[buffer(31)]],
-                             constant float4& u_specularColorTexOffsetScale [[buffer(32)]],
-                             constant float2& u_specularColorTexRotationSinCos [[buffer(33)]],
-                             constant float2& u_specularTexCoordSets [[buffer(34)]],
-                             constant float3& u_clearcoatFactors [[buffer(35)]],
-                             constant float3& u_hasClearcoatTextures [[buffer(36)]],
-                             constant float4& u_clearcoatTexOffsetScale [[buffer(37)]],
-                             constant float2& u_clearcoatTexRotationSinCos [[buffer(38)]],
-                             constant float4& u_clearcoatRoughnessTexOffsetScale [[buffer(39)]],
-                             constant float2& u_clearcoatRoughnessTexRotationSinCos [[buffer(40)]],
-                             constant float4& u_clearcoatNormalTexOffsetScale [[buffer(41)]],
-                             constant float2& u_clearcoatNormalTexRotationSinCos [[buffer(42)]],
-                             constant float3& u_clearcoatTexCoordSets [[buffer(43)]],
-                             constant float3& u_sheenColorFactor [[buffer(44)]],
-                             constant float& u_sheenRoughnessFactor [[buffer(45)]],
-                             constant float2& u_hasSheenTextures [[buffer(46)]],
-                             constant float4& u_sheenColorTexOffsetScale [[buffer(47)]],
-                             constant float2& u_sheenColorTexRotationSinCos [[buffer(48)]],
-                             constant float4& u_sheenRoughnessTexOffsetScale [[buffer(49)]],
-                             constant float2& u_sheenRoughnessTexRotationSinCos [[buffer(50)]],
-                             constant float2& u_sheenTexCoordSets [[buffer(51)]],
-                             constant float2& u_anisotropyFactors [[buffer(52)]],
-                             constant float& u_hasAnisotropyTexture [[buffer(53)]],
-                             constant float4& u_anisotropyTexOffsetScale [[buffer(54)]],
-                             constant float2& u_anisotropyTexRotationSinCos [[buffer(55)]],
-                             constant float& u_anisotropyTexCoordSet [[buffer(56)]],
-                             constant float& u_specularGlossinessWorkflow [[buffer(57)]],
-                             constant float4& u_specularGlossinessFactor [[buffer(58)]],
-                             constant float& u_hasSpecularGlossinessTexture [[buffer(59)]],
-                             constant float4& u_specularGlossinessTexOffsetScale [[buffer(60)]],
-                             constant float2& u_specularGlossinessTexRotationSinCos [[buffer(61)]],
-                             constant float& u_specularGlossinessTexCoordSet [[buffer(62)]],
-                             constant float& u_transmissionFactor [[buffer(63)]],
-                             constant float& u_hasTransmissionTexture [[buffer(64)]],
-                             constant float4& u_transmissionTexOffsetScale [[buffer(65)]],
-                             constant float2& u_transmissionTexRotationSinCos [[buffer(66)]],
-                             constant float& u_transmissionTexCoordSet [[buffer(67)]],
-                             constant float& u_mappedRasterTextureCount [[buffer(68)]],
-                             constant float4& u_mappedRasterTileUV0 [[buffer(69)]],
-                             constant float4& u_mappedRasterTileUV1 [[buffer(70)]],
-                             constant float4& u_mappedRasterTileUV2 [[buffer(71)]],
-                             constant float4& u_mappedRasterTileUV3 [[buffer(72)]],
-                             constant float& u_mappedRasterOpacity0 [[buffer(73)]],
-                             constant float& u_mappedRasterOpacity1 [[buffer(74)]],
-                             constant float& u_mappedRasterOpacity2 [[buffer(75)]],
-                             constant float& u_mappedRasterOpacity3 [[buffer(76)]],
-                             constant float& u_mappedRasterTexCoordSet0 [[buffer(77)]],
-                             constant float& u_mappedRasterTexCoordSet1 [[buffer(78)]],
-                             constant float& u_mappedRasterTexCoordSet2 [[buffer(79)]],
-                             constant float& u_mappedRasterTexCoordSet3 [[buffer(80)]],
-                             constant float& u_gltfHasWaterMask [[buffer(81)]],
-                             constant float4& u_gltfWaterMaskTranslationScale [[buffer(82)]],
-                             constant float4& u_gltfWaterMaskState [[buffer(83)]],
-                             constant float4& u_clipUV [[buffer(84)]],
-                             constant float& u_clipEnabled [[buffer(85)]],
+                             constant GltfUniforms& u [[buffer(0)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -1611,93 +1606,91 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              sampler u_anisotropySampler [[sampler(12)]],
                              sampler u_specularGlossinessSampler [[sampler(13)]],
                              sampler u_transmissionSampler [[sampler(14)]],
-                             sampler u_mappedRasterSampler0 [[sampler(15)]],
-                             sampler u_mappedRasterSampler1 [[sampler(16)]],
-                             sampler u_mappedRasterSampler2 [[sampler(17)]],
-                             sampler u_mappedRasterSampler3 [[sampler(18)]],
-                             sampler u_gltfWaterMaskSampler [[sampler(19)]]) {
+                             // raster overlay (texture 15-18) 与 water mask (texture 19)
+                             // 共用一个 sampler，encoder 无条件绑到 slot 15。
+                             sampler u_tileSharedSampler [[sampler(15)]]) {
     float2 terrainUv = gltfUvFromSet(in, 0.0);
-    if (u_clipEnabled > 0.5 &&
-        (terrainUv.x < u_clipUV.x ||
-         terrainUv.x > u_clipUV.x + u_clipUV.z ||
-         terrainUv.y < u_clipUV.y ||
-         terrainUv.y > u_clipUV.y + u_clipUV.w)) {
+    if (u.clipEnabled > 0.5 &&
+        (terrainUv.x < u.clipUV.x ||
+         terrainUv.x > u.clipUV.x + u.clipUV.z ||
+         terrainUv.y < u.clipUV.y ||
+         terrainUv.y > u.clipUV.y + u.clipUV.w)) {
         discard_fragment();
     }
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
     float3 geometryN = n;
-    float3 light = normalize(u_lightDir);
+    float3 light = normalize(float3(u.lightDir));
     float2 baseColorUv = gltfTransformUv(
-        gltfUvFromSet(in, u_textureCoordSets.x),
-        u_baseColorTexOffsetScale,
-        u_baseColorTexRotationSinCos);
-    float4 base = u_baseColor * in.color;
-    if (u_hasBaseColorTexture > 0.5) {
+        gltfUvFromSet(in, u.textureCoordSets.x),
+        u.baseColorTex.offsetScale,
+        u.baseColorTex.rotationSinCos);
+    float4 base = float4(u.baseColor) * in.color;
+    if (u.hasBaseColorTexture > 0.5) {
         base *= u_baseColorTexture.sample(u_baseColorSampler, baseColorUv);
     }
-    if (u_mappedRasterTextureCount > 0.5) {
+    if (u.mappedRasterTextureCount > 0.5) {
         base = gltfApplyMappedRaster(
             base,
             in,
             u_mappedRasterTexture0,
-            u_mappedRasterSampler0,
-            u_mappedRasterTexCoordSet0,
-            u_mappedRasterTileUV0,
-            u_mappedRasterOpacity0);
+            u_tileSharedSampler,
+            u.mappedRasterTexCoordSet[0],
+            float4(u.mappedRasterTileUV[0]),
+            u.mappedRasterOpacity[0]);
     }
-    if (u_mappedRasterTextureCount > 1.5) {
+    if (u.mappedRasterTextureCount > 1.5) {
         base = gltfApplyMappedRaster(
             base,
             in,
             u_mappedRasterTexture1,
-            u_mappedRasterSampler1,
-            u_mappedRasterTexCoordSet1,
-            u_mappedRasterTileUV1,
-            u_mappedRasterOpacity1);
+            u_tileSharedSampler,
+            u.mappedRasterTexCoordSet[1],
+            float4(u.mappedRasterTileUV[1]),
+            u.mappedRasterOpacity[1]);
     }
-    if (u_mappedRasterTextureCount > 2.5) {
+    if (u.mappedRasterTextureCount > 2.5) {
         base = gltfApplyMappedRaster(
             base,
             in,
             u_mappedRasterTexture2,
-            u_mappedRasterSampler2,
-            u_mappedRasterTexCoordSet2,
-            u_mappedRasterTileUV2,
-            u_mappedRasterOpacity2);
+            u_tileSharedSampler,
+            u.mappedRasterTexCoordSet[2],
+            float4(u.mappedRasterTileUV[2]),
+            u.mappedRasterOpacity[2]);
     }
-    if (u_mappedRasterTextureCount > 3.5) {
+    if (u.mappedRasterTextureCount > 3.5) {
         base = gltfApplyMappedRaster(
             base,
             in,
             u_mappedRasterTexture3,
-            u_mappedRasterSampler3,
-            u_mappedRasterTexCoordSet3,
-            u_mappedRasterTileUV3,
-            u_mappedRasterOpacity3);
+            u_tileSharedSampler,
+            u.mappedRasterTexCoordSet[3],
+            float4(u.mappedRasterTileUV[3]),
+            u.mappedRasterOpacity[3]);
     }
     base = gltfApplyWaterMask(
         base,
         in,
         u_gltfWaterMaskTexture,
-        u_gltfWaterMaskSampler,
-        u_gltfHasWaterMask,
-        u_gltfWaterMaskTranslationScale,
-        u_gltfWaterMaskState);
-    if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
+        u_tileSharedSampler,
+        u.hasWaterMask,
+        float4(u.waterMaskTranslationScale),
+        float4(u.waterMaskState));
+    if (u.alphaMode > 0.5 && u.alphaMode < 1.5 && base.a < u.alphaCutoff) {
         discard_fragment();
     }
-    float alpha = u_alphaMode > 1.5 ? base.a : 1.0;
-    if (u_unlit > 0.5) {
-        return float4(base.rgb, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+    float alpha = u.alphaMode > 1.5 ? base.a : 1.0;
+    if (u.unlit > 0.5) {
+        return float4(base.rgb, alpha * clamp(u.renderOpacity, 0.0, 1.0));
     }
-    float metallic = clamp(u_materialFactors.x, 0.0, 1.0);
-    float roughness = clamp(u_materialFactors.y, 0.04, 1.0);
-    if (u_hasMaterialTextures.x > 0.5) {
+    float metallic = clamp(u.materialFactors.x, 0.0, 1.0);
+    float roughness = clamp(u.materialFactors.y, 0.04, 1.0);
+    if (u.hasMaterialTextures.x > 0.5) {
         float2 mrUv = gltfTransformUv(
-            gltfUvFromSet(in, u_textureCoordSets.y),
-            u_metallicRoughnessTexOffsetScale,
-            u_metallicRoughnessTexRotationSinCos);
+            gltfUvFromSet(in, u.textureCoordSets.y),
+            u.metallicRoughnessTex.offsetScale,
+            u.metallicRoughnessTex.rotationSinCos);
         float4 mr = u_metallicRoughnessTexture.sample(
             u_metallicRoughnessSampler,
             mrUv);
@@ -1705,58 +1698,58 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         metallic = clamp(metallic * mr.b, 0.0, 1.0);
     }
     float ndotl = max(dot(n, light), 0.0);
-    if (u_hasMaterialTextures.y > 0.5) {
+    if (u.hasMaterialTextures.y > 0.5) {
         float2 normalUv = gltfTransformUv(
-            gltfUvFromSet(in, u_textureCoordSets.z),
-            u_normalTexOffsetScale,
-            u_normalTexRotationSinCos);
+            gltfUvFromSet(in, u.textureCoordSets.z),
+            u.normalTex.offsetScale,
+            u.normalTex.rotationSinCos);
         n = gltfPerturbNormal(
             n,
             normalUv,
             in.localPosition,
             in.tangent,
-            u_materialFactors.z,
+            u.materialFactors.z,
             u_normalTexture,
             u_normalSampler);
         ndotl = max(dot(n, light), 0.0);
     }
     float occlusion = 1.0;
-    if (u_hasMaterialTextures.z > 0.5) {
+    if (u.hasMaterialTextures.z > 0.5) {
         float2 occlusionUv = gltfTransformUv(
-            gltfUvFromSet(in, u_textureCoordSets.w),
-            u_occlusionTexOffsetScale,
-            u_occlusionTexRotationSinCos);
+            gltfUvFromSet(in, u.textureCoordSets.w),
+            u.occlusionTex.offsetScale,
+            u.occlusionTex.rotationSinCos);
         float ao = u_occlusionTexture.sample(
             u_occlusionSampler,
             occlusionUv).r;
-        occlusion = clamp(1.0 + u_materialFactors.w * (ao - 1.0), 0.0, 1.0);
+        occlusion = clamp(1.0 + u.materialFactors.w * (ao - 1.0), 0.0, 1.0);
     }
-    float3 emissive = u_emissiveFactor;
-    if (u_hasMaterialTextures.w > 0.5) {
+    float3 emissive = float3(u.emissiveFactor);
+    if (u.hasMaterialTextures.w > 0.5) {
         float2 emissiveUv = gltfTransformUv(
-            gltfUvFromSet(in, u_emissiveTexCoordSet),
-            u_emissiveTexOffsetScale,
-            u_emissiveTexRotationSinCos);
+            gltfUvFromSet(in, u.emissiveTexCoordSet),
+            u.emissiveTex.offsetScale,
+            u.emissiveTex.rotationSinCos);
         emissive *= u_emissiveTexture.sample(
             u_emissiveSampler,
             emissiveUv).rgb;
     }
-    float3 sheenColor = max(u_sheenColorFactor, float3(0.0));
-    float sheenRoughness = clamp(u_sheenRoughnessFactor, 0.0, 1.0);
-    if (u_hasSheenTextures.x > 0.5) {
+    float3 sheenColor = max(float3(u.sheenColorFactor), float3(0.0));
+    float sheenRoughness = clamp(u.sheenRoughnessFactor, 0.0, 1.0);
+    if (u.hasSheenTextures.x > 0.5) {
         float2 sheenColorUv = gltfTransformUv(
-            gltfUvFromSet(in, u_sheenTexCoordSets.x),
-            u_sheenColorTexOffsetScale,
-            u_sheenColorTexRotationSinCos);
+            gltfUvFromSet(in, u.sheenTexCoordSets.x),
+            u.sheenColorTex.offsetScale,
+            u.sheenColorTex.rotationSinCos);
         sheenColor *= u_sheenColorTexture.sample(
             u_sheenColorSampler,
             sheenColorUv).rgb;
     }
-    if (u_hasSheenTextures.y > 0.5) {
+    if (u.hasSheenTextures.y > 0.5) {
         float2 sheenRoughnessUv = gltfTransformUv(
-            gltfUvFromSet(in, u_sheenTexCoordSets.y),
-            u_sheenRoughnessTexOffsetScale,
-            u_sheenRoughnessTexRotationSinCos);
+            gltfUvFromSet(in, u.sheenTexCoordSets.y),
+            u.sheenRoughnessTex.offsetScale,
+            u.sheenRoughnessTex.rotationSinCos);
         sheenRoughness = clamp(
             sheenRoughness *
                 u_sheenRoughnessTexture.sample(
@@ -1765,22 +1758,22 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             0.0,
             1.0);
     }
-    float clearcoat = clamp(u_clearcoatFactors.x, 0.0, 1.0);
-    float clearcoatRoughness = clamp(u_clearcoatFactors.y, 0.0, 1.0);
-    if (u_hasClearcoatTextures.x > 0.5) {
+    float clearcoat = clamp(u.clearcoatFactors.x, 0.0, 1.0);
+    float clearcoatRoughness = clamp(u.clearcoatFactors.y, 0.0, 1.0);
+    if (u.hasClearcoatTextures.x > 0.5) {
         float2 clearcoatUv = gltfTransformUv(
-            gltfUvFromSet(in, u_clearcoatTexCoordSets.x),
-            u_clearcoatTexOffsetScale,
-            u_clearcoatTexRotationSinCos);
+            gltfUvFromSet(in, u.clearcoatTexCoordSets.x),
+            u.clearcoatTex.offsetScale,
+            u.clearcoatTex.rotationSinCos);
         clearcoat *= u_clearcoatTexture.sample(
             u_clearcoatSampler,
             clearcoatUv).r;
     }
-    if (u_hasClearcoatTextures.y > 0.5) {
+    if (u.hasClearcoatTextures.y > 0.5) {
         float2 clearcoatRoughnessUv = gltfTransformUv(
-            gltfUvFromSet(in, u_clearcoatTexCoordSets.y),
-            u_clearcoatRoughnessTexOffsetScale,
-            u_clearcoatRoughnessTexRotationSinCos);
+            gltfUvFromSet(in, u.clearcoatTexCoordSets.y),
+            u.clearcoatRoughnessTex.offsetScale,
+            u.clearcoatRoughnessTex.rotationSinCos);
         clearcoatRoughness = clamp(
             clearcoatRoughness *
                 u_clearcoatRoughnessTexture.sample(
@@ -1790,31 +1783,31 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             1.0);
     }
     float3 clearcoatNormal = geometryN;
-    if (u_hasClearcoatTextures.z > 0.5) {
+    if (u.hasClearcoatTextures.z > 0.5) {
         float2 clearcoatNormalUv = gltfTransformUv(
-            gltfUvFromSet(in, u_clearcoatTexCoordSets.z),
-            u_clearcoatNormalTexOffsetScale,
-            u_clearcoatNormalTexRotationSinCos);
+            gltfUvFromSet(in, u.clearcoatTexCoordSets.z),
+            u.clearcoatNormalTex.offsetScale,
+            u.clearcoatNormalTex.rotationSinCos);
         clearcoatNormal = gltfPerturbNormal(
             geometryN,
             clearcoatNormalUv,
             in.localPosition,
             in.tangent,
-            u_clearcoatFactors.z,
+            u.clearcoatFactors.z,
             u_clearcoatNormalTexture,
             u_clearcoatNormalSampler);
     }
     float3 specGlossSpecularColor = float3(0.0);
     float specGlossMaxSpecular = 0.0;
-    if (u_specularGlossinessWorkflow > 0.5) {
+    if (u.specularGlossinessWorkflow > 0.5) {
         float4 specGloss = float4(
-            clamp(u_specularGlossinessFactor.rgb, 0.0, 1.0),
-            clamp(u_specularGlossinessFactor.a, 0.0, 1.0));
-        if (u_hasSpecularGlossinessTexture > 0.5) {
+            clamp(float4(u.specularGlossinessFactor).rgb, 0.0, 1.0),
+            clamp(float4(u.specularGlossinessFactor).a, 0.0, 1.0));
+        if (u.hasSpecularGlossinessTexture > 0.5) {
             float2 sgUv = gltfTransformUv(
-                gltfUvFromSet(in, u_specularGlossinessTexCoordSet),
-                u_specularGlossinessTexOffsetScale,
-                u_specularGlossinessTexRotationSinCos);
+                gltfUvFromSet(in, u.specularGlossinessTexCoordSet),
+                u.specularGlossinessTex.offsetScale,
+                u.specularGlossinessTex.rotationSinCos);
             specGloss *= u_specularGlossinessTexture.sample(
                 u_specularGlossinessSampler,
                 sgUv);
@@ -1827,18 +1820,18 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             max(specGlossSpecularColor.r, specGlossSpecularColor.g),
             specGlossSpecularColor.b);
     }
-    float transmission = clamp(u_transmissionFactor, 0.0, 1.0);
-    if (transmission > 0.0 && u_hasTransmissionTexture > 0.5) {
+    float transmission = clamp(u.transmissionFactor, 0.0, 1.0);
+    if (transmission > 0.0 && u.hasTransmissionTexture > 0.5) {
         float2 transmissionUv = gltfTransformUv(
-            gltfUvFromSet(in, u_transmissionTexCoordSet),
-            u_transmissionTexOffsetScale,
-            u_transmissionTexRotationSinCos);
+            gltfUvFromSet(in, u.transmissionTexCoordSet),
+            u.transmissionTex.offsetScale,
+            u.transmissionTex.rotationSinCos);
         transmission *= u_transmissionTexture.sample(
             u_transmissionSampler,
             transmissionUv).r;
     }
     transmission = clamp(transmission, 0.0, 1.0);
-    float anisotropyStrength = clamp(u_anisotropyFactors.x, 0.0, 1.0);
+    float anisotropyStrength = clamp(u.anisotropyFactors.x, 0.0, 1.0);
     float2 anisotropyDirection = float2(1.0, 0.0);
     GltfAnisotropyBasis anisotropyBasis;
     anisotropyBasis.tangent = float3(1.0, 0.0, 0.0);
@@ -1846,10 +1839,10 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     anisotropyBasis.valid = false;
     if (anisotropyStrength > 0.0) {
         float2 anisotropyUv = gltfTransformUv(
-            gltfUvFromSet(in, u_anisotropyTexCoordSet),
-            u_anisotropyTexOffsetScale,
-            u_anisotropyTexRotationSinCos);
-        if (u_hasAnisotropyTexture > 0.5) {
+            gltfUvFromSet(in, u.anisotropyTexCoordSet),
+            u.anisotropyTex.offsetScale,
+            u.anisotropyTex.rotationSinCos);
+        if (u.hasAnisotropyTexture > 0.5) {
             float3 anisotropySample = u_anisotropyTexture.sample(
                 u_anisotropySampler,
                 anisotropyUv).rgb;
@@ -1862,7 +1855,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                 anisotropyDirection = float2(1.0, 0.0);
             }
             anisotropyDirection = normalize(
-                gltfRotateDirection(anisotropyDirection, u_anisotropyFactors.y));
+                gltfRotateDirection(anisotropyDirection, u.anisotropyFactors.y));
             anisotropyBasis = gltfTangentSpaceBasis(
                 n,
                 anisotropyUv,
@@ -1893,30 +1886,30 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             anisotropyBasis.tangent,
             anisotropyBasis.bitangent);
     }
-    float specularStrength = clamp(u_specularFactor, 0.0, 1.0);
-    if (u_hasSpecularTextures.x > 0.5) {
+    float specularStrength = clamp(u.specularFactor, 0.0, 1.0);
+    if (u.hasSpecularTextures.x > 0.5) {
         float2 specularUv = gltfTransformUv(
-            gltfUvFromSet(in, u_specularTexCoordSets.x),
-            u_specularTexOffsetScale,
-            u_specularTexRotationSinCos);
+            gltfUvFromSet(in, u.specularTexCoordSets.x),
+            u.specularTex.offsetScale,
+            u.specularTex.rotationSinCos);
         specularStrength *= u_specularTexture.sample(
             u_specularSampler,
             specularUv).a;
     }
     float3 specularColor;
     float3 diffuseColor;
-    if (u_specularGlossinessWorkflow > 0.5) {
+    if (u.specularGlossinessWorkflow > 0.5) {
         specularColor = specGlossSpecularColor;
         diffuseColor = base.rgb * (1.0 - specGlossMaxSpecular);
     } else {
         float3 dielectricSpecular =
-            float3(clamp(u_dielectricSpecularF0, 0.0, 1.0)) *
-            max(u_specularColorFactor, float3(0.0));
-        if (u_hasSpecularTextures.y > 0.5) {
+            float3(clamp(u.dielectricSpecularF0, 0.0, 1.0)) *
+            max(float3(u.specularColorFactor), float3(0.0));
+        if (u.hasSpecularTextures.y > 0.5) {
             float2 specularColorUv = gltfTransformUv(
-                gltfUvFromSet(in, u_specularTexCoordSets.y),
-                u_specularColorTexOffsetScale,
-                u_specularColorTexRotationSinCos);
+                gltfUvFromSet(in, u.specularTexCoordSets.y),
+                u.specularColorTex.offsetScale,
+                u.specularColorTex.rotationSinCos);
             dielectricSpecular *= u_specularColorTexture.sample(
                 u_specularColorSampler,
                 specularColorUv).rgb;
@@ -1949,15 +1942,16 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                 float3(clearcoatSpecular) * coatWeight;
     }
     alpha *= 1.0 - transmission;
-    return float4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+    return float4(color, alpha * clamp(u.renderOpacity, 0.0, 1.0));
 }
 )msl";
 
 // ============================================================
 // Terrain lightweight shader — MSL
 // 32-byte TerrainGpuVertex: position(vec3@0) normal(vec3@12) texcoord(vec2@24).
-// Fragment uses a compact buffer table (0-23, all <=30) so it stays well
-// under Metal's 31-buffer cap — unlike gltfFragment which reaches buffer(85).
+// Fragment consumes the shared GltfUniforms struct at buffer(0) (byte-exact
+// mirror of GltfUniformBlock.h), same as gltfFragment — one setFragmentBytes
+// per draw, far under Metal's 31-buffer cap.
 // Entry points terrainVertex / terrainFragment are UNIQUE; helper functions
 // are defined BEFORE use.
 // ============================================================
@@ -1992,6 +1986,80 @@ vertex TerrainVertexOut terrainVertex(
 static const char* kTerrainFragmentMSL = R"msl(
 #include <metal_stdlib>
 using namespace metal;
+
+// 逐字节镜像 C++ GltfUniformBlock（GltfUniformBlock.h）。所有成员 4 字节对
+// 齐（float / packed_*），唯一 16 字节对齐成员 float4x4 固定在 offset 0，
+// 两侧自然布局逐字节一致。改字段时三方同步（C++ 块 / 本 struct / GLES
+// name→offset 描述表）。
+struct GltfTextureTransform {
+    packed_float4 offsetScale;
+    packed_float2 rotationSinCos;
+};
+struct GltfUniforms {
+    float4x4 modelViewProjection;   // 仅 vertex 语义占位，fragment 不读
+    packed_float3 modelOrigin;      // CPU-only，shader 不读
+    float _reservedOrigin;
+    packed_float3 lightDir;
+    float useNormalMap;
+    float debugNormalMap;
+    packed_float4 baseColor;
+    float hasBaseColorTexture;
+    packed_float4 materialFactors;
+    float dielectricSpecularF0;
+    packed_float4 hasMaterialTextures;
+    packed_float2 anisotropyFactors;
+    float hasAnisotropyTexture;
+    packed_float2 hasSpecularTextures;
+    float specularFactor;
+    packed_float3 specularColorFactor;
+    float specularGlossinessWorkflow;
+    packed_float4 specularGlossinessFactor;
+    float hasSpecularGlossinessTexture;
+    float transmissionFactor;
+    float hasTransmissionTexture;
+    packed_float3 clearcoatFactors;
+    packed_float3 hasClearcoatTextures;
+    packed_float3 sheenColorFactor;
+    float sheenRoughnessFactor;
+    packed_float2 hasSheenTextures;
+    packed_float3 emissiveFactor;
+    packed_float4 textureCoordSets;
+    float emissiveTexCoordSet;
+    float anisotropyTexCoordSet;
+    packed_float2 specularTexCoordSets;
+    float specularGlossinessTexCoordSet;
+    float transmissionTexCoordSet;
+    packed_float3 clearcoatTexCoordSets;
+    packed_float2 sheenTexCoordSets;
+    float alphaMode;
+    float alphaCutoff;
+    float renderOpacity;
+    float unlit;
+    GltfTextureTransform baseColorTex;
+    GltfTextureTransform metallicRoughnessTex;
+    GltfTextureTransform anisotropyTex;
+    GltfTextureTransform specularTex;
+    GltfTextureTransform specularColorTex;
+    GltfTextureTransform specularGlossinessTex;
+    GltfTextureTransform transmissionTex;
+    GltfTextureTransform clearcoatTex;
+    GltfTextureTransform clearcoatRoughnessTex;
+    GltfTextureTransform clearcoatNormalTex;
+    GltfTextureTransform sheenColorTex;
+    GltfTextureTransform sheenRoughnessTex;
+    GltfTextureTransform normalTex;
+    GltfTextureTransform occlusionTex;
+    GltfTextureTransform emissiveTex;
+    float mappedRasterTextureCount;
+    packed_float4 mappedRasterTileUV[4];
+    float mappedRasterOpacity[4];
+    float mappedRasterTexCoordSet[4];
+    float hasWaterMask;
+    packed_float4 waterMaskTranslationScale;
+    packed_float4 waterMaskState;
+    packed_float4 clipUV;
+    float clipEnabled;
+};
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the
 // vertex and fragment sources into a single library), so it must NOT be
@@ -2040,30 +2108,7 @@ float4 terrainApplyWaterMask(float4 base,
 fragment float4 terrainFragment(
     TerrainVertexOut in [[stage_in]],
     bool frontFacing [[front_facing]],
-    constant packed_float3& u_lightDir [[buffer(0)]],  // 12 bytes (matches CPU-bound 3 floats; plain float3 would be 16-byte-aligned)
-    constant float4& u_baseColor [[buffer(1)]],
-    constant float& u_renderOpacity [[buffer(2)]],
-    constant float& u_hasBaseColorTexture [[buffer(3)]],
-    constant float& u_alphaMode [[buffer(4)]],
-    constant float& u_alphaCutoff [[buffer(5)]],
-    constant float& u_mappedRasterTextureCount [[buffer(6)]],
-    constant float4& u_mappedRasterTileUV0 [[buffer(7)]],
-    constant float4& u_mappedRasterTileUV1 [[buffer(8)]],
-    constant float4& u_mappedRasterTileUV2 [[buffer(9)]],
-    constant float4& u_mappedRasterTileUV3 [[buffer(10)]],
-    constant float& u_mappedRasterOpacity0 [[buffer(11)]],
-    constant float& u_mappedRasterOpacity1 [[buffer(12)]],
-    constant float& u_mappedRasterOpacity2 [[buffer(13)]],
-    constant float& u_mappedRasterOpacity3 [[buffer(14)]],
-    constant float& u_mappedRasterTexCoordSet0 [[buffer(15)]],
-    constant float& u_mappedRasterTexCoordSet1 [[buffer(16)]],
-    constant float& u_mappedRasterTexCoordSet2 [[buffer(17)]],
-    constant float& u_mappedRasterTexCoordSet3 [[buffer(18)]],
-    constant float& u_gltfHasWaterMask [[buffer(19)]],
-    constant float4& u_gltfWaterMaskTranslationScale [[buffer(20)]],
-    constant float4& u_gltfWaterMaskState [[buffer(21)]],
-    constant float4& u_clipUV [[buffer(22)]],
-    constant float& u_clipEnabled [[buffer(23)]],
+    constant GltfUniforms& u [[buffer(0)]],
     texture2d<float> u_baseColorTexture [[texture(0)]],
     texture2d<float> u_mappedRasterTexture0 [[texture(15)]],
     texture2d<float> u_mappedRasterTexture1 [[texture(16)]],
@@ -2075,56 +2120,55 @@ fragment float4 terrainFragment(
     // the base color, raster overlay (textures 15-18) and water mask (19)
     // textures without exceeding the sampler limit.
     sampler u_terrainSampler [[sampler(0)]]) {
-    return float4(0.1, 0.8, 0.2, 1.0); // [SELDIAG] TEMP green isolate coverage
     float2 terrainUv = in.texcoord;
-    if (u_clipEnabled > 0.5 &&
-        (terrainUv.x < u_clipUV.x ||
-         terrainUv.x > u_clipUV.x + u_clipUV.z ||
-         terrainUv.y < u_clipUV.y ||
-         terrainUv.y > u_clipUV.y + u_clipUV.w)) {
+    if (u.clipEnabled > 0.5 &&
+        (terrainUv.x < u.clipUV.x ||
+         terrainUv.x > u.clipUV.x + u.clipUV.z ||
+         terrainUv.y < u.clipUV.y ||
+         terrainUv.y > u.clipUV.y + u.clipUV.w)) {
         discard_fragment();
     }
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
-    float3 light = normalize(float3(u_lightDir));
+    float3 light = normalize(float3(u.lightDir));
     float NdotL = max(dot(n, light), 0.0);
 
-    float4 base = u_baseColor;
-    if (u_hasBaseColorTexture > 0.5) {
+    float4 base = float4(u.baseColor);
+    if (u.hasBaseColorTexture > 0.5) {
         base *= u_baseColorTexture.sample(u_terrainSampler, terrainUv);
     }
-    if (u_mappedRasterTextureCount > 0.5) {
+    if (u.mappedRasterTextureCount > 0.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture0, u_terrainSampler,
-            u_mappedRasterTileUV0, u_mappedRasterOpacity0);
+            float4(u.mappedRasterTileUV[0]), u.mappedRasterOpacity[0]);
     }
-    if (u_mappedRasterTextureCount > 1.5) {
+    if (u.mappedRasterTextureCount > 1.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture1, u_terrainSampler,
-            u_mappedRasterTileUV1, u_mappedRasterOpacity1);
+            float4(u.mappedRasterTileUV[1]), u.mappedRasterOpacity[1]);
     }
-    if (u_mappedRasterTextureCount > 2.5) {
+    if (u.mappedRasterTextureCount > 2.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture2, u_terrainSampler,
-            u_mappedRasterTileUV2, u_mappedRasterOpacity2);
+            float4(u.mappedRasterTileUV[2]), u.mappedRasterOpacity[2]);
     }
-    if (u_mappedRasterTextureCount > 3.5) {
+    if (u.mappedRasterTextureCount > 3.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture3, u_terrainSampler,
-            u_mappedRasterTileUV3, u_mappedRasterOpacity3);
+            float4(u.mappedRasterTileUV[3]), u.mappedRasterOpacity[3]);
     }
     base = terrainApplyWaterMask(
         base, in, u_gltfWaterMaskTexture, u_terrainSampler,
-        u_gltfHasWaterMask, u_gltfWaterMaskTranslationScale,
-        u_gltfWaterMaskState);
-    if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
+        u.hasWaterMask, float4(u.waterMaskTranslationScale),
+        float4(u.waterMaskState));
+    if (u.alphaMode > 0.5 && u.alphaMode < 1.5 && base.a < u.alphaCutoff) {
         discard_fragment();
     }
-    float alpha = u_alphaMode > 1.5 ? base.a : 1.0;
+    float alpha = u.alphaMode > 1.5 ? base.a : 1.0;
 
     float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
     float3 color = base.rgb * shade;
-    return float4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+    return float4(color, alpha * clamp(u.renderOpacity, 0.0, 1.0));
 }
 )msl";
 
@@ -2492,114 +2536,9 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.depthWrite = true;
     cmd.blend = false;
     cmd.cullFace = true;
-    cmd.uniforms["u_baseColor"] = {0.82f, 0.84f, 0.88f, 1.0f};
-    cmd.uniforms["u_hasBaseColorTexture"] = {0.0f};
-    cmd.uniforms["u_materialFactors"] = {1.0f, 1.0f, 1.0f, 1.0f};
-    cmd.uniforms["u_dielectricSpecularF0"] = {0.04f};
-    cmd.uniforms["u_hasMaterialTextures"] = {0.0f, 0.0f, 0.0f, 0.0f};
-    cmd.uniforms["u_anisotropyFactors"] = {0.0f, 0.0f};
-    cmd.uniforms["u_hasAnisotropyTexture"] = {0.0f};
-    cmd.uniforms["u_hasSpecularTextures"] = {0.0f, 0.0f};
-    cmd.uniforms["u_specularFactor"] = {1.0f};
-    cmd.uniforms["u_specularColorFactor"] = {1.0f, 1.0f, 1.0f};
-    cmd.uniforms["u_specularGlossinessWorkflow"] = {0.0f};
-    cmd.uniforms["u_specularGlossinessFactor"] = {
-        1.0f,
-        1.0f,
-        1.0f,
-        1.0f};
-    cmd.uniforms["u_hasSpecularGlossinessTexture"] = {0.0f};
-    cmd.uniforms["u_transmissionFactor"] = {0.0f};
-    cmd.uniforms["u_hasTransmissionTexture"] = {0.0f};
-    cmd.uniforms["u_clearcoatFactors"] = {0.0f, 0.0f, 1.0f};
-    cmd.uniforms["u_hasClearcoatTextures"] = {0.0f, 0.0f, 0.0f};
-    cmd.uniforms["u_sheenColorFactor"] = {0.0f, 0.0f, 0.0f};
-    cmd.uniforms["u_sheenRoughnessFactor"] = {0.0f};
-    cmd.uniforms["u_hasSheenTextures"] = {0.0f, 0.0f};
-    cmd.uniforms["u_emissiveFactor"] = {0.0f, 0.0f, 0.0f};
-    cmd.uniforms["u_textureCoordSets"] = {0.0f, 0.0f, 0.0f, 0.0f};
-    cmd.uniforms["u_emissiveTexCoordSet"] = {0.0f};
-    cmd.uniforms["u_anisotropyTexCoordSet"] = {0.0f};
-    cmd.uniforms["u_specularTexCoordSets"] = {0.0f, 0.0f};
-    cmd.uniforms["u_specularGlossinessTexCoordSet"] = {0.0f};
-    cmd.uniforms["u_transmissionTexCoordSet"] = {0.0f};
-    cmd.uniforms["u_clearcoatTexCoordSets"] = {0.0f, 0.0f, 0.0f};
-    cmd.uniforms["u_sheenTexCoordSets"] = {0.0f, 0.0f};
-    cmd.uniforms["u_alphaMode"] = {0.0f};
-    cmd.uniforms["u_alphaCutoff"] = {0.5f};
-    cmd.uniforms["u_renderOpacity"] = {1.0f};
-    cmd.uniforms["u_unlit"] = {0.0f};
-    cmd.uniforms["u_mappedRasterTextureCount"] = {0.0f};
-    cmd.uniforms["u_gltfHasWaterMask"] = {0.0f};
-    cmd.uniforms["u_gltfWaterMaskTranslationScale"] = {
-        0.0f,
-        0.0f,
-        1.0f,
-        0.0f};
-    cmd.uniforms["u_gltfWaterMaskState"] = {1.0f, 0.0f, 0.0f, 0.0f};
-    cmd.uniforms["u_clipUV"] = {0.0f, 0.0f, 1.0f, 1.0f};
-    cmd.uniforms["u_clipEnabled"] = {0.0f};
-    for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
-        cmd.uniforms["u_mappedRasterTileUV" + std::to_string(i)] = {
-            0.0f,
-            0.0f,
-            1.0f,
-            1.0f};
-        cmd.uniforms["u_mappedRasterOpacity" + std::to_string(i)] = {1.0f};
-        cmd.uniforms["u_mappedRasterTexCoordSet" + std::to_string(i)] = {
-            0.0f};
-    }
-    auto setTextureTransformDefaults = [&cmd](
-        const char* offsetScaleName,
-        const char* rotationName) {
-        cmd.uniforms[offsetScaleName] = {0.0f, 0.0f, 1.0f, 1.0f};
-        cmd.uniforms[rotationName] = {0.0f, 1.0f};
-    };
-    setTextureTransformDefaults(
-        "u_baseColorTexOffsetScale",
-        "u_baseColorTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_metallicRoughnessTexOffsetScale",
-        "u_metallicRoughnessTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_anisotropyTexOffsetScale",
-        "u_anisotropyTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_specularTexOffsetScale",
-        "u_specularTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_specularColorTexOffsetScale",
-        "u_specularColorTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_specularGlossinessTexOffsetScale",
-        "u_specularGlossinessTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_transmissionTexOffsetScale",
-        "u_transmissionTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_clearcoatTexOffsetScale",
-        "u_clearcoatTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_clearcoatRoughnessTexOffsetScale",
-        "u_clearcoatRoughnessTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_clearcoatNormalTexOffsetScale",
-        "u_clearcoatNormalTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_sheenColorTexOffsetScale",
-        "u_sheenColorTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_sheenRoughnessTexOffsetScale",
-        "u_sheenRoughnessTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_normalTexOffsetScale",
-        "u_normalTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_occlusionTexOffsetScale",
-        "u_occlusionTexRotationSinCos");
-    setTextureTransformDefaults(
-        "u_emissiveTexOffsetScale",
-        "u_emissiveTexRotationSinCos");
+    // 全部 uniform 默认值内聚在 GltfUniformBlock 成员初始化器中，构造即
+    // 就绪；本命令不得写 uniforms string-map（热路径零堆分配契约）。
+    cmd.hasGltfUniforms = true;
     return cmd;
 }
 
@@ -2626,25 +2565,9 @@ RenderCommand Renderer::makeTerrainPrimitiveCommand(Buffer* vertexBuffer,
     cmd.depthWrite = true;
     cmd.blend = false;
     cmd.cullFace = true;
-    // Only the terrain uniform defaults — no PBR-extension uniforms. The
-    // per-command population in GltfDrawCommandBuilder overwrites these.
-    cmd.uniforms["u_baseColor"] = {0.82f, 0.84f, 0.88f, 1.0f};
-    cmd.uniforms["u_hasBaseColorTexture"] = {0.0f};
-    cmd.uniforms["u_alphaMode"] = {0.0f};
-    cmd.uniforms["u_alphaCutoff"] = {0.5f};
-    cmd.uniforms["u_renderOpacity"] = {1.0f};
-    cmd.uniforms["u_mappedRasterTextureCount"] = {0.0f};
-    cmd.uniforms["u_gltfHasWaterMask"] = {0.0f};
-    cmd.uniforms["u_gltfWaterMaskTranslationScale"] = {0.0f, 0.0f, 1.0f, 0.0f};
-    cmd.uniforms["u_gltfWaterMaskState"] = {1.0f, 0.0f, 0.0f, 0.0f};
-    cmd.uniforms["u_clipUV"] = {0.0f, 0.0f, 1.0f, 1.0f};
-    cmd.uniforms["u_clipEnabled"] = {0.0f};
-    for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
-        cmd.uniforms["u_mappedRasterTileUV" + std::to_string(i)] = {
-            0.0f, 0.0f, 1.0f, 1.0f};
-        cmd.uniforms["u_mappedRasterOpacity" + std::to_string(i)] = {1.0f};
-        cmd.uniforms["u_mappedRasterTexCoordSet" + std::to_string(i)] = {0.0f};
-    }
+    // Uniform 默认值全部由 GltfUniformBlock 成员初始化器提供（terrain
+    // shader 只消费其声明的子集）。GltfDrawCommandBuilder 逐 primitive 覆写。
+    cmd.hasGltfUniforms = true;
     return cmd;
 }
 

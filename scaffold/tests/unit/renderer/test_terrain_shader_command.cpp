@@ -70,15 +70,28 @@ TEST(TerrainShaderCommandTest, MakeTerrainPrimitiveCommandHasCorrectDefaults) {
     EXPECT_TRUE(cmd.depthWrite);
     EXPECT_TRUE(cmd.cullFace);
     EXPECT_FALSE(cmd.blend);
-    // Only the lightweight terrain uniforms — no PBR-extension defaults.
-    EXPECT_TRUE(cmd.uniforms.count("u_baseColor"));
-    EXPECT_TRUE(cmd.uniforms.count("u_renderOpacity"));
-    EXPECT_TRUE(cmd.uniforms.count("u_clipUV"));
-    EXPECT_TRUE(cmd.uniforms.count("u_clipEnabled"));
-    EXPECT_TRUE(cmd.uniforms.count("u_mappedRasterTextureCount"));
-    EXPECT_FALSE(cmd.uniforms.count("u_materialFactors"));
-    EXPECT_FALSE(cmd.uniforms.count("u_clearcoatFactors"));
-    EXPECT_FALSE(cmd.uniforms.count("u_specularGlossinessFactor"));
+    // Uniforms now live in the fixed-size block; the string map stays empty
+    // (hot-path zero-allocation contract). Defaults come from the block's
+    // member initializers.
+    EXPECT_TRUE(cmd.hasGltfUniforms);
+    EXPECT_TRUE(cmd.uniforms.empty());
+    EXPECT_FLOAT_EQ(0.82f, cmd.gltfUniforms.baseColor[0]);
+    EXPECT_FLOAT_EQ(0.84f, cmd.gltfUniforms.baseColor[1]);
+    EXPECT_FLOAT_EQ(0.88f, cmd.gltfUniforms.baseColor[2]);
+    EXPECT_FLOAT_EQ(1.0f, cmd.gltfUniforms.baseColor[3]);
+    EXPECT_FLOAT_EQ(1.0f, cmd.gltfUniforms.renderOpacity);
+    EXPECT_EQ((std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f}),
+              cmd.gltfUniforms.clipUv);
+    EXPECT_FLOAT_EQ(0.0f, cmd.gltfUniforms.clipEnabled);
+    EXPECT_FLOAT_EQ(0.0f, cmd.gltfUniforms.mappedRasterTextureCount);
+    // PBR-extension fields still exist in the block but stay at defaults
+    // (the "absent from the map" semantics no longer apply).
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              cmd.gltfUniforms.materialFactors);
+    EXPECT_EQ((std::array<float, 3>{0.0f, 0.0f, 1.0f}),
+              cmd.gltfUniforms.clearcoatFactors);
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              cmd.gltfUniforms.specularGlossinessFactor);
 }
 
 // ── GltfDrawCommandBuilder branches on useTerrainVertexFormat ──
@@ -115,7 +128,8 @@ TEST(TerrainShaderCommandTest, TerrainPrimitiveUsesTerrainShaderAndStride) {
     EXPECT_EQ(RenderCommandKind::GltfPrimitive, cmd.kind);
     // The shared per-command population still runs on the terrain command.
     EXPECT_TRUE(cmd.terrainRenderContent == cmd.terrainRenderContent);
-    EXPECT_TRUE(cmd.uniforms.count("u_renderOpacity"));
+    EXPECT_TRUE(cmd.hasGltfUniforms);
+    EXPECT_FLOAT_EQ(1.0f, cmd.gltfUniforms.renderOpacity);
 }
 
 TEST(TerrainShaderCommandTest, NonTerrainPrimitiveUsesGltfShaderAndStride) {
@@ -185,46 +199,46 @@ TEST(TerrainShaderCommandTest, TerrainShadersDropPbrExtensionUniforms) {
 TEST(TerrainShaderCommandTest, TerrainFragmentMslBufferIndicesStayUnderMetalCap) {
     const std::string msl = renderer_testing::terrainFragmentMSL();
 
-    // Every terrain fragment uniform: MSL [[buffer(N)]] index must match the
-    // RenderDeviceMetal terrain bind table (kept in sync manually). All <= 30.
-    struct Entry {
-        const char* name;
-        int index;
-    };
-    const Entry table[] = {
-        {"u_lightDir", 0},
-        {"u_baseColor", 1},
-        {"u_renderOpacity", 2},
-        {"u_hasBaseColorTexture", 3},
-        {"u_alphaMode", 4},
-        {"u_alphaCutoff", 5},
-        {"u_mappedRasterTextureCount", 6},
-        {"u_mappedRasterTileUV0", 7},
-        {"u_mappedRasterTileUV1", 8},
-        {"u_mappedRasterTileUV2", 9},
-        {"u_mappedRasterTileUV3", 10},
-        {"u_mappedRasterOpacity0", 11},
-        {"u_mappedRasterOpacity1", 12},
-        {"u_mappedRasterOpacity2", 13},
-        {"u_mappedRasterOpacity3", 14},
-        {"u_mappedRasterTexCoordSet0", 15},
-        {"u_mappedRasterTexCoordSet1", 16},
-        {"u_mappedRasterTexCoordSet2", 17},
-        {"u_mappedRasterTexCoordSet3", 18},
-        {"u_gltfHasWaterMask", 19},
-        {"u_gltfWaterMaskTranslationScale", 20},
-        {"u_gltfWaterMaskState", 21},
-        {"u_clipUV", 22},
-        {"u_clipEnabled", 23},
-    };
-    int maxIndex = -1;
-    for (const Entry& entry : table) {
-        const std::string needle =
-            std::string(entry.name) + " [[buffer(" +
-            std::to_string(entry.index) + ")]]";
-        EXPECT_NE(std::string::npos, msl.find(needle))
-            << "missing " << needle;
-        maxIndex = std::max(maxIndex, entry.index);
+    // The per-name bind table is gone: the terrain fragment now consumes the
+    // whole GltfUniformBlock mirror struct in a single buffer(0) binding.
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("constant GltfUniforms& u [[buffer(0)]]"));
+
+    // The fields the terrain shader consumes must remain in the mirror struct
+    // (same set as the old bind table, spelled as struct members).
+    for (const char* field : {
+             "packed_float3 lightDir;",
+             "packed_float4 baseColor;",
+             "float renderOpacity;",
+             "float hasBaseColorTexture;",
+             "float alphaMode;",
+             "float alphaCutoff;",
+             "float mappedRasterTextureCount;",
+             "packed_float4 mappedRasterTileUV[4];",
+             "float mappedRasterOpacity[4];",
+             "float mappedRasterTexCoordSet[4];",
+             "float hasWaterMask;",
+             "packed_float4 waterMaskTranslationScale;",
+             "packed_float4 waterMaskState;",
+             "packed_float4 clipUV;",
+             "float clipEnabled;"}) {
+        EXPECT_NE(std::string::npos, msl.find(field))
+            << "missing GltfUniforms field: " << field;
     }
+
+    // Preserve the original intent: every [[buffer(N)]] index in the terrain
+    // fragment source must stay <= 30 (Metal argument-table cap is 31).
+    const std::string marker = "[[buffer(";
+    int maxIndex = -1;
+    for (size_t pos = msl.find(marker);
+         pos != std::string::npos;
+         pos = msl.find(marker, pos + marker.size())) {
+        const size_t start = pos + marker.size();
+        const size_t end = msl.find(")]]", start);
+        ASSERT_NE(std::string::npos, end);
+        maxIndex = std::max(maxIndex, std::stoi(msl.substr(start, end - start)));
+    }
+    EXPECT_GE(maxIndex, 0) << "terrain fragment MSL binds no buffers";
     EXPECT_LE(maxIndex, 30);
 }

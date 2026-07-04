@@ -277,12 +277,10 @@ TEST(TileRenderCommandPreparerTest,
     EXPECT_GT(command.surfaceClipEnabled, 0.5f);
     EXPECT_EQ(command.surfaceClipUv,
               (std::array<float, 4>{0.25f, 0.0f, 0.5f, 1.0f}));
-    ASSERT_TRUE(command.uniforms.count("u_clipUV") > 0);
-    ASSERT_TRUE(command.uniforms.count("u_clipEnabled") > 0);
-    EXPECT_EQ(command.uniforms.at("u_clipUV"),
-              (std::vector<float>{0.25f, 0.0f, 0.5f, 1.0f}));
-    EXPECT_EQ(command.uniforms.at("u_clipEnabled"),
-              (std::vector<float>{1.0f}));
+    ASSERT_TRUE(command.hasGltfUniforms);
+    EXPECT_EQ(command.gltfUniforms.clipUv,
+              (std::array<float, 4>{0.25f, 0.0f, 0.5f, 1.0f}));
+    EXPECT_FLOAT_EQ(1.0f, command.gltfUniforms.clipEnabled);
 }
 
 TEST(TileRenderCommandPreparerTest,
@@ -327,10 +325,8 @@ TEST(TileRenderCommandPreparerTest,
     EXPECT_EQ(RenderCommandKind::GltfPrimitive, command.kind);
     EXPECT_FALSE(command.terrainRenderContent);
     EXPECT_EQ(command.surfaceClipEnabled, 0.0f);
-    ASSERT_TRUE(command.uniforms.count("u_clipUV") > 0);
-    ASSERT_TRUE(command.uniforms.count("u_clipEnabled") > 0);
-    EXPECT_EQ(command.uniforms.at("u_clipUV"),
-              (std::vector<float>{0.0f, 0.0f, 1.0f, 1.0f}));
-    EXPECT_EQ(command.uniforms.at("u_clipEnabled"),
-              (std::vector<float>{0.0f}));
+    ASSERT_TRUE(command.hasGltfUniforms);
+    EXPECT_EQ(command.gltfUniforms.clipUv,
+              (std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f}));
+    EXPECT_FLOAT_EQ(0.0f, command.gltfUniforms.clipEnabled);
 }

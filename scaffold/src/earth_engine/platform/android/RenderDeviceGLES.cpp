@@ -118,6 +118,18 @@ int GLShaderProgram::uniformLocation(const std::string& name) {
     return loc;
 }
 
+const std::vector<int>& GLShaderProgram::gltfBlockLocations() {
+    if (!gltfBlockLocationsResolved_) {
+        const auto& table = gltfUniformTable();
+        gltfBlockLocations_.resize(table.size());
+        for (size_t i = 0; i < table.size(); ++i) {
+            gltfBlockLocations_[i] = glGetUniformLocation(id_, table[i].name);
+        }
+        gltfBlockLocationsResolved_ = true;
+    }
+    return gltfBlockLocations_;
+}
+
 // ============================================================
 // RenderDeviceGLES
 // ============================================================
@@ -510,21 +522,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         if (currentProgram != program->glId()) {
             currentProgram = program->glId();
             glUseProgram(currentProgram);
-            int tileSamplerLoc = program->uniformLocation("u_tileTexture");
-            if (tileSamplerLoc >= 0) {
-                glUniform1i(tileSamplerLoc, 0);
-            }
-            int waterMaskLoc = program->uniformLocation("u_waterMask");
-            if (waterMaskLoc >= 0) {
-                glUniform1i(waterMaskLoc, 5);
-            }
-            for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
-                std::string name = "u_overlayTexture" + std::to_string(i);
-                int overlaySamplerLoc = program->uniformLocation(name);
-                if (overlaySamplerLoc >= 0) {
-                    glUniform1i(overlaySamplerLoc, 1 + i);
-                }
-            }
         }
 
         // ---- 顶点属性设置 ----
@@ -765,11 +762,13 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 glBindTexture(GL_TEXTURE_2D, currentTextures[unitIdx]);
             }
         }
-        auto setSampler = [&](const char* name, int unit) {
-            int loc = program->uniformLocation(name);
-            if (loc >= 0) glUniform1i(loc, unit);
-        };
-        if (!cmd.textures.empty()) {
+        // Sampler uniform 是 program 的持久状态且单位分配固定，每个 program
+        // 只需设置一次（原先每 draw 重发 ~18 个 glUniform1i + 现场拼接名字）。
+        if (!program->samplersConfigured()) {
+            auto setSampler = [&](const char* name, int unit) {
+                int loc = program->uniformLocation(name);
+                if (loc >= 0) glUniform1i(loc, unit);
+            };
             setSampler("u_tileTexture", 0);
             setSampler("u_baseColorTexture", 0);
             setSampler("u_metallicRoughnessTexture", 1);
@@ -787,10 +786,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 setSampler(name.c_str(), kGlesGltfRasterUnitBase + i);
             }
             setSampler("u_gltfWaterMaskTexture", kGlesGltfWaterUnit);
-        }
-        for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
-            std::string name = "u_overlayTexture" + std::to_string(i);
-            setSampler(name.c_str(), i + 1);
+            setSampler("u_waterMask", 5);
+            for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
+                std::string name = "u_overlayTexture" + std::to_string(i);
+                setSampler(name.c_str(), i + 1);
+            }
+            program->markSamplersConfigured();
         }
 
         // ---- Uniforms ----
@@ -837,6 +838,37 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             set4("u_waterMaskTranslationScale",
                  cmd.surfaceWaterMaskTranslationScale);
             set4("u_waterMaskState", cmd.surfaceWaterMaskState);
+        } else if (cmd.hasGltfUniforms) {
+            // glTF/terrain 定长块直传：location 表在 program 首次使用时一次
+            // 性解析（shader 未声明的名字为 -1 跳过），此后每 draw 零字符串
+            // 哈希、零堆分配。
+            const auto& table = gltfUniformTable();
+            const std::vector<int>& locations = program->gltfBlockLocations();
+            const float* block =
+                reinterpret_cast<const float*>(&cmd.gltfUniforms);
+            for (size_t entryIndex = 0; entryIndex < table.size();
+                 ++entryIndex) {
+                const int loc = locations[entryIndex];
+                if (loc < 0) continue;
+                const float* values = block + table[entryIndex].floatOffset;
+                switch (table[entryIndex].count) {
+                    case 1:
+                        glUniform1f(loc, values[0]);
+                        break;
+                    case 2:
+                        glUniform2fv(loc, 1, values);
+                        break;
+                    case 3:
+                        glUniform3fv(loc, 1, values);
+                        break;
+                    case 4:
+                        glUniform4fv(loc, 1, values);
+                        break;
+                    case 16:
+                        glUniformMatrix4fv(loc, 1, GL_FALSE, values);
+                        break;
+                }
+            }
         }
         for (const auto& [name, values] : cmd.uniforms) {
             int loc = program->uniformLocation(name);

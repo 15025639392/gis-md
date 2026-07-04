@@ -123,59 +123,63 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     EXPECT_TRUE(cmd.depthWrite);
     EXPECT_TRUE(cmd.cullFace);
     EXPECT_FALSE(cmd.blend);
-    ASSERT_TRUE(cmd.uniforms.count("u_baseColor"));
-    ASSERT_TRUE(cmd.uniforms.count("u_hasBaseColorTexture"));
-    ASSERT_TRUE(cmd.uniforms.count("u_materialFactors"));
-    ASSERT_TRUE(cmd.uniforms.count("u_dielectricSpecularF0"));
-    ASSERT_TRUE(cmd.uniforms.count("u_hasMaterialTextures"));
-    ASSERT_TRUE(cmd.uniforms.count("u_anisotropyFactors"));
-    ASSERT_TRUE(cmd.uniforms.count("u_hasAnisotropyTexture"));
-    ASSERT_TRUE(cmd.uniforms.count("u_hasSpecularTextures"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularFactor"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularColorFactor"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessWorkflow"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessFactor"));
-    ASSERT_TRUE(cmd.uniforms.count("u_hasSpecularGlossinessTexture"));
-    ASSERT_TRUE(cmd.uniforms.count("u_transmissionFactor"));
-    ASSERT_TRUE(cmd.uniforms.count("u_hasTransmissionTexture"));
-    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatFactors"));
-    ASSERT_TRUE(cmd.uniforms.count("u_hasClearcoatTextures"));
-    ASSERT_TRUE(cmd.uniforms.count("u_sheenColorFactor"));
-    ASSERT_TRUE(cmd.uniforms.count("u_sheenRoughnessFactor"));
-    ASSERT_TRUE(cmd.uniforms.count("u_hasSheenTextures"));
-    ASSERT_TRUE(cmd.uniforms.count("u_emissiveFactor"));
-    ASSERT_TRUE(cmd.uniforms.count("u_textureCoordSets"));
-    ASSERT_TRUE(cmd.uniforms.count("u_emissiveTexCoordSet"));
-    ASSERT_TRUE(cmd.uniforms.count("u_anisotropyTexCoordSet"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularTexCoordSets"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessTexCoordSet"));
-    ASSERT_TRUE(cmd.uniforms.count("u_transmissionTexCoordSet"));
-    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexCoordSets"));
-    ASSERT_TRUE(cmd.uniforms.count("u_sheenTexCoordSets"));
-    ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexRotationSinCos"));
-    ASSERT_TRUE(cmd.uniforms.count("u_anisotropyTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_anisotropyTexRotationSinCos"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularColorTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_transmissionTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_transmissionTexRotationSinCos"));
-    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatRoughnessTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatNormalTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_sheenColorTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_sheenRoughnessTexOffsetScale"));
-    ASSERT_TRUE(cmd.uniforms.count("u_alphaMode"));
-    ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
-    ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
-    ASSERT_TRUE(cmd.uniforms.count("u_unlit"));
-    ASSERT_TRUE(cmd.uniforms.count("u_clipUV"));
-    ASSERT_TRUE(cmd.uniforms.count("u_clipEnabled"));
-    EXPECT_EQ((std::vector<float>{0.0f, 0.0f, 1.0f, 1.0f}),
-              cmd.uniforms.at("u_clipUV"));
-    EXPECT_EQ((std::vector<float>{0.0f}),
-              cmd.uniforms.at("u_clipEnabled"));
+    // Uniforms live in the fixed-size block; the string map stays empty
+    // (hot-path zero-allocation contract). Every former map default is now
+    // a member initializer of GltfUniformBlock — assert those values.
+    ASSERT_TRUE(cmd.hasGltfUniforms);
+    EXPECT_TRUE(cmd.uniforms.empty());
+    const GltfUniformBlock& u = cmd.gltfUniforms;
+    EXPECT_EQ((std::array<float, 4>{0.82f, 0.84f, 0.88f, 1.0f}), u.baseColor);
+    EXPECT_FLOAT_EQ(0.0f, u.hasBaseColorTexture);
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              u.materialFactors);
+    EXPECT_FLOAT_EQ(0.04f, u.dielectricSpecularF0);
+    EXPECT_EQ((std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
+              u.hasMaterialTextures);
+    EXPECT_EQ((std::array<float, 2>{0.0f, 0.0f}), u.anisotropyFactors);
+    EXPECT_FLOAT_EQ(0.0f, u.hasAnisotropyTexture);
+    EXPECT_EQ((std::array<float, 2>{0.0f, 0.0f}), u.hasSpecularTextures);
+    EXPECT_FLOAT_EQ(1.0f, u.specularFactor);
+    EXPECT_EQ((std::array<float, 3>{1.0f, 1.0f, 1.0f}), u.specularColorFactor);
+    EXPECT_FLOAT_EQ(0.0f, u.specularGlossinessWorkflow);
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              u.specularGlossinessFactor);
+    EXPECT_FLOAT_EQ(0.0f, u.hasSpecularGlossinessTexture);
+    EXPECT_FLOAT_EQ(0.0f, u.transmissionFactor);
+    EXPECT_FLOAT_EQ(0.0f, u.hasTransmissionTexture);
+    EXPECT_EQ((std::array<float, 3>{0.0f, 0.0f, 1.0f}), u.clearcoatFactors);
+    EXPECT_EQ((std::array<float, 3>{0.0f, 0.0f, 0.0f}),
+              u.hasClearcoatTextures);
+    EXPECT_EQ((std::array<float, 3>{0.0f, 0.0f, 0.0f}), u.sheenColorFactor);
+    EXPECT_FLOAT_EQ(0.0f, u.sheenRoughnessFactor);
+    EXPECT_EQ((std::array<float, 2>{0.0f, 0.0f}), u.hasSheenTextures);
+    EXPECT_EQ((std::array<float, 3>{0.0f, 0.0f, 0.0f}), u.emissiveFactor);
+    EXPECT_EQ((std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
+              u.textureCoordSets);
+    EXPECT_FLOAT_EQ(0.0f, u.emissiveTexCoordSet);
+    EXPECT_FLOAT_EQ(0.0f, u.anisotropyTexCoordSet);
+    EXPECT_EQ((std::array<float, 2>{0.0f, 0.0f}), u.specularTexCoordSets);
+    EXPECT_FLOAT_EQ(0.0f, u.specularGlossinessTexCoordSet);
+    EXPECT_FLOAT_EQ(0.0f, u.transmissionTexCoordSet);
+    EXPECT_EQ((std::array<float, 3>{0.0f, 0.0f, 0.0f}),
+              u.clearcoatTexCoordSets);
+    EXPECT_EQ((std::array<float, 2>{0.0f, 0.0f}), u.sheenTexCoordSets);
+    const std::array<float, 4> identityOffsetScale{0.0f, 0.0f, 1.0f, 1.0f};
+    const std::array<float, 2> identityRotation{0.0f, 1.0f};
+    for (const GltfUniformBlock::TextureTransform* transform :
+         {&u.baseColorTex, &u.anisotropyTex, &u.specularTex,
+          &u.specularColorTex, &u.specularGlossinessTex, &u.transmissionTex,
+          &u.clearcoatTex, &u.clearcoatRoughnessTex, &u.clearcoatNormalTex,
+          &u.sheenColorTex, &u.sheenRoughnessTex}) {
+        EXPECT_EQ(identityOffsetScale, transform->offsetScale);
+        EXPECT_EQ(identityRotation, transform->rotationSinCos);
+    }
+    EXPECT_FLOAT_EQ(0.0f, u.alphaMode);
+    EXPECT_FLOAT_EQ(0.5f, u.alphaCutoff);
+    EXPECT_FLOAT_EQ(1.0f, u.renderOpacity);
+    EXPECT_FLOAT_EQ(0.0f, u.unlit);
+    EXPECT_EQ((std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f}), u.clipUv);
+    EXPECT_FLOAT_EQ(0.0f, u.clipEnabled);
 }
 
 TEST(RendererCommandTest, GltfGlesVertexShadersSetExplicitPointSize) {
@@ -195,17 +199,18 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyTerrainFallbackClip) {
     EXPECT_NE(std::string::npos, glsl.find("if (u_clipEnabled > 0.5 &&"));
     EXPECT_NE(std::string::npos, glsl.find("discard;"));
 
+    // Metal consumes the whole GltfUniformBlock as one struct at buffer(0);
+    // clip uniforms are fields of that struct.
     const std::string msl = renderer_testing::gltfFragmentMSL();
     EXPECT_NE(
         std::string::npos,
-        msl.find("constant float4& u_clipUV [[buffer(84)]]"));
-    EXPECT_NE(
-        std::string::npos,
-        msl.find("constant float& u_clipEnabled [[buffer(85)]]"));
+        msl.find("constant GltfUniforms& u [[buffer(0)]]"));
+    EXPECT_NE(std::string::npos, msl.find("packed_float4 clipUV;"));
+    EXPECT_NE(std::string::npos, msl.find("float clipEnabled;"));
     EXPECT_NE(
         std::string::npos,
         msl.find("float2 terrainUv = gltfUvFromSet(in, 0.0);"));
-    EXPECT_NE(std::string::npos, msl.find("if (u_clipEnabled > 0.5 &&"));
+    EXPECT_NE(std::string::npos, msl.find("if (u.clipEnabled > 0.5 &&"));
     EXPECT_NE(std::string::npos, msl.find("discard_fragment();"));
 }
 
@@ -255,7 +260,7 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsTransmission) {
         msl.find("texture2d<float> u_transmissionTexture"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("constant float& u_transmissionFactor"));
+        msl.find("clamp(u.transmissionFactor, 0.0, 1.0)"));
     EXPECT_NE(
         std::string::npos,
         msl.find("u_transmissionTexture.sample"));
@@ -288,7 +293,7 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsPbrSpecularGlossin
         msl.find("texture2d<float> u_specularGlossinessTexture"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("u_specularGlossinessWorkflow > 0.5"));
+        msl.find("u.specularGlossinessWorkflow > 0.5"));
     EXPECT_NE(
         std::string::npos,
         msl.find("roughness = clamp(1.0 - specGloss.a"));
@@ -309,10 +314,10 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyDielectricSpecularF0) {
     const std::string msl = renderer_testing::gltfFragmentMSL();
     EXPECT_NE(
         std::string::npos,
-        msl.find("constant float& u_dielectricSpecularF0"));
+        msl.find("float dielectricSpecularF0;"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("clamp(u_dielectricSpecularF0, 0.0, 1.0)"));
+        msl.find("clamp(u.dielectricSpecularF0, 0.0, 1.0)"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsAnisotropy) {
@@ -378,7 +383,7 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSpecular) {
         msl.find("specularStrength *= u_specularTexture.sample"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("u_specularColorFactor"));
+        msl.find("u.specularColorFactor"));
     EXPECT_NE(
         std::string::npos,
         msl.find("dielectricSpecular = clamp(dielectricSpecular, 0.0, 1.0)"));
@@ -444,7 +449,7 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsClearcoat) {
                  "            clearcoatNormalUv,\n"
                  "            in.localPosition,\n"
                  "            in.tangent,\n"
-                 "            u_clearcoatFactors.z,\n"
+                 "            u.clearcoatFactors.z,\n"
                  "            u_clearcoatNormalTexture,\n"
                  "            u_clearcoatNormalSampler);"));
     EXPECT_NE(
@@ -537,11 +542,11 @@ TEST(RendererCommandTest, GltfFragmentShadersUseBaseColorForUnlitMaterials) {
         glsl.find("fragColor = vec4(base.rgb, alpha * clamp(u_renderOpacity"));
 
     const std::string msl = renderer_testing::gltfFragmentMSL();
-    EXPECT_NE(std::string::npos, msl.find("constant float& u_unlit"));
-    EXPECT_NE(std::string::npos, msl.find("if (u_unlit > 0.5)"));
+    EXPECT_NE(std::string::npos, msl.find("float unlit;"));
+    EXPECT_NE(std::string::npos, msl.find("if (u.unlit > 0.5)"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("return float4(base.rgb, alpha * clamp(u_renderOpacity"));
+        msl.find("return float4(base.rgb, alpha * clamp(u.renderOpacity"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersApplyAlphaModesConsistently) {
@@ -563,17 +568,17 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyAlphaModesConsistently) {
     const std::string msl = renderer_testing::gltfFragmentMSL();
     EXPECT_NE(
         std::string::npos,
-        msl.find("u_alphaMode > 0.5 && u_alphaMode < 1.5"));
+        msl.find("u.alphaMode > 0.5 && u.alphaMode < 1.5"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("base.a < u_alphaCutoff"));
+        msl.find("base.a < u.alphaCutoff"));
     EXPECT_NE(std::string::npos, msl.find("discard_fragment();"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("float alpha = u_alphaMode > 1.5 ? base.a : 1.0"));
+        msl.find("float alpha = u.alphaMode > 1.5 ? base.a : 1.0"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("alpha * clamp(u_renderOpacity"));
+        msl.find("alpha * clamp(u.renderOpacity"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersApplyOcclusionAndEmissive) {
@@ -591,10 +596,10 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyOcclusionAndEmissive) {
     const std::string msl = renderer_testing::gltfFragmentMSL();
     EXPECT_NE(
         std::string::npos,
-        msl.find("occlusion = clamp(1.0 + u_materialFactors.w * (ao - 1.0)"));
+        msl.find("occlusion = clamp(1.0 + u.materialFactors.w * (ao - 1.0)"));
     EXPECT_NE(
         std::string::npos,
-        msl.find("float3 emissive = u_emissiveFactor"));
+        msl.find("float3 emissive = float3(u.emissiveFactor)"));
     EXPECT_NE(
         std::string::npos,
         msl.find("emissive *= u_emissiveTexture.sample"));
@@ -750,7 +755,8 @@ TEST(RendererCommandTest, MvpValidatorAcceptsBlendedGltfWithReadOnlyDepth) {
     gltf.depthWrite = false;
     gltf.cullFace = true;
     gltf.blend = true;
-    gltf.uniforms["u_alphaMode"] = {2.0f};
+    gltf.hasGltfUniforms = true;
+    gltf.gltfUniforms.alphaMode = 2.0f;
     gltf.hasTranslucentSortDepth = true;
     gltf.translucentSortDepth = 10.0;
     gltf.frameId = 42;
@@ -770,8 +776,9 @@ TEST(RendererCommandTest, MvpValidatorKeepsAlphaMaskGltfOpaque) {
     gltf.depthWrite = true;
     gltf.cullFace = true;
     gltf.blend = false;
-    gltf.uniforms["u_alphaMode"] = {1.0f};
-    gltf.uniforms["u_alphaCutoff"] = {0.5f};
+    gltf.hasGltfUniforms = true;
+    gltf.gltfUniforms.alphaMode = 1.0f;
+    gltf.gltfUniforms.alphaCutoff = 0.5f;
     gltf.frameId = 42;
     gltf.generation = 7;
 
@@ -789,7 +796,8 @@ TEST(RendererCommandTest, MvpValidatorRejectsBlendedGltfDepthWrites) {
     gltf.depthWrite = true;
     gltf.cullFace = true;
     gltf.blend = true;
-    gltf.uniforms["u_alphaMode"] = {2.0f};
+    gltf.hasGltfUniforms = true;
+    gltf.gltfUniforms.alphaMode = 2.0f;
     gltf.hasTranslucentSortDepth = true;
     gltf.translucentSortDepth = 10.0;
     gltf.frameId = 42;
@@ -967,7 +975,8 @@ TEST(RendererCommandTest, MvpSortDrawsOpaqueGltfBeforeTranslucentBackToFront) {
     nearBlend.cullFace = true;
     nearBlend.blend = true;
     nearBlend.generation = 1;
-    nearBlend.uniforms["u_alphaMode"] = {2.0f};
+    nearBlend.hasGltfUniforms = true;
+    nearBlend.gltfUniforms.alphaMode = 2.0f;
     nearBlend.hasTranslucentSortDepth = true;
     nearBlend.translucentSortDepth = 5.0;
 
@@ -1005,7 +1014,8 @@ TEST(RendererCommandTest, MvpValidatorRejectsTranslucentGltfWithoutSortDepth) {
     gltf.cullFace = true;
     gltf.blend = true;
     gltf.generation = 1;
-    gltf.uniforms["u_alphaMode"] = {2.0f};
+    gltf.hasGltfUniforms = true;
+    gltf.gltfUniforms.alphaMode = 2.0f;
 
     RenderCommandList commands{gltf};
     auto error = validateMvpRenderCommands(commands);
@@ -1023,7 +1033,8 @@ TEST(RendererCommandTest, MvpValidatorRejectsTranslucentGltfFrontToBack) {
     nearBlend.cullFace = true;
     nearBlend.blend = true;
     nearBlend.generation = 1;
-    nearBlend.uniforms["u_alphaMode"] = {2.0f};
+    nearBlend.hasGltfUniforms = true;
+    nearBlend.gltfUniforms.alphaMode = 2.0f;
     nearBlend.hasTranslucentSortDepth = true;
     nearBlend.translucentSortDepth = 5.0;
 
@@ -1084,7 +1095,8 @@ TEST(RendererCommandTest, GltfPrimitiveBlendAllowedForLodTransitionOpacity) {
     gltf.cullFace = true;
     gltf.blend = true;
     gltf.generation = 1;
-    gltf.uniforms["u_renderOpacity"] = {0.5f};
+    gltf.hasGltfUniforms = true;
+    gltf.gltfUniforms.renderOpacity = 0.5f;
     gltf.hasTranslucentSortDepth = true;
     gltf.translucentSortDepth = 10.0;
 
@@ -1104,8 +1116,9 @@ TEST(RendererCommandTest, GltfPrimitiveBlendAllowedForAlphaModeBlend) {
     gltf.blend = true;
     gltf.frameId = 42;
     gltf.generation = 7;
-    gltf.uniforms["u_alphaMode"] = {2.0f};
-    gltf.uniforms["u_renderOpacity"] = {1.0f};
+    gltf.hasGltfUniforms = true;
+    gltf.gltfUniforms.alphaMode = 2.0f;
+    gltf.gltfUniforms.renderOpacity = 1.0f;
     gltf.hasTranslucentSortDepth = true;
     gltf.translucentSortDepth = 10.0;
 
@@ -1125,9 +1138,10 @@ TEST(RendererCommandTest, GltfPrimitiveBlendAllowedForTransmission) {
     gltf.blend = true;
     gltf.frameId = 42;
     gltf.generation = 7;
-    gltf.uniforms["u_alphaMode"] = {0.0f};
-    gltf.uniforms["u_renderOpacity"] = {1.0f};
-    gltf.uniforms["u_transmissionFactor"] = {0.5f};
+    gltf.hasGltfUniforms = true;
+    gltf.gltfUniforms.alphaMode = 0.0f;
+    gltf.gltfUniforms.renderOpacity = 1.0f;
+    gltf.gltfUniforms.transmissionFactor = 0.5f;
     gltf.hasTranslucentSortDepth = true;
     gltf.translucentSortDepth = 10.0;
 

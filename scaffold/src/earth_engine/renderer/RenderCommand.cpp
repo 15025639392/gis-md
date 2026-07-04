@@ -50,6 +50,13 @@ float uniformScalar(const RenderCommand& cmd, const std::string& name, float fal
         if (name == "u_tileOpacity") return cmd.surfaceTileOpacity;
         if (name == "u_transitionOpacity") return cmd.surfaceTransitionOpacity;
     }
+    if (cmd.hasGltfUniforms) {
+        if (name == "u_alphaMode") return cmd.gltfUniforms.alphaMode;
+        if (name == "u_transmissionFactor") {
+            return cmd.gltfUniforms.transmissionFactor;
+        }
+        if (name == "u_renderOpacity") return cmd.gltfUniforms.renderOpacity;
+    }
     auto it = cmd.uniforms.find(name);
     if (it == cmd.uniforms.end() || it->second.empty()) {
         return fallback;

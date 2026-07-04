@@ -616,6 +616,13 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
             [impl_->currentEncoder setVertexBytes:cmd.surfaceCameraRelativeOrigin.data()
                                            length:cmd.surfaceCameraRelativeOrigin.size() * sizeof(float)
                                           atIndex:4];
+        } else if (cmd.hasGltfUniforms) {
+            // glTF/terrain 定长块：vertex 只需 MVP（buffer(1)，与旧签名一致）。
+            [impl_->currentEncoder
+                setVertexBytes:cmd.gltfUniforms.modelViewProjection.data()
+                        length:cmd.gltfUniforms.modelViewProjection.size() *
+                               sizeof(float)
+                       atIndex:1];
         } else {
             setUniform("u_modelViewProjection", 1);
             setUniform("u_model", 2);
@@ -624,43 +631,15 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
             setUniform("u_cameraRelativeOrigin", 4);
         }
 
-        // Terrain lightweight shader uses its own compact fragment buffer table
-        // (indices 0-23, all <=30) distinct from the glTF table below. Bind by
-        // name at the terrain indices and skip the glTF fragment binds.
-        if (program->isTerrain()) {
-            auto setTerrainUniform = [&](const char* name, NSUInteger index) {
-                auto it = cmd.uniforms.find(name);
-                if (it != cmd.uniforms.end()) {
-                    [impl_->currentEncoder
-                        setFragmentBytes:it->second.data()
-                                  length:it->second.size() * sizeof(float)
-                                 atIndex:index];
-                }
-            };
-            setTerrainUniform("u_lightDir", 0);
-            setTerrainUniform("u_baseColor", 1);
-            setTerrainUniform("u_renderOpacity", 2);
-            setTerrainUniform("u_hasBaseColorTexture", 3);
-            setTerrainUniform("u_alphaMode", 4);
-            setTerrainUniform("u_alphaCutoff", 5);
-            setTerrainUniform("u_mappedRasterTextureCount", 6);
-            setTerrainUniform("u_mappedRasterTileUV0", 7);
-            setTerrainUniform("u_mappedRasterTileUV1", 8);
-            setTerrainUniform("u_mappedRasterTileUV2", 9);
-            setTerrainUniform("u_mappedRasterTileUV3", 10);
-            setTerrainUniform("u_mappedRasterOpacity0", 11);
-            setTerrainUniform("u_mappedRasterOpacity1", 12);
-            setTerrainUniform("u_mappedRasterOpacity2", 13);
-            setTerrainUniform("u_mappedRasterOpacity3", 14);
-            setTerrainUniform("u_mappedRasterTexCoordSet0", 15);
-            setTerrainUniform("u_mappedRasterTexCoordSet1", 16);
-            setTerrainUniform("u_mappedRasterTexCoordSet2", 17);
-            setTerrainUniform("u_mappedRasterTexCoordSet3", 18);
-            setTerrainUniform("u_gltfHasWaterMask", 19);
-            setTerrainUniform("u_gltfWaterMaskTranslationScale", 20);
-            setTerrainUniform("u_gltfWaterMaskState", 21);
-            setTerrainUniform("u_clipUV", 22);
-            setTerrainUniform("u_clipEnabled", 23);
+        // glTF/terrain 定长块：整块一次 setFragmentBytes 绑到 buffer(0)。
+        // MSL 侧 GltfUniforms struct 与 GltfUniformBlock.h 逐字节镜像（布局
+        // 契约见该头文件），取代原先 terrain 24 槽 / glTF 84 槽逐名绑定——
+        // 后者把绑定表铺到 buffer(85)，超出 Metal 每 stage 31-buffer 硬上限，
+        // 完整 glTF PBR PSO 因此建不出来。
+        if (cmd.hasGltfUniforms) {
+            [impl_->currentEncoder setFragmentBytes:&cmd.gltfUniforms
+                                             length:sizeof(GltfUniformBlock)
+                                            atIndex:0];
         } else {
 
         // Fragment uniforms
@@ -826,7 +805,13 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         const NSUInteger maxMaterialTextures = kGltfWaterMaskTextureSlot + 1;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
-        id<MTLSamplerState> terrainSharedSampler = nil;
+        id<MTLSamplerState> sharedTileSampler = nil;
+        // Metal 每 stage sampler 上限 16（索引 0-15）。terrain shader 只声明
+        // sampler(0) 一个共享 sampler；glTF PBR shader 声明材质 sampler
+        // 0-14 各自独立 + raster/water 瓦片纹理（texture 15-19）共享
+        // sampler(15)——正好压进 16 个上限。
+        const bool gltfSharedRasterSampler =
+            !program->isTerrain() && cmd.hasGltfUniforms;
         for (NSUInteger textureIndex = 0;
              textureIndex < materialTextureCount;
              ++textureIndex) {
@@ -836,11 +821,15 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
             [impl_->currentEncoder setFragmentTexture:metalTex->mtl()
                                               atIndex:textureIndex];
             if (program->isTerrain()) {
-                // Metal caps samplers at 0-15; the terrain shader declares a
-                // single shared sampler at slot 0. Bind textures at their slots
-                // (15-19 allowed) but only one sampler at slot 0.
-                if (!terrainSharedSampler) {
-                    terrainSharedSampler = metalTex->sampler();
+                if (!sharedTileSampler) {
+                    sharedTileSampler = metalTex->sampler();
+                }
+            } else if (gltfSharedRasterSampler &&
+                       textureIndex >=
+                           static_cast<NSUInteger>(
+                               kGltfRasterOverlayTextureBase)) {
+                if (!sharedTileSampler) {
+                    sharedTileSampler = metalTex->sampler();
                 }
             } else {
                 [impl_->currentEncoder
@@ -853,10 +842,17 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
             // u_terrainSampler[[sampler(0)]] unconditionally, so a tile with no
             // texture yet still needs one bound or the draw is invalid.
             [impl_->currentEncoder
-                setFragmentSamplerState:(terrainSharedSampler
-                                             ? terrainSharedSampler
+                setFragmentSamplerState:(sharedTileSampler
+                                             ? sharedTileSampler
                                              : impl_->linearClampSampler)
                                 atIndex:0];
+        } else if (gltfSharedRasterSampler) {
+            // glTF shader 无条件声明 u_tileSharedSampler [[sampler(15)]]。
+            [impl_->currentEncoder
+                setFragmentSamplerState:(sharedTileSampler
+                                             ? sharedTileSampler
+                                             : impl_->linearClampSampler)
+                                atIndex:15];
         }
 
         // 混合状态

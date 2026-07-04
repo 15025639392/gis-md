@@ -52,23 +52,31 @@ void SceneRenderCommandUniformUpdater::apply(
         if (cmd.kind == RenderCommandKind::GltfPrimitive ||
             cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             glm::dmat4 model(1.0);
-            auto originIt = cmd.uniforms.find("u_modelOrigin");
-            if (originIt != cmd.uniforms.end() &&
-                originIt->second.size() >= 3) {
-                glm::dvec3 origin(originIt->second[0],
-                                  originIt->second[1],
-                                  originIt->second[2]);
+            if (cmd.hasGltfUniforms) {
+                glm::dvec3 origin(cmd.gltfUniforms.modelOrigin[0],
+                                  cmd.gltfUniforms.modelOrigin[1],
+                                  cmd.gltfUniforms.modelOrigin[2]);
                 model = glm::translate(glm::dmat4(1.0), origin);
             }
             glm::dmat4 mvp = viewProj * model;
             glm::mat4 mvpFloat = glm::mat4(mvp);
-            auto& mvpU = cmd.uniforms["u_modelViewProjection"];
-            mvpU.resize(16);
-            std::memcpy(
-                mvpU.data(), glm::value_ptr(mvpFloat), 16 * sizeof(float));
-            cmd.uniforms["u_lightDir"] = {frameState.lightDir.x,
-                                          frameState.lightDir.y,
-                                          frameState.lightDir.z};
+            if (cmd.hasGltfUniforms) {
+                std::memcpy(cmd.gltfUniforms.modelViewProjection.data(),
+                            glm::value_ptr(mvpFloat),
+                            16 * sizeof(float));
+                cmd.gltfUniforms.lightDir = {frameState.lightDir.x,
+                                             frameState.lightDir.y,
+                                             frameState.lightDir.z};
+            } else {
+                // 兜底：外部手工构造、未启用定长块的 glTF 命令仍走 map。
+                auto& mvpU = cmd.uniforms["u_modelViewProjection"];
+                mvpU.resize(16);
+                std::memcpy(
+                    mvpU.data(), glm::value_ptr(mvpFloat), 16 * sizeof(float));
+                cmd.uniforms["u_lightDir"] = {frameState.lightDir.x,
+                                              frameState.lightDir.y,
+                                              frameState.lightDir.z};
+            }
             if (cmd.hasWorldSortCenter) {
                 const Vec3 center(cmd.worldSortCenter[0],
                                   cmd.worldSortCenter[1],

@@ -99,9 +99,20 @@ public:
     /// 获取 uniform location（缓存）
     int uniformLocation(const std::string& name);
 
+    /// GltfUniformBlock 描述表对应的 location 数组（与 gltfUniformTable()
+    /// 逐条对齐；shader 未声明的名字为 -1）。首次调用时解析一次。
+    const std::vector<int>& gltfBlockLocations();
+
+    /// sampler uniform 是 program 持久状态，只需在首个 draw 设置一次。
+    bool samplersConfigured() const { return samplersConfigured_; }
+    void markSamplersConfigured() { samplersConfigured_ = true; }
+
 private:
     unsigned int id_;
     std::unordered_map<std::string, int> uniformCache_;
+    std::vector<int> gltfBlockLocations_;
+    bool gltfBlockLocationsResolved_ = false;
+    bool samplersConfigured_ = false;
 };
 
 } // namespace earth_engine
