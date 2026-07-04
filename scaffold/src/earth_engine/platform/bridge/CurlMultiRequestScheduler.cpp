@@ -19,14 +19,6 @@
 namespace earth_engine {
 namespace {
 
-size_t writeBody(void* contents, size_t size, size_t nmemb, void* userp) {
-    auto* body = static_cast<std::vector<uint8_t>*>(userp);
-    const size_t total = size * nmemb;
-    const auto* begin = static_cast<const uint8_t*>(contents);
-    body->insert(body->end(), begin, begin + total);
-    return total;
-}
-
 int priorityValue(HttpRequestPriority priority) {
     return static_cast<int>(priority);
 }
@@ -111,6 +103,32 @@ struct CurlMultiRequestScheduler::Impl {
         std::weak_ptr<WakeState> wakeState_;
         std::weak_ptr<RequestState> state_;
     };
+
+    static size_t writeBody(void* contents,
+                            size_t size,
+                            size_t nmemb,
+                            void* userp) {
+        auto* state = static_cast<RequestState*>(userp);
+        const size_t total = size * nmemb;
+        std::vector<uint8_t>& body = state->body;
+        if (body.empty() && state->easy) {
+            // 首块数据到达时按 Content-Length 一次性 reserve，避免大响应
+            // 按 16KB 块 ~8-10 次 realloc 串在唯一网络线程上（P2-3）。
+            // 注意启用压缩后该值是压缩后大小（解压数据仍会二次增长，但
+            // 已消掉多数 realloc）；上限防御恶意超大声明。
+            constexpr curl_off_t kMaxReserveBytes = 64LL * 1024 * 1024;
+            curl_off_t contentLength = -1;
+            if (curl_easy_getinfo(state->easy,
+                                  CURLINFO_CONTENT_LENGTH_DOWNLOAD_T,
+                                  &contentLength) == CURLE_OK &&
+                contentLength > 0 && contentLength <= kMaxReserveBytes) {
+                body.reserve(static_cast<size_t>(contentLength));
+            }
+        }
+        const auto* begin = static_cast<const uint8_t*>(contents);
+        body.insert(body.end(), begin, begin + total);
+        return total;
+    }
 
     explicit Impl(int maximumActiveRequestsValue)
         : maximumActiveRequests(std::max(1, maximumActiveRequestsValue)) {
@@ -199,18 +217,18 @@ struct CurlMultiRequestScheduler::Impl {
     }
 
     void cancelQueuedRequests() {
-        std::array<std::deque<std::shared_ptr<RequestState>>, 3> cancelled;
+        // 回调交给 curl 工作线程执行（与正常完成回调同一线程语义）。
+        // 原实现在调用方线程内联执行全部排队回调——该入口由
+        // onEnterBackground 等 UI 线程事件触发，会把回调链阻塞在 UI
+        // 线程上（P2-22）。
         {
             std::lock_guard<std::mutex> lk(mutex);
-            cancelled.swap(pending);
-        }
-
-        for (auto& bucket : cancelled) {
-            for (auto& request : bucket) {
-                request->cancelled.store(true, std::memory_order_release);
-                if (request->callback) {
-                    request->callback(-1, {});
+            for (auto& bucket : pending) {
+                for (auto& request : bucket) {
+                    request->cancelled.store(true, std::memory_order_release);
+                    cancelledQueuedCallbacks.push_back(std::move(request));
                 }
+                bucket.clear();
             }
         }
         wake();
@@ -279,6 +297,8 @@ struct CurlMultiRequestScheduler::Impl {
     std::mutex mutex;
     std::condition_variable cv;
     std::array<std::deque<std::shared_ptr<RequestState>>, 3> pending;
+    // cancelQueuedRequests 摘下的请求，回调由 curl 工作线程统一执行。
+    std::deque<std::shared_ptr<RequestState>> cancelledQueuedCallbacks;
     std::unordered_map<CURL*, std::shared_ptr<RequestState>> active;
     std::thread worker;
     std::atomic<uint64_t> nextSequence{1};
@@ -305,8 +325,23 @@ private:
         return nullptr;
     }
 
+    // 在 curl 工作线程上执行 cancelQueuedRequests 摘下的请求回调。
+    void drainCancelledQueuedCallbacks() {
+        std::deque<std::shared_ptr<RequestState>> drained;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            drained.swap(cancelledQueuedCallbacks);
+        }
+        for (auto& request : drained) {
+            if (request->callback) {
+                request->callback(-1, {});
+            }
+        }
+    }
+
     void run() {
         while (true) {
+            drainCancelledQueuedCallbacks();
             startPendingRequests();
             cancelActiveRequests();
             startPendingRequests();
@@ -319,12 +354,15 @@ private:
 
             {
                 std::unique_lock<std::mutex> lk(mutex);
-                if (stopping && pendingEmptyLocked() && active.empty()) {
+                if (stopping && pendingEmptyLocked() && active.empty() &&
+                    cancelledQueuedCallbacks.empty()) {
                     break;
                 }
-                if (active.empty() && pendingEmptyLocked()) {
+                if (active.empty() && pendingEmptyLocked() &&
+                    cancelledQueuedCallbacks.empty()) {
                     cv.wait(lk, [this]() {
-                        return stopping || !pendingEmptyLocked();
+                        return stopping || !pendingEmptyLocked() ||
+                               !cancelledQueuedCallbacks.empty();
                     });
                     continue;
                 }
@@ -393,8 +431,8 @@ private:
         request->easy = easy;
         request->active = true;
         curl_easy_setopt(easy, CURLOPT_URL, request->url.c_str());
-        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, writeBody);
-        curl_easy_setopt(easy, CURLOPT_WRITEDATA, &request->body);
+        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &Impl::writeBody);
+        curl_easy_setopt(easy, CURLOPT_WRITEDATA, request.get());
         curl_easy_setopt(easy, CURLOPT_TIMEOUT, 15L);
         curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 5L);
         curl_easy_setopt(easy, CURLOPT_USERAGENT, "earth-md/0.1");
