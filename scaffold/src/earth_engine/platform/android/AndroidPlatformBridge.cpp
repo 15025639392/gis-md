@@ -11,6 +11,7 @@
 #include <android/bitmap.h>
 #include <android/log.h>
 #include <jni.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #define LOG_TAG "AndroidBridge"
@@ -31,20 +32,37 @@ void AndroidPlatformBridge_InitJvm(void* vm) {
 
 // --- JNI 线程 attach/detach 辅助 ---
 
-static JNIEnv* getJniEnv() {
-    if (!gJvm) return nullptr;
-    JNIEnv* env = nullptr;
-    jint res = gJvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
-    if (res == JNI_EDETACHED) {
-        gJvm->AttachCurrentThread(&env, nullptr);
-    }
-    return env;
-}
+// 线程生命周期 attach(P1-8):解码跑在长寿命工作线程上,每次调用
+// attach/detach 是全税,且旧实现的无条件 Detach 会把本已附着的 Java
+// 线程(如 UI 线程)从 JVM 上摘下来。改为 attach 一次 + pthread key
+// 析构时 detach(Android 官方推荐模式);已附着线程原样复用、绝不摘。
+static pthread_key_t gJniThreadKey;
+static pthread_once_t gJniThreadKeyOnce = PTHREAD_ONCE_INIT;
 
-static void detachJni() {
+static void detachJniAtThreadExit(void* /*env*/) {
     if (gJvm) {
         gJvm->DetachCurrentThread();
     }
+}
+
+static void createJniThreadKey() {
+    pthread_key_create(&gJniThreadKey, detachJniAtThreadExit);
+}
+
+static JNIEnv* getThreadJniEnv() {
+    if (!gJvm) return nullptr;
+    JNIEnv* env = nullptr;
+    jint res = gJvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (res == JNI_OK) {
+        return env;  // 本已附着(宿主 Java 线程或已初始化的工作线程)
+    }
+    if (res != JNI_EDETACHED ||
+        gJvm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+        return nullptr;
+    }
+    pthread_once(&gJniThreadKeyOnce, createJniThreadKey);
+    pthread_setspecific(gJniThreadKey, env);  // 非空值触发线程退出析构
+    return env;
 }
 
 static bool clearPendingJniException(JNIEnv* env, const char* context) {
@@ -293,58 +311,120 @@ std::string AndroidPlatformBridge::documentsDirectory() const {
     return impl_->documentsDir;
 }
 
+namespace {
+
+/// BitmapFactory JNI 句柄一次性解析缓存(P1-8):jmethodID/jfieldID 进程内
+/// 恒有效;jclass 与 Config 枚举常量升级为 global ref。首个调用线程完成
+/// 初始化(magic static 线程安全),之后每次解码零 FindClass/GetMethodID。
+struct BitmapJniHandles {
+    jclass optionsClass = nullptr;        // global ref
+    jmethodID optionsCtor = nullptr;
+    jfieldID inPreferredConfig = nullptr;
+    jfieldID inMutable = nullptr;
+    jclass bitmapFactoryClass = nullptr;  // global ref
+    jmethodID decodeByteArray = nullptr;
+    jobject argb8888 = nullptr;           // global ref
+    bool valid = false;
+};
+
+const BitmapJniHandles& bitmapJniHandles(JNIEnv* env) {
+    static const BitmapJniHandles handles = [env] {
+        BitmapJniHandles h;
+        jclass configClass = env->FindClass("android/graphics/Bitmap$Config");
+        jclass optionsClass =
+            env->FindClass("android/graphics/BitmapFactory$Options");
+        jclass factoryClass = env->FindClass("android/graphics/BitmapFactory");
+        if (!configClass || !optionsClass || !factoryClass ||
+            clearPendingJniException(env, "Bitmap JNI class lookup")) {
+            return h;
+        }
+        jfieldID argb8888Field = env->GetStaticFieldID(
+            configClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
+        jobject argb8888 =
+            argb8888Field
+                ? env->GetStaticObjectField(configClass, argb8888Field)
+                : nullptr;
+        h.optionsCtor = env->GetMethodID(optionsClass, "<init>", "()V");
+        h.inPreferredConfig = env->GetFieldID(
+            optionsClass,
+            "inPreferredConfig",
+            "Landroid/graphics/Bitmap$Config;");
+        h.inMutable = env->GetFieldID(optionsClass, "inMutable", "Z");
+        h.decodeByteArray = env->GetStaticMethodID(
+            factoryClass,
+            "decodeByteArray",
+            "([BIILandroid/graphics/BitmapFactory$Options;)"
+            "Landroid/graphics/Bitmap;");
+        if (!argb8888 || !h.optionsCtor || !h.inPreferredConfig ||
+            !h.inMutable || !h.decodeByteArray ||
+            clearPendingJniException(env, "Bitmap JNI member lookup")) {
+            env->DeleteLocalRef(configClass);
+            env->DeleteLocalRef(optionsClass);
+            env->DeleteLocalRef(factoryClass);
+            if (argb8888) env->DeleteLocalRef(argb8888);
+            return h;
+        }
+        h.optionsClass =
+            static_cast<jclass>(env->NewGlobalRef(optionsClass));
+        h.bitmapFactoryClass =
+            static_cast<jclass>(env->NewGlobalRef(factoryClass));
+        h.argb8888 = env->NewGlobalRef(argb8888);
+        env->DeleteLocalRef(configClass);
+        env->DeleteLocalRef(optionsClass);
+        env->DeleteLocalRef(factoryClass);
+        env->DeleteLocalRef(argb8888);
+        h.valid = h.optionsClass && h.bitmapFactoryClass && h.argb8888;
+        return h;
+    }();
+    return handles;
+}
+
+} // namespace
+
 std::unique_ptr<DecodedImage> AndroidPlatformBridge::decodeImage(
     const uint8_t* data, size_t len) {
     // 使用 Android BitmapFactory 解码为 ARGB_8888，再显式拷贝为 RGBA8。
-    JNIEnv* env = getJniEnv();
-    if (!env) { detachJni(); return nullptr; }
-
-    // 将 C++ 数据转为 Java byte[]
-    jbyteArray byteArray = env->NewByteArray(static_cast<jsize>(len));
-    env->SetByteArrayRegion(byteArray, 0, static_cast<jsize>(len),
-                            reinterpret_cast<const jbyte*>(data));
-
-    jclass configClass = env->FindClass("android/graphics/Bitmap$Config");
-    jfieldID argb8888Field = env->GetStaticFieldID(
-        configClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
-    jobject argb8888 = env->GetStaticObjectField(configClass, argb8888Field);
-
-    jclass optionsClass = env->FindClass("android/graphics/BitmapFactory$Options");
-    jmethodID optionsCtor = env->GetMethodID(optionsClass, "<init>", "()V");
-    jobject options = env->NewObject(optionsClass, optionsCtor);
-    jfieldID inPreferredConfig = env->GetFieldID(
-        optionsClass, "inPreferredConfig", "Landroid/graphics/Bitmap$Config;");
-    jfieldID inMutable = env->GetFieldID(optionsClass, "inMutable", "Z");
-    env->SetObjectField(options, inPreferredConfig, argb8888);
-    env->SetBooleanField(options, inMutable, JNI_TRUE);
-
-    if (clearPendingJniException(env, "BitmapFactory.Options setup")) {
-        env->DeleteLocalRef(byteArray);
-        if (options) env->DeleteLocalRef(options);
-        if (optionsClass) env->DeleteLocalRef(optionsClass);
-        if (argb8888) env->DeleteLocalRef(argb8888);
-        if (configClass) env->DeleteLocalRef(configClass);
-        detachJni();
+    // env 为线程生命周期 attach(见 getThreadJniEnv),本函数不再 detach。
+    JNIEnv* env = getThreadJniEnv();
+    if (!env) return nullptr;
+    const BitmapJniHandles& jni = bitmapJniHandles(env);
+    if (!jni.valid) {
+        LOGE("Bitmap JNI handles unavailable");
         return nullptr;
     }
 
+    // 将 C++ 数据转为 Java byte[]
+    jbyteArray byteArray = env->NewByteArray(static_cast<jsize>(len));
+    if (!byteArray) {
+        clearPendingJniException(env, "NewByteArray");
+        return nullptr;
+    }
+    env->SetByteArrayRegion(byteArray, 0, static_cast<jsize>(len),
+                            reinterpret_cast<const jbyte*>(data));
+
+    jobject options = env->NewObject(jni.optionsClass, jni.optionsCtor);
+    if (!options || clearPendingJniException(env, "BitmapFactory.Options setup")) {
+        env->DeleteLocalRef(byteArray);
+        if (options) env->DeleteLocalRef(options);
+        return nullptr;
+    }
+    env->SetObjectField(options, jni.inPreferredConfig, jni.argb8888);
+    env->SetBooleanField(options, jni.inMutable, JNI_TRUE);
+
     // BitmapFactory.decodeByteArray(data, offset, length, options)
-    jclass bmpFactoryClass = env->FindClass("android/graphics/BitmapFactory");
-    jmethodID decodeMethod = env->GetStaticMethodID(
-        bmpFactoryClass, "decodeByteArray",
-        "([BIILandroid/graphics/BitmapFactory$Options;)Landroid/graphics/Bitmap;");
     jobject bitmap = env->CallStaticObjectMethod(
-        bmpFactoryClass, decodeMethod, byteArray, 0, static_cast<jint>(len), options);
+        jni.bitmapFactoryClass,
+        jni.decodeByteArray,
+        byteArray,
+        0,
+        static_cast<jint>(len),
+        options);
     env->DeleteLocalRef(byteArray);
-    env->DeleteLocalRef(bmpFactoryClass);
     env->DeleteLocalRef(options);
-    env->DeleteLocalRef(optionsClass);
-    env->DeleteLocalRef(argb8888);
-    env->DeleteLocalRef(configClass);
 
     if (!bitmap || clearPendingJniException(env, "BitmapFactory.decode")) {
         LOGE("BitmapFactory failed to decode %zu bytes", len);
-        detachJni();
+        if (bitmap) env->DeleteLocalRef(bitmap);
         return nullptr;
     }
 
@@ -353,14 +433,12 @@ std::unique_ptr<DecodedImage> AndroidPlatformBridge::decodeImage(
         info.width == 0 || info.height == 0) {
         LOGE("AndroidBitmap_getInfo failed");
         env->DeleteLocalRef(bitmap);
-        detachJni();
         return nullptr;
     }
 
     if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) {
         LOGE("Unsupported bitmap format %u for decoded image", info.format);
         env->DeleteLocalRef(bitmap);
-        detachJni();
         return nullptr;
     }
 
@@ -369,7 +447,6 @@ std::unique_ptr<DecodedImage> AndroidPlatformBridge::decodeImage(
         !pixels) {
         LOGE("AndroidBitmap_lockPixels failed");
         env->DeleteLocalRef(bitmap);
-        detachJni();
         return nullptr;
     }
 
@@ -380,16 +457,20 @@ std::unique_ptr<DecodedImage> AndroidPlatformBridge::decodeImage(
     img->pixels.resize(static_cast<size_t>(info.width * info.height * 4));
 
     const auto* src = static_cast<const uint8_t*>(pixels);
-    for (uint32_t y = 0; y < info.height; ++y) {
-        const uint8_t* row = src + static_cast<size_t>(y) * info.stride;
-        auto dst = img->pixels.begin() +
-            static_cast<ptrdiff_t>(static_cast<size_t>(y) * info.width * 4);
-        std::copy(row, row + static_cast<size_t>(info.width) * 4, dst);
+    const size_t rowBytes = static_cast<size_t>(info.width) * 4;
+    if (info.stride == rowBytes) {
+        std::copy(src, src + rowBytes * info.height, img->pixels.begin());
+    } else {
+        for (uint32_t y = 0; y < info.height; ++y) {
+            const uint8_t* row = src + static_cast<size_t>(y) * info.stride;
+            auto dst = img->pixels.begin() +
+                static_cast<ptrdiff_t>(static_cast<size_t>(y) * rowBytes);
+            std::copy(row, row + rowBytes, dst);
+        }
     }
 
     AndroidBitmap_unlockPixels(env, bitmap);
     env->DeleteLocalRef(bitmap);
-    detachJni();
 
     LOGI("Decoded image %dx%d from %zu bytes", img->width, img->height, len);
     return img;

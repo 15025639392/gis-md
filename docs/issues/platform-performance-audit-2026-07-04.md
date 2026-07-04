@@ -1,7 +1,7 @@
 # 平台层架构与策略性能审计（2026-07-04）
 
 **分支**：`codex/surface-instancing-gpu-batch`
-**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P1-7/8/10、P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分。P1-4/5/6(Metal 帧调度三件套)修于 2026-07-04 深夜:drawable 超时+in-flight 信号量+updateBuffer orphan+mipmap blit,MTL_DEBUG_LAYER 0 错误、140/140、macOS 截图与基线一致;顺带完成 P2-20 的"drawable 存 Impl 成员"部分。
+**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P1-10、P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分。P1-7/8(网络与解码链路)亦修于同晚:HttpCache shared_ptr 零拷贝+字节预算+put 移出网络线程;Android JNI 句柄缓存+线程生命周期 attach(修无条件 Detach 正确性隐患),真机 343 次解码零异常、截图与基线一致。P1-4/5/6(Metal 帧调度三件套)修于 2026-07-04 深夜:drawable 超时+in-flight 信号量+updateBuffer orphan+mipmap blit,MTL_DEBUG_LAYER 0 错误、140/140、macOS 截图与基线一致;顺带完成 P2-20 的"drawable 存 Impl 成员"部分。
 **方法**：四路并行只读审计（GLES 后端 / Metal 后端 / 网络桥接层 / 帧循环与上传策略层），交叉核对后合并。
 **范围**：`platform/`（RenderDeviceGLES、RenderDeviceMetal、CurlMultiRequestScheduler、Android/iOS/Mac 桥）+ 与平台层耦合的中层（RenderCommand 契约、SceneRenderPipeline、上传预算/节流策略、HttpCache）。
 **不含**：已修项（相机高空早退、budget lane 涓流、节流令牌、touchInertia、glFlush 移除、GLES sampler 压缩等，见 MEMORY）；低空高度查询 O(瓦片×三角形) 为已知 TODO 未重复。
@@ -54,8 +54,8 @@
 - ✅[已修复 2026-07-04] **P1-6 Metal mipmap 从未生成**（RenderDeviceMetal.mm:176-195）：按 mip 链分配（显存+33%）+ 三线性采样，但无任何 generateMipmaps blit——GLES 有（RenderDeviceGLES.cpp:215），Metal 漏实现。缩小采样读未初始化 mip（正确性）。修复：createTexture 上传 level 0 后 blit generateMipmaps，语义与 GLES 对齐（仅 create-with-data 生成；影像瓦片纹理均为 create-with-data，覆盖热路径）。
 
 ### 网络桥
-- **P1-7 HttpCache 全局单锁 + 锁内整 body 深拷贝 + 在唯一网络线程执行 put**（HttpCache.h:62-91、171-178；GltfContentProvider.cpp:2283）：命中锁内整拷 body；put 全链拷 3 次；每瓦片 ~3×75KB 拷贝串在 curl 线程上头部阻塞后续传输。附带：容量按条数（2000）不按字节 ≈150MB+ 内存风险。修复：map 存 shared_ptr 零拷贝返回、put 全链 move、写入移出网络线程、加字节预算。
-- **P1-8 Android decodeImage 每瓦片 JNI 全税**（AndroidPlatformBridge.cpp:296-396）：每张图 AttachCurrentThread/**无条件 Detach**（若线程本已 attached 会被摘下，正确性隐患）+ 10+ 次 FindClass/GetMethodID 无缓存 + 3 次大拷贝 + Java 堆 Bitmap 无 inBitmap 复用（持续 GC 源）。修复：缓存 jclass/jmethodID + 线程生命周期 attach；或 native 解码（libjpeg-turbo/stb）绕开 JNI。
+- ✅[已修复 2026-07-04] **P1-7 HttpCache 全局单锁 + 锁内整 body 深拷贝 + 在唯一网络线程执行 put**（HttpCache.h:62-91、171-178；GltfContentProvider.cpp:2283）：命中锁内整拷 body；put 全链拷 3 次；每瓦片 ~3×75KB 拷贝串在 curl 线程上头部阻塞后续传输。附带：容量按条数（2000）不按字节 ≈150MB+ 内存风险。修复：条目存 shared_ptr<const CachedResponse>（命中零拷贝、锁内零分配）、put 全链 move、persistAsync 捕获同一 shared_ptr、加 128MB 字节预算双限；requestBodyAsync 的 put 挪到池线程并与解码共享同一份 body。新增 test_http_cache 锁语义（共享存储/字节记账/LRU/过期）。
+- ✅[已修复 2026-07-04] **P1-8 Android decodeImage 每瓦片 JNI 全税**（AndroidPlatformBridge.cpp:296-396）：每张图 AttachCurrentThread/**无条件 Detach**（若线程本已 attached 会被摘下，正确性隐患）+ 10+ 次 FindClass/GetMethodID 无缓存 + 3 次大拷贝。修复：jclass/jmethodID/枚举常量一次性解析缓存（global ref，magic static）+ 线程生命周期 attach（pthread key 析构 detach，已附着线程绝不摘）+ 无 padding 时整块拷贝。真机 343 次解码零 JNI 异常。未做（幅度需 profile 再定）：Java Bitmap inBitmap 复用池、native 解码（libjpeg-turbo）。
 
 ### 策略层
 - ✅[已修复 b77e5e701] **P1-9 上传预算计数制、时间闸门出厂即关**（Tileset.h:72 `mainThreadLoadingTimeLimit=0.0` → FrameResourceBudget `mainThreadTimeExpired()` 恒 false；TileFrameResourceBudgetPlanner.h:111-121）：相机静止 1.25s 后 smoothing 关闭，一帧允许 20 次同步 finalize + 20 次 raster 上传，**瓦片批量到达正好落在无节流窗口 → 静止帧尖峰**（与已修的"交互卡顿"互补的另一半）。且全部 lane 的 `estimatedCostUnits=1`：1024² mipmap 纹理与 4KB mesh 同价。修复：时间预算默认开（cesium 用 8ms）+ 按字节/像素加权，计数为兜底。

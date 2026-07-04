@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <ctime>
 #include <list>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -30,64 +31,88 @@ struct CachedResponse {
 
 /// Thread-safe LRU cache for HTTP responses with expiry and pruning.
 /// Enhanced to match cesium-native CachingAssetAccessor capabilities.
+///
+/// P1-7:条目存 shared_ptr<const CachedResponse>——命中直接返回共享引用
+/// (零拷贝、锁内零分配),put 全链 move,持久化任务捕获同一 shared_ptr。
+/// 容量双限:条数 + body 字节预算(旧实现 2000 条×75KB ≈ 150MB 无上限)。
 class HttpCache {
 public:
-    explicit HttpCache(size_t maxEntries = 2000)
-        : maxEntries_(maxEntries) {}
+    static constexpr size_t kDefaultMaxBodyBytes = 128ull * 1024 * 1024;
+
+    explicit HttpCache(size_t maxEntries = 2000,
+                       size_t maxBodyBytes = kDefaultMaxBodyBytes)
+        : maxEntries_(maxEntries), maxBodyBytes_(maxBodyBytes) {}
 
     // --- Backward-compat body-only API (returns raw bytes) ---
 
-    /// @deprecated Use get() for full response or getBody() explicitly.
+    /// @deprecated Use getResponse() to share the cached body without a copy.
     std::vector<uint8_t> get(const std::string& url) {
         auto resp = getResponse(url);
         return resp ? resp->body : std::vector<uint8_t>{};
     }
 
-    /// @deprecated Use put(url, CachedResponse) for full response.
+    /// @deprecated Use put(url, std::move(data)) or putResponse().
     void put(const std::string& url, const std::vector<uint8_t>& data) {
         CachedResponse resp;
         resp.body = data;
-        putResponse(url, resp);
+        putResponse(url,
+                    std::make_shared<const CachedResponse>(std::move(resp)));
     }
 
     void put(const std::string& url, std::vector<uint8_t>&& data) {
         CachedResponse resp;
         resp.body = std::move(data);
-        putResponse(url, resp);
+        putResponse(url,
+                    std::make_shared<const CachedResponse>(std::move(resp)));
     }
 
     // --- Full response API ---
 
     /// Get cached response. Returns nullptr if not cached or expired.
+    /// The returned pointer shares storage with the cache entry — no copy.
     std::shared_ptr<const CachedResponse> getResponse(const std::string& url) {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = map_.find(url);
         if (it == map_.end()) return nullptr;
-        if (it->second.response.isExpired()) {
-            map_.erase(it);
-            lruMap_.erase(url);
+        if (it->second.response->isExpired()) {
+            eraseLocked(it);
             return nullptr;
         }
         touch(url);
-        return std::make_shared<const CachedResponse>(it->second.response);
+        return it->second.response;
     }
 
-    /// Store response in cache.
+    /// Store response in cache (copies once into shared storage).
     void putResponse(const std::string& url, const CachedResponse& response) {
+        putResponse(url, std::make_shared<const CachedResponse>(response));
+    }
+
+    /// Store an already-shared response — zero copy; the persistence task
+    /// captures the same shared_ptr.
+    void putResponse(const std::string& url,
+                     std::shared_ptr<const CachedResponse> response) {
+        if (!response) return;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = map_.find(url);
             if (it != map_.end()) {
+                currentBodyBytes_ -= it->second.response->body.size();
+                currentBodyBytes_ += response->body.size();
                 it->second.response = response;
                 touch(url);
-                return;
+            } else {
+                lru_.push_front(url);
+                lruMap_[url] = lru_.begin();
+                currentBodyBytes_ += response->body.size();
+                map_[url] = Entry{response, lru_.begin()};
             }
-            if (map_.size() >= maxEntries_) evictOne();
-            lru_.push_front(url);
-            lruMap_[url] = lru_.begin();
-            map_[url] = Entry{response, lru_.begin()};
+            while ((map_.size() > maxEntries_ ||
+                    currentBodyBytes_ > maxBodyBytes_) &&
+                   !lru_.empty()) {
+                evictOne();
+            }
         }
-        persistAsync(url, response.body);
+        persistAsync(url, std::move(response));
     }
 
     /// Remove a single entry.
@@ -95,8 +120,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = map_.find(url);
         if (it != map_.end()) {
-            lruMap_.erase(url);
-            map_.erase(it);
+            eraseLocked(it);
         }
     }
 
@@ -106,8 +130,10 @@ public:
         size_t count = 0;
         auto it = map_.begin();
         while (it != map_.end()) {
-            if (it->second.response.isExpired()) {
+            if (it->second.response->isExpired()) {
+                currentBodyBytes_ -= it->second.response->body.size();
                 lruMap_.erase(it->first);
+                lru_.erase(it->second.lruIt);
                 it = map_.erase(it);
                 ++count;
             } else {
@@ -123,6 +149,7 @@ public:
         map_.clear();
         lru_.clear();
         lruMap_.clear();
+        currentBodyBytes_ = 0;
     }
 
     /// Check if URL is cached and not expired.
@@ -130,9 +157,8 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = map_.find(url);
         if (it == map_.end()) return false;
-        if (it->second.response.isExpired()) {
-            map_.erase(it);
-            lruMap_.erase(url);
+        if (it->second.response->isExpired()) {
+            eraseLocked(it);
             return false;
         }
         return true;
@@ -140,6 +166,9 @@ public:
 
     /// Number of entries.
     size_t size() const { return map_.size(); }
+
+    /// Total cached body bytes (approximate, headers excluded).
+    size_t bodyBytes() const { return currentBodyBytes_; }
 
     /// Singleton for global use.
     static HttpCache& shared() {
@@ -151,6 +180,11 @@ public:
     size_t maxEntries() const { return maxEntries_; }
 
 private:
+    struct Entry {
+        std::shared_ptr<const CachedResponse> response;
+        std::list<std::string>::iterator lruIt;
+    };
+
     void touch(const std::string& url) {
         auto lruIt = lruMap_.find(url);
         if (lruIt != lruMap_.end()) {
@@ -160,30 +194,38 @@ private:
         }
     }
 
+    void eraseLocked(std::unordered_map<std::string, Entry>::iterator it) {
+        currentBodyBytes_ -= it->second.response->body.size();
+        lru_.erase(it->second.lruIt);
+        lruMap_.erase(it->first);
+        map_.erase(it);
+    }
+
     void evictOne() {
         if (lru_.empty()) return;
         std::string victim = lru_.back();
         lru_.pop_back();
         lruMap_.erase(victim);
-        map_.erase(victim);
-    }
-
-    void persistAsync(const std::string& url, const std::vector<uint8_t>& body) {
-        if (!PersistentCache::cacheDir().empty() && !body.empty()) {
-            std::string u = url;
-            std::vector<uint8_t> d = body;
-            AsyncSystem::pool().enqueue([u = std::move(u), d = std::move(d)] {
-                PersistentCache::save(u, d);
-            });
+        auto it = map_.find(victim);
+        if (it != map_.end()) {
+            currentBodyBytes_ -= it->second.response->body.size();
+            map_.erase(it);
         }
     }
 
-    struct Entry {
-        CachedResponse response;
-        std::list<std::string>::iterator lruIt;
-    };
+    void persistAsync(const std::string& url,
+                      std::shared_ptr<const CachedResponse> response) {
+        if (!PersistentCache::cacheDir().empty() && !response->body.empty()) {
+            AsyncSystem::pool().enqueue(
+                [u = url, response = std::move(response)] {
+                    PersistentCache::save(u, response->body);
+                });
+        }
+    }
 
     size_t maxEntries_;
+    size_t maxBodyBytes_;
+    size_t currentBodyBytes_ = 0;
     std::mutex mutex_;
     std::list<std::string> lru_;
     std::unordered_map<std::string, std::list<std::string>::iterator> lruMap_;

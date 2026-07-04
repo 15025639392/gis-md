@@ -2280,23 +2280,31 @@ void requestBodyAsync(
                 return;
             }
 
-            HttpCache::shared().put(url, body);
-            auto bodyPtr =
-                std::make_shared<std::vector<uint8_t>>(std::move(body));
+            // body 一次 move 进共享响应:缓存写入挪到池线程(不再占用唯一
+            // 网络线程),且与解码消费同一份存储——put/decode 全程零拷贝
+            // (P1-7)。
+            CachedResponse cacheEntry;
+            cacheEntry.body = std::move(body);
+            auto responsePtr = std::make_shared<const CachedResponse>(
+                std::move(cacheEntry));
             AsyncSystem::pool().enqueue(
                 [key,
+                 url,
                  tokenPtr,
                  callbackPtr,
                  decodePtr,
-                 bodyPtr,
+                 responsePtr,
                  &requestsCompleted]() mutable {
                     ContentRequestCompletionGuard completion{
                         requestsCompleted};
+                    // 取消也照常入缓存:字节已经下载,复用是净收益(与旧行为
+                    // 一致——旧实现在网络线程上无条件 put)。
+                    HttpCache::shared().putResponse(url, responsePtr);
                     if (tokenPtr->isCancelled()) {
                         (*callbackPtr)(key, TileContentLoadResult::cancelled());
                         return;
                     }
-                    (*callbackPtr)(key, (*decodePtr)(*bodyPtr));
+                    (*callbackPtr)(key, (*decodePtr)(responsePtr->body));
                 });
         };
 
