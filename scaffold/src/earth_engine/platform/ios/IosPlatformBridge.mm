@@ -20,6 +20,7 @@ namespace earth_engine {
 class IosHttpRequest final : public HttpRequest {
 public:
     explicit IosHttpRequest(NSURLSessionDataTask* task) : task_(task) {}
+    ~IosHttpRequest() override { cancel(); }
     void cancel() override {
         if (task_) {
             [task_ cancel];
@@ -55,6 +56,9 @@ std::unique_ptr<HttpRequest> IosPlatformBridge::get(
     const std::string& url,
     std::function<void(int, std::vector<uint8_t>)> callback,
     HttpRequestOptions options) {
+    // 调用线程是引擎裸 std::thread（无外层池），不包池则 autoreleased
+    // 临时对象随线程生命周期无限累积
+    @autoreleasepool {
 
     NSString* nsUrl = [NSString stringWithUTF8String:url.c_str()];
     NSURL* requestUrl = [NSURL URLWithString:nsUrl];
@@ -100,28 +104,36 @@ std::unique_ptr<HttpRequest> IosPlatformBridge::get(
 
     [task resume];
     return std::make_unique<IosHttpRequest>(task);
+
+    } // @autoreleasepool
 }
 
 std::string IosPlatformBridge::cacheDirectory() const {
-    NSArray* paths = NSSearchPathForDirectoriesInDomains(
-        NSCachesDirectory, NSUserDomainMask, YES);
-    if (paths.count > 0) {
-        return [paths[0] UTF8String];
+    @autoreleasepool {
+        NSArray* paths = NSSearchPathForDirectoriesInDomains(
+            NSCachesDirectory, NSUserDomainMask, YES);
+        if (paths.count > 0) {
+            return [paths[0] UTF8String];
+        }
+        return "/tmp";
     }
-    return "/tmp";
 }
 
 std::string IosPlatformBridge::documentsDirectory() const {
-    NSArray* paths = NSSearchPathForDirectoriesInDomains(
-        NSDocumentDirectory, NSUserDomainMask, YES);
-    if (paths.count > 0) {
-        return [paths[0] UTF8String];
+    @autoreleasepool {
+        NSArray* paths = NSSearchPathForDirectoriesInDomains(
+            NSDocumentDirectory, NSUserDomainMask, YES);
+        if (paths.count > 0) {
+            return [paths[0] UTF8String];
+        }
+        return "/tmp";
     }
-    return "/tmp";
 }
 
 std::unique_ptr<DecodedImage> IosPlatformBridge::decodeImage(
     const uint8_t* data, size_t len) {
+    // 线程池逐瓦片调用，无池则每次解码的 autoreleased 对象永不释放
+    @autoreleasepool {
 
     NSData* nsData = [NSData dataWithBytes:data length:len];
     CGImageSourceRef src = CGImageSourceCreateWithData(
@@ -159,6 +171,8 @@ std::unique_ptr<DecodedImage> IosPlatformBridge::decodeImage(
     CGImageRelease(cgImage);
 
     return image;
+
+    } // @autoreleasepool
 }
 
 void IosPlatformBridge::log(LogLevel, const std::string& tag,
@@ -167,41 +181,45 @@ void IosPlatformBridge::log(LogLevel, const std::string& tag,
 }
 
 DeviceInfo IosPlatformBridge::deviceInfo() const {
-    DeviceInfo info;
-    info.platform = "iOS";
-    info.model = UIDevice.currentDevice.model.UTF8String ?: "iOS";
-    info.osVersion = UIDevice.currentDevice.systemVersion.UTF8String ?: "";
-    info.screenDensity = static_cast<float>(UIScreen.mainScreen.scale);
-    info.screenWidthPx = static_cast<int>(
-        UIScreen.mainScreen.bounds.size.width * UIScreen.mainScreen.scale);
-    info.screenHeightPx = static_cast<int>(
-        UIScreen.mainScreen.bounds.size.height * UIScreen.mainScreen.scale);
-    info.cpuCores = static_cast<int>([NSProcessInfo processInfo].processorCount);
-    info.totalMemoryBytes =
-        static_cast<int64_t>([NSProcessInfo processInfo].physicalMemory);
-    return info;
+    @autoreleasepool {
+        DeviceInfo info;
+        info.platform = "iOS";
+        info.model = UIDevice.currentDevice.model.UTF8String ?: "iOS";
+        info.osVersion = UIDevice.currentDevice.systemVersion.UTF8String ?: "";
+        info.screenDensity = static_cast<float>(UIScreen.mainScreen.scale);
+        info.screenWidthPx = static_cast<int>(
+            UIScreen.mainScreen.bounds.size.width * UIScreen.mainScreen.scale);
+        info.screenHeightPx = static_cast<int>(
+            UIScreen.mainScreen.bounds.size.height * UIScreen.mainScreen.scale);
+        info.cpuCores = static_cast<int>([NSProcessInfo processInfo].processorCount);
+        info.totalMemoryBytes =
+            static_cast<int64_t>([NSProcessInfo processInfo].physicalMemory);
+        return info;
+    }
 }
 
 std::string IosPlatformBridge::getToken(const std::string& providerId) const {
-    NSString* service = [NSString stringWithFormat:
-        @"com.earthengine.provider.%@",
-        [NSString stringWithUTF8String:providerId.c_str()]];
+    @autoreleasepool {
+        NSString* service = [NSString stringWithFormat:
+            @"com.earthengine.provider.%@",
+            [NSString stringWithUTF8String:providerId.c_str()]];
 
-    NSDictionary* query = @{
-        (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecAttrService : service,
-        (__bridge id)kSecReturnData : @YES,
-        (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitOne
-    };
+        NSDictionary* query = @{
+            (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrService : service,
+            (__bridge id)kSecReturnData : @YES,
+            (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitOne
+        };
 
-    CFTypeRef result = nil;
-    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query,
-                                          &result);
-    if (status == errSecSuccess && result) {
-        NSData* data = CFBridgingRelease(result);
-        return std::string((const char*)data.bytes, data.length);
+        CFTypeRef result = nil;
+        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query,
+                                              &result);
+        if (status == errSecSuccess && result) {
+            NSData* data = CFBridgingRelease(result);
+            return std::string((const char*)data.bytes, data.length);
+        }
+        return "";
     }
-    return "";
 }
 
 } // namespace earth_engine
