@@ -562,15 +562,16 @@ void runGoldenDiffScenario(const ScenarioSpec& scenario) {
         }
     }
 
+    // golden 已全量入库（s1-s4.trace），缺失即基建回归（宏丢失/目录移动/
+    // 误删），必须硬失败——SKIP 会被普通 add_test 当作通过
     const std::filesystem::path goldenPath =
         std::filesystem::path(SELECTOR_DIFF_GOLDEN_DIR) /
         (scenario.name + ".trace");
-    if (std::string(SELECTOR_DIFF_GOLDEN_DIR).empty() ||
-        !std::filesystem::exists(goldenPath)) {
-        GTEST_SKIP() << "golden 未生成（" << goldenPath.string()
-                     << " 不存在），跳过对拍；cesium 侧生成器提交 golden "
-                        "后本测试自动生效";
-    }
+    ASSERT_FALSE(std::string(SELECTOR_DIFF_GOLDEN_DIR).empty())
+        << "SELECTOR_DIFF_GOLDEN_DIR 未注入（tests/CMakeLists.txt 编译定义丢失）";
+    ASSERT_TRUE(std::filesystem::exists(goldenPath))
+        << "golden 缺失: " << goldenPath.string()
+        << "；如需重生成见 tools/selector_diff/cesium_golden_gen";
 
     std::ifstream golden(goldenPath, std::ios::binary);
     ASSERT_TRUE(golden.is_open()) << "无法读 golden: " << goldenPath.string();
