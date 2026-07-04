@@ -3,6 +3,7 @@
 #include "TileLoadPriorityPolicy.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace earth_engine {
 
@@ -16,49 +17,49 @@ FrameResourceLane uploadLaneForDomain(TileLoadDomain domain) {
 
 } // namespace
 
+void TilePendingLoadQueue::IndexedLoads::insert(PendingTileLoad load) {
+    const PriorityKey key{load.group, load.priority};
+    std::string cacheKey = load.cacheKey;
+    auto it = ordered.emplace(key, std::move(load));
+    byKey[std::move(cacheKey)] = it;
+}
+
+void TilePendingLoadQueue::IndexedLoads::eraseKey(
+    const std::string& cacheKey) {
+    auto indexIt = byKey.find(cacheKey);
+    if (indexIt == byKey.end()) {
+        return;
+    }
+    ordered.erase(indexIt->second);
+    byKey.erase(indexIt);
+}
+
+void TilePendingLoadQueue::IndexedLoads::clear() {
+    ordered.clear();
+    byKey.clear();
+}
+
 bool TilePendingLoadQueue::containsCacheKey(
     const std::string& cacheKey) const {
     if (cacheKey.empty()) {
         return false;
     }
-    if (uploadKeys_.count(cacheKey)) {
-        return true;
-    }
-    const auto uploadIt = std::find_if(
-        uploads_.begin(),
-        uploads_.end(),
-        [&cacheKey](const PendingTileLoad& load) {
-            return load.cacheKey == cacheKey;
-        });
-    if (uploadIt != uploads_.end()) {
-        return true;
-    }
-    const auto terminalIt = std::find_if(
-        terminalResults_.begin(),
-        terminalResults_.end(),
-        [&cacheKey](const PendingTileLoad& load) {
-            return load.cacheKey == cacheKey;
-        });
-    return terminalIt != terminalResults_.end();
+    return uploadKeys_.count(cacheKey) > 0 ||
+           uploads_.byKey.count(cacheKey) > 0 ||
+           terminalResults_.byKey.count(cacheKey) > 0;
 }
 
 void TilePendingLoadQueue::addUpload(PendingTileLoad upload) {
     if (upload.cacheKey.empty()) {
         return;
     }
-    const auto terminalIt = std::find_if(
-        terminalResults_.begin(),
-        terminalResults_.end(),
-        [&upload](const PendingTileLoad& pending) {
-            return pending.cacheKey == upload.cacheKey;
-        });
-    if (terminalIt != terminalResults_.end()) {
+    if (terminalResults_.byKey.count(upload.cacheKey)) {
         return;
     }
     if (!uploadKeys_.insert(upload.cacheKey).second) {
         return;
     }
-    uploads_.push_back(std::move(upload));
+    uploads_.insert(std::move(upload));
 }
 
 void TilePendingLoadQueue::addTerminalResult(PendingTileLoad result) {
@@ -68,16 +69,10 @@ void TilePendingLoadQueue::addTerminalResult(PendingTileLoad result) {
     if (uploadKeys_.count(result.cacheKey)) {
         return;
     }
-    const auto existingIt = std::find_if(
-        terminalResults_.begin(),
-        terminalResults_.end(),
-        [&result](const PendingTileLoad& pending) {
-            return pending.cacheKey == result.cacheKey;
-        });
-    if (existingIt != terminalResults_.end()) {
+    if (terminalResults_.byKey.count(result.cacheKey)) {
         return;
     }
-    terminalResults_.push_back(std::move(result));
+    terminalResults_.insert(std::move(result));
 }
 
 void TilePendingLoadQueue::eraseUploadKey(
@@ -87,22 +82,8 @@ void TilePendingLoadQueue::eraseUploadKey(
 
 void TilePendingLoadQueue::eraseCacheKey(const std::string& cacheKey) {
     uploadKeys_.erase(cacheKey);
-    uploads_.erase(
-        std::remove_if(
-            uploads_.begin(),
-            uploads_.end(),
-            [&cacheKey](const PendingTileLoad& load) {
-                return load.cacheKey == cacheKey;
-            }),
-        uploads_.end());
-    terminalResults_.erase(
-        std::remove_if(
-            terminalResults_.begin(),
-            terminalResults_.end(),
-            [&cacheKey](const PendingTileLoad& load) {
-                return load.cacheKey == cacheKey;
-            }),
-        terminalResults_.end());
+    uploads_.eraseKey(cacheKey);
+    terminalResults_.eraseKey(cacheKey);
 }
 
 void TilePendingLoadQueue::clear() {
@@ -113,82 +94,68 @@ void TilePendingLoadQueue::clear() {
 
 bool TilePendingLoadQueue::hasWork() const {
     return !uploadKeys_.empty() ||
-           !uploads_.empty() ||
-           !terminalResults_.empty();
+           !uploads_.ordered.empty() ||
+           !terminalResults_.ordered.empty();
 }
 
 size_t TilePendingLoadQueue::uploadCount() const {
-    return uploads_.size();
+    return uploads_.ordered.size();
 }
 
 size_t TilePendingLoadQueue::terminalResultCount() const {
-    return terminalResults_.size();
+    return terminalResults_.ordered.size();
 }
 
 size_t TilePendingLoadQueue::gltfTerrainUploadCount() const {
-    return countDomain(uploads_, TileLoadDomain::TerrainContent);
+    return countDomain(uploads_.ordered, TileLoadDomain::TerrainContent);
 }
 
 size_t TilePendingLoadQueue::gltfTerrainTerminalResultCount() const {
-    return countDomain(terminalResults_, TileLoadDomain::TerrainContent);
+    return countDomain(terminalResults_.ordered,
+                       TileLoadDomain::TerrainContent);
 }
 
 size_t TilePendingLoadQueue::contentUploadCount() const {
-    return countDomain(uploads_, TileLoadDomain::Content);
+    return countDomain(uploads_.ordered, TileLoadDomain::Content);
 }
 
 size_t TilePendingLoadQueue::contentTerminalResultCount() const {
-    return countDomain(terminalResults_, TileLoadDomain::Content);
+    return countDomain(terminalResults_.ordered, TileLoadDomain::Content);
 }
 
 std::optional<PendingTileLoad>
 TilePendingLoadQueue::takeHighestPriorityTerminalResult(
     FrameResourceBudget& budget) {
-    if (terminalResults_.empty()) {
+    if (terminalResults_.ordered.empty()) {
         return std::nullopt;
     }
-    auto bestIt = TileLoadPriorityPolicy::selectHighestPriority(
-        terminalResults_.begin(),
-        terminalResults_.end());
+    auto bestIt = terminalResults_.ordered.begin();
     if (!budget.tryFinalize(
             FrameResourceLane::TerminalState,
-            TileLoadPriorityPolicy::toFramePriority(bestIt->group))) {
+            TileLoadPriorityPolicy::toFramePriority(bestIt->first.group))) {
         return std::nullopt;
     }
-    std::optional<PendingTileLoad> result{std::move(*bestIt)};
-    terminalResults_.erase(bestIt);
-    return result;
+    return take(terminalResults_, bestIt);
 }
 
 std::optional<PendingTileLoad>
 TilePendingLoadQueue::takeHighestPriorityUpload(
     PendingLoadFinalizeContext context) {
-    auto bestIt = uploads_.end();
-    for (auto it = uploads_.begin(); it != uploads_.end(); ++it) {
-        if (context.interactionActive &&
-            it->group != TileLoadPriorityGroup::Urgent) {
-            continue;
-        }
-        if (bestIt == uploads_.end() ||
-            TileLoadPriorityPolicy::hasHigherPriority(
-                it->group,
-                it->priority,
-                bestIt->group,
-                bestIt->priority)) {
-            bestIt = it;
-        }
+    if (uploads_.ordered.empty()) {
+        return std::nullopt;
     }
-    if (bestIt == uploads_.end()) {
+    // Urgent 组排序在最前:交互期若队首都不是 Urgent,则全队列皆非。
+    auto bestIt = uploads_.ordered.begin();
+    if (context.interactionActive &&
+        bestIt->first.group != TileLoadPriorityGroup::Urgent) {
         return std::nullopt;
     }
     if (!context.budget.tryFinalize(
-            uploadLaneForDomain(bestIt->domain),
-            TileLoadPriorityPolicy::toFramePriority(bestIt->group))) {
+            uploadLaneForDomain(bestIt->second.domain),
+            TileLoadPriorityPolicy::toFramePriority(bestIt->first.group))) {
         return std::nullopt;
     }
-    std::optional<PendingTileLoad> upload{std::move(*bestIt)};
-    uploads_.erase(bestIt);
-    return upload;
+    return take(uploads_, bestIt);
 }
 
 std::optional<PendingTileLoad>
@@ -200,14 +167,23 @@ TilePendingLoadQueue::takeHighestPriorityUpload(
 }
 
 size_t TilePendingLoadQueue::countDomain(
-    const std::deque<PendingTileLoad>& loads,
+    const OrderedLoads& loads,
     TileLoadDomain domain) {
     return static_cast<size_t>(std::count_if(
         loads.begin(),
         loads.end(),
-        [domain](const PendingTileLoad& load) {
-            return load.domain == domain;
+        [domain](const OrderedLoads::value_type& entry) {
+            return entry.second.domain == domain;
         }));
+}
+
+std::optional<PendingTileLoad> TilePendingLoadQueue::take(
+    IndexedLoads& loads,
+    OrderedLoads::iterator it) {
+    std::optional<PendingTileLoad> result{std::move(it->second)};
+    loads.byKey.erase(result->cacheKey);
+    loads.ordered.erase(it);
+    return result;
 }
 
 } // namespace earth_engine

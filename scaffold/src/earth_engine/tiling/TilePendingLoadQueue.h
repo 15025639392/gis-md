@@ -4,9 +4,10 @@
 #include "../core/resources/FrameResourceBudget.h"
 
 #include <cstddef>
-#include <deque>
+#include <map>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace earth_engine {
@@ -16,6 +17,11 @@ struct PendingLoadFinalizeContext {
     FrameResourceBudget& budget;
 };
 
+/// P2-7:主线程每帧在 lifecycle 锁内按预算逐个取最高优先级项。旧实现每次
+/// 全队列线性扫描(积压数百时每帧数万次比较,持锁期间阻塞工作线程投递),
+/// 现改为按优先级排序的 multimap(取头 O(1)、增删 O(log N))+ cacheKey
+/// 哈希索引(contains/erase O(1))。等优先级项保持插入序,与旧线性扫描的
+/// "先入者优先"一致。
 class TilePendingLoadQueue {
 public:
     bool containsCacheKey(const std::string& cacheKey) const;
@@ -44,11 +50,37 @@ public:
         FrameResourceBudget& budget);
 
 private:
-    static size_t countDomain(const std::deque<PendingTileLoad>& loads,
+    // 排序键与 TileLoadPriorityPolicy::hasHigherPriority 一致:group 降序、
+    // 组内 priority 升序(值小者优先),begin() 即最高优先级。
+    struct PriorityKey {
+        TileLoadPriorityGroup group;
+        double priority;
+        bool operator<(const PriorityKey& rhs) const {
+            if (group != rhs.group) {
+                return static_cast<int>(group) > static_cast<int>(rhs.group);
+            }
+            return priority < rhs.priority;
+        }
+    };
+    using OrderedLoads = std::multimap<PriorityKey, PendingTileLoad>;
+
+    struct IndexedLoads {
+        OrderedLoads ordered;
+        std::unordered_map<std::string, OrderedLoads::iterator> byKey;
+
+        void insert(PendingTileLoad load);
+        void eraseKey(const std::string& cacheKey);
+        void clear();
+    };
+
+    static size_t countDomain(const OrderedLoads& loads,
                               TileLoadDomain domain);
+    static std::optional<PendingTileLoad> take(IndexedLoads& loads,
+                                               OrderedLoads::iterator it);
+
     std::unordered_set<std::string> uploadKeys_;
-    std::deque<PendingTileLoad> uploads_;
-    std::deque<PendingTileLoad> terminalResults_;
+    IndexedLoads uploads_;
+    IndexedLoads terminalResults_;
 };
 
 } // namespace earth_engine

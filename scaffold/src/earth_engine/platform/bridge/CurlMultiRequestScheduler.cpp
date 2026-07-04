@@ -312,8 +312,35 @@ private:
                pending[2].empty();
     }
 
-    std::shared_ptr<RequestState> popNextPendingLocked() {
-        for (size_t i = pending.size(); i > 0; --i) {
+    // P2-6:为 High 保留并发槽——低优先级预取不再占满全部槽位,让新视野
+    // 的 High 请求排队等完整轮转(cesium 每帧重排优先级的折衷替代)。
+    // High 桶只受总并发上限约束;非 High 只能占用 max - reserved 个槽。
+    static constexpr size_t kReservedUrgentSlots = 2;
+
+    std::shared_ptr<RequestState> popNextPendingGatedLocked() {
+        auto& urgentBucket =
+            pending[priorityBucket(HttpRequestPriority::High)];
+        if (!urgentBucket.empty()) {
+            auto request = urgentBucket.front();
+            urgentBucket.pop_front();
+            return request;
+        }
+
+        const size_t reserved = std::min(
+            kReservedUrgentSlots,
+            static_cast<size_t>(maximumActiveRequests) - 1);
+        size_t nonUrgentActive = 0;
+        for (const auto& entry : active) {
+            if (entry.second->priority != HttpRequestPriority::High) {
+                ++nonUrgentActive;
+            }
+        }
+        if (nonUrgentActive >=
+            static_cast<size_t>(maximumActiveRequests) - reserved) {
+            return nullptr;
+        }
+
+        for (size_t i = pending.size() - 1; i > 0; --i) {
             auto& bucket = pending[i - 1];
             if (bucket.empty()) {
                 continue;
@@ -398,16 +425,16 @@ private:
             {
                 std::lock_guard<std::mutex> lk(mutex);
                 if (stopping || active.size() >=
-                        static_cast<size_t>(maximumActiveRequests) ||
-                    pendingEmptyLocked()) {
+                        static_cast<size_t>(maximumActiveRequests)) {
                     return;
                 }
 
-                request = popNextPendingLocked();
+                request = popNextPendingGatedLocked();
             }
 
             if (!request) {
-                continue;
+                // 队列为空,或非 High 请求被保留槽门控(等在飞请求轮转)。
+                return;
             }
 
             if (request->cancelled.load(std::memory_order_acquire)) {

@@ -8,6 +8,8 @@
 #include "TileRasterOverlayDetailsDeriver.h"
 #include "TileLoadTypes.h"
 #include "TilesetTile.h"
+#include "../debug/PerfTimer.h"
+#include "../debug/PlatformLog.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -38,7 +40,19 @@ public:
 
     static std::optional<TileLoadResult> createLoadResult(
         TilesetTile& tile) {
+        // 口子A 插桩:clip 目前在主线程 TileLoadScheduler 内执行,单次
+        // 耗时是否值得 worker 化尚无数据——每次上采样记录一条,真机深
+        // 缩放跑一轮即可判断(见审计 P1-10 注记)。
+        const double clipStartMs = perf::nowMs();
         std::unique_ptr<GltfModel> childModel = createUpsampledModel(tile);
+        const double clipMs = perf::nowMs() - clipStartMs;
+        platformLog(LogLevel::Info, "EarthPerf",
+            "scope=Tileset.upsampleClip ms=%.3f tile=%d/%d/%d ok=%d",
+            clipMs,
+            tile.key.z,
+            tile.key.x,
+            tile.key.y,
+            childModel ? 1 : 0);
         if (!childModel) {
             return std::nullopt;
         }

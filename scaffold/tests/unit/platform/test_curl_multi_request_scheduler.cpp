@@ -296,6 +296,8 @@ TEST(CurlMultiRequestScheduler, StartsHighPriorityBeforeLowWhenSlotOpens) {
         maximumActiveRequests,
         CurlMultiRequestScheduler::kDefaultMaximumActiveRequests);
     EXPECT_EQ(maximumActiveRequests, 20);
+    // P2-6:非 High 只能占用 max-2 个槽(2 个保留给 High)。
+    const int nonUrgentCapacity = maximumActiveRequests - 2;
     for (int i = 0; i < maximumActiveRequests; ++i) {
         handles.push_back(scheduler.get(
             server.url("/hold/" + std::to_string(i)),
@@ -303,23 +305,61 @@ TEST(CurlMultiRequestScheduler, StartsHighPriorityBeforeLowWhenSlotOpens) {
             {HttpRequestPriority::Normal}));
     }
     ASSERT_TRUE(server.waitForSeenCount(
-        static_cast<size_t>(maximumActiveRequests),
+        static_cast<size_t>(nonUrgentCapacity),
         3s));
 
     handles.push_back(scheduler.get(
         server.url("/low"),
         [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
         {HttpRequestPriority::Low}));
+    // High 直接使用保留槽启动,无需等待任何在飞请求完成。
     handles.push_back(scheduler.get(
         server.url("/high"),
         [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
         {HttpRequestPriority::High}));
 
-    server.releaseOne();
     ASSERT_TRUE(server.waitForPath("/high", 3s));
     EXPECT_FALSE(server.hasSeen("/low"));
 
     server.releaseAll();
+    scheduler.shutdown();
+}
+
+TEST(CurlMultiRequestScheduler, ReservesSlotsForHighPriorityRequests) {
+    LocalHttpServer server;
+    // max=3,保留 min(2, max-1)=2 → 非 High 并发上限 1。
+    CurlMultiRequestScheduler scheduler(3);
+
+    std::vector<std::unique_ptr<HttpRequest>> handles;
+    handles.push_back(scheduler.get(
+        server.url("/hold/low0"),
+        [](int, std::vector<uint8_t>) {},
+        {HttpRequestPriority::Normal}));
+    ASSERT_TRUE(server.waitForPath("/hold/low0", 3s));
+
+    // 第二个非 High 被保留槽门控,不得启动。
+    handles.push_back(scheduler.get(
+        server.url("/hold/low1"),
+        [](int, std::vector<uint8_t>) {},
+        {HttpRequestPriority::Normal}));
+
+    // 两个 High 用满保留槽,与持槽的 low0 并发。
+    handles.push_back(scheduler.get(
+        server.url("/hold/high0"),
+        [](int, std::vector<uint8_t>) {},
+        {HttpRequestPriority::High}));
+    handles.push_back(scheduler.get(
+        server.url("/hold/high1"),
+        [](int, std::vector<uint8_t>) {},
+        {HttpRequestPriority::High}));
+    ASSERT_TRUE(server.waitForPath("/hold/high0", 3s));
+    ASSERT_TRUE(server.waitForPath("/hold/high1", 3s));
+    EXPECT_FALSE(server.hasSeen("/hold/low1"));
+
+    // 持槽请求释放后,被门控的 low1 不会被饿死。
+    server.releaseAll();
+    ASSERT_TRUE(server.waitForPath("/hold/low1", 3s));
+
     scheduler.shutdown();
 }
 
@@ -447,6 +487,8 @@ TEST(CurlMultiRequestScheduler, UsesConfiguredMaximumActiveRequests) {
 
     EXPECT_EQ(scheduler.maximumActiveRequests(), 2);
 
+    // max=2,保留 min(2, max-1)=1 → 非 High 并发上限 1,总并发上限 2
+    // (High 用满时)。
     std::vector<std::unique_ptr<HttpRequest>> handles;
     std::atomic<int> callbacks{0};
     for (int i = 0; i < 3; ++i) {
@@ -456,13 +498,28 @@ TEST(CurlMultiRequestScheduler, UsesConfiguredMaximumActiveRequests) {
             {HttpRequestPriority::Normal}));
     }
 
-    ASSERT_TRUE(server.waitForSeenCount(2, 3s));
+    ASSERT_TRUE(server.waitForSeenCount(1, 3s));
+    EXPECT_FALSE(server.hasSeen("/hold/1"));
     EXPECT_FALSE(server.hasSeen("/hold/2"));
 
-    server.releaseOne();
-    ASSERT_TRUE(server.waitForPath("/hold/2", 3s));
+    handles.push_back(scheduler.get(
+        server.url("/hold/high"),
+        [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
+        {HttpRequestPriority::High}));
+    ASSERT_TRUE(server.waitForPath("/hold/high", 3s));
+
+    handles.push_back(scheduler.get(
+        server.url("/high2"),
+        [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
+        {HttpRequestPriority::High}));
+    // 总并发已满(low0+high 各持一槽),第二个 High 也必须排队。
+    EXPECT_FALSE(server.hasSeen("/high2"));
 
     server.releaseAll();
+    ASSERT_TRUE(server.waitForPath("/high2", 3s));
+    ASSERT_TRUE(server.waitForPath("/hold/1", 3s));
+    ASSERT_TRUE(server.waitForPath("/hold/2", 3s));
+
     scheduler.shutdown();
 }
 
@@ -480,14 +537,16 @@ TEST(CurlMultiRequestScheduler, CancelledQueuedRequestNeverStartsOrCallbacks) {
 
     std::vector<std::unique_ptr<HttpRequest>> blockers;
     const int maximumActiveRequests = scheduler.maximumActiveRequests();
-    for (int i = 0; i < maximumActiveRequests; ++i) {
+    // 非 High 只能占 max-2 个槽(P2-6 保留),填满即可阻住后续 Normal。
+    const int nonUrgentCapacity = maximumActiveRequests - 2;
+    for (int i = 0; i < nonUrgentCapacity; ++i) {
         blockers.push_back(scheduler.get(
             server.url("/hold/" + std::to_string(i)),
             [](int, std::vector<uint8_t>) {},
             {HttpRequestPriority::Normal}));
     }
     ASSERT_TRUE(server.waitForSeenCount(
-        static_cast<size_t>(maximumActiveRequests),
+        static_cast<size_t>(nonUrgentCapacity),
         3s));
 
     std::atomic<int> queuedCallbacks{0};
