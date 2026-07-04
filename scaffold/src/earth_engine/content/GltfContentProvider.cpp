@@ -57,26 +57,6 @@ struct ContentRequestCompletionGuard {
     std::atomic<int>& completed;
 };
 
-struct ContentWorkerBlockingRequestGuard {
-    ContentWorkerBlockingRequestGuard(std::atomic<int>& activeRequests,
-                                      std::atomic<int>& peakRequests)
-        : activeRequests(activeRequests) {
-        const int active =
-            activeRequests.fetch_add(1, std::memory_order_relaxed) + 1;
-        int observedPeak = peakRequests.load(std::memory_order_relaxed);
-        while (active > observedPeak &&
-               !peakRequests.compare_exchange_weak(
-                   observedPeak,
-                   active,
-                   std::memory_order_relaxed)) {
-        }
-    }
-    ~ContentWorkerBlockingRequestGuard() {
-        activeRequests.fetch_sub(1, std::memory_order_relaxed);
-    }
-    std::atomic<int>& activeRequests;
-};
-
 struct ContentExternalResourceCompletionGuard {
     explicit ContentExternalResourceCompletionGuard(
         std::atomic<int>& completedRequests)
@@ -2215,26 +2195,220 @@ std::vector<uint8_t> readCachedOrFileUrl(const std::string& url) {
     return {};
 }
 
+/// A completed prefetch of external content resources, keyed by resolved
+/// absolute URL. Shares body storage with HttpCache entries — resolvers
+/// copy out on demand (the parser owns its buffers by value).
+struct ExternalResourceStash {
+    std::unordered_map<std::string, std::shared_ptr<const CachedResponse>>
+        byUrl;
+};
+
+/// One external resource referenced by tile content. isGltfDocument marks
+/// i3dm gltfFormat==0 references whose own buffer/image URIs can only be
+/// enumerated after the document itself has been fetched.
+struct ExternalContentResourceRef {
+    std::string url;
+    bool isGltfDocument = false;
+};
+
+void collectContentExternalResourceRefs(
+    const uint8_t* data,
+    size_t size,
+    const std::string& contentUrl,
+    std::vector<ExternalContentResourceRef>& out);
+
+/// Resolve one external resource at decode time. Never blocks: the async
+/// prefetch stage (prefetchExternalContentResourcesAsync) has already
+/// pulled every enumerable URI into the stash and HttpCache; a miss here
+/// means the resource genuinely failed to download and the parse fails the
+/// same way it did when a blocking fetch returned empty (P2-2).
 std::vector<uint8_t> fetchExternalContentResource(
     const std::string& resolvedUrl,
     std::atomic<int>& startedRequests,
     std::atomic<int>& completedRequests,
-    std::atomic<int>& activeBlockingRequests,
-    std::atomic<int>& peakBlockingRequests,
-    const std::function<std::vector<uint8_t>()>& fetchBlocking) {
+    const ExternalResourceStash* stash) {
     startedRequests.fetch_add(1, std::memory_order_relaxed);
     ContentExternalResourceCompletionGuard completion{completedRequests};
 
-    std::vector<uint8_t> immediateBody = readCachedOrFileUrl(resolvedUrl);
-    if (!immediateBody.empty()) {
-        return immediateBody;
+    if (stash) {
+        auto it = stash->byUrl.find(resolvedUrl);
+        if (it != stash->byUrl.end() && it->second) {
+            return it->second->body;
+        }
+    }
+    return readCachedOrFileUrl(resolvedUrl);
+}
+
+/// Asynchronously fetch every external resource referenced by tile content
+/// before decode starts, so parse-time resolvers never wait on network I/O
+/// from a pool thread. Fetched bodies land in HttpCache (matching the old
+/// blocking resolver's caching) and in the returned stash (immune to cache
+/// eviction between prefetch and decode). i3dm gltfFormat==0 documents are
+/// re-scanned once fetched so their nested buffer/image URIs join the same
+/// join-counter round.
+class ExternalResourcePrefetch
+    : public std::enable_shared_from_this<ExternalResourcePrefetch> {
+public:
+    using OnDone = std::function<void(std::shared_ptr<ExternalResourceStash>)>;
+
+    ExternalResourcePrefetch(PlatformBridge* bridge,
+                             HttpRequestPriority priority,
+                             OnDone onDone)
+        : bridge_(bridge),
+          priority_(priority),
+          onDone_(std::move(onDone)),
+          stash_(std::make_shared<ExternalResourceStash>()) {}
+
+    void run(const std::vector<ExternalContentResourceRef>& refs) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++outstanding_; // root token: holds the join open while seeding
+        }
+        for (const ExternalContentResourceRef& ref : refs) {
+            fetchOne(ref);
+        }
+        release();
     }
 
-    ContentWorkerBlockingRequestGuard blocking(
-        activeBlockingRequests,
-        peakBlockingRequests);
-    return fetchBlocking ? fetchBlocking() : std::vector<uint8_t>{};
+private:
+    void fetchOne(const ExternalContentResourceRef& ref) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!requested_.insert(ref.url).second) return;
+            ++outstanding_;
+        }
+
+        auto cached = HttpCache::shared().getResponse(ref.url);
+        if (cached && !cached->body.empty()) {
+            resolved(ref, std::move(cached));
+            return;
+        }
+        std::vector<uint8_t> fileBody = readCachedOrFileUrl(ref.url);
+        if (!fileBody.empty()) {
+            CachedResponse response;
+            response.body = std::move(fileBody);
+            resolved(ref,
+                     std::make_shared<const CachedResponse>(
+                         std::move(response)));
+            return;
+        }
+
+        auto self = shared_from_this();
+        auto completion = [self, ref](int statusCode,
+                                      std::vector<uint8_t> body) mutable {
+            // Runs on the network thread: hand bookkeeping (cache put,
+            // possible nested-gltf scan) to the pool like requestBodyAsync
+            // does.
+            AsyncSystem::pool().enqueue(
+                [self = std::move(self),
+                 ref = std::move(ref),
+                 statusCode,
+                 body = std::move(body)]() mutable {
+                    if (statusCode < 200 || statusCode >= 300 ||
+                        body.empty()) {
+                        self->resolved(ref, nullptr);
+                        return;
+                    }
+                    CachedResponse response;
+                    response.body = std::move(body);
+                    auto responsePtr =
+                        std::make_shared<const CachedResponse>(
+                            std::move(response));
+                    HttpCache::shared().putResponse(ref.url, responsePtr);
+                    self->resolved(ref, std::move(responsePtr));
+                });
+        };
+
+        std::unique_ptr<HttpRequest> request = bridge_
+            ? bridge_->get(ref.url, std::move(completion), {priority_})
+            : CurlMultiRequestScheduler::shared().get(
+                  ref.url, std::move(completion), {priority_});
+        if (!request) {
+            resolved(ref, nullptr);
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        requests_.push_back(std::move(request));
+    }
+
+    void resolved(const ExternalContentResourceRef& ref,
+                  std::shared_ptr<const CachedResponse> response) {
+        if (response) {
+            if (ref.isGltfDocument) {
+                std::vector<ExternalContentResourceRef> nested;
+                collectContentExternalResourceRefs(
+                    response->body.data(),
+                    response->body.size(),
+                    ref.url,
+                    nested);
+                for (const ExternalContentResourceRef& nestedRef : nested) {
+                    fetchOne(nestedRef);
+                }
+            }
+            std::lock_guard<std::mutex> lock(mutex_);
+            stash_->byUrl[ref.url] = std::move(response);
+        }
+        release();
+    }
+
+    void release() {
+        OnDone onDone;
+        std::shared_ptr<ExternalResourceStash> stash;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (--outstanding_ > 0) return;
+            onDone = std::move(onDone_);
+            stash = std::move(stash_);
+        }
+        if (onDone) onDone(std::move(stash));
+    }
+
+    PlatformBridge* bridge_;
+    HttpRequestPriority priority_;
+    OnDone onDone_;
+    std::mutex mutex_;
+    std::shared_ptr<ExternalResourceStash> stash_;
+    std::unordered_set<std::string> requested_;
+    std::vector<std::unique_ptr<HttpRequest>> requests_;
+    int outstanding_ = 0;
+};
+
+/// Collect external refs from content, prefetch them, then invoke
+/// decodeAndDeliver(stash) on a pool thread. Contents without external
+/// references (the common case) skip straight to decode.
+void prefetchThenDecodeAsync(
+    PlatformBridge* bridge,
+    const std::string& contentUrl,
+    const uint8_t* data,
+    size_t size,
+    HttpRequestPriority priority,
+    std::function<void(std::shared_ptr<ExternalResourceStash>)>
+        decodeAndDeliver) {
+    std::vector<ExternalContentResourceRef> refs;
+    if (!contentUrl.empty()) {
+        collectContentExternalResourceRefs(data, size, contentUrl, refs);
+    }
+    if (refs.empty()) {
+        decodeAndDeliver(nullptr);
+        return;
+    }
+    auto prefetch = std::make_shared<ExternalResourcePrefetch>(
+        bridge,
+        priority,
+        [decodeAndDeliver = std::move(decodeAndDeliver)](
+            std::shared_ptr<ExternalResourceStash> stash) mutable {
+            AsyncSystem::pool().enqueue(
+                [decodeAndDeliver = std::move(decodeAndDeliver),
+                 stash = std::move(stash)]() mutable {
+                    decodeAndDeliver(std::move(stash));
+                });
+        });
+    prefetch->run(refs);
 }
+
+using StashAwareDecodeFn = std::function<TileContentLoadResult(
+    const std::vector<uint8_t>&,
+    const ExternalResourceStash*)>;
 
 void requestBodyAsync(
     PlatformBridge* bridge,
@@ -2244,14 +2418,13 @@ void requestBodyAsync(
     TilesetContentProvider::ContentCallback callback,
     HttpRequestPriority priority,
     std::atomic<int>& requestsCompleted,
-    std::function<TileContentLoadResult(const std::vector<uint8_t>&)> decode) {
+    StashAwareDecodeFn decode) {
     auto tokenPtr = std::make_shared<CancellationToken>(std::move(token));
     auto callbackPtr =
         std::make_shared<TilesetContentProvider::ContentCallback>(
             std::move(callback));
-    auto decodePtr = std::make_shared<
-        std::function<TileContentLoadResult(const std::vector<uint8_t>&)>>(
-            std::move(decode));
+    auto decodePtr =
+        std::make_shared<StashAwareDecodeFn>(std::move(decode));
 
     if (tokenPtr->isCancelled()) {
         ContentRequestCompletionGuard completion{requestsCompleted};
@@ -2261,8 +2434,10 @@ void requestBodyAsync(
 
     auto requestHandle = std::make_shared<std::unique_ptr<HttpRequest>>();
     auto completionCallback =
-        [key,
+        [bridge,
+         key,
          url,
+         priority,
          tokenPtr,
          callbackPtr,
          decodePtr,
@@ -2288,23 +2463,52 @@ void requestBodyAsync(
             auto responsePtr = std::make_shared<const CachedResponse>(
                 std::move(cacheEntry));
             AsyncSystem::pool().enqueue(
-                [key,
+                [bridge,
+                 key,
                  url,
+                 priority,
                  tokenPtr,
                  callbackPtr,
                  decodePtr,
                  responsePtr,
                  &requestsCompleted]() mutable {
-                    ContentRequestCompletionGuard completion{
-                        requestsCompleted};
                     // 取消也照常入缓存:字节已经下载,复用是净收益(与旧行为
                     // 一致——旧实现在网络线程上无条件 put)。
                     HttpCache::shared().putResponse(url, responsePtr);
                     if (tokenPtr->isCancelled()) {
+                        ContentRequestCompletionGuard completion{
+                            requestsCompleted};
                         (*callbackPtr)(key, TileContentLoadResult::cancelled());
                         return;
                     }
-                    (*callbackPtr)(key, (*decodePtr)(responsePtr->body));
+                    // 外部资源(glTF 外链 buffer/image)先异步预取再解码,
+                    // 解码期 resolver 只查 stash/缓存——池线程不再 cv 等
+                    // 网络(P2-2)。
+                    prefetchThenDecodeAsync(
+                        bridge,
+                        url,
+                        responsePtr->body.data(),
+                        responsePtr->body.size(),
+                        priority,
+                        [key,
+                         tokenPtr,
+                         callbackPtr,
+                         decodePtr,
+                         responsePtr,
+                         &requestsCompleted](
+                            std::shared_ptr<ExternalResourceStash> stash) {
+                            ContentRequestCompletionGuard completion{
+                                requestsCompleted};
+                            if (tokenPtr->isCancelled()) {
+                                (*callbackPtr)(
+                                    key,
+                                    TileContentLoadResult::cancelled());
+                                return;
+                            }
+                            (*callbackPtr)(
+                                key,
+                                (*decodePtr)(responsePtr->body, stash.get()));
+                        });
                 });
         };
 
@@ -3128,6 +3332,84 @@ TileContentLoadResult decodeCmptContent(
     return result;
 }
 
+/// Mirror of decodeGltfLikeContent's container dispatch that only
+/// enumerates external resource URLs (resolved absolute) instead of
+/// decoding. Malformed containers yield no refs — the subsequent decode
+/// fails the same way it always did.
+void collectContentExternalResourceRefs(
+    const uint8_t* data,
+    size_t size,
+    const std::string& contentUrl,
+    std::vector<ExternalContentResourceRef>& out) {
+    const auto appendGltfUris = [&out](const uint8_t* gltfData,
+                                       size_t gltfSize,
+                                       const std::string& baseUrl) {
+        for (const std::string& uri :
+             GltfParser::collectExternalResourceUris(gltfData, gltfSize)) {
+            out.push_back({resolveContentUrl(baseUrl, uri, false), false});
+        }
+    };
+
+    if (data && size >= 4 && readU32LE(data) == kI3dmMagic) {
+        std::optional<I3dmHeader> header = parseI3dmHeader(data, size);
+        if (!header) return;
+        const size_t gltfStart =
+            kI3dmHeaderLength +
+            header->featureTableJsonByteLength +
+            header->featureTableBinaryByteLength +
+            header->batchTableJsonByteLength +
+            header->batchTableBinaryByteLength;
+        if (gltfStart >= header->byteLength) return;
+        if (header->gltfFormat == 1) {
+            appendGltfUris(
+                data + gltfStart,
+                static_cast<size_t>(header->byteLength) - gltfStart,
+                contentUrl);
+        } else if (header->gltfFormat == 0) {
+            const std::string gltfUri = trimRightSpaces(std::string(
+                reinterpret_cast<const char*>(data + gltfStart),
+                static_cast<size_t>(header->byteLength) - gltfStart));
+            if (!gltfUri.empty()) {
+                out.push_back(
+                    {resolveContentUrl(contentUrl, gltfUri, false), true});
+            }
+        }
+        return;
+    }
+    if (data && size >= 4 && readU32LE(data) == kPntsMagic) {
+        return;
+    }
+    if (data && size >= 4 && readU32LE(data) == kCmptMagic) {
+        std::optional<CmptHeader> header = parseCmptHeader(data, size);
+        if (!header) return;
+        size_t offset = kCmptHeaderLength;
+        for (uint32_t i = 0; i < header->tilesLength; ++i) {
+            if (offset + kCmptInnerHeaderLength > header->byteLength) return;
+            const uint32_t innerByteLength = readU32LE(data + offset + 8);
+            if (innerByteLength < kCmptInnerHeaderLength ||
+                static_cast<uint64_t>(offset) + innerByteLength >
+                    header->byteLength) {
+                return;
+            }
+            collectContentExternalResourceRefs(
+                data + offset,
+                innerByteLength,
+                contentUrl,
+                out);
+            offset += innerByteLength;
+        }
+        return;
+    }
+
+    const B3dmExtractResult b3dm = extractB3dmGlb(data, size);
+    if (b3dm.isB3dm) {
+        if (!b3dm.valid) return;
+        appendGltfUris(b3dm.glbData, b3dm.glbSize, contentUrl);
+        return;
+    }
+    appendGltfUris(data, size, contentUrl);
+}
+
 TileContentLoadResult decodeGltfLikeContent(
     const uint8_t* data,
     size_t size,
@@ -3196,6 +3478,45 @@ TileContentLoadResult decodeGltfLikeContent(
     return result;
 }
 
+/// Decode glTF-like content with a non-blocking external resource resolver
+/// (stash → HttpCache/file). Shared by the sync decodeContent entry (null
+/// stash) and the async prefetch-then-decode path.
+TileContentLoadResult decodeGltfLikeContentWithStash(
+    const uint8_t* data,
+    size_t size,
+    const Mat4& baseTransform,
+    const Mat4& gltfUpAxisTransform,
+    const std::string& contentUrl,
+    PlatformBridge* bridge,
+    std::atomic<int>& externalResourceRequestsStarted,
+    std::atomic<int>& externalResourceRequestsCompleted,
+    const ExternalResourceStash* stash) {
+    GltfParser::ExternalResourceResolver resolver;
+    if (!contentUrl.empty()) {
+        resolver = [contentUrl,
+                    stash,
+                    &externalResourceRequestsStarted,
+                    &externalResourceRequestsCompleted](
+                       const std::string& uri) {
+            const std::string resolvedUrl =
+                resolveContentUrl(contentUrl, uri, false);
+            return fetchExternalContentResource(
+                resolvedUrl,
+                externalResourceRequestsStarted,
+                externalResourceRequestsCompleted,
+                stash);
+        };
+    }
+    return decodeGltfLikeContent(
+        data,
+        size,
+        baseTransform,
+        gltfUpAxisTransform,
+        contentUrl,
+        resolver,
+        makeImageDecoder(bridge));
+}
+
 } // namespace
 
 SingleGltfContentProvider::SingleGltfContentProvider(
@@ -3243,15 +3564,45 @@ void SingleGltfContentProvider::requestTileContent(
         AsyncSystem::pool().enqueue(
             [this,
              key,
-             body = std::move(immediateBody),
-             token = std::move(token),
-             callback = std::move(callback)]() mutable {
-                ContentRequestCompletionGuard completion{requestsCompleted_};
-                if (token.isCancelled()) {
-                    callback(key, TileContentLoadResult::cancelled());
+             priority,
+             body = std::make_shared<const std::vector<uint8_t>>(
+                 std::move(immediateBody)),
+             token = std::make_shared<CancellationToken>(std::move(token)),
+             callback = std::make_shared<ContentCallback>(
+                 std::move(callback))]() mutable {
+                if (token->isCancelled()) {
+                    ContentRequestCompletionGuard completion{
+                        requestsCompleted_};
+                    (*callback)(key, TileContentLoadResult::cancelled());
                     return;
                 }
-                callback(key, decodeContent(body.data(), body.size()));
+                prefetchThenDecodeAsync(
+                    platformBridge_,
+                    url_,
+                    body->data(),
+                    body->size(),
+                    priority,
+                    [this, key, body, token, callback](
+                        std::shared_ptr<ExternalResourceStash> stash) {
+                        ContentRequestCompletionGuard completion{
+                            requestsCompleted_};
+                        if (token->isCancelled()) {
+                            (*callback)(key,
+                                        TileContentLoadResult::cancelled());
+                            return;
+                        }
+                        (*callback)(key,
+                                    decodeGltfLikeContentWithStash(
+                                        body->data(),
+                                        body->size(),
+                                        contentTransform_,
+                                        Mat4::identity(),
+                                        url_,
+                                        platformBridge_,
+                                        externalResourceRequestsStarted_,
+                                        externalResourceRequestsCompleted_,
+                                        stash.get()));
+                    });
             });
         return;
     }
@@ -3262,31 +3613,26 @@ void SingleGltfContentProvider::requestTileContent(
         return;
     }
 
-    if (platformBridge_) {
-        requestBodyAsync(
-            platformBridge_,
-            key,
-            url_,
-            std::move(token),
-            std::move(callback),
-            priority,
-            requestsCompleted_,
-            [this](const std::vector<uint8_t>& fetchedBody) {
-                return decodeContent(fetchedBody.data(), fetchedBody.size());
-            });
-        return;
-    }
-
     requestBodyAsync(
-        nullptr,
+        platformBridge_,
         key,
         url_,
         std::move(token),
         std::move(callback),
         priority,
         requestsCompleted_,
-        [this](const std::vector<uint8_t>& fetchedBody) {
-            return decodeContent(fetchedBody.data(), fetchedBody.size());
+        [this](const std::vector<uint8_t>& fetchedBody,
+               const ExternalResourceStash* stash) {
+            return decodeGltfLikeContentWithStash(
+                fetchedBody.data(),
+                fetchedBody.size(),
+                contentTransform_,
+                Mat4::identity(),
+                url_,
+                platformBridge_,
+                externalResourceRequestsStarted_,
+                externalResourceRequestsCompleted_,
+                stash);
         });
 }
 
@@ -3320,30 +3666,16 @@ ProviderRequestDiagnostics SingleGltfContentProvider::requestDiagnostics()
 TileContentLoadResult SingleGltfContentProvider::decodeContent(
     const uint8_t* data,
     size_t size) {
-    GltfParser::ExternalResourceResolver resolver;
-    if (!url_.empty()) {
-        resolver = [this](const std::string& uri) {
-            const std::string resolvedUrl =
-                resolveContentUrl(url_, uri, false);
-            return fetchExternalContentResource(
-                resolvedUrl,
-                externalResourceRequestsStarted_,
-                externalResourceRequestsCompleted_,
-                activeExternalResourceBlockingRequests_,
-                peakExternalResourceBlockingRequests_,
-                [this, resolvedUrl]() {
-                    return httpGet(resolvedUrl);
-                });
-        };
-    }
-    return decodeGltfLikeContent(
+    return decodeGltfLikeContentWithStash(
         data,
         size,
         contentTransform_,
         Mat4::identity(),
         url_,
-        resolver,
-        makeImageDecoder(platformBridge_));
+        platformBridge_,
+        externalResourceRequestsStarted_,
+        externalResourceRequestsCompleted_,
+        nullptr);
 }
 
 void SingleGltfContentProvider::setEastNorthUpPlacementDegrees(
@@ -3361,75 +3693,6 @@ void SingleGltfContentProvider::setEastNorthUpPlacementDegrees(
     const Mat4 enu = Transforms::eastNorthUpToFixedFrame(origin);
     contentTransform_ =
         enu * Mat4::scale(Vec3(uniformScale, uniformScale, uniformScale));
-}
-
-std::vector<uint8_t> SingleGltfContentProvider::httpGet(
-    const std::string& url,
-    HttpRequestPriority priority,
-    std::function<bool()> shouldCancel) const {
-    auto cached = HttpCache::shared().get(url);
-    if (!cached.empty()) return cached;
-
-    constexpr const char* kFilePrefix = "file://";
-    if (url.rfind(kFilePrefix, 0) == 0) {
-        std::ifstream in(url.substr(std::strlen(kFilePrefix)), std::ios::binary);
-        if (!in) return {};
-        std::vector<uint8_t> data{
-            std::istreambuf_iterator<char>(in),
-            std::istreambuf_iterator<char>()};
-        HttpCache::shared().put(url, data);
-        return data;
-    }
-
-    if (platformBridge_) {
-        struct WaitState {
-            std::vector<uint8_t> result;
-            std::mutex mutex;
-            std::condition_variable cv;
-            bool done = false;
-        };
-        auto state = std::make_shared<WaitState>();
-
-        auto request = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
-            {
-                std::lock_guard<std::mutex> lock(state->mutex);
-                if (code == 200) state->result = std::move(body);
-                state->done = true;
-            }
-            state->cv.notify_one();
-        }, {priority});
-
-        bool done = false;
-        {
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds(20);
-            std::unique_lock<std::mutex> lock(state->mutex);
-            while (!state->done && !(shouldCancel && shouldCancel())) {
-                const auto now = std::chrono::steady_clock::now();
-                if (now >= deadline) break;
-                state->cv.wait_until(
-                    lock,
-                    std::min(deadline, now + std::chrono::milliseconds(20)));
-            }
-            done = state->done;
-        }
-        if ((!done || (shouldCancel && shouldCancel())) && request) {
-            request->cancel();
-        }
-        if (done && !state->result.empty()) {
-            HttpCache::shared().put(url, state->result);
-        }
-        return done ? std::move(state->result) : std::vector<uint8_t>{};
-    }
-
-    std::vector<uint8_t> result =
-        CurlMultiRequestScheduler::shared().getBlocking(
-            url,
-            {priority},
-            std::chrono::seconds(20),
-            std::move(shouldCancel));
-    if (!result.empty()) HttpCache::shared().put(url, result);
-    return result;
 }
 
 TilesetJsonContentProvider::TilesetJsonContentProvider(
@@ -3556,85 +3819,72 @@ void TilesetJsonContentProvider::requestTileContent(
         AsyncSystem::pool().enqueue(
             [this,
              key,
+             priority,
              record = std::move(record),
-             body = std::move(immediateBody),
-             token = std::move(token),
-             callback = std::move(callback)]() mutable {
-                ContentRequestCompletionGuard completion{requestsCompleted_};
-                if (token.isCancelled()) {
-                    callback(key, TileContentLoadResult::cancelled());
+             body = std::make_shared<const std::vector<uint8_t>>(
+                 std::move(immediateBody)),
+             token = std::make_shared<CancellationToken>(std::move(token)),
+             callback = std::make_shared<ContentCallback>(
+                 std::move(callback))]() mutable {
+                if (token->isCancelled()) {
+                    ContentRequestCompletionGuard completion{
+                        requestsCompleted_};
+                    (*callback)(key, TileContentLoadResult::cancelled());
                     return;
                 }
                 if (!urlLooksLikeGltf(record.resolvedContentUrl) &&
                     (urlLooksLikeJson(record.resolvedContentUrl) ||
-                     bytesLookLikeJson(body.data(), body.size()))) {
+                     bytesLookLikeJson(body->data(), body->size()))) {
+                    ContentRequestCompletionGuard completion{
+                        requestsCompleted_};
                     const bool parsed = parseTilesetJson(
-                        body.data(),
-                        body.size(),
+                        body->data(),
+                        body->size(),
                         record.resolvedContentUrl,
                         record.metadata.transform,
                         record.metadata.refine,
                         record.metadata.geometricError,
                         record.metadata.key,
                         false);
-                    callback(key,
-                             parsed ? TileContentLoadResult::external()
-                                    : TileContentLoadResult::failed());
+                    (*callback)(key,
+                                parsed ? TileContentLoadResult::external()
+                                       : TileContentLoadResult::failed());
                     return;
                 }
 
-                callback(key,
-                         decodeRenderableContent(
-                             body.data(),
-                             body.size(),
-                             record.metadata.transform,
-                             record.gltfUpAxisTransform,
-                             record.resolvedContentUrl));
-            });
-        return;
-    }
-
-    if (platformBridge_) {
-        requestBodyAsync(
-            platformBridge_,
-            key,
-            record.resolvedContentUrl,
-            std::move(token),
-            std::move(callback),
-            priority,
-            requestsCompleted_,
-            [this, record = std::move(record)](
-                const std::vector<uint8_t>& fetchedBody) mutable {
-                if (!urlLooksLikeGltf(record.resolvedContentUrl) &&
-                    (urlLooksLikeJson(record.resolvedContentUrl) ||
-                     bytesLookLikeJson(
-                         fetchedBody.data(),
-                         fetchedBody.size()))) {
-                    const bool parsed = parseTilesetJson(
-                        fetchedBody.data(),
-                        fetchedBody.size(),
-                        record.resolvedContentUrl,
-                        record.metadata.transform,
-                        record.metadata.refine,
-                        record.metadata.geometricError,
-                        record.metadata.key,
-                        false);
-                    return parsed ? TileContentLoadResult::external()
-                                  : TileContentLoadResult::failed();
-                }
-
-                return decodeRenderableContent(
-                    fetchedBody.data(),
-                    fetchedBody.size(),
-                    record.metadata.transform,
-                    record.gltfUpAxisTransform,
-                    record.resolvedContentUrl);
+                prefetchThenDecodeAsync(
+                    platformBridge_,
+                    record.resolvedContentUrl,
+                    body->data(),
+                    body->size(),
+                    priority,
+                    [this, key, record, body, token, callback](
+                        std::shared_ptr<ExternalResourceStash> stash) {
+                        ContentRequestCompletionGuard completion{
+                            requestsCompleted_};
+                        if (token->isCancelled()) {
+                            (*callback)(key,
+                                        TileContentLoadResult::cancelled());
+                            return;
+                        }
+                        (*callback)(key,
+                                    decodeGltfLikeContentWithStash(
+                                        body->data(),
+                                        body->size(),
+                                        record.metadata.transform,
+                                        record.gltfUpAxisTransform,
+                                        record.resolvedContentUrl,
+                                        platformBridge_,
+                                        externalResourceRequestsStarted_,
+                                        externalResourceRequestsCompleted_,
+                                        stash.get()));
+                    });
             });
         return;
     }
 
     requestBodyAsync(
-        nullptr,
+        platformBridge_,
         key,
         record.resolvedContentUrl,
         std::move(token),
@@ -3642,7 +3892,8 @@ void TilesetJsonContentProvider::requestTileContent(
         priority,
         requestsCompleted_,
         [this, record = std::move(record)](
-            const std::vector<uint8_t>& fetchedBody) mutable {
+            const std::vector<uint8_t>& fetchedBody,
+            const ExternalResourceStash* stash) mutable {
             if (!urlLooksLikeGltf(record.resolvedContentUrl) &&
                 (urlLooksLikeJson(record.resolvedContentUrl) ||
                  bytesLookLikeJson(
@@ -3661,12 +3912,16 @@ void TilesetJsonContentProvider::requestTileContent(
                               : TileContentLoadResult::failed();
             }
 
-            return decodeRenderableContent(
+            return decodeGltfLikeContentWithStash(
                 fetchedBody.data(),
                 fetchedBody.size(),
                 record.metadata.transform,
                 record.gltfUpAxisTransform,
-                record.resolvedContentUrl);
+                record.resolvedContentUrl,
+                platformBridge_,
+                externalResourceRequestsStarted_,
+                externalResourceRequestsCompleted_,
+                stash);
         });
 }
 
@@ -3687,30 +3942,16 @@ TileContentLoadResult TilesetJsonContentProvider::decodeRenderableContent(
     const Mat4& transform,
     const Mat4& gltfUpAxisTransform,
     const std::string& contentUrl) {
-    GltfParser::ExternalResourceResolver resolver;
-    if (!contentUrl.empty()) {
-        resolver = [this, contentUrl](const std::string& uri) {
-            const std::string resolvedUrl =
-                resolveContentUrl(contentUrl, uri, false);
-            return fetchExternalContentResource(
-                resolvedUrl,
-                externalResourceRequestsStarted_,
-                externalResourceRequestsCompleted_,
-                activeExternalResourceBlockingRequests_,
-                peakExternalResourceBlockingRequests_,
-                [this, resolvedUrl]() {
-                    return httpGet(resolvedUrl);
-                });
-        };
-    }
-    return decodeGltfLikeContent(
+    return decodeGltfLikeContentWithStash(
         data,
         size,
         transform,
         gltfUpAxisTransform,
         contentUrl,
-        resolver,
-        makeImageDecoder(platformBridge_));
+        platformBridge_,
+        externalResourceRequestsStarted_,
+        externalResourceRequestsCompleted_,
+        nullptr);
 }
 
 bool TilesetJsonContentProvider::parseTilesetJson(

@@ -12,9 +12,12 @@ if(DEFINED VCPKG_ROOT AND EXISTS "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake
         CACHE STRING "")
 endif()
 
-# Earth Engine core library
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../src
-                 ${CMAKE_CURRENT_BINARY_DIR}/earth_engine_core)
+# Earth Engine core library (already a target when configured from the
+# repository root with BUILD_EXAMPLES=ON; only add when standalone)
+if(NOT TARGET earth_engine_core)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../src
+                     ${CMAKE_CURRENT_BINARY_DIR}/earth_engine_core)
+endif()
 
 # macOS app executable
 add_executable(MinimalGlobe MACOSX_BUNDLE

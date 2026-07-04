@@ -8,6 +8,7 @@
 #include <string>
 #include <stdexcept>
 #include <cstring>
+#include <unordered_map>
 
 namespace earth_engine {
 
@@ -81,6 +82,10 @@ struct RenderDeviceMetal::Impl {
     dispatch_semaphore_t inFlightSemaphore = nil;
     id<MTLTexture> depthTexture = nil;
     id<MTLSamplerState> linearClampSampler = nil;
+    // sampler 按配置去重(P2-15):Apple GPU 存活 sampler 有 1024/2048 硬
+    // 上限,逼近时静默回落默认配置;全项目配置种类只有个位数,按打包 key
+    // 复用让存活数与纹理数解耦。仅渲染线程访问,无锁。
+    std::unordered_map<uint64_t, id<MTLSamplerState>> samplerCache;
     id<MTLDepthStencilState> depthReadWrite = nil;
     id<MTLDepthStencilState> depthReadOnly = nil;
     id<MTLDepthStencilState> depthDisabled = nil;
@@ -218,18 +223,34 @@ std::unique_ptr<Texture> RenderDeviceMetal::createTexture(const TextureDesc& des
         }
     }
 
-    MTLSamplerDescriptor* samplerDesc = [MTLSamplerDescriptor new];
-    samplerDesc.minFilter = toMetalFilter(desc.minFilter);
-    samplerDesc.magFilter = toMetalFilter(desc.magFilter);
-    samplerDesc.mipFilter = desc.mipmap
-        ? MTLSamplerMipFilterLinear
-        : MTLSamplerMipFilterNotMipmapped;
-    samplerDesc.maxAnisotropy =
+    const NSUInteger anisotropy =
         static_cast<NSUInteger>(std::max(1.0f, desc.maxAnisotropy));
-    samplerDesc.sAddressMode = toMetalAddressMode(desc.wrapS);
-    samplerDesc.tAddressMode = toMetalAddressMode(desc.wrapT);
-    id<MTLSamplerState> sampler =
-        [impl_->device newSamplerStateWithDescriptor:samplerDesc];
+    const uint64_t samplerKey =
+        (static_cast<uint64_t>(desc.minFilter) << 0) |
+        (static_cast<uint64_t>(desc.magFilter) << 4) |
+        (static_cast<uint64_t>(desc.mipmap ? 1 : 0) << 8) |
+        (static_cast<uint64_t>(desc.wrapS) << 9) |
+        (static_cast<uint64_t>(desc.wrapT) << 13) |
+        (static_cast<uint64_t>(anisotropy) << 17);
+    id<MTLSamplerState> sampler = nil;
+    auto cachedSampler = impl_->samplerCache.find(samplerKey);
+    if (cachedSampler != impl_->samplerCache.end()) {
+        sampler = cachedSampler->second;
+    } else {
+        MTLSamplerDescriptor* samplerDesc = [MTLSamplerDescriptor new];
+        samplerDesc.minFilter = toMetalFilter(desc.minFilter);
+        samplerDesc.magFilter = toMetalFilter(desc.magFilter);
+        samplerDesc.mipFilter = desc.mipmap
+            ? MTLSamplerMipFilterLinear
+            : MTLSamplerMipFilterNotMipmapped;
+        samplerDesc.maxAnisotropy = anisotropy;
+        samplerDesc.sAddressMode = toMetalAddressMode(desc.wrapS);
+        samplerDesc.tAddressMode = toMetalAddressMode(desc.wrapT);
+        sampler = [impl_->device newSamplerStateWithDescriptor:samplerDesc];
+        if (sampler) {
+            impl_->samplerCache[samplerKey] = sampler;
+        }
+    }
 
     return std::make_unique<MetalTexture>(tex, sampler ?: impl_->linearClampSampler);
 }

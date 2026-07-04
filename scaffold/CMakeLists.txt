@@ -5,6 +5,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# .mm 源(Metal 后端/平台桥)需要根级启用 OBJCXX:若只由子目录
+# (examples/macos)enable,全局 .mm→OBJCXX 语言映射会生效而 src/ 作用域
+# 缺编译规则,Ninja 生成期报 CMAKE_OBJCXX_COMPILE_OBJECT 缺失。
+if(APPLE AND BUILD_EXAMPLES)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 17)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+endif()
+
 include(CTest)
 
 # 编译选项

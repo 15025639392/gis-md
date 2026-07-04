@@ -21,16 +21,6 @@ struct GpuReadyPrimitive {
     std::vector<uint32_t> indices;
     size_t indexCount = 0;
 
-    // Texture data (decoded to RGBA8/R8)
-    struct TextureData {
-        std::vector<uint8_t> pixels;
-        int width = 0;
-        int height = 0;
-        int channels = 4;  // 1=R8, 4=RGBA8
-        bool mipmap = false;
-    };
-    std::vector<TextureData> textures;
-
     // Metadata (material properties, texture bindings, etc.)
     // Populated by CPU phase, vertexBuffer/indexBuffer/texture filled by GPU phase.
     GltfPrimitiveRenderResources metadata;
@@ -50,6 +40,19 @@ struct GpuReadyPrimitive {
 /// Collection of CPU-prepared primitives for a single tile.
 struct GpuReadyData {
     std::vector<GpuReadyPrimitive> primitives;
+
+    // Texture data (decoded to RGBA8/R8). Model-level: glTF textures are
+    // shared across primitives, so they are decoded/uploaded once per tile
+    // (P2-12) and bound per primitive by index in metadata.
+    struct TextureData {
+        std::vector<uint8_t> pixels;
+        int width = 0;
+        int height = 0;
+        int channels = 4;  // 1=R8, 4=RGBA8
+        bool mipmap = false;
+    };
+    std::vector<TextureData> textures;
+
     bool valid() const { return !primitives.empty(); }
 };
 

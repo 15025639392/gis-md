@@ -209,11 +209,6 @@ public:
                                         double uniformScale = 1.0);
 
 private:
-    std::vector<uint8_t> httpGet(
-        const std::string& url,
-        HttpRequestPriority priority = HttpRequestPriority::Normal,
-        std::function<bool()> shouldCancel = {}) const;
-
     TileKey contentKey_;
     std::string url_;
     std::string name_;

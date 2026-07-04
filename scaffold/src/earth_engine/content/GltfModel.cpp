@@ -8771,6 +8771,30 @@ bool GltfModel::updateAnimation(double timeSeconds) {
     return true;
 }
 
+std::vector<std::string> GltfParser::collectExternalResourceUris(
+    const uint8_t* data,
+    size_t size) {
+    auto input = parseInput(data, size);
+    if (!input) return {};
+
+    std::vector<std::string> uris;
+    const auto appendNonDataUris = [&](const char* arrayKey) {
+        const auto arrayIt = input->document.find(arrayKey);
+        if (arrayIt == input->document.end() || !arrayIt->is_array()) return;
+        for (const json& element : *arrayIt) {
+            if (!element.is_object()) continue;
+            const auto uriIt = element.find("uri");
+            if (uriIt == element.end() || !uriIt->is_string()) continue;
+            const std::string uri = uriIt->get<std::string>();
+            if (uri.empty() || uri.rfind("data:", 0) == 0) continue;
+            uris.push_back(uri);
+        }
+    };
+    appendNonDataUris("buffers");
+    appendNonDataUris("images");
+    return uris;
+}
+
 std::unique_ptr<GltfModel> GltfParser::parse(const uint8_t* data, size_t size) {
     return parse(data, size, ExternalResourceResolver{});
 }

@@ -2002,6 +2002,60 @@ private:
     bool entered_ = false;
 };
 
+/// Serves canned bodies by exact URL, completing callbacks inline, and
+/// records every requested URL — used to prove external resources are
+/// fetched through the async prefetch stage rather than a blocking
+/// resolver.
+class MappedContentPlatformBridge final : public PlatformBridge {
+public:
+    void addBody(std::string url, std::vector<uint8_t> body) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        bodies_[std::move(url)] = std::move(body);
+    }
+
+    std::vector<std::string> requestedUrls() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return requestedUrls_;
+    }
+
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+    std::unique_ptr<HttpRequest> get(
+        const std::string& url,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions = {}) override {
+        std::vector<uint8_t> body;
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            requestedUrls_.push_back(url);
+            auto it = bodies_.find(url);
+            if (it != bodies_.end()) {
+                body = it->second;
+                found = true;
+            }
+        }
+        callback(found ? 200 : 404, std::move(body));
+        return std::make_unique<TestHttpRequest>();
+    }
+    std::string cacheDirectory() const override { return "/tmp"; }
+    std::string documentsDirectory() const override { return "/tmp"; }
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+private:
+    std::mutex mutex_;
+    std::unordered_map<std::string, std::vector<uint8_t>> bodies_;
+    std::vector<std::string> requestedUrls_;
+};
+
 std::vector<uint8_t> makeB3dm(std::vector<uint8_t> glb,
                               const std::string& featureTableJson,
                               const std::string& batchTableJson =
@@ -11941,6 +11995,148 @@ TEST(GltfParserTest, ContentProviderResolvesExternalBufferRelativeToGltfUrl) {
     EXPECT_EQ(0, diag.peakExternalResourceBlockingRequests);
 
     std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, CollectExternalResourceUrisEnumeratesNonDataUris) {
+    const std::string jsonText =
+        std::string("{") +
+        "\"asset\":{\"version\":\"2.0\"}," +
+        "\"buffers\":[" +
+        "{\"uri\":\"triangle.bin\",\"byteLength\":4}," +
+        "{\"uri\":\"data:application/octet-stream;base64,AAAA\","
+        "\"byteLength\":3}" +
+        "]," +
+        "\"images\":[" +
+        "{\"uri\":\"data:image/png;base64,AAAA\"}," +
+        "{\"uri\":\"textures/albedo.png\"}," +
+        "{\"bufferView\":0}" +
+        "]}";
+    const std::vector<std::string> uris =
+        GltfParser::collectExternalResourceUris(
+            reinterpret_cast<const uint8_t*>(jsonText.data()),
+            jsonText.size());
+    ASSERT_EQ(2u, uris.size());
+    EXPECT_EQ("triangle.bin", uris[0]);
+    EXPECT_EQ("textures/albedo.png", uris[1]);
+
+    const std::vector<uint8_t> glb = makeTriangleGlb();
+    EXPECT_TRUE(GltfParser::collectExternalResourceUris(
+                    glb.data(), glb.size()).empty());
+}
+
+TEST(GltfParserTest, ContentProviderPrefetchesExternalBufferOverHttpBeforeDecode) {
+    const ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string gltfUrl =
+        "https://prefetch-buffer.test/models/triangle.gltf";
+    const std::string binUrl =
+        "https://prefetch-buffer.test/models/triangle.bin";
+
+    MappedContentPlatformBridge bridge;
+    bridge.addBody(gltfUrl,
+                   std::vector<uint8_t>(fixture.jsonText.begin(),
+                                        fixture.jsonText.end()));
+    bridge.addBody(binUrl, fixture.bin);
+
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    SingleGltfContentProvider provider(key, gltfUrl, "prefetch fixture");
+    provider.setPlatformBridge(&bridge);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult result;
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult loaded) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                result = std::move(loaded);
+                done = true;
+            }
+            cv.notify_one();
+        });
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&]() { return done; }));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    EXPECT_EQ(3u, result.gltfModel->vertexCount());
+
+    // 外部 buffer 必须经预取阶段走 bridge 异步请求——解码期 resolver 已无
+    // 阻塞取数能力,能 Renderable 即证明预取先行(P2-2)。
+    const std::vector<std::string> requested = bridge.requestedUrls();
+    EXPECT_EQ(2u, requested.size());
+    EXPECT_TRUE(std::find(requested.begin(), requested.end(), binUrl) !=
+                requested.end());
+    ProviderRequestDiagnostics diag = provider.requestDiagnostics();
+    EXPECT_EQ(1, diag.externalResourceRequestsStarted);
+    EXPECT_EQ(1, diag.externalResourceRequestsCompleted);
+    EXPECT_EQ(0, diag.activeExternalResourceBlockingRequests);
+    EXPECT_EQ(0, diag.peakExternalResourceBlockingRequests);
+}
+
+TEST(GltfParserTest, ContentProviderPrefetchesI3dmExternalGltfChainOverHttp) {
+    const ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string i3dmUrl =
+        "https://prefetch-i3dm.test/tiles/tile.i3dm";
+    const std::string gltfUrl =
+        "https://prefetch-i3dm.test/tiles/models/triangle.gltf";
+    const std::string binUrl =
+        "https://prefetch-i3dm.test/tiles/models/triangle.bin";
+
+    MappedContentPlatformBridge bridge;
+    bridge.addBody(i3dmUrl, makeI3dm({}, 0u, "models/triangle.gltf"));
+    bridge.addBody(gltfUrl,
+                   std::vector<uint8_t>(fixture.jsonText.begin(),
+                                        fixture.jsonText.end()));
+    bridge.addBody(binUrl, fixture.bin);
+
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    SingleGltfContentProvider provider(key, i3dmUrl, "prefetch i3dm chain");
+    provider.setPlatformBridge(&bridge);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult result;
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult loaded) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                result = std::move(loaded);
+                done = true;
+            }
+            cv.notify_one();
+        });
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&]() { return done; }));
+    }
+
+    // i3dm gltfFormat==0 是两跳依赖:glTF 文档取回后再扫出它的外部
+    // buffer——预取的迭代回扫必须把两跳都吃掉,解码期零阻塞。
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    EXPECT_EQ(2u, result.gltfModel->primitives[0].instances.size());
+
+    const std::vector<std::string> requested = bridge.requestedUrls();
+    EXPECT_EQ(3u, requested.size());
+    EXPECT_TRUE(std::find(requested.begin(), requested.end(), gltfUrl) !=
+                requested.end());
+    EXPECT_TRUE(std::find(requested.begin(), requested.end(), binUrl) !=
+                requested.end());
 }
 
 TEST(GltfParserTest, ContentProviderResolvesExternalImageRelativeToGltfUrl) {

@@ -1,7 +1,7 @@
 # 平台层架构与策略性能审计（2026-07-04）
 
 **分支**：`codex/surface-instancing-gpu-batch`
-**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分（P0/P1 已全部修复,P1-10 修于 2026-07-05 凌晨）。P1-7/8(网络与解码链路)亦修于同晚:HttpCache shared_ptr 零拷贝+字节预算+put 移出网络线程;Android JNI 句柄缓存+线程生命周期 attach(修无条件 Detach 正确性隐患),真机 343 次解码零异常、截图与基线一致。P1-4/5/6(Metal 帧调度三件套)修于 2026-07-04 深夜:drawable 超时+in-flight 信号量+updateBuffer orphan+mipmap blit,MTL_DEBUG_LAYER 0 错误、140/140、macOS 截图与基线一致;顺带完成 P2-20 的"drawable 存 Impl 成员"部分。
+**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P2-4/6/7/9/18/19/21 及 P2-20 状态去重部分（P0/P1 已全部修复,P1-10 修于 2026-07-05 凌晨；P2-2/12/15 正确性组修于 2026-07-05,macOS+Android A/B 均 0.000% diff）。P1-7/8(网络与解码链路)亦修于同晚:HttpCache shared_ptr 零拷贝+字节预算+put 移出网络线程;Android JNI 句柄缓存+线程生命周期 attach(修无条件 Detach 正确性隐患),真机 343 次解码零异常、截图与基线一致。P1-4/5/6(Metal 帧调度三件套)修于 2026-07-04 深夜:drawable 超时+in-flight 信号量+updateBuffer orphan+mipmap blit,MTL_DEBUG_LAYER 0 错误、140/140、macOS 截图与基线一致;顺带完成 P2-20 的"drawable 存 Impl 成员"部分。
 **方法**：四路并行只读审计（GLES 后端 / Metal 后端 / 网络桥接层 / 帧循环与上传策略层），交叉核对后合并。
 **范围**：`platform/`（RenderDeviceGLES、RenderDeviceMetal、CurlMultiRequestScheduler、Android/iOS/Mac 桥）+ 与平台层耦合的中层（RenderCommand 契约、SceneRenderPipeline、上传预算/节流策略、HttpCache）。
 **不含**：已修项（相机高空早退、budget lane 涓流、节流令牌、touchInertia、glFlush 移除、GLES sampler 压缩等，见 MEMORY）；低空高度查询 O(瓦片×三角形) 为已知 TODO 未重复。
@@ -68,7 +68,7 @@
 | # | 发现 | 位置 | 修复方向 |
 |---|---|---|---|
 | ✅P2-1 | curl 无 `CURLOPT_ACCEPT_ENCODING` → 无 gzip（QM/json 压缩比 2-5×；iOS NSURLSession 默认有 → 双平台行为不一致） | CurlMultiRequestScheduler.cpp:383-429 | 一行 setopt |
-| P2-2 | sync-over-async：httpGet/getBlocking 在 AsyncSystem 池线程 cv 等网络（20ms 周期轮询），同池混装解码+磁盘写+网络等待 | GltfContentProvider.cpp:3358/3949/3993、QuantizedMeshLayerJsonFetcher.cpp:64-116 | 改 continuation 链或分池 |
+| ✅P2-2 | sync-over-async：httpGet/getBlocking 在 AsyncSystem 池线程 cv 等网络（20ms 周期轮询），同池混装解码+磁盘写+网络等待 | GltfContentProvider.cpp:3358/3949/3993、QuantizedMeshLayerJsonFetcher.cpp:64-116 | 已修（2026-07-05）：glTF 外部资源改"解码前枚举 URI→非阻塞并发预取（含 i3dm gltfFormat=0 两跳回扫）→池上解码查 stash/缓存"，池线程零 cv 等待，SingleGltf 阻塞 httpGet 删除。澄清：layer.json/TMS/WMS 的 fetchBlocking 跑在 installScene 主线程（同步初始化契约），不占池线程、非本病灶未动；实测唤醒方是网络线程不成环——危害是池饥饿而非死锁 |
 | ✅P2-3 | 响应 body 无 reserve：75KB 按 16KB 块 ~8-10 次 realloc 在唯一网络线程 | CurlMultiRequestScheduler.cpp:22-28 | 按 Content-Length reserve |
 | P2-4 | iOS/Mac 桥丢优先级（Mac 连 headers 一起丢）；并发 6 vs curl 20 不一致；NSURLCache 与 HttpCache 双份缓存 | IosPlatformBridge.mm:55-109、MacPlatformBridge.mm:57-60 | 映射 priority/headers、统一并发、禁 NSURLCache |
 | ✅P2-5 | QM 共享 metadata 完成后按 waiter 逐个整拷 75KB body | QuantizedMeshTerrainProvider.cpp:~3965 | shared_ptr 分发 |
@@ -78,10 +78,10 @@
 | P2-9 | 字符串瓦片注册表 key：每次 ensureTile 现场拼接（50 entries ≈ 每帧 500+ 次构造 / 2000+ 次分配） | TileCacheKey.h:10-13、TilesetTileRegistry.h:17 | z/x/y 位打包整数 key |
 | ✅P2-10 | 每帧无条件刷新 credits/progress，含 O(N²) 字符串去重 | TileRenderPlanFrameRefresher.cpp:80-178 | revision 门控 + unordered_set |
 | ✅P2-11 | 遮挡检查每瓦片重复 cartesianToCartographic(相机)（迭代法测地转换，相机帧内不变） | TileSoftwareOcclusionPolicy.cpp:168-169 | 帧级相机快照传入 |
-| P2-12 | 异步管线纹理按 primitive 重复拷贝，仅 primitives[0] 被消费（(P−1)×T 份全图浪费） | GltfRenderResourcePreparer.cpp:655-696、:905-907 | 拷贝提升到 GpuReadyData 层 |
+| ✅P2-12 | 异步管线纹理按 primitive 重复拷贝，仅 primitives[0] 被消费（(P−1)×T 份全图浪费） | GltfRenderResourcePreparer.cpp:655-696、:905-907 | 已修（2026-07-05）：TextureData 提升到 GpuReadyData 层，decodeModelTextures 每 tile 解码一次；顺带修复混合 terrain+glTF 模型且 primitives[0] 为 terrain 时纹理丢失的潜在缺陷 |
 | ✅P2-13 | createTexture 每次 glGetString(GL_EXTENSIONS) 全串拷贝 + glGetFloatv（均为驱动线程同步点），**每张 raster 瓦片纹理触发** | RenderDeviceGLES.cpp:23-27、:188-196（触发方 RenderDeviceRasterTextureUploader.cpp:97） | surface 创建时查一次缓存 |
 | ✅P2-14 | updateBuffer/updateTextureRegion 每次 glGetError（threaded GL dispatch 下强制驱动线程同步；动画每 primitive 每帧一次） | RenderDeviceGLES.cpp:254、:291 | 仅 debug 保留 |
-| P2-15 | Metal sampler 每纹理新建无去重（Apple GPU 存活 sampler 上限 1024/2048，逼近时静默回落掩盖问题） | RenderDeviceMetal.mm:197-208 | descriptor 缓存表 |
+| ✅P2-15 | Metal sampler 每纹理新建无去重（Apple GPU 存活 sampler 上限 1024/2048，逼近时静默回落掩盖问题） | RenderDeviceMetal.mm:197-208 | 已修（2026-07-05）：Impl 内 64 位打包 key（min/mag/mip/wrapS/wrapT/anisotropy）→sampler 缓存表，存活数=配置种类数；macOS A/B 截图 0.000% diff |
 | ✅P2-16 | `framebufferOnly=NO` 无正当用途，放弃 drawable 压缩/scanout 优化 | MetalView.mm:30 | 改 YES |
 | ✅P2-17 | CVDisplayLink→dispatch_async 无合帧：慢帧时主队列 render block 无限积压（输入延迟持续增长） | MetalView.mm:102-110 | pending 标记合帧 |
 | P2-18 | 每瓦片纹理 create/destroy 无池化、glGenerateMipmap 在渲染线程；接口无 PBO/staging 异步上传表达能力 | RenderDeviceGLES.cpp:146-220、RenderDeviceMetal.mm:189-236 | 纹理池 + staging→private blit |

@@ -36,6 +36,53 @@ TextureDesc::Wrap toTextureWrap(GltfTextureWrap wrap) {
     }
 }
 
+/// Decode a model's glTF textures to upload-ready RGBA8/R8 once per tile
+/// (P2-12): textures are shared across primitives, so the copy lives at
+/// GpuReadyData level instead of being duplicated into every primitive.
+std::vector<GpuReadyData::TextureData> decodeModelTextures(
+    const std::vector<GltfTexture>& modelTextures) {
+    std::vector<GpuReadyData::TextureData> textures;
+    for (const GltfTexture& tex : modelTextures) {
+        GpuReadyData::TextureData texData;
+        if (tex.image.width <= 0 || tex.image.height <= 0 ||
+            tex.image.pixels.empty()) {
+            continue;
+        }
+        const size_t pixelCount =
+            static_cast<size_t>(tex.image.width) *
+            static_cast<size_t>(tex.image.height);
+        texData.width = tex.image.width;
+        texData.height = tex.image.height;
+        texData.mipmap = tex.sampler.mipmap;
+
+        if (tex.image.channels == 1) {
+            if (tex.image.pixels.size() < pixelCount) continue;
+            texData.channels = 1;
+            texData.pixels.assign(
+                tex.image.pixels.begin(),
+                tex.image.pixels.begin() + pixelCount);
+        } else if (tex.image.channels == 3) {
+            if (tex.image.pixels.size() < pixelCount * 3u) continue;
+            texData.channels = 4;
+            texData.pixels.resize(pixelCount * 4u);
+            for (size_t p = 0; p < pixelCount; ++p) {
+                texData.pixels[p * 4u + 0] = tex.image.pixels[p * 3u + 0];
+                texData.pixels[p * 4u + 1] = tex.image.pixels[p * 3u + 1];
+                texData.pixels[p * 4u + 2] = tex.image.pixels[p * 3u + 2];
+                texData.pixels[p * 4u + 3] = 255u;
+            }
+        } else if (tex.image.channels == 4) {
+            if (tex.image.pixels.size() < pixelCount * 4u) continue;
+            texData.channels = 4;
+            texData.pixels = tex.image.pixels;
+        } else {
+            continue;
+        }
+        textures.push_back(std::move(texData));
+    }
+    return textures;
+}
+
 std::unique_ptr<Texture> createGltfGpuTexture(RenderDevice* device,
                                               const GltfTexture& texture) {
     if (!device ||
@@ -605,6 +652,7 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
     GpuReadyData ready;
     const Mat4& transform = tile.content.renderContent.gltfTransform();
     const Vec3& localOrigin = tile.content.renderContent.renderLocalOrigin();
+    bool hasGltfTexturedPrimitive = false;
 
     for (const GltfPrimitive& primitive : model->primitives) {
         if (primitive.vertices.empty() || primitive.indices.empty()) {
@@ -652,47 +700,10 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
         gpuPrim.sortCenterEcef =
             GltfRenderGeometryBuilder::primitiveSortCenterEcef(primitive, transform);
 
-        // CPU work: decode textures (only for non-terrain, terrain textures
-        // are already uploaded by the raster overlay system)
+        // Terrain textures are already uploaded by the raster overlay
+        // system; glTF textures are decoded once per tile after the loop.
         if (!useTerrainFormat) {
-            for (const GltfTexture& tex : model->textures) {
-                GpuReadyPrimitive::TextureData texData;
-                if (tex.image.width <= 0 || tex.image.height <= 0 ||
-                    tex.image.pixels.empty()) {
-                    continue;
-                }
-                const size_t pixelCount =
-                    static_cast<size_t>(tex.image.width) *
-                    static_cast<size_t>(tex.image.height);
-                texData.width = tex.image.width;
-                texData.height = tex.image.height;
-                texData.mipmap = tex.sampler.mipmap;
-
-                if (tex.image.channels == 1) {
-                    if (tex.image.pixels.size() < pixelCount) continue;
-                    texData.channels = 1;
-                    texData.pixels.assign(
-                        tex.image.pixels.begin(),
-                        tex.image.pixels.begin() + pixelCount);
-                } else if (tex.image.channels == 3) {
-                    if (tex.image.pixels.size() < pixelCount * 3u) continue;
-                    texData.channels = 4;
-                    texData.pixels.resize(pixelCount * 4u);
-                    for (size_t p = 0; p < pixelCount; ++p) {
-                        texData.pixels[p * 4u + 0] = tex.image.pixels[p * 3u + 0];
-                        texData.pixels[p * 4u + 1] = tex.image.pixels[p * 3u + 1];
-                        texData.pixels[p * 4u + 2] = tex.image.pixels[p * 3u + 2];
-                        texData.pixels[p * 4u + 3] = 255u;
-                    }
-                } else if (tex.image.channels == 4) {
-                    if (tex.image.pixels.size() < pixelCount * 4u) continue;
-                    texData.channels = 4;
-                    texData.pixels = tex.image.pixels;
-                } else {
-                    continue;
-                }
-                gpuPrim.textures.push_back(std::move(texData));
-            }
+            hasGltfTexturedPrimitive = true;
         }
 
         // Extract metadata (material properties, etc.)
@@ -742,6 +753,10 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
         ready.primitives.push_back(std::move(gpuPrim));
     }
 
+    if (hasGltfTexturedPrimitive) {
+        ready.textures = decodeModelTextures(model->textures);
+    }
+
     return ready.valid() ? std::make_optional(std::move(ready)) : std::nullopt;
 }
 
@@ -753,6 +768,7 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
     if (model.primitives.empty()) return std::nullopt;
 
     GpuReadyData ready;
+    bool hasGltfTexturedPrimitive = false;
 
     for (const GltfPrimitive& primitive : model.primitives) {
         if (primitive.vertices.empty() || primitive.indices.empty()) {
@@ -800,46 +816,10 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
         gpuPrim.sortCenterEcef =
             GltfRenderGeometryBuilder::primitiveSortCenterEcef(primitive, transform);
 
-        // CPU work: decode textures (only for non-terrain)
+        // Terrain textures are handled by the raster overlay system; glTF
+        // textures are decoded once per tile after the loop.
         if (!useTerrainFormat) {
-            for (const GltfTexture& tex : model.textures) {
-                GpuReadyPrimitive::TextureData texData;
-                if (tex.image.width <= 0 || tex.image.height <= 0 ||
-                    tex.image.pixels.empty()) {
-                    continue;
-                }
-                const size_t pixelCount =
-                    static_cast<size_t>(tex.image.width) *
-                    static_cast<size_t>(tex.image.height);
-                texData.width = tex.image.width;
-                texData.height = tex.image.height;
-                texData.mipmap = tex.sampler.mipmap;
-
-                if (tex.image.channels == 1) {
-                    if (tex.image.pixels.size() < pixelCount) continue;
-                    texData.channels = 1;
-                    texData.pixels.assign(
-                        tex.image.pixels.begin(),
-                        tex.image.pixels.begin() + pixelCount);
-                } else if (tex.image.channels == 3) {
-                    if (tex.image.pixels.size() < pixelCount * 3u) continue;
-                    texData.channels = 4;
-                    texData.pixels.resize(pixelCount * 4u);
-                    for (size_t p = 0; p < pixelCount; ++p) {
-                        texData.pixels[p * 4u + 0] = tex.image.pixels[p * 3u + 0];
-                        texData.pixels[p * 4u + 1] = tex.image.pixels[p * 3u + 1];
-                        texData.pixels[p * 4u + 2] = tex.image.pixels[p * 3u + 2];
-                        texData.pixels[p * 4u + 3] = 255u;
-                    }
-                } else if (tex.image.channels == 4) {
-                    if (tex.image.pixels.size() < pixelCount * 4u) continue;
-                    texData.channels = 4;
-                    texData.pixels = tex.image.pixels;
-                } else {
-                    continue;
-                }
-                gpuPrim.textures.push_back(std::move(texData));
-            }
+            hasGltfTexturedPrimitive = true;
         }
 
         // Copy all scalar/vector metadata but leave GPU pointers as nullptr.
@@ -887,6 +867,10 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
         ready.primitives.push_back(std::move(gpuPrim));
     }
 
+    if (hasGltfTexturedPrimitive) {
+        ready.textures = decodeModelTextures(model.textures);
+    }
+
     return ready.valid() ? std::make_optional(std::move(ready)) : std::nullopt;
 }
 
@@ -902,9 +886,9 @@ bool GltfRenderResourcePreparer::uploadToGpu(
 
     // Upload textures first (they're referenced by index in metadata)
     std::vector<std::unique_ptr<Texture>> gpuTextures;
-    if (!ready.primitives.empty() && !ready.primitives[0].textures.empty()) {
-        gpuTextures.reserve(ready.primitives[0].textures.size());
-        for (const auto& texData : ready.primitives[0].textures) {
+    if (!ready.textures.empty()) {
+        gpuTextures.reserve(ready.textures.size());
+        for (const auto& texData : ready.textures) {
             TextureDesc td;
             td.width = texData.width;
             td.height = texData.height;

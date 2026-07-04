@@ -299,6 +299,15 @@ public:
         const ExternalResourceResolver& externalResourceResolver,
         const ImageDecoder& imageDecoder,
         const GltfParserOptions& options);
+
+    /// Enumerate the external resource URIs (buffer and image uri fields
+    /// that are not data: URIs) referenced by a glTF/GLB payload, without
+    /// resolving or validating them. Returns raw, unresolved URI strings.
+    /// Used to prefetch external resources asynchronously so parse-time
+    /// resolvers never have to block on network I/O (P2-2).
+    static std::vector<std::string> collectExternalResourceUris(
+        const uint8_t* data,
+        size_t size);
 };
 
 } // namespace earth_engine
