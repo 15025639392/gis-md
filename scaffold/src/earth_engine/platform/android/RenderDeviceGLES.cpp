@@ -67,7 +67,35 @@ int glesGltfTextureUnit(size_t vecIndex) {
     return -1;
 }
 
+// VAO 缓存上限：working set 约为可见瓦片数（几十~一两百条），512 足够
+// 宽裕；触顶时逐出最久未用的一条，防止长时间运行 VAO 无限增长。
+constexpr size_t kMaxVaoCacheEntries = 512;
+
 } // namespace
+
+// ============================================================
+// GLVaoInvalidationRegistry
+// ============================================================
+
+void GLVaoInvalidationRegistry::notifyBufferDeleted(unsigned int bufferId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (deviceAlive_) {
+        pendingDeletedBuffers_.push_back(bufferId);
+    }
+}
+
+void GLVaoInvalidationRegistry::markDeviceDead() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    deviceAlive_ = false;
+    pendingDeletedBuffers_.clear();
+}
+
+std::vector<unsigned int> GLVaoInvalidationRegistry::takePendingDeletedBuffers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<unsigned int> taken;
+    taken.swap(pendingDeletedBuffers_);
+    return taken;
+}
 
 // ============================================================
 // GLTexture
@@ -86,11 +114,18 @@ GLTexture::~GLTexture() {
 // GLBuffer
 // ============================================================
 
-GLBuffer::GLBuffer(unsigned int id, size_t size, unsigned int target)
-    : id_(id), size_(size), target_(target) {}
+GLBuffer::GLBuffer(unsigned int id, size_t size, unsigned int target,
+                   std::shared_ptr<GLVaoInvalidationRegistry> vaoRegistry)
+    : id_(id), size_(size), target_(target),
+      vaoRegistry_(std::move(vaoRegistry)) {}
 
 GLBuffer::~GLBuffer() {
     if (id_) {
+        // 先登记失效：device 下一次 submit 开头会清除引用本 buffer 的 VAO
+        // （VAO 持有 buffer 引用，GL 名字可被复用，不清除则悬空）。
+        if (vaoRegistry_) {
+            vaoRegistry_->notifyBufferDeleted(id_);
+        }
         glDeleteBuffers(1, &id_);
     }
 }
@@ -134,9 +169,13 @@ const std::vector<int>& GLShaderProgram::gltfBlockLocations() {
 // RenderDeviceGLES
 // ============================================================
 
-RenderDeviceGLES::RenderDeviceGLES() = default;
+RenderDeviceGLES::RenderDeviceGLES()
+    : vaoRegistry_(std::make_shared<GLVaoInvalidationRegistry>()) {}
 
 RenderDeviceGLES::~RenderDeviceGLES() {
+    // 先声明设备死亡：此后 GLBuffer 析构不再登记。登记表由 shared_ptr
+    // 保活，晚于 device 析构的 buffer 也不会访问已释放内存。
+    vaoRegistry_->markDeviceDead();
     onSurfaceDestroyed();
 }
 
@@ -301,7 +340,7 @@ std::unique_ptr<Buffer> RenderDeviceGLES::createBuffer(const BufferDesc& desc) {
     glBufferData(target, static_cast<GLsizeiptr>(desc.size), desc.data, usage);
     glBindBuffer(target, 0);
 
-    return std::make_unique<GLBuffer>(id, desc.size, target);
+    return std::make_unique<GLBuffer>(id, desc.size, target, vaoRegistry_);
 }
 
 bool RenderDeviceGLES::updateBuffer(Buffer* buffer,
@@ -457,40 +496,19 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     int vectorCommands = 0;
     int environmentCommands = 0;
 
+    // 先消化自上次 submit 以来析构的 GLBuffer：删除引用其 id 的 VAO，
+    // 防止 dangling VAO（必须在本帧任何 VAO 查询/绑定之前完成——GL 名字
+    // 复用后同名 buffer 会命中陈旧条目）。
+    purgeVaosForDeletedBuffers();
+
     GLuint currentProgram = 0;
-    GLuint currentArrayBuffer = 0;
-    GLuint currentElementArrayBuffer = 0;
+    GLuint currentVao = 0;
     std::array<GLuint, kGltfWaterMaskTextureSlot + 1> currentTextures{};
-    bool attrib0Enabled = false;
-    bool attrib1Enabled = false;
-    bool attrib2Enabled = false;
-    bool attrib3Enabled = false;
-    bool attrib4Enabled = false;
-    bool attrib5Enabled = false;
-    bool attrib6Enabled = false;
-    bool attrib7Enabled = false;
-    bool attrib8Enabled = false;
-    bool attrib9Enabled = false;
-    bool attrib10Enabled = false;
-    bool attrib11Enabled = false;
-    bool attrib12Enabled = false;
-    bool attrib13Enabled = false;
-    bool attrib14Enabled = false;
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool polygonOffsetEnabled = false;
     bool cullFaceEnabled = true;
     bool depthWriteEnabled = true;
-
-    auto setAttribEnabled = [](GLuint index, bool& cached, bool enabled) {
-        if (cached == enabled) return;
-        if (enabled) {
-            glEnableVertexAttribArray(index);
-        } else {
-            glDisableVertexAttribArray(index);
-        }
-        cached = enabled;
-    };
 
     for (const auto& cmd : commands) {
         switch (cmd.kind) {
@@ -524,217 +542,51 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glUseProgram(currentProgram);
         }
 
-        // ---- 顶点属性设置 ----
-        if (currentArrayBuffer != vb->glId()) {
-            currentArrayBuffer = vb->glId();
-            glBindBuffer(GL_ARRAY_BUFFER, currentArrayBuffer);
-        }
-
+        // ---- 顶点属性设置（VAO 缓存）----
+        // 布局分派逻辑保留在 recordVaoLayout（VAO 首次创建时录制一次），
+        // 此处只做布局分类 + 一次 glBindVertexArray；element buffer 绑定
+        // 也封在 VAO 里，不再逐 draw 重发。
         const bool isGltfVertexLayout =
             (cmd.kind == RenderCommandKind::GltfPrimitive ||
              cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) &&
             cmd.vertexStride == 120;
+        // 与原布局分派一致：instance 属性只挂在 32B/120B 分支上。
+        const bool useInstanceAttribs =
+            (cmd.vertexStride == 32 || isGltfVertexLayout) &&
+            cmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+            instanceBuffer &&
+            cmd.instanceStride == kGltfInstanceMatrixStride;
+
+        VaoKey vaoKey;
+        vaoKey.vertexBuffer = vb->glId();
+        vaoKey.indexBuffer = ib ? ib->glId() : 0u;
+        vaoKey.instanceBuffer =
+            useInstanceAttribs ? instanceBuffer->glId() : 0u;
         if (cmd.vertexStride == 32 || isGltfVertexLayout) {
-            // Surface: POSITION(12) + NORMAL(12) + TEXCOORD_0(8) = 32 bytes.
-            // glTF: POSITION/NORMAL + 8 packed TEXCOORD sets + COLOR_0 + TANGENT.
-            const GLsizei vertexStride =
-                static_cast<GLsizei>(cmd.vertexStride);
-            setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, vertexStride,
-                                  reinterpret_cast<void*>(0));
-            glVertexAttribDivisor(0, 0);
-            setAttribEnabled(1, attrib1Enabled, true);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, vertexStride,
-                                  reinterpret_cast<void*>(12));
-            glVertexAttribDivisor(1, 0);
-            setAttribEnabled(2, attrib2Enabled, true);
-            glVertexAttribPointer(2,
-                                  isGltfVertexLayout ? 4 : 2,
-                                  GL_FLOAT,
-                                  GL_FALSE,
-                                  vertexStride,
-                                  reinterpret_cast<void*>(24));
-            glVertexAttribDivisor(2, 0);
-            if (isGltfVertexLayout) {
-                setAttribEnabled(10, attrib10Enabled, true);
-                glVertexAttribPointer(10, 4, GL_FLOAT, GL_FALSE, vertexStride,
-                                      reinterpret_cast<void*>(40));
-                glVertexAttribDivisor(10, 0);
-                setAttribEnabled(11, attrib11Enabled, true);
-                glVertexAttribPointer(11, 4, GL_FLOAT, GL_FALSE, vertexStride,
-                                      reinterpret_cast<void*>(56));
-                glVertexAttribDivisor(11, 0);
-                setAttribEnabled(12, attrib12Enabled, true);
-                glVertexAttribPointer(12, 4, GL_FLOAT, GL_FALSE, vertexStride,
-                                      reinterpret_cast<void*>(72));
-                glVertexAttribDivisor(12, 0);
-                setAttribEnabled(13, attrib13Enabled, true);
-                glVertexAttribPointer(13, 4, GL_FLOAT, GL_FALSE, vertexStride,
-                                      reinterpret_cast<void*>(88));
-                glVertexAttribDivisor(13, 0);
-                setAttribEnabled(14, attrib14Enabled, true);
-                glVertexAttribPointer(14, 4, GL_FLOAT, GL_FALSE, vertexStride,
-                                      reinterpret_cast<void*>(104));
-                glVertexAttribDivisor(14, 0);
-            } else {
-                setAttribEnabled(10, attrib10Enabled, false);
-                setAttribEnabled(11, attrib11Enabled, false);
-                setAttribEnabled(12, attrib12Enabled, false);
-                setAttribEnabled(13, attrib13Enabled, false);
-                setAttribEnabled(14, attrib14Enabled, false);
-            }
-            if (cmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
-                instanceBuffer &&
-                cmd.instanceStride == kGltfInstanceMatrixStride) {
-                if (currentArrayBuffer != instanceBuffer->glId()) {
-                    currentArrayBuffer = instanceBuffer->glId();
-                    glBindBuffer(GL_ARRAY_BUFFER, currentArrayBuffer);
-                }
-                setAttribEnabled(3, attrib3Enabled, true);
-                glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE,
-                                      kGltfInstanceMatrixStride,
-                                      reinterpret_cast<void*>(0));
-                glVertexAttribDivisor(3, 1);
-                setAttribEnabled(4, attrib4Enabled, true);
-                glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE,
-                                      kGltfInstanceMatrixStride,
-                                      reinterpret_cast<void*>(16));
-                glVertexAttribDivisor(4, 1);
-                setAttribEnabled(5, attrib5Enabled, true);
-                glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE,
-                                      kGltfInstanceMatrixStride,
-                                      reinterpret_cast<void*>(32));
-                glVertexAttribDivisor(5, 1);
-                setAttribEnabled(6, attrib6Enabled, true);
-                glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE,
-                                      kGltfInstanceMatrixStride,
-                                      reinterpret_cast<void*>(48));
-                glVertexAttribDivisor(6, 1);
-                setAttribEnabled(7, attrib7Enabled, true);
-                glVertexAttribPointer(7, 3, GL_FLOAT, GL_FALSE,
-                                      kGltfInstanceMatrixStride,
-                                      reinterpret_cast<void*>(64));
-                glVertexAttribDivisor(7, 1);
-                setAttribEnabled(8, attrib8Enabled, true);
-                glVertexAttribPointer(8, 3, GL_FLOAT, GL_FALSE,
-                                      kGltfInstanceMatrixStride,
-                                      reinterpret_cast<void*>(76));
-                glVertexAttribDivisor(8, 1);
-                setAttribEnabled(9, attrib9Enabled, true);
-                glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE,
-                                      kGltfInstanceMatrixStride,
-                                      reinterpret_cast<void*>(88));
-                glVertexAttribDivisor(9, 1);
-            } else {
-                setAttribEnabled(3, attrib3Enabled, false);
-                setAttribEnabled(4, attrib4Enabled, false);
-                setAttribEnabled(5, attrib5Enabled, false);
-                setAttribEnabled(6, attrib6Enabled, false);
-                setAttribEnabled(7, attrib7Enabled, false);
-                setAttribEnabled(8, attrib8Enabled, false);
-                setAttribEnabled(9, attrib9Enabled, false);
-            }
+            vaoKey.layout = isGltfVertexLayout
+                ? (useInstanceAttribs ? VertexLayoutKind::Gltf120Instanced
+                                      : VertexLayoutKind::Gltf120)
+                : (useInstanceAttribs ? VertexLayoutKind::Surface32Instanced
+                                      : VertexLayoutKind::Surface32);
+            vaoKey.vertexStride = static_cast<unsigned int>(cmd.vertexStride);
         } else if (cmd.vertexStride == 20) {
             // Terrain tile: pos(12) + uv(8), normal computed in shader
-            setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 20,
-                                  reinterpret_cast<void*>(0));
-            glVertexAttribDivisor(0, 0);
-            setAttribEnabled(1, attrib1Enabled, false);
-            setAttribEnabled(2, attrib2Enabled, true);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 20,
-                                  reinterpret_cast<void*>(12));
-            glVertexAttribDivisor(2, 0);
-            setAttribEnabled(3, attrib3Enabled, false);
-            setAttribEnabled(4, attrib4Enabled, false);
-            setAttribEnabled(5, attrib5Enabled, false);
-            setAttribEnabled(6, attrib6Enabled, false);
-            setAttribEnabled(7, attrib7Enabled, false);
-            setAttribEnabled(8, attrib8Enabled, false);
-            setAttribEnabled(9, attrib9Enabled, false);
-            setAttribEnabled(10, attrib10Enabled, false);
-            setAttribEnabled(11, attrib11Enabled, false);
-            setAttribEnabled(12, attrib12Enabled, false);
-            setAttribEnabled(13, attrib13Enabled, false);
-            setAttribEnabled(14, attrib14Enabled, false);
+            vaoKey.layout = VertexLayoutKind::Terrain20;
+            vaoKey.vertexStride = 20;
         } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）
-            // 根据 stride 推断分量数：8=vec2, 12=vec3
-            int compCount = 3;
-            if (cmd.vertexStride == 8) compCount = 2;   // vec2
-            else if (cmd.vertexStride == 12) compCount = 3; // vec3
-            setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, compCount, GL_FLOAT, GL_FALSE, cmd.vertexStride,
-                                  reinterpret_cast<void*>(0));
-            setAttribEnabled(1, attrib1Enabled, false);
-            setAttribEnabled(2, attrib2Enabled, false);
-            glVertexAttribDivisor(0, 0);
-            setAttribEnabled(3, attrib3Enabled, false);
-            setAttribEnabled(4, attrib4Enabled, false);
-            setAttribEnabled(5, attrib5Enabled, false);
-            setAttribEnabled(6, attrib6Enabled, false);
-            setAttribEnabled(7, attrib7Enabled, false);
-            setAttribEnabled(8, attrib8Enabled, false);
-            setAttribEnabled(9, attrib9Enabled, false);
-            setAttribEnabled(10, attrib10Enabled, false);
-            setAttribEnabled(11, attrib11Enabled, false);
-            setAttribEnabled(12, attrib12Enabled, false);
-            setAttribEnabled(13, attrib13Enabled, false);
-            setAttribEnabled(14, attrib14Enabled, false);
-            glVertexAttribDivisor(3, 0);
-            glVertexAttribDivisor(4, 0);
-            glVertexAttribDivisor(5, 0);
-            glVertexAttribDivisor(6, 0);
-            glVertexAttribDivisor(7, 0);
-            glVertexAttribDivisor(8, 0);
-            glVertexAttribDivisor(9, 0);
-            glVertexAttribDivisor(10, 0);
-            glVertexAttribDivisor(11, 0);
-            glVertexAttribDivisor(12, 0);
-            glVertexAttribDivisor(13, 0);
-            glVertexAttribDivisor(14, 0);
+            vaoKey.layout = VertexLayoutKind::SimpleStride;
+            vaoKey.vertexStride = static_cast<unsigned int>(cmd.vertexStride);
         } else {
-            // SurfaceTile vertex: float3 pos + float3 normal + float2 tex = 32 bytes
-            constexpr int kSurfaceStride = 32;
-            setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
-                                  reinterpret_cast<void*>(0));
-            setAttribEnabled(1, attrib1Enabled, true);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
-                                  reinterpret_cast<void*>(12));
-            setAttribEnabled(2, attrib2Enabled, true);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kSurfaceStride,
-                                  reinterpret_cast<void*>(24));
-            glVertexAttribDivisor(0, 0);
-            glVertexAttribDivisor(1, 0);
-            glVertexAttribDivisor(2, 0);
-            setAttribEnabled(3, attrib3Enabled, false);
-            setAttribEnabled(4, attrib4Enabled, false);
-            setAttribEnabled(5, attrib5Enabled, false);
-            setAttribEnabled(6, attrib6Enabled, false);
-            setAttribEnabled(7, attrib7Enabled, false);
-            setAttribEnabled(8, attrib8Enabled, false);
-            setAttribEnabled(9, attrib9Enabled, false);
-            setAttribEnabled(10, attrib10Enabled, false);
-            setAttribEnabled(11, attrib11Enabled, false);
-            setAttribEnabled(12, attrib12Enabled, false);
-            setAttribEnabled(13, attrib13Enabled, false);
-            setAttribEnabled(14, attrib14Enabled, false);
-            glVertexAttribDivisor(3, 0);
-            glVertexAttribDivisor(4, 0);
-            glVertexAttribDivisor(5, 0);
-            glVertexAttribDivisor(6, 0);
-            glVertexAttribDivisor(7, 0);
-            glVertexAttribDivisor(8, 0);
-            glVertexAttribDivisor(9, 0);
-            glVertexAttribDivisor(10, 0);
-            glVertexAttribDivisor(11, 0);
+            // SurfaceTile 未显式给 stride 的兜底：32B 布局
+            vaoKey.layout = VertexLayoutKind::Surface32;
+            vaoKey.vertexStride = 32;
         }
 
-        const GLuint elementArrayBuffer = ib ? ib->glId() : 0;
-        if (currentElementArrayBuffer != elementArrayBuffer) {
-            currentElementArrayBuffer = elementArrayBuffer;
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, currentElementArrayBuffer);
+        const GLuint vao = acquireVao(vaoKey);
+        if (currentVao != vao) {
+            glBindVertexArray(vao);
+            currentVao = vao;
         }
 
         // ---- 纹理绑定 ----
@@ -986,58 +838,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
     // Batch-level cleanup keeps RenderDevice ownership explicit without
     // thrashing GL state between adjacent SurfaceTile commands.
-    if (attrib0Enabled) glDisableVertexAttribArray(0);
-    if (attrib1Enabled) glDisableVertexAttribArray(1);
-    if (attrib2Enabled) glDisableVertexAttribArray(2);
-    if (attrib3Enabled) {
-        glVertexAttribDivisor(3, 0);
-        glDisableVertexAttribArray(3);
-    }
-    if (attrib4Enabled) {
-        glVertexAttribDivisor(4, 0);
-        glDisableVertexAttribArray(4);
-    }
-    if (attrib5Enabled) {
-        glVertexAttribDivisor(5, 0);
-        glDisableVertexAttribArray(5);
-    }
-    if (attrib6Enabled) {
-        glVertexAttribDivisor(6, 0);
-        glDisableVertexAttribArray(6);
-    }
-    if (attrib7Enabled) {
-        glVertexAttribDivisor(7, 0);
-        glDisableVertexAttribArray(7);
-    }
-    if (attrib8Enabled) {
-        glVertexAttribDivisor(8, 0);
-        glDisableVertexAttribArray(8);
-    }
-    if (attrib9Enabled) {
-        glVertexAttribDivisor(9, 0);
-        glDisableVertexAttribArray(9);
-    }
-    if (attrib10Enabled) {
-        glVertexAttribDivisor(10, 0);
-        glDisableVertexAttribArray(10);
-    }
-    if (attrib11Enabled) {
-        glVertexAttribDivisor(11, 0);
-        glDisableVertexAttribArray(11);
-    }
-    if (attrib12Enabled) {
-        glVertexAttribDivisor(12, 0);
-        glDisableVertexAttribArray(12);
-    }
-    if (attrib13Enabled) {
-        glVertexAttribDivisor(13, 0);
-        glDisableVertexAttribArray(13);
-    }
-    if (attrib14Enabled) {
-        glVertexAttribDivisor(14, 0);
-        glDisableVertexAttribArray(14);
-    }
+    // 属性启用/divisor/element buffer 状态都封在各 VAO 内部：这里只需解绑
+    // VAO，不再逐属性拆除（也绝不能在 VAO 绑定状态下去改全局属性状态，
+    // 否则会破坏该 VAO 录制的布局）。
+    glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    // 此时作用于默认 VAO(0) 的 element 绑定，与旧行为一致。
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     // Unbind every unit the frame may have touched — SurfaceTile uses 0-4/5,
     // compacted glTF/terrain uses 0-9 (kGlesGltfWaterUnit).
@@ -1062,6 +868,180 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     }
 }
 
+// ============================================================
+// VAO 缓存
+// ============================================================
+
+size_t RenderDeviceGLES::VaoKeyHash::operator()(const VaoKey& key) const {
+    // FNV-1a 变体：各字段依次折入。
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](uint64_t value) {
+        h ^= value;
+        h *= 1099511628211ull;
+    };
+    mix(key.vertexBuffer);
+    mix(key.indexBuffer);
+    mix(key.instanceBuffer);
+    mix(static_cast<uint64_t>(key.layout));
+    mix(key.vertexStride);
+    return static_cast<size_t>(h);
+}
+
+unsigned int RenderDeviceGLES::acquireVao(const VaoKey& key) {
+    ++vaoUseCounter_;
+    auto it = vaoCache_.find(key);
+    if (it != vaoCache_.end()) {
+        it->second.lastUse = vaoUseCounter_;
+        return it->second.vao;
+    }
+
+    // 上限逐出：淘汰最久未用的一条，防止长时间运行 VAO 无限增长。
+    // 被逐出的不可能是当前绑定的 VAO（当前绑定者 lastUse 最大）；即使
+    // GL 名字被随后的 glGenVertexArrays 复用，新建路径也会无条件
+    // glBindVertexArray，绑定状态不会错位。
+    if (vaoCache_.size() >= kMaxVaoCacheEntries) {
+        auto lru = vaoCache_.begin();
+        for (auto candidate = vaoCache_.begin(); candidate != vaoCache_.end();
+             ++candidate) {
+            if (candidate->second.lastUse < lru->second.lastUse) {
+                lru = candidate;
+            }
+        }
+        GLuint staleVao = lru->second.vao;
+        glDeleteVertexArrays(1, &staleVao);
+        vaoCache_.erase(lru);
+    }
+
+    GLuint vao = 0;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    recordVaoLayout(key);
+    vaoCache_.emplace(key, VaoEntry{vao, vaoUseCounter_});
+    return vao;
+}
+
+// 在新建 VAO 的绑定状态下录制顶点布局。新 VAO 的所有属性默认 disabled、
+// divisor 默认 0，因此只需启用本布局用到的属性。GL_ARRAY_BUFFER 绑定是
+// 全局状态（glVertexAttribPointer 捕获调用时刻绑定的 buffer），而
+// GL_ELEMENT_ARRAY_BUFFER 绑定属于 VAO 状态，须一并录入。
+void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
+    glBindBuffer(GL_ARRAY_BUFFER, key.vertexBuffer);
+    const GLsizei stride = static_cast<GLsizei>(key.vertexStride);
+    switch (key.layout) {
+        case VertexLayoutKind::Surface32:
+        case VertexLayoutKind::Surface32Instanced:
+            // Surface: POSITION(12) + NORMAL(12) + TEXCOORD_0(8) = 32 bytes.
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(12));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(24));
+            break;
+        case VertexLayoutKind::Gltf120:
+        case VertexLayoutKind::Gltf120Instanced:
+            // glTF: POSITION/NORMAL + 8 packed TEXCOORD sets + COLOR_0 + TANGENT.
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(12));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(24));
+            // attrib 10-14：packed TEXCOORD 2-7 + COLOR_0 + TANGENT，
+            // 依次位于字节偏移 40/56/72/88/104。
+            for (GLuint i = 0; i < 5; ++i) {
+                glEnableVertexAttribArray(10 + i);
+                glVertexAttribPointer(
+                    10 + i, 4, GL_FLOAT, GL_FALSE, stride,
+                    reinterpret_cast<void*>(
+                        static_cast<uintptr_t>(40 + 16 * i)));
+            }
+            break;
+        case VertexLayoutKind::Terrain20:
+            // Terrain tile: pos(12) + uv(8), normal computed in shader
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(12));
+            break;
+        case VertexLayoutKind::SimpleStride: {
+            // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）
+            // 根据 stride 推断分量数：8=vec2, 12=vec3
+            const int compCount = (key.vertexStride == 8) ? 2 : 3;
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, compCount, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            break;
+        }
+    }
+
+    if (key.layout == VertexLayoutKind::Surface32Instanced ||
+        key.layout == VertexLayoutKind::Gltf120Instanced) {
+        // Instance 矩阵属性：attrib 3-6 为 4 列 vec4（偏移 0/16/32/48），
+        // attrib 7-9 为 3 条 vec3（偏移 64/76/88），逐 instance 前进。
+        glBindBuffer(GL_ARRAY_BUFFER, key.instanceBuffer);
+        for (GLuint i = 0; i < 4; ++i) {
+            glEnableVertexAttribArray(3 + i);
+            glVertexAttribPointer(
+                3 + i, 4, GL_FLOAT, GL_FALSE, kGltfInstanceMatrixStride,
+                reinterpret_cast<void*>(static_cast<uintptr_t>(16 * i)));
+            glVertexAttribDivisor(3 + i, 1);
+        }
+        for (GLuint i = 0; i < 3; ++i) {
+            glEnableVertexAttribArray(7 + i);
+            glVertexAttribPointer(
+                7 + i, 3, GL_FLOAT, GL_FALSE, kGltfInstanceMatrixStride,
+                reinterpret_cast<void*>(static_cast<uintptr_t>(64 + 12 * i)));
+            glVertexAttribDivisor(7 + i, 1);
+        }
+    }
+
+    // element buffer 绑定录入 VAO（0 = 无索引，走 glDrawArrays 路径）。
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, key.indexBuffer);
+}
+
+void RenderDeviceGLES::purgeVaosForDeletedBuffers() {
+    std::vector<unsigned int> deleted =
+        vaoRegistry_->takePendingDeletedBuffers();
+    if (deleted.empty() || vaoCache_.empty()) {
+        return;
+    }
+    std::sort(deleted.begin(), deleted.end());
+    auto isDeleted = [&deleted](unsigned int id) {
+        return id != 0 &&
+               std::binary_search(deleted.begin(), deleted.end(), id);
+    };
+    for (auto it = vaoCache_.begin(); it != vaoCache_.end();) {
+        const VaoKey& key = it->first;
+        if (isDeleted(key.vertexBuffer) || isDeleted(key.indexBuffer) ||
+            isDeleted(key.instanceBuffer)) {
+            GLuint vao = it->second.vao;
+            glDeleteVertexArrays(1, &vao);
+            it = vaoCache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void RenderDeviceGLES::dropVaoCache(bool deleteGlObjects) {
+    if (deleteGlObjects) {
+        for (auto& entry : vaoCache_) {
+            GLuint vao = entry.second.vao;
+            glDeleteVertexArrays(1, &vao);
+        }
+    }
+    vaoCache_.clear();
+}
+
 void RenderDeviceGLES::endFrame() {
     // EGL swap 由外部调用者处理（eglSwapBuffers）
     // eglSwapBuffers() 会隐式等待 GPU 完成，不需要显式 glFlush()
@@ -1073,6 +1053,11 @@ void RenderDeviceGLES::endFrame() {
 // ============================================================
 
 void RenderDeviceGLES::onSurfaceCreated() {
+    // 新 context：旧 context 的 VAO 名字已全部失效，不能在新 context 里
+    // glDelete（可能误删新 context 恰好复用的同名对象），直接丢弃缓存；
+    // 旧 context 期间析构的 buffer 登记也一并作废。
+    dropVaoCache(/*deleteGlObjects=*/false);
+    (void)vaoRegistry_->takePendingDeletedBuffers();
     // EGL context 由外部管理，这里只做 GL 状态初始化
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -1102,6 +1087,8 @@ void RenderDeviceGLES::onSurfaceDestroyed() {
     // 注意：此时 EGL context 可能已失效，不要调用 GL 函数
     // GPU 资源由 unique_ptr 析构函数释放，但需要在有效 context 下调用
     // 实际使用时，应在 context 销毁前先销毁 RenderDeviceGLES
+    // VAO 缓存同理：只丢弃 CPU 侧记录，GL 对象随 context 一起销毁。
+    dropVaoCache(/*deleteGlObjects=*/false);
 }
 
 } // namespace earth_engine

@@ -1,11 +1,37 @@
 #pragma once
 
 #include "../../renderer/RenderDevice.h"
+#include <cstdint>
+#include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 #include <string>
 
 namespace earth_engine {
+
+/// GLBuffer 析构 → VAO 失效登记表。
+/// VAO 记录了对顶点/索引缓冲的引用：瓦片卸载时 GLBuffer 析构，若引用它的
+/// VAO 不同步清除，GL 名字复用后继续绘制是未定义行为。GLBuffer 析构时把
+/// 自己的 buffer id 投递到这里，device 在下一次 submit() 开头（GL 线程）
+/// 批量清除含该 id 的 VAO 条目——GL 对象删除永远只发生在 GL 线程。
+/// 生命周期：device 与所有 GLBuffer 通过 shared_ptr 共同持有本表，
+/// GLBuffer 晚于 device 析构时表仍然存活，只是 deviceAlive 已置假、
+/// 登记直接丢弃（消费者已不存在）。
+class GLVaoInvalidationRegistry {
+public:
+    /// GLBuffer 析构时调用（只入队，不碰 GL）。
+    void notifyBufferDeleted(unsigned int bufferId);
+    /// device 析构时调用：此后的登记直接丢弃。
+    void markDeviceDead();
+    /// device 在 submit 开头取走待清理的 buffer id 列表。
+    std::vector<unsigned int> takePendingDeletedBuffers();
+
+private:
+    std::mutex mutex_;
+    std::vector<unsigned int> pendingDeletedBuffers_;
+    bool deviceAlive_ = true;
+};
 
 /// OpenGL ES 3.0 渲染后端。
 /// 假设调用者已创建并激活 EGL context。
@@ -51,6 +77,56 @@ public:
     void onSurfaceDestroyed() override;
 
 private:
+    // ---- VAO 缓存 ----
+    // key =（vertexBuffer id, indexBuffer id, instanceBuffer id, 布局种类,
+    // stride）。GL_ELEMENT_ARRAY_BUFFER 绑定属于 VAO 状态，index buffer
+    // 必须进 key 和 VAO 记录。布局分派只在 VAO 首次创建时录制一次（见
+    // recordVaoLayout），之后同 key 命令一次 glBindVertexArray 即完成，
+    // 不再每 draw 全量重发 glVertexAttribPointer/glVertexAttribDivisor。
+    enum class VertexLayoutKind : unsigned char {
+        Surface32,          ///< 32B：POSITION(12)+NORMAL(12)+TEXCOORD(8)
+        Surface32Instanced, ///< 32B + 7 条 instance 矩阵属性（attrib 3-9）
+        Gltf120,            ///< 120B glTF：POSITION/NORMAL + packed TEXCOORD + COLOR/TANGENT
+        Gltf120Instanced,   ///< 120B glTF + 7 条 instance 矩阵属性
+        Terrain20,          ///< 20B：pos(12)+uv(8)，normal 由 shader 计算
+        SimpleStride,       ///< 单属性显式 stride（8=vec2、12=vec3，其余按 vec3）
+    };
+    struct VaoKey {
+        unsigned int vertexBuffer = 0;
+        unsigned int indexBuffer = 0;    ///< 0 = 无索引（glDrawArrays 路径）
+        unsigned int instanceBuffer = 0; ///< 仅 *Instanced 布局非 0
+        VertexLayoutKind layout = VertexLayoutKind::Surface32;
+        unsigned int vertexStride = 0;
+        bool operator==(const VaoKey& o) const {
+            return vertexBuffer == o.vertexBuffer &&
+                   indexBuffer == o.indexBuffer &&
+                   instanceBuffer == o.instanceBuffer &&
+                   layout == o.layout &&
+                   vertexStride == o.vertexStride;
+        }
+    };
+    struct VaoKeyHash {
+        size_t operator()(const VaoKey& key) const;
+    };
+    struct VaoEntry {
+        unsigned int vao = 0;
+        uint64_t lastUse = 0;  ///< LRU 逐出用的单调使用序号
+    };
+
+    /// 查缓存或新建并录制 VAO；命中只更新 LRU 序号，新建后该 VAO 保持绑定。
+    unsigned int acquireVao(const VaoKey& key);
+    /// 在新建 VAO 的绑定状态下按布局种类录制顶点属性 + element buffer。
+    void recordVaoLayout(const VaoKey& key);
+    /// 消化 GLBuffer 析构投递的失效 id，删除引用它们的 VAO（GL 线程调用）。
+    void purgeVaosForDeletedBuffers();
+    /// 丢弃全部 VAO 缓存。deleteGlObjects=false 用于 context 已（将）失效
+    /// 的场景：旧 context 的 VAO 名字不能拿到新 context 里 glDelete。
+    void dropVaoCache(bool deleteGlObjects);
+
+    std::unordered_map<VaoKey, VaoEntry, VaoKeyHash> vaoCache_;
+    uint64_t vaoUseCounter_ = 0;
+    std::shared_ptr<GLVaoInvalidationRegistry> vaoRegistry_;
+
     int viewportWidth_ = 0;
     int viewportHeight_ = 0;
     // Sky clear color pushed by Engine each frame via setClearColor().
@@ -79,7 +155,8 @@ private:
 
 class GLBuffer : public Buffer {
 public:
-    GLBuffer(unsigned int id, size_t size, unsigned int target);
+    GLBuffer(unsigned int id, size_t size, unsigned int target,
+             std::shared_ptr<GLVaoInvalidationRegistry> vaoRegistry);
     ~GLBuffer() override;
     size_t size() const override { return size_; }
     unsigned int glId() const { return id_; }
@@ -88,6 +165,9 @@ private:
     unsigned int id_;
     size_t size_;
     unsigned int target_;  // GL_ARRAY_BUFFER / GL_ELEMENT_ARRAY_BUFFER
+    // 析构时向 device 登记 id，令引用本 buffer 的 VAO 失效（见
+    // GLVaoInvalidationRegistry）。shared_ptr 保证登记表比 buffer 活得久。
+    std::shared_ptr<GLVaoInvalidationRegistry> vaoRegistry_;
 };
 
 class GLShaderProgram : public ShaderProgram {
