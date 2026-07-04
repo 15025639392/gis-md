@@ -1,7 +1,7 @@
 # 平台层架构与策略性能审计（2026-07-04）
 
 **分支**：`codex/surface-instancing-gpu-batch`
-**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P1-10、P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分。P1-7/8(网络与解码链路)亦修于同晚:HttpCache shared_ptr 零拷贝+字节预算+put 移出网络线程;Android JNI 句柄缓存+线程生命周期 attach(修无条件 Detach 正确性隐患),真机 343 次解码零异常、截图与基线一致。P1-4/5/6(Metal 帧调度三件套)修于 2026-07-04 深夜:drawable 超时+in-flight 信号量+updateBuffer orphan+mipmap blit,MTL_DEBUG_LAYER 0 错误、140/140、macOS 截图与基线一致;顺带完成 P2-20 的"drawable 存 Impl 成员"部分。
+**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分（P0/P1 已全部修复,P1-10 修于 2026-07-05 凌晨）。P1-7/8(网络与解码链路)亦修于同晚:HttpCache shared_ptr 零拷贝+字节预算+put 移出网络线程;Android JNI 句柄缓存+线程生命周期 attach(修无条件 Detach 正确性隐患),真机 343 次解码零异常、截图与基线一致。P1-4/5/6(Metal 帧调度三件套)修于 2026-07-04 深夜:drawable 超时+in-flight 信号量+updateBuffer orphan+mipmap blit,MTL_DEBUG_LAYER 0 错误、140/140、macOS 截图与基线一致;顺带完成 P2-20 的"drawable 存 Impl 成员"部分。
 **方法**：四路并行只读审计（GLES 后端 / Metal 后端 / 网络桥接层 / 帧循环与上传策略层），交叉核对后合并。
 **范围**：`platform/`（RenderDeviceGLES、RenderDeviceMetal、CurlMultiRequestScheduler、Android/iOS/Mac 桥）+ 与平台层耦合的中层（RenderCommand 契约、SceneRenderPipeline、上传预算/节流策略、HttpCache）。
 **不含**：已修项（相机高空早退、budget lane 涓流、节流令牌、touchInertia、glFlush 移除、GLES sampler 压缩等，见 MEMORY）；低空高度查询 O(瓦片×三角形) 为已知 TODO 未重复。
@@ -59,7 +59,7 @@
 
 ### 策略层
 - ✅[已修复 b77e5e701] **P1-9 上传预算计数制、时间闸门出厂即关**（Tileset.h:72 `mainThreadLoadingTimeLimit=0.0` → FrameResourceBudget `mainThreadTimeExpired()` 恒 false；TileFrameResourceBudgetPlanner.h:111-121）：相机静止 1.25s 后 smoothing 关闭，一帧允许 20 次同步 finalize + 20 次 raster 上传，**瓦片批量到达正好落在无节流窗口 → 静止帧尖峰**（与已修的"交互卡顿"互补的另一半）。且全部 lane 的 `estimatedCostUnits=1`：1024² mipmap 纹理与 4KB mesh 同价。修复：时间预算默认开（cesium 用 8ms）+ 按字节/像素加权，计数为兜底。
-- **P1-10 上采样地形瓦片走主线程同步 prepare**（GltfRenderResourcePreparer.cpp:121-593、:61-73 RGB→RGBA 主线程逐像素；TilesetContentLifecycleCoordinator.h:197-202 显式回落 sync）：深缩放常态下每瓦片顶点全量变换+纹理转码在主线程，叠加 P1-9 无闸门可一帧串多次。修复：上采样 clip 完成时在工作线程预建 TerrainGpuVertex 走 GpuUploadQueue。
+- ✅[已修复 2026-07-05] **P1-10 上采样地形瓦片走主线程同步 prepare**（GltfRenderResourcePreparer.cpp:121-593；TilesetContentLifecycleCoordinator.h:197-202 显式回落 sync）：上采样子瓦片携带父级过期 terrainGpuVertexBytes，上传编排的尺寸校验不过→回落主线程同步 prepare（顶点全量重建+无预算 GPU 上传），叠加 P1-9 深缩放一帧可串多次。修复：clip 完成时（TileGltfTerrainUpsampledChildMaterializer）按 loader decode 同一公式为子瓦片重建预置字节→自然走 GpuUploadQueue 异步路（budget lane 节流），顺带消除"父级残留字节尺寸巧合匹配→上传父几何"隐患。真机 2000m 深缩放验证：zoom 15（全上采样），51 attachments 全 exact、0 missing/kicked、terrain pending 0、59.6 FPS；30000m 与基线像素级一致。注：clip 本身仍在主线程 TileLoadScheduler 里执行（审计设想的"工作线程 clip"并不存在），如 profile 证明 clip 段有感再做 worker 化。RGB→RGBA 转码仅剩非地形 glTF 路径使用，不在地形热路径。
 
 ---
 

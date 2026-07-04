@@ -25420,6 +25420,53 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
                        42.0) < 1e-12,
           "Tileset: WebMercator terrain availability upsample uses terrain projection like cesium-native");
 }
+void testTerrainContentUpsamplePrebuildsTerrainGpuVertexBytes() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 1, 0};
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    TilesetTile child(childKey, scheme->tileToRectangle(childKey), &parent);
+    child.content.markTerrainAvailabilityUpsample();
+    auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
+    parentModel->preferredLocalOriginEcef = Vec3(100.0, 200.0, 300.0);
+    for (GltfPrimitive& primitive : parentModel->primitives) {
+        primitive.hasTerrainWaterMaskMetadata = true;
+        // Stale parent bytes of arbitrary size: the child must rebuild its
+        // own bytes, never inherit these.
+        primitive.terrainGpuVertexBytes.assign(13, 0xAB);
+    }
+    parent.content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+    std::optional<TileLoadResult> loadResult =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+    const GltfModel* childModel =
+        loadResult ? loadResult->content.gltfModel.get() : nullptr;
+    check(childModel != nullptr &&
+              !childModel->primitives.empty() &&
+              childModel->preferredLocalOriginEcef.has_value(),
+          "Tileset: terrain upsample prebuild fixture produces child model");
+    if (!childModel || childModel->primitives.empty() ||
+        !childModel->preferredLocalOriginEcef) {
+        return;
+    }
+    const GltfPrimitive& primitive = childModel->primitives.front();
+    const std::vector<TerrainGpuVertex> expected =
+        GltfRenderGeometryBuilder::buildTerrainVertices(
+            primitive,
+            Mat4::identity(),
+            *childModel->preferredLocalOriginEcef);
+    check(!primitive.terrainGpuVertexBytes.empty() &&
+              primitive.terrainGpuVertexBytes.size() ==
+                  primitive.vertices.size() * sizeof(TerrainGpuVertex) &&
+              expected.size() == primitive.vertices.size() &&
+              std::memcmp(primitive.terrainGpuVertexBytes.data(),
+                          expected.data(),
+                          primitive.terrainGpuVertexBytes.size()) == 0,
+          "Tileset: upsampled child prebuilds TerrainGpuVertex bytes matching the sync prepare formula (P1-10 async upload gate)");
+}
 void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
@@ -26866,6 +26913,7 @@ int main() {
     testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails();
     testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMappingTexcoord();
     testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
+    testTerrainContentUpsamplePrebuildsTerrainGpuVertexBytes();
     testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection();
     testTerrainContentUpsampleDerivesDetailsFromParentModelRegion();
     testTerrainContentUpsampleUsesProtectedUnloadingParentSource();

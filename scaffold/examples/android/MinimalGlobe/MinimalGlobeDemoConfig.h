@@ -5,9 +5,9 @@
 namespace earth_engine::minimal_globe_demo {
 
 constexpr const char* kQuantizedMeshTerrainTemplate =
-    "http://192.168.0.3:8090/{z}/{x}/{y}.terrain";
+    "http://127.0.0.1:8090/{z}/{x}/{y}.terrain";
 constexpr const char* kQuantizedMeshTerrainLayerJson =
-    "http://192.168.0.3:8090/layer.json";
+    "http://127.0.0.1:8090/layer.json";
 constexpr const char* kGaodeSatelliteTemplate =
     "http://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 constexpr const char* kGaodeRoadNetTemplate =

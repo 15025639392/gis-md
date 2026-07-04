@@ -3,6 +3,7 @@
 #include "../content/GltfTerrainUpsampler.h"
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
+#include "GltfRenderGeometryBuilder.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TileRasterOverlayDetailsDeriver.h"
 #include "TileLoadTypes.h"
@@ -10,8 +11,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace earth_engine {
 
@@ -152,7 +155,40 @@ private:
             return nullptr;
         }
         childModel->rasterOverlayDetails = std::move(childDetails);
+        rebuildTerrainGpuVertexBytes(*childModel);
         return childModel;
+    }
+
+    /// P1-10:clip 后为子瓦片重建 TerrainGpuVertex 预置字节。子 primitive
+    /// 从父级拷贝来的字节与 clip 后顶点数失配,上传编排的尺寸校验会把该
+    /// 瓦片打回主线程同步 prepare(顶点全量重建 + 无预算 GPU 上传,深缩放
+    /// 掉帧尖峰来源)。在此按 QuantizedMeshContentLoader 的 decode 后预建
+    /// 同一公式重建(顶点已是 ECEF 世界坐标、identity transform、origin 用
+    /// 模型首选局部原点,与运行时 renderLocalOrigin 同源),让上采样瓦片
+    /// 自然走 GpuUploadQueue 异步路。重建失败则清空字节回落同步路径——
+    /// 也顺带消除"父级残留字节尺寸巧合匹配 → 上传父几何"的既有隐患。
+    static void rebuildTerrainGpuVertexBytes(GltfModel& childModel) {
+        for (GltfPrimitive& primitive : childModel.primitives) {
+            primitive.terrainGpuVertexBytes.clear();
+            if (!childModel.preferredLocalOriginEcef ||
+                primitive.vertices.empty()) {
+                continue;
+            }
+            std::vector<TerrainGpuVertex> terrainVerts =
+                GltfRenderGeometryBuilder::buildTerrainVertices(
+                    primitive,
+                    Mat4::identity(),
+                    *childModel.preferredLocalOriginEcef);
+            if (terrainVerts.size() != primitive.vertices.size()) {
+                continue;
+            }
+            primitive.terrainGpuVertexBytes.resize(
+                terrainVerts.size() * sizeof(TerrainGpuVertex));
+            std::memcpy(
+                primitive.terrainGpuVertexBytes.data(),
+                terrainVerts.data(),
+                primitive.terrainGpuVertexBytes.size());
+        }
     }
 
     // Child window inside the parent's UV space for one texcoord set: the

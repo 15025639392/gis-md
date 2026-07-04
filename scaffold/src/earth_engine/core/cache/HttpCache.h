@@ -104,7 +104,7 @@ public:
                 lru_.push_front(url);
                 lruMap_[url] = lru_.begin();
                 currentBodyBytes_ += response->body.size();
-                map_[url] = Entry{response, lru_.begin()};
+                map_[url] = Entry{response};
             }
             while ((map_.size() > maxEntries_ ||
                     currentBodyBytes_ > maxBodyBytes_) &&
@@ -132,8 +132,11 @@ public:
         while (it != map_.end()) {
             if (it->second.response->isExpired()) {
                 currentBodyBytes_ -= it->second.response->body.size();
-                lruMap_.erase(it->first);
-                lru_.erase(it->second.lruIt);
+                auto lruIt = lruMap_.find(it->first);
+                if (lruIt != lruMap_.end()) {
+                    lru_.erase(lruIt->second);
+                    lruMap_.erase(lruIt);
+                }
                 it = map_.erase(it);
                 ++count;
             } else {
@@ -182,7 +185,6 @@ public:
 private:
     struct Entry {
         std::shared_ptr<const CachedResponse> response;
-        std::list<std::string>::iterator lruIt;
     };
 
     void touch(const std::string& url) {
@@ -194,10 +196,14 @@ private:
         }
     }
 
+    // LRU 位置一律经 lruMap_ 查(touch 后它是唯一保持同步的索引)。
     void eraseLocked(std::unordered_map<std::string, Entry>::iterator it) {
         currentBodyBytes_ -= it->second.response->body.size();
-        lru_.erase(it->second.lruIt);
-        lruMap_.erase(it->first);
+        auto lruIt = lruMap_.find(it->first);
+        if (lruIt != lruMap_.end()) {
+            lru_.erase(lruIt->second);
+            lruMap_.erase(lruIt);
+        }
         map_.erase(it);
     }
 
