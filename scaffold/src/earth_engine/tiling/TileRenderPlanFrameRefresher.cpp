@@ -10,7 +10,7 @@
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
 
-#include <algorithm>
+#include <unordered_set>
 #include <vector>
 
 namespace earth_engine {
@@ -20,21 +20,27 @@ namespace {
 constexpr int kActiveInteractionRenderPrepBudget = 0;
 constexpr int kRecoveryRenderPrepBudget = 1;
 
-void appendUniqueCredit(std::vector<std::string>& frameCredits,
-                        const std::string& credit) {
-    if (credit.empty()) {
-        return;
+// 去重集合 + 输出 vector 并行维护：vector 保持插入序（展示顺序稳定），
+// set 提供 O(1) 查重——原先逐条 std::find 在瓦片×credit 数上是 O(N²)
+// 字符串比较（P2-10）。
+struct FrameCreditCollector {
+    std::vector<std::string>& frameCredits;
+    std::unordered_set<std::string> seen;
+
+    void append(const std::string& credit) {
+        if (credit.empty()) {
+            return;
+        }
+        if (seen.insert(credit).second) {
+            frameCredits.push_back(credit);
+        }
     }
-    if (std::find(frameCredits.begin(), frameCredits.end(), credit) ==
-        frameCredits.end()) {
-        frameCredits.push_back(credit);
-    }
-}
+};
 
 void collectReadyRasterTileCredits(const TilesetTile& tile,
-                                   std::vector<std::string>& frameCredits) {
+                                   FrameCreditCollector& credits) {
     tile.rasterOverlayState.forEachMapping(
-        [&frameCredits](const RasterMappedToTilesetTile* mapping) {
+        [&credits](const RasterMappedToTilesetTile* mapping) {
             if (!mapping) {
                 return;
             }
@@ -45,21 +51,21 @@ void collectReadyRasterTileCredits(const TilesetTile& tile,
             }
 
             for (const std::string& credit : readyTile->credits()) {
-                appendUniqueCredit(frameCredits, credit);
+                credits.append(credit);
             }
         });
 }
 
 void collectRenderContentCredits(const TilesetTile& tile,
-                                 std::vector<std::string>& frameCredits) {
+                                 FrameCreditCollector& credits) {
     for (const std::string& credit : tile.content.renderContent.credits()) {
-        appendUniqueCredit(frameCredits, credit);
+        credits.append(credit);
     }
 }
 
 void collectRasterOverlayProviderCredits(
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-    std::vector<std::string>& frameCredits) {
+    FrameCreditCollector& credits) {
     for (const ActivatedRasterOverlay* overlay : rasterOverlays) {
         if (!overlay) {
             continue;
@@ -71,9 +77,7 @@ void collectRasterOverlayProviderCredits(
             continue;
         }
 
-        appendUniqueCredit(
-            frameCredits,
-            tileProvider->getImageryProvider().attribution());
+        credits.append(tileProvider->getImageryProvider().attribution());
     }
 }
 
@@ -82,29 +86,24 @@ void refreshFrameCredits(TilePlan& tilePlan,
                              rasterOverlays,
                          TileContentAccess& contentAccess) {
     tilePlan.frameCredits.clear();
-    collectRasterOverlayProviderCredits(rasterOverlays, tilePlan.frameCredits);
+    FrameCreditCollector credits{tilePlan.frameCredits, {}};
+    collectRasterOverlayProviderCredits(rasterOverlays, credits);
 
     for (const TileRenderEntry& entry : tilePlan.renderEntries) {
         if (TilesetTile* selectedTile =
                 contentAccess.ensureTile(entry.selectedKey)) {
-            collectRenderContentCredits(*selectedTile, tilePlan.frameCredits);
-            collectReadyRasterTileCredits(*selectedTile, tilePlan.frameCredits);
+            collectRenderContentCredits(*selectedTile, credits);
+            collectReadyRasterTileCredits(*selectedTile, credits);
         }
 
         if (entry.renderKey != entry.selectedKey) {
             if (TilesetTile* renderTile =
                     contentAccess.ensureTile(entry.renderKey)) {
-                collectRenderContentCredits(*renderTile, tilePlan.frameCredits);
-                collectReadyRasterTileCredits(
-                    *renderTile,
-                    tilePlan.frameCredits);
+                collectRenderContentCredits(*renderTile, credits);
+                collectReadyRasterTileCredits(*renderTile, credits);
             }
         }
     }
-}
-
-bool containsTileKey(const std::vector<TileKey>& keys, const TileKey& key) {
-    return std::find(keys.begin(), keys.end(), key) != keys.end();
 }
 
 void collectMappedRasterProgress(const TilesetTile& tile,
@@ -141,11 +140,10 @@ void refreshFrameProgress(TilePlan& tilePlan,
     tilePlan.frameMappedRasterTileCount = 0;
     tilePlan.frameMappedRasterTileLoadingCount = 0;
 
-    std::vector<TileKey> visitedTiles;
+    std::unordered_set<TileKey> visitedTiles;
     visitedTiles.reserve(tilePlan.renderEntries.size() * 2);
     for (const TileRenderEntry& entry : tilePlan.renderEntries) {
-        if (!containsTileKey(visitedTiles, entry.selectedKey)) {
-            visitedTiles.push_back(entry.selectedKey);
+        if (visitedTiles.insert(entry.selectedKey).second) {
             if (TilesetTile* selectedTile =
                     contentAccess.ensureTile(entry.selectedKey)) {
                 collectMappedRasterProgress(*selectedTile, tilePlan);
@@ -153,8 +151,7 @@ void refreshFrameProgress(TilePlan& tilePlan,
         }
 
         if (entry.renderKey != entry.selectedKey &&
-            !containsTileKey(visitedTiles, entry.renderKey)) {
-            visitedTiles.push_back(entry.renderKey);
+            visitedTiles.insert(entry.renderKey).second) {
             if (TilesetTile* renderTile =
                     contentAccess.ensureTile(entry.renderKey)) {
                 collectMappedRasterProgress(*renderTile, tilePlan);
