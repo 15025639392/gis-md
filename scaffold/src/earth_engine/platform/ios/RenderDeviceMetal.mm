@@ -4,8 +4,6 @@
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
-#import <CoreFoundation/CoreFoundation.h>
-#import <objc/runtime.h>
 #include <algorithm>
 #include <string>
 #include <stdexcept>
@@ -35,6 +33,9 @@ public:
     MetalBuffer(id<MTLBuffer> buf) : buf_(buf) {}
     size_t size() const override { return buf_.length; }
     id<MTLBuffer> mtl() const { return buf_; }
+    // updateBuffer 的 orphan 式换存储:在飞 command buffer 持有旧 id 的
+    // 强引用,换新后 CPU 写不再与 GPU 读竞争(P1-5)。
+    void replaceStorage(id<MTLBuffer> buf) { buf_ = buf; }
 private:
     id<MTLBuffer> buf_;
 };
@@ -73,6 +74,11 @@ struct RenderDeviceMetal::Impl {
     CAMetalLayer* metalLayer = nil;
     id<MTLRenderCommandEncoder> currentEncoder = nil;
     id<MTLCommandBuffer> currentCommandBuffer = nil;
+    id<CAMetalDrawable> currentDrawable = nil;
+    // in-flight 帧上限(P1-5):CPU 最多领先 GPU kMaxFramesInFlight 帧,
+    // completed handler 归还名额。防止编码无界领先导致 drawable 饥饿与
+    // 输入延迟累积。
+    dispatch_semaphore_t inFlightSemaphore = nil;
     id<MTLTexture> depthTexture = nil;
     id<MTLSamplerState> linearClampSampler = nil;
     id<MTLDepthStencilState> depthReadWrite = nil;
@@ -120,11 +126,16 @@ static MTLSamplerAddressMode toMetalAddressMode(TextureDesc::Wrap wrap) {
 // RenderDeviceMetal
 // ============================================================
 
+// CPU 允许领先 GPU 的帧数。2 = 编码一帧、GPU 执行一帧(Apple 低延迟推荐
+// 值);drawable 池为 3,留一个余量给 present 队列。
+static constexpr intptr_t kMaxFramesInFlight = 2;
+
 RenderDeviceMetal::RenderDeviceMetal(void* metalLayer)
     : impl_(new Impl()) {
     impl_->metalLayer = (__bridge CAMetalLayer*)metalLayer;
     impl_->device = impl_->metalLayer.device;
     impl_->commandQueue = [impl_->device newCommandQueue];
+    impl_->inFlightSemaphore = dispatch_semaphore_create(kMaxFramesInFlight);
     impl_->depthReadWrite = makeDepthState(impl_->device, true, true);
     impl_->depthReadOnly = makeDepthState(impl_->device, true, false);
     impl_->depthDisabled = makeDepthState(impl_->device, false, false);
@@ -192,6 +203,19 @@ std::unique_ptr<Texture> RenderDeviceMetal::createTexture(const TextureDesc& des
                bytesPerRow:static_cast<NSUInteger>(
                    desc.width *
                    (desc.format == TextureDesc::Format::R8 ? 1 : 4))];
+        // mip 链已按 mipmapped 分配,必须 blit 生成(P1-6),否则三线性
+        // 缩小采样读到未初始化 mip。语义对齐 GLES createTexture 的
+        // glGenerateMipmap(仅 create-with-data 生成,区域更新不重生成)。
+        // 同一 queue 上后续帧的采样天然排在本 blit 之后,无需同步等待。
+        if (desc.mipmap && tex.mipmapLevelCount > 1) {
+            id<MTLCommandBuffer> blitCommandBuffer =
+                [impl_->commandQueue commandBuffer];
+            id<MTLBlitCommandEncoder> blit =
+                [blitCommandBuffer blitCommandEncoder];
+            [blit generateMipmapsForTexture:tex];
+            [blit endEncoding];
+            [blitCommandBuffer commit];
+        }
     }
 
     MTLSamplerDescriptor* samplerDesc = [MTLSamplerDescriptor new];
@@ -256,9 +280,32 @@ bool RenderDeviceMetal::updateBuffer(Buffer* buffer,
     if (!metalBuffer || !data || size == 0 || offset + size > metalBuffer->size()) {
         return false;
     }
-    std::memcpy(static_cast<uint8_t*>(metalBuffer->mtl().contents) + offset,
-                data,
-                size);
+    // 旧存储可能仍被在飞 command buffer 读取(shared storage,动画 glTF
+    // 每帧覆写)——原地 memcpy 是 CPU 写/GPU 读裸竞争(P1-5)。改为 orphan:
+    // 换一块新 MTLBuffer,已提交的 command buffer 持有旧 id 的强引用直到
+    // 执行完毕;后续编码经 mtl() 取到新存储。调用方唯一热路径是动画顶点
+    // 全量重写(newBufferWithBytes 一步到位),部分更新走拷贝合成。
+    id<MTLBuffer> fresh = nil;
+    if (offset == 0 && size == metalBuffer->size()) {
+        fresh = [impl_->device newBufferWithBytes:data
+                                           length:size
+                                          options:MTLResourceStorageModeShared];
+    } else {
+        fresh = [impl_->device newBufferWithLength:metalBuffer->size()
+                                           options:MTLResourceStorageModeShared];
+        if (fresh) {
+            std::memcpy(fresh.contents,
+                        metalBuffer->mtl().contents,
+                        metalBuffer->size());
+            std::memcpy(static_cast<uint8_t*>(fresh.contents) + offset,
+                        data,
+                        size);
+        }
+    }
+    if (!fresh) {
+        return false;
+    }
+    metalBuffer->replaceStorage(fresh);
     return true;
 }
 
@@ -517,14 +564,31 @@ void RenderDeviceMetal::setClearColor(float r, float g, float b, float a) {
 }
 
 void RenderDeviceMetal::beginFrame() {
-    impl_->currentCommandBuffer = [impl_->commandQueue commandBuffer];
-
-    // 获取 current drawable
-    id<CAMetalDrawable> drawable = [impl_->metalLayer nextDrawable];
-    if (!drawable) {
+    // in-flight 帧闸门(P1-5)。带超时:GPU 异常悬挂时跳帧而不是把 UI 线程
+    // 永久卡死(P1-4);超时未拿到名额则本帧不消耗信号量,直接空帧。
+    if (dispatch_semaphore_wait(
+            impl_->inFlightSemaphore,
+            dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) != 0) {
         impl_->currentCommandBuffer = nil;
         return;
     }
+
+    impl_->currentCommandBuffer = [impl_->commandQueue commandBuffer];
+
+    // 获取 current drawable(layer 侧 allowsNextDrawableTimeout=YES,
+    // 超时返回 nil → 跳帧,归还 in-flight 名额)
+    id<CAMetalDrawable> drawable = [impl_->metalLayer nextDrawable];
+    if (!drawable) {
+        dispatch_semaphore_signal(impl_->inFlightSemaphore);
+        impl_->currentCommandBuffer = nil;
+        return;
+    }
+
+    dispatch_semaphore_t inFlight = impl_->inFlightSemaphore;
+    [impl_->currentCommandBuffer
+        addCompletedHandler:^(id<MTLCommandBuffer>) {
+            dispatch_semaphore_signal(inFlight);
+        }];
 
     MTLRenderPassDescriptor* passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
     passDesc.colorAttachments[0].texture = drawable.texture;
@@ -559,14 +623,9 @@ void RenderDeviceMetal::beginFrame() {
     // two backends onto the same winding — that would invert culling on one side.
     [impl_->currentEncoder setFrontFacingWinding:MTLWindingClockwise];
 
-    // 存储 drawable 以便 endFrame 时 present
-    // 强引用 drawable 避免提前释放
-    CFRetain((__bridge CFTypeRef)drawable);
-    // 通过 associated object 存到 command buffer
-    objc_setAssociatedObject(impl_->currentCommandBuffer,
-                            "drawable",
-                            (__bridge id)drawable,
-                            OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // 存储 drawable 以便 endFrame 时 present(Impl 强引用成员,替代原先
+    // CFRetain + associated object 的绕远存法)
+    impl_->currentDrawable = drawable;
 }
 
 void RenderDeviceMetal::submit(const RenderCommandList& commands) {
@@ -913,14 +972,13 @@ void RenderDeviceMetal::endFrame() {
     }
 
     if (impl_->currentCommandBuffer) {
-        // 获取并释放 drawable
-        id<CAMetalDrawable> drawable = objc_getAssociatedObject(impl_->currentCommandBuffer, "drawable");
-        if (drawable) {
-            [impl_->currentCommandBuffer presentDrawable:drawable];
-            CFRelease((__bridge CFTypeRef)drawable);
+        if (impl_->currentDrawable) {
+            [impl_->currentCommandBuffer presentDrawable:impl_->currentDrawable];
         }
+        // commit 后 completed handler 归还 in-flight 名额
         [impl_->currentCommandBuffer commit];
         impl_->currentCommandBuffer = nil;
+        impl_->currentDrawable = nil;
     }
 }
 
@@ -949,9 +1007,17 @@ void RenderDeviceMetal::onSurfaceChanged(int width, int height) {
 }
 
 void RenderDeviceMetal::onSurfaceDestroyed() {
-    // 释放 Metal 资源
-    impl_->currentEncoder = nil;
-    impl_->currentCommandBuffer = nil;
+    // 释放 Metal 资源。未提交的 command buffer 必须 commit 掉——它的
+    // completed handler 持有 in-flight 信号量名额,直接丢弃会永久泄漏名额。
+    if (impl_->currentEncoder) {
+        [impl_->currentEncoder endEncoding];
+        impl_->currentEncoder = nil;
+    }
+    if (impl_->currentCommandBuffer) {
+        [impl_->currentCommandBuffer commit];
+        impl_->currentCommandBuffer = nil;
+    }
+    impl_->currentDrawable = nil;
     impl_->depthTexture = nil;
 }
 

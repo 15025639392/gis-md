@@ -32,8 +32,9 @@
         _metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         _metalLayer.framebufferOnly = YES;
         _metalLayer.drawableSize = frameRect.size;
-        // macOS-specific: ensure drawables are always available
-        _metalLayer.allowsNextDrawableTimeout = NO;
+        // 允许 nextDrawable 超时返回 nil(引擎侧 nil 即跳帧):禁止超时会在
+        // GPU 落后时无限期阻塞主线程(P1-4)。
+        _metalLayer.allowsNextDrawableTimeout = YES;
         _metalLayer.displaySyncEnabled = YES;
         self.layer = _metalLayer;
 

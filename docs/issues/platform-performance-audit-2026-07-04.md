@@ -1,7 +1,7 @@
 # 平台层架构与策略性能审计（2026-07-04）
 
 **分支**：`codex/surface-instancing-gpu-batch`
-**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P1-4/5/6/7/8/10、P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分。
+**修复进度（2026-07-04 晚）**：✅ P0-1/P0-2/P0-3/P0-4、P1-1/P1-2/P1-3/P1-9、P2-1/P2-3/P2-5/P2-8/P2-10/P2-11/P2-13/P2-14/P2-16/P2-17/P2-22 及 P2-20 的空 handler 部分已修复入库（commits 8d4d79e1f…ffcf1a141；P0-4 修于 2026-07-04 深夜）。真机 Adreno 730 实测：GLES submit 段 2.77ms→0.50ms（-82%，uniform 句柄化+VAO 合并效果，达成 §6 验收线）；Metal 完整 glTF PBR PSO 首次可创建；P0-4 常驻命令缓存后 render（命令构建）段稳态 5.3-7.5ms→4.3-7.0ms，截图像素级一致。未修：P1-7/8/10、P2-2/4/6/7/9/12/15/18/19/21 及 P2-20 状态去重部分。P1-4/5/6(Metal 帧调度三件套)修于 2026-07-04 深夜:drawable 超时+in-flight 信号量+updateBuffer orphan+mipmap blit,MTL_DEBUG_LAYER 0 错误、140/140、macOS 截图与基线一致;顺带完成 P2-20 的"drawable 存 Impl 成员"部分。
 **方法**：四路并行只读审计（GLES 后端 / Metal 后端 / 网络桥接层 / 帧循环与上传策略层），交叉核对后合并。
 **范围**：`platform/`（RenderDeviceGLES、RenderDeviceMetal、CurlMultiRequestScheduler、Android/iOS/Mac 桥）+ 与平台层耦合的中层（RenderCommand 契约、SceneRenderPipeline、上传预算/节流策略、HttpCache）。
 **不含**：已修项（相机高空早退、budget lane 涓流、节流令牌、touchInertia、glFlush 移除、GLES sampler 压缩等，见 MEMORY）；低空高度查询 O(瓦片×三角形) 为已知 TODO 未重复。
@@ -49,9 +49,9 @@
 - ✅[已修复 f9e027d8d] **P1-3 uniformLocation(const std::string&) 隐式临时 string**（RenderDeviceGLES.h:100 + 调用点全传 const char*）：每帧 ~3000-5000 次 hash 查找 + ~1000-2000 次堆分配。修复：program 创建时解析为定长 GLint 数组按枚举索引。
 
 ### Metal 后端
-- **P1-4 nextDrawable 帧首获取 + `allowsNextDrawableTimeout=NO` + 主线程渲染**（RenderDeviceMetal.mm:523、MetalView.mm:33/106）：GPU 落后时无限期阻塞 UI 线程，整段编码期间握着 drawable（池仅 3 个）。修复：drawable 延后到 present 前获取或允许 timeout。
-- **P1-5 无 in-flight 帧信号量，shared buffer CPU 写与 GPU 读裸竞争**（RenderDeviceMetal.mm:251-263 + GltfRenderResourcePreparer.cpp:174-186）：动画 glTF 每帧原地覆写在飞 vertex buffer。GLES 侧同构问题：glBufferSubData 覆写在用 buffer（tiler 上 ghost-or-stall）。修复：ring buffer + completed handler 信号量。
-- **P1-6 Metal mipmap 从未生成**（RenderDeviceMetal.mm:176-195）：按 mip 链分配（显存+33%）+ 三线性采样，但无任何 generateMipmaps blit——GLES 有（RenderDeviceGLES.cpp:215），Metal 漏实现。缩小采样读未初始化 mip（正确性），规避性关 mip 则换来带宽浪费+闪烁。修复：上传后 blit encoder 补齐。
+- ✅[已修复 2026-07-04] **P1-4 nextDrawable 帧首获取 + `allowsNextDrawableTimeout=NO` + 主线程渲染**（RenderDeviceMetal.mm:523、MetalView.mm:33/106）：GPU 落后时无限期阻塞 UI 线程，整段编码期间握着 drawable（池仅 3 个）。修复：layer 允许 timeout（nil 即跳帧）+ beginFrame in-flight 闸门带 1s 超时跳帧——两侧都不再无限期阻塞主线程。
+- ✅[已修复 2026-07-04] **P1-5 无 in-flight 帧信号量，shared buffer CPU 写与 GPU 读裸竞争**（RenderDeviceMetal.mm:251-263 + GltfRenderResourcePreparer.cpp:174-186）：动画 glTF 每帧原地覆写在飞 vertex buffer。修复：in-flight 信号量（kMaxFramesInFlight=2，completed handler 归还，surface 销毁路径 commit 防名额泄漏）+ updateBuffer 改 orphan 式换存储（已提交 command buffer 强引用旧 id，比 ring buffer 简单且对部分更新也正确）。GLES 侧同构问题（glBufferSubData 覆写在用 buffer）未动，驱动 ghost-or-stall 兜底，留待 profile 证明有感再改。
+- ✅[已修复 2026-07-04] **P1-6 Metal mipmap 从未生成**（RenderDeviceMetal.mm:176-195）：按 mip 链分配（显存+33%）+ 三线性采样，但无任何 generateMipmaps blit——GLES 有（RenderDeviceGLES.cpp:215），Metal 漏实现。缩小采样读未初始化 mip（正确性）。修复：createTexture 上传 level 0 后 blit generateMipmaps，语义与 GLES 对齐（仅 create-with-data 生成；影像瓦片纹理均为 create-with-data，覆盖热路径）。
 
 ### 网络桥
 - **P1-7 HttpCache 全局单锁 + 锁内整 body 深拷贝 + 在唯一网络线程执行 put**（HttpCache.h:62-91、171-178；GltfContentProvider.cpp:2283）：命中锁内整拷 body；put 全链拷 3 次；每瓦片 ~3×75KB 拷贝串在 curl 线程上头部阻塞后续传输。附带：容量按条数（2000）不按字节 ≈150MB+ 内存风险。修复：map 存 shared_ptr 零拷贝返回、put 全链 move、写入移出网络线程、加字节预算。
