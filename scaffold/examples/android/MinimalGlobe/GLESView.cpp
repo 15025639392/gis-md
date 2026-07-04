@@ -262,8 +262,11 @@ public:
 
 private:
     void wake() {
-        if (ALooper* looper = looper_.load()) {
-            ALooper_wake(looper);
+        // 持锁 wake：TLS looper 在渲染线程退出时释放，线程退出前在同一把
+        // 锁下置空 looper_，保证 wake 期间目标存活（否则跨线程 UAF）
+        std::lock_guard<std::mutex> lock(looperMutex_);
+        if (looper_) {
+            ALooper_wake(looper_);
         }
     }
 
@@ -302,7 +305,10 @@ private:
         // 上一轮线程可能带着未消费的帧回调退出（flag 留 true），回调已随
         // 旧线程死亡，不复位则本轮 postFrameIfNeeded 永远早退 → 永久冻屏
         framePending_ = false;
-        looper_.store(ALooper_prepare(0));
+        {
+            std::lock_guard<std::mutex> lock(looperMutex_);
+            looper_ = ALooper_prepare(0);
+        }
         if (!initEGL(window)) {
             LOGE("Failed to initialize EGL on render thread");
         } else if (!createEngine()) {
@@ -323,7 +329,10 @@ private:
         // destroyEGL 内部先清引擎对象（GPU 资源析构需当前 context），再拆 EGL
         destroyEGL();
         choreographer_ = nullptr;
-        looper_.store(nullptr);
+        {
+            std::lock_guard<std::mutex> lock(looperMutex_);
+            looper_ = nullptr;
+        }
     }
 
     std::thread thread_;
@@ -331,7 +340,8 @@ private:
     std::deque<std::function<void()>> tasks_;
     std::atomic<bool> running_{false};
     std::atomic<bool> paused_{false};
-    std::atomic<ALooper*> looper_{nullptr};
+    std::mutex looperMutex_;
+    ALooper* looper_ = nullptr;  // looperMutex_ 保护；渲染线程退出前置空
     AChoreographer* choreographer_ = nullptr;  // 仅渲染线程访问
     bool framePending_ = false;                // 仅渲染线程访问
 };
