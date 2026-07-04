@@ -73,6 +73,16 @@ void decrementActiveRasterTileLoads(std::atomic<uint32_t>& activeLoads) {
     }
 }
 
+/// 节流名额唯一释放：完成回调与 abandon/析构可能并发认领同一名额
+/// （completed 置位到回调 erase 之间条目仍在 activeMappedSourceSets），
+/// 以 exchange 决定唯一递减方，防止双重释放静默偷走其他在途名额。
+void releaseRasterThrottleSlotOnce(std::atomic<bool>& released,
+                                   std::atomic<uint32_t>& activeLoads) {
+    if (!released.exchange(true)) {
+        decrementActiveRasterTileLoads(activeLoads);
+    }
+}
+
 bool uploadAllowedDuringInteraction(
     const std::string& cacheKey,
     const DecodedImage* image) {
@@ -2022,6 +2032,8 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
     : public std::enable_shared_from_this<MappedSourceImageSet> {
     MappedSourceImageSet(const TileScheme& tileScheme,
                              std::shared_ptr<ProviderAsyncState> asyncState,
+                             std::shared_ptr<std::atomic<bool>>
+                                 throttleSlotReleased,
                              std::shared_ptr<QuadtreeSourceAssetDepot>
                                  sourceDepot,
                              RasterSourceTileMapping sourceTileMapping,
@@ -2034,6 +2046,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                              MappedSourceLoadFailure failure)
         : scheme(createAsyncSchemeSnapshot(tileScheme))
         , state(std::move(asyncState))
+        , slotReleased(std::move(throttleSlotReleased))
         , depot(std::move(sourceDepot))
         , sourceTiles(std::move(sourceTileMapping))
         , targetBounds(bounds)
@@ -2117,6 +2130,12 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         remaining = 0;
         std::fill(sourceIssued.begin(), sourceIssued.end(), true);
         sources.clear();
+    }
+
+    void releaseThrottleSlotOnce() {
+        releaseRasterThrottleSlotOnce(
+            *slotReleased,
+            state->activeRasterTileLoads);
     }
 
 private:
@@ -2205,8 +2224,7 @@ private:
                                 std::memory_order_acquire)) {
                             return;
                         }
-                        decrementActiveRasterTileLoads(
-                            self->state->activeRasterTileLoads);
+                        self->releaseThrottleSlotOnce();
                         completedTileLoad = true;
                         self->state->resolveDestructionIfComplete();
                     };
@@ -2268,6 +2286,7 @@ private:
 
     std::unique_ptr<TileScheme> scheme;
     std::shared_ptr<ProviderAsyncState> state;
+    std::shared_ptr<std::atomic<bool>> slotReleased;
     std::shared_ptr<QuadtreeSourceAssetDepot> depot;
     RasterSourceTileMapping sourceTiles;
     Rectangle targetBounds;
@@ -2357,7 +2376,7 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     }
     for (const auto& sourceSet : abandonedSourceSets) {
         sourceSet->markAbandoned();
-        decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
+        sourceSet->releaseThrottleSlotOnce();
     }
     asyncState_->resolveDestructionIfComplete();
 }
@@ -2642,7 +2661,7 @@ void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
     for (const auto& [cacheKey, sourceSet] : activeSets) {
         if (sourceSet) {
             sourceSet->markAbandoned();
-            decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
+            sourceSet->releaseThrottleSlotOnce();
         }
         auto tileIt = tiles_.find(cacheKey);
         if (tileIt != tiles_.end() && tileIt->second) {
@@ -3133,6 +3152,9 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
     asyncState_->activeRasterTileLoads.fetch_add(
         1,
         std::memory_order_relaxed);
+    // 本次加载名额的唯一释放令牌：完成回调与 abandon/析构共用，谁先
+    // exchange 谁递减（见 releaseRasterThrottleSlotOnce）
+    auto throttleSlotReleased = std::make_shared<std::atomic<bool>>(false);
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         asyncState_->inFlightRequests.insert(cacheKey);
@@ -3156,6 +3178,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
     auto sourceSet = std::make_shared<MappedSourceImageSet>(
         scheme_,
         state,
+        throttleSlotReleased,
         sourceAssetDepot_,
         std::move(sourceTiles),
         targetBounds,
@@ -3163,7 +3186,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         getMaximumLevel(),
         returnEmptyForAncestorOnly,
         !tile.isMappedRasterTile(),
-        [state, cacheKey, tileWeak, requestSourceDepotEpoch](
+        [state, throttleSlotReleased, cacheKey, tileWeak,
+         requestSourceDepotEpoch](
             std::unique_ptr<DecodedImage> composed,
             std::shared_ptr<const DecodedImage> sharedImage,
             Rectangle rectangle,
@@ -3174,7 +3198,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             state->inFlightRequests.erase(cacheKey);
             state->activeMappedSourceSets.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
-                decrementActiveRasterTileLoads(
+                releaseRasterThrottleSlotOnce(
+                    *throttleSlotReleased,
                     state->activeRasterTileLoads);
                 state->resolveDestructionIfComplete();
                 return;
@@ -3185,7 +3210,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                         RasterOverlayTile::MoreDetailAvailable::No);
                     tile->setState(RasterOverlayTile::LoadState::Failed);
                 }
-                decrementActiveRasterTileLoads(
+                releaseRasterThrottleSlotOnce(
+                    *throttleSlotReleased,
                     state->activeRasterTileLoads);
                 state->resolveDestructionIfComplete();
                 state->revision.fetch_add(1, std::memory_order_relaxed);
@@ -3205,16 +3231,20 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             // 由 RasterTextureUpload lane 单独限速。此前名额持有到上传
             // 消费，交互期上传被 defer 时节流被积压占满（真机 54/20），
             // 新加载全部被卡。
-            decrementActiveRasterTileLoads(state->activeRasterTileLoads);
+            releaseRasterThrottleSlotOnce(
+                *throttleSlotReleased,
+                state->activeRasterTileLoads);
             state->resolveDestructionIfComplete();
         },
-        [state, cacheKey, tileWeak, requestSourceDepotEpoch](
+        [state, throttleSlotReleased, cacheKey, tileWeak,
+         requestSourceDepotEpoch](
             std::vector<std::string> diagnostics) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             state->activeMappedSourceSets.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
-                decrementActiveRasterTileLoads(
+                releaseRasterThrottleSlotOnce(
+                    *throttleSlotReleased,
                     state->activeRasterTileLoads);
                 state->resolveDestructionIfComplete();
                 return;
@@ -3225,7 +3255,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                         RasterOverlayTile::MoreDetailAvailable::No);
                     tile->setState(RasterOverlayTile::LoadState::Failed);
                 }
-                decrementActiveRasterTileLoads(
+                releaseRasterThrottleSlotOnce(
+                    *throttleSlotReleased,
                     state->activeRasterTileLoads);
                 state->resolveDestructionIfComplete();
                 state->revision.fetch_add(1, std::memory_order_relaxed);
@@ -3243,7 +3274,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                         ? RasterOverlayTile::LoadState::Unloaded
                         : RasterOverlayTile::LoadState::Failed);
             }
-            decrementActiveRasterTileLoads(
+            releaseRasterThrottleSlotOnce(
+                *throttleSlotReleased,
                 state->activeRasterTileLoads);
             state->resolveDestructionIfComplete();
             state->revision.fetch_add(1, std::memory_order_relaxed);

@@ -8378,3 +8378,92 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(0, provider.getPendingUploadCount());
     EXPECT_EQ(0, provider.getThrottledTilesCurrentlyLoading());
 }
+
+// abandon（setReady(false)/析构）与迟到的完成回调竞态时，节流名额只能
+// 释放一次：finishOneSource 置 completed 到回调 erase 之间条目仍在
+// activeMappedSourceSets，两侧都会认领释放权；双重释放会把后续在途
+// 加载的名额偷走（计数提前归零，节流放行超额加载）。
+TEST(RasterOverlayLifecycleTest,
+     AbandonRacingLateComposeReleasesThrottleSlotExactlyOnce) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey keyA{scheme->id(), 3, 2, 1};
+    const TileKey keyB{scheme->id(), 3, 1, 1};
+    const Rectangle boundsA = scheme->tileToRectangle(keyA);
+    const Rectangle boundsB = scheme->tileToRectangle(keyB);
+    // coverage 取两瓦片北半幅：目标窗口 ≠ 源矩形，强制走异步 compose 路径
+    const Rectangle coverage(
+        boundsB.west(),
+        boundsA.south() + boundsA.height() * 0.5,
+        boundsA.east(),
+        boundsA.north());
+    provider.setCoverageRectangle(coverage);
+
+    RasterOverlayTileProvider::TilePtr tileA =
+        provider
+            .mapRasterTilesToGeometryTile(
+                projectForProvider(provider, boundsA), 512.0, 512.0)
+            .tile;
+    ASSERT_NE(nullptr, tileA);
+    ASSERT_TRUE(tileA->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*tileA));
+    ASSERT_EQ(1, provider.getThrottledTilesCurrentlyLoading());
+    ASSERT_FALSE(imagery.pending.empty());
+
+    // 占满线程池：A 的 compose 只能排队，"completed 已置位、回调未执行"
+    // 的竞态窗口由闸门确定性地撑开
+    auto gate = std::make_shared<std::promise<void>>();
+    std::shared_future<void> gateFuture = gate->get_future().share();
+    auto blockersRunning = std::make_shared<std::atomic<int>>(0);
+    const int poolThreads =
+        static_cast<int>(AsyncSystem::pool().threadCount());
+    for (int i = 0; i < poolThreads; ++i) {
+        AsyncSystem::pool().enqueue([gateFuture, blockersRunning]() {
+            blockersRunning->fetch_add(1);
+            gateFuture.wait();
+        });
+    }
+    for (int attempt = 0;
+         attempt < 2000 && blockersRunning->load() < poolThreads;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_EQ(poolThreads, blockersRunning->load());
+
+    // 源全部完成：finishOneSource 把 compose 入队（被闸门挡住），
+    // activeMappedSourceSets 条目仍在、名额仍被 A 持有
+    while (!imagery.pending.empty()) {
+        imagery.completeNext();
+    }
+    ASSERT_EQ(1, provider.getThrottledTilesCurrentlyLoading());
+
+    provider.setReady(false);  // abandon：接管条目并释放名额（唯一一次）
+    EXPECT_EQ(0, provider.getThrottledTilesCurrentlyLoading());
+    provider.setReady(true);
+
+    // B 入场占据一个名额；A 的迟到回调若再次释放就会偷走它
+    RasterOverlayTileProvider::TilePtr tileB =
+        provider
+            .mapRasterTilesToGeometryTile(
+                projectForProvider(provider, boundsB), 512.0, 512.0)
+            .tile;
+    ASSERT_NE(nullptr, tileB);
+    ASSERT_TRUE(provider.loadTile(*tileB));
+    ASSERT_EQ(1, provider.getThrottledTilesCurrentlyLoading());
+
+    // 放行 compose；A 的回调走 depot epoch 不匹配分支并 bump revision，
+    // 以 revision 变化作为回调已执行完的锚点（buggy 递减先于 bump）
+    const uint64_t revisionBefore = provider.revision();
+    gate->set_value();
+    for (int attempt = 0;
+         attempt < 2000 && provider.revision() == revisionBefore;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_NE(revisionBefore, provider.revision());
+
+    EXPECT_EQ(1, provider.getThrottledTilesCurrentlyLoading())
+        << "A 的迟到回调重复释放名额，偷走了 B 的在途名额";
+}
