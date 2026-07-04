@@ -299,6 +299,9 @@ private:
     }
 
     void threadMain(ANativeWindow* window) {
+        // 上一轮线程可能带着未消费的帧回调退出（flag 留 true），回调已随
+        // 旧线程死亡，不复位则本轮 postFrameIfNeeded 永远早退 → 永久冻屏
+        framePending_ = false;
         looper_.store(ALooper_prepare(0));
         if (!initEGL(window)) {
             LOGE("Failed to initialize EGL on render thread");
