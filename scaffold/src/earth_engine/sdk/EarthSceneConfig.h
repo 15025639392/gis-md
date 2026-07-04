@@ -43,7 +43,8 @@ struct TerrainSourceConfig {
 };
 
 struct SceneTilesetConfig {
-    double mainThreadLoadingTimeLimit = 0.0;
+    // 与 TilesetOptions::mainThreadLoadingTimeLimit 默认保持一致（8ms 时间闸门）。
+    double mainThreadLoadingTimeLimit = 8.0;
     double tileCacheUnloadTimeLimit = 0.0;
 };
 

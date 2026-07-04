@@ -69,7 +69,11 @@ struct TilesetOptions {
     bool enableLodTransitionPeriod = false;
     float lodTransitionLength = 1.0f;
     bool kickDescendantsWhileFadingIn = true;
-    double mainThreadLoadingTimeLimit = 0.0;
+    // 每帧主线程加载时间预算（毫秒）。>0 时 FrameResourceBudget 按实测
+    // finalize/上传耗时（recordElapsed）截断当帧后续工作，计数上限退为兜底；
+    // 0 = 不设时间闸门（cesium-native 出厂默认，但静止帧一帧可串 20 次
+    // finalize + 20 次上传形成尖峰，故本引擎默认 8ms）。
+    double mainThreadLoadingTimeLimit = 8.0;
     double tileCacheUnloadTimeLimit = 0.0;
     std::vector<FogDensityAtHeight> fogDensityTable = {
         {359.393, 2.0e-5},     {800.749, 2.0e-4},
