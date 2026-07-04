@@ -18,6 +18,9 @@
     std::unique_ptr<earth_engine::EarthEngineSdkFacade> _sdkFacade;
     bool _engineReady;
     int _frameCount;
+    // 合帧标记：主队列已有未执行的 render block 时不再追加，防止慢帧下
+    // display link 持续投递导致主队列积压、输入延迟无限增长（P2-17）。
+    std::atomic<bool> _framePending;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -103,10 +106,23 @@ static CVReturn displayLinkCallback(
     CVDisplayLinkRef, const CVTimeStamp*, const CVTimeStamp*,
     CVOptionFlags, CVOptionFlags*, void* context) {
     MetalView* self = (__bridge MetalView*)context;
+    if (![self tryMarkFramePending]) {
+        return kCVReturnSuccess;  // 上一帧的 block 还没执行，合帧丢弃
+    }
     dispatch_async(dispatch_get_main_queue(), ^{
+        [self clearFramePending];
         [self renderFrame];
     });
     return kCVReturnSuccess;
+}
+
+- (BOOL)tryMarkFramePending {
+    bool expected = false;
+    return _framePending.compare_exchange_strong(expected, true);
+}
+
+- (void)clearFramePending {
+    _framePending.store(false);
 }
 
 - (void)startRenderLoop {
