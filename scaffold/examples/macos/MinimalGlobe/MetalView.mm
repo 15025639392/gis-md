@@ -27,7 +27,7 @@
         _metalLayer = [CAMetalLayer layer];
         _metalLayer.device = MTLCreateSystemDefaultDevice();
         _metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-        _metalLayer.framebufferOnly = NO;
+        _metalLayer.framebufferOnly = YES;
         _metalLayer.drawableSize = frameRect.size;
         // macOS-specific: ensure drawables are always available
         _metalLayer.allowsNextDrawableTimeout = NO;

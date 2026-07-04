@@ -331,8 +331,12 @@ private:
             }
 
             if (multi) {
+                // curl_multi_poll 而非 curl_multi_wait：
+                // 1) curl_multi_wakeup 只能唤醒 poll，wait 收不到唤醒信号；
+                // 2) numFds==0（DNS/建连窗口）时 wait 立即返回导致忙旋，
+                //    poll 会真正睡满超时。
                 int numFds = 0;
-                curl_multi_wait(multi, nullptr, 0, 50, &numFds);
+                curl_multi_poll(multi, nullptr, 0, 50, &numFds);
             }
         }
 
@@ -394,6 +398,8 @@ private:
         curl_easy_setopt(easy, CURLOPT_TIMEOUT, 15L);
         curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 5L);
         curl_easy_setopt(easy, CURLOPT_USERAGENT, "earth-md/0.1");
+        // 空字符串 = 声明 libcurl 支持的全部压缩编码并自动解压。
+        curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
         curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(easy, CURLOPT_MAXREDIRS, 3L);
         curl_easy_setopt(easy, CURLOPT_PRIVATE, request.get());

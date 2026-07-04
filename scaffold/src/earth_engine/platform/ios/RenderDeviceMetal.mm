@@ -560,9 +560,6 @@ void RenderDeviceMetal::beginFrame() {
     [impl_->currentEncoder setFrontFacingWinding:MTLWindingClockwise];
 
     // 存储 drawable 以便 endFrame 时 present
-    [impl_->currentCommandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
-        // drawable retained by command buffer
-    }];
     // 强引用 drawable 避免提前释放
     CFRetain((__bridge CFTypeRef)drawable);
     // 通过 associated object 存到 command buffer

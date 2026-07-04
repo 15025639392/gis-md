@@ -20,10 +20,26 @@ namespace {
 #define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
 #endif
 
+// glGetString(GL_EXTENSIONS)/glGetFloatv 是驱动线程同步点且每张瓦片纹理都会
+// 触发，结果对同一 GPU 恒定 —— 首次查询后缓存（surface 重建不换 GPU）。
 bool supportsTextureAnisotropy() {
-    const char* extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
-    return extensions &&
-           std::string(extensions).find("GL_EXT_texture_filter_anisotropic") != std::string::npos;
+    static const bool supported = [] {
+        const char* extensions =
+            reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+        return extensions &&
+               std::strstr(extensions, "GL_EXT_texture_filter_anisotropic") !=
+                   nullptr;
+    }();
+    return supported;
+}
+
+GLfloat deviceMaxTextureAnisotropy() {
+    static const GLfloat maxAnisotropy = [] {
+        GLfloat value = 1.0f;
+        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &value);
+        return value;
+    }();
+    return maxAnisotropy;
 }
 
 // GLES fragment shaders are limited to GL_MAX_TEXTURE_IMAGE_UNITS texture units
@@ -186,12 +202,10 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
                     desc.magFilter == TextureDesc::Filter::Linear ? GL_LINEAR : GL_NEAREST);
 
     if (desc.maxAnisotropy > 1.0f && supportsTextureAnisotropy()) {
-        GLfloat deviceMaxAnisotropy = 1.0f;
-        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &deviceMaxAnisotropy);
         const GLfloat anisotropy = std::clamp(
             static_cast<GLfloat>(desc.maxAnisotropy),
             1.0f,
-            deviceMaxAnisotropy);
+            deviceMaxTextureAnisotropy());
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
     }
 
@@ -251,7 +265,12 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
                     GL_UNSIGNED_BYTE,
                     data);
     glBindTexture(GL_TEXTURE_2D, 0);
+    // glGetError 在 threaded-GL 驱动下是同步点，热路径仅 debug 保留。
+#ifndef NDEBUG
     return glGetError() == GL_NO_ERROR;
+#else
+    return true;
+#endif
 }
 
 std::unique_ptr<Buffer> RenderDeviceGLES::createBuffer(const BufferDesc& desc) {
@@ -288,7 +307,11 @@ bool RenderDeviceGLES::updateBuffer(Buffer* buffer,
                     static_cast<GLsizeiptr>(size),
                     data);
     glBindBuffer(glBuffer->target(), 0);
+#ifndef NDEBUG
     return glGetError() == GL_NO_ERROR;
+#else
+    return true;
+#endif
 }
 
 std::unique_ptr<ShaderProgram> RenderDeviceGLES::createShader(const ShaderDesc& desc) {
