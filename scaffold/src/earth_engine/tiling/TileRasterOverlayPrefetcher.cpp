@@ -140,4 +140,39 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
     return action;
 }
 
+void TileRasterOverlayPrefetcher::advanceThrottledLoads(
+    TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    const std::vector<size_t>& overlayProcessingOrder,
+    RenderDevice* device,
+    FrameResourceBudget& frameResourceBudget) {
+    for (size_t i : overlayProcessingOrder) {
+        if (i >= tile.rasterOverlayState.mappingCount()) {
+            continue;
+        }
+        ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
+        if (!activeOverlay || !activeOverlay->visible()) {
+            continue;
+        }
+        RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlayState.mappingAt(i);
+        if (!mapped) {
+            continue;
+        }
+        RasterOverlayTile* loadingTile = mapped->getLoadingTile();
+        if (!loadingTile ||
+            loadingTile->getState() ==
+                RasterOverlayTile::LoadState::Placeholder) {
+            continue;
+        }
+        // ensureTileProvider is cached after first creation; no geometry work.
+        RasterOverlayTileProvider* activeProvider =
+            activeOverlay->ensureTileProvider(device);
+        if (!activeProvider) {
+            continue;
+        }
+        mapped->loadThrottled(*activeProvider, &frameResourceBudget);
+    }
+}
+
 } // namespace earth_engine

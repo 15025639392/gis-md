@@ -84,12 +84,22 @@ public:
                 if (!prefetchedTiles.insert(item.key).second) {
                     continue;
                 }
-                // cesium-native: Done tiles with existing overlay mappings
-                // don't need per-frame geometry recomputation.  The initial
-                // mapping was created when the tile first entered the visible
-                // plan (mappingCount transitions 0→1).  Skip full prefetch.
-                if (item.tile->content.loadState == TileLoadState::Done &&
-                    item.tile->rasterOverlayState.mappingCount() > 0) {
+                // cesium: the overlay geometry mapping is a once-at-load step
+                // (addTileOverlays), NOT per-frame. Any already-mapped tile
+                // skips the full geometric remap. Done tiles are handled by the
+                // render-path overlay state updater; loading (not-Done) tiles
+                // only advance throttled imagery loads each frame (cesium's
+                // cheap updateTileOverlays). This removes the per-frame remap of
+                // every in-flight tile that spiked to ~155ms during fast drag.
+                if (item.tile->rasterOverlayState.mappingCount() > 0) {
+                    if (item.tile->content.loadState != TileLoadState::Done) {
+                        TileRasterOverlayPrefetcher::advanceThrottledLoads(
+                            *item.tile,
+                            rasterOverlays,
+                            overlayProcessingOrder,
+                            device,
+                            frameResourceBudget);
+                    }
                     continue;
                 }
                 const TileRasterOverlayPrefetchAction action =
@@ -124,6 +134,20 @@ public:
             }
             if (TilesetTile* tile = ensureTile(request.key)) {
                 if (!prefetchedTiles.insert(request.key).second) {
+                    continue;
+                }
+                // Same once-at-load rule as the visible loop: already-mapped
+                // load-queue tiles skip the full remap and only advance
+                // throttled imagery loads.
+                if (tile->rasterOverlayState.mappingCount() > 0) {
+                    if (tile->content.loadState != TileLoadState::Done) {
+                        TileRasterOverlayPrefetcher::advanceThrottledLoads(
+                            *tile,
+                            rasterOverlays,
+                            overlayProcessingOrder,
+                            device,
+                            frameResourceBudget);
+                    }
                     continue;
                 }
                 const TileRasterOverlayPrefetchAction action =
