@@ -84,13 +84,13 @@ public:
                 if (!prefetchedTiles.insert(item.key).second) {
                     continue;
                 }
-                // cesium: the overlay geometry mapping is a once-at-load step
-                // (addTileOverlays), NOT per-frame. Any already-mapped tile
-                // skips the full geometric remap. Done tiles are handled by the
-                // render-path overlay state updater; loading (not-Done) tiles
-                // only advance throttled imagery loads each frame (cesium's
-                // cheap updateTileOverlays). This removes the per-frame remap of
-                // every in-flight tile that spiked to ~155ms during fast drag.
+                // cesium: the overlay geometry mapping is a once-at-load step,
+                // NOT per-frame. 闸1: not-Done 瓦片一律不在 prefetch 建映射——
+                // 映射交由几何加载完成(Done)后 render 路径的 RenderContent-
+                // RasterOverlayStateUpdater 建立(cesium 里 updateTileOverlays
+                // 只对已渲染 Done 瓦片)。这消除了拖动时对 not-Done 洪泛(数百
+                // 个)每帧首见映射的 8-18ms 开销。已映射的(先前 Done 后回到
+                // 加载中的)瓦片仅推进其 throttled 影像加载。
                 if (item.tile->rasterOverlayState.mappingCount() > 0) {
                     if (item.tile->content.loadState != TileLoadState::Done) {
                         TileRasterOverlayPrefetcher::advanceThrottledLoads(
@@ -100,6 +100,9 @@ public:
                             device,
                             frameResourceBudget);
                     }
+                    continue;
+                }
+                if (item.tile->content.loadState != TileLoadState::Done) {
                     continue;
                 }
                 const TileRasterOverlayPrefetchAction action =
@@ -136,9 +139,11 @@ public:
                 if (!prefetchedTiles.insert(request.key).second) {
                     continue;
                 }
-                // Same once-at-load rule as the visible loop: already-mapped
-                // load-queue tiles skip the full remap and only advance
-                // throttled imagery loads.
+                // Same 闸1 rule as the visible loop: already-mapped load-queue
+                // tiles only advance throttled imagery loads; not-Done tiles are
+                // NOT mapped here (mapping happens at Done via render path).
+                // Load-queue tiles are by definition still loading, so this
+                // removes their per-frame first-sighting mapping entirely.
                 if (tile->rasterOverlayState.mappingCount() > 0) {
                     if (tile->content.loadState != TileLoadState::Done) {
                         TileRasterOverlayPrefetcher::advanceThrottledLoads(
@@ -148,6 +153,9 @@ public:
                             device,
                             frameResourceBudget);
                     }
+                    continue;
+                }
+                if (tile->content.loadState != TileLoadState::Done) {
                     continue;
                 }
                 const TileRasterOverlayPrefetchAction action =
