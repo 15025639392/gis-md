@@ -1,16 +1,13 @@
 // 异步选择线程竞争压测（ThreadSanitizer 目标，步4b）。
 //
 // 仅在 -DEARTH_ENGINE_ENABLE_TSAN=ON 时编译,链接 tsan-instrumented core。
-// 形态:asyncSelection=true 的 Tileset,物化一棵满四叉树,相机每帧扰动强制
-// worker 每帧真跑,连跑数千帧。选择在专用 worker 线程上进行(步4 barrier 版:
-// snapshot 入/result 出跨线程),reconcile 写回 live。TSAN 报任何 data race /
-// 锁序问题即 fail —— 验证 worker handoff 的 happens-before 正确、跨帧写回与
-// 下一帧快照之间无竞争。
-//
-// 步4 为 barrier(render 阻塞等 worker),故理论上无并发重叠;此测的价值是
-// 验证 mutex/cv handoff 建立了正确的 happens-before(若同步写错,TSAN 会在
-// worker 写 runner_ 与 render 读 runner_ 之间报竞争)。步5 去 barrier 后此
-// 测转为真并发的权威门禁。
+// 形态:asyncSelectionNonBlocking=true 的 Tileset(真异步),物化一棵满四叉树,
+// 相机每帧扰动,连跑数千帧。选择在专用 worker 线程上与 render 循环**真并发**:
+// render 每帧 tryTakeResult(消费上次结果)/isBusy(空闲才 buildShadow+dispatch)/
+// 否则沿用上次计划,worker 同时在跑 selectOnShadow。TSAN 报任何 data race /
+// 锁序问题即 fail —— 验证 busy_(atomic acquire/release)+ mutex/cv 的
+// dispatch/done 协议在 render↔worker 交替持有 runner 时无竞争,跨帧写回与
+// 下一帧 buildShadow 之间也无竞争。这是真异步(步5)的权威并发门禁。
 
 #include <gtest/gtest.h>
 
@@ -148,6 +145,7 @@ SelectorView makeView(const Camera& camera, int w, int h) {
 TEST(AsyncSelectionTsanTest, PerturbedCameraStressNoRace) {
     TilesetOptions options;
     options.asyncSelection = true;
+    options.asyncSelectionNonBlocking = true;  // 真异步:worker 与 render 并发
     Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},

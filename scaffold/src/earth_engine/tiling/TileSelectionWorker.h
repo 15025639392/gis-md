@@ -2,29 +2,34 @@
 
 #include "TileSelectionShadowRunner.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
 
 namespace earth_engine {
 
+class TilesetTileRegistry;
+
 /// Dedicated selection worker thread (NOT the AsyncSystem decode pool — keeping
-/// it separate avoids starving content decoding). It runs the shadow-tree
-/// selection off the render thread.
+/// it separate avoids starving content decoding). It runs the heavy shadow-tree
+/// traversal off the render thread.
 ///
-/// Step 4 (this file) uses a BARRIER dispatch: runSync() hands a job to the
-/// worker and blocks until it finishes, then the caller reads the result. This
-/// is semantically identical to the synchronous path (golden stays 8/8) but the
-/// snapshot-in / result-out data genuinely crosses a thread boundary, so TSAN
-/// validates the handoff before the barrier is removed in step 5 (true async +
-/// tilePlan double-buffering).
+/// Non-blocking protocol (true async, step 5). Ownership of the internal runner
+/// alternates between the render thread and the worker, mediated by `busy_`
+/// (atomic, acquire/release) plus the mutex-guarded job/result handoff:
 ///
-/// The mutex/condition-variable handoff establishes happens-before both ways:
-/// render's job publish → worker's job read, and worker's result publish →
-/// render's result read. While the worker runs, the render thread is blocked in
-/// runSync (barrier), so the job's referenced live state is not concurrently
-/// mutated. That non-overlap invariant is what step 5 replaces with an explicit
-/// value snapshot + double buffer.
+///   render frame:
+///     if (const runner = tryTakeResult()) reconcile(runner) -> live
+///     if (!isBusy()) { buildShadow(live); dispatch(snapshot); }
+///     else: worker still selecting -> draw the last reconciled plan (fallback)
+///
+/// While the worker is selecting (busy_ == true), the render thread never
+/// touches the runner. buildShadow/dispatch are only called after isBusy()
+/// reads false, whose acquire pairs with the worker's release of busy_ = false,
+/// so the render thread's runner access happens-after the worker's writes. The
+/// worker reads only the shadow (already built by buildShadow) and the VALUE
+/// snapshot in the dispatched input — never live per-frame state.
 class TileSelectionWorker {
 public:
     TileSelectionWorker();
@@ -33,22 +38,32 @@ public:
     TileSelectionWorker(const TileSelectionWorker&) = delete;
     TileSelectionWorker& operator=(const TileSelectionWorker&) = delete;
 
-    /// Run one selection job on the worker thread and block until it completes.
-    /// Returns the runner holding the result (tilePlan/loadQueue/counters +
-    /// shadow tree for state write-back). The reference stays valid until the
-    /// next runSync().
-    const TileSelectionShadowRunner& runSync(
-        const TileSelectionShadowRunInput& input);
+    /// True while the worker is selecting on the shadow. When false, the render
+    /// thread owns the runner and may buildShadow()/dispatch() or read a result.
+    bool isBusy() const { return busy_.load(std::memory_order_acquire); }
+
+    /// Render thread, requires !isBusy(): rebuild the shadow tree from live.
+    void buildShadow(const TilesetTileRegistry& liveRegistry);
+
+    /// Render thread, requires !isBusy(): copy the per-frame value snapshot and
+    /// kick the worker to select on the shadow just built.
+    void dispatch(const TileSelectionShadowSelectInput& input);
+
+    /// Render thread: if the worker has published a fresh result, consume it and
+    /// return the runner (caller reconciles onto live); otherwise nullptr. The
+    /// returned reference is valid until the next dispatch()/buildShadow().
+    const TileSelectionShadowRunner* tryTakeResult();
 
 private:
     void threadMain();
 
     TileSelectionShadowRunner runner_;
+    TileSelectionShadowSelectInput job_;
 
     std::thread thread_;
     std::mutex mutex_;
     std::condition_variable cv_;
-    const TileSelectionShadowRunInput* pendingInput_ = nullptr;
+    std::atomic<bool> busy_{false};
     bool jobReady_ = false;
     bool resultReady_ = false;
     bool stop_ = false;

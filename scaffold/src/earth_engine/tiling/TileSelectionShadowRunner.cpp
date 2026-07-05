@@ -43,20 +43,43 @@ TileOcclusionState shadowNotOccluded(void*, const TilesetTile&) {
 } // namespace
 
 void TileSelectionShadowRunner::run(const TileSelectionShadowRunInput& input) {
-    shadowTree_.build(input.liveRegistry);
+    buildShadow(input.liveRegistry);
+    selectOnShadow(TileSelectionShadowSelectInput{
+        &input.tileScheme,
+        input.contentProvider,
+        input.contentProviderOwnsTerrainQuadtree,
+        input.useVirtualTerrainRoot,
+        &input.options,
+        input.frameState,
+        input.lastCameraPosition,
+        input.interactionActive,
+        input.resourceSmoothingActive,
+        input.checkOcclusion,
+        input.occlusionUserData});
+}
+
+void TileSelectionShadowRunner::buildShadow(
+    const TilesetTileRegistry& liveRegistry) {
+    shadowTree_.build(liveRegistry);
+}
+
+void TileSelectionShadowRunner::selectOnShadow(
+    const TileSelectionShadowSelectInput& input) {
     shadowFadingOut_.clear();
     shadowActiveTiles_.clear();
-    shadowBudget_.beginFrame(input.frameState.frameId, FrameResourceBudgetConfig{});
+    shadowBudget_.beginFrame(
+        input.frameState.frameId,
+        FrameResourceBudgetConfig{});
 
     TileContentAccess shadowContentAccess =
         input.contentProviderOwnsTerrainQuadtree
             ? TileContentAccess::forContentTerrain(
                   shadowTree_.registry(),
-                  input.tileScheme,
+                  *input.tileScheme,
                   *input.contentProvider)
             : TileContentAccess::forNoTerrain(
                   shadowTree_.registry(),
-                  input.tileScheme,
+                  *input.tileScheme,
                   input.contentProvider);
 
     const TileSelectionTraversalContextBinding::CheckOcclusionFn occlusionFn =
@@ -68,8 +91,8 @@ void TileSelectionShadowRunner::run(const TileSelectionShadowRunInput& input) {
             shadowLoadQueue_,
             shadowCounters_,
             input.frameState,
-            input.options.fogDensityTable,
-            input.tileScheme.id(),
+            input.options->fogDensityTable,
+            input.tileScheme->id(),
             input.contentProvider ? input.contentProvider->rootTiles()
                                   : std::vector<TileKey>{},
             input.useVirtualTerrainRoot},
@@ -84,7 +107,7 @@ void TileSelectionShadowRunner::run(const TileSelectionShadowRunInput& input) {
             TileSelectionTraversalContextBinding binding{
                 shadowTilePlan_,
                 shadowLoadQueue_,
-                input.options,
+                *input.options,
                 shadowOverlays_,
                 shadowContentAccess,
                 input.occlusionUserData,
@@ -96,7 +119,7 @@ void TileSelectionShadowRunner::run(const TileSelectionShadowRunInput& input) {
                         shadowTilePlan_,
                         shadowLoadQueue_,
                         shadowCounters_,
-                        input.options,
+                        *input.options,
                         shadowOverlays_,
                         nullptr,
                         shadowBudget_,
@@ -126,10 +149,10 @@ void TileSelectionShadowRunner::run(const TileSelectionShadowRunInput& input) {
                     shadowOverlays_,
                     finalizeFrameState.deltaSeconds,
                     TileLodTransitionFrameOptions{
-                        input.options.enableLodTransitionPeriod,
-                        input.options.lodTransitionLength},
+                        input.options->enableLodTransitionPeriod,
+                        input.options->lodTransitionLength},
                     TileRenderPlanFrameRefreshOptions{
-                        input.options.enableLodTransitionPeriod,
+                        input.options->enableLodTransitionPeriod,
                         input.interactionActive,
                         input.resourceSmoothingActive}});
         });

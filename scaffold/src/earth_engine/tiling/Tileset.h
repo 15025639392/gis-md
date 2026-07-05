@@ -76,6 +76,11 @@ struct TilesetOptions {
     // true, the render thread dispatches selection to a dedicated worker and
     // applies the result. Any regression → set false to fully revert.
     bool asyncSelection = false;
+    // 在 asyncSelection=true 基础上，把影子选择放到专用 worker 线程真异步跑
+    // （render 不阻塞，结果延迟 ≥1 帧，worker 忙时本帧沿用上次计划）。默认
+    // false = 影子选择在 render 线程同步跑（golden 可逐帧对拍验证选择算法）。
+    // true = 性能模式，靠 TSAN + 真机验证；结果滞后使 golden 无法逐帧对拍。
+    bool asyncSelectionNonBlocking = false;
     // 每帧主线程加载时间预算（毫秒）。>0 时 FrameResourceBudget 按实测
     // finalize/上传耗时（recordElapsed）截断当帧后续工作，计数上限退为兜底；
     // 0 = 不设时间闸门（cesium-native 出厂默认，但静止帧一帧可串 20 次

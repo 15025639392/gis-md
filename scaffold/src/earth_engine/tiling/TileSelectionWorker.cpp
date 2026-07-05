@@ -20,22 +20,40 @@ TileSelectionWorker::~TileSelectionWorker() {
     }
 }
 
-const TileSelectionShadowRunner& TileSelectionWorker::runSync(
-    const TileSelectionShadowRunInput& input) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    pendingInput_ = &input;
+void TileSelectionWorker::buildShadow(
+    const TilesetTileRegistry& liveRegistry) {
+    // Caller guarantees !isBusy(); the acquire in isBusy() paired with the
+    // worker's release of busy_ = false gives happens-before, so this runner
+    // write happens-after the worker's last selection write.
+    runner_.buildShadow(liveRegistry);
+}
+
+void TileSelectionWorker::dispatch(
+    const TileSelectionShadowSelectInput& input) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    job_ = input;  // value copy — no live per-frame pointers survive the call
     jobReady_ = true;
     resultReady_ = false;
+    busy_.store(true, std::memory_order_release);
     cv_.notify_all();
-    // Barrier: block the render thread until the worker publishes the result.
-    cv_.wait(lock, [this]() { return resultReady_; });
-    pendingInput_ = nullptr;
-    return runner_;
+}
+
+const TileSelectionShadowRunner* TileSelectionWorker::tryTakeResult() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!resultReady_) {
+            return nullptr;
+        }
+        resultReady_ = false;
+    }
+    // The lock acquire above happens-after the worker's result publish, so all
+    // of the worker's runner_ writes are visible here.
+    return &runner_;
 }
 
 void TileSelectionWorker::threadMain() {
     for (;;) {
-        const TileSelectionShadowRunInput* input = nullptr;
+        TileSelectionShadowSelectInput input;
         {
             std::unique_lock<std::mutex> lock(mutex_);
             cv_.wait(lock, [this]() { return jobReady_ || stop_; });
@@ -43,19 +61,15 @@ void TileSelectionWorker::threadMain() {
                 return;
             }
             jobReady_ = false;
-            input = pendingInput_;
+            input = job_;
         }
 
-        // Run the selection outside the lock (the render thread is barrier-
-        // blocked in runSync, so `runner_` and the referenced live state have no
-        // concurrent access).
-        if (input) {
-            runner_.run(*input);
-        }
+        runner_.selectOnShadow(input);
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
             resultReady_ = true;
+            busy_.store(false, std::memory_order_release);
             cv_.notify_all();
         }
     }

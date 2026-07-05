@@ -39,41 +39,25 @@ TileOcclusionState TilesetSelectionFrameFacade::shadowOcclusion(
 void TilesetSelectionFrameFacade::selectTilesAsyncShadow(
     Tileset& tileset,
     const FrameState& frameState) {
-    // Run the ordinary selection traversal on a shadow copy of the live tree,
-    // off the render thread. The shadow result is byte-identical to the sync
-    // path (same executor over a faithful read-surface mirror); see
-    // TileSelectionShadowRunner. Step 4 dispatches to a dedicated worker with a
-    // barrier (semantically synchronous), which validates the cross-thread
-    // handoff under TSAN before the barrier is removed in step 5.
-    if (!tileset.selectionWorker_) {
-        tileset.selectionWorker_ = std::make_unique<TileSelectionWorker>();
+    if (tileset.options_.asyncSelectionNonBlocking) {
+        selectTilesAsyncWorker(tileset, frameState);
+    } else {
+        selectTilesSyncShadow(tileset, frameState);
     }
-    const TileSelectionShadowRunInput input{
-        tileset.tileRegistry_,
-        *tileset.tileScheme_,
-        tileset.terrainProviders_.contentProvider(),
-        tileset.terrainProviders_.contentProviderOwnsTerrainQuadtree(),
-        tileset.hasTerrainQuadtree(),
-        tileset.options_,
-        frameState,
-        tileset.lastCameraPosition_,
-        tileset.interactionActiveForFrame_,
-        tileset.resourceSmoothingActiveForFrame_,
-        &shadowOcclusion,
-        &tileset};
-    const TileSelectionShadowRunner& runner =
-        tileset.selectionWorker_->runSync(input);
+}
 
-    // Reconcile the shadow result onto live. Render/load keys and counters are
-    // moved/copied wholesale; each shadow tile's final selection state is
-    // written back to the corresponding live tile so the next frame's shadow
-    // (seeded from live) carries correct cross-frame selection history.
+void TilesetSelectionFrameFacade::reconcileShadowToLive(
+    Tileset& tileset,
+    const TileSelectionShadowRunner& runner) {
+    // Copy render/load keys + counters wholesale; write each shadow tile's final
+    // selection state back to its live tile so the next frame's shadow (seeded
+    // from live) carries correct cross-frame selection history.
     //
     // For golden, every selected key already exists in the live registry (the
     // scene is pre-materialized). Materializing live tiles that only the shadow
     // virtual-descended is part of the later real-path apply and is not needed
     // by the content-less oracle.
-    tileset.tilePlan_ = std::move(runner.tilePlan());
+    tileset.tilePlan_ = runner.tilePlan();
     tileset.loadQueue_ = runner.loadQueue();
     tileset.selectionCounters_ = runner.counters();
 
@@ -91,6 +75,68 @@ void TilesetSelectionFrameFacade::selectTilesAsyncShadow(
         liveTile->selectionFrameState.previousSelectionState =
             shadowTile->selectionFrameState.previousSelectionState;
     }
+}
+
+void TilesetSelectionFrameFacade::selectTilesSyncShadow(
+    Tileset& tileset,
+    const FrameState& frameState) {
+    // Run the ordinary selection traversal on a shadow copy of the live tree,
+    // synchronously on the render thread. Byte-identical to the sync path (same
+    // executor over a faithful read-surface mirror), so golden verifies it
+    // frame-by-frame. Occlusion is safe here (no concurrent live mutation).
+    TileSelectionShadowRunner runner;
+    runner.run(TileSelectionShadowRunInput{
+        tileset.tileRegistry_,
+        *tileset.tileScheme_,
+        tileset.terrainProviders_.contentProvider(),
+        tileset.terrainProviders_.contentProviderOwnsTerrainQuadtree(),
+        tileset.hasTerrainQuadtree(),
+        tileset.options_,
+        frameState,
+        tileset.lastCameraPosition_,
+        tileset.interactionActiveForFrame_,
+        tileset.resourceSmoothingActiveForFrame_,
+        &shadowOcclusion,
+        &tileset});
+    reconcileShadowToLive(tileset, runner);
+}
+
+void TilesetSelectionFrameFacade::selectTilesAsyncWorker(
+    Tileset& tileset,
+    const FrameState& frameState) {
+    // True async: the heavy traversal runs on a dedicated worker while the
+    // render thread proceeds. Selection results lag ≥1 frame; when the worker
+    // is still busy this frame simply reuses the last reconciled plan.
+    if (!tileset.selectionWorker_) {
+        tileset.selectionWorker_ = std::make_unique<TileSelectionWorker>();
+    }
+    TileSelectionWorker& worker = *tileset.selectionWorker_;
+
+    // 1. Consume a finished selection (worker idle → safe to read the runner).
+    if (const TileSelectionShadowRunner* runner = worker.tryTakeResult()) {
+        reconcileShadowToLive(tileset, *runner);
+    }
+
+    // 2. If the worker is idle, snapshot live + kick a new selection. Build the
+    //    shadow here (render thread) so the worker never reads live; the input
+    //    is a value snapshot so nothing per-frame outlives this call. Occlusion
+    //    is disabled on the worker (a real thunk reads live mutable state).
+    if (!worker.isBusy()) {
+        worker.buildShadow(tileset.tileRegistry_);
+        worker.dispatch(TileSelectionShadowSelectInput{
+            tileset.tileScheme_.get(),
+            tileset.terrainProviders_.contentProvider(),
+            tileset.terrainProviders_.contentProviderOwnsTerrainQuadtree(),
+            tileset.hasTerrainQuadtree(),
+            &tileset.options_,
+            frameState,
+            tileset.lastCameraPosition_,
+            tileset.interactionActiveForFrame_,
+            tileset.resourceSmoothingActiveForFrame_,
+            nullptr,
+            nullptr});
+    }
+    // 3. else: worker busy → keep the last reconciled tilePlan_ (fallback).
 }
 
 void TilesetSelectionFrameFacade::selectTilesSync(
