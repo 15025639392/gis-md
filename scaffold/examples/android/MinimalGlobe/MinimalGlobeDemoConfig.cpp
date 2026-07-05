@@ -26,6 +26,12 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         4.0,
         2.0,
     };
+    // Light up the built-in LOD-transition alpha cross-fade (cesium
+    // enableLodTransitionPeriod) so tile refine/coarsen fades instead of
+    // popping. Library default stays off (cesium-faithful); the demo turns it
+    // on to showcase it. 0.5s is a short, responsive transition.
+    config.tileset.enableLodTransitionPeriod = true;
+    config.tileset.lodTransitionLength = 0.5f;
 
     if (kUseGaodeSatelliteForDemo) {
         RasterOverlaySourceConfig satellite;
