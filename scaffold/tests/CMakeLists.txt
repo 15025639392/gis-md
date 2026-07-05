@@ -625,6 +625,12 @@ add_executable(test_tile_selection_input_metrics
 target_link_libraries(test_tile_selection_input_metrics PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_input_metrics COMMAND test_tile_selection_input_metrics)
 
+add_executable(test_tile_selection_equivalence
+    unit/tiling/test_tile_selection_equivalence.cpp
+)
+target_link_libraries(test_tile_selection_equivalence PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_selection_equivalence COMMAND test_tile_selection_equivalence)
+
 add_executable(test_tile_selection_culling_policy
     unit/tiling/test_tile_selection_culling_policy.cpp
 )

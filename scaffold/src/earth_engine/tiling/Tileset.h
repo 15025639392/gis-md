@@ -89,6 +89,17 @@ struct TilesetOptions {
     // false = 影子选择在 render 线程同步跑（golden 可逐帧对拍验证选择算法）。
     // true = 性能模式，靠 TSAN + 真机验证；结果滞后使 golden 无法逐帧对拍。
     bool asyncSelectionNonBlocking = false;
+    // ③ 增量切面(incremental frontier)总开关。默认 false → 每帧全量遍历
+    // 选择(现状,忠实 cesium)。true → 只重评估「margin 带 ∪ dirty 集」的
+    // 边界瓦片,跳过可证明稳定的内部(设计见
+    // docs/issues/selector-incremental-frontier-design-2026-07-06.md)。
+    // Phase 0:此 flag 已就位但增量路径尚未接线,恒走全量。
+    bool incrementalSelection = false;
+    // §8 等价性基座开关(debug/test-only,默认 false)。true → 每帧在被测
+    // 选择路径之后再跑一遍全量参考选择,断言 visibleTiles/loadQueue/counters
+    // 逐位相同。increment==full 的 oracle;Phase 0 下是 full==full 自证。
+    // release 恒关(零开销)。
+    bool verifySelectionEquivalence = false;
     // 每帧主线程加载时间预算（毫秒）。>0 时 FrameResourceBudget 按实测
     // finalize/上传耗时（recordElapsed）截断当帧后续工作，计数上限退为兜底；
     // 0 = 不设时间闸门（cesium-native 出厂默认，但静止帧一帧可串 20 次
