@@ -135,11 +135,21 @@ struct ScenarioSpec {
     // asyncSelection=true 时走影子树选择路径；对同一 golden 逐帧断言，
     // 证明"影子选择 == 同步选择 == cesium golden"。
     bool asyncSelection = false;
+    // incrementalSelection=true 时走 ③ 增量切面路径;不与 cesium golden trace
+    // 对拍(load issue-order 可能不同),只靠 runScenario 内每帧 §8 oracle
+    // 断言「增量==全量」验证。
+    bool incrementalSelection = false;
 };
 
 // 返回同场景的 asyncSelection 变体（走影子树 + reconcile 回 live）。
 ScenarioSpec asyncOf(ScenarioSpec scenario) {
     scenario.asyncSelection = true;
+    return scenario;
+}
+
+// 返回同场景的 ③ 增量变体（走增量路径;§8 oracle 逐帧验证增量==全量）。
+ScenarioSpec incrementalOf(ScenarioSpec scenario) {
+    scenario.incrementalSelection = true;
     return scenario;
 }
 
@@ -367,6 +377,7 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
 
     TilesetOptions tilesetOptions = makeTilesetOptions(spec);
     tilesetOptions.asyncSelection = scenario.asyncSelection;
+    tilesetOptions.incrementalSelection = scenario.incrementalSelection;
     // §8 等价性 oracle:sync 场景每帧额外跑一遍全量参考并断言逐位相同
     // (full==full 自证 oracle 接线正确;async 场景 facade 早退不触发,恒空)。
     tilesetOptions.verifySelectionEquivalence = true;
@@ -649,4 +660,18 @@ TEST(SelectorCesiumGoldenDiffTest, S3AsyncShadowMatchesCesiumGolden) {
 
 TEST(SelectorCesiumGoldenDiffTest, S4AsyncShadowMatchesCesiumGolden) {
     runGoldenDiffScenario(asyncOf(makeS4Scenario()));
+}
+
+// ③ 增量切面:走增量路径,靠 runScenario 内每帧 §8 oracle 断言「增量==全量」。
+// 不与 cesium golden trace 对拍(增量的 load issue-order 可能不同)。S3 含在途
+// 加载时序,是 dirty/剪枝正确性的关键场景。Layer 0 identity → 平凡通过;后续
+// Layer 引入真剪枝后,这里是增量正确性的回归网。
+TEST(SelectorIncrementalTest, S1MatchesFullViaOracle) {
+    const auto results = runScenario(incrementalOf(makeS1Scenario()));
+    EXPECT_FALSE(results.empty());
+}
+
+TEST(SelectorIncrementalTest, S3MatchesFullViaOracle) {
+    const auto results = runScenario(incrementalOf(makeS3Scenario()));
+    EXPECT_FALSE(results.empty());
 }

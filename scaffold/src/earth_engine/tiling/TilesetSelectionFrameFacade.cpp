@@ -41,11 +41,25 @@ void TilesetSelectionFrameFacade::selectTiles(
         oracleShadow->buildShadow(tileset.tileRegistry_);
     }
 
-    selectTilesSync(tileset, frameState);
+    if (tileset.options_.incrementalSelection) {
+        selectTilesIncremental(tileset, frameState);
+    } else {
+        selectTilesSync(tileset, frameState);
+    }
 
     if (oracleShadow) {
         verifySelectionEquivalence(tileset, frameState, *oracleShadow);
     }
+}
+
+void TilesetSelectionFrameFacade::selectTilesIncremental(
+    Tileset& tileset,
+    const FrameState& frameState) {
+    // ③ Layer 0: identity delegate. The incremental frontier machinery (subtree
+    // contribution cache → dirty invalidation → margin-gated pruning) lands in
+    // later layers behind this same entry, each gated by the §8 oracle. Until
+    // then this must produce byte-identical output to the full path.
+    selectTilesSync(tileset, frameState);
 }
 
 void TilesetSelectionFrameFacade::verifySelectionEquivalence(

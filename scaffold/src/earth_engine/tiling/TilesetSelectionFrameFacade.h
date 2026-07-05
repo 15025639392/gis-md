@@ -22,6 +22,12 @@ private:
     // Synchronous (default) path: traverse the live tree directly.
     static void selectTilesSync(Tileset& tileset, const FrameState& frameState);
 
+    // ③ 增量切面路径(incrementalSelection 开关)。Layer 0:恒 delegate 全量
+    // (identity),仅建入口 + 让 §8 oracle 覆盖增量分支。后续 Layer 逐步在此
+    // 建子树缓存/dirty 失效/剪枝(见设计文档 §7)。输出必须逐位等于全量。
+    static void selectTilesIncremental(Tileset& tileset,
+                                       const FrameState& frameState);
+
     // asyncSelection path (kill-switch). Dispatches to the synchronous-shadow or
     // true-async worker variant based on asyncSelectionNonBlocking.
     static void selectTilesAsyncShadow(Tileset& tileset,
