@@ -19,6 +19,7 @@
 #include "TileOcclusionState.h"
 #include "TileRasterUpsampledChildCoordinator.h"
 #include "TileRenderCommandManager.h"
+#include "TileIncrementalFrontier.h"
 #include "TileSelectionCounters.h"
 #include "TileSelectionMetrics.h"
 #include "TileSelectionReuseState.h"
@@ -173,6 +174,11 @@ public:
         return selectionEquivalenceMismatch_;
     }
 
+    /// ③ 增量切面子树贡献缓存(incrementalSelection 开启时每帧重建)。测试用。
+    const TileIncrementalFrontier& incrementalFrontier() const {
+        return incrementalFrontier_;
+    }
+
 private:
     friend struct TilesetTestAccess;
     friend class TilesetSelectionFrameFacade;
@@ -275,6 +281,8 @@ private:
     TileSelectionCounters selectionCounters_;
     // §8 等价性 oracle 结果(空=相等)。见 selectionEquivalenceMismatch()。
     std::string selectionEquivalenceMismatch_;
+    // ③ 增量切面缓存(incrementalSelection 开启时用;默认路径不触碰)。
+    TileIncrementalFrontier incrementalFrontier_;
     TileMeshPreparationManager meshPreparation_;
     TileContentRuntime contentRuntime_;
     TileRenderCommandManager renderCommands_;

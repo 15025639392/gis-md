@@ -6,6 +6,7 @@ namespace earth_engine {
 
 class TileContentAccess;
 class Tileset;
+class TileIncrementalFrontier;
 enum class TileOcclusionState;
 
 struct TileSelectionTraversalContextBuildInput {
@@ -18,6 +19,8 @@ struct TileSelectionTraversalContextBuildInput {
     FrameResourceBudget& frameResourceBudget;
     Vec3 lastCameraPosition = Vec3::zero();
     TileContentAccess& contentAccess;
+    // ③ 增量缓存(nullptr = 全量/影子路径,捕获全 no-op)。
+    TileIncrementalFrontier* incremental = nullptr;
 };
 
 struct TileSelectionTraversalContextBinding {

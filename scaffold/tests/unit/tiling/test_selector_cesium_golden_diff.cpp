@@ -458,6 +458,16 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
         EXPECT_TRUE(tileset.selectionEquivalenceMismatch().empty())
             << "frame " << (frame + 1) << " §8 mismatch: "
             << tileset.selectionEquivalenceMismatch();
+        // ③ Layer 1:增量路径捕获的子树缓存必须覆盖每个 visibleTile
+        //(每个渲染瓦片都被访问过 → 有 frontier 条目)。证明捕获真跑了、非空。
+        if (scenario.incrementalSelection) {
+            for (const TileKey& key : tileset.tilePlan().visibleTiles) {
+                EXPECT_NE(tileset.incrementalFrontier().find(key), nullptr)
+                    << "frame " << (frame + 1)
+                    << " 增量缓存缺 visibleTile 贡献: "
+                    << selector_diff::tileKeyString(key.z, key.x, key.y);
+            }
+        }
 
         std::vector<std::string> renderKeys;
         for (const TileKey& key : tileset.tilePlan().visibleTiles) {

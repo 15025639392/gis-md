@@ -55,11 +55,11 @@ void TilesetSelectionFrameFacade::selectTiles(
 void TilesetSelectionFrameFacade::selectTilesIncremental(
     Tileset& tileset,
     const FrameState& frameState) {
-    // ③ Layer 0: identity delegate. The incremental frontier machinery (subtree
-    // contribution cache → dirty invalidation → margin-gated pruning) lands in
-    // later layers behind this same entry, each gated by the §8 oracle. Until
-    // then this must produce byte-identical output to the full path.
-    selectTilesSync(tileset, frameState);
+    // ③ Layer 1: 全量遍历 + 每子树净贡献捕获到 frontier(不剪枝)。输出仍逐位
+    // 等于全量(捕获对 plan/loadQueue/counters 只读),§8 oracle 验证。Layer 2/3
+    // 才用这些缓存做 dirty 失效 + 剪枝。
+    tileset.incrementalFrontier_.beginFrame();
+    selectTilesSync(tileset, frameState, &tileset.incrementalFrontier_);
 }
 
 void TilesetSelectionFrameFacade::verifySelectionEquivalence(
@@ -257,7 +257,8 @@ void TilesetSelectionFrameFacade::selectTilesAsyncWorker(
 
 void TilesetSelectionFrameFacade::selectTilesSync(
     Tileset& tileset,
-    const FrameState& frameState) {
+    const FrameState& frameState,
+    TileIncrementalFrontier* incremental) {
     TileSelectionFrameRunner::run(
         TileSelectionFrameRunInput{
             tileset.tilePlan_,
@@ -276,7 +277,8 @@ void TilesetSelectionFrameFacade::selectTilesSync(
         [&tileset](const TileKey& key) {
             return tileset.contentAccess_.ensureTile(key);
         },
-        [&tileset](TilesetTile& root, const SelectorFrame& selectorFrame) {
+        [&tileset, incremental](TilesetTile& root,
+                                const SelectorFrame& selectorFrame) {
             TileSelectionTraversalContextBinding binding{
                 tileset.tilePlan_,
                 tileset.loadQueue_,
@@ -300,7 +302,8 @@ void TilesetSelectionFrameFacade::selectTilesSync(
                         tileset.device_,
                         tileset.frameResourceBudget_,
                         tileset.lastCameraPosition_,
-                        tileset.contentAccess_},
+                        tileset.contentAccess_,
+                        incremental},
                     binding);
             TileSelectionTraversalExecutor::visitTileIfNeeded(
                 traversalContext,

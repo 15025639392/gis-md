@@ -6,6 +6,7 @@ struct FrameState;
 struct TilesetTile;
 class Tileset;
 class TileSelectionShadowRunner;
+class TileIncrementalFrontier;
 enum class TileOcclusionState;
 
 class TilesetSelectionFrameFacade {
@@ -19,8 +20,11 @@ public:
     static void consumeAsyncSelectionResult(Tileset& tileset);
 
 private:
-    // Synchronous (default) path: traverse the live tree directly.
-    static void selectTilesSync(Tileset& tileset, const FrameState& frameState);
+    // Synchronous (default) path: traverse the live tree directly. `incremental`
+    // non-null(增量路径)时,遍历捕获每子树净贡献到该缓存;nullptr 时零开销。
+    static void selectTilesSync(Tileset& tileset,
+                                const FrameState& frameState,
+                                TileIncrementalFrontier* incremental = nullptr);
 
     // ③ 增量切面路径(incrementalSelection 开关)。Layer 0:恒 delegate 全量
     // (identity),仅建入口 + 让 §8 oracle 覆盖增量分支。后续 Layer 逐步在此

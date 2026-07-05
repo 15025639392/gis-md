@@ -123,7 +123,8 @@ TileSelectionTraversalContext TileSelectionTraversalContextBuilder::build(
         createSingleTileDetails,
         createCulledTileDetails,
         binding.owner ? onVisitTile : nullptr,
-        binding.owner};
+        binding.owner,
+        input.incremental};
 }
 
 } // namespace earth_engine
