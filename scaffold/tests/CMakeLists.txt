@@ -478,6 +478,12 @@ add_executable(test_tile_selection_history
 target_link_libraries(test_tile_selection_history PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_history COMMAND test_tile_selection_history)
 
+add_executable(test_tile_selection_shadow_tree
+    unit/tiling/test_tile_selection_shadow_tree.cpp
+)
+target_link_libraries(test_tile_selection_shadow_tree PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_selection_shadow_tree COMMAND test_tile_selection_shadow_tree)
+
 add_executable(test_tile_selection_plan_appender
     unit/tiling/test_tile_selection_plan_appender.cpp
 )
