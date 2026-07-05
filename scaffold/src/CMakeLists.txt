@@ -854,3 +854,27 @@ find_package(stb CONFIG QUIET)
 if(stb_FOUND)
     target_link_libraries(earth_engine_core PRIVATE stb::stb)
 endif()
+
+# ============================================================
+# TSAN-instrumented twin for the async-selection race test.
+# Gated behind EARTH_ENGINE_ENABLE_TSAN (default OFF) so normal builds/CI are
+# untouched. Configure a dedicated build dir with -DEARTH_ENGINE_ENABLE_TSAN=ON.
+# Reuses earth_engine_core's fully-resolved source/include/link properties so
+# it stays in lockstep without duplicating the source list.
+# ============================================================
+option(EARTH_ENGINE_ENABLE_TSAN
+    "Build the ThreadSanitizer-instrumented async-selection race test" OFF)
+if(EARTH_ENGINE_ENABLE_TSAN)
+    get_target_property(_ee_tsan_sources earth_engine_core SOURCES)
+    get_target_property(_ee_tsan_incs earth_engine_core INCLUDE_DIRECTORIES)
+    get_target_property(_ee_tsan_links earth_engine_core LINK_LIBRARIES)
+    add_library(earth_engine_core_tsan STATIC ${_ee_tsan_sources})
+    target_include_directories(earth_engine_core_tsan PUBLIC ${_ee_tsan_incs})
+    if(_ee_tsan_links)
+        target_link_libraries(earth_engine_core_tsan PUBLIC ${_ee_tsan_links})
+    endif()
+    target_compile_features(earth_engine_core_tsan PUBLIC cxx_std_17)
+    target_compile_options(earth_engine_core_tsan PRIVATE
+        -fsanitize=thread -fno-omit-frame-pointer -g -O1)
+    target_link_options(earth_engine_core_tsan PUBLIC -fsanitize=thread)
+endif()
