@@ -5,6 +5,7 @@
 #include "TileOcclusionState.h"
 #include "TileRenderPlanFrameRefresher.h"
 #include "TileScheme.h"
+#include "TileSelectionEquivalence.h"
 #include "TileSelectionFrameFinalizationRunner.h"
 #include "TileSelectionFrameRunner.h"
 #include "TileSelectionShadowRunner.h"
@@ -15,7 +16,9 @@
 #include "TilesetTile.h"
 
 #include "../scene/FrameState.h"
+#include "../debug/PlatformLog.h"
 
+#include <memory>
 #include <utility>
 
 namespace earth_engine {
@@ -28,7 +31,58 @@ void TilesetSelectionFrameFacade::selectTiles(
         selectTilesAsyncShadow(tileset, frameState);
         return;
     }
+
+    // §8 等价性 oracle:必须在 selectTilesSync 改 live 之前 build 参考影子,
+    // 使影子的 resetter 从与 live 相同的 pre-selection 状态推进 previous←current
+    // (TileSelectionStateResetter 在访问时推进;build 晚了会多推一次 → 发散)。
+    std::unique_ptr<TileSelectionShadowRunner> oracleShadow;
+    if (tileset.options_.verifySelectionEquivalence) {
+        oracleShadow = std::make_unique<TileSelectionShadowRunner>();
+        oracleShadow->buildShadow(tileset.tileRegistry_);
+    }
+
     selectTilesSync(tileset, frameState);
+
+    if (oracleShadow) {
+        verifySelectionEquivalence(tileset, frameState, *oracleShadow);
+    }
+}
+
+void TilesetSelectionFrameFacade::verifySelectionEquivalence(
+    Tileset& tileset,
+    const FrameState& frameState,
+    TileSelectionShadowRunner& preSelectionShadow) {
+    // 在 pre-selection 影子上跑全量参考选择。遮挡与 live sync 路径对齐:同一
+    // shadowOcclusion thunk(checkOcclusion 为 const,重复调用安全;sync-shadow
+    // golden 路径已证遮挡在影子瓦片上与 live 逐位一致)。
+    preSelectionShadow.selectOnShadow(TileSelectionShadowSelectInput{
+        tileset.tileScheme_.get(),
+        tileset.terrainProviders_.contentProvider(),
+        tileset.terrainProviders_.contentProviderOwnsTerrainQuadtree(),
+        tileset.hasTerrainQuadtree(),
+        &tileset.options_,
+        frameState,
+        tileset.lastCameraPosition_,
+        tileset.interactionActiveForFrame_,
+        tileset.resourceSmoothingActiveForFrame_,
+        &shadowOcclusion,
+        &tileset});
+
+    const TileSelectionEquivalence::Result result =
+        TileSelectionEquivalence::compare(
+            tileset.tilePlan_,
+            tileset.loadQueue_,
+            tileset.selectionCounters_,
+            preSelectionShadow.tilePlan(),
+            preSelectionShadow.loadQueue(),
+            preSelectionShadow.counters());
+    tileset.selectionEquivalenceMismatch_ = result.mismatch;
+    if (!result.equal) {
+        platformLog(LogLevel::Warning, "SelectEquiv",
+            "frame=%llu §8 MISMATCH (live vs full): %s",
+            static_cast<unsigned long long>(frameState.frameId),
+            result.mismatch.c_str());
+    }
 }
 
 TileOcclusionState TilesetSelectionFrameFacade::shadowOcclusion(

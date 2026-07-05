@@ -45,6 +45,16 @@ private:
     static void reconcileShadowToLive(Tileset& tileset,
                                       const TileSelectionShadowRunner& runner);
 
+    // §8 等价性 oracle(见 docs/issues/selector-incremental-frontier-design-
+    // 2026-07-06.md)。仅 sync 路径 + verifySelectionEquivalence 开启时调用:
+    // 用「selectTiles 之前」build 的 pre-selection 影子跑一遍全量参考选择,
+    // 与 live 结果比对,不一致时把 mismatch 写回 tileset(debug/test 可读)。
+    // `preSelectionShadow` 必须在 live selectTiles 改状态之前 buildShadow。
+    static void verifySelectionEquivalence(
+        Tileset& tileset,
+        const FrameState& frameState,
+        TileSelectionShadowRunner& preSelectionShadow);
+
     // Occlusion thunk for the shadow traversal. Evaluates Tileset::checkOcclusion
     // on a shadow tile (bounds + camera based, so identical to the live tile).
     // Only used on the synchronous-shadow path — the async worker passes null

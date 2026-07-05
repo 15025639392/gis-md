@@ -166,6 +166,13 @@ public:
     void setOcclusionCallback(OcclusionCallback callback);
     void clearOcclusionCallback();
 
+    /// §8 等价性 oracle 的上一帧结果(verifySelectionEquivalence 开启时更新)。
+    /// 空 = 增量/被测选择与全量参考逐位相同;否则为第一处差异描述。debug/测试
+    /// 用;flag 关时恒空。
+    const std::string& selectionEquivalenceMismatch() const {
+        return selectionEquivalenceMismatch_;
+    }
+
 private:
     friend struct TilesetTestAccess;
     friend class TilesetSelectionFrameFacade;
@@ -266,6 +273,8 @@ private:
     bool cameraMoving_ = false;
     TileLoadQueue loadQueue_;
     TileSelectionCounters selectionCounters_;
+    // §8 等价性 oracle 结果(空=相等)。见 selectionEquivalenceMismatch()。
+    std::string selectionEquivalenceMismatch_;
     TileMeshPreparationManager meshPreparation_;
     TileContentRuntime contentRuntime_;
     TileRenderCommandManager renderCommands_;

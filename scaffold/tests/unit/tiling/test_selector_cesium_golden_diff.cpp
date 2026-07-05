@@ -367,6 +367,9 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
 
     TilesetOptions tilesetOptions = makeTilesetOptions(spec);
     tilesetOptions.asyncSelection = scenario.asyncSelection;
+    // §8 等价性 oracle:sync 场景每帧额外跑一遍全量参考并断言逐位相同
+    // (full==full 自证 oracle 接线正确;async 场景 facade 早退不触发,恒空)。
+    tilesetOptions.verifySelectionEquivalence = true;
     Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},
@@ -439,6 +442,11 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
             camera.position(),
             camera.direction());
         TilesetTestAccess::selectTiles(tileset, frameState);
+        // §8 oracle:sync 场景下 live 全量选择必须与 pre-selection 影子全量
+        // 逐位相同(空=相等)。这把 12 帧×每 sync 场景变成 oracle 自证。
+        EXPECT_TRUE(tileset.selectionEquivalenceMismatch().empty())
+            << "frame " << (frame + 1) << " §8 mismatch: "
+            << tileset.selectionEquivalenceMismatch();
 
         std::vector<std::string> renderKeys;
         for (const TileKey& key : tileset.tilePlan().visibleTiles) {
