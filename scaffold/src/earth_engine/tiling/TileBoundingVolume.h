@@ -21,6 +21,21 @@ enum class TileBoundingVolumeKind {
     S2Cell
 };
 
+/// The 4 ellipsoidal side planes of a Region bounding volume (corners +
+/// outward normals), used by the region distance computation. Depends only on
+/// the region rectangle + heights, so it is memoized on the volume (see
+/// cachedRegionPlanes) to avoid rebuilding ~15 cartographic→cartesian trig
+/// conversions per tile × per view × per frame in the selection hot path.
+struct BoundingRegionPlanes {
+    Vec3 southwestCornerCartesian = Vec3::zero();
+    Vec3 northeastCornerCartesian = Vec3::zero();
+    Vec3 westNormal = Vec3::zero();
+    Vec3 eastNormal = Vec3::zero();
+    Vec3 southNormal = Vec3::zero();
+    Vec3 northNormal = Vec3::zero();
+    bool valid = false;
+};
+
 /// cesium-native BoundingVolume subset used by explicit 3D Tiles JSON.
 /// Regions are stored in radians/meters and are not transformed by tile
 /// transforms, matching cesium-native transformBoundingVolume.
@@ -52,6 +67,12 @@ struct TileBoundingVolume {
     // the OBB (trig-heavy) ~3x per tile per frame in the selection hot path.
     mutable bool cachedRegionObbComputed = false;
     mutable std::optional<OrientedBoundingBox> cachedRegionObb;
+
+    // Memoized Region side planes, same lifetime contract as cachedRegionObb.
+    // The region distance path rebuilt these (trig-heavy) every call before;
+    // caching makes the per-tile distance a few dot products.
+    mutable bool cachedRegionPlanesComputed = false;
+    mutable BoundingRegionPlanes cachedRegionPlanes;
 
     static TileBoundingVolume fromRegion(const Rectangle& rectangle,
                                          double minHeight,

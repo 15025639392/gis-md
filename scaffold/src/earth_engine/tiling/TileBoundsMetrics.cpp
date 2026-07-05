@@ -55,15 +55,8 @@ bool intersectRayPlane(const Vec3& rayOrigin,
            std::isfinite(outPoint.z());
 }
 
-struct BoundingRegionPlanes {
-    Vec3 southwestCornerCartesian = Vec3::zero();
-    Vec3 northeastCornerCartesian = Vec3::zero();
-    Vec3 westNormal = Vec3::zero();
-    Vec3 eastNormal = Vec3::zero();
-    Vec3 southNormal = Vec3::zero();
-    Vec3 northNormal = Vec3::zero();
-    bool valid = false;
-};
+// BoundingRegionPlanes now lives in TileBoundingVolume.h so it can be memoized
+// on the volume (see cachedRegionPlanes below).
 
 constexpr std::array<Frustum::PlaneIndex, 4> kSelectionCullingPlanes = {
     Frustum::PlaneIndex::Left,
@@ -532,6 +525,98 @@ const std::optional<OrientedBoundingBox>& cachedRegionObb(
     return volume.cachedRegionObb;
 }
 
+// Lazily compute and cache the Region side planes on the volume (same immutable
+// lifetime as cachedRegionObb). Depend only on the region rectangle.
+const BoundingRegionPlanes& cachedRegionPlanes(
+    const TileBoundingVolume& volume) {
+    if (!volume.cachedRegionPlanesComputed) {
+        volume.cachedRegionPlanes = computeBoundingRegionPlanes(
+            volume.region,
+            Ellipsoid::WGS84());
+        volume.cachedRegionPlanesComputed = true;
+    }
+    return volume.cachedRegionPlanes;
+}
+
+// Region distance-squared using the volume's MEMOIZED planes + OBB. This is the
+// selection hot path: the free computeBoundingRegionDistanceSquared() rebuilt
+// both the side planes AND the OBB (both trig-heavy) on every call — per tile ×
+// per view × per frame. Bit-identical to that function for the same region /
+// heights / camera; only the trig inputs are cached.
+double boundingRegionDistanceSquaredCached(
+    const TileBoundingVolume& volume,
+    const Vec3& cameraPosition) {
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const auto cameraCart =
+        ellipsoid.tryCartesianToCartographic(cameraPosition);
+    const std::optional<OrientedBoundingBox>& obb = cachedRegionObb(volume);
+    auto fallback = [&]() -> double {
+        if (obb) {
+            return obb->computeDistanceSquaredToPosition(cameraPosition);
+        }
+        const double distance = computeApproximateDistanceToTileBounds(
+            volume.region,
+            cameraPosition,
+            terrainHeightPadding(volume.minimumHeight, volume.maximumHeight));
+        return distance * distance;
+    };
+    if (!cameraCart) {
+        return fallback();
+    }
+    const BoundingRegionPlanes& planes = cachedRegionPlanes(volume);
+    if (!planes.valid) {
+        return fallback();
+    }
+
+    double result = 0.0;
+    if (!volume.region.contains(
+            cameraCart->longitude(),
+            cameraCart->latitude())) {
+        const Vec3 vectorFromSouthwestCorner =
+            cameraPosition - planes.southwestCornerCartesian;
+        const double distanceToWestPlane =
+            vectorFromSouthwestCorner.dot(planes.westNormal);
+        const double distanceToSouthPlane =
+            vectorFromSouthwestCorner.dot(planes.southNormal);
+
+        const Vec3 vectorFromNortheastCorner =
+            cameraPosition - planes.northeastCornerCartesian;
+        const double distanceToEastPlane =
+            vectorFromNortheastCorner.dot(planes.eastNormal);
+        const double distanceToNorthPlane =
+            vectorFromNortheastCorner.dot(planes.northNormal);
+
+        if (distanceToWestPlane > 0.0) {
+            result += distanceToWestPlane * distanceToWestPlane;
+        } else if (distanceToEastPlane > 0.0) {
+            result += distanceToEastPlane * distanceToEastPlane;
+        }
+
+        if (distanceToSouthPlane > 0.0) {
+            result += distanceToSouthPlane * distanceToSouthPlane;
+        } else if (distanceToNorthPlane > 0.0) {
+            result += distanceToNorthPlane * distanceToNorthPlane;
+        }
+    }
+
+    const double cameraHeight = cameraCart->height();
+    if (cameraHeight > volume.maximumHeight) {
+        const double distanceAboveTop = cameraHeight - volume.maximumHeight;
+        result += distanceAboveTop * distanceAboveTop;
+    } else if (cameraHeight < volume.minimumHeight) {
+        const double distanceBelowBottom = volume.minimumHeight - cameraHeight;
+        result += distanceBelowBottom * distanceBelowBottom;
+    }
+
+    if (obb) {
+        result = std::max(
+            result,
+            obb->computeDistanceSquaredToPosition(cameraPosition));
+    }
+
+    return std::max(0.0, result);
+}
+
 } // namespace
 
 double TileBoundsMetrics::terrainMinimumHeight(const TilesetTile& tile) {
@@ -665,11 +750,7 @@ double TileBoundsMetrics::boundingVolumeDistance(
         case TileBoundingVolumeKind::Region:
             return std::sqrt(std::max(
                 0.0,
-                computeBoundingRegionDistanceSquared(
-                    volume.region,
-                    volume.minimumHeight,
-                    volume.maximumHeight,
-                    cameraPosition)));
+                boundingRegionDistanceSquaredCached(volume, cameraPosition)));
         case TileBoundingVolumeKind::Sphere:
             return std::sqrt(std::max(
                 0.0,
