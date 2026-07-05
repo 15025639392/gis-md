@@ -26,6 +26,13 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     // RenderCommand validator (non-zero check) accepts SurfaceTile commands.
     ++tileset.generation_;
 
+    // Land any finished async-worker selection BEFORE the reuse decision. The
+    // reuse gate doesn't know the worker has a pending result, so leaving this
+    // to the reuse-gated selectTiles path deadlocks a static-camera bootstrap
+    // (empty plan → no loads → revision static →永远 reuse). No-op unless the
+    // true-async worker path is active with a ready result.
+    TilesetSelectionFrameFacade::consumeAsyncSelectionResult(tileset);
+
     TileFrameWorkResult frameWork = TileFrameWorkCoordinator::run(
         TileFrameWorkInput{
             tileset.tilePlan_,

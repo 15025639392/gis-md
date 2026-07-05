@@ -124,6 +124,28 @@ void TilesetSelectionFrameFacade::selectTilesSyncShadow(
     reconcileShadowToLive(tileset, runner);
 }
 
+void TilesetSelectionFrameFacade::consumeAsyncSelectionResult(
+    Tileset& tileset) {
+    // Consuming a finished worker selection must NOT be gated behind the frame's
+    // reuse decision. On a static camera the coordinator reuses every frame and
+    // never calls selectTiles (where dispatch lives), yet the result from the
+    // initial dispatch still needs to land — otherwise the plan stays empty,
+    // nothing loads, the resource revision never advances, and the reuse gate
+    // self-perpetuates (bootstrap deadlock, observed on-device: visited=0
+    // forever). Reconciling here each frame breaks the cycle; dispatch stays
+    // gated in selectTilesAsyncWorker so a converged scene still stops
+    // re-selecting.
+    if (!tileset.options_.asyncSelection ||
+        !tileset.options_.asyncSelectionNonBlocking ||
+        !tileset.selectionWorker_) {
+        return;
+    }
+    if (const TileSelectionShadowRunner* runner =
+            tileset.selectionWorker_->tryTakeResult()) {
+        reconcileShadowToLive(tileset, *runner);
+    }
+}
+
 void TilesetSelectionFrameFacade::selectTilesAsyncWorker(
     Tileset& tileset,
     const FrameState& frameState) {
@@ -135,7 +157,10 @@ void TilesetSelectionFrameFacade::selectTilesAsyncWorker(
     }
     TileSelectionWorker& worker = *tileset.selectionWorker_;
 
-    // 1. Consume a finished selection (worker idle → safe to read the runner).
+    // 1. Consume a finished selection. Usually already taken this frame by
+    //    consumeAsyncSelectionResult (the unconditional pre-step); tryTakeResult
+    //    is idempotent, so this is a no-op then. Kept for the reuse-off case
+    //    where this path is the only consumer.
     if (const TileSelectionShadowRunner* runner = worker.tryTakeResult()) {
         reconcileShadowToLive(tileset, *runner);
     }

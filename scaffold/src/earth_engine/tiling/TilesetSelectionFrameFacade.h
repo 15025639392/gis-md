@@ -12,6 +12,12 @@ class TilesetSelectionFrameFacade {
 public:
     static void selectTiles(Tileset& tileset, const FrameState& frameState);
 
+    // Land a finished async-worker selection, UNCONDITIONALLY each frame —
+    // independent of the reuse gate. Must be called before the frame's reuse
+    // decision (see TilesetUpdateFrameRuntime). No-op unless the true-async
+    // (asyncSelectionNonBlocking) worker exists and has a ready result.
+    static void consumeAsyncSelectionResult(Tileset& tileset);
+
 private:
     // Synchronous (default) path: traverse the live tree directly.
     static void selectTilesSync(Tileset& tileset, const FrameState& frameState);
