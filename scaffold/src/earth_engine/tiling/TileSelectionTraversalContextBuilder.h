@@ -5,6 +5,7 @@
 namespace earth_engine {
 
 class TileContentAccess;
+class Tileset;
 enum class TileOcclusionState;
 
 struct TileSelectionTraversalContextBuildInput {
@@ -30,6 +31,7 @@ struct TileSelectionTraversalContextBinding {
     TileContentAccess& contentAccess;
     void* occlusionUserData = nullptr;
     CheckOcclusionFn checkOcclusion = nullptr;
+    Tileset* owner = nullptr;
 };
 
 class TileSelectionTraversalContextBuilder {

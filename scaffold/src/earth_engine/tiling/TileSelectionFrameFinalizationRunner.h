@@ -14,11 +14,13 @@ class ActivatedRasterOverlay;
 class TileContentAccess;
 class TilesetTileRegistry;
 struct TilePlan;
+struct TilesetTile;
 struct TileSelectionCounters;
 
 struct TileSelectionFrameFinalizationInput {
     TilePlan& tilePlan;
     TilesetTileRegistry& tileRegistry;
+    const std::vector<TilesetTile*>& activeTiles;
     TileSelectionCounters& selectionCounters;
     TileContentAccess& contentAccess;
     std::unordered_set<std::string>& fadingKeys;

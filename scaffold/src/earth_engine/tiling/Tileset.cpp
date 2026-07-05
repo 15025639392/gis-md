@@ -8,6 +8,7 @@
 #include "../tiling/TileOcclusionResolver.h"
 #include "../tiling/TileRenderFrameContext.h"
 #include "../tiling/TileRenderReferenceReleaser.h"
+#include "../tiling/TileSelectionStateResetter.h"
 #include "../tiling/TileSoftwareOcclusionPolicy.h"
 #include "../tiling/TilesetProviderDiagnosticsCollector.h"
 #include "../tiling/TilesetRenderFrameExecutor.h"
@@ -270,6 +271,41 @@ TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {
         [this](const TilesetTile& occlusionTile) {
             return checkSingleTileOcclusion(occlusionTile);
         });
+}
+
+void Tileset::resetActiveSelectionState() {
+    // Advance the frame stamp and rotate the active-set buffers: last frame's
+    // accumulator becomes this frame's reset targets; the accumulator is
+    // cleared to collect tiles touched this frame.
+    ++selectionActiveFrameId_;
+    std::swap(selectionActiveTiles_, selectionActiveTilesPrev_);
+    selectionActiveTiles_.clear();
+
+    // Reset only the tiles that carried non-default selection state from last
+    // frame (equivalent to cesium's per-tile frame-number invalidation). A
+    // tile whose previousSelectionState is still non-default after the shift
+    // needs one more decay pass, so it is re-tracked; once it decays to
+    // NotVisited it drops out, bounding the set to O(visible + fading).
+    for (TilesetTile* tile : selectionActiveTilesPrev_) {
+        if (!tile) continue;
+        if (tile->selectionActiveFrameId == selectionActiveFrameId_) continue;
+        tile->selectionActiveFrameId = selectionActiveFrameId_;
+        TileSelectionStateResetter::resetOne(*tile, rasterOverlays_);
+        if (tile->selectionFrameState.previousSelectionState !=
+            TileSelectionState::NotVisited) {
+            selectionActiveTiles_.push_back(tile);
+        }
+    }
+}
+
+void Tileset::onSelectionVisitTile(TilesetTile& tile) {
+    // First touch this frame: reset (shift + recompute renderability) exactly
+    // as the old full sweep would have, then record it as active. Already
+    // handled (carried or previously visited) → no-op, avoiding double reset.
+    if (tile.selectionActiveFrameId == selectionActiveFrameId_) return;
+    tile.selectionActiveFrameId = selectionActiveFrameId_;
+    TileSelectionStateResetter::resetOne(tile, rasterOverlays_);
+    selectionActiveTiles_.push_back(&tile);
 }
 
 float Tileset::sampleHeight(double lngRad, double latRad) const {

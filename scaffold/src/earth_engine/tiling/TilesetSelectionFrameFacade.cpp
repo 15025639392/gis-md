@@ -4,7 +4,6 @@
 #include "TileLoadQueue.h"
 #include "TileSelectionFrameFinalizationRunner.h"
 #include "TileSelectionFrameRunner.h"
-#include "TileSelectionStateResetter.h"
 #include "TileSelectionTraversalContextBuilder.h"
 #include "TileSelectionTraversalExecutor.h"
 #include "Tileset.h"
@@ -30,9 +29,7 @@ void TilesetSelectionFrameFacade::selectTiles(
                 : std::vector<TileKey>{},
             tileset.hasTerrainQuadtree()},
         [&tileset]() {
-            TileSelectionStateResetter::reset(
-                tileset.tileRegistry_,
-                tileset.rasterOverlays_);
+            tileset.resetActiveSelectionState();
         },
         [&tileset](const TileKey& key) {
             return tileset.contentAccess_.ensureTile(key);
@@ -48,7 +45,8 @@ void TilesetSelectionFrameFacade::selectTiles(
                 [](void* userData, const TilesetTile& tile) {
                     return static_cast<Tileset*>(userData)
                         ->checkOcclusion(tile);
-                }};
+                },
+                &tileset};
             TileSelectionTraversalContext traversalContext =
                 TileSelectionTraversalContextBuilder::build(
                     TileSelectionTraversalContextBuildInput{
@@ -74,6 +72,7 @@ void TilesetSelectionFrameFacade::selectTiles(
                 TileSelectionFrameFinalizationInput{
                     tileset.tilePlan_,
                     tileset.tileRegistry_,
+                    tileset.selectionActiveTiles_,
                     tileset.selectionCounters_,
                     tileset.contentAccess_,
                     tileset.tilesFadingOut_,

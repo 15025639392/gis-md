@@ -4,9 +4,7 @@
 #include "TilesetTile.h"
 #include "TileSelectionSummaryPolicy.h"
 
-#include <memory>
-#include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace earth_engine {
 
@@ -27,15 +25,17 @@ public:
     template <typename IsTileRenderableFn>
     static TileSelectionSummaryBuildResult build(
         TilePlan& plan,
-        const std::unordered_map<
-            std::string,
-            std::unique_ptr<TilesetTile>>& tiles,
+        const std::vector<TilesetTile*>& activeTiles,
         const TileSelectionSummaryBuildInput& input,
         IsTileRenderableFn&& isTileRenderable) {
         TileSelectionSummaryBuildResult result;
 
-        for (const auto& [cacheKey, tile] : tiles) {
-            (void)cacheKey;
+        // Iterate only the selection active-set (tiles visited this frame plus
+        // decaying tiles) instead of the whole registry. The planTile()
+        // aggregation below is filtered to `visited` (selectionState !=
+        // NotVisited) and its per-tile contributions are commutative sums, so
+        // iterating this subset in any order yields byte-identical results.
+        for (TilesetTile* tile : activeTiles) {
             if (!tile) continue;
             const TileSelectionSummaryTilePlan summaryTilePlan =
                 TileSelectionSummaryPolicy::planTile(

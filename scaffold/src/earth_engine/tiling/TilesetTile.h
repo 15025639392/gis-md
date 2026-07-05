@@ -248,6 +248,12 @@ struct TilesetTile {
     // ---- Selection / LOD frame state ----
     TileSelectionFrameState selectionFrameState;
 
+    // Incremental selection reset stamp: the selector frame id at which this
+    // tile's selectionFrameState was last reset/visited. Guards both
+    // once-per-frame reset and active-set membership (see Tileset active-set).
+    // Replaces the old per-frame full-registry reset sweep.
+    uint64_t selectionActiveFrameId = 0;
+
     TilesetTile() = default;
     TilesetTile(TileKey k, Rectangle b, TilesetTile* p = nullptr)
         : key(std::move(k)), bounds(b), parent(p) {}

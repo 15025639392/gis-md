@@ -46,6 +46,13 @@ struct TileBoundingVolume {
         0.0,
         0.0};
 
+    // Memoized OrientedBoundingBox for Region kind. The region rectangle and
+    // heights never change without a wholesale reassignment of this struct
+    // (which resets the cache), so lazy-compute-once is safe. Avoids rebuilding
+    // the OBB (trig-heavy) ~3x per tile per frame in the selection hot path.
+    mutable bool cachedRegionObbComputed = false;
+    mutable std::optional<OrientedBoundingBox> cachedRegionObb;
+
     static TileBoundingVolume fromRegion(const Rectangle& rectangle,
                                          double minHeight,
                                          double maxHeight) {

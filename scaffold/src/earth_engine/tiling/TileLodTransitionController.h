@@ -9,13 +9,20 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace earth_engine {
 
 struct TileLodTransitionOptions {
+    // Map used only for O(1) key→tile lookups (fadingKeys / visibleTiles).
     const std::unordered_map<
         std::string,
         std::unique_ptr<TilesetTile>>* tilesByCacheKey = nullptr;
+    // Selection active-set: the tiles the fade-out discovery loop scans for
+    // "rendered last frame but not this frame". Bounded to O(visible + fading)
+    // instead of the whole registry (every rendered-last-frame tile is carried
+    // in the active-set by resetActiveSelectionState).
+    const std::vector<TilesetTile*>* activeTiles = nullptr;
     bool enableLodTransitionPeriod = false;
     double lodTransitionLength = 1.0;
 };
@@ -55,9 +62,10 @@ struct TileLodTransitionController {
             std::max(0.0, deltaSeconds) /
             std::max(1e-6, options.lodTransitionLength));
 
-        if (options.tilesByCacheKey) {
-            for (const auto& [ck, tile] : *options.tilesByCacheKey) {
+        if (options.activeTiles) {
+            for (TilesetTile* tile : *options.activeTiles) {
                 if (!tile) continue;
+                const std::string ck = cacheKey(tile->key);
                 if (currentRenderKeys.find(ck) != currentRenderKeys.end()) {
                     continue;
                 }

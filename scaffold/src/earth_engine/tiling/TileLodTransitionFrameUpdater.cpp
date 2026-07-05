@@ -24,6 +24,7 @@ bool hasLodTransitionRenderContent(
 void TileLodTransitionFrameUpdater::update(
     TilePlan& tilePlan,
     TilesetTileRegistry& tileRegistry,
+    const std::vector<TilesetTile*>& activeTiles,
     std::unordered_set<std::string>& fadingKeys,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     double deltaSeconds,
@@ -34,6 +35,7 @@ void TileLodTransitionFrameUpdater::update(
         deltaSeconds,
         TileLodTransitionOptions{
             &tileRegistry.tiles(),
+            &activeTiles,
             options.enableLodTransitionPeriod,
             options.lodTransitionLength},
         [](const TileKey& key) {

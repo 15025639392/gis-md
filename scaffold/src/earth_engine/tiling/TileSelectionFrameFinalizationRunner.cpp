@@ -11,13 +11,14 @@ TileSelectionFrameFinalizationRunner::finalize(
     TileSelectionFrameFinalizationInput input) {
     return TileSelectionFrameFinalizer::finalize(
         input.tilePlan,
-        input.tileRegistry.tiles(),
+        input.activeTiles,
         input.selectionCounters,
         input.deltaSeconds,
         [&input](double deltaSeconds) {
             TileLodTransitionFrameUpdater::update(
                 input.tilePlan,
                 input.tileRegistry,
+                input.activeTiles,
                 input.fadingKeys,
                 input.rasterOverlays,
                 deltaSeconds,

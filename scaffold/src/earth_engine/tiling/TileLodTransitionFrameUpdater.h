@@ -9,6 +9,7 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class TilesetTileRegistry;
 struct TilePlan;
+struct TilesetTile;
 
 struct TileLodTransitionFrameOptions {
     bool enableLodTransitionPeriod = false;
@@ -19,6 +20,7 @@ class TileLodTransitionFrameUpdater {
 public:
     static void update(TilePlan& tilePlan,
                        TilesetTileRegistry& tileRegistry,
+                       const std::vector<TilesetTile*>& activeTiles,
                        std::unordered_set<std::string>& fadingKeys,
                        const std::vector<ActivatedRasterOverlay*>&
                            rasterOverlays,

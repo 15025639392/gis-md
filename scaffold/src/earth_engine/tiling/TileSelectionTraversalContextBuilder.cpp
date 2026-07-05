@@ -6,6 +6,8 @@
 #include "TileSelectionTraversalDetailsBuilder.h"
 #include "Tileset.h"
 #include "TilesetTile.h"
+#include "../core/geodesy/Cartographic.h"
+#include "../core/geodesy/Ellipsoid.h"
 
 namespace earth_engine {
 
@@ -86,11 +88,19 @@ TileTraversalDetails createCulledTileDetails(
         binding.options.forbidHoles);
 }
 
+void onVisitTile(void* userData, TilesetTile& tile) {
+    static_cast<Tileset*>(userData)->onSelectionVisitTile(tile);
+}
+
 } // namespace
 
 TileSelectionTraversalContext TileSelectionTraversalContextBuilder::build(
     TileSelectionTraversalContextBuildInput input,
     TileSelectionTraversalContextBinding& binding) {
+    // Precompute the camera cartographic once per frame; the traversal reuses
+    // it for every visited tile instead of resolving it iteratively each time.
+    const Cartographic cameraCart =
+        Ellipsoid::WGS84().cartesianToCartographic(input.lastCameraPosition);
     return TileSelectionTraversalContext{
         input.tilePlan,
         input.loadQueue,
@@ -100,6 +110,8 @@ TileSelectionTraversalContext TileSelectionTraversalContextBuilder::build(
         input.device,
         input.frameResourceBudget,
         input.lastCameraPosition,
+        cameraCart.longitude(),
+        cameraCart.latitude(),
         &binding,
         &input.contentAccess,
         queueTileLoad,
@@ -109,7 +121,9 @@ TileSelectionTraversalContext TileSelectionTraversalContextBuilder::build(
         checkOcclusion,
         hasLodTransitionRenderContent,
         createSingleTileDetails,
-        createCulledTileDetails};
+        createCulledTileDetails,
+        binding.owner ? onVisitTile : nullptr,
+        binding.owner};
 }
 
 } // namespace earth_engine

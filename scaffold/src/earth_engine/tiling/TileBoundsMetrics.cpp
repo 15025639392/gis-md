@@ -516,6 +516,22 @@ double computeBoundingRegionDistanceSquared(
     return std::max(0.0, result);
 }
 
+// Lazily compute and cache the Region OBB on the volume. The region rectangle
+// and heights are immutable for a given volume instance (reassignment resets
+// the cache), so this is safe and removes the repeated trig-heavy rebuild in
+// the per-tile selection hot path.
+const std::optional<OrientedBoundingBox>& cachedRegionObb(
+    const TileBoundingVolume& volume) {
+    if (!volume.cachedRegionObbComputed) {
+        volume.cachedRegionObb = computeBoundingRegionObb(
+            volume.region,
+            volume.minimumHeight,
+            volume.maximumHeight);
+        volume.cachedRegionObbComputed = true;
+    }
+    return volume.cachedRegionObb;
+}
+
 } // namespace
 
 double TileBoundsMetrics::terrainMinimumHeight(const TilesetTile& tile) {
@@ -625,11 +641,8 @@ Vec3 TileBoundsMetrics::boundingVolumeCenter(
     const TileBoundingVolume& volume) {
     switch (volume.kind) {
         case TileBoundingVolumeKind::Region:
-            if (const std::optional<OrientedBoundingBox> obb =
-                    boundingRegionObb(
-                        volume.region,
-                        volume.minimumHeight,
-                        volume.maximumHeight)) {
+            if (const std::optional<OrientedBoundingBox>& obb =
+                    cachedRegionObb(volume)) {
                 return obb->getCenter();
             }
             return tileBoundsCenterFromRectangle(volume.region);
@@ -705,11 +718,8 @@ bool TileBoundsMetrics::boundingVolumeIntersectsFrustum(
     const Frustum& frustum) {
     switch (volume.kind) {
         case TileBoundingVolumeKind::Region: {
-            const std::optional<OrientedBoundingBox> obb =
-                computeBoundingRegionObb(
-                    volume.region,
-                    volume.minimumHeight,
-                    volume.maximumHeight);
+            const std::optional<OrientedBoundingBox>& obb =
+                cachedRegionObb(volume);
             if (obb) return obbIntersectsSelectionFrustum(*obb, frustum);
             const Vec3 center = tileBoundsCenterFromRectangle(volume.region);
             const double radius = computeTileBoundsRadius(

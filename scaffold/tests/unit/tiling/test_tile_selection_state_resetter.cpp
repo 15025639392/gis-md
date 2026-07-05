@@ -2,42 +2,38 @@
 
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileSelectionStateResetter.h"
-#include "earth_engine/tiling/TilesetTileRegistry.h"
+#include "earth_engine/tiling/TilesetTile.h"
 
 using namespace earth_engine;
 
-TEST(TileSelectionStateResetterTest, ResetsSelectionFrameStateForRegistryTiles) {
-    TilesetTileRegistry registry;
-    auto tile = std::make_unique<TilesetTile>(
+TEST(TileSelectionStateResetterTest, ResetsSelectionFrameStateForTile) {
+    TilesetTile tile(
         TileKey{"test", 0, 0, 0},
         Rectangle{-1.0, -1.0, 1.0, 1.0});
-    TilesetTile* rawTile = tile.get();
-    registry.tiles()["root"] = std::move(tile);
-    registry.tiles()["null"] = nullptr;
 
-    rawTile->selectionFrameState.selectionState =
+    tile.selectionFrameState.selectionState =
         TileSelectionState::RenderedAndKicked;
-    rawTile->selectionFrameState.previousSelectionState =
+    tile.selectionFrameState.previousSelectionState =
         TileSelectionState::Refined;
-    rawTile->selectionFrameState.screenSpaceError = 42.0;
-    rawTile->selectionFrameState.inFrustum = true;
-    rawTile->selectionFrameState.cameraInside = true;
-    rawTile->selectionFrameState.ancestorMeetsSse = true;
-    rawTile->selectionFrameState.completeRenderable = true;
-    rawTile->selectionFrameState.renderable = true;
+    tile.selectionFrameState.screenSpaceError = 42.0;
+    tile.selectionFrameState.inFrustum = true;
+    tile.selectionFrameState.cameraInside = true;
+    tile.selectionFrameState.ancestorMeetsSse = true;
+    tile.selectionFrameState.completeRenderable = true;
+    tile.selectionFrameState.renderable = true;
 
-    TileSelectionStateResetter::reset(registry, {});
+    TileSelectionStateResetter::resetOne(tile, {});
 
     EXPECT_EQ(
-        rawTile->selectionFrameState.previousSelectionState,
+        tile.selectionFrameState.previousSelectionState,
         TileSelectionState::RenderedAndKicked);
     EXPECT_EQ(
-        rawTile->selectionFrameState.selectionState,
+        tile.selectionFrameState.selectionState,
         TileSelectionState::NotVisited);
-    EXPECT_DOUBLE_EQ(rawTile->selectionFrameState.screenSpaceError, 0.0);
-    EXPECT_FALSE(rawTile->selectionFrameState.inFrustum);
-    EXPECT_FALSE(rawTile->selectionFrameState.cameraInside);
-    EXPECT_FALSE(rawTile->selectionFrameState.ancestorMeetsSse);
-    EXPECT_FALSE(rawTile->selectionFrameState.completeRenderable);
-    EXPECT_FALSE(rawTile->selectionFrameState.renderable);
+    EXPECT_DOUBLE_EQ(tile.selectionFrameState.screenSpaceError, 0.0);
+    EXPECT_FALSE(tile.selectionFrameState.inFrustum);
+    EXPECT_FALSE(tile.selectionFrameState.cameraInside);
+    EXPECT_FALSE(tile.selectionFrameState.ancestorMeetsSse);
+    EXPECT_FALSE(tile.selectionFrameState.completeRenderable);
+    EXPECT_FALSE(tile.selectionFrameState.renderable);
 }

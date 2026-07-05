@@ -15,14 +15,13 @@ TEST(
         TileKey{"test", 4, 8, 0},
     };
 
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     auto tile = std::make_unique<TilesetTile>(
         TileKey{"test", 4, 8, 0},
         Rectangle{-1.0, -1.0, 1.0, 1.0});
     tile->selectionFrameState.selectionState = TileSelectionState::Rendered;
     tile->selectionFrameState.screenSpaceError = 12.0;
     tile->selectionFrameState.cameraInside = true;
-    tiles["visible"] = std::move(tile);
+    const std::vector<TilesetTile*> activeTiles{tile.get()};
 
     TileSelectionCounters counters;
     counters.culled = 2;
@@ -38,7 +37,7 @@ TEST(
     const TileSelectionFrameFinalizeTimings timings =
         TileSelectionFrameFinalizer::finalize(
             plan,
-            tiles,
+            activeTiles,
             counters,
             0.25,
             [&](double deltaSeconds) {

@@ -31,22 +31,26 @@ const TileSelectionRecord* findRecord(
 } // namespace
 
 TEST(TileSelectionSummaryBuilderTest, AggregatesVisitedTilesIntoPlan) {
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    tiles["rendered"] =
+    auto rendered =
         makeTile(TileKey{"test", 0, 0, 0}, TileSelectionState::Rendered);
-    tiles["refined"] =
+    auto refined =
         makeTile(TileKey{"test", 1, 0, 0}, TileSelectionState::Refined);
-    tiles["kicked"] = makeTile(
+    auto kicked = makeTile(
         TileKey{"test", 1, 1, 0},
         TileSelectionState::RenderedAndKicked);
-    tiles["not-visited"] =
+    auto notVisited =
         makeTile(TileKey{"test", 2, 0, 0}, TileSelectionState::NotVisited);
-    tiles["null"] = nullptr;
 
-    tiles["rendered"]->selectionFrameState.screenSpaceError = 5.0;
-    tiles["rendered"]->selectionFrameState.cameraInside = true;
-    tiles["refined"]->selectionFrameState.inFrustum = true;
-    tiles["refined"]->selectionFrameState.ancestorMeetsSse = true;
+    rendered->selectionFrameState.screenSpaceError = 5.0;
+    rendered->selectionFrameState.cameraInside = true;
+    refined->selectionFrameState.inFrustum = true;
+    refined->selectionFrameState.ancestorMeetsSse = true;
+
+    // Active-set includes visited tiles + a decaying NotVisited tile + a null
+    // slot, exercising the visited filter and null skip.
+    const std::vector<TilesetTile*> activeTiles{
+        rendered.get(), refined.get(), kicked.get(), notVisited.get(),
+        nullptr};
 
     TilePlan plan;
     plan.visibleTiles.push_back(TileKey{"test", 0, 0, 0});
@@ -55,7 +59,7 @@ TEST(TileSelectionSummaryBuilderTest, AggregatesVisitedTilesIntoPlan) {
     const TileSelectionSummaryBuildResult result =
         TileSelectionSummaryBuilder::build(
             plan,
-            tiles,
+            activeTiles,
             TileSelectionSummaryBuildInput{},
             [](const TilesetTile& tile) {
                 return tile.key != TileKey{"test", 1, 1, 0};
@@ -78,9 +82,9 @@ TEST(TileSelectionSummaryBuilderTest, AggregatesVisitedTilesIntoPlan) {
 }
 
 TEST(TileSelectionSummaryBuilderTest, WritesFrameLevelCounters) {
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    tiles["refined"] =
+    auto refined =
         makeTile(TileKey{"test", 0, 0, 0}, TileSelectionState::Refined);
+    const std::vector<TilesetTile*> activeTiles{refined.get()};
 
     TilePlan plan;
     plan.visibleTiles.push_back(TileKey{"test", 0, 0, 0});
@@ -90,7 +94,7 @@ TEST(TileSelectionSummaryBuilderTest, WritesFrameLevelCounters) {
     const TileSelectionSummaryBuildResult result =
         TileSelectionSummaryBuilder::build(
             plan,
-            tiles,
+            activeTiles,
             TileSelectionSummaryBuildInput{
                 2,
                 5,

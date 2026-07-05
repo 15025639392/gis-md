@@ -87,9 +87,18 @@ struct TilesetTestAccess {
     static void updateLodTransitions(
         Tileset& tileset,
         double deltaSeconds) {
+        // These tests drive selection state directly (no real traversal), so
+        // feed the fade-out discovery loop the full registry as the active-set
+        // — equivalent to the old full-registry scan the loop used to do.
+        std::vector<TilesetTile*> activeTiles;
+        for (auto& [ck, tile] : tileset.tileRegistry_.tiles()) {
+            (void)ck;
+            if (tile) activeTiles.push_back(tile.get());
+        }
         TileLodTransitionFrameUpdater::update(
             tileset.tilePlan_,
             tileset.tileRegistry_,
+            activeTiles,
             tileset.tilesFadingOut_,
             tileset.rasterOverlays_,
             deltaSeconds,
@@ -167,12 +176,13 @@ TEST(TileLodTransitionsTest, ControllerFadesOutPreviousRenderContent) {
     root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
 
     TilePlan plan;
+    const std::vector<TilesetTile*> activeTiles{&root};
     std::unordered_set<std::string> fadingKeys;
     TileLodTransitionController::updateTransitions(
         plan,
         fadingKeys,
         0.25,
-        TileLodTransitionOptions{&tiles, true, 1.0},
+        TileLodTransitionOptions{&tiles, &activeTiles, true, 1.0},
         testCacheKey,
         hasRenderTransitionContent);
 
@@ -201,12 +211,13 @@ TEST(TileLodTransitionsTest, ControllerRestartsReturnedFadeOutTile) {
 
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
+    const std::vector<TilesetTile*> activeTiles{&root};
     std::unordered_set<std::string> fadingKeys{testCacheKey(rootKey)};
     TileLodTransitionController::updateTransitions(
         plan,
         fadingKeys,
         0.25,
-        TileLodTransitionOptions{&tiles, true, 1.0},
+        TileLodTransitionOptions{&tiles, &activeTiles, true, 1.0},
         testCacheKey,
         hasRenderTransitionContent);
 

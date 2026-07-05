@@ -702,9 +702,15 @@ struct TilesetTestAccess {
     }
     static void updateLodTransitions(Tileset& tileset,
                                      double deltaSeconds) {
+        std::vector<TilesetTile*> activeTiles;
+        for (auto& [ck, tile] : tileset.tileRegistry_.tiles()) {
+            (void)ck;
+            if (tile) activeTiles.push_back(tile.get());
+        }
         TileLodTransitionFrameUpdater::update(
             tileset.tilePlan_,
             tileset.tileRegistry_,
+            activeTiles,
             tileset.tilesFadingOut_,
             tileset.rasterOverlays_,
             deltaSeconds,
@@ -14002,6 +14008,7 @@ void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
     root.content.loadState = TileLoadState::Done;
     root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
     TilePlan plan;
+    const std::vector<TilesetTile*> activeTiles{&root};
     std::unordered_set<std::string> fadingKeys;
     TileLodTransitionController::updateTransitions(
         plan,
@@ -14009,6 +14016,7 @@ void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
         0.25,
         TileLodTransitionOptions{
             &tiles,
+            &activeTiles,
             true,
             1.0},
         [](const TileKey& key) {
@@ -14044,6 +14052,7 @@ void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
     root.selectionFrameState.lodTransitionFadePercentage = 0.75f;
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
+    const std::vector<TilesetTile*> activeTiles{&root};
     std::unordered_set<std::string> fadingKeys{"test:0:0:0"};
     TileLodTransitionController::updateTransitions(
         plan,
@@ -14051,6 +14060,7 @@ void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
         0.25,
         TileLodTransitionOptions{
             &tiles,
+            &activeTiles,
             true,
             1.0},
         [](const TileKey& key) {

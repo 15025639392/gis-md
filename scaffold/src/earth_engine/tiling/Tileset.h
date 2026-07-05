@@ -172,6 +172,20 @@ private:
         const TilesetTile& tile) const;
     TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
 
+    // ---- Incremental selection active-set ----
+    // Replaces the per-frame full-registry selection reset sweep. The reset
+    // and traversal now touch only tiles whose selectionFrameState is
+    // non-default (visited this/last frame), which is O(visible) instead of
+    // O(resident tiles). See TileSelectionStateResetter::resetOne.
+public:
+    // Frame start: reset last frame's active tiles (shift + decay) and prime
+    // this frame's accumulator. Called before traversal.
+    void resetActiveSelectionState();
+    // Traversal visit entry: lazily reset a newly-visited tile once and add it
+    // to this frame's active-set (no-op if already handled this frame).
+    void onSelectionVisitTile(TilesetTile& tile);
+private:
+
     TilesetTerrainProviders terrainProviders_;
     std::unique_ptr<TileScheme> tileScheme_;
     std::vector<ActivatedRasterOverlay*> rasterOverlays_;
@@ -184,6 +198,13 @@ private:
     // cesium-native TilesetOptions::maximumCachedBytes default.
     static constexpr int64_t kMaximumCachedBytes = 512LL * 1024 * 1024;
     uint64_t frameNumber_ = 0;
+
+    // Incremental selection active-set (see resetActiveSelectionState).
+    // selectionActiveTiles_ accumulates tiles touched this frame;
+    // selectionActiveTilesPrev_ holds last frame's set (the reset targets).
+    uint64_t selectionActiveFrameId_ = 0;
+    std::vector<TilesetTile*> selectionActiveTiles_;
+    std::vector<TilesetTile*> selectionActiveTilesPrev_;
 
     TilesetTileRegistry tileRegistry_;
     TileContentLifecycleManager contentLifecycle_;

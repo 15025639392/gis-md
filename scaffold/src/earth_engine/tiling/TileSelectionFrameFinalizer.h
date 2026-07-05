@@ -6,9 +6,7 @@
 #include "TileVisibleRangeFinalizer.h"
 #include "../debug/PerfTimer.h"
 
-#include <memory>
-#include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace earth_engine {
 
@@ -27,9 +25,7 @@ public:
               typename IsTileRenderableFn>
     static TileSelectionFrameFinalizeTimings finalize(
         TilePlan& tilePlan,
-        const std::unordered_map<
-            std::string,
-            std::unique_ptr<TilesetTile>>& tiles,
+        const std::vector<TilesetTile*>& activeTiles,
         TileSelectionCounters& selectionCounters,
         double deltaSeconds,
         UpdateLodTransitionsFn&& updateLodTransitions,
@@ -52,7 +48,7 @@ public:
         const TileSelectionSummaryBuildResult summaryBuildResult =
             TileSelectionSummaryBuilder::build(
                 tilePlan,
-                tiles,
+                activeTiles,
                 TileSelectionSummaryBuildInput{
                     selectionCounters.culled,
                     selectionCounters.fogCulled,

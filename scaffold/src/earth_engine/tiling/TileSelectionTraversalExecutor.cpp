@@ -1,7 +1,5 @@
 #include "TileSelectionTraversalExecutor.h"
 #include "Tileset.h"
-#include "../core/geodesy/Cartographic.h"
-#include "../core/geodesy/Ellipsoid.h"
 #include "TileSelectionChildTraversal.h"
 #include "TileSelectionFrameBuilder.h"
 #include "TileSelectionHistory.h"
@@ -39,15 +37,15 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
     const SelectorFrame& selectorFrame,
     uint32_t depth,
     bool ancestorMeetsSse) {
-    const Cartographic cameraCart =
-        Ellipsoid::WGS84().cartesianToCartographic(
-            context.lastCameraPosition);
+    // Register + lazily reset this tile before any selection-state use, so the
+    // per-frame reset touches only visited tiles (incremental active-set).
+    context.onVisitTile(tile);
     TileSelectionFrameState& selection = tile.selectionFrameState;
     selection.ancestorMeetsSse = ancestorMeetsSse;
     const TileSelectionVisibilityContext visibilityContext{
         context.options.renderTilesUnderCamera,
-        cameraCart.longitude(),
-        cameraCart.latitude()};
+        context.cameraLongitude,
+        context.cameraLatitude};
 
     const TileSelectionVisitPreparationResult preparation =
         TileSelectionVisitPreparation::prepare(

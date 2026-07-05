@@ -42,6 +42,7 @@ struct TileSelectionTraversalContext {
         bool (*)(void*, const TilesetTile&);
     using CreateTraversalDetailsFn =
         TileTraversalDetails (*)(void*, const TilesetTile&);
+    using OnVisitTileFn = void (*)(void*, TilesetTile&);
 
     TilePlan& tilePlan;
     TileLoadQueue& loadQueue;
@@ -51,6 +52,11 @@ struct TileSelectionTraversalContext {
     RenderDevice* device = nullptr;
     FrameResourceBudget& frameResourceBudget;
     Vec3 lastCameraPosition = Vec3::zero();
+    // Camera cartographic, precomputed once per frame (cartesianToCartographic
+    // is an iterative solve and lastCameraPosition is constant across the
+    // traversal — recomputing it per visited tile was pure redundant work).
+    double cameraLongitude = 0.0;
+    double cameraLatitude = 0.0;
 
     void* userData = nullptr;
     void* contentAccessUserData = nullptr;
@@ -62,6 +68,17 @@ struct TileSelectionTraversalContext {
     HasLodTransitionRenderContentFn hasLodTransitionRenderContentFn = nullptr;
     CreateTraversalDetailsFn createSingleTileDetailsFn = nullptr;
     CreateTraversalDetailsFn createCulledTileDetailsFn = nullptr;
+    OnVisitTileFn onVisitTileFn = nullptr;
+    void* onVisitTileUserData = nullptr;
+
+    // Register a tile into this frame's selection active-set (and lazily reset
+    // it once). Called at the start of every tile visit so the per-frame reset
+    // touches only visited tiles instead of the whole registry.
+    void onVisitTile(TilesetTile& tile) const {
+        if (onVisitTileFn) {
+            onVisitTileFn(onVisitTileUserData, tile);
+        }
+    }
 
     void queueTileLoad(const TileKey& key,
                        TileLoadPriorityGroup group,
