@@ -368,6 +368,10 @@ struct ScenarioFrameResult {
     std::vector<std::string> renderKeys;
     int visited = 0;
     int fogCulled = 0;
+    // ③ Layer 2 机会测量(仅 incremental 场景):本帧与上帧净贡献逐位相同的
+    // 子树数 / 总捕获子树数。
+    std::size_t stableSubtrees = 0;
+    std::size_t totalSubtrees = 0;
 };
 
 /// 逐帧跑场景，返回逐帧轨迹（traceLine 由 scenarios.h 共享函数拼行）。
@@ -520,6 +524,11 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
         result.renderKeys = renderKeys;
         result.visited = counters.visited;
         result.fogCulled = counters.fogCulled;
+        if (scenario.incrementalSelection) {
+            result.totalSubtrees = tileset.incrementalFrontier().size();
+            result.stableSubtrees =
+                tileset.incrementalFrontier().stableSubtreeCount();
+        }
         // culled 映射（P3）：cesium tilesCulled 含 fog 剔除，gis-md 的
         // frustum/fog 计数分离 —— trace culled = culled + fogCulled。
         result.traceLine = selector_diff::traceLine(
@@ -676,12 +685,33 @@ TEST(SelectorCesiumGoldenDiffTest, S4AsyncShadowMatchesCesiumGolden) {
 // 不与 cesium golden trace 对拍(增量的 load issue-order 可能不同)。S3 含在途
 // 加载时序,是 dirty/剪枝正确性的关键场景。Layer 0 identity → 平凡通过;后续
 // Layer 引入真剪枝后,这里是增量正确性的回归网。
+// ③ Layer 2 机会测量:逐帧打印「与上帧净贡献相同的子树 / 总子树」——这是
+// L3 剪枝的可跳过子树上界,也是 ③ 天花板信号。sanity:stable ≤ total。
+void reportStability(const char* name,
+                     const std::vector<ScenarioFrameResult>& results) {
+    for (std::size_t i = 0; i < results.size(); ++i) {
+        const auto& r = results[i];
+        EXPECT_LE(r.stableSubtrees, r.totalSubtrees);
+        std::cout << "[incr-stability] " << name << " frame " << (i + 1)
+                  << ": stable=" << r.stableSubtrees << "/" << r.totalSubtrees
+                  << (r.totalSubtrees
+                          ? " (" +
+                                std::to_string(100 * r.stableSubtrees /
+                                               r.totalSubtrees) +
+                                "%)"
+                          : "")
+                  << std::endl;
+    }
+}
+
 TEST(SelectorIncrementalTest, S1MatchesFullViaOracle) {
     const auto results = runScenario(incrementalOf(makeS1Scenario()));
     EXPECT_FALSE(results.empty());
+    reportStability("S1", results);
 }
 
 TEST(SelectorIncrementalTest, S3MatchesFullViaOracle) {
     const auto results = runScenario(incrementalOf(makeS3Scenario()));
     EXPECT_FALSE(results.empty());
+    reportStability("S3", results);
 }

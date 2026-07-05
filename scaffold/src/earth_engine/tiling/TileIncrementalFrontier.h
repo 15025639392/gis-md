@@ -49,8 +49,12 @@ public:
         TileSelectionCounters counters;
     };
 
-    // 每帧遍历开始清空(Layer 1 全量重建;后续 Layer 保留 clean 子树)。
-    void beginFrame() { cache_.clear(); }
+    // 每帧遍历开始:把上帧缓存移入 prev_(供 frame-over-frame 稳定性对比 /
+    // 后续 Layer 的剪枝),清空 current。
+    void beginFrame() {
+        prev_ = std::move(cache_);
+        cache_.clear();
+    }
 
     Snapshot snapshot(const TilePlan& plan,
                       const TileLoadQueue& loadQueue,
@@ -102,9 +106,65 @@ public:
         return it == cache_.end() ? nullptr : &it->second;
     }
 
+    const SubtreeSelectionCache* findPrev(const TileKey& key) const {
+        const auto it = prev_.find(key);
+        return it == prev_.end() ? nullptr : &it->second;
+    }
+
     std::size_t size() const { return cache_.size(); }
 
+    // Layer 2 机会测量:本帧有多少子树的净贡献与上帧逐位相同(= L3 剪枝时可跳过
+    // 重算的子树数)。这是 ③ 的天花板信号——拖动时该数越高,增量收益越大。
+    // 注:frame-over-frame 稳定 ≠ 一定可安全剪枝(还需 dirty 谓词),但它给出
+    // 可剪枝子树的上界。
+    std::size_t stableSubtreeCount() const {
+        std::size_t stable = 0;
+        for (const auto& [key, entry] : cache_) {
+            const SubtreeSelectionCache* previous = findPrev(key);
+            if (previous && contributionEqual(entry, *previous)) {
+                ++stable;
+            }
+        }
+        return stable;
+    }
+
+    static bool contributionEqual(const SubtreeSelectionCache& a,
+                                  const SubtreeSelectionCache& b) {
+        return a.rendered == b.rendered &&
+               loadsEqual(a.loads, b.loads) &&
+               countersEqual(a.counterDelta, b.counterDelta) &&
+               detailsEqual(a.details, b.details);
+    }
+
 private:
+    static bool loadsEqual(const std::vector<TileLoadRequest>& a,
+                           const std::vector<TileLoadRequest>& b) {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (!(a[i].key == b[i].key) || a[i].group != b[i].group ||
+                a[i].priority != b[i].priority) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool countersEqual(const TileSelectionCounters& a,
+                              const TileSelectionCounters& b) {
+        return a.visited == b.visited && a.culled == b.culled &&
+               a.kicked == b.kicked && a.fogCulled == b.fogCulled &&
+               a.notYetRenderable == b.notYetRenderable &&
+               a.culledVisited == b.culledVisited && a.occluded == b.occluded &&
+               a.waitingForOcclusionResults == b.waitingForOcclusionResults;
+    }
+
+    static bool detailsEqual(const TileTraversalDetails& a,
+                             const TileTraversalDetails& b) {
+        return a.allAreRenderable == b.allAreRenderable &&
+               a.anyWereRenderedLastFrame == b.anyWereRenderedLastFrame &&
+               a.notYetRenderableCount == b.notYetRenderableCount;
+    }
+
     static TileSelectionCounters subtract(const TileSelectionCounters& a,
                                           const TileSelectionCounters& b) {
         TileSelectionCounters d;
@@ -121,6 +181,7 @@ private:
     }
 
     std::unordered_map<TileKey, SubtreeSelectionCache> cache_;
+    std::unordered_map<TileKey, SubtreeSelectionCache> prev_;
 };
 
 } // namespace earth_engine
