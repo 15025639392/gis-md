@@ -28,12 +28,21 @@ struct TileKey;
 ///     and selectionState,
 ///   - tree topology: parent / children (mirrored by key, order preserved).
 ///
-/// NOT yet mirrored (intentionally): the glTF/raster render-content
-/// read-surface (hasGltfContent / isRenderContentReady / raster mapping
-/// readiness / terrain height range). Those only affect the on-device path's
-/// renderable/refine decisions; the golden oracle uses content-less tiles and
-/// empty raster overlays, so they are added later when the real async path is
-/// wired and device-validated. Until then async selection is gated off.
+/// glTF render-content readiness IS mirrored (plain booleans only — no model
+/// or GPU resources): hasGltfContent / isRenderContentReady /
+/// isTerrainRenderContent + terrain height range, via
+/// TileRenderContentState::setShadowReadinessMirror. This makes the shadow's
+/// renderable / kick / refine / upsample-descent decisions match the live tile
+/// on device. Golden tiles are content-less, so every mirror value is false and
+/// the oracle is unaffected.
+///
+/// NOT yet mirrored (deferred, real-path follow-up): the RASTER overlay mapping
+/// read-surface (per-mapping hasPendingNonPlaceholderLoadingTile /
+/// isMoreDetailAvailable / hasReadyMapping). The shadow runs with empty
+/// overlays, so it does not gate refinement on imagery readiness; on device this
+/// only makes the shadow refine slightly more eagerly than sync until imagery
+/// catches up (render entries still resolve against live content). Occlusion is
+/// likewise deferred on the async worker (NotOccluded).
 class TileSelectionShadowTree {
 public:
     /// Rebuild the shadow to mirror `liveRegistry`'s current read-surface.

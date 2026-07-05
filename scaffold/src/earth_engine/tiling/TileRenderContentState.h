@@ -115,7 +115,29 @@ class TileRenderContentState {
 public:
     bool asyncGpuUploadPending = false;  // true = CPU work dispatched to worker, GPU upload pending next frame
 public:
-    bool hasGltfContent() const { return gltfModel != nullptr; }
+    // ── Shadow readiness mirror (async selection) ──────────────────────────
+    // A shadow TilesetTile carries no real glTF model / GPU resources (kept
+    // lightweight + thread-safe), yet the selection traversal it runs must see
+    // the SAME renderability classification the live tile would. When
+    // shadowReadinessMirror_ is set (shadow tiles ONLY — never live), the
+    // readiness PREDICATES below report the mirrored live values instead of
+    // deriving them from the absent gltfModel/resources. Pointer accessors
+    // (hasGltfModel/gltfContent/...) stay strictly model-backed, so selection —
+    // which only reads the booleans, never dereferences — is safe, while any
+    // accidental model access on a shadow tile still yields null.
+    void setShadowReadinessMirror(bool hasGltfContent,
+                                  bool renderContentReady,
+                                  bool terrainRenderContent) {
+        shadowReadinessMirror_ = true;
+        shadowHasGltfContent_ = hasGltfContent;
+        shadowRenderContentReady_ = renderContentReady;
+        terrainRenderContent_ = terrainRenderContent;
+    }
+
+    bool hasGltfContent() const {
+        return shadowReadinessMirror_ ? shadowHasGltfContent_
+                                      : gltfModel != nullptr;
+    }
     bool hasGltfModel() const { return gltfModel != nullptr; }
     GltfModel* gltfContent() { return gltfModel.get(); }
     const GltfModel* gltfContent() const { return gltfModel.get(); }
@@ -134,9 +156,15 @@ public:
         return gltfResourcesReady_ && !gltfPrimitiveResources.empty();
     }
     bool isGltfRenderReady() const {
+        if (shadowReadinessMirror_) {
+            return shadowHasGltfContent_ && shadowRenderContentReady_;
+        }
         return gltfModel != nullptr && hasGltfResources();
     }
     bool isRenderContentReady() const {
+        if (shadowReadinessMirror_) {
+            return shadowRenderContentReady_;
+        }
         return gltfModel ? isGltfRenderReady() : surface_.meshReady;
     }
     bool hasRenderableTerrainContent() const {
@@ -522,6 +550,11 @@ private:
     Mat4 gltfContentTransform = Mat4::identity();
     bool gltfResourcesReady_ = false;
     bool terrainRenderContent_ = false;
+    // Shadow readiness mirror (see setShadowReadinessMirror). Never set on live
+    // tiles, so the readiness predicates keep their model-backed behavior there.
+    bool shadowReadinessMirror_ = false;
+    bool shadowHasGltfContent_ = false;
+    bool shadowRenderContentReady_ = false;
     std::vector<std::unique_ptr<Texture>> gltfTextureResources;
     std::vector<GltfPrimitiveRenderResources> gltfPrimitiveResources;
 };

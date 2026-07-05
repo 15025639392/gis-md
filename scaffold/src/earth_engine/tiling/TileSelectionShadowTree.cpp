@@ -32,6 +32,25 @@ void TileSelectionShadowTree::mirrorReadSurface(
     shadow.content.rasterDetailSourceProjection =
         live.content.rasterDetailSourceProjection;
 
+    // glTF/terrain render-content READINESS (plain booleans, no model/GPU).
+    // The selection traversal classifies renderability through
+    // hasGltfContent()/isRenderContentReady()/isTerrainRenderContent() and the
+    // upsample-descent + bounds/SSE helpers read hasGltfContent()/height range.
+    // Mirror those so the shadow's renderable/kick/refine decisions match what
+    // the live tile would yield on device — without copying the heavy gltfModel
+    // (shadow tiles stay content-less; see setShadowReadinessMirror). In golden
+    // every live tile is content-less, so all three mirror to false → the shadow
+    // behaves exactly as before and the oracle is unaffected.
+    shadow.content.renderContent.setShadowReadinessMirror(
+        live.content.renderContent.hasGltfContent(),
+        live.content.renderContent.isRenderContentReady(),
+        live.content.renderContent.isTerrainRenderContent());
+    if (live.content.renderContent.hasTerrainHeightRange()) {
+        shadow.content.renderContent.setTerrainHeightRange(
+            live.content.renderContent.terrainMinimumHeight(),
+            live.content.renderContent.terrainMaximumHeight());
+    }
+
     // Cross-frame selection history the traversal reads (previousSelectionState
     // for refine-flow / kick decisions; selectionState is carried so the
     // shadow's own frame-start reset shifts it exactly as the sync path does).

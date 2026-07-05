@@ -3,6 +3,7 @@
 #include "TileContentAccess.h"
 #include "TileLoadQueue.h"
 #include "TileOcclusionState.h"
+#include "TileRenderPlanFrameRefresher.h"
 #include "TileScheme.h"
 #include "TileSelectionFrameFinalizationRunner.h"
 #include "TileSelectionFrameRunner.h"
@@ -49,18 +50,16 @@ void TilesetSelectionFrameFacade::selectTilesAsyncShadow(
 void TilesetSelectionFrameFacade::reconcileShadowToLive(
     Tileset& tileset,
     const TileSelectionShadowRunner& runner) {
-    // Copy render/load keys + counters wholesale; write each shadow tile's final
-    // selection state back to its live tile so the next frame's shadow (seeded
-    // from live) carries correct cross-frame selection history.
-    //
-    // For golden, every selected key already exists in the live registry (the
-    // scene is pre-materialized). Materializing live tiles that only the shadow
-    // virtual-descended is part of the later real-path apply and is not needed
-    // by the content-less oracle.
+    // Copy the shadow's SELECTION DECISION wholesale (visibleTiles / fading /
+    // selectionRecords / counters / load keys). These carry only TileKeys and
+    // plain values — no shadow TilesetTile* leaks into live state.
     tileset.tilePlan_ = runner.tilePlan();
     tileset.loadQueue_ = runner.loadQueue();
     tileset.selectionCounters_ = runner.counters();
 
+    // Write each shadow tile's final selection state back to its live tile so
+    // the next frame's shadow (seeded from live) carries correct cross-frame
+    // selection history.
     for (const auto& entry : runner.shadowTree().registry().tiles()) {
         const TilesetTile* shadowTile = entry.second.get();
         if (!shadowTile) {
@@ -75,6 +74,30 @@ void TilesetSelectionFrameFacade::reconcileShadowToLive(
         liveTile->selectionFrameState.previousSelectionState =
             shadowTile->selectionFrameState.previousSelectionState;
     }
+
+    // Re-resolve the render entries against LIVE content on the render thread.
+    // The shadow ran finalize over content-less tiles, so its renderEntries /
+    // credits / progress are empty — useless on device. This live pass:
+    //   * MATERIALIZES any live tile the shadow only virtual-descended (live
+    //     ensureTile() creates it from the scheme + links parents/children),
+    //   * gates each render entry on the LIVE tile's real render content
+    //     (isGltfRenderReady() / hasSurfaceDrawable()), falling back to the
+    //     nearest renderable live ancestor with a surface-clip window, and
+    //   * refreshes frame credits / load progress from live tiles.
+    // Golden only compares visibleTiles + loadQueue (both copied above), so this
+    // pass is invisible to the oracle while making the async path drawable.
+    //
+    // NOTE (documented limitation): per-tile lodTransitionFadePercentage is not
+    // mirrored shadow→live, so LOD-transition fade opacity is only faithful when
+    // options_.enableLodTransitionPeriod is false (the on-device default).
+    TileRenderPlanFrameRefresher::refresh(
+        tileset.tilePlan_,
+        tileset.contentAccess_,
+        tileset.rasterOverlays_,
+        TileRenderPlanFrameRefreshOptions{
+            tileset.options_.enableLodTransitionPeriod,
+            tileset.interactionActiveForFrame_,
+            tileset.resourceSmoothingActiveForFrame_});
 }
 
 void TilesetSelectionFrameFacade::selectTilesSyncShadow(
