@@ -490,6 +490,12 @@ add_executable(test_tile_selection_shadow_runner
 target_link_libraries(test_tile_selection_shadow_runner PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_shadow_runner COMMAND test_tile_selection_shadow_runner)
 
+add_executable(test_tileset_async_selection
+    unit/tiling/test_tileset_async_selection.cpp
+)
+target_link_libraries(test_tileset_async_selection PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tileset_async_selection COMMAND test_tileset_async_selection)
+
 # ThreadSanitizer async-selection race test. Only built when the TSAN twin lib
 # exists (-DEARTH_ENGINE_ENABLE_TSAN=ON); links the instrumented core and adds
 # the sanitizer flags to the test TU itself.

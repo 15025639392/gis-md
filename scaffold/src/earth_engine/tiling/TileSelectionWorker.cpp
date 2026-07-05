@@ -3,9 +3,12 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TilesetTile.h"
 
+#include <cassert>
+
 namespace earth_engine {
 
-TileSelectionWorker::TileSelectionWorker() {
+TileSelectionWorker::TileSelectionWorker()
+    : renderThreadId_(std::this_thread::get_id()) {
     thread_ = std::thread([this]() { threadMain(); });
 }
 
@@ -25,11 +28,23 @@ void TileSelectionWorker::buildShadow(
     // Caller guarantees !isBusy(); the acquire in isBusy() paired with the
     // worker's release of busy_ = false gives happens-before, so this runner
     // write happens-after the worker's last selection write.
+    assert(std::this_thread::get_id() == renderThreadId_ &&
+           "buildShadow must run on the render thread");
+    assert(!busy_.load(std::memory_order_acquire) &&
+           "buildShadow while the worker is selecting corrupts the shadow");
     runner_.buildShadow(liveRegistry);
 }
 
 void TileSelectionWorker::dispatch(
     const TileSelectionShadowSelectInput& input) {
+    assert(std::this_thread::get_id() == renderThreadId_ &&
+           "dispatch must run on the render thread");
+    assert(!busy_.load(std::memory_order_acquire) &&
+           "dispatch while the worker is busy overwrites the running job");
+    // The worker reads live mutable occlusion state through this thunk, which
+    // the render thread updates — it MUST be null on the async path.
+    assert(input.checkOcclusion == nullptr &&
+           "async worker must not carry a live-reading occlusion thunk");
     std::lock_guard<std::mutex> lock(mutex_);
     job_ = input;  // value copy — no live per-frame pointers survive the call
     jobReady_ = true;
@@ -39,6 +54,8 @@ void TileSelectionWorker::dispatch(
 }
 
 const TileSelectionShadowRunner* TileSelectionWorker::tryTakeResult() {
+    assert(std::this_thread::get_id() == renderThreadId_ &&
+           "tryTakeResult must run on the render thread");
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!resultReady_) {

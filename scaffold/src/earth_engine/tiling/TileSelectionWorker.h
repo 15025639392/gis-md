@@ -67,6 +67,11 @@ private:
     bool jobReady_ = false;
     bool resultReady_ = false;
     bool stop_ = false;
+    // The render thread that owns the non-worker API. Recorded at construction
+    // (which happens on the render thread) and asserted in debug builds so a
+    // future caller can't accidentally drive buildShadow/dispatch/tryTakeResult
+    // from another thread and corrupt the single-owner-alternation protocol.
+    std::thread::id renderThreadId_;
 };
 
 } // namespace earth_engine
