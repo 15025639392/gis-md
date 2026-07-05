@@ -66,6 +66,14 @@ struct TilesetOptions {
     bool enableFogCulling = true;
     bool enforceCulledScreenSpaceError = true;
     double culledScreenSpaceError = 64.0;
+    // cesium-js cullRequestsWhileMoving:运动期跳过"回来时多半已划走"的瓦片
+    // 网络请求。movementRatio = multiplier × 相机本帧位移 / 瓦片直径 ≥1 → 本帧
+    // 不发该瓦片请求(下一帧重评估)。cesium-native 无此项(仅靠 load 预算节流),
+    // cesium-js 默认开、对所有瓦片(含 replace-refine 地形)生效——这是对地形
+    // globe 真正有效的运动降载杠杆(foveated 对 replace-refine 地形是 no-op)。
+    // 默认 false = 忠实 cesium-native(不改 golden);true 才启用。
+    bool cullRequestsWhileMoving = false;
+    double cullRequestsWhileMovingMultiplier = 60.0;
     bool renderTilesUnderCamera = true;
     int64_t maximumCachedBytes = 512LL * 1024 * 1024;
     bool enableLodTransitionPeriod = false;

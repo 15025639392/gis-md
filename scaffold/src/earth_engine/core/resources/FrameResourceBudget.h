@@ -38,6 +38,11 @@ struct FrameResourceBudgetConfig {
     double mainThreadTimeMs = 0.0;
     bool interactionActive = false;
     bool smoothingActive = false;
+    // cullRequestsWhileMoving(cesium-js):运动期跳过快速划过屏幕的瓦片请求。
+    // 与其它每帧闸门同属帧级资源门控状态,随预算配置一起下发到 load scheduler。
+    bool cullRequestsWhileMoving = false;
+    double cullRequestsWhileMovingMultiplier = 60.0;
+    double cameraPositionDeltaMagnitude = 0.0;
 };
 
 struct FrameResourceBudgetSnapshot {
@@ -106,6 +111,15 @@ public:
     }
     uint32_t rasterUploadsUsed() const { return rasterUploadsUsed_; }
     double mainThreadElapsedMs() const { return mainThreadElapsedMs_; }
+    bool cullRequestsWhileMoving() const {
+        return config_.cullRequestsWhileMoving;
+    }
+    double cullRequestsWhileMovingMultiplier() const {
+        return config_.cullRequestsWhileMovingMultiplier;
+    }
+    double cameraPositionDeltaMagnitude() const {
+        return config_.cameraPositionDeltaMagnitude;
+    }
     FrameResourceBudgetSnapshot snapshot() const;
 
 private:

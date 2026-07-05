@@ -53,7 +53,9 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
                         kDefaultMaximumTransportActiveRequests),
             tileset.options_.mainThreadLoadingTimeLimit,
             kPostInteractionResourceSmoothingSeconds,
-            tileset.options_.maximumScreenSpaceError},
+            tileset.options_.maximumScreenSpaceError,
+            tileset.options_.cullRequestsWhileMoving,
+            tileset.options_.cullRequestsWhileMovingMultiplier},
         TileFrameWorkState{
             tileset.cameraMoving_,
             tileset.interactionActiveForFrame_,

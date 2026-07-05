@@ -41,6 +41,8 @@ struct TileFrameWorkInput {
     double mainThreadLoadingTimeLimit = 0.0;
     double postInteractionResourceSmoothingSeconds = 0.0;
     double maximumScreenSpaceError = 16.0;
+    bool cullRequestsWhileMoving = false;
+    double cullRequestsWhileMovingMultiplier = 60.0;
 };
 
 struct TileFrameWorkResult {
@@ -82,7 +84,9 @@ public:
                     input.maximumSimultaneousTileLoads,
                     input.maximumTransportActiveRequests,
                     input.mainThreadLoadingTimeLimit,
-                    input.postInteractionResourceSmoothingSeconds));
+                    input.postInteractionResourceSmoothingSeconds,
+                    input.cullRequestsWhileMoving,
+                    input.cullRequestsWhileMovingMultiplier));
         const TileFrameInteractionSnapshot& interactionSnapshot =
             frameContext.interaction;
         state.cameraMoving = interactionSnapshot.cameraMoving;

@@ -40,6 +40,9 @@ TilesetOptions makeSceneTilesetOptions(const SceneTilesetConfig& config) {
     options.tileCacheUnloadTimeLimit = config.tileCacheUnloadTimeLimit;
     options.enableLodTransitionPeriod = config.enableLodTransitionPeriod;
     options.lodTransitionLength = config.lodTransitionLength;
+    options.cullRequestsWhileMoving = config.cullRequestsWhileMoving;
+    options.cullRequestsWhileMovingMultiplier =
+        config.cullRequestsWhileMovingMultiplier;
     return options;
 }
 

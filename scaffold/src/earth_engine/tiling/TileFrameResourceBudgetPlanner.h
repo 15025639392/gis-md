@@ -20,6 +20,11 @@ struct TileFrameResourceBudgetPlanInput {
     double mainThreadLoadingTimeLimit = 0.0;
     bool interactionActive = false;
     bool resourceSmoothingActive = false;
+    // cullRequestsWhileMoving:透传到 FrameResourceBudgetConfig,由 load scheduler
+    // 在发请求前按 movementRatio 决定是否本帧延迟该瓦片。
+    bool cullRequestsWhileMoving = false;
+    double cullRequestsWhileMovingMultiplier = 60.0;
+    double cameraPositionDeltaMagnitude = 0.0;
 
     static TileFrameResourceBudgetPlanInput withDefaultTransport(
         uint32_t maximumSimultaneousTileLoads,
@@ -123,6 +128,11 @@ public:
         config.mainThreadTimeMs = input.mainThreadLoadingTimeLimit;
         config.interactionActive = input.interactionActive;
         config.smoothingActive = input.resourceSmoothingActive;
+        config.cullRequestsWhileMoving = input.cullRequestsWhileMoving;
+        config.cullRequestsWhileMovingMultiplier =
+            input.cullRequestsWhileMovingMultiplier;
+        config.cameraPositionDeltaMagnitude =
+            input.cameraPositionDeltaMagnitude;
         return config;
     }
 };

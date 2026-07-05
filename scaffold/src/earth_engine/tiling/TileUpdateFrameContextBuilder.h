@@ -17,18 +17,25 @@ struct TileUpdateFrameContextOptions {
         TileFrameResourceBudgetPlanInput::kDefaultMaximumTransportActiveRequests;
     double mainThreadLoadingTimeLimit = 0.0;
     double postInteractionResourceSmoothingSeconds = 0.0;
+    bool cullRequestsWhileMoving = false;
+    double cullRequestsWhileMovingMultiplier = 60.0;
 
     static TileUpdateFrameContextOptions fromTilesetFrame(
         uint32_t maximumSimultaneousTileLoads,
         uint32_t maximumTransportActiveRequests,
         double mainThreadLoadingTimeLimit,
-        double postInteractionResourceSmoothingSeconds) {
+        double postInteractionResourceSmoothingSeconds,
+        bool cullRequestsWhileMoving,
+        double cullRequestsWhileMovingMultiplier) {
         TileUpdateFrameContextOptions options;
         options.maximumSimultaneousTileLoads = maximumSimultaneousTileLoads;
         options.maximumTransportActiveRequests = maximumTransportActiveRequests;
         options.mainThreadLoadingTimeLimit = mainThreadLoadingTimeLimit;
         options.postInteractionResourceSmoothingSeconds =
             postInteractionResourceSmoothingSeconds;
+        options.cullRequestsWhileMoving = cullRequestsWhileMoving;
+        options.cullRequestsWhileMovingMultiplier =
+            cullRequestsWhileMovingMultiplier;
         return options;
     }
 };
@@ -50,13 +57,20 @@ struct TileUpdateFrameContextBuilder {
             previousCameraPosition,
             previousInteractionActiveTimeSeconds,
             options.postInteractionResourceSmoothingSeconds);
-        context.resourceBudgetConfig = TileFrameResourceBudgetPlanner::plan(
+        TileFrameResourceBudgetPlanInput planInput =
             TileFrameResourceBudgetPlanInput::withTransportLimit(
                 options.maximumSimultaneousTileLoads,
                 options.maximumTransportActiveRequests,
                 options.mainThreadLoadingTimeLimit,
                 context.interaction.interactionActive,
-                context.interaction.resourceSmoothingActive));
+                context.interaction.resourceSmoothingActive);
+        planInput.cullRequestsWhileMoving = options.cullRequestsWhileMoving;
+        planInput.cullRequestsWhileMovingMultiplier =
+            options.cullRequestsWhileMovingMultiplier;
+        planInput.cameraPositionDeltaMagnitude =
+            context.interaction.cameraPositionDeltaMagnitude;
+        context.resourceBudgetConfig =
+            TileFrameResourceBudgetPlanner::plan(planInput);
         return context;
     }
 };

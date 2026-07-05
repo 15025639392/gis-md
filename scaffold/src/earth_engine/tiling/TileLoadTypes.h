@@ -35,6 +35,8 @@ struct TileLoadRequestOutcome {
     size_t skippedDispatch = 0;
     size_t skippedNoContentProvider = 0;
     size_t stoppedAtDispatch = 0;
+    // cullRequestsWhileMoving:本帧因相机运动过快(相对瓦片尺寸)被延迟的请求数。
+    size_t skippedMotionCull = 0;
 };
 
 struct TileLoadedContent {

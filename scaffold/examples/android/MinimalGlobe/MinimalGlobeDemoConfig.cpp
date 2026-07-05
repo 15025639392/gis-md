@@ -26,6 +26,9 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         4.0,
         2.0,
     };
+    // 运动期跳过快速划走的瓦片网络请求(cesium-js cullRequestsWhileMoving)。
+    // 拖动/缩放中减少瞬时加载洪泛,相机停下恢复正常加载。
+    config.tileset.cullRequestsWhileMoving = true;
     // NOTE: LOD-transition alpha cross-fade (enableLodTransitionPeriod) is
     // available via SceneTilesetConfig but left OFF here. The current built-in
     // cross-fade fades parent+child simultaneously, so mid-transition the black

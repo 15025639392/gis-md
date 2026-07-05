@@ -5,6 +5,7 @@
 #include "TileLoadRequestPlanner.h"
 #include "TileLoadPriorityPolicy.h"
 #include "TileLoadTypes.h"
+#include "TileMotionCullPolicy.h"
 #include "TileGltfTerrainUpsampledChildMaterializer.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../content/GltfContentProvider.h"
@@ -180,6 +181,21 @@ public:
             if (requestKind == TileLoadRequestKind::Content) {
                 if (!input.contentProvider) {
                     ++outcome.skippedNoContentProvider;
+                    continue;
+                }
+                // cesium-js cullRequestsWhileMoving:相机运动过快(相对瓦片尺寸)
+                // 时本帧跳过该瓦片的网络请求(回来时多半已划走),下一帧重评估。
+                // 只作用于网络 Content(上采样是本地、无"回来"延迟,不剔除)。
+                // 默认关 → 忠实 cesium-native,golden 不变。
+                if (input.budget.cullRequestsWhileMoving() && tileState &&
+                    TileMotionCullPolicy::shouldDeferForMotion(
+                        TileMotionCullPolicy::Input{
+                            true,
+                            input.budget.cullRequestsWhileMovingMultiplier(),
+                            input.budget.cameraPositionDeltaMagnitude(),
+                            TileMotionCullPolicy::boundingSphereRadius(
+                                *tileState)})) {
+                    ++outcome.skippedMotionCull;
                     continue;
                 }
                 const int estimatedFanout =
