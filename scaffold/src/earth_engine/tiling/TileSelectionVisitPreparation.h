@@ -70,12 +70,16 @@ struct TileSelectionVisitOutcomePlan {
 };
 
 struct TileSelectionVisitPreparation {
+    // `scratchDistances` is a caller-owned buffer reused across every tile in a
+    // traversal (TileSelectionTraversalContext::scratchDistances), threaded
+    // through to summarizeForViews to avoid a per-tile heap allocation.
     static TileSelectionVisitPreparationResult prepare(
         const TilesetTile& tile,
         const std::vector<SelectorView>& views,
         const std::vector<double>& fogDensities,
         const TileSelectionVisibilityContext& visibilityContext,
-        const TileSelectionVisitPreparationOptions& options);
+        const TileSelectionVisitPreparationOptions& options,
+        std::vector<double>& scratchDistances);
 
     static TileSelectionVisitEarlyExitPlan earlyExitPlan(
         const TileSelectionVisitPreparationResult& preparation);

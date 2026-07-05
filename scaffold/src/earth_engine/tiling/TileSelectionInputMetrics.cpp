@@ -59,16 +59,18 @@ double TileSelectionInputMetrics::screenSpaceErrorForView(
 
 TileSelectionInputSummary TileSelectionInputMetrics::summarizeForViews(
     const TilesetTile& tile,
-    const std::vector<SelectorView>& views) {
+    const std::vector<SelectorView>& views,
+    std::vector<double>& scratchDistances) {
     TileSelectionInputSummary summary;
-    summary.distances.reserve(views.size());
+    scratchDistances.clear();
+    scratchDistances.reserve(views.size());
     for (const auto& view : views) {
-        summary.distances.push_back(distanceToTile(tile, view.position));
+        scratchDistances.push_back(distanceToTile(tile, view.position));
     }
 
     const Vec3 center = tileCenter(tile);
     summary.priority = std::numeric_limits<double>::max();
-    const size_t count = std::min(views.size(), summary.distances.size());
+    const size_t count = std::min(views.size(), scratchDistances.size());
     for (size_t i = 0; i < count; ++i) {
         const auto& view = views[i];
         summary.priority = std::min(
@@ -77,14 +79,14 @@ TileSelectionInputSummary TileSelectionInputMetrics::summarizeForViews(
                 center,
                 view.position,
                 view.direction,
-                summary.distances[i]));
+                scratchDistances[i]));
         summary.screenSpaceError = std::max(
             summary.screenSpaceError,
             screenSpaceErrorForView(
                 tile.geometricError,
                 view.projectionMatrix,
                 view.viewportHeightPixels,
-                summary.distances[i]));
+                scratchDistances[i]));
     }
 
     return summary;

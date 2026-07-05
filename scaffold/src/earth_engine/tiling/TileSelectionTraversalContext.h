@@ -71,6 +71,13 @@ struct TileSelectionTraversalContext {
     OnVisitTileFn onVisitTileFn = nullptr;
     void* onVisitTileUserData = nullptr;
 
+    // Per-view distances scratch, reused across every tile visited in this
+    // traversal so summarizeForViews doesn't heap-allocate a fresh vector per
+    // tile. Mirrors cesium-native's context scratchDistances. Left out of the
+    // builder's aggregate initializer on purpose — default-constructs empty and
+    // grows to its steady-state capacity on the first frame.
+    std::vector<double> scratchDistances;
+
     // Register a tile into this frame's selection active-set (and lazily reset
     // it once). Called at the start of every tile visit so the per-frame reset
     // touches only visited tiles instead of the whole registry.

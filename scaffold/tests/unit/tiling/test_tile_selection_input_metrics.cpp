@@ -85,22 +85,24 @@ TEST(TileSelectionInputMetricsTest, SummarizeUsesLargestPerViewSse) {
     views[1].projectionMatrix = cesiumNativeLikeProjection(2.0);
     views[1].viewportHeightPixels = 800;
 
+    std::vector<double> scratchDistances;
     const TileSelectionInputSummary summary =
-        TileSelectionInputMetrics::summarizeForViews(tile, views);
-    ASSERT_EQ(summary.distances.size(), views.size());
+        TileSelectionInputMetrics::summarizeForViews(
+            tile, views, scratchDistances);
+    ASSERT_EQ(scratchDistances.size(), views.size());
 
     const double firstViewSse =
         TileSelectionInputMetrics::screenSpaceErrorForView(
             tile.geometricError,
             views[0].projectionMatrix,
             views[0].viewportHeightPixels,
-            summary.distances[0]);
+            scratchDistances[0]);
     const double secondViewSse =
         TileSelectionInputMetrics::screenSpaceErrorForView(
             tile.geometricError,
             views[1].projectionMatrix,
             views[1].viewportHeightPixels,
-            summary.distances[1]);
+            scratchDistances[1]);
     EXPECT_NEAR(
         summary.screenSpaceError,
         std::max(firstViewSse, secondViewSse),

@@ -60,7 +60,8 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
                 context.options.forbidHoles,
                 context.options.enforceCulledScreenSpaceError,
                 context.options.maximumScreenSpaceError,
-                context.options.culledScreenSpaceError});
+                context.options.culledScreenSpaceError},
+            context.scratchDistances);
     selection.inFrustum = preparation.visibilitySample.inFrustum;
     selection.cameraInside =
         TileSelectionVisibilitySampler::cameraInsideSelectionBounds(

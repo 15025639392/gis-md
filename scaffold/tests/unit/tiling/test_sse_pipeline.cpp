@@ -10708,22 +10708,24 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
     views[1].direction = Vec3(-1.0, 0.0, 0.0);
     views[1].projectionMatrix = strongerProjection;
     views[1].viewportHeightPixels = 800;
+    std::vector<double> scratchDistances;
     const TileSelectionInputSummary summary =
-        TileSelectionInputMetrics::summarizeForViews(tile, views);
-    check(summary.distances.size() == 2 &&
-              summary.distances[0] <= summary.distances[1],
+        TileSelectionInputMetrics::summarizeForViews(
+            tile, views, scratchDistances);
+    check(scratchDistances.size() == 2 &&
+              scratchDistances[0] <= scratchDistances[1],
           "TileSelectionInputMetrics: summary computes per-view distances");
     const double expectedPriority = std::min(
         TileSelectionInputMetrics::priorityForView(
             TileSelectionInputMetrics::tileCenter(tile),
             views[0].position,
             views[0].direction,
-            summary.distances[0]),
+            scratchDistances[0]),
         TileSelectionInputMetrics::priorityForView(
             TileSelectionInputMetrics::tileCenter(tile),
             views[1].position,
             views[1].direction,
-            summary.distances[1]));
+            scratchDistances[1]));
     check(std::abs(summary.priority - expectedPriority) < 1e-12,
           "TileSelectionInputMetrics: summary uses best per-view priority");
     const double firstViewSse =
@@ -10731,13 +10733,13 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
             tile.geometricError,
             views[0].projectionMatrix,
             views[0].viewportHeightPixels,
-            summary.distances[0]);
+            scratchDistances[0]);
     const double secondViewSse =
         TileSelectionInputMetrics::screenSpaceErrorForView(
             tile.geometricError,
             views[1].projectionMatrix,
             views[1].viewportHeightPixels,
-            summary.distances[1]);
+            scratchDistances[1]);
     check(std::abs(summary.screenSpaceError -
                   std::max(firstViewSse, secondViewSse)) < 1e-12,
           "TileSelectionInputMetrics: summary uses exact maximum per-view SSE like cesium-native");
@@ -10745,7 +10747,8 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
         view.position = TileSelectionInputMetrics::tileCenter(tile);
     }
     const TileSelectionInputSummary degenerateSummary =
-        TileSelectionInputMetrics::summarizeForViews(tile, views);
+        TileSelectionInputMetrics::summarizeForViews(
+            tile, views, scratchDistances);
     check(degenerateSummary.priority == std::numeric_limits<double>::max(),
           "TileSelectionInputMetrics: all degenerate priority views stay at max like cesium-native");
 }
@@ -16783,6 +16786,7 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
         TileKey{"test", 0, 0, 0},
         Rectangle{-0.25, -0.25, 0.25, 0.25});
     tile.geometricError = 10.0;
+    std::vector<double> scratchDistances;
     SelectorView view;
     view.position = TileBoundsMetrics::tileBoundsCenter(tile.bounds);
     view.direction = Vec3(1.0, 0.0, 0.0);
@@ -16806,7 +16810,8 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
                 false,
                 true,
                 16.0,
-                64.0});
+                64.0},
+            scratchDistances);
     check(result.cullResult.culled &&
               !result.cullResult.shouldVisit &&
               result.cullResult.reason == TileSelectionCullReason::Frustum,
@@ -16831,7 +16836,8 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
             true,
             true,
             16.0,
-            64.0});
+            64.0},
+        scratchDistances);
     check(result.cullResult.culled &&
               !result.cullResult.shouldVisit &&
               result.cullResult.reason == TileSelectionCullReason::Fog,
@@ -16853,7 +16859,8 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
             false,
             true,
             16.0,
-            64.0});
+            64.0},
+        scratchDistances);
     check(!result.viewerRequestVolumeAllowed,
           "TileSelectionVisitPreparation: outside viewer request volume is rejected");
     tile.viewerRequestVolume.reset();
@@ -16875,7 +16882,8 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
             false,
             true,
             16.0,
-            0.001});
+            0.001},
+        scratchDistances);
     check(result.cullResult.culled &&
               result.cullResult.shouldVisit &&
               result.inputSummary.screenSpaceError > 0.001 &&
@@ -16895,7 +16903,8 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
             false,
             true,
             16.0,
-            64.0});
+            64.0},
+        scratchDistances);
     check(result.cullResult.culled &&
               result.cullResult.shouldVisit,
           "TileSelectionVisitPreparation: culled unconditionally refined root is still visited like cesium-native");
@@ -16917,7 +16926,8 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
             true,
             true,
             16.0,
-            64.0});
+            64.0},
+        scratchDistances);
     check(result.cullResult.culled &&
               result.cullResult.shouldVisit,
           "TileSelectionVisitPreparation: forbid-holes replace child keeps unconditionally refined culled visit");
@@ -16934,7 +16944,8 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
             true,
             true,
             16.0,
-            64.0});
+            64.0},
+        scratchDistances);
     check(result.cullResult.culled &&
               !result.cullResult.shouldVisit,
           "TileSelectionVisitPreparation: ADD unconditionally refined culled child still exits");

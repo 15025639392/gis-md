@@ -11,7 +11,8 @@ TileSelectionVisitPreparationResult TileSelectionVisitPreparation::prepare(
     const std::vector<SelectorView>& views,
     const std::vector<double>& fogDensities,
     const TileSelectionVisibilityContext& visibilityContext,
-    const TileSelectionVisitPreparationOptions& options) {
+    const TileSelectionVisitPreparationOptions& options,
+    std::vector<double>& scratchDistances) {
     TileSelectionVisitPreparationResult result;
     result.visibilitySample =
         TileSelectionVisibilitySampler::sampleForTileSelection(
@@ -19,14 +20,17 @@ TileSelectionVisitPreparationResult TileSelectionVisitPreparation::prepare(
             views,
             visibilityContext);
     result.inputSummary =
-        TileSelectionInputMetrics::summarizeForViews(tile, views);
+        TileSelectionInputMetrics::summarizeForViews(
+            tile,
+            views,
+            scratchDistances);
     result.cullResult = TileSelectionCullingPolicy::evaluateFrustum(
         result.visibilitySample.visibleFromCamera,
         options.enableFrustumCulling);
     result.cullResult = TileSelectionCullingPolicy::evaluateFog(
         result.cullResult,
         TileSelectionCullingPolicy::anyViewVisibleInFog(
-            result.inputSummary.distances,
+            scratchDistances,
             fogDensities),
         options.enableFogCulling);
     if (!result.cullResult.shouldVisit &&

@@ -140,6 +140,7 @@ TEST(
         Rectangle{-0.25, -0.25, 0.25, 0.25});
     root.unconditionallyRefine = true;
 
+    std::vector<double> scratchDistances;
     const TileSelectionVisitPreparationResult result =
         TileSelectionVisitPreparation::prepare(
             root,
@@ -153,7 +154,8 @@ TEST(
                 false,
                 true,
                 16.0,
-                64.0});
+                64.0},
+            scratchDistances);
 
     EXPECT_TRUE(result.cullResult.culled);
     EXPECT_TRUE(result.cullResult.shouldVisit);
@@ -172,6 +174,7 @@ TEST(
     child.unconditionallyRefine = true;
     child.refine = TileRefine::Replace;
 
+    std::vector<double> scratchDistances;
     const TileSelectionVisitPreparationResult result =
         TileSelectionVisitPreparation::prepare(
             child,
@@ -185,7 +188,8 @@ TEST(
                 true,
                 true,
                 16.0,
-                64.0});
+                64.0},
+            scratchDistances);
 
     EXPECT_TRUE(result.cullResult.culled);
     EXPECT_TRUE(result.cullResult.shouldVisit);
@@ -204,6 +208,7 @@ TEST(
     child.unconditionallyRefine = true;
     child.refine = TileRefine::Add;
 
+    std::vector<double> scratchDistances;
     const TileSelectionVisitPreparationResult result =
         TileSelectionVisitPreparation::prepare(
             child,
@@ -217,7 +222,8 @@ TEST(
                 true,
                 true,
                 16.0,
-                64.0});
+                64.0},
+            scratchDistances);
 
     EXPECT_TRUE(result.cullResult.culled);
     EXPECT_FALSE(result.cullResult.shouldVisit);
