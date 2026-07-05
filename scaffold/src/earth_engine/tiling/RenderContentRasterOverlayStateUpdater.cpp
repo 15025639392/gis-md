@@ -62,26 +62,17 @@ RenderContentRasterOverlayStateUpdater::update(
             tile.rasterOverlayState.ensureMapping(i);
         const RasterOverlayProjection projection =
             activeProvider->getProjection();
-        const Rectangle* geometryRectangle =
-            TileRasterOverlayMappingPolicy::geometryRectangle(
-                mappingContext,
-                projection);
-        const std::optional<Rectangle> boundingVolumeRectangle =
-            TileRasterOverlayMappingPolicy::boundingVolumeRectangle(
-                tile,
-                mappingContext,
-                projection);
-        const Rectangle& rasterTargetRectangle =
-            TileRasterOverlayMappingPolicy::targetRectangle(
-                tile,
-                geometryRectangle,
-                boundingVolumeRectangle);
-        const RasterTargetScreenPixels rasterScreenPixels =
-            RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
-                rasterTargetRectangle,
-                projection,
-                tile.nonZeroGeometricError(),
-                maximumScreenSpaceError);
+        // 闸3:目标几何缓存(computeDesiredScreenPixels 等三角开销加载时一次)。
+        const TileRasterOverlayMappingPolicy::ResolvedTargetGeometry
+            resolvedGeometry =
+                TileRasterOverlayMappingPolicy::resolveTargetGeometry(
+                    tile,
+                    mappingContext,
+                    projection,
+                    overlay,
+                    maximumScreenSpaceError);
+        const std::optional<Rectangle>& boundingVolumeRectangle =
+            resolvedGeometry.boundingVolumeRectangle;
         std::vector<RasterOverlayProjection> localMissingProjections;
         const bool mapAsRenderContent =
             mappingContext.mapsLoadedRenderContent;
@@ -93,8 +84,8 @@ RenderContentRasterOverlayStateUpdater::update(
             overlay.update(
                 tile.key,
                 overlayDetails,
-                rasterScreenPixels.x,
-                rasterScreenPixels.y,
+                resolvedGeometry.screenPixelsX,
+                resolvedGeometry.screenPixelsY,
                 *activeProvider,
                 &renderer,
                 missingProjections,

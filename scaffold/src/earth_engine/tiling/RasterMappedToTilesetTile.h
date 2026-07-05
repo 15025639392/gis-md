@@ -123,6 +123,41 @@ public:
                                     const Rectangle& imageryBounds,
                                     bool invertedVCoordinate = false);
 
+    // ── 目标几何缓存(闸3:cesium 里几何矩形 + computeDesiredScreenPixels 是
+    // addTileOverlays 的「加载时一次」动作,不随帧/相机变;updateTileOverlays
+    // 每帧只做轻量 update()。这里把三角开销缓存到映射槽,消除 Done 瓦片每帧
+    // 重算)。键=(overlayDetails 指针, projection)。内容重载→details 指针变→
+    // 失效重算。仅当 details 非空(真渲染内容)才缓存;bounds 回退路径(罕见、
+    // 上采样 bounds 可能变)不缓存,照旧每帧算,零 staleness 风险。──
+    bool targetGeometryCacheValid(const void* detailsPtr,
+                                  RasterOverlayProjection projection) const {
+        return targetGeometryCached_ &&
+               cachedDetailsPtr_ == detailsPtr &&
+               cachedProjection_ == projection;
+    }
+    void cacheTargetGeometry(
+        const void* detailsPtr,
+        RasterOverlayProjection projection,
+        double screenPixelsX,
+        double screenPixelsY,
+        const std::optional<Rectangle>& boundingVolumeRectangle) {
+        targetGeometryCached_ = true;
+        cachedDetailsPtr_ = detailsPtr;
+        cachedProjection_ = projection;
+        cachedTargetScreenPixelsX_ = screenPixelsX;
+        cachedTargetScreenPixelsY_ = screenPixelsY;
+        cachedBoundingVolumeRectangle_ = boundingVolumeRectangle;
+    }
+    double cachedTargetScreenPixelsX() const {
+        return cachedTargetScreenPixelsX_;
+    }
+    double cachedTargetScreenPixelsY() const {
+        return cachedTargetScreenPixelsY_;
+    }
+    const std::optional<Rectangle>& cachedBoundingVolumeRectangle() const {
+        return cachedBoundingVolumeRectangle_;
+    }
+
     // ── Accessors (aligned with cesium-native naming) ──
 
     /// The loading tile (may be nullptr). Aligned with getLoadingTile().
@@ -189,6 +224,15 @@ private:
     /// UV transform: rasterUV = geometryUV * scale + offset.
     float offsetU_ = 0.0f, offsetV_ = 0.0f;
     float scaleU_ = 1.0f, scaleV_ = 1.0f;
+
+    /// 目标几何缓存(闸3)。见上方 targetGeometryCacheValid/cacheTargetGeometry。
+    bool targetGeometryCached_ = false;
+    const void* cachedDetailsPtr_ = nullptr;
+    RasterOverlayProjection cachedProjection_ =
+        RasterOverlayProjection::Geographic;
+    double cachedTargetScreenPixelsX_ = 0.0;
+    double cachedTargetScreenPixelsY_ = 0.0;
+    std::optional<Rectangle> cachedBoundingVolumeRectangle_;
 
     /// Set once when the original desired-zoom tile fails.
     /// Never cleared — suppresses MoreDetailAvailable::Yes.

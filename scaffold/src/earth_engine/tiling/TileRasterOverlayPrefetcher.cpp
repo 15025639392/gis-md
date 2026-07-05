@@ -68,35 +68,25 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
 
         const RasterOverlayProjection projection =
             activeProvider->getProjection();
-        const Rectangle* geometryRectangle =
-            TileRasterOverlayMappingPolicy::geometryRectangle(
-                mappingContext,
-                projection);
-        const std::optional<Rectangle> boundingVolumeRectangle =
-            TileRasterOverlayMappingPolicy::boundingVolumeRectangle(
-                tile,
-                mappingContext,
-                projection);
-        const Rectangle& rasterTargetRectangle =
-            TileRasterOverlayMappingPolicy::targetRectangle(
-                tile,
-                geometryRectangle,
-                boundingVolumeRectangle);
+        RasterMappedToTilesetTile& mapped =
+            tile.rasterOverlayState.ensureMapping(i);
+        // 闸3:目标几何缓存(computeDesiredScreenPixels 等三角开销加载时一次)。
         // cesium-native: pass the TILESET maximumScreenSpaceError (16.0) to
         // computeDesiredScreenPixels, NOT the overlay's MSE (2.0).
         // The overlay's MSE is divided again inside
         // computeLevelFromTargetScreenPixels, creating intentional headroom
         // for higher zoom overlays.  Using overlay MSE in both places
         // underestimates the desired zoom by ~3 levels (factor 16/2 = 8).
-        const RasterTargetScreenPixels rasterScreenPixels =
-            RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
-                rasterTargetRectangle,
-                projection,
-                tile.nonZeroGeometricError(),
-                maximumScreenSpaceError);
-
-        RasterMappedToTilesetTile& mapped =
-            tile.rasterOverlayState.ensureMapping(i);
+        const TileRasterOverlayMappingPolicy::ResolvedTargetGeometry
+            resolvedGeometry =
+                TileRasterOverlayMappingPolicy::resolveTargetGeometry(
+                    tile,
+                    mappingContext,
+                    projection,
+                    mapped,
+                    maximumScreenSpaceError);
+        const std::optional<Rectangle>& boundingVolumeRectangle =
+            resolvedGeometry.boundingVolumeRectangle;
         std::vector<RasterOverlayProjection> localMissingProjections;
         const bool mapAsRenderContent =
             mappingContext.mapsLoadedRenderContent;
@@ -111,8 +101,8 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
         mapped.update(
             tile.key,
             overlayDetails,
-            rasterScreenPixels.x,
-            rasterScreenPixels.y,
+            resolvedGeometry.screenPixelsX,
+            resolvedGeometry.screenPixelsY,
             *activeProvider,
             pPrepRenderer,
             missingProjections,
