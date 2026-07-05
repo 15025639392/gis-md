@@ -132,7 +132,16 @@ struct ScenarioSpec {
     // 尾帧应渲染 z=maxDepth 叶（golden 缺失时的合理性断言）。S4 尾帧是
     // 320km 倾斜相机看地平线，叶层覆盖非场景意图，不作此断言。
     bool expectFinalLeaf = true;
+    // asyncSelection=true 时走影子树选择路径；对同一 golden 逐帧断言，
+    // 证明"影子选择 == 同步选择 == cesium golden"。
+    bool asyncSelection = false;
 };
+
+// 返回同场景的 asyncSelection 变体（走影子树 + reconcile 回 live）。
+ScenarioSpec asyncOf(ScenarioSpec scenario) {
+    scenario.asyncSelection = true;
+    return scenario;
+}
 
 ScenarioSpec makeS1Scenario() {
     return ScenarioSpec{
@@ -356,11 +365,13 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
     const selector_diff::QuadtreeSpec& tree = scenario.tree;
     const selector_diff::OptionsSpec& spec = scenario.options;
 
+    TilesetOptions tilesetOptions = makeTilesetOptions(spec);
+    tilesetOptions.asyncSelection = scenario.asyncSelection;
     Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
-        makeTilesetOptions(spec),
+        std::move(tilesetOptions),
         std::make_unique<QuadtreeSpecContentProvider>(tree));
 
     const int materialized = materializeScenarioTree(tileset, tree);
@@ -612,4 +623,22 @@ TEST(SelectorCesiumGoldenDiffTest, S3TraceMatchesCesiumGolden) {
 
 TEST(SelectorCesiumGoldenDiffTest, S4TraceMatchesCesiumGolden) {
     runGoldenDiffScenario(makeS4Scenario());
+}
+
+// asyncSelection 变体：走影子树选择 + reconcile 回 live，对同一 cesium
+// golden 逐帧断言 —— 证明影子选择与同步路径逐字一致（golden-by-construction）。
+TEST(SelectorCesiumGoldenDiffTest, S1AsyncShadowMatchesCesiumGolden) {
+    runGoldenDiffScenario(asyncOf(makeS1Scenario()));
+}
+
+TEST(SelectorCesiumGoldenDiffTest, S2AsyncShadowMatchesCesiumGolden) {
+    runGoldenDiffScenario(asyncOf(makeS2Scenario()));
+}
+
+TEST(SelectorCesiumGoldenDiffTest, S3AsyncShadowMatchesCesiumGolden) {
+    runGoldenDiffScenario(asyncOf(makeS3Scenario()));
+}
+
+TEST(SelectorCesiumGoldenDiffTest, S4AsyncShadowMatchesCesiumGolden) {
+    runGoldenDiffScenario(asyncOf(makeS4Scenario()));
 }
