@@ -48,6 +48,7 @@ struct TilesetTestAccess;
 class TilesetSelectionFrameFacade;
 class TilesetUpdateFrameFacade;
 class TilesetUpdateFrameRuntime;
+class TileSelectionWorker;
 
 /// cesium-native TilesetOptions subset used by the unified terrain tileset.
 /// Defaults intentionally mirror native where the local renderer has the
@@ -70,6 +71,11 @@ struct TilesetOptions {
     bool enableLodTransitionPeriod = false;
     float lodTransitionLength = 1.0f;
     bool kickDescendantsWhileFadingIn = true;
+    // Kill-switch for moving tile selection off the render thread. Default
+    // false → the current synchronous selection path is used unchanged. When
+    // true, the render thread dispatches selection to a dedicated worker and
+    // applies the result. Any regression → set false to fully revert.
+    bool asyncSelection = false;
     // 每帧主线程加载时间预算（毫秒）。>0 时 FrameResourceBudget 按实测
     // finalize/上传耗时（recordElapsed）截断当帧后续工作，计数上限退为兜底；
     // 0 = 不设时间闸门（cesium-native 出厂默认，但静止帧一帧可串 20 次
@@ -239,6 +245,11 @@ private:
     TileMeshPreparationManager meshPreparation_;
     TileContentRuntime contentRuntime_;
     TileRenderCommandManager renderCommands_;
+    // Dedicated off-render-thread selection worker (asyncSelection path only).
+    // Lazily created on first async frame; joined on destruction. Held by
+    // pointer so the sync path pays nothing and Tileset.h needs only a forward
+    // declaration.
+    std::unique_ptr<TileSelectionWorker> selectionWorker_;
 };
 
 } // namespace earth_engine

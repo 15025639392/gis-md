@@ -7,6 +7,7 @@
 #include "TileSelectionFrameFinalizationRunner.h"
 #include "TileSelectionFrameRunner.h"
 #include "TileSelectionShadowRunner.h"
+#include "TileSelectionWorker.h"
 #include "TileSelectionTraversalContextBuilder.h"
 #include "TileSelectionTraversalExecutor.h"
 #include "Tileset.h"
@@ -38,11 +39,16 @@ TileOcclusionState TilesetSelectionFrameFacade::shadowOcclusion(
 void TilesetSelectionFrameFacade::selectTilesAsyncShadow(
     Tileset& tileset,
     const FrameState& frameState) {
-    // Run the ordinary selection traversal on a shadow copy of the live tree.
-    // The shadow result is byte-identical to the sync path (same executor over a
-    // faithful read-surface mirror); see TileSelectionShadowRunner.
-    TileSelectionShadowRunner runner;
-    runner.run(TileSelectionShadowRunInput{
+    // Run the ordinary selection traversal on a shadow copy of the live tree,
+    // off the render thread. The shadow result is byte-identical to the sync
+    // path (same executor over a faithful read-surface mirror); see
+    // TileSelectionShadowRunner. Step 4 dispatches to a dedicated worker with a
+    // barrier (semantically synchronous), which validates the cross-thread
+    // handoff under TSAN before the barrier is removed in step 5.
+    if (!tileset.selectionWorker_) {
+        tileset.selectionWorker_ = std::make_unique<TileSelectionWorker>();
+    }
+    const TileSelectionShadowRunInput input{
         tileset.tileRegistry_,
         *tileset.tileScheme_,
         tileset.terrainProviders_.contentProvider(),
@@ -54,7 +60,9 @@ void TilesetSelectionFrameFacade::selectTilesAsyncShadow(
         tileset.interactionActiveForFrame_,
         tileset.resourceSmoothingActiveForFrame_,
         &shadowOcclusion,
-        &tileset});
+        &tileset};
+    const TileSelectionShadowRunner& runner =
+        tileset.selectionWorker_->runSync(input);
 
     // Reconcile the shadow result onto live. Render/load keys and counters are
     // moved/copied wholesale; each shadow tile's final selection state is

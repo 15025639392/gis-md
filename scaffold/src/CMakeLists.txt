@@ -429,6 +429,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSelectionShadowTree.cpp
     earth_engine/tiling/TileSelectionShadowRunner.h
     earth_engine/tiling/TileSelectionShadowRunner.cpp
+    earth_engine/tiling/TileSelectionWorker.h
+    earth_engine/tiling/TileSelectionWorker.cpp
     earth_engine/tiling/TileSelectionReusePolicy.h
     earth_engine/tiling/TileSelectionReusePolicy.cpp
     earth_engine/tiling/TileSelectionReuseState.h
