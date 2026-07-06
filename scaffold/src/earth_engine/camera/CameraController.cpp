@@ -39,7 +39,9 @@ constexpr double kPinchIntentThresholdPixels = 4.0;
 constexpr double kPinchTiltThresholdPixels = 10.0;
 constexpr double kPinchTiltRadiansPerPixel = 0.0015;
 constexpr double kPinchTiltMaxStepRadians = 0.08;
-constexpr double kPinchRotateThresholdRadians = 0.003;
+// 仅作噪声地板：足够小以让缓慢拧动逐帧响应（旧值 0.003rad≈0.17°/事件会把
+// 刻意的慢速旋转整段吞掉，手感 steppy），又足够大以滤除双指角度传感抖动。
+constexpr double kPinchRotateThresholdRadians = 0.0003;
 constexpr double kPinchAnchorFollow = 0.12;
 
 glm::dvec3 cartographicNormal(double lngDeg, double latDeg) {

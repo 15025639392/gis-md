@@ -321,6 +321,53 @@ TEST_F(CameraControllerTest, PinchChangesDistance) {
     EXPECT_NEAR(300.0, projectedAfterZoomOut.y, 2.0);
 }
 
+TEST_F(CameraControllerTest, PinchCombinedZoomAndRotateKeepsAnchorPinned) {
+    // A1 锚点锁：缩放+旋转同时发生时，手指下的地表点必须保持在双指中心。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    constexpr double cx = 450.0;
+    constexpr double cy = 320.0;
+    Vec3 grabbed = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.2f, cx, cy, 0.15f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    glm::dvec2 projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(cx, projected.x, 2.0);
+    EXPECT_NEAR(cy, projected.y, 2.0);
+}
+
+TEST_F(CameraControllerTest, PinchSlowRotateRespondsAndKeepsAnchorPinned) {
+    // A1：缓慢拧动（每帧远小于旧 0.003rad 死区）不应被死区吞掉——相机必须
+    // 逐帧响应，同时地表锚点保持在双指中心。旧实现下 20×0.001rad 全被丢弃，
+    // 相机纹丝不动（steppy），此断言 (a) 会失败。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    constexpr double cx = 430.0;
+    constexpr double cy = 330.0;
+    Vec3 grabbed = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 20; ++i) {
+        controller_->onPinchGesture(1.0f, cx, cy, 0.001f, 0.0f, 0.0f);
+    }
+    controller_->update(0.0);
+
+    // (a) 响应性：累计 20×0.001=0.02rad 的拧动必须真的转动相机。
+    EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 0.01);
+    // (b) 锚点锁：拧动全程地表点保持在双指中心。
+    glm::dvec2 projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(cx, projected.x, 2.0);
+    EXPECT_NEAR(cy, projected.y, 2.0);
+}
+
 TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);
