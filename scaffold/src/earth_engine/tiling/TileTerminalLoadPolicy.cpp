@@ -3,6 +3,7 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TileLoadTypes.h"
 #include "TilesetTile.h"
+#include "../debug/PerfTimer.h"
 
 namespace earth_engine {
 
@@ -17,6 +18,9 @@ void markUnknownTemporaryFailure(
     } else {
         tile.markContentFailedTemporarily();
     }
+    // 指数退避:避免 FailedTemporarily 瓦片每帧重打服务器(见
+    // TileRetryBackoffPolicy);成功加载时在 TilesetTile 标记器里重置。
+    tile.recordTemporaryFailureBackoff(perf::nowMs());
 }
 
 void markUnknownPermanentFailure(

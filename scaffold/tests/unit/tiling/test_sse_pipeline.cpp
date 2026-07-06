@@ -10251,6 +10251,9 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
               root->children.front() &&
               root->children.front()->key == childKey,
           "Tileset: RetryLater content materializes latent children during updateContent like cesium-native");
+    // 退避:模拟退避时间已过后验证 temp 失败仍可重试(语义保留;本帧内退避门控
+    // 见 TileRetryBackoffPolicy 单测)。
+    if (root) { root->resetTemporaryFailureBackoff(); }
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(rawProvider->requestCount == 2,
           "Tileset: RetryLater content remains retryable");
@@ -10345,6 +10348,8 @@ void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
               root->children.front() &&
               root->children.front()->key == childKey,
           "Tileset: Cancelled content materializes latent children during updateContent like cesium-native");
+    // 退避:模拟退避时间已过后验证 temp 失败仍可重试(语义保留)。
+    if (root) { root->resetTemporaryFailureBackoff(); }
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(rawProvider->requestCount == 2,
           "Tileset: Cancelled content remains retryable");
@@ -20613,6 +20618,8 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
         TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
         emptyContentRegistry,
         nullptr);
+    // 退避:模拟退避时间已过后验证清空 empty 标记的瓦片仍可重试。
+    tileRaw->resetTemporaryFailureBackoff();
     outcome = requestOnce();
     check(outcome.issued == 1 &&
               provider.requestCount == 1 &&

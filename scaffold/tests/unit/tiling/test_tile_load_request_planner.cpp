@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/tiling/TileLoadRequestPlanner.h"
+#include "earth_engine/tiling/TileRetryBackoffPolicy.h"
 
 using namespace earth_engine;
 
@@ -166,4 +167,34 @@ TEST(TileLoadRequestPlannerTest, ContentProviderKeepsTemporarilyFailedTilesRetry
     EXPECT_EQ(
         TileLoadRequestKind::Skip,
         TileLoadRequestPlanner::classify(snapshot));
+}
+
+// ---- 瞬时失败退避策略(TileRetryBackoffPolicy)----
+
+TEST(TileRetryBackoffPolicyTest, BackoffIsExponentialAndCapped) {
+    EXPECT_DOUBLE_EQ(500.0, TileRetryBackoffPolicy::backoffMs(1));
+    EXPECT_DOUBLE_EQ(1000.0, TileRetryBackoffPolicy::backoffMs(2));
+    EXPECT_DOUBLE_EQ(2000.0, TileRetryBackoffPolicy::backoffMs(3));
+    EXPECT_DOUBLE_EQ(4000.0, TileRetryBackoffPolicy::backoffMs(4));
+    // 封顶 30000ms:第 8 次(500*2^7=64000)已超上限。
+    EXPECT_DOUBLE_EQ(TileRetryBackoffPolicy::kCapMs,
+                     TileRetryBackoffPolicy::backoffMs(8));
+    EXPECT_DOUBLE_EQ(TileRetryBackoffPolicy::kCapMs,
+                     TileRetryBackoffPolicy::backoffMs(100));
+    // attemptCount<=1 边界。
+    EXPECT_DOUBLE_EQ(500.0, TileRetryBackoffPolicy::backoffMs(0));
+}
+
+TEST(TileRetryBackoffPolicyTest, RetryDueGatesOnNow) {
+    // 失败后:retryNotBefore = now + backoff。
+    const double now = 10000.0;
+    const double retryNotBefore = now + TileRetryBackoffPolicy::backoffMs(1);
+    EXPECT_FALSE(TileRetryBackoffPolicy::isRetryDue(retryNotBefore, now));
+    EXPECT_FALSE(
+        TileRetryBackoffPolicy::isRetryDue(retryNotBefore, retryNotBefore - 1.0));
+    EXPECT_TRUE(TileRetryBackoffPolicy::isRetryDue(retryNotBefore, retryNotBefore));
+    EXPECT_TRUE(
+        TileRetryBackoffPolicy::isRetryDue(retryNotBefore, retryNotBefore + 1.0));
+    // 从未失败(retryNotBefore==0)立即可重试。
+    EXPECT_TRUE(TileRetryBackoffPolicy::isRetryDue(0.0, 0.0));
 }

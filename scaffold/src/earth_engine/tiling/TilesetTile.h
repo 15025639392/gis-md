@@ -9,6 +9,7 @@
 #include "TileRefine.h"
 #include "TileRenderablePolicy.h"
 #include "TileRenderReferenceState.h"
+#include "TileRetryBackoffPolicy.h"
 #include "TileRenderContentState.h"
 #include "TileSelectionFrameState.h"
 #include "TileBoundingVolume.h"
@@ -79,6 +80,21 @@ struct TilesetTile {
     // ---- Content (terrain mesh / GPU buffers / glTF render resources) ----
     TileContentRuntimeState content;
 
+    // 瞬时失败退避:避免 FailedTemporarily 瓦片每帧重打服务器(见
+    // TileRetryBackoffPolicy)。标记临时失败时 record,成功加载时 reset。
+    double temporaryFailureRetryNotBeforeMs = 0.0;
+    int temporaryFailureCount = 0;
+
+    void recordTemporaryFailureBackoff(double nowMs) {
+        ++temporaryFailureCount;
+        temporaryFailureRetryNotBeforeMs =
+            nowMs + TileRetryBackoffPolicy::backoffMs(temporaryFailureCount);
+    }
+    void resetTemporaryFailureBackoff() {
+        temporaryFailureCount = 0;
+        temporaryFailureRetryNotBeforeMs = 0.0;
+    }
+
     void markContentLoading() {
         TileContentStateTransition::markLoading(
             content.loadState,
@@ -86,6 +102,7 @@ struct TilesetTile {
     }
 
     void markRenderContentLoaded() {
+        resetTemporaryFailureBackoff();
         TileContentStateTransition::markRenderLoaded(
             content.loadState,
             content.contentKind);
@@ -103,6 +120,7 @@ struct TilesetTile {
                                     bool markDone,
                                     IsCompleteRenderableFn&&
                                         isCompleteRenderable) {
+        resetTemporaryFailureBackoff();
         content.renderContent.setTerrainRenderContent(true);
         content.renderContent.setMeshReady(true);
         content.renderContent.setSurfaceSource(source);
@@ -200,6 +218,7 @@ struct TilesetTile {
     }
 
     void markEmptyContentLoaded() {
+        resetTemporaryFailureBackoff();
         TileContentStateTransition::markEmptyLoaded(
             content.loadState,
             content.contentKind);

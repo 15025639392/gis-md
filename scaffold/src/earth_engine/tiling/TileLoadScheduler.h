@@ -4,6 +4,9 @@
 #include "TileLoadRequestDispatcher.h"
 #include "TileLoadRequestPlanner.h"
 #include "TileLoadPriorityPolicy.h"
+#include "TileRetryBackoffPolicy.h"
+#include "TilesetTile.h"
+#include "../debug/PerfTimer.h"
 #include "TileLoadTypes.h"
 #include "TileMotionCullPolicy.h"
 #include "TileGltfTerrainUpsampledChildMaterializer.h"
@@ -74,6 +77,16 @@ public:
             TilesetTile* tileState = nullptr;
             const TileLoadRequestSnapshot snapshot =
                 makeSnapshot(requestKey, cacheKey, tileState);
+            // 退避门:临时失败瓦片未到重试时刻则跳过,避免每帧重打服务器
+            // (项目自有的体验层退避,cesium-native 无此机制)。
+            if (snapshot.loadState == TileLoadState::FailedTemporarily &&
+                tileState != nullptr &&
+                !TileRetryBackoffPolicy::isRetryDue(
+                    tileState->temporaryFailureRetryNotBeforeMs,
+                    perf::nowMs())) {
+                ++outcome.skippedClassified;
+                continue;
+            }
             const TileLoadRequestKind requestKind =
                 TileLoadRequestPlanner::classify(snapshot);
 

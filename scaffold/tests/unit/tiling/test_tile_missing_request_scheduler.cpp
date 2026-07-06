@@ -151,6 +151,12 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
         TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
         emptyContentRegistry,
         nullptr);
+    // 退避(TileRetryBackoffPolicy):临时失败后本帧被门控,不立即重打服务器。
+    outcome = requestOnce();
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_EQ(tileRaw->content.loadState, TileLoadState::FailedTemporarily);
+    // 模拟退避时间已过 → 仍可重试(temp 失败可重试语义保留,区别于永久失败)。
+    tileRaw->resetTemporaryFailureBackoff();
     outcome = requestOnce();
     EXPECT_EQ(outcome.issued, 1u);
     EXPECT_EQ(provider.requestCount, 1);
