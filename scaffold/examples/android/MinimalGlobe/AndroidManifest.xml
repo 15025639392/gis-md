@@ -11,6 +11,10 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
+        <!-- 允许 simpleperf 在 release(非 debuggable)变体上采样归因性能热点。
+             shell=true = 只允许 adb shell 侧 profile,不放开 app 内 profile。 -->
+        <profileable android:shell="true" />
+
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize"
