@@ -105,6 +105,17 @@ static bool initEGL(ANativeWindow* window) {
     EGLint major, minor;
     if (!eglInitialize(gDisplay, &major, &minor)) return false;
 
+    // 优先请求 4x MSAA(默认帧缓冲多重采样,eglSwapBuffers 自动 resolve,无需
+    // 改 shader/离屏帧缓冲);驱动不支持则回退无 MSAA。消除地形/海岸线/建筑轮廓
+    // 边缘爬行。
+    const EGLint msaaAttribs[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+        EGL_DEPTH_SIZE, 24,
+        EGL_SAMPLE_BUFFERS, 1, EGL_SAMPLES, 4,
+        EGL_NONE
+    };
     const EGLint attribs[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -114,9 +125,18 @@ static bool initEGL(ANativeWindow* window) {
     };
 
     EGLConfig config;
-    EGLint numConfigs;
-    if (!eglChooseConfig(gDisplay, attribs, &config, 1, &numConfigs)) return false;
-    if (numConfigs < 1) return false;
+    EGLint numConfigs = 0;
+    if (!eglChooseConfig(gDisplay, msaaAttribs, &config, 1, &numConfigs) ||
+        numConfigs < 1) {
+        if (!eglChooseConfig(gDisplay, attribs, &config, 1, &numConfigs)) {
+            return false;
+        }
+        if (numConfigs < 1) return false;
+    }
+    EGLint chosenSamples = 0;
+    eglGetConfigAttrib(gDisplay, config, EGL_SAMPLES, &chosenSamples);
+    __android_log_print(ANDROID_LOG_INFO, "GLESView",
+                        "EGL config MSAA samples=%d", chosenSamples);
 
     gSurface = eglCreateWindowSurface(gDisplay, config, window, nullptr);
     if (gSurface == EGL_NO_SURFACE) return false;
