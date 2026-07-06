@@ -12,6 +12,7 @@
 namespace earth_engine {
 
 class Camera;
+class CameraController;
 class RenderDevice;
 class Scene;
 class Tileset;
@@ -128,6 +129,7 @@ public:
     // ---- 访问器 ----
 
     Camera& camera();
+    CameraController& cameraController();
     bool isReady() const;
 
     /// [GESTDIAG] 当前手势锚点世界坐标(ECEF)；无活动手势返回 false。

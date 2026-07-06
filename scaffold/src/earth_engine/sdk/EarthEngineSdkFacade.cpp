@@ -6,6 +6,7 @@
 #include "../core/geodesy/Ellipsoid.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
+#include "../camera/CameraController.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/BingMapsImageryProvider.h"
 #include "../providers/DebugImageryProvider.h"
@@ -21,7 +22,12 @@
 #include "../scene/Camera.h"
 #include "../tiling/Tileset.h"
 
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <map>
 #include <memory>
@@ -641,6 +647,31 @@ void EarthEngineSdkFacade::resetCamera() {
         up = normal.cross(east.normalized());
     }
     engine_.camera().lookAt(camEcef, targetEcef, up);
+
+    // CameraController 以 orbit 模式每帧从自身 rotation_/distance_ 重建相机
+    // （看向地心=nadir），否则上面的 lookAt 会在第 1 帧被覆盖、初始相机 config
+    // 不生效。这里把 orbit 状态同步为"目标点正上方 heightMeters 高、正北朝上"：
+    //   orbit 约定：eye = -（rotation_·+Z）·distance_·R，看向地心，up=rotation_·+Y。
+    //   令 rotation_ 把 +Z→-targetDir、+Y→north ⇒ eye 落在 targetDir·(R_t+h)。
+    constexpr double kEarthRadiusMeters = 6378137.0;
+    const glm::dvec3 upG = normal.raw();
+    glm::dvec3 eastG = glm::cross(glm::dvec3(0.0, 0.0, 1.0), upG);
+    if (glm::length(eastG) < 1e-9) {
+        eastG = glm::dvec3(1.0, 0.0, 0.0);
+    }
+    eastG = glm::normalize(eastG);
+    const glm::dvec3 northG = glm::normalize(glm::cross(upG, eastG));
+    // 列向量 [Rx, Ry, Rz] = [-east, north, -up]（推导见上）。
+    const glm::dmat3 basis(-eastG, northG, -upG);
+    const glm::dquat orbitRotation = glm::quat_cast(basis);
+    const double targetRadius =
+        std::sqrt(targetEcef.dot(targetEcef));
+    const double distanceEarthRadii =
+        (targetRadius + config_.initialCamera.heightMeters) /
+        kEarthRadiusMeters;
+    engine_.cameraController().setRotation(orbitRotation);
+    engine_.cameraController().setDistance(
+        static_cast<float>(distanceEarthRadii));
 }
 
 void EarthEngineSdkFacade::addActivatedRasterOverlay(

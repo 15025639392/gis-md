@@ -155,6 +155,10 @@ Camera& Engine::camera() {
     return scene_->camera();
 }
 
+CameraController& Engine::cameraController() {
+    return scene_->cameraController();
+}
+
 // ---- 矢量图层 ----
 
 void Engine::addVectorLayer(std::unique_ptr<VectorLayer> layer) {
