@@ -24,6 +24,24 @@ android {
             manifest.srcFile "../MinimalGlobe/AndroidManifest.xml"
         }
     }
+
+    buildTypes {
+        // 优化(-O2 / RelWithDebInfo native)构建,专供**本地性能测量**。
+        // 性能必须在此变体上评估:debug(assembleDebug)是 -O0,glm 双精度数学
+        // 不内联,会把 selector/Tileset.update 膨胀 ~2.5-3×,得出错误的瓶颈画面。
+        //
+        // ⚠️ 用 debug key 签名仅为可安装,**严禁分发**(debug keystore 公开)。
+        // 真要出货请配置真实 signingConfig。
+        // debugSymbolLevel FULL 保留符号以便 simpleperf 归因。
+        // 用法:./build_apk.sh release   (或 ./gradlew assembleRelease)
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            ndk {
+                debugSymbolLevel "FULL"
+            }
+        }
+    }
 }
 
 dependencies {
