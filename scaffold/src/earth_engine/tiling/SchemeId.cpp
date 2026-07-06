@@ -1,18 +1,29 @@
 #include "SchemeId.h"
 
+#include <memory>
 #include <mutex>
-#include <unordered_set>
+#include <vector>
 
 namespace earth_engine {
 
 const std::string& SchemeId::intern(const std::string& s) {
-    // unordered_set node storage: element addresses are stable across inserts
-    // (only invalidated by erasing that element, which never happens here), so
-    // returning &*it yields a permanently stable canonical pointer.
+    // Schemes are few (1–2 per run) but intern() is called on the hot path
+    // (every TileKey built from / compared against a std::string scheme). A
+    // small vector with a linear scan costs ONE string compare in the steady
+    // state — cheaper than an unordered_set's per-call string hash + table
+    // probe, and without thread_local (which on Android routes through the
+    // costly __emutls_get_address). unique_ptr pointees have stable addresses
+    // across vector reallocation, so the returned reference is permanent.
     static std::mutex mutex;
-    static std::unordered_set<std::string> table;
+    static std::vector<std::unique_ptr<std::string>> table;
     std::lock_guard<std::mutex> lock(mutex);
-    return *table.insert(s).first;
+    for (const std::unique_ptr<std::string>& entry : table) {
+        if (*entry == s) {
+            return *entry;
+        }
+    }
+    table.push_back(std::make_unique<std::string>(s));
+    return *table.back();
 }
 
 const std::string& SchemeId::emptyString() {

@@ -1650,7 +1650,7 @@ TileContentLoadResult QuantizedMeshTerrainProvider::loadQuantizedMeshTileContent
     {
         std::lock_guard<std::recursive_mutex> lock(layersMutex_);
         const LayerConfig* contentLayer = firstAvailableLayer(key);
-        contentSchemeId = contentLayer ? contentLayer->schemeId : schemeId_;
+        contentSchemeId = contentLayer ? contentLayer->schemeId : schemeId_.str();
     }
     return QuantizedMeshContentLoader::loadTileContent(
         data,

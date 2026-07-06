@@ -330,7 +330,10 @@ private:
     std::string urlTemplate_;
     std::string attribution_;
     std::string layerJsonUrl_;
-    std::string schemeId_ = "Geographic-TMS";
+    // Interned handle(见 SchemeId):热路径 tileMetadata 每次 `key.schemeId ==
+    // schemeId_` 若 schemeId_ 是 std::string 会隐式 intern 该串;用 SchemeId 则
+    // 构造时 intern 一次,之后比较/拷贝走指针,零 intern。
+    SchemeId schemeId_ = "Geographic-TMS";
     std::string version_;
     std::string extensionsToRequest_;
     std::vector<std::vector<TileAvailabilityRect>> availabilityRanges_;
