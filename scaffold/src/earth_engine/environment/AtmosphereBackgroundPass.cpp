@@ -183,71 +183,72 @@ void main() {
     float horizonAir = (1.0 - smoothstep(0.0, 0.18, abs(viewUp))) * (1.0 - spaceFactor);
     color = mix(color, horizonColor, clamp(horizonAir * 0.22, 0.0, 0.22));
 
-    // ---- Sun disk and stellar glow ----
+    // ---- Painterly stylized sun: soft warm disk + dreamy concentric halo ----
+    // 目标是"绘画/游戏天空"的观感而非天文写实：偏大的暖色柔边圆盘，外围由多层
+    // 指数壳叠出的同心柔光晕(无硬边日冕环),再叠一层极淡的放射状 god-ray。所有项
+    // 都随 forwardScatter 门控,太阳在背面/侧面时自然淡出。系数均为可调旋钮。
     float cosTheta = dot(rayDir, sun);
     float baseSunRadius = max(u_sunAngularRadius, 0.0001);
-    float sunRadius = baseSunRadius * 0.5;
-    float glowRadius = baseSunRadius * 2.0;
     float sunAngle = sqrt(max(2.0 * (1.0 - cosTheta), 0.0));
-    float sunR = sunAngle / sunRadius;
-    float glowR = sunAngle / glowRadius;
+    // d: 归一化角距，1.0 落在圆盘边缘。0.72 让盘面比旧版(0.5)更大更醒目。
+    float discRadius = baseSunRadius * 0.72;
+    float d = sunAngle / discRadius;
+    float dClamp = min(d, 1.0);
 
-    float diskMask = 1.0 - smoothstep(0.97, 1.03, sunR);
-    float limb = sqrt(max(1.0 - sunR * sunR, 0.0));
-    float limbDarkening = mix(0.72, 1.0, pow(limb, 0.42));
-    vec3 solarCore = vec3(1.0, 0.82, 0.28);
-    vec3 solarEdge = vec3(1.0, 0.42, 0.08);
-    vec3 diskColor = mix(solarEdge, solarCore, pow(limb, 0.28)) * limbDarkening;
+    // 柔边圆盘：边缘用宽 smoothstep 融进光晕，不再是硬切。
+    float core = 1.0 - smoothstep(0.55, 1.10, d);
+    float limb = sqrt(max(1.0 - dClamp * dClamp, 0.0));
+    // 暖色绘画调色板：近白的芯 → 暖金 → 琥珀边。
+    vec3 sunHeart = vec3(1.00, 0.97, 0.86);
+    vec3 sunGold  = vec3(1.00, 0.86, 0.52);
+    vec3 sunAmber = vec3(1.00, 0.66, 0.30);
+    vec3 discColor = mix(sunAmber, sunGold, smoothstep(0.0, 0.7, limb));
+    discColor = mix(discColor, sunHeart, pow(limb, 1.6));
 
-    float coronaR = max(glowR - 1.0, 0.0);
-    float innerCorona = exp(-coronaR * coronaR * 1.25);
-    float outerCorona = 1.0 / (1.0 + coronaR * coronaR * 4.2);
-    float forwardScatter = smoothstep(0.68, 1.0, cosTheta);
+    // 暖金大光晕：参考日出照片的金色光团——加大加暖，向天空平滑晕开。三层壳:
+    // 贴边亮芯 bloom / 中层暖金 / 宽阔琥珀拖尾。
+    float forwardScatter = smoothstep(0.5, 1.0, cosTheta);
+    float halo1 = exp(-max(d - 0.6, 0.0) * 2.1);   // 贴边的紧致 bloom
+    float halo2 = exp(-max(d - 1.0, 0.0) * 0.55);  // 中层暖金晕染(加宽)
+    float halo3 = 1.0 / (1.0 + d * d * 0.085);     // 宽阔的金色大光团(加大)
+    vec3 haloColor = sunHeart * halo1 * 0.74 +
+                     sunGold  * halo2 * 0.54 +
+                     sunAmber * halo3 * 0.30;
+    haloColor *= forwardScatter;
 
+    // 放射状霞光(crepuscular rays / sunburst)：屏幕空间里从太阳向外辐射的光束。
+    // 用三组不同频率+相位的角向脉冲叠加，得到粗细不匀、不规则的自然光束(避免
+    // 机械十字星),近太阳最亮、随距离拉长淡出。参考图二的放射霞光。
     vec3 sunView = vec3(
         dot(sun, u_camRight),
         dot(sun, u_camUp),
         dot(sun, u_camForward));
-    float sunInFront = smoothstep(0.0, 0.035, sunView.z);
+    float sunInFront = smoothstep(0.0, 0.05, sunView.z);
     vec2 screenUv = vec2(ndcX, ndcY);
     vec2 sunScreenUv = sunView.xy / max(sunView.z * tanFovHalf, 0.0001);
     vec2 screenDelta = screenUv - sunScreenUv;
     float screenDist = length(screenDelta);
+    float rayAngle = atan(screenDelta.y, screenDelta.x);
+    float rays = pow(0.5 + 0.5 * cos(rayAngle * 13.0), 7.0) * 1.0 +
+                 pow(0.5 + 0.5 * cos(rayAngle * 24.0 + 1.7), 11.0) * 0.55 +
+                 pow(0.5 + 0.5 * cos(rayAngle * 7.0 - 0.9), 5.0) * 0.6;
+    // 起点略在盘外(smoothstep)避免正中心堆亮点，随距离指数拉长淡出。
+    // 稍加大衰减系数,让光束更集中在太阳近旁(参考图的霞光近源最密)。
+    float sunburst = rays * exp(-screenDist * 2.8) *
+                     smoothstep(0.015, 0.06, screenDist) * 0.42;
+    sunburst *= sunInFront * forwardScatter;
 
-    float axialHorizontal =
-        smoothstep(0.075, 0.0, abs(screenDelta.y)) *
-        smoothstep(0.95, 0.0, abs(screenDelta.x)) *
-        exp(-screenDist * 3.2);
-    float axialVertical =
-        smoothstep(0.075, 0.0, abs(screenDelta.x)) *
-        smoothstep(0.95, 0.0, abs(screenDelta.y)) *
-        exp(-screenDist * 3.2);
-    float diagonalA =
-        smoothstep(0.055, 0.0, abs(screenDelta.x - screenDelta.y)) *
-        smoothstep(0.82, 0.0, screenDist) *
-        exp(-screenDist * 4.0);
-    float diagonalB =
-        smoothstep(0.055, 0.0, abs(screenDelta.x + screenDelta.y)) *
-        smoothstep(0.82, 0.0, screenDist) *
-        exp(-screenDist * 4.0);
-    float stellarRays =
-        (axialHorizontal + axialVertical) * 0.22 +
-        (diagonalA + diagonalB) * 0.075;
-    stellarRays *= sunInFront * forwardScatter * (0.35 + 0.65 * spaceFactor);
-
-    vec3 coronaColor = vec3(1.0, 0.58, 0.16) * innerCorona * 0.34 +
-                       vec3(1.0, 0.76, 0.28) * outerCorona * 0.12 +
-                       vec3(1.0, 0.66, 0.22) * stellarRays;
-    coronaColor *= forwardScatter * (0.45 + 0.55 * spaceFactor);
+    vec3 sunColor = discColor * (core + limb * 0.35) +
+                    haloColor +
+                    mix(sunGold, sunHeart, 0.3) * sunburst;
 
     float sunEnabled = step(0.5, u_sunDiskEnabled);
-    color += sunEnabled * diskMask * diskColor * u_sunIntensity * 1.45;
-    color += sunEnabled * coronaColor * u_sunIntensity;
+    color += sunEnabled * sunColor * u_sunIntensity * 1.4;
 
     float skyAlpha = mix(1.0, 0.18, spaceFactor);
     float limbAlpha = pathScatterAmount * spaceFactor;
-    float sunAlpha = sunEnabled * sunInFront * forwardScatter *
-        clamp(diskMask + innerCorona * 0.32 + outerCorona * 0.10 + stellarRays * 0.28,
+    float sunAlpha = sunEnabled * forwardScatter *
+        clamp(core + halo1 * 0.6 + halo2 * 0.35 + halo3 * 0.2 + sunburst,
               0.0,
               1.0);
     fragColor = vec4(color, clamp(max(max(skyAlpha, limbAlpha), sunAlpha), 0.0, 1.0));
