@@ -2,6 +2,7 @@
 #include "scene/Scene.h"
 #include "tiling/Tileset.h"
 #include "scene/Camera.h"
+#include "camera/CameraController.h"
 #include "renderer/RenderDevice.h"
 #include "layers/VectorLayer.h"
 #include "interaction/InputEvent.h"
@@ -231,6 +232,11 @@ void Engine::advanceTime(double seconds) {
 
 Vec3 Engine::sunDirection() const {
     return scene_->sunDirection();
+}
+
+bool Engine::debugAnchorWorld(Vec3& outWorld) const {
+    if (!scene_) return false;
+    return scene_->cameraController().debugAnchorWorld(outWorld);
 }
 
 void Engine::getClearColor(float& r, float& g, float& b, float& a) const {

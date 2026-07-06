@@ -1,7 +1,10 @@
 package com.earthengine.minimalglobe;
 
 import android.app.Activity;
+import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -37,6 +40,12 @@ public class MainActivity extends Activity {
         // GL surface
         mGLView = new GLESView(this);
         root.addView(mGLView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // [GESTDIAG] 手势锚点可视化覆盖层（在 GL 之上、按钮之下；不拦截触摸）
+        AnchorOverlayView anchorOverlay = new AnchorOverlayView(this);
+        root.addView(anchorOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -140,6 +149,47 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    /**
+     * [GESTDIAG] 在 GL 之上绘制当前手势锚点的十字标记，vsync 连续自刷新，
+     * 不拦截触摸（落到下面的 GLESView）。用于真机观察缩放/旋转时锚点是否
+     * 稳定跟手——标记若在双指触摸/捏合首帧跳离手指即为"瞬间偏移"。
+     */
+    private static final class AnchorOverlayView extends View {
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final float[] pos = new float[2];
+
+        AnchorOverlayView(Context context) {
+            super(context);
+            setClickable(false);
+            setFocusable(false);
+            fill.setColor(0xFFFF3B30);   // 红色实心圆
+            fill.setStyle(Paint.Style.FILL);
+            ring.setColor(0xFFFFFFFF);   // 白色描边+十字
+            ring.setStyle(Paint.Style.STROKE);
+            ring.setStrokeWidth(3f);
+        }
+
+        @Override
+        public boolean onTouchEvent(android.view.MotionEvent event) {
+            return false;  // 不消费，触摸透传到下面的 GLESView
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (GLESView.nativeGetAnchorScreen(pos)) {
+                final float x = pos[0];
+                final float y = pos[1];
+                final float r = 14f * getResources().getDisplayMetrics().density;
+                canvas.drawCircle(x, y, 6f, fill);
+                canvas.drawCircle(x, y, r, ring);
+                canvas.drawLine(x - r * 1.6f, y, x + r * 1.6f, y, ring);
+                canvas.drawLine(x, y - r * 1.6f, x, y + r * 1.6f, ring);
+            }
+            postInvalidateOnAnimation();  // vsync 连续刷新，跟随相机每帧移动
+        }
     }
 
     private void toggleDebugPanel() {

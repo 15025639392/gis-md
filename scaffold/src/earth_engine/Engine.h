@@ -130,6 +130,10 @@ public:
     Camera& camera();
     bool isReady() const;
 
+    /// [GESTDIAG] 当前手势锚点世界坐标(ECEF)；无活动手势返回 false。
+    /// 供真机可视化缩放/旋转锚点稳定性用。
+    bool debugAnchorWorld(Vec3& outWorld) const;
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;

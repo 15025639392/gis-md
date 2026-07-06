@@ -47,6 +47,12 @@ static ANativeWindow* gWindow = nullptr;
 // 宽高被 UI 线程（触摸事件整形）与渲染线程（EGL/引擎）两侧读写，用原子避免撕裂
 static std::atomic<int> gWidth{0}, gHeight{0};
 
+// [GESTDIAG] 每帧由渲染线程发布当前手势锚点的屏幕投影(物理像素)，UI 线程
+// 无锁读取用于绘制锚点标记。定位"双指瞬间偏移"用，定位后整体移除。
+static std::atomic<bool> gAnchorActive{false};
+static std::atomic<float> gAnchorScreenX{0.0f};
+static std::atomic<float> gAnchorScreenY{0.0f};
+
 // Engine + RenderDevice
 static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
 static std::unique_ptr<Engine> gEngine;
@@ -217,6 +223,28 @@ static void renderFrame() {
     // 环境系统：时间步进，render 中 update() 计算当前帧天空色
     gEngine->advanceTime(dt);
     gEngine->render(0.0);  // auto-delta（内部 beginFrame→update 计算 clearColor→render→endFrame）
+
+    // [GESTDIAG] 发布当前手势锚点屏幕投影（用当前帧相机，故标记随相机每帧跟随）。
+    {
+        Vec3 anchorWorld;
+        bool published = false;
+        if (gEngine->debugAnchorWorld(anchorWorld)) {
+            const int w = gWidth.load();
+            const int h = gHeight.load();
+            const glm::dmat4 vp = gEngine->camera()
+                .viewProjectionMatrix(static_cast<double>(w),
+                                      static_cast<double>(h)).raw();
+            glm::dvec4 clip = vp * glm::dvec4(anchorWorld.raw(), 1.0);
+            if (clip.w > 1e-9) {  // w>0 → 锚点在相机前方
+                clip /= clip.w;
+                gAnchorScreenX = static_cast<float>((clip.x + 1.0) * 0.5 * w);
+                gAnchorScreenY = static_cast<float>((1.0 - clip.y) * 0.5 * h);
+                gAnchorActive = true;
+                published = true;
+            }
+        }
+        if (!published) gAnchorActive = false;
+    }
 
     eglSwapBuffers(gDisplay, gSurface);
     ++gFrameCount;
@@ -860,6 +888,18 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         },
         std::chrono::milliseconds(100));
     return env->NewStringUTF(ok ? text->c_str() : "Engine not ready");
+}
+
+// [GESTDIAG] 无锁读取渲染线程发布的锚点屏幕投影。out[0]=x, out[1]=y(物理像素)。
+// 返回 true 表示当前有活动手势锚点。
+JNIEXPORT jboolean JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGetAnchorScreen(
+    JNIEnv* env, jobject /* this */, jfloatArray out) {
+    if (out != nullptr && env->GetArrayLength(out) >= 2) {
+        jfloat vals[2] = { gAnchorScreenX.load(), gAnchorScreenY.load() };
+        env->SetFloatArrayRegion(out, 0, 2, vals);
+    }
+    return gAnchorActive.load() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL

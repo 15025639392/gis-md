@@ -231,6 +231,10 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     private static native void nativePause();
     private static native void nativeResume();
 
+    // [GESTDIAG] 读取当前手势锚点屏幕投影(物理像素)；out[0]=x,out[1]=y，
+    // 返回 true 表示有活动锚点。用于可视化缩放/旋转锚点稳定性。
+    public static native boolean nativeGetAnchorScreen(float[] out);
+
     // --- Debug panel native methods ---
     public native String nativeGetDiagnosticsString();
     public native void nativeAddDemoVectorLayer();

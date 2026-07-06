@@ -139,6 +139,7 @@ void CameraController::onDragStart(float xPixels, float yPixels, double timestam
     dragLastY_ = yPixels;
     inertiaAngularVelocity_ = 0.0;
     lastDragTimestamp_ = timestamp;
+    logGestureDiag("dragStart", xPixels, yPixels);
 }
 
 void CameraController::onDragMove(float xPixels, float yPixels, double timestamp) {
@@ -148,10 +149,12 @@ void CameraController::onDragMove(float xPixels, float yPixels, double timestamp
 
     dragLastX_ = xPixels;
     dragLastY_ = yPixels;
+    logGestureDiag("dragMove", xPixels, yPixels);
 }
 
 void CameraController::onDragEnd() {
     if (!dragging_) return;
+    logGestureDiag("dragEnd", dragLastX_, dragLastY_);
     dragging_ = false;
     hasGrabbedPoint_ = false;
     // 惯性参数由 orbit() 中的最后一次调用设置
@@ -170,6 +173,8 @@ void CameraController::onPinchGesture(float scale,
     inertiaAngularVelocity_ = 0.0;
     dragging_ = false;
     hasGrabbedPoint_ = false;
+
+    const bool isPinchStartFrame = !pinching_;
 
     if (!pinching_) {
         pinching_ = true;
@@ -294,9 +299,13 @@ void CameraController::onPinchGesture(float scale,
             syncDistanceFromCamera();
         }
     }
+
+    logGestureDiag(isPinchStartFrame ? "pinchStart" : "pinchMove",
+                   centerX, centerY);
 }
 
 void CameraController::onPinchEnd() {
+    logGestureDiag("pinchEnd", pinchAnchorScreenX_, pinchAnchorScreenY_);
     pinching_ = false;
     hasPinchAnchor_ = false;
     inertiaAngularVelocity_ = 0.0;
@@ -475,6 +484,64 @@ void CameraController::syncDistanceFromCamera() {
 
 glm::dvec3 CameraController::clampEyeAltitude(const glm::dvec3& eye) const {
     return clampEyeToMinAltitude(eye, terrainHeightFunc_);
+}
+
+bool CameraController::debugAnchorWorld(Vec3& outWorld) const {
+    if (pinching_ && hasPinchAnchor_) {
+        outWorld = Vec3(pinchAnchorNormal_.raw() * grabbedRadiusMeters_);
+        return true;
+    }
+    if (dragging_ && hasGrabbedPoint_) {
+        outWorld = grabbedPoint_;
+        return true;
+    }
+    return false;
+}
+
+void CameraController::logGestureDiag(const char* label, float screenX, float screenY) {
+    // [GESTDIAG] 临时插桩：定位"双指触摸瞬间偏移"。dEye 是本事件相机位移，
+    // anchorErr 是锚点当前投影与手指的像素差；某帧 dEye 或 anchorErr 突然
+    // 变大，即为跳变帧。定位后整体移除。
+    const glm::dvec3 eye = camera_->position().raw();
+    const double dEye = hasLastDiagEye_ ? glm::length(eye - lastDiagEye_) : 0.0;
+    lastDiagEye_ = eye;
+    hasLastDiagEye_ = true;
+
+    const Cartographic cart =
+        Ellipsoid::WGS84().cartesianToCartographic(Vec3(eye));
+
+    bool hasAnchor = false;
+    glm::dvec3 anchorWorld(0.0);
+    if (pinching_ && hasPinchAnchor_) {
+        anchorWorld = pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
+        hasAnchor = true;
+    } else if (hasGrabbedPoint_) {
+        anchorWorld = grabbedPoint_.raw();
+        hasAnchor = true;
+    }
+
+    double anchorErrX = 0.0;
+    double anchorErrY = 0.0;
+    if (hasAnchor) {
+        const glm::dmat4 vp = camera_->viewProjectionMatrix(
+            static_cast<double>(viewportWidth_),
+            static_cast<double>(viewportHeight_)).raw();
+        glm::dvec4 clip = vp * glm::dvec4(anchorWorld, 1.0);
+        if (std::abs(clip.w) > 1e-9) {
+            clip /= clip.w;
+            const double sx = (clip.x + 1.0) * 0.5 * viewportWidth_;
+            const double sy = (1.0 - clip.y) * 0.5 * viewportHeight_;
+            anchorErrX = sx - static_cast<double>(screenX);
+            anchorErrY = sy - static_cast<double>(screenY);
+        }
+    }
+
+    platformLog(LogLevel::Info, "GESTDIAG",
+        "%s eye=(%.5f,%.5f,%.0fm) dEye=%.1fm finger=(%.0f,%.0f) "
+        "anchorErr=(%.1f,%.1f)px hasAnchor=%d",
+        label,
+        cart.longitudeDegrees(), cart.latitudeDegrees(), cart.height(),
+        dEye, screenX, screenY, anchorErrX, anchorErrY, hasAnchor ? 1 : 0);
 }
 
 void CameraController::keepAnchorAtScreenPoint(const Vec3& anchorNormal,
