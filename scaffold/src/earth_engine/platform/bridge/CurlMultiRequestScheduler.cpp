@@ -1,5 +1,7 @@
 #include "CurlMultiRequestScheduler.h"
 
+#include "CaCertBundle.h"
+
 #include <curl/curl.h>
 
 #include <algorithm>
@@ -470,6 +472,17 @@ private:
         curl_easy_setopt(easy, CURLOPT_PRIVATE, request.get());
         curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, request->errorBuffer.data());
+        // vcpkg libcurl 无内置 CA 路径；Android app 沙箱又无法可靠使用系统 CA
+        // 目录(/system/etc/security/cacerts) —— OpenSSL 报 curl=60 "unable to
+        // get local issuer certificate"(SELinux/哈希目录格式)。故内嵌 Mozilla
+        // CA 包用内存 blob 做证书校验，一次性修复所有 HTTPS(cesium 及任何 HTTPS
+        // 源)；HTTP 源不受影响。VERIFYPEER 保持默认开启(安全)。NOCOPY：数据是
+        // 静态存储，curl 只引用不拷贝。
+        curl_blob caBlob;
+        caBlob.data = const_cast<char*>(kCaCertBundlePem);
+        caBlob.len = sizeof(kCaCertBundlePem) - 1;
+        caBlob.flags = CURL_BLOB_NOCOPY;
+        curl_easy_setopt(easy, CURLOPT_CAINFO_BLOB, &caBlob);
         for (const auto& header : request->requestHeaders) {
             const std::string value = header.first + ": " + header.second;
             request->headers =
