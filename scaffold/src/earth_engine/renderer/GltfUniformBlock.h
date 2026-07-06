@@ -46,6 +46,9 @@ struct alignas(16) GltfUniformBlock {
     std::array<float, 3> lightDir{0.0f, 0.0f, 0.0f};
     float useNormalMap = 0.0f;
     float debugNormalMap = 0.0f;
+    // 天空环境填充光（rgb + 保留 a）；SkyGradient 求解，每帧由
+    // SceneRenderCommandUniformUpdater 写入。16 字节保持 size % 16 == 0。
+    std::array<float, 4> ambient{0.0f, 0.0f, 0.0f, 1.0f};
 
     std::array<float, 4> baseColor{0.82f, 0.84f, 0.88f, 1.0f};
     float hasBaseColorTexture = 0.0f;
@@ -167,9 +170,10 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 85> table = {{
+    static const std::array<GltfUniformTableEntry, 86> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
+        EE_GLTF_ENTRY("u_ambient", ambient, 4),
         EE_GLTF_ENTRY("u_useNormalMap", useNormalMap, 1),
         EE_GLTF_ENTRY("u_debugNormalMap", debugNormalMap, 1),
         EE_GLTF_ENTRY("u_baseColor", baseColor, 4),

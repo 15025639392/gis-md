@@ -49,6 +49,8 @@ double updateEnvironment(const SceneFrameStateBuildInput& input) {
     frameState.clearR = hc[0];
     frameState.clearG = hc[1];
     frameState.clearB = hc[2];
+    auto& ac = input.skyGradient->ambientColor();
+    frameState.ambient = {ac[0], ac[1], ac[2]};
     return perf::nowMs() - startMs;
 }
 

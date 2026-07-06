@@ -67,6 +67,10 @@ void SceneRenderCommandUniformUpdater::apply(
                 cmd.gltfUniforms.lightDir = {frameState.lightDir.x,
                                              frameState.lightDir.y,
                                              frameState.lightDir.z};
+                cmd.gltfUniforms.ambient = {frameState.ambient.r,
+                                            frameState.ambient.g,
+                                            frameState.ambient.b,
+                                            1.0f};
             } else {
                 // 兜底：外部手工构造、未启用定长块的 glTF 命令仍走 map。
                 auto& mvpU = cmd.uniforms["u_modelViewProjection"];

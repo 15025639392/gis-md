@@ -192,6 +192,7 @@ in vec4 v_texcoord45;
 in vec4 v_texcoord67;
 
 uniform vec3 u_lightDir;
+uniform vec4 u_ambient;
 uniform vec4 u_baseColor;
 uniform sampler2D u_baseColorTexture;
 uniform sampler2D u_metallicRoughnessTexture;
@@ -354,7 +355,11 @@ vec4 applyGltfWaterMask(vec4 base) {
             uvFromSet(0.0) * u_gltfWaterMaskTranslationScale.z;
         water = texture(u_gltfWaterMaskTexture, waterUv).r;
     }
-    return vec4(mix(base.rgb, base.rgb, clamp(water, 0.0, 1.0)), base.a);
+    // 水面着色（第一步）：让 water mask 不再是 no-op —— 海洋像素轻度压暗+冷偏
+    // 使其与陆地有辨识度。真正的动画阳光反光(sun glint)需把视向量 V 接进本函数，
+    // 属报告 P2 后续；此处 tint 系数是可调旋钮。
+    vec3 waterRgb = base.rgb * 0.8 + vec3(0.01, 0.04, 0.07);
+    return vec4(mix(base.rgb, waterRgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
 vec3 applyTbn(vec3 tangent, vec3 bitangent, vec3 n, vec3 mapNormal) {
@@ -773,6 +778,7 @@ void main() {
     }
     diffuseColor *= 1.0 - transmission;
     vec3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
+                 diffuseColor * u_ambient.rgb * occlusion +
                  specularColor * specular +
                  emissive;
     if (dot(sheenColor, sheenColor) > 0.0) {
@@ -893,6 +899,7 @@ in vec3 v_normal;
 in vec2 v_texcoord;
 
 uniform vec3 u_lightDir;
+uniform vec4 u_ambient;
 uniform vec4 u_baseColor;
 uniform float u_hasBaseColorTexture;
 uniform sampler2D u_baseColorTexture;
@@ -957,7 +964,11 @@ vec4 applyGltfWaterMask(vec4 base) {
             uvFromSet(0.0) * u_gltfWaterMaskTranslationScale.z;
         water = texture(u_gltfWaterMaskTexture, waterUv).r;
     }
-    return vec4(mix(base.rgb, base.rgb, clamp(water, 0.0, 1.0)), base.a);
+    // 水面着色（第一步）：让 water mask 不再是 no-op —— 海洋像素轻度压暗+冷偏
+    // 使其与陆地有辨识度。真正的动画阳光反光(sun glint)需把视向量 V 接进本函数，
+    // 属报告 P2 后续；此处 tint 系数是可调旋钮。
+    vec3 waterRgb = base.rgb * 0.8 + vec3(0.01, 0.04, 0.07);
+    return vec4(mix(base.rgb, waterRgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
 void main() {
@@ -1019,7 +1030,7 @@ void main() {
     // Directional shade: keep imagery readable even when the light vector is
     // behind the tile (matches kSurfaceTileFragmentGLSL curvature hint).
     float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
-    vec3 color = base.rgb * shade;
+    vec3 color = base.rgb * shade + base.rgb * u_ambient.rgb;
     fragColor = vec4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
 }
 )glsl";
@@ -1303,6 +1314,7 @@ struct GltfUniforms {
     packed_float3 lightDir;
     float useNormalMap;
     float debugNormalMap;
+    packed_float4 ambient;
     packed_float4 baseColor;
     float hasBaseColorTexture;
     packed_float4 materialFactors;
@@ -1421,7 +1433,9 @@ float4 gltfApplyWaterMask(float4 base,
             translationScale.xy + gltfUvFromSet(in, 0.0) * translationScale.z;
         water = waterMaskTexture.sample(waterMaskSampler, waterUv).r;
     }
-    return float4(mix(base.rgb, base.rgb, clamp(water, 0.0, 1.0)), base.a);
+    // 水面着色（第一步）：见 GLSL 侧注释；tint 系数镜像保持一致。
+    float3 waterRgb = base.rgb * 0.8 + float3(0.01, 0.04, 0.07);
+    return float4(mix(base.rgb, waterRgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
 float3 gltfApplyTbn(float3 tangent,
@@ -1921,6 +1935,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     }
     diffuseColor *= 1.0 - transmission;
     float3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
+                   diffuseColor * float4(u.ambient).rgb * occlusion +
                    specularColor * specular +
                    emissive;
     if (dot(sheenColor, sheenColor) > 0.0) {
@@ -2002,6 +2017,7 @@ struct GltfUniforms {
     packed_float3 lightDir;
     float useNormalMap;
     float debugNormalMap;
+    packed_float4 ambient;
     packed_float4 baseColor;
     float hasBaseColorTexture;
     packed_float4 materialFactors;
@@ -2102,7 +2118,9 @@ float4 terrainApplyWaterMask(float4 base,
             translationScale.xy + in.texcoord * translationScale.z;
         water = waterMaskTexture.sample(waterMaskSampler, waterUv).r;
     }
-    return float4(mix(base.rgb, base.rgb, clamp(water, 0.0, 1.0)), base.a);
+    // 水面着色（第一步）：见 GLSL 侧注释；tint 系数镜像保持一致。
+    float3 waterRgb = base.rgb * 0.8 + float3(0.01, 0.04, 0.07);
+    return float4(mix(base.rgb, waterRgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
 fragment float4 terrainFragment(
@@ -2167,7 +2185,7 @@ fragment float4 terrainFragment(
     float alpha = u.alphaMode > 1.5 ? base.a : 1.0;
 
     float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
-    float3 color = base.rgb * shade;
+    float3 color = base.rgb * shade + base.rgb * float4(u.ambient).rgb;
     return float4(color, alpha * clamp(u.renderOpacity, 0.0, 1.0));
 }
 )msl";
