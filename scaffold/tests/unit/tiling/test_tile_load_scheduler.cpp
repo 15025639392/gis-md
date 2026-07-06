@@ -41,7 +41,7 @@ bool waitForUpsampleAsync(Predicate&& predicate) {
 }
 
 std::string cacheKeyForTile(const TileKey& key) {
-    return key.schemeId + ":" +
+    return key.schemeId.str() + ":" +
            std::to_string(key.z) + ":" +
            std::to_string(key.x) + ":" +
            std::to_string(key.y);
@@ -2314,7 +2314,7 @@ TEST(TileLoadSchedulerTest, ContentThenTerrainShareTerrainContentDispatchBudget)
                 const std::string&,
                 TilesetTile*& tileState) {
                 plannedKeys.push_back(
-                    key.schemeId + ":" + std::to_string(key.x));
+                    key.schemeId.str() + ":" + std::to_string(key.x));
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
                 if (key.schemeId == "content") {
@@ -2327,7 +2327,7 @@ TEST(TileLoadSchedulerTest, ContentThenTerrainShareTerrainContentDispatchBudget)
             [](TilesetTile&, double) { return false; },
             [&markedKeys](const TileKey& key) {
                 markedKeys.push_back(
-                    key.schemeId + ":" + std::to_string(key.x));
+                    key.schemeId.str() + ":" + std::to_string(key.x));
             });
 
     ASSERT_EQ(plannedKeys.size(), 3u);
@@ -2388,7 +2388,7 @@ TEST(TileLoadSchedulerTest, TerrainThenContentShareTerrainContentDispatchBudget)
                 const std::string&,
                 TilesetTile*& tileState) {
                 plannedKeys.push_back(
-                    key.schemeId + ":" + std::to_string(key.x));
+                    key.schemeId.str() + ":" + std::to_string(key.x));
                 tileState = nullptr;
                 TileLoadRequestSnapshot snapshot;
                 if (key.schemeId == "content") {
@@ -2401,7 +2401,7 @@ TEST(TileLoadSchedulerTest, TerrainThenContentShareTerrainContentDispatchBudget)
             [](TilesetTile&, double) { return false; },
             [&markedKeys](const TileKey& key) {
                 markedKeys.push_back(
-                    key.schemeId + ":" + std::to_string(key.x));
+                    key.schemeId.str() + ":" + std::to_string(key.x));
             });
 
     ASSERT_EQ(plannedKeys.size(), 3u);

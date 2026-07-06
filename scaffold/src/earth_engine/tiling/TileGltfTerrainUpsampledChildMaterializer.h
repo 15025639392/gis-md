@@ -414,7 +414,7 @@ private:
 
     static RasterOverlayProjection terrainProjectionForTileKey(
         const TileKey& key) {
-        return key.schemeId.find("WebMercator") != std::string::npos
+        return key.schemeId.str().find("WebMercator") != std::string::npos
             ? RasterOverlayProjection::WebMercator
             : RasterOverlayProjection::Geographic;
     }

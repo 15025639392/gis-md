@@ -29,7 +29,7 @@ TEST(TileKeyQuadtreeIdAlignmentTest, ParentUsesCesiumNativeBitShiftSemantics) {
     const TileKey child{"XYZ-WebMercator", 4, 11, 6};
     const TileKey parent = child.parent();
 
-    EXPECT_EQ("XYZ-WebMercator", parent.schemeId);
+    EXPECT_EQ("XYZ-WebMercator", parent.schemeId.str());
     EXPECT_EQ(3, parent.z);
     EXPECT_EQ(5, parent.x);
     EXPECT_EQ(3, parent.y);
@@ -50,7 +50,7 @@ TEST(TileKeyQuadtreeIdAlignmentTest, GeographicTmsParentPreservesCesiumNativeHal
     const TileKey child{"Geographic-TMS", 3, 13, 6};
     const TileKey parent = child.parent();
 
-    EXPECT_EQ("Geographic-TMS", parent.schemeId);
+    EXPECT_EQ("Geographic-TMS", parent.schemeId.str());
     EXPECT_EQ(2, parent.z);
     EXPECT_EQ(6, parent.x);
     EXPECT_EQ(3, parent.y);

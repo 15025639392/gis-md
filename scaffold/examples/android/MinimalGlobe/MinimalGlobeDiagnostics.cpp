@@ -15,7 +15,7 @@ namespace {
 
 std::string tileKeyLabel(const TileKey& key) {
     std::ostringstream out;
-    out << key.schemeId << "/" << key.z << "/" << key.x << "/" << key.y;
+    out << key.schemeId.str() << "/" << key.z << "/" << key.x << "/" << key.y;
     return out.str();
 }
 

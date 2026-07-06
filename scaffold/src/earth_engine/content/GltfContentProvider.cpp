@@ -318,7 +318,7 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
 }
 
 std::string contentCacheKey(const TileKey& key) {
-    return key.schemeId + "/" + std::to_string(key.z) + "/" +
+    return key.schemeId.str() + "/" + std::to_string(key.z) + "/" +
            std::to_string(key.x) + "/" + std::to_string(key.y);
 }
 

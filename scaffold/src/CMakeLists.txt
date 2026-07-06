@@ -239,6 +239,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileRasterOverlayDetailsGenerator.cpp
     earth_engine/tiling/TileKey.h
     earth_engine/tiling/TileKey.cpp
+    earth_engine/tiling/SchemeId.h
+    earth_engine/tiling/SchemeId.cpp
     earth_engine/tiling/TileID.h
     earth_engine/tiling/TileID.cpp
     earth_engine/tiling/ImplicitTileIdUtilities.h

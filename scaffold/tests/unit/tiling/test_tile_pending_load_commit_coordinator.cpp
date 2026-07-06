@@ -1337,7 +1337,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
     auto ensure = [&tiles, &scheme](const TileKey& childKey) -> TilesetTile* {
         const std::string childCacheKey =
-            childKey.schemeId + "/" + std::to_string(childKey.z) + "/" +
+            childKey.schemeId.str() + "/" + std::to_string(childKey.z) + "/" +
             std::to_string(childKey.x) + "/" + std::to_string(childKey.y);
         auto it = tiles.find(childCacheKey);
         if (it == tiles.end()) {

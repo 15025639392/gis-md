@@ -85,7 +85,7 @@ void TileTextureCache::clear() {
 
 std::string TileTextureCache::makeCacheKey(const TileKey& key) const {
     return cacheDomain_ + "/" +
-           key.schemeId + "/" +
+           key.schemeId.str() + "/" +
            std::to_string(key.z) + "/" +
            std::to_string(key.x) + "/" +
            std::to_string(key.y);

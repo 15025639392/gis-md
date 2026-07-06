@@ -810,7 +810,7 @@ TileKey parentTileKey(const TileKey& key) {
 }
 
 std::string sourceCacheKey(const TileKey& key) {
-    return key.schemeId + "/" + std::to_string(key.z) + "/" +
+    return key.schemeId.str() + "/" + std::to_string(key.z) + "/" +
            std::to_string(key.x) + "/" + std::to_string(key.y);
 }
 
@@ -2686,7 +2686,7 @@ int RasterOverlayTileProvider::getMaximumLevel() const {
 }
 
 std::string RasterOverlayTileProvider::tileCacheKey(const TileKey& key) const {
-    return key.schemeId + "/" + std::to_string(key.z) + "/" +
+    return key.schemeId.str() + "/" + std::to_string(key.z) + "/" +
            std::to_string(key.x) + "/" + std::to_string(key.y);
 }
 

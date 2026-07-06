@@ -68,7 +68,7 @@ TEST_F(TMSTileSchemeTest, PositionToTileKnownTMS) {
         116.397 * M_PI / 180.0, 39.908 * M_PI / 180.0, 13);
 
     EXPECT_EQ(13, key.z);
-    EXPECT_EQ("TMS-WebMercator", key.schemeId);
+    EXPECT_EQ("TMS-WebMercator", key.schemeId.str());
     // x should match XYZ (same Mercator projection)
     EXPECT_EQ(6744, key.x);
     EXPECT_EQ(5087, key.y);

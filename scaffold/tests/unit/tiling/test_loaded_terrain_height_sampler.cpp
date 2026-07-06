@@ -19,7 +19,7 @@ using namespace earth_engine;
 namespace {
 
 std::string cacheKeyFor(const TileKey& key) {
-    return key.schemeId + ":" +
+    return key.schemeId.str() + ":" +
            std::to_string(key.z) + ":" +
            std::to_string(key.x) + ":" +
            std::to_string(key.y);

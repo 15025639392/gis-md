@@ -11147,7 +11147,7 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     const TileKey erasedKey{"test", 1, 2, 3};
     const TileKey keptKey{"test", 1, 2, 4};
     const auto cacheKeyForTile = [](const TileKey& key) {
-        return key.schemeId + ":" +
+        return key.schemeId.str() + ":" +
                std::to_string(key.z) + ":" +
                std::to_string(key.x) + ":" +
                std::to_string(key.y);
@@ -11219,7 +11219,7 @@ void testTileIndexStateErasesTerminalResults() {
     const TileKey erasedKey{"test", 1, 0, 0};
     const TileKey keptKey{"test", 1, 0, 1};
     const auto cacheKeyForTile = [](const TileKey& key) {
-        return key.schemeId + ":" +
+        return key.schemeId.str() + ":" +
                std::to_string(key.z) + ":" +
                std::to_string(key.x) + ":" +
                std::to_string(key.y);
@@ -13375,7 +13375,7 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
             0,
             1},
             [&tiles](const TileKey& key) -> TilesetTile* {
-                const std::string cacheKey = key.schemeId + ":" +
+                const std::string cacheKey = key.schemeId.str() + ":" +
                     std::to_string(key.z) + ":" +
                     std::to_string(key.x) + ":" +
                     std::to_string(key.y);
@@ -13383,7 +13383,7 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
                 return it == tiles.end() ? nullptr : it->second;
             },
             [](const TileKey& key) {
-                return key.schemeId + ":" +
+                return key.schemeId.str() + ":" +
                     std::to_string(key.z) + ":" +
                     std::to_string(key.x) + ":" +
                     std::to_string(key.y);
@@ -13652,7 +13652,7 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
                 return key == root.key ? &root : nullptr;
             },
             [](const TileKey& key) {
-                return key.schemeId + ":" +
+                return key.schemeId.str() + ":" +
                     std::to_string(key.z) + ":" +
                     std::to_string(key.x) + ":" +
                     std::to_string(key.y);
@@ -13730,7 +13730,7 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
                 return key == root.key ? &root : nullptr;
             },
             [](const TileKey& key) {
-                return key.schemeId + ":" +
+                return key.schemeId.str() + ":" +
                     std::to_string(key.z) + ":" +
                     std::to_string(key.x) + ":" +
                     std::to_string(key.y);
@@ -14023,7 +14023,7 @@ void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
             true,
             1.0},
         [](const TileKey& key) {
-            return key.schemeId + ":" +
+            return key.schemeId.str() + ":" +
                 std::to_string(key.z) + ":" +
                 std::to_string(key.x) + ":" +
                 std::to_string(key.y);
@@ -14067,7 +14067,7 @@ void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
             true,
             1.0},
         [](const TileKey& key) {
-            return key.schemeId + ":" +
+            return key.schemeId.str() + ":" +
                 std::to_string(key.z) + ":" +
                 std::to_string(key.x) + ":" +
                 std::to_string(key.y);
@@ -14454,7 +14454,7 @@ void testTileIndexStateErasesEmptyContentRegistryKey() {
         loadQueue,
         lifecycle,
         [](const TileKey& key) {
-            return key.schemeId + ":" +
+            return key.schemeId.str() + ":" +
                    std::to_string(key.z) + ":" +
                    std::to_string(key.x) + ":" +
                    std::to_string(key.y);
@@ -15864,7 +15864,7 @@ void testTileSubtreeTraversalCollectsRootAndDescendants() {
         TileSubtreeTraversal::collectCacheKeys(
             root,
             [](const TileKey& key) {
-                return key.schemeId + ":" +
+                return key.schemeId.str() + ":" +
                        std::to_string(key.z) + ":" +
                        std::to_string(key.x) + ":" +
                        std::to_string(key.y);
@@ -15990,7 +15990,7 @@ void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
         TileSubtreeTraversal::collectDescendantsForRemoval(
             root,
             [](const TileKey& key) {
-                return key.schemeId + ":" +
+                return key.schemeId.str() + ":" +
                        std::to_string(key.z) + ":" +
                        std::to_string(key.x) + ":" +
                        std::to_string(key.y);
@@ -19453,7 +19453,7 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
           "TileLoadRequestPlanner: permanently failed content tile is not retried");
 }
 std::string testCacheKeyForTile(const TileKey& key) {
-    return key.schemeId + ":" +
+    return key.schemeId.str() + ":" +
            std::to_string(key.z) + ":" +
            std::to_string(key.x) + ":" +
            std::to_string(key.y);

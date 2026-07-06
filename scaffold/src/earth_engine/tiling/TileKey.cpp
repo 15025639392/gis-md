@@ -17,7 +17,7 @@ int TileKey::invertedY(int tilesAtLevelY) const {
 }
 
 std::ostream& operator<<(std::ostream& os, const TileKey& key) {
-    return os << "TileKey(" << key.schemeId
+    return os << "TileKey(" << key.schemeId.str()
               << " z=" << key.z
               << " x=" << key.x
               << " y=" << key.y << ")";
