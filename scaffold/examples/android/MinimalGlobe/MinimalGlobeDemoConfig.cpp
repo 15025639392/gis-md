@@ -11,16 +11,23 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     };
 
     if (kEnableTerrainForDemo) {
-        config.terrain = {
-            TerrainSourceKind::QuantizedMesh,
-            kQuantizedMeshTerrainTemplate,
-            kQuantizedMeshTerrainLayerJson,
-            "QuantizedMesh Terrain",
-            0,
-            12,
-            65,
-            false,
-        };
+        config.terrain.kind = TerrainSourceKind::QuantizedMesh;
+        config.terrain.tileSize = 65;
+        config.terrain.enableWaterMask = true;
+        config.terrain.minimumZoom = 0;
+        if (kUseCesiumIonTerrain) {
+            // Cesium World Terrain：全球，运行时 ion endpoint 协商。
+            config.terrain.attribution = "Cesium World Terrain";
+            config.terrain.maximumZoom = 16;
+            config.terrain.cesiumIonAssetId = kCesiumIonTerrainAssetId;
+            config.terrain.cesiumIonAccessToken = kCesiumIonAccessToken;
+        } else {
+            // 本地 FABDEM（重庆，z0-12）。
+            config.terrain.urlTemplate = kQuantizedMeshTerrainTemplate;
+            config.terrain.layerJsonUrl = kQuantizedMeshTerrainLayerJson;
+            config.terrain.attribution = "QuantizedMesh Terrain";
+            config.terrain.maximumZoom = 12;
+        }
     }
     config.tileset = {
         4.0,

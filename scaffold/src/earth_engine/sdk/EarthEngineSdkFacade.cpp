@@ -140,6 +140,60 @@ struct SceneTerrainRuntimeSources {
         TileScheme::createGeographicTMS();
 };
 
+struct CesiumIonTerrainEndpoint {
+    std::string layerJsonUrl;
+    std::string urlTemplate;
+    std::string attribution;
+};
+
+// Cesium ion endpoint 协商：用长期 token 换取临时凭证 URL + accessToken。
+// 返回的 layerJsonUrl 带 ?access_token=<temp>，QuantizedMeshTerrainProvider
+// 的 resolveTerrainTemplate 会把该 query 合并进每个瓦片请求。
+std::optional<CesiumIonTerrainEndpoint> resolveCesiumIonTerrainEndpoint(
+    const TerrainSourceConfig& config,
+    PlatformBridge& platformBridge) {
+    std::string server = config.cesiumIonServerUrl;
+    if (server.empty()) {
+        server = "https://api.cesium.com/";
+    }
+    if (server.back() != '/') {
+        server += '/';
+    }
+    const std::string endpointUrl = server + "v1/assets/" +
+        std::to_string(config.cesiumIonAssetId) +
+        "/endpoint?access_token=" + config.cesiumIonAccessToken;
+
+    QuantizedMeshLayerJsonFetcher fetcher(&platformBridge);
+    const std::vector<uint8_t> bytes = fetcher.fetchBlocking(endpointUrl);
+    if (bytes.empty()) {
+        return std::nullopt;
+    }
+    try {
+        const nlohmann::json j =
+            nlohmann::json::parse(bytes.begin(), bytes.end());
+        std::string url = j.value("url", std::string());
+        const std::string token = j.value("accessToken", std::string());
+        if (url.empty() || token.empty()) {
+            return std::nullopt;
+        }
+        if (url.back() != '/') {
+            url += '/';
+        }
+        CesiumIonTerrainEndpoint endpoint;
+        endpoint.layerJsonUrl = url + "layer.json?access_token=" + token;
+        endpoint.urlTemplate =
+            url + "{z}/{x}/{y}.terrain?access_token=" + token;
+        if (j.contains("attributions") && j["attributions"].is_array() &&
+            !j["attributions"].empty()) {
+            endpoint.attribution =
+                j["attributions"].front().value("html", std::string());
+        }
+        return endpoint;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
 SceneTerrainRuntimeSources createTerrainRuntimeSources(
     const TerrainSourceConfig& config,
     PlatformBridge& platformBridge) {
@@ -149,15 +203,32 @@ SceneTerrainRuntimeSources createTerrainRuntimeSources(
     }
 
     if (config.kind == TerrainSourceKind::QuantizedMesh) {
+        std::string layerJsonUrl = config.layerJsonUrl;
+        std::string urlTemplate = config.urlTemplate;
+        std::string attribution = config.attribution;
+        if (config.cesiumIonAssetId > 0) {
+            const std::optional<CesiumIonTerrainEndpoint> endpoint =
+                resolveCesiumIonTerrainEndpoint(config, platformBridge);
+            if (!endpoint) {
+                logError(platformBridge,
+                         "Cesium ion terrain endpoint negotiation failed: asset " +
+                             std::to_string(config.cesiumIonAssetId));
+                return sources;
+            }
+            layerJsonUrl = endpoint->layerJsonUrl;
+            urlTemplate = endpoint->urlTemplate;
+            if (!endpoint->attribution.empty()) {
+                attribution = endpoint->attribution;
+            }
+        }
         auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
-            config.urlTemplate, config.attribution);
+            urlTemplate, attribution);
         qm->setTileSize(config.tileSize);
         qm->setWaterMaskEnabled(config.enableWaterMask);
         qm->setPlatformBridge(&platformBridge);
-        if (!qm->configureFromLayerJsonUrl(config.layerJsonUrl)) {
+        if (!qm->configureFromLayerJsonUrl(layerJsonUrl)) {
             logError(platformBridge,
-                     "QuantizedMesh layer.json load failed: " +
-                         config.layerJsonUrl);
+                     "QuantizedMesh layer.json load failed: " + layerJsonUrl);
         }
         applyConfiguredZoomRange(*qm, config.minimumZoom, config.maximumZoom);
         sources.tileScheme = createTileSchemeForId(qm->schemeId());

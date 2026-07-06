@@ -40,6 +40,15 @@ struct TerrainSourceConfig {
     int maximumZoom = 0;
     int tileSize = 0;
     bool enableWaterMask = false;
+    // Cesium ion 集成：cesiumIonAssetId > 0 时，installScene 先向 ionServerUrl 做
+    // endpoint 协商（GET v1/assets/{id}/endpoint?access_token=<token>），用返回的
+    // 临时凭证 URL + token 覆盖 layerJsonUrl；QuantizedMeshTerrainProvider 经
+    // resolveTerrainTemplate/mergeBaseQuery 把 access_token 传播到每个瓦片请求。
+    // 临时 token 约 1 小时过期，当前无自动刷新（会话超时后重装场景即可）。
+    // assetId=0 时按 layerJsonUrl 原样加载（本地/自建 quantized-mesh）。
+    int cesiumIonAssetId = 0;
+    std::string cesiumIonAccessToken;
+    std::string cesiumIonServerUrl = "https://api.cesium.com/";
 };
 
 struct SceneTilesetConfig {

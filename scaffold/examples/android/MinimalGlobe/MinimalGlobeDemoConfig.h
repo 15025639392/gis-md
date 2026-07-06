@@ -4,10 +4,22 @@
 
 namespace earth_engine::minimal_globe_demo {
 
+// 本地自建 quantized-mesh（重庆 FABDEM，经 adb reverse → 127.0.0.1:8090）。
+// kUseCesiumIonTerrain=false 时回退到这套。
 constexpr const char* kQuantizedMeshTerrainTemplate =
     "http://127.0.0.1:8090/{z}/{x}/{y}.terrain";
 constexpr const char* kQuantizedMeshTerrainLayerJson =
     "http://127.0.0.1:8090/layer.json";
+
+// Cesium ion World Terrain（asset 1）：全球地形，走 ion endpoint 运行时协商，
+// 脱离本地服务器 + adb reverse 依赖。临时凭证约 1 小时过期（当前无自动刷新）。
+constexpr bool kUseCesiumIonTerrain = true;
+constexpr int kCesiumIonTerrainAssetId = 1;
+constexpr const char* kCesiumIonAccessToken =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJqdGkiOiI5YzU4ODg1YS01ZTY3LTRhODYtOGUyZi04ZjkxYjg0OTg2ZGMiLCJpZCI6NjM2"
+    "MDUsImlhdCI6MTYyODMxNzM2OH0."
+    "McSbZHfB5rO3TmWDHRGFdUWVayCvs8iiKuAUyPoYJyY";
 constexpr const char* kGaodeSatelliteTemplate =
     "http://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 constexpr const char* kGaodeRoadNetTemplate =
