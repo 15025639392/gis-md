@@ -129,6 +129,12 @@ private:
     Vec3 pinchEarthUpNormal_{0.0, 0.0, 1.0};
     float pinchAnchorScreenX_ = 0.0f;
     float pinchAnchorScreenY_ = 0.0f;
+    double lastPinchTimestamp_ = 0.0;
+
+    // zoom 惯性状态（对数距离空间，见 .cpp 常量说明）
+    bool hasZoomInertia_ = false;
+    double zoomInertiaLogRate_ = 0.0;         // d(ln dist)/dt，>0 = 继续拉近
+    glm::dvec3 zoomInertiaAnchor_{0.0, 0.0, 0.0};
 
     // [GESTDIAG] 临时：上一次手势事件时的相机 eye（算 dEye 用）。
     glm::dvec3 lastDiagEye_{0.0, 0.0, 0.0};

@@ -44,6 +44,14 @@ constexpr double kPinchTiltMaxStepRadians = 0.08;
 constexpr double kPinchRotateThresholdRadians = 0.0003;
 constexpr double kPinchAnchorFollow = 0.12;
 
+// Zoom 惯性：捏合松手后沿视线朝锚点继续滑一小段。刻意建模在"对数距离"空间
+// （每秒的 ln(距离) 变化率），有三个好处：① 与高度无关，海拔 10km 和 100m
+// 手感一致；② 指数逼近锚点、永不越过（distance*=exp(-r·dt)>0），从数学上排除
+// 历史上那个 36× fling；③ 天然有界。速率上限 + 指数阻尼 + 低于地板即停。
+constexpr double kZoomInertiaDampingPerSecond = 6.0;
+constexpr double kMaxZoomInertiaLogRate = 6.0;   // |d(ln dist)/dt| 上限，滤抖动尖峰
+constexpr double kMinZoomInertiaLogRate = 0.08;  // 低于此停止滑行
+
 glm::dvec3 cartographicNormal(double lngDeg, double latDeg) {
     const double lng = glm::radians(lngDeg);
     const double lat = glm::radians(latDeg);
@@ -138,6 +146,8 @@ void CameraController::onDragStart(float xPixels, float yPixels, double timestam
     dragLastX_ = xPixels;
     dragLastY_ = yPixels;
     inertiaAngularVelocity_ = 0.0;
+    hasZoomInertia_ = false;   // 拖拽打断 zoom 惯性滑行
+    zoomInertiaLogRate_ = 0.0;
     lastDragTimestamp_ = timestamp;
     logGestureDiag("dragStart", xPixels, yPixels);
 }
@@ -166,7 +176,7 @@ void CameraController::onPinchGesture(float scale,
                                       float rotationRadians,
                                       float centerDeltaX,
                                       float centerDeltaY,
-                                      double /*timestamp*/) {
+                                      double timestamp) {
     if (scale <= 0.0f) return;
 
     // Pinch starts/updates interrupt drag inertia; mixed inertias feel unstable.
@@ -180,6 +190,10 @@ void CameraController::onPinchGesture(float scale,
         pinching_ = true;
         update(0.0);
         orbitMode_ = false;
+        // 新捏合打断上一段 zoom 惯性滑行，并重置速率累积。
+        hasZoomInertia_ = false;
+        zoomInertiaLogRate_ = 0.0;
+        lastPinchTimestamp_ = timestamp;
 
         Vec3 anchorPoint;
         grabbedRadiusMeters_ = kEarthRadiusMeters;
@@ -224,6 +238,21 @@ void CameraController::onPinchGesture(float scale,
         if (nextDistanceRadii <= kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
             syncDistanceFromCamera();
+        }
+
+        // 累积 zoom 惯性速率（对数距离空间，EMA 平滑）。clampedScale≈1 的纯
+        // 旋转/倾斜帧会让速率自然衰减向 0，故只有真正在缩放才留下滑行动量。
+        {
+            const double dt = timestamp - lastPinchTimestamp_;
+            if (dt > 0.0 && dt < 0.25) {
+                const double instRate = std::clamp(
+                    std::log(clampedScale) / dt,
+                    -kMaxZoomInertiaLogRate, kMaxZoomInertiaLogRate);
+                zoomInertiaLogRate_ =
+                    zoomInertiaLogRate_ * (1.0 - kVelocitySmoothing) +
+                    instRate * kVelocitySmoothing;
+            }
+            zoomInertiaAnchor_ = pointOnEarth;
         }
 
         const bool rotateIntent =
@@ -300,6 +329,8 @@ void CameraController::onPinchGesture(float scale,
         }
     }
 
+    lastPinchTimestamp_ = timestamp;
+
     logGestureDiag(isPinchStartFrame ? "pinchStart" : "pinchMove",
                    centerX, centerY);
 }
@@ -307,8 +338,17 @@ void CameraController::onPinchGesture(float scale,
 void CameraController::onPinchEnd() {
     logGestureDiag("pinchEnd", pinchAnchorScreenX_, pinchAnchorScreenY_);
     pinching_ = false;
-    hasPinchAnchor_ = false;
     inertiaAngularVelocity_ = 0.0;
+    // 松手时若刚才在缩放且留有足够动量，启动 zoom 惯性滑行（锚点仍需保留以
+    // 沿视线朝它 dolly）。否则清零。
+    if (hasPinchAnchor_ &&
+        std::abs(zoomInertiaLogRate_) >= kMinZoomInertiaLogRate) {
+        hasZoomInertia_ = true;
+    } else {
+        hasZoomInertia_ = false;
+        zoomInertiaLogRate_ = 0.0;
+    }
+    hasPinchAnchor_ = false;
 }
 
 void CameraController::update(double deltaSeconds) {
@@ -333,6 +373,32 @@ void CameraController::update(double deltaSeconds) {
             }
         }
         inertiaAngularVelocity_ *= std::exp(-kInertiaDampingPerSecond * deltaSeconds);
+    }
+
+    // Zoom 惯性滑行：沿视线朝锚点按对数距离指数逼近（distance*=exp(-r·dt)），
+    // 永不越过锚点、天然有界；沿 eye→anchor 直线 dolly 故锚点保持钉住。
+    if (!dragging_ && !pinching_ && hasZoomInertia_ && deltaSeconds > 0.0) {
+        const glm::dvec3 eye = camera_->position().raw();
+        const glm::dvec3 toEye = eye - zoomInertiaAnchor_;
+        const double dist = glm::length(toEye);
+        if (dist > 1e-3) {
+            const double sFrame =
+                std::exp(zoomInertiaLogRate_ * deltaSeconds);  // >1 拉近
+            glm::dvec3 nextEye = zoomInertiaAnchor_ + toEye / sFrame;
+            nextEye = clampEyeAltitude(nextEye);
+            if ((glm::length(nextEye) / kEarthRadiusMeters) <=
+                kMaxDistanceEarthRadii) {
+                camera_->setView(Vec3(nextEye), camera_->direction(),
+                                 camera_->up());
+                syncDistanceFromCamera();
+            }
+        }
+        zoomInertiaLogRate_ *=
+            std::exp(-kZoomInertiaDampingPerSecond * deltaSeconds);
+        if (std::abs(zoomInertiaLogRate_) < kMinZoomInertiaLogRate) {
+            hasZoomInertia_ = false;
+            zoomInertiaLogRate_ = 0.0;
+        }
     }
 
     if (!orbitMode_) {

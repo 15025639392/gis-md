@@ -424,6 +424,114 @@ TEST_F(CameraControllerTest, PinchZoomWithTerrainPickerKeepsAnchorPinned) {
     EXPECT_NEAR(ay, projected.y, 1.5);
 }
 
+TEST_F(CameraControllerTest, PinchZoomFlickGlidesThenSettles) {
+    // A2：捏合缩放松手后应沿视线朝锚点继续滑一小段（惯性），最终停住。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(6.0f);
+    controller_->update(0.0);
+    constexpr double cx = 400.0;
+    constexpr double cy = 300.0;
+    Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+
+    double t = 1.0;
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f, t);
+    t += 0.016;
+    for (int i = 0; i < 4; ++i) {
+        controller_->onPinchGesture(1.15f, cx, cy, 0.0f, 0.0f, 0.0f, t);
+        t += 0.016;
+    }
+    const double distRelease = camera_->position().distanceTo(anchor);
+    controller_->onPinchEnd();
+
+    controller_->update(1.0 / 60.0);
+    const double distGlide = camera_->position().distanceTo(anchor);
+    EXPECT_LT(distGlide, distRelease);  // 松手后继续拉近
+
+    for (int i = 0; i < 600; ++i) controller_->update(1.0 / 60.0);
+    const double distSettled = camera_->position().distanceTo(anchor);
+    controller_->update(1.0 / 60.0);
+    EXPECT_NEAR(distSettled, camera_->position().distanceTo(anchor), 1.0);
+}
+
+TEST_F(CameraControllerTest, ZoomInertiaBoundedNoFling) {
+    // 反发散守卫（对应历史上 touchInertia 的 36× fling）：猛烈 flick 后跑大量帧，
+    // 必须收敛、永不穿透高度地板、永不越过锚点飞出。对数距离建模从数学上保证。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(6.0f);
+    controller_->update(0.0);
+    constexpr double cx = 400.0;
+    constexpr double cy = 300.0;
+
+    double t = 1.0;
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f, t);
+    t += 0.016;
+    for (int i = 0; i < 8; ++i) {
+        controller_->onPinchGesture(1.3f, cx, cy, 0.0f, 0.0f, 0.0f, t);
+        t += 0.016;
+    }
+    controller_->onPinchEnd();
+    for (int i = 0; i < 5000; ++i) controller_->update(1.0 / 60.0);
+
+    const double alt =
+        Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
+    EXPECT_GE(alt, 49.0);                            // 未穿透 50m 地板
+    EXPECT_LT(alt, 6.5 * kEarthRadiusMeters);        // 未发散
+}
+
+TEST_F(CameraControllerTest, ZoomInertiaKeepsAnchorPinnedDuringGlide) {
+    // 滑行期沿 eye→anchor 直线 dolly，故 off-center 锚点全程钉在屏幕原位。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(4.0f);
+    controller_->update(0.0);
+    constexpr double ax = 500.0;
+    constexpr double ay = 240.0;
+    Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(ax, ay, 800.0, 600.0));
+
+    double t = 1.0;
+    controller_->onPinchGesture(1.0f, ax, ay, 0.0f, 0.0f, 0.0f, t);
+    t += 0.016;
+    for (int i = 0; i < 4; ++i) {
+        controller_->onPinchGesture(1.15f, ax, ay, 0.0f, 0.0f, 0.0f, t);
+        t += 0.016;
+    }
+    controller_->onPinchEnd();
+
+    for (int i = 0; i < 8; ++i) {
+        controller_->update(1.0 / 60.0);
+        glm::dvec2 p = projectToScreen(*camera_, anchor);
+        EXPECT_NEAR(ax, p.x, 2.0);
+        EXPECT_NEAR(ay, p.y, 2.0);
+    }
+}
+
+TEST_F(CameraControllerTest, DragInterruptsZoomInertia) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(6.0f);
+    controller_->update(0.0);
+    constexpr double cx = 400.0;
+    constexpr double cy = 300.0;
+    Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+
+    double t = 1.0;
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f, t);
+    t += 0.016;
+    for (int i = 0; i < 4; ++i) {
+        controller_->onPinchGesture(1.15f, cx, cy, 0.0f, 0.0f, 0.0f, t);
+        t += 0.016;
+    }
+    controller_->onPinchEnd();
+    controller_->update(1.0 / 60.0);  // gliding
+
+    controller_->onDragStart(cx, cy);
+    controller_->onDragEnd();
+    const double d0 = camera_->position().distanceTo(anchor);
+    controller_->update(1.0 / 60.0);
+    EXPECT_NEAR(d0, camera_->position().distanceTo(anchor), 0.5);  // 滑行已停
+}
+
 TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);
