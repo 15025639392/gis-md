@@ -368,6 +368,62 @@ TEST_F(CameraControllerTest, PinchSlowRotateRespondsAndKeepsAnchorPinned) {
     EXPECT_NEAR(cy, projected.y, 2.0);
 }
 
+TEST_F(CameraControllerTest, PinchZoomOffCenterKeepsAnchorPinnedWithoutSwing) {
+    // A1 稳定性：在远离屏幕中心处捏合缩放时，手指下的地表点必须原地不动。
+    // 旧实现沿 camera.direction() 前移再靠 keepAnchor 旋转回拉，off-center 时
+    // 会先把锚点甩偏再纠正 → 首帧可见"瞬间偏移"。此处用 1px 严紧容差复现。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(3.0f);
+    controller_->update(0.0);
+
+    constexpr double ax = 520.0;  // 明显偏离中心 (400,300)
+    constexpr double ay = 225.0;
+    Vec3 grabbed = intersectEarthSphere(
+        camera_->getPickRay(ax, ay, 800.0, 600.0));
+
+    controller_->onPinchGesture(1.0f, ax, ay, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.2f, ax, ay, 0.0f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    glm::dvec2 projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(ax, projected.x, 1.0);
+    EXPECT_NEAR(ay, projected.y, 1.0);
+}
+
+TEST_F(CameraControllerTest, PinchZoomWithTerrainPickerKeepsAnchorPinned) {
+    // 复现真机"瞬间偏移"：抓取锚点走 surfacePicker(地形，真实高度),而 keepAnchor
+    // 走裸 intersectGrabSphere(球面)。两个面不一致时,首个缩放帧会按地形-球面
+    // 夹角把地球猛地旋一下。这里注入一个"抬高"的 picker 模拟地形。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(3.0f);
+    controller_->update(0.0);
+
+    // 地形 picker：沿 pick ray 命中球面后径向抬高 ~30km(夸张但同量级于夹角效应)。
+    controller_->setSurfacePicker([&](float x, float y, Vec3& outPoint) {
+        Ray ray = camera_->getPickRay(x, y, 800.0, 600.0);
+        Vec3 onSphere = intersectEarthSphere(ray);
+        outPoint = onSphere * (1.0 + 30000.0 / kEarthRadiusMeters);
+        return true;
+    });
+
+    constexpr double ax = 500.0;
+    constexpr double ay = 240.0;
+    Vec3 grabbed;  // 用同一 picker 记录被抓地表点
+    {
+        Ray ray = camera_->getPickRay(ax, ay, 800.0, 600.0);
+        Vec3 onSphere = intersectEarthSphere(ray);
+        grabbed = onSphere * (1.0 + 30000.0 / kEarthRadiusMeters);
+    }
+
+    controller_->onPinchGesture(1.0f, ax, ay, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.2f, ax, ay, 0.0f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    glm::dvec2 projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(ax, projected.x, 1.5);
+    EXPECT_NEAR(ay, projected.y, 1.5);
+}
+
 TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);
@@ -536,24 +592,55 @@ TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
     EXPECT_TRUE(changed);
 }
 
+TEST_F(CameraControllerTest, PinchTiltKeepsAnchorScreenPositionStable) {
+    // 真机观察到的缺陷：双指倾斜时地图被"平移"、锚点被推离原屏幕位。根因是
+    // centerIntent 平移跟随把倾斜的竖向手指位移误当 pan，逐帧把锚点法线朝手指
+    // 方向混合。倾斜应绕锚点 pitch、锚点原地不动。此处断言倾斜后原锚点仍投影
+    // 在其起始屏幕位置附近。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(4.0f);
+    controller_->update(0.0);
+
+    constexpr double cx = 400.0;
+    constexpr double cy = 300.0;
+    Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    // 纯倾斜：双指中心竖向移动，无缩放/旋转。多帧累积放大漂移。
+    for (int i = 0; i < 6; ++i) {
+        controller_->onPinchGesture(
+            1.0f, cx, static_cast<float>(cy - 20), 0.0f, 0.0f, -20.0f);
+    }
+    controller_->update(0.0);
+
+    glm::dvec2 projected = projectToScreen(*camera_, anchor);
+    EXPECT_NEAR(cx, projected.x, 3.0);
+    EXPECT_NEAR(cy, projected.y, 3.0);
+}
+
 TEST_F(CameraControllerTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+
+    // 先建立一个明显的斜视倾角，脱离 nadir 退化区（nadir 处已无更多下倾空间，
+    // pitch 轴/up 方向病态，倾斜方向断言无意义）。
+    for (int i = 0; i < 8; ++i) {
+        controller_->onPinchGesture(1.0f, 400.0f, 260.0f, 0.0f, 0.0f, -40.0f);
+    }
+    controller_->update(0.0);
     const double beforePushUpSlope = cameraSlope(*camera_);
 
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
     controller_->onPinchGesture(1.0f, 400.0f, 260.0f, 0.0f, 0.0f, -40.0f);
     controller_->update(0.0);
     const double afterPushUpSlope = cameraSlope(*camera_);
-
     EXPECT_LT(afterPushUpSlope, beforePushUpSlope);
 
-    const double beforePullDownSlope = cameraSlope(*camera_);
-
+    const double beforePullDownSlope = afterPushUpSlope;
     controller_->onPinchGesture(1.0f, 400.0f, 340.0f, 0.0f, 0.0f, 40.0f);
     controller_->update(0.0);
     const double afterPullDownSlope = cameraSlope(*camera_);
-
     EXPECT_GT(afterPullDownSlope, beforePullDownSlope);
 }
 

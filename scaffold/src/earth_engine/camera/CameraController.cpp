@@ -264,7 +264,10 @@ void CameraController::onPinchGesture(float scale,
                 pinchAnchorScreenY_);
         }
 
-        if (centerIntent && !scaleDominant) {
+        // 倾斜时 centerDeltaY 大 → centerIntent 为真，但那是 pitch 意图不是 pan；
+        // 若在此把锚点朝手指方向混合，会把锚点推离原位、地图看着像被平移
+        // （真机可视化实测偏 ~17px）。故倾斜时不做质心跟随，锚点保持为 pitch 支点。
+        if (centerIntent && !scaleDominant && !tiltIntent) {
             Vec3 currentCenterPoint;
             if (pickSurfacePoint(centerX, centerY, currentCenterPoint)) {
                 const glm::dvec3 blended = glm::normalize(
