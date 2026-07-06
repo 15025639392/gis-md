@@ -121,7 +121,7 @@ Android UI 线程                    渲染线程(C++)
 | # | 事项 | 类别 | 粗估(AI协作) |
 |---|---|---|---|
 | A0 | ✅ **已落地** 拖拽地平线 `spin3D` 回退（消死区）—— `onDragStart` miss 不再放弃拖拽、`applyAnchorDrag` 打空 latch 到转台旋转并共用惯性通道；新增 2 回归测试(`DragSpinsWhenPointerMissesGlobeInsteadOfDeadZone` / `DragSpinFlickOverEmptySpaceSeedsInertia`)，native 146/146 + camera 27/27 | 观感/正确性 | 半天 |
-| A1 | 双指联合相似变换解算（替换 §2.5 模态门控；`pointer0/1` 数据已就绪，手感升级最大） | 观感 | 1 天 |
+| A1 | ✅ **已落地（收窄）** 双指缩放/旋转锚点锁 —— 深读后修订 §2.5：组合缩放+旋转的锚点锁本已正确，"联合"缺口远小于审计所述；用户拍板**保留"双指不平移"既有模型**（不推翻 `PinchHorizontalPanDoesNotMoveCamera`）。实修=消除 `kPinchRotateThresholdRadians` 0.003→0.0003 旋转死区（慢速拧动不再被吞、逐帧响应且锁锚点）。新增 2 不变量测试，146/146 + camera 29/29 | 观感 | 收窄后 ~2h |
 | A2 | zoom / rotate 惯性（复用现有 `inertiaAxis_/inertiaAngularVelocity_` 通道 + 新增缩放惯性标量） | 观感 | 半天 |
 | A3 | Android 输入健壮性：接 `VelocityTracker` + 消费 `getHistoricalX/Y` 一帧多采样 | 鲁棒/精度 | 半天 |
 | A4 | 带缓动 `flyTo`（双击/复位/programmatic 统一走它，替换 `viewDistance` 瞬跳） | 观感 | 1 天 |
