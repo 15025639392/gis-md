@@ -71,6 +71,19 @@ void SceneRenderCommandUniformUpdater::apply(
                                             frameState.ambient.g,
                                             frameState.ambient.b,
                                             1.0f};
+                // 相机世界坐标相对本瓦片 RTC 原点的偏移。RTC 相减在双精度下
+                // 完成，float 只承载小量级差值 → 水面 sun-glint 求视向量 V。
+                const glm::dvec3 eyeWorld(cam.position().x(),
+                                          cam.position().y(),
+                                          cam.position().z());
+                const glm::dvec3 tileOrigin(cmd.gltfUniforms.modelOrigin[0],
+                                            cmd.gltfUniforms.modelOrigin[1],
+                                            cmd.gltfUniforms.modelOrigin[2]);
+                const glm::dvec3 eyeRtc = eyeWorld - tileOrigin;
+                cmd.gltfUniforms.eyePositionRTC = {
+                    static_cast<float>(eyeRtc.x),
+                    static_cast<float>(eyeRtc.y),
+                    static_cast<float>(eyeRtc.z)};
             } else {
                 // 兜底：外部手工构造、未启用定长块的 glTF 命令仍走 map。
                 auto& mvpU = cmd.uniforms["u_modelViewProjection"];

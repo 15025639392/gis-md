@@ -193,6 +193,7 @@ in vec4 v_texcoord67;
 
 uniform vec3 u_lightDir;
 uniform vec4 u_ambient;
+uniform vec3 u_eyePositionRTC;
 uniform vec4 u_baseColor;
 uniform sampler2D u_baseColorTexture;
 uniform sampler2D u_metallicRoughnessTexture;
@@ -345,7 +346,7 @@ vec4 applyMappedRaster(
     return alphaOver(base, texture(rasterTexture, overlayUv), opacity);
 }
 
-vec4 applyGltfWaterMask(vec4 base) {
+vec4 applyGltfWaterMask(vec4 base, vec3 N, vec3 L, vec3 V) {
     if (u_gltfHasWaterMask < 0.5 || u_gltfWaterMaskState.x > 0.5) {
         return base;
     }
@@ -355,10 +356,15 @@ vec4 applyGltfWaterMask(vec4 base) {
             uvFromSet(0.0) * u_gltfWaterMaskTranslationScale.z;
         water = texture(u_gltfWaterMaskTexture, waterUv).r;
     }
-    // 水面着色（第一步）：让 water mask 不再是 no-op —— 海洋像素轻度压暗+冷偏
-    // 使其与陆地有辨识度。真正的动画阳光反光(sun glint)需把视向量 V 接进本函数，
-    // 属报告 P2 后续；此处 tint 系数是可调旋钮。
+    // 海洋像素轻度压暗+冷偏，使其与陆地有辨识度。
     vec3 waterRgb = base.rgb * 0.8 + vec3(0.01, 0.04, 0.07);
+    // sun-glint：太阳在水面的镜面高光(Blinn-Phong)。H=半程向量，指数越高高光
+    // 越紧。glint 只加进 waterRgb → 下方 mix 用 water 权重门控，陆地像素为 0；
+    // facing 让背光侧(NdotL<0)淡出，避免夜面出现假高光。系数是可调旋钮。
+    vec3 H = normalize(L + V);
+    float facing = smoothstep(0.0, 0.05, dot(N, L));
+    float glint = pow(max(dot(N, H), 0.0), 400.0) * facing;
+    waterRgb += vec3(1.0, 0.95, 0.85) * glint * 0.5;
     return vec4(mix(base.rgb, waterRgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
@@ -555,7 +561,7 @@ void main() {
             u_mappedRasterTileUV3,
             u_mappedRasterOpacity3);
     }
-    base = applyGltfWaterMask(base);
+    base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
         discard;
     }
@@ -879,12 +885,14 @@ layout(location = 2) in vec2 a_texcoord;
 uniform mat4 u_modelViewProjection;
 
 out vec3 v_normal;
+out vec3 v_position;
 out vec2 v_texcoord;
 
 void main() {
     // cesium-native RTC: tile origin is baked into the MVP matrix (computed in
     // CPU double precision). a_position is relative to the tile center.
     v_normal = normalize(a_normal);
+    v_position = a_position;
     v_texcoord = a_texcoord;
     gl_PointSize = 1.0;
     gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
@@ -896,10 +904,12 @@ static const char* kTerrainFragmentGLSL = R"glsl(
 precision highp float;
 
 in vec3 v_normal;
+in vec3 v_position;
 in vec2 v_texcoord;
 
 uniform vec3 u_lightDir;
 uniform vec4 u_ambient;
+uniform vec3 u_eyePositionRTC;
 uniform vec4 u_baseColor;
 uniform float u_hasBaseColorTexture;
 uniform sampler2D u_baseColorTexture;
@@ -954,7 +964,7 @@ vec4 applyMappedRaster(
     return alphaOver(base, texture(rasterTexture, overlayUv), opacity);
 }
 
-vec4 applyGltfWaterMask(vec4 base) {
+vec4 applyGltfWaterMask(vec4 base, vec3 N, vec3 L, vec3 V) {
     if (u_gltfHasWaterMask < 0.5 || u_gltfWaterMaskState.x > 0.5) {
         return base;
     }
@@ -964,10 +974,15 @@ vec4 applyGltfWaterMask(vec4 base) {
             uvFromSet(0.0) * u_gltfWaterMaskTranslationScale.z;
         water = texture(u_gltfWaterMaskTexture, waterUv).r;
     }
-    // 水面着色（第一步）：让 water mask 不再是 no-op —— 海洋像素轻度压暗+冷偏
-    // 使其与陆地有辨识度。真正的动画阳光反光(sun glint)需把视向量 V 接进本函数，
-    // 属报告 P2 后续；此处 tint 系数是可调旋钮。
+    // 海洋像素轻度压暗+冷偏，使其与陆地有辨识度。
     vec3 waterRgb = base.rgb * 0.8 + vec3(0.01, 0.04, 0.07);
+    // sun-glint：太阳在水面的镜面高光(Blinn-Phong)。H=半程向量，指数越高高光
+    // 越紧。glint 只加进 waterRgb → 下方 mix 用 water 权重门控，陆地像素为 0；
+    // facing 让背光侧(NdotL<0)淡出，避免夜面出现假高光。系数是可调旋钮。
+    vec3 H = normalize(L + V);
+    float facing = smoothstep(0.0, 0.05, dot(N, L));
+    float glint = pow(max(dot(N, H), 0.0), 400.0) * facing;
+    waterRgb += vec3(1.0, 0.95, 0.85) * glint * 0.5;
     return vec4(mix(base.rgb, waterRgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
@@ -1021,7 +1036,7 @@ void main() {
             u_mappedRasterTileUV3,
             u_mappedRasterOpacity3);
     }
-    base = applyGltfWaterMask(base);
+    base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
         discard;
     }
@@ -1315,6 +1330,8 @@ struct GltfUniforms {
     float useNormalMap;
     float debugNormalMap;
     packed_float4 ambient;
+    packed_float3 eyePositionRTC;
+    float _reservedEye;
     packed_float4 baseColor;
     float hasBaseColorTexture;
     packed_float4 materialFactors;
@@ -1423,7 +1440,10 @@ float4 gltfApplyWaterMask(float4 base,
                           sampler waterMaskSampler,
                           float hasWaterMask,
                           float4 translationScale,
-                          float4 state) {
+                          float4 state,
+                          float3 N,
+                          float3 L,
+                          float3 V) {
     if (hasWaterMask < 0.5 || state.x > 0.5) {
         return base;
     }
@@ -1433,8 +1453,12 @@ float4 gltfApplyWaterMask(float4 base,
             translationScale.xy + gltfUvFromSet(in, 0.0) * translationScale.z;
         water = waterMaskTexture.sample(waterMaskSampler, waterUv).r;
     }
-    // 水面着色（第一步）：见 GLSL 侧注释；tint 系数镜像保持一致。
+    // 见 GLSL 侧注释；tint + sun-glint 系数镜像保持一致。
     float3 waterRgb = base.rgb * 0.8 + float3(0.01, 0.04, 0.07);
+    float3 H = normalize(L + V);
+    float facing = smoothstep(0.0, 0.05, dot(N, L));
+    float glint = pow(max(dot(N, H), 0.0), 400.0) * facing;
+    waterRgb += float3(1.0, 0.95, 0.85) * glint * 0.5;
     return float4(mix(base.rgb, waterRgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
@@ -1690,7 +1714,10 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         u_tileSharedSampler,
         u.hasWaterMask,
         float4(u.waterMaskTranslationScale),
-        float4(u.waterMaskState));
+        float4(u.waterMaskState),
+        n,
+        light,
+        normalize(float3(u.eyePositionRTC) - in.localPosition));
     if (u.alphaMode > 0.5 && u.alphaMode < 1.5 && base.a < u.alphaCutoff) {
         discard_fragment();
     }
@@ -1984,6 +2011,7 @@ struct TerrainVertexIn {
 struct TerrainVertexOut {
     float4 position [[position]];
     float3 normal;
+    float3 localPosition;
     float2 texcoord;
 };
 
@@ -1993,6 +2021,7 @@ vertex TerrainVertexOut terrainVertex(
     TerrainVertexOut out;
     out.position = u_modelViewProjection * float4(in.position, 1.0);
     out.normal = normalize(in.normal);
+    out.localPosition = in.position;
     out.texcoord = in.texcoord;
     return out;
 }
@@ -2018,6 +2047,8 @@ struct GltfUniforms {
     float useNormalMap;
     float debugNormalMap;
     packed_float4 ambient;
+    packed_float3 eyePositionRTC;
+    float _reservedEye;
     packed_float4 baseColor;
     float hasBaseColorTexture;
     packed_float4 materialFactors;
@@ -2108,7 +2139,10 @@ float4 terrainApplyWaterMask(float4 base,
                              sampler waterMaskSampler,
                              float hasWaterMask,
                              float4 translationScale,
-                             float4 state) {
+                             float4 state,
+                             float3 N,
+                             float3 L,
+                             float3 V) {
     if (hasWaterMask < 0.5 || state.x > 0.5) {
         return base;
     }
@@ -2118,8 +2152,12 @@ float4 terrainApplyWaterMask(float4 base,
             translationScale.xy + in.texcoord * translationScale.z;
         water = waterMaskTexture.sample(waterMaskSampler, waterUv).r;
     }
-    // 水面着色（第一步）：见 GLSL 侧注释；tint 系数镜像保持一致。
+    // 见 GLSL 侧注释；tint + sun-glint 系数镜像保持一致。
     float3 waterRgb = base.rgb * 0.8 + float3(0.01, 0.04, 0.07);
+    float3 H = normalize(L + V);
+    float facing = smoothstep(0.0, 0.05, dot(N, L));
+    float glint = pow(max(dot(N, H), 0.0), 400.0) * facing;
+    waterRgb += float3(1.0, 0.95, 0.85) * glint * 0.5;
     return float4(mix(base.rgb, waterRgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
@@ -2178,7 +2216,9 @@ fragment float4 terrainFragment(
     base = terrainApplyWaterMask(
         base, in, u_gltfWaterMaskTexture, u_terrainSampler,
         u.hasWaterMask, float4(u.waterMaskTranslationScale),
-        float4(u.waterMaskState));
+        float4(u.waterMaskState),
+        n, light,
+        normalize(float3(u.eyePositionRTC) - in.localPosition));
     if (u.alphaMode > 0.5 && u.alphaMode < 1.5 && base.a < u.alphaCutoff) {
         discard_fragment();
     }
