@@ -235,6 +235,10 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     // 返回 true 表示有活动锚点。用于可视化缩放/旋转锚点稳定性。
     public static native boolean nativeGetAnchorScreen(float[] out);
 
+    // 指北针：相机方位角(弧度,0=正北,顺时针+) / 复位正北朝上。
+    public static native float nativeGetHeadingRadians();
+    public static native void nativeResetNorthUp();
+
     // --- Debug panel native methods ---
     public native String nativeGetDiagnosticsString();
     public native void nativeAddDemoVectorLayer();

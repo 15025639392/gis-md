@@ -73,6 +73,13 @@ public:
     /// true 并写出 outWorld；否则返回 false。用于真机可视化锚点稳定性。
     bool debugAnchorWorld(Vec3& outWorld) const;
 
+    /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
+    double headingRadians() const;
+    /// 相机俯仰角（弧度，0 = 水平，-π/2 = 正俯视）。
+    double pitchRadians() const;
+    /// 复位到正北朝上（heading = 0），保持屏幕中心地物居中与当前俯仰。
+    void resetNorthUp();
+
 private:
     bool intersectGrabSphere(const Ray& ray, Vec3& outPoint) const;
     bool pickSurfacePoint(float xPixels, float yPixels, Vec3& outPoint) const;

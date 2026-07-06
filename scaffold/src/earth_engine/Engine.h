@@ -136,6 +136,11 @@ public:
     /// 供真机可视化缩放/旋转锚点稳定性用。
     bool debugAnchorWorld(Vec3& outWorld) const;
 
+    /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
+    double cameraHeadingRadians() const;
+    /// 复位到正北朝上（保持俯仰与相机位置）。
+    void resetNorthUp();
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;

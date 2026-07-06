@@ -53,6 +53,9 @@ static std::atomic<bool> gAnchorActive{false};
 static std::atomic<float> gAnchorScreenX{0.0f};
 static std::atomic<float> gAnchorScreenY{0.0f};
 
+// 每帧发布相机方位角(弧度),UI 指北针无锁读取。
+static std::atomic<float> gHeadingRadians{0.0f};
+
 // Engine + RenderDevice
 static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
 static std::unique_ptr<Engine> gEngine;
@@ -245,6 +248,8 @@ static void renderFrame() {
         }
         if (!published) gAnchorActive = false;
     }
+
+    gHeadingRadians = static_cast<float>(gEngine->cameraHeadingRadians());
 
     eglSwapBuffers(gDisplay, gSurface);
     ++gFrameCount;
@@ -900,6 +905,22 @@ Java_com_earthengine_sdk_GLESView_nativeGetAnchorScreen(
         env->SetFloatArrayRegion(out, 0, 2, vals);
     }
     return gAnchorActive.load() ? JNI_TRUE : JNI_FALSE;
+}
+
+// 指北针：读取每帧发布的相机方位角(弧度,0=正北,顺时针+)。
+JNIEXPORT jfloat JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGetHeadingRadians(
+    JNIEnv* /* env */, jobject /* this */) {
+    return gHeadingRadians.load();
+}
+
+// 复位正北朝上（在渲染线程执行，读写相机态）。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeResetNorthUp(
+    JNIEnv* /* env */, jobject /* this */) {
+    gRenderThread.post([]() {
+        if (gEngine) gEngine->resetNorthUp();
+    });
 }
 
 JNIEXPORT void JNICALL

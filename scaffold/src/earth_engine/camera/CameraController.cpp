@@ -552,6 +552,66 @@ glm::dvec3 CameraController::clampEyeAltitude(const glm::dvec3& eye) const {
     return clampEyeToMinAltitude(eye, terrainHeightFunc_);
 }
 
+namespace {
+
+// 相机 direction 在 pos 处本地 ENU 平面上的方位角：0=正北，顺时针(向东)为正。
+double headingFromFrame(const glm::dvec3& localUp,
+                        const glm::dvec3& direction,
+                        const glm::dvec3& cameraUp) {
+    glm::dvec3 east = glm::cross(glm::dvec3(0.0, 0.0, 1.0), localUp);
+    const double eastLen = glm::length(east);
+    east = eastLen > 1e-9 ? east / eastLen : glm::dvec3(1.0, 0.0, 0.0);  // 极点退化
+    const glm::dvec3 north = glm::cross(localUp, east);
+
+    // 视线水平分量；近正俯视时退化，用相机 up 的水平分量兜底（屏幕"上"朝向）。
+    glm::dvec3 horiz = direction - localUp * glm::dot(direction, localUp);
+    double hLen = glm::length(horiz);
+    if (hLen < 1e-9) {
+        horiz = cameraUp - localUp * glm::dot(cameraUp, localUp);
+        hLen = glm::length(horiz);
+        if (hLen < 1e-9) return 0.0;
+    }
+    horiz /= hLen;
+    double heading = std::atan2(glm::dot(horiz, east), glm::dot(horiz, north));
+    if (heading < 0.0) heading += 2.0 * glm::pi<double>();
+    return heading;
+}
+
+}  // namespace
+
+double CameraController::headingRadians() const {
+    const glm::dvec3 up =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(camera_->position()).raw();
+    return headingFromFrame(up, camera_->direction().raw(), camera_->up().raw());
+}
+
+double CameraController::pitchRadians() const {
+    const glm::dvec3 up =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(camera_->position()).raw();
+    const double s = std::clamp(glm::dot(camera_->direction().raw(), up),
+                                -1.0, 1.0);
+    return std::asin(s);  // + 向上，- 向下；正俯视 = -π/2
+}
+
+void CameraController::resetNorthUp() {
+    update(0.0);
+    orbitMode_ = false;
+    inertiaAngularVelocity_ = 0.0;
+    hasZoomInertia_ = false;
+    zoomInertiaLogRate_ = 0.0;
+
+    double heading = headingRadians();
+    if (heading > glm::pi<double>()) heading -= 2.0 * glm::pi<double>();  // 走最短
+    if (std::abs(heading) < 1e-6) return;
+
+    // 绕相机自身竖轴原地旋转：相机位置在该轴上不动 → 俯仰精确保持，仅朝向转到
+    // 正北（与 cesium camera.setView({heading:0}) 同）。绕竖轴旋转 α 使 heading
+    // 变化 -α，故抵消 heading 需转 +heading。
+    const glm::dvec3 axis =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(camera_->position()).raw();
+    rotateCameraAroundPoint(camera_->position().raw(), axis, heading);
+}
+
 bool CameraController::debugAnchorWorld(Vec3& outWorld) const {
     if (pinching_ && hasPinchAnchor_) {
         outWorld = Vec3(pinchAnchorNormal_.raw() * grabbedRadiusMeters_);

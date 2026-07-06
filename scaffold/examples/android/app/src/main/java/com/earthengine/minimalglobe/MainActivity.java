@@ -5,6 +5,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -48,6 +49,13 @@ public class MainActivity extends Activity {
         root.addView(anchorOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // 指北针（左上角；点按复位正北）
+        CompassView compass = new CompassView(this);
+        FrameLayout.LayoutParams compassParams = new FrameLayout.LayoutParams(
+                dp(56), dp(56), Gravity.TOP | Gravity.START);
+        compassParams.setMargins(dp(12), dp(24), 0, 0);
+        root.addView(compass, compassParams);
 
         // Debug button (floating)
         mDebugButton = new Button(this);
@@ -149,6 +157,72 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    /**
+     * 指北针：红针指向正北。相机 heading=0（朝正北）时红针朝上。点按复位正北朝上。
+     * 每帧读一次 heading（极廉价），仅当角度变化时才重绘（省电）。
+     */
+    private static final class CompassView extends View {
+        private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint north = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint south = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path needle = new Path();
+        private float headingRad = 0f;
+
+        CompassView(Context context) {
+            super(context);
+            setClickable(true);
+            setOnClickListener(v -> GLESView.nativeResetNorthUp());
+            ring.setColor(0xAA000000);
+            ring.setStyle(Paint.Style.FILL);
+            north.setColor(0xFFFF3B30);   // 北=红
+            south.setColor(0xFFEEEEEE);   // 南=白
+            label.setColor(0xFFFFFFFF);
+            label.setTextAlign(Paint.Align.CENTER);
+
+            post(new Runnable() {
+                @Override public void run() {
+                    setHeading(GLESView.nativeGetHeadingRadians());
+                    postOnAnimation(this);   // 每帧廉价读取，变化才 invalidate
+                }
+            });
+        }
+
+        private void setHeading(float h) {
+            if (Math.abs(h - headingRad) > 0.005f) {   // ~0.3°
+                headingRad = h;
+                invalidate();
+            }
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            final float cx = getWidth() * 0.5f;
+            final float cy = getHeight() * 0.5f;
+            final float r = Math.min(cx, cy) - 3f;
+            canvas.drawCircle(cx, cy, r, ring);
+
+            canvas.save();
+            // heading=0 → 红针朝上；heading 增大(向东)→ 北在屏幕上向左偏，故反向旋转。
+            canvas.rotate((float) Math.toDegrees(-headingRad), cx, cy);
+            needle.reset();
+            needle.moveTo(cx, cy - r * 0.72f);
+            needle.lineTo(cx - r * 0.22f, cy);
+            needle.lineTo(cx + r * 0.22f, cy);
+            needle.close();
+            canvas.drawPath(needle, north);
+            needle.reset();
+            needle.moveTo(cx, cy + r * 0.72f);
+            needle.lineTo(cx - r * 0.22f, cy);
+            needle.lineTo(cx + r * 0.22f, cy);
+            needle.close();
+            canvas.drawPath(needle, south);
+            label.setTextSize(r * 0.42f);
+            canvas.drawText("N", cx, cy - r * 0.34f, label);
+            canvas.restore();
+        }
     }
 
     /**

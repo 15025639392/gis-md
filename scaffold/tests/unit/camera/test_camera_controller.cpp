@@ -828,6 +828,59 @@ TEST_F(CameraControllerTest, ViewDistanceRespectsNearGroundSafetyFloor) {
     EXPECT_GT(camera_->direction().dot((target - camera_->position()).normalized()), 0.999);
 }
 
+TEST_F(CameraControllerTest, NadirViewPitchIsNegativeHalfPi) {
+    // identity 轨道 → 相机正俯视地心，pitch 应为 -π/2。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    const double pi = std::acos(-1.0);
+    EXPECT_NEAR(-pi / 2.0, controller_->pitchRadians(), 0.02);
+}
+
+TEST_F(CameraControllerTest, ResetNorthUpZerosHeading) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(3.0f);
+    controller_->update(0.0);
+
+    // 双指旋转(绕地心竖轴 twist)制造明显非零方位角。
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.4f, 0.0f, 0.0f);
+    controller_->onPinchEnd();
+    controller_->update(0.0);
+
+    const double pi = std::acos(-1.0);
+    double before = controller_->headingRadians();
+    if (before > pi) before -= 2.0 * pi;
+    ASSERT_GT(std::abs(before), 0.05);  // 确实偏离正北，测试才有意义
+
+    controller_->resetNorthUp();
+
+    double after = controller_->headingRadians();
+    if (after > pi) after -= 2.0 * pi;
+    EXPECT_NEAR(0.0, after, pi / 180.0);  // 复位到 ±1° 内
+}
+
+TEST_F(CameraControllerTest, ResetNorthUpPreservesPitch) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(3.0f);
+    controller_->update(0.0);
+
+    // 先倾斜脱离正俯视，再 twist 制造方位角。
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 6; ++i) {
+        controller_->onPinchGesture(1.0f, 400.0f,
+            static_cast<float>(300 - 20), 0.0f, 0.0f, -20.0f);
+    }
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.4f, 0.0f, 0.0f);
+    controller_->onPinchEnd();
+    controller_->update(0.0);
+
+    const double pitchBefore = controller_->pitchRadians();
+    controller_->resetNorthUp();
+    const double pitchAfter = controller_->pitchRadians();
+
+    EXPECT_NEAR(pitchBefore, pitchAfter, std::acos(-1.0) / 180.0);  // 俯仰保持
+}
+
 TEST_F(CameraControllerTest, UpdateUpdatesCameraPosition) {
     // 初始相机 view matrix
     auto initialView = camera_->viewMatrix();

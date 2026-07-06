@@ -243,6 +243,14 @@ bool Engine::debugAnchorWorld(Vec3& outWorld) const {
     return scene_->cameraController().debugAnchorWorld(outWorld);
 }
 
+double Engine::cameraHeadingRadians() const {
+    return scene_ ? scene_->cameraController().headingRadians() : 0.0;
+}
+
+void Engine::resetNorthUp() {
+    if (scene_) scene_->cameraController().resetNorthUp();
+}
+
 void Engine::getClearColor(float& r, float& g, float& b, float& a) const {
     const auto& fs = scene_->frameState();
     r = fs.clearR;
