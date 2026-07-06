@@ -280,15 +280,14 @@ void TilesetSelectionFrameFacade::selectTilesSync(
         [&tileset, incremental](TilesetTile& root,
                                 const SelectorFrame& selectorFrame) {
             TileSelectionTraversalContextBinding binding{
-                tileset.tilePlan_,
-                tileset.loadQueue_,
-                tileset.options_,
-                tileset.rasterOverlays_,
-                tileset.contentAccess_,
                 &tileset,
                 [](void* userData, const TilesetTile& tile) {
                     return static_cast<Tileset*>(userData)
                         ->checkOcclusion(tile);
+                },
+                [](void* userData, TilesetTile& tile) {
+                    static_cast<Tileset*>(userData)
+                        ->onSelectionVisitTile(tile);
                 },
                 &tileset};
             TileSelectionTraversalContext traversalContext =

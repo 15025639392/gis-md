@@ -1,6 +1,9 @@
 #include "TileSelectionTraversalExecutor.h"
 #include "Tileset.h"
+#include "TileContentAccess.h"
 #include "TileSelectionChildTraversal.h"
+#include "TileSelectionPlanAppender.h"
+#include "TileSelectionTraversalDetailsBuilder.h"
 #include "TileSelectionFrameBuilder.h"
 #include "TileSelectionHistory.h"
 #include "TileSelectionPostTraversalCommitter.h"
@@ -94,7 +97,8 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
             selection.screenSpaceError = 0.0;
         }
         if (visitOutcome.queueLoad) {
-            context.queueTileLoad(
+            TileSelectionPlanAppender::queueTileLoad(
+                context.loadQueue,
                 tile.key,
                 visitOutcome.loadGroup,
                 preparation.inputSummary.priority);
@@ -103,7 +107,10 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
             tile,
             incrementalSnapshot,
             visitOutcome.returnCulledTraversalDetails
-                ? context.createCulledTileDetails(tile)
+                ? TileSelectionTraversalDetailsBuilder::forCulledTile(
+                      tile,
+                      context.rasterOverlays,
+                      context.options.forbidHoles)
                 : TileTraversalDetails{},
             tileMargin);
     }
@@ -150,7 +157,7 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
             context.rasterOverlays);
     tile.updateTraversalRenderability(renderable);
 
-    const bool tileCanRefine = context.canRefine(tile);
+    const bool tileCanRefine = context.contentAccess.canRefine(tile);
     TileSelectionRefineFlowResult refineFlow;
     refineFlow.ancestorMeetsSse = ancestorMeetsSse;
     if (tileCanRefine) {
@@ -194,25 +201,32 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
     ancestorMeetsSse = preTraversal.ancestorMeetsSseAfterPreTraversal;
     bool queuedForLoad = preTraversal.queuedForLoadAfterPreTraversal;
     if (preTraversal.queueUrgentLoad) {
-        context.queueTileLoad(
+        TileSelectionPlanAppender::queueTileLoad(
+            context.loadQueue,
             tile.key,
             TileLoadPriorityGroup::Urgent,
             tilePriority);
     }
 
     if (preTraversal.finishAsSingleTile) {
-        context.addTileToCurrentPlan(
+        TileSelectionPlanAppender::addTileToCurrentPlan(
+            context.tilePlan,
+            context.loadQueue,
+            context.options.enableLodTransitionPeriod,
             tile,
             tileSse,
             preTraversal.singleTileShouldQueueLoad,
             tilePriority);
-        return context.createSingleTileDetails(tile);
+        return TileSelectionTraversalDetailsBuilder::forSingleTile(
+            tile,
+            context.rasterOverlays);
     }
 
     const TileChildFrameMaterializeResult childMaterialize =
-        context.ensureTileChildren(tile);
+        context.contentAccess.ensureTileChildren(tile);
     if (childMaterialize.retryLater) {
-        context.queueTileLoad(
+        TileSelectionPlanAppender::queueTileLoad(
+            context.loadQueue,
             tile.key,
             TileLoadPriorityGroup::Urgent,
             tilePriority);
@@ -220,7 +234,10 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
     }
 
     if (preTraversal.addAdditiveParentToPlan) {
-        context.addTileToCurrentPlan(
+        TileSelectionPlanAppender::addTileToCurrentPlan(
+            context.tilePlan,
+            context.loadQueue,
+            context.options.enableLodTransitionPeriod,
             tile,
             tileSse,
             preTraversal.additiveParentShouldQueueLoad,
@@ -251,7 +268,10 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                 renderable,
                 tile.unconditionallyRefine,
                 selection.previousSelectionState,
-                context.hasLodTransitionRenderContent(tile),
+                tile.content.contentKind == TileContentKind::Render &&
+                    TileSelectionRasterOverlayPreparer::isRenderable(
+                        tile,
+                        context.rasterOverlays),
                 selection.lodTransitionFadePercentage,
                 TileSelectionHistory::wasRenderedLastFrame(tile),
                 tile.content.contentKind == TileContentKind::External,
@@ -288,13 +308,17 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
             [&context](const TileKey& key,
                        TileLoadPriorityGroup group,
                        double priority) {
-                context.queueTileLoad(key, group, priority);
+                TileSelectionPlanAppender::queueTileLoad(
+                    context.loadQueue, key, group, priority);
             },
             [&context](TilesetTile& selectedTile,
                        double screenSpaceError,
                        bool queueForLoad,
                        double priority) {
-                context.addTileToCurrentPlan(
+                TileSelectionPlanAppender::addTileToCurrentPlan(
+                    context.tilePlan,
+                    context.loadQueue,
+                    context.options.enableLodTransitionPeriod,
                     selectedTile,
                     screenSpaceError,
                     queueForLoad,

@@ -15,6 +15,8 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class RenderDevice;
 class FrameResourceBudget;
+class TileContentAccess;
+class Tileset;
 struct TilesetTile;
 struct TileKey;
 class TileLoadQueue;
@@ -23,26 +25,12 @@ struct TilesetOptions;
 enum class TileOcclusionState;
 
 struct TileSelectionTraversalContext {
-    using QueueTileLoadFn = void (*)(
-        void*,
-        const TileKey&,
-        TileLoadPriorityGroup,
-        double);
-    using AddTileToCurrentPlanFn = void (*)(
-        void*,
-        TilesetTile&,
-        double,
-        bool,
-        double);
-    using EnsureTileChildrenFn =
-        TileChildFrameMaterializeResult (*)(void*, TilesetTile&);
-    using CanRefineFn = bool (*)(void*, const TilesetTile&);
+    // Two collaborators are genuinely injected — occlusion (software occlusion
+    // vs. none) and onVisitTile (live tileset registration vs. shadow-tree
+    // active-set reset) — so they stay function pointers. Everything else has a
+    // single concrete implementation and is called directly by the executor.
     using CheckOcclusionFn =
         TileOcclusionState (*)(void*, const TilesetTile&);
-    using HasLodTransitionRenderContentFn =
-        bool (*)(void*, const TilesetTile&);
-    using CreateTraversalDetailsFn =
-        TileTraversalDetails (*)(void*, const TilesetTile&);
     using OnVisitTileFn = void (*)(void*, TilesetTile&);
 
     TilePlan& tilePlan;
@@ -59,18 +47,29 @@ struct TileSelectionTraversalContext {
     double cameraLongitude = 0.0;
     double cameraLatitude = 0.0;
 
-    void* userData = nullptr;
-    void* contentAccessUserData = nullptr;
-    QueueTileLoadFn queueTileLoadFn = nullptr;
-    AddTileToCurrentPlanFn addTileToCurrentPlanFn = nullptr;
-    EnsureTileChildrenFn ensureTileChildrenFn = nullptr;
-    CanRefineFn canRefineFn = nullptr;
+    // The one concrete collaborator the executor holds a handle to (the rest
+    // are stateless sibling policies called by their static methods). No type
+    // erasure — the indirection only ever bound one implementation and blocked
+    // inlining of the hot per-visit callbacks.
+    TileContentAccess& contentAccess;
+
+    void* occlusionUserData = nullptr;
     CheckOcclusionFn checkOcclusionFn = nullptr;
-    HasLodTransitionRenderContentFn hasLodTransitionRenderContentFn = nullptr;
-    CreateTraversalDetailsFn createSingleTileDetailsFn = nullptr;
-    CreateTraversalDetailsFn createCulledTileDetailsFn = nullptr;
     OnVisitTileFn onVisitTileFn = nullptr;
     void* onVisitTileUserData = nullptr;
+
+    TileOcclusionState checkOcclusion(const TilesetTile& tile) const {
+        return checkOcclusionFn(occlusionUserData, tile);
+    }
+
+    // Register + lazily reset a tile at the start of its visit. Injected: the
+    // live path registers into the tileset's active-set; the shadow path resets
+    // and accumulates into the shadow tree's active-set.
+    void onVisitTile(TilesetTile& tile) const {
+        if (onVisitTileFn) {
+            onVisitTileFn(onVisitTileUserData, tile);
+        }
+    }
 
     // ③ 增量切面缓存(incrementalSelection 开启时非空,否则 nullptr → 捕获全是
     // no-op,全量/影子路径零开销)。子树 visit 期间捕获净贡献,见
@@ -103,59 +102,6 @@ struct TileSelectionTraversalContext {
     // grows to its steady-state capacity on the first frame.
     std::vector<double> scratchDistances;
 
-    // Register a tile into this frame's selection active-set (and lazily reset
-    // it once). Called at the start of every tile visit so the per-frame reset
-    // touches only visited tiles instead of the whole registry.
-    void onVisitTile(TilesetTile& tile) const {
-        if (onVisitTileFn) {
-            onVisitTileFn(onVisitTileUserData, tile);
-        }
-    }
-
-    void queueTileLoad(const TileKey& key,
-                       TileLoadPriorityGroup group,
-                       double priority) const {
-        queueTileLoadFn(userData, key, group, priority);
-    }
-
-    void addTileToCurrentPlan(TilesetTile& tile,
-                              double screenSpaceError,
-                              bool queueForLoad,
-                              double priority) const {
-        addTileToCurrentPlanFn(
-            userData,
-            tile,
-            screenSpaceError,
-            queueForLoad,
-            priority);
-    }
-
-    TileChildFrameMaterializeResult ensureTileChildren(
-        TilesetTile& tile) const {
-        return ensureTileChildrenFn(contentAccessUserData, tile);
-    }
-
-    bool canRefine(const TilesetTile& tile) const {
-        return canRefineFn(contentAccessUserData, tile);
-    }
-
-    TileOcclusionState checkOcclusion(const TilesetTile& tile) const {
-        return checkOcclusionFn(userData, tile);
-    }
-
-    bool hasLodTransitionRenderContent(const TilesetTile& tile) const {
-        return hasLodTransitionRenderContentFn(userData, tile);
-    }
-
-    TileTraversalDetails createSingleTileDetails(
-        const TilesetTile& tile) const {
-        return createSingleTileDetailsFn(userData, tile);
-    }
-
-    TileTraversalDetails createCulledTileDetails(
-        const TilesetTile& tile) const {
-        return createCulledTileDetailsFn(userData, tile);
-    }
 };
 
 } // namespace earth_engine

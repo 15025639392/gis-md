@@ -23,18 +23,18 @@ struct TileSelectionTraversalContextBuildInput {
     TileIncrementalFrontier* incremental = nullptr;
 };
 
+// The injected policies for a traversal: occlusion (software occlusion vs.
+// none) and onVisitTile (live tileset active-set registration vs. shadow-tree
+// reset+accumulate). The plain per-frame data lives in the BuildInput above.
 struct TileSelectionTraversalContextBinding {
     using CheckOcclusionFn =
         TileOcclusionState (*)(void*, const TilesetTile&);
+    using OnVisitTileFn = void (*)(void*, TilesetTile&);
 
-    TilePlan& tilePlan;
-    TileLoadQueue& loadQueue;
-    const TilesetOptions& options;
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
-    TileContentAccess& contentAccess;
     void* occlusionUserData = nullptr;
     CheckOcclusionFn checkOcclusion = nullptr;
-    Tileset* owner = nullptr;
+    OnVisitTileFn onVisitTile = nullptr;
+    void* onVisitTileUserData = nullptr;
 };
 
 class TileSelectionTraversalContextBuilder {

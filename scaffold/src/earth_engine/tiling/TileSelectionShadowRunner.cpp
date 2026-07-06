@@ -105,14 +105,10 @@ void TileSelectionShadowRunner::selectOnShadow(
         [&](TilesetTile& root, const SelectorFrame& selectorFrame) {
             ShadowVisitState visitState{&shadowOverlays_, &shadowActiveTiles_};
             TileSelectionTraversalContextBinding binding{
-                shadowTilePlan_,
-                shadowLoadQueue_,
-                *input.options,
-                shadowOverlays_,
-                shadowContentAccess,
                 input.occlusionUserData,
                 occlusionFn,
-                nullptr};
+                shadowOnVisitTile,
+                &visitState};
             TileSelectionTraversalContext traversalContext =
                 TileSelectionTraversalContextBuilder::build(
                     TileSelectionTraversalContextBuildInput{
@@ -126,10 +122,6 @@ void TileSelectionShadowRunner::selectOnShadow(
                         input.lastCameraPosition,
                         shadowContentAccess},
                     binding);
-            // owner is null → the builder leaves onVisitTile unset; wire the
-            // shadow-local reset/active-set hook directly instead.
-            traversalContext.onVisitTileFn = shadowOnVisitTile;
-            traversalContext.onVisitTileUserData = &visitState;
             TileSelectionTraversalExecutor::visitTileIfNeeded(
                 traversalContext,
                 root,

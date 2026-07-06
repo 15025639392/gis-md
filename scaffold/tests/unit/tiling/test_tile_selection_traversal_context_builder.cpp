@@ -6,13 +6,10 @@
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
 #include "earth_engine/tiling/TileOcclusionState.h"
 #include "earth_engine/tiling/TileScheme.h"
-#include "earth_engine/tiling/TileSelectionFrameBuilder.h"
 #include "earth_engine/tiling/TileSelectionTraversalContextBuilder.h"
-#include "earth_engine/tiling/TileSelectionTraversalExecutor.h"
 #include "earth_engine/tiling/Tileset.h"
+#include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
-
-#include <limits>
 
 using namespace earth_engine;
 
@@ -33,12 +30,7 @@ struct TraversalContextFixture {
             registry,
             *scheme,
             nullptr);
-    TileSelectionTraversalContextBinding binding{
-        tilePlan,
-        loadQueue,
-        options,
-        rasterOverlays,
-        contentAccess};
+    TileSelectionTraversalContextBinding binding{};
 
     TileSelectionTraversalContext build() {
         return TileSelectionTraversalContextBuilder::build(
@@ -56,60 +48,41 @@ struct TraversalContextFixture {
     }
 };
 
-struct RetryChildrenProbe {
+struct VisitProbe {
     int calls = 0;
+    TilesetTile* lastTile = nullptr;
+    void* lastUserData = nullptr;
 };
 
-TileChildFrameMaterializeResult retryChildrenMaterialization(
-    void* userData,
-    TilesetTile& tile) {
-    auto* probe = static_cast<RetryChildrenProbe*>(userData);
+void probeOnVisitTile(void* userData, TilesetTile& tile) {
+    auto* probe = static_cast<VisitProbe*>(userData);
     ++probe->calls;
-    EXPECT_EQ(tile.key, (TileKey{"test", 0, 0, 0}));
-    return TileChildFrameMaterializeResult{false, true};
-}
-
-bool alwaysCanRefine(void*, const TilesetTile&) {
-    return true;
+    probe->lastTile = &tile;
+    probe->lastUserData = userData;
 }
 
 } // namespace
 
-TEST(
-    TileSelectionTraversalContextBuilderTest,
-    QueueAndAddCallbacksWritePlanState) {
+// The builder now copies plain per-frame data (refs to the tileset's plan,
+// queue, content access, ...) straight into the context — no type erasure. This
+// verifies those references point back at the exact input objects.
+TEST(TileSelectionTraversalContextBuilderTest, WiresContextToInputObjects) {
     TraversalContextFixture fixture;
-    fixture.options.enableLodTransitionPeriod = false;
-    TileSelectionTraversalContext context = fixture.build();
+    const TileSelectionTraversalContext context = fixture.build();
 
-    TilesetTile tile(
-        TileKey{"test", 0, 0, 0},
-        Rectangle{-1.0, -1.0, 1.0, 1.0});
-
-    context.queueTileLoad(tile.key, TileLoadPriorityGroup::Preload, 7.0);
-
-    ASSERT_EQ(fixture.loadQueue.size(), 1u);
-    EXPECT_EQ(fixture.loadQueue.front().key, tile.key);
-    EXPECT_EQ(fixture.loadQueue.front().group, TileLoadPriorityGroup::Preload);
-    EXPECT_EQ(fixture.loadQueue.front().priority, 7.0);
-
-    context.addTileToCurrentPlan(tile, 4.0, true, 3.0);
-
-    ASSERT_EQ(fixture.tilePlan.visibleTiles.size(), 1u);
-    EXPECT_EQ(fixture.tilePlan.visibleTiles.front(), tile.key);
-    EXPECT_EQ(
-        tile.selectionFrameState.selectionState,
-        TileSelectionState::Rendered);
-    EXPECT_DOUBLE_EQ(tile.selectionFrameState.screenSpaceError, 4.0);
-    EXPECT_FLOAT_EQ(tile.selectionFrameState.lodTransitionFadePercentage, 1.0f);
-    ASSERT_EQ(fixture.loadQueue.size(), 1u);
-    EXPECT_EQ(fixture.loadQueue.front().key, tile.key);
-    EXPECT_EQ(
-        fixture.loadQueue.front().group,
-        TileLoadPriorityGroup::Normal);
-    EXPECT_EQ(fixture.loadQueue.front().priority, 3.0);
+    EXPECT_EQ(&context.tilePlan, &fixture.tilePlan);
+    EXPECT_EQ(&context.loadQueue, &fixture.loadQueue);
+    EXPECT_EQ(&context.counters, &fixture.counters);
+    EXPECT_EQ(&context.options, &fixture.options);
+    EXPECT_EQ(&context.rasterOverlays, &fixture.rasterOverlays);
+    EXPECT_EQ(&context.contentAccess, &fixture.contentAccess);
+    EXPECT_EQ(context.device, nullptr);
+    EXPECT_EQ(&context.frameResourceBudget, &fixture.budget);
 }
 
+// Occlusion is a genuinely injected policy (software occlusion vs. none): the
+// binding carries the function pointer + user data, and the context dispatches
+// through them.
 TEST(
     TileSelectionTraversalContextBuilderTest,
     OcclusionCallbackUsesBindingUserData) {
@@ -139,45 +112,36 @@ TEST(
     EXPECT_EQ(callbackCalls, 2);
 }
 
+// onVisitTile is the other injected policy: the live path registers into the
+// tileset's active-set, the shadow path resets into the shadow tree. The
+// builder must route the binding's hook + user data through to the context.
 TEST(
     TileSelectionTraversalContextBuilderTest,
-    TraversalQueuesUrgentLoadWhenChildrenRetryLater) {
+    OnVisitTileCallbackUsesBindingUserData) {
     TraversalContextFixture fixture;
-    fixture.options.enableFrustumCulling = false;
-    fixture.options.enableFogCulling = false;
-    fixture.options.enableLodTransitionPeriod = false;
-    RetryChildrenProbe probe;
-    TileSelectionTraversalContext context = fixture.build();
-    context.contentAccessUserData = &probe;
-    context.ensureTileChildrenFn = retryChildrenMaterialization;
-    context.canRefineFn = alwaysCanRefine;
+    VisitProbe probe;
+    fixture.binding.onVisitTile = probeOnVisitTile;
+    fixture.binding.onVisitTileUserData = &probe;
+    const TileSelectionTraversalContext context = fixture.build();
 
     TilesetTile tile(
         TileKey{"test", 0, 0, 0},
         Rectangle{-1.0, -1.0, 1.0, 1.0});
-    tile.unconditionallyRefine = true;
-    tile.geometricError = 1.0;
-
-    const SelectorFrame selectorFrame;
-    const TileTraversalDetails details =
-        TileSelectionTraversalExecutor::visitTileIfNeeded(
-            context,
-            tile,
-            selectorFrame,
-            0,
-            false);
+    context.onVisitTile(tile);
 
     EXPECT_EQ(probe.calls, 1);
-    ASSERT_EQ(fixture.loadQueue.size(), 1u);
-    EXPECT_EQ(fixture.loadQueue.front().key, tile.key);
-    EXPECT_EQ(
-        fixture.loadQueue.front().group,
-        TileLoadPriorityGroup::Urgent);
-    EXPECT_DOUBLE_EQ(
-        fixture.loadQueue.front().priority,
-        std::numeric_limits<double>::max());
-    EXPECT_EQ(tile.selectionFrameState.selectionState,
-              TileSelectionState::Refined);
-    EXPECT_TRUE(details.allAreRenderable);
-    EXPECT_EQ(details.notYetRenderableCount, 0u);
+    EXPECT_EQ(probe.lastTile, &tile);
+    EXPECT_EQ(probe.lastUserData, &probe);
+}
+
+// A null onVisitTile hook (e.g. a path that opts out) must be a safe no-op
+// rather than a null-pointer call.
+TEST(TileSelectionTraversalContextBuilderTest, OnVisitTileNullHookIsNoOp) {
+    TraversalContextFixture fixture;
+    const TileSelectionTraversalContext context = fixture.build();
+
+    TilesetTile tile(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-1.0, -1.0, 1.0, 1.0});
+    EXPECT_NO_FATAL_FAILURE(context.onVisitTile(tile));
 }
