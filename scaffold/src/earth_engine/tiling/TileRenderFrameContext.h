@@ -31,7 +31,9 @@ struct TileRenderFrameContext {
         bool allowSynchronousMeshPrep,
         const std::optional<std::array<float, 4>>& surfaceClipUv) const;
 
-    void markEligibleForUnloading(const std::string& cacheKey) const;
+    void markEligibleForUnloading(
+        const TilesetTile* tile,
+        const std::string& cacheKey) const;
 
     void updateTotalBytesUsed() const;
 

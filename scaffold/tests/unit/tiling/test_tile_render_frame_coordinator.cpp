@@ -105,7 +105,7 @@ TEST(
             command.kind = RenderCommandKind::SurfaceTile;
             outCommands.push_back(std::move(command));
         },
-        [](const std::string&) {},
+        [](const TilesetTile*, const std::string&) {},
         [&updateTotalBytesCalled]() {
             updateTotalBytesCalled = true;
         },

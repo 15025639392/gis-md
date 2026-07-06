@@ -32,8 +32,8 @@ void TilesetRenderFrameExecutor::buildRenderCommands(
                 allowSynchronousMeshPrep,
                 surfaceClipUv);
         },
-        [&context](const std::string& cacheKey) {
-            context.markEligibleForUnloading(cacheKey);
+        [&context](const TilesetTile* tile, const std::string& cacheKey) {
+            context.markEligibleForUnloading(tile, cacheKey);
         },
         [&context]() {
             context.updateTotalBytesUsed();

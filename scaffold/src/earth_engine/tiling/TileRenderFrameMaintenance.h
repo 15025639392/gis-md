@@ -60,7 +60,7 @@ public:
 
         const double eligibilityStartMs = perf::nowMs();
         for (const TileFrameInactiveEntry& entry : inactiveTiles) {
-            markEligible(entry.cacheKey);
+            markEligible(entry.tile, *entry.cacheKey);
         }
         timings.eligibilityMs = perf::nowMs() - eligibilityStartMs;
 

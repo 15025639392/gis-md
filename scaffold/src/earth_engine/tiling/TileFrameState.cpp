@@ -14,7 +14,7 @@ std::vector<TileFrameInactiveEntry> TileFrameState::collectInactiveTiles(
         if (!tile || tile->lastUsedFrame() == frameNumber) {
             continue;
         }
-        result.push_back(TileFrameInactiveEntry{cacheKey, tile.get()});
+        result.push_back(TileFrameInactiveEntry{&cacheKey, tile.get()});
     }
     return result;
 }

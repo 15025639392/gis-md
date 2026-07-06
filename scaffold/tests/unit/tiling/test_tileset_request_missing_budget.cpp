@@ -260,6 +260,7 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key) {
         tileset.cacheOwnership_.markEligibleForUnloading(
+            tileset.tileRegistry_.findTile(key),
             terrainCacheKey(tileset, key));
     }
 

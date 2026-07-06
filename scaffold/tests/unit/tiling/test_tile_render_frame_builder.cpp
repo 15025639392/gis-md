@@ -121,7 +121,7 @@ TEST(
             outCommands.push_back(std::move(command));
         },
         [](const std::vector<TileFrameInactiveEntry>&) {},
-        [](const std::string&) {},
+        [](const TilesetTile*, const std::string&) {},
         [&updateTotalBytesCalled]() {
             updateTotalBytesCalled = true;
         },

@@ -27,7 +27,7 @@ public:
         double& tileCacheUnloadTimeLimit);
 
     void updateTotalBytesUsed();
-    void markEligibleForUnloading(const std::string& key);
+    void markEligibleForUnloading(const TilesetTile* tile, const std::string& key);
     void markIneligibleForUnloading(const std::string& key);
     void eraseTileIndexState(const std::string& key);
     void clearChildrenRecursively(TilesetTile* tile,

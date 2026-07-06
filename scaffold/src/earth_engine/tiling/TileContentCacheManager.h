@@ -36,9 +36,7 @@ public:
         const TileContentLifecycleManager& lifecycle);
 
     void markEligibleForUnloading(
-        const std::unordered_map<
-            std::string,
-            std::unique_ptr<TilesetTile>>& tiles,
+        const TilesetTile* tile,
         const std::string& cacheKey);
     void markIneligibleForUnloading(const std::string& cacheKey);
 

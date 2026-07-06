@@ -31,8 +31,9 @@ void TileRenderFrameContext::buildTileDrawCommand(
 }
 
 void TileRenderFrameContext::markEligibleForUnloading(
+    const TilesetTile* tile,
     const std::string& cacheKey) const {
-    cacheOwnership.markEligibleForUnloading(cacheKey);
+    cacheOwnership.markEligibleForUnloading(tile, cacheKey);
 }
 
 void TileRenderFrameContext::updateTotalBytesUsed() const {

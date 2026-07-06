@@ -10,7 +10,10 @@ namespace earth_engine {
 struct TilesetTile;
 
 struct TileFrameInactiveEntry {
-    std::string cacheKey;
+    // Borrowed from the registry map's key — the map owns it and isn't mutated
+    // between collection and consumption within a single frame's maintenance,
+    // so no per-inactive-tile string copy is made.
+    const std::string* cacheKey = nullptr;
     TilesetTile* tile = nullptr;
 };
 

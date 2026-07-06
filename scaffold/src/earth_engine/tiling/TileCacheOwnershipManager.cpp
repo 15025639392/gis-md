@@ -33,8 +33,9 @@ void TileCacheOwnershipManager::updateTotalBytesUsed() {
 }
 
 void TileCacheOwnershipManager::markEligibleForUnloading(
+    const TilesetTile* tile,
     const std::string& key) {
-    contentCache_.markEligibleForUnloading(tiles_, key);
+    contentCache_.markEligibleForUnloading(tile, key);
 }
 
 void TileCacheOwnershipManager::markIneligibleForUnloading(

@@ -14,9 +14,9 @@ void TileContentCacheManager::updateTotalBytesUsed(
 }
 
 void TileContentCacheManager::markEligibleForUnloading(
-    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
+    const TilesetTile* tile,
     const std::string& cacheKey) {
-    TileIndexState::markEligibleForUnloading(unloadQueue_, tiles, cacheKey);
+    TileIndexState::markEligibleForUnloading(unloadQueue_, tile, cacheKey);
 }
 
 void TileContentCacheManager::markIneligibleForUnloading(

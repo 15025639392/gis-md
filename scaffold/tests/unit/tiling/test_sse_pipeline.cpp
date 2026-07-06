@@ -137,6 +137,19 @@
 #include <string>
 #include <utility>
 using namespace earth_engine;
+
+namespace {
+// markEligibleForUnloading now takes the tile the caller already holds; tests
+// look it up from their local registry map (nullptr when absent, matching the
+// old find-miss no-op).
+inline const TilesetTile* tileForKey(
+    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
+    const std::string& key) {
+    auto it = tiles.find(key);
+    return it == tiles.end() ? nullptr : it->second.get();
+}
+} // namespace
+
 namespace earth_engine {
 
 class RetryLaterContentProvider final : public TilesetContentProvider {
@@ -548,6 +561,7 @@ struct TilesetTestAccess {
     }
     static void markEligibleForUnloading(Tileset& tileset, const TileKey& key) {
         tileset.cacheOwnership_.markEligibleForUnloading(
+            tileset.tileRegistry_.findTile(key),
             terrainCacheKey(tileset, key));
     }
     static void unloadCachedBytes(Tileset& tileset, int64_t maximumCachedBytes) {
@@ -10939,27 +10953,27 @@ void testTileIndexStateQueuesOnlyUnloadableTiles() {
     tiles["null"] = nullptr;
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
-        tiles,
+        tileForKey(tiles, "render"),
         "render");
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
-        tiles,
+        tileForKey(tiles, "loading"),
         "loading");
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
-        tiles,
+        tileForKey(tiles, "failed-unknown"),
         "failed-unknown");
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
-        tiles,
+        tileForKey(tiles, "unloaded-unknown"),
         "unloaded-unknown");
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
-        tiles,
+        tileForKey(tiles, "null"),
         "null");
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
-        tiles,
+        tileForKey(tiles, "missing"),
         "missing");
     check(unloadQueue.size() == 2 &&
               unloadQueue.contains("render") &&
@@ -11271,7 +11285,7 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     TilesetTestAccess::makeGltfRenderReady(*tile);
     tiles[cacheKey] = std::move(tile);    lifecycle.emptyContentRegistry().insert(cacheKey);
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    manager.markEligibleForUnloading(tiles, cacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
     check(manager.totalBytesUsed() > 0 &&
               manager.unloadQueue().contains(cacheKey),
           "TileContentCacheManager: owns byte accounting and unload queue state");
@@ -11302,7 +11316,7 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);    lifecycle.emptyContentRegistry().insert(cacheKey);
     loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
-    manager.markEligibleForUnloading(tiles, cacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
     {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
@@ -11336,7 +11350,7 @@ void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
     tile->content.contentKind = TileContentKind::Unknown;
     tiles[cacheKey] = std::move(tile);
     lifecycle.emptyContentRegistry().insert(cacheKey);
-    manager.markEligibleForUnloading(tiles, cacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
     manager.unloadCachedBytes(
         -1,
         0.0,
@@ -11362,7 +11376,7 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     tiles[cacheKey] = std::move(tile);    manager.updateTotalBytesUsed(tiles, lifecycle);
     const int64_t bytesBeforeUnload = manager.totalBytesUsed();
     manager.cacheBytesDirty() = false;
-    manager.markEligibleForUnloading(tiles, cacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
     manager.unloadCachedBytes(
         0,
         0.0,
@@ -11402,7 +11416,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    manager.markEligibleForUnloading(tiles, rootCacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
@@ -11456,7 +11470,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    manager.markEligibleForUnloading(tiles, rootCacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
@@ -11511,7 +11525,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    manager.markEligibleForUnloading(tiles, rootCacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
@@ -11579,7 +11593,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    manager.markEligibleForUnloading(tiles, rootCacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
         0,
@@ -12070,7 +12084,7 @@ void testTileFrameStateCollectsInactiveTilesOncePerFrame() {
     const std::vector<TileFrameInactiveEntry> inactiveTiles =
         TileFrameState::collectInactiveTiles(tiles, 7);
     check(inactiveTiles.size() == 1 &&
-              inactiveTiles[0].cacheKey == "inactive" &&
+              *inactiveTiles[0].cacheKey == "inactive" &&
               inactiveTiles[0].tile == inactiveRaw,
           "TileFrameState: inactive scan skips current-frame and null tiles");
 }

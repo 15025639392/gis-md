@@ -21,11 +21,11 @@ class TileUnloadQueue;
 struct TilesetTile;
 
 struct TileIndexState {
+    // `tile` is the entry the caller already holds (from the frame's inactive
+    // scan), so eligibility is checked directly without re-looking-up cacheKey.
     static void markEligibleForUnloading(
         TileUnloadQueue& unloadQueue,
-        const std::unordered_map<
-            std::string,
-            std::unique_ptr<TilesetTile>>& tiles,
+        const TilesetTile* tile,
         const std::string& cacheKey);
 
     static void markIneligibleForUnloading(

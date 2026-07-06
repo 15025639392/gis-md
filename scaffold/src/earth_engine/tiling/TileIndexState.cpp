@@ -12,12 +12,10 @@ namespace earth_engine {
 
 void TileIndexState::markEligibleForUnloading(
     TileUnloadQueue& unloadQueue,
-    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
+    const TilesetTile* tile,
     const std::string& cacheKey) {
-    const auto tileIt = tiles.find(cacheKey);
-    if (tileIt == tiles.end() ||
-        !tileIt->second ||
-        !TileUnloadPolicy::isEligibleForContentUnloadQueue(*tileIt->second)) {
+    if (!tile ||
+        !TileUnloadPolicy::isEligibleForContentUnloadQueue(*tile)) {
         return;
     }
     unloadQueue.pushBackIfAbsent(cacheKey);

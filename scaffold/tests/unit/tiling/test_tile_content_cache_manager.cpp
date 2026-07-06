@@ -20,6 +20,16 @@ using namespace earth_engine;
 
 namespace {
 
+// markEligibleForUnloading now takes the tile the caller already holds; in
+// tests the tile lives in the local registry map, so look it up (nullptr when
+// absent, matching the old find-miss no-op).
+const TilesetTile* tileForKey(
+    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
+    const std::string& key) {
+    auto it = tiles.find(key);
+    return it == tiles.end() ? nullptr : it->second.get();
+}
+
 struct ExternalSubtreeFixture {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
@@ -44,7 +54,7 @@ struct ExternalSubtreeFixture {
         tiles[childCacheKey] = std::move(child);
 
         manager.updateTotalBytesUsed(tiles, lifecycle);
-        manager.markEligibleForUnloading(tiles, rootCacheKey);
+        manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     }
 
     void addChildUploadWork() {
@@ -143,7 +153,7 @@ TEST(
     lifecycle.emptyContentRegistry().insert(cacheKey);
 
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    manager.markEligibleForUnloading(tiles, cacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
 
     EXPECT_GT(manager.totalBytesUsed(), 0);
     EXPECT_TRUE(manager.unloadQueue().contains(cacheKey));
@@ -212,7 +222,7 @@ TEST(
     tiles[cacheKey] = std::move(tile);
     lifecycle.emptyContentRegistry().insert(cacheKey);
 
-    manager.markEligibleForUnloading(tiles, cacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
     manager.unloadCachedBytes(
         -1,
         0.0,
@@ -244,7 +254,7 @@ TEST(
     tiles[cacheKey] = std::move(tile);
     lifecycle.emptyContentRegistry().insert(cacheKey);
     loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
-    manager.markEligibleForUnloading(tiles, cacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
 
     {
         FrameResourceBudgetConfig config;
@@ -382,8 +392,8 @@ TEST(
     tiles[rootBCacheKey] = std::move(rootB);
 
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    manager.markEligibleForUnloading(tiles, rootACacheKey);
-    manager.markEligibleForUnloading(tiles, rootBCacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, rootACacheKey), rootACacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, rootBCacheKey), rootBCacheKey);
 
     bool clearedA = false;
     bool clearedB = false;
@@ -488,9 +498,9 @@ TEST(
     loadQueue.queue(childKey, TileLoadPriorityGroup::Normal, 1.0);
     loadQueue.queue(grandchildKey, TileLoadPriorityGroup::Normal, 2.0);
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    manager.markEligibleForUnloading(tiles, rootCacheKey);
-    manager.markEligibleForUnloading(tiles, childCacheKey);
-    manager.markEligibleForUnloading(tiles, grandchildCacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, childCacheKey), childCacheKey);
+    manager.markEligibleForUnloading(tileForKey(tiles, grandchildCacheKey), grandchildCacheKey);
     ASSERT_TRUE(manager.unloadQueue().contains(rootCacheKey));
     ASSERT_TRUE(manager.unloadQueue().contains(childCacheKey));
     ASSERT_TRUE(manager.unloadQueue().contains(grandchildCacheKey));
