@@ -249,6 +249,47 @@ TEST_F(CameraControllerTest, DragThenInertiaDecays) {
     EXPECT_LT(rotDiff, 0.01);
 }
 
+TEST_F(CameraControllerTest, DragSpinsWhenPointerMissesGlobeInsteadOfDeadZone) {
+    // 回归（A0 消死区）：手指按在地球轮廓外（pick ray 打空）时，旧实现
+    // onDragStart 直接放弃整段拖拽（dragging_=false → onDragMove no-op），
+    // 地图卡死不动。现在应回退到 spin 转台旋转。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(7.0f);
+    controller_->update(0.0);
+
+    // 先确认起点确实在球面之外（判别式 < 0 → ray 不命中），否则测不到回退。
+    const Ray missRay = camera_->getPickRay(780.0, 40.0, 800.0, 600.0);
+    const glm::dvec3 o = missRay.origin().raw();
+    const glm::dvec3 d = missRay.direction().raw();
+    const double b = 2.0 * glm::dot(o, d);
+    const double c = glm::dot(o, o) - kEarthRadiusMeters * kEarthRadiusMeters;
+    ASSERT_LT(b * b - 4.0 * c, 0.0);
+
+    controller_->onDragStart(780.0f, 40.0f);
+    controller_->onDragMove(740.0f, 90.0f);
+    controller_->onDragEnd();
+
+    EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 1e-6);
+}
+
+TEST_F(CameraControllerTest, DragSpinFlickOverEmptySpaceSeedsInertia) {
+    // spin 与 anchor 共用惯性通道：隔着地平线甩一下，松手后应继续滑行。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(7.0f);
+    controller_->update(0.0);
+
+    controller_->onDragStart(780.0f, 40.0f, 1.0);
+    controller_->onDragMove(720.0f, 100.0f, 1.016);
+    controller_->onDragEnd();
+
+    const auto qEnd = controller_->rotation();
+    controller_->update(1.0 / 60.0);
+    const auto qGlide = controller_->rotation();
+    const double diff = std::abs(qEnd.w - qGlide.w) + std::abs(qEnd.x - qGlide.x) +
+                        std::abs(qEnd.y - qGlide.y) + std::abs(qEnd.z - qGlide.z);
+    EXPECT_GT(diff, 1e-9);
+}
+
 TEST_F(CameraControllerTest, PinchChangesDistance) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->setDistance(5.0f);

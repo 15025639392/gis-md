@@ -127,7 +127,10 @@ void CameraController::setTerrainHeightFunc(TerrainHeightFunc func) {
 void CameraController::onDragStart(float xPixels, float yPixels, double timestamp) {
     update(0.0);
     orbitMode_ = false;
-    dragging_ = grabSurfacePoint(xPixels, yPixels);
+    // 抓取起始地表点；miss（按在地平线外/空白处）不再放弃整段拖拽，
+    // 而是进入 spin 回退。grabSurfacePoint 内部已设置 hasGrabbedPoint_。
+    grabSurfacePoint(xPixels, yPixels);
+    dragging_ = true;
     dragStartX_ = xPixels;
     dragStartY_ = yPixels;
     dragLastX_ = xPixels;
@@ -553,28 +556,50 @@ bool CameraController::grabSurfacePoint(float xPixels, float yPixels) {
 
 void CameraController::applyAnchorDrag(float xPixels, float yPixels,
                                        double timestamp) {
-    if (!hasGrabbedPoint_) {
-        return;
-    }
+    glm::dquat delta;
 
     Vec3 targetPoint;
-    if (!pickSurfacePoint(xPixels, yPixels, targetPoint)) {
-        return;
+    const bool anchorValid =
+        hasGrabbedPoint_ && pickSurfacePoint(xPixels, yPixels, targetPoint);
+
+    if (anchorValid) {
+        // Anchor pan：旋转让被抓地表点跟随手指（起点/当前都命中球面）。
+        const glm::dvec3 from = targetPoint.normalized().raw();
+        const glm::dvec3 to = grabbedNormal_.raw();
+        const glm::dvec3 axis = glm::cross(from, to);
+        const double axisLength = glm::length(axis);
+        if (axisLength < 1e-10) {
+            return;
+        }
+        const double dot = std::clamp(glm::dot(from, to), -1.0, 1.0);
+        const double angle = std::atan2(axisLength, dot);
+        delta = glm::angleAxis(angle, axis / axisLength);
+    } else {
+        // Spin 回退（等价 cesium _spin3D）：手指在地平线外/空白处，没有
+        // 地表点可锚定，改用屏幕像素位移按"转台"方式绕地心转相机。一旦
+        // miss 就 latch 到 spin 直到抬手——避免近球缘 pan<->spin 每帧抖动，
+        // 以及重入球面时把过期锚点猛拉回指下的跳变。
+        hasGrabbedPoint_ = false;
+
+        const double dx = static_cast<double>(xPixels) - dragLastX_;
+        const double dy = static_cast<double>(yPixels) - dragLastY_;
+        if (std::abs(dx) < 1e-6 && std::abs(dy) < 1e-6) {
+            return;
+        }
+        // 屏幕中心处每像素约对应的角度，给出接近 1:1 的转台手感。
+        // 水平/垂直每像素角度相同（aspect 抵消），故统一用 fov/height。
+        const double radPerPixel =
+            camera_->verticalFovRadians() /
+            static_cast<double>(std::max(1, viewportHeight_));
+        // 手指右移 → 世界右转（绕屏幕竖轴=camera up）；
+        // 手指下移 → 世界下转（绕屏幕横轴=camera right）。
+        const glm::dquat yaw =
+            glm::angleAxis(-dx * radPerPixel, camera_->up().raw());
+        const glm::dquat pitch =
+            glm::angleAxis(-dy * radPerPixel, camera_->right().raw());
+        delta = glm::normalize(yaw * pitch);
     }
 
-    const glm::dvec3 from = targetPoint.normalized().raw();
-    const glm::dvec3 to = grabbedNormal_.raw();
-    const glm::dvec3 axis = glm::cross(from, to);
-    const double axisLength = glm::length(axis);
-    if (axisLength < 1e-10) {
-        return;
-    }
-
-    const double dot = std::clamp(glm::dot(from, to), -1.0, 1.0);
-    const double angle = std::atan2(axisLength, dot);
-
-    const glm::dvec3 normalizedAxis = glm::normalize(axis);
-    const glm::dquat delta = glm::angleAxis(angle, normalizedAxis);
     applyCameraRotation(delta);
     {
         glm::dvec3 clampedEye = clampEyeAltitude(
@@ -586,12 +611,14 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
         }
     }
 
-    // 更新惯性（使用事件时间戳，而非渲染时钟）
+    // 更新惯性（使用事件时间戳，而非渲染时钟）；spin 与 anchor 共用同一通道，
+    // 故隔着地平线甩一下也能顺滑滑行。
+    const double angle = glm::angle(delta);
     double dt = timestamp - lastDragTimestamp_;
-    if (dt > 0.0 && dt < 0.25) {
-        double instantaneousVelocity = std::min(static_cast<double>(angle) / dt,
+    if (angle > 1e-9 && dt > 0.0 && dt < 0.25) {
+        double instantaneousVelocity = std::min(angle / dt,
                                                 kMaxInertiaAngularVelocityRadPerSec);
-        inertiaAxis_ = normalizedAxis;
+        inertiaAxis_ = glm::axis(delta);
         inertiaAngularVelocity_ =
             inertiaAngularVelocity_ * (1.0 - kVelocitySmoothing) +
             instantaneousVelocity * kVelocitySmoothing;
