@@ -533,10 +533,25 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
 
         for (size_t i = 0; i < edgeIdx.size(); ++i) {
             size_t ei = reverse ? (edgeIdx.size() - 1 - i) : i;
-            const SurfaceVertex& top = decoded->vertices[edgeIdx[ei]];
-            Cartographic cart = ellipsoid.cartesianToCartographic(top.positionEcef);
+            const uint32_t vi = edgeIdx[ei];
+            const SurfaceVertex& top = decoded->vertices[vi];
+            // Reconstruct the skirt base lon/lat/height from the RAW quantized
+            // u/v/h (exactly as the main-vertex loop and cesium addSkirt do),
+            // NOT by inverting the top vertex ECEF via cartesianToCartographic.
+            // The inverse recovers latitude via asin(clamp(n.z)), whose derivative
+            // blows up as lat→±π/2, so near a pole tile the round-trip turns tiny
+            // float error into noisy non-monotonic longitudes → twisted / degenerate
+            // skirt quads (visible tearing). Lerping from u/v is exact and also
+            // drops a per-edge-vertex Newton solve.
+            const double u = static_cast<double>(uBuf[vi]) * uScale;
+            const double v = static_cast<double>(vBuf[vi]) * uScale;
+            const double h = hMin + static_cast<double>(hBuf[vi]) * hScale * hRange;
+            const double lng =
+                westLng + (eastLng - westLng) * std::clamp(u, 0.0, 1.0);
+            const double lat =
+                southLat + (northLat - southLat) * std::clamp(v, 0.0, 1.0);
             Cartographic sc = Cartographic::fromRadians(
-                cart.longitude() + lo, cart.latitude() + la, cart.height() - skirtH);
+                lng + lo, lat + la, h - skirtH);
 
             SurfaceVertex sv;
             sv.positionEcef = ellipsoid.cartographicToCartesian(sc);

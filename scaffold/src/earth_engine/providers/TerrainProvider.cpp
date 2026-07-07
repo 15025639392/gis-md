@@ -32,14 +32,40 @@ float DecodedHeightmap::sampleBilinear(float u, float v) const {
     float wx = fx - static_cast<float>(x0);
     float wy = fy - static_cast<float>(y0);
 
-    float h00 = heights[static_cast<size_t>(y0 * tileSize + x0)];
-    float h10 = heights[static_cast<size_t>(y0 * tileSize + x1)];
-    float h01 = heights[static_cast<size_t>(y1 * tileSize + x0)];
-    float h11 = heights[static_cast<size_t>(y1 * tileSize + x1)];
+    const float h00 = heights[static_cast<size_t>(y0 * tileSize + x0)];
+    const float h10 = heights[static_cast<size_t>(y0 * tileSize + x1)];
+    const float h01 = heights[static_cast<size_t>(y1 * tileSize + x0)];
+    const float h11 = heights[static_cast<size_t>(y1 * tileSize + x1)];
 
-    float top = h00 + wx * (h10 - h00);
-    float bottom = h01 + wx * (h11 - h01);
-    return top + wy * (bottom - top);
+    // Exclude no-data corners from the blend. A raw bilinear mix of a no-data
+    // sentinel (e.g. 65535) with valid corners yields a mid-range value (e.g.
+    // ~15000 m) that slips UNDER isNoData's >50000 test → a spurious height
+    // ramp/spike along every no-data boundary. Weight only the valid corners
+    // and renormalize; if all four are no-data, return a no-data value so the
+    // caller's isNoData(result) trips (preserving the "no data here" signal).
+    const float w00 = (1.0f - wx) * (1.0f - wy);
+    const float w10 = wx * (1.0f - wy);
+    const float w01 = (1.0f - wx) * wy;
+    const float w11 = wx * wy;
+
+    float weightedSum = 0.0f;
+    float weightTotal = 0.0f;
+    const auto accumulate = [&](float h, float w) {
+        if (!isNoData(h)) {
+            weightedSum += h * w;
+            weightTotal += w;
+        }
+    };
+    accumulate(h00, w00);
+    accumulate(h10, w10);
+    accumulate(h01, w01);
+    accumulate(h11, w11);
+
+    if (weightTotal <= 0.0f) {
+        // All four corners are no-data → propagate a no-data value.
+        return h00;
+    }
+    return weightedSum / weightTotal;
 }
 
 } // namespace earth_engine
