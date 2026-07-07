@@ -600,11 +600,15 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             config_.gltf.url,
             config_.gltf.name);
         gltfProvider->setPlatformBridge(&platformBridge_);
-        gltfProvider->setEastNorthUpPlacementDegrees(
-            config_.gltf.longitudeDegrees,
-            config_.gltf.latitudeDegrees,
-            config_.gltf.heightMeters,
-            config_.gltf.uniformScale);
+        // 世界锚定内容(i3dm 绝对 ECEF)不套 ENU 就地放置——内容自身已定位,
+        // 再叠 ENU 会二次平移把它推到界外(见 GltfSourceConfig::worldAnchored)。
+        if (!config_.gltf.worldAnchored) {
+            gltfProvider->setEastNorthUpPlacementDegrees(
+                config_.gltf.longitudeDegrees,
+                config_.gltf.latitudeDegrees,
+                config_.gltf.heightMeters,
+                config_.gltf.uniformScale);
+        }
 
         auto gltfTileset = std::make_unique<Tileset>(
             TileScheme::createGeographicTMS(),
@@ -625,6 +629,29 @@ void EarthEngineSdkFacade::resetCamera() {
         Cartographic::fromDegrees(config_.initialCamera.longitudeDegrees,
                                   config_.initialCamera.latitudeDegrees,
                                   0.0));
+
+    // 斜视初始视角:自由视角(非 orbit),相机从目标点正南以给定仰角俯瞰,让竖直
+    // foliage 等地表小物可见(nadir 下广告牌边缘朝相机≈隐形)。viewDistance 会把
+    // orbitMode_ 置 false,故每帧不再被 orbit 重建覆盖。
+    if (config_.initialCamera.obliqueElevationDegrees > 0.0) {
+        const Vec3 upN = ellipsoid.geodeticSurfaceNormal(targetEcef);
+        Vec3 eastN = Vec3::unitZ().cross(upN);
+        if (eastN.lengthSquared() < 1e-12) {
+            eastN = Vec3::unitX();
+        }
+        eastN = eastN.normalized();
+        const Vec3 northN = upN.cross(eastN).normalized();
+        const double elevRad =
+            config_.initialCamera.obliqueElevationDegrees * M_PI / 180.0;
+        const double dist =
+            config_.initialCamera.heightMeters / std::max(0.05, std::sin(elevRad));
+        // 相机在目标正南、抬高:eye = target + dist*(sin·up - cos·north)。
+        const Vec3 eye = targetEcef +
+            (upN * std::sin(elevRad) - northN * std::cos(elevRad)) * dist;
+        engine_.camera().lookAt(eye, targetEcef, upN);
+        engine_.cameraController().viewDistance(targetEcef, dist);
+        return;
+    }
     auto camEcef = ellipsoid.cartographicToCartesian(
         Cartographic::fromDegrees(config_.initialCamera.longitudeDegrees,
                                   config_.initialCamera.latitudeDegrees,

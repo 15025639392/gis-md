@@ -190,6 +190,13 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
         u.alphaMode = alphaModeUniform(primitive.alphaMode);
         u.alphaCutoff = primitive.alphaCutoff;
         u.unlit = primitive.unlit ? 1.0f : 0.0f;
+        // 实例化 blend/透射 primitive 用 alpha-to-coverage 保持单 draw(顺序无关),
+        // 否则逐实例 alpha 排序会退化成每实例一个 draw call(N 爆炸+大 N OOM)。
+        // 内容不变式:仅取决于材质 alphaMode/透射与是否实例化。
+        cmd.alphaToCoverage =
+            primitive.instanceCount > 0 &&
+            (primitive.alphaMode == GltfAlphaMode::Blend ||
+             primitive.transmissionFactor > 0.0f);
 
         auto setTransform = [](
             GltfUniformBlock::TextureTransform& transform,
@@ -341,9 +348,12 @@ void applyPerFrameCommandState(
     }
     // alphaMode/transmission 是内容量(缓存里),透明度是每帧量:blend 状态
     // 必须每帧重新派生,否则 fade 结束后命令会卡在半透明状态。
-    if (context.transitionOpacity < 0.999f ||
-        u.alphaMode == 2.0f ||
-        u.transmissionFactor > 0.0f) {
+    // A2C 命令(实例化 blend)材质半透明改由 alpha-to-coverage 承担,不开常规
+    // alpha 混合(那需逐实例排序);但 LOD 淡入淡出期整块 alpha 叠加仍需真混合。
+    const bool fading = context.transitionOpacity < 0.999f;
+    const bool materialTranslucent =
+        u.alphaMode == 2.0f || u.transmissionFactor > 0.0f;
+    if (fading || (materialTranslucent && !cmd.alphaToCoverage)) {
         cmd.blend = true;
         cmd.depthWrite = false;
         cmd.blendSrc = RenderCommand::BlendFactor::SrcAlpha;

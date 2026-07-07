@@ -502,37 +502,9 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                 return true;
             };
 
-        if (GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
-                primitive)) {
-            const Vec3 centroid =
-                GltfRenderGeometryBuilder::primitiveCentroid(primitive);
-            for (const GltfInstance& instance : primitive.instances) {
-                const Mat4 instanceTransform(
-                    tile.content.renderContent.gltfTransform().raw() *
-                    instance.transform.raw());
-                std::vector<GltfGpuVertex> verts =
-                    GltfRenderGeometryBuilder::buildVertices(
-                        primitive,
-                        instanceTransform,
-                        tile.content.renderContent.renderLocalOrigin(),
-                        false);
-                const Vec3 sortCenter =
-                    GltfRenderGeometryBuilder::transformPoint(
-                        instanceTransform.raw(),
-                        centroid);
-                if (!appendPrimitiveResource(
-                        std::move(verts),
-                        sortCenter,
-                        nullptr)) {
-                    resourceFailure = true;
-                    break;
-                }
-            }
-            if (resourceFailure) {
-                break;
-            }
-            continue;
-        }
+        // blend/透射实例化 primitive 不再拆成逐实例 draw(那会 N 爆炸+大 N OOM):
+        // 走下方常规实例化路径(单 instanceBuffer + 单 draw),透明由 render 命令的
+        // alpha-to-coverage 承担(见 GltfDrawCommandBuilder::alphaToCoverage)。
 
         // Use lightweight terrain vertex format for terrain content
         if (useTerrainFormat && !instanced) {

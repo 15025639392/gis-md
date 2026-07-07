@@ -45,6 +45,10 @@ Vec3 GltfRenderGeometryBuilder::primitiveSortCenterEcef(
     return center / static_cast<double>(primitive.instances.size());
 }
 
+// 历史名"split":曾把 blend/透射实例化拆成逐实例 draw 以正确排序;现改由
+// alpha-to-coverage 单实例化 draw 承担(见 RenderCommand::alphaToCoverage),不再
+// 拆分。本谓词仅剩用途=标记"blend/透射实例化 primitive",供动画改写时保守重建
+// (modelUsesSplitBlendInstances → GltfRenderResourcePreparer 动画分支)。
 bool GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
     const GltfPrimitive& primitive) {
     return !primitive.instances.empty() &&
@@ -57,9 +61,10 @@ size_t GltfRenderGeometryBuilder::primitiveRenderResourceCount(
     if (primitive.vertices.empty() || primitive.indices.empty()) {
         return 0u;
     }
-    return primitiveUsesSplitBlendInstances(primitive)
-        ? primitive.instances.size()
-        : 1u;
+    // 每个可渲染 primitive = 1 个绘制资源(实例化或非实例化均一个)。blend 实例化
+    // 不再拆成 N 份逐实例资源——改由 alpha-to-coverage 单 draw 承担(见
+    // RenderCommand::alphaToCoverage / GltfDrawCommandBuilder)。
+    return 1u;
 }
 
 bool GltfRenderGeometryBuilder::modelUsesSplitBlendInstances(

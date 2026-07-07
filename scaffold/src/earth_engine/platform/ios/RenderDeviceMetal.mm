@@ -660,7 +660,11 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
 
         if (!program || !vb) continue;
 
-        [impl_->currentEncoder setRenderPipelineState:program->pso(cmd.blend)];
+        // alpha-to-coverage 命令(实例化 blend/透射):GLES 用真 A2C(MSAA 覆盖);
+        // Metal 无多重采样帧缓冲,A2C 会是 no-op,故回落到 blended PSO——单 draw
+        // 无序 alpha 混合(仍避免逐实例 draw 爆炸)。cmd.blend 已被抑制,这里补选。
+        const bool useBlendedPso = cmd.blend || cmd.alphaToCoverage;
+        [impl_->currentEncoder setRenderPipelineState:program->pso(useBlendedPso)];
         id<MTLDepthStencilState> depthState = impl_->depthDisabled;
         if (cmd.depthTest) {
             depthState = cmd.depthWrite ? impl_->depthReadWrite : impl_->depthReadOnly;

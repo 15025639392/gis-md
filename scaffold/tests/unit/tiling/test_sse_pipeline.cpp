@@ -7770,43 +7770,21 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
         *root,
         commands,
         1.0f);
-    check(commands.size() == 2 &&
-              root->content.renderContent.gltfPrimitiveResourceCount() == 2u,
-          "Tileset: glTF BLEND instances become separate sortable draw commands");
-    if (commands.size() < 2) return;
-    bool splitCommands = true;
-    for (const RenderCommand& cmd : commands) {
-        splitCommands = splitCommands &&
-            cmd.kind == RenderCommandKind::GltfPrimitive &&
-            cmd.instanceCount == 0 &&
-            cmd.instanceBuffer == nullptr &&
-            cmd.blend &&
-            !cmd.depthWrite &&
-            cmd.hasWorldSortCenter;
-    }
-    check(splitCommands,
-          "Tileset: split BLEND instance commands are non-instanced translucent primitives");
-    check(std::abs(commands[0].worldSortCenter[2] - 5.0) < 1e-9 &&
-              std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
-          "Tileset: split BLEND instance commands carry per-instance sort centers");
-    const auto* firstVertices =
-        dynamic_cast<const DummyBuffer*>(commands[0].vertexBuffer);
-    const auto* secondVertices =
-        dynamic_cast<const DummyBuffer*>(commands[1].vertexBuffer);
-    bool verticesBakedPerInstance = false;
-    if (firstVertices && secondVertices &&
-        firstVertices->bytes().size() >= 3u * sizeof(float) &&
-        secondVertices->bytes().size() >= 3u * sizeof(float)) {
-        std::array<float, 3> first{};
-        std::array<float, 3> second{};
-        std::memcpy(first.data(), firstVertices->bytes().data(), sizeof(first));
-        std::memcpy(second.data(), secondVertices->bytes().data(), sizeof(second));
-        verticesBakedPerInstance =
-            std::abs(first[2] + 10.0f) < 1e-6f &&
-            std::abs(second[2] - 10.0f) < 1e-6f;
-    }
-    check(verticesBakedPerInstance,
-          "Tileset: split BLEND instance vertices are baked relative to shared local origin");
+    // BLEND 实例化 primitive 走 alpha-to-coverage 单实例化 draw(顺序无关),不再
+    // 拆成逐实例 sortable 命令——避免 N draw 爆炸+大 N OOM(见 RenderCommand::
+    // alphaToCoverage / GltfDrawCommandBuilder / GltfRenderResourcePreparer)。
+    check(commands.size() == 1 &&
+              root->content.renderContent.gltfPrimitiveResourceCount() == 1u,
+          "Tileset: glTF BLEND instances render as one alpha-to-coverage instanced command");
+    if (commands.empty()) return;
+    const RenderCommand& blendCmd = commands[0];
+    check(blendCmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+              blendCmd.instanceCount == 2 &&
+              blendCmd.instanceBuffer != nullptr &&
+              blendCmd.alphaToCoverage &&
+              !blendCmd.blend &&
+              blendCmd.depthWrite,
+          "Tileset: BLEND instanced command uses alpha-to-coverage, not per-instance alpha blend");
 }
 void testTilesetGltfTransmissionInstancesSplitForSorting() {
     DummyRenderDevice device;
@@ -7845,28 +7823,22 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
         *root,
         commands,
         1.0f);
-    check(commands.size() == 2 &&
-              root->content.renderContent.gltfPrimitiveResourceCount() == 2u,
-          "Tileset: glTF transmission instances become separate sortable draw commands");
-    if (commands.size() < 2) return;
-    bool splitCommands = true;
-    for (const RenderCommand& cmd : commands) {
-        splitCommands = splitCommands &&
-            cmd.kind == RenderCommandKind::GltfPrimitive &&
-            cmd.instanceCount == 0 &&
-            cmd.instanceBuffer == nullptr &&
-            cmd.blend &&
-            !cmd.depthWrite &&
-            cmd.hasWorldSortCenter &&
-            hasGltfUniform(cmd, "u_transmissionFactor") &&
-            std::abs(gltfUniform(cmd, "u_transmissionFactor").front() -
-                     0.5f) < 1e-6f;
-    }
-    check(splitCommands,
-          "Tileset: split transmission instance commands are non-instanced translucent primitives");
-    check(std::abs(commands[0].worldSortCenter[2] - 5.0) < 1e-9 &&
-              std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
-          "Tileset: split transmission instance commands carry per-instance sort centers");
+    // 透射(transmission)实例化同 BLEND:走 alpha-to-coverage 单实例化 draw,不拆。
+    check(commands.size() == 1 &&
+              root->content.renderContent.gltfPrimitiveResourceCount() == 1u,
+          "Tileset: glTF transmission instances render as one alpha-to-coverage instanced command");
+    if (commands.empty()) return;
+    const RenderCommand& transCmd = commands[0];
+    check(transCmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+              transCmd.instanceCount == 2 &&
+              transCmd.instanceBuffer != nullptr &&
+              transCmd.alphaToCoverage &&
+              !transCmd.blend &&
+              transCmd.depthWrite &&
+              hasGltfUniform(transCmd, "u_transmissionFactor") &&
+              std::abs(gltfUniform(transCmd, "u_transmissionFactor").front() -
+                       0.5f) < 1e-6f,
+          "Tileset: transmission instanced command uses alpha-to-coverage with transmission factor");
 }
 void testTilesetContentProviderLoadsGltfRenderContent() {
     DummyRenderDevice device;
@@ -8156,25 +8128,19 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
         *root,
         commands,
         1.0f);
-    check(commands.size() == 2 &&
-              root->content.renderContent.gltfPrimitiveResourceCount() == 2u,
-          "Tileset: native EXT_mesh_gpu_instancing BLEND splits into sortable commands");
-    if (commands.size() < 2) return;
-    bool splitCommands = true;
-    for (const RenderCommand& cmd : commands) {
-        splitCommands = splitCommands &&
-            cmd.kind == RenderCommandKind::GltfPrimitive &&
-            cmd.instanceCount == 0 &&
-            cmd.instanceBuffer == nullptr &&
-            cmd.blend &&
-            !cmd.depthWrite &&
-            cmd.hasWorldSortCenter;
-    }
-    check(splitCommands,
-          "Tileset: native EXT_mesh_gpu_instancing BLEND does not use one translucent instanced command");
-    check(std::abs(commands[0].worldSortCenter[2] - 5.0) < 1e-9 &&
-              std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
-          "Tileset: native EXT_mesh_gpu_instancing BLEND carries per-instance sort centers");
+    // 原生 EXT_mesh_gpu_instancing BLEND 同样走 alpha-to-coverage 单实例化 draw。
+    check(commands.size() == 1 &&
+              root->content.renderContent.gltfPrimitiveResourceCount() == 1u,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND renders as one alpha-to-coverage instanced command");
+    if (commands.empty()) return;
+    const RenderCommand& extBlendCmd = commands[0];
+    check(extBlendCmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+              extBlendCmd.instanceCount == 2 &&
+              extBlendCmd.instanceBuffer != nullptr &&
+              extBlendCmd.alphaToCoverage &&
+              !extBlendCmd.blend &&
+              extBlendCmd.depthWrite,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND uses one alpha-to-coverage instanced command");
 }
 void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
     DummyRenderDevice device;
@@ -8214,69 +8180,27 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
         *root,
         commands,
         1.0f);
-    check(commands.size() == 2 &&
-              root->content.renderContent.gltfPrimitiveResourceCount() == 2u,
-          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS splits into sortable commands");
-    if (commands.size() < 2) return;
-    bool splitCommands = true;
-    for (const RenderCommand& cmd : commands) {
-        splitCommands = splitCommands &&
-            cmd.kind == RenderCommandKind::GltfPrimitive &&
-            cmd.instanceCount == 0 &&
-            cmd.instanceBuffer == nullptr &&
-            cmd.blend &&
-            !cmd.depthWrite &&
-            cmd.hasWorldSortCenter;
-    }
-    check(splitCommands,
-          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS never submits one translucent instanced command");
+    // BLEND TRS 实例化:alpha-to-coverage 单实例化 draw。逐实例几何不再烘焙进
+    // 顶点(instance TRS 走 instanceBuffer),故不再有 per-instance baked vertices。
+    // 共享 local origin(变换后质心均值)与实例化无关,仍成立。
+    check(commands.size() == 1 &&
+              root->content.renderContent.gltfPrimitiveResourceCount() == 1u,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS renders as one alpha-to-coverage instanced command");
+    if (commands.empty()) return;
+    const RenderCommand& trsBlendCmd = commands[0];
+    check(trsBlendCmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+              trsBlendCmd.instanceCount == 2 &&
+              trsBlendCmd.instanceBuffer != nullptr &&
+              trsBlendCmd.alphaToCoverage &&
+              !trsBlendCmd.blend &&
+              trsBlendCmd.depthWrite,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS uses one alpha-to-coverage instanced command");
     check(std::abs(TilesetTestAccess::localOrigin(*root).x()) < 1e-12 &&
               std::abs(TilesetTestAccess::localOrigin(*root).y() -
                        (2.0 / 3.0)) < 1e-12 &&
               std::abs(TilesetTestAccess::localOrigin(*root).z() - 15.0) <
                   1e-12,
           "Tileset: native EXT_mesh_gpu_instancing BLEND TRS local origin uses transformed centroids");
-    check(std::abs(commands[0].worldSortCenter[0] - (2.0 / 3.0)) <
-                  1e-9 &&
-              std::abs(commands[0].worldSortCenter[1] - 1.0) < 1e-9 &&
-              std::abs(commands[0].worldSortCenter[2] - 5.0) < 1e-9 &&
-              std::abs(commands[1].worldSortCenter[0] + (2.0 / 3.0)) <
-                  1e-9 &&
-              std::abs(commands[1].worldSortCenter[1] - (1.0 / 3.0)) <
-                  1e-9 &&
-              std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
-          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS carries transformed sort centers");
-    const auto* firstVertices =
-        dynamic_cast<const DummyBuffer*>(commands[0].vertexBuffer);
-    const auto* secondVertices =
-        dynamic_cast<const DummyBuffer*>(commands[1].vertexBuffer);
-    constexpr size_t kGltfGpuVertexBytes = 120u;
-    bool secondVertexBakedPerInstance = false;
-    if (firstVertices && secondVertices &&
-        firstVertices->bytes().size() >=
-            kGltfGpuVertexBytes + 3u * sizeof(float) &&
-        secondVertices->bytes().size() >=
-            kGltfGpuVertexBytes + 3u * sizeof(float)) {
-        std::array<float, 3> firstSecondVertex{};
-        std::array<float, 3> secondSecondVertex{};
-        std::memcpy(
-            firstSecondVertex.data(),
-            firstVertices->bytes().data() + kGltfGpuVertexBytes,
-            sizeof(firstSecondVertex));
-        std::memcpy(
-            secondSecondVertex.data(),
-            secondVertices->bytes().data() + kGltfGpuVertexBytes,
-            sizeof(secondSecondVertex));
-        secondVertexBakedPerInstance =
-            std::abs(firstSecondVertex[0] - 2.0f) < 1e-5f &&
-            std::abs(firstSecondVertex[1] + (2.0f / 3.0f)) < 1e-5f &&
-            std::abs(firstSecondVertex[2] + 10.0f) < 1e-5f &&
-            std::abs(secondSecondVertex[0]) < 1e-5f &&
-            std::abs(secondSecondVertex[1] - (1.0f / 3.0f)) < 1e-5f &&
-            std::abs(secondSecondVertex[2] - 10.0f) < 1e-5f;
-    }
-    check(secondVertexBakedPerInstance,
-          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS bakes rotation and scale into split vertices");
 }
 void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
     DummyRenderDevice device;
@@ -8433,41 +8357,20 @@ void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
         *root,
         commands,
         1.0f);
-    check(commands.size() == 4 &&
-              root->content.renderContent.gltfPrimitiveResourceCount() == 4u,
-          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND splits every combined instance");
-    if (commands.size() < 4) return;
-    bool splitCommands = true;
-    for (const RenderCommand& cmd : commands) {
-        splitCommands = splitCommands &&
-            cmd.kind == RenderCommandKind::GltfPrimitive &&
-            cmd.instanceCount == 0 &&
-            cmd.instanceBuffer == nullptr &&
-            cmd.blend &&
-            !cmd.depthWrite &&
-            cmd.hasWorldSortCenter;
-    }
-    check(splitCommands,
-          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND never submits one translucent instanced command");
-    const double expectedX[4] = {
-        1.0 / 3.0,
-        1.0 / 3.0,
-        10.0 + 1.0 / 3.0,
-        10.0 + 1.0 / 3.0
-    };
-    const double expectedZ[4] = {5.0, 25.0, 5.0, 25.0};
-    bool sortCentersMatch = true;
-    for (size_t i = 0; i < 4; ++i) {
-        sortCentersMatch = sortCentersMatch &&
-            std::abs(commands[i].worldSortCenter[0] - expectedX[i]) <
-                1e-9 &&
-            std::abs(commands[i].worldSortCenter[1] - 1.0 / 3.0) <
-                1e-9 &&
-            std::abs(commands[i].worldSortCenter[2] - expectedZ[i]) <
-                1e-9;
-    }
-    check(sortCentersMatch,
-          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND carries per-combined-instance sort centers");
+    // I3DM(2 实例) × 原生 EXT(2 实例) = 4 组合实例。BLEND 走 alpha-to-coverage
+    // 单实例化 draw(instanceCount==4),不再每组合实例拆一个 draw。
+    check(commands.size() == 1 &&
+              root->content.renderContent.gltfPrimitiveResourceCount() == 1u,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND renders as one alpha-to-coverage instanced command");
+    if (commands.empty()) return;
+    const RenderCommand& i3dmBlendCmd = commands[0];
+    check(i3dmBlendCmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+              i3dmBlendCmd.instanceCount == 4 &&
+              i3dmBlendCmd.instanceBuffer != nullptr &&
+              i3dmBlendCmd.alphaToCoverage &&
+              !i3dmBlendCmd.blend &&
+              i3dmBlendCmd.depthWrite,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND uses one instanced command over 4 combined instances");
 }
 void testTilesetJsonProviderLoadsExplicitGltfTile() {
     const std::filesystem::path root =
@@ -14652,17 +14555,14 @@ void testGltfRenderGeometryBuilderClassifiesSplitResources() {
     GltfInstance secondInstance;
     secondInstance.transform = Mat4::translation(Vec3(0.0, 0.0, 25.0));
     primitive.instances = {firstInstance, secondInstance};
-    check(!GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
-              primitive) &&
-              GltfRenderGeometryBuilder::primitiveRenderResourceCount(
+    check(GltfRenderGeometryBuilder::primitiveRenderResourceCount(
                   primitive) == 1u,
           "GltfRenderGeometryBuilder: opaque instances remain one render resource");
     primitive.alphaMode = GltfAlphaMode::Blend;
-    check(GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
-              primitive) &&
-              GltfRenderGeometryBuilder::primitiveRenderResourceCount(
-                  primitive) == 2u,
-          "GltfRenderGeometryBuilder: BLEND instances split into per-instance resources");
+    // BLEND 实例化不再拆成逐实例资源——单实例化 draw + alpha-to-coverage 承担透明。
+    check(GltfRenderGeometryBuilder::primitiveRenderResourceCount(
+                  primitive) == 1u,
+          "GltfRenderGeometryBuilder: BLEND instances remain one instanced render resource");
     const Vec3 sortCenter =
         GltfRenderGeometryBuilder::primitiveSortCenterEcef(
             primitive,

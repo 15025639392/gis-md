@@ -27,10 +27,29 @@ constexpr const char* kGaodeRoadNetTemplate =
 constexpr const char* kRobotExpressiveGlbUrl =
     "https://maptalks.org/maptalks.three/demo/data/RobotExpressive.glb";
 
+// 实例化性能基线(默认关,见 kEnableInstancedI3dmDemo):Cesium 官方
+// 3d-tiles-samples 的 tree.i3dm(gltfFormat=1 内嵌 glb, EAST_NORTH_UP, 树干
+// OPAQUE + 树叶 BLEND)。经 SingleGltfContentProvider 的 .i3dm 解码 →
+// GltfPrimitiveInstanced 实例化绘制,验证 blend 实例化走 alpha-to-coverage 单
+// draw(不退化成逐实例 draw 爆炸)。境外网络受限设备上测量时,改指 adb reverse
+// 的 localhost(http://127.0.0.1:8091/treeN.i3dm,scratchpad 按 N 生成缩放变体)。
+constexpr const char* kTreeI3dmUrl =
+    "https://raw.githubusercontent.com/CesiumGS/3d-tiles-samples/main/"
+    "1.0/TilesetWithTreeBillboards/tree.i3dm";
+
 constexpr bool kEnableTerrainForDemo = true;
 constexpr bool kUseGaodeSatelliteForDemo = true;
 constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
 constexpr bool kEnableRobotExpressiveGltfDemo = false;
+// 开启后 config.gltf 指向 tree.i3dm(覆盖 RobotExpressive),用于实例化基线测量。
+// tree.i3dm 是世界锚定内容,相机随之移到样本真实位置(宾州)低空俯视。
+// 默认关:依赖 localhost 服务器+生成变体,非独立可跑;开启前先起 http.server。
+constexpr bool kEnableInstancedI3dmDemo = false;
+// tree.i3dm 25 实例质心的真实经纬度(绝对 ECEF 反算, 簇径~180m)。
+constexpr double kTreeI3dmLongitudeDegrees = -75.612094;
+constexpr double kTreeI3dmLatitudeDegrees = 40.042531;
+// 低空俯视: 180m 簇在此高度铺满可观屏幕面积, 保证实例化 fragment 开销可测。
+constexpr double kTreeI3dmCameraHeightMeters = 350.0;
 
 constexpr double kDemoCameraLongitudeDegrees = 106.508;
 constexpr double kDemoCameraLatitudeDegrees = 29.617;

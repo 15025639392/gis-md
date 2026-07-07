@@ -67,6 +67,11 @@ struct RenderCommand {
     bool depthTest = true;
     bool depthWrite = true;
     bool blend = false;
+    // 实例化 blend/透射 primitive 走 alpha-to-coverage(MSAA 覆盖抖动)而非逐实例
+    // alpha 排序:顺序无关、单 draw 画完所有实例,避免 blend 实例化退化成每实例
+    // 一个 draw call(见 GltfDrawCommandBuilder + RenderDeviceGLES)。true 时后端
+    // 启用 GL_SAMPLE_ALPHA_TO_COVERAGE 且不开常规 alpha 混合。
+    bool alphaToCoverage = false;
     bool cullFace = true;
     enum class BlendFactor { SrcAlpha, OneMinusSrcAlpha } blendSrc = BlendFactor::SrcAlpha;
     enum class BlendFactorDst { OneMinusSrcAlpha, One } blendDst = BlendFactorDst::OneMinusSrcAlpha;

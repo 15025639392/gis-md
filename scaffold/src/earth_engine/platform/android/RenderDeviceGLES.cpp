@@ -466,6 +466,7 @@ void RenderDeviceGLES::beginFrame() {
     // depth makes the next frame's surface tiles appear perforated.
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
+    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     glDisable(GL_POLYGON_OFFSET_FILL);
     // Clear color: sky color for this frame, pushed by Engine via setClearColor()
     // from FrameState before beginFrame(). The fullscreen atmosphere pass covers
@@ -493,6 +494,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     const double submitStartMs = perf::nowMs();
     int surfaceCommands = 0;
     int gltfCommands = 0;
+    int instancedCommands = 0;  // [I3DMDIAG] GltfPrimitiveInstanced 命令数
+    int totalInstances = 0;     // [I3DMDIAG] 所有实例化命令的实例总数
     int vectorCommands = 0;
     int environmentCommands = 0;
 
@@ -506,6 +509,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     std::array<GLuint, kGltfWaterMaskTextureSlot + 1> currentTextures{};
     bool depthTestEnabled = true;
     bool blendEnabled = false;
+    bool alphaToCoverageEnabled = false;
     bool polygonOffsetEnabled = false;
     bool cullFaceEnabled = true;
     bool depthWriteEnabled = true;
@@ -516,8 +520,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 ++surfaceCommands;
                 break;
             case RenderCommandKind::GltfPrimitive:
+                ++gltfCommands;
+                break;
             case RenderCommandKind::GltfPrimitiveInstanced:
                 ++gltfCommands;
+                ++instancedCommands;
+                totalInstances += cmd.instanceCount;
                 break;
             case RenderCommandKind::VectorOverlay:
                 ++vectorCommands;
@@ -783,6 +791,19 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             polygonOffsetEnabled = cmd.blend;
         }
 
+        // Alpha-to-coverage:实例化 blend/透射 primitive 的顺序无关透明(靠 MSAA
+        // 覆盖抖动),单 draw 画完所有实例。仅在未开常规 alpha 混合时启用(淡入淡出
+        // 期 cmd.blend=true 会走真混合,此时不叠 A2C)。需要多重采样帧缓冲(4x MSAA)。
+        const bool wantAlphaToCoverage = cmd.alphaToCoverage && !cmd.blend;
+        if (alphaToCoverageEnabled != wantAlphaToCoverage) {
+            if (wantAlphaToCoverage) {
+                glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+            } else {
+                glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+            }
+            alphaToCoverageEnabled = wantAlphaToCoverage;
+        }
+
         if (cullFaceEnabled != cmd.cullFace) {
             if (cmd.cullFace) {
                 glEnable(GL_CULL_FACE);
@@ -856,12 +877,14 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     if (submitCount <= 1 || submitCount % 120 == 0 || submitMs >= 25.0) {
         GLenum err = glGetError();
         __android_log_print(ANDROID_LOG_INFO, "GLES",
-            "submit #%d: %zu commands, ms=%.3f surface=%d gltf=%d vector=%d env=%d glError=%d",
+            "submit #%d: %zu commands, ms=%.3f surface=%d gltf=%d inst=%d(%d) vector=%d env=%d glError=%d",
             submitCount,
             commands.size(),
             submitMs,
             surfaceCommands,
             gltfCommands,
+            instancedCommands,
+            totalInstances,
             vectorCommands,
             environmentCommands,
             err);

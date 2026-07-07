@@ -29,6 +29,9 @@ struct SceneCameraConfig {
     double longitudeDegrees = 0.0;
     double latitudeDegrees = 0.0;
     double heightMeters = 0.0;
+    // 初始视角仰角(度): 0 = 正俯视(nadir orbit, 默认/向后兼容); >0 = 自由斜视,
+    // 相机从目标点正南、以该仰角俯瞰(适合看竖直 foliage 等地表小物, nadir 下隐形)。
+    double obliqueElevationDegrees = 0.0;
 };
 
 struct TerrainSourceConfig {
@@ -129,6 +132,9 @@ struct GltfSourceConfig {
     double latitudeDegrees = 0.0;
     double heightMeters = 0.0;
     double uniformScale = 1.0;
+    // true = 内容自带世界坐标(如 i3dm 绝对 ECEF 实例位置),不套 ENU 就地放置,
+    // 否则 ENU(lon/lat/height)*scale 会与内容自身锚定二次叠加把它推到界外。
+    bool worldAnchored = false;
 };
 
 struct EarthSceneConfig {
