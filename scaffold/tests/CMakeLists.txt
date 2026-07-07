@@ -881,6 +881,18 @@ add_executable(test_feature_bucket_grid
 target_link_libraries(test_feature_bucket_grid PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_feature_bucket_grid COMMAND test_feature_bucket_grid)
 
+add_executable(test_constrained_delaunay
+    unit/data/test_constrained_delaunay.cpp
+)
+target_link_libraries(test_constrained_delaunay PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_constrained_delaunay COMMAND test_constrained_delaunay)
+
+add_executable(test_polygon_tessellator
+    unit/data/test_polygon_tessellator.cpp
+)
+target_link_libraries(test_polygon_tessellator PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_polygon_tessellator COMMAND test_polygon_tessellator)
+
 add_executable(test_gltf_parser
     unit/content/test_gltf_parser.cpp
 )

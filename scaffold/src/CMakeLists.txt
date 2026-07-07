@@ -672,6 +672,10 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/FeatureSpatialIndex.cpp
     earth_engine/data/FeatureBucketGrid.h
     earth_engine/data/FeatureBucketGrid.cpp
+    earth_engine/data/ConstrainedDelaunay.h
+    earth_engine/data/ConstrainedDelaunay.cpp
+    earth_engine/data/PolygonTessellator.h
+    earth_engine/data/PolygonTessellator.cpp
     earth_engine/data/FeatureStore.h
     earth_engine/data/FeatureStore.cpp
     earth_engine/data/GeoJsonImporter.h
