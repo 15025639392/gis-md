@@ -154,14 +154,42 @@ class VectorTileSource : public VectorFeatureSource {  // 只读 MVT,§5
 
 shader 走 `Renderer.cpp` 内嵌 MSL+GLES 双份约定。
 
-### 6.2 线镶嵌(照搬 maplibre)
-`a_pos(ECEF 相对桶原点) + a_normal + a_extrusion`,**线宽顶点着色器展开**:
-```glsl
-vec4 clip = u_mvp * vec4(a_pos, 1.0);
-vec2 offset = a_normal * u_lineWidthPx * clip.w / u_viewportPx;
-gl_Position = clip + vec4(offset, 0.0, 0.0);
+### 6.2 线镶嵌(球面屏幕线宽,已定策略)
+
+**为什么不照搬 maplibre**:maplibre 在 **2D 瓦片空间预烘焙** `a_normal`(屏幕垂向可预测)。**球面上一条线段的屏幕垂向是视角相关的**——相机一动垂向就变,烘不进顶点。故走 **Cesium/deck.gl PathLayer 路线:顶点带相邻位置,屏幕垂向在顶点着色器里现算**。
+
+**顶点布局(锁定)**。每个折线顶点 → **2 个 ribbon 顶点**(side=±1),携带:
 ```
-join: miter/bevel/round;cap: butt/square/round;dash: 弧长参数 fragment mod 丢弃。worker 生成。
+LineVertex {
+    Vec3  pos;        // 本顶点 ECEF(相对桶原点)
+    Vec3  prev;       // 前驱顶点 ECEF(端点=pos 自身,哨兵)
+    Vec3  next;       // 后继顶点 ECEF(端点=pos 自身,哨兵)
+    float side;       // +1 / -1(挤出方向)
+    float lengthSoFar;// 沿线累计 3D 弧长(m),供 dash
+}
+```
+n 顶点折线 → **2n 顶点**,每段 2 三角形 → **6(n-1) 索引**。
+
+**顶点着色器(现算屏幕垂向 + miter)**:
+```glsl
+vec4 cp = u_mvp*vec4(pos,1), cprev = u_mvp*vec4(prev,1), cnext = u_mvp*vec4(next,1);
+vec2 s  = cp.xy/cp.w,  sp = cprev.xy/cprev.w,  sn = cnext.xy/cnext.w;  // NDC
+vec2 dirA = normalize((s - sp)*aspect);   // 前段屏幕方向(端点哨兵时退化)
+vec2 dirB = normalize((sn - s)*aspect);
+vec2 miter = normalize(perp(dirA) + perp(dirB));       // 角平分垂向
+float scale = 1.0 / max(dot(miter, perp(dirB)), MITER_MIN);  // miter 长度(带下限)
+vec2 offset = miter * side * (u_lineWidthPx / u_viewportH) * scale;
+gl_Position = cp + vec4(offset * cp.w / aspect, 0.0, 0.0);   // 屏幕恒定像素宽
+```
+
+**决策(锁定)**:
+- **join = miter + miter-limit**:`scale` 有下限 `MITER_MIN`(≈1/cos(maxHalfAngle))防尖角爆炸。纯 2n-ribbon + in-shader miter,**零额外几何**。bevel/round join 需每顶点额外几何(CPU 侧),列为后续。
+- **cap = butt/square in-shader**(端点哨兵 prev==pos → 用单段方向;square 沿方向再延 0.5w);round cap 需额外扇形几何,后续。
+- **dash**:`lengthSoFar` 传 fragment,按 `u_dashPattern` mod 丢弃。
+- **近地平线畸变(锁定)**:大俯仰角时 `cp.w` 极小,挤出爆炸 → **clamp 最大屏幕挤出**(offset 长度设上限),避免地平线处线宽发散。
+- **闭合线**(首==尾):首尾顶点 prev/next 环绕相连(无 cap)。
+
+**CPU 侧(可单测)**:`LineTessellator` 产出上述顶点/索引 + prev/next/side/lengthSoFar 布局。几何拓扑(顶点数/索引数/哨兵/弧长)可单测;屏幕挤出的视觉正确性属 shader,留真机验证。
 
 ### 6.3 面 + 抗锯齿
 earcut 三角化 + fill;outline 第二索引缓冲。**无 MSAA framebuffer** → fragment 边缘 alpha(distance-to-edge)柔化,不依赖 RTT。

@@ -676,6 +676,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/ConstrainedDelaunay.cpp
     earth_engine/data/PolygonTessellator.h
     earth_engine/data/PolygonTessellator.cpp
+    earth_engine/data/LineTessellator.h
+    earth_engine/data/LineTessellator.cpp
     earth_engine/data/FeatureStore.h
     earth_engine/data/FeatureStore.cpp
     earth_engine/data/GeoJsonImporter.h

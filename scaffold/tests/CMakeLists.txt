@@ -893,6 +893,12 @@ add_executable(test_polygon_tessellator
 target_link_libraries(test_polygon_tessellator PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_polygon_tessellator COMMAND test_polygon_tessellator)
 
+add_executable(test_line_tessellator
+    unit/data/test_line_tessellator.cpp
+)
+target_link_libraries(test_line_tessellator PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_line_tessellator COMMAND test_line_tessellator)
+
 add_executable(test_gltf_parser
     unit/content/test_gltf_parser.cpp
 )
