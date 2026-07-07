@@ -183,14 +183,32 @@ void main() {
     float horizonAir = (1.0 - smoothstep(0.0, 0.18, abs(viewUp))) * (1.0 - spaceFactor);
     color = mix(color, horizonColor, clamp(horizonAir * 0.22, 0.0, 0.22));
 
-    // ---- Painterly stylized sun: soft warm disk + dreamy concentric halo ----
-    // 目标是"绘画/游戏天空"的观感而非天文写实：偏大的暖色柔边圆盘，外围由多层
-    // 指数壳叠出的同心柔光晕(无硬边日冕环),再叠一层极淡的放射状 god-ray。所有项
-    // 都随 forwardScatter 门控,太阳在背面/侧面时自然淡出。系数均为可调旋钮。
+    // ---- 太阳侧大气 rim light（从太空看地球的蓝色大气环）----
+    // 只有掠过地球边缘的天空光线才有 rim：ray 到地心的最近距离 perpDist>R(擦边而
+    // 过,未命中星球——命中的已 discard)。limbHeight = perpDist-R 在贴着地表处最小、
+    // 越往高空越大,用指数壳做出贴地最亮、向上淡出的薄环。sunlit 让 rim 在朝阳的一
+    // 侧最亮、跨过晨昏线向夜面淡出——即"太阳光照亮地球边缘"的真实感。仅太空可见
+    // (spaceFactor 门控),近地时地球边缘不在画面里。
+    float perpDist = sqrt(max(c - b * b, 0.0));
+    float limbHeight = perpDist - R;
+    vec3 limbPoint = cam + rayDir * b;            // 光线到地心的最近点
+    float sunlit = smoothstep(-0.15, 0.35, dot(normalize(limbPoint), sun));
+    float rim = exp(-max(limbHeight, 0.0) / 26000.0) *
+                step(0.0, limbHeight) * spaceFactor * sunlit;
+    // 朝阳最亮处偏冷白,向晨昏线偏天蓝——大气瑞利散射的观感。
+    vec3 rimColor = mix(vec3(0.28, 0.52, 1.0), vec3(0.72, 0.86, 1.0), sunlit);
+    color += rimColor * rim * u_sunIntensity * 1.15;
+
+    // ---- Sun disk + halo：真实日面尺寸 + 大气门控的绘画风放射霞光 ----
+    // u_sunAngularRadius 现为真实值(≈0.00465rad)，从太空看是远处小亮盘=真实日地
+    // 距离感。暖金大光晕与放射霞光是**大气散射**效果，故按 atmoScatter(=1-spaceFactor)
+    // 门控：近地满、太空里淡出，只留紧致亮芯——太空中即为写实的小太阳。所有项另受
+    // forwardScatter 门控，太阳在背面/侧面时自然淡出。系数均为可调旋钮。
     float cosTheta = dot(rayDir, sun);
     float baseSunRadius = max(u_sunAngularRadius, 0.0001);
     float sunAngle = sqrt(max(2.0 * (1.0 - cosTheta), 0.0));
-    // d: 归一化角距，1.0 落在圆盘边缘。0.72 让盘面比旧版(0.5)更大更醒目。
+    float atmoScatter = 1.0 - spaceFactor;  // 大气效果强度:近地=1,太空=0
+    // d: 归一化角距，1.0 落在圆盘边缘。
     float discRadius = baseSunRadius * 0.72;
     float d = sunAngle / discRadius;
     float dClamp = min(d, 1.0);
@@ -208,12 +226,13 @@ void main() {
     // 暖金大光晕：参考日出照片的金色光团——加大加暖，向天空平滑晕开。三层壳:
     // 贴边亮芯 bloom / 中层暖金 / 宽阔琥珀拖尾。
     float forwardScatter = smoothstep(0.5, 1.0, cosTheta);
-    float halo1 = exp(-max(d - 0.6, 0.0) * 2.1);   // 贴边的紧致 bloom
-    float halo2 = exp(-max(d - 1.0, 0.0) * 0.55);  // 中层暖金晕染(加宽)
-    float halo3 = 1.0 / (1.0 + d * d * 0.085);     // 宽阔的金色大光团(加大)
+    float halo1 = exp(-max(d - 0.6, 0.0) * 2.1);   // 贴边的紧致 bloom(镜头/眼睛过曝)
+    float halo2 = exp(-max(d - 1.0, 0.0) * 0.55);  // 中层暖金晕染(大气)
+    float halo3 = 1.0 / (1.0 + d * d * 0.085);     // 宽阔的金色大光团(大气)
+    // halo1 太空里也保留(亮源过曝 bloom);halo2/halo3 是大气金色光晕,随 atmoScatter
+    // 淡出——太空中只剩紧致亮芯,符合远处小太阳的真实观感。
     vec3 haloColor = sunHeart * halo1 * 0.74 +
-                     sunGold  * halo2 * 0.54 +
-                     sunAmber * halo3 * 0.30;
+                     (sunGold * halo2 * 0.54 + sunAmber * halo3 * 0.30) * atmoScatter;
     haloColor *= forwardScatter;
 
     // 放射状霞光(crepuscular rays / sunburst)：屏幕空间里从太阳向外辐射的光束。
@@ -232,11 +251,13 @@ void main() {
     float rays = pow(0.5 + 0.5 * cos(rayAngle * 13.0), 7.0) * 1.0 +
                  pow(0.5 + 0.5 * cos(rayAngle * 24.0 + 1.7), 11.0) * 0.55 +
                  pow(0.5 + 0.5 * cos(rayAngle * 7.0 - 0.9), 5.0) * 0.6;
-    // 起点略在盘外(smoothstep)避免正中心堆亮点，随距离指数拉长淡出。
-    // 稍加大衰减系数,让光束更集中在太阳近旁(参考图的霞光近源最密)。
-    float sunburst = rays * exp(-screenDist * 2.8) *
-                     smoothstep(0.015, 0.06, screenDist) * 0.42;
-    sunburst *= sunInFront * forwardScatter;
+    // 起点略在盘外(smoothstep)避免正中心堆亮点。小衰减系数=光束拉得很长,
+    // 能从太阳一路伸到地球上("太阳光射线直接打到地球")。
+    float sunburst = rays * exp(-screenDist * 1.25) *
+                     smoothstep(0.015, 0.06, screenDist) * 0.38;
+    // 光束在太空里也保留大部分(0.7 floor),这样从太空看太阳的光线也能射到地球;
+    // 近地时(大气)再补足到满。
+    sunburst *= sunInFront * forwardScatter * (0.7 + 0.3 * atmoScatter);
 
     vec3 sunColor = discColor * (core + limb * 0.35) +
                     haloColor +
@@ -247,11 +268,14 @@ void main() {
 
     float skyAlpha = mix(1.0, 0.18, spaceFactor);
     float limbAlpha = pathScatterAmount * spaceFactor;
+    float rimAlpha = clamp(rim, 0.0, 1.0);   // 让蓝色 rim 在深色太空天中显现
     float sunAlpha = sunEnabled * forwardScatter *
-        clamp(core + halo1 * 0.6 + halo2 * 0.35 + halo3 * 0.2 + sunburst,
+        clamp(core + halo1 * 0.6 +
+                  (halo2 * 0.35 + halo3 * 0.2) * atmoScatter + sunburst,
               0.0,
               1.0);
-    fragColor = vec4(color, clamp(max(max(skyAlpha, limbAlpha), sunAlpha), 0.0, 1.0));
+    float alpha = max(max(max(skyAlpha, limbAlpha), sunAlpha), rimAlpha);
+    fragColor = vec4(color, clamp(alpha, 0.0, 1.0));
 }
 )";
 
