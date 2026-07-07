@@ -238,7 +238,7 @@ bool Tileset::drainGpuUploadQueue(
     uint32_t maxUploadsPerFrame) {
     return contentRuntime_.drainGpuUploadQueue(
         makeContentRuntimeUploadFrame(pPrepRenderer),
-        nullptr,
+        &frameResourceBudget_,
         maxUploadsPerFrame);
 }
 

@@ -216,9 +216,11 @@ private:
 
     /// Drain the async GPU upload queue.  Must be called after
     /// processPendingLoads in each frame update.
+    /// maxUploadsPerFrame 现为失控上限（backstop），真实限流是 drain 内的
+    /// 共享主线程时间预算（mainThreadTimeMs 8ms 墙钟）+ 4 张保底 floor。
     bool drainGpuUploadQueue(
         IPrepareRendererResources* pPrepRenderer = nullptr,
-        uint32_t maxUploadsPerFrame = 4);
+        uint32_t maxUploadsPerFrame = 20);
 
     void markContentResourcesDirty();
     TileOcclusionState checkSingleTileOcclusion(

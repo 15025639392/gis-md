@@ -18,6 +18,7 @@
 #include "../content/GltfContentProvider.h"
 #include "../content/GltfModel.h"
 #include "../core/async/AsyncSystem.h"
+#include "../debug/PerfTimer.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../renderer/RenderDevice.h"
 
@@ -220,7 +221,19 @@ public:
         }
         bool processed = false;
         uint32_t uploadsThisFrame = 0;
+        // 地形 GPU 上传/finalize 受共享主线程时间预算约束（budget->mainThreadTimeMs，
+        // 默认 8ms）：先无条件保底上传 kMinTerrainUploadsPerFrame（= 旧硬编码值，
+        // 防饿死 + 零回归），其后按当帧剩余主线程时间继续摊入——便宜瓦片一帧可上多
+        // 张，昂贵瓦片自限于时间；maxUploadsPerFrame 为失控上限。这补齐了
+        // TilesetOptions.mainThreadLoadingTimeLimit 注释声称、此前对地形 drain 缺失
+        // 的墙钟截断（旧实现恒 4/帧且完全脱离预算）。budget==nullptr 时退回纯计数。
+        constexpr uint32_t kMinTerrainUploadsPerFrame = 4u;
         while (uploadsThisFrame < maxUploadsPerFrame) {
+            if (budget != nullptr &&
+                uploadsThisFrame >= kMinTerrainUploadsPerFrame &&
+                budget->mainThreadTimeExpired()) {
+                break;
+            }
             std::optional<PendingGpuUpload> upload =
                 context.gpuUploadQueue->tryPop();
             if (!upload) break;
@@ -249,6 +262,7 @@ public:
 
             // Call uploadToGpu — creates GPU buffers, clears
             // asyncGpuUploadPending, and calls markRenderContentDone.
+            const double uploadStartMs = perf::nowMs();
             bool success = GltfRenderResourcePreparer::uploadToGpu(
                 *tile,
                 context.device,
@@ -262,6 +276,13 @@ public:
                     context.pPrepRenderer);
             if (action.resourcesDirty) {
                 markResourcesDirty();
+            }
+            // 计入共享主线程时间预算，供下一次循环的墙钟闸判断（同时让本帧后续
+            // 无——terrain drain 是帧内最后的主线程资源工作）。
+            if (budget != nullptr) {
+                budget->recordElapsed(
+                    FrameResourceLane::TerrainFinalize,
+                    perf::nowMs() - uploadStartMs);
             }
             // Clear the lifecycle key so the tile can be re-loaded if needed.
             TilePendingUploadCompletion::eraseUpload(
