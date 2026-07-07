@@ -4,10 +4,13 @@
 #include "SceneFrameDiagnostics.h"
 #include "SceneFrameStateBuilder.h"
 #include "SceneTilesetCoordinator.h"
+#include "Camera.h"
 #include "../camera/CameraController.h"
+#include "../core/geodesy/Ellipsoid.h"
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace earth_engine {
@@ -30,6 +33,27 @@ void SceneFrameUpdateCoordinator::update(
         cameraUpdateMs = perf::nowMs() - startMs;
     }
     const double t_cam = perf::nowMs();
+
+    // Dynamic near plane: reverse-Z with a fixed near=150/far=1e12 crams every
+    // real distance into a tiny, poorly-conditioned z_ndc range (~2e-5) at
+    // altitude. The precision loss is UPSTREAM of the depth buffer — the float32
+    // clip-space z computed in the vertex shader can't separate ~1 m depth
+    // differences when z_ndc lives at 2e-5 — so a bigger depth buffer does NOT
+    // help; only tightening the near plane (moving z_ndc into a well-conditioned
+    // range ~0.5) does. The closest possible visible geometry is the nadir at
+    // (distToCenter - maxRadius); keep near a safe 0.5× of it so it never clips
+    // even under tilt, while pulling z_ndc off the pathological 2e-5 floor. Far
+    // stays as configured (1e12). Cost: two scalar uniforms per frame — zero.
+    if (input.camera) {
+        const double distToCenter = input.camera->position().length();
+        const double nadirDistance =
+            distToCenter - Ellipsoid::WGS84().maximumRadius();
+        const double nearPlane = std::max(150.0, nadirDistance * 0.5);
+        input.camera->setPerspective(
+            input.camera->verticalFovRadians(),
+            nearPlane,
+            input.camera->farPlaneMeters());
+    }
 
     input.elapsedTime += input.deltaSeconds;
     SceneFrameStateBuildResult frameStateResult =
