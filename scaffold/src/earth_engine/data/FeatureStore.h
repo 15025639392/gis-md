@@ -2,10 +2,12 @@
 
 #include "Feature.h"
 #include "FeatureSpatialIndex.h"
+#include "FeatureBucketGrid.h"
 #include "../core/math/Rectangle.h"
 
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace earth_engine {
@@ -55,6 +57,27 @@ public:
         return features_;
     }
 
+    // ---- 分桶(渲染单元 + 编辑脏区) ----
+
+    /// 与视口相交的桶(渲染层据此决定重镶/绘制哪些单元)。
+    std::vector<BucketKey> bucketsInView(const Rectangle& bbox) const {
+        return buckets_.bucketsInView(bbox);
+    }
+
+    /// 桶内要素 ID(渲染层据此镶嵌该单元;不存在返 nullptr)。
+    const std::unordered_set<FeatureId>* featuresInBucket(BucketKey key) const {
+        return buckets_.featuresIn(key);
+    }
+
+    /// 取走并清空脏桶(编辑/新增后需重镶的单元)。
+    std::unordered_set<BucketKey> consumeDirtyBuckets() {
+        return buckets_.consumeDirty();
+    }
+
+    const std::unordered_set<BucketKey>& dirtyBuckets() const {
+        return buckets_.dirtyBuckets();
+    }
+
     void clear();
 
 private:
@@ -63,6 +86,7 @@ private:
 
     std::unordered_map<FeatureId, Feature> features_;
     FeatureSpatialIndex index_;
+    FeatureBucketGrid buckets_;
     FeatureId nextId_ = 1;  // 稳定 ID 分配器,0 保留为无效
 };
 

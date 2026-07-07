@@ -875,6 +875,12 @@ add_executable(test_feature_store
 target_link_libraries(test_feature_store PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_feature_store COMMAND test_feature_store)
 
+add_executable(test_feature_bucket_grid
+    unit/data/test_feature_bucket_grid.cpp
+)
+target_link_libraries(test_feature_bucket_grid PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_feature_bucket_grid COMMAND test_feature_bucket_grid)
+
 add_executable(test_gltf_parser
     unit/content/test_gltf_parser.cpp
 )

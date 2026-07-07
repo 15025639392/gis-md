@@ -38,6 +38,7 @@ FeatureId FeatureStore::addFeature(Feature feature) {
     const Rectangle bounds = feature.bounds;
     features_[id] = std::move(feature);
     index_.insert(id, bounds);
+    buckets_.assign(id, bounds);
     return id;
 }
 
@@ -45,6 +46,7 @@ bool FeatureStore::removeFeature(FeatureId id) {
     auto it = features_.find(id);
     if (it == features_.end()) return false;
     index_.remove(id, it->second.bounds);
+    buckets_.unassign(id, it->second.bounds);
     features_.erase(it);
     return true;
 }
@@ -53,8 +55,11 @@ bool FeatureStore::updateFeature(const Feature& feature) {
     auto it = features_.find(feature.id);
     if (it == features_.end()) return false;
 
-    // 先摘旧索引条目(用旧 bounds),再算新 bounds、写回、插新条目。
-    index_.remove(feature.id, it->second.bounds);
+    // 先摘旧索引/桶条目(用旧 bounds),再算新 bounds、写回、插新条目。
+    // 跨桶时新旧两桶都被标脏(unassign 标旧、assign 标新)。
+    const Rectangle oldBounds = it->second.bounds;
+    index_.remove(feature.id, oldBounds);
+    buckets_.unassign(feature.id, oldBounds);
 
     Feature updated = feature;
     updated.bounds = computeBoundsFromRings(updated);  // 权威来自 rings
@@ -62,6 +67,7 @@ bool FeatureStore::updateFeature(const Feature& feature) {
     const Rectangle newBounds = updated.bounds;
     it->second = std::move(updated);
     index_.insert(feature.id, newBounds);
+    buckets_.assign(feature.id, newBounds);
     return true;
 }
 
@@ -77,6 +83,7 @@ std::vector<FeatureId> FeatureStore::queryVisible(const Rectangle& bbox) const {
 void FeatureStore::clear() {
     features_.clear();
     index_.clear();
+    buckets_.clear();
     nextId_ = 1;
 }
 

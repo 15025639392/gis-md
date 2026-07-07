@@ -670,6 +670,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/Feature.h
     earth_engine/data/FeatureSpatialIndex.h
     earth_engine/data/FeatureSpatialIndex.cpp
+    earth_engine/data/FeatureBucketGrid.h
+    earth_engine/data/FeatureBucketGrid.cpp
     earth_engine/data/FeatureStore.h
     earth_engine/data/FeatureStore.cpp
     earth_engine/data/GeoJsonImporter.h
