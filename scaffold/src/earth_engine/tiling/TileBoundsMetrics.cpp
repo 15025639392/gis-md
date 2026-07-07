@@ -424,6 +424,33 @@ std::optional<OrientedBoundingBox> computeBoundingRegionObb(
         maxZ);
 }
 
+// 相机 ECEF→cartographic 是逐帧恒定量,但区域距离计算此前对每个瓦片重算(迭代
+// Newton)。selector 一帧访问数百个瓦片,相机位置完全相同——把最近一次转换记
+// 忆化,N 次迭代转换塌成 1 次转换 + N 次 Vec3 比较。cesium 在 ViewState 里一次
+// 性算好 _positionCartographic;此 memo 与其 bit-identical(同一转换),且无需
+// 改动任何函数签名。多视图交替时退化为逐次计算(仍正确)。
+std::optional<Cartographic> cameraCartographicMemoized(
+    const Ellipsoid& ellipsoid,
+    const Vec3& cameraPosition) {
+    static thread_local bool cachedValid = false;
+    static thread_local Vec3 cachedPosition = Vec3::zero();
+    static thread_local Vec3 cachedRadii = Vec3::zero();
+    static thread_local std::optional<Cartographic> cachedCartographic;
+    // key = (cameraPosition, ellipsoid radii)。转换是 ellipsoid 相关的纯函数;
+    // 只用位置做 key 会在同位置换椭球(月球/火星/单位球 tileset)时返回上一个
+    // 椭球的 cartographic。当前调用方都是 WGS84,radii 恒等——把它并入 key 消除
+    // 这个潜伏地雷,代价仅一次 Vec3 比较。
+    if (cachedValid && cachedPosition == cameraPosition &&
+        cachedRadii == ellipsoid.radii()) {
+        return cachedCartographic;
+    }
+    cachedCartographic = ellipsoid.tryCartesianToCartographic(cameraPosition);
+    cachedPosition = cameraPosition;
+    cachedRadii = ellipsoid.radii();
+    cachedValid = true;
+    return cachedCartographic;
+}
+
 double computeBoundingRegionDistanceSquared(
     const Rectangle& bounds,
     double minimumHeight,
@@ -431,7 +458,7 @@ double computeBoundingRegionDistanceSquared(
     const Vec3& cameraPosition) {
     const auto& ellipsoid = Ellipsoid::WGS84();
     const auto cameraCart =
-        ellipsoid.tryCartesianToCartographic(cameraPosition);
+        cameraCartographicMemoized(ellipsoid, cameraPosition);
     if (!cameraCart) {
         const std::optional<OrientedBoundingBox> obb =
             computeBoundingRegionObb(bounds, minimumHeight, maximumHeight);
@@ -548,7 +575,7 @@ double boundingRegionDistanceSquaredCached(
     const Vec3& cameraPosition) {
     const auto& ellipsoid = Ellipsoid::WGS84();
     const auto cameraCart =
-        ellipsoid.tryCartesianToCartographic(cameraPosition);
+        cameraCartographicMemoized(ellipsoid, cameraPosition);
     const std::optional<OrientedBoundingBox>& obb = cachedRegionObb(volume);
     auto fallback = [&]() -> double {
         if (obb) {
