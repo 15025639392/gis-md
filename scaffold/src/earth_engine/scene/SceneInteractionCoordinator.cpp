@@ -30,7 +30,8 @@ void SceneInteractionCoordinator::configureCameraSurfacePicker(
         });
 
     cameraController.setTerrainHeightFunc(
-        [contextProvider](const Vec3& ecefPosition) -> double {
+        [contextProvider](const Vec3& ecefPosition)
+            -> std::optional<double> {
             return SceneTerrainQuery::sampleHeight(
                 contextProvider().terrainTileset,
                 ecefPosition);

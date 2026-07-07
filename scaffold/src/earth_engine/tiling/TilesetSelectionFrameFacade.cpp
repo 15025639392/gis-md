@@ -109,6 +109,25 @@ void TilesetSelectionFrameFacade::selectTilesAsyncShadow(
     Tileset& tileset,
     const FrameState& frameState) {
     if (tileset.options_.asyncSelectionNonBlocking) {
+        // 真异步 worker 无法安全读取活体遮挡状态,故 selectTilesAsyncWorker 派发时
+        // occlusion 回调恒为 nullptr(worker 里 assert 强制)。这意味着开启非阻塞异步
+        // 时,遮挡剔除与 delayRefinementForOcclusion 被静默旁路——异步渲染集会过度细化
+        // 被遮挡区域,与同步 cesium 集发散。golden 跑在 occlusion=off,捕捉不到此回归,
+        // 故在此显式告警(每进程一次),避免"两开关都开"时无人察觉。
+        if (tileset.options_.enableOcclusionCulling ||
+            tileset.options_.delayRefinementForOcclusion) {
+            static thread_local bool warned = false;
+            if (!warned) {
+                warned = true;
+                platformLog(
+                    LogLevel::Warning,
+                    "AsyncSelect",
+                    "asyncSelectionNonBlocking bypasses occlusion culling "
+                    "(worker cannot read live occlusion state); "
+                    "enableOcclusionCulling/delayRefinementForOcclusion have "
+                    "no effect on the async render set.");
+            }
+        }
         selectTilesAsyncWorker(tileset, frameState);
     } else {
         selectTilesSyncShadow(tileset, frameState);

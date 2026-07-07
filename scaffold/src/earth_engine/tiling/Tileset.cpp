@@ -309,8 +309,9 @@ void Tileset::onSelectionVisitTile(TilesetTile& tile) {
     selectionActiveTiles_.push_back(&tile);
 }
 
-float Tileset::sampleHeight(double lngRad, double latRad) const {
-    return LoadedTerrainHeightSampler::sampleHeight(
+std::optional<float> Tileset::sampleHeightOptional(
+    double lngRad, double latRad) const {
+    return LoadedTerrainHeightSampler::sampleHeightOptional(
         tileRegistry_.tiles(),
         lngRad,
         latRad);

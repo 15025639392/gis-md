@@ -238,7 +238,7 @@ void commitBestSample(std::optional<LoadedTerrainSample>& bestSample,
 
 } // namespace
 
-float LoadedTerrainHeightSampler::sampleHeight(
+std::optional<float> LoadedTerrainHeightSampler::sampleHeightOptional(
     const std::unordered_map<
         std::string,
         std::unique_ptr<TilesetTile>>& tiles,
@@ -289,7 +289,10 @@ float LoadedTerrainHeightSampler::sampleHeight(
         }
     }
 
-    return bestSample ? bestSample->height : 0.0f;
+    if (bestSample) {
+        return bestSample->height;
+    }
+    return std::nullopt;
 }
 
 } // namespace earth_engine

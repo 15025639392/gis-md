@@ -654,6 +654,42 @@ TEST_F(CameraControllerTest, HighAltitudePinchSkipsTerrainHeightQuery) {
     EXPECT_EQ(0, terrainCalls);
 }
 
+TEST_F(CameraControllerTest, TerrainClampHoldsLastKnownHeightWhenSampleMissing) {
+    // No-data regression: when the terrain sampler returns nullopt (tile not yet
+    // loaded / no coverage), the altitude clamp must hold the last known terrain
+    // height rather than treat the point as sea level (which would let the eye
+    // sink to ~50 m over not-yet-loaded high terrain, then pop back up on load).
+    std::optional<double> sampled = 3000.0;  // valid high terrain
+    controller_->setTerrainHeightFunc(
+        [&](const Vec3&) -> std::optional<double> { return sampled; });
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(1.001f);  // ~6.4 km, below the 9 km fast-path
+    controller_->update(0.0);
+
+    // Zoom in hard so the eye pins against the terrain floor (~3000 + 50 m) and
+    // the valid sample populates the last-known cache.
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 24; ++i) {
+        controller_->onPinchGesture(1.3f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->update(0.0);
+    const double altitudeWithData =
+        Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
+    EXPECT_GE(altitudeWithData, 3000.0);
+
+    // Terrain data now unavailable → clamp must hold the ~3000 m floor, NOT drop
+    // to sea level + 50 m.
+    sampled = std::nullopt;
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 24; ++i) {
+        controller_->onPinchGesture(1.3f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->update(0.0);
+    const double altitudeNoData =
+        Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
+    EXPECT_GE(altitudeNoData, 3000.0);
+}
+
 TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);

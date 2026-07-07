@@ -34,6 +34,7 @@
 
 #include <memory>
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include <string>
 #include <unordered_set>
@@ -151,9 +152,18 @@ public:
     TilesetLoadDiagnostics loadDiagnostics() const;
 
     /// Sample the best loaded terrain height at longitude/latitude.
-    /// Returns ellipsoid height in meters, or 0 when no loaded terrain tile
-    /// currently covers the position.
-    float sampleHeight(double lngRad, double latRad) const;
+    /// Returns ellipsoid height in meters, or nullopt when no loaded terrain
+    /// tile currently covers the position (no data). Callers that need to
+    /// distinguish "no data" from real sea level (e.g. the camera altitude
+    /// clamp) use this variant.
+    std::optional<float> sampleHeightOptional(
+        double lngRad, double latRad) const;
+
+    /// Convenience wrapper: no data falls back to sea level (0). Picking and
+    /// other "want a concrete height, sea-level default is fine" callers.
+    float sampleHeight(double lngRad, double latRad) const {
+        return sampleHeightOptional(lngRad, latRad).value_or(0.0f);
+    }
 
     /// cesium-native: release all render references after GPU submit.
     /// Called by Scene after renderer_->submit(commands) so that

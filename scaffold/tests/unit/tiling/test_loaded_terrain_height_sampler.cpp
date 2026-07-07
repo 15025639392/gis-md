@@ -173,6 +173,36 @@ void putLoadedGltfTerrainTile(
 
 } // namespace
 
+TEST(LoadedTerrainHeightSamplerTest, ReturnsNulloptWhenNoLoadedTerrainCovers) {
+    auto scheme = TileScheme::createGeographicTMS();
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    // A loaded terrain tile exists, but it covers a DIFFERENT quadrant than the
+    // query point → no covering sample → nullopt (must NOT be reported as 0.0,
+    // which is a real sea-level height).
+    const TileKey coveredKey{"Geographic-TMS", 1, 0, 0};
+    const Rectangle coveredBounds = scheme->tileToRectangle(coveredKey);
+    putLoadedGltfTerrainTile(
+        tiles, coveredKey, coveredBounds,
+        makeTerrainGltfTriangle(coveredBounds, 55.0, 55.0, 55.0));
+
+    const TileKey elsewhereKey{"Geographic-TMS", 1, 1, 1};
+    const Rectangle elsewhere = scheme->tileToRectangle(elsewhereKey);
+    const double longitude = (elsewhere.west() + elsewhere.east()) * 0.5;
+    const double latitude = (elsewhere.south() + elsewhere.north()) * 0.5;
+
+    const std::optional<float> sample =
+        LoadedTerrainHeightSampler::sampleHeightOptional(
+            tiles, longitude, latitude);
+    EXPECT_FALSE(sample.has_value());
+
+    // The convenience wrapper still falls back to sea level for such callers.
+    EXPECT_NEAR(
+        0.0f,
+        LoadedTerrainHeightSampler::sampleHeight(tiles, longitude, latitude),
+        1e-4f);
+}
+
 TEST(LoadedTerrainHeightSamplerTest, UsesBestLoadedTerrainTile) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;

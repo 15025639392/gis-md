@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <functional>
+#include <optional>
 
 namespace earth_engine {
 
@@ -26,9 +27,14 @@ public:
     using SurfacePicker = std::function<bool(float xPixels, float yPixels, Vec3& outPoint)>;
     void setSurfacePicker(SurfacePicker picker);
 
-    /// Returns height above WGS84 ellipsoid (meters) at the given ECEF position.
-    /// When set, collision clamping uses terrain height instead of bare ellipsoid.
-    using TerrainHeightFunc = std::function<double(const Vec3& ecefPosition)>;
+    /// Returns height above WGS84 ellipsoid (meters) at the given ECEF position,
+    /// or nullopt when no terrain data covers the point (unloaded / no coverage).
+    /// When set, collision clamping uses terrain height instead of bare ellipsoid;
+    /// on nullopt the clamp holds the last known terrain height rather than
+    /// treating the point as sea level (which would let the eye sink into
+    /// not-yet-loaded terrain).
+    using TerrainHeightFunc =
+        std::function<std::optional<double>(const Vec3& ecefPosition)>;
     void setTerrainHeightFunc(TerrainHeightFunc func);
 
     /// drag 开始（手指按下）
@@ -106,6 +112,9 @@ private:
     Camera* camera_;
     SurfacePicker surfacePicker_;
     TerrainHeightFunc terrainHeightFunc_;
+    // 最近一次有效地形高度样本(米),供地形无数据时的 clamp 保守回退。
+    // mutable:clampEyeAltitude 是 const 查询但需更新此缓存。
+    mutable double lastKnownTerrainHeight_ = 0.0;
     int viewportWidth_ = 1;
     int viewportHeight_ = 1;
 

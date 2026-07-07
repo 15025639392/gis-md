@@ -78,7 +78,8 @@ glm::dquat defaultViewRotation() {
 }
 
 glm::dvec3 clampEyeToMinAltitude(const glm::dvec3& eye,
-                                 const CameraController::TerrainHeightFunc& terrainFunc) {
+                                 const CameraController::TerrainHeightFunc& terrainFunc,
+                                 double& lastKnownTerrainHeight) {
     if (glm::length(eye) < 1e-6) return eye;
 
     const auto& ellipsoid = Ellipsoid::WGS84();
@@ -94,9 +95,17 @@ glm::dvec3 clampEyeToMinAltitude(const glm::dvec3& eye,
     const Vec3 surface = ellipsoid.projectToSurface(eyeVec);
     const Vec3 normal = ellipsoid.geodeticSurfaceNormal(surface);
 
-    double terrainHeight = 0.0;
+    // 无地形数据(未加载 / 无覆盖瓦片)时 terrainFunc 返回 nullopt——不能当海平面
+    // 0 处理,否则相机会被允许下沉到未加载山体表面之下,瓦片加载后又被顶回(dip→
+    // pop)。保守回退到上一次有效样本(初值 0),让下限稳定、消除突跳。有数据时更新
+    // 缓存。无 terrainFunc(未接地形)时缓存恒 0 → 行为等价于旧的 bare-ellipsoid+50m。
+    double terrainHeight = lastKnownTerrainHeight;
     if (terrainFunc) {
-        terrainHeight = terrainFunc(surface);
+        const std::optional<double> sampled = terrainFunc(surface);
+        if (sampled) {
+            terrainHeight = *sampled;
+            lastKnownTerrainHeight = *sampled;
+        }
     }
 
     const double minHeight = std::max(terrainHeight, 0.0) +
@@ -549,7 +558,8 @@ void CameraController::syncDistanceFromCamera() {
 }
 
 glm::dvec3 CameraController::clampEyeAltitude(const glm::dvec3& eye) const {
-    return clampEyeToMinAltitude(eye, terrainHeightFunc_);
+    return clampEyeToMinAltitude(
+        eye, terrainHeightFunc_, lastKnownTerrainHeight_);
 }
 
 namespace {

@@ -16,16 +16,20 @@ SceneTerrainQuery::makeLngLatHeightSampler(const Tileset* terrainTileset) {
     };
 }
 
-double SceneTerrainQuery::sampleHeight(
+std::optional<double> SceneTerrainQuery::sampleHeight(
     const Tileset* terrainTileset,
     const Vec3& ecefPosition) {
     if (!terrainTileset) {
-        return 0.0;
+        return std::nullopt;
     }
     const Cartographic c =
         Ellipsoid::WGS84().cartesianToCartographic(ecefPosition);
-    return static_cast<double>(
-        terrainTileset->sampleHeight(c.longitude(), c.latitude()));
+    const std::optional<float> h =
+        terrainTileset->sampleHeightOptional(c.longitude(), c.latitude());
+    if (!h) {
+        return std::nullopt;
+    }
+    return static_cast<double>(*h);
 }
 
 } // namespace earth_engine
