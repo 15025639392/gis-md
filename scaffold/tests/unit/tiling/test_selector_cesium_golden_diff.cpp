@@ -190,6 +190,17 @@ ScenarioSpec makeS4Scenario() {
         /*expectFinalLeaf=*/false};
 }
 
+ScenarioSpec makeS5Scenario() {
+    return ScenarioSpec{
+        "s5",
+        selector_diff::kS1Tree,  // S5 复用 S1 树
+        selector_diff::kS5Options,
+        {selector_diff::kS5Frames.begin(), selector_diff::kS5Frames.end()},
+        1,
+        // pan 尾帧相机不在 region 中心正上方,叶层覆盖非场景意图,不作尾叶断言。
+        /*expectFinalLeaf=*/false};
+}
+
 /// 由 QuadtreeSpec 程序化枚举整棵满四叉树的内容 provider
 /// （仿 test_tileset_selection_refinement.cpp 的 SelectionTreeContentProvider，
 /// 但树由规格递推而非逐瓦片列表）。叶子（z == maxDepth）childTiles 返回空。
@@ -714,4 +725,13 @@ TEST(SelectorIncrementalTest, S3MatchesFullViaOracle) {
     const auto results = runScenario(incrementalOf(makeS3Scenario()));
     EXPECT_FALSE(results.empty());
     reportStability("S3", results);
+}
+
+// S5 = 等高横向 pan（真机 orbit-drag 的代理场景）。zoom(S1)=0% stable、
+// still(S3)=100% stable 之间的那个未知数——量化 pan 下可剪枝子树上界,决定
+// ③ L3 剪枝对"拖动 selector 7-12ms"是否真有杠杆。§8 oracle 逐帧验证增量==全量。
+TEST(SelectorIncrementalTest, S5PanMatchesFullViaOracle) {
+    const auto results = runScenario(incrementalOf(makeS5Scenario()));
+    EXPECT_FALSE(results.empty());
+    reportStability("S5", results);
 }

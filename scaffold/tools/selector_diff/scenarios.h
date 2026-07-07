@@ -291,6 +291,33 @@ inline constexpr std::array<CameraFrameSpec, 12> kS4Frames{{
 
 inline constexpr OptionsSpec kS4Options{};
 
+// ---- 场景 S5：等高横向平移（pan）——增量切面机会测量的关键场景 ----
+//
+// 真机拖动是横向 orbit-pan（相机绕地心侧移，LOD 近恒定），而非 S1 的纵向
+// zoom。zoom 每帧换 LOD 壳 → 全子树 churn（S1 实测 0% stable）；pan 保持
+// LOD 恒定，只有视锥前/后缘瓦片进出 → 内部子树应大量稳定。此场景量化 pan
+// 下的 stable 子树比例 = ③ L3 剪枝对"拖动 selector 成本"的真实上界（zoom 0%
+// 与 still 100% 之间的那个未知数）。
+// 定高 400km（z3 叶可见、含 z2 内部子树），前 3 帧收敛，其后每帧东移
+// +0.008 rad（~51km，约半个 z3 瓦片宽），始终留在 region [0, π/16] 内，
+// 两侧都有数据。nadir（pitch=0）。§8 oracle 逐帧验证增量==全量。
+inline constexpr std::array<CameraFrameSpec, 12> kS5Frames{{
+    {0.060, 0.098, 400000.0},
+    {0.060, 0.098, 400000.0},
+    {0.060, 0.098, 400000.0},
+    {0.068, 0.098, 400000.0},
+    {0.076, 0.098, 400000.0},
+    {0.084, 0.098, 400000.0},
+    {0.092, 0.098, 400000.0},
+    {0.100, 0.098, 400000.0},
+    {0.108, 0.098, 400000.0},
+    {0.116, 0.098, 400000.0},
+    {0.124, 0.098, 400000.0},
+    {0.132, 0.098, 400000.0},
+}};
+
+inline constexpr OptionsSpec kS5Options{};
+
 // ---- 轨迹行格式（两侧 driver 都用这一份，保证 byte 级一致）----
 //   frame=N render=[a,b,...] loads=[c,...] visited=V culled=C culledVisited=CV kicked=K
 // 瓦片 key 统一 "z-x-y"。render 排序输出（遍历序不作为对拍面）；
