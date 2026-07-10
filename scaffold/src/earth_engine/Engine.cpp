@@ -87,11 +87,7 @@ void Engine::setAerialFogEnabled(bool enabled) {
     offscreenPostProcessInitFailed_ = false;
 }
 
-void Engine::setAerialFogParams(float colorR, float colorG, float colorB,
-                                float density, float startDistance) {
-    aerialFogColorR_ = colorR;
-    aerialFogColorG_ = colorG;
-    aerialFogColorB_ = colorB;
+void Engine::setAerialFogParams(float density, float startDistance) {
     aerialFogDensity_ = density;
     aerialFogStartDistance_ = startDistance;
 }
@@ -186,18 +182,33 @@ void Engine::render(double deltaSeconds) {
         const double startMs = perf::nowMs();
         device_->endPass();
         if (offscreenPassActive_) {
-            // aerial fog 每帧参数:near/far 取当前相机(动态 near 已在 update
-            // 里按高度设);雾色/密度/起点走 SDK 可配值(默认亮地平线霞——
-            // 勿用 clear 天顶暗色,会把远景压黑)。非 fog effect 忽略。
-            // TODO: 雾色应随时间/太阳跟踪大气 pass 的地平线色(现固定日间霞)。
+            // aerial fog 每帧参数:near/far + 相机基 + 太阳,喂给 shader 逐
+            // 像素算天空色作雾色(与大气 pass 同源→随高度/方向/太阳自然同调),
+            // 密度随高度/视角在 shader 内衰减。密度/起点走 SDK 可配值。
             OffscreenPostProcess::FrameParams params;
             const Camera& cam = scene_->camera();
             params.nearPlane = static_cast<float>(cam.nearPlaneMeters());
             params.farPlane = static_cast<float>(cam.farPlaneMeters());
-            params.fogColor = {aerialFogColorR_, aerialFogColorG_,
-                               aerialFogColorB_};
             params.fogDensity = aerialFogDensity_;
             params.fogStartDistance = aerialFogStartDistance_;
+            auto toArr = [](const Vec3& v) {
+                return std::array<float, 3>{static_cast<float>(v.x()),
+                                            static_cast<float>(v.y()),
+                                            static_cast<float>(v.z())};
+            };
+            params.camPos = toArr(cam.position());
+            params.camRight = toArr(cam.right());
+            params.camUp = toArr(cam.up());
+            params.camForward = toArr(cam.direction());
+            params.sunDir = toArr(scene_->sunDirection());
+            params.tanFovHalf =
+                static_cast<float>(std::tan(cam.verticalFovRadians() * 0.5));
+            params.aspect = surfaceHeightPixels_ > 0
+                ? static_cast<float>(surfaceWidthPixels_) /
+                      static_cast<float>(surfaceHeightPixels_)
+                : 1.0f;
+            // 密度高度衰减用的星球半径:椭球赤道半径(近似,雾密度对此不敏感)。
+            params.planetRadius = 6378137.0f;
             if (device_->beginPass(nullptr)) {
                 device_->submit({offscreenPostProcess_->buildCommand(params)});
                 device_->endPass();

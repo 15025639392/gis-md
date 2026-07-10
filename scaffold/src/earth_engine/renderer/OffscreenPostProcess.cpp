@@ -91,43 +91,85 @@ void main() {
 }
 )";
 
-// Aerial fog(距离雾):采样离屏 color(unit0)+ depth(unit1)。深度是
-// reverse-Z window depth [0,1](近=1、远→0.5、背景=0)。用 near/far 反算
-// eye-space 视距 d,再指数雾混向雾色。推导见 offscreen 设计文档:
-//   z_ndc = 2*z_win - 1               (GLES 默认 depth range [0,1])
-//   d = near*far / (z_ndc*(far-near) + near)
-// 背景(z_win<0.25,即无地形写入)跳过——天空色已在离屏 color 里。
+// Aerial fog(大气一致的距离雾,Google Earth / Cesium 式):采样离屏 color
+// (unit0)+ depth(unit1),reverse-Z 反算 eye-space 视距 d,再:
+//   ① 雾色 = 该像素视线方向的天空色(移植大气 pass 天空色近似,与天空
+//      同源→远处地形无缝融进它正前方那块天空,随高度/方向/太阳变);
+//   ② 密度随相机高度衰减(近地浓、超 maxHeight 关)+ 视线角(朝地平线最
+//      浓、朝下几乎无——aerial perspective 主要在地平线可见,同 Cesium Fog.js);
+//   ③ 指数-平方雾混合(同 czm_fog)。
+// reverse-Z:z_ndc=2*z_win-1(GLES depth range [0,1]),d=near*far/(z_ndc*(far-near)+near)。
+// 背景(z_win<0.25,无地形写入)跳过——天空色已在离屏 color 里。
 const char* kAerialFogFragGLSL = R"(#version 300 es
 precision highp float;
 uniform sampler2D u_tileTexture;   // 离屏 color, unit 0
 uniform sampler2D u_depthTexture;  // 离屏 depth,  unit 1
 uniform vec2 u_depthNearFar;       // (near, far) 米
-uniform vec3 u_fogColor;
 uniform vec2 u_fogParams;          // (density, startDistance)
+uniform vec3 u_camPos;             // 相机 ECEF
+uniform vec3 u_camRight;
+uniform vec3 u_camUp;
+uniform vec3 u_camForward;
+uniform vec3 u_sunDir;             // 太阳方向 ECEF(单位)
+uniform vec2 u_fovAspect;          // (tanFovHalf, aspect)
+uniform float u_planetRadius;
 in vec2 v_uv;
 out vec4 fragColor;
+
+// 该视线方向的天空色近似(与 AtmosphereBackgroundPass 同色板:低空霞
+// lowSky→天顶蓝 zenith,按视线仰角混合;太阳侧近地平线微暖)。远处地形
+// 混向此色即"融进正前方的天空"。
+vec3 skyColorFor(vec3 rayDir, vec3 up, vec3 sun) {
+    float viewUp = dot(rayDir, up);
+    vec3 zenithColor = vec3(0.06, 0.24, 0.55);
+    vec3 lowSkyColor = vec3(0.50, 0.74, 0.92);
+    float skyT = smoothstep(-0.08, 0.85, viewUp);
+    vec3 sky = mix(lowSkyColor, zenithColor, pow(skyT, 0.85));
+    // 太阳侧地平线附近微暖(前向 Mie 散射观感)。
+    float mu = max(dot(rayDir, sun), 0.0);
+    sky = mix(sky, vec3(0.95, 0.90, 0.82),
+              pow(mu, 8.0) * 0.30 * (1.0 - skyT));
+    return sky;
+}
 
 void main() {
     vec3 color = texture(u_tileTexture, v_uv).rgb;
     float zWin = texture(u_depthTexture, v_uv).r;
-    // 背景/天空:无地形深度写入(clear=0)→ 不加雾,直出天空色。
-    if (zWin < 0.25) {
+    if (zWin < 0.25) {            // 背景/天空:不加雾。
         fragColor = vec4(color, 1.0);
         return;
     }
     float near = u_depthNearFar.x;
     float far = u_depthNearFar.y;
     float zNdc = 2.0 * zWin - 1.0;
-    // reverse-Z 线性化:eye-space 视距(米),分母恒正(zNdc∈[0,1])。
     float d = (near * far) / (zNdc * (far - near) + near);
 
-    float density = u_fogParams.x;
+    // per-pixel 视线(与大气 pass 逐字一致的重建)。
+    vec2 ndc = v_uv * 2.0 - 1.0;
+    float tanHalf = u_fovAspect.x;
+    float aspect = u_fovAspect.y;
+    vec3 rayDir = normalize(u_camForward +
+                            u_camRight * ndc.x * tanHalf * aspect +
+                            u_camUp * ndc.y * tanHalf);
+    vec3 up = normalize(u_camPos);
+    vec3 sun = normalize(u_sunDir);
+    float camHeight = max(length(u_camPos) - u_planetRadius, 0.0);
+
+    // 密度:基础强度 × 视线角(地平线最浓、朝下清)× 高度衰减(近地浓、
+    // 超 maxHeight 关)。maxHeight=150km:高空俯瞰基本无雾。
+    const float maxHeight = 150000.0;
+    float viewWeight = 1.0 - abs(dot(rayDir, up));
+    float heightWeight = smoothstep(maxHeight, 0.0, camHeight);
+    float density = u_fogParams.x * viewWeight * heightWeight;
+
     float startDistance = u_fogParams.y;
     float fogDist = max(d - startDistance, 0.0);
-    // 指数雾:近处透明、远处饱和到雾色。
-    float fog = 1.0 - exp(-density * fogDist);
-    fog = clamp(fog, 0.0, 1.0);
-    fragColor = vec4(mix(color, u_fogColor, fog), 1.0);
+    // 指数-平方雾(同 czm_fog):近处≈0、远处饱和。
+    float scalar = fogDist * density;
+    float fog = clamp(1.0 - exp(-scalar * scalar), 0.0, 1.0);
+
+    vec3 fogColor = skyColorFor(rayDir, up, sun);
+    fragColor = vec4(mix(color, fogColor, fog), 1.0);
 }
 )";
 
@@ -251,10 +293,21 @@ RenderCommand OffscreenPostProcess::buildCommand(
         // depth 绑 unit 1(u_depthTexture);后端 sampler 表已把它固定绑 1。
         cmd.textures.push_back(framebuffer_->depthTexture());
         cmd.uniforms["u_depthNearFar"] = {params.nearPlane, params.farPlane};
-        cmd.uniforms["u_fogColor"] = {params.fogColor[0], params.fogColor[1],
-                                      params.fogColor[2]};
         cmd.uniforms["u_fogParams"] = {params.fogDensity,
                                        params.fogStartDistance};
+        cmd.uniforms["u_camPos"] = {params.camPos[0], params.camPos[1],
+                                    params.camPos[2]};
+        cmd.uniforms["u_camRight"] = {params.camRight[0], params.camRight[1],
+                                      params.camRight[2]};
+        cmd.uniforms["u_camUp"] = {params.camUp[0], params.camUp[1],
+                                   params.camUp[2]};
+        cmd.uniforms["u_camForward"] = {params.camForward[0],
+                                        params.camForward[1],
+                                        params.camForward[2]};
+        cmd.uniforms["u_sunDir"] = {params.sunDir[0], params.sunDir[1],
+                                    params.sunDir[2]};
+        cmd.uniforms["u_fovAspect"] = {params.tanFovHalf, params.aspect};
+        cmd.uniforms["u_planetRadius"] = {params.planetRadius};
     }
     return cmd;
 }

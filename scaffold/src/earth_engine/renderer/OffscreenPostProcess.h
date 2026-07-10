@@ -27,14 +27,25 @@ class OffscreenPostProcess {
 public:
     enum class Effect { Passthrough, Fxaa, AerialFog };
 
-    /// aerial fog 每帧参数(near/far 视距重建 + 雾色/密度)。非 fog effect
-    /// 忽略。density 越大雾越浓;startDistance 前不加雾(米)。
+    /// aerial fog 每帧参数。非 fog effect 忽略。
+    /// 雾色不再是固定常数——shader 每像素按视线方向算天空色作雾色(与大气
+    /// pass 同源→天然同调);这里的相机基/太阳/半径喂给那套散射近似。
+    /// density 是基础强度,shader 再乘高度衰减 + 视线角(近地浓/高空关/朝
+    /// 地平线最浓)。
     struct FrameParams {
         float nearPlane = 1.0f;
         float farPlane = 1.0e12f;
-        std::array<float, 3> fogColor = {0.62f, 0.82f, 0.94f};
         float fogDensity = 6.0e-6f;
         float fogStartDistance = 0.0f;
+        // 相机基(单位向量)+ 太阳方向(ECEF)+ 视锥,per-pixel 视线重建用。
+        std::array<float, 3> camPos = {0.0f, 0.0f, 0.0f};
+        std::array<float, 3> camRight = {1.0f, 0.0f, 0.0f};
+        std::array<float, 3> camUp = {0.0f, 1.0f, 0.0f};
+        std::array<float, 3> camForward = {0.0f, 0.0f, -1.0f};
+        std::array<float, 3> sunDir = {0.0f, 0.0f, 1.0f};
+        float tanFovHalf = 0.5f;
+        float aspect = 1.0f;
+        float planetRadius = 6378137.0f;
     };
 
     OffscreenPostProcess() = default;
