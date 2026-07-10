@@ -1,5 +1,6 @@
 #include "CompositeTerrainProvider.h"
 
+#include "../tiling/TileQuadtreeChildKeys.h"
 #include "../tiling/TileSelectionRootPolicy.h"
 
 #include <utility>
@@ -17,6 +18,25 @@ CompositeTerrainProvider::CompositeTerrainProvider(
 bool CompositeTerrainProvider::primaryAvailable(const TileKey& key) const {
     return primary_->availabilityState(key) ==
            TileAvailabilityState::Available;
+}
+
+bool CompositeTerrainProvider::isPureHoleQuad(const TileKey& key) const {
+    // z0 has no siblings within a parent quad; a level-zero root the primary
+    // source lacks is itself a pure hole.
+    if (key.z == 0) {
+        return !primaryAvailable(key);
+    }
+    // Ellipsoid only fills where the whole sibling quad is uncovered (the parent
+    // would stop as a coarse leaf). If any sibling is primary-covered this is a
+    // coverage edge: the uncovered siblings must remain real-terrain upsample
+    // tiles (materializeTerrainChildren marks them so), not flatten to ellipsoid.
+    for (const TileKey& sibling :
+         TileQuadtreeChildKeys::terrainChildren(key.parent())) {
+        if (primaryAvailable(sibling)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::string CompositeTerrainProvider::id() const {
@@ -61,14 +81,19 @@ TileAvailabilityState CompositeTerrainProvider::availabilityState(
     if (primaryAvailable(key)) {
         return TileAvailabilityState::Available;
     }
-    // Ellipsoid floor: fill any hole the primary source lacks, up to the cap, so
-    // TileChildMaterializer never stops on an exposed coarse leaf. supportsTile
-    // guards the tiling scheme; the virtual root and the cap bound the floor.
+    // supportsTile guards the tiling scheme and the ellipsoid cap (its own
+    // maximumLevel). The virtual root is always fillable.
     if (!ellipsoid_->supportsTile(key)) {
         return TileAvailabilityState::NotAvailable;
     }
-    if (TileSelectionRootPolicy::isVirtualTerrainRoot(key) ||
-        key.z <= ellipsoidMaxZoom_) {
+    if (TileSelectionRootPolicy::isVirtualTerrainRoot(key)) {
+        return TileAvailabilityState::Available;
+    }
+    // Ellipsoid floor is intentionally narrow: it only fills a fully-uncovered
+    // sibling quad (where the parent would otherwise stop as a coarse leaf with
+    // a giant skirt). At a coverage edge the uncovered siblings stay NotAvailable
+    // so they become real-terrain upsample tiles, not flat ellipsoid.
+    if (key.z <= ellipsoidMaxZoom_ && isPureHoleQuad(key)) {
         return TileAvailabilityState::Available;
     }
     return TileAvailabilityState::NotAvailable;

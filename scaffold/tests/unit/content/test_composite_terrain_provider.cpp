@@ -142,14 +142,14 @@ TEST(CompositeTerrainProviderTest, AllHoleQuadWithinCapMaterializesFullQuad) {
     }
 }
 
-TEST(CompositeTerrainProviderTest, HolesAdjacentToCoverageAreAvailableNotUpsample) {
+TEST(CompositeTerrainProviderTest, CoverageEdgeHolesStayRealTerrainUpsample) {
     auto composite = makeComposite();
     auto scheme = TileScheme::createGeographicTMS();
 
     // Parent whose SW child (x==0,y==0) is primary-covered and the other three
-    // are holes within the cap. Without the floor the three holes would be
-    // marked terrain-availability upsample (making them upsample-source
-    // candidates); with the floor they are Available ellipsoid children instead.
+    // are holes within the cap. This is a COVERAGE EDGE: the ellipsoid floor must
+    // NOT fire here — the uncovered siblings must stay real-terrain upsample
+    // tiles (clipped from the covered parent), never flatten to flat ellipsoid.
     const TileKey parentKey{kScheme, kEllipsoidCap - 1, 0, 0};
     TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
     parent.geometricError = 100.0;
@@ -178,11 +178,20 @@ TEST(CompositeTerrainProviderTest, HolesAdjacentToCoverageAreAvailableNotUpsampl
 
     ASSERT_TRUE(changed);
     ASSERT_EQ(4u, parent.children.size());
-    for (const TilesetTile* child : parent.children) {
-        ASSERT_NE(nullptr, child);
-        EXPECT_FALSE(child->content.isTerrainAvailabilityUpsample());
-        EXPECT_FALSE(child->content.derivesTerrainFromParent());
+    // Child[0] = SW = primary-covered → real content, not upsample.
+    EXPECT_FALSE(parent.children[0]->content.isTerrainAvailabilityUpsample());
+    // Children[1..3] = holes adjacent to coverage → real-terrain upsample of the
+    // covered parent, NOT flattened to ellipsoid.
+    for (size_t i = 1; i < parent.children.size(); ++i) {
+        EXPECT_TRUE(parent.children[i]->content.isTerrainAvailabilityUpsample())
+            << "coverage-edge hole child " << i
+            << " must stay real-terrain upsample, not ellipsoid";
     }
+    // And the composite must report those edge holes NotAvailable so the
+    // materializer routes them to upsample rather than requesting ellipsoid.
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              composite->availabilityState(
+                  TileKey{kScheme, kEllipsoidCap, 1, 0}));
 }
 
 TEST(CompositeTerrainProviderTest, ContentRoutesToPrimaryWhereCovered) {

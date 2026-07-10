@@ -64,6 +64,13 @@ private:
     /// the primary source and keeps its uncapped availability).
     bool primaryAvailable(const TileKey& key) const;
 
+    /// True when NONE of this tile's four siblings has primary coverage, i.e. the
+    /// parent would otherwise stop as a coarse leaf (the giant-skirt case). Only
+    /// then does the ellipsoid floor apply: at a coverage edge some sibling IS
+    /// covered, so the uncovered ones must stay real-terrain upsample tiles
+    /// (clipped from the covered parent) rather than flatten to the ellipsoid.
+    bool isPureHoleQuad(const TileKey& key) const;
+
     std::unique_ptr<TilesetContentProvider> primary_;
     std::unique_ptr<TilesetContentProvider> ellipsoid_;
     int ellipsoidMaxZoom_ = 0;
