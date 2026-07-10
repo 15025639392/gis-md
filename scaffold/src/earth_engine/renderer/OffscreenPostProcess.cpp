@@ -1,6 +1,9 @@
 #include "OffscreenPostProcess.h"
 
 #include "../debug/PlatformLog.h"
+#include "../environment/AtmosphereSkyColorGLSL.h"
+
+#include <string>
 
 namespace earth_engine {
 
@@ -100,7 +103,7 @@ void main() {
 //   ③ 指数-平方雾混合(同 czm_fog)。
 // reverse-Z:z_ndc=2*z_win-1(GLES depth range [0,1]),d=near*far/(z_ndc*(far-near)+near)。
 // 背景(z_win<0.25,无地形写入)跳过——天空色已在离屏 color 里。
-const char* kAerialFogFragGLSL = R"(#version 300 es
+const char* kAerialFogFragHead = R"(#version 300 es
 precision highp float;
 uniform sampler2D u_tileTexture;   // 离屏 color, unit 0
 uniform sampler2D u_depthTexture;  // 离屏 depth,  unit 1
@@ -115,23 +118,13 @@ uniform vec2 u_fovAspect;          // (tanFovHalf, aspect)
 uniform float u_planetRadius;
 in vec2 v_uv;
 out vec4 fragColor;
+)";
 
-// 该视线方向的天空色近似(与 AtmosphereBackgroundPass 同色板:低空霞
-// lowSky→天顶蓝 zenith,按视线仰角混合;太阳侧近地平线微暖)。远处地形
-// 混向此色即"融进正前方的天空"。
-vec3 skyColorFor(vec3 rayDir, vec3 up, vec3 sun) {
-    float viewUp = dot(rayDir, up);
-    vec3 zenithColor = vec3(0.06, 0.24, 0.55);
-    vec3 lowSkyColor = vec3(0.50, 0.74, 0.92);
-    float skyT = smoothstep(-0.08, 0.85, viewUp);
-    vec3 sky = mix(lowSkyColor, zenithColor, pow(skyT, 0.85));
-    // 太阳侧地平线附近微暖(前向 Mie 散射观感)。
-    float mu = max(dot(rayDir, sun), 0.0);
-    sky = mix(sky, vec3(0.95, 0.90, 0.82),
-              pow(mu, 8.0) * 0.30 * (1.0 - skyT));
-    return sky;
-}
-
+// kSkyColorGLSL(computeSkyColor)在此注入:雾色 = 大气 pass 同一天空色
+// 模型,逐分量恒等 → 远处地形融进正前方天空、交接无缝。见
+// AtmosphereSkyColorGLSL.h。旧的本地 skyColorFor 已删除(那是与大气 pass
+// 平行的第二套近似,正是"搭配不完美"的根因)。
+const char* kAerialFogFragMain = R"(
 void main() {
     vec3 color = texture(u_tileTexture, v_uv).rgb;
     float zWin = texture(u_depthTexture, v_uv).r;
@@ -164,11 +157,21 @@ void main() {
 
     float startDistance = u_fogParams.y;
     float fogDist = max(d - startDistance, 0.0);
-    // 指数-平方雾(同 czm_fog):近处≈0、远处饱和。
-    float scalar = fogDist * density;
-    float fog = clamp(1.0 - exp(-scalar * scalar), 0.0, 1.0);
+    // 平-指数雾(aerial perspective):haze 从近到远**连续**累积,给出纵深/
+    // 空间感。指数-平方会让近处极清、只有地平线饱和(二元、无中景过渡、显
+    // 平),故用平-exp——中景就开始渐变发蓝,如 Google Earth。
+    float fog = clamp(1.0 - exp(-fogDist * density), 0.0, 1.0);
+    // 地平线处(视线近水平,viewUp≈0)强制全雾:最远地形距离有限,普通指数
+    // 雾只到 ~0.9,残留几%地形色比纯雾天空略深 → 地平线硬轮廓边。这里让近
+    // 水平视线的地形完全融进天空(GE 远景本就全雾化),消除交接硬边。
+    float viewUp = dot(rayDir, up);
+    fog = max(fog, 1.0 - smoothstep(0.0, 0.06, abs(viewUp)));
 
-    vec3 fogColor = skyColorFor(rayDir, up, sun);
+    // 雾色 = 该视线方向的天空色(与大气 pass 同一 computeSkyColor)。
+    // spaceFactor 用与大气 pass 一致的公式(近地 fog 生效区恒≈0,深黑项
+    // 不起作用,但保持同源可读)。
+    float spaceFactor = smoothstep(120000.0, 900000.0, camHeight);
+    vec3 fogColor = computeSkyColor(rayDir, up, sun, spaceFactor);
     fragColor = vec4(mix(color, fogColor, fog), 1.0);
 }
 )";
@@ -185,12 +188,15 @@ const char* diagTag(OffscreenPostProcess::Effect effect) {
     }
 }
 
-const char* fragForEffect(OffscreenPostProcess::Effect effect) {
+std::string fragForEffect(OffscreenPostProcess::Effect effect) {
     switch (effect) {
         case OffscreenPostProcess::Effect::Fxaa:
             return kFxaaFragGLSL;
         case OffscreenPostProcess::Effect::AerialFog:
-            return kAerialFogFragGLSL;
+            // 拼接:头(uniform) + 共享 computeSkyColor + main。雾色与大气
+            // pass 同源。
+            return std::string(kAerialFogFragHead) + kSkyColorGLSL +
+                   kAerialFogFragMain;
         case OffscreenPostProcess::Effect::Passthrough:
         default:
             return kBlitFragGLSL;

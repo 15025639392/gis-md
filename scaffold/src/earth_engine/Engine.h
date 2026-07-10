@@ -167,7 +167,7 @@ private:
     bool fxaaEnabled_ = false;
     bool aerialFogEnabled_ = false;
     // Aerial fog 调参(SDK 可配);雾色由 shader 从大气模型算,不在此存。
-    float aerialFogDensity_ = 6.0e-6f;
+    float aerialFogDensity_ = 8.0e-6f;
     float aerialFogStartDistance_ = 0.0f;
     // initialize 失败(如 Metal 未接线)后不再逐帧重试。
     bool offscreenPostProcessInitFailed_ = false;

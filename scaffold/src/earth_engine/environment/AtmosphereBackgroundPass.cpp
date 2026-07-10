@@ -1,8 +1,10 @@
 #include "AtmosphereBackgroundPass.h"
+#include "AtmosphereSkyColorGLSL.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include <glm/gtc/constants.hpp>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 #include "../debug/PlatformLog.h"
 // LOGI/LOGE 现为统一 platformLog 的薄别名（Android -> logcat，其它平台 -> stderr）。
@@ -23,7 +25,7 @@ void main() {
 }
 )";
 
-const char* kAtmosphereBackgroundFrag = R"(#version 300 es
+const char* kAtmosphereBackgroundFragHead = R"(#version 300 es
 precision highp float;
 
 uniform vec3 u_camPos;
@@ -56,7 +58,11 @@ float miePhase(float mu) {
     float g2 = g * g;
     return 0.18 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 0.05), 1.5);
 }
+)";
 
+// kSkyColorGLSL(computeSkyColor)在此注入:大气 pass 与 aerial fog 共享
+// 同一天空色模型,雾霾色逐分量恒等天空色。见 AtmosphereSkyColorGLSL.h。
+const char* kAtmosphereBackgroundFragMain = R"(
 void main() {
     // ---- View ray in world (ECEF) space from camera basis ----
     float px = gl_FragCoord.x;
@@ -117,11 +123,18 @@ void main() {
         }
     }
 
-    // Match OpenGlobus' background atmosphere contract: the independent sky
-    // pass never colors ground-facing rays. Ground haze belongs to the surface
-    // shader, while depth testing keeps this fullscreen pass behind terrain.
+    // 命中/掠射星球的光线:地形通常覆盖它们(本 pass depthTest 已把 fragment
+    // 挡在地形之后,terrain 写过深度的像素这里必被丢弃)。但地形几何到 limb
+    // 边缘会留一两像素缝没覆盖 —— 旧版 discard 让这些缝露出离屏黑底,fog pass
+    // 又因 zWin<0.25 当背景跳过 → 地平线上一条纯黑虚线。改为输出该方向的地平线
+    // 雾霾色(与 fog 同一 computeSkyColor):缝隙填霾无缝,terrain 覆盖处仍被
+    // 深度测试丢弃,故只影响真正空缺的像素。
     if (hitPlanet) {
-        discard;
+        vec3 gapUp = normalize(cam);
+        float gapHeight = max(length(cam) - R, 0.0);
+        float gapSpace = smoothstep(120000.0, 900000.0, gapHeight);
+        fragColor = vec4(computeSkyColor(rayDir, gapUp, sun, gapSpace), 1.0);
+        return;
     }
 
     // ---- Scattering approximation ----
@@ -159,14 +172,12 @@ void main() {
     vec3 localUp = normalize(cam);
     float camHeight = max(length(cam) - R, 0.0);
     float spaceFactor = smoothstep(120000.0, 900000.0, camHeight);
-    float viewUp = dot(rayDir, localUp);
-    vec3 zenithColor = vec3(0.06, 0.24, 0.55);
-    vec3 lowSkyColor = vec3(0.50, 0.74, 0.92);
-    float raySkyT = smoothstep(-0.08, 0.85, viewUp);
-    float screenSkyT = smoothstep(0.0, 1.0, py / h);
-    float skyT = mix(screenSkyT, raySkyT, spaceFactor);
-    vec3 baseSky = mix(lowSkyColor, zenithColor, pow(skyT, 0.85));
-    baseSky = mix(baseSky, vec3(0.0, 0.005, 0.025), spaceFactor);
+
+    // 天空底色 = 统一散射模型(与 aerial fog 逐分量同源)。仰角渐变 +
+    // 太空压黑 + 太阳侧地平线微暖都在 computeSkyColor 里,雾色调它同一函数
+    // → 天空↔地形交接恒等无缝。旧的 screen-y 参数化 + 独立 horizon band 常数
+    // 对齐已删除(那是"三套模型凑近似"的病根)。
+    vec3 color = computeSkyColor(rayDir, localUp, sun, spaceFactor);
 
     vec3 scatterColor = rayleighColor * r + mieColor * m;
     scatterColor *= u_sunIntensity * 0.85;
@@ -174,14 +185,7 @@ void main() {
     float opticalThickness = rayleighDepth * 0.018 + mieDepth * 0.010;
     float pathScatterAmount =
         clamp(1.0 - exp(-opticalThickness), 0.0, 0.35) * u_opacity;
-    vec3 color = mix(baseSky, baseSky + scatterColor, pathScatterAmount * spaceFactor);
-
-    float horizonGlow = pow(1.0 - screenSkyT, 2.4) * (1.0 - spaceFactor);
-    vec3 horizonColor = vec3(0.50, 0.74, 0.92);
-    color = mix(color, horizonColor, clamp(horizonGlow * 0.36, 0.0, 0.36));
-
-    float horizonAir = (1.0 - smoothstep(0.0, 0.18, abs(viewUp))) * (1.0 - spaceFactor);
-    color = mix(color, horizonColor, clamp(horizonAir * 0.22, 0.0, 0.22));
+    color = mix(color, color + scatterColor, pathScatterAmount * spaceFactor);
 
     // ---- 太阳侧大气 rim light（从太空看地球的蓝色大气环）----
     // 只有掠过地球边缘的天空光线才有 rim：ray 到地心的最近距离 perpDist>R(擦边而
@@ -302,7 +306,9 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
 
     ShaderDesc shaderDesc;
     shaderDesc.vertexSource = kAtmosphereBackgroundVert;
-    shaderDesc.fragmentSource = kAtmosphereBackgroundFrag;
+    // 拼接:头(uniform+phase 函数) + 共享 computeSkyColor + main。
+    shaderDesc.fragmentSource = std::string(kAtmosphereBackgroundFragHead) +
+                                kSkyColorGLSL + kAtmosphereBackgroundFragMain;
     auto shaderPtr = device->createShader(shaderDesc);
     if (!shaderPtr) {
         LOGE("initialize: createShader returned null");

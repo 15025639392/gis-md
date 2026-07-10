@@ -171,7 +171,7 @@ struct EarthSceneConfig {
     /// 雾密度(基础强度,1/米)与起雾距离(米,之前不加雾)。雾色由 shader
     /// 每像素从大气模型算(随视线/高度/太阳自然同调天空),不是常数,故无
     /// 雾色配置项;密度在 shader 内还会乘高度衰减 + 视线角。
-    float aerialFogDensity = 6.0e-6f;
+    float aerialFogDensity = 8.0e-6f;
     float aerialFogStartDistance = 0.0f;
 };
 
