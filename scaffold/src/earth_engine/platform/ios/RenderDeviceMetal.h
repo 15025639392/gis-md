@@ -40,6 +40,8 @@ public:
     // ---- 帧操作 ----
     void setClearColor(float r, float g, float b, float a) override;
     void beginFrame() override;
+    bool beginPass(Framebuffer* target) override;
+    void endPass() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;
 

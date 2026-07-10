@@ -443,9 +443,89 @@ std::unique_ptr<ShaderProgram> RenderDeviceGLES::createShader(const ShaderDesc& 
     return std::make_unique<GLShaderProgram>(program);
 }
 
-std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(const FramebufferDesc& /*desc*/) {
-    // Stage 2 MVP 不需要自定义 framebuffer（使用默认 framebuffer）
-    return nullptr;
+// ============================================================
+// GLFramebuffer
+// ============================================================
+
+GLFramebuffer::GLFramebuffer(unsigned int fboId,
+                             std::unique_ptr<GLTexture> color,
+                             unsigned int depthRenderbufferId,
+                             int width,
+                             int height)
+    : fboId_(fboId),
+      color_(std::move(color)),
+      depthRenderbufferId_(depthRenderbufferId),
+      width_(width),
+      height_(height) {}
+
+GLFramebuffer::~GLFramebuffer() {
+    if (fboId_) {
+        glDeleteFramebuffers(1, &fboId_);
+    }
+    if (depthRenderbufferId_) {
+        glDeleteRenderbuffers(1, &depthRenderbufferId_);
+    }
+    // color_ 的 GLTexture 析构自删纹理。
+}
+
+std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
+    const FramebufferDesc& desc) {
+    if (desc.width <= 0 || desc.height <= 0 || !desc.hasColor) {
+        __android_log_print(ANDROID_LOG_ERROR, "GLES",
+            "createFramebuffer: invalid desc %dx%d hasColor=%d",
+            desc.width, desc.height, desc.hasColor ? 1 : 0);
+        return nullptr;
+    }
+    if (desc.samples > 1) {
+        // v1 不支持 MSAA(resolve 未实现),按单采样处理而不是假装支持。
+        __android_log_print(ANDROID_LOG_WARN, "GLES",
+            "createFramebuffer: samples=%d unsupported, using 1", desc.samples);
+    }
+
+    GLuint colorTex = 0;
+    glGenTextures(1, &colorTex);
+    glBindTexture(GL_TEXTURE_2D, colorTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, desc.width, desc.height);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    auto color = std::make_unique<GLTexture>(colorTex, desc.width, desc.height);
+
+    GLuint depthRb = 0;
+    if (desc.hasDepth) {
+        glGenRenderbuffers(1, &depthRb);
+        glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
+        // 32F 深度匹配主 pass 的 reverse-Z 精度需求(ES3 保证支持)。
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F,
+                              desc.width, desc.height);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    }
+
+    GLuint fbo = 0;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, colorTex, 0);
+    if (depthRb) {
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, depthRb);
+    }
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        __android_log_print(ANDROID_LOG_ERROR, "GLES",
+            "createFramebuffer: incomplete (status=0x%x) %dx%d",
+            status, desc.width, desc.height);
+        glDeleteFramebuffers(1, &fbo);
+        if (depthRb) {
+            glDeleteRenderbuffers(1, &depthRb);
+        }
+        return nullptr;  // color 纹理由 GLTexture 析构回收
+    }
+    return std::make_unique<GLFramebuffer>(
+        fbo, std::move(color), depthRb, desc.width, desc.height);
 }
 
 // ============================================================
@@ -460,8 +540,20 @@ void RenderDeviceGLES::setClearColor(float r, float g, float b, float a) {
 }
 
 void RenderDeviceGLES::beginFrame() {
-    glViewport(0, 0, viewportWidth_, viewportHeight_);
-    // Restore frame-global state before clear. Previous overlay/background
+    // 帧获取阶段无事可做(EGL context/surface 由外部管理);pass 的
+    // clear + 状态设置在 beginPass() 里逐 pass 执行。
+}
+
+bool RenderDeviceGLES::beginPass(Framebuffer* target) {
+    if (target) {
+        auto* fbo = static_cast<GLFramebuffer*>(target);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo->glId());
+        glViewport(0, 0, fbo->width(), fbo->height());
+    } else {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, viewportWidth_, viewportHeight_);
+    }
+    // Restore pass-global state before clear. Previous overlay/background
     // commands may leave depth writes or blending disabled/enabled; stale
     // depth makes the next frame's surface tiles appear perforated.
     glDepthMask(GL_TRUE);
@@ -486,6 +578,13 @@ void RenderDeviceGLES::beginFrame() {
     // that out so both backends cull the same geometric face. Do NOT "unify" the
     // two backends onto the same winding — that would invert culling on one side.
     glFrontFace(GL_CCW);
+    return true;
+}
+
+void RenderDeviceGLES::endPass() {
+    // 回绑默认 framebuffer;离屏 pass 结束后下一个 beginPass 会重设
+    // viewport,主 pass 自身的 endPass 为幂等回绑。
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void RenderDeviceGLES::submit(const RenderCommandList& commands) {

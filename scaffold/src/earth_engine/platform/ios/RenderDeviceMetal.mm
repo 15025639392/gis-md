@@ -65,6 +65,28 @@ private:
     bool isTerrain_ = false;
 };
 
+/// 离屏 framebuffer:color 恒为可采样 MTLTexture(经 MetalTexture 包装,
+/// 可直接进 RenderCommand::textures);depth 独立 Depth32Float 纹理,与主
+/// pass 深度同格式(reverse-Z)。pass descriptor 每次 beginPass 现建。
+class MetalFramebuffer : public Framebuffer {
+public:
+    MetalFramebuffer(std::unique_ptr<MetalTexture> color,
+                     id<MTLTexture> depth,
+                     int width,
+                     int height)
+        : color_(std::move(color)), depth_(depth),
+          width_(width), height_(height) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+    Texture* colorTexture() const override { return color_.get(); }
+    id<MTLTexture> colorMtl() const { return color_->mtl(); }
+    id<MTLTexture> depthMtl() const { return depth_; }
+private:
+    std::unique_ptr<MetalTexture> color_;
+    id<MTLTexture> depth_;  // nil = 无 depth attachment
+    int width_, height_;
+};
+
 // ============================================================
 // RenderDeviceMetal::Impl
 // ============================================================
@@ -569,8 +591,54 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         layout == PipelineLayout::Terrain);
 }
 
-std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const FramebufferDesc& /*desc*/) {
-    return nullptr;  // MVP 不需要
+std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const FramebufferDesc& desc) {
+    if (desc.width <= 0 || desc.height <= 0 || !desc.hasColor) {
+        NSLog(@"createFramebuffer: invalid desc %dx%d hasColor=%d",
+              desc.width, desc.height, desc.hasColor ? 1 : 0);
+        return nullptr;
+    }
+    if (desc.samples > 1) {
+        // v1 不支持 MSAA(resolve 未实现),按单采样处理而不是假装支持。
+        NSLog(@"createFramebuffer: samples=%d unsupported, using 1", desc.samples);
+    }
+
+    // color 格式必须与既有 PSO 的 colorAttachments[0](BGRA8Unorm)一致,
+    // 否则场景 PSO 在离屏 pass 里全部失效。
+    MTLTextureDescriptor* colorDesc = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                     width:desc.width
+                                    height:desc.height
+                                 mipmapped:NO];
+    colorDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    colorDesc.storageMode = MTLStorageModePrivate;
+    id<MTLTexture> colorTex = [impl_->device newTextureWithDescriptor:colorDesc];
+    if (!colorTex) {
+        NSLog(@"createFramebuffer: color texture alloc failed %dx%d",
+              desc.width, desc.height);
+        return nullptr;
+    }
+
+    id<MTLTexture> depthTex = nil;
+    if (desc.hasDepth) {
+        MTLTextureDescriptor* depthDesc = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                         width:desc.width
+                                        height:desc.height
+                                     mipmapped:NO];
+        depthDesc.usage = MTLTextureUsageRenderTarget;
+        depthDesc.storageMode = MTLStorageModePrivate;
+        depthTex = [impl_->device newTextureWithDescriptor:depthDesc];
+        if (!depthTex) {
+            NSLog(@"createFramebuffer: depth texture alloc failed %dx%d",
+                  desc.width, desc.height);
+            return nullptr;
+        }
+    }
+
+    auto color = std::make_unique<MetalTexture>(colorTex,
+                                                impl_->linearClampSampler);
+    return std::make_unique<MetalFramebuffer>(
+        std::move(color), depthTex, desc.width, desc.height);
 }
 
 // ============================================================
@@ -611,29 +679,56 @@ void RenderDeviceMetal::beginFrame() {
             dispatch_semaphore_signal(inFlight);
         }];
 
+    // 存储 drawable 以便 beginPass 挂 attachment、endFrame 时 present
+    // (Impl 强引用成员,替代原先 CFRetain + associated object 的绕远存法)。
+    // pass descriptor + encoder 的创建在 beginPass() 里逐 pass 执行。
+    impl_->currentDrawable = drawable;
+}
+
+bool RenderDeviceMetal::beginPass(Framebuffer* target) {
+    // beginFrame 跳帧(信号量超时 / drawable 为 nil)时本帧无 pass 可开。
+    if (!impl_->currentCommandBuffer) return false;
+    if (impl_->currentEncoder) {
+        NSLog(@"beginPass: pass already open (nested passes unsupported)");
+        return false;
+    }
+
     MTLRenderPassDescriptor* passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
-    passDesc.colorAttachments[0].texture = drawable.texture;
+    double viewportW, viewportH;
+    if (target) {
+        auto* fbo = static_cast<MetalFramebuffer*>(target);
+        passDesc.colorAttachments[0].texture = fbo->colorMtl();
+        // 离屏 color 会被后续 pass 采样,必须 Store。
+        passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
+        passDesc.depthAttachment.texture = fbo->depthMtl();
+        viewportW = fbo->width();
+        viewportH = fbo->height();
+    } else {
+        if (!impl_->currentDrawable) return false;
+        passDesc.colorAttachments[0].texture = impl_->currentDrawable.texture;
+        passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
+        passDesc.depthAttachment.texture = impl_->depthTexture;
+        viewportW = impl_->viewportWidth;
+        viewportH = impl_->viewportHeight;
+    }
     passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
     // Clear color: sky color for this frame, pushed by Engine via setClearColor()
     // from FrameState before beginFrame(). The fullscreen atmosphere pass covers
     // this on the globe; it shows through at the horizon and empty sky.
     passDesc.colorAttachments[0].clearColor =
         MTLClearColorMake(impl_->clearR, impl_->clearG, impl_->clearB, impl_->clearA);
-    passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-    passDesc.depthAttachment.texture = impl_->depthTexture;
-    passDesc.depthAttachment.loadAction = MTLLoadActionClear;
-    passDesc.depthAttachment.clearDepth = 0.0;  // Reverse-Z: clear to 0 (farthest)
-    passDesc.depthAttachment.storeAction = MTLStoreActionDontCare;
+    if (passDesc.depthAttachment.texture) {
+        passDesc.depthAttachment.loadAction = MTLLoadActionClear;
+        passDesc.depthAttachment.clearDepth = 0.0;  // Reverse-Z: clear to 0 (farthest)
+        passDesc.depthAttachment.storeAction = MTLStoreActionDontCare;
+    }
 
     impl_->currentEncoder =
         [impl_->currentCommandBuffer renderCommandEncoderWithDescriptor:passDesc];
 
     // 设置视口
     [impl_->currentEncoder
-        setViewport:(MTLViewport){0.0, 0.0,
-                                  static_cast<double>(impl_->viewportWidth),
-                                  static_cast<double>(impl_->viewportHeight),
-                                  0.0, 1.0}];
+        setViewport:(MTLViewport){0.0, 0.0, viewportW, viewportH, 0.0, 1.0}];
 
     // Front-face winding is Metal's default MTLWindingClockwise. This MUST stay
     // opposite to the GLES backend's GL_CCW. Both backends draw the same geometry
@@ -643,10 +738,14 @@ void RenderDeviceMetal::beginFrame() {
     // that out so both backends cull the same geometric face. Do NOT "unify" the
     // two backends onto the same winding — that would invert culling on one side.
     [impl_->currentEncoder setFrontFacingWinding:MTLWindingClockwise];
+    return true;
+}
 
-    // 存储 drawable 以便 endFrame 时 present(Impl 强引用成员,替代原先
-    // CFRetain + associated object 的绕远存法)
-    impl_->currentDrawable = drawable;
+void RenderDeviceMetal::endPass() {
+    if (impl_->currentEncoder) {
+        [impl_->currentEncoder endEncoding];
+        impl_->currentEncoder = nil;
+    }
 }
 
 void RenderDeviceMetal::submit(const RenderCommandList& commands) {

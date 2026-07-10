@@ -64,6 +64,16 @@ public:
         (void)a;
     }
     virtual void beginFrame() = 0;
+    /// 开启一个渲染 pass。target=nullptr 表示默认目标(屏幕/drawable)。
+    /// 每帧须先 beginFrame();pass 不可嵌套;submit() 灌进当前 pass。
+    /// 返回 false 表示本 pass 不可用(如 Metal 跳帧),调用方跳过其 submit。
+    /// 默认实现 no-op 返回 true——离屏/测试设备无 pass 概念,单 pass 后端
+    /// 可继续把 pass-open 逻辑留在 beginFrame(避免破坏 mock)。
+    virtual bool beginPass(Framebuffer* target) {
+        (void)target;
+        return true;
+    }
+    virtual void endPass() {}
     virtual void submit(const RenderCommandList& commands) = 0;
     virtual void endFrame() = 0;
 
@@ -138,6 +148,13 @@ public:
 class Framebuffer {
 public:
     virtual ~Framebuffer() = default;
+    virtual int width() const = 0;
+    virtual int height() const = 0;
+    /// 离屏 color attachment,恒为可采样纹理:可直接塞进
+    /// RenderCommand::textures 被后续 pass 采样。生命周期归 Framebuffer。
+    /// v 轴方向保持各后端原生方向(GL bottom-left / Metal top-left),
+    /// 消费它的全屏采样 shader 按后端各自写对 UV,引擎层不做 flip。
+    virtual Texture* colorTexture() const = 0;
 };
 
 } // namespace earth_engine

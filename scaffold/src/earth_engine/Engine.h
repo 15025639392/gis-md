@@ -13,6 +13,7 @@ namespace earth_engine {
 
 class Camera;
 class CameraController;
+class OffscreenPassthrough;
 class RenderDevice;
 class Scene;
 class Tileset;
@@ -141,11 +142,23 @@ public:
     /// 复位到正北朝上（保持俯仰与相机位置）。
     void resetNorthUp();
 
+    /// 离屏 passthrough(RTT 冒烟通路,默认关):场景画进离屏 FBO 再全屏
+    /// blit 上屏,像素应与直绘一致。守住 createFramebuffer+beginPass 通路。
+    void setOffscreenPassthroughEnabled(bool enabled);
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
+    std::unique_ptr<OffscreenPassthrough> offscreenPassthrough_;
     double lastRenderTime_ = 0.0;
     bool surfaceCreated_ = false;
+    bool offscreenPassthroughEnabled_ = false;
+    // initialize 失败(如 Metal blit 未接线)后不再逐帧重试。
+    bool offscreenPassthroughInitFailed_ = false;
+    // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要 blit pass)。
+    bool offscreenPassActive_ = false;
+    int surfaceWidthPixels_ = 0;
+    int surfaceHeightPixels_ = 0;
 };
 
 } // namespace earth_engine

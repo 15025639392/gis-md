@@ -157,6 +157,10 @@ struct EarthSceneConfig {
     GltfSourceConfig gltf;
     /// Julian date set during installScene(); 0.0 leaves the epoch value.
     double fixedSimulationJulianDate = 0.0;
+    /// 离屏 passthrough(RTT 冒烟通路,默认关):场景画进离屏 FBO 再全屏
+    /// blit 上屏,像素应与直绘一致。用于点亮/守护 createFramebuffer +
+    /// beginPass 离屏渲染通路(后处理链地基)。当前仅 GLES 生效。
+    bool debugOffscreenPassthrough = false;
 };
 
 } // namespace earth_engine

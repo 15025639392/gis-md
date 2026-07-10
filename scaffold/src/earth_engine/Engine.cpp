@@ -3,8 +3,10 @@
 #include "tiling/Tileset.h"
 #include "scene/Camera.h"
 #include "camera/CameraController.h"
+#include "renderer/OffscreenPassthrough.h"
 #include "renderer/RenderDevice.h"
 #include "layers/VectorLayer.h"
+#include "debug/PlatformLog.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
 #include "debug/PerfTimer.h"
@@ -38,14 +40,27 @@ void Engine::onSurfaceCreated() {
 void Engine::onSurfaceChanged(int widthPixels, int heightPixels, float dpr) {
     device_->onSurfaceChanged(widthPixels, heightPixels);
     scene_->setViewport(widthPixels, heightPixels, dpr);
+    surfaceWidthPixels_ = widthPixels;
+    surfaceHeightPixels_ = heightPixels;
 }
 
 void Engine::onSurfaceDestroyed() {
+    // 离屏资源属于即将失效的 GPU context;surface 重建后惰性重建。
+    if (offscreenPassthrough_) {
+        offscreenPassthrough_->dispose();
+        offscreenPassthrough_.reset();
+    }
+    offscreenPassthroughInitFailed_ = false;
     scene_->setRenderDevice(nullptr);
     if (device_) {
         device_->onSurfaceDestroyed();
     }
     surfaceCreated_ = false;
+}
+
+void Engine::setOffscreenPassthroughEnabled(bool enabled) {
+    offscreenPassthroughEnabled_ = enabled;
+    offscreenPassthroughInitFailed_ = false;
 }
 
 void Engine::render(double deltaSeconds) {
@@ -85,6 +100,30 @@ void Engine::render(double deltaSeconds) {
         getClearColor(clearR, clearG, clearB, clearA);
         device_->setClearColor(clearR, clearG, clearB, clearA);
         device_->beginFrame();
+        // 离屏 passthrough(flag ON 且资源可用时):场景 pass 的目标换成
+        // 离屏 FBO,场景后追加全屏 blit pass 上屏;任何一环失败都回落直绘。
+        if (offscreenPassthroughEnabled_ && !offscreenPassthroughInitFailed_ &&
+            !offscreenPassthrough_) {
+            auto passthrough = std::make_unique<OffscreenPassthrough>();
+            if (passthrough->initialize(device_)) {
+                offscreenPassthrough_ = std::move(passthrough);
+            } else {
+                offscreenPassthroughInitFailed_ = true;
+            }
+        }
+        Framebuffer* offscreenTarget = nullptr;
+        if (offscreenPassthroughEnabled_ && offscreenPassthrough_) {
+            offscreenTarget = offscreenPassthrough_->ensureFramebuffer(
+                surfaceWidthPixels_, surfaceHeightPixels_);
+        }
+        // 场景 pass(离屏或直绘主 pass)。beginFrame 只做帧获取,pass 的
+        // clear + 状态设置在 beginPass 里;跳帧时返回 false,submit 自身
+        // 对无 encoder 空判,scene->render() 的 CPU 侧工作照常推进。
+        offscreenPassActive_ =
+            offscreenTarget && device_->beginPass(offscreenTarget);
+        if (!offscreenPassActive_) {
+            device_->beginPass(nullptr);
+        }
         scene_->recordEngineTiming(
             Scene::EngineTimingScope::BeginFrame,
             perf::nowMs() - startMs);
@@ -98,6 +137,19 @@ void Engine::render(double deltaSeconds) {
     }
     {
         const double startMs = perf::nowMs();
+        device_->endPass();
+        if (offscreenPassActive_) {
+            if (device_->beginPass(nullptr)) {
+                device_->submit({offscreenPassthrough_->buildBlitCommand()});
+                device_->endPass();
+            }
+            static int rttDiagCounter = 0;
+            if (++rttDiagCounter % 120 == 1) {
+                platformLog(LogLevel::Info, "RTTDIAG",
+                            "offscreenPass=1 blit=1 fbo=%dx%d",
+                            surfaceWidthPixels_, surfaceHeightPixels_);
+            }
+        }
         device_->endFrame();
         scene_->recordEngineTiming(
             Scene::EngineTimingScope::EndFrame,

@@ -68,6 +68,8 @@ public:
     // ---- 帧操作 ----
     void setClearColor(float r, float g, float b, float a) override;
     void beginFrame() override;
+    bool beginPass(Framebuffer* target) override;
+    void endPass() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;
 
@@ -150,6 +152,28 @@ public:
     unsigned int glId() const { return id_; }
 private:
     unsigned int id_;
+    int width_, height_;
+};
+
+/// 离屏 framebuffer:color 恒为可采样 GLTexture(生命周期归本对象),
+/// depth 用 renderbuffer(不需被采样,省完备性开销)。
+class GLFramebuffer : public Framebuffer {
+public:
+    GLFramebuffer(unsigned int fboId,
+                  std::unique_ptr<GLTexture> color,
+                  unsigned int depthRenderbufferId,
+                  int width,
+                  int height);
+    ~GLFramebuffer() override;
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+    Texture* colorTexture() const override { return color_.get(); }
+    unsigned int glId() const { return fboId_; }
+
+private:
+    unsigned int fboId_;
+    std::unique_ptr<GLTexture> color_;
+    unsigned int depthRenderbufferId_;  // 0 = 无 depth attachment
     int width_, height_;
 };
 

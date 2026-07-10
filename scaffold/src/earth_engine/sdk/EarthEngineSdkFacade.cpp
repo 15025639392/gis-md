@@ -638,6 +638,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     }
 
     engine_.setTime(config_.fixedSimulationJulianDate);
+    engine_.setOffscreenPassthroughEnabled(config_.debugOffscreenPassthrough);
 }
 
 void EarthEngineSdkFacade::resetCamera() {
