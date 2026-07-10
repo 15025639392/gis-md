@@ -1042,10 +1042,17 @@ void main() {
     }
     float alpha = u_alphaMode > 1.5 ? base.a : 1.0;
 
-    // Directional shade: keep imagery readable even when the light vector is
-    // behind the tile (matches kSurfaceTileFragmentGLSL curvature hint).
-    float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
-    vec3 color = base.rgb * shade + base.rgb * u_ambient.rgb;
+    // GE 式半球光照:蓝天 ambient 补光集中在阴影侧,太阳做方向 relief。
+    // 受光面≈base(不过曝、不蓝 cast);阴影侧被抬 + 天空蓝染,而非洗白或
+    // 死黑。directional:0=背光→1=受光。旧模型把 ambient 加在满 shade 之
+    // 上导致受光面 base*1.24 过曝偏蓝(非 GE),此处改为 hemisphere 分配。
+    float directional = smoothstep(0.0, 1.0, NdotL);
+    // 暖阳/冷阴影(GE/摄影级):受光面乘微暖太阳色(红+蓝−),背光面由
+    // 天空蓝 ambient 补光——冷暖分离让 relief 更立体、更像真实日照。
+    vec3 sunTint = vec3(1.05, 1.0, 0.91);
+    vec3 color = base.rgb * (0.72 + 0.28 * directional)
+                          * mix(vec3(1.0), sunTint, directional)
+               + base.rgb * u_ambient.rgb * (1.0 - directional);
     fragColor = vec4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
 }
 )glsl";
@@ -2224,8 +2231,14 @@ fragment float4 terrainFragment(
     }
     float alpha = u.alphaMode > 1.5 ? base.a : 1.0;
 
-    float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
-    float3 color = base.rgb * shade + base.rgb * float4(u.ambient).rgb;
+    // GE 式半球光照(与 kTerrainFragmentGLSL 一致):蓝天 ambient 补阴影、
+    // 太阳做方向 relief、受光面≈base 不过曝。
+    float directional = smoothstep(0.0, 1.0, NdotL);
+    // 暖阳/冷阴影(与 kTerrainFragmentGLSL 一致)。
+    float3 sunTint = float3(1.05, 1.0, 0.91);
+    float3 color = base.rgb * (0.72 + 0.28 * directional)
+                            * mix(float3(1.0), sunTint, directional)
+                 + base.rgb * float4(u.ambient).rgb * (1.0 - directional);
     return float4(color, alpha * clamp(u.renderOpacity, 0.0, 1.0));
 }
 )msl";
