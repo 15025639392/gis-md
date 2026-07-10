@@ -450,11 +450,13 @@ std::unique_ptr<ShaderProgram> RenderDeviceGLES::createShader(const ShaderDesc& 
 GLFramebuffer::GLFramebuffer(unsigned int fboId,
                              std::unique_ptr<GLTexture> color,
                              unsigned int depthRenderbufferId,
+                             std::unique_ptr<GLTexture> depthTexture,
                              int width,
                              int height)
     : fboId_(fboId),
       color_(std::move(color)),
       depthRenderbufferId_(depthRenderbufferId),
+      depthTexture_(std::move(depthTexture)),
       width_(width),
       height_(height) {}
 
@@ -465,7 +467,7 @@ GLFramebuffer::~GLFramebuffer() {
     if (depthRenderbufferId_) {
         glDeleteRenderbuffers(1, &depthRenderbufferId_);
     }
-    // color_ 的 GLTexture 析构自删纹理。
+    // color_ / depthTexture_ 的 GLTexture 析构自删纹理。
 }
 
 std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
@@ -493,11 +495,26 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     glBindTexture(GL_TEXTURE_2D, 0);
     auto color = std::make_unique<GLTexture>(colorTex, desc.width, desc.height);
 
+    // depth:renderbuffer(默认,不可采样)或纹理(depthSampleable)。两者
+    // 都用 32F 匹配主 pass reverse-Z 精度。深度纹理必须 NEAREST 过滤
+    // (深度值不可线性插值)。
     GLuint depthRb = 0;
-    if (desc.hasDepth) {
+    std::unique_ptr<GLTexture> depthTex;
+    if (desc.hasDepth && desc.depthSampleable) {
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT32F,
+                       desc.width, desc.height);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        depthTex = std::make_unique<GLTexture>(tex, desc.width, desc.height);
+    } else if (desc.hasDepth) {
         glGenRenderbuffers(1, &depthRb);
         glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
-        // 32F 深度匹配主 pass 的 reverse-Z 精度需求(ES3 保证支持)。
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F,
                               desc.width, desc.height);
         glBindRenderbuffer(GL_RENDERBUFFER, 0);
@@ -508,7 +525,10 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, colorTex, 0);
-    if (depthRb) {
+    if (depthTex) {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                               GL_TEXTURE_2D, depthTex->glId(), 0);
+    } else if (depthRb) {
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                                   GL_RENDERBUFFER, depthRb);
     }
@@ -522,10 +542,11 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
         if (depthRb) {
             glDeleteRenderbuffers(1, &depthRb);
         }
-        return nullptr;  // color 纹理由 GLTexture 析构回收
+        return nullptr;  // color/depth 纹理由 GLTexture 析构回收
     }
     return std::make_unique<GLFramebuffer>(
-        fbo, std::move(color), depthRb, desc.width, desc.height);
+        fbo, std::move(color), depthRb, std::move(depthTex),
+        desc.width, desc.height);
 }
 
 // ============================================================
@@ -729,6 +750,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 if (loc >= 0) glUniform1i(loc, unit);
             };
             setSampler("u_tileTexture", 0);
+            // 离屏后处理 aerial fog:depth 采样器绑 unit 1(其它 program
+            // 未声明此名 → loc=-1 无副作用)。
+            setSampler("u_depthTexture", 1);
             setSampler("u_baseColorTexture", 0);
             setSampler("u_metallicRoughnessTexture", 1);
             setSampler("u_normalTexture", 2);

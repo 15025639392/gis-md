@@ -640,6 +640,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     engine_.setTime(config_.fixedSimulationJulianDate);
     engine_.setOffscreenPassthroughEnabled(config_.debugOffscreenPassthrough);
     engine_.setFxaaEnabled(config_.fxaa);
+    engine_.setAerialFogEnabled(config_.aerialFog);
 }
 
 void EarthEngineSdkFacade::resetCamera() {

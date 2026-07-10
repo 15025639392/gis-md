@@ -72,18 +72,23 @@ class MetalFramebuffer : public Framebuffer {
 public:
     MetalFramebuffer(std::unique_ptr<MetalTexture> color,
                      id<MTLTexture> depth,
+                     std::unique_ptr<MetalTexture> depthSampleable,
                      int width,
                      int height)
         : color_(std::move(color)), depth_(depth),
+          depthSampleable_(std::move(depthSampleable)),
           width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
     Texture* colorTexture() const override { return color_.get(); }
+    // 仅当 depthSampleable 时非空(否则 depth 仅作 render target)。
+    Texture* depthTexture() const override { return depthSampleable_.get(); }
     id<MTLTexture> colorMtl() const { return color_->mtl(); }
     id<MTLTexture> depthMtl() const { return depth_; }
 private:
     std::unique_ptr<MetalTexture> color_;
-    id<MTLTexture> depth_;  // nil = 无 depth attachment
+    id<MTLTexture> depth_;  // nil = 无 depth attachment;render-pass depth 句柄
+    std::unique_ptr<MetalTexture> depthSampleable_;  // 非空 = 可采样 depth 包装
     int width_, height_;
 };
 
@@ -625,7 +630,10 @@ std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const Framebuf
                                          width:desc.width
                                         height:desc.height
                                      mipmapped:NO];
-        depthDesc.usage = MTLTextureUsageRenderTarget;
+        // depthSampleable 时加 ShaderRead 让后续 pass(如 aerial fog)采样。
+        depthDesc.usage = desc.depthSampleable
+            ? (MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead)
+            : MTLTextureUsageRenderTarget;
         depthDesc.storageMode = MTLStorageModePrivate;
         depthTex = [impl_->device newTextureWithDescriptor:depthDesc];
         if (!depthTex) {
@@ -637,8 +645,15 @@ std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const Framebuf
 
     auto color = std::make_unique<MetalTexture>(colorTex,
                                                 impl_->linearClampSampler);
+    // 可采样深度包装成 MetalTexture,经 depthTexture() 进 textures[] 绑定路径。
+    std::unique_ptr<MetalTexture> depthSampleable;
+    if (depthTex && desc.depthSampleable) {
+        depthSampleable = std::make_unique<MetalTexture>(
+            depthTex, impl_->linearClampSampler);
+    }
     return std::make_unique<MetalFramebuffer>(
-        std::move(color), depthTex, desc.width, desc.height);
+        std::move(color), depthTex, std::move(depthSampleable),
+        desc.width, desc.height);
 }
 
 // ============================================================

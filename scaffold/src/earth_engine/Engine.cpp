@@ -17,6 +17,20 @@
 
 namespace earth_engine {
 
+namespace {
+const char* diagTagForEffect(OffscreenPostProcess::Effect effect) {
+    switch (effect) {
+        case OffscreenPostProcess::Effect::Fxaa:
+            return "FXAADIAG";
+        case OffscreenPostProcess::Effect::AerialFog:
+            return "FOGDIAG";
+        case OffscreenPostProcess::Effect::Passthrough:
+        default:
+            return "RTTDIAG";
+    }
+}
+} // namespace
+
 Engine::Engine(RenderDevice* device)
     : device_(device),
       scene_(std::make_unique<Scene>()) {
@@ -68,6 +82,11 @@ void Engine::setFxaaEnabled(bool enabled) {
     offscreenPostProcessInitFailed_ = false;
 }
 
+void Engine::setAerialFogEnabled(bool enabled) {
+    aerialFogEnabled_ = enabled;
+    offscreenPostProcessInitFailed_ = false;
+}
+
 void Engine::render(double deltaSeconds) {
     if (!surfaceCreated_ || !isReady()) { fprintf(stderr, "[Engine::render] BLOCKED: surface=%d ready=%d\n", surfaceCreated_, isReady()); return; }
     const double frameStartMs = perf::nowMs();
@@ -107,11 +126,13 @@ void Engine::render(double deltaSeconds) {
         device_->beginFrame();
         // 离屏后处理(flag ON 且资源可用时):场景 pass 的目标换成离屏
         // FBO,场景后追加全屏后处理 pass 上屏;任何一环失败都回落直绘。
-        // FXAA 优先于 passthrough 调试直通。
-        const bool wantOffscreen = fxaaEnabled_ || offscreenPassthroughEnabled_;
+        // 优先级:AerialFog > FXAA > passthrough 调试直通。
+        const bool wantOffscreen =
+            aerialFogEnabled_ || fxaaEnabled_ || offscreenPassthroughEnabled_;
         const OffscreenPostProcess::Effect wantEffect =
-            fxaaEnabled_ ? OffscreenPostProcess::Effect::Fxaa
-                         : OffscreenPostProcess::Effect::Passthrough;
+            aerialFogEnabled_ ? OffscreenPostProcess::Effect::AerialFog
+            : fxaaEnabled_    ? OffscreenPostProcess::Effect::Fxaa
+                              : OffscreenPostProcess::Effect::Passthrough;
         // 期望的 effect 变了(运行时切换)→ 丢弃旧对象按新 shader 重建。
         if (offscreenPostProcess_ &&
             offscreenPostProcess_->effect() != wantEffect) {
@@ -156,16 +177,26 @@ void Engine::render(double deltaSeconds) {
         const double startMs = perf::nowMs();
         device_->endPass();
         if (offscreenPassActive_) {
+            // aerial fog 每帧参数:near/far 取当前相机(动态 near 已在 update
+            // 里按高度设);雾色用亮地平线霞色让远处地形融进地平线(clear 色
+            // 是天顶暗色,拿来当雾色会把远景压黑——错的);密度/起点为固定
+            // 可调常量。非 fog effect 忽略。
+            // TODO: 雾色应随时间/太阳跟踪大气 pass 的地平线色(现固定日间霞)。
+            OffscreenPostProcess::FrameParams params;
+            const Camera& cam = scene_->camera();
+            params.nearPlane = static_cast<float>(cam.nearPlaneMeters());
+            params.farPlane = static_cast<float>(cam.farPlaneMeters());
+            params.fogColor = {0.62f, 0.82f, 0.94f};  // 匹配大气地平线霞色
+            params.fogDensity = 6.0e-6f;
+            params.fogStartDistance = 0.0f;
             if (device_->beginPass(nullptr)) {
-                device_->submit({offscreenPostProcess_->buildCommand()});
+                device_->submit({offscreenPostProcess_->buildCommand(params)});
                 device_->endPass();
             }
             static int postDiagCounter = 0;
             if (++postDiagCounter % 120 == 1) {
-                const bool isFxaa =
-                    offscreenPostProcess_->effect() ==
-                    OffscreenPostProcess::Effect::Fxaa;
-                platformLog(LogLevel::Info, isFxaa ? "FXAADIAG" : "RTTDIAG",
+                platformLog(LogLevel::Info,
+                            diagTagForEffect(offscreenPostProcess_->effect()),
                             "offscreenPass=1 postProcess=1 fbo=%dx%d",
                             surfaceWidthPixels_, surfaceHeightPixels_);
             }

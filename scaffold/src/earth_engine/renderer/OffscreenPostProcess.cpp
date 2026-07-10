@@ -91,9 +91,68 @@ void main() {
 }
 )";
 
+// Aerial fog(距离雾):采样离屏 color(unit0)+ depth(unit1)。深度是
+// reverse-Z window depth [0,1](近=1、远→0.5、背景=0)。用 near/far 反算
+// eye-space 视距 d,再指数雾混向雾色。推导见 offscreen 设计文档:
+//   z_ndc = 2*z_win - 1               (GLES 默认 depth range [0,1])
+//   d = near*far / (z_ndc*(far-near) + near)
+// 背景(z_win<0.25,即无地形写入)跳过——天空色已在离屏 color 里。
+const char* kAerialFogFragGLSL = R"(#version 300 es
+precision highp float;
+uniform sampler2D u_tileTexture;   // 离屏 color, unit 0
+uniform sampler2D u_depthTexture;  // 离屏 depth,  unit 1
+uniform vec2 u_depthNearFar;       // (near, far) 米
+uniform vec3 u_fogColor;
+uniform vec2 u_fogParams;          // (density, startDistance)
+in vec2 v_uv;
+out vec4 fragColor;
+
+void main() {
+    vec3 color = texture(u_tileTexture, v_uv).rgb;
+    float zWin = texture(u_depthTexture, v_uv).r;
+    // 背景/天空:无地形深度写入(clear=0)→ 不加雾,直出天空色。
+    if (zWin < 0.25) {
+        fragColor = vec4(color, 1.0);
+        return;
+    }
+    float near = u_depthNearFar.x;
+    float far = u_depthNearFar.y;
+    float zNdc = 2.0 * zWin - 1.0;
+    // reverse-Z 线性化:eye-space 视距(米),分母恒正(zNdc∈[0,1])。
+    float d = (near * far) / (zNdc * (far - near) + near);
+
+    float density = u_fogParams.x;
+    float startDistance = u_fogParams.y;
+    float fogDist = max(d - startDistance, 0.0);
+    // 指数雾:近处透明、远处饱和到雾色。
+    float fog = 1.0 - exp(-density * fogDist);
+    fog = clamp(fog, 0.0, 1.0);
+    fragColor = vec4(mix(color, u_fogColor, fog), 1.0);
+}
+)";
+
 const char* diagTag(OffscreenPostProcess::Effect effect) {
-    return effect == OffscreenPostProcess::Effect::Fxaa ? "FXAADIAG"
-                                                        : "RTTDIAG";
+    switch (effect) {
+        case OffscreenPostProcess::Effect::Fxaa:
+            return "FXAADIAG";
+        case OffscreenPostProcess::Effect::AerialFog:
+            return "FOGDIAG";
+        case OffscreenPostProcess::Effect::Passthrough:
+        default:
+            return "RTTDIAG";
+    }
+}
+
+const char* fragForEffect(OffscreenPostProcess::Effect effect) {
+    switch (effect) {
+        case OffscreenPostProcess::Effect::Fxaa:
+            return kFxaaFragGLSL;
+        case OffscreenPostProcess::Effect::AerialFog:
+            return kAerialFogFragGLSL;
+        case OffscreenPostProcess::Effect::Passthrough:
+        default:
+            return kBlitFragGLSL;
+    }
 }
 
 } // anonymous namespace
@@ -113,8 +172,7 @@ bool OffscreenPostProcess::initialize(RenderDevice* device, Effect effect) {
 
     ShaderDesc shaderDesc;
     shaderDesc.vertexSource = kFullscreenVertGLSL;
-    shaderDesc.fragmentSource =
-        effect == Effect::Fxaa ? kFxaaFragGLSL : kBlitFragGLSL;
+    shaderDesc.fragmentSource = fragForEffect(effect);
     shader_ = device->createShader(shaderDesc);
     if (!shader_) {
         platformLog(LogLevel::Error, tag, "shader create failed");
@@ -154,6 +212,8 @@ Framebuffer* OffscreenPostProcess::ensureFramebuffer(int width, int height) {
         desc.hasColor = true;
         desc.hasDepth = true;
         desc.samples = 1;
+        // AerialFog 要采样场景深度重建视距 → 深度须可采样。
+        desc.depthSampleable = (effect_ == Effect::AerialFog);
         framebuffer_ = device_->createFramebuffer(desc);
         if (framebuffer_) {
             platformLog(LogLevel::Info, diagTag(effect_),
@@ -163,7 +223,8 @@ Framebuffer* OffscreenPostProcess::ensureFramebuffer(int width, int height) {
     return framebuffer_.get();
 }
 
-RenderCommand OffscreenPostProcess::buildCommand() const {
+RenderCommand OffscreenPostProcess::buildCommand(
+    const FrameParams& params) const {
     RenderCommand cmd;
     // 直接经 device->submit 提交,不进 Scene 主链路,故不占用 MVP kind。
     cmd.kind = RenderCommandKind::Unknown;
@@ -178,13 +239,22 @@ RenderCommand OffscreenPostProcess::buildCommand() const {
     cmd.depthWrite = false;
     cmd.blend = false;
     cmd.cullFace = false;
-    if (framebuffer_) {
-        cmd.textures.push_back(framebuffer_->colorTexture());
-        if (effect_ == Effect::Fxaa) {
-            const float w = static_cast<float>(framebuffer_->width());
-            const float h = static_cast<float>(framebuffer_->height());
-            cmd.uniforms["u_inverseResolution"] = {1.0f / w, 1.0f / h};
-        }
+    if (!framebuffer_) {
+        return cmd;
+    }
+    cmd.textures.push_back(framebuffer_->colorTexture());  // unit 0 = color
+    if (effect_ == Effect::Fxaa) {
+        const float w = static_cast<float>(framebuffer_->width());
+        const float h = static_cast<float>(framebuffer_->height());
+        cmd.uniforms["u_inverseResolution"] = {1.0f / w, 1.0f / h};
+    } else if (effect_ == Effect::AerialFog) {
+        // depth 绑 unit 1(u_depthTexture);后端 sampler 表已把它固定绑 1。
+        cmd.textures.push_back(framebuffer_->depthTexture());
+        cmd.uniforms["u_depthNearFar"] = {params.nearPlane, params.farPlane};
+        cmd.uniforms["u_fogColor"] = {params.fogColor[0], params.fogColor[1],
+                                      params.fogColor[2]};
+        cmd.uniforms["u_fogParams"] = {params.fogDensity,
+                                       params.fogStartDistance};
     }
     return cmd;
 }

@@ -121,6 +121,10 @@ struct FramebufferDesc {
     bool hasColor = true;
     bool hasDepth = true;
     int samples = 1;
+    // depth 是否需被后续 pass 采样(如 aerial fog 从深度重建视距)。
+    // false(默认)→ GLES 用 renderbuffer 更省;true → GLES 换深度纹理、
+    // Metal 加 ShaderRead usage,经 Framebuffer::depthTexture() 暴露。
+    bool depthSampleable = false;
 };
 
 // ============================================================
@@ -155,6 +159,10 @@ public:
     /// v 轴方向保持各后端原生方向(GL bottom-left / Metal top-left),
     /// 消费它的全屏采样 shader 按后端各自写对 UV,引擎层不做 flip。
     virtual Texture* colorTexture() const = 0;
+    /// 离屏 depth attachment 作可采样纹理:仅当 FramebufferDesc.depthSampleable
+    /// 时非空(否则 depth 是 renderbuffer,返回 nullptr)。采样值为 window
+    /// depth [0,1](reverse-Z:近=1、远→0.5、背景=0),消费方自行线性化视距。
+    virtual Texture* depthTexture() const { return nullptr; }
 };
 
 } // namespace earth_engine

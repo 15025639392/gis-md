@@ -164,6 +164,10 @@ struct EarthSceneConfig {
     /// FXAA 抗锯齿(默认关):场景经离屏 FBO + 全屏 FXAA 消除锯齿。与
     /// passthrough 同走离屏后处理通路,两者都开时 FXAA 优先。当前仅 GLES。
     bool fxaa = false;
+    /// Aerial fog 距离雾(默认关):场景经离屏 FBO,采样深度重建视距,远处
+    /// 地形指数雾混向天空色。填补大气 pass 契约里"地表雾"的空缺。优先级
+    /// 高于 FXAA。当前仅 GLES。
+    bool aerialFog = false;
 };
 
 } // namespace earth_engine

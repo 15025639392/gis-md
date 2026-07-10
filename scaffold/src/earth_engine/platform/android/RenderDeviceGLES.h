@@ -155,25 +155,29 @@ private:
     int width_, height_;
 };
 
-/// 离屏 framebuffer:color 恒为可采样 GLTexture(生命周期归本对象),
-/// depth 用 renderbuffer(不需被采样,省完备性开销)。
+/// 离屏 framebuffer:color 恒为可采样 GLTexture(生命周期归本对象)。
+/// depth 二选一:默认用 renderbuffer(不需采样,省完备性开销);
+/// depthSampleable 时改用可采样 GLTexture(如 aerial fog 采样视距)。
 class GLFramebuffer : public Framebuffer {
 public:
     GLFramebuffer(unsigned int fboId,
                   std::unique_ptr<GLTexture> color,
                   unsigned int depthRenderbufferId,
+                  std::unique_ptr<GLTexture> depthTexture,
                   int width,
                   int height);
     ~GLFramebuffer() override;
     int width() const override { return width_; }
     int height() const override { return height_; }
     Texture* colorTexture() const override { return color_.get(); }
+    Texture* depthTexture() const override { return depthTexture_.get(); }
     unsigned int glId() const { return fboId_; }
 
 private:
     unsigned int fboId_;
     std::unique_ptr<GLTexture> color_;
-    unsigned int depthRenderbufferId_;  // 0 = 无 depth attachment
+    unsigned int depthRenderbufferId_;      // 0 = 无 renderbuffer depth
+    std::unique_ptr<GLTexture> depthTexture_; // 非空 = 可采样 depth
     int width_, height_;
 };
 

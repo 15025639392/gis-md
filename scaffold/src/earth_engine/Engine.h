@@ -148,6 +148,9 @@ public:
     /// FXAA 抗锯齿(默认关):场景画进离屏 FBO,全屏 FXAA 采样上屏消除锯齿。
     /// 与 passthrough 同走离屏后处理通路;两者都开时 FXAA 优先。当前仅 GLES。
     void setFxaaEnabled(bool enabled);
+    /// Aerial fog 距离雾(默认关):场景经离屏 FBO,全屏采样深度重建视距,
+    /// 远处地形指数雾混向天空色。同走离屏后处理通路;当前仅 GLES。
+    void setAerialFogEnabled(bool enabled);
 
 private:
     RenderDevice* device_;
@@ -155,9 +158,10 @@ private:
     std::unique_ptr<OffscreenPostProcess> offscreenPostProcess_;
     double lastRenderTime_ = 0.0;
     bool surfaceCreated_ = false;
-    // 离屏后处理开关(FXAA 优先于 passthrough 调试直通)。
+    // 离屏后处理开关。优先级:AerialFog > FXAA > passthrough 调试直通。
     bool offscreenPassthroughEnabled_ = false;
     bool fxaaEnabled_ = false;
+    bool aerialFogEnabled_ = false;
     // initialize 失败(如 Metal 未接线)后不再逐帧重试。
     bool offscreenPostProcessInitFailed_ = false;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
