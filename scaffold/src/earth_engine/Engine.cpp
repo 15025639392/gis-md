@@ -3,7 +3,7 @@
 #include "tiling/Tileset.h"
 #include "scene/Camera.h"
 #include "camera/CameraController.h"
-#include "renderer/OffscreenPassthrough.h"
+#include "renderer/OffscreenPostProcess.h"
 #include "renderer/RenderDevice.h"
 #include "layers/VectorLayer.h"
 #include "debug/PlatformLog.h"
@@ -46,11 +46,11 @@ void Engine::onSurfaceChanged(int widthPixels, int heightPixels, float dpr) {
 
 void Engine::onSurfaceDestroyed() {
     // 离屏资源属于即将失效的 GPU context;surface 重建后惰性重建。
-    if (offscreenPassthrough_) {
-        offscreenPassthrough_->dispose();
-        offscreenPassthrough_.reset();
+    if (offscreenPostProcess_) {
+        offscreenPostProcess_->dispose();
+        offscreenPostProcess_.reset();
     }
-    offscreenPassthroughInitFailed_ = false;
+    offscreenPostProcessInitFailed_ = false;
     scene_->setRenderDevice(nullptr);
     if (device_) {
         device_->onSurfaceDestroyed();
@@ -60,7 +60,12 @@ void Engine::onSurfaceDestroyed() {
 
 void Engine::setOffscreenPassthroughEnabled(bool enabled) {
     offscreenPassthroughEnabled_ = enabled;
-    offscreenPassthroughInitFailed_ = false;
+    offscreenPostProcessInitFailed_ = false;
+}
+
+void Engine::setFxaaEnabled(bool enabled) {
+    fxaaEnabled_ = enabled;
+    offscreenPostProcessInitFailed_ = false;
 }
 
 void Engine::render(double deltaSeconds) {
@@ -100,20 +105,32 @@ void Engine::render(double deltaSeconds) {
         getClearColor(clearR, clearG, clearB, clearA);
         device_->setClearColor(clearR, clearG, clearB, clearA);
         device_->beginFrame();
-        // 离屏 passthrough(flag ON 且资源可用时):场景 pass 的目标换成
-        // 离屏 FBO,场景后追加全屏 blit pass 上屏;任何一环失败都回落直绘。
-        if (offscreenPassthroughEnabled_ && !offscreenPassthroughInitFailed_ &&
-            !offscreenPassthrough_) {
-            auto passthrough = std::make_unique<OffscreenPassthrough>();
-            if (passthrough->initialize(device_)) {
-                offscreenPassthrough_ = std::move(passthrough);
+        // 离屏后处理(flag ON 且资源可用时):场景 pass 的目标换成离屏
+        // FBO,场景后追加全屏后处理 pass 上屏;任何一环失败都回落直绘。
+        // FXAA 优先于 passthrough 调试直通。
+        const bool wantOffscreen = fxaaEnabled_ || offscreenPassthroughEnabled_;
+        const OffscreenPostProcess::Effect wantEffect =
+            fxaaEnabled_ ? OffscreenPostProcess::Effect::Fxaa
+                         : OffscreenPostProcess::Effect::Passthrough;
+        // 期望的 effect 变了(运行时切换)→ 丢弃旧对象按新 shader 重建。
+        if (offscreenPostProcess_ &&
+            offscreenPostProcess_->effect() != wantEffect) {
+            offscreenPostProcess_->dispose();
+            offscreenPostProcess_.reset();
+            offscreenPostProcessInitFailed_ = false;
+        }
+        if (wantOffscreen && !offscreenPostProcessInitFailed_ &&
+            !offscreenPostProcess_) {
+            auto postProcess = std::make_unique<OffscreenPostProcess>();
+            if (postProcess->initialize(device_, wantEffect)) {
+                offscreenPostProcess_ = std::move(postProcess);
             } else {
-                offscreenPassthroughInitFailed_ = true;
+                offscreenPostProcessInitFailed_ = true;
             }
         }
         Framebuffer* offscreenTarget = nullptr;
-        if (offscreenPassthroughEnabled_ && offscreenPassthrough_) {
-            offscreenTarget = offscreenPassthrough_->ensureFramebuffer(
+        if (wantOffscreen && offscreenPostProcess_) {
+            offscreenTarget = offscreenPostProcess_->ensureFramebuffer(
                 surfaceWidthPixels_, surfaceHeightPixels_);
         }
         // 场景 pass(离屏或直绘主 pass)。beginFrame 只做帧获取,pass 的
@@ -140,13 +157,16 @@ void Engine::render(double deltaSeconds) {
         device_->endPass();
         if (offscreenPassActive_) {
             if (device_->beginPass(nullptr)) {
-                device_->submit({offscreenPassthrough_->buildBlitCommand()});
+                device_->submit({offscreenPostProcess_->buildCommand()});
                 device_->endPass();
             }
-            static int rttDiagCounter = 0;
-            if (++rttDiagCounter % 120 == 1) {
-                platformLog(LogLevel::Info, "RTTDIAG",
-                            "offscreenPass=1 blit=1 fbo=%dx%d",
+            static int postDiagCounter = 0;
+            if (++postDiagCounter % 120 == 1) {
+                const bool isFxaa =
+                    offscreenPostProcess_->effect() ==
+                    OffscreenPostProcess::Effect::Fxaa;
+                platformLog(LogLevel::Info, isFxaa ? "FXAADIAG" : "RTTDIAG",
+                            "offscreenPass=1 postProcess=1 fbo=%dx%d",
                             surfaceWidthPixels_, surfaceHeightPixels_);
             }
         }

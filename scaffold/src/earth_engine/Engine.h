@@ -13,7 +13,7 @@ namespace earth_engine {
 
 class Camera;
 class CameraController;
-class OffscreenPassthrough;
+class OffscreenPostProcess;
 class RenderDevice;
 class Scene;
 class Tileset;
@@ -145,17 +145,22 @@ public:
     /// 离屏 passthrough(RTT 冒烟通路,默认关):场景画进离屏 FBO 再全屏
     /// blit 上屏,像素应与直绘一致。守住 createFramebuffer+beginPass 通路。
     void setOffscreenPassthroughEnabled(bool enabled);
+    /// FXAA 抗锯齿(默认关):场景画进离屏 FBO,全屏 FXAA 采样上屏消除锯齿。
+    /// 与 passthrough 同走离屏后处理通路;两者都开时 FXAA 优先。当前仅 GLES。
+    void setFxaaEnabled(bool enabled);
 
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
-    std::unique_ptr<OffscreenPassthrough> offscreenPassthrough_;
+    std::unique_ptr<OffscreenPostProcess> offscreenPostProcess_;
     double lastRenderTime_ = 0.0;
     bool surfaceCreated_ = false;
+    // 离屏后处理开关(FXAA 优先于 passthrough 调试直通)。
     bool offscreenPassthroughEnabled_ = false;
-    // initialize 失败(如 Metal blit 未接线)后不再逐帧重试。
-    bool offscreenPassthroughInitFailed_ = false;
-    // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要 blit pass)。
+    bool fxaaEnabled_ = false;
+    // initialize 失败(如 Metal 未接线)后不再逐帧重试。
+    bool offscreenPostProcessInitFailed_ = false;
+    // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;
     int surfaceHeightPixels_ = 0;

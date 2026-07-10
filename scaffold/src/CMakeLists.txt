@@ -138,8 +138,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderCommand.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
-    earth_engine/renderer/OffscreenPassthrough.h
-    earth_engine/renderer/OffscreenPassthrough.cpp
+    earth_engine/renderer/OffscreenPostProcess.h
+    earth_engine/renderer/OffscreenPostProcess.cpp
     earth_engine/renderer/RenderDeviceRasterTextureUploader.h
     earth_engine/renderer/RenderDeviceRasterTextureUploader.cpp
     earth_engine/renderer/IPrepareRendererResources.h

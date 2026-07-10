@@ -161,6 +161,9 @@ struct EarthSceneConfig {
     /// blit 上屏,像素应与直绘一致。用于点亮/守护 createFramebuffer +
     /// beginPass 离屏渲染通路(后处理链地基)。当前仅 GLES 生效。
     bool debugOffscreenPassthrough = false;
+    /// FXAA 抗锯齿(默认关):场景经离屏 FBO + 全屏 FXAA 消除锯齿。与
+    /// passthrough 同走离屏后处理通路,两者都开时 FXAA 优先。当前仅 GLES。
+    bool fxaa = false;
 };
 
 } // namespace earth_engine
