@@ -641,6 +641,9 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     engine_.setOffscreenPassthroughEnabled(config_.debugOffscreenPassthrough);
     engine_.setFxaaEnabled(config_.fxaa);
     engine_.setAerialFogEnabled(config_.aerialFog);
+    engine_.setAerialFogParams(config_.aerialFogColorR, config_.aerialFogColorG,
+                               config_.aerialFogColorB, config_.aerialFogDensity,
+                               config_.aerialFogStartDistance);
 }
 
 void EarthEngineSdkFacade::resetCamera() {

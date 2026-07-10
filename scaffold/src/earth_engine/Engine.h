@@ -151,6 +151,10 @@ public:
     /// Aerial fog 距离雾(默认关):场景经离屏 FBO,全屏采样深度重建视距,
     /// 远处地形指数雾混向天空色。同走离屏后处理通路;当前仅 GLES。
     void setAerialFogEnabled(bool enabled);
+    /// Aerial fog 调参:雾色 RGB(0..1)、密度(1/米)、起雾距离(米)。
+    /// near/far 由引擎每帧从相机取,不在此设。
+    void setAerialFogParams(float colorR, float colorG, float colorB,
+                            float density, float startDistance);
 
 private:
     RenderDevice* device_;
@@ -162,6 +166,12 @@ private:
     bool offscreenPassthroughEnabled_ = false;
     bool fxaaEnabled_ = false;
     bool aerialFogEnabled_ = false;
+    // Aerial fog 调参(SDK 可配);near/far 每帧从相机取。默认亮地平线霞。
+    float aerialFogColorR_ = 0.62f;
+    float aerialFogColorG_ = 0.82f;
+    float aerialFogColorB_ = 0.94f;
+    float aerialFogDensity_ = 6.0e-6f;
+    float aerialFogStartDistance_ = 0.0f;
     // initialize 失败(如 Metal 未接线)后不再逐帧重试。
     bool offscreenPostProcessInitFailed_ = false;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。

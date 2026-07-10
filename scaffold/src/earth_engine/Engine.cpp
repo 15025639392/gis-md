@@ -87,6 +87,15 @@ void Engine::setAerialFogEnabled(bool enabled) {
     offscreenPostProcessInitFailed_ = false;
 }
 
+void Engine::setAerialFogParams(float colorR, float colorG, float colorB,
+                                float density, float startDistance) {
+    aerialFogColorR_ = colorR;
+    aerialFogColorG_ = colorG;
+    aerialFogColorB_ = colorB;
+    aerialFogDensity_ = density;
+    aerialFogStartDistance_ = startDistance;
+}
+
 void Engine::render(double deltaSeconds) {
     if (!surfaceCreated_ || !isReady()) { fprintf(stderr, "[Engine::render] BLOCKED: surface=%d ready=%d\n", surfaceCreated_, isReady()); return; }
     const double frameStartMs = perf::nowMs();
@@ -178,17 +187,17 @@ void Engine::render(double deltaSeconds) {
         device_->endPass();
         if (offscreenPassActive_) {
             // aerial fog 每帧参数:near/far 取当前相机(动态 near 已在 update
-            // 里按高度设);雾色用亮地平线霞色让远处地形融进地平线(clear 色
-            // 是天顶暗色,拿来当雾色会把远景压黑——错的);密度/起点为固定
-            // 可调常量。非 fog effect 忽略。
+            // 里按高度设);雾色/密度/起点走 SDK 可配值(默认亮地平线霞——
+            // 勿用 clear 天顶暗色,会把远景压黑)。非 fog effect 忽略。
             // TODO: 雾色应随时间/太阳跟踪大气 pass 的地平线色(现固定日间霞)。
             OffscreenPostProcess::FrameParams params;
             const Camera& cam = scene_->camera();
             params.nearPlane = static_cast<float>(cam.nearPlaneMeters());
             params.farPlane = static_cast<float>(cam.farPlaneMeters());
-            params.fogColor = {0.62f, 0.82f, 0.94f};  // 匹配大气地平线霞色
-            params.fogDensity = 6.0e-6f;
-            params.fogStartDistance = 0.0f;
+            params.fogColor = {aerialFogColorR_, aerialFogColorG_,
+                               aerialFogColorB_};
+            params.fogDensity = aerialFogDensity_;
+            params.fogStartDistance = aerialFogStartDistance_;
             if (device_->beginPass(nullptr)) {
                 device_->submit({offscreenPostProcess_->buildCommand(params)});
                 device_->endPass();

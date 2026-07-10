@@ -168,6 +168,14 @@ struct EarthSceneConfig {
     /// 地形指数雾混向天空色。填补大气 pass 契约里"地表雾"的空缺。优先级
     /// 高于 FXAA。当前仅 GLES。
     bool aerialFog = false;
+    /// Aerial fog 雾色 RGB(0..1)。默认亮地平线霞,匹配大气 pass 地平线色
+    /// 让远景无缝融进天空;勿用天顶暗色(远景会压黑)。
+    float aerialFogColorR = 0.62f;
+    float aerialFogColorG = 0.82f;
+    float aerialFogColorB = 0.94f;
+    /// 雾密度(越大越浓,指数雾系数,单位 1/米)与起雾距离(米,之前不加雾)。
+    float aerialFogDensity = 6.0e-6f;
+    float aerialFogStartDistance = 0.0f;
 };
 
 } // namespace earth_engine
