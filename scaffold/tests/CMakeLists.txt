@@ -322,6 +322,12 @@ add_executable(test_gltf_terrain_upsampler
 target_link_libraries(test_gltf_terrain_upsampler PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_gltf_terrain_upsampler COMMAND test_gltf_terrain_upsampler)
 
+add_executable(test_composite_terrain_provider
+    unit/content/test_composite_terrain_provider.cpp
+)
+target_link_libraries(test_composite_terrain_provider PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_composite_terrain_provider COMMAND test_composite_terrain_provider)
+
 add_executable(test_tile_bounding_volume
     unit/tiling/test_tile_bounding_volume.cpp
 )

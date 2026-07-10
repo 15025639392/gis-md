@@ -1,0 +1,135 @@
+#include "CompositeTerrainProvider.h"
+
+#include "../tiling/TileSelectionRootPolicy.h"
+
+#include <utility>
+
+namespace earth_engine {
+
+CompositeTerrainProvider::CompositeTerrainProvider(
+    std::unique_ptr<TilesetContentProvider> primary,
+    std::unique_ptr<TilesetContentProvider> ellipsoid,
+    int ellipsoidMaxZoom)
+    : primary_(std::move(primary)),
+      ellipsoid_(std::move(ellipsoid)),
+      ellipsoidMaxZoom_(ellipsoidMaxZoom) {}
+
+bool CompositeTerrainProvider::primaryAvailable(const TileKey& key) const {
+    return primary_->availabilityState(key) ==
+           TileAvailabilityState::Available;
+}
+
+std::string CompositeTerrainProvider::id() const {
+    return "composite-terrain(" + primary_->id() + "+" + ellipsoid_->id() +
+           ")";
+}
+
+bool CompositeTerrainProvider::supportsTile(const TileKey& key) const {
+    return primary_->supportsTile(key) || ellipsoid_->supportsTile(key);
+}
+
+std::vector<TileKey> CompositeTerrainProvider::rootTiles() const {
+    // Both providers share the scheme and return the same virtual terrain root.
+    return primary_->rootTiles();
+}
+
+std::optional<TilesetContentTileMetadata>
+CompositeTerrainProvider::tileMetadata(const TileKey& key) const {
+    // Prefer the primary source (real height range + bounding volume); fall back
+    // to the ellipsoid (h=0 region, geometric-error seed) in pure-hole regions.
+    if (auto metadata = primary_->tileMetadata(key)) {
+        return metadata;
+    }
+    return ellipsoid_->tileMetadata(key);
+}
+
+std::vector<TileKey> CompositeTerrainProvider::childTiles(
+    const TileKey& key) const {
+    // The primary source yields children wherever it is covered (including deep
+    // levels past the ellipsoid cap); the ellipsoid is the global superset that
+    // fills holes up to the cap.
+    if (auto children = primary_->childTiles(key); !children.empty()) {
+        return children;
+    }
+    return ellipsoid_->childTiles(key);
+}
+
+TileAvailabilityState CompositeTerrainProvider::availabilityState(
+    const TileKey& key) const {
+    // Primary source availability is never capped: a covered deep tile stays
+    // Available even below the ellipsoid floor.
+    if (primaryAvailable(key)) {
+        return TileAvailabilityState::Available;
+    }
+    // Ellipsoid floor: fill any hole the primary source lacks, up to the cap, so
+    // TileChildMaterializer never stops on an exposed coarse leaf. supportsTile
+    // guards the tiling scheme; the virtual root and the cap bound the floor.
+    if (!ellipsoid_->supportsTile(key)) {
+        return TileAvailabilityState::NotAvailable;
+    }
+    if (TileSelectionRootPolicy::isVirtualTerrainRoot(key) ||
+        key.z <= ellipsoidMaxZoom_) {
+        return TileAvailabilityState::Available;
+    }
+    return TileAvailabilityState::NotAvailable;
+}
+
+bool CompositeTerrainProvider::isTerrainAvailabilityBoundaryLevel(
+    int level) const {
+    return primary_->isTerrainAvailabilityBoundaryLevel(level);
+}
+
+void CompositeTerrainProvider::applyAvailabilityUpdates(
+    const std::vector<QuantizedMeshAvailabilityUpdate>& updates) {
+    primary_->applyAvailabilityUpdates(updates);
+}
+
+int CompositeTerrainProvider::estimatedRequestFanout(
+    const TileKey& key) const {
+    // Ellipsoid content resolves synchronously with no network fanout.
+    return primaryAvailable(key) ? primary_->estimatedRequestFanout(key) : 1;
+}
+
+void CompositeTerrainProvider::requestTileContent(
+    const TileKey& key,
+    CancellationToken token,
+    ContentCallback callback,
+    HttpRequestPriority priority) {
+    if (primaryAvailable(key)) {
+        primary_->requestTileContent(
+            key, std::move(token), std::move(callback), priority);
+    } else {
+        ellipsoid_->requestTileContent(
+            key, std::move(token), std::move(callback), priority);
+    }
+}
+
+void CompositeTerrainProvider::requestTileContent(
+    const TileKey& key,
+    CancellationToken token,
+    ContentCallback callback,
+    HttpRequestPriority priority,
+    TileContentRequestOptions options) {
+    if (primaryAvailable(key)) {
+        primary_->requestTileContent(
+            key, std::move(token), std::move(callback), priority, options);
+    } else {
+        ellipsoid_->requestTileContent(
+            key, std::move(token), std::move(callback), priority, options);
+    }
+}
+
+TileContentLoadResult CompositeTerrainProvider::decodeContent(
+    const uint8_t* data,
+    size_t size) {
+    // Only the primary source emits encoded bytes; ellipsoid content is built
+    // inline in requestTileContent and never decoded.
+    return primary_->decodeContent(data, size);
+}
+
+ProviderRequestDiagnostics CompositeTerrainProvider::requestDiagnostics()
+    const {
+    return primary_->requestDiagnostics();
+}
+
+} // namespace earth_engine

@@ -52,6 +52,13 @@ struct TerrainSourceConfig {
     int cesiumIonAssetId = 0;
     std::string cesiumIonAccessToken;
     std::string cesiumIonServerUrl = "https://api.cesium.com/";
+    // 无细数据区回落椭球（partial 覆盖数据集）：主源（QM）无数据的瓦片在
+    // [0, ellipsoidFallbackMaxZoom] 内回落为平滑椭球面，而非停成粗叶子 +
+    // 巨型 skirt 裙墙。默认关 = 全局数据集（如 ion World Terrain）零改动零回归，
+    // 椭球源永不命中。maxZoom 界定纯空洞区的细化深度（椭球是平的，无需深细化）。
+    bool ellipsoidFallback = false;
+    int ellipsoidFallbackMaxZoom = 13;
+    int ellipsoidFallbackGridSize = 16;
 };
 
 struct SceneTilesetConfig {

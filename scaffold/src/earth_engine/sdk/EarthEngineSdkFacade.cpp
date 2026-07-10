@@ -1,6 +1,8 @@
 #include "EarthEngineSdkFacade.h"
 
 #include "../Engine.h"
+#include "../content/CompositeTerrainProvider.h"
+#include "../content/EllipsoidTerrainContentProvider.h"
 #include "../content/GltfContentProvider.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -238,7 +240,22 @@ SceneTerrainRuntimeSources createTerrainRuntimeSources(
         }
         applyConfiguredZoomRange(*qm, config.minimumZoom, config.maximumZoom);
         sources.tileScheme = createTileSchemeForId(qm->schemeId());
-        sources.contentProvider = std::move(qm);
+        if (config.ellipsoidFallback) {
+            // Fuse the QM source with an ellipsoid floor so uncovered regions
+            // render as a smooth ellipsoid instead of a coarse-leaf skirt wall.
+            // The ellipsoid shares the QM tiling scheme so both quadtrees align.
+            auto ellipsoid = std::make_unique<EllipsoidTerrainContentProvider>(
+                qm->schemeId(),
+                config.ellipsoidFallbackMaxZoom,
+                config.ellipsoidFallbackGridSize);
+            sources.contentProvider =
+                std::make_unique<CompositeTerrainProvider>(
+                    std::move(qm),
+                    std::move(ellipsoid),
+                    config.ellipsoidFallbackMaxZoom);
+        } else {
+            sources.contentProvider = std::move(qm);
+        }
         return sources;
     }
 
