@@ -275,6 +275,11 @@ void main() {
               0.0,
               1.0);
     float alpha = max(max(max(skyAlpha, limbAlpha), sunAlpha), rimAlpha);
+    // 打破平滑天空渐变的 8-bit 量化条带(banding):按屏幕位置加 ±0.5/255
+    // 的有序抖动,把台阶散成噪声(GE 天空是平滑的)。仅影响最低有效位。
+    float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233)))
+                         * 43758.5453);
+    color += (dither - 0.5) / 255.0;
     fragColor = vec4(color, clamp(alpha, 0.0, 1.0));
 }
 )";
