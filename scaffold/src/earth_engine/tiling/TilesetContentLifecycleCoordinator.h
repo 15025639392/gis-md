@@ -22,6 +22,7 @@
 #include "../core/resources/FrameResourceBudget.h"
 #include "../renderer/RenderDevice.h"
 
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -221,6 +222,30 @@ public:
         }
         bool processed = false;
         uint32_t uploadsThisFrame = 0;
+        auto logSlowDrainPhase = [&](const char* scope,
+                                     double elapsedMs,
+                                     const PendingGpuUpload& pendingUpload) {
+            constexpr double kSlowDrainPhaseMs = 1.0;
+            if (elapsedMs < kSlowDrainPhaseMs) {
+                return;
+            }
+            char detail[256];
+            std::snprintf(
+                detail,
+                sizeof(detail),
+                "cache=%s uploadsThisFrame=%u remaining=%zu",
+                pendingUpload.cacheKey.c_str(),
+                uploadsThisFrame,
+                context.gpuUploadQueue ? context.gpuUploadQueue->size() : 0u);
+            platformLog(
+                LogLevel::Info,
+                "EarthPerf",
+                "frame=%llu scope=%s ms=%.3f %s",
+                static_cast<unsigned long long>(context.frameNumber),
+                scope,
+                elapsedMs,
+                detail);
+        };
         // 地形 GPU 上传/finalize 受共享主线程时间预算约束（budget->mainThreadTimeMs，
         // 默认 8ms）：先无条件保底上传 kMinTerrainUploadsPerFrame（= 旧硬编码值，
         // 防饿死 + 零回归），其后按当帧剩余主线程时间继续摊入——便宜瓦片一帧可上多
@@ -267,8 +292,14 @@ public:
                 *tile,
                 context.device,
                 std::move(upload->data));
+            const double uploadToGpuMs = perf::nowMs() - uploadStartMs;
+            logSlowDrainPhase(
+                "TilePendingLoad.drainGpuUpload.uploadToGpu",
+                uploadToGpuMs,
+                *upload);
 
             // Finalize: attach raster overlays, ensure children, etc.
+            const double finishStartMs = perf::nowMs();
             const TileContentUploadCommitAction action =
                 TileContentUploadCommitter::finishRenderResourcePreparation(
                     *tile,
@@ -277,6 +308,10 @@ public:
             if (action.resourcesDirty) {
                 markResourcesDirty();
             }
+            logSlowDrainPhase(
+                "TilePendingLoad.drainGpuUpload.finish",
+                perf::nowMs() - finishStartMs,
+                *upload);
             // 计入共享主线程时间预算，供下一次循环的墙钟闸判断（同时让本帧后续
             // 无——terrain drain 是帧内最后的主线程资源工作）。
             if (budget != nullptr) {

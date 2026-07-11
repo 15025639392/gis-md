@@ -43,8 +43,10 @@ struct TerrainSourceConfig {
     int maximumZoom = 0;
     int tileSize = 0;
     bool enableWaterMask = false;
-    // Cesium ion 集成：cesiumIonAssetId > 0 时，installScene 先向 ionServerUrl 做
-    // endpoint 协商（GET v1/assets/{id}/endpoint?access_token=<token>），用返回的
+    // Cesium ion 集成：cesiumIonAssetId > 0 时，installScene 会先安装可贴图的
+    // 椭球地表，并在后台向 ionServerUrl 做 endpoint 协商
+    // （GET v1/assets/{id}/endpoint?access_token=<token>）。协商完成后，渲染
+    // 线程将椭球替换为真实 quantized-mesh；影像请求不等待这一过程。返回的
     // 临时凭证 URL + token 覆盖 layerJsonUrl；QuantizedMeshTerrainProvider 经
     // resolveTerrainTemplate/mergeBaseQuery 把 access_token 传播到每个瓦片请求。
     // 临时 token 约 1 小时过期，当前无自动刷新（会话超时后重装场景即可）。
@@ -75,6 +77,10 @@ struct SceneTilesetConfig {
     // 恢复正常加载。multiplier 越大剔除越激进(cesium 默认 60)。
     bool cullRequestsWhileMoving = false;
     double cullRequestsWhileMovingMultiplier = 60.0;
+    // 地形 fill 代理(cesium-js TerrainFillMesh):可见瓦片真实地形未到时先贴椭球
+    // 代理网格,影像立即显示在平滑地球上,真实地形到达再"隆起"。默认关。
+    bool enableTerrainFillProxy = false;
+    int terrainFillProxyGridSize = 16;
 };
 
 struct RasterOverlaySourceConfig {

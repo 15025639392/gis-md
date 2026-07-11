@@ -52,8 +52,13 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
         tile.content.renderContent.restartCachedDrawCommands();
     const std::string tileCacheKey = TileCacheKey::forTile(tile.key);
     size_t stableIndex = 0;
+    // Draw-effective resources: real terrain if renderable, else the ellipsoid
+    // fill proxy. All three per-primitive reads below (resources, terrain flag,
+    // local origin) go through the draw-effective getters so the fill draws
+    // through the identical command path and swaps to real geometry the frame
+    // real terrain becomes ready (which invalidates the cache).
     for (const GltfPrimitiveRenderResources& primitive :
-         tile.content.renderContent.gltfPrimitiveResourcesForDraw()) {
+         tile.content.renderContent.drawPrimitiveResources()) {
         if (!primitive.vertexBuffer || !primitive.indexBuffer ||
             primitive.indexCount <= 0) {
             continue;
@@ -88,9 +93,9 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
         }
         cmd.stableKey = tileCacheKey + "#" + std::to_string(stableIndex++);
         cmd.terrainRenderContent =
-            tile.content.renderContent.isTerrainRenderContent();
+            tile.content.renderContent.drawIsTerrainContent();
         cmd.primitive = renderPrimitiveType(primitive.primitiveMode);
-        const Vec3& localOrigin = tile.content.renderContent.renderLocalOrigin();
+        const Vec3& localOrigin = tile.content.renderContent.drawLocalOrigin();
         GltfUniformBlock& u = cmd.gltfUniforms;
         u.modelOrigin = {
             static_cast<float>(localOrigin.x()),
@@ -370,7 +375,7 @@ void GltfDrawCommandBuilder::build(
     RenderCommandList& commands,
     const GltfDrawCommandBuildContext& context) {
     TileRenderContentState& renderContent = tile.content.renderContent;
-    if (!renderContent.hasGltfResources()) {
+    if (!renderContent.hasDrawableResources()) {
         return;
     }
     if (!renderContent.hasCachedDrawCommands()) {

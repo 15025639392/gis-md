@@ -260,11 +260,16 @@ void SceneRenderPipeline::buildLayerCommands(
     const double layerStartMs = perf::nowMs();
     if (context.terrainTileset) {
         context.terrainTileset->buildRenderCommands(
-            context.renderer, context.commands);
+            context.renderer,
+            context.commands,
+            context.frameState.frameId);
     }
     for (auto& tileset : context.additionalTilesets) {
         if (tileset) {
-            tileset->buildRenderCommands(context.renderer, context.commands);
+            tileset->buildRenderCommands(
+                context.renderer,
+                context.commands,
+                context.frameState.frameId);
         }
     }
     layerCommandsMs = perf::nowMs() - layerStartMs;

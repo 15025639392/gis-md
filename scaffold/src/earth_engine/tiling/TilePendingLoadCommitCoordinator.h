@@ -10,7 +10,10 @@
 #include "TileTerminalLoadCommitter.h"
 #include "TilesetTile.h"
 #include "../content/GltfContentProvider.h"
+#include "../debug/PerfTimer.h"
 
+#include <cstdio>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -82,8 +85,15 @@ public:
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
         EnsureGltfResourcesFn&& ensureGltfResources,
-        MarkResourcesDirtyFn&& markResourcesDirty) {
+        MarkResourcesDirtyFn&& markResourcesDirty,
+        uint64_t diagnosticFrameNumber = 0) {
+        const double ensureTileStartMs = perf::nowMs();
         TilesetTile* tile = ensureTile(upload.key);
+        logSlowCommitPhase(
+            diagnosticFrameNumber,
+            "TilePendingLoad.commitUpload.ensureTile",
+            perf::nowMs() - ensureTileStartMs,
+            upload);
         if (!tile) {
             emptyContentRegistry.erase(upload.cacheKey);
             TilePendingUploadCompletion::eraseUpload(
@@ -95,6 +105,7 @@ public:
         if (TileLoadDomainPolicy::shouldFailUploadForDomain(
                 upload.domain,
                 upload.result)) {
+            const double failCommitStartMs = perf::nowMs();
             TileLoadResult failedResult =
                 TileLoadDomainPolicy::normalizeForDomain(
                     upload.domain,
@@ -112,21 +123,46 @@ public:
             TilePendingUploadCompletion::eraseUpload(
                 lifecycle,
                 upload.cacheKey);
+            logSlowCommitPhase(
+                diagnosticFrameNumber,
+                "TilePendingLoad.commitUpload.failTerminal",
+                perf::nowMs() - failCommitStartMs,
+                upload);
             return;
         }
 
+        const double metadataStartMs = perf::nowMs();
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
         TileAvailabilityUpdateCommitter::applyAvailabilityUpdates(
             upload.domain,
             upload.result,
             contentProvider);
+        logSlowCommitPhase(
+            diagnosticFrameNumber,
+            "TilePendingLoad.commitUpload.metadata",
+            perf::nowMs() - metadataStartMs,
+            upload);
+
+        const double prepareRenderStartMs = perf::nowMs();
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
             std::move(upload.content()),
             rasterOverlays,
             device,
             pPrepRenderer);
+        logSlowCommitPhase(
+            diagnosticFrameNumber,
+            "TilePendingLoad.commitUpload.prepareRenderContent",
+            perf::nowMs() - prepareRenderStartMs,
+            upload);
+
+        const double ensureResourcesStartMs = perf::nowMs();
         ensureGltfResources(*tile);
+        logSlowCommitPhase(
+            diagnosticFrameNumber,
+            "TilePendingLoad.commitUpload.ensureGltfResources",
+            perf::nowMs() - ensureResourcesStartMs,
+            upload);
 
         // Async pipeline: CPU work dispatched to worker thread; GPU upload
         // and finalization happen in drainGpuUploadQueue.  Keep the tile
@@ -139,12 +175,18 @@ public:
 
         const bool renderResourcesReady =
             tile->content.renderContent.isRenderContentReady();
+        const double finishStartMs = perf::nowMs();
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
                 *tile,
                 renderResourcesReady,
                 pPrepRenderer);
         applyCommitAction(action, *tile, ensureChildren, markResourcesDirty);
+        logSlowCommitPhase(
+            diagnosticFrameNumber,
+            "TilePendingLoad.commitUpload.finish",
+            perf::nowMs() - finishStartMs,
+            upload);
 
         emptyContentRegistry.erase(upload.cacheKey);
         TilePendingUploadCompletion::eraseUpload(
@@ -167,6 +209,33 @@ private:
         if (action.resourcesDirty) {
             markResourcesDirty();
         }
+    }
+
+    static void logSlowCommitPhase(uint64_t frameNumber,
+                                   const char* scope,
+                                   double elapsedMs,
+                                   const PendingTileLoad& load) {
+        constexpr double kSlowCommitPhaseMs = 1.0;
+        if (elapsedMs < kSlowCommitPhaseMs) {
+            return;
+        }
+        char detail[256];
+        std::snprintf(
+            detail,
+            sizeof(detail),
+            "domain=%d group=%d priority=%.3f cache=%s",
+            static_cast<int>(load.domain),
+            static_cast<int>(load.group),
+            load.priority,
+            load.cacheKey.c_str());
+        platformLog(
+            LogLevel::Info,
+            "EarthPerf",
+            "frame=%llu scope=%s ms=%.3f %s",
+            static_cast<unsigned long long>(frameNumber),
+            scope,
+            elapsedMs,
+            detail);
     }
 
 };

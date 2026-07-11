@@ -96,6 +96,30 @@ public:
             return;
         }
 
+        // Terrain fill: real content is not present yet, but a drape-ready
+        // ellipsoid proxy is. Draw it so imagery appears on the smooth globe
+        // immediately (its raster mappings are advanced by the parallel
+        // load-dispatch fetch, not the real-content raster update above). The
+        // tile is DRAWABLE but NOT complete-renderable — LOD refinement keeps
+        // pursuing the real terrain, and the proxy is dropped the frame real
+        // terrain becomes ready (markRenderContentReady).
+        if (tile.content.renderContent.isFillReady()) {
+            tile.updateFrameRenderability(
+                /*drawable=*/true,
+                /*complete=*/false);
+            GltfDrawCommandBuilder::build(
+                renderer,
+                tile,
+                rasterOverlays,
+                commands,
+                GltfDrawCommandBuildContext{
+                    context.frameNumber,
+                    context.generation,
+                    context.transitionOpacity,
+                    context.surfaceClipUv});
+            return;
+        }
+
         // No glTF content - nothing to render
         tile.clearFrameRenderability();
     }

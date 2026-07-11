@@ -328,6 +328,12 @@ add_executable(test_composite_terrain_provider
 target_link_libraries(test_composite_terrain_provider PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_composite_terrain_provider COMMAND test_composite_terrain_provider)
 
+add_executable(test_ellipsoid_terrain_mesh_builder
+    unit/content/test_ellipsoid_terrain_mesh_builder.cpp
+)
+target_link_libraries(test_ellipsoid_terrain_mesh_builder PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_ellipsoid_terrain_mesh_builder COMMAND test_ellipsoid_terrain_mesh_builder)
+
 add_executable(test_tile_bounding_volume
     unit/tiling/test_tile_bounding_volume.cpp
 )

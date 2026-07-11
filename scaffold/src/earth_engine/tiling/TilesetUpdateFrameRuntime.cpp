@@ -55,7 +55,11 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             kPostInteractionResourceSmoothingSeconds,
             tileset.options_.maximumScreenSpaceError,
             tileset.options_.cullRequestsWhileMoving,
-            tileset.options_.cullRequestsWhileMovingMultiplier},
+            tileset.options_.cullRequestsWhileMovingMultiplier,
+            tileset.options_.enableTerrainFillProxy,
+            tileset.options_.terrainFillProxyGridSize,
+            tileset.hasTerrainQuadtree(),
+            &tileset.tileRegistry_.tiles()},
         TileFrameWorkState{
             tileset.cameraMoving_,
             tileset.interactionActiveForFrame_,

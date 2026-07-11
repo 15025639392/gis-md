@@ -67,7 +67,8 @@ public:
                 ensureTile,
                 ensureTileChildren,
                 ensureGltfResources,
-                markResourcesDirty);
+                markResourcesDirty,
+                input.budget.frameNumber());
         };
 
         return TilePendingLoadProcessor::processPendingLoads(

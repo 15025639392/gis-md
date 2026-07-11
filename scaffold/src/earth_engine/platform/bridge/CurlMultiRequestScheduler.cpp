@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -64,6 +65,8 @@ struct CurlMultiRequestScheduler::Impl {
         bool active = false;
         bool notifyCallbackOnShutdown = false;
         std::atomic<bool> cancelled{false};
+        std::chrono::steady_clock::time_point queuedAt;
+        std::chrono::steady_clock::time_point startedAt;
     };
 
     struct WakeState {
@@ -167,6 +170,7 @@ struct CurlMultiRequestScheduler::Impl {
         state->callback = std::move(callback);
         state->priority = options.priority;
         state->notifyCallbackOnShutdown = notifyCallbackOnShutdown;
+        state->queuedAt = std::chrono::steady_clock::now();
 
         {
             std::lock_guard<std::mutex> lk(mutex);
@@ -459,6 +463,7 @@ private:
 
         request->easy = easy;
         request->active = true;
+        request->startedAt = std::chrono::steady_clock::now();
         curl_easy_setopt(easy, CURLOPT_URL, request->url.c_str());
         curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &Impl::writeBody);
         curl_easy_setopt(easy, CURLOPT_WRITEDATA, request.get());
@@ -519,8 +524,26 @@ private:
             return false;
         }
 
-        std::lock_guard<std::mutex> lk(mutex);
-        active[easy] = request;
+        size_t activeCount = 0;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            active[easy] = request;
+            activeCount = active.size();
+        }
+        const double queueMs =
+            std::chrono::duration<double, std::milli>(
+                request->startedAt - request->queuedAt)
+                .count();
+        platformLog(
+            LogLevel::Info,
+            "EarthNet",
+            "start seq=%llu %s p=%d queue=%.1fms active=%zu url=%s",
+            static_cast<unsigned long long>(request->sequence),
+            request->method.c_str(),
+            static_cast<int>(request->priority),
+            queueMs,
+            activeCount,
+            request->url.c_str());
         return true;
     }
 
@@ -578,6 +601,27 @@ private:
             curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &httpCode);
             const CURLcode curlResult = message->data.result;
 
+            double dnsSeconds = 0.0;
+            double connectSeconds = 0.0;
+            double tlsSeconds = 0.0;
+            double firstByteSeconds = 0.0;
+            double transferSeconds = 0.0;
+            curl_easy_getinfo(easy, CURLINFO_NAMELOOKUP_TIME, &dnsSeconds);
+            curl_easy_getinfo(easy, CURLINFO_CONNECT_TIME, &connectSeconds);
+            curl_easy_getinfo(easy, CURLINFO_APPCONNECT_TIME, &tlsSeconds);
+            curl_easy_getinfo(
+                easy, CURLINFO_STARTTRANSFER_TIME, &firstByteSeconds);
+            curl_easy_getinfo(easy, CURLINFO_TOTAL_TIME, &transferSeconds);
+            const auto now = std::chrono::steady_clock::now();
+            const double queueMs =
+                std::chrono::duration<double, std::milli>(
+                    request->startedAt - request->queuedAt)
+                    .count();
+            const double wallMs =
+                std::chrono::duration<double, std::milli>(
+                    now - request->queuedAt)
+                    .count();
+
             if (request->cancelled.load(std::memory_order_acquire)) {
                 cleanupEasy(request);
                 request->easy = nullptr;
@@ -588,6 +632,26 @@ private:
             const int statusCode = curlResult == CURLE_OK
                 ? static_cast<int>(httpCode)
                 : -1;
+            platformLog(
+                LogLevel::Info,
+                "EarthNet",
+                "seq=%llu %s p=%d http=%ld curl=%d queue=%.1fms "
+                "dns=%.1f conn=%.1f tls=%.1f ttfb=%.1f xfer=%.1f "
+                "wall=%.1f bytes=%zu url=%s",
+                static_cast<unsigned long long>(request->sequence),
+                request->method.c_str(),
+                static_cast<int>(request->priority),
+                httpCode,
+                static_cast<int>(curlResult),
+                queueMs,
+                dnsSeconds * 1000.0,
+                connectSeconds * 1000.0,
+                tlsSeconds * 1000.0,
+                firstByteSeconds * 1000.0,
+                transferSeconds * 1000.0,
+                wallMs,
+                request->body.size(),
+                request->url.c_str());
             if (statusCode != 200) {
                 const char* detail = request->errorBuffer[0] != '\0'
                     ? request->errorBuffer.data()

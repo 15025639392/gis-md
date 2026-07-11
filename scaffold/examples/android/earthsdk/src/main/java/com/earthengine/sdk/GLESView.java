@@ -70,6 +70,18 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
             nativeDebugZoom(0.84f, getWidth(), getHeight());
             return true;
         }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            nativeDebugTilt(80.0f, getWidth(), getHeight());
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+            nativeDebugTilt(-80.0f, getWidth(), getHeight());
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+            nativeDebugPinchEnd(getWidth(), getHeight());
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
     }
 
@@ -228,6 +240,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     private static native void nativePinchEnd(float centerX, float centerY);
     private static native void nativePinchRotateTilt(float scale, float rotationRadians, float centerX, float centerY, float centerDx, float centerDy, float pointer0X, float pointer0Y, float pointer1X, float pointer1Y, int width, int height);
     private static native void nativeDebugZoom(float scale, int width, int height);
+    private static native void nativeDebugTilt(float centerDy, int width, int height);
+    private static native void nativeDebugPinchEnd(int width, int height);
     private static native void nativePause();
     private static native void nativeResume();
 

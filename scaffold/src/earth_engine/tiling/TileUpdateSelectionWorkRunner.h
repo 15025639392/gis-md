@@ -6,6 +6,7 @@
 #include "TileRasterOverlayFrameProcessor.h"
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TileSelectionCounters.h"
+#include "TileFillProxyPreparer.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionReuseState.h"
 #include "../core/resources/FrameResourceBudget.h"
@@ -36,6 +37,11 @@ struct TileUpdateSelectionWorkInput {
         TileSelectionReuseRejectReason::None;
     bool reusedSelection = false;
     double maximumScreenSpaceError = 16.0;
+    bool enableTerrainFillProxy = false;
+    int terrainFillProxyGridSize = 16;
+    bool hasTerrainQuadtree = false;
+    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>* tiles =
+        nullptr;
 };
 
 struct TileUpdateSelectionWorkResult {
@@ -111,6 +117,47 @@ public:
                     input.loadQueue.queue(key, group, priority);
                 });
             result.prefetchMs = perf::nowMs() - prefetchStartMs;
+        }
+
+        // Terrain fill proxy: give each visible tile still lacking real terrain
+        // a drape-ready ellipsoid proxy so imagery appears on the smooth globe
+        // immediately (cesium-js TerrainFillMesh model). Runs after prefetch
+        // (imagery mappings advanced) and before refreshRenderEntries so
+        // canBuildRenderEntryDirectly picks up freshly-ready fills this frame.
+        // Flag-gated (default off) → golden/existing behavior unchanged.
+        if (input.enableTerrainFillProxy && input.hasTerrainQuadtree &&
+            !input.reusedSelection &&
+            input.tiles != nullptr) {
+            const std::vector<size_t> fillOverlayOrder =
+                TileSelectionRasterOverlayPreparer::processingOrder(
+                    input.rasterOverlays);
+            for (const TileKey& key : input.tilePlan.visibleTiles) {
+                TilesetTile* tile = ensureTile(key);
+                if (!tile) continue;
+                const bool madeFill = TileFillProxyPreparer::ensureFillProxy(
+                    *tile,
+                    *input.tiles,
+                    input.device,
+                    input.terrainFillProxyGridSize);
+                // Map imagery onto a fill tile (keyed on its bounding-volume
+                // rectangle — the proxy's own rectangle). The normal Done-path
+                // raster update never runs for a still-loading fill tile, so
+                // drive the mapping ONCE here (mappingCount==0); subsequent
+                // frames advance it via the prefetch pass above
+                // (advanceThrottledLoads), so this is not per-frame work.
+                if (tile->content.renderContent.drawsFill() &&
+                    tile->rasterOverlayState.mappingCount() == 0 &&
+                    !input.rasterOverlays.empty()) {
+                    TileRasterOverlayPrefetcher::prefetch(
+                        *tile,
+                        input.rasterOverlays,
+                        fillOverlayOrder,
+                        input.device,
+                        input.maximumScreenSpaceError,
+                        input.frameResourceBudget);
+                }
+                (void)madeFill;
+            }
         }
 
         const double requestStartMs = perf::nowMs();

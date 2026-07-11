@@ -165,8 +165,15 @@ struct TileRenderPlanFinalizer {
 
 private:
     static bool canBuildRenderEntryDirectly(const TilesetTile& tile) {
-        if (tile.content.renderContent.hasGltfContent()) {
-            return tile.content.renderContent.isGltfRenderReady();
+        // Real terrain renderable OR the ellipsoid fill proxy is ready: the
+        // tile draws its OWN geometry directly (no ancestor fallback). A
+        // fill-ready tile shows its own fine imagery on the smooth globe
+        // immediately; the draw path (drawsFill) swaps to real terrain the
+        // frame it becomes ready. This also covers the window where real
+        // content is committed but not yet GPU-ready while the fill still
+        // draws — matching the draw path's drawsFill()/hasDrawableResources().
+        if (tile.content.renderContent.hasDrawableResources()) {
+            return true;
         }
         return hasRenderableSurfaceForPlan(tile);
     }

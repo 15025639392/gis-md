@@ -2417,6 +2417,31 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceFailureFallsBackToParentTile) {
 }
 
 TEST(RasterOverlayLifecycleTest,
+     SynchronousSourceFailuresCanFallbackToRootWithoutDanglingIssueCallback) {
+    AlwaysFailingImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(0, 3);
+
+    const TileKey child{scheme->id(), 3, 5, 2};
+    auto tile = provider.getTile(child);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider.loadTile(*tile));
+
+    EXPECT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(child, imagery.requestedKeys.front());
+
+    EXPECT_EQ(0, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
+    EXPECT_FALSE(provider.hasPendingWork());
+
+    ASSERT_EQ(4u, imagery.requestedKeys.size());
+    EXPECT_EQ((TileKey{scheme->id(), 2, 2, 1}), imagery.requestedKeys[1]);
+    EXPECT_EQ((TileKey{scheme->id(), 1, 1, 0}), imagery.requestedKeys[2]);
+    EXPECT_EQ((TileKey{scheme->id(), 0, 0, 0}), imagery.requestedKeys[3]);
+}
+
+TEST(RasterOverlayLifecycleTest,
      SourceTileFallbackIgnoresSupportsTileForParentLikeCesiumNative) {
     UnsupportedParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

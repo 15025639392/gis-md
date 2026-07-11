@@ -4,10 +4,37 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace earth_engine {
 
 struct TilesetTile;
+class Rectangle;
+
+// Batched terrain-height sampler over a fixed area. Gathers the candidate
+// loaded-terrain tiles overlapping the area ONCE, then answers many point
+// queries against just that set — avoiding the full-registry scan that
+// sampleHeightOptional does per call. Used to lift the many vertices of a fill
+// proxy (all inside the tile's rectangle) to loaded-terrain height cheaply.
+class LoadedTerrainAreaSampler {
+public:
+    LoadedTerrainAreaSampler(
+        const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
+            tiles,
+        const Rectangle& area);
+
+    /// Height at (lon, lat) in radians from the deepest covering candidate, or
+    /// nullopt if no loaded terrain in the area covers the point.
+    std::optional<float> sample(double longitudeRadians,
+                                double latitudeRadians) const;
+
+    /// True if the area contains no loaded-terrain candidates at all (every
+    /// sample would be nullopt — the whole proxy stays flat).
+    bool empty() const { return candidates_.empty(); }
+
+private:
+    std::vector<const TilesetTile*> candidates_;
+};
 
 class LoadedTerrainHeightSampler {
 public:

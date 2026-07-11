@@ -330,10 +330,13 @@ void Tileset::update(
 }
 
 void Tileset::buildRenderCommands(Renderer& renderer,
-                                  RenderCommandList& commands) {
+                                  RenderCommandList& commands,
+                                  uint64_t renderFrameId) {
     ++frameNumber_;
+    const uint64_t commandFrameNumber =
+        renderFrameId != 0 ? renderFrameId : frameNumber_;
     renderCommands_.beginFrame(
-        frameNumber_,
+        commandFrameNumber,
         generation_,
         currentFrameTimeSeconds_,
         options_.maximumScreenSpaceError);
@@ -345,7 +348,7 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                 contentCache_.unloadQueue(),
                 rasterOverlays_,
                 contentCache_.cacheBytesDirty(),
-                frameNumber_,
+                commandFrameNumber,
                 lastCameraPosition_,
                 options_.fogDensityTable,
                 selectionCounters_.fogCulled,

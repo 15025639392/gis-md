@@ -1778,14 +1778,18 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                                  onSourceFailed,
                                  onReady,
                                  fallbackInFlightKeys]() mutable {
-                                    int issued = 0;
+                                    // requestSource retains onSourceIssued in
+                                    // its async completion callback. A stack
+                                    // reference here becomes dangling when a
+                                    // failed parent queues another fallback.
+                                    auto issued = std::make_shared<int>(0);
                                     self->requestSource(
                                         parentKey,
                                         originalKey,
                                         true,
                                         false,
-                                        [&]() {
-                                            ++issued;
+                                        [issued, onSourceIssued]() {
+                                            ++(*issued);
                                             if (onSourceIssued) {
                                                 onSourceIssued();
                                             }
@@ -1794,7 +1798,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                                         onSourceFailed,
                                         std::move(onReady),
                                         std::move(fallbackInFlightKeys));
-                                    return issued;
+                                    return *issued;
                                 }});
                     }
                     return;

@@ -113,6 +113,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/content/GltfContentProvider.cpp
     earth_engine/content/EllipsoidTerrainContentProvider.h
     earth_engine/content/EllipsoidTerrainContentProvider.cpp
+    earth_engine/content/EllipsoidTerrainMeshBuilder.h
+    earth_engine/content/EllipsoidTerrainMeshBuilder.cpp
     earth_engine/content/CompositeTerrainProvider.h
     earth_engine/content/CompositeTerrainProvider.cpp
     earth_engine/content/GltfTerrainUpsampler.h
@@ -233,6 +235,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/GltfRenderGeometryBuilder.cpp
     earth_engine/tiling/GltfRenderResourcePreparer.h
     earth_engine/tiling/GltfRenderResourcePreparer.cpp
+    earth_engine/tiling/TileFillProxyPreparer.h
+    earth_engine/tiling/TileFillProxyPreparer.cpp
     earth_engine/tiling/LoadedTerrainHeightSampler.h
     earth_engine/tiling/LoadedTerrainHeightSampler.cpp
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.h

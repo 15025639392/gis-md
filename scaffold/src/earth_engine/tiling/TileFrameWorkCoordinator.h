@@ -43,6 +43,11 @@ struct TileFrameWorkInput {
     double maximumScreenSpaceError = 16.0;
     bool cullRequestsWhileMoving = false;
     double cullRequestsWhileMovingMultiplier = 60.0;
+    bool enableTerrainFillProxy = false;
+    int terrainFillProxyGridSize = 16;
+    bool hasTerrainQuadtree = false;
+    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>* tiles =
+        nullptr;
 };
 
 struct TileFrameWorkResult {
@@ -153,7 +158,11 @@ public:
                 reuseMode,
                 reuseClassification.rejectReason,
                 reusedSelection,
-                input.maximumScreenSpaceError},
+                input.maximumScreenSpaceError,
+                input.enableTerrainFillProxy,
+                input.terrainFillProxyGridSize,
+                input.hasTerrainQuadtree,
+                input.tiles},
             refreshTilePlanRenderEntries,
             selectTiles,
             ensureTile,

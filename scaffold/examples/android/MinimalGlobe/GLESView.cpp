@@ -217,6 +217,10 @@ static int gFrameCount = 0;
 static void renderFrame() {
     if (!gEngineReady) return;
 
+    if (gSdkFacade) {
+        gSdkFacade->update();
+    }
+
     // 时间步进（实时）
     static auto lastTime = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
@@ -264,6 +268,10 @@ static void renderFrame() {
 class RenderThread {
 public:
     void start(ANativeWindow* window) {
+        // SurfaceView can deliver surfaceCreated again before a matching
+        // surfaceDestroyed. A joinable std::thread cannot be overwritten, and
+        // the old EGL / engine lifetime must finish before a new one begins.
+        stop();
         {
             std::lock_guard<std::mutex> lock(mutex_);
             tasks_.clear();  // 丢弃上一轮 surface 生命周期遗留的任务
@@ -431,7 +439,14 @@ Java_com_earthengine_sdk_GLESView_nativeInit(
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeSurfaceCreated(
     JNIEnv* env, jobject /* this */, jobject surface) {
-
+    // Some devices recreate the Surface without first issuing a matching
+    // surfaceDestroyed. Finish the prior native lifetime before replacing the
+    // ANativeWindow so no render thread or EGL context remains attached to it.
+    gRenderThread.stop();
+    if (gWindow) {
+        ANativeWindow_release(gWindow);
+        gWindow = nullptr;
+    }
     gWindow = ANativeWindow_fromSurface(env, surface);
     if (!gWindow) {
         LOGE("ANativeWindow_fromSurface failed");

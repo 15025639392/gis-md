@@ -76,6 +76,12 @@ struct TilesetOptions {
     // 默认 false = 忠实 cesium-native(不改 golden);true 才启用。
     bool cullRequestsWhileMoving = false;
     double cullRequestsWhileMovingMultiplier = 60.0;
+    // Terrain fill proxy (cesium-js TerrainFillMesh model): give each visible
+    // tile still loading real terrain a drape-ready ellipsoid proxy so imagery
+    // appears on the smooth globe immediately, then swaps to real terrain (which
+    // "rises") when it arrives. Default false = unchanged behavior / golden.
+    bool enableTerrainFillProxy = false;
+    int terrainFillProxyGridSize = 16;
     bool renderTilesUnderCamera = true;
     int64_t maximumCachedBytes = 512LL * 1024 * 1024;
     bool enableLodTransitionPeriod = false;
@@ -142,7 +148,9 @@ public:
 
     void update(const FrameState& frameState,
                 IPrepareRendererResources* pPrepRenderer = nullptr);
-    void buildRenderCommands(Renderer& renderer, RenderCommandList& commands);
+    void buildRenderCommands(Renderer& renderer,
+                             RenderCommandList& commands,
+                             uint64_t renderFrameId = 0);
 
     const TilePlan& tilePlan() const { return tilePlan_; }
     const TileScheme& tileScheme() const { return *tileScheme_; }

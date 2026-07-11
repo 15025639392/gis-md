@@ -236,39 +236,22 @@ void commitBestSample(std::optional<LoadedTerrainSample>& bestSample,
     }
 }
 
-} // namespace
-
-std::optional<float> LoadedTerrainHeightSampler::sampleHeightOptional(
-    const std::unordered_map<
-        std::string,
-        std::unique_ptr<TilesetTile>>& tiles,
-        double longitudeRadians,
-        double latitudeRadians) {
-    // Gather the candidate tiles first (a point lies inside one tile per
-    // zoom level plus its ancestors) and scan them deepest-first so a hit at
-    // the finest level lets every coarser candidate be skipped. Registry
-    // iteration order is random; without the sort every ancestor's full
-    // triangle list may be scanned before the deepest tile is reached.
-    std::vector<const TilesetTile*> candidates;
-    for (const auto& [cacheKey, tile] : tiles) {
-        (void)cacheKey;
-        if (tile && tile->bounds.contains(longitudeRadians, latitudeRadians)) {
-            candidates.push_back(tile.get());
-        }
-    }
-    std::sort(
-        candidates.begin(),
-        candidates.end(),
-        [](const TilesetTile* a, const TilesetTile* b) {
-            return a->key.z > b->key.z;
-        });
-
+// Scan zoom-descending candidates for the deepest one whose terrain mesh covers
+// (lon, lat). Candidates must already be sorted zoom-desc; the point-in-bounds
+// test is applied here so an area-prefiltered candidate list can be reused
+// across many points.
+std::optional<float> sampleFromSortedCandidates(
+    const std::vector<const TilesetTile*>& candidates,
+    double longitudeRadians,
+    double latitudeRadians) {
     std::optional<LoadedTerrainSample> bestSample;
     for (const TilesetTile* tile : candidates) {
         if (bestSample && tile->key.z < bestSample->zoom) {
             break;
         }
-
+        if (!tile->bounds.contains(longitudeRadians, latitudeRadians)) {
+            continue;
+        }
         const TileRenderContentState& renderContent =
             tile->content.renderContent;
         if (renderContent.isTerrainRenderContent()) {
@@ -288,11 +271,68 @@ std::optional<float> LoadedTerrainHeightSampler::sampleHeightOptional(
             }
         }
     }
-
     if (bestSample) {
         return bestSample->height;
     }
     return std::nullopt;
+}
+
+} // namespace
+
+LoadedTerrainAreaSampler::LoadedTerrainAreaSampler(
+    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
+    const Rectangle& area) {
+    for (const auto& [cacheKey, tile] : tiles) {
+        (void)cacheKey;
+        if (tile && tile->content.renderContent.isTerrainRenderContent() &&
+            tile->content.renderContent.gltfModelForRead() != nullptr &&
+            tile->bounds.intersects(area)) {
+            candidates_.push_back(tile.get());
+        }
+    }
+    std::sort(
+        candidates_.begin(),
+        candidates_.end(),
+        [](const TilesetTile* a, const TilesetTile* b) {
+            return a->key.z > b->key.z;
+        });
+}
+
+std::optional<float> LoadedTerrainAreaSampler::sample(
+    double longitudeRadians,
+    double latitudeRadians) const {
+    return sampleFromSortedCandidates(
+        candidates_,
+        longitudeRadians,
+        latitudeRadians);
+}
+
+std::optional<float> LoadedTerrainHeightSampler::sampleHeightOptional(
+    const std::unordered_map<
+        std::string,
+        std::unique_ptr<TilesetTile>>& tiles,
+        double longitudeRadians,
+        double latitudeRadians) {
+    // Gather the candidate tiles first (a point lies inside one tile per
+    // zoom level plus its ancestors) and scan them deepest-first so a hit at
+    // the finest level lets every coarser candidate be skipped.
+    std::vector<const TilesetTile*> candidates;
+    for (const auto& [cacheKey, tile] : tiles) {
+        (void)cacheKey;
+        if (tile && tile->bounds.contains(longitudeRadians, latitudeRadians)) {
+            candidates.push_back(tile.get());
+        }
+    }
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const TilesetTile* a, const TilesetTile* b) {
+            return a->key.z > b->key.z;
+        });
+    return sampleFromSortedCandidates(
+        candidates,
+        longitudeRadians,
+        latitudeRadians);
 }
 
 } // namespace earth_engine

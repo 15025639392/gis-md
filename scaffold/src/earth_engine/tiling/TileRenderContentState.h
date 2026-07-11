@@ -155,6 +155,40 @@ public:
     bool hasGltfResources() const {
         return gltfResourcesReady_ && !gltfPrimitiveResources.empty();
     }
+
+    // ── Terrain fill (ellipsoid proxy) ─────────────────────────────────────
+    // A drape-ready ellipsoid proxy model shown while the real terrain is still
+    // loading. It lives in a SEPARATE slot from gltfModel so the many code
+    // paths that read gltfModel (upsample parent geometry, raster-detail
+    // generation, canPrepareRasterOverlays, ...) keep treating gltfModel as the
+    // committed REAL content only. The draw path consults the draw-effective
+    // getters below, which prefer real content and fall back to the fill.
+    // Because a proxy vertex and the real-terrain vertex at the same lon/lat
+    // map imagery to the same texel (overlay UVs are height-independent), the
+    // tile's raster mappings bind identically to fill and real geometry — no
+    // re-map on swap; imagery stays put while terrain "rises".
+    bool hasFillModel() const { return fillModel_ != nullptr; }
+    bool isFillReady() const {
+        return fillModel_ != nullptr && fillResourcesReady_ &&
+               !fillPrimitiveResources_.empty();
+    }
+    /// True when the draw path should render the fill proxy: the real terrain
+    /// mesh is not yet renderable but a fill proxy is ready.
+    bool drawsFill() const { return !isGltfRenderReady() && isFillReady(); }
+    /// The draw path can emit commands (real OR fill geometry ready).
+    bool hasDrawableResources() const {
+        return hasGltfResources() || isFillReady();
+    }
+    const std::vector<GltfPrimitiveRenderResources>& drawPrimitiveResources()
+        const {
+        return drawsFill() ? fillPrimitiveResources_ : gltfPrimitiveResources;
+    }
+    const Vec3& drawLocalOrigin() const {
+        return drawsFill() ? fillLocalOrigin_ : surface_.localOrigin;
+    }
+    bool drawIsTerrainContent() const {
+        return drawsFill() ? true : terrainRenderContent_;
+    }
     bool isGltfRenderReady() const {
         if (shadowReadinessMirror_) {
             return shadowHasGltfContent_ && shadowRenderContentReady_;
@@ -223,6 +257,10 @@ public:
     void markRenderContentReady() {
         if (gltfModel) {
             gltfResourcesReady_ = true;
+            // Real terrain is now renderable — the proxy has served its purpose;
+            // drop it so the tile draws real geometry (the "rise") and frees the
+            // proxy GPU buffers. Imagery UVs are unchanged (lon/lat-based).
+            clearFillContent();
             invalidateCachedDrawCommands();
         } else {
             surface_.meshReady = true;
@@ -376,6 +414,56 @@ public:
         invalidateCachedDrawCommands();
     }
 
+    // ── Fill (ellipsoid proxy) lifecycle ───────────────────────────────────
+    void setFillContent(std::unique_ptr<GltfModel> model,
+                        const Mat4& contentTransform = Mat4::identity()) {
+        clearFillGpuResources();
+        if (model && model->preferredLocalOriginEcef.has_value()) {
+            fillLocalOrigin_ =
+                contentTransform * *model->preferredLocalOriginEcef;
+        } else {
+            fillLocalOrigin_ = Vec3::zero();
+        }
+        fillModel_ = std::move(model);
+        fillContentTransform_ = contentTransform;
+        fillResourcesReady_ = false;
+        invalidateCachedDrawCommands();
+    }
+    GltfModel* fillContent() { return fillModel_.get(); }
+    const GltfModel* fillContent() const { return fillModel_.get(); }
+    const Mat4& fillTransform() const { return fillContentTransform_; }
+    const Vec3& fillLocalOrigin() const { return fillLocalOrigin_; }
+    void beginFillGpuResourceBuild(size_t textureCount,
+                                   size_t primitiveResourceCount) {
+        clearFillGpuResources();
+        fillTextureResources_.reserve(textureCount);
+        fillPrimitiveResources_.reserve(primitiveResourceCount);
+    }
+    void addFillTextureResource(std::unique_ptr<Texture> texture) {
+        fillTextureResources_.push_back(std::move(texture));
+    }
+    void addFillPrimitiveResource(GltfPrimitiveRenderResources resources) {
+        fillPrimitiveResources_.push_back(std::move(resources));
+        invalidateCachedDrawCommands();
+    }
+    void setFillResourcesReady(bool ready) {
+        fillResourcesReady_ = ready;
+        invalidateCachedDrawCommands();
+    }
+    void clearFillGpuResources() {
+        fillTextureResources_.clear();
+        fillPrimitiveResources_.clear();
+        fillResourcesReady_ = false;
+        invalidateCachedDrawCommands();
+    }
+    /// Drop the proxy entirely (real terrain took over, or the tile unloaded).
+    void clearFillContent() {
+        fillModel_.reset();
+        fillContentTransform_ = Mat4::identity();
+        fillLocalOrigin_ = Vec3::zero();
+        clearFillGpuResources();
+    }
+
     static int64_t estimateHeightmapBytes(const DecodedHeightmap& heightmap) {
         int64_t bytes = 0;
         bytes += static_cast<int64_t>(
@@ -424,6 +512,24 @@ public:
         if (surface_.heightmap) {
             bytes += estimateHeightmapBytes(*surface_.heightmap);
         }
+        if (fillModel_) {
+            bytes += fillModel_->byteSize();
+        }
+        for (const std::unique_ptr<Texture>& texture : fillTextureResources_) {
+            if (texture) {
+                bytes += static_cast<int64_t>(
+                    texture->width() * texture->height() * 4);
+            }
+        }
+        for (const GltfPrimitiveRenderResources& primitive :
+             fillPrimitiveResources_) {
+            if (primitive.vertexBuffer) {
+                bytes += static_cast<int64_t>(primitive.vertexBuffer->size());
+            }
+            if (primitive.indexBuffer) {
+                bytes += static_cast<int64_t>(primitive.indexBuffer->size());
+            }
+        }
         return bytes;
     }
 
@@ -446,6 +552,11 @@ public:
     }
 
     void releaseGpuResources() {
+        // NOTE: does NOT touch the fill proxy. prepareGltfContent() calls this
+        // when committing real content that is not yet GPU-ready; the fill must
+        // keep drawing across that window and is dropped only once the real
+        // mesh is renderable (markRenderContentReady) or the tile unloads
+        // (clearRenderContent / clearGltfContent).
         surface_.gpuVertexBuffer.reset();
         surface_.gpuIndexBuffer.reset();
         gltfTextureResources.clear();
@@ -492,6 +603,7 @@ public:
         gltfPrimitiveResources.clear();
         gltfResourcesReady_ = false;
         terrainRenderContent_ = false;
+        clearFillContent();
         invalidateCachedDrawCommands();
     }
 
@@ -515,6 +627,7 @@ public:
     }
 
     void clearGltfContent() {
+        clearFillContent();
         const bool wasGltfOwnedContent =
             gltfModel != nullptr ||
             terrainRenderContent_ ||
@@ -557,6 +670,14 @@ private:
     bool shadowRenderContentReady_ = false;
     std::vector<std::unique_ptr<Texture>> gltfTextureResources;
     std::vector<GltfPrimitiveRenderResources> gltfPrimitiveResources;
+
+    // Terrain fill (ellipsoid proxy) — separate from real gltf* content above.
+    std::unique_ptr<GltfModel> fillModel_;
+    Mat4 fillContentTransform_ = Mat4::identity();
+    Vec3 fillLocalOrigin_ = Vec3::zero();
+    bool fillResourcesReady_ = false;
+    std::vector<std::unique_ptr<Texture>> fillTextureResources_;
+    std::vector<GltfPrimitiveRenderResources> fillPrimitiveResources_;
 };
 
 } // namespace earth_engine
