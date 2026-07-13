@@ -198,6 +198,8 @@ public:
     int getPendingUploadCount() const;
     int64_t getPendingUploadBytes() const;
     int64_t getPeakPendingUploadBytes() const;
+    int64_t getPendingUploadBudgetBytes() const;
+    int64_t getPeakPendingUploadBudgetBytes() const;
 
     double getMaximumScreenSpaceError() const {
         return maximumScreenSpaceError_;
@@ -430,6 +432,11 @@ private:
     /// after overlay/provider destruction, matching cesium-native's depot
     /// lifetime model without letting callbacks dereference a dead provider.
     struct ProviderAsyncState {
+        struct SharedRasterImageRefs {
+            int64_t sizeBytes = 0;
+            uint32_t sourceCacheRefs = 0;
+            uint32_t pendingUploadRefs = 0;
+        };
         std::deque<PendingUpload> pendingUploads;
         mutable std::mutex mutex;
         std::unordered_map<std::string, SourceTileAsset>
@@ -445,8 +452,12 @@ private:
         std::deque<PendingSourceFallback> pendingSourceFallbacks;
         std::deque<std::pair<std::string, uint64_t>>
             sourceTileDepotCacheLru;
+        std::unordered_map<const DecodedImage*, SharedRasterImageRefs>
+            sharedRasterImageRefs;
         int64_t pendingUploadBytes = 0;
+        int64_t pinnedSharedPendingUploadBytes = 0;
         int64_t peakPendingUploadBytes = 0;
+        int64_t peakPendingUploadBudgetBytes = 0;
         int64_t sourceTileDepotCacheBytes = 0;
         int64_t peakSourceTileDepotCacheBytes = 0;
         int64_t subTileCacheBytes = 16 * 1024 * 1024;
@@ -494,6 +505,20 @@ private:
     static void compactSourceDepotCacheLruLocked(ProviderAsyncState& state);
     static void compactActiveMappedSourceSetOrderLocked(
         ProviderAsyncState& state);
+    static void retainPendingUploadImageBytesLocked(
+        ProviderAsyncState& state,
+        const PendingUpload& upload);
+    static void releasePendingUploadImageBytesLocked(
+        ProviderAsyncState& state,
+        const PendingUpload& upload);
+    static void retainSourceCacheImageBytesLocked(
+        ProviderAsyncState& state,
+        const std::shared_ptr<const DecodedImage>& image);
+    static void releaseSourceCacheImageBytesLocked(
+        ProviderAsyncState& state,
+        const std::shared_ptr<const DecodedImage>& image);
+    static void trackPendingUploadBudgetPeakLocked(ProviderAsyncState& state);
+    static void clearSourceDepotCacheLocked(ProviderAsyncState& state);
     static int64_t pendingUploadSizeBytes(const PendingUpload& upload);
     static void clearPendingUploads(ProviderAsyncState& state);
     std::shared_ptr<ProviderAsyncState> asyncState_ =

@@ -77,11 +77,14 @@ TilesetProviderDiagnosticsCollector::collect(
         snapshot.rasterSourceRequestsInFlight +=
             provider->getActiveRasterSourceRequests();
         snapshot.rasterPendingUploads += provider->getPendingUploadCount();
-        const int64_t pendingUploadBytes = provider->getPendingUploadBytes();
+        const int64_t pendingUploadBytes =
+            provider->getPendingUploadBudgetBytes();
+        const int64_t peakPendingUploadBytes =
+            provider->getPeakPendingUploadBudgetBytes();
         const int64_t cachedSourceTileBytes =
             provider->getCachedSourceTileBytes();
         snapshot.rasterPendingUploadBytes += pendingUploadBytes;
-        snapshot.peakRasterPendingUploadBytes += pendingUploadBytes;
+        snapshot.peakRasterPendingUploadBytes += peakPendingUploadBytes;
         snapshot.rasterCachedSourceTileBytes += cachedSourceTileBytes;
         snapshot.peakRasterCachedSourceTileBytes +=
             cachedSourceTileBytes;

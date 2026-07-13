@@ -593,7 +593,8 @@ TEST(
     ASSERT_TRUE(rasterTile);
     ASSERT_TRUE(rasterProvider->loadTile(*rasterTile));
     ASSERT_EQ(1, rasterProvider->getPendingUploadCount());
-    ASSERT_GT(rasterProvider->getPendingUploadBytes(), 0);
+    ASSERT_EQ(0, rasterProvider->getPendingUploadBytes());
+    ASSERT_GT(rasterProvider->getPendingUploadBudgetBytes(), 0);
     ASSERT_GT(rasterProvider->getCachedSourceTileBytes(), 0);
 
     Tileset tileset(
