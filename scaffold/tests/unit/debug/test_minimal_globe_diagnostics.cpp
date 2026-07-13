@@ -33,6 +33,8 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     diagnostics.frameMappedRasterTileLoadingCount = 2;
     diagnostics.frameMappedRasterTileCount = 5;
     diagnostics.rasterOverlayTilesLoading = 4;
+    diagnostics.rasterPendingUploadBytes = 12 * 1024;
+    diagnostics.rasterCachedSourceTileBytes = 34 * 1024;
 
     const std::string line =
         minimal_globe_demo::buildRenderEntryDiagnosticsLine(diagnostics);
@@ -48,6 +50,7 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     EXPECT_NE(std::string::npos, line.find("work 3/12"));
     EXPECT_NE(std::string::npos, line.find("mapped 2/5"));
     EXPECT_NE(std::string::npos, line.find("rasterLoad 4"));
+    EXPECT_NE(std::string::npos, line.find("rasterCpu 12k+34k"));
 }
 
 TEST(MinimalGlobeDiagnosticsTest, SummaryReportsRenderEntryReasonCounts) {

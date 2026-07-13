@@ -60,6 +60,10 @@ std::string buildRenderEntryDiagnosticsLine(const Diagnostics& diagnostics) {
         << " mapped " << diagnostics.frameMappedRasterTileLoadingCount
         << "/" << diagnostics.frameMappedRasterTileCount
         << " rasterLoad " << diagnostics.rasterOverlayTilesLoading
+        << " rasterCpu "
+        << diagnostics.rasterPendingUploadBytes / 1024
+        << "k+" << diagnostics.rasterCachedSourceTileBytes / 1024
+        << "k"
         << "\n";
     return out.str();
 }
