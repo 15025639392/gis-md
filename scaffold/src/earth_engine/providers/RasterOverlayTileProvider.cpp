@@ -1672,6 +1672,15 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     inFlight.try_emplace(
                         fallbackInFlightKey,
                         InFlightSourceTileAsset{});
+                if (waiterOwnerToken != 0) {
+                    auto& keys =
+                        self->state->sourceTileDepotFallbackKeysByOwner[
+                            waiterOwnerToken];
+                    if (std::find(keys.begin(), keys.end(), requestedKey) ==
+                        keys.end()) {
+                        keys.push_back(requestedKey);
+                    }
+                }
                 if (!inserted) {
                     it->second.waiters.push_back(
                         InFlightSourceTileAsset::WaiterEntry{
@@ -1900,9 +1909,10 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     [waiterOwnerToken](
                         const InFlightSourceTileAsset::WaiterEntry& waiter) {
                         return waiter.ownerToken == waiterOwnerToken;
-                    }),
+                }),
                 waiters.end());
         }
+        state->sourceTileDepotFallbackKeysByOwner.erase(waiterOwnerToken);
     }
 
 private:
@@ -2570,6 +2580,7 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
         }
         asyncState_->activeMappedSourceSets.clear();
         asyncState_->activeMappedSourceSetOrder.clear();
+        asyncState_->sourceTileDepotFallbackKeysByOwner.clear();
         asyncState_->pendingSourceFallbacks.clear();
         asyncState_->inFlightRequests.clear();
     }
@@ -2617,6 +2628,7 @@ void RasterOverlayTileProvider::setReady(bool ready) {
         clearSourceDepotInFlightLocked(*asyncState_);
         asyncState_->inFlightRequests.clear();
         asyncState_->activeMappedSourceSetOrder.clear();
+        asyncState_->sourceTileDepotFallbackKeysByOwner.clear();
         asyncState_->pendingSourceFallbacks.clear();
         // pendingUploads 的节流名额已在加载完成入队时释放，直接丢弃
         clearPendingUploads(*asyncState_);
@@ -2832,6 +2844,7 @@ void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
         asyncState_->sourceTileDepotCacheLru.clear();
         asyncState_->sourceTileDepotCacheBytes = 0;
         clearSourceDepotInFlightLocked(*asyncState_);
+        asyncState_->sourceTileDepotFallbackKeysByOwner.clear();
     }
     invalidateDirectRasterTileCache();
     refreshSourceAssetDepot();
@@ -2861,6 +2874,17 @@ void RasterOverlayTileProvider::abandonActiveSourceSets(bool mappedOnly) {
                 detachedInFlightWaiters.emplace_back(
                     it->second->getSourceKeys(),
                     it->second->getWaiterOwnerToken());
+                auto fallbackKeysIt =
+                    asyncState_->sourceTileDepotFallbackKeysByOwner.find(
+                        it->second->getWaiterOwnerToken());
+                if (fallbackKeysIt !=
+                    asyncState_->sourceTileDepotFallbackKeysByOwner.end()) {
+                    detachedInFlightWaiters.emplace_back(
+                        std::move(fallbackKeysIt->second),
+                        it->second->getWaiterOwnerToken());
+                    asyncState_->sourceTileDepotFallbackKeysByOwner.erase(
+                        fallbackKeysIt);
+                }
             }
             asyncState_->inFlightRequests.erase(it->first);
             activeSets.emplace_back(it->first, std::move(it->second));
@@ -3476,7 +3500,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         returnEmptyForAncestorOnly,
         !tile.isMappedRasterTile(),
         [state, throttleSlotReleased, cacheKey, tileWeak,
-         requestSourceDepotEpoch](
+         requestSourceDepotEpoch, sourceWaiterOwnerToken](
             std::unique_ptr<DecodedImage> composed,
             std::shared_ptr<const DecodedImage> sharedImage,
             Rectangle rectangle,
@@ -3486,6 +3510,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             state->activeMappedSourceSets.erase(cacheKey);
+            state->sourceTileDepotFallbackKeysByOwner.erase(
+                sourceWaiterOwnerToken);
             compactActiveMappedSourceSetOrderLocked(*state);
             if (!state->alive.load(std::memory_order_acquire)) {
                 releaseRasterThrottleSlotOnce(
@@ -3534,11 +3560,13 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             state->resolveDestructionIfComplete();
         },
         [state, throttleSlotReleased, cacheKey, tileWeak,
-         requestSourceDepotEpoch](
+         requestSourceDepotEpoch, sourceWaiterOwnerToken](
             std::vector<std::string> diagnostics) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             state->activeMappedSourceSets.erase(cacheKey);
+            state->sourceTileDepotFallbackKeysByOwner.erase(
+                sourceWaiterOwnerToken);
             compactActiveMappedSourceSetOrderLocked(*state);
             if (!state->alive.load(std::memory_order_acquire)) {
                 releaseRasterThrottleSlotOnce(

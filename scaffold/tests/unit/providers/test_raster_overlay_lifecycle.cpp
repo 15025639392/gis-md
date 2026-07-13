@@ -4424,6 +4424,58 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     MappedInvalidationDetachesIssuedParentFallbackWaiters) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(0, 3);
+
+    const TileKey child{scheme->id(), 3, 2, 2};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {child};
+
+    const Rectangle childBounds = scheme->tileToRectangle(child);
+    const Rectangle westHalf(
+        childBounds.west(),
+        childBounds.south(),
+        childBounds.west() + childBounds.width() * 0.5,
+        childBounds.north());
+
+    auto staleTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, westHalf),
+        256.0,
+        512.0).tile;
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(staleTile->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*staleTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(child, imagery.pending.front().key);
+
+    imagery.completeNext();
+    FrameResourceBudgetConfig fallbackConfig;
+    fallbackConfig.maxNetworkRequestsPerFrame = 20;
+    fallbackConfig.maxNetworkInflight = 20;
+    fallbackConfig.maxRasterNetworkRequestsPerFrame = 1;
+    fallbackConfig.maxRasterNetworkInflight = 8;
+    FrameResourceBudget fallbackBudget;
+    fallbackBudget.beginFrame(1, fallbackConfig);
+    EXPECT_EQ(0, provider.processPendingUploads(false, &fallbackBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(parent, imagery.pending.front().key);
+    EXPECT_GE(provider.getInFlightSourceWaiterCount(), 1);
+
+    provider.setMaximumScreenSpaceError(
+        provider.getMaximumScreenSpaceError() * 2.0);
+
+    EXPECT_EQ(0, provider.getInFlightSourceWaiterCount());
+
+    imagery.completeNext();
+    EXPECT_EQ(0, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_FALSE(provider.hasPendingWork());
+}
+
 TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

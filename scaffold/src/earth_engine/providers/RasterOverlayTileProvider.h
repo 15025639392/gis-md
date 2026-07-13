@@ -229,6 +229,14 @@ public:
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return static_cast<int>(asyncState_->sourceTileDepotInFlight.size());
     }
+    int getInFlightSourceWaiterCount() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        int total = 0;
+        for (const auto& [_, entry] : asyncState_->sourceTileDepotInFlight) {
+            total += static_cast<int>(entry.waiters.size());
+        }
+        return total;
+    }
     int getActiveMappedSourceSetOrderCount() const {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return static_cast<int>(asyncState_->activeMappedSourceSetOrder.size());
@@ -428,6 +436,8 @@ private:
             sourceTileDepotCache;
         std::unordered_map<std::string, InFlightSourceTileAsset>
             sourceTileDepotInFlight;
+        std::unordered_map<uint64_t, std::vector<TileKey>>
+            sourceTileDepotFallbackKeysByOwner;
         std::unordered_map<std::string, std::shared_ptr<MappedSourceImageSet>>
             activeMappedSourceSets;
         std::deque<std::string> activeMappedSourceSetOrder;
