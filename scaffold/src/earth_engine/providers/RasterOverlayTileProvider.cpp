@@ -2594,11 +2594,20 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
 void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
     ++mappedRasterTileEpoch_;
     abandonActiveMappedSourceSets();
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        auto& pendingUploads = asyncState_->pendingUploads;
+        pendingUploads.erase(
+            std::remove_if(
+                pendingUploads.begin(),
+                pendingUploads.end(),
+                [](const PendingUpload& upload) {
+                    return isMappedRasterCacheKey(upload.cacheKey);
+                }),
+            pendingUploads.end());
+    }
     for (auto it = tiles_.begin(); it != tiles_.end();) {
-        if (isMappedRasterCacheKey(it->first) &&
-            it->second &&
-            it->second->getState() !=
-                RasterOverlayTile::LoadState::Loading) {
+        if (isMappedRasterCacheKey(it->first) && it->second) {
             it = tiles_.erase(it);
         } else {
             ++it;
@@ -3528,6 +3537,16 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (auto it = tiles_.find(upload.cacheKey); it != tiles_.end()) {
             targetTiles.push_back(it->second);
         }
+        targetTiles.erase(
+            std::remove_if(
+                targetTiles.begin(),
+                targetTiles.end(),
+                [this](const TilePtr& target) {
+                    return !target ||
+                           (target->isMappedRasterTile() &&
+                            !ownsCurrentTile(*target));
+                }),
+            targetTiles.end());
         if (targetTiles.empty()) {
             // 节流名额已在加载完成入队时释放，这里只丢弃孤儿上传
             continue;

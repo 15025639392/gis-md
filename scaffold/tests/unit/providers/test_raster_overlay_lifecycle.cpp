@@ -8404,6 +8404,44 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(0, provider.getThrottledTilesCurrentlyLoading());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     MappedCacheInvalidationDropsStalePendingUploadsBeforeGpuUpload) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey coveredKey{scheme->id(), 1, 0, 0};
+    provider.setCoverageRectangle(scheme->tileToRectangle(coveredKey));
+    const Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+
+    RasterOverlayTileProvider::TilePtr tile =
+        provider
+            .mapRasterTilesToGeometryTile(
+                projectForProvider(provider, rootBounds),
+                256.0,
+                256.0)
+            .tile;
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(tile->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
+
+    std::weak_ptr<RasterOverlayTile> weakTile = tile;
+    tile.reset();
+
+    provider.setMaximumScreenSpaceError(1.0);
+
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(0, provider.getCachedTileCount());
+    EXPECT_TRUE(weakTile.expired());
+
+    provider.processPendingUploads(false);
+    EXPECT_EQ(0, uploaderPtr->uploadCount);
+}
+
 // abandon（setReady(false)/析构）与迟到的完成回调竞态时，节流名额只能
 // 释放一次：finishOneSource 置 completed 到回调 erase 之间条目仍在
 // activeMappedSourceSets，两侧都会认领释放权；双重释放会把后续在途
