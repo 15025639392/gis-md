@@ -3938,6 +3938,54 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     PendingUploadBudgetEvictionCompactsStaleSourceLruMetadata) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+    provider.setSubTileCacheBytes(4096);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+
+    for (int i = 0; i < 64; ++i) {
+        const double westT = 0.05 + 0.004 * static_cast<double>(i % 8);
+        const double southT = 0.05 + 0.02 * static_cast<double>(i / 8);
+        const Rectangle patch(
+            sourceBounds.west() + sourceBounds.width() * westT,
+            sourceBounds.south() + sourceBounds.height() * southT,
+            sourceBounds.west() + sourceBounds.width() * (westT + 0.20),
+            sourceBounds.south() + sourceBounds.height() * (southT + 0.20));
+
+        auto tile = provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, patch),
+            128.0,
+            128.0).tile;
+        ASSERT_NE(nullptr, tile);
+        ASSERT_TRUE(tile->isMappedRasterTile());
+        ASSERT_TRUE(provider.loadTile(*tile));
+        ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+    }
+
+    EXPECT_EQ(1, provider.getCachedSourceTileCount());
+    ASSERT_GT(provider.getCachedSourceTileLruEntryCount(), 1);
+
+    auto directTile = provider.getTile(sourceKey);
+    ASSERT_NE(nullptr, directTile);
+    ASSERT_TRUE(provider.loadTile(*directTile));
+    ASSERT_EQ(1, provider.getPendingUploadCount());
+    const int64_t pendingBytes = provider.getPendingUploadBytes();
+    ASSERT_GT(pendingBytes, 0);
+
+    provider.setSubTileCacheBytes(pendingBytes);
+
+    EXPECT_EQ(0, provider.getCachedSourceTileCount());
+    EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+    EXPECT_LE(provider.getCachedSourceTileLruEntryCount(), 32);
+}
+
+TEST(RasterOverlayLifecycleTest,
      SourceTileDepotRetriesRequestExceptionsLikeCesiumNativeSharedAssetDepot) {
     ThrowOnceImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

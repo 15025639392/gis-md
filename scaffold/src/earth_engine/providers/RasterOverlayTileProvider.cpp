@@ -2487,11 +2487,47 @@ void RasterOverlayTileProvider::enforceSourceDepotBudgetLocked(
     if (state.sourceTileDepotCacheBytes < 0) {
         state.sourceTileDepotCacheBytes = 0;
     }
+    compactSourceDepotCacheLruLocked(state);
 }
 
 void RasterOverlayTileProvider::clearSourceDepotInFlightLocked(
     ProviderAsyncState& state) {
     state.sourceTileDepotInFlight.clear();
+}
+
+void RasterOverlayTileProvider::compactSourceDepotCacheLruLocked(
+    ProviderAsyncState& state) {
+    constexpr size_t kLruSlackEntries = 32;
+    const size_t liveEntries = state.sourceTileDepotCache.size();
+    if (state.sourceTileDepotCacheLru.size() <=
+        liveEntries + kLruSlackEntries) {
+        return;
+    }
+    if (liveEntries > 0 &&
+        state.sourceTileDepotCacheLru.size() <=
+            liveEntries * 2 + kLruSlackEntries) {
+        return;
+    }
+
+    std::vector<std::pair<std::string, uint64_t>> compactedEntries;
+    compactedEntries.reserve(liveEntries);
+    for (const auto& [key, source] : state.sourceTileDepotCache) {
+        compactedEntries.emplace_back(key, source.generation);
+    }
+    std::sort(
+        compactedEntries.begin(),
+        compactedEntries.end(),
+        [](const auto& left, const auto& right) {
+            return std::tie(left.second, left.first) <
+                   std::tie(right.second, right.first);
+        });
+
+    std::deque<std::pair<std::string, uint64_t>> compactedLru;
+    compactedLru.insert(
+        compactedLru.end(),
+        std::make_move_iterator(compactedEntries.begin()),
+        std::make_move_iterator(compactedEntries.end()));
+    state.sourceTileDepotCacheLru.swap(compactedLru);
 }
 
 void RasterOverlayTileProvider::compactActiveMappedSourceSetOrderLocked(
