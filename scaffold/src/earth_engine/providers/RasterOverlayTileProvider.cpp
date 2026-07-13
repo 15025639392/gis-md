@@ -2512,6 +2512,7 @@ void RasterOverlayTileProvider::setCoverageRectangle(
             ++it;
         }
     }
+    discardPendingUploadsForMissingTiles();
     invalidateMappedRasterTileCache();
 }
 
@@ -2627,6 +2628,7 @@ void RasterOverlayTileProvider::invalidateDirectRasterTileCache() {
             ++it;
         }
     }
+    discardPendingUploadsForMissingTiles();
     asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -2687,6 +2689,19 @@ void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
         asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
         asyncState_->resolveDestructionIfComplete();
     }
+}
+
+void RasterOverlayTileProvider::discardPendingUploadsForMissingTiles() {
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    auto& pendingUploads = asyncState_->pendingUploads;
+    pendingUploads.erase(
+        std::remove_if(
+            pendingUploads.begin(),
+            pendingUploads.end(),
+            [this](const PendingUpload& upload) {
+                return tiles_.find(upload.cacheKey) == tiles_.end();
+            }),
+        pendingUploads.end());
 }
 
 int RasterOverlayTileProvider::getMaximumLevel() const {

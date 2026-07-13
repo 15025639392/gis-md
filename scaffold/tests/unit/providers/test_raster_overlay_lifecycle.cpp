@@ -958,6 +958,31 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     CoverageChangeDropsStaleDirectPendingUploadImmediately) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey firstKey{scheme->id(), 2, 1, 1};
+    const TileKey secondKey{scheme->id(), 2, 3, 3};
+    provider.setCoverageRectangle(scheme->tileToRectangle(firstKey));
+
+    auto firstTile = provider.getTile(firstKey);
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    ASSERT_EQ(1, provider.getPendingUploadCount());
+
+    provider.setCoverageRectangle(scheme->tileToRectangle(secondKey));
+
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(0, provider.getCachedTileCount());
+    provider.processPendingUploads(false);
+    EXPECT_EQ(0, uploaderPtr->uploadCount);
+}
+
+TEST(RasterOverlayLifecycleTest,
      DestroyedProviderIgnoresLateRasterFailureLikeCesiumNativeDepotLifetime) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
@@ -2697,6 +2722,29 @@ TEST(RasterOverlayLifecycleTest,
     ASSERT_TRUE(provider.loadTile(*currentTile));
     EXPECT_EQ(2u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     LevelRangeChangeDropsStaleDirectPendingUploadImmediately) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    auto staleTile = provider.getTile(sourceKey);
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(provider.loadTile(*staleTile));
+    ASSERT_EQ(1, provider.getPendingUploadCount());
+
+    provider.setLevelRange(3, 4);
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, staleTile->getState());
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    provider.processPendingUploads(false);
+    EXPECT_EQ(0, uploaderPtr->uploadCount);
 }
 
 TEST(RasterOverlayLifecycleTest,

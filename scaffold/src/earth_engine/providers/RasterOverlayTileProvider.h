@@ -334,6 +334,7 @@ private:
     void invalidateMappedRasterTileCache();
     void invalidateSourceAssetDepotCache();
     void abandonActiveMappedSourceSets();
+    void discardPendingUploadsForMissingTiles();
 
     ImageryProvider& provider_;
     const TileScheme& scheme_;
