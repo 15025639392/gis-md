@@ -1900,9 +1900,6 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         return waiter.ownerToken == waiterOwnerToken;
                     }),
                 waiters.end());
-            if (waiters.empty()) {
-                inFlight.erase(it);
-            }
         }
     }
 

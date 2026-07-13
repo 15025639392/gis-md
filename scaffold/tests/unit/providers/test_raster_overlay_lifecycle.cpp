@@ -5270,7 +5270,7 @@ TEST(RasterOverlayLifecycleTest,
         provider.getMaximumScreenSpaceError() * 2.0);
 
     EXPECT_EQ(RasterOverlayTile::LoadState::Failed, staleTile->getState());
-    EXPECT_EQ(0, provider.getInFlightSourceTileCount());
+    EXPECT_EQ(2, provider.getInFlightSourceTileCount());
     EXPECT_TRUE(provider.hasPendingWork());
 
     FrameResourceBudget secondBudget;
@@ -5316,6 +5316,52 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, provider.processPendingUploads(false));
     EXPECT_FALSE(provider.hasPendingWork());
     EXPECT_EQ(0, provider.getActiveMappedSourceSetOrderCount());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     AbandonedMappedSourceReuseKeepsOriginalSourceRequestInFlight) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+
+    auto staleTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, westHalf),
+        128.0,
+        128.0).tile;
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(staleTile->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*staleTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+    EXPECT_EQ(1, provider.getInFlightSourceTileCount());
+
+    provider.setMaximumScreenSpaceError(
+        provider.getMaximumScreenSpaceError() * 2.0);
+
+    auto remappedTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, westHalf),
+        128.0,
+        128.0).tile;
+    ASSERT_NE(nullptr, remappedTile);
+    ASSERT_TRUE(remappedTile->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*remappedTile));
+    EXPECT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(1, provider.getInFlightSourceTileCount());
+
+    imagery.completeNext();
+    EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
 }
 
 TEST(RasterOverlayLifecycleTest,
