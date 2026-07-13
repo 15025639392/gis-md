@@ -479,6 +479,7 @@ private:
         }
     };
     static void enforceSourceDepotBudgetLocked(ProviderAsyncState& state);
+    static void clearSourceDepotInFlightLocked(ProviderAsyncState& state);
     static void compactActiveMappedSourceSetOrderLocked(
         ProviderAsyncState& state);
     static int64_t pendingUploadSizeBytes(const PendingUpload& upload);

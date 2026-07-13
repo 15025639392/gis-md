@@ -5441,6 +5441,44 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     SourceDepotInvalidationDropsAbandonedInFlightEntriesImmediately) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+
+    auto staleTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, westHalf),
+        128.0,
+        128.0).tile;
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(staleTile->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*staleTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(1, provider.getInFlightSourceTileCount());
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    provider.setMaximumTextureSize(256);
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, staleTile->getState());
+    EXPECT_EQ(0, provider.getInFlightSourceTileCount());
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    imagery.completeNext();
+    EXPECT_EQ(0, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_FALSE(provider.hasPendingWork());
+}
+
+TEST(RasterOverlayLifecycleTest,
      CompletedMappedSourceSetDoesNotLeaveOrderEntriesBehind) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

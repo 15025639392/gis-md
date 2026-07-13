@@ -2489,6 +2489,11 @@ void RasterOverlayTileProvider::enforceSourceDepotBudgetLocked(
     }
 }
 
+void RasterOverlayTileProvider::clearSourceDepotInFlightLocked(
+    ProviderAsyncState& state) {
+    state.sourceTileDepotInFlight.clear();
+}
+
 void RasterOverlayTileProvider::compactActiveMappedSourceSetOrderLocked(
     ProviderAsyncState& state) {
     if (state.activeMappedSourceSetOrder.empty()) {
@@ -2573,6 +2578,7 @@ void RasterOverlayTileProvider::setReady(bool ready) {
         asyncState_->sourceTileDepotCache.clear();
         asyncState_->sourceTileDepotCacheLru.clear();
         asyncState_->sourceTileDepotCacheBytes = 0;
+        clearSourceDepotInFlightLocked(*asyncState_);
         asyncState_->inFlightRequests.clear();
         asyncState_->activeMappedSourceSetOrder.clear();
         asyncState_->pendingSourceFallbacks.clear();
@@ -2789,6 +2795,7 @@ void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
         asyncState_->sourceTileDepotCache.clear();
         asyncState_->sourceTileDepotCacheLru.clear();
         asyncState_->sourceTileDepotCacheBytes = 0;
+        clearSourceDepotInFlightLocked(*asyncState_);
     }
     invalidateDirectRasterTileCache();
     refreshSourceAssetDepot();
