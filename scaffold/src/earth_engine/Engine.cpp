@@ -92,8 +92,14 @@ void Engine::setAerialFogParams(float density, float startDistance) {
     aerialFogStartDistance_ = startDistance;
 }
 
-void Engine::render(double deltaSeconds) {
-    if (!surfaceCreated_ || !isReady()) { fprintf(stderr, "[Engine::render] BLOCKED: surface=%d ready=%d\n", surfaceCreated_, isReady()); return; }
+bool Engine::render(double deltaSeconds) {
+    if (!surfaceCreated_ || !isReady()) {
+        fprintf(stderr,
+                "[Engine::render] BLOCKED: surface=%d ready=%d\n",
+                surfaceCreated_,
+                isReady());
+        return false;
+    }
     const double frameStartMs = perf::nowMs();
 
     // 自动计时
@@ -120,6 +126,17 @@ void Engine::render(double deltaSeconds) {
         scene_->recordEngineTiming(
             Scene::EngineTimingScope::SceneUpdate,
             perf::nowMs() - startMs);
+    }
+    if (scene_->shouldHoldPresentationFrame()) {
+        scene_->recordEngineTiming(Scene::EngineTimingScope::BeginFrame, 0.0);
+        scene_->recordEngineTiming(Scene::EngineTimingScope::SceneRender, 0.0);
+        scene_->recordEngineTiming(Scene::EngineTimingScope::EndFrame, 0.0);
+        scene_->finishEngineFrame(perf::nowMs() - frameStartMs);
+        perf::logTiming(scene_->frameState().frameId,
+                        "Engine.render.total",
+                        scene_->diagnostics().engineFrameCpuMs,
+                        "hold=1 draw=0 tiles=0");
+        return false;
     }
     {
         const double startMs = perf::nowMs();
@@ -171,9 +188,10 @@ void Engine::render(double deltaSeconds) {
             Scene::EngineTimingScope::BeginFrame,
             perf::nowMs() - startMs);
     }
+    bool scenePresented = false;
     {
         const double startMs = perf::nowMs();
-        scene_->render();
+        scenePresented = scene_->render();
         scene_->recordEngineTiming(
             Scene::EngineTimingScope::SceneRender,
             perf::nowMs() - startMs);
@@ -181,7 +199,7 @@ void Engine::render(double deltaSeconds) {
     {
         const double startMs = perf::nowMs();
         device_->endPass();
-        if (offscreenPassActive_) {
+        if (offscreenPassActive_ && scenePresented) {
             // aerial fog 每帧参数:near/far + 相机基 + 太阳,喂给 shader 逐
             // 像素算天空色作雾色(与大气 pass 同源→随高度/方向/太阳自然同调),
             // 密度随高度/视角在 shader 内衰减。密度/起点走 SDK 可配值。
@@ -231,18 +249,20 @@ void Engine::render(double deltaSeconds) {
     const Diagnostics& diag = scene_->diagnostics();
     char detail[256];
     std::snprintf(detail, sizeof(detail),
-        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d",
+        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d",
         diag.engineBeginFrameMs,
         diag.sceneUpdateMs,
         diag.sceneRenderMs,
         diag.renderSubmitMs,
         diag.engineEndFrameMs,
         diag.drawCalls,
-        diag.visibleTiles);
+        diag.visibleTiles,
+        scenePresented ? 0 : 1);
     perf::logTiming(scene_->frameState().frameId,
                     "Engine.render.total",
                     diag.engineFrameCpuMs,
                     detail);
+    return scenePresented;
 }
 
 void Engine::onInputEvent(const InputEvent& event) {

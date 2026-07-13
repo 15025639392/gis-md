@@ -54,9 +54,10 @@ public:
 
     // ---- 渲染 ----
 
-    /// 渲染一帧
+    /// 渲染一帧。
+    /// 返回 false 表示本帧只推进加载/状态、不呈现新 GPU 帧，应保留上一帧。
     /// @param deltaSeconds 上一帧到现在的秒数（0 = 自动计算）
-    void render(double deltaSeconds = 0.0);
+    bool render(double deltaSeconds = 0.0);
 
     // ---- 输入事件 ----
 

@@ -8,6 +8,7 @@
 #include "../tiling/TileOcclusionResolver.h"
 #include "../tiling/TileRenderFrameContext.h"
 #include "../tiling/TileRenderReferenceReleaser.h"
+#include "../tiling/TileRasterOverlayReadinessPolicy.h"
 #include "../tiling/TileSelectionStateResetter.h"
 #include "../tiling/TileSelectionWorker.h"
 #include "../tiling/TileSoftwareOcclusionPolicy.h"
@@ -15,6 +16,7 @@
 #include "../tiling/TilesetRenderFrameExecutor.h"
 #include "../tiling/TilesetUpdateFrameFacade.h"
 #include "../layers/ActivatedRasterOverlay.h"
+#include "../layers/RasterOverlay.h"
 #include "../debug/PlatformLog.h"
 
 #include <memory>
@@ -361,6 +363,59 @@ void Tileset::buildRenderCommands(Renderer& renderer,
             cacheOwnership_},
         renderer,
         commands);
+}
+
+bool Tileset::shouldHoldPresentationFrame() const {
+    const bool hasSelectedSurfaceWork =
+        !tilePlan_.visibleTiles.empty() || !tilePlan_.tilesFadingOut.empty();
+    if (!hasSelectedSurfaceWork ||
+        !requiresBaseImageryPresentationSurface()) {
+        return false;
+    }
+
+    if (tilePlan_.renderEntries.empty()) {
+        return true;
+    }
+
+    return !plannedRenderEntriesHaveRequiredBaseImagery();
+}
+
+bool Tileset::requiresBaseImageryPresentationSurface() const {
+    const bool hasSelectedSurfaceWork =
+        !tilePlan_.visibleTiles.empty() || !tilePlan_.tilesFadingOut.empty();
+    if (!hasSelectedSurfaceWork) {
+        return false;
+    }
+
+    for (const ActivatedRasterOverlay* activeOverlay : rasterOverlays_) {
+        if (!activeOverlay || !activeOverlay->visible()) {
+            continue;
+        }
+        const RasterOverlay& overlay = activeOverlay->getOverlay();
+        if (overlay.role() == RasterOverlayRole::BaseImagery &&
+            overlay.blocksCompleteRenderable()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool Tileset::plannedRenderEntriesHaveRequiredBaseImagery() const {
+    for (const TileRenderEntry& entry : tilePlan_.renderEntries) {
+        const TilesetTile* renderTile =
+            tileRegistry_.findTile(entry.renderKey);
+        if (!renderTile) {
+            return false;
+        }
+        if (!TileRasterOverlayReadinessPolicy::
+                terrainSurfaceImageryDrawableReady(
+                    *renderTile,
+                    rasterOverlays_)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void Tileset::releaseRenderReferences() {

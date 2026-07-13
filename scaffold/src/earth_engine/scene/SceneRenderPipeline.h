@@ -26,6 +26,7 @@ class SceneRenderPipeline {
 public:
     struct Result {
         Diagnostics diagnostics;
+        bool presentable = true;
     };
 
     struct Context {
@@ -57,6 +58,7 @@ private:
                          double& surfaceDiagnosticsMs,
                          double& validateMs) const;
     void aggregateDiagnostics(Context& context, double& diagnosticsMs) const;
+    bool shouldHoldPresentationAfterCommandBuild(const Context& context) const;
     void releaseRenderReferences(Context& context) const;
 };
 

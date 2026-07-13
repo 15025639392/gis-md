@@ -44,12 +44,15 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         4.0,
         2.0,
     };
+    // Android demo budget: keep visible detail unchanged, but do not retain the
+    // desktop/cesium-native 512MB off-screen tile cache on a phone.
+    config.tileset.maximumCachedBytes = 192LL * 1024 * 1024;
     // 运动期跳过快速划走的瓦片网络请求(cesium-js cullRequestsWhileMoving)。
     // 拖动/缩放中减少瞬时加载洪泛,相机停下恢复正常加载。
     config.tileset.cullRequestsWhileMoving = true;
-    // 地形 fill 代理仍在做真机预算与可视化链路验证；当前先保持关闭，
-    // 避免在渲染线程集中创建代理网格和 GPU buffer 造成交互卡顿。
-    config.tileset.enableTerrainFillProxy = false;
+    // 地形 fill 代理:ion 地形协商/根瓦片加载期间,先把已到的影像贴到椭球代理,
+    // 真实 quantized-mesh 到达后再替换,避免 provider 切换窗口只剩天空。
+    config.tileset.enableTerrainFillProxy = true;
     // NOTE: LOD-transition alpha cross-fade (enableLodTransitionPeriod) is
     // available via SceneTilesetConfig but left OFF here. The current built-in
     // cross-fade fades parent+child simultaneously, so mid-transition the black

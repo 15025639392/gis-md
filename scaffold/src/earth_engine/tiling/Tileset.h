@@ -153,6 +153,8 @@ public:
                              uint64_t renderFrameId = 0);
 
     const TilePlan& tilePlan() const { return tilePlan_; }
+    bool shouldHoldPresentationFrame() const;
+    bool requiresBaseImageryPresentationSurface() const;
     const TileScheme& tileScheme() const { return *tileScheme_; }
     int cachedHeightmapTerrainTilesForLegacySurfacePath() const;
     int pendingRequests() const;
@@ -212,6 +214,7 @@ private:
     TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame(
         IPrepareRendererResources* pPrepRenderer);
     bool hasTerrainQuadtree() const;
+    bool plannedRenderEntriesHaveRequiredBaseImagery() const;
     TileLoadRequestOutcome requestMissingContent(
         const std::vector<TileLoadRequest>& loadRequests,
         FrameResourceBudget* budget = nullptr,

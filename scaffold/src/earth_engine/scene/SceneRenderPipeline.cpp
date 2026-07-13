@@ -36,6 +36,12 @@ int countTerrainSurfaceCommands(const RenderCommandList& commands) {
             isTerrainSurfaceCommand));
 }
 
+bool isTerrainSurfaceCommandWithBaseImagery(const RenderCommand& command) {
+    return isTerrainSurfaceCommand(command) &&
+           command.gltfRasterOverlayTextureCount > 0 &&
+           command.surfaceBaseRasterState > 0;
+}
+
 int terrainRenderEntryCount(const Tileset* tileset) {
     if (!tileset) {
         return 0;
@@ -123,14 +129,20 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     context.diagnostics.renderCommandBuildMs =
         perf::nowMs() - renderStartMs;
 
-    if (context.beforeSubmit) {
+    const bool presentable = !shouldHoldPresentationAfterCommandBuild(context);
+
+    if (context.beforeSubmit && presentable) {
         context.beforeSubmit();
     }
 
-    const double submitStartMs = perf::nowMs();
-    context.renderer.submit(context.commands);
-    context.diagnostics.renderSubmitMs =
-        perf::nowMs() - submitStartMs;
+    if (presentable) {
+        const double submitStartMs = perf::nowMs();
+        context.renderer.submit(context.commands);
+        context.diagnostics.renderSubmitMs =
+            perf::nowMs() - submitStartMs;
+    } else {
+        context.diagnostics.renderSubmitMs = 0.0;
+    }
 
     releaseRenderReferences(context);
 
@@ -154,17 +166,18 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
     char detail[192];
     std::snprintf(detail, sizeof(detail),
-        "build=%.2f submit=%.2f draw=%d surface=%d mesh=%d",
+        "build=%.2f submit=%.2f draw=%d surface=%d mesh=%d hold=%d",
         context.diagnostics.renderCommandBuildMs,
         context.diagnostics.renderSubmitMs,
         context.diagnostics.drawCalls,
         context.diagnostics.renderSurfaceTiles,
-        context.diagnostics.surfaceMeshCount);
+        context.diagnostics.surfaceMeshCount,
+        presentable ? 0 : 1);
     perf::logTiming(context.frameState.frameId,
                     "Scene.render.total",
                     perf::nowMs() - renderStartMs,
                     detail);
-    return Result{context.diagnostics};
+    return Result{context.diagnostics, presentable};
 }
 
 void SceneRenderPipeline::reserveCommands(Context& context) const {
@@ -359,6 +372,26 @@ void SceneRenderPipeline::aggregateDiagnostics(
     context.diagnostics.terrainSurfaceCommandsSubmitted =
         countTerrainSurfaceCommands(context.commands);
     diagnosticsMs = perf::nowMs() - startMs;
+}
+
+bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
+    const Context& context) const {
+    const Tileset* terrainTileset = context.terrainTileset;
+    if (!terrainTileset ||
+        !terrainTileset->requiresBaseImageryPresentationSurface()) {
+        return false;
+    }
+    bool hasTerrainSurfaceCommand = false;
+    for (const RenderCommand& command : context.commands) {
+        if (!isTerrainSurfaceCommand(command)) {
+            continue;
+        }
+        hasTerrainSurfaceCommand = true;
+        if (!isTerrainSurfaceCommandWithBaseImagery(command)) {
+            return true;
+        }
+    }
+    return !hasTerrainSurfaceCommand;
 }
 
 void SceneRenderPipeline::releaseRenderReferences(Context& context) const {

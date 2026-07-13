@@ -7,6 +7,7 @@
 #include "SceneRenderPipeline.h"
 #include "SceneTelemetryCoordinator.h"
 #include "SceneTilesetCoordinator.h"
+#include "PresentationTrace.h"
 #include "../camera/CameraController.h"
 #include "../environment/SkyGradient.h"
 #include "../interaction/InputEvent.h"
@@ -15,8 +16,62 @@
 #include "../tiling/Tileset.h"
 
 #include <utility>
+#include <algorithm>
+#include <cmath>
 
 namespace earth_engine {
+namespace {
+
+Vec3 traceArrayToVec3(const std::array<double, 3>& values) {
+    return Vec3(values[0], values[1], values[2]);
+}
+
+bool cameraStillMatchesPresentedFrame(const FrameState& frameState,
+                                      const PresentationTrace& trace) {
+    if (!frameState.camera || trace.camera.frameId == 0) {
+        return false;
+    }
+
+    const Camera& camera = *frameState.camera;
+    const Vec3 previousPosition = traceArrayToVec3(trace.camera.position);
+    const Vec3 previousDirection = traceArrayToVec3(trace.camera.direction);
+    const double heightScale =
+        std::max(1000.0, std::abs(trace.camera.cameraHeightMeters));
+    if (camera.position().distanceTo(previousPosition) > heightScale * 0.05) {
+        return false;
+    }
+
+    constexpr double kTwoDegreesCos = 0.9993908270190958;
+    return camera.direction().normalized().dot(
+               previousDirection.normalized()) >= kTwoDegreesCos;
+}
+
+bool shouldHoldTerrainCoverageTakeover(
+    const Tileset& primaryTileset,
+    const FrameState& frameState,
+    const PresentationTrace& previousTrace) {
+    if (!primaryTileset.requiresBaseImageryPresentationSurface() ||
+        previousTrace.tilesets.empty() ||
+        !cameraStillMatchesPresentedFrame(frameState, previousTrace)) {
+        return false;
+    }
+
+    const PresentationTilesetTrace& previousTerrain =
+        previousTrace.tilesets.front();
+    const int previousEntryCount =
+        static_cast<int>(previousTerrain.renderEntries.size());
+    const int currentEntryCount =
+        static_cast<int>(primaryTileset.tilePlan().renderEntries.size());
+    if (previousEntryCount < 2 || currentEntryCount == 0) {
+        return false;
+    }
+
+    const int minimumTakeoverEntries =
+        std::min(previousEntryCount, 32);
+    return currentEntryCount < minimumTakeoverEntries;
+}
+
+} // namespace
 
 Scene::Scene()
     : camera_(std::make_unique<Camera>()),
@@ -127,8 +182,8 @@ const PresentationTrace& Scene::presentationTrace() const {
     return telemetry_->presentationTrace();
 }
 
-void Scene::render() {
-    if (!renderer_ || !renderPipeline_ || !isReady()) return;
+bool Scene::render() {
+    if (!renderer_ || !renderPipeline_ || !isReady()) return false;
 
     SceneRenderPipeline::Result renderResult =
         renderPipeline_->render(SceneRenderPipeline::Context{
@@ -144,6 +199,21 @@ void Scene::render() {
         layers_->vectorLayers(),
         [this]() { updatePresentationTrace(); }});
     telemetry_->replaceRenderDiagnostics(renderResult.diagnostics);
+    return renderResult.presentable;
+}
+
+bool Scene::shouldHoldPresentationFrame() const {
+    const Tileset* primaryTileset = tilesets_->primary();
+    if (!primaryTileset) {
+        return false;
+    }
+    if (primaryTileset->shouldHoldPresentationFrame()) {
+        return true;
+    }
+    return shouldHoldTerrainCoverageTakeover(
+        *primaryTileset,
+        frameRuntime_.frameState(),
+        telemetry_->presentationTrace());
 }
 
 void Scene::updatePresentationTrace() {

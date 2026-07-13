@@ -49,7 +49,8 @@ public:
 
     void setViewport(int widthPixels, int heightPixels, float dpr = 1.0f);
     void update(double deltaSeconds);
-    void render();
+    bool render();
+    bool shouldHoldPresentationFrame() const;
     void setSelectorViewOverride(
         std::vector<SelectorView> selectorViews);
     void clearSelectorViewOverride();

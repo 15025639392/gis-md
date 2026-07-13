@@ -229,7 +229,8 @@ static void renderFrame() {
 
     // 环境系统：时间步进，render 中 update() 计算当前帧天空色
     gEngine->advanceTime(dt);
-    gEngine->render(0.0);  // auto-delta（内部 beginFrame→update 计算 clearColor→render→endFrame）
+    const bool presented =
+        gEngine->render(0.0);  // auto-delta（内部 update；必要时 beginFrame→render→endFrame）
 
     // [GESTDIAG] 发布当前手势锚点屏幕投影（用当前帧相机，故标记随相机每帧跟随）。
     {
@@ -255,8 +256,10 @@ static void renderFrame() {
 
     gHeadingRadians = static_cast<float>(gEngine->cameraHeadingRadians());
 
-    eglSwapBuffers(gDisplay, gSurface);
-    ++gFrameCount;
+    if (presented) {
+        eglSwapBuffers(gDisplay, gSurface);
+        ++gFrameCount;
+    }
 }
 
 // ============================================================

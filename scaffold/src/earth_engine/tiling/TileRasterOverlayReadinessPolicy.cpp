@@ -1,9 +1,11 @@
 #include "TileRasterOverlayReadinessPolicy.h"
 
 #include "RasterMappedToTilesetTile.h"
+#include "SurfaceRasterBinding.h"
 #include "TileLoadState.h"
 #include "TilesetTile.h"
 
+#include "../content/GltfModel.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
 
@@ -33,6 +35,52 @@ bool TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
     }
 
     return true;
+}
+
+bool TileRasterOverlayReadinessPolicy::requiredBaseImageryDrawableReady(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    for (size_t i = 0; i < rasterOverlays.size(); ++i) {
+        const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
+        if (!activeOverlay || !activeOverlay->visible()) {
+            continue;
+        }
+        const RasterOverlay& overlay = activeOverlay->getOverlay();
+        if (overlay.role() != RasterOverlayRole::BaseImagery ||
+            !overlay.blocksCompleteRenderable()) {
+            continue;
+        }
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlayState.mappingAt(i);
+        const SurfaceRasterBinding binding =
+            chooseSurfaceRasterBinding(mapped);
+        if (!rasterOverlayBindingAllowedByPolicy(
+                activeOverlay,
+                mapped,
+                binding)) {
+            return false;
+        }
+        const int32_t textureCoordinateID =
+            mapped ? mapped->getTextureCoordinateID() : -1;
+        if (textureCoordinateID < 0 ||
+            textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool TileRasterOverlayReadinessPolicy::terrainSurfaceImageryDrawableReady(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    const TileRenderContentState& renderContent = tile.content.renderContent;
+    if (!renderContent.isTerrainRenderContent() &&
+        !renderContent.drawIsTerrainContent()) {
+        return true;
+    }
+
+    return requiredBaseImageryDrawableReady(tile, rasterOverlays);
 }
 
 std::vector<size_t> TileRasterOverlayReadinessPolicy::processingOrder(

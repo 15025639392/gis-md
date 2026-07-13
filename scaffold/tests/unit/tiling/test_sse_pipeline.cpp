@@ -5893,7 +5893,7 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
               !childMapped.isMoreDetailAvailable(),
           "Tileset: failed pending child raster converges to ancestor without more detail");
 }
-void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
+void testTilesetBlockingBaseImagerySkipsPlaceholderSurface() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -5917,8 +5917,6 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     auto gltfModel = makeQuadTerrainGltfModel(preciseRectangle);
     gltfModel->rasterOverlayDetails =
         makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
-    auto waterMaskTexture = std::make_unique<DummyTexture>(256, 256);
-    Texture* rawWaterMaskTexture = waterMaskTexture.get();
     root->content.renderContent.prepareGltfContent(
         std::move(gltfModel), Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
@@ -5927,11 +5925,6 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     resources.indexBuffer = std::make_unique<DummyBuffer>(12);
     resources.indexCount = 6;
     resources.vertexCount = 4;
-    resources.hasTerrainWaterMaskMetadata = true;
-    resources.terrainOnlyLand = false;
-    resources.terrainOnlyWater = false;
-    resources.terrainWaterMaskTexture = rawWaterMaskTexture;
-    resources.terrainWaterMaskTranslationScale = {0.25f, 0.5f, 0.5f, 0.0f};
     root->content.renderContent.addGltfPrimitiveResource(std::move(resources));
     root->content.renderContent.markRenderContentReady();
     root->geometricError = 100.0;
@@ -5948,27 +5941,8 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
         *root,
         commands,
         1.0f);
-    check(!commands.empty() &&
-              commands.front().kind == RenderCommandKind::GltfPrimitive &&
-              commands.front().gltfRasterOverlayTextureCount == 0,
-          "Tileset: blocking base imagery draws surface geometry with the shared placeholder texture");
-    check(!commands.empty() &&
-              commands.front().gltfHasWaterMask == 1.0f &&
-              commands.front().gltfWaterMaskState[0] == 0.0f &&
-              commands.front().gltfWaterMaskState[1] == 0.0f &&
-              commands.front().gltfWaterMaskState[2] == 1.0f &&
-              std::abs(commands.front().gltfWaterMaskTranslationScale[0] -
-                       0.25f) < 1e-6f &&
-              std::abs(commands.front().gltfWaterMaskTranslationScale[1] -
-                       0.5f) < 1e-6f &&
-              std::abs(commands.front().gltfWaterMaskTranslationScale[2] -
-                       0.5f) < 1e-6f,
-          "Tileset: surface command carries quantized-mesh water mask state");
-    check(commands.front().textures.size() >
-              static_cast<size_t>(kGltfWaterMaskTextureSlot) &&
-              commands.front().textures[kGltfWaterMaskTextureSlot] ==
-                  rawWaterMaskTexture,
-          "Tileset: surface command binds quantized-mesh water mask texture to unit 5");
+    check(commands.empty(),
+          "Tileset: blocking base imagery does not draw a placeholder terrain shell before a drawable raster exists");
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: missing blocking base imagery keeps strict complete renderable false");
 }
@@ -11294,10 +11268,10 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
         nullptr,
         [](TilesetTile&) {});
     check(bytesBeforeUnload > 0 &&
-              manager.totalBytesUsed() == bytesBeforeUnload &&
+              manager.totalBytesUsed() < bytesBeforeUnload &&
               manager.cacheBytesDirty() &&
               !manager.unloadQueue().contains(cacheKey),
-          "TileContentCacheManager: smoothing preserves state");
+          "TileContentCacheManager: smoothing unloads but defers full byte refresh");
 }
 void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     TileContentCacheManager manager;
@@ -23156,6 +23130,9 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *child);
+    check(child->rasterOverlayState.hasDrawableReadyMapping(0),
+          "Scene: imagery-only fallback diagnostics selected child has ancestor base imagery");
     check(!root->hasSurfaceDrawable(),
           "Scene: imagery-only fallback diagnostics starts before ancestor mesh is ready");
     check(child->hasSurfaceDrawable(),
@@ -23175,6 +23152,288 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 1,
           "Scene: imagery-only ancestor fallback draws selected surface");
 }
+
+void testScenePresentationHoldsWhenVisibleTerrainHasNoDrawableSurfaceEntry() {
+    DummyRenderDevice device;
+    Scene scene;
+    check(scene.setRenderDevice(&device),
+          "Scene: presentation hold initializes renderer");
+    check(!scene.shouldHoldPresentationFrame(),
+          "Scene: presentation hold is disabled without a primary terrain tileset");
+
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    check(root != nullptr,
+          "Scene: presentation hold creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
+    check(!terrainRaw->tilePlan().visibleTiles.empty() &&
+              terrainRaw->tilePlan().renderEntries.empty(),
+          "Scene: presentation hold fixture has visible terrain but no drawable surface entry");
+
+    scene.setTileset(std::move(terrainTileset));
+    check(scene.shouldHoldPresentationFrame(),
+          "Scene: presentation hold preserves the previous frame until base imagery is drawable");
+}
+
+void testScenePresentationHoldsWhenPlannedTerrainMixesDrawableAndMissingBaseImagery() {
+    DummyRenderDevice device;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(*terrainRaw, childKey);
+    check(root != nullptr && child != nullptr,
+          "Scene: mixed presentation hold creates terrain tiles");
+    if (!root || !child) return;
+
+    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
+    TilesetTestAccess::ensureTileMesh(*terrainRaw, *child);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Scene: mixed presentation hold creates root base imagery tile");
+    if (!rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    check(root->rasterOverlayState.hasDrawableReadyMapping(0),
+          "Scene: mixed presentation hold fixture has one drawable base-imagery tile");
+    check(!child->rasterOverlayState.hasDrawableReadyMapping(0),
+          "Scene: mixed presentation hold fixture leaves one terrain tile without base imagery");
+
+    TilePlan& plan = TilesetTestAccess::mutableTilePlan(*terrainRaw);
+    plan = TilePlan{};
+    plan.visibleTiles.push_back(rootKey);
+    plan.visibleTiles.push_back(childKey);
+    TileRenderEntry rootEntry;
+    rootEntry.selectedKey = rootKey;
+    rootEntry.renderKey = rootKey;
+    rootEntry.reason = TileRenderEntryReason::Direct;
+    rootEntry.selectedThisFrame = true;
+    TileRenderEntry childEntry;
+    childEntry.selectedKey = childKey;
+    childEntry.renderKey = childKey;
+    childEntry.reason = TileRenderEntryReason::Direct;
+    childEntry.selectedThisFrame = true;
+    plan.renderEntries.push_back(rootEntry);
+    plan.renderEntries.push_back(childEntry);
+    check(terrainRaw->shouldHoldPresentationFrame(),
+          "Scene: presentation hold rejects mixed terrain plans with any missing base imagery");
+}
+
+void testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers() {
+    DummyRenderDevice device;
+    Scene scene;
+    check(scene.setRenderDevice(&device),
+          "Scene: terrain takeover coverage hold initializes renderer");
+    scene.setViewport(800, 600, 1.0f);
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto oldBaseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay oldBaseActivated(*oldBaseOverlay);
+    auto oldTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&oldBaseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* oldRaw = oldTileset.get();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* oldRoot = TilesetTestAccess::ensureTile(*oldRaw, rootKey);
+    TilesetTile* oldChild = TilesetTestAccess::ensureTile(*oldRaw, childKey);
+    check(oldRoot != nullptr && oldChild != nullptr,
+          "Scene: terrain takeover fixture creates previous tiles");
+    if (!oldRoot || !oldChild) return;
+    TilesetTestAccess::ensureTileMesh(*oldRaw, *oldRoot);
+    TilesetTestAccess::ensureTileMesh(*oldRaw, *oldChild);
+    TilesetTestAccess::prefetchRasterOverlays(*oldRaw, *oldRoot);
+    RasterMappedToTilesetTile* oldRootMapped =
+        oldRoot->rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* oldRootRaster =
+        oldRootMapped ? oldRootMapped->getLoadingTile() : nullptr;
+    check(oldRootRaster != nullptr,
+          "Scene: terrain takeover fixture creates previous base imagery");
+    if (!oldRootRaster) return;
+    oldRootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    oldRootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*oldRaw, *oldRoot);
+    TilesetTestAccess::prefetchRasterOverlays(*oldRaw, *oldChild);
+    check(oldRoot->rasterOverlayState.hasDrawableReadyMapping(0) &&
+              oldChild->rasterOverlayState.hasDrawableReadyMapping(0),
+          "Scene: terrain takeover fixture previous tiles are drawable with base imagery");
+
+    scene.setTileset(std::move(oldTileset));
+    scene.update(1.0 / 60.0);
+    TilePlan& oldPlan = TilesetTestAccess::mutableTilePlan(*oldRaw);
+    oldPlan = TilePlan{};
+    oldPlan.visibleTiles.push_back(rootKey);
+    oldPlan.visibleTiles.push_back(childKey);
+    TileRenderEntry rootEntry;
+    rootEntry.selectedKey = rootKey;
+    rootEntry.renderKey = rootKey;
+    rootEntry.reason = TileRenderEntryReason::Direct;
+    rootEntry.selectedThisFrame = true;
+    TileRenderEntry childEntry;
+    childEntry.selectedKey = childKey;
+    childEntry.renderKey = childKey;
+    childEntry.reason = TileRenderEntryReason::Direct;
+    childEntry.selectedThisFrame = true;
+    oldPlan.renderEntries.push_back(rootEntry);
+    oldPlan.renderEntries.push_back(childEntry);
+    check(scene.render(),
+          "Scene: terrain takeover fixture presents previous detailed terrain");
+    check(scene.presentationTrace().tilesets.size() == 1u &&
+              scene.presentationTrace().tilesets.front().renderEntries.size() == 2u,
+          "Scene: terrain takeover fixture records previous presented coverage");
+
+    auto newBaseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay newBaseActivated(*newBaseOverlay);
+    auto newTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&newBaseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* newRaw = newTileset.get();
+    TilesetTile* newRoot = TilesetTestAccess::ensureTile(*newRaw, rootKey);
+    check(newRoot != nullptr,
+          "Scene: terrain takeover fixture creates replacement root");
+    if (!newRoot) return;
+    TilesetTestAccess::ensureTileMesh(*newRaw, *newRoot);
+    TilesetTestAccess::prefetchRasterOverlays(*newRaw, *newRoot);
+    RasterMappedToTilesetTile* newRootMapped =
+        newRoot->rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* newRootRaster =
+        newRootMapped ? newRootMapped->getLoadingTile() : nullptr;
+    check(newRootRaster != nullptr,
+          "Scene: terrain takeover fixture creates replacement base imagery");
+    if (!newRootRaster) return;
+    newRootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    newRootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*newRaw, *newRoot);
+    check(newRoot->rasterOverlayState.hasDrawableReadyMapping(0),
+          "Scene: terrain takeover fixture replacement root has drawable base imagery");
+
+    scene.setTileset(std::move(newTileset));
+    scene.update(1.0 / 60.0);
+    TilePlan& newPlan = TilesetTestAccess::mutableTilePlan(*newRaw);
+    newPlan = TilePlan{};
+    newPlan.visibleTiles.push_back(rootKey);
+    newPlan.renderEntries.push_back(rootEntry);
+    check(!newRaw->shouldHoldPresentationFrame(),
+          "Scene: terrain takeover fixture replacement root passes base imagery hold");
+    check(scene.shouldHoldPresentationFrame(),
+          "Scene: terrain takeover holds a same-camera replacement that would reduce visible coverage");
+}
+
+void testScenePresentationHoldsWhenPlannedTerrainLacksBaseImageryCommand() {
+    DummyRenderDevice device;
+    Scene scene;
+    check(scene.setRenderDevice(&device),
+          "Scene: command-level presentation hold initializes renderer");
+    scene.setViewport(800, 600, 1.0f);
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = TilesetTestAccess::makeContentTerrainTilesetPtr(
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    check(root != nullptr,
+          "Scene: command-level presentation hold creates root terrain tile");
+    if (!root) return;
+
+    auto model = makeFlatGeographicTerrainGltfModel(root->bounds, 0.0);
+    root->content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources resources;
+    resources.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    resources.indexBuffer = std::make_unique<DummyBuffer>(12);
+    resources.indexCount = 6;
+    resources.vertexCount = 4;
+    root->content.renderContent.addGltfPrimitiveResource(
+        std::move(resources));
+    root->markRenderContentDone();
+
+    scene.setTileset(std::move(terrainTileset));
+    scene.update(1.0 / 60.0);
+    TilePlan& plan = TilesetTestAccess::mutableTilePlan(*terrainRaw);
+    plan = TilePlan{};
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderEntry entry;
+    entry.selectedKey = rootKey;
+    entry.renderKey = rootKey;
+    entry.reason = TileRenderEntryReason::Direct;
+    entry.selectedThisFrame = true;
+    plan.renderEntries.push_back(entry);
+
+    const bool presented = scene.render();
+    check(!presented,
+          "Scene: command-level presentation hold rejects planned terrain without a bound base-imagery command");
+    check(device.submittedCommands.empty(),
+          "Scene: command-level presentation hold does not submit sky or shell-only commands");
+    check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
+              scene.diagnostics().terrainRenderEntriesMissed == 1 &&
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 0,
+          "Scene: command-level presentation hold keeps diagnostics on the skipped terrain entry");
+}
+
 void testSceneSortsTransparentGltfByCameraDepth() {
     DummyRenderDevice device;
     Scene scene;
@@ -24133,11 +24392,9 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
           "TileRenderPlanFrameRefresher: test root has drawable surface geometry");
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     check(tileset.tilePlan().visibleTiles.size() == 1 &&
-              tileset.tilePlan().renderEntries.size() == 1 &&
-              tileset.tilePlan().renderEntries.front().selectedKey ==
-                  rootKey &&
-              tileset.tilePlan().renderEntries.front().renderKey == rootKey,
-          "TileRenderPlanFrameRefresher: surface geometry is planned before base raster is drawable");
+              tileset.tilePlan().visibleTiles.front() == rootKey &&
+              tileset.tilePlan().renderEntries.empty(),
+          "TileRenderPlanFrameRefresher: blocking base imagery keeps surface geometry out of the render plan until the raster is drawable");
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -24225,8 +24482,8 @@ void testTileRenderPlanFrameRefresherCollectsProviderRasterCredits() {
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& plan = tileset.tilePlan();
-    check(plan.renderEntries.size() == 1,
-          "TileRenderPlanFrameRefresher: provider credit fixture has one render entry");
+    check(plan.renderEntries.empty(),
+          "TileRenderPlanFrameRefresher: provider credit fixture waits for drawable base imagery before planning a render entry");
     check(plan.frameCredits.size() == 1 &&
               plan.frameCredits.front() == "Provider credit",
           "TileRenderPlanFrameRefresher: provider raster credits are aggregated before tile imagery loads like cesium-native");
@@ -26484,7 +26741,7 @@ int main() {
     testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testRasterSelectionPrefetchSkipHonorsMoreDetail();
-    testTilesetBlockingBaseImageryDrawsPlaceholderSurface();
+    testTilesetBlockingBaseImagerySkipsPlaceholderSurface();
     testTilesetFailedChildBaseImageryUsesAncestorCommandTexture();
     testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw();
     testTilesetSurfaceOverlaysCompositeIntoSingleCommand();
@@ -26834,6 +27091,10 @@ int main() {
     testSceneDiagnosticsExposeTerrainRenderEntryReasons();
     testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason();
     testSceneDiagnosticsDrawImageryOnlyAncestorSurface();
+    testScenePresentationHoldsWhenVisibleTerrainHasNoDrawableSurfaceEntry();
+    testScenePresentationHoldsWhenPlannedTerrainMixesDrawableAndMissingBaseImagery();
+    testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers();
+    testScenePresentationHoldsWhenPlannedTerrainLacksBaseImageryCommand();
     testSceneSortsTransparentGltfByCameraDepth();
     testTilesetLodTransitionsUseNativeDeltaState();
     testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection();
