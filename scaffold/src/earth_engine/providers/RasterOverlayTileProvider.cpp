@@ -2934,6 +2934,21 @@ int RasterOverlayTileProvider::getPendingUploadCount() const {
     return static_cast<int>(asyncState_->pendingUploads.size());
 }
 
+int64_t RasterOverlayTileProvider::getPendingUploadBytes() const {
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    int64_t bytes = 0;
+    for (const PendingUpload& upload : asyncState_->pendingUploads) {
+        if (upload.image) {
+            bytes += decodedImageSizeBytes(*upload.image);
+            continue;
+        }
+        if (upload.sharedImage) {
+            bytes += decodedImageSizeBytes(*upload.sharedImage);
+        }
+    }
+    return bytes;
+}
+
 bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
                                          FrameResourceBudget* budget) {
     if (tile.isMappedRasterTile()) {

@@ -196,6 +196,7 @@ public:
                 std::memory_order_relaxed));
     }
     int getPendingUploadCount() const;
+    int64_t getPendingUploadBytes() const;
 
     double getMaximumScreenSpaceError() const {
         return maximumScreenSpaceError_;

@@ -25,6 +25,8 @@ void TilesetProviderDiagnosticsSnapshot::applyTo(
     diagnostics.rasterOverlayTilesLoading += rasterOverlayTilesLoading;
     diagnostics.rasterSourceRequestsInFlight += rasterSourceRequestsInFlight;
     diagnostics.rasterPendingUploads += rasterPendingUploads;
+    diagnostics.rasterPendingUploadBytes += rasterPendingUploadBytes;
+    diagnostics.rasterCachedSourceTileBytes += rasterCachedSourceTileBytes;
 }
 
 TilesetProviderDiagnosticsSnapshot
@@ -72,6 +74,9 @@ TilesetProviderDiagnosticsCollector::collect(
         snapshot.rasterSourceRequestsInFlight +=
             provider->getActiveRasterSourceRequests();
         snapshot.rasterPendingUploads += provider->getPendingUploadCount();
+        snapshot.rasterPendingUploadBytes += provider->getPendingUploadBytes();
+        snapshot.rasterCachedSourceTileBytes +=
+            provider->getCachedSourceTileBytes();
     }
     return snapshot;
 }

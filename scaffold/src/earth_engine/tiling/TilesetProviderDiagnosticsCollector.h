@@ -19,6 +19,8 @@ struct TilesetProviderDiagnosticsSnapshot {
     int rasterOverlayTilesLoading = 0;
     int rasterSourceRequestsInFlight = 0;
     int rasterPendingUploads = 0;
+    int64_t rasterPendingUploadBytes = 0;
+    int64_t rasterCachedSourceTileBytes = 0;
 
     uint32_t maximumTransportActiveRequests(uint32_t fallback) const;
     void applyTo(TilesetLoadDiagnostics& diagnostics) const;

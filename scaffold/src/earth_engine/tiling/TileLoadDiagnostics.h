@@ -28,6 +28,8 @@ struct TilesetLoadDiagnostics {
     int rasterOverlayTilesLoading = 0;
     int rasterSourceRequestsInFlight = 0;
     int rasterPendingUploads = 0;
+    int64_t rasterPendingUploadBytes = 0;
+    int64_t rasterCachedSourceTileBytes = 0;
     int unloadQueueTiles = 0;
     int loadUnloadingTiles = 0;
     int loadFailedTemporarilyTiles = 0;

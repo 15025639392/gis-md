@@ -192,6 +192,38 @@ private:
     ProviderRequestDiagnostics diagnostics_;
 };
 
+class ImmediateImageImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "immediate-image"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 2; }
+    int tileWidth() const override { return 4; }
+    int tileHeight() const override { return 4; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://immediate-image";
+    }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        TileCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        auto image = std::make_unique<DecodedImage>();
+        image->width = tileWidth();
+        image->height = tileHeight();
+        image->channels = 4;
+        image->pixels.resize(
+            static_cast<size_t>(image->width) *
+            static_cast<size_t>(image->height) * 4u,
+            static_cast<uint8_t>(key.z + 1));
+        callback(key, std::move(image));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+};
+
 class DiagnosticContentProvider final : public TilesetContentProvider {
 public:
     explicit DiagnosticContentProvider(ProviderRequestDiagnostics diagnostics)
@@ -541,6 +573,46 @@ TEST(
          ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+}
+
+TEST(
+    TilesetProviderDiagnosticsCollectorTest,
+    ExposesRasterPendingUploadAndSourceBytes) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<ImmediateImageImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* rasterProvider =
+        activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, rasterProvider);
+
+    const TileKey rasterKey{"XYZ-WebMercator", 1, 0, 0};
+    RasterOverlayTileProvider::TilePtr rasterTile =
+        rasterProvider->getTile(rasterKey);
+    ASSERT_TRUE(rasterTile);
+    ASSERT_TRUE(rasterProvider->loadTile(*rasterTile));
+    ASSERT_EQ(1, rasterProvider->getPendingUploadCount());
+    ASSERT_GT(rasterProvider->getPendingUploadBytes(), 0);
+    ASSERT_GT(rasterProvider->getCachedSourceTileBytes(), 0);
+
+    Tileset tileset(
+        TileScheme::createGeographicTMS(),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TilesetLoadDiagnostics loadDiag = tileset.loadDiagnostics();
+    EXPECT_EQ(loadDiag.rasterPendingUploads, 1);
+    EXPECT_GT(loadDiag.rasterPendingUploadBytes, 0);
+    EXPECT_GT(loadDiag.rasterCachedSourceTileBytes, 0);
+
+    Diagnostics diagnostics;
+    SceneTilesetDiagnostics::reset(diagnostics);
+    SceneTilesetDiagnostics::addTileset(diagnostics, tileset, true);
+    EXPECT_EQ(diagnostics.rasterPendingUploads, 1);
+    EXPECT_GT(diagnostics.rasterPendingUploadBytes, 0);
+    EXPECT_GT(diagnostics.rasterCachedSourceTileBytes, 0);
 }
 
 TEST(

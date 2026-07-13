@@ -24,6 +24,11 @@ void addSaturating(int& target, int value) {
     target += std::min(value, available);
 }
 
+int saturatingAddInt(int left, int right) {
+    addSaturating(left, right);
+    return left;
+}
+
 void resetProviderDiagnostics(Diagnostics& diag) {
     diag.terrainProviderRequestsStarted = 0;
     diag.terrainProviderRequestsCompleted = 0;
@@ -368,6 +373,14 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
     snapshot.rasterSourceRequestsInFlight =
         loadDiag.rasterSourceRequestsInFlight;
     snapshot.rasterPendingUploads = loadDiag.rasterPendingUploads;
+    snapshot.rasterPendingUploadBytes =
+        static_cast<int>(std::min<int64_t>(
+            loadDiag.rasterPendingUploadBytes,
+            std::numeric_limits<int>::max()));
+    snapshot.rasterCachedSourceTileBytes =
+        static_cast<int>(std::min<int64_t>(
+            loadDiag.rasterCachedSourceTileBytes,
+            std::numeric_limits<int>::max()));
     snapshot.frameMappedRasterTileCount =
         plan.frameMappedRasterTileCount;
     snapshot.frameMappedRasterTileLoadingCount =
@@ -431,6 +444,12 @@ void SceneTilesetDiagnosticsSnapshot::add(
     rasterOverlayTilesLoading += next.rasterOverlayTilesLoading;
     rasterSourceRequestsInFlight += next.rasterSourceRequestsInFlight;
     rasterPendingUploads += next.rasterPendingUploads;
+    rasterPendingUploadBytes = saturatingAddInt(
+        rasterPendingUploadBytes,
+        next.rasterPendingUploadBytes);
+    rasterCachedSourceTileBytes = saturatingAddInt(
+        rasterCachedSourceTileBytes,
+        next.rasterCachedSourceTileBytes);
     frameMappedRasterTileCount += next.frameMappedRasterTileCount;
     frameMappedRasterTileLoadingCount +=
         next.frameMappedRasterTileLoadingCount;
@@ -581,6 +600,12 @@ void SceneTilesetDiagnosticsSnapshot::applyTo(Diagnostics& diag) const {
     diag.rasterOverlayTilesLoading += rasterOverlayTilesLoading;
     diag.rasterSourceRequestsInFlight += rasterSourceRequestsInFlight;
     diag.rasterPendingUploads += rasterPendingUploads;
+    diag.rasterPendingUploadBytes = saturatingAddInt(
+        diag.rasterPendingUploadBytes,
+        rasterPendingUploadBytes);
+    diag.rasterCachedSourceTileBytes = saturatingAddInt(
+        diag.rasterCachedSourceTileBytes,
+        rasterCachedSourceTileBytes);
     diag.frameMappedRasterTileCount += frameMappedRasterTileCount;
     diag.frameMappedRasterTileLoadingCount +=
         frameMappedRasterTileLoadingCount;
@@ -697,6 +722,8 @@ void SceneTilesetDiagnostics::reset(Diagnostics& diag) {
     diag.rasterOverlayTilesLoading = 0;
     diag.rasterSourceRequestsInFlight = 0;
     diag.rasterPendingUploads = 0;
+    diag.rasterPendingUploadBytes = 0;
+    diag.rasterCachedSourceTileBytes = 0;
     diag.frameMappedRasterTileCount = 0;
     diag.frameMappedRasterTileLoadingCount = 0;
     diag.frameProgressTotalCount = 0;
