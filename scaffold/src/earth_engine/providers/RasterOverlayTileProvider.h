@@ -438,6 +438,7 @@ private:
             sourceTileDepotInFlight;
         std::unordered_map<uint64_t, std::vector<TileKey>>
             sourceTileDepotFallbackKeysByOwner;
+        std::unordered_set<uint64_t> activeMappedSourceOwnerTokens;
         std::unordered_map<std::string, std::shared_ptr<MappedSourceImageSet>>
             activeMappedSourceSets;
         std::deque<std::string> activeMappedSourceSetOrder;
