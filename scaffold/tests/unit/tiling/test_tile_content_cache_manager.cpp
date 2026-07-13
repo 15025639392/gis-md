@@ -2,14 +2,25 @@
 
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/content/GltfModel.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/core/math/Vec3.h"
+#include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileCacheOwnershipManager.h"
 #include "earth_engine/tiling/TileContentCacheManager.h"
 #include "earth_engine/tiling/TileLoadQueue.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
+#include "earth_engine/tiling/TileScheme.h"
+
+#include "../../helpers/MockRenderDevice.h"
 
 #include <memory>
 #include <string>
@@ -135,6 +146,31 @@ void makeGltfRenderReady(TilesetTile& tile) {
     res.vertexCount = 4;
     tile.content.renderContent.addGltfPrimitiveResource(std::move(res));
     tile.markRenderContentDone();
+}
+
+Rectangle projectForProvider(const TileScheme& scheme,
+                             const Rectangle& geographicRectangle) {
+    if (scheme.crsProfile() == "EPSG:3857") {
+        return projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            geographicRectangle);
+    }
+    return geographicRectangle;
+}
+
+RasterOverlayDetails makeProviderDetails(const TileScheme& scheme,
+                                         const Rectangle& geographicRectangle) {
+    RasterOverlayDetails details;
+    if (scheme.crsProfile() == "EPSG:3857") {
+        details.rasterOverlayProjections = {
+            RasterOverlayProjection::WebMercator};
+        details.rasterOverlayRectangles = {
+            projectForProvider(scheme, geographicRectangle)};
+        details.boundingRegion = {geographicRectangle, 0.0, 0.0};
+    } else {
+        details.setGeographicRectangle(geographicRectangle);
+    }
+    return details;
 }
 } // namespace
 
@@ -580,4 +616,122 @@ TEST(
     EXPECT_TRUE(rootRaw->children.empty());
     EXPECT_EQ(tiles.end(), tiles.find(childCacheKey));
     EXPECT_EQ(tiles.end(), tiles.find(grandchildCacheKey));
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    SharedAncestorRasterUnloadRefreshesBytesEvenDuringSmoothing) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+
+    const TileKey parentKey{overlay->getTileScheme().id(), 2, 1, 1};
+    const TileKey childKey{overlay->getTileScheme().id(), 3, 2, 2};
+    const Rectangle parentBounds =
+        overlay->getTileScheme().tileToRectangle(parentKey);
+    const Rectangle childBounds =
+        overlay->getTileScheme().tileToRectangle(childKey);
+    const RasterOverlayDetails parentDetails =
+        makeProviderDetails(overlay->getTileScheme(), parentBounds);
+    const RasterOverlayDetails childDetails =
+        makeProviderDetails(overlay->getTileScheme(), childBounds);
+    std::vector<RasterOverlayProjection> missing;
+
+    auto parentTile = std::make_unique<TilesetTile>(parentKey, parentBounds);
+    RasterMappedToTilesetTile& parentMapping =
+        parentTile->rasterOverlayState.ensureMapping(0);
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentRaster = parentMapping.getLoadingTile();
+    ASSERT_NE(nullptr, parentRaster);
+    parentRaster->setTexture(std::make_unique<earth_engine::testing::DummyTexture>(
+        4,
+        4));
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    ASSERT_EQ(parentRaster, parentMapping.getReadyTile());
+
+    auto childTile =
+        std::make_unique<TilesetTile>(childKey, childBounds, parentTile.get());
+    childTile->geometricError = 100.0;
+    RasterMappedToTilesetTile& childMapping =
+        childTile->rasterOverlayState.ensureMapping(0);
+    childMapping.update(
+        childKey,
+        childDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        parentTile.get(),
+        0);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    TileRasterOverlayPrefetcher::prefetch(
+        *childTile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    ASSERT_EQ(parentRaster, childMapping.getReadyTile());
+    ASSERT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+              childMapping.getReadyTileSource());
+
+    const std::string parentCacheKey = TileCacheKey::forTile(parentKey);
+    const std::string childCacheKey = TileCacheKey::forTile(childKey);
+    tiles.emplace(parentCacheKey, std::move(parentTile));
+    tiles.emplace(childCacheKey, std::move(childTile));
+
+    manager.updateTotalBytesUsed(tiles, lifecycle);
+    ASSERT_EQ(4 * 4 * 4, manager.totalBytesUsed());
+    manager.cacheBytesDirty() = false;
+    manager.markEligibleForUnloading(
+        tileForKey(tiles, childCacheKey),
+        childCacheKey);
+
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        true,
+        tiles,
+        lifecycle,
+        nullptr,
+        [](TilesetTile&) {});
+
+    EXPECT_EQ(4 * 4 * 4, manager.totalBytesUsed());
+    EXPECT_FALSE(manager.cacheBytesDirty());
+    EXPECT_FALSE(manager.unloadQueue().contains(childCacheKey));
+    EXPECT_EQ(TileLoadState::Unloaded, tiles[childCacheKey]->content.loadState);
 }

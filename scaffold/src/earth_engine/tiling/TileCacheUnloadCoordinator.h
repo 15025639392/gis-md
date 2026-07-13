@@ -2,6 +2,7 @@
 
 #include "TileCacheMetrics.h"
 #include "TileLoadState.h"
+#include "RasterMappedToTilesetTile.h"
 #include "TileUnloadPolicy.h"
 #include "TileUnloadQueue.h"
 #include "TilesetTile.h"
@@ -31,6 +32,20 @@ struct TileCacheUnloadResult {
 
 class TileCacheUnloadCoordinator {
 public:
+    static bool requiresImmediateByteRefreshAfterUnload(
+        const TilesetTile& tile) {
+        bool usesAncestorRasterFallback = false;
+        tile.rasterOverlayState.forEachMapping([&](const auto* mapping) {
+            if (usesAncestorRasterFallback || !mapping) {
+                return;
+            }
+            usesAncestorRasterFallback =
+                mapping->getReadyTileSource() ==
+                RasterMappedToTilesetTile::ReadyTileSource::Ancestor;
+        });
+        return usesAncestorRasterFallback;
+    }
+
     template <typename SubtreeHasActiveContentWorkFn,
               typename UnloadTileContentFn,
               typename MarkIneligibleFn,
@@ -78,6 +93,7 @@ public:
         };
 
         std::vector<TilesetTile*> tilesNeedingChildrenCleared;
+        bool immediateByteRefreshRequired = false;
         size_t remainingCandidates = unloadQueue.size();
         while ((totalBytesUsed > maximumCachedBytes ||
                 hasQueuedUnloadingTile() ||
@@ -96,6 +112,8 @@ public:
             TilesetTile& tile = *tileIt->second;
             const int64_t estimatedBytesBeforeUnload =
                 TileCacheMetrics::estimateTileBytes(tile);
+            const bool needsImmediateRefresh =
+                requiresImmediateByteRefreshAfterUnload(tile);
 
             const bool externalSubtreeHasActiveWork =
                 tile.content.contentKind == TileContentKind::External &&
@@ -122,6 +140,8 @@ public:
                 tilesNeedingChildrenCleared.emplace_back(&tile);
             }
 
+            immediateByteRefreshRequired =
+                immediateByteRefreshRequired || needsImmediateRefresh;
             totalBytesUsed = std::max<int64_t>(
                 0,
                 totalBytesUsed -
@@ -140,7 +160,8 @@ public:
         return TileCacheUnloadResult{
             totalBytesUsed,
             cacheBytesDirty,
-            cacheBytesDirty && !resourceSmoothingActive};
+            cacheBytesDirty &&
+                (!resourceSmoothingActive || immediateByteRefreshRequired)};
     }
 };
 
