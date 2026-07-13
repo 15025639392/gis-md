@@ -197,6 +197,7 @@ public:
     }
     int getPendingUploadCount() const;
     int64_t getPendingUploadBytes() const;
+    int64_t getPeakPendingUploadBytes() const;
 
     double getMaximumScreenSpaceError() const {
         return maximumScreenSpaceError_;
@@ -212,9 +213,17 @@ public:
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return asyncState_->sourceTileDepotCacheBytes;
     }
+    int64_t getPeakCachedSourceTileBytes() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        return asyncState_->peakSourceTileDepotCacheBytes;
+    }
     int getCachedSourceTileCount() const {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return static_cast<int>(asyncState_->sourceTileDepotCache.size());
+    }
+    int getCachedSourceTileLruEntryCount() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        return static_cast<int>(asyncState_->sourceTileDepotCacheLru.size());
     }
     void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
@@ -336,6 +345,7 @@ private:
     void invalidateSourceAssetDepotCache();
     void abandonActiveMappedSourceSets();
     void discardPendingUploadsForMissingTiles();
+    bool pendingUploadBackpressureActive() const;
 
     ImageryProvider& provider_;
     const TileScheme& scheme_;
@@ -406,7 +416,10 @@ private:
         std::deque<PendingSourceFallback> pendingSourceFallbacks;
         std::deque<std::pair<std::string, uint64_t>>
             sourceTileDepotCacheLru;
+        int64_t pendingUploadBytes = 0;
+        int64_t peakPendingUploadBytes = 0;
         int64_t sourceTileDepotCacheBytes = 0;
+        int64_t peakSourceTileDepotCacheBytes = 0;
         int64_t subTileCacheBytes = 16 * 1024 * 1024;
         uint64_t sourceTileDepotGeneration = 0;
         uint64_t sourceTileDepotEpoch = 0;
@@ -447,6 +460,9 @@ private:
             promise->set_value();
         }
     };
+    static void enforceSourceDepotBudgetLocked(ProviderAsyncState& state);
+    static int64_t pendingUploadSizeBytes(const PendingUpload& upload);
+    static void clearPendingUploads(ProviderAsyncState& state);
     std::shared_ptr<ProviderAsyncState> asyncState_ =
         std::make_shared<ProviderAsyncState>();
     std::shared_ptr<QuadtreeSourceAssetDepot> sourceAssetDepot_;

@@ -242,7 +242,9 @@ TEST(
     snapshot.rasterSourceRequestsInFlight = 1;
     snapshot.rasterPendingUploads = 3;
     snapshot.rasterPendingUploadBytes = 4096;
+    snapshot.peakRasterPendingUploadBytes = 12288;
     snapshot.rasterCachedSourceTileBytes = 8192;
+    snapshot.peakRasterCachedSourceTileBytes = 16384;
 
     Diagnostics diagnostics;
     SceneTilesetDiagnostics::reset(diagnostics);
@@ -275,7 +277,9 @@ TEST(
     EXPECT_EQ(diagnostics.rasterSourceRequestsInFlight, 1);
     EXPECT_EQ(diagnostics.rasterPendingUploads, 3);
     EXPECT_EQ(diagnostics.rasterPendingUploadBytes, 4096);
+    EXPECT_EQ(diagnostics.peakRasterPendingUploadBytes, 12288);
     EXPECT_EQ(diagnostics.rasterCachedSourceTileBytes, 8192);
+    EXPECT_EQ(diagnostics.peakRasterCachedSourceTileBytes, 16384);
 }
 
 TEST(

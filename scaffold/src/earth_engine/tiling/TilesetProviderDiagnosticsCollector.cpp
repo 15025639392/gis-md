@@ -26,7 +26,10 @@ void TilesetProviderDiagnosticsSnapshot::applyTo(
     diagnostics.rasterSourceRequestsInFlight += rasterSourceRequestsInFlight;
     diagnostics.rasterPendingUploads += rasterPendingUploads;
     diagnostics.rasterPendingUploadBytes += rasterPendingUploadBytes;
+    diagnostics.peakRasterPendingUploadBytes += peakRasterPendingUploadBytes;
     diagnostics.rasterCachedSourceTileBytes += rasterCachedSourceTileBytes;
+    diagnostics.peakRasterCachedSourceTileBytes +=
+        peakRasterCachedSourceTileBytes;
 }
 
 TilesetProviderDiagnosticsSnapshot
@@ -74,9 +77,14 @@ TilesetProviderDiagnosticsCollector::collect(
         snapshot.rasterSourceRequestsInFlight +=
             provider->getActiveRasterSourceRequests();
         snapshot.rasterPendingUploads += provider->getPendingUploadCount();
-        snapshot.rasterPendingUploadBytes += provider->getPendingUploadBytes();
-        snapshot.rasterCachedSourceTileBytes +=
+        const int64_t pendingUploadBytes = provider->getPendingUploadBytes();
+        const int64_t cachedSourceTileBytes =
             provider->getCachedSourceTileBytes();
+        snapshot.rasterPendingUploadBytes += pendingUploadBytes;
+        snapshot.peakRasterPendingUploadBytes += pendingUploadBytes;
+        snapshot.rasterCachedSourceTileBytes += cachedSourceTileBytes;
+        snapshot.peakRasterCachedSourceTileBytes +=
+            cachedSourceTileBytes;
     }
     return snapshot;
 }

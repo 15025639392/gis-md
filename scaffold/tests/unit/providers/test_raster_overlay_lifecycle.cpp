@@ -2748,6 +2748,65 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     PendingUploadBackpressureBlocksAdditionalDirectLoadsUntilDrain) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setSubTileCacheBytes(16);
+
+    auto firstTile = provider.getTile(TileKey{scheme->id(), 2, 1, 1});
+    auto secondTile = provider.getTile(TileKey{scheme->id(), 2, 1, 2});
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_NE(nullptr, secondTile);
+
+    ASSERT_TRUE(provider.loadTileThrottled(*firstTile, nullptr));
+    EXPECT_EQ(1, provider.getPendingUploadCount());
+    const int64_t pendingBytesAfterFirstLoad =
+        provider.getPendingUploadBytes();
+    EXPECT_GT(pendingBytesAfterFirstLoad, 0);
+    provider.setSubTileCacheBytes(pendingBytesAfterFirstLoad);
+
+    EXPECT_FALSE(provider.loadTileThrottled(*secondTile, nullptr));
+    EXPECT_EQ(1, imagery.requestCount);
+
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+
+    EXPECT_TRUE(provider.loadTileThrottled(*secondTile, nullptr));
+    EXPECT_EQ(2, imagery.requestCount);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     PendingUploadsConsumeSubTileBudgetBeforeSourceDepot) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    auto firstTile = provider.getTile(TileKey{scheme->id(), 2, 1, 1});
+    auto secondTile = provider.getTile(TileKey{scheme->id(), 2, 1, 2});
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_NE(nullptr, secondTile);
+
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+    const int64_t retainedSourceBytes = provider.getCachedSourceTileBytes();
+    ASSERT_GT(retainedSourceBytes, 0);
+
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+    const int64_t pendingBytes = provider.getPendingUploadBytes();
+    ASSERT_GT(pendingBytes, 0);
+
+    provider.setSubTileCacheBytes(pendingBytes);
+
+    EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+    EXPECT_EQ(pendingBytes, provider.getPendingUploadBytes());
+}
+
+TEST(RasterOverlayLifecycleTest,
      StaleEpochSourceCompletionDoesNotRepopulateCurrentDepotCache) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
@@ -3742,6 +3801,42 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, provider.getCachedSourceTileBytes());
     ASSERT_EQ(3u, imagery.requestedKeys.size());
     EXPECT_EQ(firstSourceKey, imagery.requestedKeys.back());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     CachedSourceReuseCompactsStaleLruEntries) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+    provider.setSubTileCacheBytes(4096);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+
+    for (int i = 0; i < 64; ++i) {
+        const double westT = 0.05 + 0.004 * static_cast<double>(i % 8);
+        const double southT = 0.05 + 0.02 * static_cast<double>(i / 8);
+        const Rectangle patch(
+            sourceBounds.west() + sourceBounds.width() * westT,
+            sourceBounds.south() + sourceBounds.height() * southT,
+            sourceBounds.west() + sourceBounds.width() * (westT + 0.20),
+            sourceBounds.south() + sourceBounds.height() * (southT + 0.20));
+
+        auto tile = provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, patch),
+            128.0,
+            128.0).tile;
+        ASSERT_NE(nullptr, tile);
+        ASSERT_TRUE(tile->isMappedRasterTile());
+        ASSERT_TRUE(provider.loadTile(*tile));
+        ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+    }
+
+    EXPECT_EQ(1, imagery.requestCount);
+    EXPECT_EQ(1, provider.getCachedSourceTileCount());
+    EXPECT_LE(provider.getCachedSourceTileLruEntryCount(), 33);
 }
 
 TEST(RasterOverlayLifecycleTest,

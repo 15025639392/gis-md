@@ -19,7 +19,17 @@ void SceneTelemetryCoordinator::finishEngineFrame(double elapsedMs) {
 
 void SceneTelemetryCoordinator::replaceRenderDiagnostics(
     const Diagnostics& diagnostics) {
+    const int peakRasterPendingUploadBytes = std::max(
+        diagnostics_.peakRasterPendingUploadBytes,
+        diagnostics.peakRasterPendingUploadBytes);
+    const int peakRasterCachedSourceTileBytes = std::max(
+        diagnostics_.peakRasterCachedSourceTileBytes,
+        diagnostics.peakRasterCachedSourceTileBytes);
     diagnostics_ = diagnostics;
+    diagnostics_.peakRasterPendingUploadBytes =
+        peakRasterPendingUploadBytes;
+    diagnostics_.peakRasterCachedSourceTileBytes =
+        peakRasterCachedSourceTileBytes;
 }
 
 void SceneTelemetryCoordinator::updatePresentationTrace(

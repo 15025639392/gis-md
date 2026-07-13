@@ -23,6 +23,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -570,8 +571,16 @@ bool isRasterCompositeSourceImage(const DecodedImage& image) {
 }
 
 int64_t decodedImageSizeBytes(const DecodedImage& image) {
-    return static_cast<int64_t>(sizeof(DecodedImage)) +
-           static_cast<int64_t>(image.pixels.size());
+    // Provider-side cache / backpressure budgets should track raster pixel
+    // payload, not the C++ wrapper object. Empty "loaded without texture"
+    // placeholders must not evict real cached source imagery.
+    return static_cast<int64_t>(image.pixels.size());
+}
+
+void trackPeakBytes(int64_t currentBytes, int64_t& peakBytes) {
+    if (currentBytes > peakBytes) {
+        peakBytes = currentBytes;
+    }
 }
 
 double webMercatorY(double latRad) {
@@ -1928,7 +1937,9 @@ private:
         if (state->sourceTileDepotEpoch != depotEpoch) {
             return cached;
         }
-        const int64_t cacheBudgetBytes = state->subTileCacheBytes;
+        const int64_t cacheBudgetBytes = std::max<int64_t>(
+            0,
+            state->subTileCacheBytes - state->pendingUploadBytes);
         if (cacheBudgetBytes <= 0) {
             cache.clear();
             cacheLru.clear();
@@ -1942,7 +1953,9 @@ private:
         }
         failed.generation = ++cacheGeneration;
         cacheBytes += failed.sizeBytes;
+        trackPeakBytes(cacheBytes, state->peakSourceTileDepotCacheBytes);
         cacheLru.emplace_back(key, failed.generation);
+        compactCacheLruIfNeeded();
         cache[key] = failed;
         pruneCacheToBudget(cacheBudgetBytes);
         return cached;
@@ -1974,7 +1987,9 @@ private:
         if (state->sourceTileDepotEpoch != depotEpoch) {
             return;
         }
-        const int64_t cacheBudgetBytes = state->subTileCacheBytes;
+        const int64_t cacheBudgetBytes = std::max<int64_t>(
+            0,
+            state->subTileCacheBytes - state->pendingUploadBytes);
         if (cacheBudgetBytes <= 0) {
             cache.clear();
             cacheLru.clear();
@@ -1988,7 +2003,9 @@ private:
         }
         cached.generation = ++cacheGeneration;
         cacheBytes += cached.sizeBytes;
+        trackPeakBytes(cacheBytes, state->peakSourceTileDepotCacheBytes);
         cacheLru.emplace_back(key, cached.generation);
+        compactCacheLruIfNeeded();
         cache[key] = std::move(cached);
         pruneCacheToBudget(cacheBudgetBytes);
     }
@@ -1996,6 +2013,7 @@ private:
     void touchCachedSource(const std::string& key, SourceTileAsset& source) {
         source.generation = ++cacheGeneration;
         cacheLru.emplace_back(key, source.generation);
+        compactCacheLruIfNeeded();
     }
 
     void pruneCacheToBudget(int64_t cacheBudgetBytes) {
@@ -2012,6 +2030,38 @@ private:
         if (cacheBytes < 0) {
             cacheBytes = 0;
         }
+    }
+
+    void compactCacheLruIfNeeded() {
+        constexpr size_t kLruSlackEntries = 32;
+        const size_t liveEntries = cache.size();
+        if (cacheLru.size() <= liveEntries + kLruSlackEntries) {
+            return;
+        }
+        if (liveEntries > 0 &&
+            cacheLru.size() <= liveEntries * 2 + kLruSlackEntries) {
+            return;
+        }
+
+        std::vector<std::pair<std::string, uint64_t>> compactedEntries;
+        compactedEntries.reserve(liveEntries);
+        for (const auto& [key, source] : cache) {
+            compactedEntries.emplace_back(key, source.generation);
+        }
+        std::sort(
+            compactedEntries.begin(),
+            compactedEntries.end(),
+            [](const auto& left, const auto& right) {
+                return std::tie(left.second, left.first) <
+                       std::tie(right.second, right.first);
+            });
+
+        std::deque<std::pair<std::string, uint64_t>> compactedLru;
+        compactedLru.insert(
+            compactedLru.end(),
+            std::make_move_iterator(compactedEntries.begin()),
+            std::make_move_iterator(compactedEntries.end()));
+        cacheLru.swap(compactedLru);
     }
 
     ImageryProvider& provider;
@@ -2351,6 +2401,46 @@ double RasterOverlayTileProvider::projectedVForLatitude(
     return projectedVForLatitudeInternal(scheme, bounds, lat);
 }
 
+int64_t RasterOverlayTileProvider::pendingUploadSizeBytes(
+    const PendingUpload& upload) {
+    if (upload.image) {
+        return decodedImageSizeBytes(*upload.image);
+    }
+    if (upload.sharedImage) {
+        return decodedImageSizeBytes(*upload.sharedImage);
+    }
+    return 0;
+}
+
+void RasterOverlayTileProvider::clearPendingUploads(ProviderAsyncState& state) {
+    state.pendingUploads.clear();
+    state.pendingUploadBytes = 0;
+    enforceSourceDepotBudgetLocked(state);
+}
+
+void RasterOverlayTileProvider::enforceSourceDepotBudgetLocked(
+    ProviderAsyncState& state) {
+    const int64_t totalBudgetBytes = std::max<int64_t>(0, state.subTileCacheBytes);
+    const int64_t sourceBudgetBytes = std::max<int64_t>(
+        0,
+        totalBudgetBytes - state.pendingUploadBytes);
+    while (state.sourceTileDepotCacheBytes > sourceBudgetBytes &&
+           !state.sourceTileDepotCacheLru.empty()) {
+        auto [key, generation] = state.sourceTileDepotCacheLru.front();
+        state.sourceTileDepotCacheLru.pop_front();
+        auto it = state.sourceTileDepotCache.find(key);
+        if (it == state.sourceTileDepotCache.end() ||
+            it->second.generation != generation) {
+            continue;
+        }
+        state.sourceTileDepotCacheBytes -= it->second.sizeBytes;
+        state.sourceTileDepotCache.erase(it);
+    }
+    if (state.sourceTileDepotCacheBytes < 0) {
+        state.sourceTileDepotCacheBytes = 0;
+    }
+}
+
 RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
                                                      const TileScheme& scheme,
                                                      std::unique_ptr<RasterTextureUploader> textureUploader)
@@ -2367,7 +2457,7 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         // pendingUploads 的节流名额已在加载完成入队时释放，直接丢弃
-        asyncState_->pendingUploads.clear();
+        clearPendingUploads(*asyncState_);
         for (auto& [_, sourceSet] : asyncState_->activeMappedSourceSets) {
             if (sourceSet) {
                 abandonedSourceSets.push_back(std::move(sourceSet));
@@ -2423,7 +2513,7 @@ void RasterOverlayTileProvider::setReady(bool ready) {
         asyncState_->activeMappedSourceSetOrder.clear();
         asyncState_->pendingSourceFallbacks.clear();
         // pendingUploads 的节流名额已在加载完成入队时释放，直接丢弃
-        asyncState_->pendingUploads.clear();
+        clearPendingUploads(*asyncState_);
     }
 
     for (auto& entry : tiles_) {
@@ -2541,20 +2631,7 @@ void RasterOverlayTileProvider::setMaximumTextureSize(int maximumTextureSize) {
 void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) {
     std::lock_guard<std::mutex> lock(asyncState_->mutex);
     asyncState_->subTileCacheBytes = std::max<int64_t>(0, subTileCacheBytes);
-    while (asyncState_->sourceTileDepotCacheBytes >
-               asyncState_->subTileCacheBytes &&
-           !asyncState_->sourceTileDepotCacheLru.empty()) {
-        auto [key, generation] =
-            asyncState_->sourceTileDepotCacheLru.front();
-        asyncState_->sourceTileDepotCacheLru.pop_front();
-        auto it = asyncState_->sourceTileDepotCache.find(key);
-        if (it == asyncState_->sourceTileDepotCache.end() ||
-            it->second.generation != generation) {
-            continue;
-        }
-        asyncState_->sourceTileDepotCacheBytes -= it->second.sizeBytes;
-        asyncState_->sourceTileDepotCache.erase(it);
-    }
+    enforceSourceDepotBudgetLocked(*asyncState_);
     if (asyncState_->subTileCacheBytes == 0 ||
         asyncState_->sourceTileDepotCacheBytes < 0) {
         if (asyncState_->subTileCacheBytes == 0) {
@@ -2602,8 +2679,16 @@ void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
             std::remove_if(
                 pendingUploads.begin(),
                 pendingUploads.end(),
-                [](const PendingUpload& upload) {
-                    return isMappedRasterCacheKey(upload.cacheKey);
+                [state = asyncState_.get()](const PendingUpload& upload) {
+                    if (!isMappedRasterCacheKey(upload.cacheKey)) {
+                        return false;
+                    }
+                    state->pendingUploadBytes = std::max<int64_t>(
+                        0,
+                        state->pendingUploadBytes -
+                            pendingUploadSizeBytes(upload));
+                    enforceSourceDepotBudgetLocked(*state);
+                    return true;
                 }),
             pendingUploads.end());
     }
@@ -2698,8 +2783,15 @@ void RasterOverlayTileProvider::discardPendingUploadsForMissingTiles() {
         std::remove_if(
             pendingUploads.begin(),
             pendingUploads.end(),
-            [this](const PendingUpload& upload) {
-                return tiles_.find(upload.cacheKey) == tiles_.end();
+            [this, state = asyncState_.get()](const PendingUpload& upload) {
+                if (tiles_.find(upload.cacheKey) != tiles_.end()) {
+                    return false;
+                }
+                state->pendingUploadBytes = std::max<int64_t>(
+                    0,
+                    state->pendingUploadBytes - pendingUploadSizeBytes(upload));
+                enforceSourceDepotBudgetLocked(*state);
+                return true;
             }),
         pendingUploads.end());
 }
@@ -2936,17 +3028,20 @@ int RasterOverlayTileProvider::getPendingUploadCount() const {
 
 int64_t RasterOverlayTileProvider::getPendingUploadBytes() const {
     std::lock_guard<std::mutex> lock(asyncState_->mutex);
-    int64_t bytes = 0;
-    for (const PendingUpload& upload : asyncState_->pendingUploads) {
-        if (upload.image) {
-            bytes += decodedImageSizeBytes(*upload.image);
-            continue;
-        }
-        if (upload.sharedImage) {
-            bytes += decodedImageSizeBytes(*upload.sharedImage);
-        }
+    return asyncState_->pendingUploadBytes;
+}
+
+int64_t RasterOverlayTileProvider::getPeakPendingUploadBytes() const {
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    return asyncState_->peakPendingUploadBytes;
+}
+
+bool RasterOverlayTileProvider::pendingUploadBackpressureActive() const {
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    if (asyncState_->subTileCacheBytes <= 0) {
+        return false;
     }
-    return bytes;
+    return asyncState_->pendingUploadBytes >= asyncState_->subTileCacheBytes;
 }
 
 bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
@@ -3002,6 +3097,9 @@ bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
     }
     if (tile.getState() != RasterOverlayTile::LoadState::Unloaded) {
         return true;
+    }
+    if (pendingUploadBackpressureActive()) {
+        return false;
     }
 
     const bool canJoinExistingMappedSources =
@@ -3261,14 +3359,21 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                 return;
             }
             logAndroidRasterPipeline("composed", cacheKey, 0, 0);
+            PendingUpload pendingUpload{
+                cacheKey,
+                std::move(composed),
+                std::move(sharedImage),
+                rectangle,
+                moreDetailAvailable,
+                std::move(diagnostics),
+                std::move(credits)};
+            state->pendingUploadBytes += pendingUploadSizeBytes(pendingUpload);
+            trackPeakBytes(
+                state->pendingUploadBytes,
+                state->peakPendingUploadBytes);
+            enforceSourceDepotBudgetLocked(*state);
             state->pendingUploads.push_back(
-                {cacheKey,
-                 std::move(composed),
-                 std::move(sharedImage),
-                 rectangle,
-                 moreDetailAvailable,
-                 std::move(diagnostics),
-                 std::move(credits)});
+                std::move(pendingUpload));
             // cesium _totalTilesCurrentlyLoading 语义：节流名额在加载
             // （下载+合成）完成时释放；GPU 上传属主线程 prepare 阶段，
             // 由 RasterTextureUpload lane 单独限速。此前名额持有到上传
@@ -3345,6 +3450,9 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
 int RasterOverlayTileProvider::issueMappedSourceImageSet(
     const std::shared_ptr<MappedSourceImageSet>& sourceSet,
     FrameResourceBudget* budget) {
+    if (pendingUploadBackpressureActive()) {
+        return 0;
+    }
     if (!sourceSet || sourceSet->isComplete()) {
         return 0;
     }
@@ -3442,6 +3550,9 @@ bool RasterOverlayTileProvider::mappedTileWouldIssueNewSourceRequests(
 
 int RasterOverlayTileProvider::issuePendingSourceFallbacks(
     FrameResourceBudget* budget) {
+    if (pendingUploadBackpressureActive()) {
+        return 0;
+    }
     int issued = 0;
     while (true) {
         if (budget) {
@@ -3560,6 +3671,11 @@ int RasterOverlayTileProvider::processPendingUploads(
                 }
             }
             upload = std::move(*selected);
+            asyncState_->pendingUploadBytes = std::max<int64_t>(
+                0,
+                asyncState_->pendingUploadBytes -
+                    pendingUploadSizeBytes(upload));
+            enforceSourceDepotBudgetLocked(*asyncState_);
             asyncState_->pendingUploads.erase(selected);
         }
 

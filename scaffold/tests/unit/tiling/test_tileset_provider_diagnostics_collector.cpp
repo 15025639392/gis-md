@@ -605,14 +605,18 @@ TEST(
     const TilesetLoadDiagnostics loadDiag = tileset.loadDiagnostics();
     EXPECT_EQ(loadDiag.rasterPendingUploads, 1);
     EXPECT_GT(loadDiag.rasterPendingUploadBytes, 0);
+    EXPECT_GT(loadDiag.peakRasterPendingUploadBytes, 0);
     EXPECT_GT(loadDiag.rasterCachedSourceTileBytes, 0);
+    EXPECT_GT(loadDiag.peakRasterCachedSourceTileBytes, 0);
 
     Diagnostics diagnostics;
     SceneTilesetDiagnostics::reset(diagnostics);
     SceneTilesetDiagnostics::addTileset(diagnostics, tileset, true);
     EXPECT_EQ(diagnostics.rasterPendingUploads, 1);
     EXPECT_GT(diagnostics.rasterPendingUploadBytes, 0);
+    EXPECT_GT(diagnostics.peakRasterPendingUploadBytes, 0);
     EXPECT_GT(diagnostics.rasterCachedSourceTileBytes, 0);
+    EXPECT_GT(diagnostics.peakRasterCachedSourceTileBytes, 0);
 }
 
 TEST(

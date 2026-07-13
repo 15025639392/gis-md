@@ -88,7 +88,9 @@ struct SceneTilesetDiagnosticsSnapshot {
     int rasterSourceRequestsInFlight = 0;
     int rasterPendingUploads = 0;
     int rasterPendingUploadBytes = 0;
+    int peakRasterPendingUploadBytes = 0;
     int rasterCachedSourceTileBytes = 0;
+    int peakRasterCachedSourceTileBytes = 0;
     int frameMappedRasterTileCount = 0;
     int frameMappedRasterTileLoadingCount = 0;
     int frameProgressTotalCount = 0;

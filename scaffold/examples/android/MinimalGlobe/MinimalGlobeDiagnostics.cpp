@@ -63,6 +63,9 @@ std::string buildRenderEntryDiagnosticsLine(const Diagnostics& diagnostics) {
         << " rasterCpu "
         << diagnostics.rasterPendingUploadBytes / 1024
         << "k+" << diagnostics.rasterCachedSourceTileBytes / 1024
+        << "k peak "
+        << diagnostics.peakRasterPendingUploadBytes / 1024
+        << "k+" << diagnostics.peakRasterCachedSourceTileBytes / 1024
         << "k"
         << "\n";
     return out.str();
