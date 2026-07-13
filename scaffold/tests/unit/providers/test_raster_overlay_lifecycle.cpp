@@ -5262,6 +5262,7 @@ TEST(RasterOverlayLifecycleTest,
     ASSERT_TRUE(provider.loadTileThrottled(*staleTile, &firstBudget));
     EXPECT_EQ(2u, imagery.pending.size());
     EXPECT_EQ(2u, firstBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(2, provider.getInFlightSourceTileCount());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loading, staleTile->getState());
     EXPECT_TRUE(provider.hasPendingWork());
 
@@ -5269,6 +5270,7 @@ TEST(RasterOverlayLifecycleTest,
         provider.getMaximumScreenSpaceError() * 2.0);
 
     EXPECT_EQ(RasterOverlayTile::LoadState::Failed, staleTile->getState());
+    EXPECT_EQ(0, provider.getInFlightSourceTileCount());
     EXPECT_TRUE(provider.hasPendingWork());
 
     FrameResourceBudget secondBudget;

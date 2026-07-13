@@ -225,6 +225,10 @@ public:
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return static_cast<int>(asyncState_->sourceTileDepotCacheLru.size());
     }
+    int getInFlightSourceTileCount() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        return static_cast<int>(asyncState_->sourceTileDepotInFlight.size());
+    }
     void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
     int getMaximumLevel() const;
@@ -392,7 +396,11 @@ private:
     };
     struct InFlightSourceTileAsset {
         using Result = std::shared_ptr<const SourceTileAsset>;
-        std::vector<std::function<void(Result)>> waiters;
+        struct WaiterEntry {
+            uint64_t ownerToken = 0;
+            std::function<void(Result)> callback;
+        };
+        std::vector<WaiterEntry> waiters;
     };
     struct PendingSourceFallback {
         TileKey originalKey;

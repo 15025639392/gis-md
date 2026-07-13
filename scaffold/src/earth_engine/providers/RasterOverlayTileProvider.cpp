@@ -583,6 +583,8 @@ void trackPeakBytes(int64_t currentBytes, int64_t& peakBytes) {
     }
 }
 
+std::atomic<uint64_t> gNextRasterSourceWaiterOwnerToken{1};
+
 double webMercatorY(double latRad) {
     const double lat = std::clamp(
         latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
@@ -1563,6 +1565,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         const TileKey& originalKey,
         bool ancestorFallback,
         bool shareInFlight,
+        uint64_t waiterOwnerToken,
         const std::function<void()>& onSourceIssued,
         const std::function<void()>& onSourceFinished,
         const std::function<void()>& onSourceFailed,
@@ -1625,7 +1628,9 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 std::lock_guard<std::mutex> lock(cacheMutex);
                 auto [it, inserted] =
                     inFlight.try_emplace(inFlightKey, InFlightSourceTileAsset{});
-                it->second.waiters.push_back(std::move(waiter));
+                it->second.waiters.push_back(InFlightSourceTileAsset::WaiterEntry{
+                    waiterOwnerToken,
+                    std::move(waiter)});
                 if (!inserted) {
                     return;
                 }
@@ -1668,7 +1673,10 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         fallbackInFlightKey,
                         InFlightSourceTileAsset{});
                 if (!inserted) {
-                    it->second.waiters.push_back(std::move(waiter));
+                    it->second.waiters.push_back(
+                        InFlightSourceTileAsset::WaiterEntry{
+                            waiterOwnerToken,
+                            std::move(waiter)});
                     return;
                 }
             }
@@ -1686,6 +1694,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
              requestedKey,
              originalKey,
              ancestorFallback,
+             waiterOwnerToken,
              onSourceIssued,
              onSourceFinished,
              onSourceFailed,
@@ -1786,7 +1795,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                                  onSourceFinished,
                                  onSourceFailed,
                                  onReady,
-                                 fallbackInFlightKeys]() mutable {
+                                 fallbackInFlightKeys,
+                                 waiterOwnerToken]() mutable {
                                     // requestSource retains onSourceIssued in
                                     // its async completion callback. A stack
                                     // reference here becomes dangling when a
@@ -1797,6 +1807,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                                         originalKey,
                                         true,
                                         false,
+                                        waiterOwnerToken,
                                         [issued, onSourceIssued]() {
                                             ++(*issued);
                                             if (onSourceIssued) {
@@ -1866,6 +1877,33 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         finishInFlightSource(
             originalKey,
             makeAbandonedSourceResult(originalKey));
+    }
+
+    void detachInFlightWaiters(const std::vector<TileKey>& keys,
+                               uint64_t waiterOwnerToken) {
+        if (waiterOwnerToken == 0 || keys.empty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        for (const TileKey& key : keys) {
+            auto it = inFlight.find(depotCacheKey(key));
+            if (it == inFlight.end()) {
+                continue;
+            }
+            auto& waiters = it->second.waiters;
+            waiters.erase(
+                std::remove_if(
+                    waiters.begin(),
+                    waiters.end(),
+                    [waiterOwnerToken](
+                        const InFlightSourceTileAsset::WaiterEntry& waiter) {
+                        return waiter.ownerToken == waiterOwnerToken;
+                    }),
+                waiters.end());
+            if (waiters.empty()) {
+                inFlight.erase(it);
+            }
+        }
     }
 
 private:
@@ -1963,8 +2001,7 @@ private:
 
     size_t finishInFlightSource(const TileKey& originalKey,
                                 InFlightSourceTileAsset::Result source) {
-        std::vector<std::function<void(InFlightSourceTileAsset::Result)>>
-            waiters;
+        std::vector<InFlightSourceTileAsset::WaiterEntry> waiters;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
             auto it = inFlight.find(depotCacheKey(originalKey));
@@ -1974,7 +2011,9 @@ private:
             }
         }
         for (auto& waiter : waiters) {
-            waiter(source);
+            if (waiter.callback) {
+                waiter.callback(source);
+            }
         }
         return waiters.size();
     }
@@ -2090,6 +2129,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                                  throttleSlotReleased,
                              std::shared_ptr<QuadtreeSourceAssetDepot>
                                  sourceDepot,
+                             uint64_t sourceWaiterOwnerToken,
                              RasterSourceTileMapping sourceTileMapping,
                              Rectangle bounds,
                              RasterOverlayProjection outputProjection,
@@ -2102,6 +2142,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         , state(std::move(asyncState))
         , slotReleased(std::move(throttleSlotReleased))
         , depot(std::move(sourceDepot))
+        , waiterOwnerToken(sourceWaiterOwnerToken)
         , sourceTiles(std::move(sourceTileMapping))
         , targetBounds(bounds)
         , projection(outputProjection)
@@ -2151,6 +2192,7 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                 sourceKey,
                 false,
                 true,
+                waiterOwnerToken,
                 [issued, onSourceIssued]() {
                     ++(*issued);
                     onSourceIssued();
@@ -2190,6 +2232,12 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
         releaseRasterThrottleSlotOnce(
             *slotReleased,
             state->activeRasterTileLoads);
+    }
+
+    uint64_t getWaiterOwnerToken() const { return waiterOwnerToken; }
+
+    const std::vector<TileKey>& getSourceKeys() const {
+        return sourceTiles.sourceKeys;
     }
 
 private:
@@ -2342,6 +2390,7 @@ private:
     std::shared_ptr<ProviderAsyncState> state;
     std::shared_ptr<std::atomic<bool>> slotReleased;
     std::shared_ptr<QuadtreeSourceAssetDepot> depot;
+    uint64_t waiterOwnerToken = 0;
     RasterSourceTileMapping sourceTiles;
     Rectangle targetBounds;
     RasterOverlayProjection projection;
@@ -2734,10 +2783,19 @@ void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
     std::vector<std::pair<std::string, std::shared_ptr<MappedSourceImageSet>>>
         activeSets;
     std::vector<TileKey> abandonedFallbackSources;
+    std::vector<std::pair<std::vector<TileKey>, uint64_t>>
+        detachedInFlightWaiters;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         activeSets.reserve(asyncState_->activeMappedSourceSets.size());
+        detachedInFlightWaiters.reserve(
+            asyncState_->activeMappedSourceSets.size());
         for (auto& entry : asyncState_->activeMappedSourceSets) {
+            if (entry.second) {
+                detachedInFlightWaiters.emplace_back(
+                    entry.second->getSourceKeys(),
+                    entry.second->getWaiterOwnerToken());
+            }
             activeSets.emplace_back(entry.first, std::move(entry.second));
             asyncState_->inFlightRequests.erase(entry.first);
         }
@@ -2753,6 +2811,12 @@ void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
     }
 
     if (sourceAssetDepot_) {
+        for (const auto& [sourceKeys, waiterOwnerToken] :
+             detachedInFlightWaiters) {
+            sourceAssetDepot_->detachInFlightWaiters(
+                sourceKeys,
+                waiterOwnerToken);
+        }
         for (const TileKey& key : abandonedFallbackSources) {
             sourceAssetDepot_->abandonInFlightSource(key);
         }
@@ -3315,12 +3379,17 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         requestSourceDepotEpoch = asyncState_->sourceTileDepotEpoch;
     }
+    const uint64_t sourceWaiterOwnerToken =
+        gNextRasterSourceWaiterOwnerToken.fetch_add(
+            1,
+            std::memory_order_relaxed);
     const bool returnEmptyForAncestorOnly = true;
     auto sourceSet = std::make_shared<MappedSourceImageSet>(
         scheme_,
         state,
         throttleSlotReleased,
         sourceAssetDepot_,
+        sourceWaiterOwnerToken,
         std::move(sourceTiles),
         targetBounds,
         projection_,
