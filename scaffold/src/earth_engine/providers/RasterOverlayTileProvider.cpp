@@ -2490,6 +2490,22 @@ void RasterOverlayTileProvider::enforceSourceDepotBudgetLocked(
     }
 }
 
+void RasterOverlayTileProvider::compactActiveMappedSourceSetOrderLocked(
+    ProviderAsyncState& state) {
+    if (state.activeMappedSourceSetOrder.empty()) {
+        return;
+    }
+    std::deque<std::string> compactedOrder;
+    for (const std::string& cacheKey : state.activeMappedSourceSetOrder) {
+        auto it = state.activeMappedSourceSets.find(cacheKey);
+        if (it == state.activeMappedSourceSets.end() || !it->second) {
+            continue;
+        }
+        compactedOrder.push_back(cacheKey);
+    }
+    state.activeMappedSourceSetOrder.swap(compactedOrder);
+}
+
 RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
                                                      const TileScheme& scheme,
                                                      std::unique_ptr<RasterTextureUploader> textureUploader)
@@ -3407,6 +3423,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             state->activeMappedSourceSets.erase(cacheKey);
+            compactActiveMappedSourceSetOrderLocked(*state);
             if (!state->alive.load(std::memory_order_acquire)) {
                 releaseRasterThrottleSlotOnce(
                     *throttleSlotReleased,
@@ -3459,6 +3476,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             state->activeMappedSourceSets.erase(cacheKey);
+            compactActiveMappedSourceSetOrderLocked(*state);
             if (!state->alive.load(std::memory_order_acquire)) {
                 releaseRasterThrottleSlotOnce(
                     *throttleSlotReleased,
@@ -3666,18 +3684,14 @@ int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         activeSets.reserve(asyncState_->activeMappedSourceSetOrder.size());
-        std::deque<std::string> compactedOrder;
-        for (const std::string& cacheKey :
-             asyncState_->activeMappedSourceSetOrder) {
+        for (const std::string& cacheKey : asyncState_->activeMappedSourceSetOrder) {
             auto it = asyncState_->activeMappedSourceSets.find(cacheKey);
-            if (it == asyncState_->activeMappedSourceSets.end() ||
-                !it->second) {
+            if (it == asyncState_->activeMappedSourceSets.end() || !it->second) {
                 continue;
             }
-            compactedOrder.push_back(cacheKey);
             activeSets.push_back(it->second);
         }
-        asyncState_->activeMappedSourceSetOrder.swap(compactedOrder);
+        compactActiveMappedSourceSetOrderLocked(*asyncState_);
     }
 
     for (const auto& sourceSet : activeSets) {

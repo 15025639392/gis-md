@@ -5287,6 +5287,38 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     CompletedMappedSourceSetDoesNotLeaveOrderEntriesBehind) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+    auto tile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, rootBounds),
+        1024.0,
+        1024.0).tile;
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(tile->isMappedRasterTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 8;
+    config.maxRasterNetworkInflight = 16;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    ASSERT_TRUE(provider.loadTileThrottled(*tile, &budget));
+    ASSERT_GT(provider.getActiveMappedSourceSetOrderCount(), 0);
+    while (!imagery.pending.empty()) {
+        imagery.completeNext();
+    }
+    ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_EQ(0, provider.getActiveMappedSourceSetOrderCount());
+}
+
+TEST(RasterOverlayLifecycleTest,
      MappedRasterConfigChangeRemapsHeldLoadingTileInsteadOfFailingOverlay) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

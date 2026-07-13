@@ -229,6 +229,10 @@ public:
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return static_cast<int>(asyncState_->sourceTileDepotInFlight.size());
     }
+    int getActiveMappedSourceSetOrderCount() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        return static_cast<int>(asyncState_->activeMappedSourceSetOrder.size());
+    }
     void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
     int getMaximumLevel() const;
@@ -469,6 +473,8 @@ private:
         }
     };
     static void enforceSourceDepotBudgetLocked(ProviderAsyncState& state);
+    static void compactActiveMappedSourceSetOrderLocked(
+        ProviderAsyncState& state);
     static int64_t pendingUploadSizeBytes(const PendingUpload& upload);
     static void clearPendingUploads(ProviderAsyncState& state);
     std::shared_ptr<ProviderAsyncState> asyncState_ =
