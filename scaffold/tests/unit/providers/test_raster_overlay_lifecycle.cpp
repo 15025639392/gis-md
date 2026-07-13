@@ -4142,6 +4142,64 @@ TEST(RasterOverlayLifecycleTest,
               tile->isMoreDetailAvailable());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     DirectParentFallbackSurvivesMappedCacheInvalidation) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(0, 3);
+
+    const TileKey child{scheme->id(), 3, 2, 2};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {child};
+
+    auto tile = provider.getTile(child);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_FALSE(tile->isMappedRasterTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkInflight = 8;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+    ASSERT_TRUE(provider.loadTileThrottled(*tile, &firstBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+
+    imagery.completeNext();
+    EXPECT_TRUE(imagery.pending.empty());
+    EXPECT_EQ(1, provider.getPendingSourceFallbackCount());
+
+    FrameResourceBudget blockedBudget;
+    config.maxNetworkRequestsPerFrame = 0;
+    config.maxNetworkInflight = 0;
+    config.maxRasterNetworkRequestsPerFrame = 0;
+    config.maxRasterNetworkInflight = 0;
+    blockedBudget.beginFrame(2, config);
+    EXPECT_EQ(0, provider.processPendingUploads(false, &blockedBudget));
+    EXPECT_EQ(1, provider.getPendingSourceFallbackCount());
+
+    provider.setMaximumScreenSpaceError(
+        provider.getMaximumScreenSpaceError() * 2.0);
+    EXPECT_EQ(1, provider.getPendingSourceFallbackCount());
+
+    FrameResourceBudget fallbackBudget;
+    config.maxNetworkRequestsPerFrame = 20;
+    config.maxNetworkInflight = 20;
+    config.maxRasterNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkInflight = 8;
+    fallbackBudget.beginFrame(3, config);
+    EXPECT_EQ(0, provider.processPendingUploads(false, &fallbackBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(parent, imagery.pending.front().key);
+    EXPECT_EQ(0, provider.getPendingSourceFallbackCount());
+
+    imagery.completeNext();
+    EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+}
+
 TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

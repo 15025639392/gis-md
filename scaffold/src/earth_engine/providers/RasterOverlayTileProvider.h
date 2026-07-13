@@ -233,6 +233,10 @@ public:
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return static_cast<int>(asyncState_->activeMappedSourceSetOrder.size());
     }
+    int getPendingSourceFallbackCount() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        return static_cast<int>(asyncState_->pendingSourceFallbacks.size());
+    }
     void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
     int getMaximumLevel() const;
@@ -351,7 +355,7 @@ private:
     void invalidateDirectRasterTileCache();
     void invalidateMappedRasterTileCache();
     void invalidateSourceAssetDepotCache();
-    void abandonActiveMappedSourceSets();
+    void abandonActiveSourceSets(bool mappedOnly);
     void discardPendingUploadsForMissingTiles();
     bool pendingUploadBackpressureActive() const;
 
@@ -408,6 +412,7 @@ private:
     };
     struct PendingSourceFallback {
         TileKey originalKey;
+        uint64_t ownerToken = 0;
         std::function<int()> issue;
     };
 

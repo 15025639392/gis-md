@@ -1788,6 +1788,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         self->state->pendingSourceFallbacks.push_back(
                             PendingSourceFallback{
                                 originalKey,
+                                waiterOwnerToken,
                                 [self,
                                  parentKey,
                                  originalKey,
@@ -2563,7 +2564,7 @@ void RasterOverlayTileProvider::setReady(bool ready) {
         return;
     }
 
-    abandonActiveMappedSourceSets();
+    abandonActiveSourceSets(false);
 
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
@@ -2733,7 +2734,7 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
 
 void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
     ++mappedRasterTileEpoch_;
-    abandonActiveMappedSourceSets();
+    abandonActiveSourceSets(true);
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         auto& pendingUploads = asyncState_->pendingUploads;
@@ -2780,7 +2781,7 @@ void RasterOverlayTileProvider::invalidateDirectRasterTileCache() {
 }
 
 void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
-    abandonActiveMappedSourceSets();
+    abandonActiveSourceSets(false);
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         ++asyncState_->sourceTileDepotEpoch;
@@ -2792,35 +2793,55 @@ void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
     refreshSourceAssetDepot();
 }
 
-void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
+void RasterOverlayTileProvider::abandonActiveSourceSets(bool mappedOnly) {
     std::vector<std::pair<std::string, std::shared_ptr<MappedSourceImageSet>>>
         activeSets;
     std::vector<TileKey> abandonedFallbackSources;
     std::vector<std::pair<std::vector<TileKey>, uint64_t>>
         detachedInFlightWaiters;
+    std::unordered_set<uint64_t> abandonedOwnerTokens;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         activeSets.reserve(asyncState_->activeMappedSourceSets.size());
         detachedInFlightWaiters.reserve(
             asyncState_->activeMappedSourceSets.size());
-        for (auto& entry : asyncState_->activeMappedSourceSets) {
-            if (entry.second) {
-                detachedInFlightWaiters.emplace_back(
-                    entry.second->getSourceKeys(),
-                    entry.second->getWaiterOwnerToken());
+        for (auto it = asyncState_->activeMappedSourceSets.begin();
+             it != asyncState_->activeMappedSourceSets.end();) {
+            if (mappedOnly && !isMappedRasterCacheKey(it->first)) {
+                ++it;
+                continue;
             }
-            activeSets.emplace_back(entry.first, std::move(entry.second));
-            asyncState_->inFlightRequests.erase(entry.first);
+            if (it->second) {
+                abandonedOwnerTokens.insert(
+                    it->second->getWaiterOwnerToken());
+                detachedInFlightWaiters.emplace_back(
+                    it->second->getSourceKeys(),
+                    it->second->getWaiterOwnerToken());
+            }
+            asyncState_->inFlightRequests.erase(it->first);
+            activeSets.emplace_back(it->first, std::move(it->second));
+            it = asyncState_->activeMappedSourceSets.erase(it);
         }
-        abandonedFallbackSources.reserve(
-            asyncState_->pendingSourceFallbacks.size());
-        for (const PendingSourceFallback& fallback :
-             asyncState_->pendingSourceFallbacks) {
-            abandonedFallbackSources.push_back(fallback.originalKey);
+        if (mappedOnly) {
+            std::deque<PendingSourceFallback> retainedFallbacks;
+            for (auto& fallback : asyncState_->pendingSourceFallbacks) {
+                if (abandonedOwnerTokens.count(fallback.ownerToken) == 0) {
+                    retainedFallbacks.push_back(std::move(fallback));
+                    continue;
+                }
+                abandonedFallbackSources.push_back(fallback.originalKey);
+            }
+            asyncState_->pendingSourceFallbacks.swap(retainedFallbacks);
+        } else {
+            abandonedFallbackSources.reserve(
+                asyncState_->pendingSourceFallbacks.size());
+            for (const PendingSourceFallback& fallback :
+                 asyncState_->pendingSourceFallbacks) {
+                abandonedFallbackSources.push_back(fallback.originalKey);
+            }
+            asyncState_->pendingSourceFallbacks.clear();
         }
-        asyncState_->activeMappedSourceSets.clear();
-        asyncState_->activeMappedSourceSetOrder.clear();
-        asyncState_->pendingSourceFallbacks.clear();
+        compactActiveMappedSourceSetOrderLocked(*asyncState_);
     }
 
     if (sourceAssetDepot_) {
