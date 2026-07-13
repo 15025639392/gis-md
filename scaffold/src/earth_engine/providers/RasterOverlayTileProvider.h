@@ -412,6 +412,7 @@ private:
     };
     struct PendingSourceFallback {
         TileKey originalKey;
+        TileKey requestedKey;
         uint64_t ownerToken = 0;
         std::function<int()> issue;
     };

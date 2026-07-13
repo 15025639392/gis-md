@@ -530,6 +530,24 @@ public:
                 : makeImage(256, 256, static_cast<uint8_t>(item.key.z)));
     }
 
+    void completeKey(const TileKey& key) {
+        auto it = std::find_if(
+            pending.begin(),
+            pending.end(),
+            [&key](const Pending& item) { return item.key == key; });
+        ASSERT_NE(pending.end(), it);
+        Pending item = std::move(*it);
+        pending.erase(it);
+        const bool fails =
+            std::find(failingKeys.begin(), failingKeys.end(), item.key) !=
+            failingKeys.end();
+        item.callback(
+            item.key,
+            fails
+                ? nullptr
+                : makeImage(256, 256, static_cast<uint8_t>(item.key.z)));
+    }
+
     struct Pending {
         TileKey key;
         TileCallback callback;
@@ -4077,6 +4095,84 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
               repeatedEastTile->getState());
     EXPECT_EQ(nullptr, repeatedEastTile->getTexture());
     EXPECT_FALSE(provider.hasPendingWork());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     QueuedSiblingFallbackJoinsParentInFlightWithoutAdditionalBudget) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(0, 3);
+
+    const TileKey westChild{scheme->id(), 3, 2, 2};
+    const TileKey eastChild{scheme->id(), 3, 3, 2};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {westChild, eastChild};
+
+    const Rectangle westBounds = scheme->tileToRectangle(westChild);
+    const Rectangle westHalf(
+        westBounds.west(),
+        westBounds.south(),
+        westBounds.west() + westBounds.width() * 0.5,
+        westBounds.north());
+    const Rectangle eastBounds = scheme->tileToRectangle(eastChild);
+    const Rectangle eastHalf(
+        eastBounds.west(),
+        eastBounds.south(),
+        eastBounds.west() + eastBounds.width() * 0.5,
+        eastBounds.north());
+
+    auto westTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, westHalf),
+        256.0,
+        512.0).tile;
+    auto eastTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, eastHalf),
+        256.0,
+        512.0).tile;
+    ASSERT_NE(nullptr, westTile);
+    ASSERT_NE(nullptr, eastTile);
+
+    ASSERT_TRUE(provider.loadTile(*westTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(westChild, imagery.pending.front().key);
+
+    imagery.completeNext();
+    FrameResourceBudgetConfig fallbackConfig;
+    fallbackConfig.maxNetworkRequestsPerFrame = 20;
+    fallbackConfig.maxNetworkInflight = 20;
+    fallbackConfig.maxRasterNetworkRequestsPerFrame = 1;
+    fallbackConfig.maxRasterNetworkInflight = 2;
+    FrameResourceBudget fallbackBudget;
+    fallbackBudget.beginFrame(1, fallbackConfig);
+    EXPECT_EQ(0, provider.processPendingUploads(false, &fallbackBudget));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(parent, imagery.pending.front().key);
+
+    ASSERT_TRUE(provider.loadTile(*eastTile));
+    ASSERT_EQ(2u, imagery.pending.size());
+    EXPECT_EQ(eastChild, imagery.pending.back().key);
+
+    FrameResourceBudgetConfig blockedConfig;
+    blockedConfig.maxNetworkRequestsPerFrame = 0;
+    blockedConfig.maxNetworkInflight = 0;
+    blockedConfig.maxRasterNetworkRequestsPerFrame = 0;
+    blockedConfig.maxRasterNetworkInflight = 0;
+    FrameResourceBudget blockedBudget;
+    blockedBudget.beginFrame(2, blockedConfig);
+
+    imagery.completeKey(eastChild);
+    EXPECT_EQ(1, provider.getPendingSourceFallbackCount());
+    EXPECT_EQ(0, provider.processPendingUploads(false, &blockedBudget));
+    EXPECT_EQ(0, provider.getPendingSourceFallbackCount());
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(parent, imagery.pending.front().key);
+
+    imagery.completeNext();
+    EXPECT_EQ(2, processPendingUploadsUntil(provider, 2));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, westTile->getState());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
 TEST(RasterOverlayLifecycleTest,

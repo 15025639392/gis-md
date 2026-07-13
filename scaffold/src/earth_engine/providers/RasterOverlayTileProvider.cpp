@@ -1788,6 +1788,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         self->state->pendingSourceFallbacks.push_back(
                             PendingSourceFallback{
                                 originalKey,
+                                parentKey,
                                 waiterOwnerToken,
                                 [self,
                                  parentKey,
@@ -3660,7 +3661,22 @@ int RasterOverlayTileProvider::issuePendingSourceFallbacks(
     }
     int issued = 0;
     while (true) {
-        if (budget) {
+        PendingSourceFallback fallback;
+        bool canReuseExistingSource = false;
+        std::optional<TileKey> requestedKey;
+        {
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
+            if (asyncState_->pendingSourceFallbacks.empty()) {
+                break;
+            }
+            requestedKey = asyncState_->pendingSourceFallbacks.front().requestedKey;
+        }
+        if (requestedKey && sourceAssetDepot_) {
+            canReuseExistingSource =
+                !sourceAssetDepot_->wouldIssueNewRequest(*requestedKey);
+        }
+
+        if (budget && !canReuseExistingSource) {
             const int remainingSlots = availableRasterRequestSlots(
                 budget,
                 asyncState_->activeRasterSourceRequests.load(
@@ -3670,7 +3686,6 @@ int RasterOverlayTileProvider::issuePendingSourceFallbacks(
             }
         }
 
-        PendingSourceFallback fallback;
         {
             std::lock_guard<std::mutex> lock(asyncState_->mutex);
             if (asyncState_->pendingSourceFallbacks.empty()) {
