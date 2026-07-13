@@ -2895,7 +2895,8 @@ void RasterOverlayTileProvider::discardPendingUploadsForMissingTiles() {
                 }
                 state->pendingUploadBytes = std::max<int64_t>(
                     0,
-                    state->pendingUploadBytes - pendingUploadSizeBytes(upload));
+                    state->pendingUploadBytes -
+                        pendingUploadSizeBytes(upload));
                 enforceSourceDepotBudgetLocked(*state);
                 return true;
             }),
@@ -3794,13 +3795,17 @@ int RasterOverlayTileProvider::processPendingUploads(
                 }
             }
             upload = std::move(*selected);
+            asyncState_->pendingUploads.erase(selected);
+        }
+
+        const auto releaseUploadBudget = [this, &upload]() {
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
             asyncState_->pendingUploadBytes = std::max<int64_t>(
                 0,
                 asyncState_->pendingUploadBytes -
                     pendingUploadSizeBytes(upload));
             enforceSourceDepotBudgetLocked(*asyncState_);
-            asyncState_->pendingUploads.erase(selected);
-        }
+        };
 
         std::vector<TilePtr> targetTiles;
         if (auto it = tiles_.find(upload.cacheKey); it != tiles_.end()) {
@@ -3818,6 +3823,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             targetTiles.end());
         if (targetTiles.empty()) {
             // 节流名额已在加载完成入队时释放，这里只丢弃孤儿上传
+            releaseUploadBudget();
             continue;
         }
 
@@ -3841,6 +3847,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             }
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             ++processed;
+            releaseUploadBudget();
             continue;
         }
 
@@ -3854,6 +3861,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             }
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             ++processed;
+            releaseUploadBudget();
             continue;
         }
 
@@ -3918,6 +3926,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         budget->recordElapsed(FrameResourceLane::RasterTextureUpload, uploadMs);
         asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
         ++processed;
+        releaseUploadBudget();
     }
     return processed;
 }

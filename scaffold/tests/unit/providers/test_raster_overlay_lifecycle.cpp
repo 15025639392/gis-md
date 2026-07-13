@@ -610,6 +610,32 @@ public:
     int uploadCount = 0;
 };
 
+class BudgetInspectingRasterUploader final : public RasterTextureUploader {
+public:
+    int maxTextureSize() const override { return 2048; }
+
+    std::unique_ptr<Texture> uploadRasterTexture(
+        const DecodedImage& image,
+        const RasterTextureUploadOptions&) override {
+        ++uploadCount;
+        if (!triggered && onFirstUpload) {
+            triggered = true;
+            onFirstUpload();
+        }
+        if (provider) {
+            observedSourceCacheBytesDuringUpload =
+                provider->getCachedSourceTileBytes();
+        }
+        return std::make_unique<TestTexture>(image.width, image.height);
+    }
+
+    RasterOverlayTileProvider* provider = nullptr;
+    std::function<void()> onFirstUpload;
+    int uploadCount = 0;
+    bool triggered = false;
+    int64_t observedSourceCacheBytesDuringUpload = -1;
+};
+
 class RecordingPrepareRendererResources final
     : public IPrepareRendererResources {
 public:
@@ -2822,6 +2848,60 @@ TEST(RasterOverlayLifecycleTest,
 
     EXPECT_EQ(0, provider.getCachedSourceTileBytes());
     EXPECT_EQ(pendingBytes, provider.getPendingUploadBytes());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     UploadingImageKeepsPendingBudgetUntilMainThreadUploadFinishes) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<BudgetInspectingRasterUploader>();
+    BudgetInspectingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    uploaderPtr->provider = &provider;
+    provider.setLevelRange(3, 3);
+    provider.setSubTileCacheBytes(256 * 256 * 4 + 1);
+
+    const TileKey directKey{scheme->id(), 3, 4, 3};
+    auto directTile = provider.getTile(directKey);
+    ASSERT_NE(nullptr, directTile);
+    ASSERT_TRUE(provider.loadTile(*directTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+
+    imagery.completeNext();
+    ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+
+    const TileKey mappedSourceKey{scheme->id(), 3, 5, 3};
+    const Rectangle mappedSourceBounds =
+        scheme->tileToRectangle(mappedSourceKey);
+    const Rectangle mappedHalf(
+        mappedSourceBounds.west(),
+        mappedSourceBounds.south(),
+        mappedSourceBounds.west() + mappedSourceBounds.width() * 0.5,
+        mappedSourceBounds.north());
+    auto mappedTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, mappedHalf),
+        128.0,
+        128.0).tile;
+    ASSERT_NE(nullptr, mappedTile);
+    ASSERT_TRUE(mappedTile->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*mappedTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(mappedSourceKey, imagery.pending.front().key);
+
+    uploaderPtr->onFirstUpload = [&imagery]() { imagery.completeNext(); };
+    FrameResourceBudgetConfig uploadConfig;
+    uploadConfig.maxRasterUploadsPerFrame = 1;
+    FrameResourceBudget firstFrameBudget;
+    firstFrameBudget.beginFrame(1, uploadConfig);
+    EXPECT_EQ(1, provider.processPendingUploads(false, &firstFrameBudget));
+    EXPECT_EQ(0, uploaderPtr->observedSourceCacheBytesDuringUpload);
+
+    EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
+    FrameResourceBudget secondFrameBudget;
+    secondFrameBudget.beginFrame(2, uploadConfig);
+    EXPECT_EQ(1, provider.processPendingUploads(false, &secondFrameBudget));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
 }
 
 TEST(RasterOverlayLifecycleTest,
