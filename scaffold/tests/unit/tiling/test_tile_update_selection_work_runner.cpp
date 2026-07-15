@@ -203,6 +203,7 @@ TEST(
             [&](const FrameState& selectedFrame,
                 TileSelectionPerformanceTimings& timings) {
                 selectCalled = true;
+                timings.collectDetailed = true;
                 timings.traversalMs = 8.0;
                 timings.refineMs = 3.0;
                 timings.renderPlanMs = 2.0;
@@ -237,6 +238,7 @@ TEST(
         result.reuseRejectReason,
         TileSelectionReuseRejectReason::SelectorMovedStaleDisabled);
     EXPECT_TRUE(selectCalled);
+    EXPECT_TRUE(result.selectorDetailedTimings);
     EXPECT_DOUBLE_EQ(result.selectorTraversalMs, 8.0);
     EXPECT_DOUBLE_EQ(result.selectorRefineMs, 3.0);
     EXPECT_DOUBLE_EQ(result.selectorRenderPlanMs, 2.0);

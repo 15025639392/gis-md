@@ -56,6 +56,7 @@ struct TileUpdateSelectionWorkResult {
     double selectorRefineDecisionMs = 0.0;
     double selectorRefineMaterializeMs = 0.0;
     double selectorRefineCommitMs = 0.0;
+    bool selectorDetailedTimings = false;
     int selectorRefineMaterializeCalls = 0;
     int selectorRefineMaterializeChanged = 0;
     int selectorRefineMaterializeRetry = 0;
@@ -81,6 +82,7 @@ struct TileUpdateSelectionWorkResult {
     int prefetchRenderPlanAuthoritativeUpdates = 0;
     int prefetchRenderPlanStableReuses = 0;
     double requestMs = 0.0;
+    TileLoadRequestOutcome requestOutcome;
     TileSelectionReuseMode reuseMode = TileSelectionReuseMode::None;
     TileSelectionReuseRejectReason reuseRejectReason =
         TileSelectionReuseRejectReason::None;
@@ -142,6 +144,8 @@ public:
                 selectionTimings.refineMaterializeMs;
             result.selectorRefineCommitMs =
                 selectionTimings.refineCommitMs;
+            result.selectorDetailedTimings =
+                selectionTimings.collectDetailed;
             result.selectorRefineMaterializeCalls =
                 selectionTimings.refineMaterializeCalls;
             result.selectorRefineMaterializeChanged =
@@ -303,6 +307,7 @@ public:
         requestOutcome = requestMissingTiles(
             input.loadQueue,
             &input.frameResourceBudget);
+        result.requestOutcome = requestOutcome;
         input.selectionReuseState.recordRequestOutcome(
             requestOutcome.issued > 0,
             requestOutcome.blockedByInflight);

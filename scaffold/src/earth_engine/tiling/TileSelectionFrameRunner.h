@@ -43,7 +43,10 @@ public:
         VisitTileIfNeededFn&& visitTileIfNeeded,
         FinalizeSelectedTilePlanFn&& finalizeSelectedTilePlan) {
         if (input.performanceTimings) {
+            const bool collectDetailed =
+                input.performanceTimings->collectDetailed;
             *input.performanceTimings = TileSelectionPerformanceTimings{};
+            input.performanceTimings->collectDetailed = collectDetailed;
         }
         input.tilePlan = TilePlan{};
         input.tilePlan.frameId = input.frameState.frameId;

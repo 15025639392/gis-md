@@ -14,6 +14,7 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     input.reuseRejectReason =
         TileSelectionReuseRejectReason::SelectorMovedStaleDisabled;
     input.selectorTraversalMs = 12.5;
+    input.selectorDetailedTimings = true;
     input.selectorVisitVisibilityMs = 2.5;
     input.selectorVisitInputMetricsMs = 3.5;
     input.selectorVisitPolicyMs = 0.25;
@@ -43,6 +44,14 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     input.prefetchRenderPlanAuthoritativeUpdates = 3;
     input.prefetchRenderPlanStableReuses = 37;
     input.gpuUploadDrainMs = 6.25;
+    input.requestClassifiedContent = 11;
+    input.requestClassifiedTerrainAvailabilityUpsample = 13;
+    input.requestClassifiedRasterDetailUpsample = 17;
+    input.requestIssuedContent = 2;
+    input.requestIssuedTerrainAvailabilityUpsample = 3;
+    input.requestIssuedRasterDetailUpsample = 5;
+    input.requestUpsampleWorkerCapacity = 6;
+    input.requestMotionDeferred = 7;
 
     const std::array<char, 1536> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
@@ -52,6 +61,7 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     EXPECT_NE(text.find("reuseMode=2"), std::string::npos);
     EXPECT_NE(text.find("reuseReject=4"), std::string::npos);
     EXPECT_NE(text.find("selTrav=12.50"), std::string::npos);
+    EXPECT_NE(text.find("selDetail=1"), std::string::npos);
     EXPECT_NE(text.find("selVis=2.50"), std::string::npos);
     EXPECT_NE(text.find("selMetric=3.50"), std::string::npos);
     EXPECT_NE(text.find("selPolicy=0.25"), std::string::npos);
@@ -80,6 +90,10 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     EXPECT_NE(text.find("prefRenderTiles=40"), std::string::npos);
     EXPECT_NE(text.find("prefRenderAuth=3"), std::string::npos);
     EXPECT_NE(text.find("prefRenderReuse=37"), std::string::npos);
+    EXPECT_NE(text.find("reqClass=11/13/17"), std::string::npos);
+    EXPECT_NE(text.find("reqIssued=2/3/5"), std::string::npos);
+    EXPECT_NE(text.find("reqUpCap=6"), std::string::npos);
+    EXPECT_NE(text.find("reqMotion=7"), std::string::npos);
     EXPECT_NE(text.find("gpuDrain=6.25"), std::string::npos);
 }
 

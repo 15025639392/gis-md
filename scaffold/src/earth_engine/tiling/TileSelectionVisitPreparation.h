@@ -20,6 +20,7 @@ struct TileSelectionVisitPreparationOptions {
     bool enforceCulledScreenSpaceError = true;
     double maximumScreenSpaceError = 16.0;
     double culledScreenSpaceError = 64.0;
+    bool collectDetailedTimings = false;
 };
 
 struct TileSelectionVisitPreparationResult {

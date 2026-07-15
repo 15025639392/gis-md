@@ -22,6 +22,12 @@ struct TileLoadRequest {
 
 struct TileLoadRequestOutcome {
     size_t issued = 0;
+    size_t classifiedContent = 0;
+    size_t classifiedTerrainAvailabilityUpsample = 0;
+    size_t classifiedRasterDetailUpsample = 0;
+    size_t issuedContent = 0;
+    size_t issuedTerrainAvailabilityUpsample = 0;
+    size_t issuedRasterDetailUpsample = 0;
     bool blockedByInflight = false;
     // Per-reason drop counters for the request loop. A stalled load queue
     // (entries present, nothing issued) is diagnosed by which counter eats
@@ -32,6 +38,7 @@ struct TileLoadRequestOutcome {
     size_t skippedClassified = 0;
     size_t skippedUpsampleSourceNotReady = 0;
     size_t skippedUpsampleNoContentSource = 0;
+    size_t skippedUpsampleWorkerCapacity = 0;
     size_t skippedDispatch = 0;
     size_t skippedNoContentProvider = 0;
     size_t stoppedAtDispatch = 0;

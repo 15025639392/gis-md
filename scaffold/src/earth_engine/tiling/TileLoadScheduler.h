@@ -14,6 +14,7 @@
 #include "../core/resources/FrameResourceBudget.h"
 #include "../content/GltfContentProvider.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -175,6 +176,10 @@ private:
             }
             const TileLoadRequestKind requestKind =
                 TileLoadRequestPlanner::classify(snapshot);
+            recordClassified(
+                pass.outcome,
+                requestKind,
+                snapshot.upsampleKind);
 
             if (requestKind == TileLoadRequestKind::Skip) {
                 ++pass.outcome.skippedClassified;
@@ -206,6 +211,12 @@ private:
                 if (!hasTerrainContentSource) {
                     ++pass.outcome.skippedUpsampleNoContentSource;
                     pass.consumed.push_back(requestKey);
+                    continue;
+                }
+                if (!TileLoadRequestDispatcher::
+                        hasUpsampleClipWorkerCapacity()) {
+                    ++pass.outcome.skippedUpsampleWorkerCapacity;
+                    pass.retained.push_back(request);
                     continue;
                 }
 
@@ -242,6 +253,9 @@ private:
                     }
                     markTileContentLoading(requestKey);
                     ++pass.outcome.issued;
+                    recordIssuedUpsample(
+                        pass.outcome,
+                        snapshot.upsampleKind);
                     pass.consumed.push_back(requestKey);
                     continue;
                 }
@@ -252,7 +266,6 @@ private:
                         input.lifecycle.condition(),
                         input.lifecycle.requestState(),
                         input.lifecycle.pendingLoads(),
-                        input.budget,
                         requestKey,
                         cacheKey,
                         request.group,
@@ -270,14 +283,26 @@ private:
                                 : TileLoadResult::createTerminal(
                                       TileLoadStatus::Failed);
                         },
-                        [&markTileContentLoading, &requestKey, &pass]() {
+                        [&markTileContentLoading,
+                         &requestKey,
+                         &pass,
+                         upsampleKind = snapshot.upsampleKind]() {
                             markTileContentLoading(requestKey);
                             ++pass.outcome.issued;
+                            recordIssuedUpsample(
+                                pass.outcome,
+                                upsampleKind);
                         });
                 if (shouldStopAfterDispatch(dispatchResult)) {
                     ++pass.outcome.stoppedAtDispatch;
                     retainRemaining(requestIndex);
                     break;
+                }
+                if (dispatchResult ==
+                    TileLoadDispatchResult::WorkerCapacityBlocked) {
+                    ++pass.outcome.skippedUpsampleWorkerCapacity;
+                    pass.retained.push_back(request);
+                    continue;
                 }
                 if (dispatchResult == TileLoadDispatchResult::Skipped) {
                     ++pass.outcome.skippedDispatch;
@@ -317,15 +342,16 @@ private:
                 {
                     std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                     if (!input.budget.hasNetworkInflightCapacity(
-                            requestLane,
-                            static_cast<uint32_t>(
-                                input.lifecycle
-                                    .requestState()
-                                    .totalRequestCount()),
+                        requestLane,
+                        static_cast<uint32_t>(
+                            input.lifecycle
+                                .requestState()
+                                .counts()
+                                .contentRequests),
                             estimatedFanout)) {
                         pass.outcome.blockedByInflight = true;
-                        retainRemaining(requestIndex);
-                        break;
+                        pass.retained.push_back(request);
+                        continue;
                     }
                 }
                 const TileLoadDispatchResult dispatchResult =
@@ -343,15 +369,21 @@ private:
                         [&markTileContentLoading, &requestKey, &pass]() {
                             markTileContentLoading(requestKey);
                             ++pass.outcome.issued;
+                            ++pass.outcome.issuedContent;
                         },
                         requestOptionsForTile(
                             *input.contentProvider,
                             tileState,
                             input.requiredRasterOverlayProjections));
-                if (shouldStopAfterDispatch(dispatchResult)) {
+                if (dispatchResult ==
+                    TileLoadDispatchResult::Destroying) {
                     ++pass.outcome.stoppedAtDispatch;
                     retainRemaining(requestIndex);
                     break;
+                }
+                if (dispatchResult == TileLoadDispatchResult::Blocked) {
+                    pass.retained.push_back(request);
+                    continue;
                 }
                 if (dispatchResult == TileLoadDispatchResult::Skipped) {
                     ++pass.outcome.skippedDispatch;
@@ -363,6 +395,45 @@ private:
 
         return pass;
     }
+
+    static void recordClassified(
+        TileLoadRequestOutcome& outcome,
+        TileLoadRequestKind requestKind,
+        TileContentUpsampleKind upsampleKind) {
+        if (requestKind == TileLoadRequestKind::Content) {
+            ++outcome.classifiedContent;
+            return;
+        }
+        if (requestKind != TileLoadRequestKind::TerrainContentUpsample) {
+            return;
+        }
+        switch (upsampleKind) {
+            case TileContentUpsampleKind::TerrainAvailability:
+                ++outcome.classifiedTerrainAvailabilityUpsample;
+                break;
+            case TileContentUpsampleKind::RasterDetail:
+                ++outcome.classifiedRasterDetailUpsample;
+                break;
+            case TileContentUpsampleKind::None:
+                break;
+        }
+    }
+
+    static void recordIssuedUpsample(
+        TileLoadRequestOutcome& outcome,
+        TileContentUpsampleKind upsampleKind) {
+        switch (upsampleKind) {
+            case TileContentUpsampleKind::TerrainAvailability:
+                ++outcome.issuedTerrainAvailabilityUpsample;
+                break;
+            case TileContentUpsampleKind::RasterDetail:
+                ++outcome.issuedRasterDetailUpsample;
+                break;
+            case TileContentUpsampleKind::None:
+                break;
+        }
+    }
+
     static TileContentRequestOptions requestOptionsForTile(
         const TilesetContentProvider& provider,
         const TilesetTile* tile,
@@ -389,8 +460,7 @@ private:
     }
 
     static bool shouldStopAfterDispatch(TileLoadDispatchResult result) {
-        return result == TileLoadDispatchResult::Destroying ||
-               result == TileLoadDispatchResult::Blocked;
+        return result == TileLoadDispatchResult::Destroying;
     }
 };
 

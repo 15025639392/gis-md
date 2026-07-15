@@ -18,6 +18,10 @@ public:
 
     void cancel() { cancelled_->store(true, std::memory_order_release); }
 
+    bool sharesStateWith(const CancellationToken& other) const {
+        return cancelled_ == other.cancelled_;
+    }
+
     /// 创建子令牌（父取消则子也取消）
     CancellationToken createChild() const {
         CancellationToken child;

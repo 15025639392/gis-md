@@ -21,6 +21,7 @@
 #include <vector>
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <thread>
 
 using namespace earth_engine;
@@ -342,6 +343,10 @@ TEST(TileLoadSchedulerTest,
             [](const TileKey&) {});
 
     EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.classifiedContent, 1u);
+    EXPECT_EQ(outcome.issuedContent, 1u);
+    EXPECT_EQ(outcome.classifiedTerrainAvailabilityUpsample, 0u);
+    EXPECT_EQ(outcome.classifiedRasterDetailUpsample, 0u);
     EXPECT_EQ(outcome.skippedClassified, 1u);
     EXPECT_TRUE(queue.empty());
     EXPECT_EQ(provider.requestCount, 1);
@@ -575,7 +580,9 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(queue.front().key, childKey);
 }
 
-TEST(TileLoadSchedulerTest, BlocksContentRequestWhenInflightIsFull) {
+TEST(
+    TileLoadSchedulerTest,
+    LocalUpsampleInflightDoesNotBlockNetworkContent) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 1;
@@ -618,15 +625,224 @@ TEST(TileLoadSchedulerTest, BlocksContentRequestWhenInflightIsFull) {
             [](TilesetTile&, double) { return false; },
             [&marked](const TileKey&) { marked = true; });
 
-    EXPECT_EQ(outcome.issued, 0u);
-    EXPECT_TRUE(outcome.blockedByInflight);
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_TRUE(planned);
-    EXPECT_FALSE(marked);
-    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_TRUE(marked);
+    EXPECT_EQ(provider.requestCount, 1);
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
+TEST(
+    TileLoadSchedulerTest,
+    UpsampleClipCapacityDoesNotBlockFollowingNetworkContent) {
+    TileLoadLifecycle lifecycle;
+    TileLoadLifecycle secondLifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 20;
+    config.maxNetworkInflight = 20;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const size_t upsampleCapacity =
+        TileLoadRequestDispatcher::maximumUpsampleClipInflight();
+    std::promise<void> releasePromise;
+    const std::shared_future<void> release =
+        releasePromise.get_future().share();
+    for (size_t i = 0; i < upsampleCapacity; ++i) {
+        TileLoadLifecycle& owner =
+            i % 2u == 0u ? lifecycle : secondLifecycle;
+        const TileKey key{
+            "busy",
+            1,
+            static_cast<int32_t>(i),
+            0};
+        const TileLoadDispatchResult result =
+            TileLoadRequestDispatcher::requestUpsampleClip(
+                owner.mutex(),
+                owner.condition(),
+                owner.requestState(),
+                owner.pendingLoads(),
+                key,
+                "busy-upsample-" + std::to_string(i),
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                0,
+                [release](const int&) {
+                    release.wait();
+                    return TileLoadResult::createTerminal(
+                        TileLoadStatus::Failed);
+                },
+                [] {});
+        EXPECT_EQ(result, TileLoadDispatchResult::Issued);
+    }
+    EXPECT_FALSE(
+        TileLoadRequestDispatcher::hasUpsampleClipWorkerCapacity());
+
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const TileKey contentKey{"test", 1, 1, 0};
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.markRasterDetailUpsample(
+        RasterOverlayProjection::Geographic);
+    parent.content.renderContent.setGltfContent(
+        makeSchedulerQuadTerrainGltfModel(parentBounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+    bool prepared = false;
+    bool contentMarked = false;
+    CountingContentProvider provider;
+
+    TileLoadQueue queue;
+    queue.queue(
+        childKey,
+        TileLoadPriorityGroup::Normal,
+        1.0);
+    queue.queue(
+        contentKey,
+        TileLoadPriorityGroup::Normal,
+        2.0);
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            queue,
+            TileLoadSchedulerInput{lifecycle, budget, &provider},
+            cacheKeyForTile,
+            [&](const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                TileLoadRequestSnapshot snapshot;
+                if (key == contentKey) {
+                    tileState = nullptr;
+                    snapshot.contentProviderSupportsTile = true;
+                    return snapshot;
+                }
+                tileState = &child;
+                snapshot.hasTile = true;
+                snapshot.upsampleKind =
+                    TileContentUpsampleKind::RasterDetail;
+                snapshot.contentProviderOwnsTerrainQuadtree = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&](const TileKey& key) {
+                if (key == contentKey) {
+                    contentMarked = true;
+                }
+            });
+
+    EXPECT_TRUE(prepared);
+    EXPECT_TRUE(contentMarked);
+    EXPECT_EQ(provider.requestCount, 1);
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.issuedContent, 1u);
+    EXPECT_EQ(outcome.skippedUpsampleWorkerCapacity, 1u);
+    EXPECT_EQ(queue.size(), 1u);
+    EXPECT_EQ(queue.front().key, childKey);
+    EXPECT_EQ(
+        lifecycle.pendingRequestCount() +
+            secondLifecycle.pendingRequestCount(),
+        upsampleCapacity);
+    EXPECT_EQ(budget.networkRequestsIssued(), 1u);
+
+    releasePromise.set_value();
+    EXPECT_TRUE(waitForUpsampleAsync([&] {
+        return lifecycle.pendingRequestCount() == 0u &&
+               secondLifecycle.pendingRequestCount() == 0u;
+    }));
+    EXPECT_TRUE(
+        TileLoadRequestDispatcher::hasUpsampleClipWorkerCapacity());
+}
+
+TEST(
+    TileLoadSchedulerTest,
+    NetworkInflightBlockDoesNotBlockFollowingLocalUpsample) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 20;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        ASSERT_TRUE(lifecycle.requestState().beginContentRequest(
+            "busy-network",
+            token));
+    }
+
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const TileKey contentKey{"test", 1, 1, 0};
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.markRasterDetailUpsample(
+        RasterOverlayProjection::Geographic);
+    parent.content.renderContent.setGltfContent(
+        makeSchedulerQuadTerrainGltfModel(parentBounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+    CountingContentProvider provider;
+    TileLoadQueue queue;
+    queue.queue(
+        contentKey,
+        TileLoadPriorityGroup::Urgent,
+        1.0);
+    queue.queue(
+        childKey,
+        TileLoadPriorityGroup::Normal,
+        2.0);
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            queue,
+            TileLoadSchedulerInput{lifecycle, budget, &provider},
+            cacheKeyForTile,
+            [&](const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                TileLoadRequestSnapshot snapshot;
+                if (key == contentKey) {
+                    tileState = nullptr;
+                    snapshot.contentProviderSupportsTile = true;
+                    return snapshot;
+                }
+                tileState = &child;
+                snapshot.hasTile = true;
+                snapshot.upsampleKind =
+                    TileContentUpsampleKind::RasterDetail;
+                snapshot.contentProviderOwnsTerrainQuadtree = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return true; },
+            [](const TileKey&) {});
+
+    EXPECT_TRUE(outcome.blockedByInflight);
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.issuedRasterDetailUpsample, 1u);
+    EXPECT_EQ(provider.requestCount, 0);
+    ASSERT_EQ(queue.size(), 1u);
+    EXPECT_EQ(queue.front().key, contentKey);
+    EXPECT_TRUE(waitForUpsampleAsync(
+        [&] { return lifecycle.pendingRequestCount() == 1u; }));
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeContentRequest(
+            "busy-network");
     }
 }
 
@@ -872,6 +1088,10 @@ TEST(TileLoadSchedulerTest, ExplicitContentProviderUsesContentRequestPath) {
             [&marked](const TileKey&) { marked = true; });
 
     EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.classifiedContent, 1u);
+    EXPECT_EQ(outcome.issuedContent, 1u);
+    EXPECT_EQ(outcome.classifiedTerrainAvailabilityUpsample, 0u);
+    EXPECT_EQ(outcome.classifiedRasterDetailUpsample, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_EQ(provider.contentRequestCount, 1);
     EXPECT_EQ(provider.terrainRequestCount, 0);
@@ -1092,7 +1312,8 @@ TEST(TileLoadSchedulerTest,
                 tileState = &child;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
+                snapshot.upsampleKind =
+                    TileContentUpsampleKind::TerrainAvailability;
                 snapshot.contentProviderOwnsTerrainQuadtree = true;
                 return snapshot;
             },
@@ -1170,6 +1391,10 @@ TEST(TileLoadSchedulerTest,
             [&marked](const TileKey&) { marked = true; });
 
     EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.classifiedTerrainAvailabilityUpsample, 1u);
+    EXPECT_EQ(outcome.issuedTerrainAvailabilityUpsample, 1u);
+    EXPECT_EQ(outcome.classifiedContent, 0u);
+    EXPECT_EQ(outcome.classifiedRasterDetailUpsample, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_TRUE(prepared);
     EXPECT_TRUE(marked);
@@ -1385,7 +1610,8 @@ TEST(TileLoadSchedulerTest,
                 tileState = &child;
                 TileLoadRequestSnapshot snapshot;
                 snapshot.hasTile = true;
-                snapshot.upsampleKind = TileContentUpsampleKind::TerrainAvailability;
+                snapshot.upsampleKind =
+                    TileContentUpsampleKind::RasterDetail;
                 snapshot.contentProviderOwnsTerrainQuadtree = true;
                 return snapshot;
             },
@@ -1402,6 +1628,10 @@ TEST(TileLoadSchedulerTest,
             [&marked](const TileKey&) { marked = true; });
 
     EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.classifiedRasterDetailUpsample, 1u);
+    EXPECT_EQ(outcome.issuedRasterDetailUpsample, 1u);
+    EXPECT_EQ(outcome.classifiedContent, 0u);
+    EXPECT_EQ(outcome.classifiedTerrainAvailabilityUpsample, 0u);
     EXPECT_FALSE(outcome.blockedByInflight);
     EXPECT_TRUE(prepared);
     EXPECT_TRUE(marked);
@@ -2509,7 +2739,7 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
     EXPECT_EQ(lifecycle.counts().gltfTerrainTerminalResults, 1u);
 }
 
-TEST(TileLoadSchedulerTest, StopsAfterDispatchBudgetBlock) {
+TEST(TileLoadSchedulerTest, ContinuesScanningAfterDispatchBudgetBlock) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkRequestsPerFrame = 1;
@@ -2561,13 +2791,15 @@ TEST(TileLoadSchedulerTest, StopsAfterDispatchBudgetBlock) {
                 markedKeys.push_back(key.x);
             });
 
-    ASSERT_EQ(plannedKeys.size(), 2u);
+    ASSERT_EQ(plannedKeys.size(), 3u);
     ASSERT_EQ(markedKeys.size(), 1u);
     EXPECT_EQ(outcome.issued, 1u);
     EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(outcome.stoppedAtDispatch, 0u);
     EXPECT_EQ(provider.requestCount, 1);
     EXPECT_EQ(plannedKeys[0], firstKey.x);
     EXPECT_EQ(plannedKeys[1], blockedKey.x);
+    EXPECT_EQ(plannedKeys[2], skippedKey.x);
     EXPECT_EQ(markedKeys[0], firstKey.x);
 }
 

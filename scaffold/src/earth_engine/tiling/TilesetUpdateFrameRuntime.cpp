@@ -220,6 +220,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             selectionWork.selectorRefineDecisionMs,
             selectionWork.selectorRefineMaterializeMs,
             selectionWork.selectorRefineCommitMs,
+            selectionWork.selectorDetailedTimings,
             uploadWork.rasterSourceFallbackMs,
             uploadWork.rasterSourceSnapshotMs,
             uploadWork.rasterSourceIssueMs,
@@ -237,7 +238,18 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             selectionWork.prefetchRenderPlanTiles,
             selectionWork.prefetchRenderPlanAuthoritativeUpdates,
             selectionWork.prefetchRenderPlanStableReuses,
-            gpuUploadDrainMs}};
+            gpuUploadDrainMs,
+            selectionWork.requestOutcome.classifiedContent,
+            selectionWork.requestOutcome
+                .classifiedTerrainAvailabilityUpsample,
+            selectionWork.requestOutcome.classifiedRasterDetailUpsample,
+            selectionWork.requestOutcome.issuedContent,
+            selectionWork.requestOutcome
+                .issuedTerrainAvailabilityUpsample,
+            selectionWork.requestOutcome.issuedRasterDetailUpsample,
+            selectionWork.requestOutcome
+                .skippedUpsampleWorkerCapacity,
+            selectionWork.requestOutcome.skippedMotionCull}};
 }
 
 } // namespace earth_engine

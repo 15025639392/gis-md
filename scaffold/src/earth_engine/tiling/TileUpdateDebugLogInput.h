@@ -57,6 +57,7 @@ struct TileUpdateDebugLogInput {
     double selectorRefineDecisionMs = 0.0;
     double selectorRefineMaterializeMs = 0.0;
     double selectorRefineCommitMs = 0.0;
+    bool selectorDetailedTimings = false;
     double rasterSourceFallbackMs = 0.0;
     double rasterSourceSnapshotMs = 0.0;
     double rasterSourceIssueMs = 0.0;
@@ -75,6 +76,14 @@ struct TileUpdateDebugLogInput {
     int prefetchRenderPlanAuthoritativeUpdates = 0;
     int prefetchRenderPlanStableReuses = 0;
     double gpuUploadDrainMs = 0.0;
+    size_t requestClassifiedContent = 0;
+    size_t requestClassifiedTerrainAvailabilityUpsample = 0;
+    size_t requestClassifiedRasterDetailUpsample = 0;
+    size_t requestIssuedContent = 0;
+    size_t requestIssuedTerrainAvailabilityUpsample = 0;
+    size_t requestIssuedRasterDetailUpsample = 0;
+    size_t requestUpsampleWorkerCapacity = 0;
+    size_t requestMotionDeferred = 0;
 };
 
 } // namespace earth_engine

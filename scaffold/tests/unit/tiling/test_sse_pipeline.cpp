@@ -19056,8 +19056,21 @@ void testTilePendingRequestStateCancelIgnoresUnknownKeys() {
           "TilePendingRequestState: unknown cancel leaves existing requests untouched");
     state.cancelAndErase("terrain");
     state.cancelAndErase("content");
-    check(state.empty(),
-          "TilePendingRequestState: unknown cancel test cleanup drains requests");
+    check(terrainToken.isCancelled() &&
+              contentToken.isCancelled() &&
+              state.empty() &&
+              !state.callbacksDrained(),
+          "TilePendingRequestState: cancellation removes active keys but retains callback ownership");
+    CancellationToken replacementToken;
+    check(state.beginTerrainRequest("terrain", replacementToken),
+          "TilePendingRequestState: cancelled key can be reissued");
+    state.completeTerrainRequest("terrain", terrainToken);
+    check(state.contains("terrain"),
+          "TilePendingRequestState: old completion cannot erase same-key replacement");
+    state.completeContentRequest("content", contentToken);
+    state.completeTerrainRequest("terrain", replacementToken);
+    check(state.callbacksDrained(),
+          "TilePendingRequestState: token-aware completions drain retired and replacement callbacks");
 }
 void testTileLoadLifecycleCountsAndFindsPendingWork() {
     TileLoadLifecycle lifecycle;
@@ -19644,8 +19657,8 @@ void testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull() {
     CancellationToken token;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        check(lifecycle.requestState().beginTerrainRequest("busy", token),
-              "TileLoadScheduler: test starts one inflight request");
+        check(lifecycle.requestState().beginContentRequest("busy", token),
+              "TileLoadScheduler: test starts one network inflight request");
     }
     bool planned = false;
     bool marked = false;
@@ -19679,7 +19692,7 @@ void testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull() {
           "TileLoadScheduler: content inflight block happens after request classification without dispatch side effects");
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.requestState().completeTerrainRequest("busy");
+        lifecycle.requestState().completeContentRequest("busy");
     }
 }
 void testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock() {
@@ -20615,7 +20628,7 @@ void testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning() {
               lifecycle.counts().contentTerminalResults == 1,
           "TileLoadScheduler: dispatcher duplicate skip avoids request side effects after planning");
 }
-void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
+void testTileLoadSchedulerContinuesScanningAfterDispatchBudgetBlock() {
     class DeferredContentProvider final : public TilesetContentProvider {
     public:
         std::string id() const override { return "scheduler-budget-content"; }
@@ -20680,15 +20693,18 @@ void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
             [&markedKeys](const TileKey& key) {
                 markedKeys.push_back(key.x);
             });
-    check(outcome.issued == 1 && !outcome.blockedByInflight,
-          "TileLoadScheduler: dispatch budget block stops without inflight flag");
+    check(outcome.issued == 1 &&
+              !outcome.blockedByInflight &&
+              outcome.stoppedAtDispatch == 0,
+          "TileLoadScheduler: dispatch budget block keeps scanning without inflight flag");
     check(provider.requestCount == 1 &&
-              plannedKeys.size() == 2 &&
+              plannedKeys.size() == 3 &&
               plannedKeys[0] == firstKey.x &&
               plannedKeys[1] == blockedKey.x &&
+              plannedKeys[2] == skippedKey.x &&
               markedKeys.size() == 1 &&
               markedKeys[0] == firstKey.x,
-          "TileLoadScheduler: dispatch budget block stops before later request planning");
+          "TileLoadScheduler: dispatch budget block retains network work while continuing later request planning");
 }
 void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
     class RetryContentProvider final : public TilesetContentProvider {
@@ -27338,7 +27354,7 @@ int main() {
     testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot();
     testTileLoadSchedulerStopsDuringDestroyBeforePlanning();
     testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning();
-    testTileLoadSchedulerStopsAfterDispatchBudgetBlock();
+    testTileLoadSchedulerContinuesScanningAfterDispatchBudgetBlock();
     testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();

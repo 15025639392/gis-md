@@ -35,7 +35,7 @@ void TileLoadLifecycle::markDestroyingCancelAndWait() {
     requestState_.markDestroyingAndCancelRequests();
     pendingLoads_.clear();
     condition_.wait(lock, [this]() {
-        return requestState_.empty();
+        return requestState_.callbacksDrained();
     });
     requestState_.clearAfterCallbacksComplete();
 }

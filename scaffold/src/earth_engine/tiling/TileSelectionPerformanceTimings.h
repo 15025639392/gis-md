@@ -3,6 +3,7 @@
 namespace earth_engine {
 
 struct TileSelectionPerformanceTimings {
+    bool collectDetailed = false;
     double traversalMs = 0.0;
     double refineMs = 0.0;
     double renderPlanMs = 0.0;

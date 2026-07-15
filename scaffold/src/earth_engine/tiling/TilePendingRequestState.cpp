@@ -1,5 +1,7 @@
 #include "TilePendingRequestState.h"
 
+#include <algorithm>
+
 namespace earth_engine {
 
 bool TilePendingRequestState::destroying() const {
@@ -8,6 +10,11 @@ bool TilePendingRequestState::destroying() const {
 
 bool TilePendingRequestState::empty() const {
     return pendingRequests_.empty();
+}
+
+bool TilePendingRequestState::callbacksDrained() const {
+    return pendingRequests_.empty() &&
+           retiredCallbackTokens_.empty();
 }
 
 bool TilePendingRequestState::contains(const std::string& cacheKey) const {
@@ -69,10 +76,37 @@ void TilePendingRequestState::completeContentRequest(
     pendingRequestTokens_.erase(cacheKey);
 }
 
+void TilePendingRequestState::completeTerrainRequest(
+    const std::string& cacheKey,
+    const CancellationToken& token) {
+    const auto active = pendingRequestTokens_.find(cacheKey);
+    if (active != pendingRequestTokens_.end() &&
+        active->second.sharesStateWith(token)) {
+        completeTerrainRequest(cacheKey);
+        return;
+    }
+    const auto retired = std::find_if(
+        retiredCallbackTokens_.begin(),
+        retiredCallbackTokens_.end(),
+        [&token](const CancellationToken& candidate) {
+            return candidate.sharesStateWith(token);
+        });
+    if (retired != retiredCallbackTokens_.end()) {
+        retiredCallbackTokens_.erase(retired);
+    }
+}
+
+void TilePendingRequestState::completeContentRequest(
+    const std::string& cacheKey,
+    const CancellationToken& token) {
+    completeTerrainRequest(cacheKey, token);
+}
+
 void TilePendingRequestState::cancelAndErase(const std::string& cacheKey) {
     if (auto tokenIt = pendingRequestTokens_.find(cacheKey);
         tokenIt != pendingRequestTokens_.end()) {
         tokenIt->second.cancel();
+        retiredCallbackTokens_.push_back(tokenIt->second);
     }
     pendingRequests_.erase(cacheKey);
     pendingContentRequestKeys_.erase(cacheKey);
@@ -88,11 +122,12 @@ void TilePendingRequestState::markDestroyingAndCancelRequests() {
 }
 
 void TilePendingRequestState::clearAfterCallbacksComplete() {
-    if (!pendingRequests_.empty()) {
+    if (!callbacksDrained()) {
         return;
     }
     pendingContentRequestKeys_.clear();
     pendingRequestTokens_.clear();
+    retiredCallbackTokens_.clear();
     destroying_ = false;
 }
 

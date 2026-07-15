@@ -15,23 +15,30 @@ TileSelectionVisitPreparationResult TileSelectionVisitPreparation::prepare(
     const TileSelectionVisitPreparationOptions& options,
     std::vector<double>& scratchDistances) {
     TileSelectionVisitPreparationResult result;
-    const double visibilityStartMs = perf::nowMs();
+    const double visibilityStartMs =
+        options.collectDetailedTimings ? perf::nowMs() : 0.0;
     result.visibilitySample =
         TileSelectionVisibilitySampler::sampleForTileSelection(
             tile,
             views,
             visibilityContext);
-    result.visibilityMs = perf::nowMs() - visibilityStartMs;
+    if (options.collectDetailedTimings) {
+        result.visibilityMs = perf::nowMs() - visibilityStartMs;
+    }
 
-    const double inputMetricsStartMs = perf::nowMs();
+    const double inputMetricsStartMs =
+        options.collectDetailedTimings ? perf::nowMs() : 0.0;
     result.inputSummary =
         TileSelectionInputMetrics::summarizeForViews(
             tile,
             views,
             scratchDistances);
-    result.inputMetricsMs = perf::nowMs() - inputMetricsStartMs;
+    if (options.collectDetailedTimings) {
+        result.inputMetricsMs = perf::nowMs() - inputMetricsStartMs;
+    }
 
-    const double policyStartMs = perf::nowMs();
+    const double policyStartMs =
+        options.collectDetailedTimings ? perf::nowMs() : 0.0;
     result.cullResult = TileSelectionCullingPolicy::evaluateFrustum(
         result.visibilitySample.visibleFromCamera,
         options.enableFrustumCulling);
@@ -62,7 +69,9 @@ TileSelectionVisitPreparationResult TileSelectionVisitPreparation::prepare(
             options.maximumScreenSpaceError,
             options.enforceCulledScreenSpaceError,
             options.culledScreenSpaceError);
-    result.policyMs = perf::nowMs() - policyStartMs;
+    if (options.collectDetailedTimings) {
+        result.policyMs = perf::nowMs() - policyStartMs;
+    }
     return result;
 }
 

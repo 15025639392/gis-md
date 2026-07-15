@@ -173,5 +173,19 @@ TEST(TilePendingRequestStateTest, CancelIgnoresUnknownKeys) {
     state.cancelAndErase("terrain");
     state.cancelAndErase("content");
 
+    EXPECT_TRUE(terrainToken.isCancelled());
+    EXPECT_TRUE(contentToken.isCancelled());
     EXPECT_TRUE(state.empty());
+    EXPECT_FALSE(state.callbacksDrained());
+
+    CancellationToken replacementToken;
+    EXPECT_TRUE(state.beginTerrainRequest(
+        "terrain",
+        replacementToken));
+    state.completeTerrainRequest("terrain", terrainToken);
+    EXPECT_TRUE(state.contains("terrain"));
+    state.completeContentRequest("content", contentToken);
+    EXPECT_FALSE(state.callbacksDrained());
+    state.completeTerrainRequest("terrain", replacementToken);
+    EXPECT_TRUE(state.callbacksDrained());
 }

@@ -16,6 +16,7 @@
 #include "Tileset.h"
 #include "TilesetTile.h"
 
+#include "../debug/PerfTimer.h"
 #include "../scene/FrameState.h"
 #include "../debug/PlatformLog.h"
 
@@ -31,6 +32,8 @@ void TilesetSelectionFrameFacade::selectTiles(
     IPrepareRendererResources* pPrepRenderer) {
     if (performanceTimings) {
         *performanceTimings = TileSelectionPerformanceTimings{};
+        performanceTimings->collectDetailed =
+            perf::shouldLog(frameState.frameId);
     }
     tileset.currentFrameTimeSeconds_ = frameState.timeSeconds;
     if (tileset.options_.asyncSelection) {

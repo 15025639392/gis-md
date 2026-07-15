@@ -10,6 +10,8 @@
 #include "../content/GltfContentProvider.h"
 #include "../threading/CancellationToken.h"
 
+#include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <memory>
@@ -23,11 +25,23 @@ enum class TileLoadDispatchResult {
     Issued,
     Skipped,
     Blocked,
+    WorkerCapacityBlocked,
     Destroying
 };
 
 class TileLoadRequestDispatcher {
 public:
+    static size_t maximumUpsampleClipInflight() {
+        return std::max<size_t>(
+            1u,
+            AsyncSystem::pool().threadCount() / 2u);
+    }
+
+    static bool hasUpsampleClipWorkerCapacity() {
+        return activeUpsampleClipTasks_.load(std::memory_order_relaxed) <
+               maximumUpsampleClipInflight();
+    }
+
     static TileLoadDispatchResult queueUpsampledLoad(
         std::mutex& mutex,
         TilePendingRequestState& requestState,
@@ -122,9 +136,11 @@ public:
                             priority,
                             std::move(loadResult));
                     }
-                    requestState.completeContentRequest(cacheKey);
+                    requestState.completeContentRequest(
+                        cacheKey,
+                        token);
+                    condition.notify_all();
                 }
-                condition.notify_all();
             };
         auto guard = std::make_shared<ContentCompletionGuard>(
             std::move(complete));
@@ -139,22 +155,18 @@ public:
         return TileLoadDispatchResult::Issued;
     }
 
-    // 上采样 clip 的异步派发,结构与 requestContent 一比一对齐:主线程认领
-    // (beginTerrainRequest 占 in-flight 名额、堵 containsWorkForCacheKey 去重、
-    // 计入析构等待集)+ budget.tryIssue 门控派发数 → 把纯 CPU 的 clip 工作
-    // 丢进 AsyncSystem::pool worker → 完成回调单锁经 enqueueCompletedLoadResult
-    // 投 pendingLoads(与 requestContent 复用同一 worker→lifecycle 锁→pendingLoads
-    // 模型)。clipInput 是主线程建好的自有快照(零 TilesetTile 指针),clip
-    // 在 worker 只读快照,不碰共享可变状态。UpsampleClipCompletionGuard 保证
-    // 完成 exactly-once(worker 若被抛弃仍以失败终态完成),否则 in-flight 名额
-    // 泄漏 → markDestroyingCancelAndWait 永久阻塞死锁。
+    // 上采样 clip 是本地 CPU 工作，不占网络 budget。主线程仍通过
+    // beginTerrainRequest 认领 key，用于去重、取消和析构等待；worker 完成后
+    // 经 pendingLoads 回到统一提交路径。clipInput 是主线程建好的自有快照
+    // (零 TilesetTile 指针)，worker 只读快照，不碰共享可变状态。
+    // UpsampleClipCompletionGuard 保证 exactly-once，否则 lifecycle 名额泄漏
+    // 会令 markDestroyingCancelAndWait 永久阻塞。
     template <typename OnIssuedFn, typename ClipInput, typename ClipFn>
     static TileLoadDispatchResult requestUpsampleClip(
         std::mutex& mutex,
         std::condition_variable& condition,
         TilePendingRequestState& requestState,
         TilePendingLoadQueue& pendingLoads,
-        FrameResourceBudget& budget,
         const TileKey& key,
         const std::string& cacheKey,
         TileLoadPriorityGroup group,
@@ -175,13 +187,11 @@ public:
                 pendingLoads.containsCacheKey(cacheKey)) {
                 return TileLoadDispatchResult::Skipped;
             }
-            if (!budget.tryIssue(
-                    FrameResourceLane::TerrainRequest,
-                    TileLoadPriorityPolicy::toFramePriority(group),
-                    1)) {
-                return TileLoadDispatchResult::Blocked;
+            if (!tryAcquireUpsampleClipSlot()) {
+                return TileLoadDispatchResult::WorkerCapacityBlocked;
             }
             if (!requestState.beginTerrainRequest(cacheKey, token)) {
+                releaseUpsampleClipSlot();
                 return TileLoadDispatchResult::Skipped;
             }
         }
@@ -213,9 +223,12 @@ public:
                             priority,
                             std::move(normalized));
                     }
-                    requestState.completeTerrainRequest(cacheKey);
+                    releaseUpsampleClipSlot();
+                    requestState.completeTerrainRequest(
+                        cacheKey,
+                        token);
+                    condition.notify_all();
                 }
-                condition.notify_all();
             };
         auto guard = std::make_shared<UpsampleClipCompletionGuard>(
             std::move(complete));
@@ -235,6 +248,30 @@ public:
     }
 
 private:
+    static bool tryAcquireUpsampleClipSlot() {
+        size_t active =
+            activeUpsampleClipTasks_.load(std::memory_order_relaxed);
+        const size_t maximum = maximumUpsampleClipInflight();
+        while (active < maximum) {
+            if (activeUpsampleClipTasks_.compare_exchange_weak(
+                    active,
+                    active + 1u,
+                    std::memory_order_acq_rel,
+                    std::memory_order_relaxed)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void releaseUpsampleClipSlot() {
+        activeUpsampleClipTasks_.fetch_sub(
+            1u,
+            std::memory_order_acq_rel);
+    }
+
+    inline static std::atomic<size_t> activeUpsampleClipTasks_{0};
+
     /// TileLoadResult 版完成 guard:上采样 clip worker 完成 exactly-once;若
     /// worker 被抛弃(池停机)而从未 fire,析构以失败终态兜底,防 in-flight
     /// 名额泄漏 → 析构等待死锁。语义同 ContentCompletionGuard。
