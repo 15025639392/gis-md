@@ -80,6 +80,9 @@ TEST(GltfDrawCommandCacheTest, BuildPopulatesResidentCacheWithStableKey) {
     EXPECT_EQ(7u, commands[0].frameId);
     EXPECT_EQ(3u, commands[0].generation);
     EXPECT_TRUE(commands[0].terrainRenderContent);
+    EXPECT_EQ(
+        TerrainSurfaceCommandSource::RealTerrain,
+        commands[0].terrainSurfaceSource);
     EXPECT_TRUE(harness.tile.content.renderContent.hasCachedDrawCommands());
     ASSERT_EQ(
         1u, harness.tile.content.renderContent.cachedDrawCommands().size());

@@ -187,7 +187,9 @@ void EllipsoidTerrainContentProvider::requestTileContent(
                 bounds,
                 projections,
                 gridSize_),
-            std::move(metadata)));
+            std::move(metadata),
+            Mat4::identity(),
+            TileTerrainRenderSource::EllipsoidFallback));
 }
 
 TileContentLoadResult EllipsoidTerrainContentProvider::decodeContent(

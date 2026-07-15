@@ -229,6 +229,10 @@ void Scene::setTileset(std::unique_ptr<Tileset> tileset) {
     configureCameraSurfacePicker();
 }
 
+void Scene::stageTilesetReplacement(std::unique_ptr<Tileset> tileset) {
+    tilesets_->stagePrimaryReplacement(std::move(tileset));
+}
+
 void Scene::addTileset(std::unique_ptr<Tileset> tileset) {
     tilesets_->addContent(std::move(tileset));
 }

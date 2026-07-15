@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ScenePrimaryTilesetTakeoverPolicy.h"
 #include "../tiling/TileOcclusionCallback.h"
 
 #include <memory>
@@ -21,9 +22,13 @@ public:
     ~SceneTilesetCoordinator();
 
     void setPrimary(std::unique_ptr<Tileset> tileset);
+    void stagePrimaryReplacement(std::unique_ptr<Tileset> tileset);
     void addContent(std::unique_ptr<Tileset> tileset);
 
     Tileset* primary() const { return primary_.get(); }
+    const Tileset* pendingPrimary() const {
+        return pendingPrimary_.get();
+    }
     const std::vector<std::unique_ptr<Tileset>>& contentTilesets() const {
         return contentTilesets_;
     }
@@ -40,6 +45,8 @@ private:
     void applyOcclusionCallback(Tileset& tileset) const;
 
     std::unique_ptr<Tileset> primary_;
+    std::unique_ptr<Tileset> pendingPrimary_;
+    ScenePrimaryTilesetTakeoverState pendingTakeoverState_;
     std::vector<std::unique_ptr<Tileset>> contentTilesets_;
     TileOcclusionCallback occlusionCallback_;
 };

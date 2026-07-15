@@ -320,6 +320,10 @@ void Engine::setTileset(std::unique_ptr<Tileset> tileset) {
     scene_->setTileset(std::move(tileset));
 }
 
+void Engine::stageTilesetReplacement(std::unique_ptr<Tileset> tileset) {
+    scene_->stageTilesetReplacement(std::move(tileset));
+}
+
 void Engine::addTileset(std::unique_ptr<Tileset> tileset) {
     scene_->addTileset(std::move(tileset));
 }

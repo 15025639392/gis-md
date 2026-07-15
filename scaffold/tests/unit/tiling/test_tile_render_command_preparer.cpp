@@ -13,6 +13,7 @@
 #include "earth_engine/core/math/Vec3.h"
 #include "earth_engine/tiling/GltfRenderGeometryBuilder.h"
 #include "earth_engine/tiling/SurfaceTile.h"
+#include "earth_engine/tiling/TileContentUploadPolicy.h"
 #include "earth_engine/tiling/TileFillGeometrySignature.h"
 #include "../../helpers/MockRenderDevice.h"
 
@@ -334,6 +335,43 @@ TEST(TileRenderCommandPreparerTest,
     EXPECT_EQ(command.gltfUniforms.clipUv,
               (std::array<float, 4>{0.25f, 0.0f, 0.5f, 1.0f}));
     EXPECT_FLOAT_EQ(1.0f, command.gltfUniforms.clipEnabled);
+}
+
+TEST(TileRenderCommandPreparerTest,
+     GltfEllipsoidTerrainCommandKeepsFallbackSource) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TileContentLoadResult result = TileContentLoadResult::renderTerrain(
+        std::make_unique<GltfModel>(),
+        TileLoadResultMetadata{},
+        Mat4::identity(),
+        TileTerrainRenderSource::EllipsoidFallback);
+    TileContentUploadPolicy::prepareGltfRenderContent(
+        tile,
+        TileLoadedContent::fromContentResult(std::move(result)));
+    GltfPrimitiveRenderResources primitive;
+    primitive.vertexBuffer = std::make_unique<DummyBuffer>(96);
+    primitive.indexBuffer = std::make_unique<DummyBuffer>(12);
+    primitive.vertexCount = 3;
+    primitive.indexCount = 3;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(primitive));
+    tile.content.renderContent.setGltfResourcesReady(true);
+
+    std::vector<ActivatedRasterOverlay*> overlays;
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TileRenderCommandPreparer::build(
+        renderer,
+        tile,
+        commands,
+        overlays,
+        nullptr,
+        makeContext(true),
+        [](TilesetTile&) {});
+
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_TRUE(commands.front().terrainRenderContent);
+    EXPECT_EQ(TerrainSurfaceCommandSource::EllipsoidFallback,
+              commands.front().terrainSurfaceSource);
 }
 
 TEST(TileRenderCommandPreparerTest,
@@ -835,6 +873,9 @@ TEST(
     EXPECT_TRUE(tile.content.renderContent.isFillReady());
     ASSERT_EQ(1u, commands.size());
     EXPECT_EQ(fillVertexBuffer, commands.front().vertexBuffer);
+    EXPECT_EQ(
+        TerrainSurfaceCommandSource::FillProxy,
+        commands.front().terrainSurfaceSource);
 }
 
 TEST(

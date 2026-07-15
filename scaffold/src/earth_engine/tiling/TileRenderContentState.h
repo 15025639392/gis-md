@@ -235,6 +235,11 @@ public:
     bool hasDrawableResources() const {
         return hasGltfResources() || isFillReady();
     }
+    bool drawsTransientFallbackSurface() const {
+        return drawsFill() ||
+               surface_.surfaceSource ==
+                   SurfaceDrawableSource::EllipsoidFallback;
+    }
     const std::vector<GltfPrimitiveRenderResources>& drawPrimitiveResources()
         const {
         return drawsFill() ? fillPrimitiveResources_ : gltfPrimitiveResources;
@@ -355,7 +360,8 @@ public:
         surface_.surfaceDrawable = drawable;
     }
     void setSurfaceSource(SurfaceDrawableSource source) {
-        if (gltfModel && source != SurfaceDrawableSource::GltfContent) {
+        if (gltfModel && source != SurfaceDrawableSource::GltfContent &&
+            source != SurfaceDrawableSource::EllipsoidFallback) {
             surface_.surfaceSource = SurfaceDrawableSource::GltfContent;
             return;
         }
@@ -834,7 +840,8 @@ private:
         const bool wasGltfOwnedContent =
             gltfModel != nullptr ||
             terrainRenderContent_ ||
-            surface_.surfaceSource == SurfaceDrawableSource::GltfContent;
+            surface_.surfaceSource == SurfaceDrawableSource::GltfContent ||
+            surface_.surfaceSource == SurfaceDrawableSource::EllipsoidFallback;
         gltfModel.reset();
         if (hadModel) {
             markRetainedResourcesChanged();
@@ -869,7 +876,8 @@ private:
 
     bool isGltfOwnedContentState() const {
         return gltfModel != nullptr ||
-               surface_.surfaceSource == SurfaceDrawableSource::GltfContent;
+               surface_.surfaceSource == SurfaceDrawableSource::GltfContent ||
+               surface_.surfaceSource == SurfaceDrawableSource::EllipsoidFallback;
     }
 
     TileSurfaceContentState surface_;

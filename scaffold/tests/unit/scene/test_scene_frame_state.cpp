@@ -14,10 +14,12 @@
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/Frustum.h"
 #include "earth_engine/scene/PresentationTrace.h"
-#include "earth_engine/scene/ScenePresentationTraceBuilder.h"
 #include "earth_engine/scene/SceneFrameDiagnostics.h"
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
+#include "earth_engine/scene/ScenePresentationTraceBuilder.h"
+#include "earth_engine/scene/ScenePrimaryTilesetTakeoverPolicy.h"
+#include "earth_engine/scene/SceneTilesetCoordinator.h"
 #include "earth_engine/tiling/GltfRenderResourcePreparer.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
@@ -347,7 +349,253 @@ GltfPrimitive makeTransparentTrianglePrimitiveAt(const Vec3& center) {
     return primitive;
 }
 
+std::unique_ptr<Tileset> makeTakeoverTileset(DummyRenderDevice& device) {
+    return std::make_unique<Tileset>(
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        &device,
+        TilesetOptions{});
+}
+
+TilesetTile* makeTakeoverRenderTile(
+    Tileset& tileset,
+    const TileKey& key,
+    SurfaceDrawableSource source =
+        SurfaceDrawableSource::GltfContent) {
+    TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
+    if (!tile) {
+        return nullptr;
+    }
+    tile->content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    tile->content.renderContent.setTerrainRenderContent(true);
+    tile->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile->markRenderContentDone();
+    tile->content.renderContent.setSurfaceSource(source);
+    return tile;
+}
+
+void setSingleTakeoverEntry(
+    Tileset& tileset,
+    TilesetTile& renderTile,
+    const TileKey& selectedKey,
+    const TileKey& renderKey) {
+    TilePlan& plan = TilesetTestAccess::mutableTilePlan(tileset);
+    plan = TilePlan{};
+    plan.visibleTiles.push_back(selectedKey);
+    TileRenderEntry entry;
+    entry.selectedKey = selectedKey;
+    entry.renderKey = renderKey;
+    entry.selectedTile = &renderTile;
+    entry.renderTile = &renderTile;
+    entry.selectedThisFrame = true;
+    plan.renderEntries.push_back(entry);
+}
+
 } // namespace
+
+TEST(
+    SceneFrameStateTest,
+    StagedPrimaryReplacementKeepsCurrentPrimaryAlive) {
+    DummyRenderDevice device;
+    SceneTilesetCoordinator coordinator;
+    auto current = makeTakeoverTileset(device);
+    Tileset* currentRaw = current.get();
+    coordinator.setPrimary(std::move(current));
+
+    auto pending = makeTakeoverTileset(device);
+    Tileset* pendingRaw = pending.get();
+    coordinator.stagePrimaryReplacement(std::move(pending));
+
+    EXPECT_EQ(currentRaw, coordinator.primary());
+    EXPECT_EQ(pendingRaw, coordinator.pendingPrimary());
+}
+
+TEST(
+    SceneFrameStateTest,
+    PrimaryTakeoverRejectsCoarseAncestorAndEllipsoidFallback) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey selectedKey{"Geographic-TMS", 6, 32, 20};
+    const TileKey coarseKey{"Geographic-TMS", 2, 2, 1};
+    TilesetTile* currentTile =
+        makeTakeoverRenderTile(*current, selectedKey);
+    TilesetTile* pendingTile =
+        makeTakeoverRenderTile(*pending, coarseKey);
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_NE(nullptr, pendingTile);
+    setSingleTakeoverEntry(
+        *current,
+        *currentTile,
+        selectedKey,
+        selectedKey);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        selectedKey,
+        coarseKey);
+
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::isCandidateReady(
+        *current,
+        *pending));
+
+    pendingTile->content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::EllipsoidFallback);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        selectedKey,
+        selectedKey);
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::isCandidateReady(
+        *current,
+        *pending));
+
+    pendingTile->content.renderContent.clearGltfContentPreservingFill();
+    pendingTile->content.renderContent.setFillContent(
+        std::make_unique<GltfModel>());
+    pendingTile->content.renderContent.beginFillGpuResourceBuild(0, 1);
+    pendingTile->content.renderContent.addFillPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    const auto fillSignature = TileFillGeometrySignature::tryCreate(
+        pendingTile->bounds,
+        RasterOverlayProjection::Geographic,
+        4);
+    ASSERT_TRUE(fillSignature.has_value());
+    pendingTile->content.renderContent.commitFillResourcesReady(
+        *fillSignature);
+    ASSERT_TRUE(pendingTile->content.renderContent.drawsFill());
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::isCandidateReady(
+        *current,
+        *pending));
+}
+
+TEST(
+    SceneFrameStateTest,
+    PrimaryTakeoverAcceptsStableRealTerrainNearSelectedLevel) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey selectedKey{"Geographic-TMS", 6, 32, 20};
+    const TileKey parentKey{"Geographic-TMS", 5, 16, 10};
+    TilesetTile* currentTile =
+        makeTakeoverRenderTile(*current, selectedKey);
+    TilesetTile* pendingTile =
+        makeTakeoverRenderTile(*pending, parentKey);
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_NE(nullptr, pendingTile);
+    setSingleTakeoverEntry(
+        *current,
+        *currentTile,
+        selectedKey,
+        selectedKey);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        selectedKey,
+        parentKey);
+
+    EXPECT_TRUE(ScenePrimaryTilesetTakeoverPolicy::isCandidateReady(
+        *current,
+        *pending));
+}
+
+TEST(
+    SceneFrameStateTest,
+    PrimaryTakeoverRejectsReadyRootBelowCurrentCoverageLevel) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey currentKey{"Geographic-TMS", 6, 32, 20};
+    const TileKey pendingRoot{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* currentTile =
+        makeTakeoverRenderTile(*current, currentKey);
+    TilesetTile* pendingTile =
+        makeTakeoverRenderTile(*pending, pendingRoot);
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_NE(nullptr, pendingTile);
+    setSingleTakeoverEntry(
+        *current,
+        *currentTile,
+        currentKey,
+        currentKey);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        pendingRoot,
+        pendingRoot);
+
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::isCandidateReady(
+        *current,
+        *pending));
+}
+
+TEST(
+    SceneFrameStateTest,
+    PrimaryTakeoverRequiresConsecutiveStableSelectionFrames) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey selectedKey{"Geographic-TMS", 6, 32, 20};
+    const TileKey parentKey{"Geographic-TMS", 5, 16, 10};
+    const TileKey coarseKey{"Geographic-TMS", 2, 2, 1};
+    TilesetTile* currentTile =
+        makeTakeoverRenderTile(*current, selectedKey);
+    TilesetTile* pendingTile =
+        makeTakeoverRenderTile(*pending, parentKey);
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_NE(nullptr, pendingTile);
+    setSingleTakeoverEntry(
+        *current,
+        *currentTile,
+        selectedKey,
+        selectedKey);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        selectedKey,
+        parentKey);
+
+    ScenePrimaryTilesetTakeoverState state;
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::shouldCommit(
+        state,
+        *current,
+        *pending));
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::shouldCommit(
+        state,
+        *current,
+        *pending));
+
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        selectedKey,
+        coarseKey);
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::shouldCommit(
+        state,
+        *current,
+        *pending));
+    EXPECT_EQ(0, state.consecutiveReadyFrames);
+
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        selectedKey,
+        parentKey);
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::shouldCommit(
+        state,
+        *current,
+        *pending));
+    EXPECT_FALSE(ScenePrimaryTilesetTakeoverPolicy::shouldCommit(
+        state,
+        *current,
+        *pending));
+    EXPECT_TRUE(ScenePrimaryTilesetTakeoverPolicy::shouldCommit(
+        state,
+        *current,
+        *pending));
+}
 
 TEST(SceneFrameStateTest, SelectorViewOverrideFeedsMultipleViews) {
     Scene scene;

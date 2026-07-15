@@ -40,12 +40,19 @@ struct TilesetContentTileMetadata {
     bool unconditionallyRefine = false;
 };
 
+enum class TileTerrainRenderSource {
+    Generic,
+    EllipsoidFallback
+};
+
 struct TileContentLoadResult {
     TileLoadStatus status = TileLoadStatus::Failed;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
     bool terrainRenderContent = false;
+    TileTerrainRenderSource terrainRenderSource =
+        TileTerrainRenderSource::Generic;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
 
@@ -63,7 +70,8 @@ struct TileContentLoadResult {
     static TileContentLoadResult renderTerrain(
         std::unique_ptr<GltfModel> model,
         TileLoadResultMetadata metadata = {},
-        Mat4 contentTransform = Mat4::identity()) {
+        Mat4 contentTransform = Mat4::identity(),
+        TileTerrainRenderSource source = TileTerrainRenderSource::Generic) {
         TileContentLoadResult result = render(std::move(model));
         if (result.status == TileLoadStatus::Renderable) {
             if (!metadata.rasterOverlayDetails && result.gltfModel &&
@@ -77,6 +85,7 @@ struct TileContentLoadResult {
             result.metadata = std::move(metadata);
             result.contentTransform = contentTransform;
             result.terrainRenderContent = true;
+            result.terrainRenderSource = source;
         }
         return result;
     }

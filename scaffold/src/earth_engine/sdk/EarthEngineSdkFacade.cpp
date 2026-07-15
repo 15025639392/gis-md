@@ -56,6 +56,7 @@ struct EarthEngineSdkFacade::IonTerrainNegotiationState {
     std::string layerJsonUrl;
     std::string urlTemplate;
     std::string attribution;
+    int retryCount = 0;
 };
 
 namespace {
@@ -185,6 +186,14 @@ std::string cesiumIonEndpointUrl(const TerrainSourceConfig& config) {
     }
     return server + "v1/assets/" + std::to_string(config.cesiumIonAssetId) +
            "/endpoint?access_token=" + config.cesiumIonAccessToken;
+}
+
+int startupEllipsoidMaximumLevel(const TerrainSourceConfig& config) {
+    constexpr int kMaxStartupEllipsoidLevel = 8;
+    const int configured = config.ellipsoidFallbackMaxZoom > 0
+        ? config.ellipsoidFallbackMaxZoom
+        : config.maximumZoom;
+    return std::max(1, std::min(kMaxStartupEllipsoidLevel, configured));
 }
 
 std::optional<CesiumIonTerrainEndpoint> parseCesiumIonTerrainEndpoint(
@@ -362,14 +371,42 @@ void EarthEngineSdkFacade::update() {
     ionTerrainNegotiationRequest_.reset();
 
     if (statusCode != 200 || body.empty()) {
-        logError(
-            platformBridge_,
-            stage == IonTerrainNegotiationState::Stage::Endpoint
-                ? "Cesium ion terrain endpoint negotiation failed; keeping "
-                  "ellipsoid imagery surface"
-                : "Cesium ion terrain layer.json load failed; keeping "
-                  "ellipsoid imagery surface");
-        ionTerrainNegotiation_.reset();
+        int retryCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            retryCount = ++state->retryCount;
+        }
+        if (stage == IonTerrainNegotiationState::Stage::Endpoint) {
+            logError(
+                platformBridge_,
+                "Cesium ion terrain endpoint negotiation failed; retry " +
+                    std::to_string(retryCount) +
+                    " while keeping ellipsoid imagery surface");
+            ionTerrainNegotiationRequest_ = platformBridge_.get(
+                cesiumIonEndpointUrl(config_.terrain),
+                [state](int retryStatusCode, std::vector<uint8_t> retryBody) {
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    state->statusCode = retryStatusCode;
+                    state->body = std::move(retryBody);
+                    state->completed = true;
+                },
+                {HttpRequestPriority::High});
+        } else {
+            logError(
+                platformBridge_,
+                "Cesium ion terrain layer.json load failed; retry " +
+                    std::to_string(retryCount) +
+                    " while keeping ellipsoid imagery surface");
+            ionTerrainNegotiationRequest_ = platformBridge_.get(
+                layerJsonUrl,
+                [state](int retryStatusCode, std::vector<uint8_t> retryBody) {
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    state->statusCode = retryStatusCode;
+                    state->body = std::move(retryBody);
+                    state->completed = true;
+                },
+                {HttpRequestPriority::High});
+        }
         return;
     }
 
@@ -390,6 +427,7 @@ void EarthEngineSdkFacade::update() {
             state->layerJsonUrl = endpoint->layerJsonUrl;
             state->urlTemplate = endpoint->urlTemplate;
             state->attribution = endpoint->attribution;
+            state->retryCount = 0;
         }
         ionTerrainNegotiationRequest_ = platformBridge_.get(
             endpoint->layerJsonUrl,
@@ -439,9 +477,12 @@ void EarthEngineSdkFacade::update() {
         &renderDevice_,
         makeSceneTilesetOptions(config_.tileset),
         std::move(terrainProvider));
-    engine_.setTileset(std::move(tileset));
+    engine_.stageTilesetReplacement(std::move(tileset));
     ionTerrainNegotiation_.reset();
-    logInfo(platformBridge_, "Cesium ion terrain installed after ellipsoid startup");
+    logInfo(
+        platformBridge_,
+        "Cesium ion terrain staged; ellipsoid startup remains until real "
+        "terrain is presentation-ready");
 }
 
 void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
@@ -778,7 +819,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
         auto startupEllipsoid =
             std::make_unique<EllipsoidTerrainContentProvider>(
                 "Geographic-TMS",
-                std::max(1, config_.terrain.maximumZoom),
+                startupEllipsoidMaximumLevel(config_.terrain),
                 config_.terrain.ellipsoidFallbackGridSize);
         tileset = std::make_unique<Tileset>(
             TileScheme::createGeographicTMS(),

@@ -760,7 +760,7 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
          "exact=%d parent=%d missing=%d unsupported=%d kicked=%d retained=%d "
-         "entry plan=%d/%d/%d draw=%d/%d/%d miss=%d/%d/%d defer=%d/%d/%d fallback=%d prep=%d/%d surface=%d "
+         "entry plan=%d/%d/%d draw=%d/%d/%d miss=%d/%d/%d defer=%d/%d/%d fallback=%d prep=%d/%d surface=%d src=%d/%d/%d/%d "
          "z=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d qBal=%d "
          "qFrustum=%d qHz=%d qEq2=%d grp=%d/%d/%d "
          "center=%.6f,%.6f targetH=%.2f camH=%.2f pitch=%.6f heading=%.6f vp=%dx%d "
@@ -791,6 +791,10 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
          diag.terrainRenderEntriesSynchronousPrep,
          diag.terrainRenderEntriesDeferredPrep,
          diag.terrainSurfaceCommandsSubmitted,
+         diag.terrainSurfaceRealCommands,
+         diag.terrainSurfaceFillProxyCommands,
+         diag.terrainSurfaceEllipsoidCommands,
+         diag.terrainSurfaceUnknownCommands,
          diag.minVisibleZoom,
          diag.maxVisibleZoom,
          diag.imageryMinTargetZoom,
@@ -845,6 +849,7 @@ static std::string buildDiagnosticsText() {
         "Draw calls: %d  |  GPU tex: %d  |  glTF prim: %d\n"
         "Visible tiles: terrain %d content %d/%d  |  Cached: %d\n"
         "Surface meshes: %d (%d terrSurfCmd, %d terrGltfCmd)\n"
+        "Terrain surface src: real %d, fill %d, ell %d, unk %d\n"
         "Attachments: %d exact, %d parent, %d missing, %d unsup, %d kicked, %d retained\n"
         "Zoom: %d-%d  |  Img: %d-%d -> tex %d-%d\n"
         "LOD: %.0f px  |  EqZoom: %d\n"
@@ -880,6 +885,10 @@ static std::string buildDiagnosticsText() {
         diag.cachedTextures,
         diag.surfaceMeshCount,
         diag.terrainSurfaceTileCommands, diag.terrainGltfPrimitiveCommands,
+        diag.terrainSurfaceRealCommands,
+        diag.terrainSurfaceFillProxyCommands,
+        diag.terrainSurfaceEllipsoidCommands,
+        diag.terrainSurfaceUnknownCommands,
         diag.imageryExactAttachments, diag.imageryParentFallbackAttachments,
         diag.imageryMissingTiles, diag.imageryUnsupportedTiles,
         diag.imageryKickedTiles,

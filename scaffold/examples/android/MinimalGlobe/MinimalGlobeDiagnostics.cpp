@@ -53,6 +53,11 @@ std::string buildRenderEntryDiagnosticsLine(const Diagnostics& diagnostics) {
         << "/" << diagnostics.terrainRenderEntriesDeferredPrep
         << "  surface "
         << diagnostics.terrainSurfaceCommandsSubmitted
+        << " (real " << diagnostics.terrainSurfaceRealCommands
+        << ", fill " << diagnostics.terrainSurfaceFillProxyCommands
+        << ", ell " << diagnostics.terrainSurfaceEllipsoidCommands
+        << ", unk " << diagnostics.terrainSurfaceUnknownCommands
+        << ")"
         << "  load " << static_cast<int>(
                diagnostics.frameLoadProgressPercentage)
         << "% work " << diagnostics.frameProgressLoadingCount

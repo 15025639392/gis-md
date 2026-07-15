@@ -82,6 +82,8 @@ public:
 
     /// cesium-native 对齐：设置统一 Tileset。
     void setTileset(std::unique_ptr<Tileset> tileset);
+    /// 保持当前地表可交互渲染，直到替代 Tileset 达到接管门槛。
+    void stageTilesetReplacement(std::unique_ptr<Tileset> tileset);
     /// 添加并列 3D Tiles / glTF 内容 Tileset；不参与地形采样。
     void addTileset(std::unique_ptr<Tileset> tileset);
 

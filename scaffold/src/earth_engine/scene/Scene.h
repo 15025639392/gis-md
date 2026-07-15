@@ -72,6 +72,7 @@ public:
 
     // ---- 统一 Tileset（cesium-native 对齐） ----
     void setTileset(std::unique_ptr<Tileset> tileset);
+    void stageTilesetReplacement(std::unique_ptr<Tileset> tileset);
     void addTileset(std::unique_ptr<Tileset> tileset);
     Tileset* tileset() const;
     size_t additionalTilesetCount() const;

@@ -22,6 +22,10 @@ struct SceneRenderCommandDiagnosticsSnapshot {
     int imageryMaxTextureZoom = 0;
     int terrainSurfaceTileCommands = 0;
     int terrainGltfPrimitiveCommands = 0;
+    int terrainSurfaceRealCommands = 0;
+    int terrainSurfaceFillProxyCommands = 0;
+    int terrainSurfaceEllipsoidCommands = 0;
+    int terrainSurfaceUnknownCommands = 0;
 
     static SceneRenderCommandDiagnosticsSnapshot fromCommands(
         const RenderCommandList& commands);

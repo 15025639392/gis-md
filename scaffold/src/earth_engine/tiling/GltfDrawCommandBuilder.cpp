@@ -28,6 +28,24 @@ float alphaModeUniform(GltfAlphaMode mode) {
     }
 }
 
+TerrainSurfaceCommandSource terrainSurfaceSourceForDraw(
+    const TileRenderContentState& renderContent) {
+    if (renderContent.drawsFill()) {
+        return TerrainSurfaceCommandSource::FillProxy;
+    }
+    switch (renderContent.currentSurfaceSource()) {
+        case SurfaceDrawableSource::EllipsoidFallback:
+            return TerrainSurfaceCommandSource::EllipsoidFallback;
+        case SurfaceDrawableSource::None:
+            return TerrainSurfaceCommandSource::Unknown;
+        case SurfaceDrawableSource::HeightmapTerrain:
+        case SurfaceDrawableSource::AncestorUpsample:
+        case SurfaceDrawableSource::GltfContent:
+        default:
+            return TerrainSurfaceCommandSource::RealTerrain;
+    }
+}
+
 RenderCommand::PrimitiveType renderPrimitiveType(GltfPrimitiveMode mode) {
     switch (mode) {
         case GltfPrimitiveMode::Points:
@@ -97,6 +115,10 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
         cmd.stableKey = tileCacheKey + "#" + std::to_string(stableIndex++);
         cmd.terrainRenderContent =
             tile.content.renderContent.drawIsTerrainContent();
+        if (cmd.terrainRenderContent) {
+            cmd.terrainSurfaceSource =
+                terrainSurfaceSourceForDraw(tile.content.renderContent);
+        }
         cmd.primitive = renderPrimitiveType(primitive.primitiveMode);
         const Vec3& localOrigin = tile.content.renderContent.drawLocalOrigin();
         GltfUniformBlock& u = cmd.gltfUniforms;
@@ -358,6 +380,10 @@ void applyPerFrameCommandState(
         ++rasterOverlayTextureCount;
     }
     cmd.gltfRasterOverlayTextureCount = rasterOverlayTextureCount;
+    if (cmd.terrainRenderContent) {
+        cmd.terrainSurfaceSource =
+            terrainSurfaceSourceForDraw(tile.content.renderContent);
+    }
     u.mappedRasterTextureCount =
         static_cast<float>(rasterOverlayTextureCount);
     for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {

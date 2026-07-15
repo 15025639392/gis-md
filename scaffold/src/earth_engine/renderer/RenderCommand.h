@@ -29,6 +29,13 @@ enum class RenderCommandKind {
     VectorOverlay          // order 30
 };
 
+enum class TerrainSurfaceCommandSource {
+    Unknown,
+    RealTerrain,
+    FillProxy,
+    EllipsoidFallback
+};
+
 /// 单条渲染命令。
 /// 由 Layer::buildRenderCommands() 生成，Renderer 收集并提交给 RenderDevice。
 struct RenderCommand {
@@ -41,6 +48,8 @@ struct RenderCommand {
     uint64_t frameId = 0;
     uint64_t generation = 0;
     bool terrainRenderContent = false;
+    TerrainSurfaceCommandSource terrainSurfaceSource =
+        TerrainSurfaceCommandSource::Unknown;
 
     // GPU 资源引用（裸指针，生命周期由 RenderDevice 管理）
     ShaderProgram* shader = nullptr;

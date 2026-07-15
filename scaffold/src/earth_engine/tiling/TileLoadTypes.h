@@ -47,6 +47,7 @@ struct TileLoadedContent {
         content.contentTransform = result.contentTransform;
         content.metadata = std::move(result.metadata);
         content.terrainRenderContent = result.terrainRenderContent;
+        content.terrainRenderSource = result.terrainRenderSource;
         content.quantizedMeshAvailabilityUpdates =
             std::move(result.quantizedMeshAvailabilityUpdates);
         return content;
@@ -54,6 +55,8 @@ struct TileLoadedContent {
 
     std::unique_ptr<GltfModel> gltfModel;
     bool terrainRenderContent = false;
+    TileTerrainRenderSource terrainRenderSource =
+        TileTerrainRenderSource::Generic;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate>

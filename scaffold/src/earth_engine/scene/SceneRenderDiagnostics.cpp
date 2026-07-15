@@ -30,6 +30,14 @@ void applyRenderCommandSnapshot(
         snapshot.terrainSurfaceTileCommands;
     diagnostics.terrainGltfPrimitiveCommands =
         snapshot.terrainGltfPrimitiveCommands;
+    diagnostics.terrainSurfaceRealCommands =
+        snapshot.terrainSurfaceRealCommands;
+    diagnostics.terrainSurfaceFillProxyCommands =
+        snapshot.terrainSurfaceFillProxyCommands;
+    diagnostics.terrainSurfaceEllipsoidCommands =
+        snapshot.terrainSurfaceEllipsoidCommands;
+    diagnostics.terrainSurfaceUnknownCommands =
+        snapshot.terrainSurfaceUnknownCommands;
 }
 
 void applySurfaceGenerationSnapshot(
@@ -105,6 +113,21 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
                 ++snapshot.terrainSurfaceTileCommands;
                 ++snapshot.renderSurfaceTiles;
                 ++snapshot.surfaceMeshCount;
+                switch (command.terrainSurfaceSource) {
+                    case TerrainSurfaceCommandSource::RealTerrain:
+                        ++snapshot.terrainSurfaceRealCommands;
+                        break;
+                    case TerrainSurfaceCommandSource::FillProxy:
+                        ++snapshot.terrainSurfaceFillProxyCommands;
+                        break;
+                    case TerrainSurfaceCommandSource::EllipsoidFallback:
+                        ++snapshot.terrainSurfaceEllipsoidCommands;
+                        break;
+                    case TerrainSurfaceCommandSource::Unknown:
+                    default:
+                        ++snapshot.terrainSurfaceUnknownCommands;
+                        break;
+                }
             }
         } else if (command.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             ++snapshot.renderGltfPrimitives;
@@ -114,6 +137,21 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
                 ++snapshot.terrainSurfaceTileCommands;
                 ++snapshot.renderSurfaceTiles;
                 ++snapshot.surfaceMeshCount;
+                switch (command.terrainSurfaceSource) {
+                    case TerrainSurfaceCommandSource::RealTerrain:
+                        ++snapshot.terrainSurfaceRealCommands;
+                        break;
+                    case TerrainSurfaceCommandSource::FillProxy:
+                        ++snapshot.terrainSurfaceFillProxyCommands;
+                        break;
+                    case TerrainSurfaceCommandSource::EllipsoidFallback:
+                        ++snapshot.terrainSurfaceEllipsoidCommands;
+                        break;
+                    case TerrainSurfaceCommandSource::Unknown:
+                    default:
+                        ++snapshot.terrainSurfaceUnknownCommands;
+                        break;
+                }
             }
         }
     }
@@ -178,6 +216,10 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.terrainRenderEntriesSelectedDeferred = 0;
     diagnostics.terrainRenderEntriesFadingDeferred = 0;
     diagnostics.terrainSurfaceCommandsSubmitted = 0;
+    diagnostics.terrainSurfaceRealCommands = 0;
+    diagnostics.terrainSurfaceFillProxyCommands = 0;
+    diagnostics.terrainSurfaceEllipsoidCommands = 0;
+    diagnostics.terrainSurfaceUnknownCommands = 0;
     diagnostics.surfaceMeshCount = 0;
     diagnostics.imageryAttachments = 0;
     diagnostics.imageryExactAttachments = 0;

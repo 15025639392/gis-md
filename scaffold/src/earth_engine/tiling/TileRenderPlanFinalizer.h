@@ -86,8 +86,11 @@ struct TileRenderPlanFinalizer {
             bool usesAncestorFallback = false;
 
             if (selectedThisFrame &&
-                !canBuildRenderEntryDirectly(selectedTile,
-                                             rasterOverlays)) {
+                !canBuildRenderEntryDirectly(
+                    selectedTile,
+                    rasterOverlays,
+                    DirectRenderFallbackPolicy::
+                        PreferAncestorForTransientSurface)) {
                 TilesetTile* renderableAncestor =
                     findNearestRenderableAncestor(
                         selectedTile,
@@ -105,7 +108,9 @@ struct TileRenderPlanFinalizer {
             }
             if (!canBuildRenderEntryDirectly(
                     *commandTile,
-                    rasterOverlays)) {
+                    rasterOverlays,
+                    DirectRenderFallbackPolicy::
+                        AllowTransientSurfaceAsLastResort)) {
                 return;
             }
 
@@ -239,17 +244,26 @@ private:
         }
     };
 
+    enum class DirectRenderFallbackPolicy {
+        PreferAncestorForTransientSurface,
+        AllowTransientSurfaceAsLastResort
+    };
+
     static bool canBuildRenderEntryDirectly(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
-        // Real terrain renderable OR the ellipsoid fill proxy is ready: the
-        // tile draws its OWN geometry directly (no ancestor fallback). A
-        // fill-ready tile shows its own fine imagery on the smooth globe
-        // immediately; the draw path (drawsFill) swaps to real terrain the
-        // frame it becomes ready. This also covers the window where real
-        // content is committed but not yet GPU-ready while the fill still
-        // draws — matching the draw path's drawsFill()/hasDrawableResources().
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        DirectRenderFallbackPolicy fallbackPolicy) {
+        // Real terrain can replace its parent immediately. Transient
+        // ellipsoid/fill surfaces are drawable, but they should only become
+        // direct entries when no renderable ancestor can keep coverage.
         if (tile.content.renderContent.hasDrawableResources()) {
+            if (fallbackPolicy ==
+                    DirectRenderFallbackPolicy::
+                        PreferAncestorForTransientSurface &&
+                tile.content.renderContent
+                    .drawsTransientFallbackSurface()) {
+                return false;
+            }
             return TileRasterOverlayReadinessPolicy::
                 terrainSurfaceImageryDrawableReady(tile, rasterOverlays);
         }

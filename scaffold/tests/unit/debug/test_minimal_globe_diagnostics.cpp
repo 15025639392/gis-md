@@ -27,6 +27,10 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     diagnostics.terrainRenderEntriesSynchronousPrep = 4;
     diagnostics.terrainRenderEntriesDeferredPrep = 5;
     diagnostics.terrainSurfaceCommandsSubmitted = 6;
+    diagnostics.terrainSurfaceRealCommands = 2;
+    diagnostics.terrainSurfaceFillProxyCommands = 3;
+    diagnostics.terrainSurfaceEllipsoidCommands = 1;
+    diagnostics.terrainSurfaceUnknownCommands = 0;
     diagnostics.frameLoadProgressPercentage = 75.0;
     diagnostics.frameProgressLoadingCount = 3;
     diagnostics.frameProgressTotalCount = 12;
@@ -48,6 +52,7 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     EXPECT_NE(std::string::npos, line.find("fallback 3"));
     EXPECT_NE(std::string::npos, line.find("prep 4/5"));
     EXPECT_NE(std::string::npos, line.find("surface 6"));
+    EXPECT_NE(std::string::npos, line.find("real 2, fill 3, ell 1, unk 0"));
     EXPECT_NE(std::string::npos, line.find("load 75%"));
     EXPECT_NE(std::string::npos, line.find("work 3/12"));
     EXPECT_NE(std::string::npos, line.find("mapped 2/5"));

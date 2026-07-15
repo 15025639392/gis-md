@@ -11,6 +11,8 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     RenderCommand firstSurface;
     firstSurface.kind = RenderCommandKind::GltfPrimitive;
     firstSurface.terrainRenderContent = true;
+    firstSurface.terrainSurfaceSource =
+        TerrainSurfaceCommandSource::RealTerrain;
     firstSurface.textures = {sharedTexture};
     firstSurface.surfaceGeometryZoom = 3;
     firstSurface.surfaceTextureZoom = 4;
@@ -18,6 +20,8 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     RenderCommand secondSurface;
     secondSurface.kind = RenderCommandKind::GltfPrimitive;
     secondSurface.terrainRenderContent = true;
+    secondSurface.terrainSurfaceSource =
+        TerrainSurfaceCommandSource::FillProxy;
     secondSurface.textures = {sharedTexture, secondTexture};
     secondSurface.surfaceGeometryZoom = 7;
     secondSurface.surfaceTextureZoom = 6;
@@ -25,6 +29,8 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     RenderCommand missingImagerySurface;
     missingImagerySurface.kind = RenderCommandKind::GltfPrimitive;
     missingImagerySurface.terrainRenderContent = true;
+    missingImagerySurface.terrainSurfaceSource =
+        TerrainSurfaceCommandSource::EllipsoidFallback;
 
     RenderCommand terrainGltfPrimitive;
     terrainGltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
@@ -49,6 +55,10 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     EXPECT_EQ(snapshot.terrainSurfaceTileCommands, 4);
     EXPECT_EQ(snapshot.terrainGltfPrimitiveCommands, 4);
     EXPECT_EQ(snapshot.terrainRenderContentCommands, 4);
+    EXPECT_EQ(snapshot.terrainSurfaceRealCommands, 1);
+    EXPECT_EQ(snapshot.terrainSurfaceFillProxyCommands, 1);
+    EXPECT_EQ(snapshot.terrainSurfaceEllipsoidCommands, 1);
+    EXPECT_EQ(snapshot.terrainSurfaceUnknownCommands, 1);
     EXPECT_EQ(snapshot.renderGltfPrimitives, 5);
     EXPECT_EQ(snapshot.gpuTextureCount, 2);
     EXPECT_EQ(snapshot.imageryExactAttachments, 2);
@@ -77,6 +87,18 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     EXPECT_EQ(
         diagnostics.terrainGltfPrimitiveCommands,
         snapshot.terrainGltfPrimitiveCommands);
+    EXPECT_EQ(
+        diagnostics.terrainSurfaceRealCommands,
+        snapshot.terrainSurfaceRealCommands);
+    EXPECT_EQ(
+        diagnostics.terrainSurfaceFillProxyCommands,
+        snapshot.terrainSurfaceFillProxyCommands);
+    EXPECT_EQ(
+        diagnostics.terrainSurfaceEllipsoidCommands,
+        snapshot.terrainSurfaceEllipsoidCommands);
+    EXPECT_EQ(
+        diagnostics.terrainSurfaceUnknownCommands,
+        snapshot.terrainSurfaceUnknownCommands);
     EXPECT_EQ(diagnostics.imageryAttachments, 2);
 
     RenderCommandList commandsWithoutTextures = {missingImagerySurface};

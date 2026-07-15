@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/EllipsoidTerrainMeshBuilder.h"
+#include "earth_engine/content/EllipsoidTerrainContentProvider.h"
 #include "earth_engine/content/GltfModel.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -53,6 +54,24 @@ TEST(EllipsoidTerrainMeshBuilderTest, ProducesDrapeReadyGridModel) {
 
     // Overlay texcoords are populated for set 0 (the single projection).
     ASSERT_EQ(prim.vertices.size(), prim.vertexTexCoords[0].size());
+}
+
+TEST(EllipsoidTerrainMeshBuilderTest,
+     ProviderMarksTerrainContentAsEllipsoidFallback) {
+    EllipsoidTerrainContentProvider provider("Geographic-TMS", 1, 4);
+    TileContentLoadResult result;
+    provider.requestTileContent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult loaded) {
+            result = std::move(loaded);
+        },
+        HttpRequestPriority::Normal);
+
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+    EXPECT_TRUE(result.terrainRenderContent);
+    EXPECT_EQ(TileTerrainRenderSource::EllipsoidFallback,
+              result.terrainRenderSource);
 }
 
 TEST(EllipsoidTerrainMeshBuilderTest,

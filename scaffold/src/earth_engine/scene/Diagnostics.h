@@ -122,6 +122,10 @@ struct Diagnostics {
     int terrainRenderEntriesSelectedDeferred = 0;
     int terrainRenderEntriesFadingDeferred = 0;
     int terrainSurfaceCommandsSubmitted = 0;
+    int terrainSurfaceRealCommands = 0;
+    int terrainSurfaceFillProxyCommands = 0;
+    int terrainSurfaceEllipsoidCommands = 0;
+    int terrainSurfaceUnknownCommands = 0;
     int surfaceMeshCount = 0;
     int imageryAttachments = 0;
     int imageryExactAttachments = 0;
