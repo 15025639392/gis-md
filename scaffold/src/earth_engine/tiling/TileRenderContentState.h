@@ -711,6 +711,26 @@ public:
         }
     }
 
+    std::vector<std::vector<uint8_t>>
+    takeTerrainGpuVertexBytesForDeferredRelease() {
+        std::vector<std::vector<uint8_t>> retired;
+        if (!gltfModel) {
+            return retired;
+        }
+        retired.reserve(gltfModel->primitives.size());
+        for (GltfPrimitive& primitive : gltfModel->primitives) {
+            if (primitive.terrainGpuVertexBytes.empty()) {
+                continue;
+            }
+            retired.push_back(
+                std::move(primitive.terrainGpuVertexBytes));
+        }
+        if (!retired.empty()) {
+            markRetainedResourcesChanged();
+        }
+        return retired;
+    }
+
     void clearGltfGpuResources() {
         if (!gltfTextureResources.empty()) {
             markRetainedResourcesChanged();

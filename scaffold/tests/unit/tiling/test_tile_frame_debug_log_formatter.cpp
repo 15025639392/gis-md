@@ -42,6 +42,7 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     input.prefetchRenderPlanTiles = 40;
     input.prefetchRenderPlanAuthoritativeUpdates = 3;
     input.prefetchRenderPlanStableReuses = 37;
+    input.gpuUploadDrainMs = 6.25;
 
     const std::array<char, 1536> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
@@ -79,6 +80,7 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     EXPECT_NE(text.find("prefRenderTiles=40"), std::string::npos);
     EXPECT_NE(text.find("prefRenderAuth=3"), std::string::npos);
     EXPECT_NE(text.find("prefRenderReuse=37"), std::string::npos);
+    EXPECT_NE(text.find("gpuDrain=6.25"), std::string::npos);
 }
 
 TEST(

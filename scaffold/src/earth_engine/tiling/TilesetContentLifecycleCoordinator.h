@@ -262,16 +262,25 @@ public:
                 elapsedMs,
                 detail);
         };
-        // 地形 GPU 上传/finalize 受共享主线程时间预算约束（budget->mainThreadTimeMs，
-        // 默认 8ms）：先无条件保底上传 kMinTerrainUploadsPerFrame（= 旧硬编码值，
-        // 防饿死 + 零回归），其后按当帧剩余主线程时间继续摊入——便宜瓦片一帧可上多
-        // 张，昂贵瓦片自限于时间；maxUploadsPerFrame 为失控上限。这补齐了
-        // TilesetOptions.mainThreadLoadingTimeLimit 注释声称、此前对地形 drain 缺失
-        // 的墙钟截断（旧实现恒 4/帧且完全脱离预算）。budget==nullptr 时退回纯计数。
-        constexpr uint32_t kMinTerrainUploadsPerFrame = 4u;
+        // Cesium Native checks its soft time limit after making at least one
+        // main-thread load step. On this renderer, a one-upload floor allowed
+        // visible terrain fallback to accumulate during sustained interaction,
+        // while the previous four-upload floor produced 20-35 ms bursts.
+        // Keep two uploads of interaction progress, then restore the previous
+        // catch-up floor once interaction smoothing ends. maxUploadsPerFrame
+        // remains the no-budget/backstop limit.
+        constexpr uint32_t kInteractionUploadFloor = 2u;
+        constexpr uint32_t kIdleUploadFloor = 4u;
+        uint32_t minimumUploadsBeforeTimeCheck = kIdleUploadFloor;
+        if (budget != nullptr) {
+            const FrameResourceBudgetSnapshot snapshot = budget->snapshot();
+            if (snapshot.interactionActive || snapshot.smoothingActive) {
+                minimumUploadsBeforeTimeCheck = kInteractionUploadFloor;
+            }
+        }
         while (uploadsThisFrame < maxUploadsPerFrame) {
             if (budget != nullptr &&
-                uploadsThisFrame >= kMinTerrainUploadsPerFrame &&
+                uploadsThisFrame >= minimumUploadsBeforeTimeCheck &&
                 budget->mainThreadTimeExpired()) {
                 break;
             }
@@ -316,15 +325,51 @@ public:
             // Call uploadToGpu — creates GPU buffers, clears
             // asyncGpuUploadPending, and calls markRenderContentDone.
             const double uploadStartMs = perf::nowMs();
+            GpuUploadMetrics uploadMetrics;
             bool success = GltfRenderResourcePreparer::uploadToGpu(
                 *tile,
                 context.device,
-                std::move(upload->data));
+                std::move(upload->data),
+                &uploadMetrics);
             const double uploadToGpuMs = perf::nowMs() - uploadStartMs;
             logSlowDrainPhase(
                 "TilePendingLoad.drainGpuUpload.uploadToGpu",
                 uploadToGpuMs,
                 *upload);
+            if (uploadToGpuMs >= 1.0) {
+                platformLog(
+                    LogLevel::Info,
+                    "EarthPerf",
+                    "frame=%llu scope=TilePendingLoad.gpuUploadDetail "
+                    "ms=%.3f texture=%.3f vertex=%.3f index=%.3f "
+                    "instance=%.3f commit=%.3f bytes=%lld vertexBytes=%lld "
+                    "indexBytes=%lld instanceBytes=%lld textureBytes=%lld "
+                    "retireBytes=%lld retirePendingBytes=%lld "
+                    "retirePendingTasks=%u retireInline=%d "
+                    "primitives=%u buffers=%u textures=%u cache=%s",
+                    static_cast<unsigned long long>(context.frameNumber),
+                    uploadToGpuMs,
+                    uploadMetrics.textureUploadMs,
+                    uploadMetrics.vertexBufferUploadMs,
+                    uploadMetrics.indexBufferUploadMs,
+                    uploadMetrics.instanceBufferUploadMs,
+                    uploadMetrics.resourceCommitMs,
+                    static_cast<long long>(uploadMetrics.totalBytes()),
+                    static_cast<long long>(uploadMetrics.vertexBytes),
+                    static_cast<long long>(uploadMetrics.indexBytes),
+                    static_cast<long long>(uploadMetrics.instanceBytes),
+                    static_cast<long long>(uploadMetrics.textureBytes),
+                    static_cast<long long>(
+                        uploadMetrics.deferredCpuBytes),
+                    static_cast<long long>(
+                        uploadMetrics.deferredReleasePendingBytes),
+                    uploadMetrics.deferredReleasePendingTasks,
+                    uploadMetrics.deferredReleaseInlineFallback ? 1 : 0,
+                    uploadMetrics.primitiveCount,
+                    uploadMetrics.totalBufferCount(),
+                    uploadMetrics.textureCount,
+                    upload->cacheKey.c_str());
+            }
 
             // Finalize: attach raster overlays, ensure children, etc.
             const double finishStartMs = perf::nowMs();

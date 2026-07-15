@@ -17,6 +17,7 @@
 #include <array>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 using namespace earth_engine;
@@ -239,4 +240,123 @@ TEST(GpuUploadQueueTest, InvalidPayloadReleasesLifecycleUploadClaim) {
     EXPECT_DOUBLE_EQ(50.0, tile.contentBoundingVolume->maximumHeight);
     EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
     EXPECT_EQ(1, prepRenderer.detachCount);
+}
+
+TEST(GpuUploadQueueTest, ExpiredInteractionBudgetMakesBoundedProgress) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudget setupBudget;
+    FrameResourceBudgetConfig setupConfig;
+    setupConfig.maxMainThreadFinalizesPerFrame = 3;
+    setupBudget.beginFrame(1, setupConfig);
+
+    std::array<std::unique_ptr<TilesetTile>, 3> tiles;
+    GpuUploadQueue queue;
+    for (size_t i = 0; i < tiles.size(); ++i) {
+        const TileKey key{"test", 1, static_cast<int>(i), 0};
+        const std::string cacheKey = "budgeted-upload-" + std::to_string(i);
+        tiles[i] = std::make_unique<TilesetTile>(
+            key,
+            Rectangle::fromDegrees(-20.0, -10.0, 20.0, 10.0));
+        tiles[i]->content.renderContent.prepareGltfContent(
+            std::make_unique<GltfModel>(),
+            Mat4::identity());
+        tiles[i]->content.renderContent.setTerrainRenderContent(true);
+        tiles[i]->markRenderContentLoaded();
+        tiles[i]->content.renderContent.asyncGpuUploadPending = true;
+
+        {
+            std::lock_guard<std::mutex> lock(lifecycle.mutex());
+            lifecycle.pendingLoads().addUpload(PendingTileLoad{
+                TileLoadDomain::TerrainContent,
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                static_cast<double>(i),
+                TileLoadResult::createRenderableGltfTerrain(
+                    std::make_unique<GltfModel>())});
+            ASSERT_TRUE(
+                lifecycle.pendingLoads()
+                    .takeHighestPriorityUpload(false, setupBudget)
+                    .has_value());
+        }
+        queue.push(PendingGpuUpload{key, cacheKey, GpuReadyData{}});
+    }
+
+    FrameResourceBudget budget;
+    FrameResourceBudgetConfig config;
+    config.mainThreadTimeMs = 0.5;
+    config.interactionActive = true;
+
+    std::vector<ActivatedRasterOverlay*> overlays;
+    TileEmptyContentRegistry emptyContentRegistry;
+    const auto findTile =
+        [&tiles](const TileKey& requestedKey) -> TilesetTile* {
+        for (const std::unique_ptr<TilesetTile>& tile : tiles) {
+            if (tile && tile->key == requestedKey) {
+                return tile.get();
+            }
+        }
+        return nullptr;
+    };
+    const auto drainOneExpiredFrame =
+        [&](uint64_t frameNumber) {
+        budget.beginFrame(frameNumber, config);
+        budget.recordElapsed(FrameResourceLane::TerrainFinalize, 0.5);
+        return
+        TilesetContentLifecycleCoordinator::drainGpuUploadQueue(
+            TilesetContentUploadContext{
+                lifecycle,
+                nullptr,
+                nullptr,
+                nullptr,
+                overlays,
+                emptyContentRegistry,
+                &queue,
+                frameNumber},
+            &budget,
+            20,
+            findTile,
+            [](TilesetTile&) {});
+    };
+
+    EXPECT_TRUE(drainOneExpiredFrame(2));
+    EXPECT_EQ(1u, queue.size());
+    EXPECT_FALSE(tiles[0]->content.renderContent.asyncGpuUploadPending);
+    EXPECT_FALSE(tiles[1]->content.renderContent.asyncGpuUploadPending);
+    EXPECT_TRUE(tiles[2]->content.renderContent.asyncGpuUploadPending);
+
+    EXPECT_TRUE(drainOneExpiredFrame(3));
+    EXPECT_FALSE(queue.hasWork());
+    EXPECT_FALSE(tiles[2]->content.renderContent.asyncGpuUploadPending);
+
+    setupBudget.beginFrame(10, setupConfig);
+    for (size_t i = 0; i < tiles.size(); ++i) {
+        const TileKey& key = tiles[i]->key;
+        const std::string cacheKey =
+            "idle-catch-up-upload-" + std::to_string(i);
+        tiles[i]->content.renderContent.asyncGpuUploadPending = true;
+        {
+            std::lock_guard<std::mutex> lock(lifecycle.mutex());
+            lifecycle.pendingLoads().addUpload(PendingTileLoad{
+                TileLoadDomain::TerrainContent,
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                static_cast<double>(i),
+                TileLoadResult::createRenderableGltfTerrain(
+                    std::make_unique<GltfModel>())});
+            ASSERT_TRUE(
+                lifecycle.pendingLoads()
+                    .takeHighestPriorityUpload(false, setupBudget)
+                    .has_value());
+        }
+        queue.push(PendingGpuUpload{key, cacheKey, GpuReadyData{}});
+    }
+
+    config.interactionActive = false;
+    EXPECT_TRUE(drainOneExpiredFrame(11));
+    EXPECT_FALSE(queue.hasWork());
+    for (const std::unique_ptr<TilesetTile>& tile : tiles) {
+        EXPECT_FALSE(tile->content.renderContent.asyncGpuUploadPending);
+    }
 }

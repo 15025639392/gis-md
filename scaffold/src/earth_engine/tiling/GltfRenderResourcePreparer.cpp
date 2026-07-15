@@ -5,9 +5,12 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TilesetTile.h"
 #include "../content/GltfModel.h"
+#include "../core/async/AsyncSystem.h"
+#include "../debug/PerfTimer.h"
 #include "../renderer/RenderDevice.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -17,6 +20,93 @@
 
 namespace earth_engine {
 namespace {
+
+constexpr int64_t kDeferredCpuReleaseLimitBytes =
+    32LL * 1024LL * 1024LL;
+std::atomic<int64_t> gDeferredCpuReleasePendingBytes{0};
+std::atomic<uint32_t> gDeferredCpuReleasePendingTasks{0};
+
+struct DeferredGpuUploadCpuPayload {
+    std::vector<std::vector<uint8_t>> byteBuffers;
+    std::vector<std::vector<uint32_t>> indexBuffers;
+
+    int64_t allocatedBytes() const {
+        int64_t bytes = 0;
+        for (const std::vector<uint8_t>& buffer : byteBuffers) {
+            bytes += static_cast<int64_t>(buffer.capacity());
+        }
+        for (const std::vector<uint32_t>& buffer : indexBuffers) {
+            bytes += static_cast<int64_t>(
+                buffer.capacity() * sizeof(uint32_t));
+        }
+        return bytes;
+    }
+};
+
+void deferCpuPayloadRelease(
+    std::shared_ptr<DeferredGpuUploadCpuPayload> payload,
+    GpuUploadMetrics* metrics) {
+    if (!payload ||
+        (payload->byteBuffers.empty() &&
+         payload->indexBuffers.empty())) {
+        return;
+    }
+    const int64_t payloadBytes = payload->allocatedBytes();
+    if (metrics) {
+        metrics->deferredCpuBytes = payloadBytes;
+    }
+    const int64_t previouslyPending =
+        gDeferredCpuReleasePendingBytes.fetch_add(
+            payloadBytes,
+            std::memory_order_acq_rel);
+    if (previouslyPending + payloadBytes >
+        kDeferredCpuReleaseLimitBytes) {
+        gDeferredCpuReleasePendingBytes.fetch_sub(
+            payloadBytes,
+            std::memory_order_acq_rel);
+        payload->byteBuffers.clear();
+        payload->indexBuffers.clear();
+        if (metrics) {
+            metrics->deferredReleaseInlineFallback = true;
+            metrics->deferredReleasePendingBytes =
+                gDeferredCpuReleasePendingBytes.load(
+                    std::memory_order_acquire);
+            metrics->deferredReleasePendingTasks =
+                gDeferredCpuReleasePendingTasks.load(
+                    std::memory_order_acquire);
+        }
+        return;
+    }
+
+    gDeferredCpuReleasePendingTasks.fetch_add(
+        1u,
+        std::memory_order_acq_rel);
+    auto release = [
+        payload = std::move(payload),
+        payloadBytes]() mutable {
+        payload->byteBuffers.clear();
+        payload->indexBuffers.clear();
+        gDeferredCpuReleasePendingBytes.fetch_sub(
+            payloadBytes,
+            std::memory_order_acq_rel);
+        gDeferredCpuReleasePendingTasks.fetch_sub(
+            1u,
+            std::memory_order_acq_rel);
+    };
+    try {
+        (void)AsyncSystem::pool().enqueue(release);
+    } catch (...) {
+        release();
+    }
+    if (metrics) {
+        metrics->deferredReleasePendingBytes =
+            gDeferredCpuReleasePendingBytes.load(
+                std::memory_order_acquire);
+        metrics->deferredReleasePendingTasks =
+            gDeferredCpuReleasePendingTasks.load(
+                std::memory_order_acquire);
+    }
+}
 
 TextureDesc::Filter toTextureFilter(GltfTextureFilter filter) {
     return filter == GltfTextureFilter::Nearest
@@ -504,7 +594,31 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
 bool GltfRenderResourcePreparer::uploadToGpu(
     TilesetTile& tile,
     RenderDevice* device,
-    GpuReadyData&& ready) {
+    GpuReadyData&& ready,
+    GpuUploadMetrics* metrics) {
+    if (metrics) {
+        *metrics = GpuUploadMetrics{};
+        metrics->primitiveCount =
+            static_cast<uint32_t>(ready.primitives.size());
+        for (const GpuReadyPrimitive& primitive : ready.primitives) {
+            metrics->vertexBytes +=
+                static_cast<int64_t>(primitive.vertexBytes.size());
+            metrics->indexBytes += static_cast<int64_t>(
+                primitive.indices.size() * sizeof(uint32_t));
+            if (primitive.instances) {
+                metrics->instanceBytes += static_cast<int64_t>(
+                    primitive.instances->bytes.size());
+            }
+        }
+        for (const GpuReadyData::TextureData& texture : ready.textures) {
+            if (texture.valid()) {
+                metrics->textureBytes +=
+                    static_cast<int64_t>(texture.pixels.size());
+                ++metrics->textureCount;
+            }
+        }
+    }
+
     const bool validPayload =
         ready.valid() &&
         std::all_of(
@@ -521,6 +635,11 @@ bool GltfRenderResourcePreparer::uploadToGpu(
     tile.content.renderContent.beginGltfGpuResourceBuild(
         ready.textures.size(),
         ready.primitives.size());
+    auto deferredCpuPayload =
+        std::make_shared<DeferredGpuUploadCpuPayload>();
+    deferredCpuPayload->byteBuffers.reserve(
+        ready.primitives.size() * 2u + ready.textures.size());
+    deferredCpuPayload->indexBuffers.reserve(ready.primitives.size());
 
     // Upload textures first (they're referenced by index in metadata)
     std::vector<std::unique_ptr<Texture>> gpuTextures;
@@ -530,7 +649,7 @@ bool GltfRenderResourcePreparer::uploadToGpu(
         for (size_t textureIndex = 0;
              textureIndex < ready.textures.size();
              ++textureIndex) {
-            const GpuReadyData::TextureData& texData =
+            GpuReadyData::TextureData& texData =
                 ready.textures[textureIndex];
             if (!texData.valid()) {
                 continue;
@@ -548,7 +667,14 @@ bool GltfRenderResourcePreparer::uploadToGpu(
             td.magFilter = toTextureFilter(texData.magFilter);
             td.wrapS = toTextureWrap(texData.wrapS);
             td.wrapT = toTextureWrap(texData.wrapT);
+            const double textureStartMs = perf::nowMs();
             gpuTextures[textureIndex] = device->createTexture(td);
+            if (metrics) {
+                metrics->textureUploadMs +=
+                    perf::nowMs() - textureStartMs;
+            }
+            deferredCpuPayload->byteBuffers.push_back(
+                std::move(texData.pixels));
         }
     }
 
@@ -570,7 +696,15 @@ bool GltfRenderResourcePreparer::uploadToGpu(
             ? BufferDesc::Usage::Dynamic
             : BufferDesc::Usage::Static;
         vbDesc.type = BufferDesc::Type::Vertex;
+        const double vertexBufferStartMs = perf::nowMs();
         prim.metadata.vertexBuffer = device->createBuffer(vbDesc);
+        if (metrics) {
+            metrics->vertexBufferUploadMs +=
+                perf::nowMs() - vertexBufferStartMs;
+            ++metrics->vertexBufferCount;
+        }
+        deferredCpuPayload->byteBuffers.push_back(
+            std::move(prim.vertexBytes));
 
         // GPU: create index buffer
         BufferDesc ibDesc;
@@ -578,7 +712,15 @@ bool GltfRenderResourcePreparer::uploadToGpu(
         ibDesc.data = prim.indices.data();
         ibDesc.usage = BufferDesc::Usage::Static;
         ibDesc.type = BufferDesc::Type::Index;
+        const double indexBufferStartMs = perf::nowMs();
         prim.metadata.indexBuffer = device->createBuffer(ibDesc);
+        if (metrics) {
+            metrics->indexBufferUploadMs +=
+                perf::nowMs() - indexBufferStartMs;
+            ++metrics->indexBufferCount;
+        }
+        deferredCpuPayload->indexBuffers.push_back(
+            std::move(prim.indices));
 
         // GPU: create instance buffer if needed
         if (prim.instances) {
@@ -589,14 +731,27 @@ bool GltfRenderResourcePreparer::uploadToGpu(
                 ? BufferDesc::Usage::Dynamic
                 : BufferDesc::Usage::Static;
             instDesc.type = BufferDesc::Type::Vertex;
+            const double instanceBufferStartMs = perf::nowMs();
             prim.metadata.instanceBuffer = device->createBuffer(instDesc);
+            if (metrics) {
+                metrics->instanceBufferUploadMs +=
+                    perf::nowMs() - instanceBufferStartMs;
+                ++metrics->instanceBufferCount;
+            }
+            deferredCpuPayload->byteBuffers.push_back(
+                std::move(prim.instances->bytes));
         }
 
+        const double resourceCommitStartMs = perf::nowMs();
         // Validate
         if (!prim.metadata.vertexBuffer ||
             !prim.metadata.indexBuffer ||
             (prim.instances && !prim.metadata.instanceBuffer)) {
             success = false;
+            if (metrics) {
+                metrics->resourceCommitMs +=
+                    perf::nowMs() - resourceCommitStartMs;
+            }
             continue;
         }
 
@@ -669,8 +824,13 @@ bool GltfRenderResourcePreparer::uploadToGpu(
 
         tile.content.renderContent.addGltfPrimitiveResource(
             std::move(prim.metadata));
+        if (metrics) {
+            metrics->resourceCommitMs +=
+                perf::nowMs() - resourceCommitStartMs;
+        }
     }
 
+    const double finalCommitStartMs = perf::nowMs();
     // Store textures in the tile's texture resource list
     if (!gpuTextures.empty()) {
         for (auto& tex : gpuTextures) {
@@ -683,14 +843,39 @@ bool GltfRenderResourcePreparer::uploadToGpu(
 
     // Mark tile as ready for rendering
     if (success && tile.content.renderContent.hasGltfPrimitiveResources()) {
-        tile.content.renderContent.clearTerrainGpuVertexBytes();
+        std::vector<std::vector<uint8_t>> retainedTerrainBytes =
+            tile.content.renderContent
+                .takeTerrainGpuVertexBytesForDeferredRelease();
+        for (std::vector<uint8_t>& bytes : retainedTerrainBytes) {
+            deferredCpuPayload->byteBuffers.push_back(
+                std::move(bytes));
+        }
         tile.markRenderContentDone();
     } else {
         tile.content.renderContent.clearGltfGpuResources();
         tile.markRenderContentFailedTemporarily();
     }
+    if (metrics) {
+        metrics->resourceCommitMs +=
+            perf::nowMs() - finalCommitStartMs;
+    }
+    deferCpuPayloadRelease(std::move(deferredCpuPayload), metrics);
 
     return success;
+}
+
+int64_t GltfRenderResourcePreparer::deferredCpuReleasePendingBytes() {
+    return gDeferredCpuReleasePendingBytes.load(
+        std::memory_order_acquire);
+}
+
+uint32_t GltfRenderResourcePreparer::deferredCpuReleasePendingTasks() {
+    return gDeferredCpuReleasePendingTasks.load(
+        std::memory_order_acquire);
+}
+
+int64_t GltfRenderResourcePreparer::deferredCpuReleaseLimitBytes() {
+    return kDeferredCpuReleaseLimitBytes;
 }
 
 } // namespace earth_engine

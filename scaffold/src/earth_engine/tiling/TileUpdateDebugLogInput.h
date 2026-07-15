@@ -74,6 +74,7 @@ struct TileUpdateDebugLogInput {
     int prefetchRenderPlanTiles = 0;
     int prefetchRenderPlanAuthoritativeUpdates = 0;
     int prefetchRenderPlanStableReuses = 0;
+    double gpuUploadDrainMs = 0.0;
 };
 
 } // namespace earth_engine

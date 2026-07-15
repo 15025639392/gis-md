@@ -2,6 +2,7 @@
 
 #include "GpuReadyData.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -12,6 +13,35 @@ struct TilesetTile;
 struct GltfModel;
 class Mat4;
 class Vec3;
+
+struct GpuUploadMetrics {
+    int64_t vertexBytes = 0;
+    int64_t indexBytes = 0;
+    int64_t instanceBytes = 0;
+    int64_t textureBytes = 0;
+    uint32_t primitiveCount = 0;
+    uint32_t textureCount = 0;
+    uint32_t vertexBufferCount = 0;
+    uint32_t indexBufferCount = 0;
+    uint32_t instanceBufferCount = 0;
+    double textureUploadMs = 0.0;
+    double vertexBufferUploadMs = 0.0;
+    double indexBufferUploadMs = 0.0;
+    double instanceBufferUploadMs = 0.0;
+    double resourceCommitMs = 0.0;
+    int64_t deferredCpuBytes = 0;
+    int64_t deferredReleasePendingBytes = 0;
+    uint32_t deferredReleasePendingTasks = 0;
+    bool deferredReleaseInlineFallback = false;
+
+    int64_t totalBytes() const {
+        return vertexBytes + indexBytes + instanceBytes + textureBytes;
+    }
+
+    uint32_t totalBufferCount() const {
+        return vertexBufferCount + indexBufferCount + instanceBufferCount;
+    }
+};
 
 struct GltfRenderResourcePreparer {
     /// Legacy synchronous path (kept for animation updates).
@@ -41,7 +71,12 @@ struct GltfRenderResourcePreparer {
     static bool uploadToGpu(
         TilesetTile& tile,
         RenderDevice* device,
-        GpuReadyData&& ready);
+        GpuReadyData&& ready,
+        GpuUploadMetrics* metrics = nullptr);
+
+    static int64_t deferredCpuReleasePendingBytes();
+    static uint32_t deferredCpuReleasePendingTasks();
+    static int64_t deferredCpuReleaseLimitBytes();
 };
 
 } // namespace earth_engine

@@ -10,7 +10,7 @@ std::array<char, 1536> TileFrameDebugLogFormatter::updateDetail(
     std::snprintf(
         detail.data(),
         detail.size(),
-        "render=%zu load=%zu selector=%.2f selTrav=%.2f selVis=%.2f selMetric=%.2f selPolicy=%.2f selRefine=%.2f selOv=%.2f selDec=%.2f selMat=%.2f selMatCalls=%d selMatChanged=%d selMatRetry=%d selMatFast=%d selCommit=%.2f selPlan=%.2f selReq=%.2f prefetch=%.2f prefetchBase=%.2f prefetchFill=%.2f prefRender=%.2f prefRenderUpdate=%.2f prefRenderAction=%.2f prefetchVisible=%.2f prefetchLoad=%.2f prefetchAdvance=%.2f prefetchMap=%.2f request=%.2f terrainUpload=%.2f rasterUpload=%.2f rasterPick=%.2f rasterFallback=%.2f rasterSnapshot=%.2f rasterIssue=%.2f rasterQueue=%.2f rasterTex=%.2f rasterFinalize=%.2f rasterBook=%.2f cache=%zu pending=%zu rsrc=%d activeSets=%d fallbacks=%d srcInflight=%d srcWaiters=%d pendUp=%d visited=%d culled=%d culledVisited=%d fog=%d occluded=%d occWait=%d kicked=%d notReady=%d reused=%d reuseMode=%d reuseReject=%d prefVis=%d prefLoad=%d prefAdv=%d prefMap=%d prefRenderTiles=%d prefRenderAuth=%d prefRenderReuse=%d rasterUploads=%d rasterMapped=%d rasterMax=%.2f rasterMaxSize=%dx%d interaction=%d smoothing=%d",
+        "render=%zu load=%zu selector=%.2f selTrav=%.2f selVis=%.2f selMetric=%.2f selPolicy=%.2f selRefine=%.2f selOv=%.2f selDec=%.2f selMat=%.2f selMatCalls=%d selMatChanged=%d selMatRetry=%d selMatFast=%d selCommit=%.2f selPlan=%.2f selReq=%.2f prefetch=%.2f prefetchBase=%.2f prefetchFill=%.2f prefRender=%.2f prefRenderUpdate=%.2f prefRenderAction=%.2f prefetchVisible=%.2f prefetchLoad=%.2f prefetchAdvance=%.2f prefetchMap=%.2f request=%.2f terrainUpload=%.2f gpuDrain=%.2f rasterUpload=%.2f rasterPick=%.2f rasterFallback=%.2f rasterSnapshot=%.2f rasterIssue=%.2f rasterQueue=%.2f rasterTex=%.2f rasterFinalize=%.2f rasterBook=%.2f cache=%zu pending=%zu rsrc=%d activeSets=%d fallbacks=%d srcInflight=%d srcWaiters=%d pendUp=%d visited=%d culled=%d culledVisited=%d fog=%d occluded=%d occWait=%d kicked=%d notReady=%d reused=%d reuseMode=%d reuseReject=%d prefVis=%d prefLoad=%d prefAdv=%d prefMap=%d prefRenderTiles=%d prefRenderAuth=%d prefRenderReuse=%d rasterUploads=%d rasterMapped=%d rasterMax=%.2f rasterMaxSize=%dx%d interaction=%d smoothing=%d",
         input.renderTileCount,
         input.loadRequestCount,
         input.selectorMs,
@@ -41,6 +41,7 @@ std::array<char, 1536> TileFrameDebugLogFormatter::updateDetail(
         input.prefetchMapMs,
         input.requestMs,
         input.terrainUploadMs,
+        input.gpuUploadDrainMs,
         input.rasterUploadMs,
         input.rasterSelectTaskMs,
         input.rasterSourceFallbackMs,

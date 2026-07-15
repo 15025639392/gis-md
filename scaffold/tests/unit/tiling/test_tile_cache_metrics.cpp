@@ -236,10 +236,33 @@ TEST(TileCacheMetricsTest, GpuUploadClearsRetainedPrebuiltTerrainBytes) {
     ready.primitives.push_back(std::move(primitive));
 
     earth_engine::testing::MockRenderDevice device;
+    GpuUploadMetrics metrics;
     ASSERT_TRUE(GltfRenderResourcePreparer::uploadToGpu(
         tile,
         &device,
-        std::move(ready)));
+        std::move(ready),
+        &metrics));
+    EXPECT_EQ(128, metrics.vertexBytes);
+    EXPECT_EQ(
+        static_cast<int64_t>(6 * sizeof(uint32_t)),
+        metrics.indexBytes);
+    EXPECT_EQ(0, metrics.instanceBytes);
+    EXPECT_EQ(0, metrics.textureBytes);
+    EXPECT_EQ(1u, metrics.primitiveCount);
+    EXPECT_EQ(1u, metrics.vertexBufferCount);
+    EXPECT_EQ(1u, metrics.indexBufferCount);
+    EXPECT_EQ(0u, metrics.instanceBufferCount);
+    EXPECT_EQ(2u, metrics.totalBufferCount());
+    EXPECT_EQ(0u, metrics.textureCount);
+    EXPECT_EQ(152, metrics.totalBytes());
+    EXPECT_GE(metrics.vertexBufferUploadMs, 0.0);
+    EXPECT_GE(metrics.indexBufferUploadMs, 0.0);
+    EXPECT_GE(metrics.resourceCommitMs, 0.0);
+    EXPECT_GE(metrics.deferredCpuBytes, 280);
+    EXPECT_LE(
+        metrics.deferredReleasePendingBytes,
+        GltfRenderResourcePreparer::deferredCpuReleaseLimitBytes());
+    EXPECT_FALSE(metrics.deferredReleaseInlineFallback);
 
     const GltfModel* retained = tile.content.renderContent.gltfModelForRead();
     ASSERT_NE(nullptr, retained);
@@ -254,6 +277,53 @@ TEST(TileCacheMetricsTest, GpuUploadClearsRetainedPrebuiltTerrainBytes) {
     EXPECT_NE(nullptr, resources->indexBuffer);
     EXPECT_EQ(4, resources->vertexCount);
     EXPECT_EQ(6, resources->indexCount);
+}
+
+TEST(TileCacheMetricsTest, DeferredCpuReleaseFallsBackInlineAboveBound) {
+    TilesetTile tile;
+    auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
+    ASSERT_FALSE(gltfModel->primitives.empty());
+    gltfModel->primitives.front().terrainGpuVertexBytes.resize(
+        static_cast<size_t>(
+            GltfRenderResourcePreparer::deferredCpuReleaseLimitBytes() +
+            1),
+        7);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(gltfModel), Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+
+    GpuReadyData ready;
+    GpuReadyPrimitive primitive;
+    primitive.vertexBytes.resize(128, 7);
+    primitive.vertexStride = 32;
+    primitive.vertexCount = 4;
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.indexCount = primitive.indices.size();
+    primitive.metadata.useTerrainVertexFormat = true;
+    ready.primitives.push_back(std::move(primitive));
+
+    earth_engine::testing::MockRenderDevice device;
+    GpuUploadMetrics metrics;
+    ASSERT_TRUE(GltfRenderResourcePreparer::uploadToGpu(
+        tile,
+        &device,
+        std::move(ready),
+        &metrics));
+
+    EXPECT_TRUE(metrics.deferredReleaseInlineFallback);
+    EXPECT_GT(
+        metrics.deferredCpuBytes,
+        GltfRenderResourcePreparer::deferredCpuReleaseLimitBytes());
+    EXPECT_LE(
+        GltfRenderResourcePreparer::deferredCpuReleasePendingBytes(),
+        GltfRenderResourcePreparer::deferredCpuReleaseLimitBytes());
+    const GltfModel* retained =
+        tile.content.renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, retained);
+    ASSERT_FALSE(retained->primitives.empty());
+    EXPECT_TRUE(
+        retained->primitives.front()
+            .terrainGpuVertexBytes.empty());
 }
 
 TEST(TileCacheMetricsTest, CountsHeightmapAndRetainedTilePayloads) {

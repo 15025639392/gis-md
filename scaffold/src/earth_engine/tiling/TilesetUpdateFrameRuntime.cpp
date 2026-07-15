@@ -133,13 +133,31 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     }
     // Drain the async GPU upload queue.  Terrain CPU work dispatched to
     // worker threads by processPendingLoads lands here for GPU upload.
-    {   const double t_drain = perf::nowMs();
+    double gpuUploadDrainMs = 0.0;
+    {
+        const double t_drain = perf::nowMs();
         tileset.drainGpuUploadQueue(pPrepRenderer);
-        const double drainMs = perf::nowMs() - t_drain;
-        if (drainMs > 1.0) {
+        gpuUploadDrainMs = perf::nowMs() - t_drain;
+        if (gpuUploadDrainMs > 1.0) {
             platformLog(LogLevel::Info, "EarthPerf",
-                "drainGpuUpload: %.2f ms", drainMs);
+                "drainGpuUpload: %.2f ms", gpuUploadDrainMs);
         }
+    }
+    if ((frameState.frameId % 120u) == 0u) {
+        platformLog(
+            LogLevel::Info,
+            "EarthPerf",
+            "frame=%llu scope=DeferredCpuRelease pendingBytes=%lld "
+            "pendingTasks=%u limitBytes=%lld",
+            static_cast<unsigned long long>(frameState.frameId),
+            static_cast<long long>(
+                GltfRenderResourcePreparer::
+                    deferredCpuReleasePendingBytes()),
+            GltfRenderResourcePreparer::
+                deferredCpuReleasePendingTasks(),
+            static_cast<long long>(
+                GltfRenderResourcePreparer::
+                    deferredCpuReleaseLimitBytes()));
     }
 
     const TileUpdateUploadRunResult& uploadWork = frameWork.uploadWork;
@@ -218,7 +236,8 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             selectionWork.prefetchRenderPlanActionMs,
             selectionWork.prefetchRenderPlanTiles,
             selectionWork.prefetchRenderPlanAuthoritativeUpdates,
-            selectionWork.prefetchRenderPlanStableReuses}};
+            selectionWork.prefetchRenderPlanStableReuses,
+            gpuUploadDrainMs}};
 }
 
 } // namespace earth_engine
