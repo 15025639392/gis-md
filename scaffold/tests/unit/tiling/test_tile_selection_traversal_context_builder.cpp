@@ -41,6 +41,7 @@ struct TraversalContextFixture {
                 options,
                 rasterOverlays,
                 nullptr,
+                nullptr,
                 budget,
                 Vec3(1.0, 2.0, 3.0),
                 contentAccess},

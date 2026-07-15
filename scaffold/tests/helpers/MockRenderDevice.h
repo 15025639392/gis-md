@@ -2,6 +2,7 @@
 
 #include "earth_engine/renderer/RenderDevice.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -23,6 +24,10 @@ public:
     DummyTexture(int width, int height) : width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
 private:
     int width_ = 0, height_ = 0;
 };
@@ -38,6 +43,17 @@ public:
     }
     size_t size() const override { return byteSize_; }
     const std::vector<uint8_t>& bytes() const { return bytes_; }
+    bool update(size_t offset, const void* data, size_t size) {
+        if (!data || offset > byteSize_ || size > byteSize_ - offset) {
+            return false;
+        }
+        if (bytes_.size() != byteSize_) {
+            bytes_.resize(byteSize_);
+        }
+        const auto* begin = static_cast<const uint8_t*>(data);
+        std::copy(begin, begin + size, bytes_.begin() + offset);
+        return true;
+    }
 private:
     size_t byteSize_ = 0;
     std::vector<uint8_t> bytes_;
@@ -71,13 +87,26 @@ public:
     }
 
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
+        ++bufferCreationAttempts;
+        if (failBufferCreationAtAttempt == bufferCreationAttempts) {
+            return nullptr;
+        }
         auto buf = std::make_unique<DummyBuffer>(desc.size, desc.data);
         ++createdBufferCount;
         return buf;
     }
 
-    bool updateBuffer(Buffer*, size_t, const void*, size_t) override {
-        return false;
+    bool updateBuffer(Buffer* buffer,
+                      size_t offset,
+                      const void* data,
+                      size_t size) override {
+        if (!allowBufferUpdates) return false;
+        auto* dummy = dynamic_cast<DummyBuffer*>(buffer);
+        if (!dummy || !dummy->update(offset, data, size)) {
+            return false;
+        }
+        ++updatedBufferCount;
+        return true;
     }
 
     std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
@@ -104,10 +133,14 @@ public:
     TextureDesc lastTextureDesc;
     int createdTextureCount = 0;
     int createdBufferCount = 0;
+    int updatedBufferCount = 0;
+    int bufferCreationAttempts = 0;
+    int failBufferCreationAtAttempt = -1;
     int shaderCount = 0;
     int submitCount = 0;
     int frameCount = 0;
     bool allowTextureCreation = true;
+    bool allowBufferUpdates = true;
 };
 
 } // namespace testing

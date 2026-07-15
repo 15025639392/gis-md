@@ -3,6 +3,7 @@
 #include "ProviderRequestDiagnostics.h"
 #include "RasterOverlayTile.h"
 #include "RasterTextureUploader.h"
+#include "../tiling/TileRasterOverlayUploadResult.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileScheme.h"
@@ -22,6 +23,7 @@
 #include <atomic>
 #include <cstdint>
 #include <future>
+#include <list>
 
 namespace earth_engine {
 
@@ -244,8 +246,9 @@ public:
         return static_cast<int>(asyncState_->activeMappedSourceSetOrder.size());
     }
     int getPendingSourceFallbackCount() const {
-        std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        return static_cast<int>(asyncState_->pendingSourceFallbacks.size());
+        return static_cast<int>(
+            asyncState_->pendingSourceFallbackCount.load(
+                std::memory_order_acquire));
     }
     void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
@@ -254,8 +257,9 @@ public:
 
     /// Process completed uploads on the main thread.
     /// Should be called once per frame.
-    int processPendingUploads(bool interactionActive,
-                              FrameResourceBudget* budget = nullptr);
+    TileRasterOverlayUploadResult processPendingUploads(
+        bool interactionActive,
+        FrameResourceBudget* budget = nullptr);
 
     /// True while HTTP requests, queued raster source fanout, or main-thread
     /// texture uploads are outstanding.
@@ -268,6 +272,13 @@ public:
         return asyncState_->revision.load(std::memory_order_relaxed);
     }
 
+    /// Monotonic mapping identity revision. Unlike revision(), this changes
+    /// only when existing geometry-to-raster mappings may point at stale
+    /// provider tiles because provider readiness or mapping options changed.
+    uint64_t mappingRevision() const {
+        return mappingRevision_;
+    }
+
     // ── Texture cache ──
 
     /// Direct texture cache lookup by key.
@@ -275,6 +286,9 @@ public:
 
     /// Total cached tiles.
     int getCachedTileCount() const { return static_cast<int>(tiles_.size()); }
+    int64_t tileTextureBytesUsed() const {
+        return textureByteLedger_->bytes.load(std::memory_order_relaxed);
+    }
 
     // ── Eviction ──
 
@@ -295,12 +309,15 @@ public:
     /// Evict tiles that have not been referenced recently.
     /// Called once per frame from Tileset::buildRenderCommands,
     /// AFTER all tile access for the frame is complete.
-    void trimUnusedTiles();
+    void trimUnusedTiles(bool cachePressure = false);
 
     // Texture ownership: RasterOverlayTile owns its GPU texture
     // via unique_ptr<Texture>. No external callback needed.
 
 private:
+    friend class RasterOverlayTile;
+    using TileCache = std::unordered_map<std::string, TilePtr>;
+
     struct QuadtreeSourcePlan {
         int sourceZoom = 0;
         int minX = 0;
@@ -354,7 +371,11 @@ private:
         const std::shared_ptr<MappedSourceImageSet>& sourceSet,
         FrameResourceBudget* budget);
     int issuePendingSourceFallbacks(FrameResourceBudget* budget);
-    int issueActiveMappedSourceImageSets(FrameResourceBudget* budget);
+    int issueActiveMappedSourceImageSets(
+        FrameResourceBudget* budget,
+        double* fallbackMs,
+        double* snapshotMs,
+        double* issueMs);
     int estimateNewSourceRequestsForSourceKeys(
         const std::vector<TileKey>& sourceKeys) const;
     bool mappedTileWouldIssueNewSourceRequests(
@@ -362,6 +383,14 @@ private:
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;
+    void insertCachedTile(const std::string& cacheKey, TilePtr tile);
+    void touchCachedTile(const std::string& cacheKey);
+    void touchCachedTile(RasterOverlayTile& tile);
+    TileCache::iterator eraseCachedTile(TileCache::iterator it);
+    void clearCachedTiles();
+    std::shared_ptr<RasterTextureByteLedger> textureByteLedgerForTiles() const {
+        return textureByteLedger_;
+    }
     void invalidateDirectRasterTileCache();
     void invalidateMappedRasterTileCache();
     void invalidateSourceAssetDepotCache();
@@ -377,7 +406,10 @@ private:
     Rectangle coverageRectangle_ = Rectangle::MAXIMUM;
 
     /// All cached tiles retained by this provider (key → shared_ptr).
-    std::unordered_map<std::string, TilePtr> tiles_;
+    TileCache tiles_;
+    std::list<RasterOverlayTile*> tileCacheLru_;
+    std::shared_ptr<RasterTextureByteLedger> textureByteLedger_ =
+        std::make_shared<RasterTextureByteLedger>();
 
     /// cesium-native: shared placeholder tile returned when provider is not ready.
     TilePtr placeholderTile_;
@@ -426,6 +458,19 @@ private:
         uint64_t ownerToken = 0;
         std::function<int()> issue;
     };
+    struct RetiredAsyncResources {
+        RetiredAsyncResources() {
+            pendingUploads.reserve(8);
+            sourceAssets.reserve(8);
+            inFlightSources.reserve(8);
+            sourceSets.reserve(8);
+        }
+
+        std::vector<PendingUpload> pendingUploads;
+        std::vector<SourceTileAsset> sourceAssets;
+        std::vector<InFlightSourceTileAsset> inFlightSources;
+        std::vector<std::shared_ptr<MappedSourceImageSet>> sourceSets;
+    };
 
     /// Shared runtime state touched by async raster callbacks. It intentionally
     /// outlives RasterOverlayTileProvider when a source request completes
@@ -450,6 +495,7 @@ private:
             activeMappedSourceSets;
         std::deque<std::string> activeMappedSourceSetOrder;
         std::deque<PendingSourceFallback> pendingSourceFallbacks;
+        std::atomic<uint32_t> pendingSourceFallbackCount{0};
         std::deque<std::pair<std::string, uint64_t>>
             sourceTileDepotCacheLru;
         std::unordered_map<const DecodedImage*, SharedRasterImageRefs>
@@ -461,12 +507,14 @@ private:
         int64_t sourceTileDepotCacheBytes = 0;
         int64_t peakSourceTileDepotCacheBytes = 0;
         int64_t subTileCacheBytes = 16 * 1024 * 1024;
+        std::atomic<bool> pendingUploadBackpressure{false};
         uint64_t sourceTileDepotGeneration = 0;
         uint64_t sourceTileDepotEpoch = 0;
         std::unordered_set<std::string> inFlightRequests;
         std::atomic<uint32_t> activeRasterTileLoads{0};
         std::atomic<uint32_t> activeRasterSourceRequests{0};
         std::atomic<uint32_t> activeRasterComposeTasks{0};
+        std::atomic<uint32_t> activeDeferredUploadReleases{0};
         std::atomic<uint32_t> peakRasterSourceRequests{0};
         std::atomic<int> rasterSourceRequestsStarted{0};
         std::atomic<int> rasterSourceRequestsCompleted{0};
@@ -481,7 +529,9 @@ private:
         bool hasActiveAsyncWork() const {
             return activeRasterTileLoads.load(std::memory_order_acquire) > 0 ||
                    activeRasterSourceRequests.load(std::memory_order_acquire) > 0 ||
-                   activeRasterComposeTasks.load(std::memory_order_acquire) > 0;
+                   activeRasterComposeTasks.load(std::memory_order_acquire) > 0 ||
+                   activeDeferredUploadReleases.load(
+                       std::memory_order_acquire) > 0;
         }
 
         void resolveDestructionIfComplete() {
@@ -500,8 +550,12 @@ private:
             promise->set_value();
         }
     };
-    static void enforceSourceDepotBudgetLocked(ProviderAsyncState& state);
-    static void clearSourceDepotInFlightLocked(ProviderAsyncState& state);
+    static void enforceSourceDepotBudgetLocked(
+        ProviderAsyncState& state,
+        RetiredAsyncResources& retired);
+    static void clearSourceDepotInFlightLocked(
+        ProviderAsyncState& state,
+        RetiredAsyncResources& retired);
     static void compactSourceDepotCacheLruLocked(ProviderAsyncState& state);
     static void compactActiveMappedSourceSetOrderLocked(
         ProviderAsyncState& state);
@@ -511,6 +565,9 @@ private:
     static void releasePendingUploadImageBytesLocked(
         ProviderAsyncState& state,
         const PendingUpload& upload);
+    static void releaseOwnedPendingUploadImageBytesLocked(
+        ProviderAsyncState& state,
+        int64_t imageBytes);
     static void retainSourceCacheImageBytesLocked(
         ProviderAsyncState& state,
         const std::shared_ptr<const DecodedImage>& image);
@@ -518,9 +575,15 @@ private:
         ProviderAsyncState& state,
         const std::shared_ptr<const DecodedImage>& image);
     static void trackPendingUploadBudgetPeakLocked(ProviderAsyncState& state);
-    static void clearSourceDepotCacheLocked(ProviderAsyncState& state);
+    static void updatePendingUploadBackpressureLocked(
+        ProviderAsyncState& state);
+    static void clearSourceDepotCacheLocked(
+        ProviderAsyncState& state,
+        RetiredAsyncResources& retired);
     static int64_t pendingUploadSizeBytes(const PendingUpload& upload);
-    static void clearPendingUploads(ProviderAsyncState& state);
+    static void clearPendingUploadsLocked(
+        ProviderAsyncState& state,
+        RetiredAsyncResources& retired);
     std::shared_ptr<ProviderAsyncState> asyncState_ =
         std::make_shared<ProviderAsyncState>();
     std::shared_ptr<QuadtreeSourceAssetDepot> sourceAssetDepot_;
@@ -529,6 +592,7 @@ private:
     /// Used to stamp lastUsedFrame on tiles in getTile().
     uint64_t frameNumber_ = 0;
     uint64_t mappedRasterTileEpoch_ = 0;
+    uint64_t mappingRevision_ = 0;
     double maximumScreenSpaceError_ = 2.0;
     int maximumTextureSize_ = 2048;
     int minimumLevel_ = 0;

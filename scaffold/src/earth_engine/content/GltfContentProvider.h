@@ -114,6 +114,7 @@ struct TileContentLoadResult {
 
 struct TileContentRequestOptions {
     bool generateTerrainRasterOverlayDetails = false;
+    std::vector<RasterOverlayProjection> requiredRasterOverlayProjections;
 };
 
 class TilesetContentProvider {
@@ -127,6 +128,10 @@ public:
         const TileKey&) const {
         return std::nullopt;
     }
+    // Structural metadata is immutable by default, matching cesium-native
+    // Tile. Dynamic providers must publish a non-zero revision and only then
+    // may an existing Unloaded tile refresh its metadata.
+    virtual uint64_t tileMetadataRevision() const { return 0; }
     virtual std::vector<TileKey> childTiles(const TileKey&) const {
         return {};
     }
@@ -135,6 +140,7 @@ public:
         const TileKey&) const {
         return TileAvailabilityState::NotAvailable;
     }
+    virtual uint64_t childTopologyRevision() const { return 0; }
     virtual bool isTerrainAvailabilityBoundaryLevel(int) const {
         return false;
     }
@@ -240,6 +246,9 @@ public:
     std::vector<TileKey> rootTiles() const override;
     std::optional<TilesetContentTileMetadata> tileMetadata(
         const TileKey& key) const override;
+    uint64_t childTopologyRevision() const override {
+        return childTopologyRevision_.load(std::memory_order_acquire);
+    }
     std::vector<TileKey> childTiles(const TileKey& key) const override;
     void requestTileContent(const TileKey& key,
                             CancellationToken token,
@@ -304,6 +313,7 @@ private:
     std::atomic<int> externalResourceRequestsCompleted_{0};
     std::atomic<int> activeExternalResourceBlockingRequests_{0};
     std::atomic<int> peakExternalResourceBlockingRequests_{0};
+    std::atomic<uint64_t> childTopologyRevision_{1};
 };
 
 } // namespace earth_engine

@@ -16,6 +16,7 @@
 #include "TileSelectionVisibilitySampler.h"
 #include "TileSelectionVisitPreparation.h"
 #include "TilesetTile.h"
+#include "../debug/PerfTimer.h"
 
 #include <cmath>
 #include <optional>
@@ -71,11 +72,16 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
                 context.options.culledScreenSpaceError},
             context.scratchDistances);
     selection.inFrustum = preparation.visibilitySample.inFrustum;
-    selection.cameraInside =
-        TileSelectionVisibilitySampler::cameraInsideSelectionBounds(
-            tile,
-            visibilityContext);
+    selection.cameraInside = preparation.visibilitySample.cameraInside;
     selection.priority = preparation.inputSummary.priority;
+    if (context.performanceTimings) {
+        context.performanceTimings->visitVisibilityMs +=
+            preparation.visibilityMs;
+        context.performanceTimings->visitInputMetricsMs +=
+            preparation.inputMetricsMs;
+        context.performanceTimings->visitPolicyMs +=
+            preparation.policyMs;
+    }
 
     // 子树内到主阈值的 margin(离翻转最近);子树聚合见 TileIncrementalFrontier。
     const double tileMargin = std::abs(
@@ -143,12 +149,16 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
     double tilePriority,
     double tileSse) {
     (void)depth;
+    const double refinePreStartMs = perf::nowMs();
+    const double refineOverlayStartMs = perf::nowMs();
     TileSelectionRasterOverlayPreparer::prepare(
         tile,
         context.rasterOverlays,
         context.device,
         context.options.maximumScreenSpaceError,
-        context.frameResourceBudget);
+        context.frameResourceBudget,
+        context.tilePlan.frameId,
+        context.pPrepRenderer);
     const TileSelectionFrameState& selection = tile.selectionFrameState;
     const bool renderable =
         !TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key) &&
@@ -156,7 +166,12 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
             tile,
             context.rasterOverlays);
     tile.updateTraversalRenderability(renderable);
+    if (context.performanceTimings) {
+        context.performanceTimings->refineOverlayMs +=
+            perf::nowMs() - refineOverlayStartMs;
+    }
 
+    const double refineDecisionStartMs = perf::nowMs();
     const bool tileCanRefine = context.contentAccess.canRefine(tile);
     TileSelectionRefineFlowResult refineFlow;
     refineFlow.ancestorMeetsSse = ancestorMeetsSse;
@@ -200,6 +215,12 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                 refineFlow});
     ancestorMeetsSse = preTraversal.ancestorMeetsSseAfterPreTraversal;
     bool queuedForLoad = preTraversal.queuedForLoadAfterPreTraversal;
+    if (context.performanceTimings) {
+        context.performanceTimings->refineDecisionMs +=
+            perf::nowMs() - refineDecisionStartMs;
+    }
+
+    const double refinePreCommitStartMs = perf::nowMs();
     if (preTraversal.queueUrgentLoad) {
         TileSelectionPlanAppender::queueTileLoad(
             context.loadQueue,
@@ -217,13 +238,37 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
             tileSse,
             preTraversal.singleTileShouldQueueLoad,
             tilePriority);
+        if (context.performanceTimings) {
+            context.performanceTimings->refineCommitMs +=
+                perf::nowMs() - refinePreCommitStartMs;
+            context.performanceTimings->refineMs +=
+                perf::nowMs() - refinePreStartMs;
+        }
         return TileSelectionTraversalDetailsBuilder::forSingleTile(
             tile,
             context.rasterOverlays);
     }
+    if (context.performanceTimings) {
+        context.performanceTimings->refineCommitMs +=
+            perf::nowMs() - refinePreCommitStartMs;
+    }
 
+    const double refineMaterializeStartMs = perf::nowMs();
     const TileChildFrameMaterializeResult childMaterialize =
         context.contentAccess.ensureTileChildren(tile);
+    if (context.performanceTimings) {
+        context.performanceTimings->refineMaterializeMs +=
+            perf::nowMs() - refineMaterializeStartMs;
+        ++context.performanceTimings->refineMaterializeCalls;
+        context.performanceTimings->refineMaterializeChanged +=
+            childMaterialize.changed ? 1 : 0;
+        context.performanceTimings->refineMaterializeRetry +=
+            childMaterialize.retryLater ? 1 : 0;
+        context.performanceTimings->refineMaterializeFastPath +=
+            childMaterialize.fastPath ? 1 : 0;
+    }
+
+    const double refineMaterializeCommitStartMs = perf::nowMs();
     if (childMaterialize.retryLater) {
         TileSelectionPlanAppender::queueTileLoad(
             context.loadQueue,
@@ -243,11 +288,19 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
             preTraversal.additiveParentShouldQueueLoad,
             tilePriority);
     }
+    if (context.performanceTimings) {
+        context.performanceTimings->refineCommitMs +=
+            perf::nowMs() - refineMaterializeCommitStartMs;
+    }
 
     const size_t firstRenderedDescendant =
         context.tilePlan.visibleTiles.size();
     const size_t loadQueueBeforeChildren = context.loadQueue.size();
 
+    if (context.performanceTimings) {
+        context.performanceTimings->refineMs +=
+            perf::nowMs() - refinePreStartMs;
+    }
     const TileTraversalDetails traversalDetails =
         TileSelectionChildTraversal::visitChildren(
             tile.children,
@@ -261,6 +314,7 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                     ancestorMeetsSse);
             });
 
+    const double refinePostStartMs = perf::nowMs();
     const TileSelectionPostTraversalResult postTraversal =
         TileSelectionPostTraversalPolicy::evaluate(
             TileSelectionPostTraversalInput{
@@ -325,6 +379,12 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                     priority);
             });
 
+    if (context.performanceTimings) {
+        context.performanceTimings->refineCommitMs +=
+            perf::nowMs() - refinePostStartMs;
+        context.performanceTimings->refineMs +=
+            perf::nowMs() - refinePostStartMs;
+    }
     if (commitResult.returnedSingleTileDetails) {
         return commitResult.details;
     }

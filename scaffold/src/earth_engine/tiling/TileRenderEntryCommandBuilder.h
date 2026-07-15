@@ -28,9 +28,8 @@ struct TileRenderEntryCommandStats {
 
 class TileRenderEntryCommandBuilder {
 public:
-    template <typename EnsureTileFn,
-              typename CacheKeyFn,
-              typename MarkIneligibleFn,
+    template <typename CacheKeyFn,
+              typename ProtectTileFn,
               typename BuildTileDrawCommandFn>
     static TileRenderEntryCommandStats build(
         const TilePlan& plan,
@@ -38,9 +37,8 @@ public:
         uint64_t frameNumber,
         Renderer& renderer,
         RenderCommandList& commands,
-        EnsureTileFn&& ensureTile,
         CacheKeyFn&& cacheKey,
-        MarkIneligibleFn&& markIneligible,
+        ProtectTileFn&& protectTile,
         BuildTileDrawCommandFn&& buildTileDrawCommand) {
         TileRenderEntryCommandStats stats;
         for (const TileRenderEntry& entry : plan.renderEntries) {
@@ -49,25 +47,22 @@ public:
             }
             ++stats.plannedEntries;
 
-            TilesetTile* selectedTile = ensureTile(entry.selectedKey);
+            TilesetTile* selectedTile = entry.selectedTile;
             if (!selectedTile) {
                 ++stats.missingSelectedTiles;
                 continue;
             }
             ++stats.ensuredTiles;
 
-            selectedTile->markUsedForRenderFrame(frameNumber);
-            markIneligible(cacheKey(entry.selectedKey));
+            protectTile(selectedTile, frameNumber);
 
-            TilesetTile* commandTile = ensureTile(entry.renderKey);
+            TilesetTile* commandTile = entry.renderTile;
             if (!commandTile) {
                 ++stats.missingRenderTiles;
                 continue;
             }
 
-            commandTile->markUsedForRenderFrame(frameNumber);
-            commandTile->addReference();
-            markIneligible(cacheKey(commandTile->key));
+            protectTile(commandTile, frameNumber);
 
             const size_t before = commands.size();
             if (entry.allowSynchronousMeshPrep) {

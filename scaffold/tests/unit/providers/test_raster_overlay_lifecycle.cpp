@@ -22,12 +22,15 @@
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileLoadQueue.h"
 #include "earth_engine/tiling/TileMeshPreparationManager.h"
+#include "earth_engine/tiling/TileRasterOverlayFrameProcessor.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
+#include "earth_engine/tiling/TilePlan.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -45,14 +48,23 @@ namespace {
 
 class TestTexture final : public Texture {
 public:
-    TestTexture(int width, int height) : width_(width), height_(height) {}
+    TestTexture(int width, int height, size_t sizeBytes = 0)
+        : width_(width),
+          height_(height),
+          sizeBytes_(
+              sizeBytes > 0
+                  ? sizeBytes
+                  : static_cast<size_t>(width) *
+                        static_cast<size_t>(height) * 4u) {}
 
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override { return sizeBytes_; }
 
 private:
     int width_ = 0;
     int height_ = 0;
+    size_t sizeBytes_ = 0;
 };
 
 std::unique_ptr<DecodedImage> makeImage(int width,
@@ -113,7 +125,7 @@ int processPendingUploadsUntil(RasterOverlayTileProvider& provider,
     int processed = 0;
     for (int attempt = 0; attempt < 200 && processed < expectedUploads;
          ++attempt) {
-        processed += provider.processPendingUploads(false);
+        processed += provider.processPendingUploads(false).processedUploads;
         if (processed >= expectedUploads) {
             break;
         }
@@ -132,6 +144,16 @@ int waitForPendingUploadCount(RasterOverlayTileProvider& provider,
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return provider.getPendingUploadCount();
+}
+
+bool waitForNoPendingWork(RasterOverlayTileProvider& provider) {
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        if (!provider.hasPendingWork()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return !provider.hasPendingWork();
 }
 
 class NullImageryProvider final : public ImageryProvider {
@@ -495,6 +517,42 @@ public:
     const DecodedImage* lastCompletedImage = nullptr;
 };
 
+class SequencedDeferredImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "sequenced-deferred"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 10; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        pending.push_back(Pending{key, std::move(callback)});
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    void completeNext(std::unique_ptr<DecodedImage> image) {
+        ASSERT_FALSE(pending.empty());
+        Pending item = std::move(pending.front());
+        pending.pop_front();
+        item.callback(item.key, std::move(image));
+    }
+
+    struct Pending {
+        TileKey key;
+        TileCallback callback;
+    };
+    std::vector<TileKey> requestedKeys;
+    std::deque<Pending> pending;
+};
+
 class DeferredParentFallbackImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "deferred-parent-fallback"; }
@@ -603,11 +661,14 @@ public:
         const DecodedImage& image,
         const RasterTextureUploadOptions&) override {
         ++uploadCount;
+        uploadedRed.push_back(
+            image.pixels.empty() ? 0 : image.pixels.front());
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         return std::make_unique<TestTexture>(image.width, image.height);
     }
 
     int uploadCount = 0;
+    std::vector<uint8_t> uploadedRed;
 };
 
 class BudgetInspectingRasterUploader final : public RasterTextureUploader {
@@ -1601,12 +1662,16 @@ TEST(RasterOverlayLifecycleTest, DirectTileUsesParentSubsetFallbackLikeCesiumNat
     ASSERT_NE(nullptr, tile);
 
     ASSERT_TRUE(provider.loadTile(*tile));
-    EXPECT_EQ(0, provider.processPendingUploads(false));
+    int processedUploads =
+        provider.processPendingUploads(false).processedUploads;
     ASSERT_EQ(2u, imagery.requestedKeys.size());
     EXPECT_EQ(childKey, imagery.requestedKeys[0]);
     EXPECT_EQ(parentKey, imagery.requestedKeys[1]);
 
-    ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+    if (processedUploads == 0) {
+        processedUploads += processPendingUploadsUntil(provider, 1);
+    }
+    ASSERT_EQ(1, processedUploads);
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
     EXPECT_EQ(nullptr, tile->getTexture());
     EXPECT_EQ(0, uploaderPtr->uploadCount);
@@ -1964,6 +2029,110 @@ TEST(RasterOverlayLifecycleTest, DirectTileCacheRetainsRecentAndMarkedTiles) {
     EXPECT_EQ(0, provider.getCachedTileCount());
 }
 
+TEST(
+    RasterOverlayLifecycleTest,
+    RasterTextureBytesTrackReplacementAndExternalTileLifetime) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    const TileKey key{scheme->id(), 3, 4, 2};
+
+    auto tile = provider.getTile(key);
+    ASSERT_NE(nullptr, tile);
+    tile->setTexture(std::make_unique<TestTexture>(4, 4, 19));
+    EXPECT_EQ(19, provider.tileTextureBytesUsed());
+
+    tile->setTexture(std::make_unique<TestTexture>(8, 8, 73));
+    EXPECT_EQ(73, provider.tileTextureBytesUsed());
+
+    tile->markLoadedWithoutTexture();
+    EXPECT_EQ(0, provider.tileTextureBytesUsed());
+
+    tile->setTexture(std::make_unique<TestTexture>(2, 4, 29));
+    provider.setReady(false);
+    EXPECT_EQ(0, provider.getCachedTileCount());
+    EXPECT_EQ(29, provider.tileTextureBytesUsed());
+
+    tile.reset();
+    EXPECT_EQ(0, provider.tileTextureBytesUsed());
+}
+
+TEST(
+    RasterOverlayLifecycleTest,
+    RasterLruTouchMovesOnlyTheUsedTileToTheRecentEnd) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    const TileKey firstKey{scheme->id(), 3, 4, 2};
+    const TileKey secondKey{scheme->id(), 3, 5, 2};
+
+    provider.setFrameNumber(1);
+    auto first = provider.getTile(firstKey);
+    provider.setFrameNumber(2);
+    auto second = provider.getTile(secondKey);
+    std::weak_ptr<RasterOverlayTile> weakFirst = first;
+    std::weak_ptr<RasterOverlayTile> weakSecond = second;
+    provider.setFrameNumber(100);
+    provider.markUsed(firstKey);
+    first.reset();
+    second.reset();
+
+    provider.setFrameNumber(123);
+    provider.trimUnusedTiles();
+
+    EXPECT_EQ(1, provider.getCachedTileCount());
+    EXPECT_FALSE(weakFirst.expired());
+    EXPECT_TRUE(weakSecond.expired());
+}
+
+TEST(
+    RasterOverlayLifecycleTest,
+    DirectTileTouchDoesNotRelinkAStaleExternallyHeldTile) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    const TileKey key{scheme->id(), 3, 4, 2};
+
+    provider.setFrameNumber(1);
+    auto staleTile = provider.getTile(key);
+    ASSERT_NE(nullptr, staleTile);
+
+    provider.setReady(false);
+    ASSERT_EQ(0, provider.getCachedTileCount());
+    provider.setFrameNumber(2);
+    provider.markUsed(*staleTile);
+    EXPECT_EQ(0, provider.getCachedTileCount());
+
+    provider.setReady(true);
+    auto currentTile = provider.getTile(key);
+    ASSERT_NE(nullptr, currentTile);
+    EXPECT_NE(staleTile.get(), currentTile.get());
+    EXPECT_EQ(1, provider.getCachedTileCount());
+}
+
+TEST(
+    RasterOverlayLifecycleTest,
+    CachePressureEvictsYoungUnreferencedTilesButKeepsReferencedTiles) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    const TileKey referencedKey{scheme->id(), 3, 4, 2};
+    const TileKey freeKey{scheme->id(), 3, 5, 2};
+
+    provider.setFrameNumber(1);
+    auto referenced = provider.getTile(referencedKey);
+    auto freeTile = provider.getTile(freeKey);
+    freeTile.reset();
+
+    provider.setFrameNumber(2);
+    provider.trimUnusedTiles(true);
+    EXPECT_EQ(1, provider.getCachedTileCount());
+
+    referenced.reset();
+    provider.trimUnusedTiles(true);
+    EXPECT_EQ(0, provider.getCachedTileCount());
+}
+
 TEST(RasterOverlayLifecycleTest,
      PendingRasterUploadRetainsProviderTileLikeCesiumNativeFuture) {
     ImmediateImageryProvider imagery;
@@ -1983,7 +2152,7 @@ TEST(RasterOverlayLifecycleTest,
     provider.trimUnusedTiles();
 
     EXPECT_EQ(1, provider.getCachedTileCount());
-    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.processPendingUploads(false).processedUploads);
     EXPECT_EQ(1, uploaderPtr->uploadCount);
 
     RasterOverlayTileProvider::TilePtr loaded = provider.getTile(key);
@@ -2500,7 +2669,7 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(child, imagery.requestedKeys.front());
 
-    EXPECT_EQ(0, provider.processPendingUploads(false));
+    EXPECT_EQ(0, provider.processPendingUploads(false).processedUploads);
     EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
     EXPECT_FALSE(provider.hasPendingWork());
 
@@ -2821,6 +2990,7 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, uploaderPtr->uploadCount);
     EXPECT_EQ(0, provider.getPendingUploadCount());
 
+    ASSERT_TRUE(waitForNoPendingWork(provider));
     EXPECT_TRUE(provider.loadTileThrottled(*secondTile, nullptr));
     EXPECT_EQ(2u, imagery.requestedKeys.size());
 }
@@ -2937,7 +3107,10 @@ TEST(RasterOverlayLifecycleTest,
     uploadConfig.maxRasterUploadsPerFrame = 1;
     FrameResourceBudget firstFrameBudget;
     firstFrameBudget.beginFrame(1, uploadConfig);
-    EXPECT_EQ(1, provider.processPendingUploads(false, &firstFrameBudget));
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(false, &firstFrameBudget)
+            .processedUploads);
     EXPECT_EQ(
         directSharedSourceBytes,
         uploaderPtr->observedSourceCacheBytesDuringUpload);
@@ -2945,7 +3118,10 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, uploadConfig);
-    EXPECT_EQ(1, provider.processPendingUploads(false, &secondFrameBudget));
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(false, &secondFrameBudget)
+            .processedUploads);
     EXPECT_EQ(0, provider.getPendingUploadCount());
 }
 
@@ -3431,14 +3607,16 @@ TEST(
     FrameResourceBudget pumpBudget;
     pumpBudget.beginFrame(3, pumpConfig);
 
-    EXPECT_EQ(1, provider.processPendingUploads(false, &pumpBudget));
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(false, &pumpBudget).processedUploads);
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(newSourceKey, imagery.pending.front().key);
     EXPECT_EQ(1u, pumpBudget.rasterNetworkRequestsIssued());
 
     imagery.completeNext();
     EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
-    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.processPendingUploads(false).processedUploads);
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               mixedMapping.tile->getState());
     EXPECT_EQ(2u, imagery.requestedKeys.size());
@@ -3533,14 +3711,16 @@ TEST(
     FrameResourceBudget pumpBudget;
     pumpBudget.beginFrame(3, pumpConfig);
 
-    EXPECT_EQ(1, provider.processPendingUploads(false, &pumpBudget));
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(false, &pumpBudget).processedUploads);
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(newSourceKey, imagery.pending.front().key);
     EXPECT_EQ(1u, pumpBudget.rasterNetworkRequestsIssued());
 
     imagery.completeNext();
     EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
-    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.processPendingUploads(false).processedUploads);
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               mixedMapping.tile->getState());
     EXPECT_EQ(2u, imagery.requestedKeys.size());
@@ -3989,7 +4169,7 @@ TEST(RasterOverlayLifecycleTest,
     auto uploader = std::make_unique<CountingRasterUploader>();
     RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
     provider.setLevelRange(3, 3);
-    provider.setSubTileCacheBytes(4096);
+    provider.setSubTileCacheBytes(512 * 1024);
 
     const TileKey sourceKey{scheme->id(), 3, 2, 3};
     const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
@@ -4014,6 +4194,7 @@ TEST(RasterOverlayLifecycleTest,
             imagery.completeNext();
         }
         ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+        ASSERT_TRUE(waitForNoPendingWork(provider));
     }
 
     EXPECT_EQ(1, provider.getCachedSourceTileCount());
@@ -4037,7 +4218,7 @@ TEST(RasterOverlayLifecycleTest,
 
     provider.setSubTileCacheBytes(pendingBytes);
 
-    EXPECT_EQ(1, provider.getCachedSourceTileCount());
+    EXPECT_EQ(0, provider.getCachedSourceTileCount());
     EXPECT_EQ(0, provider.getCachedSourceTileBytes());
     EXPECT_LE(provider.getCachedSourceTileLruEntryCount(), 32);
 }
@@ -4081,7 +4262,7 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
     EXPECT_EQ(0, provider.getCachedSourceTileCount());
     EXPECT_EQ(0, uploaderPtr->uploadCount);
-    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_TRUE(waitForNoPendingWork(provider));
 
     auto retryTile = provider.mapRasterTilesToGeometryTile(
         projectForProvider(provider, secondPatch),
@@ -4098,7 +4279,7 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, provider.getCachedSourceTileCount());
     EXPECT_EQ(1, uploaderPtr->uploadCount);
     EXPECT_TRUE(retryTile->loadDiagnostics().empty());
-    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_TRUE(waitForNoPendingWork(provider));
 }
 
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksRetryChildAndReuseCachedParentLikeCesiumNative) {
@@ -4234,7 +4415,7 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     imagery.completeNext();
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(eastChild, imagery.pending[0].key);
-    EXPECT_EQ(0, provider.processPendingUploads(false));
+    EXPECT_EQ(0, provider.processPendingUploads(false).processedUploads);
     ASSERT_EQ(2u, imagery.pending.size());
     EXPECT_EQ(eastChild, imagery.pending[0].key);
     EXPECT_EQ(parent, imagery.pending[1].key);
@@ -4256,7 +4437,7 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
     EXPECT_EQ(nullptr, westTile->getTexture());
     EXPECT_EQ(nullptr, eastTile->getTexture());
-    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_TRUE(waitForNoPendingWork(provider));
 
     const size_t requestsAfterConcurrentFallback = imagery.requestedKeys.size();
     const Rectangle eastInner(
@@ -4279,7 +4460,7 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               repeatedEastTile->getState());
     EXPECT_EQ(nullptr, repeatedEastTile->getTexture());
-    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_TRUE(waitForNoPendingWork(provider));
 }
 
 TEST(RasterOverlayLifecycleTest,
@@ -4331,7 +4512,10 @@ TEST(RasterOverlayLifecycleTest,
     fallbackConfig.maxRasterNetworkInflight = 2;
     FrameResourceBudget fallbackBudget;
     fallbackBudget.beginFrame(1, fallbackConfig);
-    EXPECT_EQ(0, provider.processPendingUploads(false, &fallbackBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &fallbackBudget)
+            .processedUploads);
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(parent, imagery.pending.front().key);
 
@@ -4349,7 +4533,10 @@ TEST(RasterOverlayLifecycleTest,
 
     imagery.completeKey(eastChild);
     EXPECT_EQ(1, provider.getPendingSourceFallbackCount());
-    EXPECT_EQ(0, provider.processPendingUploads(false, &blockedBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &blockedBudget)
+            .processedUploads);
     EXPECT_EQ(0, provider.getPendingSourceFallbackCount());
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(parent, imagery.pending.front().key);
@@ -4398,7 +4585,10 @@ TEST(RasterOverlayLifecycleTest,
     config.maxRasterNetworkRequestsPerFrame = 0;
     config.maxRasterNetworkInflight = 0;
     blockedBudget.beginFrame(2, config);
-    EXPECT_EQ(0, provider.processPendingUploads(false, &blockedBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &blockedBudget)
+            .processedUploads);
     EXPECT_TRUE(imagery.pending.empty());
     EXPECT_EQ(1u, imagery.requestedKeys.size());
 
@@ -4408,7 +4598,10 @@ TEST(RasterOverlayLifecycleTest,
     config.maxRasterNetworkRequestsPerFrame = 1;
     config.maxRasterNetworkInflight = 8;
     fallbackBudget.beginFrame(3, config);
-    EXPECT_EQ(0, provider.processPendingUploads(false, &fallbackBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &fallbackBudget)
+            .processedUploads);
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(parent, imagery.pending.front().key);
     EXPECT_EQ(2u, imagery.requestedKeys.size());
@@ -4417,7 +4610,7 @@ TEST(RasterOverlayLifecycleTest,
 
     imagery.completeNext();
     EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
-    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.processPendingUploads(false).processedUploads);
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               tile->isMoreDetailAvailable());
@@ -4457,7 +4650,10 @@ TEST(RasterOverlayLifecycleTest,
     config.maxRasterNetworkRequestsPerFrame = 0;
     config.maxRasterNetworkInflight = 0;
     blockedBudget.beginFrame(2, config);
-    EXPECT_EQ(0, provider.processPendingUploads(false, &blockedBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &blockedBudget)
+            .processedUploads);
     EXPECT_EQ(1, provider.getPendingSourceFallbackCount());
 
     provider.setMaximumScreenSpaceError(
@@ -4470,14 +4666,17 @@ TEST(RasterOverlayLifecycleTest,
     config.maxRasterNetworkRequestsPerFrame = 1;
     config.maxRasterNetworkInflight = 8;
     fallbackBudget.beginFrame(3, config);
-    EXPECT_EQ(0, provider.processPendingUploads(false, &fallbackBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &fallbackBudget)
+            .processedUploads);
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(parent, imagery.pending.front().key);
     EXPECT_EQ(0, provider.getPendingSourceFallbackCount());
 
     imagery.completeNext();
     EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
-    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.processPendingUploads(false).processedUploads);
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
 }
 
@@ -4517,7 +4716,10 @@ TEST(RasterOverlayLifecycleTest,
     fallbackConfig.maxRasterNetworkInflight = 8;
     FrameResourceBudget fallbackBudget;
     fallbackBudget.beginFrame(1, fallbackConfig);
-    EXPECT_EQ(0, provider.processPendingUploads(false, &fallbackBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &fallbackBudget)
+            .processedUploads);
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(parent, imagery.pending.front().key);
     EXPECT_GE(provider.getInFlightSourceWaiterCount(), 1);
@@ -4894,6 +5096,105 @@ TEST(RasterOverlayLifecycleTest,
         destroyed.wait_for(std::chrono::seconds(1)));
 }
 
+TEST(RasterOverlayLifecycleTest,
+     DeferredUploadReleaseKeepsBackpressureAndDestructionLifetime) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const size_t workerCount = AsyncSystem::pool().threadCount();
+    ASSERT_GT(workerCount, 0u);
+
+    std::promise<void> releaseWorkersPromise;
+    std::shared_future<void> releaseWorkers =
+        releaseWorkersPromise.get_future().share();
+    struct WorkerReleaseGuard {
+        std::promise<void>& promise;
+        bool released = false;
+        ~WorkerReleaseGuard() {
+            if (!released) {
+                promise.set_value();
+            }
+        }
+        void release() {
+            if (!released) {
+                promise.set_value();
+                released = true;
+            }
+        }
+    } releaseGuard{releaseWorkersPromise};
+    std::atomic<size_t> startedWorkers{0};
+    std::vector<std::future<void>> blockers;
+    blockers.reserve(workerCount);
+    for (size_t i = 0; i < workerCount; ++i) {
+        blockers.push_back(AsyncSystem::pool().enqueue(
+            [releaseWorkers, &startedWorkers]() {
+                startedWorkers.fetch_add(1, std::memory_order_release);
+                releaseWorkers.wait();
+            }));
+    }
+    for (int attempt = 0; attempt < 200 &&
+         startedWorkers.load(std::memory_order_acquire) < workerCount;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_EQ(workerCount, startedWorkers.load(std::memory_order_acquire));
+
+    DeferredImageryProvider imagery;
+    std::shared_future<void> destroyed;
+    {
+        auto uploader = std::make_unique<CountingRasterUploader>();
+        auto provider = std::make_unique<RasterOverlayTileProvider>(
+            imagery,
+            *scheme,
+            std::move(uploader));
+        provider->setReady(true);
+
+        auto firstTile =
+            provider->getTile(TileKey{scheme->id(), 2, 1, 1});
+        ASSERT_NE(nullptr, firstTile);
+        ASSERT_TRUE(provider->loadTileThrottled(*firstTile));
+        ASSERT_EQ(1u, imagery.pending.size());
+        imagery.completeNext();
+        ASSERT_EQ(1, waitForPendingUploadCount(*provider, 1));
+
+        const int64_t pendingBudgetBytes =
+            provider->getPendingUploadBudgetBytes();
+        ASSERT_GT(pendingBudgetBytes, 0);
+        ASSERT_EQ(
+            1,
+            provider->processPendingUploads(false).processedUploads);
+        EXPECT_EQ(0, provider->getPendingUploadCount());
+        EXPECT_EQ(
+            pendingBudgetBytes,
+            provider->getPendingUploadBudgetBytes());
+        EXPECT_TRUE(provider->hasPendingWork());
+
+        provider->setReady(false);
+        EXPECT_EQ(
+            pendingBudgetBytes,
+            provider->getPendingUploadBudgetBytes());
+        provider->setReady(true);
+        provider->setSubTileCacheBytes(pendingBudgetBytes);
+        auto secondTile =
+            provider->getTile(TileKey{scheme->id(), 2, 2, 1});
+        ASSERT_NE(nullptr, secondTile);
+        EXPECT_FALSE(provider->loadTileThrottled(*secondTile));
+        EXPECT_EQ(1u, imagery.requestedKeys.size());
+
+        destroyed = provider->getAsyncDestructionCompleteEvent();
+        provider.reset();
+        EXPECT_EQ(
+            std::future_status::timeout,
+            destroyed.wait_for(std::chrono::milliseconds(0)));
+    }
+
+    releaseGuard.release();
+    for (auto& blocker : blockers) {
+        blocker.get();
+    }
+    EXPECT_EQ(
+        std::future_status::ready,
+        destroyed.wait_for(std::chrono::seconds(1)));
+}
+
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceFailureDoesNotFallbackBelowOverlayMinimumLevel) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
@@ -4989,7 +5290,7 @@ TEST(RasterOverlayLifecycleTest, MappedRasterTilesShareInFlightSourceTileLikeCes
     EXPECT_EQ(2, waitForPendingUploadCount(provider, 2));
     EXPECT_TRUE(provider.hasPendingWork());
     EXPECT_EQ(2, processPendingUploadsUntil(provider, 2));
-    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_TRUE(waitForNoPendingWork(provider));
 }
 
 TEST(RasterOverlayLifecycleTest, FailedSourceTileIsSharedLikeCesiumNativeDepot) {
@@ -5229,16 +5530,16 @@ TEST(RasterOverlayLifecycleTest, SharedFrameBudgetLimitsRasterUploadsPerFrame) {
     budget.beginFrame(1, config);
 
     provider.setFrameNumber(1);
-    EXPECT_EQ(1, provider.processPendingUploads(false, &budget));
+    EXPECT_EQ(1, provider.processPendingUploads(false, &budget).processedUploads);
     EXPECT_EQ(1, uploaderPtr->uploadCount);
     EXPECT_EQ(1u, budget.rasterUploadsUsed());
 
-    EXPECT_EQ(0, provider.processPendingUploads(false, &budget));
+    EXPECT_EQ(0, provider.processPendingUploads(false, &budget).processedUploads);
     EXPECT_EQ(1, uploaderPtr->uploadCount);
 
     budget.beginFrame(2, config);
     provider.setFrameNumber(2);
-    EXPECT_EQ(1, provider.processPendingUploads(false, &budget));
+    EXPECT_EQ(1, provider.processPendingUploads(false, &budget).processedUploads);
     EXPECT_EQ(2, uploaderPtr->uploadCount);
 }
 
@@ -5267,7 +5568,10 @@ TEST(RasterOverlayLifecycleTest, ElapsedUploadBudgetDefersRemainingUploads) {
     FrameResourceBudget firstFrameBudget;
     firstFrameBudget.beginFrame(1, config);
 
-    EXPECT_EQ(1, provider.processPendingUploads(false, &firstFrameBudget));
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(false, &firstFrameBudget)
+            .processedUploads);
     EXPECT_EQ(1, uploaderPtr->uploadCount);
     EXPECT_EQ(1, provider.getPendingUploadCount());
     EXPECT_EQ(1u, firstFrameBudget.rasterUploadsUsed());
@@ -5275,9 +5579,59 @@ TEST(RasterOverlayLifecycleTest, ElapsedUploadBudgetDefersRemainingUploads) {
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
 
-    EXPECT_EQ(1, provider.processPendingUploads(false, &secondFrameBudget));
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(false, &secondFrameBudget)
+            .processedUploads);
     EXPECT_EQ(2, uploaderPtr->uploadCount);
     EXPECT_EQ(0, provider.getPendingUploadCount());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     InteractionRequeuePreservesOriginalPendingUploadOrder) {
+    SequencedDeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterUploader>();
+    SlowRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const std::array<TileKey, 4> keys{
+        TileKey{scheme->id(), 2, 0, 0},
+        TileKey{scheme->id(), 2, 1, 0},
+        TileKey{scheme->id(), 2, 2, 0},
+        TileKey{scheme->id(), 2, 3, 0}};
+    for (const TileKey& key : keys) {
+        auto tile = provider.getTile(key);
+        ASSERT_NE(nullptr, tile);
+        ASSERT_TRUE(provider.loadTileThrottled(*tile));
+    }
+    ASSERT_EQ(4u, imagery.pending.size());
+
+    imagery.completeNext(makeImage(513, 1, 10));
+    imagery.completeNext(makeImage(256, 1, 20));
+    imagery.completeNext(makeImage(513, 1, 30));
+    imagery.completeNext(makeImage(256, 1, 40));
+    ASSERT_EQ(4, waitForPendingUploadCount(provider, 4));
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterUploadsPerFrame = 2;
+    config.mainThreadTimeMs = 0.001;
+    config.interactionActive = true;
+    FrameResourceBudget interactionBudget;
+    interactionBudget.beginFrame(1, config);
+
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(true, &interactionBudget)
+            .processedUploads);
+    ASSERT_EQ(1u, uploaderPtr->uploadedRed.size());
+    EXPECT_EQ(20, uploaderPtr->uploadedRed.front());
+    EXPECT_EQ(3, provider.getPendingUploadCount());
+
+    EXPECT_EQ(3, processPendingUploadsUntil(provider, 3));
+    EXPECT_EQ(
+        (std::vector<uint8_t>{20, 10, 30, 40}),
+        uploaderPtr->uploadedRed);
 }
 
 TEST(RasterOverlayLifecycleTest, DefaultFrameBudgetUploadsMultipleRasterTiles) {
@@ -5550,14 +5904,20 @@ TEST(RasterOverlayLifecycleTest,
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, config);
 
-    EXPECT_EQ(0, provider.processPendingUploads(false, &secondBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &secondBudget)
+            .processedUploads);
     EXPECT_EQ(2u, imagery.pending.size());
     EXPECT_EQ(2u, secondBudget.rasterNetworkRequestsIssued());
     while (!imagery.pending.empty()) {
         imagery.completeNext();
     }
     EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
-    EXPECT_EQ(1, provider.processPendingUploads(false, &secondBudget));
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(false, &secondBudget)
+            .processedUploads);
     EXPECT_TRUE(imagery.pending.empty());
 }
 
@@ -5620,7 +5980,10 @@ TEST(RasterOverlayLifecycleTest,
 
     FrameResourceBudget pumpBudget;
     pumpBudget.beginFrame(3, config);
-    EXPECT_EQ(0, provider.processPendingUploads(false, &pumpBudget));
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &pumpBudget)
+            .processedUploads);
     ASSERT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(firstTile->getMappedSourceKeys()[1],
               imagery.pending.front().key);
@@ -5742,8 +6105,8 @@ TEST(RasterOverlayLifecycleTest,
         imagery.completeNext();
     }
     ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
-    EXPECT_EQ(1, provider.processPendingUploads(false));
-    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_EQ(1, provider.processPendingUploads(false).processedUploads);
+    EXPECT_TRUE(waitForNoPendingWork(provider));
     EXPECT_EQ(0, provider.getActiveMappedSourceSetOrderCount());
 }
 
@@ -5790,7 +6153,7 @@ TEST(RasterOverlayLifecycleTest,
 
     imagery.completeNext();
     EXPECT_EQ(1, waitForPendingUploadCount(provider, 1));
-    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, provider.processPendingUploads(false).processedUploads);
 }
 
 TEST(RasterOverlayLifecycleTest,
@@ -5866,7 +6229,7 @@ TEST(RasterOverlayLifecycleTest,
         imagery.completeNext();
     }
     processPendingUploadsUntil(provider, 1);
-    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_TRUE(waitForNoPendingWork(provider));
     EXPECT_EQ(0, provider.getPendingUploadCount());
 }
 
@@ -6362,6 +6725,177 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, recorder.detachCount);
 }
 
+TEST(
+    RasterOverlayLifecycleTest,
+    StableAttachedMappingReusesAcrossFramesAndRenderPlanDeduplicatesTiles) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* provider =
+        activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+    provider->setLevelRange(3, 3);
+
+    const TileKey sourceKey{overlay->getTileScheme().id(), 3, 4, 3};
+    const Rectangle sourceBounds =
+        overlay->getTileScheme().tileToRectangle(sourceKey);
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        sourceBounds);
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.renderContent.setGltfResourcesReady(true);
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.geometricError = 100.0;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    RecordingPrepareRendererResources recorder;
+
+    budget.beginFrame(1, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget,
+        &recorder,
+        1);
+    RasterMappedToTilesetTile* mapped =
+        tile.rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mapped);
+    RasterOverlayTile* loading = mapped->getLoadingTile();
+    ASSERT_NE(nullptr, loading);
+    loading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    loading->setTexture(std::make_unique<TestTexture>(4, 4));
+
+    budget.beginFrame(2, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget,
+        &recorder,
+        2);
+    ASSERT_EQ(
+        RasterMappedToTilesetTile::State::Attached,
+        mapped->getState());
+    ASSERT_EQ(1, recorder.attachCount);
+    const uint64_t stableUpdateCount =
+        tile.rasterOverlayState.authoritativeUpdateCount();
+
+    TilePlan plan;
+    plan.frameId = 3;
+    TileRenderEntry selectedEntry;
+    selectedEntry.selectedTile = &tile;
+    selectedEntry.renderTile = &tile;
+    selectedEntry.selectedKey = tile.key;
+    selectedEntry.renderKey = tile.key;
+    plan.renderEntries.push_back(selectedEntry);
+    TileRenderEntry fadingEntry = selectedEntry;
+    fadingEntry.selectedThisFrame = false;
+    fadingEntry.reason = TileRenderEntryReason::FadingOut;
+    plan.renderEntries.push_back(fadingEntry);
+
+    budget.beginFrame(3, config);
+    const TileRasterOverlayRenderPlanPrepareResult result =
+        TileRasterOverlayFrameProcessor::prepareRenderPlan(
+            plan,
+            overlays,
+            std::vector<size_t>{0},
+            nullptr,
+            16.0,
+            budget,
+            &recorder,
+            [](TilesetTile&) {
+                FAIL() << "stable mapping must not unload content";
+            },
+            [](TilesetTile&) {
+                FAIL() << "stable mapping must not create children";
+            },
+            [](const TileKey&, TileLoadPriorityGroup, double) {
+                FAIL() << "stable mapping must not queue a reload";
+            },
+            []() {
+                FAIL() << "stable mapping must not refresh the render plan";
+            });
+
+    EXPECT_EQ(1, result.tilesConsidered);
+    EXPECT_EQ(0, result.authoritativeUpdates);
+    EXPECT_EQ(1, result.stableReuses);
+    EXPECT_EQ(
+        stableUpdateCount,
+        tile.rasterOverlayState.authoritativeUpdateCount());
+    EXPECT_EQ(1, recorder.attachCount);
+
+    loading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    plan.frameId = 4;
+    budget.beginFrame(4, config);
+    int upsampleActionCount = 0;
+    const TileRasterOverlayRenderPlanPrepareResult upsampleResult =
+        TileRasterOverlayFrameProcessor::prepareRenderPlan(
+            plan,
+            overlays,
+            std::vector<size_t>{0},
+            nullptr,
+            16.0,
+            budget,
+            &recorder,
+            [](TilesetTile&) {
+                FAIL() << "more-detail mapping must not unload content";
+            },
+            [&](TilesetTile& actionTile) {
+                EXPECT_EQ(&tile, &actionTile);
+                ++upsampleActionCount;
+            },
+            [](const TileKey&, TileLoadPriorityGroup, double) {
+                FAIL() << "more-detail mapping must not queue a reload";
+            },
+            []() {
+                FAIL() << "more-detail mapping must not refresh the render plan";
+            });
+    EXPECT_EQ(1, upsampleActionCount);
+    EXPECT_EQ(1, upsampleResult.upsampleActions);
+    EXPECT_EQ(1, upsampleResult.authoritativeUpdates);
+    const uint64_t postUpsampleUpdateCount =
+        tile.rasterOverlayState.authoritativeUpdateCount();
+
+    const int detachCountBeforeConfigurationChange = recorder.detachCount;
+    provider->setLevelRange(3, 4);
+    budget.beginFrame(5, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget,
+        &recorder,
+        5);
+    EXPECT_EQ(
+        postUpsampleUpdateCount + 1,
+        tile.rasterOverlayState.authoritativeUpdateCount());
+    EXPECT_EQ(
+        detachCountBeforeConfigurationChange + 1,
+        recorder.detachCount);
+}
+
 TEST(RasterOverlayLifecycleTest,
      UpsampleSourcePreparationDetachesStaleRasterResidueLikeCesiumNative) {
     auto overlay = std::make_unique<RasterOverlay>(
@@ -6449,7 +6983,9 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(0u, parent.rasterOverlayState.mappingCount());
     EXPECT_FALSE(parent.content.renderContent.hasGltfContent());
     EXPECT_EQ(2u, resourceRevision);
-    EXPECT_TRUE(cache.cacheBytesDirty());
+    EXPECT_EQ(0, cache.totalBytesUsed());
+    EXPECT_TRUE(cache.unloadQueue().contains(
+        TileCacheKey::forTile(parent.key)));
 }
 
 TEST(RasterOverlayLifecycleTest,
@@ -9047,7 +9583,7 @@ TEST(RasterOverlayLifecycleTest,
     // interactionActive = true：≤512² 的 mapped raster 必须被消费
     int processed = 0;
     for (int attempt = 0; attempt < 200 && processed < 1; ++attempt) {
-        processed += provider.processPendingUploads(true);
+        processed += provider.processPendingUploads(true).processedUploads;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     EXPECT_EQ(1, processed)

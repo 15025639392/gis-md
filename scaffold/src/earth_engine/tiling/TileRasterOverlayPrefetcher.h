@@ -1,6 +1,9 @@
 #pragma once
 
+#include "TileRasterOverlayState.h"
+
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace earth_engine {
@@ -11,9 +14,7 @@ class IPrepareRendererResources;
 class RenderDevice;
 struct TilesetTile;
 
-struct TileRasterOverlayPrefetchAction {
-    bool unloadTileContent = false;
-};
+using TileRasterOverlayPrefetchAction = TileRasterOverlayUpdateAction;
 
 class TileRasterOverlayPrefetcher {
 public:
@@ -24,7 +25,8 @@ public:
         RenderDevice* device,
         double maximumScreenSpaceError,
         FrameResourceBudget& frameResourceBudget,
-        IPrepareRendererResources* pPrepRenderer = nullptr);
+        IPrepareRendererResources* pPrepRenderer = nullptr,
+        uint64_t frameNumber = 0);
 
     // cesium updateTileOverlays 的每帧廉价路径:对「已映射」的瓦片只推进
     // throttled 影像加载,不重算投影几何、不走 mapped.update 的祖先回退。

@@ -61,7 +61,9 @@ public:
         std::optional<QuantizedMeshAvailabilityUpdate>
             currentTileAvailabilityUpdate = std::nullopt,
         RasterOverlayDetailsMode rasterOverlayDetailsMode =
-            RasterOverlayDetailsMode::None);
+            RasterOverlayDetailsMode::None,
+        std::vector<RasterOverlayProjection>
+            requiredRasterOverlayProjections = {});
 
     static TileContentLoadResult loadTileContent(
         const uint8_t* data,
@@ -74,7 +76,9 @@ public:
         std::optional<QuantizedMeshAvailabilityUpdate>
             currentTileAvailabilityUpdate = std::nullopt,
         RasterOverlayDetailsMode rasterOverlayDetailsMode =
-            RasterOverlayDetailsMode::None);
+            RasterOverlayDetailsMode::None,
+        std::vector<RasterOverlayProjection>
+            requiredRasterOverlayProjections = {});
 
     static TileContentLoadResult toTileContentLoadResult(
         QuantizedMeshContentLoadResult&& result);

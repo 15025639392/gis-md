@@ -9,8 +9,8 @@ struct TileLoadStatePredicates {
         TileLoadState state) {
         switch (state) {
         case TileLoadState::Unloaded:
-        case TileLoadState::ContentLoading:
             return true;
+        case TileLoadState::ContentLoading:
         case TileLoadState::Unloading:
         case TileLoadState::FailedTemporarily:
         case TileLoadState::ContentLoaded:

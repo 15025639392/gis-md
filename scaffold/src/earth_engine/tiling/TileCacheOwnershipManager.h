@@ -7,10 +7,13 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace earth_engine {
 
 class IPrepareRendererResources;
+class ActivatedRasterOverlay;
+class GpuUploadQueue;
 class TileContentLifecycleManager;
 class TileLoadQueue;
 struct TilesetTile;
@@ -22,11 +25,16 @@ public:
         TileContentLifecycleManager& contentLifecycle,
         TileLoadQueue& loadQueue,
         std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
+        std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         bool& resourceSmoothingActiveForFrame,
         int64_t& maximumCachedBytes,
-        double& tileCacheUnloadTimeLimit);
+        double& tileCacheUnloadTimeLimit,
+        GpuUploadQueue* gpuUploadQueue = nullptr);
 
     void updateTotalBytesUsed();
+    int64_t totalBytesUsed() const;
+    bool shouldUnloadCachedBytes() const;
+    void trimRasterCaches(bool cachePressure);
     void markEligibleForUnloading(const TilesetTile* tile, const std::string& key);
     void markIneligibleForUnloading(const std::string& key);
     void eraseTileIndexState(const std::string& key);
@@ -44,9 +52,11 @@ private:
     TileContentLifecycleManager& contentLifecycle_;
     TileLoadQueue& loadQueue_;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles_;
+    std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
     bool& resourceSmoothingActiveForFrame_;
     int64_t& maximumCachedBytes_;
     double& tileCacheUnloadTimeLimit_;
+    GpuUploadQueue* gpuUploadQueue_ = nullptr;
 };
 
 } // namespace earth_engine

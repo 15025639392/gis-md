@@ -5,6 +5,7 @@
 namespace earth_engine {
 
 class TileContentCacheManager;
+struct TilesetTile;
 
 class TileContentResourceInvalidator {
 public:
@@ -12,7 +13,9 @@ public:
         uint64_t& resourceRevision,
         TileContentCacheManager& contentCache);
 
-    void markResourcesDirty();
+    void markResourcesChanged();
+    void reconcileTileResources(TilesetTile& tile);
+    void markTileResourcesChanged(TilesetTile& tile);
 
 private:
     uint64_t& resourceRevision_;

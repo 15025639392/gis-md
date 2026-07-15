@@ -6774,15 +6774,21 @@ bool validInstanceRotationAccessor(const AccessorSpan& span) {
            span.normalized;
 }
 
-std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
+struct ParsedGpuInstances {
+    std::vector<GltfInstance> instances;
+    std::vector<GltfInstanceRuntimeTransform> runtimeTransforms;
+};
+
+std::optional<ParsedGpuInstances> parseGpuInstancingInstances(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
     const json& node,
     const glm::dmat4& nodeGlobalTransform,
+    bool retainRuntimeTransforms,
     bool& strictFailure) {
     const auto extensionsIt = node.find("extensions");
     if (extensionsIt == node.end()) {
-        return std::vector<GltfInstance>{};
+        return ParsedGpuInstances{};
     }
     if (!extensionsIt->is_object()) {
         strictFailure = true;
@@ -6791,7 +6797,7 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
     const auto instancingIt =
         extensionsIt->find("EXT_mesh_gpu_instancing");
     if (instancingIt == extensionsIt->end()) {
-        return std::vector<GltfInstance>{};
+        return ParsedGpuInstances{};
     }
     if (!node.contains("mesh") ||
         node.contains("skin") ||
@@ -6865,7 +6871,11 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
         return std::nullopt;
     }
 
-    std::vector<GltfInstance> instances(count);
+    ParsedGpuInstances parsed;
+    parsed.instances.resize(count);
+    if (retainRuntimeTransforms) {
+        parsed.runtimeTransforms.resize(count);
+    }
     for (size_t i = 0; i < count; ++i) {
         glm::dmat4 transform(1.0);
         if (translations) {
@@ -6912,7 +6922,11 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
             strictFailure = true;
             return std::nullopt;
         }
-        instances[i].transform = Mat4(transform);
+        parsed.instances[i].transform = Mat4(transform);
+        if (retainRuntimeTransforms) {
+            parsed.runtimeTransforms[i].nodeLocalTransform =
+                Mat4(transform);
+        }
     }
 
     if (!finiteMat4Value(nodeGlobalTransform)) {
@@ -6931,7 +6945,7 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
         strictFailure = true;
         return std::nullopt;
     }
-    for (GltfInstance& instance : instances) {
+    for (GltfInstance& instance : parsed.instances) {
         const glm::dmat4 finalTransform =
             nodeGlobalTransform *
             instance.transform.raw() *
@@ -6942,7 +6956,7 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
         }
         instance.transform = Mat4(finalTransform);
     }
-    return instances;
+    return parsed;
 }
 
 std::vector<GltfNodeRuntime> toRuntimeNodes(
@@ -7035,14 +7049,15 @@ std::vector<uint8_t> traversedNodeMask(const json& doc) {
     return visited;
 }
 
-std::optional<std::vector<std::vector<GltfInstance>>>
+std::optional<std::vector<ParsedGpuInstances>>
 parseAllGpuInstancingInstances(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
     const std::vector<NodeRecord>& nodeRecords,
-    const std::vector<uint8_t>& cacheMask) {
+    const std::vector<uint8_t>& cacheMask,
+    bool retainRuntimeTransforms) {
     const auto& nodes = doc.value("nodes", json::array());
-    std::vector<std::vector<GltfInstance>> instancesByNode(nodes.size());
+    std::vector<ParsedGpuInstances> instancesByNode(nodes.size());
     for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex) {
         const json& node = nodes[nodeIndex];
         if (!node.is_object() || !nodeHasGpuInstancingExtension(node)) {
@@ -7054,14 +7069,15 @@ parseAllGpuInstancingInstances(
                 ? nodeRecords[nodeIndex].globalTransform
                 : glm::dmat4(1.0);
         bool strictFailure = false;
-        std::optional<std::vector<GltfInstance>> instances =
+        std::optional<ParsedGpuInstances> instances =
             parseGpuInstancingInstances(
                 doc,
                 buffers,
                 node,
                 nodeGlobalTransform,
+                retainRuntimeTransforms,
                 strictFailure);
-        if (!instances || strictFailure || instances->empty()) {
+        if (!instances || strictFailure || instances->instances.empty()) {
             return std::nullopt;
         }
         if (nodeIndex < cacheMask.size() && cacheMask[nodeIndex] != 0u) {
@@ -8072,7 +8088,7 @@ void traverseNode(
     const std::vector<NodeRecord>& nodeRecords,
     const std::vector<SkinRecord>& skins,
     const StructuralMetadataPropertyTables& structuralMetadata,
-    const std::vector<std::vector<GltfInstance>>& nativeInstancesByNode,
+    const std::vector<ParsedGpuInstances>& nativeInstancesByNode,
     int nodeIndex,
     GltfModel& model,
     bool meshQuantizationEnabled,
@@ -8086,13 +8102,13 @@ void traverseNode(
     }
 
     const json& node = nodes[static_cast<size_t>(nodeIndex)];
-    const std::vector<GltfInstance>* nativeInstances = nullptr;
+    const ParsedGpuInstances* nativeInstances = nullptr;
     if (static_cast<size_t>(nodeIndex) < nativeInstancesByNode.size()) {
         nativeInstances =
             &nativeInstancesByNode[static_cast<size_t>(nodeIndex)];
     }
     if (nodeHasGpuInstancingExtension(node) &&
-        (!nativeInstances || nativeInstances->empty())) {
+        (!nativeInstances || nativeInstances->instances.empty())) {
         strictFailure = true;
         return;
     }
@@ -8125,8 +8141,12 @@ void traverseNode(
                         meshQuantizationEnabled,
                         allowLegacyBatchIdAttribute,
                         strictFailure)) {
-                    if (nativeInstances && !nativeInstances->empty()) {
-                        primitive->instances = *nativeInstances;
+                    if (nativeInstances &&
+                        !nativeInstances->instances.empty()) {
+                        primitive->instances =
+                            nativeInstances->instances;
+                        primitive->runtime.instanceTransforms =
+                            nativeInstances->runtimeTransforms;
                     }
                     model.primitives.push_back(std::move(*primitive));
                 }
@@ -8425,6 +8445,37 @@ bool rebuildRuntimePrimitive(GltfModel& model, GltfPrimitive& primitive) {
     if (!finiteMat4Value(nodeTransform)) {
         return false;
     }
+    if (!runtime.instanceTransforms.empty()) {
+        if (runtime.instanceTransforms.size() !=
+            primitive.instances.size()) {
+            return false;
+        }
+        const glm::dmat3 nodeLinear(nodeTransform);
+        const double determinant = glm::determinant(nodeLinear);
+        if (!std::isfinite(determinant) ||
+            std::abs(determinant) <= 1e-14) {
+            return false;
+        }
+        const glm::dmat4 inverseNodeTransform =
+            glm::inverse(nodeTransform);
+        if (!finiteMat4Value(inverseNodeTransform)) {
+            return false;
+        }
+        for (size_t i = 0; i < primitive.instances.size(); ++i) {
+            const GltfInstanceRuntimeTransform& recipe =
+                runtime.instanceTransforms[i];
+            const glm::dmat4 currentTransform =
+                recipe.outerTransform.raw() *
+                nodeTransform *
+                recipe.nodeLocalTransform.raw() *
+                inverseNodeTransform;
+            if (!finiteMat4Value(currentTransform)) {
+                return false;
+            }
+            primitive.instances[i].transform =
+                Mat4(currentTransform);
+        }
+    }
     glm::dmat3 normalMatrix(1.0);
     if (!skinned && (runtime.hasNormals || runtime.hasTangents)) {
         std::optional<glm::dmat3> maybeNormalMatrix =
@@ -8579,6 +8630,8 @@ int64_t GltfModel::byteSize() const {
     for (const GltfPrimitive& primitive : primitives) {
         bytes += static_cast<int64_t>(
             primitive.vertices.size() * sizeof(SurfaceVertex));
+        bytes += static_cast<int64_t>(
+            primitive.terrainGpuVertexBytes.size());
         for (const auto& texCoords : primitive.vertexTexCoords) {
             bytes += static_cast<int64_t>(
                 texCoords.size() * sizeof(std::array<float, 2>));
@@ -8600,6 +8653,24 @@ int64_t GltfModel::byteSize() const {
             bytes += gltfFeaturePropertiesByteSize(
                 instance.featureProperties);
         }
+        const GltfPrimitiveRuntime& runtime = primitive.runtime;
+        bytes += static_cast<int64_t>(
+            runtime.baseVertices.size() * sizeof(SurfaceVertex));
+        bytes += static_cast<int64_t>(
+            runtime.baseTangents.size() * sizeof(std::array<float, 4>));
+        bytes += static_cast<int64_t>(
+            runtime.skinning.size() * sizeof(GltfVertexSkinning));
+        for (const GltfMorphTarget& target : runtime.morphTargets) {
+            bytes += static_cast<int64_t>(
+                target.positionDeltas.size() * sizeof(Vec3));
+            bytes += static_cast<int64_t>(
+                target.normalDeltas.size() * sizeof(Vec3));
+            bytes += static_cast<int64_t>(
+                target.tangentDeltas.size() * sizeof(Vec3));
+        }
+        bytes += static_cast<int64_t>(
+            runtime.instanceTransforms.size() *
+            sizeof(GltfInstanceRuntimeTransform));
     }
     for (const GltfTexture& texture : textures) {
         bytes += static_cast<int64_t>(texture.image.pixels.size());
@@ -8842,14 +8913,6 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !imageDecoder) {
         return nullptr;
     }
-    if (declaredExtension(input->document, "EXT_mesh_gpu_instancing")) {
-        const auto animationsIt = input->document.find("animations");
-        if (animationsIt != input->document.end()) {
-            if (!animationsIt->is_array() || !animationsIt->empty()) {
-                return nullptr;
-            }
-        }
-    }
     const bool meshQuantizationEnabled =
         declaredExtension(input->document, "KHR_mesh_quantization");
     if (meshQuantizationEnabled &&
@@ -8887,13 +8950,19 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     if (!finiteNodeRecords(nodeRecords)) {
         return nullptr;
     }
-    std::optional<std::vector<std::vector<GltfInstance>>>
+    std::optional<std::vector<GltfAnimationRuntime>> animations =
+        parseAnimations(input->document, buffers, nodeRecords);
+    if (!animations) {
+        return nullptr;
+    }
+    std::optional<std::vector<ParsedGpuInstances>>
         nativeInstancesByNode =
             parseAllGpuInstancingInstances(
                 input->document,
                 buffers,
                 nodeRecords,
-                traversedNodeMask(input->document));
+                traversedNodeMask(input->document),
+                !animations->empty());
     if (!nativeInstancesByNode) {
         return nullptr;
     }
@@ -8912,11 +8981,6 @@ std::unique_ptr<GltfModel> GltfParser::parse(
 
     const std::vector<SkinRecord> skins =
         parseSkins(input->document, buffers, nodeRecords.size());
-    std::optional<std::vector<GltfAnimationRuntime>> animations =
-        parseAnimations(input->document, buffers, nodeRecords);
-    if (!animations) {
-        return nullptr;
-    }
     const auto& scenes = input->document.value("scenes", json::array());
     const auto& nodes = input->document.value("nodes", json::array());
     bool strictFailure = false;

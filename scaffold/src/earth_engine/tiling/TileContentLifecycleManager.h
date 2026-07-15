@@ -69,9 +69,11 @@ public:
             std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
     }
 
-    template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
+    template <typename LoadRequests,
+              typename PrepareUpsampleSourceTileFn,
+              typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(
-        const std::vector<TileLoadRequest>& loadRequests,
+        LoadRequests& loadRequests,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,

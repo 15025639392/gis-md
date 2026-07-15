@@ -4,6 +4,7 @@
 #include "../renderer/Renderer.h"
 #include "../renderer/RenderDevice.h"
 #include "../tiling/LoadedTerrainHeightSampler.h"
+#include "../tiling/TileCacheKey.h"
 #include "../tiling/TileFrameResourceBudgetPlanner.h"
 #include "../tiling/TileOcclusionResolver.h"
 #include "../tiling/TileRenderFrameContext.h"
@@ -19,6 +20,7 @@
 #include "../layers/RasterOverlay.h"
 #include "../debug/PlatformLog.h"
 
+#include <cassert>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -64,27 +66,31 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
       rasterOverlays_(std::move(rasterOverlays)),
       device_(device),
       options_(std::move(options)),
+      resourceInvalidator_(
+          resourceRevision_,
+          contentCache_),
       contentAccess_(
           terrainProviders_.contentProviderOwnsTerrainQuadtree()
               ? TileContentAccess::forContentTerrain(
                     tileRegistry_,
                     *tileScheme_,
-                    *terrainProviders_.contentProvider())
+                    *terrainProviders_.contentProvider(),
+                    &resourceInvalidator_)
               : TileContentAccess::forNoTerrain(
                     tileRegistry_,
                     *tileScheme_,
-                    terrainProviders_.contentProvider())),
-      resourceInvalidator_(
-          resourceRevision_,
-          contentCache_),
+                    terrainProviders_.contentProvider(),
+                    &resourceInvalidator_)),
       cacheOwnership_(
           contentCache_,
           contentLifecycle_,
           loadQueue_,
           tileRegistry_.tiles(),
+          rasterOverlays_,
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
-          options_.tileCacheUnloadTimeLimit),
+          options_.tileCacheUnloadTimeLimit,
+          &gpuUploadQueue_),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),
@@ -102,11 +108,9 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
           resourceInvalidator_),
       renderCommands_(
           meshPreparation_,
-          cacheOwnership_,
-          rasterUpsampledChildren_,
+          resourceInvalidator_,
           rasterOverlays_,
-          device_,
-          frameResourceBudget_) {
+          device_) {
     frameResourceBudget_.beginFrame(
         0,
         makeFrameResourceBudgetConfig(options_, false, false));
@@ -135,6 +139,9 @@ bool Tileset::hasTerrainQuadtree() const {
 }
 
 Tileset::~Tileset() {
+    discardPendingRenderReferences();
+    releaseSelectionReferences(selectionActiveTiles_);
+    releaseSelectionReferences(selectionActiveTilesPrev_);
     // cesium-native keeps TilesetContentManager alive while worker callbacks
     // complete. This local engine has synchronous destruction, so wait until
     // every callback has observed the destroyed state and left the callback.
@@ -150,7 +157,7 @@ int Tileset::cachedHeightmapTerrainTilesForLegacySurfacePath() const {
 }
 
 int64_t Tileset::totalBytesUsed() const {
-    return contentCache_.totalBytesUsed();
+    return cacheOwnership_.totalBytesUsed();
 }
 
 void Tileset::setOcclusionCallback(OcclusionCallback callback) {
@@ -223,6 +230,17 @@ TileLoadRequestOutcome Tileset::requestMissingContent(
     return lastRequestOutcome_;
 }
 
+TileLoadRequestOutcome Tileset::requestMissingContent(
+    TileLoadQueue& loadQueue,
+    FrameResourceBudget* budget,
+    IPrepareRendererResources* pPrepRenderer) {
+    lastRequestOutcome_ = contentRuntime_.requestMissingTiles(
+        loadQueue,
+        makeContentRuntimeRequestFrame(pPrepRenderer),
+        budget);
+    return lastRequestOutcome_;
+}
+
 bool Tileset::processPendingLoads(
     bool interactionActive,
     bool resourceSmoothingActive,
@@ -276,39 +294,82 @@ TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {
         });
 }
 
-void Tileset::resetActiveSelectionState() {
-    // Advance the frame stamp and rotate the active-set buffers: last frame's
-    // accumulator becomes this frame's reset targets; the accumulator is
-    // cleared to collect tiles touched this frame.
+void Tileset::rotateSelectionActiveTiles(bool resetSelectionState) {
     ++selectionActiveFrameId_;
     std::swap(selectionActiveTiles_, selectionActiveTilesPrev_);
-    selectionActiveTiles_.clear();
 
-    // Reset only the tiles that carried non-default selection state from last
-    // frame (equivalent to cesium's per-tile frame-number invalidation). A
-    // tile whose previousSelectionState is still non-default after the shift
-    // needs one more decay pass, so it is re-tracked; once it decays to
-    // NotVisited it drops out, bounding the set to O(visible + fading).
-    for (TilesetTile* tile : selectionActiveTilesPrev_) {
-        if (!tile) continue;
-        if (tile->selectionActiveFrameId == selectionActiveFrameId_) continue;
-        tile->selectionActiveFrameId = selectionActiveFrameId_;
-        TileSelectionStateResetter::resetOne(*tile, rasterOverlays_);
-        if (tile->selectionFrameState.previousSelectionState !=
-            TileSelectionState::NotVisited) {
-            selectionActiveTiles_.push_back(tile);
+    if (resetSelectionState) {
+        auto resetOnce = [this](TilesetTile* tile) {
+            if (!tile ||
+                tile->selectionActiveFrameId == selectionActiveFrameId_) {
+                return;
+            }
+            tile->selectionActiveFrameId = selectionActiveFrameId_;
+            TileSelectionStateResetter::resetOne(*tile, rasterOverlays_);
+        };
+
+        // The vector that became current is two traversals old. Reset it once
+        // more to decay stale previousSelectionState before releasing it. A
+        // stable tile is also in the previous vector, and the frame stamp keeps
+        // that overlap from shifting its selection history twice.
+        for (TilesetTile* tile : selectionActiveTiles_) {
+            resetOnce(tile);
+        }
+        for (TilesetTile* tile : selectionActiveTilesPrev_) {
+            resetOnce(tile);
         }
     }
+
+    // beginTraversal(): previous.swap(current), current.clear(). Clearing the
+    // intrusive-pointer vector releases only the two-traversals-old ownership;
+    // previous traversal references remain live while this frame is selected.
+    releaseSelectionReferences(selectionActiveTiles_);
+}
+
+void Tileset::retirePreviousSelectionReferencesForReuse() {
+    releaseSelectionReferences(selectionActiveTilesPrev_);
+}
+
+void Tileset::trackSelectionActiveTile(
+    TilesetTile& tile,
+    bool resetSelectionState) {
+    if (resetSelectionState &&
+        tile.selectionActiveFrameId != selectionActiveFrameId_) {
+        tile.selectionActiveFrameId = selectionActiveFrameId_;
+        TileSelectionStateResetter::resetOne(tile, rasterOverlays_);
+    }
+    if (tile.selectionTraversalFrameId == selectionActiveFrameId_) {
+        return;
+    }
+
+    tile.selectionTraversalFrameId = selectionActiveFrameId_;
+    selectionActiveTiles_.push_back(&tile);
+    tile.addReference();
+    cacheOwnership_.markIneligibleForUnloading(
+        TileCacheKey::forTile(tile.key));
+}
+
+void Tileset::releaseSelectionReferences(
+    std::vector<TilesetTile*>& tiles) {
+    for (TilesetTile* tile : tiles) {
+        if (!tile) {
+            continue;
+        }
+        assert(tile->referenceCount() > 0);
+        tile->removeReference();
+        cacheOwnership_.markEligibleForUnloading(
+            tile,
+            TileCacheKey::forTile(tile->key));
+    }
+    tiles.clear();
+}
+
+void Tileset::resetActiveSelectionState() {
+    rotateSelectionActiveTiles(true);
 }
 
 void Tileset::onSelectionVisitTile(TilesetTile& tile) {
-    // First touch this frame: reset (shift + recompute renderability) exactly
-    // as the old full sweep would have, then record it as active. Already
-    // handled (carried or previously visited) → no-op, avoiding double reset.
-    if (tile.selectionActiveFrameId == selectionActiveFrameId_) return;
-    tile.selectionActiveFrameId = selectionActiveFrameId_;
-    TileSelectionStateResetter::resetOne(tile, rasterOverlays_);
-    selectionActiveTiles_.push_back(&tile);
+    trackSelectionActiveTile(tile, true);
 }
 
 std::optional<float> Tileset::sampleHeightOptional(
@@ -334,33 +395,35 @@ void Tileset::update(
 void Tileset::buildRenderCommands(Renderer& renderer,
                                   RenderCommandList& commands,
                                   uint64_t renderFrameId) {
+    if (!pendingRenderReferences_.empty()) {
+        platformLog(
+            LogLevel::Error,
+            "Tileset",
+            "buildRenderCommands rejected: the previous command batch still "
+            "owns render references; submit it or explicitly discard it");
+        return;
+    }
     ++frameNumber_;
     const uint64_t commandFrameNumber =
         renderFrameId != 0 ? renderFrameId : frameNumber_;
     renderCommands_.beginFrame(
         commandFrameNumber,
         generation_,
-        currentFrameTimeSeconds_,
-        options_.maximumScreenSpaceError);
+        currentFrameTimeSeconds_);
     TilesetRenderFrameExecutor::buildRenderCommands(
         TileRenderFrameContext{
             TileRenderFrameCoordinatorInput{
                 tilePlan_,
-                tileRegistry_.tiles(),
-                contentCache_.unloadQueue(),
                 rasterOverlays_,
-                contentCache_.cacheBytesDirty(),
                 commandFrameNumber,
                 lastCameraPosition_,
                 options_.fogDensityTable,
                 selectionCounters_.fogCulled,
                 resourceSmoothingActiveForFrame_,
-                interactionActiveForFrame_,
-                contentCache_.totalBytesUsed(),
-                options_.maximumCachedBytes},
-            contentAccess_,
+                interactionActiveForFrame_},
             renderCommands_,
-            cacheOwnership_},
+            cacheOwnership_,
+            pendingRenderReferences_},
         renderer,
         commands);
 }
@@ -423,7 +486,15 @@ void Tileset::releaseRenderReferences() {
     // Drops the reference that was added in buildRenderCommands for
     // tiles in the current render list, making them eligible for
     // unloading in the next frame.
-    TileRenderReferenceReleaser::release(tileRegistry_.tiles());
+    discardPendingRenderReferences();
+}
+
+void Tileset::discardPendingRenderReferences() {
+    TileRenderReferenceReleaser::release(
+        pendingRenderReferences_,
+        [this](const TilesetTile* tile, const std::string& cacheKey) {
+            cacheOwnership_.markEligibleForUnloading(tile, cacheKey);
+        });
 }
 
 } // namespace earth_engine

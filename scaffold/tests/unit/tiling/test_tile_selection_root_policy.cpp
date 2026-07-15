@@ -30,6 +30,10 @@ public:
 
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
 
 private:
     int width_ = 0;

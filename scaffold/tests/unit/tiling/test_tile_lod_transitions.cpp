@@ -95,10 +95,12 @@ struct TilesetTestAccess {
             (void)ck;
             if (tile) activeTiles.push_back(tile.get());
         }
+        const std::vector<TilesetTile*> previousActiveTiles;
         TileLodTransitionFrameUpdater::update(
             tileset.tilePlan_,
             tileset.tileRegistry_,
             activeTiles,
+            previousActiveTiles,
             tileset.tilesFadingOut_,
             tileset.rasterOverlays_,
             deltaSeconds,
@@ -182,7 +184,12 @@ TEST(TileLodTransitionsTest, ControllerFadesOutPreviousRenderContent) {
         plan,
         fadingKeys,
         0.25,
-        TileLodTransitionOptions{&tiles, &activeTiles, true, 1.0},
+        TileLodTransitionOptions{
+            &tiles,
+            &activeTiles,
+            nullptr,
+            true,
+            1.0},
         testCacheKey,
         hasRenderTransitionContent);
 
@@ -194,6 +201,51 @@ TEST(TileLodTransitionsTest, ControllerFadesOutPreviousRenderContent) {
         1e-6f);
     EXPECT_LT(std::abs(plan.tilesFadingOut.front().opacity - 0.75f), 1e-6f);
     EXPECT_EQ(plan.fadingNodeCount, 1);
+}
+
+TEST(
+    TileLodTransitionsTest,
+    ControllerDiscoversPreviousOnlyTraversalTileForFadeOut) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles.emplace(
+        testCacheKey(parentKey),
+        std::make_unique<TilesetTile>(parentKey, Rectangle{}));
+    tiles.emplace(
+        testCacheKey(childKey),
+        std::make_unique<TilesetTile>(childKey, Rectangle{}));
+    TilesetTile& parent = *tiles[testCacheKey(parentKey)];
+    TilesetTile& child = *tiles[testCacheKey(childKey)];
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Done;
+    child.content.contentKind = TileContentKind::Render;
+    child.content.loadState = TileLoadState::Done;
+    child.selectionFrameState.previousSelectionState =
+        TileSelectionState::Rendered;
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(parentKey);
+    const std::vector<TilesetTile*> currentActiveTiles{&parent};
+    const std::vector<TilesetTile*> previousActiveTiles{&child};
+    std::unordered_set<std::string> fadingKeys;
+
+    TileLodTransitionController::updateTransitions(
+        plan,
+        fadingKeys,
+        0.25,
+        TileLodTransitionOptions{
+            &tiles,
+            &currentActiveTiles,
+            &previousActiveTiles,
+            true,
+            1.0},
+        testCacheKey,
+        hasRenderTransitionContent);
+
+    EXPECT_EQ(fadingKeys.count(testCacheKey(childKey)), 1u);
+    ASSERT_EQ(plan.tilesFadingOut.size(), 1u);
+    EXPECT_EQ(plan.tilesFadingOut.front().key, childKey);
 }
 
 TEST(TileLodTransitionsTest, ControllerRestartsReturnedFadeOutTile) {
@@ -217,7 +269,12 @@ TEST(TileLodTransitionsTest, ControllerRestartsReturnedFadeOutTile) {
         plan,
         fadingKeys,
         0.25,
-        TileLodTransitionOptions{&tiles, &activeTiles, true, 1.0},
+        TileLodTransitionOptions{
+            &tiles,
+            &activeTiles,
+            nullptr,
+            true,
+            1.0},
         testCacheKey,
         hasRenderTransitionContent);
 

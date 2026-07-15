@@ -10,7 +10,13 @@ void TileTerrainHeightRangePolicy::setTerrainHeightRange(
     TilesetTile& tile,
     double minimumHeight,
     double maximumHeight) {
+    if (tile.content.renderContent.hasTerrainHeightRange() &&
+        tile.content.renderContent.terrainMinimumHeight() == minimumHeight &&
+        tile.content.renderContent.terrainMaximumHeight() == maximumHeight) {
+        return;
+    }
     tile.content.renderContent.setTerrainHeightRange(minimumHeight, maximumHeight);
+    tile.notifyChildMaterializationStateChanged();
 }
 
 void TileTerrainHeightRangePolicy::setDefaultTerrainHeightRange(

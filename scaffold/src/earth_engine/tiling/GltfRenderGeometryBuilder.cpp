@@ -45,17 +45,6 @@ Vec3 GltfRenderGeometryBuilder::primitiveSortCenterEcef(
     return center / static_cast<double>(primitive.instances.size());
 }
 
-// 历史名"split":曾把 blend/透射实例化拆成逐实例 draw 以正确排序;现改由
-// alpha-to-coverage 单实例化 draw 承担(见 RenderCommand::alphaToCoverage),不再
-// 拆分。本谓词仅剩用途=标记"blend/透射实例化 primitive",供动画改写时保守重建
-// (modelUsesSplitBlendInstances → GltfRenderResourcePreparer 动画分支)。
-bool GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
-    const GltfPrimitive& primitive) {
-    return !primitive.instances.empty() &&
-           (primitive.alphaMode == GltfAlphaMode::Blend ||
-            primitive.transmissionFactor > 0.0f);
-}
-
 size_t GltfRenderGeometryBuilder::primitiveRenderResourceCount(
     const GltfPrimitive& primitive) {
     if (primitive.vertices.empty() || primitive.indices.empty()) {
@@ -65,14 +54,6 @@ size_t GltfRenderGeometryBuilder::primitiveRenderResourceCount(
     // 不再拆成 N 份逐实例资源——改由 alpha-to-coverage 单 draw 承担(见
     // RenderCommand::alphaToCoverage / GltfDrawCommandBuilder)。
     return 1u;
-}
-
-bool GltfRenderGeometryBuilder::modelUsesSplitBlendInstances(
-    const GltfModel& model) {
-    return std::any_of(
-        model.primitives.begin(),
-        model.primitives.end(),
-        primitiveUsesSplitBlendInstances);
 }
 
 Vec3 GltfRenderGeometryBuilder::localOrigin(
@@ -251,9 +232,10 @@ std::vector<TerrainGpuVertex> GltfRenderGeometryBuilder::buildTerrainVertices(
         verts[i].nrm[1] = static_cast<float>(nrm.y());
         verts[i].nrm[2] = static_cast<float>(nrm.z());
 
-        const auto uv = texCoordForVertex(primitive, 0, i);
-        verts[i].texcoord[0] = uv[0];
-        verts[i].texcoord[1] = uv[1];
+        packTexCoordPair(
+            verts[i].texcoord01,
+            texCoordForVertex(primitive, 0, i),
+            texCoordForVertex(primitive, 1, i));
     }
     return verts;
 }

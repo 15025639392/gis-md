@@ -4,6 +4,7 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileRenderEntryCommandBuilder.h"
+#include "earth_engine/tiling/TileRenderReferenceReleaser.h"
 
 #include <unordered_map>
 
@@ -50,6 +51,8 @@ TEST(
         TileRenderEntry entry;
         entry.selectedKey = selectedKey;
         entry.renderKey = renderKey;
+        entry.selectedTile = findTile(tiles, selectedKey);
+        entry.renderTile = findTile(tiles, renderKey);
         entry.allowSynchronousMeshPrep = allowSynchronousMeshPrep;
         plan.renderEntries.push_back(entry);
     };
@@ -68,13 +71,12 @@ TEST(
             7,
             renderer,
             commands,
-            [&tiles](const TileKey& key) {
-                return findTile(tiles, key);
-            },
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);
             },
-            [](const std::string&) {},
+            [](TilesetTile* tile, uint64_t frameNumber) {
+                tile->markUsedForRenderFrame(frameNumber);
+            },
             [&drawnKey](Renderer&,
                         TilesetTile& tile,
                         RenderCommandList& outCommands,
@@ -113,12 +115,15 @@ TEST(
     TileRenderEntry entry;
     entry.selectedKey = selectedKey;
     entry.renderKey = renderKey;
+    entry.selectedTile = &selected;
+    entry.renderTile = &render;
     entry.usesAncestorFallback = true;
     entry.surfaceClipEnabled = true;
     entry.surfaceClipUv = {0.0f, 0.5f, 0.5f, 0.5f};
     plan.renderEntries.push_back(entry);
 
     std::vector<std::string> ineligibleKeys;
+    std::vector<TileRenderReference> references;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     const TileRenderEntryCommandStats stats =
@@ -128,14 +133,21 @@ TEST(
             11,
             renderer,
             commands,
-            [&tiles](const TileKey& key) {
-                return findTile(tiles, key);
-            },
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);
             },
-            [&ineligibleKeys](const std::string& key) {
-                ineligibleKeys.push_back(key);
+            [&ineligibleKeys, &references](
+                TilesetTile* tile,
+                uint64_t frameNumber) {
+                tile->markUsedForRenderFrame(frameNumber);
+                tile->addReference();
+                std::string cacheKey = TileCacheKey::forTile(tile->key);
+                ineligibleKeys.push_back(cacheKey);
+                references.push_back(
+                    TileRenderReference{
+                        tile,
+                        std::move(cacheKey),
+                        true});
             },
             [&renderKey](Renderer&,
                          TilesetTile& tile,
@@ -157,11 +169,16 @@ TEST(
     EXPECT_EQ(stats.drawAttempts, 1);
     EXPECT_EQ(selected.lastUsedFrame(), 11u);
     EXPECT_EQ(render.lastUsedFrame(), 11u);
-    EXPECT_EQ(selected.referenceCount(), 0);
+    EXPECT_EQ(selected.referenceCount(), 1);
     EXPECT_EQ(render.referenceCount(), 1);
     ASSERT_EQ(ineligibleKeys.size(), 2u);
     EXPECT_EQ(ineligibleKeys[0], TileCacheKey::forTile(selectedKey));
     EXPECT_EQ(ineligibleKeys[1], TileCacheKey::forTile(renderKey));
+    ASSERT_EQ(references.size(), 2u);
+    EXPECT_EQ(references[0].tile, &selected);
+    EXPECT_TRUE(references[0].countedReference);
+    EXPECT_EQ(references[1].tile, &render);
+    EXPECT_TRUE(references[1].countedReference);
     EXPECT_NE(
         commands.front().stableKey.find(
             "clip:" + TileCacheKey::forTile(selectedKey)),
@@ -176,6 +193,8 @@ TEST(TileRenderEntryCommandBuilderTest, BuildsFadingEntriesOnlyInFadePass) {
     TileRenderEntry entry;
     entry.selectedKey = fadingKey;
     entry.renderKey = fadingKey;
+    entry.selectedTile = &fading;
+    entry.renderTile = &fading;
     entry.reason = TileRenderEntryReason::FadingOut;
     entry.selectedThisFrame = false;
     entry.opacity = 0.4f;
@@ -183,13 +202,12 @@ TEST(TileRenderEntryCommandBuilderTest, BuildsFadingEntriesOnlyInFadePass) {
 
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    auto ensureTile = [&fading](const TileKey& key) -> TilesetTile* {
-        return key == fading.key ? &fading : nullptr;
-    };
     auto cacheKey = [](const TileKey& key) {
         return TileCacheKey::forTile(key);
     };
-    auto markIneligible = [](const std::string&) {};
+    auto protectTile = [](TilesetTile* tile, uint64_t frameNumber) {
+        tile->markUsedForRenderFrame(frameNumber);
+    };
     float submittedOpacity = 0.0f;
     auto buildCommand = [&submittedOpacity](Renderer&,
                                             TilesetTile&,
@@ -211,9 +229,8 @@ TEST(TileRenderEntryCommandBuilderTest, BuildsFadingEntriesOnlyInFadePass) {
             12,
             renderer,
             commands,
-            ensureTile,
             cacheKey,
-            markIneligible,
+            protectTile,
             buildCommand);
 
     EXPECT_TRUE(commands.empty());
@@ -226,9 +243,8 @@ TEST(TileRenderEntryCommandBuilderTest, BuildsFadingEntriesOnlyInFadePass) {
             12,
             renderer,
             commands,
-            ensureTile,
             cacheKey,
-            markIneligible,
+            protectTile,
             buildCommand);
 
     ASSERT_EQ(commands.size(), 1u);
@@ -236,5 +252,5 @@ TEST(TileRenderEntryCommandBuilderTest, BuildsFadingEntriesOnlyInFadePass) {
     EXPECT_EQ(fadeStats.drawAttempts, 1);
     EXPECT_NEAR(submittedOpacity, 0.4f, 1e-6f);
     EXPECT_EQ(fading.lastUsedFrame(), 12u);
-    EXPECT_EQ(fading.referenceCount(), 1);
+    EXPECT_EQ(fading.referenceCount(), 0);
 }

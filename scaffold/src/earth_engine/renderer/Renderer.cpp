@@ -868,8 +868,8 @@ void main() {
 )glsl";
 
 // ============================================================
-// Terrain lightweight shader — 32-byte TerrainGpuVertex layout
-// POSITION(vec3@0) + NORMAL(vec3@12) + TEXCOORD_0(vec2@24) = 32 bytes
+// Terrain lightweight shader — 40-byte TerrainGpuVertex layout
+// POSITION(vec3@0) + NORMAL(vec3@12) + TEXCOORD_0/1(vec4@24) = 40 bytes
 // This is the glTF shader MINUS all PBR-extension uniforms: it keeps only
 // base color, raster-overlay compositing (slots 15-18), water mask (slot 19),
 // terrain clip, directional lighting and render opacity. RTC origin stays
@@ -880,20 +880,20 @@ static const char* kTerrainVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec2 a_texcoord;
+layout(location = 2) in vec4 a_texcoord01;
 
 uniform mat4 u_modelViewProjection;
 
 out vec3 v_normal;
 out vec3 v_position;
-out vec2 v_texcoord;
+out vec4 v_texcoord01;
 
 void main() {
     // cesium-native RTC: tile origin is baked into the MVP matrix (computed in
     // CPU double precision). a_position is relative to the tile center.
     v_normal = normalize(a_normal);
     v_position = a_position;
-    v_texcoord = a_texcoord;
+    v_texcoord01 = a_texcoord01;
     gl_PointSize = 1.0;
     gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
 }
@@ -905,7 +905,7 @@ precision highp float;
 
 in vec3 v_normal;
 in vec3 v_position;
-in vec2 v_texcoord;
+in vec4 v_texcoord01;
 
 uniform vec3 u_lightDir;
 uniform vec4 u_ambient;
@@ -943,8 +943,8 @@ uniform float u_clipEnabled;
 out vec4 fragColor;
 
 vec2 uvFromSet(float texCoordSet) {
-    // Terrain vertices only carry TEXCOORD_0; all raster overlays reference it.
-    return v_texcoord;
+    int setIndex = int(floor(texCoordSet + 0.5));
+    return setIndex == 1 ? v_texcoord01.zw : v_texcoord01.xy;
 }
 
 vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
@@ -1997,7 +1997,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
 
 // ============================================================
 // Terrain lightweight shader — MSL
-// 32-byte TerrainGpuVertex: position(vec3@0) normal(vec3@12) texcoord(vec2@24).
+// 40-byte TerrainGpuVertex: position(vec3@0) normal(vec3@12)
+// texcoord01(vec4@24).
 // Fragment consumes the shared GltfUniforms struct at buffer(0) (byte-exact
 // mirror of GltfUniformBlock.h), same as gltfFragment — one setFragmentBytes
 // per draw, far under Metal's 31-buffer cap.
@@ -2012,14 +2013,14 @@ using namespace metal;
 struct TerrainVertexIn {
     float3 position [[attribute(0)]];
     float3 normal   [[attribute(1)]];
-    float2 texcoord [[attribute(2)]];
+    float4 texcoord01 [[attribute(2)]];
 };
 
 struct TerrainVertexOut {
     float4 position [[position]];
     float3 normal;
     float3 localPosition;
-    float2 texcoord;
+    float4 texcoord01;
 };
 
 vertex TerrainVertexOut terrainVertex(
@@ -2029,7 +2030,7 @@ vertex TerrainVertexOut terrainVertex(
     out.position = u_modelViewProjection * float4(in.position, 1.0);
     out.normal = normalize(in.normal);
     out.localPosition = in.position;
-    out.texcoord = in.texcoord;
+    out.texcoord01 = in.texcoord01;
     return out;
 }
 )msl";
@@ -2119,6 +2120,11 @@ struct GltfUniforms {
 // vertex and fragment sources into a single library), so it must NOT be
 // redefined here.
 
+float2 terrainUvFromSet(TerrainVertexOut in, float texCoordSet) {
+    int setIndex = int(floor(texCoordSet + 0.5));
+    return setIndex == 1 ? in.texcoord01.zw : in.texcoord01.xy;
+}
+
 float4 terrainAlphaOver(float4 base, float4 overlay, float opacity) {
     overlay.a *= clamp(opacity, 0.0, 1.0);
     base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
@@ -2130,10 +2136,11 @@ float4 terrainApplyMappedRaster(float4 base,
                                 TerrainVertexOut in,
                                 texture2d<float> rasterTexture,
                                 sampler rasterSampler,
+                                float texCoordSet,
                                 float4 tileUV,
                                 float opacity) {
-    // Terrain vertices only carry TEXCOORD_0; overlays reference in.texcoord.
-    float2 overlayUv = tileUV.xy + in.texcoord * tileUV.zw;
+    float2 overlayUv =
+        tileUV.xy + terrainUvFromSet(in, texCoordSet) * tileUV.zw;
     return terrainAlphaOver(
         base,
         rasterTexture.sample(rasterSampler, overlayUv),
@@ -2156,7 +2163,7 @@ float4 terrainApplyWaterMask(float4 base,
     float water = state.y;
     if (state.z > 0.5) {
         float2 waterUv =
-            translationScale.xy + in.texcoord * translationScale.z;
+            translationScale.xy + in.texcoord01.xy * translationScale.z;
         water = waterMaskTexture.sample(waterMaskSampler, waterUv).r;
     }
     // 见 GLSL 侧注释；tint + sun-glint 系数镜像保持一致。
@@ -2183,7 +2190,7 @@ fragment float4 terrainFragment(
     // the base color, raster overlay (textures 15-18) and water mask (19)
     // textures without exceeding the sampler limit.
     sampler u_terrainSampler [[sampler(0)]]) {
-    float2 terrainUv = in.texcoord;
+    float2 terrainUv = in.texcoord01.xy;
     if (u.clipEnabled > 0.5 &&
         (terrainUv.x < u.clipUV.x ||
          terrainUv.x > u.clipUV.x + u.clipUV.z ||
@@ -2203,21 +2210,25 @@ fragment float4 terrainFragment(
     if (u.mappedRasterTextureCount > 0.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture0, u_terrainSampler,
+            u.mappedRasterTexCoordSet[0],
             float4(u.mappedRasterTileUV[0]), u.mappedRasterOpacity[0]);
     }
     if (u.mappedRasterTextureCount > 1.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture1, u_terrainSampler,
+            u.mappedRasterTexCoordSet[1],
             float4(u.mappedRasterTileUV[1]), u.mappedRasterOpacity[1]);
     }
     if (u.mappedRasterTextureCount > 2.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture2, u_terrainSampler,
+            u.mappedRasterTexCoordSet[2],
             float4(u.mappedRasterTileUV[2]), u.mappedRasterOpacity[2]);
     }
     if (u.mappedRasterTextureCount > 3.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture3, u_terrainSampler,
+            u.mappedRasterTexCoordSet[3],
             float4(u.mappedRasterTileUV[3]), u.mappedRasterOpacity[3]);
     }
     base = terrainApplyWaterMask(
@@ -2408,7 +2419,7 @@ struct Renderer::Impl {
     std::unique_ptr<ShaderProgram> gltfShader;
     std::unique_ptr<ShaderProgram> gltfInstancedShader;
 
-    // Terrain lightweight shader (32-byte vertex, no PBR extensions)
+    // Terrain lightweight shader (40-byte vertex, no PBR extensions)
     std::unique_ptr<ShaderProgram> terrainShader;
 
     // Color (vector)
@@ -2474,7 +2485,7 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] gltfShader failed — glTF models unavailable\n");
     }
 
-    // ---- Terrain lightweight shader (32-byte TerrainGpuVertex) ----
+    // ---- Terrain lightweight shader (40-byte TerrainGpuVertex) ----
     // Unlike gltfShader, this is a small shader (<=31 Metal buffers) so it must
     // compile on BOTH backends. Treat failure as fatal like surfaceTileShader.
     ShaderDesc terrainSd;
@@ -2619,7 +2630,7 @@ RenderCommand Renderer::makeTerrainPrimitiveCommand(Buffer* vertexBuffer,
                                                     int vertexCount) const {
     RenderCommand cmd;
     // Command kind stays GltfPrimitive: GLES keys the vertex layout on
-    // vertexStride (32 -> 2-float texcoord path, attribs 10-14 disabled) and
+    // vertexStride (40 -> packed texcoord0/1 path, attribs 10-14 disabled) and
     // Metal keys the PSO on the terrainVertex/terrainFragment entry points.
     cmd.kind = RenderCommandKind::GltfPrimitive;
     cmd.owner = "terrain_primitive";
@@ -2629,7 +2640,7 @@ RenderCommand Renderer::makeTerrainPrimitiveCommand(Buffer* vertexBuffer,
     cmd.indexBuffer = indexBuffer;
     cmd.indexCount = indexCount;
     cmd.vertexCount = vertexCount;
-    cmd.vertexStride = 32;  // POSITION(12) + NORMAL(12) + TEXCOORD_0(8)
+    cmd.vertexStride = 40;  // POSITION(12) + NORMAL(12) + TEXCOORD_0/1(16)
     cmd.primitive = RenderCommand::PrimitiveType::Triangles;
     cmd.indexType = RenderCommand::IndexType::UInt32;
     cmd.depthTest = true;

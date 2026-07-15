@@ -5,6 +5,7 @@
 #include "../providers/RasterOverlayTileProvider.h"
 #include "GltfRenderGeometryBuilder.h"
 #include "RasterMappedToTilesetTile.h"
+#include "TerrainRasterOverlayProjectionResolver.h"
 #include "TileRasterOverlayDetailsDeriver.h"
 #include "TileLoadTypes.h"
 #include "TilesetTile.h"
@@ -85,6 +86,7 @@ public:
 
         UpsampleClipInput input;
         input.parentModel = std::make_unique<GltfModel>(*parentModel);
+        pruneClipSnapshot(*input.parentModel);
         input.childKey = tile.key;
         input.tileBounds = tile.bounds;
         input.sourceBounds = source->bounds;
@@ -188,6 +190,23 @@ public:
     }
 
 private:
+    template <typename VectorT>
+    static void clearVectorMemory(VectorT& values) {
+        values.clear();
+        values.shrink_to_fit();
+    }
+
+    static void pruneClipSnapshot(GltfModel& model) {
+        for (GltfPrimitive& primitive : model.primitives) {
+            clearVectorMemory(primitive.terrainGpuVertexBytes);
+            clearVectorMemory(primitive.instances);
+            clearVectorMemory(primitive.runtime.baseVertices);
+            clearVectorMemory(primitive.runtime.baseTangents);
+            clearVectorMemory(primitive.runtime.skinning);
+            clearVectorMemory(primitive.runtime.morphTargets);
+        }
+    }
+
     static bool isCommittedGltfTerrainSource(
         const TilesetTile& child,
         const TilesetTile& source) {
@@ -414,9 +433,7 @@ private:
 
     static RasterOverlayProjection terrainProjectionForTileKey(
         const TileKey& key) {
-        return key.schemeId.str().find("WebMercator") != std::string::npos
-            ? RasterOverlayProjection::WebMercator
-            : RasterOverlayProjection::Geographic;
+        return TerrainRasterOverlayProjectionResolver::forTileKey(key);
     }
 };
 

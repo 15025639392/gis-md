@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GpuUploadQueue.h"
+#include "TileLoadQueue.h"
 #include "TileLoadTypes.h"
 
 #include <cstdint>
@@ -62,6 +63,10 @@ public:
         const std::vector<TileLoadRequest>& loadRequests,
         const TileContentRuntimeRequestFrame& frame,
         FrameResourceBudget* budget);
+    TileLoadRequestOutcome requestMissingTiles(
+        TileLoadQueue& loadQueue,
+        const TileContentRuntimeRequestFrame& frame,
+        FrameResourceBudget* budget);
     bool processPendingUploads(
         const TileContentRuntimeUploadFrame& frame,
         bool interactionActive,
@@ -72,6 +77,7 @@ public:
         FrameResourceBudget* budget,
         uint32_t maxUploadsPerFrame);
     void markResourcesDirty();
+    void markTileResourcesDirty(TilesetTile& tile);
 
 private:
     friend struct TilesetTestAccess;

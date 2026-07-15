@@ -52,7 +52,7 @@ public:
     /// Render thread: if the worker has published a fresh result, consume it and
     /// return the runner (caller reconciles onto live); otherwise nullptr. The
     /// returned reference is valid until the next dispatch()/buildShadow().
-    const TileSelectionShadowRunner* tryTakeResult();
+    TileSelectionShadowRunner* tryTakeResult();
 
 private:
     void threadMain();

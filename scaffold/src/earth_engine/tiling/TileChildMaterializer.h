@@ -36,17 +36,25 @@ struct TileChildMaterializer {
     static bool linkContentChildren(
         TilesetTile& parent,
         const std::vector<TileKey>& childKeys,
-        EnsureTileFn&& ensureTile) {
+        EnsureTileFn&& ensureTile,
+        bool* materializationComplete = nullptr) {
         bool changed = false;
+        bool complete = true;
         for (const TileKey& childKey : childKeys) {
             const size_t childCountBefore = parent.children.size();
             TilesetTile* child = ensureTile(childKey);
-            if (!child) continue;
+            if (!child) {
+                complete = false;
+                continue;
+            }
             const bool linkedByEnsure =
                 parent.children.size() != childCountBefore &&
                 std::find(parent.children.begin(), parent.children.end(),
                           child) != parent.children.end();
             changed |= linkedByEnsure || linkChild(parent, *child);
+        }
+        if (materializationComplete) {
+            *materializationComplete = complete;
         }
         return changed;
     }
@@ -58,9 +66,13 @@ struct TileChildMaterializer {
         AvailabilityFn&& availabilityState,
         EnsureTileFn&& ensureTile,
         bool clearTerrainAvailabilityUpsampleContent = false,
-        IPrepareRendererResources* pPrepRenderer = nullptr) {
+        IPrepareRendererResources* pPrepRenderer = nullptr,
+        bool* materializationComplete = nullptr) {
         if (parent.key.z >= maxZoom ||
             parent.content.isTerrainAvailabilityUpsample()) {
+            if (materializationComplete) {
+                *materializationComplete = true;
+            }
             return false;
         }
 
@@ -83,16 +95,23 @@ struct TileChildMaterializer {
         // children are UpsampledQuadtreeNode equivalents and must not request
         // terrain data.
         if (!anyChildAvailable) {
+            if (materializationComplete) {
+                *materializationComplete = true;
+            }
             return false;
         }
 
         bool changed = false;
+        bool complete = true;
         for (const ChildAvailability& childInfo : children) {
             TilesetTile* child = ensureTile(childInfo.key);
-            if (!child) continue;
+            if (!child) {
+                complete = false;
+                continue;
+            }
             const bool childUnconditionalRefineChanged =
                 child->unconditionallyRefine;
-            child->unconditionallyRefine = false;
+            child->setUnconditionallyRefine(false);
             const bool hasAcceptedTerrainContent =
                 TileContentTerrainResiduePolicy::hasAcceptedTerrainContent(
                     *child);
@@ -114,11 +133,13 @@ struct TileChildMaterializer {
                     child->boundingVolume,
                     childBoundingVolume) ||
                 child->contentBoundingVolume.has_value();
-            child->geometricError = childGeometricError;
-            child->refine = parent.refine;
+            child->setGeometricError(childGeometricError);
+            child->setRefine(parent.refine);
             if (!hasAcceptedTerrainContent) {
-                child->boundingVolume = childBoundingVolume;
-                child->contentBoundingVolume.reset();
+                if (childBoundsChanged) {
+                    child->setBoundingVolume(childBoundingVolume);
+                    child->resetContentBoundingVolume();
+                }
             }
             const bool childGeometryChanged =
                 childTraversalGeometryChanged ||
@@ -147,9 +168,9 @@ struct TileChildMaterializer {
                         pPrepRenderer);
                 }
                 if (upsampled) {
-                    child->content.markTerrainAvailabilityUpsample();
+                    child->markTerrainAvailabilityUpsample();
                 } else {
-                    child->content.clearUpsampleKind();
+                    child->clearUpsampleKind();
                 }
                 if (!hasAcceptedTerrainContent) {
                     TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
@@ -159,6 +180,9 @@ struct TileChildMaterializer {
                 changed = true;
             }
             changed |= linkChild(parent, *child);
+        }
+        if (materializationComplete) {
+            *materializationComplete = complete;
         }
         return changed;
     }
@@ -198,9 +222,9 @@ struct TileChildMaterializer {
         const int childX = static_cast<int>(childX64);
         const int childY = static_cast<int>(childY64);
 
-        parent.refine = TileRefine::Replace;
+        parent.setRefine(TileRefine::Replace);
         if (parent.geometricError <= 0.0) {
-            parent.geometricError = defaultGeometricError;
+            parent.setGeometricError(defaultGeometricError);
         }
 
         bool changed = false;
@@ -223,7 +247,6 @@ struct TileChildMaterializer {
             const bool childGeometryChanged =
                 child->geometricError != childGeometricError;
 
-            child->parent = &parent;
             // The child keeps its registry/scheme rectangle (ensureTile
             // computed it from the tile key). These are REAL quadtree tiles
             // that may later receive real content, and selection culls
@@ -237,24 +260,25 @@ struct TileChildMaterializer {
             // rectangle must stay authoritative. The upsampled MESH itself is
             // still split at the parent's overlay-texcoord 0.5 independently
             // of these bounds (GltfTerrainUpsampler).
-            child->boundingVolume = TileBoundingVolume::fromRegion(
+            child->setBoundingVolume(TileBoundingVolume::fromRegion(
                 child->bounds,
                 TileBoundsMetrics::terrainMinimumHeight(parent),
-                TileBoundsMetrics::terrainMaximumHeight(parent));
-            child->contentBoundingVolume = child->boundingVolume;
-            child->geometricError = childGeometricError;
-            child->refine = TileRefine::Replace;
+                TileBoundsMetrics::terrainMaximumHeight(parent)));
+            child->setContentBoundingVolume(child->boundingVolume);
+            child->setGeometricError(childGeometricError);
+            child->setRefine(TileRefine::Replace);
             if (!wasRasterDetailUpsample || childGeometryChanged) {
                 child->content.renderContent.clearRenderContent();
                 child->rasterOverlayState.releaseAndClearReferences(
                     pPrepRenderer);
+                child->notifyChildMaterializationStateChanged();
             }
             if (sourceProjection) {
-                child->content.markRasterDetailUpsample(*sourceProjection);
+                child->markRasterDetailUpsample(*sourceProjection);
             } else {
-                child->content.markRasterDetailUpsample();
+                child->markRasterDetailUpsample();
             }
-            child->unconditionallyRefine = false;
+            child->setUnconditionallyRefine(false);
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,
                 parent);
@@ -352,14 +376,7 @@ private:
     }
 
     static bool linkChild(TilesetTile& parent, TilesetTile& child) {
-        child.parent = &parent;
-        if (std::find(parent.children.begin(),
-                      parent.children.end(),
-                      &child) != parent.children.end()) {
-            return false;
-        }
-        parent.children.push_back(&child);
-        return true;
+        return parent.attachChild(child);
     }
 };
 

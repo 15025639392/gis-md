@@ -27,6 +27,7 @@
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
 #include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/tiling/GltfRenderGeometryBuilder.h"
+#include "earth_engine/tiling/GltfRenderResourcePreparer.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileCacheMetrics.h"
@@ -461,6 +462,40 @@ struct TilesetTestAccess {
             tileset.options_.maximumScreenSpaceError,
             tileset.frameResourceBudget_);
     }
+    static void prepareRenderTileRasterOverlays(
+        Tileset& tileset,
+        TilesetTile& tile,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
+        const std::vector<size_t> overlayOrder =
+            TileSelectionRasterOverlayPreparer::processingOrder(
+                tileset.rasterOverlays_);
+        const TileRasterOverlayPrefetchAction action =
+            TileRasterOverlayPrefetcher::prefetch(
+                tile,
+                tileset.rasterOverlays_,
+                overlayOrder,
+                tileset.device_,
+                tileset.options_.maximumScreenSpaceError,
+                tileset.frameResourceBudget_,
+                pPrepRenderer,
+                tileset.tilePlan_.frameId);
+        if (action.unloadTileContent) {
+            tileset.cacheOwnership_.unloadTileContent(
+                tile,
+                pPrepRenderer);
+            tileset.loadQueue_.queue(
+                tile.key,
+                TileLoadPriorityGroup::Normal,
+                tile.selectionFrameState.priority);
+        } else if (
+            action.createRasterOverlayUpsampledChildren &&
+            tile.children.empty()) {
+            tileset.rasterUpsampledChildren_
+                .createRasterOverlayUpsampledChildren(
+                    tile,
+                    pPrepRenderer);
+        }
+    }
     static void prefetchRasterOverlaySelection(
         Tileset& tileset,
         const std::vector<TileLoadRequest>& requests,
@@ -646,9 +681,28 @@ struct TilesetTestAccess {
         tileset.renderCommands_.beginFrame(
             tileset.frameNumber_,
             tileset.generation_,
-            tileset.currentFrameTimeSeconds_,
-            tileset.options_.maximumScreenSpaceError);
+            tileset.currentFrameTimeSeconds_);
         tileset.renderCommands_.buildTileDrawCommand(
+            renderer,
+            tile,
+            commands,
+            transitionOpacity);
+    }
+    static void prepareAndBuildGltfTileDrawCommand(
+        Tileset& tileset,
+        Renderer& renderer,
+        TilesetTile& tile,
+        RenderCommandList& commands,
+        float transitionOpacity) {
+        if (tile.content.renderContent.hasGltfContent() &&
+            !tile.content.renderContent.isGltfRenderReady()) {
+            GltfRenderResourcePreparer::prepare(
+                tile,
+                tileset.device_,
+                tileset.currentFrameTimeSeconds_);
+        }
+        buildTileDrawCommand(
+            tileset,
             renderer,
             tile,
             commands,
@@ -660,14 +714,10 @@ struct TilesetTestAccess {
     static uint64_t resourceRevision(const Tileset& tileset) {
         return tileset.resourceRevision_;
     }
-    static bool cacheBytesDirty(const Tileset& tileset) {
-        return tileset.contentCache_.cacheBytesDirty();
-    }
     static bool selectionReuseReusable(const Tileset& tileset) {
         return tileset.selectionReuseState_.reusable;
     }
     static void primeCleanReusableResources(Tileset& tileset) {
-        tileset.contentCache_.cacheBytesDirty() = false;
         tileset.selectionReuseState_.reusable = true;
     }
     static void markTileResourcesDirty(Tileset& tileset) {
@@ -721,10 +771,12 @@ struct TilesetTestAccess {
             (void)ck;
             if (tile) activeTiles.push_back(tile.get());
         }
+        const std::vector<TilesetTile*> previousActiveTiles;
         TileLodTransitionFrameUpdater::update(
             tileset.tilePlan_,
             tileset.tileRegistry_,
             activeTiles,
+            previousActiveTiles,
             tileset.tilesFadingOut_,
             tileset.rasterOverlays_,
             deltaSeconds,
@@ -778,7 +830,8 @@ int processPendingRasterUploadsUntil(RasterOverlayTileProvider& provider,
     int processed = 0;
     for (int attempt = 0; attempt < 200 && processed < expectedUploads;
          ++attempt) {
-        processed += provider.processPendingUploads(false, budget);
+        processed +=
+            provider.processPendingUploads(false, budget).processedUploads;
         if (processed >= expectedUploads) {
             break;
         }
@@ -1145,6 +1198,10 @@ public:
     DummyTexture(int width, int height) : width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
 private:
     int width_ = 0;
     int height_ = 0;
@@ -3268,8 +3325,9 @@ void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
     config.mainThreadTimeMs = 0.001;
     FrameResourceBudget firstFrameBudget;
     firstFrameBudget.beginFrame(1, config);
-    const int firstProcessed =
-        provider.processPendingUploads(false, &firstFrameBudget);
+    const int firstProcessed = provider.processPendingUploads(
+        false,
+        &firstFrameBudget).processedUploads;
     check(firstProcessed == 1 &&
               rawUploader->uploadCount == 1 &&
               provider.getPendingUploadCount() == 1 &&
@@ -3277,8 +3335,9 @@ void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
           "RasterOverlayTileProvider: elapsed upload cost stops later uploads in the same frame");
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
-    const int secondProcessed =
-        provider.processPendingUploads(false, &secondFrameBudget);
+    const int secondProcessed = provider.processPendingUploads(
+        false,
+        &secondFrameBudget).processedUploads;
     check(secondProcessed == 1 &&
               rawUploader->uploadCount == 2 &&
               provider.getPendingUploadCount() == 0,
@@ -4529,11 +4588,12 @@ void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
         std::move(provider));
     TilesetTestAccess::primeCleanReusableResources(tileset);
     const uint64_t beforeRevision = TilesetTestAccess::resourceRevision(tileset);
+    const int64_t beforeBytes = tileset.totalBytesUsed();
     TilesetTestAccess::markTileResourcesDirty(tileset);
     check(TilesetTestAccess::resourceRevision(tileset) == beforeRevision + 1,
           "Tileset: resource dirty bumps resource revision");
-    check(TilesetTestAccess::cacheBytesDirty(tileset),
-          "Tileset: resource dirty marks cache bytes dirty");
+    check(tileset.totalBytesUsed() == beforeBytes,
+          "Tileset: global resource dirty leaves the incremental tile byte ledger unchanged");
     check(TilesetTestAccess::selectionReuseReusable(tileset),
           "Tileset: resource dirty preserves selection reuse for static loading");
 }
@@ -5114,6 +5174,10 @@ void testTilesetMissingRasterProjectionRequestsReload() {
     root->rasterOverlayState.mappings().resize(1);
     Renderer renderer(nullptr);
     RenderCommandList commands;
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
         renderer,
@@ -5181,6 +5245,10 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
     root->rasterOverlayState.mappings().resize(1);
     Renderer renderer(nullptr);
     RenderCommandList commands;
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
         renderer,
@@ -5232,6 +5300,10 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
     root->rasterOverlayState.mappings().resize(1);
     Renderer renderer(nullptr);
     RenderCommandList commands;
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
         renderer,
@@ -5764,6 +5836,10 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
           "Tileset: selector renderability sees promoted raster before build");
     Renderer renderer(nullptr);
     RenderCommandList commands;
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
         renderer,
@@ -5778,7 +5854,7 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
                   static_cast<size_t>(kGltfRasterOverlayTextureBase) &&
               commands.front().textures[kGltfRasterOverlayTextureBase] ==
                   loadingTile->getTexture(),
-          "Tileset: build command emits a surface command from the core ready raster");
+          "Tileset: build command consumes the update-prepared core ready raster");
 }
 void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     auto overlay = std::make_unique<RasterOverlay>(
@@ -6176,6 +6252,10 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
         RasterOverlayTile::MoreDetailAvailable::No);
     Renderer renderer(nullptr);
     RenderCommandList commands;
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
         renderer,
@@ -6242,12 +6322,10 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     root->rasterOverlayState.mappings().resize(1);
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
         tileset,
-        renderer,
         *root,
-        commands,
-        1.0f);
+        &renderer);
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
@@ -6257,6 +6335,10 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     commands.clear();
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
         renderer,
@@ -6314,7 +6396,7 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -6492,12 +6574,16 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
         commands,
         1.0f);
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loading = mapped ? mapped->getLoadingTile() : nullptr;
@@ -6507,7 +6593,11 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     loading->setTexture(std::make_unique<DummyTexture>(4, 4));
     loading->setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
     commands.clear();
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -6631,7 +6721,7 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -6684,7 +6774,7 @@ void testTilesetGltfTangentsUseModelLinearTransform() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::scale(Vec3(2.0, 1.0, 1.0)));
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF tangent transform model is retained");
     if (!model) return;
@@ -6696,7 +6786,7 @@ void testTilesetGltfTangentsUseModelLinearTransform() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -6740,7 +6830,7 @@ void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF MASK material model is retained");
     if (!model) return;
@@ -6750,7 +6840,7 @@ void testTilesetGltfMaskMaterialStaysOpaqueCommand() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -6785,7 +6875,7 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF unlit material model is retained");
     if (!model) return;
@@ -6797,7 +6887,7 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -6834,7 +6924,7 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF emissive material model is retained");
     if (!model) return;
@@ -6852,7 +6942,7 @@ void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -6917,7 +7007,7 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF IOR material model is retained");
     if (!model) return;
@@ -6930,7 +7020,7 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -6968,7 +7058,7 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF anisotropy material model is retained");
     if (!model) return;
@@ -6986,7 +7076,7 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7049,7 +7139,7 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF spec-gloss material model is retained");
     if (!model) return;
@@ -7069,7 +7159,7 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7144,7 +7234,7 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF transmission material model is retained");
     if (!model) return;
@@ -7162,7 +7252,7 @@ void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7224,7 +7314,7 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF specular material model is retained");
     if (!model) return;
@@ -7249,7 +7339,7 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7331,7 +7421,7 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF clearcoat material model is retained");
     if (!model) return;
@@ -7364,7 +7454,7 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7453,7 +7543,7 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
     root->content.renderContent.prepareGltfContent(
         makeTexturedTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF sheen material model is retained");
     if (!model) return;
@@ -7478,7 +7568,7 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7558,7 +7648,7 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF point/line mode model is retained");
     if (!model) return;
@@ -7579,7 +7669,7 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7610,7 +7700,7 @@ void testTilesetGltfDoubleSidedDisablesCullOnly() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF doubleSided material model is retained");
     if (!model) return;
@@ -7619,7 +7709,7 @@ void testTilesetGltfDoubleSidedDisablesCullOnly() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7650,7 +7740,7 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF opaque instancing model is retained");
     if (!model) return;
@@ -7666,7 +7756,7 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7723,7 +7813,7 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF BLEND instancing model is retained");
     if (!model) return;
@@ -7738,7 +7828,7 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -7776,7 +7866,7 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
     root->content.renderContent.prepareGltfContent(
         makeTriangleGltfModel(),
         Mat4::identity());
-    GltfModel* model = root->content.renderContent.gltfContent();
+    auto model = root->content.renderContent.editGltfContent();
     check(model != nullptr,
           "Tileset: glTF transmission instancing model is retained");
     if (!model) return;
@@ -7791,7 +7881,7 @@ void testTilesetGltfTransmissionInstancesSplitForSorting() {
     root->content.loadState = TileLoadState::ContentLoaded;
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    TilesetTestAccess::buildTileDrawCommand(
+    TilesetTestAccess::prepareAndBuildGltfTileDrawCommand(
         tileset,
         renderer,
         *root,
@@ -10888,34 +10978,40 @@ void testTileCacheUnloadCoordinatorRotatesDeferredCandidates() {
     tiles["free"] = std::move(free);
     std::vector<std::string> unloadedKeys;
     std::vector<std::string> markedIneligibleKeys;
+    int64_t totalBytesUsed = 2;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
         tiles,
-        2,
         0,
         0.0,
-        false,
-        false,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
         [](const TilesetTile&) {
             return false;
         },
         [&](TilesetTile& tile) {
             unloadedKeys.push_back(tile.key.y == 1 ? "free" : "referenced");
+            --totalBytesUsed;
             return TileCacheUnloadContentResult::Remove;
         },
         [&](const std::string& key) {
             markedIneligibleKeys.push_back(key);
             unloadQueue.erase(key);
         },
-        [](TilesetTile&) {});
+        [](TilesetTile&) {},
+        []() {});
     check(unloadedKeys.size() == 1 &&
               unloadedKeys.front() == "free" &&
               markedIneligibleKeys.size() == 1 &&
               markedIneligibleKeys.front() == "free" &&
               unloadQueue.size() == 1 &&
               unloadQueue.front() == "referenced" &&
-              result.cacheBytesDirty &&
-              result.shouldRefreshTotalBytes,
+              result.totalBytesUsed == 1 &&
+              result.unloadedTiles == 1,
           "TileCacheUnloadCoordinator: deferred referenced candidate rotates and later candidate unloads");
 }
 void testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred() {
@@ -10934,14 +11030,18 @@ void testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred() {
     }
     int unloadAttempts = 0;
     int markedIneligibleCount = 0;
+    int64_t totalBytesUsed = 2;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
         tiles,
-        2,
         0,
         0.0,
-        false,
-        false,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
         [](const TilesetTile&) {
             return false;
         },
@@ -10952,14 +11052,15 @@ void testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred() {
         [&](const std::string&) {
             ++markedIneligibleCount;
         },
-        [](TilesetTile&) {});
+        [](TilesetTile&) {},
+        []() {});
     check(unloadAttempts == 0 &&
               markedIneligibleCount == 0 &&
               unloadQueue.size() == 2 &&
               unloadQueue.front() == "a" &&
-              !result.cacheBytesDirty &&
-              !result.shouldRefreshTotalBytes,
-          "TileCacheUnloadCoordinator: all-deferred queue scans once without dirtying cache bytes");
+              result.totalBytesUsed == 2 &&
+              result.unloadedTiles == 0,
+          "TileCacheUnloadCoordinator: all-deferred queue scans once without changing incremental bytes");
 }
 void testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues() {
     TileUnloadQueue unloadQueue;
@@ -10974,36 +11075,42 @@ void testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues() {
     tiles["free"] = std::move(free);
     std::vector<std::string> unloadedKeys;
     std::vector<std::string> markedIneligibleKeys;
+    int64_t totalBytesUsed = 2;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
         tiles,
-        2,
         0,
         0.0,
-        false,
-        false,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
         [](const TilesetTile&) {
             return false;
         },
         [&](TilesetTile& tile) {
             unloadedKeys.push_back(tile.key.y == 1 ? "free" : "stale");
+            --totalBytesUsed;
             return TileCacheUnloadContentResult::Remove;
         },
         [&](const std::string& key) {
             markedIneligibleKeys.push_back(key);
             unloadQueue.erase(key);
         },
-        [](TilesetTile&) {});
+        [](TilesetTile&) {},
+        []() {});
     check(unloadedKeys.size() == 1 &&
               unloadedKeys.front() == "free" &&
               markedIneligibleKeys.size() == 1 &&
               markedIneligibleKeys.front() == "free" &&
               unloadQueue.empty() &&
-              result.cacheBytesDirty &&
-              result.shouldRefreshTotalBytes,
+              result.totalBytesUsed == 1 &&
+              result.unloadedTiles == 1,
           "TileCacheUnloadCoordinator: stale queue keys are dropped before continuing to later candidates");
 }
-void testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing() {
+void testTileCacheUnloadCoordinatorUsesLiveIncrementalBytes() {
     TileUnloadQueue unloadQueue;
     unloadQueue.pushBackIfAbsent("free");
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -11014,30 +11121,36 @@ void testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing() {
     free->content.loadState = TileLoadState::Done;
     tiles["free"] = std::move(free);
     int unloadAttempts = 0;
+    int64_t totalBytesUsed = 1;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
         tiles,
-        1,
         0,
         0.0,
-        true,
-        false,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
         [](const TilesetTile&) {
             return false;
         },
         [&](TilesetTile&) {
             ++unloadAttempts;
+            totalBytesUsed = 0;
             return TileCacheUnloadContentResult::Remove;
         },
         [&](const std::string& key) {
             unloadQueue.erase(key);
         },
-        [](TilesetTile&) {});
+        [](TilesetTile&) {},
+        []() {});
     check(unloadAttempts == 1 &&
               unloadQueue.empty() &&
-              result.cacheBytesDirty &&
-              !result.shouldRefreshTotalBytes,
-          "TileCacheUnloadCoordinator: smoothing keeps cache bytes dirty without same-frame refresh");
+              result.totalBytesUsed == 0 &&
+              result.unloadedTiles == 1,
+          "TileCacheUnloadCoordinator: unload decisions use live incremental bytes without a refresh pass");
 }
 void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     const TileKey erasedKey{"test", 1, 2, 3};
@@ -11173,7 +11286,7 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
           "TileContentCacheManager: owns byte accounting and unload queue state");
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -11247,7 +11360,7 @@ void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
               tiles[cacheKey]->content.contentKind == TileContentKind::Unknown,
           "TileContentCacheManager: unloading unknown content clears stale empty marker");
 }
-void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
+void testTileContentCacheManagerSettlesBytesDuringSmoothing() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -11255,9 +11368,9 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     const std::string cacheKey = TileCacheKey::forTile(key);
     auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
     TilesetTestAccess::makeGltfRenderReady(*tile);
-    tiles[cacheKey] = std::move(tile);    manager.updateTotalBytesUsed(tiles, lifecycle);
+    tiles[cacheKey] = std::move(tile);
+    manager.updateTotalBytesUsed(tiles, lifecycle);
     const int64_t bytesBeforeUnload = manager.totalBytesUsed();
-    manager.cacheBytesDirty() = false;
     manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
     manager.unloadCachedBytes(
         0,
@@ -11269,9 +11382,8 @@ void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
         [](TilesetTile&) {});
     check(bytesBeforeUnload > 0 &&
               manager.totalBytesUsed() < bytesBeforeUnload &&
-              manager.cacheBytesDirty() &&
               !manager.unloadQueue().contains(cacheKey),
-          "TileContentCacheManager: smoothing unloads but defers full byte refresh");
+          "TileContentCacheManager: smoothing unload settles incremental bytes immediately");
 }
 void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     TileContentCacheManager manager;
@@ -11301,7 +11413,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
     manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -11355,7 +11467,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
     manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -11410,7 +11522,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
     manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -11425,7 +11537,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
           "TileContentCacheManager: claimed upload keeps external wrapper queued before retry");
     lifecycle.loadLifecycle().cancelAndEraseCacheKey(childCacheKey);
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -11435,7 +11547,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
          &tiles,
          &childCacheKey](TilesetTile& tile) {
             clearChildrenCalled = true;
-            tile.children.clear();
+            tile.clearChildren();
             tiles.erase(childCacheKey);
         });
     check(!manager.unloadQueue().contains(rootCacheKey) &&
@@ -11478,7 +11590,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     manager.markEligibleForUnloading(tileForKey(tiles, rootCacheKey), rootCacheKey);
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -11494,7 +11606,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
           "TileContentCacheManager: active external subtree work keeps wrapper queued for retry");
     lifecycle.loadLifecycle().cancelAndEraseCacheKey(childCacheKey);
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -11504,7 +11616,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
          &tiles,
          &childCacheKey](TilesetTile& tile) {
             clearChildrenCalled = true;
-            tile.children.clear();
+            tile.clearChildren();
             tiles.erase(childCacheKey);
         });
     check(!manager.unloadQueue().contains(rootCacheKey) &&
@@ -13081,7 +13193,7 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
     check(terrainCache.find(cacheKey) != terrainCache.end() &&
               terrainCache.at(cacheKey)->valid() &&
               !emptyContentRegistry.contains(cacheKey) &&
@@ -13116,14 +13228,14 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
         nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitTerminalResult(
         contentResult,
         emptyContentRegistry,
         nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
     check(!childrenEnsured &&
               !resourcesDirty &&
               !emptyContentRegistry.contains("missing-terrain") &&
@@ -13151,7 +13263,7 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
     check(!emptyContentRegistry.contains(cacheKey) &&
               !childrenEnsured &&
               resourcesDirty &&
@@ -13180,7 +13292,7 @@ void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
     check(!emptyContentRegistry.contains(cacheKey) &&
               !childrenEnsured &&
               resourcesDirty &&
@@ -13209,7 +13321,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
     check(!emptyContentRegistry.contains(cacheKey) &&
               !childrenEnsured &&
               resourcesDirty &&
@@ -13238,7 +13350,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
     check(!emptyContentRegistry.contains(cacheKey) &&
               !childrenEnsured &&
               resourcesDirty &&
@@ -13474,17 +13586,11 @@ void testTileRenderPlanFinalizerKeepsGltfRenderContentDirect() {
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
         });
-    check(plan.renderEntries.size() == 1 &&
-              plan.renderEntries.front().selectedKey == rootKey &&
-              plan.renderEntries.front().renderKey == rootKey &&
-              plan.renderEntries.front().reason ==
-                  TileRenderEntryReason::Direct &&
-              !plan.renderEntries.front().usesAncestorFallback &&
-              plan.renderEntries.front().allowSynchronousMeshPrep &&
+    check(plan.renderEntries.empty() &&
               plan.renderEntryAncestorFallbackCount == 0 &&
               plan.renderEntrySynchronousPrepCount == 0 &&
               plan.renderEntryDeferredPrepCount == 0,
-          "TileRenderPlanFinalizer: glTF render content stays direct for render-resource prep");
+          "TileRenderPlanFinalizer: unready glTF waits for update resource preparation");
 }
 void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
     const TileKey parentKey{"test", 0, 0, 0};
@@ -13693,6 +13799,14 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
         TileRenderEntry entry;
         entry.selectedKey = selectedKey;
         entry.renderKey = renderKey;
+        auto selectedIt =
+            tiles.find(TileCacheKey::forTile(selectedKey));
+        entry.selectedTile =
+            selectedIt == tiles.end() ? nullptr : selectedIt->second;
+        auto renderIt =
+            tiles.find(TileCacheKey::forTile(renderKey));
+        entry.renderTile =
+            renderIt == tiles.end() ? nullptr : renderIt->second;
         entry.allowSynchronousMeshPrep = allowSynchronousMeshPrep;
         plan.renderEntries.push_back(entry);
     };
@@ -13710,14 +13824,12 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
             7,
             renderer,
             commands,
-            [&tiles](const TileKey& key) -> TilesetTile* {
-                auto it = tiles.find(TileCacheKey::forTile(key));
-                return it == tiles.end() ? nullptr : it->second;
-            },
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);
             },
-            [](const std::string&) {},
+            [](TilesetTile* tile, uint64_t frameNumber) {
+                tile->markUsedForRenderFrame(frameNumber);
+            },
             [&drawnKey](Renderer&,
                         TilesetTile& tile,
                         RenderCommandList& outCommands,
@@ -13752,6 +13864,8 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
     TileRenderEntry entry;
     entry.selectedKey = selectedKey;
     entry.renderKey = renderKey;
+    entry.selectedTile = &selected;
+    entry.renderTile = &render;
     entry.usesAncestorFallback = true;
     entry.surfaceClipEnabled = true;
     entry.surfaceClipUv = {0.0f, 0.5f, 0.5f, 0.5f};
@@ -13766,15 +13880,16 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
             11,
             renderer,
             commands,
-            [&tiles](const TileKey& key) -> TilesetTile* {
-                auto it = tiles.find(TileCacheKey::forTile(key));
-                return it == tiles.end() ? nullptr : it->second;
-            },
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);
             },
-            [&ineligibleKeys](const std::string& key) {
-                ineligibleKeys.push_back(key);
+            [&ineligibleKeys](
+                TilesetTile* tile,
+                uint64_t frameNumber) {
+                tile->markUsedForRenderFrame(frameNumber);
+                tile->addReference();
+                ineligibleKeys.push_back(
+                    TileCacheKey::forTile(tile->key));
             },
             [&renderKey](Renderer&,
                          TilesetTile& tile,
@@ -13795,7 +13910,7 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
               stats.drawAttempts == 1 &&
               selected.lastUsedFrame() == 11 &&
               render.lastUsedFrame() == 11 &&
-              selected.referenceCount() == 0 &&
+              selected.referenceCount() == 1 &&
               render.referenceCount() == 1,
           "TileRenderEntryCommandBuilder: selected and render tiles stay active for ancestor fallback");
     check(ineligibleKeys.size() == 2 &&
@@ -13842,13 +13957,12 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
           "TileRenderPlanFinalizer: fading tiles become fade-pass render entries");
     Renderer renderer(nullptr);
     RenderCommandList commands;
-    auto ensureTile = [&fading](const TileKey& key) -> TilesetTile* {
-        return key == fading.key ? &fading : nullptr;
-    };
     auto cacheKey = [](const TileKey& key) {
         return TileCacheKey::forTile(key);
     };
-    auto markIneligible = [](const std::string&) {};
+    auto protectTile = [](TilesetTile* tile, uint64_t frameNumber) {
+        tile->markUsedForRenderFrame(frameNumber);
+    };
     float submittedOpacity = 0.0f;
     auto buildCommand = [&submittedOpacity](Renderer&,
                                             TilesetTile&,
@@ -13869,9 +13983,8 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
             12,
             renderer,
             commands,
-            ensureTile,
             cacheKey,
-            markIneligible,
+            protectTile,
             buildCommand);
     check(commands.empty() && selectedStats.plannedEntries == 0,
           "TileRenderEntryCommandBuilder: selected pass skips fading render entries");
@@ -13882,16 +13995,15 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
             12,
             renderer,
             commands,
-            ensureTile,
             cacheKey,
-            markIneligible,
+            protectTile,
             buildCommand);
     check(commands.size() == 1 &&
               fadeStats.plannedEntries == 1 &&
               fadeStats.drawAttempts == 1 &&
               std::abs(submittedOpacity - 0.4f) < 1e-6f &&
               fading.lastUsedFrame() == 12 &&
-              fading.referenceCount() == 1,
+              fading.referenceCount() == 0,
           "TileRenderEntryCommandBuilder: fade pass submits fading render entries with opacity");
 }
 void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
@@ -13916,6 +14028,7 @@ void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
         TileLodTransitionOptions{
             &tiles,
             &activeTiles,
+            nullptr,
             true,
             1.0},
         [](const TileKey& key) {
@@ -13960,6 +14073,7 @@ void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
         TileLodTransitionOptions{
             &tiles,
             &activeTiles,
+            nullptr,
             true,
             1.0},
         [](const TileKey& key) {
@@ -14885,6 +14999,139 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
           "RenderContentRasterOverlayStateUpdater: textured more-detail raster is drawable");
     check(drawableAction.createRasterOverlayUpsampledChildren,
           "RenderContentRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
+}
+void testSurfaceRasterUpdaterRunsOncePerTilePerFrame() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    auto scheme = TileScheme::createXYZWebMercator();
+    TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
+                     scheme->tileToRectangle(
+                         TileKey{scheme->id(), 0, 0, 0}));
+    auto model = makeQuadTerrainGltfModel(tile.bounds);
+    model->rasterOverlayDetails =
+        makeProviderDetails(*scheme, tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources resources;
+    resources.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    resources.indexBuffer = std::make_unique<DummyBuffer>(12);
+    resources.indexCount = 6;
+    resources.vertexCount = 4;
+    tile.content.renderContent.addGltfPrimitiveResource(
+        std::move(resources));
+    tile.content.renderContent.markRenderContentReady();
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 0;
+    config.maxRasterNetworkInflight = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> order{0};
+
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget);
+    RasterMappedToTilesetTile* mapped =
+        tile.rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "Raster once-per-frame fixture creates a loading mapping");
+    if (!mapped || !loadingTile) return;
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+
+    const uint64_t beforeFrame =
+        tile.rasterOverlayState.authoritativeUpdateCount();
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget,
+        nullptr,
+        10);
+    check(
+        tile.rasterOverlayState.authoritativeUpdateCount() ==
+            beforeFrame + 1,
+        "Raster once-per-frame: selector performs one authoritative update");
+    check(mapped->getState() ==
+              RasterMappedToTilesetTile::State::Unattached,
+          "Raster once-per-frame: null-renderer selector leaves ready raster unattached");
+
+    Renderer renderer(nullptr);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget,
+        &renderer,
+        10);
+    check(
+        tile.rasterOverlayState.authoritativeUpdateCount() ==
+            beforeFrame + 1,
+        "Raster once-per-frame: main-thread materialization reuses selector state instead of rerunning mapping update");
+    check(mapped->getState() ==
+              RasterMappedToTilesetTile::State::Attached,
+        "Raster once-per-frame: update cache hit still materializes the raster attachment");
+
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget,
+        &renderer,
+        10);
+    check(
+        tile.rasterOverlayState.authoritativeUpdateCount() ==
+            beforeFrame + 1,
+        "Raster once-per-frame: repeated update preparation reuses the same result");
+
+    budget.beginFrame(11, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget,
+        &renderer,
+        11);
+    check(
+        tile.rasterOverlayState.authoritativeUpdateCount() ==
+            beforeFrame + 1,
+        "Raster stable mapping: the next frame reuses the attached mapping without an authoritative update");
+
+    tile.rasterOverlayState.releaseAndClearReferences(&renderer);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget,
+        &renderer,
+        11);
+    check(
+        tile.rasterOverlayState.authoritativeUpdateCount() ==
+            beforeFrame + 2,
+        "Raster once-per-frame: mapping mutation invalidates the same-frame cache");
 }
 void testSurfaceRasterUpdaterUpsampleUsesNaturalOverlayOrderNotPriority() {
     // Regression for the raster-overlay audit S5-01: doSubdivide must compare the
@@ -17526,7 +17773,7 @@ void testTileFrameDebugLogFormatterReportsReuseMode() {
     input.reuseMode = TileSelectionReuseMode::Stale;
     input.reuseRejectReason =
         TileSelectionReuseRejectReason::SelectorMovedStaleDisabled;
-    const std::array<char, 640> detail =
+    const std::array<char, 1536> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
     const std::string text(detail.data());
     check(text.find("reused=1") != std::string::npos &&
@@ -17549,7 +17796,7 @@ void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
     input.fadingRenderStats.deferredEntries = 7;
     input.renderStats.missedDrawEntries = 9;
     input.renderStats.deferredEntries = 13;
-    const std::array<char, 640> detail =
+    const std::array<char, 1024> detail =
         TileFrameDebugLogFormatter::renderBuildDetail(input);
     const std::string text(detail.data());
     check(text.find("entries=5") != std::string::npos &&
@@ -17601,21 +17848,27 @@ void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
                 true,
                 16.0},
             [&]() { refreshCalled = true; },
-            [&](const FrameState&) { selectCalled = true; },
+            [&](const FrameState&, TileSelectionPerformanceTimings&) {
+                selectCalled = true;
+            },
+            [](const TileKey&) -> TilesetTile* { return nullptr; },
             [&](const TileKey&) -> TilesetTile* { return nullptr; },
             [](TilesetTile&) {},
-            [&](const std::vector<TileLoadRequest>& requests,
+            [](TilesetTile&) {},
+            [&](TileLoadQueue& requests,
                 FrameResourceBudget*) {
                 requestCalled = true;
                 requestCount = requests.size();
+                requests.clear();
                 TileLoadRequestOutcome outcome;
                 outcome.issued = 1;
                 return outcome;
-            });
-    check(result.reusedSelection && refreshCalled && !selectCalled,
-          "TileUpdateSelectionWorkRunner: reuse refreshes render entries without reselecting");
-    check(loadQueue.size() == 1 && loadQueue.front().key == queuedKey,
-          "TileUpdateSelectionWorkRunner: reuse preserves queued resource work");
+            },
+            [](TilesetTile&) {});
+    check(result.reusedSelection && !refreshCalled && !selectCalled,
+          "TileUpdateSelectionWorkRunner: strict reuse preserves render entries without refreshing or reselecting");
+    check(loadQueue.empty(),
+          "TileUpdateSelectionWorkRunner: issued work leaves the selection queue");
     check(requestCalled && requestCount == 1,
           "TileUpdateSelectionWorkRunner: reuse continues requesting queued resources");
     check(reuseState.lastRequestIssuedWork,
@@ -17651,6 +17904,12 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
     tile.selectionFrameState.priority = 3.0;
     TilePlan tilePlan;
     tilePlan.visibleTiles.push_back(key);
+    TileRenderEntry renderEntry;
+    renderEntry.selectedKey = key;
+    renderEntry.renderKey = key;
+    renderEntry.selectedTile = &tile;
+    renderEntry.renderTile = &tile;
+    tilePlan.renderEntries.push_back(renderEntry);
     TileLoadQueue loadQueue;
     TileSelectionCounters counters;
     TileSelectionReuseState reuseState;
@@ -17686,7 +17945,10 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
             true,
             16.0},
         [&]() { refreshCalled = true; },
-        [](const FrameState&) {},
+        [](const FrameState&, TileSelectionPerformanceTimings&) {},
+        [&tile](const TileKey& requestedTile) -> TilesetTile* {
+            return requestedTile == tile.key ? &tile : nullptr;
+        },
         [&tile](const TileKey& requestedTile) -> TilesetTile* {
             return requestedTile == tile.key ? &tile : nullptr;
         },
@@ -17699,7 +17961,8 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
                 emptyContentRegistry,
                 nullptr);
         },
-        [&](const std::vector<TileLoadRequest>& requests,
+        [](TilesetTile&) {},
+        [&](TileLoadQueue& requests,
             FrameResourceBudget*) {
             requestCalled = true;
             requestCount = requests.size();
@@ -17709,13 +17972,12 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
             TileLoadRequestOutcome outcome;
             outcome.issued = requests.empty() ? 0 : 1;
             return outcome;
-        });
-    // In reuse mode, overlay prefetch is skipped (cesium-native align).
-    // Missing projections are handled on the next non-reuse selection.
-    check(refreshCalled && !unloadCalled,
-          "TileUpdateSelectionWorkRunner: reuse skips overlay prefetch (no unload)");
-    check(!requestCalled || requestCount == 0,
-          "TileUpdateSelectionWorkRunner: reuse skips overlay prefetch (no reload)");
+        },
+        [](TilesetTile&) {});
+    check(refreshCalled && unloadCalled,
+          "TileUpdateSelectionWorkRunner: strict reuse prepares the retained render plan and unloads content with a missing raster projection");
+    check(requestCalled && requestCount == 1 && requestedKey == key,
+          "TileUpdateSelectionWorkRunner: strict reuse queues the render tile for projection-aware reload");
 }
 void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
     FrameState previousFrame;
@@ -17783,12 +18045,17 @@ void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
         []() {},
         []() { return true; },
         [&]() { refreshCalled = true; },
-        [&](const FrameState&) { selectCalled = true; },
+        [&](const FrameState&, TileSelectionPerformanceTimings&) {
+            selectCalled = true;
+        },
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
-        [](const std::vector<TileLoadRequest>&, FrameResourceBudget*) {
+        [](TilesetTile&) {},
+        [](TileLoadQueue&, FrameResourceBudget*) {
             return TileLoadRequestOutcome{};
-        });
+        },
+        [](TilesetTile&) {});
     check(result.interactionActive && result.resourceSmoothingActive,
           "TileFrameWorkCoordinator: moving camera enters active resource smoothing");
     check(selectCalled && !refreshCalled &&
@@ -21936,7 +22203,7 @@ void testTilesetAdditiveRefinementCullsWithParentBounds() {
     if (!root || !child) return;
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->refine = TileRefine::Add;
-    root->children.clear();
+    root->clearChildren();
     root->children.push_back(child);
     child->parent = root;
     const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
@@ -21979,7 +22246,7 @@ void testTilesetAdditiveRefinedTileCountsAsPreviouslyRendered() {
     root->content.contentKind = TileContentKind::Empty;
     root->refine = TileRefine::Add;
     root->selectionFrameState.previousSelectionState = TileSelectionState::Refined;
-    root->children.clear();
+    root->clearChildren();
     check(TilesetTestAccess::singleTileDetailsAnyWereRenderedLastFrame(
               tileset,
               *root),
@@ -22119,7 +22386,7 @@ void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
           "Tileset: unconditional-child culling parent and child are created");
     if (!root || !child) return;
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-    root->children.clear();
+    root->clearChildren();
     root->children.push_back(child);
     child->parent = root;
     child->unconditionallyRefine = true;
@@ -22192,6 +22459,11 @@ void testTilesetEmptySelectorViewsShortCircuitTraversal() {
           "Tileset: empty selector views do not queue culled root when sibling preload is disabled");
 }
 void testTilesetFogDensityTableIsConfigurable() {
+    struct FogSelectionSnapshot {
+        std::vector<TileKey> visibleTiles;
+        int notRenderingNodeCount = 0;
+        TileSelectionCounters counters;
+    };
     auto runWithFogTable =
         [](std::vector<FogDensityAtHeight> fogDensityTable) {
         auto scheme = TileScheme::createGeographicTMS();
@@ -22203,7 +22475,7 @@ void testTilesetFogDensityTableIsConfigurable() {
         check(root != nullptr,
               "Tileset: fog-density configurable root tile is created");
         if (!root) {
-            return std::pair<TilePlan, TileSelectionCounters>{};
+            return FogSelectionSnapshot{};
         }
         const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
         Camera camera;
@@ -22221,22 +22493,24 @@ void testTilesetFogDensityTableIsConfigurable() {
             camera.position(),
             camera.direction());
         TilesetTestAccess::selectTiles(tileset, frameState);
-        return std::pair<TilePlan, TileSelectionCounters>{
-            tileset.tilePlan(),
+        return FogSelectionSnapshot{
+            tileset.tilePlan().visibleTiles,
+            tileset.tilePlan().notRenderingNodeCount,
             TilesetTestAccess::selectionCounters(tileset)};
     };
-    const auto [clearPlan, clearCounters] = runWithFogTable({{0.0, 0.0}});
-    const auto [densePlan, denseCounters] =
+    const FogSelectionSnapshot clear =
+        runWithFogTable({{0.0, 0.0}});
+    const FogSelectionSnapshot dense =
         runWithFogTable({{0.0, 1.0}, {1000000.0, 1.0}});
-    check(!clearPlan.visibleTiles.empty(),
+    check(!clear.visibleTiles.empty(),
           "Tileset: zero fog density table permits root selection");
-    check(clearCounters.visited > 0 &&
-              clearCounters.fogCulled == 0,
+    check(clear.counters.visited > 0 &&
+              clear.counters.fogCulled == 0,
           "Tileset: visible fog root counts as visited");
-    check(densePlan.visibleTiles.empty() &&
-              densePlan.notRenderingNodeCount > 0,
+    check(dense.visibleTiles.empty() &&
+              dense.notRenderingNodeCount > 0,
           "Tileset: custom dense fog density table culls selected roots");
-    check(denseCounters.fogCulled > 0,
+    check(dense.counters.fogCulled > 0,
           "Tileset: dense fog still visits the virtual terrain root before culling data tiles");
 }
 void testTileSelectionMetricsFogMatchesCesiumNativeRules() {
@@ -22857,11 +23131,11 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
           "Scene: additional glTF tileset roots are created");
     if (!westContent || !eastContent) return;
     westContent->content.renderContent.setGltfContent(makeTriangleGltfModel());
-    westContent->content.loadState = TileLoadState::Done;
-    westContent->content.contentKind = TileContentKind::Render;
+    westContent->markRenderContentLoaded();
+    GltfRenderResourcePreparer::prepare(*westContent, &device, 0.0);
     eastContent->content.renderContent.setGltfContent(makeTriangleGltfModel());
-    eastContent->content.loadState = TileLoadState::Done;
-    eastContent->content.contentKind = TileContentKind::Render;
+    eastContent->markRenderContentLoaded();
+    GltfRenderResourcePreparer::prepare(*eastContent, &device, 0.0);
     scene.addTileset(std::move(contentTileset));
     check(scene.tileset() == terrainRaw &&
               scene.additionalTilesetCount() == 1,
@@ -22942,8 +23216,8 @@ void testSceneTerrainContentCountsAsTerrainRenderContent() {
     if (!root) return;
     root->content.renderContent.setGltfContent(makeTriangleGltfModel());
     root->content.renderContent.setTerrainRenderContent(true);
-    root->content.loadState = TileLoadState::Done;
-    root->content.contentKind = TileContentKind::Render;
+    root->markRenderContentLoaded();
+    GltfRenderResourcePreparer::prepare(*root, &device, 0.0);
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
     scene.render();
@@ -23306,14 +23580,19 @@ void testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers() {
     oldPlan = TilePlan{};
     oldPlan.visibleTiles.push_back(rootKey);
     oldPlan.visibleTiles.push_back(childKey);
+    oldPlan.tilesToRenderThisFrame = {oldRoot, oldChild};
     TileRenderEntry rootEntry;
     rootEntry.selectedKey = rootKey;
     rootEntry.renderKey = rootKey;
+    rootEntry.selectedTile = oldRoot;
+    rootEntry.renderTile = oldRoot;
     rootEntry.reason = TileRenderEntryReason::Direct;
     rootEntry.selectedThisFrame = true;
     TileRenderEntry childEntry;
     childEntry.selectedKey = childKey;
     childEntry.renderKey = childKey;
+    childEntry.selectedTile = oldChild;
+    childEntry.renderTile = oldChild;
     childEntry.reason = TileRenderEntryReason::Direct;
     childEntry.selectedThisFrame = true;
     oldPlan.renderEntries.push_back(rootEntry);
@@ -23360,7 +23639,15 @@ void testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers() {
     TilePlan& newPlan = TilesetTestAccess::mutableTilePlan(*newRaw);
     newPlan = TilePlan{};
     newPlan.visibleTiles.push_back(rootKey);
-    newPlan.renderEntries.push_back(rootEntry);
+    newPlan.tilesToRenderThisFrame.push_back(newRoot);
+    TileRenderEntry newRootEntry;
+    newRootEntry.selectedKey = rootKey;
+    newRootEntry.renderKey = rootKey;
+    newRootEntry.selectedTile = newRoot;
+    newRootEntry.renderTile = newRoot;
+    newRootEntry.reason = TileRenderEntryReason::Direct;
+    newRootEntry.selectedThisFrame = true;
+    newPlan.renderEntries.push_back(newRootEntry);
     check(!newRaw->shouldHoldPresentationFrame(),
           "Scene: terrain takeover fixture replacement root passes base imagery hold");
     check(scene.shouldHoldPresentationFrame(),
@@ -23416,9 +23703,12 @@ void testScenePresentationHoldsWhenPlannedTerrainLacksBaseImageryCommand() {
     TilePlan& plan = TilesetTestAccess::mutableTilePlan(*terrainRaw);
     plan = TilePlan{};
     plan.visibleTiles.push_back(rootKey);
+    plan.tilesToRenderThisFrame.push_back(root);
     TileRenderEntry entry;
     entry.selectedKey = rootKey;
     entry.renderKey = rootKey;
+    entry.selectedTile = root;
+    entry.renderTile = root;
     entry.reason = TileRenderEntryReason::Direct;
     entry.selectedThisFrame = true;
     plan.renderEntries.push_back(entry);
@@ -23461,8 +23751,8 @@ void testSceneSortsTransparentGltfByCameraDepth() {
         makeTransparentTrianglePrimitiveAt(target + Vec3(900000.0, 0.0, 0.0)));
     model->primitives.push_back(makeTransparentTrianglePrimitiveAt(target));
     root->content.renderContent.setGltfContent(std::move(model));
-    root->content.loadState = TileLoadState::Done;
-    root->content.contentKind = TileContentKind::Render;
+    root->markRenderContentLoaded();
+    GltfRenderResourcePreparer::prepare(*root, &device, 0.0);
     scene.setTileset(std::move(contentTileset));
     scene.update(1.0 / 60.0);
     scene.render();
@@ -24577,6 +24867,10 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
           "TileRenderPlanFrameRefresher: ready but unattached mapped raster still contributes to loading progress like cesium-native");
     Renderer renderer(nullptr);
     RenderCommandList commands;
+    TilesetTestAccess::prepareRenderTileRasterOverlays(
+        tileset,
+        *root,
+        &renderer);
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
         renderer,
@@ -24584,7 +24878,7 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
         commands,
         1.0f);
     check(rootMapped->getState() == RasterMappedToTilesetTile::State::Attached,
-          "TileRenderPlanFrameRefresher: progress fixture attaches mapped raster during draw command preparation");
+          "TileRenderPlanFrameRefresher: progress fixture attaches mapped raster during update preparation");
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& attachedPlan = tileset.tilePlan();
@@ -25449,7 +25743,8 @@ void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
           "Tileset: stale raster-detail upsample fixture has ready more-detail raster");
     TilesetTile* child = root->children.front();
     child->content.markRasterDetailUpsample();
-    GltfModel* currentParentModel = root->content.renderContent.gltfContent();
+    auto currentParentModel =
+        root->content.renderContent.editGltfContent();
     if (!currentParentModel) return;
     currentParentModel->rasterOverlayDetails = RasterOverlayDetails{};
     TilesetTestAccess::requestMissingTile(tileset, child->key);
@@ -26126,7 +26421,7 @@ void testTilesetUnloadKeepsParentWithReferencedDescendant() {
     root->children.front()->addReference();
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+    TilesetTestAccess::unloadCachedBytes(tileset, -1);
     check(TilesetTestAccess::findTile(tileset, rootKey) == root,
           "Tileset: unload skips parent while descendant is referenced");
     check(TilesetTestAccess::findTile(tileset, childKey) != nullptr,
@@ -26181,8 +26476,10 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
         std::move(parentModel),
         Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources rootResources;
+    rootResources.vertexBuffer = std::make_unique<DummyBuffer>(64);
     root->content.renderContent.addGltfPrimitiveResource(
-        GltfPrimitiveRenderResources{});
+        std::move(rootResources));
     root->markRenderContentDone();
     root->geometricError = 100.0;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
@@ -26315,7 +26612,7 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     child->content.renderContent.setMeshReady(true);
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+    TilesetTestAccess::unloadCachedBytes(tileset, -1);
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
     TilesetTile* childAfter = TilesetTestAccess::findTile(tileset, childKey);
     check(rootAfter == root &&
@@ -26350,7 +26647,7 @@ void testTilesetUnloadExternalContentClearsChildren() {
     childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
-    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+    TilesetTestAccess::unloadCachedBytes(tileset, -1);
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
     check(rootAfter == root &&
               rootAfter->children.empty() &&
@@ -26842,13 +27139,13 @@ int main() {
     testTileCacheUnloadCoordinatorRotatesDeferredCandidates();
     testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred();
     testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues();
-    testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing();
+    testTileCacheUnloadCoordinatorUsesLiveIncrementalBytes();
     testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches();
     testTileIndexStateErasesTerminalResults();
     testTileContentCacheManagerOwnsBytesQueueAndUnload();
     testTileContentCacheManagerEraseIndexClearsClaimedUploadWork();
     testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload();
-    testTileContentCacheManagerDefersByteRefreshDuringSmoothing();
+    testTileContentCacheManagerSettlesBytesDuringSmoothing();
     testTileContentCacheManagerDefersExternalSubtreeWithActiveWork();
     testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload();
     testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadCompletes();
@@ -27159,6 +27456,7 @@ int main() {
     testTilesetUnloadExternalContentClearsChildren();
     testTilesetDirectExternalContentUnloadClearsChildren();
     testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction();
+    testSurfaceRasterUpdaterRunsOncePerTilePerFrame();
     testSurfaceRasterUpdaterUpsampleUsesNaturalOverlayOrderNotPriority();
     testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative();
     testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder();

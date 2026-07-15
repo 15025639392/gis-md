@@ -8,9 +8,11 @@ namespace earth_engine {
 
 bool TileUnloadPolicy::isEligibleForContentUnloadQueue(
     const TilesetTile& tile) {
-    if (tile.content.loadState == TileLoadState::Unloaded ||
+    if ((tile.content.loadState == TileLoadState::Unloaded &&
+         !tile.content.renderContent.hasFillResources()) ||
         tile.content.loadState == TileLoadState::ContentLoading ||
-        tile.content.loadState == TileLoadState::Unloading) {
+        tile.content.loadState == TileLoadState::Unloading ||
+        tile.content.renderContent.asyncGpuUploadPending) {
         return false;
     }
     return true;

@@ -22,7 +22,7 @@ void TileContentUploadPolicy::prepareGltfRenderContent(
 
 void TileContentUploadPolicy::markGltfRenderResourcesFailed(
     TilesetTile& tile) {
-    tile.content.renderContent.clearGltfContent();
+    tile.content.renderContent.clearGltfContentPreservingFill();
     tile.markRenderContentFailedTemporarily();
 }
 

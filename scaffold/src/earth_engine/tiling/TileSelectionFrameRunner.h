@@ -4,6 +4,7 @@
 #include "TilePlan.h"
 #include "TileSelectionCounters.h"
 #include "TileSelectionFrameBuilder.h"
+#include "TileSelectionPerformanceTimings.h"
 #include "TileSelectionRootPolicy.h"
 #include "../debug/PerfTimer.h"
 #include "../scene/FrameState.h"
@@ -26,6 +27,7 @@ struct TileSelectionFrameRunInput {
     std::string tileSchemeId;
     std::vector<TileKey> explicitRoots;
     bool useVirtualTerrainRoot = false;
+    TileSelectionPerformanceTimings* performanceTimings = nullptr;
 };
 
 class TileSelectionFrameRunner {
@@ -40,7 +42,9 @@ public:
         EnsureTileFn&& ensureTile,
         VisitTileIfNeededFn&& visitTileIfNeeded,
         FinalizeSelectedTilePlanFn&& finalizeSelectedTilePlan) {
-        [[maybe_unused]] const double selectorStartMs = perf::nowMs();
+        if (input.performanceTimings) {
+            *input.performanceTimings = TileSelectionPerformanceTimings{};
+        }
         input.tilePlan = TilePlan{};
         input.tilePlan.frameId = input.frameState.frameId;
         input.loadQueue.clear();
@@ -72,10 +76,18 @@ public:
                 visitTileIfNeeded(*root, selectorFrame);
             }
         }
-        [[maybe_unused]] const double traversalMs = perf::nowMs() - traversalStartMs;
+        if (input.performanceTimings) {
+            input.performanceTimings->traversalMs =
+                perf::nowMs() - traversalStartMs;
+        }
 
-        [[maybe_unused]] const auto finalizeTimings = finalizeSelectedTilePlan(
-            input.frameState);
+        const double renderPlanStartMs = perf::nowMs();
+        [[maybe_unused]] const auto finalizeTimings =
+            finalizeSelectedTilePlan(input.frameState);
+        if (input.performanceTimings) {
+            input.performanceTimings->renderPlanMs =
+                perf::nowMs() - renderPlanStartMs;
+        }
     }
 };
 

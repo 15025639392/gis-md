@@ -92,7 +92,7 @@ void TileLoadResultMetadataApplicator::apply(
     }
 
     if (metadata.updatedBoundingVolume) {
-        tile.boundingVolume = std::move(metadata.updatedBoundingVolume);
+        tile.setBoundingVolume(std::move(metadata.updatedBoundingVolume));
         if (!metadata.terrainHeightRange) {
             metadata.terrainHeightRange = {
                 tile.boundingVolume->minimumHeight,
@@ -100,8 +100,8 @@ void TileLoadResultMetadataApplicator::apply(
         }
     }
     if (metadata.updatedContentBoundingVolume) {
-        tile.contentBoundingVolume =
-            std::move(metadata.updatedContentBoundingVolume);
+        tile.setContentBoundingVolume(
+            std::move(metadata.updatedContentBoundingVolume));
     }
     if (metadata.rasterOverlayDetails) {
         if (RasterOverlayDetails* details =

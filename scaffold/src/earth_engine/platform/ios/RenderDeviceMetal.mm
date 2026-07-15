@@ -22,6 +22,9 @@ public:
         : tex_(tex), sampler_(sampler) {}
     int width() const override { return static_cast<int>(tex_.width); }
     int height() const override { return static_cast<int>(tex_.height); }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(tex_.allocatedSize);
+    }
     id<MTLTexture> mtl() const { return tex_; }
     id<MTLSamplerState> sampler() const { return sampler_; }
 private:
@@ -397,7 +400,7 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     PipelineLayout layout = PipelineLayout::Surface;
 
     // Probe the terrain lightweight shader FIRST (unique entry points) so it is
-    // never mis-detected as tile/gltf. It uses the Surface stride-32 descriptor.
+    // never mis-detected as tile/gltf.
     id<MTLFunction> vertexFunc = [library newFunctionWithName:@"terrainVertex"];
     id<MTLFunction> fragmentFunc = [library newFunctionWithName:@"terrainFragment"];
     if (vertexFunc && fragmentFunc) {
@@ -461,10 +464,8 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
         vd.layouts[0].stride = 12;
-    } else if (layout == PipelineLayout::Surface ||
-               layout == PipelineLayout::Terrain) {
-        // Both use the 32-byte TerrainGpuVertex/surface layout:
-        // POSITION(12) + NORMAL(12) + TEXCOORD_0(8).
+    } else if (layout == PipelineLayout::Surface) {
+        // Surface layout: POSITION(12) + NORMAL(12) + TEXCOORD_0(8).
         vd.attributes[0].format = MTLVertexFormatFloat3;   // position
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
@@ -475,6 +476,19 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[2].offset = 24;
         vd.attributes[2].bufferIndex = 0;
         vd.layouts[0].stride = 32;
+    } else if (layout == PipelineLayout::Terrain) {
+        // Terrain layout: POSITION(12) + NORMAL(12) +
+        // packed TEXCOORD_0/1(16).
+        vd.attributes[0].format = MTLVertexFormatFloat3;
+        vd.attributes[0].offset = 0;
+        vd.attributes[0].bufferIndex = 0;
+        vd.attributes[1].format = MTLVertexFormatFloat3;
+        vd.attributes[1].offset = 12;
+        vd.attributes[1].bufferIndex = 0;
+        vd.attributes[2].format = MTLVertexFormatFloat4;
+        vd.attributes[2].offset = 24;
+        vd.attributes[2].bufferIndex = 0;
+        vd.layouts[0].stride = 40;
     } else if (layout == PipelineLayout::Gltf) {
         vd.attributes[0].format = MTLVertexFormatFloat3;   // position
         vd.attributes[0].offset = 0;

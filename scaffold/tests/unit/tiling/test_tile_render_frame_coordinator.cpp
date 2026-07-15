@@ -46,6 +46,8 @@ TEST(
     TileRenderEntry entry;
     entry.selectedKey = childKey;
     entry.renderKey = parentKey;
+    entry.selectedTile = findTile(tiles, childKey);
+    entry.renderTile = findTile(tiles, parentKey);
     entry.reason = TileRenderEntryReason::AncestorFallback;
     entry.opacity = 0.65f;
     entry.usesAncestorFallback = true;
@@ -54,11 +56,10 @@ TEST(
     entry.surfaceClipUv = {0.5f, 0.0f, 0.5f, 0.5f};
     plan.renderEntries.push_back(entry);
 
-    TileUnloadQueue unloadQueue;
     std::vector<ActivatedRasterOverlay*> overlays;
-    bool cacheBytesDirty = false;
     std::vector<std::string> ineligibleKeys;
-    bool updateTotalBytesCalled = false;
+    int trackedReferences = 0;
+    bool trimRasterCachesCalled = false;
     bool unloadCachedBytesCalled = false;
     bool buildCommandCalled = false;
     float forwardedOpacity = 0.0f;
@@ -70,25 +71,20 @@ TEST(
     TileRenderFrameCoordinator::run(
         TileRenderFrameCoordinatorInput{
             plan,
-            tiles,
-            unloadQueue,
             overlays,
-            cacheBytesDirty,
             41,
             Vec3{6378137.0, 0.0, 0.0},
             {},
             0,
             false,
-            true,
-            512,
-            1024},
+            true},
         renderer,
         commands,
-        [&tiles](const TileKey& key) {
-            return findTile(tiles, key);
-        },
         [&ineligibleKeys](const std::string& cacheKey) {
             ineligibleKeys.push_back(cacheKey);
+        },
+        [&trackedReferences](TilesetTile*, std::string, bool) {
+            ++trackedReferences;
         },
         [&](Renderer&,
             TilesetTile& tile,
@@ -105,10 +101,11 @@ TEST(
             command.kind = RenderCommandKind::SurfaceTile;
             outCommands.push_back(std::move(command));
         },
-        [](const TilesetTile*, const std::string&) {},
-        [&updateTotalBytesCalled]() {
-            updateTotalBytesCalled = true;
+        [&trimRasterCachesCalled](bool cachePressure) {
+            EXPECT_FALSE(cachePressure);
+            trimRasterCachesCalled = true;
         },
+        []() { return false; },
         [&unloadCachedBytesCalled]() {
             unloadCachedBytesCalled = true;
         });
@@ -128,6 +125,7 @@ TEST(
     EXPECT_EQ(findTile(tiles, childKey)->lastUsedFrame(), 41u);
     EXPECT_EQ(findTile(tiles, parentKey)->lastUsedFrame(), 41u);
     EXPECT_EQ(findTile(tiles, parentKey)->referenceCount(), 1);
-    EXPECT_FALSE(updateTotalBytesCalled);
+    EXPECT_EQ(trackedReferences, 2);
+    EXPECT_TRUE(trimRasterCachesCalled);
     EXPECT_FALSE(unloadCachedBytesCalled);
 }

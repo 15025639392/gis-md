@@ -5,8 +5,6 @@
 #include "TileRenderEntryCommandBuilder.h"
 #include "TileRenderFrameMaintenance.h"
 #include "TileSelectionMetrics.h"
-#include "TileUnloadPolicy.h"
-#include "TileUnloadQueue.h"
 #include "TilesetTile.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/math/Vec3.h"
@@ -16,9 +14,8 @@
 
 #include <algorithm>
 #include <array>
-#include <memory>
 #include <string>
-#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace earth_engine {
@@ -28,41 +25,34 @@ struct FogDensityAtHeight;
 
 struct TileRenderFrameBuildInput {
     TilePlan& tilePlan;
-    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
-    TileUnloadQueue& unloadQueue;
     std::vector<ActivatedRasterOverlay*>& rasterOverlays;
-    bool& cacheBytesDirty;
     uint64_t frameNumber = 0;
     Vec3 lastCameraPosition;
     const std::vector<FogDensityAtHeight>& fogDensityTable;
     int fogCulled = 0;
     bool resourceSmoothingActive = false;
     bool interactionActive = false;
-    int64_t totalBytesUsed = 0;
-    int64_t maximumCachedBytes = 0;
 };
 
 class TileRenderFrameBuilder {
 public:
-    template <typename EnsureTileFn,
-              typename TerrainCacheKeyFn,
+    template <typename TerrainCacheKeyFn,
               typename MarkIneligibleFn,
+              typename TrackReferenceFn,
               typename BuildTileDrawCommandFn,
-              typename DetachInactiveFn,
-              typename MarkEligibleFn,
-              typename UpdateTotalBytesFn,
+              typename TrimRasterCachesFn,
+              typename ShouldUnloadCachedBytesFn,
               typename UnloadCachedBytesFn>
     static void build(
         TileRenderFrameBuildInput input,
         Renderer& renderer,
         RenderCommandList& commands,
-        EnsureTileFn&& ensureTile,
         TerrainCacheKeyFn&& terrainCacheKey,
         MarkIneligibleFn&& markIneligible,
+        TrackReferenceFn&& trackReference,
         BuildTileDrawCommandFn&& buildTileDrawCommand,
-        DetachInactiveFn&& detachInactive,
-        MarkEligibleFn&& markEligible,
-        UpdateTotalBytesFn&& updateTotalBytes,
+        TrimRasterCachesFn&& trimRasterCaches,
+        ShouldUnloadCachedBytesFn&& shouldUnloadCachedBytes,
         UnloadCachedBytesFn&& unloadCachedBytes) {
         const double buildCommandsStartMs = perf::nowMs();
         const size_t commandsBeforeTileset = commands.size();
@@ -95,6 +85,36 @@ public:
                 input.fogDensityTable,
                 cameraHeight);
 
+        std::unordered_set<TilesetTile*> activeTiles;
+        activeTiles.reserve(
+            input.tilePlan.visibleTiles.size() +
+            input.tilePlan.tilesFadingOut.size());
+        auto protectTile = [&](TilesetTile* tile, uint64_t frameNumber) {
+            if (!tile) {
+                return;
+            }
+            tile->markUsedForRenderFrame(frameNumber);
+            if (!activeTiles.insert(tile).second) {
+                return;
+            }
+            tile->addReference();
+            std::string cacheKey = terrainCacheKey(tile->key);
+            markIneligible(cacheKey);
+            trackReference(tile, std::move(cacheKey), true);
+        };
+
+        // Cesium Native keeps ViewUpdateResult::tilesToRenderThisFrame and
+        // tilesFadingOut as intrusive Tile pointers. Mirror that ownership
+        // before cache maintenance, including selected tiles whose raster is
+        // not drawable yet and therefore have no render entry.
+        for (TilesetTile* tile : input.tilePlan.tilesToRenderThisFrame) {
+            protectTile(tile, input.frameNumber);
+        }
+        for (TilesetTile* tile :
+             input.tilePlan.tilesFadingOutThisFrame) {
+            protectTile(tile, input.frameNumber);
+        }
+
         TileRenderEntryCommandStats renderStats;
         double selectedBuildMs = 0.0;
         double fadeBuildMs = 0.0;
@@ -125,9 +145,8 @@ public:
                     input.frameNumber,
                     renderer,
                     commands,
-                    ensureTile,
                     terrainCacheKey,
-                    markIneligible,
+                    protectTile,
                     buildTileDrawCommand);
             mergeRenderStats(stats);
             return stats;
@@ -172,26 +191,13 @@ public:
         input.tilePlan.renderEntryFadingCommandDeferredCount =
             fadingStats.deferredEntries;
 
-        const bool hasQueuedUnloadingTile =
-            TileUnloadPolicy::hasQueuedTileInState(
-                input.unloadQueue,
-                input.tiles,
-                TileLoadState::Unloading);
         const TileRenderFrameMaintenanceTimings maintenanceTimings =
             TileRenderFrameMaintenance::run(
-                input.tiles,
-                input.frameNumber,
-                input.rasterOverlays,
-                input.cacheBytesDirty,
-                input.resourceSmoothingActive,
-                input.totalBytesUsed > input.maximumCachedBytes ||
-                    hasQueuedUnloadingTile,
-                detachInactive,
-                markEligible,
-                updateTotalBytes,
+                trimRasterCaches,
+                shouldUnloadCachedBytes,
                 unloadCachedBytes);
 
-        const std::array<char, 640> buildBreakdown =
+        const std::array<char, 1024> buildBreakdown =
             TileFrameDebugLogFormatter::renderBuildDetail(
                 TileRenderDebugLogInput{
                     selectedBuildMs,

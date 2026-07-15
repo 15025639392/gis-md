@@ -11,6 +11,8 @@
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
+#include "earth_engine/tiling/TileContentCacheManager.h"
+#include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileContentAccess.h"
 #include "earth_engine/tiling/TileLoadDomainPolicy.h"
 #include "earth_engine/tiling/TileLoadStatePredicates.h"
@@ -23,6 +25,7 @@
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
 #include "earth_engine/tiling/TileAvailabilityUpdateCommitter.h"
+#include "../../helpers/MockRenderDevice.h"
 
 #include <algorithm>
 #include <array>
@@ -261,7 +264,7 @@ void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(childrenEnsured);
@@ -335,7 +338,7 @@ void expectTerminalResultClearsStaleRenderResidue(
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
-        []() {});
+        [](TilesetTile&) {});
 
     EXPECT_FALSE(tile.content.renderContent.hasGltfContent());
     EXPECT_FALSE(tile.content.renderContent.isTerrainRenderContent());
@@ -371,7 +374,7 @@ void expectRetryLaterPreservesRenderContentLikeCesiumNative(
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_TRUE(tile.content.renderContent.hasGltfContent());
     EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
@@ -406,7 +409,7 @@ void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_TRUE(resourcesDirty);
@@ -441,7 +444,7 @@ void expectTerrainTerminalIgnoresMetadata(TileLoadStatus status,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
-        []() {});
+        [](TilesetTile&) {});
 
     EXPECT_FALSE(tile.boundingVolume.has_value());
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
@@ -475,7 +478,7 @@ void expectContentTerminalIgnoresMetadata(TileLoadStatus status,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
-        []() {});
+        [](TilesetTile&) {});
 
     EXPECT_FALSE(tile.boundingVolume.has_value());
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
@@ -598,7 +601,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             nullptr,
             [&tile](const TileKey&) -> TilesetTile* { return &tile; },
             [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-            [&resourcesDirty]() { resourcesDirty = true; });
+            [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
         EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
         EXPECT_FALSE(childrenEnsured);
@@ -658,7 +661,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             childrenEnsured = true;
             childResult = contentAccess.ensureTileChildren(tile);
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(childrenEnsured);
     EXPECT_FALSE(childResult.retryLater);
@@ -760,7 +763,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             return contentAccess.ensureTile(key);
         },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
@@ -836,7 +839,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             return contentAccess.ensureTile(key);
         },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
@@ -902,7 +905,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             [&childrenEnsuredDuringCommit](TilesetTile&) {
                 childrenEnsuredDuringCommit = true;
             },
-            []() {});
+            [](TilesetTile&) {});
 
         EXPECT_FALSE(childrenEnsuredDuringCommit);
         EXPECT_TRUE(root->children.empty());
@@ -973,7 +976,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             [&childrenEnsuredDuringCommit](TilesetTile&) {
                 childrenEnsuredDuringCommit = true;
             },
-            []() {});
+            [](TilesetTile&) {});
 
         EXPECT_FALSE(childrenEnsuredDuringCommit);
         EXPECT_TRUE(root->children.empty());
@@ -1095,7 +1098,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
     EXPECT_TRUE(tile.content.renderContent.hasGltfPrimitiveResources());
@@ -1139,7 +1142,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             return contentAccess.ensureTile(tileKey);
         },
         [](TilesetTile&) {},
-        []() {});
+        [](TilesetTile&) {});
 
     ASSERT_EQ(TileLoadState::FailedTemporarily, tile->content.loadState);
     ASSERT_TRUE(tile->content.renderContent.hasGltfContent());
@@ -1207,7 +1210,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.boundingVolume.has_value());
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
@@ -1247,7 +1250,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
@@ -1286,7 +1289,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; },
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; },
         &provider);
 
     ASSERT_EQ(1u, provider.appliedUpdates.size());
@@ -1329,7 +1332,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
-        []() {},
+        [](TilesetTile&) {},
         &provider);
 
     ASSERT_EQ(1u, provider.appliedUpdates.size());
@@ -1427,7 +1430,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             nullptr,
             [&tile](const TileKey&) -> TilesetTile* { return &tile; },
             [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-            [&resourcesDirty]() { resourcesDirty = true; },
+            [&resourcesDirty](TilesetTile&) { resourcesDirty = true; },
             &provider);
 
         EXPECT_TRUE(provider.appliedUpdates.empty());
@@ -1462,7 +1465,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
@@ -1501,7 +1504,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
-        []() {});
+        [](TilesetTile&) {});
 
     ASSERT_TRUE(tile.boundingVolume.has_value());
     EXPECT_EQ(originalRectangle, tile.boundingVolume->region);
@@ -1548,7 +1551,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.boundingVolume.has_value());
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
@@ -1911,7 +1914,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             committedTile.markRenderContentDone();
             ++ensureGltfCalls;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_EQ(TileAvailabilityState::Available,
               provider.availabilityState(availableChildKey));
@@ -1995,7 +1998,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             committedTile.markRenderContentDone();
             ++ensureGltfCalls;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_EQ(1u, provider.appliedUpdates.size());
     EXPECT_EQ(update.layerIndex, provider.appliedUpdates.front().layerIndex);
@@ -2126,7 +2129,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             [&ensureGltfCalls](TilesetTile&) {
                 ++ensureGltfCalls;
             },
-            [&resourcesDirty]() { resourcesDirty = true; });
+            [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
         ASSERT_EQ(1u, provider.appliedUpdates.size());
         EXPECT_EQ(update.layerIndex, provider.appliedUpdates.front().layerIndex);
@@ -2239,7 +2242,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(commitChildren.changed);
@@ -2356,7 +2359,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.content.renderContent.markRenderContentReady();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(commitChildren.changed);
@@ -2452,7 +2455,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             committedTile.markRenderContentDone();
             ++ensureGltfCalls;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
     ASSERT_TRUE(tile.boundingVolume.has_value());
@@ -2534,6 +2537,62 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     FailedGltfResourcePreparationPreservesReadyFillAndMappings) {
+    const TileKey key{"test", 0, 0, 0};
+    const Rectangle bounds =
+        Rectangle::fromDegrees(-20.0, -10.0, 20.0, 10.0);
+    TilesetTile tile(key, bounds);
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    tile.content.renderContent.setFillContent(
+        std::make_unique<GltfModel>());
+    GltfPrimitiveRenderResources fillResources;
+    fillResources.vertexBuffer =
+        std::make_unique<earth_engine::testing::DummyBuffer>(64);
+    fillResources.indexBuffer =
+        std::make_unique<earth_engine::testing::DummyBuffer>(24);
+    fillResources.vertexCount = 4;
+    fillResources.indexCount = 6;
+    tile.content.renderContent.beginFillGpuResourceBuild(0, 1);
+    tile.content.renderContent.addFillPrimitiveResource(
+        std::move(fillResources));
+    const std::optional<TileFillGeometrySignature> fillSignature =
+        TileFillGeometrySignature::tryCreate(
+            bounds,
+            RasterOverlayProjection::Geographic,
+            4);
+    ASSERT_TRUE(fillSignature.has_value());
+    tile.content.renderContent.commitFillResourcesReady(*fillSignature);
+    ASSERT_TRUE(tile.content.renderContent.isFillReady());
+
+    TileLoadResult loadResult = makeTerrainContentContentResult(
+        std::make_unique<GltfModel>());
+    TileContentUploadCommitter::prepareRenderContent(
+        tile,
+        std::move(loadResult.content));
+    RasterMappedToTilesetTile& mapping =
+        tile.rasterOverlayState.ensureMapping(0);
+    RasterMappedToTilesetTile* const mappingBeforeFailure = &mapping;
+
+    const TileContentUploadCommitAction action =
+        TileContentUploadCommitter::finishRenderResourcePreparation(
+            tile,
+            false);
+
+    EXPECT_TRUE(action.resourcesDirty);
+    EXPECT_FALSE(action.ensureChildren);
+    EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_TRUE(tile.content.renderContent.isFillReady());
+    EXPECT_TRUE(tile.content.renderContent.drawsFill());
+    ASSERT_EQ(1u, tile.rasterOverlayState.mappingCount());
+    EXPECT_EQ(
+        mappingBeforeFailure,
+        tile.rasterOverlayState.mappingAt(0));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentUploadPreservesStaleContentBoundsWhenOnlyTileBoundsUpdateLikeCesiumNative) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain-updated-bounds";
@@ -2606,7 +2665,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     const RasterOverlayDetails& committedDetails =
         tile.content.renderContent.rasterOverlayDetails();
@@ -2724,7 +2783,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     const RasterOverlayDetails& committedDetails =
         tile.content.renderContent.rasterOverlayDetails();
@@ -2832,7 +2891,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     const GltfModel* committedModel =
         tile.content.renderContent.gltfModelForRead();
@@ -2935,7 +2994,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     const GltfModel* committedModel =
         tile.content.renderContent.gltfModelForRead();
@@ -3055,7 +3114,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     const GltfModel* committedModel =
         tile.content.renderContent.gltfModelForRead();
@@ -3162,7 +3221,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_TRUE(tile.rasterOverlayState.mappings().empty());
     EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
@@ -3261,7 +3320,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_EQ(TileContentKind::Empty, tile.content.contentKind);
     EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
@@ -3351,7 +3410,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
@@ -3431,7 +3490,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             committedTile.markRenderContentDone();
             ++ensureGltfCalls;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
     EXPECT_FALSE(tile.content.renderContent.isMeshReady());
@@ -3453,6 +3512,53 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(
+    TilePendingLoadCommitCoordinatorTest,
+    AsyncUploadCommitReconcilesResidentTileBytesBeforeGpuDrain) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    PendingTileLoad upload{
+        TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeTerrainContentContentResult(
+            makeCommitCoordinatorQuadTerrainGltfModel(
+                Rectangle::fromDegrees(-1.0, -1.0, 1.0, 1.0)))};
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    TileLoadLifecycle lifecycle;
+    TileContentCacheManager cache;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        nullptr,
+        {},
+        emptyContentRegistry,
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [](TilesetTile& committedTile) {
+            committedTile.content.renderContent.asyncGpuUploadPending = true;
+        },
+        [&cache, &resourcesDirty](TilesetTile& committedTile) {
+            resourcesDirty = true;
+            cache.reconcileTileBytes(committedTile);
+        });
+
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_TRUE(tile.content.renderContent.asyncGpuUploadPending);
+    EXPECT_EQ(TileLoadState::ContentLoaded, tile.content.loadState);
+    EXPECT_GT(cache.accountedTileBytes(cacheKey), 0);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -3517,7 +3623,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.initialBoundingVolume.has_value());
     EXPECT_EQ(looseRectangle, tile.initialBoundingVolume->region);
@@ -3609,7 +3715,7 @@ TEST(
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.initialBoundingVolume.has_value());
     EXPECT_EQ(looseRectangle, tile.initialBoundingVolume->region);
@@ -3707,7 +3813,7 @@ TEST(
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.initialBoundingVolume.has_value());
     EXPECT_EQ(looseRectangle, tile.initialBoundingVolume->region);
@@ -3804,7 +3910,7 @@ TEST(
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.initialBoundingVolume.has_value());
     EXPECT_EQ(looseRectangle, tile.initialBoundingVolume->region);
@@ -3897,7 +4003,7 @@ TEST(
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.initialBoundingVolume.has_value());
     EXPECT_TRUE(tile.initialBoundingVolume->looseFittingHeights);
@@ -3987,7 +4093,7 @@ TEST(
                 GltfPrimitiveRenderResources{});
             committedTile.markRenderContentDone();
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.initialBoundingVolume.has_value());
     EXPECT_EQ(looseRectangle, tile.initialBoundingVolume->region);
@@ -4064,7 +4170,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                 GltfPrimitiveRenderResources{});
             ++ensureGltfCalls;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
@@ -4132,7 +4238,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&ensureGltfCalls](TilesetTile&) { ++ensureGltfCalls; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_EQ(0, ensureGltfCalls);
     EXPECT_FALSE(childrenEnsured);
@@ -4237,7 +4343,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [](TilesetTile&) {},
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(childrenEnsured);
     EXPECT_TRUE(resourcesDirty);
@@ -4339,7 +4445,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&ensureGltfCalls](TilesetTile&) { ++ensureGltfCalls; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_EQ(0, ensureGltfCalls);
     EXPECT_FALSE(childrenEnsured);
@@ -4410,7 +4516,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             committedTile.markRenderContentDone();
             ++ensureGltfCalls;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_TRUE(terrainCache.empty());
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
@@ -4489,7 +4595,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&child](const TileKey&) -> TilesetTile* { return &child; },
         [](TilesetTile&) {},
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_TRUE(gltfEnsured);
     EXPECT_TRUE(resourcesDirty);
@@ -4559,7 +4665,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             return key == child.key ? &child : nullptr;
         },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
     EXPECT_FALSE(childrenEnsured);
@@ -4692,7 +4798,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
     EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
@@ -4732,14 +4838,14 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitTerminalResult(
         contentResult,
         emptyContentRegistry,
         nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_FALSE(childrenEnsured);
     EXPECT_FALSE(resourcesDirty);
@@ -4805,7 +4911,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             committedTile.markRenderContentDone();
             ++ensureGltfCalls;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     EXPECT_TRUE(terrainCache.empty());
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
@@ -4870,7 +4976,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             committedTile.markRenderContentDone();
             gltfEnsured = true;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.initialBoundingVolume.has_value());
     EXPECT_EQ(initialRectangle, tile.initialBoundingVolume->region);
@@ -4950,7 +5056,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             committedTile.markRenderContentDone();
             gltfEnsured = true;
         },
-        [&resourcesDirty]() { resourcesDirty = true; });
+        [&resourcesDirty](TilesetTile&) { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.initialBoundingVolume.has_value());
     EXPECT_EQ(initialRectangle, tile.initialBoundingVolume->region);

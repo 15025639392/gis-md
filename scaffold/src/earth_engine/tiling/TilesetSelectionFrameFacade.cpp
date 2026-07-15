@@ -2,6 +2,7 @@
 
 #include "TileContentAccess.h"
 #include "TileLoadQueue.h"
+#include "TileLodTransitionFrameUpdater.h"
 #include "TileOcclusionState.h"
 #include "TileRenderPlanFrameRefresher.h"
 #include "TileScheme.h"
@@ -25,7 +26,12 @@ namespace earth_engine {
 
 void TilesetSelectionFrameFacade::selectTiles(
     Tileset& tileset,
-    const FrameState& frameState) {
+    const FrameState& frameState,
+    TileSelectionPerformanceTimings* performanceTimings,
+    IPrepareRendererResources* pPrepRenderer) {
+    if (performanceTimings) {
+        *performanceTimings = TileSelectionPerformanceTimings{};
+    }
     tileset.currentFrameTimeSeconds_ = frameState.timeSeconds;
     if (tileset.options_.asyncSelection) {
         selectTilesAsyncShadow(tileset, frameState);
@@ -42,9 +48,18 @@ void TilesetSelectionFrameFacade::selectTiles(
     }
 
     if (tileset.options_.incrementalSelection) {
-        selectTilesIncremental(tileset, frameState);
+        selectTilesIncremental(
+            tileset,
+            frameState,
+            performanceTimings,
+            pPrepRenderer);
     } else {
-        selectTilesSync(tileset, frameState);
+        selectTilesSync(
+            tileset,
+            frameState,
+            nullptr,
+            performanceTimings,
+            pPrepRenderer);
     }
 
     if (oracleShadow) {
@@ -54,12 +69,19 @@ void TilesetSelectionFrameFacade::selectTiles(
 
 void TilesetSelectionFrameFacade::selectTilesIncremental(
     Tileset& tileset,
-    const FrameState& frameState) {
+    const FrameState& frameState,
+    TileSelectionPerformanceTimings* performanceTimings,
+    IPrepareRendererResources* pPrepRenderer) {
     // ③ Layer 1: 全量遍历 + 每子树净贡献捕获到 frontier(不剪枝)。输出仍逐位
     // 等于全量(捕获对 plan/loadQueue/counters 只读),§8 oracle 验证。Layer 2/3
     // 才用这些缓存做 dirty 失效 + 剪枝。
     tileset.incrementalFrontier_.beginFrame();
-    selectTilesSync(tileset, frameState, &tileset.incrementalFrontier_);
+    selectTilesSync(
+        tileset,
+        frameState,
+        &tileset.incrementalFrontier_,
+        performanceTimings,
+        pPrepRenderer);
 }
 
 void TilesetSelectionFrameFacade::verifySelectionEquivalence(
@@ -136,23 +158,34 @@ void TilesetSelectionFrameFacade::selectTilesAsyncShadow(
 
 void TilesetSelectionFrameFacade::reconcileShadowToLive(
     Tileset& tileset,
-    const TileSelectionShadowRunner& runner) {
+    TileSelectionShadowRunner& runner) {
+    // Mirror Cesium's current/previous traversal pointer ownership on the live
+    // tree. The shadow owns only value-state; live references must rotate when
+    // a completed shadow traversal is actually accepted.
+    tileset.rotateSelectionActiveTiles(true);
+
     // Copy the shadow's SELECTION DECISION wholesale (visibleTiles / fading /
-    // selectionRecords / counters / load keys). These carry only TileKeys and
-    // plain values — no shadow TilesetTile* leaks into live state.
-    tileset.tilePlan_ = runner.tilePlan();
+    // selectionRecords / counters / load keys), then discard the shadow-only
+    // render handles before resolving the live render result below.
+    TilePlan& shadowPlan = runner.tilePlan();
+    shadowPlan.renderEntries.clear();
+    shadowPlan.tilesToRenderThisFrame.clear();
+    shadowPlan.tilesFadingOutThisFrame.clear();
+    tileset.tilePlan_ = std::move(shadowPlan);
     tileset.loadQueue_ = runner.loadQueue();
     tileset.selectionCounters_ = runner.counters();
 
-    // Write each shadow tile's final selection state back to its live tile so
-    // the next frame's shadow (seeded from live) carries correct cross-frame
-    // selection history.
-    for (const auto& entry : runner.shadowTree().registry().tiles()) {
-        const TilesetTile* shadowTile = entry.second.get();
+    // Shadow traversal may have materialized descendants that were not present
+    // in the live snapshot. Materialize every visited key on reconciliation so
+    // preload, culled-sibling, and refinement-intermediate tiles receive the
+    // same live ownership as synchronous traversal, even when they are absent
+    // from the render plan.
+    for (const TilesetTile* shadowTile : runner.activeTiles()) {
         if (!shadowTile) {
             continue;
         }
-        TilesetTile* liveTile = tileset.tileRegistry_.findTile(shadowTile->key);
+        TilesetTile* liveTile =
+            tileset.contentAccess_.ensureTile(shadowTile->key);
         if (!liveTile) {
             continue;
         }
@@ -160,6 +193,7 @@ void TilesetSelectionFrameFacade::reconcileShadowToLive(
             shadowTile->selectionFrameState.selectionState;
         liveTile->selectionFrameState.previousSelectionState =
             shadowTile->selectionFrameState.previousSelectionState;
+        tileset.trackSelectionActiveTile(*liveTile, false);
     }
 
     // Re-resolve the render entries against LIVE content on the render thread.
@@ -174,9 +208,17 @@ void TilesetSelectionFrameFacade::reconcileShadowToLive(
     // Golden only compares visibleTiles + loadQueue (both copied above), so this
     // pass is invisible to the oracle while making the async path drawable.
     //
-    // NOTE (documented limitation): per-tile lodTransitionFadePercentage is not
-    // mirrored shadow→live, so LOD-transition fade opacity is only faithful when
-    // options_.enableLodTransitionPeriod is false (the on-device default).
+    TileLodTransitionFrameUpdater::update(
+        tileset.tilePlan_,
+        tileset.tileRegistry_,
+        tileset.selectionActiveTiles_,
+        tileset.selectionActiveTilesPrev_,
+        tileset.tilesFadingOut_,
+        tileset.rasterOverlays_,
+        runner.deltaSeconds(),
+        TileLodTransitionFrameOptions{
+            tileset.options_.enableLodTransitionPeriod,
+            tileset.options_.lodTransitionLength});
     TileRenderPlanFrameRefresher::refresh(
         tileset.tilePlan_,
         tileset.contentAccess_,
@@ -211,7 +253,7 @@ void TilesetSelectionFrameFacade::selectTilesSyncShadow(
     reconcileShadowToLive(tileset, runner);
 }
 
-void TilesetSelectionFrameFacade::consumeAsyncSelectionResult(
+bool TilesetSelectionFrameFacade::consumeAsyncSelectionResult(
     Tileset& tileset) {
     // Consuming a finished worker selection must NOT be gated behind the frame's
     // reuse decision. On a static camera the coordinator reuses every frame and
@@ -225,12 +267,14 @@ void TilesetSelectionFrameFacade::consumeAsyncSelectionResult(
     if (!tileset.options_.asyncSelection ||
         !tileset.options_.asyncSelectionNonBlocking ||
         !tileset.selectionWorker_) {
-        return;
+        return false;
     }
-    if (const TileSelectionShadowRunner* runner =
+    if (TileSelectionShadowRunner* runner =
             tileset.selectionWorker_->tryTakeResult()) {
         reconcileShadowToLive(tileset, *runner);
+        return true;
     }
+    return false;
 }
 
 void TilesetSelectionFrameFacade::selectTilesAsyncWorker(
@@ -248,7 +292,7 @@ void TilesetSelectionFrameFacade::selectTilesAsyncWorker(
     //    consumeAsyncSelectionResult (the unconditional pre-step); tryTakeResult
     //    is idempotent, so this is a no-op then. Kept for the reuse-off case
     //    where this path is the only consumer.
-    if (const TileSelectionShadowRunner* runner = worker.tryTakeResult()) {
+    if (TileSelectionShadowRunner* runner = worker.tryTakeResult()) {
         reconcileShadowToLive(tileset, *runner);
     }
 
@@ -277,7 +321,9 @@ void TilesetSelectionFrameFacade::selectTilesAsyncWorker(
 void TilesetSelectionFrameFacade::selectTilesSync(
     Tileset& tileset,
     const FrameState& frameState,
-    TileIncrementalFrontier* incremental) {
+    TileIncrementalFrontier* incremental,
+    TileSelectionPerformanceTimings* performanceTimings,
+    IPrepareRendererResources* pPrepRenderer) {
     TileSelectionFrameRunner::run(
         TileSelectionFrameRunInput{
             tileset.tilePlan_,
@@ -289,15 +335,17 @@ void TilesetSelectionFrameFacade::selectTilesSync(
             tileset.terrainProviders_.contentProvider()
                 ? tileset.terrainProviders_.contentProvider()->rootTiles()
                 : std::vector<TileKey>{},
-            tileset.hasTerrainQuadtree()},
+            tileset.hasTerrainQuadtree(),
+            performanceTimings},
         [&tileset]() {
             tileset.resetActiveSelectionState();
         },
         [&tileset](const TileKey& key) {
             return tileset.contentAccess_.ensureTile(key);
         },
-        [&tileset, incremental](TilesetTile& root,
-                                const SelectorFrame& selectorFrame) {
+        [&tileset, incremental, performanceTimings, pPrepRenderer](
+            TilesetTile& root,
+            const SelectorFrame& selectorFrame) {
             TileSelectionTraversalContextBinding binding{
                 &tileset,
                 [](void* userData, const TilesetTile& tile) {
@@ -318,9 +366,11 @@ void TilesetSelectionFrameFacade::selectTilesSync(
                         tileset.options_,
                         tileset.rasterOverlays_,
                         tileset.device_,
+                        pPrepRenderer,
                         tileset.frameResourceBudget_,
                         tileset.lastCameraPosition_,
                         tileset.contentAccess_,
+                        performanceTimings,
                         incremental},
                     binding);
             TileSelectionTraversalExecutor::visitTileIfNeeded(
@@ -336,6 +386,7 @@ void TilesetSelectionFrameFacade::selectTilesSync(
                     tileset.tilePlan_,
                     tileset.tileRegistry_,
                     tileset.selectionActiveTiles_,
+                    tileset.selectionActiveTilesPrev_,
                     tileset.selectionCounters_,
                     tileset.contentAccess_,
                     tileset.tilesFadingOut_,

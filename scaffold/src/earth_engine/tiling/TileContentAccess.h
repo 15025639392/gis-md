@@ -9,6 +9,7 @@
 namespace earth_engine {
 
 class TileContentLifecycleManager;
+class TileContentResourceInvalidator;
 class IPrepareRendererResources;
 class TileScheme;
 class TilesetContentProvider;
@@ -19,12 +20,14 @@ public:
     static TileContentAccess forContentTerrain(
         TilesetTileRegistry& tileRegistry,
         const TileScheme& tileScheme,
-        const TilesetContentProvider& contentProvider);
+        const TilesetContentProvider& contentProvider,
+        TileContentResourceInvalidator* resourceInvalidator = nullptr);
 
     static TileContentAccess forNoTerrain(
         TilesetTileRegistry& tileRegistry,
         const TileScheme& tileScheme,
-        const TilesetContentProvider* contentProvider);
+        const TilesetContentProvider* contentProvider,
+        TileContentResourceInvalidator* resourceInvalidator = nullptr);
 
     TilesetTile* ensureTile(const TileKey& key,
                             IPrepareRendererResources* pPrepRenderer = nullptr);
@@ -39,7 +42,8 @@ private:
     TileContentAccess(TilesetTileRegistry& tileRegistry,
                       const TileScheme& tileScheme,
                       const TilesetContentProvider* contentProvider,
-                      bool contentProviderOwnsTerrainQuadtree);
+                      bool contentProviderOwnsTerrainQuadtree,
+                      TileContentResourceInvalidator* resourceInvalidator);
 
     bool contentProviderOwnsTerrainQuadtree() const;
     bool hasTerrainQuadtree() const;
@@ -52,6 +56,7 @@ private:
     const TileScheme& tileScheme_;
     const TilesetContentProvider* contentProvider_ = nullptr;
     bool contentProviderOwnsTerrainQuadtree_ = false;
+    TileContentResourceInvalidator* resourceInvalidator_ = nullptr;
 };
 
 } // namespace earth_engine

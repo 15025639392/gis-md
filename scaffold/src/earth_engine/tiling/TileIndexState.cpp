@@ -15,6 +15,7 @@ void TileIndexState::markEligibleForUnloading(
     const TilesetTile* tile,
     const std::string& cacheKey) {
     if (!tile ||
+        tile->referenceCount() > 0 ||
         !TileUnloadPolicy::isEligibleForContentUnloadQueue(*tile)) {
         return;
     }

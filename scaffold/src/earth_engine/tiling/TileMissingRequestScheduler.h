@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace earth_engine {
@@ -21,6 +22,8 @@ struct TileMissingRequestSchedulerInput {
     TilesetContentProvider* contentProvider = nullptr;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
     const TileEmptyContentRegistry& emptyContentRegistry;
+    const std::vector<RasterOverlayProjection>*
+        requiredRasterOverlayProjections = nullptr;
 };
 
 class TileMissingRequestScheduler {
@@ -34,12 +37,51 @@ public:
         TerrainCacheKeyFn&& terrainCacheKey,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
+        return requestImpl(
+            loadRequests,
+            input,
+            std::forward<TerrainCacheKeyFn>(terrainCacheKey),
+            std::forward<PrepareUpsampleSourceTileFn>(
+                prepareUpsampleSourceTile),
+            std::forward<EnsureTileFn>(ensureTile));
+    }
+
+    template <typename TerrainCacheKeyFn,
+              typename PrepareUpsampleSourceTileFn,
+              typename EnsureTileFn>
+    static TileLoadRequestOutcome request(
+        TileLoadQueue& loadQueue,
+        TileMissingRequestSchedulerInput input,
+        TerrainCacheKeyFn&& terrainCacheKey,
+        PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
+        EnsureTileFn&& ensureTile) {
+        return requestImpl(
+            loadQueue,
+            input,
+            std::forward<TerrainCacheKeyFn>(terrainCacheKey),
+            std::forward<PrepareUpsampleSourceTileFn>(
+                prepareUpsampleSourceTile),
+            std::forward<EnsureTileFn>(ensureTile));
+    }
+
+private:
+    template <typename LoadRequests,
+              typename TerrainCacheKeyFn,
+              typename PrepareUpsampleSourceTileFn,
+              typename EnsureTileFn>
+    static TileLoadRequestOutcome requestImpl(
+        LoadRequests& loadRequests,
+        TileMissingRequestSchedulerInput input,
+        TerrainCacheKeyFn&& terrainCacheKey,
+        PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
+        EnsureTileFn&& ensureTile) {
         return TileLoadScheduler::requestMissingTiles(
             loadRequests,
             TileLoadSchedulerInput{
                 input.loadLifecycle,
                 input.budget,
-                input.contentProvider},
+                input.contentProvider,
+                input.requiredRasterOverlayProjections},
             terrainCacheKey,
             [&](const TileKey& key,
                 const std::string& cacheKey,
@@ -61,7 +103,6 @@ public:
             });
     }
 
-private:
     static TileLoadRequestSnapshot makeSnapshot(
         const TileMissingRequestSchedulerInput& input,
         const TileKey& key,

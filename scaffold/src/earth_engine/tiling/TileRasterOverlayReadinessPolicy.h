@@ -16,6 +16,14 @@ public:
         const TilesetTile& tile,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
 
+    static bool requiredBaseImageryDrawableReady(
+        const TilesetTile& tile,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+
+    static bool terrainSurfaceImageryDrawableReady(
+        const TilesetTile& tile,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+
     static std::vector<size_t> processingOrder(
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
 };

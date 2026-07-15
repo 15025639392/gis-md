@@ -1,18 +1,24 @@
 #include "TileRenderFrameContext.h"
 
 #include "TileCacheOwnershipManager.h"
-#include "TileContentAccess.h"
 #include "TileRenderCommandManager.h"
 
 namespace earth_engine {
 
-TilesetTile* TileRenderFrameContext::ensureTile(const TileKey& key) const {
-    return contentAccess.ensureTile(key);
-}
-
 void TileRenderFrameContext::markIneligibleForUnloading(
     const std::string& cacheKey) const {
     cacheOwnership.markIneligibleForUnloading(cacheKey);
+}
+
+void TileRenderFrameContext::trackRenderReference(
+    TilesetTile* tile,
+    std::string cacheKey,
+    bool countedReference) const {
+    renderReferences.push_back(
+        TileRenderReference{
+            tile,
+            std::move(cacheKey),
+            countedReference});
 }
 
 void TileRenderFrameContext::buildTileDrawCommand(
@@ -30,14 +36,17 @@ void TileRenderFrameContext::buildTileDrawCommand(
                                         surfaceClipUv);
 }
 
-void TileRenderFrameContext::markEligibleForUnloading(
-    const TilesetTile* tile,
-    const std::string& cacheKey) const {
-    cacheOwnership.markEligibleForUnloading(tile, cacheKey);
+const TileRenderCommandPerformanceTimings&
+TileRenderFrameContext::renderCommandTimings() const {
+    return renderCommands.frameTimings();
 }
 
-void TileRenderFrameContext::updateTotalBytesUsed() const {
-    cacheOwnership.updateTotalBytesUsed();
+void TileRenderFrameContext::trimRasterCaches(bool cachePressure) const {
+    cacheOwnership.trimRasterCaches(cachePressure);
+}
+
+bool TileRenderFrameContext::shouldUnloadCachedBytes() const {
+    return cacheOwnership.shouldUnloadCachedBytes();
 }
 
 void TileRenderFrameContext::unloadCachedBytes(Renderer& renderer) const {

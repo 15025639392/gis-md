@@ -2114,26 +2114,76 @@ std::vector<GltfInstance> makeGltfInstances(
     return instances;
 }
 
-std::optional<std::vector<GltfInstance>> combineI3dmAndNativeGltfInstances(
+struct CombinedGltfInstances {
+    std::vector<GltfInstance> instances;
+    std::vector<GltfInstanceRuntimeTransform> runtimeTransforms;
+};
+
+std::optional<CombinedGltfInstances> combineI3dmAndNativeGltfInstances(
     const std::vector<GltfInstance>& i3dmInstances,
-    const std::vector<GltfInstance>& nativeInstances) {
+    const std::vector<GltfInstance>& nativeInstances,
+    const std::vector<GltfInstanceRuntimeTransform>&
+        nativeRuntimeTransforms,
+    bool retainRuntimeTransforms) {
+    CombinedGltfInstances combined;
     if (nativeInstances.empty()) {
-        return i3dmInstances;
+        combined.instances = i3dmInstances;
+        if (!retainRuntimeTransforms) {
+            return combined;
+        }
+        combined.runtimeTransforms.reserve(i3dmInstances.size());
+        for (const GltfInstance& i3dmInstance : i3dmInstances) {
+            GltfInstanceRuntimeTransform recipe;
+            recipe.outerTransform = i3dmInstance.transform;
+            combined.runtimeTransforms.push_back(
+                std::move(recipe));
+        }
+        return combined;
     }
     if (i3dmInstances.size() >
             std::numeric_limits<size_t>::max() / nativeInstances.size()) {
         return std::nullopt;
     }
-    std::vector<GltfInstance> combined;
-    combined.reserve(i3dmInstances.size() * nativeInstances.size());
+    const bool hasNativeRuntimeTransforms =
+        nativeRuntimeTransforms.size() == nativeInstances.size();
+    const size_t combinedCount =
+        i3dmInstances.size() * nativeInstances.size();
+    combined.instances.reserve(combinedCount);
+    if (retainRuntimeTransforms) {
+        combined.runtimeTransforms.reserve(combinedCount);
+    }
     for (const GltfInstance& i3dmInstance : i3dmInstances) {
-        for (const GltfInstance& nativeInstance : nativeInstances) {
+        for (size_t nativeIndex = 0;
+             nativeIndex < nativeInstances.size();
+             ++nativeIndex) {
+            const GltfInstance& nativeInstance =
+                nativeInstances[nativeIndex];
             GltfInstance instance;
             instance.transform =
                 i3dmInstance.transform * nativeInstance.transform;
             instance.featureId = i3dmInstance.featureId;
             instance.featureProperties = i3dmInstance.featureProperties;
-            combined.push_back(instance);
+            combined.instances.push_back(std::move(instance));
+
+            if (!retainRuntimeTransforms) {
+                continue;
+            }
+            GltfInstanceRuntimeTransform recipe;
+            if (hasNativeRuntimeTransforms) {
+                const GltfInstanceRuntimeTransform& nativeRecipe =
+                    nativeRuntimeTransforms[nativeIndex];
+                recipe.outerTransform =
+                    i3dmInstance.transform *
+                    nativeRecipe.outerTransform;
+                recipe.nodeLocalTransform =
+                    nativeRecipe.nodeLocalTransform;
+            } else {
+                recipe.outerTransform =
+                    i3dmInstance.transform *
+                    nativeInstance.transform;
+            }
+            combined.runtimeTransforms.push_back(
+                std::move(recipe));
         }
     }
     return combined;
@@ -2613,15 +2663,21 @@ TileContentLoadResult decodeI3dmContent(
     if (instances.empty()) {
         return TileContentLoadResult::empty();
     }
+    const bool retainRuntimeTransforms =
+        model->hasRuntimeAnimation();
     for (GltfPrimitive& primitive : model->primitives) {
-        std::optional<std::vector<GltfInstance>> combined =
+        std::optional<CombinedGltfInstances> combined =
             combineI3dmAndNativeGltfInstances(
                 instances,
-                primitive.instances);
+                primitive.instances,
+                primitive.runtime.instanceTransforms,
+                retainRuntimeTransforms);
         if (!combined) {
             return TileContentLoadResult::failed();
         }
-        primitive.instances = std::move(*combined);
+        primitive.instances = std::move(combined->instances);
+        primitive.runtime.instanceTransforms =
+            std::move(combined->runtimeTransforms);
     }
 
     TileContentLoadResult result =
@@ -3163,6 +3219,11 @@ bool bakePrimitiveTransform(GltfPrimitive& primitive,
     if (!primitive.instances.empty()) {
         for (GltfInstance& instance : primitive.instances) {
             instance.transform = transform * instance.transform;
+        }
+        for (GltfInstanceRuntimeTransform& recipe :
+             primitive.runtime.instanceTransforms) {
+            recipe.outerTransform =
+                transform * recipe.outerTransform;
         }
         return true;
     }
@@ -4165,6 +4226,7 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         records_[contentCacheKey(wrapperKey)] = std::move(wrapper);
         rootKeys_.clear();
         rootKeys_.push_back(wrapperKey);
+        childTopologyRevision_.fetch_add(1, std::memory_order_release);
         return true;
     }
 
@@ -4192,6 +4254,7 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         rootKeys_.clear();
         rootKeys_.push_back(*rootKey);
     }
+    childTopologyRevision_.fetch_add(1, std::memory_order_release);
     return true;
 }
 

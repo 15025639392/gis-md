@@ -1,8 +1,9 @@
 #include "TileFillProxyPreparer.h"
 
 #include "GltfRenderGeometryBuilder.h"
-#include "LoadedTerrainHeightSampler.h"
 #include "RasterMappedToTilesetTile.h"
+#include "TerrainRasterOverlayProjectionResolver.h"
+#include "TileFillGeometrySignature.h"
 #include "TileSelectionRootPolicy.h"
 #include "TilesetTile.h"
 #include "../content/EllipsoidTerrainMeshBuilder.h"
@@ -12,17 +13,14 @@
 namespace earth_engine {
 namespace {
 
-RasterOverlayProjection projectionForTile(const TilesetTile& tile) {
-    return tile.key.schemeId.str() == "XYZ-WebMercator"
-        ? RasterOverlayProjection::WebMercator
-        : RasterOverlayProjection::Geographic;
-}
-
 // Upload the fill model's single terrain-format primitive into the tile's fill
 // GPU slots. Mirrors the terrain branch of GltfRenderResourcePreparer, but
 // targets the fill slots and carries no water mask / base-color texture (the
 // proxy's imagery is supplied by the raster-overlay bindings at draw time).
-bool uploadFillPrimitive(TilesetTile& tile, RenderDevice* device) {
+bool uploadFillPrimitive(
+    TilesetTile& tile,
+    RenderDevice* device,
+    const TileFillGeometrySignature& geometrySignature) {
     TileRenderContentState& rc = tile.content.renderContent;
     const GltfModel* model = rc.fillContent();
     if (!model || model->primitives.empty()) {
@@ -81,62 +79,100 @@ bool uploadFillPrimitive(TilesetTile& tile, RenderDevice* device) {
 
     rc.beginFillGpuResourceBuild(0, 1);
     rc.addFillPrimitiveResource(std::move(resources));
-    rc.setFillResourcesReady(true);
+    rc.commitFillResourcesReady(geometrySignature);
     return true;
 }
 
 } // namespace
 
-bool TileFillProxyPreparer::ensureFillProxy(
+TileFillProxyPrepareResult TileFillProxyPreparer::ensureFillProxy(
     TilesetTile& tile,
-    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     RenderDevice* device,
-    int gridSize) {
-    if (!device) {
-        return false;
-    }
+    int gridSize,
+    IPrepareRendererResources* pPrepRenderer) {
     TileRenderContentState& rc = tile.content.renderContent;
-    // Already showing (or about to show) real terrain, or a fill already
-    // exists — nothing to do.
-    if (rc.hasGltfResources() || rc.hasFillModel()) {
-        return false;
+    auto clearFill = [&]() {
+        if (!rc.hasFillModel() && !rc.hasFillResources()) {
+            return false;
+        }
+        rc.clearFillContent();
+        return true;
+    };
+    auto clearFillAndMappings = [&]() {
+        if (!rc.hasFillModel() && !rc.hasFillResources()) {
+            return false;
+        }
+        tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+        rc.clearFillContent();
+        return true;
+    };
+
+    // Real geometry owns the draw path once ready.
+    if (rc.isRenderContentReady()) {
+        return TileFillProxyPrepareResult{
+            false,
+            clearFill()};
     }
     // The virtual terrain root has world-spanning bounds and never renders.
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key)) {
-        return false;
+        return TileFillProxyPrepareResult{
+            false,
+            clearFillAndMappings()};
     }
-    if (tile.bounds.isEmpty()) {
-        return false;
+    const RasterOverlayProjection projection =
+        TerrainRasterOverlayProjectionResolver::forTileKey(tile.key);
+    const std::optional<TileFillGeometrySignature> signature =
+        TileFillGeometrySignature::tryCreate(
+            tile.bounds,
+            projection,
+            gridSize);
+    if (!signature) {
+        return TileFillProxyPrepareResult{
+            false,
+            clearFillAndMappings()};
+    }
+    if (rc.isFillReady() && rc.hasMatchingFillGeometry(*signature)) {
+        return {};
+    }
+    if (!device) {
+        return {};
     }
 
-    // Borrow loaded-terrain heights along the proxy grid (nullopt where no
-    // terrain is loaded → flat). Edges shared with loaded neighbours therefore
-    // meet the real terrain crack-free. The area sampler gathers the terrain
-    // tiles overlapping this tile's rectangle ONCE, so the ~289 grid-vertex
-    // queries reuse that candidate set instead of rescanning the whole
-    // registry per vertex.
-    const LoadedTerrainAreaSampler areaSampler(tiles, tile.bounds);
-    const EllipsoidProxyHeightSampler heightSampler =
-        areaSampler.empty()
-            ? EllipsoidProxyHeightSampler{}
-            : [&areaSampler](double lonRad,
-                             double latRad) -> std::optional<float> {
-                  return areaSampler.sample(lonRad, latRad);
-              };
+    bool resourcesChanged = false;
+    if (rc.hasFillModel() || rc.hasFillResources()) {
+        const TileFillGeometrySignature* existingSignature =
+            rc.fillGeometrySignature();
+        const bool mappingDomainChanged =
+            !existingSignature ||
+            existingSignature->bounds != signature->bounds ||
+            existingSignature->projection != signature->projection;
+        if (mappingDomainChanged) {
+            tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+        }
+        rc.clearFillContent();
+        resourcesChanged = true;
+    }
+
+    // Fill is a temporary visual bridge while real terrain is loading.
+    // Sampling loaded terrain for every grid vertex scans terrain triangles
+    // repeatedly and can block the render thread for seconds on Android.
+    // Keep the proxy on the smooth ellipsoid; real terrain replaces it as soon
+    // as its renderer resources are ready.
     std::unique_ptr<GltfModel> proxy = EllipsoidTerrainMeshBuilder::makeModel(
         tile.bounds,
-        projectionForTile(tile),
-        gridSize,
-        heightSampler);
+        projection,
+        signature->gridSize,
+        {});
     if (!proxy) {
-        return false;
+        return TileFillProxyPrepareResult{false, resourcesChanged};
     }
     rc.setFillContent(std::move(proxy));
-    if (!uploadFillPrimitive(tile, device)) {
+    if (!uploadFillPrimitive(tile, device, *signature)) {
         rc.clearFillContent();
-        return false;
+        return TileFillProxyPrepareResult{false, resourcesChanged};
     }
-    return true;
+    rc.clearFillCpuModelAfterUpload();
+    return TileFillProxyPrepareResult{true, true};
 }
 
 } // namespace earth_engine

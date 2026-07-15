@@ -1,8 +1,6 @@
 #pragma once
 
-#include "TileCacheMetrics.h"
 #include "TileLoadState.h"
-#include "RasterMappedToTilesetTile.h"
 #include "TileUnloadPolicy.h"
 #include "TileUnloadQueue.h"
 #include "TilesetTile.h"
@@ -26,78 +24,43 @@ enum class TileCacheUnloadContentResult {
 
 struct TileCacheUnloadResult {
     int64_t totalBytesUsed = 0;
-    bool cacheBytesDirty = false;
-    bool shouldRefreshTotalBytes = false;
+    size_t unloadedTiles = 0;
 };
 
 class TileCacheUnloadCoordinator {
 public:
-    static bool requiresImmediateByteRefreshAfterUnload(
-        const TilesetTile& tile) {
-        bool usesAncestorRasterFallback = false;
-        tile.rasterOverlayState.forEachMapping([&](const auto* mapping) {
-            if (usesAncestorRasterFallback || !mapping) {
-                return;
-            }
-            usesAncestorRasterFallback =
-                mapping->getReadyTileSource() ==
-                RasterMappedToTilesetTile::ReadyTileSource::Ancestor;
-        });
-        return usesAncestorRasterFallback;
-    }
-
-    template <typename SubtreeHasActiveContentWorkFn,
+    template <typename CurrentTotalBytesFn,
+              typename ShouldContinueFn,
+              typename SubtreeHasActiveContentWorkFn,
               typename UnloadTileContentFn,
               typename MarkIneligibleFn,
-              typename ClearChildrenFn>
+              typename ClearChildrenFn,
+              typename TrimExternalCachesFn>
     static TileCacheUnloadResult run(
         TileUnloadQueue& unloadQueue,
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
-        int64_t totalBytesUsed,
         int64_t maximumCachedBytes,
         double timeBudgetMs,
-        bool resourceSmoothingActive,
-        bool cacheBytesDirty,
+        CurrentTotalBytesFn&& currentTotalBytes,
+        ShouldContinueFn&& shouldContinue,
         SubtreeHasActiveContentWorkFn&& subtreeHasActiveContentWork,
         UnloadTileContentFn&& unloadTileContent,
         MarkIneligibleFn&& markIneligible,
-        ClearChildrenFn&& clearChildren) {
+        ClearChildrenFn&& clearChildren,
+        TrimExternalCachesFn&& trimExternalCaches) {
         const double unloadStartMs = perf::nowMs();
         const auto timeBudgetExpired = [&]() {
             return timeBudgetMs > 0.0 &&
                    perf::nowMs() - unloadStartMs >= timeBudgetMs;
         };
-        const auto hasQueuedUnloadingTile = [&]() {
-            return TileUnloadPolicy::hasQueuedTileInState(
-                unloadQueue,
-                tiles,
-                TileLoadState::Unloading);
-        };
-        const auto hasQueuedTileNeedingUnload = [&]() {
-            for (const std::string& k : unloadQueue.keys()) {
-                auto it = tiles.find(k);
-                if (it != tiles.end() && it->second) {
-                    const TileLoadState s =
-                        it->second->content.loadState;
-                    if (s == TileLoadState::Done ||
-                        s == TileLoadState::ContentLoaded ||
-                        s == TileLoadState::Failed ||
-                        s == TileLoadState::Unloading) {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        };
 
         std::vector<TilesetTile*> tilesNeedingChildrenCleared;
-        bool immediateByteRefreshRequired = false;
+        size_t unloadedTiles = 0;
+        trimExternalCaches();
         size_t remainingCandidates = unloadQueue.size();
-        while ((totalBytesUsed > maximumCachedBytes ||
-                hasQueuedUnloadingTile() ||
-                hasQueuedTileNeedingUnload()) &&
+        while (shouldContinue(maximumCachedBytes) &&
                !unloadQueue.empty() &&
                remainingCandidates > 0) {
             --remainingCandidates;
@@ -110,10 +73,13 @@ public:
             }
 
             TilesetTile& tile = *tileIt->second;
-            const int64_t estimatedBytesBeforeUnload =
-                TileCacheMetrics::estimateTileBytes(tile);
-            const bool needsImmediateRefresh =
-                requiresImmediateByteRefreshAfterUnload(tile);
+
+            if (tile.content.loadState != TileLoadState::Unloading &&
+                !TileUnloadPolicy::isEligibleForContentUnloadQueue(tile)) {
+                markIneligible(key);
+                if (timeBudgetExpired()) break;
+                continue;
+            }
 
             const bool externalSubtreeHasActiveWork =
                 tile.content.contentKind == TileContentKind::External &&
@@ -128,6 +94,7 @@ public:
 
             const TileCacheUnloadContentResult removed =
                 unloadTileContent(tile);
+            trimExternalCaches();
             if (removed == TileCacheUnloadContentResult::Keep) {
                 unloadQueue.moveFrontToBack();
                 if (timeBudgetExpired()) break;
@@ -139,14 +106,7 @@ public:
                 TileCacheUnloadContentResult::RemoveAndClearChildren) {
                 tilesNeedingChildrenCleared.emplace_back(&tile);
             }
-
-            immediateByteRefreshRequired =
-                immediateByteRefreshRequired || needsImmediateRefresh;
-            totalBytesUsed = std::max<int64_t>(
-                0,
-                totalBytesUsed -
-                    std::max<int64_t>(0, estimatedBytesBeforeUnload));
-            cacheBytesDirty = true;
+            ++unloadedTiles;
 
             if (timeBudgetExpired()) break;
         }
@@ -158,10 +118,8 @@ public:
         }
 
         return TileCacheUnloadResult{
-            totalBytesUsed,
-            cacheBytesDirty,
-            cacheBytesDirty &&
-                (!resourceSmoothingActive || immediateByteRefreshRequired)};
+            currentTotalBytes(),
+            unloadedTiles};
     }
 };
 

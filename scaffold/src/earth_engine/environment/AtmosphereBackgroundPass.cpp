@@ -165,7 +165,7 @@ void main() {
     float mPhase = miePhase(mu);
 
     vec3 rayleighColor = vec3(0.20, 0.42, 1.0);
-    vec3 mieColor = vec3(0.72, 0.80, 0.92);
+    vec3 mieColor = vec3(0.2000, 0.4196, 1.0); // #336BFF
     float r = rayleighDepth * 0.055 * rPhase;
     float m = mieDepth * 0.020 * mPhase;
 

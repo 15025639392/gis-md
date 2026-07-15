@@ -3,6 +3,7 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TileViewerRequestVolumePolicy.h"
 #include "TilesetTile.h"
+#include "../debug/PerfTimer.h"
 
 namespace earth_engine {
 
@@ -14,16 +15,23 @@ TileSelectionVisitPreparationResult TileSelectionVisitPreparation::prepare(
     const TileSelectionVisitPreparationOptions& options,
     std::vector<double>& scratchDistances) {
     TileSelectionVisitPreparationResult result;
+    const double visibilityStartMs = perf::nowMs();
     result.visibilitySample =
         TileSelectionVisibilitySampler::sampleForTileSelection(
             tile,
             views,
             visibilityContext);
+    result.visibilityMs = perf::nowMs() - visibilityStartMs;
+
+    const double inputMetricsStartMs = perf::nowMs();
     result.inputSummary =
         TileSelectionInputMetrics::summarizeForViews(
             tile,
             views,
             scratchDistances);
+    result.inputMetricsMs = perf::nowMs() - inputMetricsStartMs;
+
+    const double policyStartMs = perf::nowMs();
     result.cullResult = TileSelectionCullingPolicy::evaluateFrustum(
         result.visibilitySample.visibleFromCamera,
         options.enableFrustumCulling);
@@ -54,6 +62,7 @@ TileSelectionVisitPreparationResult TileSelectionVisitPreparation::prepare(
             options.maximumScreenSpaceError,
             options.enforceCulledScreenSpaceError,
             options.culledScreenSpaceError);
+    result.policyMs = perf::nowMs() - policyStartMs;
     return result;
 }
 

@@ -88,6 +88,7 @@ private:
     enum class VertexLayoutKind : unsigned char {
         Surface32,          ///< 32B：POSITION(12)+NORMAL(12)+TEXCOORD(8)
         Surface32Instanced, ///< 32B + 7 条 instance 矩阵属性（attrib 3-9）
+        Terrain40,          ///< 40B：POSITION/NORMAL+packed TEXCOORD_0/1
         Gltf120,            ///< 120B glTF：POSITION/NORMAL + packed TEXCOORD + COLOR/TANGENT
         Gltf120Instanced,   ///< 120B glTF + 7 条 instance 矩阵属性
         Terrain20,          ///< 20B：pos(12)+uv(8)，normal 由 shader 计算
@@ -145,14 +146,16 @@ private:
 
 class GLTexture : public Texture {
 public:
-    GLTexture(unsigned int id, int width, int height);
+    GLTexture(unsigned int id, int width, int height, size_t sizeBytes);
     ~GLTexture() override;
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override { return sizeBytes_; }
     unsigned int glId() const { return id_; }
 private:
     unsigned int id_;
     int width_, height_;
+    size_t sizeBytes_ = 0;
 };
 
 /// 离屏 framebuffer:color 恒为可采样 GLTexture(生命周期归本对象)。

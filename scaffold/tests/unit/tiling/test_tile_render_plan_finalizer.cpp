@@ -1,19 +1,34 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfModel.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
+#include "earth_engine/core/geodesy/WebMercatorProjection.h"
 #include "earth_engine/core/math/Mat4.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTile.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/tiling/TileRasterOverlayReadinessPolicy.h"
 #include "earth_engine/tiling/TileRenderPlanFinalizer.h"
+#include "earth_engine/tiling/TileScheme.h"
 
 #include <array>
+#include <cmath>
 #include <memory>
+#include <type_traits>
 #include <unordered_map>
 
 using namespace earth_engine;
 
 namespace {
+
+static_assert(!std::is_copy_constructible_v<TilePlan>);
+static_assert(!std::is_copy_assignable_v<TilePlan>);
 
 class DummyBuffer final : public Buffer {
 public:
@@ -22,6 +37,21 @@ public:
 
 private:
     size_t byteSize_ = 0;
+};
+
+class DummyTexture final : public Texture {
+public:
+    DummyTexture(int width, int height) : width_(width), height_(height) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
 };
 
 std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
@@ -90,12 +120,120 @@ void makeGltfRenderReady(TilesetTile& tile) {
     tile.markRenderContentDone();
 }
 
+void makeFillRenderReady(
+    TilesetTile& tile,
+    RasterOverlayProjection projection) {
+    tile.content.renderContent.setFillContent(
+        makeQuadTerrainGltfModel(tile.bounds));
+    GltfPrimitiveRenderResources resources;
+    resources.useTerrainVertexFormat = true;
+    resources.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    resources.indexBuffer = std::make_unique<DummyBuffer>(24);
+    resources.vertexCount = 4;
+    resources.indexCount = 6;
+    tile.content.renderContent.beginFillGpuResourceBuild(0, 1);
+    tile.content.renderContent.addFillPrimitiveResource(
+        std::move(resources));
+    const std::optional<TileFillGeometrySignature> signature =
+        TileFillGeometrySignature::tryCreate(
+            tile.bounds,
+            projection,
+            4);
+    ASSERT_TRUE(signature.has_value());
+    tile.content.renderContent.commitFillResourcesReady(*signature);
+    tile.content.renderContent.clearFillCpuModelAfterUpload();
+    ASSERT_TRUE(tile.content.renderContent.isFillReady());
+    ASSERT_TRUE(tile.content.renderContent.drawsFill());
+}
+
 bool isDrawableRenderContent(const TilesetTile& tile) {
-    return tile.hasSurfaceDrawable() ||
-           tile.content.renderContent.isGltfRenderReady();
+    return tile.content.renderContent.hasDrawableResources();
+}
+
+std::unique_ptr<RasterOverlay> makeBlockingBaseOverlay() {
+    RasterOverlay::Options options;
+    options.role = RasterOverlayRole::BaseImagery;
+    options.blocksCompleteRenderable = true;
+    return std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        options);
+}
+
+void makeDrawableBaseRaster(TilesetTile& tile,
+                            ActivatedRasterOverlay& activeOverlay) {
+    RasterOverlayTileProvider* provider =
+        activeOverlay.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+
+    std::vector<RasterOverlayProjection> missingProjections;
+    RasterMappedToTilesetTile& mapped =
+        tile.rasterOverlayState.ensureMapping(0);
+    mapped.update(
+        tile.key,
+        tile.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        *provider,
+        nullptr,
+        missingProjections,
+        tile.parent,
+        0);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+    mapped.update(
+        tile.key,
+        tile.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        *provider,
+        nullptr,
+        missingProjections,
+        tile.parent,
+        0);
+    ASSERT_TRUE(tile.rasterOverlayState.hasDrawableReadyMapping(0));
 }
 
 } // namespace
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    UsesSelectionLiveHandleWithoutResolvingKeyAgain) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{});
+    makeGltfRenderReady(root);
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    plan.tilesToRenderThisFrame.push_back(&root);
+    int ensureCalls = 0;
+
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&ensureCalls](const TileKey&) -> TilesetTile* {
+            ++ensureCalls;
+            return nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile);
+        });
+
+    EXPECT_EQ(ensureCalls, 0);
+    ASSERT_EQ(plan.tilesToRenderThisFrame.size(), 1u);
+    EXPECT_EQ(plan.tilesToRenderThisFrame.front(), &root);
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    EXPECT_EQ(plan.renderEntries.front().selectedTile, &root);
+    EXPECT_EQ(plan.renderEntries.front().renderTile, &root);
+}
 
 TEST(
     TileRenderPlanFinalizerTest,
@@ -136,9 +274,13 @@ TEST(
         });
 
     ASSERT_EQ(plan.renderEntries.size(), 1u);
+    ASSERT_EQ(plan.tilesToRenderThisFrame.size(), 1u);
+    EXPECT_EQ(plan.tilesToRenderThisFrame.front(), &child);
     const TileRenderEntry& entry = plan.renderEntries.front();
     EXPECT_EQ(entry.selectedKey, childKey);
     EXPECT_EQ(entry.renderKey, parentKey);
+    EXPECT_EQ(entry.selectedTile, &child);
+    EXPECT_EQ(entry.renderTile, &parent);
     EXPECT_EQ(entry.reason, TileRenderEntryReason::AncestorFallback);
     EXPECT_TRUE(entry.usesAncestorFallback);
     EXPECT_TRUE(entry.surfaceClipEnabled);
@@ -151,6 +293,112 @@ TEST(
     EXPECT_NEAR(entry.surfaceClipUv[1], 0.0f, 1e-6f);
     EXPECT_NEAR(entry.surfaceClipUv[2], 0.5f, 1e-6f);
     EXPECT_NEAR(entry.surfaceClipUv[3], 0.5f, 1e-6f);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    SkipsTerrainDirectEntryUntilBlockingBaseImageryIsDrawable) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    root.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(root.bounds), Mat4::identity());
+    root.content.renderContent.setTerrainRenderContent(true);
+    root.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root.content.renderContent.markRenderContentReady();
+    root.markRenderContentDone();
+
+    auto baseOverlay = makeBlockingBaseOverlay();
+    ActivatedRasterOverlay activeBase(*baseOverlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activeBase};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        overlays,
+        [&root](const TileKey& key) -> TilesetTile* {
+            return key == root.key ? &root : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [&overlays](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile) &&
+                   TileRasterOverlayReadinessPolicy::
+                       terrainSurfaceImageryDrawableReady(tile, overlays);
+        });
+
+    EXPECT_TRUE(plan.renderEntries.empty());
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    UsesTexturedAncestorWhenSelectedTerrainBaseImageryIsMissing) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 1, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
+    parent.markRenderContentDone();
+    child.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(child.bounds), Mat4::identity());
+    child.content.renderContent.setTerrainRenderContent(true);
+    child.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    child.content.renderContent.markRenderContentReady();
+    child.markRenderContentDone();
+
+    auto baseOverlay = makeBlockingBaseOverlay();
+    ActivatedRasterOverlay activeBase(*baseOverlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activeBase};
+    makeDrawableBaseRaster(parent, activeBase);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        overlays,
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [&overlays](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile) &&
+                   TileRasterOverlayReadinessPolicy::
+                       terrainSurfaceImageryDrawableReady(tile, overlays);
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, childKey);
+    EXPECT_EQ(entry.renderKey, parentKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::AncestorFallback);
+    EXPECT_TRUE(entry.usesAncestorFallback);
+    EXPECT_TRUE(entry.surfaceClipEnabled);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
 }
 
 TEST(
@@ -299,7 +547,105 @@ TEST(
 
 TEST(
     TileRenderPlanFinalizerTest,
-    RejectsGltfAncestorFallbackUntilResourcesAreReady) {
+    UsesReadyGeographicFillAncestorFallbackWithSurfaceClip) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 1, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle::fromDegrees(0.0, 0.0, 20.0, 20.0));
+    TilesetTile child(
+        childKey,
+        Rectangle::fromDegrees(10.0, 10.0, 20.0, 20.0),
+        &parent);
+    makeFillRenderReady(parent, RasterOverlayProjection::Geographic);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{false, true, 0, 1},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile);
+        });
+
+    ASSERT_EQ(1u, plan.renderEntries.size());
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(&parent, entry.renderTile);
+    EXPECT_TRUE(entry.usesAncestorFallback);
+    EXPECT_TRUE(entry.surfaceClipEnabled);
+    EXPECT_NEAR(0.5f, entry.surfaceClipUv[0], 1e-6f);
+    EXPECT_NEAR(0.0f, entry.surfaceClipUv[1], 1e-6f);
+    EXPECT_NEAR(0.5f, entry.surfaceClipUv[2], 1e-6f);
+    EXPECT_NEAR(0.5f, entry.surfaceClipUv[3], 1e-6f);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    UsesReadyWebMercatorFillAncestorFallbackWithProjectedClip) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 1, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle::fromDegrees(0.0, 0.0, 20.0, 20.0));
+    TilesetTile child(
+        childKey,
+        Rectangle::fromDegrees(10.0, 10.0, 20.0, 20.0),
+        &parent);
+    makeFillRenderReady(parent, RasterOverlayProjection::WebMercator);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{false, true, 0, 1},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile);
+        });
+
+    const WebMercatorProjection projection(Ellipsoid::WGS84());
+    const Rectangle parentProjected =
+        projectRectangleSimple(projection, parent.bounds);
+    const Rectangle childProjected =
+        projectRectangleSimple(projection, child.bounds);
+    const float expectedVScale = static_cast<float>(
+        (parentProjected.north() - childProjected.south()) /
+        parentProjected.computeHeight());
+
+    ASSERT_EQ(1u, plan.renderEntries.size());
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(&parent, entry.renderTile);
+    EXPECT_TRUE(entry.usesAncestorFallback);
+    EXPECT_TRUE(entry.surfaceClipEnabled);
+    EXPECT_NEAR(0.5f, entry.surfaceClipUv[0], 1e-6f);
+    EXPECT_NEAR(0.0f, entry.surfaceClipUv[1], 1e-6f);
+    EXPECT_NEAR(0.5f, entry.surfaceClipUv[2], 1e-6f);
+    EXPECT_NEAR(expectedVScale, entry.surfaceClipUv[3], 1e-6f);
+    EXPECT_GT(std::abs(entry.surfaceClipUv[3] - 0.5f), 1e-3f);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    UnreadyStaticGltfDoesNotCreateDirectRenderEntry) {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 1, 0};
     TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
@@ -308,8 +654,7 @@ TEST(
     parent.content.renderContent.setGltfContent(makeEmptyGltfModel());
     parent.content.loadState = TileLoadState::Done;
     parent.content.contentKind = TileContentKind::Render;
-    // Child has glTF content at ContentLoaded so canAttemptRenderResourcePrep
-    // returns true, allowing a direct render entry.
+    // Child has committed static glTF content but no GPU resources yet.
     child.content.renderContent.setGltfContent(makeEmptyGltfModel());
     child.content.renderContent.setTerrainRenderContent(true);
     child.content.loadState = TileLoadState::ContentLoaded;
@@ -338,14 +683,11 @@ TEST(
             return isDrawableRenderContent(tile);
         });
 
-    // Parent is not drawable (no resources), so child gets a direct entry.
-    // SynchronousPrep is dead — the entry reason is Direct.
-    ASSERT_EQ(plan.renderEntries.size(), 1u);
-    const TileRenderEntry& entry = plan.renderEntries.front();
-    EXPECT_EQ(entry.selectedKey, childKey);
-    EXPECT_EQ(entry.renderKey, childKey);
-    EXPECT_EQ(entry.reason, TileRenderEntryReason::Direct);
-    EXPECT_FALSE(entry.usesAncestorFallback);
+    // Neither tile is drawable. Resource creation belongs to update/upload,
+    // so draw planning must wait instead of creating a direct prep entry.
+    EXPECT_TRUE(plan.renderEntries.empty());
+    ASSERT_EQ(1u, plan.tilesToRenderThisFrame.size());
+    EXPECT_EQ(&child, plan.tilesToRenderThisFrame.front());
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
     EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);

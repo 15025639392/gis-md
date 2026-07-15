@@ -29,6 +29,8 @@ TEST(TileSelectionPlanAppenderTest, AddsVisibleTileAndQueuesNormalLoad) {
 
     ASSERT_EQ(tilePlan.visibleTiles.size(), 1u);
     EXPECT_EQ(tilePlan.visibleTiles.front(), tile.key);
+    ASSERT_EQ(tilePlan.tilesToRenderThisFrame.size(), 1u);
+    EXPECT_EQ(tilePlan.tilesToRenderThisFrame.front(), &tile);
     EXPECT_EQ(tile.selectionFrameState.selectionState,
               TileSelectionState::Rendered);
     EXPECT_EQ(tile.selectionFrameState.screenSpaceError, 12.5);
@@ -60,6 +62,8 @@ TEST(TileSelectionPlanAppenderTest, SkipsNormalLoadWhenAlreadyQueued) {
         9.0);
 
     ASSERT_EQ(tilePlan.visibleTiles.size(), 1u);
+    ASSERT_EQ(tilePlan.tilesToRenderThisFrame.size(), 1u);
+    EXPECT_EQ(tilePlan.tilesToRenderThisFrame.front(), &tile);
     EXPECT_EQ(tile.selectionFrameState.selectionState,
               TileSelectionState::Rendered);
     EXPECT_EQ(tile.selectionFrameState.screenSpaceError, 4.0);

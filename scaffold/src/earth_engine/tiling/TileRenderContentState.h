@@ -6,6 +6,7 @@
 #include "../renderer/RenderCommand.h"
 #include "../renderer/RenderDevice.h"
 #include "SurfaceTile.h"
+#include "TileFillGeometrySignature.h"
 
 #include <array>
 #include <cstddef>
@@ -108,12 +109,50 @@ struct GltfPrimitiveRenderResources {
     bool doubleSided = false;
     bool unlit = false;
     bool dynamicVertices = false;
-    bool useTerrainVertexFormat = false;  // true = 32-byte TerrainGpuVertex, false = 120-byte GltfGpuVertex
+    bool useTerrainVertexFormat = false;  // true = 40-byte TerrainGpuVertex, false = 120-byte GltfGpuVertex
 };
 
 class TileRenderContentState {
 public:
     bool asyncGpuUploadPending = false;  // true = CPU work dispatched to worker, GPU upload pending next frame
+
+    class GltfContentEdit {
+    public:
+        GltfContentEdit(
+            TileRenderContentState& owner,
+            GltfModel* model)
+            : owner_(&owner),
+              model_(model) {}
+        ~GltfContentEdit() {
+            if (model_) {
+                owner_->markRetainedResourcesChanged();
+            }
+        }
+
+        GltfContentEdit(const GltfContentEdit&) = delete;
+        GltfContentEdit& operator=(const GltfContentEdit&) = delete;
+
+        explicit operator bool() const { return model_ != nullptr; }
+        bool operator==(std::nullptr_t) const { return model_ == nullptr; }
+        bool operator!=(std::nullptr_t) const { return model_ != nullptr; }
+        friend bool operator==(
+            std::nullptr_t,
+            const GltfContentEdit& edit) {
+            return edit.model_ == nullptr;
+        }
+        friend bool operator!=(
+            std::nullptr_t,
+            const GltfContentEdit& edit) {
+            return edit.model_ != nullptr;
+        }
+        GltfModel* operator->() { return model_; }
+        GltfModel& operator*() { return *model_; }
+
+    private:
+        TileRenderContentState* owner_ = nullptr;
+        GltfModel* model_ = nullptr;
+    };
+
 public:
     // ── Shadow readiness mirror (async selection) ──────────────────────────
     // A shadow TilesetTile carries no real glTF model / GPU resources (kept
@@ -139,9 +178,14 @@ public:
                                       : gltfModel != nullptr;
     }
     bool hasGltfModel() const { return gltfModel != nullptr; }
-    GltfModel* gltfContent() { return gltfModel.get(); }
     const GltfModel* gltfContent() const { return gltfModel.get(); }
     const GltfModel* gltfModelForRead() const { return gltfModel.get(); }
+    GltfContentEdit editGltfContent() {
+        return GltfContentEdit(*this, gltfModel.get());
+    }
+    bool updateGltfAnimation(double timeSeconds) {
+        return gltfModel && gltfModel->updateAnimation(timeSeconds);
+    }
     const Mat4& gltfTransform() const { return gltfContentTransform; }
     bool isMeshReady() const { return surface_.meshReady; }
     bool isSurfaceMeshReady() const { return surface_.meshReady; }
@@ -168,13 +212,25 @@ public:
     // tile's raster mappings bind identically to fill and real geometry — no
     // re-map on swap; imagery stays put while terrain "rises".
     bool hasFillModel() const { return fillModel_ != nullptr; }
+    bool hasFillResources() const { return !fillPrimitiveResources_.empty(); }
+    bool hasMatchingFillGeometry(
+        const TileFillGeometrySignature& signature) const {
+        return fillGeometrySignature_.has_value() &&
+               *fillGeometrySignature_ == signature;
+    }
+    const TileFillGeometrySignature* fillGeometrySignature() const {
+        return fillGeometrySignature_
+            ? &*fillGeometrySignature_
+            : nullptr;
+    }
     bool isFillReady() const {
-        return fillModel_ != nullptr && fillResourcesReady_ &&
-               !fillPrimitiveResources_.empty();
+        return fillResourcesReady_ && !fillPrimitiveResources_.empty();
     }
     /// True when the draw path should render the fill proxy: the real terrain
     /// mesh is not yet renderable but a fill proxy is ready.
-    bool drawsFill() const { return !isGltfRenderReady() && isFillReady(); }
+    bool drawsFill() const {
+        return !isRenderContentReady() && isFillReady();
+    }
     /// The draw path can emit commands (real OR fill geometry ready).
     bool hasDrawableResources() const {
         return hasGltfResources() || isFillReady();
@@ -211,7 +267,6 @@ public:
     const DecodedHeightmap* retainedHeightmap() const {
         return surface_.heightmap.get();
     }
-    DecodedHeightmap* retainedHeightmap() { return surface_.heightmap.get(); }
     bool hasRetainedHeightmap() const { return surface_.heightmap != nullptr; }
     bool hasTerrainHeightRange() const {
         return surface_.hasTerrainHeightRange;
@@ -228,13 +283,23 @@ public:
     }
     void setRetainedHeightmap(std::unique_ptr<DecodedHeightmap> decoded) {
         if (isGltfOwnedContentState()) {
-            surface_.heightmap.reset();
+            if (surface_.heightmap) {
+                surface_.heightmap.reset();
+                markRetainedResourcesChanged();
+            }
             return;
+        }
+        if (surface_.heightmap || decoded) {
+            markRetainedResourcesChanged();
         }
         surface_.heightmap = std::move(decoded);
     }
     void clearRetainedHeightmap() {
+        const bool hadHeightmap = surface_.heightmap != nullptr;
         surface_.heightmap.reset();
+        if (hadHeightmap) {
+            markRetainedResourcesChanged();
+        }
         if (!gltfModel) {
             clearTerrainHeightRange();
         }
@@ -245,25 +310,45 @@ public:
             return;
         }
         surface_.meshReady = ready;
+        if (ready) {
+            clearFillContent();
+        }
     }
     void setGltfResourcesReady(bool ready) {
+        if (gltfResourcesReady_ == ready) {
+            return;
+        }
         gltfResourcesReady_ = ready;
         invalidateCachedDrawCommands();
     }
     void setTerrainRenderContent(bool terrain) {
+        if (terrainRenderContent_ == terrain) {
+            return;
+        }
         terrainRenderContent_ = terrain;
         invalidateCachedDrawCommands();
     }
     void markRenderContentReady() {
         if (gltfModel) {
+            const bool readinessChanged = !gltfResourcesReady_;
             gltfResourcesReady_ = true;
             // Real terrain is now renderable — the proxy has served its purpose;
             // drop it so the tile draws real geometry (the "rise") and frees the
             // proxy GPU buffers. Imagery UVs are unchanged (lon/lat-based).
-            clearFillContent();
-            invalidateCachedDrawCommands();
+            if (hasAnyFillState()) {
+                clearFillContent();
+            }
+            if (readinessChanged) {
+                invalidateCachedDrawCommands();
+            }
         } else {
+            const bool readinessChanged = !surface_.meshReady;
             surface_.meshReady = true;
+            if (hasAnyFillState()) {
+                clearFillContent();
+            } else if (!readinessChanged) {
+                return;
+            }
         }
     }
     void setSurfaceDrawable(bool drawable) {
@@ -340,10 +425,10 @@ public:
             ? &gltfPrimitiveResources[index]
             : nullptr;
     }
-    GltfPrimitiveRenderResources* gltfPrimitiveResourceForBuildAt(
+    GltfPrimitiveRenderResources* gltfPrimitiveResourceForAnimationUpdateAt(
         size_t index) {
-        // 可变访问口(动画路径每帧改写 sortCenterEcef/animationRevision),
-        // 保守失效:动画瓦片本就需要每帧重建命令。
+        // The animation path only updates existing buffer contents and
+        // size-stable draw metadata.
         invalidateCachedDrawCommands();
         return index < gltfPrimitiveResources.size()
             ? &gltfPrimitiveResources[index]
@@ -372,6 +457,9 @@ public:
     }
 
     void setSurfaceLocalOrigin(const Vec3& origin) {
+        if (surface_.localOrigin == origin) {
+            return;
+        }
         surface_.localOrigin = origin;
         invalidateCachedDrawCommands();
     }
@@ -379,9 +467,18 @@ public:
     void setSurfaceGpuBuffers(std::unique_ptr<Buffer> vertexBuffer,
                               std::unique_ptr<Buffer> indexBuffer) {
         if (isGltfOwnedContentState()) {
+            const bool hadBuffers =
+                surface_.gpuVertexBuffer || surface_.gpuIndexBuffer;
             surface_.gpuVertexBuffer.reset();
             surface_.gpuIndexBuffer.reset();
+            if (hadBuffers) {
+                markRetainedResourcesChanged();
+            }
             return;
+        }
+        if (surface_.gpuVertexBuffer || surface_.gpuIndexBuffer ||
+            vertexBuffer || indexBuffer) {
+            markRetainedResourcesChanged();
         }
         surface_.gpuVertexBuffer = std::move(vertexBuffer);
         surface_.gpuIndexBuffer = std::move(indexBuffer);
@@ -389,13 +486,23 @@ public:
 
     void setSurfaceWaterMaskTexture(std::unique_ptr<Texture> texture) {
         if (isGltfOwnedContentState()) {
+            const bool hadTexture = surfaceWaterMaskTexture_ != nullptr;
             surfaceWaterMaskTexture_.reset();
+            if (hadTexture) {
+                markRetainedResourcesChanged();
+            }
             return;
+        }
+        if (surfaceWaterMaskTexture_ || texture) {
+            markRetainedResourcesChanged();
         }
         surfaceWaterMaskTexture_ = std::move(texture);
     }
 
     void setGltfLocalOrigin(const Vec3& origin) {
+        if (surface_.localOrigin == origin) {
+            return;
+        }
         surface_.localOrigin = origin;
         invalidateCachedDrawCommands();
     }
@@ -406,17 +513,21 @@ public:
     }
 
     void addGltfTextureResource(std::unique_ptr<Texture> texture) {
+        markRetainedResourcesChanged();
         gltfTextureResources.push_back(std::move(texture));
     }
 
     void addGltfPrimitiveResource(GltfPrimitiveRenderResources resources) {
+        markRetainedResourcesChanged();
         gltfPrimitiveResources.push_back(std::move(resources));
         invalidateCachedDrawCommands();
     }
 
     // ── Fill (ellipsoid proxy) lifecycle ───────────────────────────────────
-    void setFillContent(std::unique_ptr<GltfModel> model,
-                        const Mat4& contentTransform = Mat4::identity()) {
+    void setFillContent(
+        std::unique_ptr<GltfModel> model,
+        const Mat4& contentTransform = Mat4::identity()) {
+        markRetainedResourcesChanged();
         clearFillGpuResources();
         if (model && model->preferredLocalOriginEcef.has_value()) {
             fillLocalOrigin_ =
@@ -429,7 +540,6 @@ public:
         fillResourcesReady_ = false;
         invalidateCachedDrawCommands();
     }
-    GltfModel* fillContent() { return fillModel_.get(); }
     const GltfModel* fillContent() const { return fillModel_.get(); }
     const Mat4& fillTransform() const { return fillContentTransform_; }
     const Vec3& fillLocalOrigin() const { return fillLocalOrigin_; }
@@ -440,28 +550,61 @@ public:
         fillPrimitiveResources_.reserve(primitiveResourceCount);
     }
     void addFillTextureResource(std::unique_ptr<Texture> texture) {
+        markRetainedResourcesChanged();
         fillTextureResources_.push_back(std::move(texture));
     }
     void addFillPrimitiveResource(GltfPrimitiveRenderResources resources) {
+        markRetainedResourcesChanged();
         fillPrimitiveResources_.push_back(std::move(resources));
         invalidateCachedDrawCommands();
     }
-    void setFillResourcesReady(bool ready) {
-        fillResourcesReady_ = ready;
+    void commitFillResourcesReady(
+        const TileFillGeometrySignature& geometrySignature) {
+        fillGeometrySignature_ = geometrySignature;
+        fillResourcesReady_ = true;
         invalidateCachedDrawCommands();
     }
+    void clearFillCpuModelAfterUpload() {
+        if (fillModel_) {
+            markRetainedResourcesChanged();
+        }
+        fillModel_.reset();
+    }
     void clearFillGpuResources() {
+        const bool changed =
+            !fillTextureResources_.empty() ||
+            !fillPrimitiveResources_.empty() ||
+            fillGeometrySignature_.has_value() ||
+            fillResourcesReady_;
+        if (!changed) {
+            return;
+        }
+        if (!fillTextureResources_.empty() ||
+            !fillPrimitiveResources_.empty()) {
+            markRetainedResourcesChanged();
+        }
         fillTextureResources_.clear();
         fillPrimitiveResources_.clear();
+        fillGeometrySignature_.reset();
         fillResourcesReady_ = false;
         invalidateCachedDrawCommands();
     }
     /// Drop the proxy entirely (real terrain took over, or the tile unloaded).
     void clearFillContent() {
+        if (!hasAnyFillState()) {
+            return;
+        }
+        if (fillModel_) {
+            markRetainedResourcesChanged();
+        }
         fillModel_.reset();
         fillContentTransform_ = Mat4::identity();
         fillLocalOrigin_ = Vec3::zero();
         clearFillGpuResources();
+    }
+
+    uint64_t retainedResourcesRevision() const {
+        return retainedResourcesRevision_;
     }
 
     static int64_t estimateHeightmapBytes(const DecodedHeightmap& heightmap) {
@@ -489,13 +632,11 @@ public:
         }
         if (surfaceWaterMaskTexture_) {
             bytes += static_cast<int64_t>(
-                surfaceWaterMaskTexture_->width() *
-                surfaceWaterMaskTexture_->height() * 4);
+                surfaceWaterMaskTexture_->sizeBytes());
         }
         for (const std::unique_ptr<Texture>& texture : gltfTextureResources) {
             if (texture) {
-                bytes += static_cast<int64_t>(
-                    texture->width() * texture->height() * 4);
+                bytes += static_cast<int64_t>(texture->sizeBytes());
             }
         }
         for (const GltfPrimitiveRenderResources& primitive :
@@ -508,6 +649,10 @@ public:
                 bytes += static_cast<int64_t>(
                     primitive.indexBuffer->size());
             }
+            if (primitive.instanceBuffer) {
+                bytes += static_cast<int64_t>(
+                    primitive.instanceBuffer->size());
+            }
         }
         if (surface_.heightmap) {
             bytes += estimateHeightmapBytes(*surface_.heightmap);
@@ -517,8 +662,7 @@ public:
         }
         for (const std::unique_ptr<Texture>& texture : fillTextureResources_) {
             if (texture) {
-                bytes += static_cast<int64_t>(
-                    texture->width() * texture->height() * 4);
+                bytes += static_cast<int64_t>(texture->sizeBytes());
             }
         }
         for (const GltfPrimitiveRenderResources& primitive :
@@ -529,17 +673,42 @@ public:
             if (primitive.indexBuffer) {
                 bytes += static_cast<int64_t>(primitive.indexBuffer->size());
             }
+            if (primitive.instanceBuffer) {
+                bytes += static_cast<int64_t>(
+                    primitive.instanceBuffer->size());
+            }
         }
         return bytes;
     }
 
     void clearGltfPrimitiveResources() {
+        if (!gltfPrimitiveResources.empty()) {
+            markRetainedResourcesChanged();
+        }
         gltfPrimitiveResources.clear();
         gltfResourcesReady_ = false;
         invalidateCachedDrawCommands();
     }
 
+    void clearTerrainGpuVertexBytes() {
+        if (!gltfModel) {
+            return;
+        }
+        bool changed = false;
+        for (GltfPrimitive& primitive : gltfModel->primitives) {
+            changed |= !primitive.terrainGpuVertexBytes.empty();
+            primitive.terrainGpuVertexBytes.clear();
+            primitive.terrainGpuVertexBytes.shrink_to_fit();
+        }
+        if (changed) {
+            markRetainedResourcesChanged();
+        }
+    }
+
     void clearGltfGpuResources() {
+        if (!gltfTextureResources.empty()) {
+            markRetainedResourcesChanged();
+        }
         gltfTextureResources.clear();
         clearGltfPrimitiveResources();
     }
@@ -557,10 +726,18 @@ public:
         // keep drawing across that window and is dropped only once the real
         // mesh is renderable (markRenderContentReady) or the tile unloads
         // (clearRenderContent / clearGltfContent).
+        const bool changed =
+            surface_.gpuVertexBuffer ||
+            surface_.gpuIndexBuffer ||
+            !gltfTextureResources.empty() ||
+            !gltfPrimitiveResources.empty();
         surface_.gpuVertexBuffer.reset();
         surface_.gpuIndexBuffer.reset();
         gltfTextureResources.clear();
         gltfPrimitiveResources.clear();
+        if (changed) {
+            markRetainedResourcesChanged();
+        }
         gltfResourcesReady_ = false;
         surface_.surfaceDrawable = false;
         surface_.surfaceSource = SurfaceDrawableSource::None;
@@ -568,6 +745,10 @@ public:
     }
 
     void clearSurfaceMeshResources() {
+        const bool changed =
+            surface_.gpuVertexBuffer ||
+            surface_.gpuIndexBuffer ||
+            surfaceWaterMaskTexture_;
         surface_.gpuVertexBuffer.reset();
         surface_.gpuIndexBuffer.reset();
         surfaceWaterMaskTexture_.reset();
@@ -576,6 +757,9 @@ public:
         surface_.surfaceDrawable = false;
         surface_.surfaceSource = SurfaceDrawableSource::None;
         clearTerrainHeightRange();
+        if (changed) {
+            markRetainedResourcesChanged();
+        }
     }
 
     void clearSurfaceResiduePreservingContentMetadata() {
@@ -595,6 +779,10 @@ public:
     }
 
     void clearRenderContent() {
+        const bool hadHeightmap = surface_.heightmap != nullptr;
+        const bool hadModel = gltfModel != nullptr;
+        const bool hadTextures = !gltfTextureResources.empty();
+        const bool hadPrimitives = !gltfPrimitiveResources.empty();
         clearSurfaceMeshResources();
         surface_.heightmap.reset();
         gltfModel.reset();
@@ -604,11 +792,15 @@ public:
         gltfResourcesReady_ = false;
         terrainRenderContent_ = false;
         clearFillContent();
+        if (hadHeightmap || hadModel || hadTextures || hadPrimitives) {
+            markRetainedResourcesChanged();
+        }
         invalidateCachedDrawCommands();
     }
 
     void prepareGltfContent(std::unique_ptr<GltfModel> model,
                             const Mat4& contentTransform) {
+        markRetainedResourcesChanged();
         surface_.heightmap.reset();
         surfaceWaterMaskTexture_.reset();
         surface_.horizonOcclusionPoint.reset();
@@ -627,12 +819,26 @@ public:
     }
 
     void clearGltfContent() {
-        clearFillContent();
+        clearGltfContentState(true);
+    }
+    void clearGltfContentPreservingFill() {
+        clearGltfContentState(false);
+    }
+
+private:
+    void clearGltfContentState(bool clearFill) {
+        const bool hadModel = gltfModel != nullptr;
+        if (clearFill) {
+            clearFillContent();
+        }
         const bool wasGltfOwnedContent =
             gltfModel != nullptr ||
             terrainRenderContent_ ||
             surface_.surfaceSource == SurfaceDrawableSource::GltfContent;
         gltfModel.reset();
+        if (hadModel) {
+            markRetainedResourcesChanged();
+        }
         gltfContentTransform = Mat4::identity();
         clearGltfGpuResources();
         terrainRenderContent_ = false;
@@ -649,7 +855,18 @@ public:
         }
     }
 
-private:
+    bool hasAnyFillState() const {
+        return fillModel_ != nullptr ||
+               fillGeometrySignature_.has_value() ||
+               fillResourcesReady_ ||
+               !fillTextureResources_.empty() ||
+               !fillPrimitiveResources_.empty();
+    }
+
+    void markRetainedResourcesChanged() {
+        ++retainedResourcesRevision_;
+    }
+
     bool isGltfOwnedContentState() const {
         return gltfModel != nullptr ||
                surface_.surfaceSource == SurfaceDrawableSource::GltfContent;
@@ -673,11 +890,13 @@ private:
 
     // Terrain fill (ellipsoid proxy) — separate from real gltf* content above.
     std::unique_ptr<GltfModel> fillModel_;
+    std::optional<TileFillGeometrySignature> fillGeometrySignature_;
     Mat4 fillContentTransform_ = Mat4::identity();
     Vec3 fillLocalOrigin_ = Vec3::zero();
     bool fillResourcesReady_ = false;
     std::vector<std::unique_ptr<Texture>> fillTextureResources_;
     std::vector<GltfPrimitiveRenderResources> fillPrimitiveResources_;
+    uint64_t retainedResourcesRevision_ = 1;
 };
 
 } // namespace earth_engine

@@ -2,6 +2,7 @@
 #include "RasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../renderer/RenderDeviceRasterTextureUploader.h"
+#include "../tiling/TileRasterOverlayUploadResult.h"
 
 namespace earth_engine {
 
@@ -51,14 +52,14 @@ RasterOverlayTile* ActivatedRasterOverlay::getPlaceholderTile() {
     return provider->getPlaceholderTile().get();
 }
 
-int ActivatedRasterOverlay::processPendingUploads(
+TileRasterOverlayUploadResult ActivatedRasterOverlay::processPendingUploads(
     bool interactionActive,
     FrameResourceBudget* budget) {
     syncProviderOptionsFromOverlay();
     if (tileProvider_) {
         return tileProvider_->processPendingUploads(interactionActive, budget);
     }
-    return 0;
+    return {};
 }
 
 bool ActivatedRasterOverlay::hasPendingWork() const {
@@ -76,11 +77,15 @@ void ActivatedRasterOverlay::setFrameNumber(uint64_t frameNumber) {
     }
 }
 
-void ActivatedRasterOverlay::trimUnusedTiles() {
+void ActivatedRasterOverlay::trimUnusedTiles(bool cachePressure) {
     syncProviderOptionsFromOverlay();
     if (tileProvider_) {
-        tileProvider_->trimUnusedTiles();
+        tileProvider_->trimUnusedTiles(cachePressure);
     }
+}
+
+int64_t ActivatedRasterOverlay::tileTextureBytesUsed() const {
+    return tileProvider_ ? tileProvider_->tileTextureBytesUsed() : 0;
 }
 
 int ActivatedRasterOverlay::getCachedTileCount() const {

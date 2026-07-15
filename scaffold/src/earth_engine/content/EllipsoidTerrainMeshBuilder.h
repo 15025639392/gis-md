@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace earth_engine {
 
@@ -45,12 +46,20 @@ public:
         RasterOverlayProjection projection,
         int gridSize,
         const EllipsoidProxyHeightSampler& heightSampler = {});
+    static std::unique_ptr<GltfModel> makeModel(
+        const Rectangle& geographicRectangle,
+        const std::vector<RasterOverlayProjection>& projections,
+        int gridSize,
+        const EllipsoidProxyHeightSampler& heightSampler = {});
 
     /// The RasterOverlayDetails a proxy model of this rectangle/projection
     /// carries (projection list + projected rectangle + NW-V convention).
     static RasterOverlayDetails makeRasterOverlayDetails(
         const Rectangle& geographicRectangle,
         RasterOverlayProjection projection);
+    static RasterOverlayDetails makeRasterOverlayDetails(
+        const Rectangle& geographicRectangle,
+        const std::vector<RasterOverlayProjection>& projections);
 };
 
 } // namespace earth_engine

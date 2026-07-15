@@ -16,6 +16,7 @@
 #include "../core/math/MathUtils.h"
 #include "../core/math/Rectangle.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -57,6 +58,140 @@ struct TilesetTile {
     TilesetTile* getParent() { return parent; }
     const TilesetTile* getParent() const { return parent; }
 
+    bool attachChild(TilesetTile& child) {
+        if (std::find(children.begin(), children.end(), &child) !=
+            children.end()) {
+            if (child.parent != this) {
+                child.parent = this;
+                child.invalidateChildMaterialization();
+                invalidateChildMaterialization();
+            }
+            return false;
+        }
+        child.parent = this;
+        child.invalidateChildMaterialization();
+        children.push_back(&child);
+        invalidateChildMaterialization();
+        return true;
+    }
+
+    void clearChildren() {
+        if (children.empty()) {
+            return;
+        }
+        for (TilesetTile* child : children) {
+            if (child && child->parent == this) {
+                child->parent = nullptr;
+                child->invalidateChildMaterialization();
+            }
+        }
+        children.clear();
+        invalidateChildMaterialization();
+    }
+
+    void setBounds(const Rectangle& value) {
+        if (bounds == value) {
+            return;
+        }
+        bounds = value;
+        notifyChildMaterializationStateChanged();
+    }
+
+    void setGeometricError(double value) {
+        if (geometricError == value) {
+            return;
+        }
+        geometricError = value;
+        notifyChildMaterializationStateChanged();
+    }
+
+    void setRefine(TileRefine value) {
+        if (refine == value) {
+            return;
+        }
+        refine = value;
+        notifyChildMaterializationStateChanged();
+    }
+
+    void setUnconditionallyRefine(bool value) {
+        if (unconditionallyRefine == value) {
+            return;
+        }
+        unconditionallyRefine = value;
+        notifyChildMaterializationStateChanged();
+    }
+
+    void setBoundingVolume(std::optional<TileBoundingVolume> value) {
+        boundingVolume = std::move(value);
+        notifyChildMaterializationStateChanged();
+    }
+
+    void setContentBoundingVolume(
+        std::optional<TileBoundingVolume> value) {
+        contentBoundingVolume = std::move(value);
+        notifyChildMaterializationStateChanged();
+    }
+
+    void resetContentBoundingVolume() {
+        if (!contentBoundingVolume) {
+            return;
+        }
+        contentBoundingVolume.reset();
+        notifyChildMaterializationStateChanged();
+    }
+
+    void invalidateChildMaterialization() {
+        ++childMaterializationInputRevision;
+        if (childMaterializationInputRevision == 0) {
+            childMaterializationInputRevision = 1;
+        }
+        childMaterializationStateValid = false;
+    }
+
+    void notifyChildMaterializationStateChanged() {
+        invalidateChildMaterialization();
+        if (parent) {
+            parent->invalidateChildMaterialization();
+        }
+    }
+
+    void markTerrainAvailabilityUpsample() {
+        if (content.isTerrainAvailabilityUpsample() &&
+            !content.rasterDetailSourceProjection) {
+            return;
+        }
+        content.markTerrainAvailabilityUpsample();
+        notifyChildMaterializationStateChanged();
+    }
+
+    void markRasterDetailUpsample() {
+        if (content.isRasterDetailUpsample() &&
+            !content.rasterDetailSourceProjection) {
+            return;
+        }
+        content.markRasterDetailUpsample();
+        notifyChildMaterializationStateChanged();
+    }
+
+    void markRasterDetailUpsample(
+        RasterOverlayProjection sourceProjection) {
+        if (content.isRasterDetailUpsample() &&
+            content.rasterDetailSourceProjection == sourceProjection) {
+            return;
+        }
+        content.markRasterDetailUpsample(sourceProjection);
+        notifyChildMaterializationStateChanged();
+    }
+
+    void clearUpsampleKind() {
+        if (!content.derivesTerrainFromParent() &&
+            !content.rasterDetailSourceProjection) {
+            return;
+        }
+        content.clearUpsampleKind();
+        notifyChildMaterializationStateChanged();
+    }
+
     double nonZeroGeometricError() const {
         if (geometricError > MathUtils::Epsilon5) {
             return geometricError;
@@ -96,23 +231,44 @@ struct TilesetTile {
     }
 
     void markContentLoading() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
         TileContentStateTransition::markLoading(
             content.loadState,
             content.contentKind);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markRenderContentLoaded() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
         resetTemporaryFailureBackoff();
         TileContentStateTransition::markRenderLoaded(
             content.loadState,
             content.contentKind);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markRenderContentDone() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
+        const bool wasReady =
+            content.renderContent.isRenderContentReady();
         TileContentStateTransition::markRenderDone(
             content.renderContent,
             content.loadState,
             content.contentKind);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind ||
+            content.renderContent.isRenderContentReady() != wasReady) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     template <typename IsCompleteRenderableFn>
@@ -128,6 +284,7 @@ struct TilesetTile {
         if (markDone) {
             content.loadState = TileLoadState::Done;
         }
+        notifyChildMaterializationStateChanged();
         updateFrameRenderability(
             hasSurfaceDrawable(),
             isCompleteRenderable(*this));
@@ -199,67 +356,115 @@ struct TilesetTile {
     }
 
     void markRenderContentFailedTemporarily() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
         TileContentStateTransition::markRenderFailedTemporarily(
             content.renderContent,
             content.loadState,
             content.contentKind);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markContentFailedTemporarily() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
         TileContentStateTransition::markFailedTemporarily(
             content.loadState,
             content.contentKind);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markContentFailedPermanently() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
         TileContentStateTransition::markFailedPermanently(
             content.loadState,
             content.contentKind);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markEmptyContentLoaded() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
         resetTemporaryFailureBackoff();
         TileContentStateTransition::markEmptyLoaded(
             content.loadState,
             content.contentKind);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markEmptyContentDone() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
         TileContentStateTransition::markEmptyDone(
             content.loadState,
             content.contentKind);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markExternalContentDone() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
+        const bool wasUnconditionallyRefined = unconditionallyRefine;
         TileContentStateTransition::markExternalDone(
             content.loadState,
             content.contentKind,
             unconditionallyRefine);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind ||
+            unconditionallyRefine != wasUnconditionallyRefined) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markContentUnloading() {
+        const TileLoadState previousLoadState = content.loadState;
         TileContentStateTransition::markUnloading(content.loadState);
+        if (content.loadState != previousLoadState) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     void markContentUnloaded() {
+        const TileLoadState previousLoadState = content.loadState;
+        const TileContentKind previousContentKind = content.contentKind;
         TileContentStateTransition::markUnloaded(
             content.loadState,
             content.contentKind,
             selectionFrameState);
+        if (content.loadState != previousLoadState ||
+            content.contentKind != previousContentKind) {
+            notifyChildMaterializationStateChanged();
+        }
     }
 
     // ── cesium-native reference counting (Tile::getReferenceCount) ──
-    /// Incremented when tile content is referenced by the renderer.
+    /// Shared by selector traversal ownership and renderer submit ownership.
     /// Tiles with referenceCount > 0 are ineligible for unloading.
-    int32_t referenceCount() const { return renderReferences.count(); }
-    uint64_t lastUsedFrame() const { return renderReferences.lastUsedFrame(); }
+    int32_t referenceCount() const { return referenceState.count(); }
+    uint64_t lastUsedFrame() const { return referenceState.lastUsedFrame(); }
     void markUsedForRenderFrame(uint64_t frameNumber) {
-        renderReferences.markUsedForFrame(frameNumber);
+        referenceState.markUsedForFrame(frameNumber);
     }
-    void addReference() { renderReferences.add(); }
-    void removeReference() { renderReferences.remove(); }
-    void clearReferences() { renderReferences.clear(); }
-    TileRenderReferenceState renderReferences;
+    void addReference() { referenceState.add(); }
+    void removeReference() { referenceState.remove(); }
+    void clearReferences() { referenceState.clear(); }
+    TileRenderReferenceState referenceState;
 
     // ---- Raster overlays ----
     TileRasterOverlayState rasterOverlayState;
@@ -269,9 +474,27 @@ struct TilesetTile {
 
     // Incremental selection reset stamp: the selector frame id at which this
     // tile's selectionFrameState was last reset/visited. Guards both
-    // once-per-frame reset and active-set membership (see Tileset active-set).
+    // once-per-frame reset and the previous-traversal history decay.
     // Replaces the old per-frame full-registry reset sweep.
     uint64_t selectionActiveFrameId = 0;
+    // The selector frame in which this tile was added to the current traversal
+    // ownership set. Kept separate from selectionActiveFrameId because a tile
+    // may be reset from previous-traversal history before it is visited again.
+    uint64_t selectionTraversalFrameId = 0;
+
+    // Child creation follows cesium-native's state-transition model. Provider
+    // topology changes and explicit tile mutations invalidate this generation;
+    // stable selection frames compare only integer versions.
+    uint64_t childMaterializationInputRevision = 1;
+    uint64_t appliedChildMaterializationInputRevision = 0;
+    uint64_t appliedChildTopologyRevision = 0;
+    uint64_t appliedChildMaterializationConfiguration = 0;
+    bool childMaterializationStateValid = false;
+
+    // Provider metadata is immutable by default. Providers that explicitly
+    // publish a metadata revision may refresh an existing Unloaded tile once
+    // per revision.
+    uint64_t appliedContentMetadataRevision = 0;
 
     TilesetTile() = default;
     TilesetTile(TileKey k, Rectangle b, TilesetTile* p = nullptr)

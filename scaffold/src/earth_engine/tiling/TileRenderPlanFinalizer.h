@@ -2,6 +2,7 @@
 
 #include "TileKey.h"
 #include "TilePlan.h"
+#include "TileRasterOverlayReadinessPolicy.h"
 #include "TilesetTile.h"
 
 #include "../core/geodesy/Ellipsoid.h"
@@ -11,11 +12,13 @@
 #include <algorithm>
 #include <array>
 #include <optional>
-#include <string>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace earth_engine {
+
+class ActivatedRasterOverlay;
 
 struct TileRenderPlanFinalizeOptions {
     bool enableLodTransitionPeriod = false;
@@ -34,75 +37,100 @@ struct TileRenderPlanFinalizer {
         EnsureTileFn&& ensureTile,
         CacheKeyFn&& cacheKey,
         IsFallbackRenderableFn&& isFallbackRenderable) {
+        static const std::vector<ActivatedRasterOverlay*> kNoRasterOverlays;
+        refreshRenderEntries(
+            plan,
+            options,
+            kNoRasterOverlays,
+            std::forward<EnsureTileFn>(ensureTile),
+            std::forward<CacheKeyFn>(cacheKey),
+            std::forward<IsFallbackRenderableFn>(isFallbackRenderable));
+    }
+
+    template <typename EnsureTileFn,
+              typename CacheKeyFn,
+              typename IsFallbackRenderableFn>
+    static void refreshRenderEntries(
+        TilePlan& plan,
+        const TileRenderPlanFinalizeOptions& options,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        EnsureTileFn&& ensureTile,
+        CacheKeyFn&& cacheKey,
+        IsFallbackRenderableFn&& isFallbackRenderable) {
+        (void)cacheKey;
+        std::vector<TilesetTile*> selectedTileHandles =
+            std::move(plan.tilesToRenderThisFrame);
+        std::vector<TilesetTile*> fadingTileHandles =
+            std::move(plan.tilesFadingOutThisFrame);
         plan.renderEntries.clear();
+        plan.tilesToRenderThisFrame.clear();
+        plan.tilesFadingOutThisFrame.clear();
         plan.renderEntryAncestorFallbackCount = 0;
         plan.renderEntrySynchronousPrepCount = 0;
         plan.renderEntryDeferredPrepCount = 0;
 
-        std::unordered_set<std::string> renderedGeometryKeys;
-        std::unordered_set<std::string> renderedFullGeometryKeys;
-        std::unordered_set<std::string> renderedClippedGeometryKeys;
+        std::unordered_set<RenderGeometryIdentity, RenderGeometryIdentityHash>
+            renderedGeometry;
+        std::unordered_set<TilesetTile*> renderedFullGeometry;
+        std::unordered_set<TilesetTile*> renderedClippedGeometry;
 
         int renderPrepBudgetRemaining = options.interactionActive
             ? options.activeInteractionRenderPrepBudget
             : options.recoveryRenderPrepBudget;
 
-        auto appendRenderEntry = [&](const TileKey& key,
+        auto appendRenderEntry = [&](TilesetTile& selectedTile,
                                      float opacity,
                                      bool selectedThisFrame) {
-            TilesetTile* selectedTile = ensureTile(key);
-            if (!selectedTile) return;
-
-            TilesetTile* commandTile = selectedTile;
+            TilesetTile* commandTile = &selectedTile;
             std::optional<std::array<float, 4>> surfaceClipUv;
             bool usesAncestorFallback = false;
 
             if (selectedThisFrame &&
-                !canBuildRenderEntryDirectly(*selectedTile)) {
+                !canBuildRenderEntryDirectly(selectedTile,
+                                             rasterOverlays)) {
                 TilesetTile* renderableAncestor =
                     findNearestRenderableAncestor(
-                        *selectedTile,
+                        selectedTile,
                         isFallbackRenderable);
                 if (renderableAncestor) {
                     commandTile = renderableAncestor;
                     surfaceClipUv = clipUvForDescendantBounds(
                         *commandTile,
-                        selectedTile->bounds);
+                        selectedTile.bounds);
                     if (!surfaceClipUv) {
                         return;
                     }
                     usesAncestorFallback = true;
                 }
             }
-            if (!canBuildRenderEntryDirectly(*commandTile) &&
-                !canAttemptRenderResourcePrep(*commandTile)) {
+            if (!canBuildRenderEntryDirectly(
+                    *commandTile,
+                    rasterOverlays)) {
                 return;
             }
 
-            const std::string selectedCk = cacheKey(selectedTile->key);
-            const std::string commandCk = cacheKey(commandTile->key);
-            std::string renderDedupKey = commandCk;
+            const RenderGeometryIdentity renderIdentity{
+                commandTile,
+                surfaceClipUv ? &selectedTile : nullptr};
             if (surfaceClipUv) {
-                if (renderedFullGeometryKeys.count(commandCk) > 0) {
+                if (renderedFullGeometry.count(commandTile) > 0) {
                     return;
                 }
-                renderDedupKey += "|clip:";
-                renderDedupKey += selectedCk;
-            } else if (renderedClippedGeometryKeys.count(commandCk) > 0) {
+            } else if (
+                renderedClippedGeometry.count(commandTile) > 0) {
                 eraseClippedEntriesForRenderTile(
                     plan,
-                    commandCk,
-                    renderedGeometryKeys,
-                    renderedClippedGeometryKeys,
-                    cacheKey);
+                    commandTile,
+                    renderedGeometry,
+                    renderedClippedGeometry);
             }
-            if (!renderedGeometryKeys.insert(renderDedupKey).second) {
+            if (!renderedGeometry.insert(renderIdentity).second) {
                 return;
             }
             if (surfaceClipUv) {
-                renderedClippedGeometryKeys.insert(commandCk);
+                renderedClippedGeometry.insert(commandTile);
             } else {
-                renderedFullGeometryKeys.insert(commandCk);
+                renderedFullGeometry.insert(commandTile);
             }
 
             bool allowSynchronousMeshPrep = true;
@@ -122,12 +150,14 @@ struct TileRenderPlanFinalizer {
             }
 
             TileRenderEntry entry;
-            entry.selectedKey = selectedTile->key;
+            entry.selectedKey = selectedTile.key;
             entry.renderKey = commandTile->key;
+            entry.selectedTile = &selectedTile;
+            entry.renderTile = commandTile;
             entry.reason = selectedThisFrame
                 ? TileRenderEntryReason::Direct
                 : TileRenderEntryReason::FadingOut;
-            entry.opacity = commandTile == selectedTile ? opacity : 1.0f;
+            entry.opacity = commandTile == &selectedTile ? opacity : 1.0f;
             entry.selectedThisFrame = selectedThisFrame;
             entry.usesAncestorFallback = usesAncestorFallback;
             entry.allowSynchronousMeshPrep = allowSynchronousMeshPrep;
@@ -146,25 +176,72 @@ struct TileRenderPlanFinalizer {
             plan.renderEntries.push_back(std::move(entry));
         };
 
-        for (const TileKey& key : plan.visibleTiles) {
-            TilesetTile* tile = ensureTile(key);
+        for (size_t i = 0; i < plan.visibleTiles.size(); ++i) {
+            const TileKey& key = plan.visibleTiles[i];
+            TilesetTile* tile =
+                i < selectedTileHandles.size() &&
+                        selectedTileHandles[i] &&
+                        selectedTileHandles[i]->key == key
+                    ? selectedTileHandles[i]
+                    : ensureTile(key);
+            if (!tile) {
+                continue;
+            }
+            plan.tilesToRenderThisFrame.push_back(tile);
             const float transitionOpacity =
-                options.enableLodTransitionPeriod && tile
+                options.enableLodTransitionPeriod
                     ? tile->selectionFrameState.lodTransitionFadePercentage
                     : 1.0f;
-            appendRenderEntry(key, transitionOpacity, true);
+            appendRenderEntry(*tile, transitionOpacity, true);
         }
 
-        for (const TileTransition& transition : plan.tilesFadingOut) {
+        for (size_t i = 0; i < plan.tilesFadingOut.size(); ++i) {
+            const TileTransition& transition = plan.tilesFadingOut[i];
             if (transition.opacity <= 0.001f) {
                 continue;
             }
-            appendRenderEntry(transition.key, transition.opacity, false);
+            TilesetTile* tile =
+                i < fadingTileHandles.size() &&
+                        fadingTileHandles[i] &&
+                        fadingTileHandles[i]->key == transition.key
+                    ? fadingTileHandles[i]
+                    : ensureTile(transition.key);
+            if (!tile) {
+                continue;
+            }
+            plan.tilesFadingOutThisFrame.push_back(tile);
+            appendRenderEntry(*tile, transition.opacity, false);
         }
     }
 
 private:
-    static bool canBuildRenderEntryDirectly(const TilesetTile& tile) {
+    struct RenderGeometryIdentity {
+        TilesetTile* renderTile = nullptr;
+        TilesetTile* selectedTileForClip = nullptr;
+
+        bool operator==(const RenderGeometryIdentity& other) const {
+            return renderTile == other.renderTile &&
+                   selectedTileForClip ==
+                       other.selectedTileForClip;
+        }
+    };
+
+    struct RenderGeometryIdentityHash {
+        size_t operator()(const RenderGeometryIdentity& identity) const {
+            const size_t renderHash =
+                std::hash<TilesetTile*>()(identity.renderTile);
+            const size_t selectedHash =
+                std::hash<TilesetTile*>()(
+                    identity.selectedTileForClip);
+            return renderHash ^
+                   (selectedHash + 0x9e3779b9 +
+                    (renderHash << 6) + (renderHash >> 2));
+        }
+    };
+
+    static bool canBuildRenderEntryDirectly(
+        const TilesetTile& tile,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
         // Real terrain renderable OR the ellipsoid fill proxy is ready: the
         // tile draws its OWN geometry directly (no ancestor fallback). A
         // fill-ready tile shows its own fine imagery on the smooth globe
@@ -173,22 +250,15 @@ private:
         // content is committed but not yet GPU-ready while the fill still
         // draws — matching the draw path's drawsFill()/hasDrawableResources().
         if (tile.content.renderContent.hasDrawableResources()) {
-            return true;
+            return TileRasterOverlayReadinessPolicy::
+                terrainSurfaceImageryDrawableReady(tile, rasterOverlays);
         }
         return hasRenderableSurfaceForPlan(tile);
     }
 
     static bool needsSurfaceGeometryPrep(const TilesetTile& tile) {
-        return canAttemptSurfaceGeometryPrep(tile) &&
-               !hasRenderableSurfaceForPlan(tile);
-    }
-
-    static bool canAttemptSurfaceGeometryPrep(const TilesetTile& tile) {
-        return false;  // Surface mesh removed
-    }
-
-    static bool canAttemptRenderResourcePrep(const TilesetTile& tile) {
-        return tile.content.renderContent.hasGltfContent();
+        static_cast<void>(tile);
+        return false;
     }
 
     static bool hasRenderableSurfaceForPlan(const TilesetTile& tile) {
@@ -212,7 +282,21 @@ private:
         Rectangle texcoordRect = commandTile.bounds;
         RasterOverlayProjection projection =
             RasterOverlayProjection::Geographic;
-        if (commandTile.content.renderContent
+        const TileFillGeometrySignature* fillSignature =
+            commandTile.content.renderContent.fillGeometrySignature();
+        if (commandTile.content.renderContent.drawsFill() &&
+            fillSignature) {
+            projection = fillSignature->projection;
+            texcoordRect =
+                projection == RasterOverlayProjection::WebMercator
+                ? projectRectangleSimple(
+                      WebMercatorProjection(Ellipsoid::WGS84()),
+                      fillSignature->bounds
+                          .splitAtAntimeridian()
+                          .first)
+                : fillSignature->bounds;
+        } else if (
+            commandTile.content.renderContent
                 .hasRasterOverlayDetailsContent()) {
             const RasterOverlayDetails& details =
                 commandTile.content.renderContent.rasterOverlayDetails();
@@ -289,26 +373,25 @@ private:
         return nullptr;
     }
 
-    template <typename CacheKeyFn>
     static void eraseClippedEntriesForRenderTile(
         TilePlan& plan,
-        const std::string& renderCacheKey,
-        std::unordered_set<std::string>& renderedGeometryKeys,
-        std::unordered_set<std::string>& renderedClippedGeometryKeys,
-        CacheKeyFn&& cacheKey) {
+        TilesetTile* renderTile,
+        std::unordered_set<
+            RenderGeometryIdentity,
+            RenderGeometryIdentityHash>& renderedGeometry,
+        std::unordered_set<TilesetTile*>& renderedClippedGeometry) {
         plan.renderEntries.erase(
             std::remove_if(
                 plan.renderEntries.begin(),
                 plan.renderEntries.end(),
                 [&](const TileRenderEntry& entry) {
                     if (!entry.hasSurfaceClip() ||
-                        cacheKey(entry.renderKey) != renderCacheKey) {
+                        entry.renderTile != renderTile) {
                         return false;
                     }
-                    std::string clippedDedupKey = renderCacheKey;
-                    clippedDedupKey += "|clip:";
-                    clippedDedupKey += cacheKey(entry.selectedKey);
-                    renderedGeometryKeys.erase(clippedDedupKey);
+                    renderedGeometry.erase(RenderGeometryIdentity{
+                        renderTile,
+                        entry.selectedTile});
                     if (entry.usesAncestorFallback &&
                         plan.renderEntryAncestorFallbackCount > 0) {
                         --plan.renderEntryAncestorFallbackCount;
@@ -316,7 +399,7 @@ private:
                     return true;
                 }),
             plan.renderEntries.end());
-        renderedClippedGeometryKeys.erase(renderCacheKey);
+        renderedClippedGeometry.erase(renderTile);
     }
 };
 

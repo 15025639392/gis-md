@@ -97,6 +97,13 @@ struct GltfMorphTarget {
     std::vector<Vec3> tangentDeltas;
 };
 
+struct GltfInstanceRuntimeTransform {
+    // Transform outside the glTF node hierarchy, such as an I3DM instance.
+    Mat4 outerTransform = Mat4::identity();
+    // EXT_mesh_gpu_instancing transform in the owning node's local space.
+    Mat4 nodeLocalTransform = Mat4::identity();
+};
+
 struct GltfPrimitiveRuntime {
     int nodeIndex = -1;
     int skinIndex = -1;
@@ -104,13 +111,14 @@ struct GltfPrimitiveRuntime {
     std::vector<std::array<float, 4>> baseTangents;
     std::vector<GltfVertexSkinning> skinning;
     std::vector<GltfMorphTarget> morphTargets;
+    std::vector<GltfInstanceRuntimeTransform> instanceTransforms;
     bool hasNormals = false;
     bool hasTangents = false;
 };
 
 struct GltfPrimitive {
     std::vector<SurfaceVertex> vertices;
-    // Pre-built TerrainGpuVertex bytes (32-byte format).  Populated during
+    // Pre-built TerrainGpuVertex bytes (40-byte format). Populated during
     // decode (worker thread) so main-thread GPU upload can create vertex
     // buffers directly without re-building vertices from SurfaceVertex.
     std::vector<uint8_t> terrainGpuVertexBytes;

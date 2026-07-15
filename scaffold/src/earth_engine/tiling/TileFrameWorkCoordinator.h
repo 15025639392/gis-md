@@ -16,6 +16,8 @@
 
 namespace earth_engine {
 
+class IPrepareRendererResources;
+
 struct TileFrameWorkState {
     bool& cameraMoving;
     bool& interactionActiveForFrame;
@@ -46,8 +48,7 @@ struct TileFrameWorkInput {
     bool enableTerrainFillProxy = false;
     int terrainFillProxyGridSize = 16;
     bool hasTerrainQuadtree = false;
-    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>* tiles =
-        nullptr;
+    IPrepareRendererResources* pPrepRenderer = nullptr;
 };
 
 struct TileFrameWorkResult {
@@ -64,9 +65,12 @@ public:
               typename HasTilesetPendingWorkFn,
               typename RefreshTilePlanRenderEntriesFn,
               typename SelectTilesFn,
+              typename FindTileFn,
               typename EnsureTileFn,
               typename UnloadTileContentFn,
-              typename RequestMissingTilesFn>
+              typename CreateRasterOverlayUpsampledChildrenFn,
+              typename RequestMissingTilesFn,
+              typename MarkTileResourcesDirtyFn>
     static TileFrameWorkResult run(
         TileFrameWorkInput input,
         TileFrameWorkState state,
@@ -75,9 +79,13 @@ public:
         HasTilesetPendingWorkFn&& hasTilesetPendingWork,
         RefreshTilePlanRenderEntriesFn&& refreshTilePlanRenderEntries,
         SelectTilesFn&& selectTiles,
+        FindTileFn&& findTile,
         EnsureTileFn&& ensureTile,
         UnloadTileContentFn&& unloadTileContent,
-        RequestMissingTilesFn&& requestMissingTiles) {
+        CreateRasterOverlayUpsampledChildrenFn&&
+            createRasterOverlayUpsampledChildren,
+        RequestMissingTilesFn&& requestMissingTiles,
+        MarkTileResourcesDirtyFn&& markTileResourcesDirty) {
         TileFrameWorkResult result;
 
         const TileUpdateFrameContext frameContext =
@@ -162,12 +170,15 @@ public:
                 input.enableTerrainFillProxy,
                 input.terrainFillProxyGridSize,
                 input.hasTerrainQuadtree,
-                input.tiles},
+                input.pPrepRenderer},
             refreshTilePlanRenderEntries,
             selectTiles,
+            findTile,
             ensureTile,
             unloadTileContent,
-            requestMissingTiles);
+            createRasterOverlayUpsampledChildren,
+            requestMissingTiles,
+            markTileResourcesDirty);
 
         return result;
     }

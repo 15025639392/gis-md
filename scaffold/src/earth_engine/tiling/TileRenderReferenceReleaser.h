@@ -2,22 +2,31 @@
 
 #include "TilesetTile.h"
 
-#include <memory>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace earth_engine {
 
+struct TileRenderReference {
+    TilesetTile* tile = nullptr;
+    std::string cacheKey;
+    bool countedReference = false;
+};
+
 struct TileRenderReferenceReleaser {
-    static void release(
-        const std::unordered_map<
-            std::string,
-            std::unique_ptr<TilesetTile>>& tiles) {
-        for (const auto& entry : tiles) {
-            if (entry.second) {
-                entry.second->clearReferences();
+    template <typename MarkEligibleFn>
+    static void release(std::vector<TileRenderReference>& references,
+                        MarkEligibleFn&& markEligible) {
+        for (TileRenderReference& reference : references) {
+            if (!reference.tile) {
+                continue;
             }
+            if (reference.countedReference) {
+                reference.tile->removeReference();
+            }
+            markEligible(reference.tile, reference.cacheKey);
         }
+        references.clear();
     }
 };
 

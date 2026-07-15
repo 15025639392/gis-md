@@ -39,7 +39,7 @@ private:
     void prepareContentTerrainFrame(
         TilesetTile& tile,
         IPrepareRendererResources* pPrepRenderer);
-    void markResourcesDirty();
+    void markResourcesDirty(TilesetTile& tile);
     void queueTileLoad(const TileKey& key,
                        TileLoadPriorityGroup group,
                        double priority);

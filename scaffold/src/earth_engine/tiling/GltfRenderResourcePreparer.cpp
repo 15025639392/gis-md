@@ -41,9 +41,17 @@ TextureDesc::Wrap toTextureWrap(GltfTextureWrap wrap) {
 /// GpuReadyData level instead of being duplicated into every primitive.
 std::vector<GpuReadyData::TextureData> decodeModelTextures(
     const std::vector<GltfTexture>& modelTextures) {
-    std::vector<GpuReadyData::TextureData> textures;
-    for (const GltfTexture& tex : modelTextures) {
-        GpuReadyData::TextureData texData;
+    std::vector<GpuReadyData::TextureData> textures(modelTextures.size());
+    for (size_t textureIndex = 0;
+         textureIndex < modelTextures.size();
+         ++textureIndex) {
+        const GltfTexture& tex = modelTextures[textureIndex];
+        GpuReadyData::TextureData& texData = textures[textureIndex];
+        texData.minFilter = tex.sampler.minFilter;
+        texData.magFilter = tex.sampler.magFilter;
+        texData.mipmap = tex.sampler.mipmap;
+        texData.wrapS = tex.sampler.wrapS;
+        texData.wrapT = tex.sampler.wrapT;
         if (tex.image.width <= 0 || tex.image.height <= 0 ||
             tex.image.pixels.empty()) {
             continue;
@@ -53,7 +61,6 @@ std::vector<GpuReadyData::TextureData> decodeModelTextures(
             static_cast<size_t>(tex.image.height);
         texData.width = tex.image.width;
         texData.height = tex.image.height;
-        texData.mipmap = tex.sampler.mipmap;
 
         if (tex.image.channels == 1) {
             if (tex.image.pixels.size() < pixelCount) continue;
@@ -78,66 +85,8 @@ std::vector<GpuReadyData::TextureData> decodeModelTextures(
         } else {
             continue;
         }
-        textures.push_back(std::move(texData));
     }
     return textures;
-}
-
-std::unique_ptr<Texture> createGltfGpuTexture(RenderDevice* device,
-                                              const GltfTexture& texture) {
-    if (!device ||
-        texture.image.width <= 0 ||
-        texture.image.height <= 0 ||
-        texture.image.pixels.empty()) {
-        return nullptr;
-    }
-
-    const size_t pixelCount =
-        static_cast<size_t>(texture.image.width) *
-        static_cast<size_t>(texture.image.height);
-    std::vector<uint8_t> rgbaPixels;
-    const uint8_t* texturePixels = texture.image.pixels.data();
-    size_t texturePixelBytes = texture.image.pixels.size();
-    TextureDesc::Format textureFormat = TextureDesc::Format::RGBA8;
-    if (texture.image.channels == 1) {
-        if (texture.image.pixels.size() < pixelCount) {
-            return nullptr;
-        }
-        texturePixelBytes = pixelCount;
-        textureFormat = TextureDesc::Format::R8;
-    } else if (texture.image.channels == 3) {
-        if (texture.image.pixels.size() < pixelCount * 3u) {
-            return nullptr;
-        }
-        rgbaPixels.resize(pixelCount * 4u);
-        for (size_t i = 0; i < pixelCount; ++i) {
-            rgbaPixels[i * 4u + 0u] = texture.image.pixels[i * 3u + 0u];
-            rgbaPixels[i * 4u + 1u] = texture.image.pixels[i * 3u + 1u];
-            rgbaPixels[i * 4u + 2u] = texture.image.pixels[i * 3u + 2u];
-            rgbaPixels[i * 4u + 3u] = 255u;
-        }
-        texturePixels = rgbaPixels.data();
-        texturePixelBytes = rgbaPixels.size();
-    } else if (texture.image.channels == 4) {
-        if (texture.image.pixels.size() < pixelCount * 4u) {
-            return nullptr;
-        }
-    } else {
-        return nullptr;
-    }
-
-    TextureDesc textureDesc;
-    textureDesc.width = texture.image.width;
-    textureDesc.height = texture.image.height;
-    textureDesc.format = textureFormat;
-    textureDesc.data = texturePixels;
-    textureDesc.dataSize = texturePixelBytes;
-    textureDesc.mipmap = texture.sampler.mipmap;
-    textureDesc.minFilter = toTextureFilter(texture.sampler.minFilter);
-    textureDesc.magFilter = toTextureFilter(texture.sampler.magFilter);
-    textureDesc.wrapS = toTextureWrap(texture.sampler.wrapS);
-    textureDesc.wrapT = toTextureWrap(texture.sampler.wrapT);
-    return device->createTexture(textureDesc);
 }
 
 GltfPrimitiveRenderResources::TextureBinding makeGltfTextureBinding(
@@ -162,29 +111,63 @@ GltfPrimitiveRenderResources::TextureBinding makeGltfTextureBinding(
     return renderBinding;
 }
 
+bool isValidGpuReadyPrimitive(const GpuReadyPrimitive& primitive) {
+    if (primitive.vertexStride == 0 ||
+        primitive.vertexCount == 0 ||
+        primitive.vertexBytes.empty() ||
+        primitive.vertexBytes.size() % primitive.vertexStride != 0 ||
+        primitive.vertexBytes.size() / primitive.vertexStride !=
+            primitive.vertexCount ||
+        primitive.indexCount == 0 ||
+        primitive.indexCount != primitive.indices.size()) {
+        return false;
+    }
+    if (!primitive.instances) {
+        return true;
+    }
+    return primitive.instances->stride > 0 &&
+           primitive.instances->count > 0 &&
+           !primitive.instances->bytes.empty() &&
+           primitive.instances->bytes.size() %
+                   primitive.instances->stride ==
+               0 &&
+           primitive.instances->bytes.size() /
+                   primitive.instances->stride ==
+               primitive.instances->count;
+}
 
 } // namespace
 
 void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                                          RenderDevice* device,
                                          double currentFrameTimeSeconds) {
-    GltfModel* model = tile.content.renderContent.gltfContent();
+    const GltfModel* model =
+        tile.content.renderContent.gltfModelForRead();
     if (!model) return;
     const bool animated = model->hasRuntimeAnimation();
-    const bool animationChanged =
-        animated && model->updateAnimation(currentFrameTimeSeconds);
+    if (animated) {
+        tile.content.renderContent.updateGltfAnimation(
+            currentFrameTimeSeconds);
+    }
     size_t expectedResourceCount = 0;
     for (const GltfPrimitive& primitive : model->primitives) {
         expectedResourceCount +=
             GltfRenderGeometryBuilder::primitiveRenderResourceCount(primitive);
     }
-    const bool splitBlendInstances =
-        GltfRenderGeometryBuilder::modelUsesSplitBlendInstances(*model);
     if (expectedResourceCount > 0 &&
         tile.content.renderContent.gltfPrimitiveResourceCount() ==
             expectedResourceCount) {
         const auto& primitiveResources =
             tile.content.renderContent.gltfPrimitiveResourcesForDraw();
+        const bool animationResourcesStale =
+            animated &&
+            std::any_of(
+                primitiveResources.begin(),
+                primitiveResources.end(),
+                [revision = model->currentAnimationRevision()](
+                    const GltfPrimitiveRenderResources& resources) {
+                    return resources.animationRevision != revision;
+                });
         const bool allReady = std::all_of(
             primitiveResources.begin(),
             primitiveResources.end(),
@@ -196,13 +179,16 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                         resources.instanceBuffer != nullptr);
             });
         if (allReady) {
-            if (animated && animationChanged && splitBlendInstances) {
-                tile.content.renderContent.clearGltfPrimitiveResources();
-            } else if (animated && animationChanged && device) {
-                tile.content.renderContent.setGltfLocalOrigin(
+            if (animationResourcesStale) {
+                if (!device) {
+                    return;
+                }
+                const Mat4& transform =
+                    tile.content.renderContent.gltfTransform();
+                const Vec3 localOrigin =
                     GltfRenderGeometryBuilder::localOrigin(
                         *model,
-                        tile.content.renderContent.gltfTransform()));
+                        transform);
                 bool updated = true;
                 size_t resourceIndex = 0;
                 for (const GltfPrimitive& primitive :
@@ -212,7 +198,8 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                         continue;
                     }
                     GltfPrimitiveRenderResources* resources =
-                        tile.content.renderContent.gltfPrimitiveResourceForBuildAt(
+                        tile.content.renderContent
+                            .gltfPrimitiveResourceForAnimationUpdateAt(
                             resourceIndex++);
                     if (!resources) {
                         updated = false;
@@ -221,9 +208,9 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                     std::vector<GltfGpuVertex> verts =
                         GltfRenderGeometryBuilder::buildVertices(
                             primitive,
-                            tile.content.renderContent.gltfTransform(),
-                            tile.content.renderContent.renderLocalOrigin());
-                    const bool ok = resources->vertexBuffer &&
+                            transform,
+                            localOrigin);
+                    bool ok = resources->vertexBuffer &&
                         resources->vertexBuffer->size() ==
                             verts.size() * sizeof(GltfGpuVertex) &&
                         device->updateBuffer(
@@ -231,6 +218,25 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                             0,
                             verts.data(),
                             verts.size() * sizeof(GltfGpuVertex));
+                    if (ok && !primitive.instances.empty()) {
+                        std::vector<GltfGpuInstance> instances =
+                            GltfRenderGeometryBuilder::buildInstances(
+                                primitive,
+                                transform,
+                                localOrigin);
+                        ok = resources->instanceBuffer &&
+                            resources->instanceCount ==
+                                static_cast<int>(instances.size()) &&
+                            resources->instanceBuffer->size() ==
+                                instances.size() *
+                                    sizeof(GltfGpuInstance) &&
+                            device->updateBuffer(
+                                resources->instanceBuffer.get(),
+                                0,
+                                instances.data(),
+                                instances.size() *
+                                    sizeof(GltfGpuInstance));
+                    }
                     if (!ok) {
                         updated = false;
                         break;
@@ -238,377 +244,37 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                     resources->sortCenterEcef =
                         GltfRenderGeometryBuilder::primitiveSortCenterEcef(
                             primitive,
-                            tile.content.renderContent.gltfTransform());
+                            transform);
                     resources->animationRevision =
                         model->currentAnimationRevision();
                 }
                 if (!updated) {
                     tile.content.renderContent.clearGltfPrimitiveResources();
                 } else {
+                    tile.content.renderContent.setGltfLocalOrigin(
+                        localOrigin);
+                    tile.content.renderContent.clearTerrainGpuVertexBytes();
                     tile.markRenderContentDone();
                     return;
                 }
             } else {
+                tile.content.renderContent.clearTerrainGpuVertexBytes();
                 tile.markRenderContentDone();
                 return;
             }
         }
     }
-    if (!device) return;
-    tile.content.renderContent.setGltfLocalOrigin(
-        GltfRenderGeometryBuilder::localOrigin(
-            *model,
-            tile.content.renderContent.gltfTransform()));
-
-    tile.content.renderContent.beginGltfGpuResourceBuild(
-        model->textures.size(),
-        expectedResourceCount);
-    for (const GltfTexture& texture : model->textures) {
-        tile.content.renderContent.addGltfTextureResource(
-            createGltfGpuTexture(device, texture));
+    if (!device) {
+        return;
     }
-
-    bool resourceFailure = false;
-
-    for (const GltfPrimitive& primitive : model->primitives) {
-        if (primitive.vertices.empty() || primitive.indices.empty()) {
-            continue;
-        }
-
-        const bool instanced = !primitive.instances.empty();
-
-        // Determine if this primitive should use terrain-specific lightweight vertex format
-        const bool useTerrainFormat = primitive.hasTerrainWaterMaskMetadata;
-
-        auto appendPrimitiveResource =
-            [&](std::vector<GltfGpuVertex>&& verts,
-                const Vec3& sortCenter,
-                const std::vector<GltfGpuInstance>* instanceData) {
-                GltfPrimitiveRenderResources resources;
-                resources.useTerrainVertexFormat = false;
-                BufferDesc vbDesc;
-                vbDesc.size = verts.size() * sizeof(GltfGpuVertex);
-                vbDesc.data = verts.data();
-                vbDesc.usage = animated
-                    ? BufferDesc::Usage::Dynamic
-                    : BufferDesc::Usage::Static;
-                vbDesc.type = BufferDesc::Type::Vertex;
-                resources.vertexBuffer = device->createBuffer(vbDesc);
-
-                BufferDesc ibDesc;
-                ibDesc.size = primitive.indices.size() * sizeof(uint32_t);
-                ibDesc.data = primitive.indices.data();
-                ibDesc.usage = BufferDesc::Usage::Static;
-                ibDesc.type = BufferDesc::Type::Index;
-                resources.indexBuffer = device->createBuffer(ibDesc);
-                resources.vertexCount =
-                    static_cast<int>(primitive.vertices.size());
-                resources.indexCount =
-                    static_cast<int>(primitive.indices.size());
-                resources.primitiveMode = primitive.primitiveMode;
-                resources.sortCenterEcef = sortCenter;
-                resources.baseColorFactor = primitive.baseColorFactor;
-                resources.metallicFactor = primitive.metallicFactor;
-                resources.roughnessFactor = primitive.roughnessFactor;
-                resources.dielectricSpecularF0 =
-                    primitive.dielectricSpecularF0;
-                resources.specularFactor = primitive.specularFactor;
-                resources.specularColorFactor =
-                    primitive.specularColorFactor;
-                resources.specularGlossinessWorkflow =
-                    primitive.specularGlossinessWorkflow;
-                resources.specularGlossinessSpecularFactor =
-                    primitive.specularGlossinessSpecularFactor;
-                resources.specularGlossinessGlossinessFactor =
-                    primitive.specularGlossinessGlossinessFactor;
-                resources.transmissionFactor = primitive.transmissionFactor;
-                resources.anisotropyStrength =
-                    primitive.anisotropyStrength;
-                resources.anisotropyRotation =
-                    primitive.anisotropyRotation;
-                resources.clearcoatFactor = primitive.clearcoatFactor;
-                resources.clearcoatRoughnessFactor =
-                    primitive.clearcoatRoughnessFactor;
-                resources.clearcoatNormalTextureScale =
-                    primitive.clearcoatNormalTextureScale;
-                resources.sheenColorFactor = primitive.sheenColorFactor;
-                resources.sheenRoughnessFactor =
-                    primitive.sheenRoughnessFactor;
-                resources.normalTextureScale = primitive.normalTextureScale;
-                resources.occlusionTextureStrength =
-                    primitive.occlusionTextureStrength;
-                resources.emissiveFactor = primitive.emissiveFactor;
-                resources.alphaMode = primitive.alphaMode;
-                resources.alphaCutoff = primitive.alphaCutoff;
-                resources.doubleSided = primitive.doubleSided;
-                resources.unlit = primitive.unlit;
-                resources.dynamicVertices = animated;
-                resources.animationRevision =
-                    model->currentAnimationRevision();
-                resources.hasTerrainWaterMaskMetadata =
-                    primitive.hasTerrainWaterMaskMetadata;
-                resources.terrainOnlyWater = primitive.terrainOnlyWater;
-                resources.terrainOnlyLand = primitive.terrainOnlyLand;
-                resources.terrainWaterMaskTranslationScale = {
-                    static_cast<float>(primitive.terrainWaterMaskTranslationX),
-                    static_cast<float>(primitive.terrainWaterMaskTranslationY),
-                    static_cast<float>(primitive.terrainWaterMaskScale),
-                    0.0f};
-                if (primitive.terrainWaterMaskTextureIndex &&
-                    *primitive.terrainWaterMaskTextureIndex <
-                        tile.content.renderContent
-                            .gltfTextureResourcesForBinding()
-                            .size()) {
-                    resources.terrainWaterMaskTexture =
-                        tile.content.renderContent
-                            .gltfTextureResourcesForBinding()
-                            [*primitive.terrainWaterMaskTextureIndex]
-                                .get();
-                }
-                std::optional<GltfTextureBinding> baseColorBinding =
-                    primitive.baseColorTexture;
-                if (!baseColorBinding && primitive.baseColorTextureIndex) {
-                    GltfTextureBinding binding;
-                    binding.textureIndex = *primitive.baseColorTextureIndex;
-                    baseColorBinding = binding;
-                }
-                resources.baseColorTexture = makeGltfTextureBinding(
-                    baseColorBinding,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.metallicRoughnessTexture = makeGltfTextureBinding(
-                    primitive.metallicRoughnessTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.anisotropyTexture = makeGltfTextureBinding(
-                    primitive.anisotropyTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.specularTexture = makeGltfTextureBinding(
-                    primitive.specularTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.specularColorTexture = makeGltfTextureBinding(
-                    primitive.specularColorTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.specularGlossinessTexture = makeGltfTextureBinding(
-                    primitive.specularGlossinessTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.transmissionTexture = makeGltfTextureBinding(
-                    primitive.transmissionTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.clearcoatTexture = makeGltfTextureBinding(
-                    primitive.clearcoatTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.clearcoatRoughnessTexture = makeGltfTextureBinding(
-                    primitive.clearcoatRoughnessTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.clearcoatNormalTexture = makeGltfTextureBinding(
-                    primitive.clearcoatNormalTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.sheenColorTexture = makeGltfTextureBinding(
-                    primitive.sheenColorTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.sheenRoughnessTexture = makeGltfTextureBinding(
-                    primitive.sheenRoughnessTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.normalTexture = makeGltfTextureBinding(
-                    primitive.normalTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.occlusionTexture = makeGltfTextureBinding(
-                    primitive.occlusionTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                resources.emissiveTexture = makeGltfTextureBinding(
-                    primitive.emissiveTexture,
-                    tile.content.renderContent.gltfTextureResourcesForBinding());
-                auto bindingHasTexCoordSet =
-                    [&](const std::optional<GltfTextureBinding>& binding) {
-                        return !binding ||
-                               GltfRenderGeometryBuilder::primitiveHasTexCoordSet(
-                                   primitive,
-                                   binding->texCoord);
-                    };
-                if ((baseColorBinding &&
-                     !resources.baseColorTexture.texture) ||
-                    (primitive.metallicRoughnessTexture &&
-                     !resources.metallicRoughnessTexture.texture) ||
-                    (primitive.anisotropyTexture &&
-                     !resources.anisotropyTexture.texture) ||
-                    (primitive.specularTexture &&
-                     !resources.specularTexture.texture) ||
-                    (primitive.specularColorTexture &&
-                     !resources.specularColorTexture.texture) ||
-                    (primitive.specularGlossinessTexture &&
-                     !resources.specularGlossinessTexture.texture) ||
-                    (primitive.transmissionTexture &&
-                     !resources.transmissionTexture.texture) ||
-                    (primitive.clearcoatTexture &&
-                     !resources.clearcoatTexture.texture) ||
-                    (primitive.clearcoatRoughnessTexture &&
-                     !resources.clearcoatRoughnessTexture.texture) ||
-                    (primitive.clearcoatNormalTexture &&
-                     !resources.clearcoatNormalTexture.texture) ||
-                    (primitive.sheenColorTexture &&
-                     !resources.sheenColorTexture.texture) ||
-                    (primitive.sheenRoughnessTexture &&
-                     !resources.sheenRoughnessTexture.texture) ||
-                    (primitive.normalTexture &&
-                     !resources.normalTexture.texture) ||
-                    (primitive.occlusionTexture &&
-                     !resources.occlusionTexture.texture) ||
-                    (primitive.emissiveTexture &&
-                     !resources.emissiveTexture.texture) ||
-                    !bindingHasTexCoordSet(baseColorBinding) ||
-                    !bindingHasTexCoordSet(
-                        primitive.metallicRoughnessTexture) ||
-                    !bindingHasTexCoordSet(primitive.anisotropyTexture) ||
-                    !bindingHasTexCoordSet(primitive.specularTexture) ||
-                    !bindingHasTexCoordSet(
-                        primitive.specularColorTexture) ||
-                    !bindingHasTexCoordSet(
-                        primitive.specularGlossinessTexture) ||
-                    !bindingHasTexCoordSet(primitive.transmissionTexture) ||
-                    !bindingHasTexCoordSet(primitive.clearcoatTexture) ||
-                    !bindingHasTexCoordSet(
-                        primitive.clearcoatRoughnessTexture) ||
-                    !bindingHasTexCoordSet(
-                        primitive.clearcoatNormalTexture) ||
-                    !bindingHasTexCoordSet(primitive.sheenColorTexture) ||
-                    !bindingHasTexCoordSet(
-                        primitive.sheenRoughnessTexture) ||
-                    !bindingHasTexCoordSet(primitive.normalTexture) ||
-                    !bindingHasTexCoordSet(primitive.occlusionTexture) ||
-                    !bindingHasTexCoordSet(primitive.emissiveTexture)) {
-                    return false;
-                }
-
-                if (instanceData) {
-                    BufferDesc instanceDesc;
-                    instanceDesc.size =
-                        instanceData->size() * sizeof(GltfGpuInstance);
-                    instanceDesc.data = instanceData->data();
-                    instanceDesc.usage = BufferDesc::Usage::Static;
-                    instanceDesc.type = BufferDesc::Type::Vertex;
-                    resources.instanceBuffer =
-                        device->createBuffer(instanceDesc);
-                    resources.instanceCount =
-                        static_cast<int>(instanceData->size());
-                }
-
-                if (!resources.vertexBuffer ||
-                    !resources.indexBuffer ||
-                    (instanceData && !resources.instanceBuffer)) {
-                    return false;
-                }
-
-                tile.content.renderContent.addGltfPrimitiveResource(
-                    std::move(resources));
-                return true;
-            };
-
-        // blend/透射实例化 primitive 不再拆成逐实例 draw(那会 N 爆炸+大 N OOM):
-        // 走下方常规实例化路径(单 instanceBuffer + 单 draw),透明由 render 命令的
-        // alpha-to-coverage 承担(见 GltfDrawCommandBuilder::alphaToCoverage)。
-
-        // Use lightweight terrain vertex format for terrain content
-        if (useTerrainFormat && !instanced) {
-            std::vector<TerrainGpuVertex> terrainVerts =
-                GltfRenderGeometryBuilder::buildTerrainVertices(
-                    primitive,
-                    tile.content.renderContent.gltfTransform(),
-                    tile.content.renderContent.renderLocalOrigin());
-
-            GltfPrimitiveRenderResources resources;
-            resources.useTerrainVertexFormat = true;
-            BufferDesc vbDesc;
-            vbDesc.size = terrainVerts.size() * sizeof(TerrainGpuVertex);
-            vbDesc.data = terrainVerts.data();
-            vbDesc.usage = BufferDesc::Usage::Static;
-            vbDesc.type = BufferDesc::Type::Vertex;
-            resources.vertexBuffer = device->createBuffer(vbDesc);
-
-            BufferDesc ibDesc;
-            ibDesc.size = primitive.indices.size() * sizeof(uint32_t);
-            ibDesc.data = primitive.indices.data();
-            ibDesc.usage = BufferDesc::Usage::Static;
-            ibDesc.type = BufferDesc::Type::Index;
-            resources.indexBuffer = device->createBuffer(ibDesc);
-            resources.vertexCount = static_cast<int>(primitive.vertices.size());
-            resources.indexCount = static_cast<int>(primitive.indices.size());
-            resources.primitiveMode = primitive.primitiveMode;
-            resources.sortCenterEcef = GltfRenderGeometryBuilder::primitiveSortCenterEcef(
-                primitive, tile.content.renderContent.gltfTransform());
-            // Set minimal material properties for terrain
-            resources.baseColorFactor = primitive.baseColorFactor;
-            resources.metallicFactor = 0.0f;
-            resources.roughnessFactor = 1.0f;
-            resources.unlit = false;
-            resources.hasTerrainWaterMaskMetadata = true;
-            resources.terrainOnlyWater = primitive.terrainOnlyWater;
-            resources.terrainOnlyLand = primitive.terrainOnlyLand;
-            resources.terrainWaterMaskTranslationScale = {
-                static_cast<float>(primitive.terrainWaterMaskTranslationX),
-                static_cast<float>(primitive.terrainWaterMaskTranslationY),
-                static_cast<float>(primitive.terrainWaterMaskScale),
-                0.0f};
-            if (primitive.terrainWaterMaskTextureIndex &&
-                *primitive.terrainWaterMaskTextureIndex <
-                    tile.content.renderContent.gltfTextureResourcesForBinding().size()) {
-                resources.terrainWaterMaskTexture =
-                    tile.content.renderContent.gltfTextureResourcesForBinding()
-                    [*primitive.terrainWaterMaskTextureIndex].get();
-            }
-            // Set base color texture for terrain
-            std::optional<GltfTextureBinding> baseColorBinding = primitive.baseColorTexture;
-            if (!baseColorBinding && primitive.baseColorTextureIndex) {
-                GltfTextureBinding binding;
-                binding.textureIndex = *primitive.baseColorTextureIndex;
-                baseColorBinding = binding;
-            }
-            resources.baseColorTexture = makeGltfTextureBinding(
-                baseColorBinding,
-                tile.content.renderContent.gltfTextureResourcesForBinding());
-
-            if (!resources.vertexBuffer || !resources.indexBuffer) {
-                resourceFailure = true;
-                break;
-            }
-            tile.content.renderContent.addGltfPrimitiveResource(std::move(resources));
-            continue;
-        }
-
-        std::vector<GltfGpuVertex> verts =
-            GltfRenderGeometryBuilder::buildVertices(
-                primitive,
-                tile.content.renderContent.gltfTransform(),
-                tile.content.renderContent.renderLocalOrigin());
-
-        std::vector<GltfGpuInstance> instances;
-        if (instanced) {
-            instances = GltfRenderGeometryBuilder::buildInstances(
-                primitive,
-                tile.content.renderContent.gltfTransform(),
-                tile.content.renderContent.renderLocalOrigin());
-        }
-
-        const std::vector<GltfGpuInstance>* instanceData =
-            instanced ? &instances : nullptr;
-        if (!appendPrimitiveResource(
-                std::move(verts),
-                GltfRenderGeometryBuilder::primitiveSortCenterEcef(
-                    primitive,
-                    tile.content.renderContent.gltfTransform()),
-                instanceData)) {
-            resourceFailure = true;
-            break;
-        }
-    }
-
-    if (resourceFailure) {
+    std::optional<GpuReadyData> ready =
+        prepareCpuWork(tile, currentFrameTimeSeconds);
+    if (!ready) {
         tile.content.renderContent.clearGltfGpuResources();
-    }
-
-    if (!resourceFailure && tile.content.renderContent.hasGltfPrimitiveResources()) {
-        tile.markRenderContentDone();
-    } else {
         tile.markRenderContentFailedTemporarily();
+        return;
     }
+    uploadToGpu(tile, device, std::move(*ready));
 }
 
 // ============================================================
@@ -619,117 +285,18 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
     const TilesetTile& tile,
     double currentFrameTimeSeconds) {
     const GltfModel* model = tile.content.renderContent.gltfModelForRead();
-    if (!model || model->primitives.empty()) return std::nullopt;
-
-    GpuReadyData ready;
-    const Mat4& transform = tile.content.renderContent.gltfTransform();
-    const Vec3& localOrigin = tile.content.renderContent.renderLocalOrigin();
-    bool hasGltfTexturedPrimitive = false;
-
-    for (const GltfPrimitive& primitive : model->primitives) {
-        if (primitive.vertices.empty() || primitive.indices.empty()) {
-            continue;
-        }
-
-        GpuReadyPrimitive gpuPrim;
-        const bool useTerrainFormat = primitive.hasTerrainWaterMaskMetadata;
-        const bool instanced = !primitive.instances.empty();
-
-        // CPU work: build vertex data
-        if (useTerrainFormat && !instanced) {
-            auto terrainVerts = GltfRenderGeometryBuilder::buildTerrainVertices(
-                primitive, transform, localOrigin);
-            gpuPrim.vertexBytes.resize(terrainVerts.size() * sizeof(TerrainGpuVertex));
-            memcpy(gpuPrim.vertexBytes.data(), terrainVerts.data(), gpuPrim.vertexBytes.size());
-            gpuPrim.vertexStride = sizeof(TerrainGpuVertex);
-            gpuPrim.vertexCount = terrainVerts.size();
-        } else {
-            auto gltfVerts = GltfRenderGeometryBuilder::buildVertices(
-                primitive, transform, localOrigin);
-            gpuPrim.vertexBytes.resize(gltfVerts.size() * sizeof(GltfGpuVertex));
-            memcpy(gpuPrim.vertexBytes.data(), gltfVerts.data(), gpuPrim.vertexBytes.size());
-            gpuPrim.vertexStride = sizeof(GltfGpuVertex);
-            gpuPrim.vertexCount = gltfVerts.size();
-
-            // Build instance data if needed
-            if (instanced) {
-                auto instanceData = GltfRenderGeometryBuilder::buildInstances(
-                    primitive, transform, localOrigin);
-                GpuReadyPrimitive::InstanceData inst;
-                inst.bytes.resize(instanceData.size() * sizeof(GltfGpuInstance));
-                memcpy(inst.bytes.data(), instanceData.data(), inst.bytes.size());
-                inst.count = instanceData.size();
-                inst.stride = sizeof(GltfGpuInstance);
-                gpuPrim.instances = std::move(inst);
-            }
-        }
-
-        // Index data (just copy)
-        gpuPrim.indices = primitive.indices;
-        gpuPrim.indexCount = primitive.indices.size();
-
-        // Sort center
-        gpuPrim.sortCenterEcef =
-            GltfRenderGeometryBuilder::primitiveSortCenterEcef(primitive, transform);
-
-        // Terrain textures are already uploaded by the raster overlay
-        // system; glTF textures are decoded once per tile after the loop.
-        if (!useTerrainFormat) {
-            hasGltfTexturedPrimitive = true;
-        }
-
-        // Extract metadata (material properties, etc.)
-        // This copies all the scalar/vector properties but leaves
-        // GPU pointers (vertexBuffer, indexBuffer, texture) as nullptr.
-        GltfPrimitiveRenderResources& meta = gpuPrim.metadata;
-        meta.useTerrainVertexFormat = useTerrainFormat;
-        meta.vertexCount = static_cast<int>(primitive.vertices.size());
-        meta.indexCount = static_cast<int>(primitive.indices.size());
-        meta.instanceCount = instanced
-            ? static_cast<int>(primitive.instances.size()) : 0;
-        meta.primitiveMode = primitive.primitiveMode;
-        meta.sortCenterEcef = gpuPrim.sortCenterEcef;
-        meta.baseColorFactor = primitive.baseColorFactor;
-        meta.metallicFactor = primitive.metallicFactor;
-        meta.roughnessFactor = primitive.roughnessFactor;
-        meta.dielectricSpecularF0 = primitive.dielectricSpecularF0;
-        meta.specularFactor = primitive.specularFactor;
-        meta.specularColorFactor = primitive.specularColorFactor;
-        meta.specularGlossinessWorkflow = primitive.specularGlossinessWorkflow;
-        meta.specularGlossinessSpecularFactor = primitive.specularGlossinessSpecularFactor;
-        meta.specularGlossinessGlossinessFactor = primitive.specularGlossinessGlossinessFactor;
-        meta.transmissionFactor = primitive.transmissionFactor;
-        meta.anisotropyStrength = primitive.anisotropyStrength;
-        meta.anisotropyRotation = primitive.anisotropyRotation;
-        meta.clearcoatFactor = primitive.clearcoatFactor;
-        meta.clearcoatRoughnessFactor = primitive.clearcoatRoughnessFactor;
-        meta.clearcoatNormalTextureScale = primitive.clearcoatNormalTextureScale;
-        meta.sheenColorFactor = primitive.sheenColorFactor;
-        meta.sheenRoughnessFactor = primitive.sheenRoughnessFactor;
-        meta.normalTextureScale = primitive.normalTextureScale;
-        meta.occlusionTextureStrength = primitive.occlusionTextureStrength;
-        meta.emissiveFactor = primitive.emissiveFactor;
-        meta.alphaMode = primitive.alphaMode;
-        meta.alphaCutoff = primitive.alphaCutoff;
-        meta.doubleSided = primitive.doubleSided;
-        meta.unlit = primitive.unlit;
-        meta.hasTerrainWaterMaskMetadata = primitive.hasTerrainWaterMaskMetadata;
-        meta.terrainOnlyWater = primitive.terrainOnlyWater;
-        meta.terrainOnlyLand = primitive.terrainOnlyLand;
-        meta.terrainWaterMaskTranslationScale = {
-            static_cast<float>(primitive.terrainWaterMaskTranslationX),
-            static_cast<float>(primitive.terrainWaterMaskTranslationY),
-            static_cast<float>(primitive.terrainWaterMaskScale),
-            0.0f};
-
-        ready.primitives.push_back(std::move(gpuPrim));
+    if (!model) {
+        return std::nullopt;
     }
-
-    if (hasGltfTexturedPrimitive) {
-        ready.textures = decodeModelTextures(model->textures);
-    }
-
-    return ready.valid() ? std::make_optional(std::move(ready)) : std::nullopt;
+    const Mat4& transform =
+        tile.content.renderContent.gltfTransform();
+    const Vec3 localOrigin =
+        GltfRenderGeometryBuilder::localOrigin(*model, transform);
+    return prepareCpuWorkFromModel(
+        *model,
+        transform,
+        localOrigin,
+        currentFrameTimeSeconds);
 }
 
 std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
@@ -740,7 +307,9 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
     if (model.primitives.empty()) return std::nullopt;
 
     GpuReadyData ready;
-    bool hasGltfTexturedPrimitive = false;
+    ready.localOrigin = localOrigin;
+    bool hasReferencedTextures = false;
+    const bool animated = model.hasRuntimeAnimation();
 
     for (const GltfPrimitive& primitive : model.primitives) {
         if (primitive.vertices.empty() || primitive.indices.empty()) {
@@ -753,12 +322,26 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
 
         // CPU work: build vertex data
         if (useTerrainFormat && !instanced) {
-            auto terrainVerts = GltfRenderGeometryBuilder::buildTerrainVertices(
-                primitive, transform, localOrigin);
-            gpuPrim.vertexBytes.resize(terrainVerts.size() * sizeof(TerrainGpuVertex));
-            memcpy(gpuPrim.vertexBytes.data(), terrainVerts.data(), gpuPrim.vertexBytes.size());
+            const size_t expectedPrebuiltBytes =
+                primitive.vertices.size() * sizeof(TerrainGpuVertex);
+            if (primitive.terrainGpuVertexBytes.size() ==
+                expectedPrebuiltBytes) {
+                gpuPrim.vertexBytes = primitive.terrainGpuVertexBytes;
+            } else {
+                auto terrainVerts =
+                    GltfRenderGeometryBuilder::buildTerrainVertices(
+                        primitive,
+                        transform,
+                        localOrigin);
+                gpuPrim.vertexBytes.resize(
+                    terrainVerts.size() * sizeof(TerrainGpuVertex));
+                std::memcpy(
+                    gpuPrim.vertexBytes.data(),
+                    terrainVerts.data(),
+                    gpuPrim.vertexBytes.size());
+            }
             gpuPrim.vertexStride = sizeof(TerrainGpuVertex);
-            gpuPrim.vertexCount = terrainVerts.size();
+            gpuPrim.vertexCount = primitive.vertices.size();
         } else {
             auto gltfVerts = GltfRenderGeometryBuilder::buildVertices(
                 primitive, transform, localOrigin);
@@ -788,11 +371,77 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
         gpuPrim.sortCenterEcef =
             GltfRenderGeometryBuilder::primitiveSortCenterEcef(primitive, transform);
 
-        // Terrain textures are handled by the raster overlay system; glTF
-        // textures are decoded once per tile after the loop.
-        if (!useTerrainFormat) {
-            hasGltfTexturedPrimitive = true;
+        gpuPrim.terrainWaterMaskTextureIndex =
+            primitive.terrainWaterMaskTextureIndex;
+        gpuPrim.baseColorTexture = primitive.baseColorTexture;
+        if (!gpuPrim.baseColorTexture &&
+            primitive.baseColorTextureIndex) {
+            GltfTextureBinding binding;
+            binding.textureIndex = *primitive.baseColorTextureIndex;
+            gpuPrim.baseColorTexture = binding;
         }
+        gpuPrim.metallicRoughnessTexture =
+            primitive.metallicRoughnessTexture;
+        gpuPrim.anisotropyTexture = primitive.anisotropyTexture;
+        gpuPrim.specularTexture = primitive.specularTexture;
+        gpuPrim.specularColorTexture = primitive.specularColorTexture;
+        gpuPrim.specularGlossinessTexture =
+            primitive.specularGlossinessTexture;
+        gpuPrim.transmissionTexture = primitive.transmissionTexture;
+        gpuPrim.clearcoatTexture = primitive.clearcoatTexture;
+        gpuPrim.clearcoatRoughnessTexture =
+            primitive.clearcoatRoughnessTexture;
+        gpuPrim.clearcoatNormalTexture =
+            primitive.clearcoatNormalTexture;
+        gpuPrim.sheenColorTexture = primitive.sheenColorTexture;
+        gpuPrim.sheenRoughnessTexture =
+            primitive.sheenRoughnessTexture;
+        gpuPrim.normalTexture = primitive.normalTexture;
+        gpuPrim.occlusionTexture = primitive.occlusionTexture;
+        gpuPrim.emissiveTexture = primitive.emissiveTexture;
+
+        auto bindingHasTexCoordSet =
+            [&](const std::optional<GltfTextureBinding>& binding) {
+                return !binding ||
+                       GltfRenderGeometryBuilder::primitiveHasTexCoordSet(
+                           primitive,
+                           binding->texCoord);
+            };
+        if (!bindingHasTexCoordSet(gpuPrim.baseColorTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.metallicRoughnessTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.anisotropyTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.specularTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.specularColorTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.specularGlossinessTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.transmissionTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.clearcoatTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.clearcoatRoughnessTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.clearcoatNormalTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.sheenColorTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.sheenRoughnessTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.normalTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.occlusionTexture) ||
+            !bindingHasTexCoordSet(gpuPrim.emissiveTexture)) {
+            return std::nullopt;
+        }
+        hasReferencedTextures =
+            hasReferencedTextures ||
+            gpuPrim.terrainWaterMaskTextureIndex.has_value() ||
+            gpuPrim.baseColorTexture.has_value() ||
+            gpuPrim.metallicRoughnessTexture.has_value() ||
+            gpuPrim.anisotropyTexture.has_value() ||
+            gpuPrim.specularTexture.has_value() ||
+            gpuPrim.specularColorTexture.has_value() ||
+            gpuPrim.specularGlossinessTexture.has_value() ||
+            gpuPrim.transmissionTexture.has_value() ||
+            gpuPrim.clearcoatTexture.has_value() ||
+            gpuPrim.clearcoatRoughnessTexture.has_value() ||
+            gpuPrim.clearcoatNormalTexture.has_value() ||
+            gpuPrim.sheenColorTexture.has_value() ||
+            gpuPrim.sheenRoughnessTexture.has_value() ||
+            gpuPrim.normalTexture.has_value() ||
+            gpuPrim.occlusionTexture.has_value() ||
+            gpuPrim.emissiveTexture.has_value();
 
         // Copy all scalar/vector metadata but leave GPU pointers as nullptr.
         GltfPrimitiveRenderResources& meta = gpuPrim.metadata;
@@ -827,6 +476,8 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
         meta.alphaCutoff = primitive.alphaCutoff;
         meta.doubleSided = primitive.doubleSided;
         meta.unlit = primitive.unlit;
+        meta.dynamicVertices = animated;
+        meta.animationRevision = model.currentAnimationRevision();
         meta.hasTerrainWaterMaskMetadata = primitive.hasTerrainWaterMaskMetadata;
         meta.terrainOnlyWater = primitive.terrainOnlyWater;
         meta.terrainOnlyLand = primitive.terrainOnlyLand;
@@ -839,7 +490,7 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
         ready.primitives.push_back(std::move(gpuPrim));
     }
 
-    if (hasGltfTexturedPrimitive) {
+    if (hasReferencedTextures) {
         ready.textures = decodeModelTextures(model.textures);
     }
 
@@ -854,13 +505,36 @@ bool GltfRenderResourcePreparer::uploadToGpu(
     TilesetTile& tile,
     RenderDevice* device,
     GpuReadyData&& ready) {
-    if (!device || !ready.valid()) return false;
+    const bool validPayload =
+        ready.valid() &&
+        std::all_of(
+            ready.primitives.begin(),
+            ready.primitives.end(),
+            isValidGpuReadyPrimitive);
+    if (!device || !validPayload) {
+        tile.content.renderContent.asyncGpuUploadPending = false;
+        tile.markRenderContentFailedTemporarily();
+        return false;
+    }
+
+    tile.content.renderContent.setGltfLocalOrigin(ready.localOrigin);
+    tile.content.renderContent.beginGltfGpuResourceBuild(
+        ready.textures.size(),
+        ready.primitives.size());
 
     // Upload textures first (they're referenced by index in metadata)
     std::vector<std::unique_ptr<Texture>> gpuTextures;
+    bool success = true;
     if (!ready.textures.empty()) {
-        gpuTextures.reserve(ready.textures.size());
-        for (const auto& texData : ready.textures) {
+        gpuTextures.resize(ready.textures.size());
+        for (size_t textureIndex = 0;
+             textureIndex < ready.textures.size();
+             ++textureIndex) {
+            const GpuReadyData::TextureData& texData =
+                ready.textures[textureIndex];
+            if (!texData.valid()) {
+                continue;
+            }
             TextureDesc td;
             td.width = texData.width;
             td.height = texData.height;
@@ -870,16 +544,24 @@ bool GltfRenderResourcePreparer::uploadToGpu(
             td.data = texData.pixels.data();
             td.dataSize = texData.pixels.size();
             td.mipmap = texData.mipmap;
-            td.minFilter = texData.mipmap
-                ? TextureDesc::Filter::Linear
-                : TextureDesc::Filter::Nearest;
-            td.magFilter = TextureDesc::Filter::Linear;
-            gpuTextures.push_back(device->createTexture(td));
+            td.minFilter = toTextureFilter(texData.minFilter);
+            td.magFilter = toTextureFilter(texData.magFilter);
+            td.wrapS = toTextureWrap(texData.wrapS);
+            td.wrapT = toTextureWrap(texData.wrapT);
+            gpuTextures[textureIndex] = device->createTexture(td);
         }
     }
 
-    bool success = true;
     for (auto& prim : ready.primitives) {
+        prim.metadata.vertexCount =
+            static_cast<int>(prim.vertexCount);
+        prim.metadata.indexCount =
+            static_cast<int>(prim.indexCount);
+        prim.metadata.instanceCount = prim.instances
+            ? static_cast<int>(prim.instances->count)
+            : 0;
+        prim.metadata.sortCenterEcef = prim.sortCenterEcef;
+
         // GPU: create vertex buffer
         BufferDesc vbDesc;
         vbDesc.size = prim.vertexBytes.size();
@@ -903,39 +585,85 @@ bool GltfRenderResourcePreparer::uploadToGpu(
             BufferDesc instDesc;
             instDesc.size = prim.instances->bytes.size();
             instDesc.data = prim.instances->bytes.data();
-            instDesc.usage = BufferDesc::Usage::Static;
+            instDesc.usage = prim.metadata.dynamicVertices
+                ? BufferDesc::Usage::Dynamic
+                : BufferDesc::Usage::Static;
             instDesc.type = BufferDesc::Type::Vertex;
             prim.metadata.instanceBuffer = device->createBuffer(instDesc);
         }
 
         // Validate
-        if (!prim.metadata.vertexBuffer || !prim.metadata.indexBuffer) {
+        if (!prim.metadata.vertexBuffer ||
+            !prim.metadata.indexBuffer ||
+            (prim.instances && !prim.metadata.instanceBuffer)) {
             success = false;
             continue;
         }
 
-        // Set texture bindings (raw pointers into gpuTextures)
-        if (!gpuTextures.empty()) {
-            auto bindTexture = [&](GltfPrimitiveRenderResources::TextureBinding& binding,
-                                   const std::optional<GltfTextureBinding>& modelBinding) {
-                if (modelBinding && modelBinding->textureIndex < gpuTextures.size()) {
-                    binding.texture = gpuTextures[modelBinding->textureIndex].get();
-                    binding.texCoord = modelBinding->texCoord;
-                    binding.offsetScale = {
-                        modelBinding->transform.offset[0],
-                        modelBinding->transform.offset[1],
-                        modelBinding->transform.scale[0],
-                        modelBinding->transform.scale[1]};
-                    binding.rotationSinCos = {
-                        static_cast<float>(std::sin(modelBinding->transform.rotation)),
-                        static_cast<float>(std::cos(modelBinding->transform.rotation))};
+        auto bindTexture =
+            [&](GltfPrimitiveRenderResources::TextureBinding& binding,
+                const std::optional<GltfTextureBinding>& modelBinding) {
+                binding = makeGltfTextureBinding(
+                    modelBinding,
+                    gpuTextures);
+                if (modelBinding && !binding.texture) {
+                    success = false;
                 }
             };
-            // For terrain, only bind base color
-            if (prim.metadata.useTerrainVertexFormat) {
-                std::optional<GltfTextureBinding> baseColorBinding;
-                // Terrain textures are handled by raster overlay system,
-                // not by the GLTF texture system. Skip texture binding.
+        bindTexture(
+            prim.metadata.baseColorTexture,
+            prim.baseColorTexture);
+        bindTexture(
+            prim.metadata.metallicRoughnessTexture,
+            prim.metallicRoughnessTexture);
+        bindTexture(
+            prim.metadata.anisotropyTexture,
+            prim.anisotropyTexture);
+        bindTexture(
+            prim.metadata.specularTexture,
+            prim.specularTexture);
+        bindTexture(
+            prim.metadata.specularColorTexture,
+            prim.specularColorTexture);
+        bindTexture(
+            prim.metadata.specularGlossinessTexture,
+            prim.specularGlossinessTexture);
+        bindTexture(
+            prim.metadata.transmissionTexture,
+            prim.transmissionTexture);
+        bindTexture(
+            prim.metadata.clearcoatTexture,
+            prim.clearcoatTexture);
+        bindTexture(
+            prim.metadata.clearcoatRoughnessTexture,
+            prim.clearcoatRoughnessTexture);
+        bindTexture(
+            prim.metadata.clearcoatNormalTexture,
+            prim.clearcoatNormalTexture);
+        bindTexture(
+            prim.metadata.sheenColorTexture,
+            prim.sheenColorTexture);
+        bindTexture(
+            prim.metadata.sheenRoughnessTexture,
+            prim.sheenRoughnessTexture);
+        bindTexture(
+            prim.metadata.normalTexture,
+            prim.normalTexture);
+        bindTexture(
+            prim.metadata.occlusionTexture,
+            prim.occlusionTexture);
+        bindTexture(
+            prim.metadata.emissiveTexture,
+            prim.emissiveTexture);
+        if (prim.terrainWaterMaskTextureIndex) {
+            const size_t textureIndex =
+                *prim.terrainWaterMaskTextureIndex;
+            if (textureIndex >= gpuTextures.size() ||
+                !gpuTextures[textureIndex]) {
+                success = false;
+            } else {
+                prim.metadata.terrainWaterMaskTexture =
+                    gpuTextures[textureIndex].get();
             }
         }
 
@@ -955,8 +683,10 @@ bool GltfRenderResourcePreparer::uploadToGpu(
 
     // Mark tile as ready for rendering
     if (success && tile.content.renderContent.hasGltfPrimitiveResources()) {
+        tile.content.renderContent.clearTerrainGpuVertexBytes();
         tile.markRenderContentDone();
     } else {
+        tile.content.renderContent.clearGltfGpuResources();
         tile.markRenderContentFailedTemporarily();
     }
 

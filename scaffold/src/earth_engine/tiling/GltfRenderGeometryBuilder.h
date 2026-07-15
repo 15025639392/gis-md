@@ -26,17 +26,19 @@ static_assert(
     sizeof(GltfGpuVertex) == 120,
     "glTF GPU vertices pack POSITION, NORMAL, eight TEXCOORD sets, COLOR_0 and TANGENT");
 
-/// Terrain-specific lightweight vertex format (32 bytes).
-/// Used for terrain tiles that only need position, normal, and one texcoord set.
+/// Terrain-specific lightweight vertex format (40 bytes).
+/// The engine currently supports Geographic and WebMercator raster
+/// projections, so two packed texcoord sets preserve the complete terrain
+/// overlay contract without paying the 120-byte generic glTF vertex cost.
 struct TerrainGpuVertex {
     float pos[3];
     float nrm[3];
-    float texcoord[2];
+    float texcoord01[4];
 };
 
 static_assert(
-    sizeof(TerrainGpuVertex) == 32,
-    "Terrain GPU vertices pack POSITION, NORMAL, and TEXCOORD_0 only");
+    sizeof(TerrainGpuVertex) == 40,
+    "Terrain GPU vertices pack POSITION, NORMAL, and TEXCOORD_0/1");
 
 struct GltfGpuInstance {
     float model[16];
@@ -49,10 +51,7 @@ struct GltfRenderGeometryBuilder {
     static Vec3 primitiveSortCenterEcef(
         const GltfPrimitive& primitive,
         const Mat4& contentTransform);
-    static bool primitiveUsesSplitBlendInstances(
-        const GltfPrimitive& primitive);
     static size_t primitiveRenderResourceCount(const GltfPrimitive& primitive);
-    static bool modelUsesSplitBlendInstances(const GltfModel& model);
     static Vec3 localOrigin(
         const GltfModel& model,
         const Mat4& contentTransform);
@@ -69,9 +68,9 @@ struct GltfRenderGeometryBuilder {
         const Vec3& localOrigin,
         std::optional<bool> keepInstanceLocalVertices = std::nullopt);
 
-    /// Build terrain-specific lightweight vertices (32 bytes per vertex).
-    /// Only includes position, normal, and texcoord0 - skips color, tangent,
-    /// and texcoord sets 1-7 which terrain doesn't need.
+    /// Build terrain-specific lightweight vertices (40 bytes per vertex).
+    /// Includes both supported raster projection texcoord sets while skipping
+    /// generic material data and texcoord sets 2-7.
     static std::vector<TerrainGpuVertex> buildTerrainVertices(
         const GltfPrimitive& primitive,
         const Mat4& contentTransform,

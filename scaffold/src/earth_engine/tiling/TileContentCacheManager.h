@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace earth_engine {
@@ -24,16 +25,18 @@ public:
     int64_t totalBytesUsed() const { return totalBytesUsed_; }
     TileUnloadQueue& unloadQueue() { return unloadQueue_; }
     const TileUnloadQueue& unloadQueue() const { return unloadQueue_; }
-    bool& cacheBytesDirty() { return cacheBytesDirty_; }
-    bool cacheBytesDirty() const { return cacheBytesDirty_; }
-
-    void markResourcesDirty();
+    bool hasPendingProtectedUnloads() const {
+        return !pendingProtectedUnloads_.empty();
+    }
 
     void updateTotalBytesUsed(
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
         const TileContentLifecycleManager& lifecycle);
+    bool reconcileTileBytes(const TilesetTile& tile);
+    void eraseTileBytes(const std::string& cacheKey);
+    int64_t accountedTileBytes(const std::string& cacheKey) const;
 
     void markEligibleForUnloading(
         const TilesetTile* tile,
@@ -50,7 +53,9 @@ public:
         TileContentLifecycleManager& lifecycle,
         IPrepareRendererResources* pPrepRenderer);
 
-    template <typename ClearChildrenFn>
+    template <typename CurrentTotalBytesFn,
+              typename TrimExternalCachesFn,
+              typename ClearChildrenFn>
     void unloadCachedBytes(
         int64_t maximumCachedBytes,
         double unloadTimeLimitMs,
@@ -60,43 +65,22 @@ public:
             std::unique_ptr<TilesetTile>>& tiles,
         TileContentLifecycleManager& lifecycle,
         IPrepareRendererResources* pPrepRenderer,
+        CurrentTotalBytesFn&& currentTotalBytes,
+        TrimExternalCachesFn&& trimExternalCaches,
         ClearChildrenFn&& clearChildren) {
-        // When resource smoothing is active and the cache is still over
-        // budget, skip unloading tiles that are not already in the
-        // Unloading state. This avoids a large single-frame spike in
-        // freed GPU/CPU bytes. Tiles already mid-unload continue to
-        // make progress.
-        if (resourceSmoothingActive &&
-            totalBytesUsed_ > maximumCachedBytes) {
-            size_t candidates = unloadQueue_.size();
-            while (candidates > 0 && !unloadQueue_.empty()) {
-                --candidates;
-                const std::string key = unloadQueue_.front();
-                auto it = tiles.find(key);
-                if (it == tiles.end()) {
-                    unloadQueue_.popFront();
-                    continue;
-                }
-                TilesetTile& tile = *it->second;
-                if (tile.content.loadState == TileLoadState::Unloading) {
-                    // Already mid-unload; let it continue through the
-                    // normal coordinator path below.
-                    break;
-                }
-                // Defer: remove from queue without unloading.
-                unloadQueue_.popFront();
-            }
-            cacheBytesDirty_ = true;
-            return;
-        }
+        auto currentTotalBytesFn =
+            std::forward<CurrentTotalBytesFn>(currentTotalBytes);
         const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
             unloadQueue_,
             tiles,
-            totalBytesUsed_,
             maximumCachedBytes,
             unloadTimeLimitMs,
-            resourceSmoothingActive,
-            cacheBytesDirty_,
+            currentTotalBytesFn,
+            [this,
+             &currentTotalBytesFn](int64_t maximumBytes) {
+                return currentTotalBytesFn() > maximumBytes ||
+                       hasPendingProtectedUnloads();
+            },
             [&lifecycle](const TilesetTile& tile) {
                 return TileSubtreeWorkTracker::hasActiveContentWork(
                     tile,
@@ -116,20 +100,47 @@ public:
             [this](const std::string& key) {
                 markIneligibleForUnloading(key);
             },
-            std::forward<ClearChildrenFn>(clearChildren));
-        totalBytesUsed_ = result.totalBytesUsed;
-        cacheBytesDirty_ = result.cacheBytesDirty;
+            std::forward<ClearChildrenFn>(clearChildren),
+            std::forward<TrimExternalCachesFn>(trimExternalCaches));
+        (void)result;
+        (void)resourceSmoothingActive;
+    }
 
-        if (result.shouldRefreshTotalBytes) {
-            updateTotalBytesUsed(tiles, lifecycle);
-            cacheBytesDirty_ = false;
-        }
+    template <typename ClearChildrenFn>
+    void unloadCachedBytes(
+        int64_t maximumCachedBytes,
+        double unloadTimeLimitMs,
+        bool resourceSmoothingActive,
+        const std::unordered_map<
+            std::string,
+            std::unique_ptr<TilesetTile>>& tiles,
+        TileContentLifecycleManager& lifecycle,
+        IPrepareRendererResources* pPrepRenderer,
+        ClearChildrenFn&& clearChildren) {
+        unloadCachedBytes(
+            maximumCachedBytes,
+            unloadTimeLimitMs,
+            resourceSmoothingActive,
+            tiles,
+            lifecycle,
+            pPrepRenderer,
+            [this]() {
+                return totalBytesUsed_;
+            },
+            []() {},
+            std::forward<ClearChildrenFn>(clearChildren));
     }
 
 private:
+    struct TileByteAccount {
+        uint64_t retainedResourcesRevision = 0;
+        int64_t bytes = 0;
+    };
+
     int64_t totalBytesUsed_ = 0;
+    std::unordered_map<std::string, TileByteAccount> tileBytes_;
     TileUnloadQueue unloadQueue_;
-    bool cacheBytesDirty_ = true;
+    std::unordered_set<std::string> pendingProtectedUnloads_;
 };
 
 } // namespace earth_engine

@@ -20,11 +20,13 @@
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
+#include "earth_engine/tiling/TileFillProxyPreparer.h"
 #include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileSelectionRootPolicy.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileTerrainHeightRangePolicy.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/Tileset.h"
@@ -34,6 +36,7 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -110,8 +113,10 @@ struct TilesetTestAccess {
         tileset.meshPreparation_.prepareRenderableTile(tile);
     }
 
-    static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
-        tileset.contentAccess_.ensureTileChildren(tile);
+    static TileChildFrameMaterializeResult ensureTileChildren(
+        Tileset& tileset,
+        TilesetTile& tile) {
+        return tileset.contentAccess_.ensureTileChildren(tile);
     }
 
     static bool canRefine(Tileset& tileset, const TilesetTile& tile) {
@@ -251,6 +256,10 @@ public:
     DummyTexture(int width, int height) : width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
 
 private:
     int width_ = 0;
@@ -486,10 +495,14 @@ public:
     }
     std::optional<TilesetContentTileMetadata> tileMetadata(
         const TileKey& key) const override {
+        ++metadataCalls;
         if (key != metadata.key) {
             return std::nullopt;
         }
         return metadata;
+    }
+    uint64_t tileMetadataRevision() const override {
+        return metadataRevision;
     }
     void requestTileContent(
         const TileKey& key,
@@ -503,6 +516,8 @@ public:
     }
 
     TilesetContentTileMetadata metadata;
+    uint64_t metadataRevision = 1;
+    mutable int metadataCalls = 0;
 };
 
 class PendingBoundaryContentTerrainProvider final
@@ -746,6 +761,85 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_FALSE(primitive.terrainOnlyWater);
     ASSERT_TRUE(primitive.terrainWaterMaskTextureIndex.has_value());
     EXPECT_EQ(0u, *primitive.terrainWaterMaskTextureIndex);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     QuantizedMeshWorkerGeneratesAndPacksRequiredProjectionUvSetsLikeCesiumNative) {
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(Vec3::zero(), Vec3::zero());
+    const Rectangle rectangle =
+        Rectangle::fromDegrees(-40.0, 35.0, 10.0, 75.0);
+
+    TileContentLoadResult result =
+        QuantizedMeshContentLoader::loadTileContent(
+            bytes.data(),
+            bytes.size(),
+            rectangle,
+            false,
+            {},
+            RasterOverlayProjection::Geographic,
+            std::nullopt,
+            QuantizedMeshContentLoader::RasterOverlayDetailsMode::
+                GenerateTerrainProjection,
+            {
+                RasterOverlayProjection::WebMercator,
+                RasterOverlayProjection::Geographic,
+                RasterOverlayProjection::WebMercator});
+
+    ASSERT_EQ(TileLoadStatus::Renderable, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
+    const RasterOverlayDetails& details =
+        result.gltfModel->rasterOverlayDetails;
+    ASSERT_TRUE(result.metadata.rasterOverlayDetails->equalsExact(details));
+    ASSERT_EQ(2u, details.rasterOverlayProjections.size());
+    EXPECT_EQ(
+        RasterOverlayProjection::Geographic,
+        details.rasterOverlayProjections[0]);
+    EXPECT_EQ(
+        RasterOverlayProjection::WebMercator,
+        details.rasterOverlayProjections[1]);
+    EXPECT_EQ(
+        0,
+        details.textureCoordinateIDForProjection(
+            RasterOverlayProjection::Geographic));
+    EXPECT_EQ(
+        1,
+        details.textureCoordinateIDForProjection(
+            RasterOverlayProjection::WebMercator));
+
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_EQ(
+        primitive.vertices.size(),
+        primitive.vertexTexCoords[0].size());
+    ASSERT_EQ(
+        primitive.vertices.size(),
+        primitive.vertexTexCoords[1].size());
+    EXPECT_TRUE(primitive.vertexTexCoords[2].empty());
+    ASSERT_EQ(
+        primitive.vertices.size() * sizeof(TerrainGpuVertex),
+        primitive.terrainGpuVertexBytes.size());
+    for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+        TerrainGpuVertex packed{};
+        std::memcpy(
+            &packed,
+            primitive.terrainGpuVertexBytes.data() +
+                i * sizeof(TerrainGpuVertex),
+            sizeof(TerrainGpuVertex));
+        EXPECT_FLOAT_EQ(
+            primitive.vertexTexCoords[0][i][0],
+            packed.texcoord01[0]);
+        EXPECT_FLOAT_EQ(
+            primitive.vertexTexCoords[0][i][1],
+            packed.texcoord01[1]);
+        EXPECT_FLOAT_EQ(
+            primitive.vertexTexCoords[1][i][0],
+            packed.texcoord01[2]);
+        EXPECT_FLOAT_EQ(
+            primitive.vertexTexCoords[1][i][1],
+            packed.texcoord01[3]);
+    }
 }
 
 TEST(TilesetQuantizedMeshTest,
@@ -1008,7 +1102,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainEnsureTileDoesNotRefreshMetadataDuringProtectedUnload) {
+     ContentTerrainMetadataRefreshIsExplicitAndOnlyWhileUnloaded) {
     auto provider =
         std::make_unique<MutableMetadataContentTerrainProvider>();
     MutableMetadataContentTerrainProvider* rawProvider = provider.get();
@@ -1035,6 +1129,10 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_EQ(originalBounds, root->bounds);
     EXPECT_DOUBLE_EQ(-10.0, root->boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(128.0, root->geometricError);
+    EXPECT_EQ(1, rawProvider->metadataCalls);
+
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+    EXPECT_EQ(1, rawProvider->metadataCalls);
 
     const Rectangle refreshedBounds =
         Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0);
@@ -1042,6 +1140,7 @@ TEST(TilesetQuantizedMeshTest,
     rawProvider->metadata.boundingVolume =
         TileBoundingVolume::fromRegion(refreshedBounds, 30.0, 40.0);
     rawProvider->metadata.geometricError = 64.0;
+    ++rawProvider->metadataRevision;
 
     root->content.loadState = TileLoadState::Unloading;
     TilesetTile* unloadingEnsure = TilesetTestAccess::ensureTile(
@@ -1053,17 +1152,79 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_EQ(originalBounds, root->bounds);
     EXPECT_DOUBLE_EQ(-10.0, root->boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(128.0, root->geometricError);
+    EXPECT_EQ(1, rawProvider->metadataCalls);
 
     root->content.loadState = TileLoadState::ContentLoading;
-    TilesetTile* retryableEnsure = TilesetTestAccess::ensureTile(
+    TilesetTile* loadingEnsure = TilesetTestAccess::ensureTile(
         tileset,
         rootKey);
 
-    ASSERT_EQ(root, retryableEnsure);
+    ASSERT_EQ(root, loadingEnsure);
+    ASSERT_TRUE(root->boundingVolume.has_value());
+    EXPECT_EQ(originalBounds, root->bounds);
+    EXPECT_DOUBLE_EQ(-10.0, root->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(128.0, root->geometricError);
+    EXPECT_EQ(1, rawProvider->metadataCalls);
+
+    root->content.loadState = TileLoadState::Unloaded;
+    TilesetTile* unloadedEnsure = TilesetTestAccess::ensureTile(
+        tileset,
+        rootKey);
+
+    ASSERT_EQ(root, unloadedEnsure);
     ASSERT_TRUE(root->boundingVolume.has_value());
     EXPECT_EQ(refreshedBounds, root->bounds);
     EXPECT_DOUBLE_EQ(30.0, root->boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(64.0, root->geometricError);
+    EXPECT_EQ(2, rawProvider->metadataCalls);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ExistingTerrainLookupPreservesMaterializedChildStateAndFastPath) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    Tileset tileset(
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    root->setBoundingVolume(TileBoundingVolume::fromRegion(
+        root->bounds,
+        -12.0,
+        34.0));
+    TileTerrainHeightRangePolicy::setTerrainHeightRange(
+        *root,
+        -12.0,
+        34.0);
+
+    const TileChildFrameMaterializeResult first =
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_TRUE(first.changed);
+    ASSERT_EQ(4u, root->children.size());
+    TilesetTile* child = root->children.front();
+    ASSERT_NE(nullptr, child);
+    ASSERT_TRUE(child->boundingVolume.has_value());
+    EXPECT_DOUBLE_EQ(-12.0, child->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(34.0, child->boundingVolume->maximumHeight);
+
+    for (int i = 0; i < 16; ++i) {
+        EXPECT_EQ(
+            child,
+            TilesetTestAccess::ensureTile(tileset, child->key));
+    }
+
+    const TileChildFrameMaterializeResult second =
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_FALSE(second.changed);
+    EXPECT_TRUE(second.fastPath);
+    ASSERT_TRUE(child->boundingVolume.has_value());
+    EXPECT_DOUBLE_EQ(-12.0, child->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(34.0, child->boundingVolume->maximumHeight);
 }
 
 TEST(TilesetQuantizedMeshTest,
@@ -1123,6 +1284,153 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_TRUE(root->rasterOverlayState.hasMissingProjections());
     RasterOverlayTileProvider* rasterProvider = activated.getTileProvider();
     ASSERT_NE(nullptr, rasterProvider);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainEnsureTilePreservesRetryableFillAndRasterMappings) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    DummyRenderDevice device;
+
+    for (const TileLoadState retryableState : {
+             TileLoadState::Unloaded,
+             TileLoadState::ContentLoading,
+             TileLoadState::FailedTemporarily}) {
+        root->content.loadState = retryableState;
+        ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+            *root,
+            &device,
+            4));
+        root->rasterOverlayState.ensureMapping(0);
+        ASSERT_TRUE(root->content.renderContent.isFillReady());
+        ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
+
+        TilesetTile* ensuredAgain = TilesetTestAccess::ensureTile(
+            tileset,
+            rootKey);
+
+        ASSERT_EQ(root, ensuredAgain);
+        EXPECT_TRUE(root->content.renderContent.isFillReady());
+        EXPECT_EQ(1u, root->rasterOverlayState.mappingCount());
+
+        root->content.renderContent.clearFillContent();
+        root->rasterOverlayState.releaseAndClearReferences(nullptr);
+    }
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainEnsureTileClearsInvalidOrTerminalFillResidue) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    DummyRenderDevice device;
+
+    root->content.loadState = TileLoadState::ContentLoading;
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        *root,
+        &device,
+        4));
+    root->rasterOverlayState.ensureMapping(0);
+    root->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+    EXPECT_FALSE(root->content.renderContent.isFillReady());
+    EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
+    EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
+
+    root->content.loadState = TileLoadState::ContentLoading;
+    root->content.contentKind = TileContentKind::Unknown;
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        *root,
+        &device,
+        4));
+    root->rasterOverlayState.ensureMapping(0);
+    root->content.contentKind = TileContentKind::Render;
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+    EXPECT_FALSE(root->content.renderContent.isFillReady());
+    EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
+
+    for (const TileLoadState terminalState : {
+             TileLoadState::Done,
+             TileLoadState::Failed,
+             TileLoadState::Unloading}) {
+        root->content.loadState = TileLoadState::Unloaded;
+        ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+            *root,
+            &device,
+            4));
+        root->rasterOverlayState.ensureMapping(0);
+        root->content.loadState = terminalState;
+
+        TilesetTestAccess::ensureTile(tileset, rootKey);
+
+        EXPECT_FALSE(root->content.renderContent.isFillReady());
+        EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
+    }
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainAcceptedGltfKeepsFillUntilGpuReady) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    DummyRenderDevice device;
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        *root,
+        &device,
+        4));
+    root->rasterOverlayState.ensureMapping(0);
+
+    root->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(root->bounds),
+        Mat4::identity());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::ContentLoaded;
+
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+
+    EXPECT_TRUE(root->content.renderContent.hasGltfContent());
+    EXPECT_TRUE(root->content.renderContent.isFillReady());
+    EXPECT_TRUE(root->content.renderContent.drawsFill());
+    EXPECT_EQ(1u, root->rasterOverlayState.mappingCount());
+
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->content.renderContent.markRenderContentReady();
+    EXPECT_FALSE(root->content.renderContent.isFillReady());
+    EXPECT_TRUE(root->content.renderContent.isGltfRenderReady());
 }
 
 TEST(TilesetQuantizedMeshTest,
@@ -1312,7 +1620,7 @@ TEST(TilesetQuantizedMeshTest,
              TileLoadState::FailedTemporarily,
              TileLoadState::Unloaded,
              TileLoadState::ContentLoading}) {
-        boundary->children.clear();
+        boundary->clearChildren();
         boundary->content.loadState = waitingState;
         TilesetTestAccess::ensureTileChildren(tileset, *boundary);
         EXPECT_TRUE(boundary->children.empty());
@@ -1341,13 +1649,13 @@ TEST(TilesetQuantizedMeshTest,
     }
     EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *boundary));
 
-    boundary->children.clear();
+    boundary->clearChildren();
     boundary->content.loadState = TileLoadState::Failed;
     TilesetTestAccess::ensureTileChildren(tileset, *boundary);
     ASSERT_EQ(4u, boundary->children.size());
     EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *boundary));
 
-    boundary->children.clear();
+    boundary->clearChildren();
     boundary->content.loadState = TileLoadState::Done;
     TilesetTestAccess::ensureTileChildren(tileset, *boundary);
     ASSERT_EQ(4u, boundary->children.size());
@@ -1786,6 +2094,16 @@ TEST(TilesetQuantizedMeshTest,
     ASSERT_NE(nullptr, tile->content.renderContent.gltfContent());
     EXPECT_FALSE(tile->content.renderContent.hasRetainedHeightmap());
     EXPECT_TRUE(tile->content.renderContent.hasGltfResources());
+    ASSERT_EQ(
+        1u,
+        tile->content.renderContent.gltfPrimitiveResourceCount());
+    const GltfPrimitiveRenderResources* primitiveResources =
+        tile->content.renderContent.gltfPrimitiveResourceForReadAt(0);
+    ASSERT_NE(nullptr, primitiveResources);
+    EXPECT_NE(nullptr, primitiveResources->vertexBuffer);
+    EXPECT_NE(nullptr, primitiveResources->indexBuffer);
+    EXPECT_GT(primitiveResources->vertexCount, 0);
+    EXPECT_GT(primitiveResources->indexCount, 0);
 
     ASSERT_TRUE(tile->initialBoundingVolume.has_value());
     EXPECT_EQ(initialVolume.region, tile->initialBoundingVolume->region);
@@ -2316,8 +2634,8 @@ TEST(TilesetQuantizedMeshTest,
         positiveChildLoad->content.metadata.terrainHeightRange->second,
         1e-12);
 
-    GltfModel* parentModel =
-        parent.content.renderContent.gltfContent();
+    auto parentModel =
+        parent.content.renderContent.editGltfContent();
     ASSERT_NE(nullptr, parentModel);
     parentModel->rasterOverlayDetails = RasterOverlayDetails{};
 

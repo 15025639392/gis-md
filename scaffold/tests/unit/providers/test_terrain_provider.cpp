@@ -994,7 +994,7 @@ TEST(
             cv.notify_one();
         },
         HttpRequestPriority::Normal,
-        TileContentRequestOptions{true});
+        TileContentRequestOptions{true, {}});
 
     ASSERT_TRUE(bridge.waitUntilPendingCount(1));
     ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
@@ -1118,7 +1118,7 @@ TEST(QuantizedMeshTerrainProviderTest,
             cv.notify_one();
         },
         HttpRequestPriority::Normal,
-        TileContentRequestOptions{true});
+        TileContentRequestOptions{true, {}});
 
     ASSERT_TRUE(bridge.waitUntilPendingCount(1));
     ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
@@ -1218,6 +1218,86 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
+     RequestTileContentForwardsRequiredOverlayProjectionsToWorkerLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "available": [
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 0, "startY": 0, "endX": 1, "endY": 1}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TileContentLoadResult completed;
+    TileContentRequestOptions options;
+    options.requiredRasterOverlayProjections = {
+        RasterOverlayProjection::WebMercator,
+        RasterOverlayProjection::WebMercator};
+
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        },
+        HttpRequestPriority::Normal,
+        std::move(options));
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    ASSERT_TRUE(completed.metadata.rasterOverlayDetails.has_value());
+    const RasterOverlayDetails& details =
+        completed.gltfModel->rasterOverlayDetails;
+    ASSERT_TRUE(completed.metadata.rasterOverlayDetails->equalsExact(details));
+    ASSERT_EQ(2u, details.rasterOverlayProjections.size());
+    EXPECT_EQ(
+        RasterOverlayProjection::Geographic,
+        details.rasterOverlayProjections[0]);
+    EXPECT_EQ(
+        RasterOverlayProjection::WebMercator,
+        details.rasterOverlayProjections[1]);
+    ASSERT_EQ(1u, completed.gltfModel->primitives.size());
+    const GltfPrimitive& primitive =
+        completed.gltfModel->primitives.front();
+    EXPECT_EQ(
+        primitive.vertices.size(),
+        primitive.vertexTexCoords[0].size());
+    EXPECT_EQ(
+        primitive.vertices.size(),
+        primitive.vertexTexCoords[1].size());
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
      RequestTileContentKeepsRasterOverlayDetailsForExistingUpsampledChildLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
@@ -1258,7 +1338,7 @@ TEST(QuantizedMeshTerrainProviderTest,
             cv.notify_one();
         },
         HttpRequestPriority::Normal,
-        TileContentRequestOptions{true});
+        TileContentRequestOptions{true, {}});
 
     ASSERT_TRUE(bridge.waitUntilPendingCount(1));
     ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
@@ -4665,6 +4745,40 @@ TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityStartsUnknownChildren
 
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(child));
+}
+
+TEST(
+    QuantizedMeshTerrainProviderTest,
+    RuntimeAvailabilityUpdateDoesNotInvalidateUnrelatedChildTopology) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 17,
+      "metadataAvailability": 10
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const uint64_t topologyRevisionBefore =
+        provider.childTopologyRevision();
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = TileKey{"Geographic-TMS", 0, 0, 0};
+    update.metadataAvailability.push_back({0, 0, 0, 0, 0});
+    provider.applyAvailabilityUpdates({update});
+
+    EXPECT_EQ(topologyRevisionBefore, provider.childTopologyRevision());
+    EXPECT_EQ(
+        TileAvailabilityState::Available,
+        provider.availabilityState(
+            TileKey{"Geographic-TMS", 1, 0, 0}));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityLoadedSubtreeTableUsesCeilLikeCesiumNative) {

@@ -13,6 +13,7 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
+#include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileLoadStatePredicates.h"
 #include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -21,6 +22,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -34,6 +36,10 @@ public:
 
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
 
 private:
     int width_ = 0;
@@ -219,6 +225,64 @@ TEST(TileChildMaterializerTest, LinkContentChildrenWithoutDuplicates) {
     EXPECT_EQ(tiles["test:1:1:0"].get(), parent.children[1]);
     EXPECT_EQ(&parent, parent.children[0]->parent);
     EXPECT_EQ(&parent, parent.children[1]->parent);
+}
+
+TEST(TileChildMaterializerTest, GltfUpsampleClipInputDropsTransientMeshCopies) {
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, parentBounds);
+    TilesetTile child(TileKey{"test", 1, 0, 0}, childBounds, &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    auto parentModel = makeQuadTerrainGltfModel(parentBounds);
+    ASSERT_FALSE(parentModel->primitives.empty());
+    GltfPrimitive& sourcePrimitive = parentModel->primitives.front();
+    sourcePrimitive.terrainGpuVertexBytes.resize(4096, 3);
+    sourcePrimitive.instances.resize(8);
+    sourcePrimitive.runtime.baseTangents.resize(sourcePrimitive.vertices.size());
+    sourcePrimitive.runtime.skinning.resize(sourcePrimitive.vertices.size());
+    sourcePrimitive.runtime.morphTargets.resize(2);
+    const size_t retainedBaseVertexCount =
+        sourcePrimitive.runtime.baseVertices.size();
+    parent.content.renderContent.prepareGltfContent(
+        std::move(parentModel), Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.loadState = TileLoadState::Done;
+
+    std::optional<
+        TileGltfTerrainUpsampledChildMaterializer::UpsampleClipInput>
+        input = TileGltfTerrainUpsampledChildMaterializer::buildClipInput(
+            child);
+
+    ASSERT_TRUE(input.has_value());
+    ASSERT_NE(nullptr, input->parentModel);
+    ASSERT_FALSE(input->parentModel->primitives.empty());
+    const GltfPrimitive& snapshotPrimitive =
+        input->parentModel->primitives.front();
+    EXPECT_TRUE(snapshotPrimitive.terrainGpuVertexBytes.empty());
+    EXPECT_TRUE(snapshotPrimitive.instances.empty());
+    EXPECT_TRUE(snapshotPrimitive.runtime.baseVertices.empty());
+    EXPECT_TRUE(snapshotPrimitive.runtime.baseTangents.empty());
+    EXPECT_TRUE(snapshotPrimitive.runtime.skinning.empty());
+    EXPECT_TRUE(snapshotPrimitive.runtime.morphTargets.empty());
+    EXPECT_EQ(4u, snapshotPrimitive.vertices.size());
+    EXPECT_EQ(6u, snapshotPrimitive.indices.size());
+    EXPECT_EQ(4u, snapshotPrimitive.vertexTexCoords[0].size());
+    const GltfModel* retainedModel =
+        parent.content.renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, retainedModel);
+    ASSERT_FALSE(retainedModel->primitives.empty());
+    EXPECT_EQ(
+        retainedBaseVertexCount,
+        retainedModel->primitives.front().runtime.baseVertices.size());
+
+    std::unique_ptr<GltfModel> childModel =
+        TileGltfTerrainUpsampledChildMaterializer::clipToModel(*input);
+    ASSERT_NE(nullptr, childModel);
+    ASSERT_FALSE(childModel->primitives.empty());
+    EXPECT_EQ(
+        childModel->primitives.front().vertices.size(),
+        childModel->primitives.front().runtime.baseVertices.size());
 }
 
 TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiumNative) {
@@ -417,7 +481,7 @@ TEST(TileChildMaterializerTest,
              TileLoadState::FailedTemporarily,
              TileLoadState::Unloaded,
              TileLoadState::ContentLoading}) {
-        parent.children.clear();
+        parent.clearChildren();
         parent.content.loadState = waitingState;
         std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
         int ensureCalls = 0;
@@ -458,7 +522,7 @@ TEST(TileChildMaterializerTest,
              TileLoadState::ContentLoaded,
              TileLoadState::Done,
              TileLoadState::Failed}) {
-        parent.children.clear();
+        parent.clearChildren();
         parent.content.loadState = resolvedState;
         std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
         auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
@@ -550,6 +614,294 @@ TEST(TileChildMaterializerTest,
     EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
               parent.children.front()->key);
     EXPECT_FALSE(parent.children.front()->content.derivesTerrainFromParent());
+}
+
+TEST(TileChildMaterializerTest,
+     StableFrameMaterializationUsesStateVersionFastPath) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    parent.geometricError = 100.0;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+    int availabilityChecks = 0;
+    auto availability = [&availabilityChecks](const TileKey&) {
+        ++availabilityChecks;
+        return TileAvailabilityState::Available;
+    };
+    TileChildFrameMaterializeInput input{
+        parent,
+        {},
+        2,
+        true,
+        false,
+        true,
+        nullptr,
+        7};
+
+    const TileChildFrameMaterializeResult first =
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability);
+    const TileChildFrameMaterializeResult second =
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability);
+
+    EXPECT_TRUE(first.changed);
+    EXPECT_FALSE(first.fastPath);
+    EXPECT_FALSE(second.changed);
+    EXPECT_TRUE(second.fastPath);
+    EXPECT_EQ(4, availabilityChecks);
+    EXPECT_EQ(4u, parent.children.size());
+}
+
+TEST(TileChildMaterializerTest,
+     ChildTopologyRevisionInvalidatesStableMaterialization) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    parent.geometricError = 100.0;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+    bool available = false;
+    int availabilityChecks = 0;
+    auto availability = [&available, &availabilityChecks](const TileKey&) {
+        ++availabilityChecks;
+        return available
+            ? TileAvailabilityState::Available
+            : TileAvailabilityState::NotAvailable;
+    };
+    TileChildFrameMaterializeInput input{
+        parent,
+        {},
+        2,
+        true,
+        false,
+        true,
+        nullptr,
+        1};
+
+    EXPECT_FALSE(
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability)
+            .changed);
+    EXPECT_TRUE(
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability)
+            .fastPath);
+    EXPECT_EQ(4, availabilityChecks);
+
+    available = true;
+    input.childTopologyRevision = 2;
+    const TileChildFrameMaterializeResult refreshed =
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability);
+
+    EXPECT_TRUE(refreshed.changed);
+    EXPECT_FALSE(refreshed.fastPath);
+    EXPECT_EQ(8, availabilityChecks);
+    EXPECT_EQ(4u, parent.children.size());
+}
+
+TEST(TileChildMaterializerTest,
+     RetryLaterDoesNotPopulateMaterializationFastPath) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle{});
+    int availabilityChecks = 0;
+    auto availability = [&availabilityChecks](const TileKey&) {
+        ++availabilityChecks;
+        return TileAvailabilityState::Available;
+    };
+    auto ensure = [](const TileKey&) -> TilesetTile* {
+        return nullptr;
+    };
+    TileChildFrameMaterializeInput input{
+        parent,
+        {},
+        2,
+        true,
+        true,
+        true,
+        nullptr,
+        1};
+
+    const TileChildFrameMaterializeResult first =
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability);
+    const TileChildFrameMaterializeResult second =
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability);
+
+    EXPECT_TRUE(first.retryLater);
+    EXPECT_TRUE(second.retryLater);
+    EXPECT_FALSE(first.fastPath);
+    EXPECT_FALSE(second.fastPath);
+    EXPECT_FALSE(parent.childMaterializationStateValid);
+    EXPECT_EQ(0, availabilityChecks);
+}
+
+TEST(TileChildMaterializerTest,
+     PartialChildMaterializationDoesNotPopulateFastPath) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    parent.geometricError = 100.0;
+
+    bool allowEnsure = false;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure =
+        [&allowEnsure, &tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        if (!allowEnsure) {
+            return nullptr;
+        }
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+    int availabilityChecks = 0;
+    auto availability = [&availabilityChecks](const TileKey&) {
+        ++availabilityChecks;
+        return TileAvailabilityState::Available;
+    };
+    TileChildFrameMaterializeInput input{
+        parent,
+        {},
+        2,
+        true,
+        false,
+        true,
+        nullptr,
+        1};
+
+    const TileChildFrameMaterializeResult first =
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability);
+
+    EXPECT_FALSE(first.changed);
+    EXPECT_FALSE(first.fastPath);
+    EXPECT_FALSE(parent.childMaterializationStateValid);
+    EXPECT_TRUE(parent.children.empty());
+    EXPECT_EQ(4, availabilityChecks);
+
+    allowEnsure = true;
+    const TileChildFrameMaterializeResult second =
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability);
+
+    EXPECT_TRUE(second.changed);
+    EXPECT_FALSE(second.fastPath);
+    EXPECT_TRUE(parent.childMaterializationStateValid);
+    EXPECT_EQ(4u, parent.children.size());
+    EXPECT_EQ(8, availabilityChecks);
+}
+
+TEST(TileChildMaterializerTest,
+     ChildStateMutationInvalidatesMaterializationFastPath) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    parent.geometricError = 100.0;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+    int availabilityChecks = 0;
+    auto availability = [&availabilityChecks](const TileKey&) {
+        ++availabilityChecks;
+        return TileAvailabilityState::Available;
+    };
+    TileChildFrameMaterializeInput input{
+        parent,
+        {},
+        2,
+        true,
+        false,
+        true,
+        nullptr,
+        1};
+
+    ASSERT_TRUE(
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability)
+            .changed);
+    ASSERT_EQ(4u, parent.children.size());
+    parent.children.front()->setGeometricError(999.0);
+
+    const TileChildFrameMaterializeResult refreshed =
+        TileChildFrameMaterializer::ensureChildren(
+            input,
+            ensure,
+            availability);
+
+    EXPECT_TRUE(refreshed.changed);
+    EXPECT_FALSE(refreshed.fastPath);
+    EXPECT_DOUBLE_EQ(50.0, parent.children.front()->geometricError);
+    EXPECT_EQ(8, availabilityChecks);
 }
 
 TEST(TileChildMaterializerTest,

@@ -9,15 +9,31 @@
 namespace earth_engine {
 
 void TileVisibleRangeFinalizer::dedupeVisibleTiles(TilePlan& plan) {
+    const bool handlesAligned =
+        plan.tilesToRenderThisFrame.size() == plan.visibleTiles.size();
     std::unordered_set<TileKey> seen;
     std::vector<TileKey> deduped;
+    std::vector<TilesetTile*> dedupedHandles;
     deduped.reserve(plan.visibleTiles.size());
-    for (const TileKey& key : plan.visibleTiles) {
+    if (handlesAligned) {
+        dedupedHandles.reserve(plan.tilesToRenderThisFrame.size());
+    }
+    for (size_t i = 0; i < plan.visibleTiles.size(); ++i) {
+        const TileKey& key = plan.visibleTiles[i];
         if (seen.insert(key).second) {
             deduped.push_back(key);
+            if (handlesAligned) {
+                dedupedHandles.push_back(
+                    plan.tilesToRenderThisFrame[i]);
+            }
         }
     }
     plan.visibleTiles = std::move(deduped);
+    if (handlesAligned) {
+        plan.tilesToRenderThisFrame = std::move(dedupedHandles);
+    } else {
+        plan.tilesToRenderThisFrame.clear();
+    }
 }
 
 void TileVisibleRangeFinalizer::updateVisibleZoomRange(TilePlan& plan) {

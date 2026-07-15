@@ -2,6 +2,7 @@
 
 #include "../renderer/Renderer.h"
 #include "TileRenderFrameCoordinator.h"
+#include "TileRenderReferenceReleaser.h"
 
 #include <array>
 #include <optional>
@@ -10,18 +11,20 @@
 namespace earth_engine {
 
 class TileCacheOwnershipManager;
-class TileContentAccess;
 class TileRenderCommandManager;
+struct TileRenderCommandPerformanceTimings;
 
 struct TileRenderFrameContext {
     TileRenderFrameCoordinatorInput input;
-    TileContentAccess& contentAccess;
     TileRenderCommandManager& renderCommands;
     TileCacheOwnershipManager& cacheOwnership;
-
-    TilesetTile* ensureTile(const TileKey& key) const;
+    std::vector<TileRenderReference>& renderReferences;
 
     void markIneligibleForUnloading(const std::string& cacheKey) const;
+    void trackRenderReference(
+        TilesetTile* tile,
+        std::string cacheKey,
+        bool countedReference) const;
 
     void buildTileDrawCommand(
         Renderer& renderer,
@@ -30,13 +33,11 @@ struct TileRenderFrameContext {
         float transitionOpacity,
         bool allowSynchronousMeshPrep,
         const std::optional<std::array<float, 4>>& surfaceClipUv) const;
+    const TileRenderCommandPerformanceTimings&
+    renderCommandTimings() const;
 
-    void markEligibleForUnloading(
-        const TilesetTile* tile,
-        const std::string& cacheKey) const;
-
-    void updateTotalBytesUsed() const;
-
+    void trimRasterCaches(bool cachePressure) const;
+    bool shouldUnloadCachedBytes() const;
     void unloadCachedBytes(Renderer& renderer) const;
 };
 

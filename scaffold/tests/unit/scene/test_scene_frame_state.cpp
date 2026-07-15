@@ -18,6 +18,7 @@
 #include "earth_engine/scene/SceneFrameDiagnostics.h"
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
+#include "earth_engine/tiling/GltfRenderResourcePreparer.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileRenderPlanFrameRefresher.h"
@@ -45,12 +46,18 @@ struct TilesetTestAccess {
 
     static void setLoadedGltfTerrainContent(
         TilesetTile& tile,
-        std::unique_ptr<GltfModel> model) {
+        std::unique_ptr<GltfModel> model,
+        RenderDevice* device = nullptr) {
         tile.content.renderContent.prepareGltfContent(
             std::move(model),
             Mat4::identity());
         tile.content.renderContent.setTerrainRenderContent(true);
-        tile.markRenderContentDone();
+        if (device) {
+            tile.markRenderContentLoaded();
+            GltfRenderResourcePreparer::prepare(tile, device, 0.0);
+        } else {
+            tile.markRenderContentDone();
+        }
     }
 
     static TileOcclusionState checkOcclusion(
@@ -123,6 +130,10 @@ public:
     DummyTexture(int width, int height) : width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
 
 private:
     int width_ = 0;
@@ -664,7 +675,8 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     ASSERT_NE(terrainRoot, nullptr);
     TilesetTestAccess::setLoadedGltfTerrainContent(
         *terrainRoot,
-        makeFlatGeographicTerrainGltfModel(terrainRoot->bounds, 123.0));
+        makeFlatGeographicTerrainGltfModel(terrainRoot->bounds, 123.0),
+        &device);
     scene.setTileset(std::move(terrainTileset));
 
     auto contentTileset = std::make_unique<Tileset>(
@@ -677,8 +689,8 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     ASSERT_NE(contentRoot, nullptr);
     contentRoot->content.renderContent.setGltfContent(
         makeTriangleGltfModel());
-    contentRoot->content.loadState = TileLoadState::Done;
-    contentRoot->content.contentKind = TileContentKind::Render;
+    contentRoot->markRenderContentLoaded();
+    GltfRenderResourcePreparer::prepare(*contentRoot, &device, 0.0);
 
     scene.addTileset(std::move(contentTileset));
     scene.update(1.0 / 60.0);
@@ -757,8 +769,8 @@ TEST(SceneFrameStateTest, GltfTerrainCountsAsTerrainRenderContent) {
     ASSERT_NE(root, nullptr);
     root->content.renderContent.setGltfContent(makeTriangleGltfModel());
     root->content.renderContent.setTerrainRenderContent(true);
-    root->content.loadState = TileLoadState::Done;
-    root->content.contentKind = TileContentKind::Render;
+    root->markRenderContentLoaded();
+    GltfRenderResourcePreparer::prepare(*root, &device, 0.0);
     scene.setTileset(std::move(terrainTileset));
 
     scene.update(1.0 / 60.0);
@@ -940,7 +952,8 @@ TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
 
     TilesetTestAccess::setLoadedGltfTerrainContent(
         *root,
-        makeFlatGeographicTerrainGltfModel(root->bounds, 0.0));
+        makeFlatGeographicTerrainGltfModel(root->bounds, 0.0),
+        &device);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -953,7 +966,7 @@ TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    ASSERT_FALSE(root->hasSurfaceDrawable());
+    ASSERT_TRUE(root->hasSurfaceDrawable());
 
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
@@ -1067,8 +1080,8 @@ TEST(SceneFrameStateTest, SortsTransparentGltfByCameraDepth) {
         makeTransparentTrianglePrimitiveAt(target + Vec3(900000.0, 0.0, 0.0)));
     model->primitives.push_back(makeTransparentTrianglePrimitiveAt(target));
     root->content.renderContent.setGltfContent(std::move(model));
-    root->content.loadState = TileLoadState::Done;
-    root->content.contentKind = TileContentKind::Render;
+    root->markRenderContentLoaded();
+    GltfRenderResourcePreparer::prepare(*root, &device, 0.0);
     scene.setTileset(std::move(contentTileset));
 
     scene.update(1.0 / 60.0);

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Earth Task Orchestrator"
+  short_description: "Coordinate deep gis-md investigation and verification"
+  default_prompt: "Use $earth-task-orchestrator to investigate this gis-md task with persistent hypotheses and verification gates."

@@ -21,6 +21,7 @@ struct TileSelectionFrameFinalizationInput {
     TilePlan& tilePlan;
     TilesetTileRegistry& tileRegistry;
     const std::vector<TilesetTile*>& activeTiles;
+    const std::vector<TilesetTile*>& previousActiveTiles;
     TileSelectionCounters& selectionCounters;
     TileContentAccess& contentAccess;
     std::unordered_set<std::string>& fadingKeys;

@@ -34,7 +34,7 @@ void TileTextureCache::put(const TileKey& key, std::unique_ptr<Texture> texture)
     if (!texture) return;
 
     std::string cacheKey = makeCacheKey(key);
-    size_t bytes = static_cast<size_t>(texture->width() * texture->height() * 4);  // RGBA
+    const size_t bytes = texture->sizeBytes();
 
     // 如果已存在，先移除旧的
     auto it = map_.find(cacheKey);

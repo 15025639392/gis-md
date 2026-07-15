@@ -4,6 +4,7 @@
 #include "TileChildFrameMaterializer.h"
 #include "TileIncrementalFrontier.h"
 #include "TileSelectionCounters.h"
+#include "TileSelectionPerformanceTimings.h"
 #include "TileTraversalDetails.h"
 #include "../core/math/Vec3.h"
 
@@ -15,6 +16,7 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class RenderDevice;
 class FrameResourceBudget;
+class IPrepareRendererResources;
 class TileContentAccess;
 class Tileset;
 struct TilesetTile;
@@ -39,6 +41,7 @@ struct TileSelectionTraversalContext {
     const TilesetOptions& options;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     RenderDevice* device = nullptr;
+    IPrepareRendererResources* pPrepRenderer = nullptr;
     FrameResourceBudget& frameResourceBudget;
     Vec3 lastCameraPosition = Vec3::zero();
     // Camera cartographic, precomputed once per frame (cartesianToCartographic
@@ -52,6 +55,7 @@ struct TileSelectionTraversalContext {
     // erasure — the indirection only ever bound one implementation and blocked
     // inlining of the hot per-visit callbacks.
     TileContentAccess& contentAccess;
+    TileSelectionPerformanceTimings* performanceTimings = nullptr;
 
     void* occlusionUserData = nullptr;
     CheckOcclusionFn checkOcclusionFn = nullptr;

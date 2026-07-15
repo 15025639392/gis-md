@@ -43,12 +43,16 @@ void TileRasterUpsampledChildCoordinator::createRasterOverlayUpsampledChildren(
             },
             pPrepRenderer);
     if (changed) {
-        markResourcesDirty();
+        for (TilesetTile* child : tile.children) {
+            if (child) {
+                resourceInvalidator_.markTileResourcesChanged(*child);
+            }
+        }
     }
 }
 
 void TileRasterUpsampledChildCoordinator::markResourcesDirty() {
-    resourceInvalidator_.markResourcesDirty();
+    resourceInvalidator_.markResourcesChanged();
 }
 
 } // namespace earth_engine

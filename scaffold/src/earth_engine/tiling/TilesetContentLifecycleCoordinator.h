@@ -20,8 +20,11 @@
 #include "../core/async/AsyncSystem.h"
 #include "../debug/PerfTimer.h"
 #include "../core/resources/FrameResourceBudget.h"
+#include "../layers/ActivatedRasterOverlay.h"
+#include "../providers/RasterOverlayTileProvider.h"
 #include "../renderer/RenderDevice.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -64,9 +67,11 @@ struct TilesetContentUploadContext {
 
 class TilesetContentLifecycleCoordinator {
 public:
-    template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
+    template <typename LoadRequests,
+              typename PrepareUpsampleSourceTileFn,
+              typename EnsureTileFn>
     static TileLoadRequestOutcome requestMissingTiles(
-        const std::vector<TileLoadRequest>& loadRequests,
+        LoadRequests& loadRequests,
         TilesetContentLifecycleContext context,
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
@@ -80,6 +85,27 @@ public:
             localBudget.beginFrame(context.frameNumber, config);
             budget = &localBudget;
         }
+        std::vector<RasterOverlayProjection> requiredProjections;
+        requiredProjections.reserve(context.rasterOverlays.size());
+        for (ActivatedRasterOverlay* activeOverlay :
+             context.rasterOverlays) {
+            if (!activeOverlay || !activeOverlay->visible()) {
+                continue;
+            }
+            RasterOverlayTileProvider* overlayProvider =
+                activeOverlay->ensureTileProvider(context.device);
+            if (!overlayProvider || !overlayProvider->isReady()) {
+                continue;
+            }
+            const RasterOverlayProjection projection =
+                overlayProvider->getProjection();
+            if (std::find(
+                    requiredProjections.begin(),
+                    requiredProjections.end(),
+                    projection) == requiredProjections.end()) {
+                requiredProjections.push_back(projection);
+            }
+        }
         return TileMissingRequestScheduler::request(
             loadRequests,
             TileMissingRequestSchedulerInput{
@@ -87,7 +113,8 @@ public:
                 *budget,
                 context.contentProvider,
                 context.tiles,
-                context.emptyContentRegistry},
+                context.emptyContentRegistry,
+                &requiredProjections},
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);
             },
@@ -132,70 +159,59 @@ public:
             ensureTile,
             ensureTileChildren,
             [&](TilesetTile& tile) {
-                // For terrain content, dispatch CPU work to the worker thread
-                // and defer GPU upload to drainGpuUploadQueue.  This moves the
-                // ~20ms vertex-building CPU work off the main thread.
-                // Async GPU pipeline for terrain content decoded from
-                // quantized-mesh tiles.  CPU work (buildVertices) runs on
-                // a worker thread; GPU upload runs via drainGpuUploadQueue.
-                // Async GPU pipeline for terrain content decoded from
-                // quantized-mesh tiles.  Vertex data is pre-built in
-                // TerrainGpuVertex format during decode (worker thread),
-                // so the main thread only needs GPU buffer creation.
+                const GltfModel* model =
+                    tile.content.renderContent.gltfModelForRead();
+                bool hasRenderablePrimitive = false;
+                bool hasCompletePrebuiltTerrainPayload =
+                    model != nullptr && !model->primitives.empty();
+                if (model) {
+                    for (const GltfPrimitive& primitive :
+                         model->primitives) {
+                        if (primitive.vertices.empty() ||
+                            primitive.indices.empty()) {
+                            continue;
+                        }
+                        hasRenderablePrimitive = true;
+                        const size_t expectedVertexBytes =
+                            primitive.vertices.size() *
+                            sizeof(TerrainGpuVertex);
+                        if (!primitive.hasTerrainWaterMaskMetadata ||
+                            !primitive.instances.empty() ||
+                            primitive.terrainGpuVertexBytes.size() !=
+                                expectedVertexBytes) {
+                            hasCompletePrebuiltTerrainPayload = false;
+                            break;
+                        }
+                    }
+                }
+
+                // Terrain vertex conversion is already complete in the decode
+                // worker. Package that payload through the same CPU-ready
+                // builder used by every other upload so render metadata and
+                // GPU bytes have one source of truth.
                 if (tile.content.renderContent.isTerrainRenderContent() &&
-                    tile.content.renderContent.hasGltfModel() &&
-                    tile.content.renderContent.gltfContent() &&
-                    !tile.content.renderContent.gltfContent()->primitives.empty() &&
-                    tile.content.renderContent.gltfContent()
-                            ->primitives.front()
-                            .hasTerrainWaterMaskMetadata &&
-                    !tile.content.renderContent.gltfContent()
-                            ->primitives.front()
-                            .terrainGpuVertexBytes.empty() &&
-                    // Pre-built terrain bytes must match the current primitive
-                    // geometry. Upsampled tiles carry stale parent bytes whose
-                    // vertex count differs from their (clipped) vertices; using
-                    // them uploads parent geometry indexed by child indices ->
-                    // corrupt triangles. Fall back to the sync prepare() path,
-                    // which rebuilds TerrainGpuVertex from prim.vertices.
-                    tile.content.renderContent.gltfContent()
-                            ->primitives.front()
-                            .terrainGpuVertexBytes.size() ==
-                        tile.content.renderContent.gltfContent()
-                            ->primitives.front()
-                            .vertices.size() * sizeof(TerrainGpuVertex) &&
-                    context.gpuUploadQueue && context.device) {
+                    hasRenderablePrimitive &&
+                    hasCompletePrebuiltTerrainPayload &&
+                    context.gpuUploadQueue &&
+                    context.device) {
+                    std::optional<GpuReadyData> ready =
+                        GltfRenderResourcePreparer::prepareCpuWork(
+                            tile,
+                            context.currentFrameTimeSeconds);
+                    if (!ready) {
+                        GltfRenderResourcePreparer::prepare(
+                            tile,
+                            context.device,
+                            context.currentFrameTimeSeconds);
+                        return;
+                    }
                     tile.content.renderContent.asyncGpuUploadPending = true;
                     const TileKey tileKey = tile.key;
                     const std::string cacheKey = TileCacheKey::forTile(tileKey);
-                    GpuUploadQueue* gpuQueue = context.gpuUploadQueue;
-                    // Extract pre-built vertex bytes directly from the model.
-                    // No CPU work needed — format conversion already happened
-                    // during decode on the worker thread (cesium-native pattern).
-                    const GltfModel* model =
-                        tile.content.renderContent.gltfModelForRead();
-                    if (model && !model->primitives.empty()) {
-                        const GltfPrimitive& prim = model->primitives.front();
-                        GpuReadyData ready;
-                        GpuReadyPrimitive gpuPrim;
-                        gpuPrim.vertexBytes = prim.terrainGpuVertexBytes;
-                        gpuPrim.vertexStride = sizeof(TerrainGpuVertex);
-                        gpuPrim.vertexCount = prim.vertices.size();
-                        gpuPrim.indices = prim.indices;
-                        gpuPrim.indexCount = prim.indices.size();
-                        gpuPrim.sortCenterEcef =
-                            GltfRenderGeometryBuilder::primitiveSortCenterEcef(
-                                prim, tile.content.renderContent.gltfTransform());
-                        GltfPrimitiveRenderResources& meta = gpuPrim.metadata;
-                        meta.useTerrainVertexFormat = true;
-                        meta.hasTerrainWaterMaskMetadata =
-                            prim.hasTerrainWaterMaskMetadata;
-                        meta.terrainOnlyWater = prim.terrainOnlyWater;
-                        meta.terrainOnlyLand = prim.terrainOnlyLand;
-                        ready.primitives.push_back(std::move(gpuPrim));
-                        gpuQueue->push(PendingGpuUpload{
-                            tileKey, cacheKey, std::move(ready)});
-                    }
+                    context.gpuUploadQueue->push(PendingGpuUpload{
+                        tileKey,
+                        cacheKey,
+                        std::move(*ready)});
                 } else {
                     // Non-terrain content: synchronous path.
                     GltfRenderResourcePreparer::prepare(
@@ -279,9 +295,21 @@ public:
 
             if (!upload->data.valid()) {
                 // CPU work failed (no primitives).
-                TileContentUploadPolicy::markGltfRenderResourcesFailed(
-                    *tile);
                 tile->content.renderContent.asyncGpuUploadPending = false;
+                const TileContentUploadCommitAction action =
+                    TileContentUploadCommitter::
+                        finishRenderResourcePreparation(
+                            *tile,
+                            false,
+                            context.pPrepRenderer);
+                if (action.resourcesDirty) {
+                    markResourcesDirty(*tile);
+                }
+                TilePendingUploadCompletion::eraseUpload(
+                    context.loadLifecycle,
+                    upload->cacheKey);
+                processed = true;
+                ++uploadsThisFrame;
                 continue;
             }
 
@@ -306,7 +334,7 @@ public:
                     success,
                     context.pPrepRenderer);
             if (action.resourcesDirty) {
-                markResourcesDirty();
+                markResourcesDirty(*tile);
             }
             logSlowDrainPhase(
                 "TilePendingLoad.drainGpuUpload.finish",

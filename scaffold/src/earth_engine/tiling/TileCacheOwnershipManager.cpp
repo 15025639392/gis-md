@@ -3,10 +3,13 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TileCacheKey.h"
 #include "TileContentLifecycleManager.h"
+#include "TilePendingUploadCompletion.h"
+#include "GpuUploadQueue.h"
 #include "TileLoadQueue.h"
 #include "TileSubtreeRemovalCoordinator.h"
 #include "TilesetTile.h"
 #include "../content/GltfContentProvider.h"
+#include "../layers/ActivatedRasterOverlay.h"
 
 #include <vector>
 
@@ -17,19 +20,49 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
     TileContentLifecycleManager& contentLifecycle,
     TileLoadQueue& loadQueue,
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
+    std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     bool& resourceSmoothingActiveForFrame,
     int64_t& maximumCachedBytes,
-    double& tileCacheUnloadTimeLimit)
+    double& tileCacheUnloadTimeLimit,
+    GpuUploadQueue* gpuUploadQueue)
     : contentCache_(contentCache),
       contentLifecycle_(contentLifecycle),
       loadQueue_(loadQueue),
       tiles_(tiles),
+      rasterOverlays_(rasterOverlays),
       resourceSmoothingActiveForFrame_(resourceSmoothingActiveForFrame),
       maximumCachedBytes_(maximumCachedBytes),
-      tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit) {}
+      tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit),
+      gpuUploadQueue_(gpuUploadQueue) {}
 
 void TileCacheOwnershipManager::updateTotalBytesUsed() {
     contentCache_.updateTotalBytesUsed(tiles_, contentLifecycle_);
+}
+
+int64_t TileCacheOwnershipManager::totalBytesUsed() const {
+    int64_t bytes = contentCache_.totalBytesUsed();
+    for (const ActivatedRasterOverlay* overlay : rasterOverlays_) {
+        if (overlay) {
+            bytes += overlay->tileTextureBytesUsed();
+        }
+    }
+    if (gpuUploadQueue_) {
+        bytes += gpuUploadQueue_->pendingBytes();
+    }
+    return bytes;
+}
+
+bool TileCacheOwnershipManager::shouldUnloadCachedBytes() const {
+    return totalBytesUsed() > maximumCachedBytes_ ||
+           contentCache_.hasPendingProtectedUnloads();
+}
+
+void TileCacheOwnershipManager::trimRasterCaches(bool cachePressure) {
+    for (ActivatedRasterOverlay* overlay : rasterOverlays_) {
+        if (overlay) {
+            overlay->trimUnusedTiles(cachePressure);
+        }
+    }
 }
 
 void TileCacheOwnershipManager::markEligibleForUnloading(
@@ -44,6 +77,9 @@ void TileCacheOwnershipManager::markIneligibleForUnloading(
 }
 
 void TileCacheOwnershipManager::eraseTileIndexState(const std::string& key) {
+    if (gpuUploadQueue_) {
+        gpuUploadQueue_->eraseCacheKey(key);
+    }
     contentCache_.eraseTileIndexState(
         key,
         contentLifecycle_,
@@ -72,11 +108,15 @@ TileCacheUnloadContentResult TileCacheOwnershipManager::unloadTileContent(
         tile,
         contentLifecycle_,
         pPrepRenderer);
+    if (result != TileCacheUnloadContentResult::Keep && gpuUploadQueue_) {
+        const std::string cacheKey = TileCacheKey::forTile(tile.key);
+        gpuUploadQueue_->eraseCacheKey(cacheKey);
+        TilePendingUploadCompletion::eraseUpload(
+            contentLifecycle_.loadLifecycle(),
+            cacheKey);
+    }
     if (result == TileCacheUnloadContentResult::RemoveAndClearChildren) {
         clearChildrenRecursively(&tile, pPrepRenderer);
-    }
-    if (result != TileCacheUnloadContentResult::Keep) {
-        contentCache_.markResourcesDirty();
     }
     return result;
 }
@@ -91,6 +131,12 @@ void TileCacheOwnershipManager::unloadCachedBytes(
         tiles_,
         contentLifecycle_,
         pPrepRenderer,
+        [this]() {
+            return totalBytesUsed();
+        },
+        [this]() {
+            trimRasterCaches(true);
+        },
         [this, pPrepRenderer](TilesetTile& tile) {
             clearChildrenRecursively(&tile, pPrepRenderer);
         });

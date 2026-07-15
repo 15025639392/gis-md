@@ -15,6 +15,7 @@ void markUnknownTemporaryFailure(
     tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
     if (tile.content.contentKind == TileContentKind::Render) {
         tile.content.loadState = TileLoadState::FailedTemporarily;
+        tile.notifyChildMaterializationStateChanged();
     } else {
         tile.markContentFailedTemporarily();
     }
@@ -48,7 +49,7 @@ void applyNativeEmptyContentRefinement(TilesetTile& tile) {
         ? ancestor->nonZeroGeometricError()
         : tileError * 2.0;
     if (tileError >= parentError) {
-        tile.unconditionallyRefine = true;
+        tile.setUnconditionallyRefine(true);
     }
 }
 

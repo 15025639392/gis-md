@@ -40,6 +40,7 @@ public:
     bool providesTerrainQuadtree() const override { return true; }
     TileAvailabilityState availabilityState(
         const TileKey& key) const override;
+    uint64_t childTopologyRevision() const override;
     bool isTerrainAvailabilityBoundaryLevel(int level) const override;
     void applyAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override;

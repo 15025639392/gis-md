@@ -118,30 +118,8 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     primitive.runtime.hasNormals = true;
 
     model->primitives.push_back(std::move(primitive));
-    // Pre-build TerrainGpuVertex data so main-thread GPU upload can create
-    // vertex buffers directly.  Matches cesium-native: vertex format
     if (!model->rebuildRuntime()) {
         return nullptr;
-    }
-    // Pre-build TerrainGpuVertex data AFTER rebuildRuntime so vertex positions
-    // are in ECEF (world) coordinates — matching the sync prepare() path.
-    // Without this, the async pipeline's vertex positions are off by
-    // localOrigin, shifting overlay UV and creating stripe artifacts.
-    {
-        GltfPrimitive& p = model->primitives.back();
-        std::vector<TerrainGpuVertex> terrainVerts =
-            GltfRenderGeometryBuilder::buildTerrainVertices(
-                p,
-                Mat4::identity(),
-                decodedTile.localOriginEcef);
-        if (!terrainVerts.empty()) {
-            p.terrainGpuVertexBytes.resize(
-                terrainVerts.size() * sizeof(TerrainGpuVertex));
-            std::memcpy(
-                p.terrainGpuVertexBytes.data(),
-                terrainVerts.data(),
-                p.terrainGpuVertexBytes.size());
-        }
     }
     return model;
 }
@@ -150,17 +128,22 @@ RasterOverlayDetails makeRasterOverlayDetails(
     const Rectangle& geographicRectangle,
     double minimumHeight,
     double maximumHeight,
-    RasterOverlayProjection terrainProjection) {
+    const std::vector<RasterOverlayProjection>& projections) {
     RasterOverlayDetails details;
-    details.rasterOverlayProjections = {terrainProjection};
-    details.rasterOverlayInvertedVCoordinates = {false};
-    if (terrainProjection == RasterOverlayProjection::WebMercator) {
-        details.rasterOverlayRectangles = {
-            projectRectangleSimple(
-                WebMercatorProjection(Ellipsoid::WGS84()),
-                geographicRectangle)};
-    } else {
-        details.rasterOverlayRectangles = {geographicRectangle};
+    details.rasterOverlayProjections = projections;
+    details.rasterOverlayRectangles.reserve(projections.size());
+    details.rasterOverlayInvertedVCoordinates.assign(
+        projections.size(),
+        false);
+    for (RasterOverlayProjection projection : projections) {
+        if (projection == RasterOverlayProjection::WebMercator) {
+            details.rasterOverlayRectangles.push_back(
+                projectRectangleSimple(
+                    WebMercatorProjection(Ellipsoid::WGS84()),
+                    geographicRectangle));
+        } else {
+            details.rasterOverlayRectangles.push_back(geographicRectangle);
+        }
     }
     details.boundingRegion = {
         geographicRectangle,
@@ -170,8 +153,9 @@ RasterOverlayDetails makeRasterOverlayDetails(
 }
 
 void rewriteTerrainProjectionTexCoords(GltfModel& model,
-                                        RasterOverlayProjection projection) {
-    if (projection != RasterOverlayProjection::WebMercator) {
+                                        RasterOverlayProjection projection,
+                                        size_t textureCoordinateIndex) {
+    if (textureCoordinateIndex >= kGltfMaxTexCoordSets) {
         return;
     }
 
@@ -191,24 +175,21 @@ void rewriteTerrainProjectionTexCoords(GltfModel& model,
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     const WebMercatorProjection webMercator(ellipsoid);
     for (GltfPrimitive& primitive : model.primitives) {
-        const Mat4* nodeTransform = nullptr;
-        if (primitive.runtime.nodeIndex >= 0 &&
-            static_cast<size_t>(primitive.runtime.nodeIndex) <
-                model.nodes.size()) {
-            nodeTransform =
-                &model.nodes[static_cast<size_t>(primitive.runtime.nodeIndex)]
-                     .globalTransform;
-        }
         std::vector<std::array<float, 2>>& texCoords =
-            primitive.vertexTexCoords[0];
-        if (texCoords.size() != primitive.vertices.size()) {
-            texCoords.resize(primitive.vertices.size());
+            primitive.vertexTexCoords[textureCoordinateIndex];
+        texCoords.resize(primitive.vertices.size());
+        if (projection == RasterOverlayProjection::Geographic) {
+            for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+                texCoords[i] = primitive.vertices[i].uv;
+            }
+            continue;
         }
         for (size_t i = 0; i < primitive.vertices.size(); ++i) {
-            const Vec3 worldPosition = nodeTransform
-                ? nodeTransform->transformPoint(
-                      primitive.vertices[i].positionEcef)
-                : primitive.vertices[i].positionEcef;
+            // rebuildRuntime() has already baked node.globalTransform into
+            // primitive.vertices. Applying it again double-counts the tile
+            // origin and collapses projected overlay coordinates.
+            const Vec3& worldPosition =
+                primitive.vertices[i].positionEcef;
             const std::optional<Cartographic> cartographic =
                 ellipsoid.tryCartesianToCartographic(
                     worldPosition);
@@ -266,6 +247,52 @@ void rewriteTerrainProjectionTexCoords(GltfModel& model,
     }
 }
 
+std::vector<RasterOverlayProjection> requestedProjectionOrder(
+    RasterOverlayProjection terrainProjection,
+    bool generateTerrainProjection,
+    std::vector<RasterOverlayProjection> requiredProjections) {
+    std::vector<RasterOverlayProjection> projections;
+    projections.reserve(requiredProjections.size() + 1u);
+    if (generateTerrainProjection || !requiredProjections.empty()) {
+        projections.push_back(terrainProjection);
+    }
+    for (RasterOverlayProjection projection : requiredProjections) {
+        if (std::find(
+                projections.begin(),
+                projections.end(),
+                projection) == projections.end()) {
+            projections.push_back(projection);
+        }
+    }
+    if (projections.size() > kGltfMaxTexCoordSets) {
+        projections.resize(kGltfMaxTexCoordSets);
+    }
+    return projections;
+}
+
+void rebuildTerrainGpuVertexBytes(GltfModel& model) {
+    if (!model.preferredLocalOriginEcef) {
+        return;
+    }
+    for (GltfPrimitive& primitive : model.primitives) {
+        primitive.terrainGpuVertexBytes.clear();
+        std::vector<TerrainGpuVertex> terrainVerts =
+            GltfRenderGeometryBuilder::buildTerrainVertices(
+                primitive,
+                Mat4::identity(),
+                *model.preferredLocalOriginEcef);
+        if (terrainVerts.size() != primitive.vertices.size()) {
+            continue;
+        }
+        primitive.terrainGpuVertexBytes.resize(
+            terrainVerts.size() * sizeof(TerrainGpuVertex));
+        std::memcpy(
+            primitive.terrainGpuVertexBytes.data(),
+            terrainVerts.data(),
+            primitive.terrainGpuVertexBytes.size());
+    }
+}
+
 std::vector<QuantizedMeshAvailabilityUpdate> collectAvailabilityUpdates(
     const std::vector<QuantizedMeshMetadataContent>& metadata,
     std::optional<QuantizedMeshAvailabilityUpdate>
@@ -315,7 +342,9 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     RasterOverlayProjection terrainProjection,
     std::optional<QuantizedMeshAvailabilityUpdate>
         currentTileAvailabilityUpdate,
-    RasterOverlayDetailsMode rasterOverlayDetailsMode) {
+    RasterOverlayDetailsMode rasterOverlayDetailsMode,
+    std::vector<RasterOverlayProjection>
+        requiredRasterOverlayProjections) {
     QuantizedMeshContentLoadResult result;
 
     std::unique_ptr<QuantizedMeshParser::DecodedTile> decodedTile =
@@ -355,17 +384,31 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         decodedTile->maximumHeight};
     result.metadata.horizonOcclusionPoint =
         decodedTile->horizonOcclusionPoint;
-    if (rasterOverlayDetailsMode ==
-        RasterOverlayDetailsMode::GenerateTerrainProjection) {
+    std::vector<RasterOverlayProjection> projections =
+        requestedProjectionOrder(
+            terrainProjection,
+            rasterOverlayDetailsMode ==
+                RasterOverlayDetailsMode::GenerateTerrainProjection,
+            std::move(requiredRasterOverlayProjections));
+    if (!projections.empty()) {
         RasterOverlayDetails rasterOverlayDetails = makeRasterOverlayDetails(
             tileRectangle,
             decodedTile->minimumHeight,
             decodedTile->maximumHeight,
-            terrainProjection);
+            projections);
         gltfModel->rasterOverlayDetails = rasterOverlayDetails;
-        rewriteTerrainProjectionTexCoords(*gltfModel, terrainProjection);
+        for (size_t i = 0; i < projections.size(); ++i) {
+            rewriteTerrainProjectionTexCoords(
+                *gltfModel,
+                projections[i],
+                i);
+        }
         result.metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
     }
+    // Build upload-ready terrain vertices only after every requested
+    // projection has been written. The render thread can then create the GPU
+    // buffer without rebuilding or dropping secondary overlay UV sets.
+    rebuildTerrainGpuVertexBytes(*gltfModel);
     result.gltfModel = std::move(gltfModel);
     result.availabilityUpdates = collectAvailabilityUpdates(
         metadata,
@@ -403,7 +446,9 @@ TileContentLoadResult QuantizedMeshContentLoader::loadTileContent(
     RasterOverlayProjection terrainProjection,
     std::optional<QuantizedMeshAvailabilityUpdate>
         currentTileAvailabilityUpdate,
-    RasterOverlayDetailsMode rasterOverlayDetailsMode) {
+    RasterOverlayDetailsMode rasterOverlayDetailsMode,
+    std::vector<RasterOverlayProjection>
+        requiredRasterOverlayProjections) {
     return toTileContentLoadResult(
         load(data,
              size,
@@ -412,7 +457,8 @@ TileContentLoadResult QuantizedMeshContentLoader::loadTileContent(
              metadata,
              terrainProjection,
              std::move(currentTileAvailabilityUpdate),
-             rasterOverlayDetailsMode));
+             rasterOverlayDetailsMode,
+             std::move(requiredRasterOverlayProjections)));
 }
 
 } // namespace earth_engine

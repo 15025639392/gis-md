@@ -436,6 +436,12 @@ add_executable(test_tile_cache_metrics
 target_link_libraries(test_tile_cache_metrics PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_cache_metrics COMMAND test_tile_cache_metrics)
 
+add_executable(test_gpu_upload_queue
+    unit/tiling/test_gpu_upload_queue.cpp
+)
+target_link_libraries(test_gpu_upload_queue PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_gpu_upload_queue COMMAND test_gpu_upload_queue)
+
 add_executable(test_tile_content_cache_manager
     unit/tiling/test_tile_content_cache_manager.cpp
 )
@@ -588,6 +594,12 @@ add_executable(test_tile_render_frame_builder
 )
 target_link_libraries(test_tile_render_frame_builder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_render_frame_builder COMMAND test_tile_render_frame_builder)
+
+add_executable(test_tile_render_frame_maintenance
+    unit/tiling/test_tile_render_frame_maintenance.cpp
+)
+target_link_libraries(test_tile_render_frame_maintenance PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_render_frame_maintenance COMMAND test_tile_render_frame_maintenance)
 
 add_executable(test_tile_render_frame_coordinator
     unit/tiling/test_tile_render_frame_coordinator.cpp
@@ -800,6 +812,12 @@ add_executable(test_scene_tileset_diagnostics
 )
 target_link_libraries(test_scene_tileset_diagnostics PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_scene_tileset_diagnostics COMMAND test_scene_tileset_diagnostics)
+
+add_executable(test_scene_telemetry_coordinator
+    unit/scene/test_scene_telemetry_coordinator.cpp
+)
+target_link_libraries(test_scene_telemetry_coordinator PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_scene_telemetry_coordinator COMMAND test_scene_telemetry_coordinator)
 
 add_executable(test_scene_render_diagnostics
     unit/scene/test_scene_render_diagnostics.cpp

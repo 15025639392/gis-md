@@ -4,6 +4,8 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
@@ -11,6 +13,7 @@
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/renderer/RenderDevice.h"
+#include "earth_engine/renderer/Renderer.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
@@ -18,9 +21,11 @@
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileSelectionPlanAppender.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetUpdateFrameRuntime.h"
+#include "../../helpers/MockRenderDevice.h"
 
 #include <algorithm>
 #include <chrono>
@@ -181,6 +186,21 @@ struct TilesetTestAccess {
         return tileset.contentAccess_.ensureTile(key);
     }
 
+    static void addPendingRenderReference(
+        Tileset& tileset,
+        TilesetTile& tile) {
+        tile.addReference();
+        tileset.pendingRenderReferences_.push_back(
+            TileRenderReference{
+                &tile,
+                TileCacheKey::forTile(tile.key),
+                true});
+    }
+
+    static size_t pendingRenderReferenceCount(const Tileset& tileset) {
+        return tileset.pendingRenderReferences_.size();
+    }
+
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
         tileset.contentAccess_.ensureTileChildren(tile);
     }
@@ -320,6 +340,10 @@ struct TilesetTestAccess {
 
     static void unloadTileContent(Tileset& tileset, TilesetTile& tile) {
         tileset.cacheOwnership_.unloadTileContent(tile, nullptr);
+    }
+
+    static void retirePreviousSelectionReferencesForReuse(Tileset& tileset) {
+        tileset.retirePreviousSelectionReferencesForReuse();
     }
 
     static void requestMissingTilesWithPriorities(
@@ -840,6 +864,10 @@ public:
     DummyTexture(int width, int height) : width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
 
 private:
     int width_ = 0;
@@ -1287,6 +1315,127 @@ TEST(
     EXPECT_EQ(1, recorder.detachCount);
     EXPECT_EQ(key, recorder.lastDetachedGeometryKey);
     EXPECT_EQ(0, recorder.lastDetachedOverlayIndex);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UpdateFramePreparesRasterOnceBeforeRenderCommandsConsumeIt) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    DummyRenderDevice device;
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS(),
+        overlays,
+        &device);
+
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
+    ASSERT_NE(nullptr, tile);
+    tile->geometricError = 0.0;
+    tile->boundingVolume =
+        TileBoundingVolume::fromRegion(tile->bounds, 0.0, 0.0);
+
+    auto model = makeTriangleGltfModel();
+    model->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::WebMercator);
+    model->rasterOverlayDetails.rasterOverlayRectangles.push_back(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            tile->bounds));
+    tile->content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    tile->content.renderContent.setTerrainRenderContent(true);
+    GltfPrimitiveRenderResources resources;
+    resources.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    resources.indexBuffer = std::make_unique<DummyBuffer>(12);
+    resources.vertexCount = 3;
+    resources.indexCount = 3;
+    tile->content.renderContent.addGltfPrimitiveResource(
+        std::move(resources));
+    tile->content.renderContent.markRenderContentReady();
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+
+    FrameResourceBudgetConfig budgetConfig;
+    budgetConfig.maxRasterNetworkRequestsPerFrame = 0;
+    budgetConfig.maxRasterNetworkInflight = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(403, budgetConfig);
+    TileRasterOverlayPrefetcher::prefetch(
+        *tile,
+        overlays,
+        TileSelectionRasterOverlayPreparer::processingOrder(overlays),
+        &device,
+        16.0,
+        budget);
+    RasterMappedToTilesetTile* mapped =
+        tile->rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    ASSERT_NE(nullptr, mapped);
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+    const uint64_t updatesBefore =
+        tile->rasterOverlayState.authoritativeUpdateCount();
+
+    Camera camera;
+    camera.lookAt(
+        Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
+        Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
+        Vec3::unitZ());
+    FrameState frameState;
+    frameState.frameId = 404;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+
+    RecordingPrepareRendererResources recorder;
+    TilesetTestAccess::runUpdateFrameRuntime(
+        tileset,
+        frameState,
+        &recorder);
+
+    EXPECT_EQ(
+        updatesBefore + 1,
+        tile->rasterOverlayState.authoritativeUpdateCount());
+    EXPECT_EQ(1, recorder.attachCount);
+    EXPECT_EQ(0, recorder.detachCount);
+    EXPECT_EQ(key, recorder.lastGeometryKey);
+    EXPECT_EQ(0, recorder.lastOverlayIndex);
+    EXPECT_EQ(loadingTile, recorder.lastRasterTile.get());
+    EXPECT_EQ(loadingTile->getTexture(), recorder.lastTexture);
+    EXPECT_EQ(
+        RasterOverlayTile::LoadState::Done,
+        loadingTile->getState());
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::State::Attached,
+        mapped->getState());
+    EXPECT_EQ(nullptr, mapped->getLoadingTile());
+    EXPECT_EQ(loadingTile, mapped->getReadyTile());
+
+    const uint64_t updatesBeforeDraw =
+        tile->rasterOverlayState.authoritativeUpdateCount();
+    Renderer renderer(&device);
+    RenderCommandList commands;
+    tileset.buildRenderCommands(
+        renderer,
+        commands,
+        frameState.frameId);
+
+    EXPECT_FALSE(commands.empty());
+    EXPECT_EQ(
+        updatesBeforeDraw,
+        tile->rasterOverlayState.authoritativeUpdateCount());
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::State::Attached,
+        mapped->getState());
+    tileset.discardPendingRenderReferences();
 }
 
 TEST(
@@ -1826,6 +1975,128 @@ TEST(
 
 TEST(
     TilesetRequestMissingBudgetTest,
+    SelectionTraversalReferencesProtectNonRenderTilesForTwoGenerations) {
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.contentKind = TileContentKind::Empty;
+    root->content.loadState = TileLoadState::Done;
+
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    ASSERT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 1);
+
+    tileset.resetActiveSelectionState();
+    tileset.onSelectionVisitTile(*root);
+    root->selectionFrameState.selectionState = TileSelectionState::Refined;
+
+    EXPECT_EQ(root->referenceCount(), 1);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 0);
+    EXPECT_TRUE(tileset.tilePlan().visibleTiles.empty());
+
+    tileset.resetActiveSelectionState();
+    EXPECT_EQ(root->referenceCount(), 1);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 0);
+
+    tileset.resetActiveSelectionState();
+    EXPECT_EQ(root->referenceCount(), 0);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 1);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    StableSelectionTraversalKeepsCurrentAndPreviousReferencesContinuous) {
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.contentKind = TileContentKind::Empty;
+    root->content.loadState = TileLoadState::Done;
+
+    tileset.resetActiveSelectionState();
+    tileset.onSelectionVisitTile(*root);
+    root->selectionFrameState.selectionState = TileSelectionState::Refined;
+    ASSERT_EQ(root->referenceCount(), 1);
+
+    tileset.resetActiveSelectionState();
+    EXPECT_EQ(root->referenceCount(), 1);
+    tileset.onSelectionVisitTile(*root);
+    root->selectionFrameState.selectionState = TileSelectionState::Refined;
+    EXPECT_EQ(root->referenceCount(), 2);
+
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 0);
+
+    tileset.resetActiveSelectionState();
+    EXPECT_EQ(root->referenceCount(), 1);
+    tileset.onSelectionVisitTile(*root);
+    root->selectionFrameState.selectionState = TileSelectionState::Refined;
+    EXPECT_EQ(root->referenceCount(), 2);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UnloadQueueRejectsTilesWithActiveReferences) {
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.contentKind = TileContentKind::Empty;
+    root->content.loadState = TileLoadState::Done;
+
+    root->addReference();
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 0);
+
+    root->removeReference();
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 1);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    SecondRenderBuildDoesNotReleaseUnsubmittedReferences) {
+    earth_engine::testing::MockRenderDevice device;
+    Renderer renderer(&device);
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS(),
+        {},
+        &device);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    TilesetTestAccess::addPendingRenderReference(tileset, *root);
+    ASSERT_EQ(root->referenceCount(), 1);
+    ASSERT_EQ(
+        TilesetTestAccess::pendingRenderReferenceCount(tileset),
+        1u);
+
+    RenderCommandList commands;
+    tileset.buildRenderCommands(renderer, commands);
+
+    EXPECT_TRUE(commands.empty());
+    EXPECT_EQ(root->referenceCount(), 1);
+    EXPECT_EQ(
+        TilesetTestAccess::pendingRenderReferenceCount(tileset),
+        1u);
+
+    tileset.discardPendingRenderReferences();
+    EXPECT_EQ(root->referenceCount(), 0);
+    EXPECT_EQ(
+        TilesetTestAccess::pendingRenderReferenceCount(tileset),
+        0u);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
     UnloadQueueIgnoresUnloadedUnknownTiles) {
     Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
         TileScheme::createGeographicTMS());
@@ -1935,7 +2206,16 @@ TEST(
     ASSERT_FALSE(root->children.empty());
     ASSERT_NE(root->children.front(), nullptr);
 
-    const TileKey childKey = root->children.front()->key;
+    TilesetTile* child = root->children.front();
+    const TileKey childKey = child->key;
+
+    child->addReference();
+    TilesetTestAccess::unloadTileContent(tileset, *root);
+    EXPECT_EQ(root->content.loadState, TileLoadState::Done);
+    EXPECT_EQ(root->content.contentKind, TileContentKind::External);
+    EXPECT_FALSE(root->children.empty());
+    EXPECT_NE(TilesetTestAccess::findTile(tileset, childKey), nullptr);
+    child->clearReferences();
 
     root->addReference();
     TilesetTestAccess::unloadTileContent(tileset, *root);
@@ -1952,5 +2232,64 @@ TEST(
     EXPECT_TRUE(rootAfter->children.empty());
     EXPECT_EQ(rootAfter->content.loadState, TileLoadState::Unloaded);
     EXPECT_EQ(rootAfter->content.contentKind, TileContentKind::Unknown);
+    EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    ReuseRetiresPreviousTraversalOwnershipButKeepsCurrent) {
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
+    const TileKey previousKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey currentKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* previous =
+        TilesetTestAccess::ensureTile(tileset, previousKey);
+    TilesetTile* current =
+        TilesetTestAccess::ensureTile(tileset, currentKey);
+    ASSERT_NE(previous, nullptr);
+    ASSERT_NE(current, nullptr);
+    previous->content.contentKind = TileContentKind::Empty;
+    previous->content.loadState = TileLoadState::Done;
+    current->content.contentKind = TileContentKind::Empty;
+    current->content.loadState = TileLoadState::Done;
+
+    tileset.resetActiveSelectionState();
+    tileset.onSelectionVisitTile(*previous);
+    ASSERT_EQ(previous->referenceCount(), 1);
+
+    tileset.resetActiveSelectionState();
+    tileset.onSelectionVisitTile(*current);
+    ASSERT_EQ(previous->referenceCount(), 1);
+    ASSERT_EQ(current->referenceCount(), 1);
+
+    TilesetTestAccess::retirePreviousSelectionReferencesForReuse(tileset);
+
+    EXPECT_EQ(previous->referenceCount(), 0);
+    EXPECT_EQ(current->referenceCount(), 1);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 1);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    DirectSubtreeRemovalRejectsReferencedDescendant) {
+    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
+        TileScheme::createGeographicTMS());
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_FALSE(root->children.empty());
+    TilesetTile* child = root->children.front();
+    ASSERT_NE(child, nullptr);
+    const TileKey childKey = child->key;
+
+    child->addReference();
+    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
+    EXPECT_FALSE(root->children.empty());
+    EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), child);
+
+    child->clearReferences();
+    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
+    EXPECT_TRUE(root->children.empty());
     EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
 }

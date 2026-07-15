@@ -28,7 +28,7 @@ public:
         if (TileContentTerrainResiduePolicy::clearRejectableResidue(
                 tile,
                 input.pPrepRenderer)) {
-            markResourcesDirty();
+            markResourcesDirty(tile);
         }
     }
 };

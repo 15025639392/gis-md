@@ -98,6 +98,10 @@ public:
     const TilePlan& tilePlan() const { return shadowTilePlan_; }
     const TileLoadQueue& loadQueue() const { return shadowLoadQueue_; }
     const TileSelectionCounters& counters() const { return shadowCounters_; }
+    const std::vector<TilesetTile*>& activeTiles() const {
+        return shadowActiveTiles_;
+    }
+    double deltaSeconds() const { return deltaSeconds_; }
     TileSelectionShadowTree& shadowTree() { return shadowTree_; }
     const TileSelectionShadowTree& shadowTree() const { return shadowTree_; }
 
@@ -109,6 +113,7 @@ private:
     FrameResourceBudget shadowBudget_;
     std::unordered_set<std::string> shadowFadingOut_;
     std::vector<TilesetTile*> shadowActiveTiles_;
+    double deltaSeconds_ = 0.0;
     // Deliberately empty: content-less scope means no required overlays. Kept as
     // a member so the traversal/finalize binding can hold a stable reference.
     std::vector<ActivatedRasterOverlay*> shadowOverlays_;

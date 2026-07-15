@@ -70,10 +70,29 @@ TEST(TileRenderReferenceStateTest, ReleaserClearsAllRenderReferencesOnly) {
     second->addReference();
     second->markUsedForRenderFrame(9);
 
-    TileRenderReferenceReleaser::release(tiles);
+    std::vector<TileRenderReference> references{
+        TileRenderReference{
+            first,
+            TileCacheKey::forTile(firstKey),
+            true},
+        TileRenderReference{
+            first,
+            TileCacheKey::forTile(firstKey),
+            true}};
+    std::vector<std::string> eligibleKeys;
+    TileRenderReferenceReleaser::release(
+        references,
+        [&eligibleKeys](
+            const TilesetTile*,
+            const std::string& cacheKey) {
+            eligibleKeys.push_back(cacheKey);
+        });
 
     EXPECT_EQ(first->referenceCount(), 0);
-    EXPECT_EQ(second->referenceCount(), 0);
+    EXPECT_EQ(second->referenceCount(), 1);
     EXPECT_EQ(first->lastUsedFrame(), 7u);
     EXPECT_EQ(second->lastUsedFrame(), 9u);
+    EXPECT_TRUE(references.empty());
+    ASSERT_EQ(eligibleKeys.size(), 2u);
+    EXPECT_EQ(eligibleKeys.front(), TileCacheKey::forTile(firstKey));
 }

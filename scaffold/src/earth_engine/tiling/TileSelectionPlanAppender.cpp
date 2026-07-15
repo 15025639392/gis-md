@@ -41,6 +41,7 @@ void TileSelectionPlanAppender::addTileToCurrentPlan(
     }
     if (renderEntry.appendVisibleTile) {
         tilePlan.visibleTiles.push_back(tile.key);
+        tilePlan.tilesToRenderThisFrame.push_back(&tile);
     }
     if (renderEntry.queueNormalLoad) {
         queueTileLoad(

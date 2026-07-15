@@ -21,6 +21,7 @@ public:
     static void update(TilePlan& tilePlan,
                        TilesetTileRegistry& tileRegistry,
                        const std::vector<TilesetTile*>& activeTiles,
+                       const std::vector<TilesetTile*>& previousActiveTiles,
                        std::unordered_set<std::string>& fadingKeys,
                        const std::vector<ActivatedRasterOverlay*>&
                            rasterOverlays,

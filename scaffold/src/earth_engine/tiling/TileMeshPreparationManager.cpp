@@ -32,8 +32,8 @@ void TileMeshPreparationManager::prepareContentTerrainFrame(
         TileContentTerrainMeshFrameEnsureInput{
             tile,
             pPrepRenderer},
-        [this]() {
-            markResourcesDirty();
+        [this](TilesetTile& changedTile) {
+            markResourcesDirty(changedTile);
         });
 }
 
@@ -55,8 +55,8 @@ bool TileMeshPreparationManager::prepareUpsampleSourceTile(
         });
 }
 
-void TileMeshPreparationManager::markResourcesDirty() {
-    resourceInvalidator_.markResourcesDirty();
+void TileMeshPreparationManager::markResourcesDirty(TilesetTile& tile) {
+    resourceInvalidator_.markTileResourcesChanged(tile);
 }
 
 void TileMeshPreparationManager::queueTileLoad(

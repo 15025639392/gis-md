@@ -4,11 +4,13 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileRenderFrameBuilder.h"
+#include "earth_engine/tiling/TileRenderReferenceReleaser.h"
 
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using namespace earth_engine;
@@ -51,11 +53,15 @@ TEST(
     TileRenderEntry selectedEntry;
     selectedEntry.selectedKey = selectedKey;
     selectedEntry.renderKey = selectedKey;
+    selectedEntry.selectedTile = findTile(tiles, selectedKey);
+    selectedEntry.renderTile = selectedEntry.selectedTile;
     plan.renderEntries.push_back(selectedEntry);
 
     TileRenderEntry fadingEntry;
     fadingEntry.selectedKey = fadingKey;
     fadingEntry.renderKey = fadingKey;
+    fadingEntry.selectedTile = findTile(tiles, fadingKey);
+    fadingEntry.renderTile = fadingEntry.selectedTile;
     fadingEntry.reason = TileRenderEntryReason::FadingOut;
     fadingEntry.selectedThisFrame = false;
     fadingEntry.opacity = 0.35f;
@@ -64,18 +70,20 @@ TEST(
     TileRenderEntry deferredEntry;
     deferredEntry.selectedKey = deferredKey;
     deferredEntry.renderKey = deferredKey;
+    deferredEntry.selectedTile = findTile(tiles, deferredKey);
+    deferredEntry.renderTile = deferredEntry.selectedTile;
     deferredEntry.allowSynchronousMeshPrep = false;
     plan.renderEntries.push_back(deferredEntry);
 
     TileRenderEntry missingRenderEntry;
     missingRenderEntry.selectedKey = missingSelectedKey;
     missingRenderEntry.renderKey = missingRenderKey;
+    missingRenderEntry.selectedTile =
+        findTile(tiles, missingSelectedKey);
     plan.renderEntries.push_back(missingRenderEntry);
 
-    TileUnloadQueue unloadQueue;
     std::vector<ActivatedRasterOverlay*> overlays;
-    bool cacheBytesDirty = true;
-    bool updateTotalBytesCalled = false;
+    bool trimRasterCachesCalled = false;
     bool unloadCachedBytesCalled = false;
     std::vector<std::string> ineligibleKeys;
     std::vector<float> submittedOpacities;
@@ -85,29 +93,22 @@ TEST(
     TileRenderFrameBuilder::build(
         TileRenderFrameBuildInput{
             plan,
-            tiles,
-            unloadQueue,
             overlays,
-            cacheBytesDirty,
             23,
             Vec3{6378137.0, 0.0, 0.0},
             {},
             0,
             false,
-            false,
-            2048,
-            1024},
+            false},
         renderer,
         commands,
-        [&tiles](const TileKey& key) {
-            return findTile(tiles, key);
-        },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
         },
         [&ineligibleKeys](const std::string& key) {
             ineligibleKeys.push_back(key);
         },
+        [](TilesetTile*, std::string, bool) {},
         [&submittedOpacities](
             Renderer&,
             TilesetTile&,
@@ -120,11 +121,11 @@ TEST(
             command.kind = RenderCommandKind::SurfaceTile;
             outCommands.push_back(std::move(command));
         },
-        [](const std::vector<TileFrameInactiveEntry>&) {},
-        [](const TilesetTile*, const std::string&) {},
-        [&updateTotalBytesCalled]() {
-            updateTotalBytesCalled = true;
+        [&trimRasterCachesCalled](bool cachePressure) {
+            EXPECT_FALSE(cachePressure);
+            trimRasterCachesCalled = true;
         },
+        []() { return true; },
         [&unloadCachedBytesCalled]() {
             unloadCachedBytesCalled = true;
         });
@@ -153,15 +154,119 @@ TEST(
     EXPECT_EQ(findTile(tiles, fadingKey)->lastUsedFrame(), 23u);
     EXPECT_EQ(findTile(tiles, deferredKey)->lastUsedFrame(), 23u);
     EXPECT_EQ(findTile(tiles, missingSelectedKey)->lastUsedFrame(), 23u);
-    ASSERT_EQ(ineligibleKeys.size(), 7u);
+    ASSERT_EQ(ineligibleKeys.size(), 4u);
     EXPECT_EQ(ineligibleKeys[0], TileCacheKey::forTile(selectedKey));
-    EXPECT_EQ(ineligibleKeys[1], TileCacheKey::forTile(selectedKey));
-    EXPECT_EQ(ineligibleKeys[2], TileCacheKey::forTile(deferredKey));
-    EXPECT_EQ(ineligibleKeys[3], TileCacheKey::forTile(deferredKey));
-    EXPECT_EQ(ineligibleKeys[4], TileCacheKey::forTile(missingSelectedKey));
-    EXPECT_EQ(ineligibleKeys[5], TileCacheKey::forTile(fadingKey));
-    EXPECT_EQ(ineligibleKeys[6], TileCacheKey::forTile(fadingKey));
-    EXPECT_TRUE(updateTotalBytesCalled);
+    EXPECT_EQ(ineligibleKeys[1], TileCacheKey::forTile(deferredKey));
+    EXPECT_EQ(ineligibleKeys[2], TileCacheKey::forTile(missingSelectedKey));
+    EXPECT_EQ(ineligibleKeys[3], TileCacheKey::forTile(fadingKey));
+    EXPECT_TRUE(trimRasterCachesCalled);
     EXPECT_TRUE(unloadCachedBytesCalled);
-    EXPECT_FALSE(cacheBytesDirty);
+}
+
+TEST(
+    TileRenderFrameBuilderTest,
+    ProtectsVisibleAndFadingTilesWithoutRenderEntriesBeforeUnloading) {
+    const TileKey readyKey{"test", 0, 0, 0};
+    const TileKey blockedKey{"test", 0, 1, 0};
+    const TileKey fadingKey{"test", 0, 2, 0};
+    const TileKey expiredFadeKey{"test", 0, 3, 0};
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    addTile(tiles, readyKey);
+    addTile(tiles, blockedKey);
+    addTile(tiles, fadingKey);
+    addTile(tiles, expiredFadeKey);
+
+    TilePlan plan;
+    plan.visibleTiles = {readyKey, blockedKey};
+    plan.tilesFadingOut = {
+        TileTransition{fadingKey, 0.4f, 1},
+        TileTransition{expiredFadeKey, 0.001f, 1}};
+    plan.tilesToRenderThisFrame = {
+        findTile(tiles, readyKey),
+        findTile(tiles, blockedKey)};
+    plan.tilesFadingOutThisFrame = {
+        findTile(tiles, fadingKey)};
+    TileRenderEntry readyEntry;
+    readyEntry.selectedKey = readyKey;
+    readyEntry.renderKey = readyKey;
+    readyEntry.selectedTile = findTile(tiles, readyKey);
+    readyEntry.renderTile = readyEntry.selectedTile;
+    plan.renderEntries.push_back(readyEntry);
+
+    std::vector<ActivatedRasterOverlay*> overlays;
+    std::vector<TileRenderReference> references;
+    std::unordered_set<std::string> ineligibleKeys;
+    bool unloadSawProtectedPlan = false;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TileRenderFrameBuilder::build(
+        TileRenderFrameBuildInput{
+            plan,
+            overlays,
+            31,
+            Vec3{6378137.0, 0.0, 0.0},
+            {},
+            0,
+            false,
+            false},
+        renderer,
+        commands,
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [&ineligibleKeys](const std::string& key) {
+            ineligibleKeys.insert(key);
+        },
+        [&references](
+            TilesetTile* tile,
+            std::string cacheKey,
+            bool countedReference) {
+            references.push_back(
+                TileRenderReference{
+                    tile,
+                    std::move(cacheKey),
+                    countedReference});
+        },
+        [](Renderer&,
+           TilesetTile&,
+           RenderCommandList&,
+           float,
+           bool,
+           const std::optional<std::array<float, 4>>&) {},
+        [](bool) {},
+        []() {
+            return true;
+        },
+        [&]() {
+            TilesetTile* blocked = findTile(tiles, blockedKey);
+            TilesetTile* fading = findTile(tiles, fadingKey);
+            TilesetTile* expiredFade = findTile(tiles, expiredFadeKey);
+            ASSERT_NE(blocked, nullptr);
+            ASSERT_NE(fading, nullptr);
+            ASSERT_NE(expiredFade, nullptr);
+            unloadSawProtectedPlan =
+                blocked->referenceCount() == 1 &&
+                fading->referenceCount() == 1 &&
+                expiredFade->referenceCount() == 0 &&
+                ineligibleKeys.count(
+                    TileCacheKey::forTile(blockedKey)) == 1 &&
+                ineligibleKeys.count(
+                    TileCacheKey::forTile(fadingKey)) == 1;
+        });
+
+    EXPECT_TRUE(unloadSawProtectedPlan);
+    EXPECT_EQ(references.size(), 3u);
+    EXPECT_EQ(findTile(tiles, readyKey)->referenceCount(), 1);
+    EXPECT_EQ(findTile(tiles, blockedKey)->lastUsedFrame(), 31u);
+    EXPECT_EQ(findTile(tiles, fadingKey)->lastUsedFrame(), 31u);
+    EXPECT_EQ(findTile(tiles, expiredFadeKey)->lastUsedFrame(), 0u);
+
+    TileRenderReferenceReleaser::release(
+        references,
+        [](const TilesetTile*, const std::string&) {});
+    EXPECT_EQ(findTile(tiles, readyKey)->referenceCount(), 0);
+    EXPECT_EQ(findTile(tiles, blockedKey)->referenceCount(), 0);
+    EXPECT_EQ(findTile(tiles, fadingKey)->referenceCount(), 0);
 }

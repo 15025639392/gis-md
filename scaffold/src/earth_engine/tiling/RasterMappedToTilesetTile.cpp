@@ -436,20 +436,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
 
     // ── Step 6: Attach the ready tile ──
     // cesium-native: loadInMainThread → attachRasterInMainThread
-    if (_pReadyTile != nullptr && state_ == State::Unattached) {
-        // cesium-native: create GPU resources before attach
-        _pReadyTile->loadInMainThread();
-
-        if (pPrepRenderer && _pReadyTile->getRendererResources()) {
-            pPrepRenderer->attachRasterInMainThread(
-                geometryKey, overlaySlot_,
-                _pReadyTile,
-                static_cast<Texture*>(_pReadyTile->getRendererResources()),
-                offsetU_, offsetV_, scaleU_, scaleV_);
-            state_ = (_pLoadingTile != nullptr) ? State::TemporarilyAttached
-                                                 : State::Attached;
-        }
-    }
+    attachReadyTileInMainThread(pPrepRenderer);
 
     // ── Step 7: Return MoreDetailAvailable ──
     if (_pLoadingTile != nullptr) {
@@ -484,6 +471,48 @@ bool RasterMappedToTilesetTile::hasPendingNonPlaceholderLoadingTile() const {
                RasterOverlayTile::LoadState::Placeholder;
 }
 
+bool RasterMappedToTilesetTile::hasStableUpdateState() const {
+    return _pLoadingTile == nullptr &&
+           _pReadyTile != nullptr &&
+           state_ == State::Attached;
+}
+
+void RasterMappedToTilesetTile::markStableReadyTileUsed() {
+    if (_pReadyTile == nullptr ||
+        _pReadyTile->getState() ==
+            RasterOverlayTile::LoadState::Placeholder) {
+        return;
+    }
+    _pReadyTile->getTileProvider().markUsed(*_pReadyTile);
+}
+
+uint64_t RasterMappedToTilesetTile::runtimeStateSignature() const {
+    constexpr uint64_t kOffset = 1469598103934665603ull;
+    constexpr uint64_t kPrime = 1099511628211ull;
+    uint64_t signature = kOffset;
+    auto mix = [&](uint64_t value) {
+        signature ^= value;
+        signature *= kPrime;
+    };
+    auto mixTile = [&](const std::shared_ptr<RasterOverlayTile>& tile) {
+        mix(reinterpret_cast<uintptr_t>(tile.get()));
+        if (!tile) {
+            return;
+        }
+        mix(static_cast<uint64_t>(tile->getState()));
+        mix(static_cast<uint64_t>(tile->isMoreDetailAvailable()));
+        mix(reinterpret_cast<uintptr_t>(tile->getRendererResources()));
+    };
+
+    mix(static_cast<uint64_t>(state_));
+    mix(static_cast<uint64_t>(loadingTileSource_));
+    mix(static_cast<uint64_t>(readyTileSource_));
+    mix(static_cast<uint64_t>(originalFailed_ ? 1 : 0));
+    mixTile(_pLoadingTile);
+    mixTile(_pReadyTile);
+    return signature;
+}
+
 Texture* RasterMappedToTilesetTile::texture() const {
     return _pReadyTile ? _pReadyTile->getTexture() : nullptr;
 }
@@ -507,6 +536,32 @@ void RasterMappedToTilesetTile::releaseTileReferences(
     IPrepareRendererResources* pPrepRenderer) {
     detachFromTile(pPrepRenderer);
     clearTileOwnershipState();
+}
+
+void RasterMappedToTilesetTile::attachReadyTileInMainThread(
+    IPrepareRendererResources* pPrepRenderer) {
+    if (!pPrepRenderer || _pReadyTile == nullptr ||
+        state_ != State::Unattached) {
+        return;
+    }
+
+    _pReadyTile->loadInMainThread();
+    if (!_pReadyTile->getRendererResources()) {
+        return;
+    }
+
+    pPrepRenderer->attachRasterInMainThread(
+        geometryKey_,
+        overlaySlot_,
+        _pReadyTile,
+        static_cast<Texture*>(_pReadyTile->getRendererResources()),
+        offsetU_,
+        offsetV_,
+        scaleU_,
+        scaleV_);
+    state_ = _pLoadingTile != nullptr
+        ? State::TemporarilyAttached
+        : State::Attached;
 }
 
 void RasterMappedToTilesetTile::clearTileOwnershipState() {

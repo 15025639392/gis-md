@@ -744,8 +744,8 @@ TEST(QuantizedMeshContentLoaderTest,
         result.gltfModel->nodes[static_cast<size_t>(
             primitive.runtime.nodeIndex)]
             .globalTransform;
-    const Vec3 worldPosition = nodeTransform.transformPoint(
-        primitive.vertices[interiorVertexIndex].positionEcef);
+    const Vec3& worldPosition =
+        primitive.vertices[interiorVertexIndex].positionEcef;
 
     const WebMercatorProjection projection(Ellipsoid::WGS84());
     const Rectangle expectedProjectedRectangle = projectRectangleSimple(
@@ -770,20 +770,24 @@ TEST(QuantizedMeshContentLoaderTest,
                 primitive.vertexTexCoords[0][interiorVertexIndex][1],
                 1e-6);
 
-    const Vec3 localPosition =
-        primitive.vertices[interiorVertexIndex].positionEcef;
-    const Cartographic localCartographic =
-        Ellipsoid::WGS84().cartesianToCartographic(localPosition);
-    const Vec3 incorrectlyProjectedLocal =
-        projectPosition(projection, localCartographic);
-    // Same NW convention as expectedV, but derived from the (wrong) local
-    // position; the actual texcoord must differ measurably from it.
+    const Vec3 doubleTransformedWorldPosition =
+        nodeTransform.transformPoint(worldPosition);
+    const Cartographic doubleTransformedCartographic =
+        Ellipsoid::WGS84().cartesianToCartographic(
+            doubleTransformedWorldPosition);
+    const Vec3 incorrectlyProjected =
+        projectPosition(projection, doubleTransformedCartographic);
+    const double wrongU =
+        (incorrectlyProjected.x() - expectedProjectedRectangle.west()) /
+        expectedProjectedRectangle.width();
     const double wrongV =
-        (expectedProjectedRectangle.north() - incorrectlyProjectedLocal.y()) /
+        (expectedProjectedRectangle.north() - incorrectlyProjected.y()) /
         expectedProjectedRectangle.height();
-    EXPECT_GT(std::abs(wrongV -
-                       primitive.vertexTexCoords[0][interiorVertexIndex][1]),
-              1e-3);
+    const double actualU =
+        primitive.vertexTexCoords[0][interiorVertexIndex][0];
+    const double actualV =
+        primitive.vertexTexCoords[0][interiorVertexIndex][1];
+    EXPECT_GT(std::hypot(wrongU - actualU, wrongV - actualV), 1e-3);
 }
 
 TEST(QuantizedMeshContentLoaderTest,

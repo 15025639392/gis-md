@@ -217,9 +217,19 @@ static int gFrameCount = 0;
 static void renderFrame() {
     if (!gEngineReady) return;
 
+    const auto frameStart = std::chrono::steady_clock::now();
+    static auto previousFrameStart = frameStart;
+    const double callbackIntervalMs =
+        std::chrono::duration<double, std::milli>(
+            frameStart - previousFrameStart).count();
+    previousFrameStart = frameStart;
+
+    const auto sdkStart = std::chrono::steady_clock::now();
     if (gSdkFacade) {
         gSdkFacade->update();
     }
+    const double sdkMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - sdkStart).count();
 
     // 时间步进（实时）
     static auto lastTime = std::chrono::steady_clock::now();
@@ -229,10 +239,14 @@ static void renderFrame() {
 
     // 环境系统：时间步进，render 中 update() 计算当前帧天空色
     gEngine->advanceTime(dt);
+    const auto engineStart = std::chrono::steady_clock::now();
     const bool presented =
         gEngine->render(0.0);  // auto-delta（内部 update；必要时 beginFrame→render→endFrame）
+    const double engineMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - engineStart).count();
 
     // [GESTDIAG] 发布当前手势锚点屏幕投影（用当前帧相机，故标记随相机每帧跟随）。
+    const auto postEngineStart = std::chrono::steady_clock::now();
     {
         Vec3 anchorWorld;
         bool published = false;
@@ -255,10 +269,38 @@ static void renderFrame() {
     }
 
     gHeadingRadians = static_cast<float>(gEngine->cameraHeadingRadians());
+    const double postEngineMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - postEngineStart).count();
 
+    double swapMs = 0.0;
+    EGLBoolean swapOk = EGL_TRUE;
     if (presented) {
-        eglSwapBuffers(gDisplay, gSurface);
-        ++gFrameCount;
+        const auto swapStart = std::chrono::steady_clock::now();
+        swapOk = eglSwapBuffers(gDisplay, gSurface);
+        swapMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - swapStart).count();
+        if (swapOk == EGL_TRUE) {
+            ++gFrameCount;
+        }
+    }
+
+    const double frameTotalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - frameStart).count();
+    const uint64_t frameId = gEngine->presentationTrace().camera.frameId;
+    if (frameId <= 3 || frameId % 120 == 0 ||
+        frameTotalMs >= 25.0 || swapMs >= 8.0) {
+        LOGI(
+            "FrameLoop frame=%llu total=%.3f sdk=%.3f engine=%.3f "
+            "post=%.3f swap=%.3f callback=%.3f presented=%d swapOk=%d",
+            static_cast<unsigned long long>(frameId),
+            frameTotalMs,
+            sdkMs,
+            engineMs,
+            postEngineMs,
+            swapMs,
+            callbackIntervalMs,
+            presented ? 1 : 0,
+            swapOk == EGL_TRUE ? 1 : 0);
     }
 }
 
@@ -505,6 +547,23 @@ static void endDebugPinchIfNeeded(float centerX, float centerY) {
     gDebugPinchActive = false;
 }
 
+static void beginDebugPinchIfNeeded(float centerX,
+                                    float centerY,
+                                    double timestamp) {
+    if (gDebugPinchActive) return;
+
+    InputEvent event;
+    event.type = InputEvent::Type::PinchStart;
+    event.screenX = centerX;
+    event.screenY = centerY;
+    event.pinchScale = 1.0f;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.pointerCount = 2;
+    event.timestamp = timestamp;
+    postInputEvent(event);
+    gDebugPinchActive = true;
+}
+
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeTouchDown(
     JNIEnv* /* env */, jobject /* this */) {
@@ -642,25 +701,42 @@ Java_com_earthengine_sdk_GLESView_nativePinchRotateTilt(
 }
 
 JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeDebugTilt(
+    JNIEnv* /* env */, jobject /* this */,
+    jfloat centerDy, jint width, jint height) {
+    const float centerX = static_cast<float>(width) * 0.5f;
+    const float centerY = static_cast<float>(height) * 0.5f;
+    const double timestamp = androidUptimeSeconds();
+    beginDebugPinchIfNeeded(centerX, centerY, timestamp);
+
+    InputEvent move;
+    move.type = InputEvent::Type::PinchMove;
+    move.screenX = centerX;
+    move.screenY = centerY;
+    move.pinchScale = 1.0f;
+    move.centerDeltaY = centerDy;
+    move.pointerType = InputEvent::PointerType::Touch;
+    move.pointerCount = 2;
+    move.timestamp = timestamp + 0.016;
+    postInputEvent(move);
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeDebugPinchEnd(
+    JNIEnv* /* env */, jobject /* this */, jint width, jint height) {
+    endDebugPinchIfNeeded(
+        static_cast<float>(width) * 0.5f,
+        static_cast<float>(height) * 0.5f);
+}
+
+JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
     JNIEnv* /* env */, jobject /* this */,
     jfloat scale, jint width, jint height) {
     const float centerX = static_cast<float>(width) * 0.5f;
     const float centerY = static_cast<float>(height) * 0.5f;
     const double ts = androidUptimeSeconds();
-
-    if (!gDebugPinchActive) {
-        InputEvent start;
-        start.type = InputEvent::Type::PinchStart;
-        start.screenX = centerX;
-        start.screenY = centerY;
-        start.pinchScale = 1.0f;
-        start.pointerType = InputEvent::PointerType::Touch;
-        start.pointerCount = 2;
-        start.timestamp = ts;
-        postInputEvent(start);
-        gDebugPinchActive = true;
-    }
+    beginDebugPinchIfNeeded(centerX, centerY, ts);
 
     InputEvent move;
     move.type = InputEvent::Type::PinchMove;

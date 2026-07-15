@@ -17,6 +17,7 @@ struct TileSelectionVisibilityContext {
 struct TileSelectionVisibilitySample {
     bool visibleFromCamera = false;
     bool inFrustum = false;
+    bool cameraInside = false;
 };
 
 struct TileSelectionVisibilitySampler {

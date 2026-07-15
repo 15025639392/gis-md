@@ -19,6 +19,7 @@
 #include "TileOcclusionState.h"
 #include "TileRasterUpsampledChildCoordinator.h"
 #include "TileRenderCommandManager.h"
+#include "TileRenderReferenceReleaser.h"
 #include "TileIncrementalFrontier.h"
 #include "TileSelectionCounters.h"
 #include "TileSelectionMetrics.h"
@@ -180,6 +181,11 @@ public:
     /// reference counts protect tiles until the GPU has consumed them.
     void releaseRenderReferences();
 
+    /// Explicitly abandon a command batch that was built but will not be
+    /// submitted. This is the only legal pre-submit path that releases the
+    /// batch's tile references.
+    void discardPendingRenderReferences();
+
     /// cesium-native TileOcclusionRendererProxyPool equivalent input hook.
     /// Renderer/platform code may provide real per-tile occlusion results.
     /// Do not return OcclusionUnavailable for tiles whose result will never
@@ -219,6 +225,10 @@ private:
         const std::vector<TileLoadRequest>& loadRequests,
         FrameResourceBudget* budget = nullptr,
         IPrepareRendererResources* pPrepRenderer = nullptr);
+    TileLoadRequestOutcome requestMissingContent(
+        TileLoadQueue& loadQueue,
+        FrameResourceBudget* budget = nullptr,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
     bool processPendingLoads(
         bool interactionActive,
         bool resourceSmoothingActive,
@@ -237,6 +247,12 @@ private:
     TileOcclusionState checkSingleTileOcclusion(
         const TilesetTile& tile) const;
     TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
+    void rotateSelectionActiveTiles(bool resetSelectionState);
+    void retirePreviousSelectionReferencesForReuse();
+    void trackSelectionActiveTile(
+        TilesetTile& tile,
+        bool resetSelectionState);
+    void releaseSelectionReferences(std::vector<TilesetTile*>& tiles);
 
     // ---- Incremental selection active-set ----
     // Replaces the per-frame full-registry selection reset sweep. The reset
@@ -265,16 +281,16 @@ private:
     static constexpr int64_t kMaximumCachedBytes = 512LL * 1024 * 1024;
     uint64_t frameNumber_ = 0;
 
-    // Incremental selection active-set (see resetActiveSelectionState).
-    // selectionActiveTiles_ accumulates tiles touched this frame;
-    // selectionActiveTilesPrev_ holds last frame's set (the reset targets).
+    // Cesium Native TreeTraversalState<Tile::Pointer> equivalent. Each vector
+    // owns one reference per entry: current traversal and previous traversal.
+    // Their union is also the bounded set whose selection history may need a
+    // reset, replacing the old full-registry sweep.
     uint64_t selectionActiveFrameId_ = 0;
     std::vector<TilesetTile*> selectionActiveTiles_;
     std::vector<TilesetTile*> selectionActiveTilesPrev_;
 
     TilesetTileRegistry tileRegistry_;
     TileContentLifecycleManager contentLifecycle_;
-    TileContentAccess contentAccess_;
     TileContentCacheManager contentCache_;
     GpuUploadQueue gpuUploadQueue_;  // async CPU→GPU pipeline
     uint64_t resourceRevision_ = 1;
@@ -283,6 +299,7 @@ private:
     // to diagnose load-queue stalls (which branch dropped the requests).
     TileLoadRequestOutcome lastRequestOutcome_;
     TileContentResourceInvalidator resourceInvalidator_;
+    TileContentAccess contentAccess_;
     TileCacheOwnershipManager cacheOwnership_;
     TileRasterUpsampledChildCoordinator rasterUpsampledChildren_;
     std::unordered_set<std::string> tilesFadingOut_;
@@ -309,6 +326,7 @@ private:
     TileMeshPreparationManager meshPreparation_;
     TileContentRuntime contentRuntime_;
     TileRenderCommandManager renderCommands_;
+    std::vector<TileRenderReference> pendingRenderReferences_;
     // Dedicated off-render-thread selection worker (asyncSelection path only).
     // Lazily created on first async frame; joined on destruction. Held by
     // pointer so the sync path pays nothing and Tileset.h needs only a forward

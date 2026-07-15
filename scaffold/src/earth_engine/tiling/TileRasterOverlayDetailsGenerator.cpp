@@ -167,7 +167,7 @@ bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
                                RasterOverlayProjection projection,
                                const Rectangle& projectedRectangle,
                                size_t textureCoordinateIndex) {
-    GltfModel* model = renderContent.gltfContent();
+    auto model = renderContent.editGltfContent();
     if (!model ||
         textureCoordinateIndex >= kGltfMaxTexCoordSets ||
         projectedRectangle.isEmpty()) {
@@ -218,6 +218,11 @@ bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
                         0.0,
                         1.0))});
         }
+        // These bytes pack every terrain texcoord set. A dynamic overlay can
+        // reach this fallback after the worker built them, so force the
+        // lifecycle coordinator onto the rebuild path instead of uploading
+        // stale UVs.
+        primitive.terrainGpuVertexBytes.clear();
     }
     return true;
 }

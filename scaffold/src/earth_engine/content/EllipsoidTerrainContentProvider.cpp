@@ -7,6 +7,7 @@
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileScheme.h"
 #include "../tiling/TileSelectionRootPolicy.h"
+#include "../tiling/TerrainRasterOverlayProjectionResolver.h"
 
 #include <algorithm>
 #include <cmath>
@@ -27,12 +28,6 @@ std::unique_ptr<TileScheme> createScheme(const std::string& schemeId) {
         return TileScheme::createGeographicTMS();
     }
     return TileScheme::createXYZWebMercator();
-}
-
-RasterOverlayProjection projectionForScheme(const std::string& schemeId) {
-    return schemeId == "XYZ-WebMercator"
-        ? RasterOverlayProjection::WebMercator
-        : RasterOverlayProjection::Geographic;
 }
 
 Rectangle rootRectangleForScheme(const std::string& schemeId) {
@@ -136,7 +131,21 @@ void EllipsoidTerrainContentProvider::requestTileContent(
     const TileKey& key,
     CancellationToken token,
     ContentCallback callback,
-    HttpRequestPriority) {
+    HttpRequestPriority priority) {
+    requestTileContent(
+        key,
+        std::move(token),
+        std::move(callback),
+        priority,
+        TileContentRequestOptions{});
+}
+
+void EllipsoidTerrainContentProvider::requestTileContent(
+    const TileKey& key,
+    CancellationToken token,
+    ContentCallback callback,
+    HttpRequestPriority,
+    TileContentRequestOptions options) {
     if (token.isCancelled()) {
         callback(key, TileContentLoadResult::cancelled());
         return;
@@ -147,6 +156,18 @@ void EllipsoidTerrainContentProvider::requestTileContent(
         return;
     }
     const Rectangle bounds = createScheme(schemeId_)->tileToRectangle(key);
+    const RasterOverlayProjection terrainProjection =
+        TerrainRasterOverlayProjectionResolver::forSchemeId(schemeId_);
+    std::vector<RasterOverlayProjection> projections{terrainProjection};
+    for (RasterOverlayProjection projection :
+         options.requiredRasterOverlayProjections) {
+        if (std::find(
+                projections.begin(),
+                projections.end(),
+                projection) == projections.end()) {
+            projections.push_back(projection);
+        }
+    }
     TileLoadResultMetadata metadata;
     metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
         bounds,
@@ -157,13 +178,14 @@ void EllipsoidTerrainContentProvider::requestTileContent(
         kEllipsoidTerrainMaximumHeight};
     metadata.rasterOverlayDetails =
         EllipsoidTerrainMeshBuilder::makeRasterOverlayDetails(
-            bounds, projectionForScheme(schemeId_));
+            bounds,
+            projections);
     callback(
         key,
         TileContentLoadResult::renderTerrain(
             EllipsoidTerrainMeshBuilder::makeModel(
                 bounds,
-                projectionForScheme(schemeId_),
+                projections,
                 gridSize_),
             std::move(metadata)));
 }

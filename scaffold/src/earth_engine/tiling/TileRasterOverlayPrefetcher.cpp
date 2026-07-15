@@ -13,9 +13,56 @@
 #include "../providers/RasterOverlayTileProvider.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace earth_engine {
+namespace {
+
+bool canReuseStableUpdate(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    if (tile.rasterOverlayState.hasMissingProjections() ||
+        tile.rasterOverlayState.mappingCount() != rasterOverlays.size()) {
+        return false;
+    }
+
+    for (size_t i = 0; i < rasterOverlays.size(); ++i) {
+        const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlayState.mappingAt(i);
+        if (!activeOverlay || !activeOverlay->visible()) {
+            if (mapped) {
+                return false;
+            }
+            continue;
+        }
+        if (!mapped || !mapped->hasStableUpdateState()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void markStableMappingsUsed(
+    TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    for (size_t i = 0;
+         i < rasterOverlays.size() &&
+         i < tile.rasterOverlayState.mappingCount();
+         ++i) {
+        if (!rasterOverlays[i] || !rasterOverlays[i]->visible()) {
+            continue;
+        }
+        RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlayState.mappingAt(i);
+        if (mapped) {
+            mapped->markStableReadyTileUsed();
+        }
+    }
+}
+
+} // namespace
 
 TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
     TilesetTile& tile,
@@ -24,15 +71,76 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
     RenderDevice* device,
     double maximumScreenSpaceError,
     FrameResourceBudget& frameResourceBudget,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    uint64_t frameNumber) {
+    const uint64_t mappingIdentity =
+        TileRasterOverlaySignature::mappingIdentity(rasterOverlays);
+    const uint64_t configuration =
+        TileRasterOverlaySignature::configuration(rasterOverlays);
+    const uint64_t providerMappingRevision =
+        TileRasterOverlaySignature::mappingRevision(rasterOverlays);
+    const uint64_t contentRevision =
+        tile.content.renderContent.retainedResourcesRevision();
+    const uint64_t runtimeStateSignature =
+        tile.rasterOverlayState.runtimeStateSignature();
+    const bool stableAcrossFrames =
+        canReuseStableUpdate(tile, rasterOverlays);
+
     TileRasterOverlayPrefetchAction action;
+    bool rendererMaterialized = false;
+    if (tile.rasterOverlayState.tryReuseFrameUpdate(
+            frameNumber,
+            mappingIdentity,
+            configuration,
+            providerMappingRevision,
+            contentRevision,
+            runtimeStateSignature,
+            stableAcrossFrames,
+            action,
+            rendererMaterialized)) {
+        if (pPrepRenderer && !rendererMaterialized &&
+            !action.unloadTileContent) {
+            tile.rasterOverlayState.attachReadyMappingsInMainThread(
+                pPrepRenderer);
+            tile.rasterOverlayState.recordFrameUpdate(
+                frameNumber,
+                mappingIdentity,
+                TileRasterOverlaySignature::configuration(rasterOverlays),
+                TileRasterOverlaySignature::mappingRevision(rasterOverlays),
+                tile.content.renderContent.retainedResourcesRevision(),
+                tile.rasterOverlayState.runtimeStateSignature(),
+                canReuseStableUpdate(tile, rasterOverlays),
+                action,
+                true);
+        }
+        if (stableAcrossFrames) {
+            markStableMappingsUsed(tile, rasterOverlays);
+        }
+        return action;
+    }
+
+    tile.rasterOverlayState.countAuthoritativeUpdate();
+    auto finish = [&]() {
+        tile.rasterOverlayState.recordFrameUpdate(
+            frameNumber,
+            mappingIdentity,
+            TileRasterOverlaySignature::configuration(rasterOverlays),
+            TileRasterOverlaySignature::mappingRevision(rasterOverlays),
+            tile.content.renderContent.retainedResourcesRevision(),
+            tile.rasterOverlayState.runtimeStateSignature(),
+            canReuseStableUpdate(tile, rasterOverlays),
+            action,
+            pPrepRenderer != nullptr);
+        return action;
+    };
+
     if (TileRasterOverlayReadinessPolicy::doneTileCannotHoldRasterOverlays(
             tile)) {
         tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
-        return action;
+        return finish();
     }
     tile.rasterOverlayState.synchronizeMappingIdentity(
-        TileRasterOverlaySignature::mappingIdentity(rasterOverlays),
+        mappingIdentity,
         pPrepRenderer);
     tile.rasterOverlayState.resizeMappingSlots(
         rasterOverlays.size(),
@@ -40,15 +148,15 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
     tile.rasterOverlayState.clearMissingProjections();
 
     if (rasterOverlays.empty()) {
-        return action;
+        return finish();
     }
-
-
 
     const TileRasterOverlayMappingContext mappingContext =
         TileRasterOverlayMappingPolicy::contextFor(tile);
     const RasterOverlayDetails& overlayDetails = mappingContext.details();
 
+    std::optional<size_t> firstMoreDetailAvailable;
+    std::optional<size_t> firstUnknownAvailability;
     for (size_t i : overlayProcessingOrder) {
         if (i >= tile.rasterOverlayState.mappingCount()) {
             continue;
@@ -98,18 +206,19 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
         // cesium-native updates RasterMappedTo3DTile before giving any
         // throttled raster request another chance to run. Keep that order so
         // loaded/failed/stale tiles are consumed before request fanout.
-        mapped.update(
-            tile.key,
-            overlayDetails,
-            resolvedGeometry.screenPixelsX,
-            resolvedGeometry.screenPixelsY,
-            *activeProvider,
-            pPrepRenderer,
-            missingProjections,
-            tile.parent,
-            i,
-            mapAsRenderContent,
-            boundingVolumeRectangle);
+        const RasterMappedToTilesetTile::MoreDetail moreDetail =
+            mapped.update(
+                tile.key,
+                overlayDetails,
+                resolvedGeometry.screenPixelsX,
+                resolvedGeometry.screenPixelsY,
+                *activeProvider,
+                pPrepRenderer,
+                missingProjections,
+                tile.parent,
+                i,
+                mapAsRenderContent,
+                boundingVolumeRectangle);
         if (tile.rasterOverlayState.hasMissingProjections()) {
             if (tile.content.loadState == TileLoadState::Done) {
                 action.unloadTileContent = true;
@@ -117,7 +226,19 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
                 tile.rasterOverlayState.releaseAndClearReferences(
                     pPrepRenderer);
             }
-            return action;
+            return finish();
+        }
+
+        if (moreDetail == RasterMappedToTilesetTile::MoreDetail::Yes &&
+            tile.rasterOverlayState.hasReadyMapping(i)) {
+            if (!firstMoreDetailAvailable || i < *firstMoreDetailAvailable) {
+                firstMoreDetailAvailable = i;
+            }
+        } else if (
+            moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown) {
+            if (!firstUnknownAvailability || i < *firstUnknownAvailability) {
+                firstUnknownAvailability = i;
+            }
         }
 
         RasterOverlayTile* loadingTile = mapped.getLoadingTile();
@@ -127,7 +248,12 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
             mapped.loadThrottled(*activeProvider, &frameResourceBudget);
         }
     }
-    return action;
+    action.createRasterOverlayUpsampledChildren =
+        tile.content.loadState == TileLoadState::Done &&
+        firstMoreDetailAvailable &&
+        (!firstUnknownAvailability ||
+         *firstUnknownAvailability > *firstMoreDetailAvailable);
+    return finish();
 }
 
 void TileRasterOverlayPrefetcher::advanceThrottledLoads(

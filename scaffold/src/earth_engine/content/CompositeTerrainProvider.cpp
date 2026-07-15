@@ -99,6 +99,10 @@ TileAvailabilityState CompositeTerrainProvider::availabilityState(
     return TileAvailabilityState::NotAvailable;
 }
 
+uint64_t CompositeTerrainProvider::childTopologyRevision() const {
+    return primary_->childTopologyRevision();
+}
+
 bool CompositeTerrainProvider::isTerrainAvailabilityBoundaryLevel(
     int level) const {
     return primary_->isTerrainAvailabilityBoundaryLevel(level);

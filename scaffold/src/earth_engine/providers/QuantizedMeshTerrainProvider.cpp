@@ -11,6 +11,7 @@
 #include "../terrain/QuantizedMeshParser.h"
 #include "../tiling/TileQuadtreeChildKeys.h"
 #include "../tiling/TileSelectionRootPolicy.h"
+#include "../tiling/TerrainRasterOverlayProjectionResolver.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include <nlohmann/json.hpp>
@@ -273,6 +274,7 @@ void QuantizedMeshTerrainProvider::setZoomRange(int minZ, int maxZ) {
             layers_.front().schemeId,
             layers_.front().maxZoom);
     }
+    childTopologyRevision_.fetch_add(1, std::memory_order_release);
 }
 
 namespace {
@@ -420,10 +422,7 @@ Rectangle terrainRootRectangle(const std::string& schemeId) {
 
 RasterOverlayProjection rasterOverlayProjectionForTerrainScheme(
     const std::string& schemeId) {
-    if (schemeId == "XYZ-WebMercator") {
-        return RasterOverlayProjection::WebMercator;
-    }
-    return RasterOverlayProjection::Geographic;
+    return TerrainRasterOverlayProjectionResolver::forSchemeId(schemeId);
 }
 
 std::string composeUrl(const ParsedUrl& url) {
@@ -1312,7 +1311,8 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
     }
 }
 
-void QuantizedMeshTerrainProvider::syncPublicStateFromLayers() {
+void QuantizedMeshTerrainProvider::syncPublicStateFromLayers(
+    bool topologyChanged) {
     if (layers_.empty()) return;
 
     // Public accessors expose the active LayerJson terrain state while the
@@ -1338,6 +1338,9 @@ void QuantizedMeshTerrainProvider::syncPublicStateFromLayers() {
             attribution_ += "\n";
         }
         attribution_ += layer.attribution;
+    }
+    if (topologyChanged) {
+        childTopologyRevision_.fetch_add(1, std::memory_order_release);
     }
 }
 
@@ -1645,7 +1648,9 @@ TileContentLoadResult QuantizedMeshTerrainProvider::loadQuantizedMeshTileContent
     const std::vector<QuantizedMeshMetadataContent>& metadata,
     std::optional<QuantizedMeshAvailabilityUpdate>
         currentTileAvailabilityUpdate,
-    bool forceRasterOverlayDetails) const {
+    bool forceRasterOverlayDetails,
+    std::vector<RasterOverlayProjection>
+        requiredRasterOverlayProjections) const {
     std::string contentSchemeId;
     {
         std::lock_guard<std::recursive_mutex> lock(layersMutex_);
@@ -1663,7 +1668,8 @@ TileContentLoadResult QuantizedMeshTerrainProvider::loadQuantizedMeshTileContent
         forceRasterOverlayDetails
             ? QuantizedMeshContentLoader::RasterOverlayDetailsMode::
                   GenerateTerrainProjection
-            : QuantizedMeshContentLoader::RasterOverlayDetailsMode::None);
+            : QuantizedMeshContentLoader::RasterOverlayDetailsMode::None,
+        std::move(requiredRasterOverlayProjections));
 }
 
 void QuantizedMeshTerrainProvider::requestTileContent(
@@ -1721,6 +1727,8 @@ void QuantizedMeshTerrainProvider::requestTileContent(
     auto requestState = std::make_shared<AsyncTileRequestState>();
     requestState->forceRasterOverlayDetails =
         options.generateTerrainRasterOverlayDetails;
+    requestState->requiredRasterOverlayProjections =
+        std::move(options.requiredRasterOverlayProjections);
     if (contentLayerIndex < 0) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
@@ -2139,6 +2147,7 @@ void QuantizedMeshTerrainProvider::completeAsyncTileRequestIfReady(
     int statusCode = 0;
     std::vector<uint8_t> body;
     std::vector<std::vector<uint8_t>> metadataBodies;
+    std::vector<RasterOverlayProjection> requiredRasterOverlayProjections;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
         if (state->finalized ||
@@ -2150,6 +2159,8 @@ void QuantizedMeshTerrainProvider::completeAsyncTileRequestIfReady(
         statusCode = state->statusCode;
         body = std::move(state->body);
         metadataBodies = std::move(state->metadataBodies);
+        requiredRasterOverlayProjections =
+            std::move(state->requiredRasterOverlayProjections);
     }
 
     auto bodyPtr =
@@ -2164,7 +2175,8 @@ void QuantizedMeshTerrainProvider::completeAsyncTileRequestIfReady(
         bodyPtr,
         statusCode,
         std::move(metadataBodies),
-        state->forceRasterOverlayDetails);
+        state->forceRasterOverlayDetails,
+        std::move(requiredRasterOverlayProjections));
 }
 
 void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
@@ -2178,7 +2190,9 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
     std::shared_ptr<std::vector<uint8_t>> body,
     int statusCode,
     std::vector<std::vector<uint8_t>> metadataBodies,
-    bool forceRasterOverlayDetails) {
+    bool forceRasterOverlayDetails,
+    std::vector<RasterOverlayProjection>
+        requiredRasterOverlayProjections) {
     AsyncSystem::pool().enqueue(
         [this,
          key,
@@ -2190,7 +2204,9 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
          body,
          statusCode,
          metadataBodies = std::move(metadataBodies),
-         forceRasterOverlayDetails]() mutable {
+         forceRasterOverlayDetails,
+         requiredRasterOverlayProjections =
+             std::move(requiredRasterOverlayProjections)]() mutable {
             RequestCompletionGuard completion{requestsCompleted_};
             const std::vector<QuantizedMeshAvailabilityUpdate>
                 sideEffectAvailabilityUpdates =
@@ -2265,7 +2281,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     waterMaskEnabled_,
                     metadata,
                     std::move(currentTileAvailabilityUpdate),
-                    forceRasterOverlayDetails);
+                    forceRasterOverlayDetails,
+                    std::move(requiredRasterOverlayProjections));
             if (result.status == TileLoadStatus::Failed) {
                 result.quantizedMeshAvailabilityUpdates =
                     availabilityUpdatesForCompletedContent();
@@ -2419,7 +2436,11 @@ void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
             subtreeLevel,
             subtreeMorton);
     }
-    syncPublicStateFromLayers();
+    // These availability updates are produced while completing subtreeKey's
+    // own content load. That tile's local materialization input revision is
+    // invalidated by the content-state transition, so globally invalidating
+    // every tile would only force an unrelated full active-tree rescan.
+    syncPublicStateFromLayers(false);
 }
 
 bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const {

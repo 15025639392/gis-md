@@ -13,14 +13,72 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     input.reuseMode = TileSelectionReuseMode::Stale;
     input.reuseRejectReason =
         TileSelectionReuseRejectReason::SelectorMovedStaleDisabled;
+    input.selectorTraversalMs = 12.5;
+    input.selectorVisitVisibilityMs = 2.5;
+    input.selectorVisitInputMetricsMs = 3.5;
+    input.selectorVisitPolicyMs = 0.25;
+    input.selectorRefineMs = 4.25;
+    input.selectorRefineOverlayMs = 0.75;
+    input.selectorRefineDecisionMs = 1.25;
+    input.selectorRefineMaterializeMs = 0.50;
+    input.selectorRefineCommitMs = 1.75;
+    input.selectorRefineMaterializeCalls = 12;
+    input.selectorRefineMaterializeChanged = 2;
+    input.selectorRefineMaterializeRetry = 1;
+    input.selectorRefineMaterializeFastPath = 9;
+    input.selectorRenderPlanMs = 2.0;
+    input.selectorRequestPlanningMs = 1.5;
+    input.rasterSelectTaskMs = 3.0;
+    input.rasterUploadTextureMs = 5.0;
+    input.rasterTileFinalizeMs = 7.0;
+    input.rasterBookkeepingMs = 11.0;
+    input.rasterSourceFallbackMs = 0.25;
+    input.rasterSourceSnapshotMs = 0.50;
+    input.rasterSourceIssueMs = 1.00;
+    input.rasterUploadQueueSelectMs = 1.25;
+    input.prefetchRenderPlanMs = 2.25;
+    input.prefetchRenderPlanUpdateMs = 1.75;
+    input.prefetchRenderPlanActionMs = 0.50;
+    input.prefetchRenderPlanTiles = 40;
+    input.prefetchRenderPlanAuthoritativeUpdates = 3;
+    input.prefetchRenderPlanStableReuses = 37;
 
-    const std::array<char, 640> detail =
+    const std::array<char, 1536> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
     const std::string text(detail.data());
 
     EXPECT_NE(text.find("reused=1"), std::string::npos);
     EXPECT_NE(text.find("reuseMode=2"), std::string::npos);
     EXPECT_NE(text.find("reuseReject=4"), std::string::npos);
+    EXPECT_NE(text.find("selTrav=12.50"), std::string::npos);
+    EXPECT_NE(text.find("selVis=2.50"), std::string::npos);
+    EXPECT_NE(text.find("selMetric=3.50"), std::string::npos);
+    EXPECT_NE(text.find("selPolicy=0.25"), std::string::npos);
+    EXPECT_NE(text.find("selRefine=4.25"), std::string::npos);
+    EXPECT_NE(text.find("selOv=0.75"), std::string::npos);
+    EXPECT_NE(text.find("selDec=1.25"), std::string::npos);
+    EXPECT_NE(text.find("selMat=0.50"), std::string::npos);
+    EXPECT_NE(text.find("selMatCalls=12"), std::string::npos);
+    EXPECT_NE(text.find("selMatChanged=2"), std::string::npos);
+    EXPECT_NE(text.find("selMatRetry=1"), std::string::npos);
+    EXPECT_NE(text.find("selMatFast=9"), std::string::npos);
+    EXPECT_NE(text.find("selCommit=1.75"), std::string::npos);
+    EXPECT_NE(text.find("selPlan=2.00"), std::string::npos);
+    EXPECT_NE(text.find("selReq=1.50"), std::string::npos);
+    EXPECT_NE(text.find("rasterPick=3.00"), std::string::npos);
+    EXPECT_NE(text.find("rasterFallback=0.25"), std::string::npos);
+    EXPECT_NE(text.find("rasterSnapshot=0.50"), std::string::npos);
+    EXPECT_NE(text.find("rasterIssue=1.00"), std::string::npos);
+    EXPECT_NE(text.find("rasterQueue=1.25"), std::string::npos);
+    EXPECT_NE(text.find("rasterTex=5.00"), std::string::npos);
+    EXPECT_NE(text.find("rasterFinalize=7.00"), std::string::npos);
+    EXPECT_NE(text.find("rasterBook=11.00"), std::string::npos);
+    EXPECT_NE(text.find("prefRender=2.25"), std::string::npos);
+    EXPECT_NE(text.find("prefRenderUpdate=1.75"), std::string::npos);
+    EXPECT_NE(text.find("prefRenderAction=0.50"), std::string::npos);
+    EXPECT_NE(text.find("prefRenderTiles=40"), std::string::npos);
+    EXPECT_NE(text.find("prefRenderAuth=3"), std::string::npos);
+    EXPECT_NE(text.find("prefRenderReuse=37"), std::string::npos);
 }
 
 TEST(
@@ -41,7 +99,7 @@ TEST(
     input.renderStats.missedDrawEntries = 9;
     input.renderStats.deferredEntries = 13;
 
-    const std::array<char, 640> detail =
+    const std::array<char, 1024> detail =
         TileFrameDebugLogFormatter::renderBuildDetail(input);
     const std::string text(detail.data());
 

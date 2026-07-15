@@ -75,6 +75,9 @@ public:
 
     bool supportsTile(const TileKey& key) const override;
     TileAvailabilityState availabilityState(const TileKey& key) const override;
+    uint64_t childTopologyRevision() const override {
+        return childTopologyRevision_.load(std::memory_order_acquire);
+    }
     std::string buildUrl(const TileKey& key) const;
     int estimatedRequestFanout(const TileKey& key) const override;
 
@@ -214,6 +217,8 @@ private:
         bool contentFinished = false;
         bool finalized = false;
         bool forceRasterOverlayDetails = false;
+        std::vector<RasterOverlayProjection>
+            requiredRasterOverlayProjections;
         int statusCode = 0;
         std::vector<uint8_t> body;
     };
@@ -269,9 +274,11 @@ private:
         const std::vector<QuantizedMeshMetadataContent>& metadata,
         std::optional<QuantizedMeshAvailabilityUpdate>
             currentTileAvailabilityUpdate = std::nullopt,
-        bool forceRasterOverlayDetails = false) const;
+        bool forceRasterOverlayDetails = false,
+        std::vector<RasterOverlayProjection>
+            requiredRasterOverlayProjections = {}) const;
     void resetFallbackLayerFromFields();
-    void syncPublicStateFromLayers();
+    void syncPublicStateFromLayers(bool topologyChanged = true);
     void handleAsyncTileBody(
         const TileKey& key,
         int contentLayerIndex,
@@ -320,7 +327,9 @@ private:
         std::shared_ptr<std::vector<uint8_t>> body,
         int statusCode,
         std::vector<std::vector<uint8_t>> metadataBodies,
-        bool forceRasterOverlayDetails);
+        bool forceRasterOverlayDetails,
+        std::vector<RasterOverlayProjection>
+            requiredRasterOverlayProjections);
     std::vector<QuantizedMeshAvailabilityUpdate>
     parseAvailabilityUpdatesFromMetadataRequests(
         const std::vector<LayerAvailabilityRequest>& availabilityRequests,
@@ -351,6 +360,7 @@ private:
     std::atomic<int> requestsFailed_{0};
     std::atomic<int> activeWorkerBlockingRequests_{0};
     std::atomic<int> peakWorkerBlockingRequests_{0};
+    std::atomic<uint64_t> childTopologyRevision_{1};
     std::shared_ptr<MetadataRequestRegistry> metadataRegistry_ =
         std::make_shared<MetadataRequestRegistry>();
 };

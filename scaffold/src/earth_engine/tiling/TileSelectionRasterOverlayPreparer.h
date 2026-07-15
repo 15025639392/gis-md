@@ -10,6 +10,7 @@
 #include "TilesetTile.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace earth_engine {
@@ -78,13 +79,16 @@ public:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         RenderDevice* device,
         double maximumScreenSpaceError,
-        FrameResourceBudget& frameResourceBudget) {
+        FrameResourceBudget& frameResourceBudget,
+        uint64_t frameNumber = 0,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
         if (!tile.canPrepareRasterOverlays()) {
             return;
         }
 
-        // Selection asks renderability before command building can update
-        // raster mappings, so advance required overlays during traversal.
+        // Selection needs current raster readiness before it can classify the
+        // tile. Advance the update-owned mapping state here; command building
+        // only consumes the prepared result.
         if (!rasterOverlays.empty() &&
             tile.rasterOverlayState.mappingCount() >= rasterOverlays.size()) {
             if (canSkipReadyOverlayPrefetch(
@@ -102,7 +106,9 @@ public:
             overlayOrder,
             device,
             maximumScreenSpaceError,
-            frameResourceBudget);
+            frameResourceBudget,
+            pPrepRenderer,
+            frameNumber);
     }
 };
 

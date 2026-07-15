@@ -1059,6 +1059,11 @@ TEST(
 TEST(
     TilesetSelectionRefinementTest,
     FogDensityTableIsConfigurable) {
+    struct FogSelectionResult {
+        std::vector<TileKey> visibleTiles;
+        int notRenderingNodeCount = 0;
+        TileSelectionCounters counters;
+    };
     auto runWithFogTable =
         [](std::vector<FogDensityAtHeight> fogDensityTable) {
             TilesetOptions options;
@@ -1102,22 +1107,23 @@ TEST(
                 camera.direction());
             TilesetTestAccess::selectTiles(tileset, frameState);
 
-            return std::pair<TilePlan, TileSelectionCounters>{
-                tileset.tilePlan(),
+            return FogSelectionResult{
+                tileset.tilePlan().visibleTiles,
+                tileset.tilePlan().notRenderingNodeCount,
                 TilesetTestAccess::selectionCounters(tileset)};
         };
 
-    const auto [clearPlan, clearCounters] = runWithFogTable({{0.0, 0.0}});
-    const auto [densePlan, denseCounters] =
+    const FogSelectionResult clear = runWithFogTable({{0.0, 0.0}});
+    const FogSelectionResult dense =
         runWithFogTable({{0.0, 1.0}, {1000000.0, 1.0}});
 
-    EXPECT_FALSE(clearPlan.visibleTiles.empty());
-    EXPECT_GT(clearCounters.visited, 0);
-    EXPECT_EQ(clearCounters.fogCulled, 0);
-    EXPECT_TRUE(densePlan.visibleTiles.empty());
-    EXPECT_GT(densePlan.notRenderingNodeCount, 0);
-    EXPECT_EQ(denseCounters.visited, 0);
-    EXPECT_GT(denseCounters.fogCulled, 0);
+    EXPECT_FALSE(clear.visibleTiles.empty());
+    EXPECT_GT(clear.counters.visited, 0);
+    EXPECT_EQ(clear.counters.fogCulled, 0);
+    EXPECT_TRUE(dense.visibleTiles.empty());
+    EXPECT_GT(dense.notRenderingNodeCount, 0);
+    EXPECT_EQ(dense.counters.visited, 0);
+    EXPECT_GT(dense.counters.fogCulled, 0);
 }
 
 TEST(
@@ -2297,15 +2303,19 @@ TEST(
     update.subtreeKey = rootKey;
     update.metadataAvailability = {{0, 0, 0, 0, 0}};
     providerPtr->applyAvailabilityUpdates({update});
+    EXPECT_EQ(
+        TileAvailabilityState::Available,
+        providerPtr->availabilityState(
+            TileKey{"Geographic-TMS", 1, 0, 0}));
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());
 
-    root->children.clear();
+    root->clearChildren();
     root->content.loadState = TileLoadState::Done;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());
 
-    root->children.clear();
+    root->clearChildren();
     root->content.loadState = TileLoadState::Failed;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());
@@ -2339,6 +2349,10 @@ TEST(
         {0, 0, 0, 0, 0},
         {1, 0, 0, 0, 0}};
     provider->applyAvailabilityUpdates({update});
+    EXPECT_EQ(
+        TileAvailabilityState::Available,
+        provider->availabilityState(
+            TileKey{"Geographic-TMS", 2, 0, 0}));
 
     Tileset tileset(
         TileScheme::createGeographicTMS(),
@@ -2355,7 +2369,7 @@ TEST(
              TileLoadState::Unloaded,
              TileLoadState::ContentLoading,
              TileLoadState::FailedTemporarily}) {
-        middle->children.clear();
+        middle->clearChildren();
         middle->content.loadState = state;
         TilesetTestAccess::ensureTileChildren(tileset, *middle);
         EXPECT_EQ(4u, middle->children.size());
@@ -2419,13 +2433,13 @@ TEST(
              TileLoadState::Unloaded,
              TileLoadState::ContentLoading,
              TileLoadState::FailedTemporarily}) {
-        root->children.clear();
+        root->clearChildren();
         root->content.loadState = state;
         TilesetTestAccess::ensureTileChildren(tileset, *root);
         EXPECT_TRUE(root->children.empty());
     }
 
-    root->content.loadState = TileLoadState::ContentLoaded;
+    root->content.loadState = TileLoadState::ContentLoading;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_TRUE(root->children.empty());
 
@@ -2434,7 +2448,12 @@ TEST(
     parentSubtreeUpdate.subtreeKey = rootKey;
     parentSubtreeUpdate.metadataAvailability = {{0, 0, 0, 0, 0}};
     providerPtr->applyAvailabilityUpdates({parentSubtreeUpdate});
+    EXPECT_EQ(
+        TileAvailabilityState::Available,
+        providerPtr->availabilityState(
+            TileKey{"Geographic-TMS", 1, 0, 0}));
 
+    root->markRenderContentLoaded();
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());
 

@@ -18,3 +18,7 @@ cmake-build-*/
 .DS_Store
 .idea/
 .vscode/
+
+# Codex task orchestrator runtime state
+.codex/task-state/*
+!.codex/task-state/.gitkeep

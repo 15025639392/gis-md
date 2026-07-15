@@ -20,6 +20,8 @@ namespace earth_engine {
 
 namespace {
 
+const std::vector<TilesetTile*> kNoPreviousActiveTiles;
+
 // Shadow per-visit hook: mirrors Tileset::onSelectionVisitTile — run the
 // identical per-tile reset (shift selectionState → previousSelectionState,
 // recompute renderability) and record the tile in this frame's active-set for
@@ -65,6 +67,7 @@ void TileSelectionShadowRunner::buildShadow(
 
 void TileSelectionShadowRunner::selectOnShadow(
     const TileSelectionShadowSelectInput& input) {
+    deltaSeconds_ = input.frameState.deltaSeconds;
     shadowFadingOut_.clear();
     shadowActiveTiles_.clear();
     shadowBudget_.beginFrame(
@@ -118,6 +121,7 @@ void TileSelectionShadowRunner::selectOnShadow(
                         *input.options,
                         shadowOverlays_,
                         nullptr,
+                        nullptr,
                         shadowBudget_,
                         input.lastCameraPosition,
                         shadowContentAccess},
@@ -135,6 +139,7 @@ void TileSelectionShadowRunner::selectOnShadow(
                     shadowTilePlan_,
                     shadowTree_.registry(),
                     shadowActiveTiles_,
+                    kNoPreviousActiveTiles,
                     shadowCounters_,
                     shadowContentAccess,
                     shadowFadingOut_,

@@ -45,6 +45,33 @@ TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
         });
 }
 
+TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
+    TileLoadQueue& loadQueue,
+    const TileContentRuntimeRequestFrame& frame,
+    FrameResourceBudget* budget) {
+    return lifecycle_.requestMissingTiles(
+        loadQueue,
+        frame.contentProvider,
+        frame.device,
+        frame.rasterOverlays,
+        frame.tiles,
+        frame.frameNumber,
+        frame.maximumSimultaneousTileLoads,
+        frame.mainThreadLoadingTimeLimit,
+        frame.currentFrameTimeSeconds,
+        frame.smoothedMainThreadUploadLimit,
+        budget,
+        [this, &frame](TilesetTile& tile, double priority) {
+            return meshPreparation_.prepareUpsampleSourceTile(
+                tile,
+                priority,
+                frame.pPrepRenderer);
+        },
+        [this](const TileKey& key) {
+            return contentAccess_.ensureTile(key);
+        });
+}
+
 bool TileContentRuntime::processPendingUploads(
     const TileContentRuntimeUploadFrame& frame,
     bool interactionActive,
@@ -70,8 +97,8 @@ bool TileContentRuntime::processPendingUploads(
         [this, &frame](TilesetTile& tile) {
             contentAccess_.ensureTileChildren(tile, frame.pPrepRenderer);
         },
-        [this]() {
-            markResourcesDirty();
+        [this](TilesetTile& tile) {
+            markTileResourcesDirty(tile);
         });
 }
 
@@ -95,13 +122,17 @@ bool TileContentRuntime::drainGpuUploadQueue(
         [this](const TileKey& key) {
             return contentAccess_.ensureTile(key);
         },
-        [this]() {
-            markResourcesDirty();
+        [this](TilesetTile& tile) {
+            markTileResourcesDirty(tile);
         });
 }
 
 void TileContentRuntime::markResourcesDirty() {
-    resourceInvalidator_.markResourcesDirty();
+    resourceInvalidator_.markResourcesChanged();
+}
+
+void TileContentRuntime::markTileResourcesDirty(TilesetTile& tile) {
+    resourceInvalidator_.markTileResourcesChanged(tile);
 }
 
 } // namespace earth_engine

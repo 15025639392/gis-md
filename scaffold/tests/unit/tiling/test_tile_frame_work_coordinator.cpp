@@ -79,12 +79,17 @@ TEST(
         []() {},
         []() { return true; },
         [&]() { refreshCalled = true; },
-        [&](const FrameState&) { selectCalled = true; },
+        [&](const FrameState&, TileSelectionPerformanceTimings&) {
+            selectCalled = true;
+        },
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
-        [](const std::vector<TileLoadRequest>&, FrameResourceBudget*) {
+        [](TilesetTile&) {},
+        [](TileLoadQueue&, FrameResourceBudget*) {
             return TileLoadRequestOutcome{};
-        });
+        },
+        [](TilesetTile&) {});
 
     EXPECT_TRUE(result.interactionActive);
     EXPECT_TRUE(result.resourceSmoothingActive);
@@ -169,24 +174,30 @@ TEST(TileFrameWorkCoordinatorTest, StableFrameStrictReusesSelection) {
         []() {},
         []() { return false; },
         [&]() { refreshCalled = true; },
-        [&](const FrameState&) { selectCalled = true; },
+        [&](const FrameState&, TileSelectionPerformanceTimings&) {
+            selectCalled = true;
+        },
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
+        [](TilesetTile&) {},
         [&requestCalled](
-            const std::vector<TileLoadRequest>& requests,
+            TileLoadQueue& requests,
             FrameResourceBudget*) {
             requestCalled = true;
             TileLoadRequestOutcome outcome;
             outcome.issued = requests.empty() ? 0 : 1;
+            requests.clear();
             return outcome;
-        });
+        },
+        [](TilesetTile&) {});
 
     EXPECT_FALSE(result.interactionActive);
     EXPECT_FALSE(result.resourceSmoothingActive);
     EXPECT_FALSE(cameraMoving);
     EXPECT_FALSE(interactionActive);
     EXPECT_FALSE(resourceSmoothingActive);
-    EXPECT_TRUE(refreshCalled);
+    EXPECT_FALSE(refreshCalled);
     EXPECT_FALSE(selectCalled);
     EXPECT_TRUE(requestCalled);
     EXPECT_TRUE(result.selectionWork.reusedSelection);
@@ -195,4 +206,5 @@ TEST(TileFrameWorkCoordinatorTest, StableFrameStrictReusesSelection) {
         result.selectionWork.reuseRejectReason,
         TileSelectionReuseRejectReason::None);
     EXPECT_TRUE(reuseState.lastRequestIssuedWork);
+    EXPECT_TRUE(loadQueue.empty());
 }

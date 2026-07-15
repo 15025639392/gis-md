@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TerrainRasterOverlayProjectionResolver.h"
 #include "TilesetTile.h"
 
 namespace earth_engine {
@@ -22,14 +23,41 @@ struct TileContentTerrainResiduePolicy {
                tile.content.renderContent.isTerrainRenderContent();
     }
 
+    static bool hasProtectedRetryableFill(const TilesetTile& tile) {
+        const TileLoadState state = tile.content.loadState;
+        const TileRenderContentState& renderContent =
+            tile.content.renderContent;
+        const TileFillGeometrySignature* signature =
+            renderContent.fillGeometrySignature();
+        const bool retryable =
+            state == TileLoadState::Unloaded ||
+            state == TileLoadState::ContentLoading ||
+            state == TileLoadState::FailedTemporarily;
+        return retryable &&
+               tile.content.contentKind == TileContentKind::Unknown &&
+               renderContent.isFillReady() &&
+               signature &&
+               signature->bounds == tile.bounds &&
+               signature->projection ==
+                   TerrainRasterOverlayProjectionResolver::forTileKey(
+                       tile.key) &&
+               !renderContent.hasGltfContent() &&
+               !renderContent.hasRetainedHeightmap() &&
+               !renderContent.isRenderContentReady() &&
+               !tile.rasterOverlayState.hasMissingProjections();
+    }
+
     static bool hasRejectableResidue(const TilesetTile& tile) {
         if (hasAcceptedTerrainContent(tile) ||
-            hasProtectedRetryableTerrainContent(tile)) {
+            hasProtectedRetryableTerrainContent(tile) ||
+            hasProtectedRetryableFill(tile)) {
             return false;
         }
         return tile.content.renderContent.hasRenderableTerrainContent() ||
                tile.content.renderContent.hasRetainedHeightmap() ||
                tile.content.renderContent.isRenderContentReady() ||
+               tile.content.renderContent.hasFillModel() ||
+               tile.content.renderContent.hasFillResources() ||
                tile.rasterOverlayState.mappingCount() > 0 ||
                tile.rasterOverlayState.hasMissingProjections();
     }
@@ -42,6 +70,7 @@ struct TileContentTerrainResiduePolicy {
         }
         tile.content.renderContent.clearRenderContent();
         tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+        tile.notifyChildMaterializationStateChanged();
         return true;
     }
 };

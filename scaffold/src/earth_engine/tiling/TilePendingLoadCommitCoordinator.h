@@ -169,6 +169,7 @@ public:
         // alive by NOT erasing the upload from the lifecycle — the upload
         // stays as a pending claim that protects the tile from unloading.
         if (tile->content.renderContent.asyncGpuUploadPending) {
+            markResourcesDirty(*tile);
             emptyContentRegistry.erase(upload.cacheKey);
             return;
         }
@@ -207,7 +208,7 @@ private:
             ensureChildren(tile);
         }
         if (action.resourcesDirty) {
-            markResourcesDirty();
+            markResourcesDirty(tile);
         }
     }
 

@@ -14,15 +14,26 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/core/math/Vec3.h"
+#include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTile.h"
+#include "earth_engine/renderer/IPrepareRendererResources.h"
+#include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileKey.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
 #include "earth_engine/tiling/TileSelectionWorker.h"
 
+#include <algorithm>
 #include <memory>
 #include <set>
 #include <string>
@@ -39,8 +50,15 @@ struct TilesetTestAccess {
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
         tileset.contentAccess_.ensureTileChildren(tile);
     }
-    static void selectTiles(Tileset& tileset, const FrameState& frameState) {
-        TilesetSelectionFrameFacade::selectTiles(tileset, frameState);
+    static void selectTiles(
+        Tileset& tileset,
+        const FrameState& frameState,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
+        TilesetSelectionFrameFacade::selectTiles(
+            tileset,
+            frameState,
+            nullptr,
+            pPrepRenderer);
     }
     static void setLastCamera(Tileset& tileset,
                               const Vec3& position,
@@ -57,6 +75,14 @@ struct TilesetTestAccess {
                 std::this_thread::yield();
             }
         }
+    }
+    static bool currentSelectionContains(
+        const Tileset& tileset,
+        const TilesetTile* tile) {
+        return std::find(
+                   tileset.selectionActiveTiles_.begin(),
+                   tileset.selectionActiveTiles_.end(),
+                   tile) != tileset.selectionActiveTiles_.end();
     }
 };
 } // namespace earth_engine
@@ -103,16 +129,25 @@ public:
     }
 };
 
-std::unique_ptr<Tileset> makeTileset(bool nonBlocking) {
+std::unique_ptr<Tileset> makeTilesetWithOptions(
+    bool asyncSelection,
+    bool nonBlocking,
+    std::vector<ActivatedRasterOverlay*> overlays = {}) {
     TilesetOptions options;
-    options.asyncSelection = true;
+    options.asyncSelection = asyncSelection;
     options.asyncSelectionNonBlocking = nonBlocking;
     return std::make_unique<Tileset>(
         TileScheme::createGeographicTMS(),
-        std::vector<ActivatedRasterOverlay*>{},
+        std::move(overlays),
         nullptr,
         std::move(options),
         std::make_unique<SpecProvider>());
+}
+
+std::unique_ptr<Tileset> makeTileset(bool nonBlocking) {
+    return makeTilesetWithOptions(
+        true,
+        nonBlocking);
 }
 
 void materialize(Tileset& tileset) {
@@ -184,6 +219,14 @@ FrameState makeStaticFrame(Camera& camera,
     return frame;
 }
 
+FrameState makeEmptyFrame(uint64_t frameId) {
+    FrameState frame;
+    frame.frameId = frameId;
+    frame.viewportWidthPixels = 1024;
+    frame.viewportHeightPixels = 768;
+    return frame;
+}
+
 std::set<std::string> visibleKeys(const Tileset& tileset) {
     std::set<std::string> keys;
     for (const TileKey& key : tileset.tilePlan().visibleTiles) {
@@ -209,7 +252,293 @@ void runStaticFrameDrained(Tileset& tileset, uint64_t frameId) {
     TilesetTestAccess::waitForSelectionIdle(tileset);
 }
 
+void runEmptyFrame(Tileset& tileset, uint64_t frameId) {
+    TilesetTestAccess::selectTiles(tileset, makeEmptyFrame(frameId));
+}
+
+void runEmptyFrameDrained(Tileset& tileset, uint64_t frameId) {
+    runEmptyFrame(tileset, frameId);
+    TilesetTestAccess::waitForSelectionIdle(tileset);
+}
+
+void seedRenderedSelection(Tileset& tileset, TilesetTile& tile) {
+    tileset.resetActiveSelectionState();
+    tileset.onSelectionVisitTile(tile);
+    tile.selectionFrameState.selectionState = TileSelectionState::Rendered;
+}
+
+class DummyTexture final : public Texture {
+public:
+    int width() const override { return 4; }
+    int height() const override { return 4; }
+    size_t sizeBytes() const override { return 4u * 4u * 4u; }
+};
+
+class RecordingPrepareRendererResources final
+    : public IPrepareRendererResources {
+public:
+    void attachRasterInMainThread(
+        const TileKey&,
+        int32_t,
+        std::shared_ptr<const RasterOverlayTile>,
+        Texture*,
+        float,
+        float,
+        float,
+        float) override {
+        ++attachCount;
+    }
+
+    void detachRasterInMainThread(
+        const TileKey&,
+        int32_t) noexcept override {
+        ++detachCount;
+    }
+
+    int attachCount = 0;
+    int detachCount = 0;
+};
+
+struct ReadyRasterFixture {
+    std::unique_ptr<RasterOverlay> overlay;
+    std::unique_ptr<ActivatedRasterOverlay> activated;
+    std::unique_ptr<Tileset> tileset;
+    TilesetTile* root = nullptr;
+    RasterMappedToTilesetTile* mapping = nullptr;
+    RasterOverlayTile* rasterTile = nullptr;
+    uint64_t authoritativeUpdates = 0;
+};
+
+ReadyRasterFixture makeReadyRasterFixture(
+    bool asyncSelection,
+    bool nonBlocking) {
+    ReadyRasterFixture fixture;
+    fixture.overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    fixture.activated =
+        std::make_unique<ActivatedRasterOverlay>(*fixture.overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{
+        fixture.activated.get()};
+    fixture.tileset = makeTilesetWithOptions(
+        asyncSelection,
+        nonBlocking,
+        overlays);
+    materialize(*fixture.tileset);
+    fixture.root = TilesetTestAccess::ensureTile(
+        *fixture.tileset,
+        TileKey{kSchemeId, 0, 0, 0});
+    if (!fixture.root) {
+        return fixture;
+    }
+
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::WebMercator);
+    model->rasterOverlayDetails.rasterOverlayRectangles.push_back(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            fixture.root->bounds));
+    fixture.root->content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    fixture.root->content.renderContent.setTerrainRenderContent(true);
+    fixture.root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    fixture.root->content.renderContent.markRenderContentReady();
+    fixture.root->content.loadState = TileLoadState::Done;
+    fixture.root->content.contentKind = TileContentKind::Render;
+    fixture.root->geometricError = 0.0;
+
+    FrameResourceBudgetConfig budgetConfig;
+    budgetConfig.maxRasterNetworkRequestsPerFrame = 0;
+    budgetConfig.maxRasterNetworkInflight = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, budgetConfig);
+    TileRasterOverlayPrefetcher::prefetch(
+        *fixture.root,
+        overlays,
+        TileSelectionRasterOverlayPreparer::processingOrder(overlays),
+        nullptr,
+        16.0,
+        budget);
+    fixture.mapping = fixture.root->rasterOverlayState.mappingAt(0);
+    fixture.rasterTile =
+        fixture.mapping ? fixture.mapping->getLoadingTile() : nullptr;
+    if (fixture.rasterTile) {
+        fixture.rasterTile->setTexture(
+            std::make_unique<DummyTexture>());
+    }
+    fixture.authoritativeUpdates =
+        fixture.root->rasterOverlayState.authoritativeUpdateCount();
+    return fixture;
+}
+
 } // namespace
+
+TEST(
+    TilesetAsyncSelectionTest,
+    ShadowSelectionNeverMaterializesLiveRasterRendererState) {
+    {
+        ReadyRasterFixture fixture =
+            makeReadyRasterFixture(false, false);
+        ASSERT_NE(nullptr, fixture.root);
+        ASSERT_NE(nullptr, fixture.mapping);
+        ASSERT_NE(nullptr, fixture.rasterTile);
+        RecordingPrepareRendererResources recorder;
+        Camera camera;
+        std::vector<SelectorView> views;
+        const FrameState frame = makeStaticFrame(camera, views, 1);
+        TilesetTestAccess::setLastCamera(
+            *fixture.tileset,
+            camera.position(),
+            camera.direction());
+        TilesetTestAccess::selectTiles(
+            *fixture.tileset,
+            frame,
+            &recorder);
+        EXPECT_EQ(1, recorder.attachCount);
+        EXPECT_EQ(0, recorder.detachCount);
+        EXPECT_EQ(
+            fixture.authoritativeUpdates + 1,
+            fixture.root->rasterOverlayState.authoritativeUpdateCount());
+        EXPECT_EQ(
+            RasterMappedToTilesetTile::State::Attached,
+            fixture.mapping->getState());
+    }
+
+    for (bool nonBlocking : {false, true}) {
+        ReadyRasterFixture fixture =
+            makeReadyRasterFixture(true, nonBlocking);
+        ASSERT_NE(nullptr, fixture.root);
+        ASSERT_NE(nullptr, fixture.mapping);
+        ASSERT_NE(nullptr, fixture.rasterTile);
+        RecordingPrepareRendererResources recorder;
+        Camera camera;
+        std::vector<SelectorView> views;
+        FrameState frame = makeStaticFrame(camera, views, 1);
+        TilesetTestAccess::setLastCamera(
+            *fixture.tileset,
+            camera.position(),
+            camera.direction());
+        TilesetTestAccess::selectTiles(
+            *fixture.tileset,
+            frame,
+            &recorder);
+        if (nonBlocking) {
+            TilesetTestAccess::waitForSelectionIdle(*fixture.tileset);
+            frame.frameId = 2;
+            TilesetTestAccess::selectTiles(
+                *fixture.tileset,
+                frame,
+                &recorder);
+            TilesetTestAccess::waitForSelectionIdle(*fixture.tileset);
+        }
+
+        EXPECT_EQ(0, recorder.attachCount);
+        EXPECT_EQ(0, recorder.detachCount);
+        EXPECT_EQ(
+            fixture.authoritativeUpdates,
+            fixture.root->rasterOverlayState.authoritativeUpdateCount());
+        EXPECT_EQ(
+            RasterMappedToTilesetTile::State::Unattached,
+            fixture.mapping->getState());
+        EXPECT_EQ(
+            fixture.rasterTile,
+            fixture.mapping->getLoadingTile());
+        EXPECT_EQ(nullptr, fixture.mapping->getReadyTile());
+    }
+}
+
+TEST(
+    TilesetAsyncSelectionTest,
+    SyncShadowProtectsVisitedIntermediateLiveTiles) {
+    std::unique_ptr<Tileset> tileset = makeTileset(/*nonBlocking=*/false);
+    materialize(*tileset);
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(
+        *tileset,
+        TileKey{kSchemeId, 0, 0, 0});
+    ASSERT_NE(root, nullptr);
+
+    runStaticFrame(*tileset, 1);
+
+    EXPECT_TRUE(TilesetTestAccess::currentSelectionContains(*tileset, root));
+    EXPECT_GT(root->referenceCount(), 0);
+    EXPECT_EQ(
+        std::find(
+            tileset->tilePlan().visibleTiles.begin(),
+            tileset->tilePlan().visibleTiles.end(),
+            root->key),
+        tileset->tilePlan().visibleTiles.end());
+}
+
+TEST(
+    TilesetAsyncSelectionTest,
+    SyncShadowDecaysUnvisitedSelectionHistoryForTwoGenerations) {
+    std::unique_ptr<Tileset> tileset = makeTileset(/*nonBlocking=*/false);
+    materialize(*tileset);
+    TilesetTile* root = TilesetTestAccess::ensureTile(
+        *tileset,
+        TileKey{kSchemeId, 0, 0, 0});
+    ASSERT_NE(root, nullptr);
+
+    seedRenderedSelection(*tileset, *root);
+    ASSERT_EQ(root->referenceCount(), 1);
+
+    runEmptyFrame(*tileset, 1);
+    EXPECT_EQ(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::NotVisited);
+    EXPECT_EQ(
+        root->selectionFrameState.previousSelectionState,
+        TileSelectionState::Rendered);
+    EXPECT_EQ(root->referenceCount(), 1);
+
+    runEmptyFrame(*tileset, 2);
+    EXPECT_EQ(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::NotVisited);
+    EXPECT_EQ(
+        root->selectionFrameState.previousSelectionState,
+        TileSelectionState::NotVisited);
+    EXPECT_EQ(root->referenceCount(), 0);
+}
+
+TEST(
+    TilesetAsyncSelectionTest,
+    NonBlockingShadowDecaysUnvisitedSelectionHistoryForTwoResults) {
+    std::unique_ptr<Tileset> tileset = makeTileset(/*nonBlocking=*/true);
+    materialize(*tileset);
+    TilesetTile* root = TilesetTestAccess::ensureTile(
+        *tileset,
+        TileKey{kSchemeId, 0, 0, 0});
+    ASSERT_NE(root, nullptr);
+
+    seedRenderedSelection(*tileset, *root);
+    ASSERT_EQ(root->referenceCount(), 1);
+
+    runEmptyFrameDrained(*tileset, 1);
+    runEmptyFrame(*tileset, 2);
+    EXPECT_EQ(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::NotVisited);
+    EXPECT_EQ(
+        root->selectionFrameState.previousSelectionState,
+        TileSelectionState::Rendered);
+    EXPECT_EQ(root->referenceCount(), 1);
+
+    TilesetTestAccess::waitForSelectionIdle(*tileset);
+    runEmptyFrame(*tileset, 3);
+    EXPECT_EQ(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::NotVisited);
+    EXPECT_EQ(
+        root->selectionFrameState.previousSelectionState,
+        TileSelectionState::NotVisited);
+    EXPECT_EQ(root->referenceCount(), 0);
+}
 
 // 静止相机下:真异步(延迟交付)在若干帧后收敛到与同步影子选择相同的
 // visibleTiles。异步只延迟、不改变最终选择。
@@ -240,10 +569,17 @@ TEST(TilesetAsyncSelectionTest, NonBlockingConvergesToSyncSelection) {
 TEST(TilesetAsyncSelectionTest, NonBlockingManyFramesProducesPlan) {
     std::unique_ptr<Tileset> ts = makeTileset(/*nonBlocking=*/true);
     materialize(*ts);
+    TilesetTile* root = TilesetTestAccess::ensureTile(
+        *ts,
+        TileKey{kSchemeId, 0, 0, 0});
+    ASSERT_NE(root, nullptr);
+
     for (uint64_t f = 1; f <= 32; ++f) {
         runStaticFrameDrained(*ts, f);
     }
     runStaticFrame(*ts, 33);  // consume the last drained result
     EXPECT_GT(ts->tilePlan().frameId, 0u);
     EXPECT_FALSE(ts->tilePlan().visibleTiles.empty());
+    EXPECT_TRUE(TilesetTestAccess::currentSelectionContains(*ts, root));
+    EXPECT_GT(root->referenceCount(), 0);
 }

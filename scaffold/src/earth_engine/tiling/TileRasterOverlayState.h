@@ -1,5 +1,6 @@
 #pragma once
 
+#include "RasterMappedToTilesetTile.h"
 #include "SurfaceTile.h"
 
 #include <cstddef>
@@ -10,11 +11,16 @@
 namespace earth_engine {
 
 class IPrepareRendererResources;
-class RasterMappedToTilesetTile;
+
+struct TileRasterOverlayUpdateAction {
+    bool unloadTileContent = false;
+    bool createRasterOverlayUpsampledChildren = false;
+};
 
 class TileRasterOverlayState {
 public:
     std::vector<std::unique_ptr<RasterMappedToTilesetTile>>& mappings() {
+        invalidateFrameUpdateCache();
         return mappings_;
     }
     const std::vector<std::unique_ptr<RasterMappedToTilesetTile>>& mappings()
@@ -23,6 +29,7 @@ public:
     }
 
     std::vector<RasterOverlayProjection>& missingProjections() {
+        invalidateFrameUpdateCache();
         return missingProjections_;
     }
     const std::vector<RasterOverlayProjection>& missingProjections() const {
@@ -31,6 +38,7 @@ public:
 
     void ensureMappingSlots(size_t count) {
         if (mappings_.size() < count) {
+            invalidateFrameUpdateCache();
             mappings_.resize(count);
         }
     }
@@ -55,7 +63,12 @@ public:
         }
     }
 
-    void clearMissingProjections() { missingProjections_.clear(); }
+    void clearMissingProjections() {
+        if (!missingProjections_.empty()) {
+            invalidateFrameUpdateCache();
+            missingProjections_.clear();
+        }
+    }
     bool hasMissingProjections() const { return !missingProjections_.empty(); }
     int missingProjectionCount() const {
         return static_cast<int>(missingProjections_.size());
@@ -66,11 +79,54 @@ public:
     void releaseReferences(IPrepareRendererResources* pPrepRenderer);
     void releaseAndClearReferences(IPrepareRendererResources* pPrepRenderer);
 
+    bool tryReuseFrameUpdate(
+        uint64_t frameNumber,
+        uint64_t mappingIdentity,
+        uint64_t configuration,
+        uint64_t providerMappingRevision,
+        uint64_t contentRevision,
+        uint64_t runtimeStateSignature,
+        bool stableAcrossFrames,
+        TileRasterOverlayUpdateAction& action,
+        bool& rendererMaterialized);
+    void recordFrameUpdate(
+        uint64_t frameNumber,
+        uint64_t mappingIdentity,
+        uint64_t configuration,
+        uint64_t providerMappingRevision,
+        uint64_t contentRevision,
+        uint64_t runtimeStateSignature,
+        bool stableAcrossFrames,
+        TileRasterOverlayUpdateAction action,
+        bool rendererMaterialized);
+    void attachReadyMappingsInMainThread(
+        IPrepareRendererResources* pPrepRenderer);
+    void invalidateFrameUpdateCache();
+    uint64_t runtimeStateSignature() const;
+
+    uint64_t authoritativeUpdateCount() const {
+        return authoritativeUpdateCount_;
+    }
+    void countAuthoritativeUpdate() {
+        ++authoritativeUpdateCount_;
+    }
+
 private:
     std::vector<std::unique_ptr<RasterMappedToTilesetTile>> mappings_;
     std::vector<RasterOverlayProjection> missingProjections_;
     bool hasMappingIdentity_ = false;
     uint64_t mappingIdentity_ = 0;
+    bool frameUpdateCacheValid_ = false;
+    bool frameUpdateRendererMaterialized_ = false;
+    uint64_t frameUpdateNumber_ = 0;
+    uint64_t frameUpdateMappingIdentity_ = 0;
+    uint64_t frameUpdateConfiguration_ = 0;
+    uint64_t frameUpdateProviderMappingRevision_ = 0;
+    uint64_t frameUpdateContentRevision_ = 0;
+    uint64_t frameUpdateRuntimeStateSignature_ = 0;
+    bool frameUpdateStableAcrossFrames_ = false;
+    TileRasterOverlayUpdateAction frameUpdateAction_;
+    uint64_t authoritativeUpdateCount_ = 0;
 };
 
 } // namespace earth_engine

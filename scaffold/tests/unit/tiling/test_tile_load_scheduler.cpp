@@ -10,7 +10,9 @@
 #include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
 #include "earth_engine/tiling/TilesetTile.h"
 
+#include <algorithm>
 #include <array>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -110,11 +112,21 @@ public:
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
     }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback,
+        HttpRequestPriority,
+        TileContentRequestOptions options) override {
+        lastRequestOptions = std::move(options);
+        ++requestCount;
+    }
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
         return TileContentLoadResult::failed();
     }
 
     int requestCount = 0;
+    std::optional<TileContentRequestOptions> lastRequestOptions;
 };
 
 class ExplicitContentTerrainProvider final : public TerrainProvider,
@@ -213,6 +225,355 @@ public:
 };
 
 } // namespace
+
+TEST(TileLoadQueueTest, KeepsIndexedDeduplicationValidAcrossMutations) {
+    const TileKey first{"test", 1, 0, 0};
+    const TileKey second{"test", 1, 1, 0};
+    const TileKey third{"test", 1, 2, 0};
+    TileLoadQueue queue;
+    queue.queue(
+        first,
+        TileLoadPriorityGroup::Preload,
+        10.0);
+    queue.queue(
+        second,
+        TileLoadPriorityGroup::Normal,
+        20.0);
+    queue.queue(
+        third,
+        TileLoadPriorityGroup::Normal,
+        30.0);
+
+    queue.erase(second);
+    queue.queue(
+        third,
+        TileLoadPriorityGroup::Urgent,
+        5.0);
+    queue.queue(
+        second,
+        TileLoadPriorityGroup::Preload,
+        40.0);
+
+    ASSERT_EQ(queue.size(), 3u);
+    EXPECT_EQ(queue.requests()[0].key, first);
+    EXPECT_EQ(queue.requests()[1].key, third);
+    EXPECT_EQ(
+        queue.requests()[1].group,
+        TileLoadPriorityGroup::Urgent);
+    EXPECT_EQ(queue.requests()[2].key, second);
+
+    queue.eraseIf([&](const TileLoadRequest& request) {
+        return request.key == first;
+    });
+    queue.queue(
+        second,
+        TileLoadPriorityGroup::Normal,
+        1.0);
+    ASSERT_EQ(queue.size(), 2u);
+    EXPECT_EQ(queue.requests()[0].key, third);
+    EXPECT_EQ(queue.requests()[1].key, second);
+    EXPECT_EQ(
+        queue.requests()[1].group,
+        TileLoadPriorityGroup::Normal);
+
+    std::vector<TileLoadRequest> taken = queue.takeRequests();
+    EXPECT_TRUE(queue.empty());
+    ASSERT_EQ(taken.size(), 2u);
+
+    queue.mergeRequests(std::move(taken));
+    queue.mergeRequests(
+        {TileLoadRequest{
+            third,
+            TileLoadPriorityGroup::Preload,
+            0.0}});
+    ASSERT_EQ(queue.size(), 2u);
+    EXPECT_EQ(
+        queue.front().group,
+        TileLoadPriorityGroup::Urgent);
+
+    queue.resize(1);
+    queue.queue(
+        second,
+        TileLoadPriorityGroup::Urgent,
+        0.5);
+    ASSERT_EQ(queue.size(), 2u);
+    EXPECT_EQ(queue.requests()[1].key, second);
+}
+
+TEST(TileLoadSchedulerTest,
+     ConsumableQueueDropsIssuedAndTerminalRequests) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey doneKey{"test", 1, 0, 0};
+    const TileKey loadKey{"test", 1, 1, 0};
+    TilesetTile doneTile(doneKey, Rectangle{});
+    doneTile.content.loadState = TileLoadState::Done;
+    CountingContentProvider provider;
+    TileLoadQueue queue;
+    queue.queue(doneKey, TileLoadPriorityGroup::Normal, 2.0);
+    queue.queue(loadKey, TileLoadPriorityGroup::Urgent, 1.0);
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            queue,
+            TileLoadSchedulerInput{lifecycle, budget, &provider},
+            cacheKeyForTile,
+            [&](const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                TileLoadRequestSnapshot snapshot;
+                if (key == doneKey) {
+                    tileState = &doneTile;
+                    snapshot.hasTile = true;
+                    snapshot.loadState = TileLoadState::Done;
+                } else {
+                    tileState = nullptr;
+                    snapshot.contentProviderSupportsTile = true;
+                }
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [](const TileKey&) {});
+
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(outcome.skippedClassified, 1u);
+    EXPECT_TRUE(queue.empty());
+    EXPECT_EQ(provider.requestCount, 1);
+}
+
+TEST(TileLoadSchedulerTest,
+     TerrainContentRequestCarriesStableRequiredProjectionSnapshot) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"Geographic-TMS", 2, 1, 1};
+    TilesetTile tile(key, Rectangle{});
+    TerrainQuadtreeContentProvider provider;
+    const std::vector<RasterOverlayProjection> requiredProjections{
+        RasterOverlayProjection::WebMercator,
+        RasterOverlayProjection::Geographic};
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                &requiredProjections},
+            cacheKeyForTile,
+            [&tile](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                tileState = &tile;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.contentProviderSupportsTile = true;
+                snapshot.contentProviderOwnsTerrainQuadtree = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [](const TileKey&) {});
+
+    EXPECT_EQ(1u, outcome.issued);
+    ASSERT_TRUE(provider.lastRequestOptions.has_value());
+    EXPECT_FALSE(
+        provider.lastRequestOptions
+            ->generateTerrainRasterOverlayDetails);
+    EXPECT_EQ(
+        requiredProjections,
+        provider.lastRequestOptions
+            ->requiredRasterOverlayProjections);
+}
+
+TEST(TileLoadSchedulerTest,
+     ConsumableQueueRetainsRetryableWorkAndMergesNewSourceRequests) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey retryKey{"test", 2, 0, 0};
+    const TileKey childKey{"test", 2, 1, 0};
+    const TileKey parentKey{"test", 1, 0, 0};
+    TilesetTile retryTile(retryKey, Rectangle{});
+    retryTile.content.loadState = TileLoadState::FailedTemporarily;
+    retryTile.temporaryFailureRetryNotBeforeMs =
+        std::numeric_limits<double>::max();
+    TilesetTile child(childKey, Rectangle{});
+    child.content.markTerrainAvailabilityUpsample();
+    TileLoadQueue queue;
+    queue.queue(retryKey, TileLoadPriorityGroup::Normal, 2.0);
+    queue.queue(childKey, TileLoadPriorityGroup::Urgent, 1.0);
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            queue,
+            TileLoadSchedulerInput{lifecycle, budget, nullptr},
+            cacheKeyForTile,
+            [&](const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                if (key == retryKey) {
+                    tileState = &retryTile;
+                    snapshot.loadState = TileLoadState::FailedTemporarily;
+                } else {
+                    tileState = &child;
+                    snapshot.upsampleKind =
+                        TileContentUpsampleKind::TerrainAvailability;
+                }
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&](TilesetTile&, double priority) {
+                queue.queue(
+                    parentKey,
+                    TileLoadPriorityGroup::Urgent,
+                    priority);
+                return false;
+            },
+            [](const TileKey&) {});
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_EQ(outcome.skippedClassified, 1u);
+    EXPECT_EQ(outcome.skippedUpsampleSourceNotReady, 1u);
+    EXPECT_EQ(queue.size(), 3u);
+    const auto contains = [&](const TileKey& key) {
+        return std::any_of(
+            queue.begin(),
+            queue.end(),
+            [&](const TileLoadRequest& request) {
+                return request.key == key;
+            });
+    };
+    EXPECT_TRUE(contains(retryKey));
+    EXPECT_TRUE(contains(childKey));
+    EXPECT_TRUE(contains(parentKey));
+}
+
+TEST(TileLoadSchedulerTest,
+     ConsumableQueueRetainsBlockedRequestAndLowerPriorities) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        ASSERT_TRUE(lifecycle.requestState().beginContentRequest(
+            "busy",
+            token));
+    }
+
+    const TileKey urgentKey{"test", 1, 0, 0};
+    const TileKey normalKey{"test", 1, 1, 0};
+    CountingContentProvider provider;
+    TileLoadQueue queue;
+    queue.queue(normalKey, TileLoadPriorityGroup::Normal, 1.0);
+    queue.queue(urgentKey, TileLoadPriorityGroup::Urgent, 2.0);
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            queue,
+            TileLoadSchedulerInput{lifecycle, budget, &provider},
+            cacheKeyForTile,
+            [](const TileKey&,
+               const std::string&,
+               TilesetTile*& tileState) {
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.contentProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [](const TileKey&) {});
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_TRUE(outcome.blockedByInflight);
+    ASSERT_EQ(queue.size(), 2u);
+    EXPECT_EQ(queue.front().key, urgentKey);
+    EXPECT_EQ(provider.requestCount, 0);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeContentRequest("busy");
+    }
+}
+
+TEST(TileLoadSchedulerTest,
+     ConsumedBatchEntryRemovesDependencyDuplicateQueuedDuringThePass) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey childKey{"test", 2, 0, 0};
+    const TileKey parentKey{"test", 1, 0, 0};
+    TilesetTile child(childKey, Rectangle{});
+    child.content.markTerrainAvailabilityUpsample();
+    TilesetTile parent(parentKey, Rectangle{});
+    parent.content.loadState = TileLoadState::Done;
+    TileLoadQueue queue;
+    queue.queue(childKey, TileLoadPriorityGroup::Urgent, 1.0);
+    queue.queue(parentKey, TileLoadPriorityGroup::Normal, 2.0);
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            queue,
+            TileLoadSchedulerInput{lifecycle, budget, nullptr},
+            cacheKeyForTile,
+            [&](const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                if (key == childKey) {
+                    tileState = &child;
+                    snapshot.upsampleKind =
+                        TileContentUpsampleKind::TerrainAvailability;
+                } else {
+                    tileState = &parent;
+                    snapshot.loadState = TileLoadState::Done;
+                }
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&](TilesetTile&, double priority) {
+                queue.queue(
+                    parentKey,
+                    TileLoadPriorityGroup::Urgent,
+                    priority);
+                return false;
+            },
+            [](const TileKey&) {});
+
+    EXPECT_EQ(outcome.skippedUpsampleSourceNotReady, 1u);
+    EXPECT_EQ(outcome.skippedClassified, 1u);
+    ASSERT_EQ(queue.size(), 1u);
+    EXPECT_EQ(queue.front().key, childKey);
+}
 
 TEST(TileLoadSchedulerTest, BlocksContentRequestWhenInflightIsFull) {
     TileLoadLifecycle lifecycle;

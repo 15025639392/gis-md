@@ -140,3 +140,29 @@ TEST(
     EXPECT_EQ(tile.rasterOverlayState.mappingCount(), 0u);
     EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
 }
+
+TEST(
+    TileContentUnloadCoordinatorBasicTest,
+    ExternalContentWithReferencedDescendantClearsRasterOverlayStateBeforeKeep) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::External;
+    tile.content.loadState = TileLoadState::Done;
+    tile.attachChild(child);
+    child.addReference();
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+    UnloadFixture fixture;
+    fixture.emptyContentRegistry.insert(fixture.cacheKey);
+
+    const TileCacheUnloadContentResult result = unload(tile, fixture);
+
+    EXPECT_EQ(result, TileCacheUnloadContentResult::Keep);
+    EXPECT_TRUE(fixture.emptyContentRegistry.contains(fixture.cacheKey));
+    EXPECT_EQ(tile.content.contentKind, TileContentKind::External);
+    EXPECT_EQ(tile.content.loadState, TileLoadState::Done);
+    EXPECT_EQ(child.referenceCount(), 1);
+    EXPECT_EQ(tile.rasterOverlayState.mappingCount(), 0u);
+    EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
+}

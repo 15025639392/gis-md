@@ -3,9 +3,12 @@
 #include "RasterMappedToTilesetTile.h"
 #include "SurfaceRasterBinding.h"
 #include "TileCacheKey.h"
+#include "TileRasterOverlayReadinessPolicy.h"
 #include "TilesetTile.h"
 #include "../layers/ActivatedRasterOverlay.h"
+#include "../layers/RasterOverlay.h"
 #include "../renderer/Renderer.h"
+#include "../debug/PerfTimer.h"
 
 #include <string>
 #include <utility>
@@ -74,7 +77,7 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                 primitive.vertexCount,
                 primitive.instanceCount);
         } else if (primitive.useTerrainVertexFormat) {
-            // Terrain quantized-mesh primitive: 32-byte TerrainGpuVertex VBO
+            // Terrain quantized-mesh primitive: 40-byte TerrainGpuVertex VBO
             // drawn with the dedicated lightweight terrain shader. The
             // per-command population below (water mask, material subset)
             // stays identical — the terrain shader consumes the subset of
@@ -281,7 +284,8 @@ void applyPerFrameCommandState(
     RenderCommand& cmd,
     TilesetTile& tile,
     const std::vector<ActivatedRasterOverlay*>& overlays,
-    const GltfDrawCommandBuildContext& context) {
+    const GltfDrawCommandBuildContext& context,
+    GltfDrawCommandBuildTimings* timings) {
     cmd.frameId = context.frameNumber;
     cmd.generation = context.generation;
     GltfUniformBlock& u = cmd.gltfUniforms;
@@ -294,7 +298,11 @@ void applyPerFrameCommandState(
         u.clipEnabled = 1.0f;
     }
 
+    const double rasterBindingStartMs =
+        timings ? perf::nowMs() : 0.0;
     int rasterOverlayTextureCount = 0;
+    cmd.surfaceBaseRasterState = 0;
+    cmd.surfaceBaseIsMappedRasterTile = 0;
     for (size_t i = 0;
          i < overlays.size() && i < tile.rasterOverlayState.mappingCount();
          ++i) {
@@ -341,6 +349,12 @@ void applyPerFrameCommandState(
             activeOverlay ? activeOverlay->opacity() : 1.0f;
         cmd.gltfRasterOverlayTexCoordSets[rasterOverlayTextureCount] =
             static_cast<float>(textureCoordinateID);
+        if (activeOverlay &&
+            activeOverlay->getOverlay().role() ==
+                RasterOverlayRole::BaseImagery) {
+            cmd.surfaceBaseRasterState = 1;
+            cmd.surfaceBaseIsMappedRasterTile = 1;
+        }
         ++rasterOverlayTextureCount;
     }
     cmd.gltfRasterOverlayTextureCount = rasterOverlayTextureCount;
@@ -350,6 +364,10 @@ void applyPerFrameCommandState(
         u.mappedRasterTileUv[i] = cmd.gltfRasterOverlayTileUvs[i];
         u.mappedRasterOpacity[i] = cmd.gltfRasterOverlayOpacities[i];
         u.mappedRasterTexCoordSet[i] = cmd.gltfRasterOverlayTexCoordSets[i];
+    }
+    if (timings) {
+        timings->rasterBindingMs +=
+            perf::nowMs() - rasterBindingStartMs;
     }
     // alphaMode/transmission 是内容量(缓存里),透明度是每帧量:blend 状态
     // 必须每帧重新派生,否则 fade 结束后命令会卡在半透明状态。
@@ -373,18 +391,62 @@ void GltfDrawCommandBuilder::build(
     TilesetTile& tile,
     const std::vector<ActivatedRasterOverlay*>& overlays,
     RenderCommandList& commands,
-    const GltfDrawCommandBuildContext& context) {
+    const GltfDrawCommandBuildContext& context,
+    GltfDrawCommandBuildTimings* timings) {
+    const double eligibilityStartMs =
+        timings ? perf::nowMs() : 0.0;
     TileRenderContentState& renderContent = tile.content.renderContent;
     if (!renderContent.hasDrawableResources()) {
+        if (timings) {
+            timings->eligibilityMs +=
+                perf::nowMs() - eligibilityStartMs;
+        }
         return;
     }
+    if (!TileRasterOverlayReadinessPolicy::
+            terrainSurfaceImageryDrawableReady(tile, overlays)) {
+        if (timings) {
+            timings->eligibilityMs +=
+                perf::nowMs() - eligibilityStartMs;
+        }
+        return;
+    }
+    if (timings) {
+        timings->eligibilityMs +=
+            perf::nowMs() - eligibilityStartMs;
+    }
     if (!renderContent.hasCachedDrawCommands()) {
+        const double cacheRebuildStartMs =
+            timings ? perf::nowMs() : 0.0;
         rebuildCachedDrawCommands(renderer, tile);
+        if (timings) {
+            timings->cacheRebuildMs +=
+                perf::nowMs() - cacheRebuildStartMs;
+            ++timings->cacheRebuildCount;
+        }
     }
     for (const RenderCommand& cachedCommand :
          renderContent.cachedDrawCommands()) {
+        const double commandCopyStartMs =
+            timings ? perf::nowMs() : 0.0;
         commands.push_back(cachedCommand);
-        applyPerFrameCommandState(commands.back(), tile, overlays, context);
+        if (timings) {
+            timings->commandCopyMs +=
+                perf::nowMs() - commandCopyStartMs;
+        }
+        const double perFrameStateStartMs =
+            timings ? perf::nowMs() : 0.0;
+        applyPerFrameCommandState(
+            commands.back(),
+            tile,
+            overlays,
+            context,
+            timings);
+        if (timings) {
+            timings->perFrameStateMs +=
+                perf::nowMs() - perFrameStateStartMs;
+            ++timings->commandCount;
+        }
     }
 }
 

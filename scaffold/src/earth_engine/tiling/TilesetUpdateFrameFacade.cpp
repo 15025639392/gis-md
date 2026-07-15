@@ -20,7 +20,7 @@ void TilesetUpdateFrameFacade::update(
     const TilesetUpdateFrameRuntimeResult updateResult =
         TilesetUpdateFrameRuntime::run(tileset, frameState, pPrepRenderer);
 
-    const std::array<char, 640> updateDetail =
+    const std::array<char, 1536> updateDetail =
         TileFrameDebugLogFormatter::updateDetail(
             updateResult.debugLog);
     perf::logTimingAtLeast(frameState.frameId,

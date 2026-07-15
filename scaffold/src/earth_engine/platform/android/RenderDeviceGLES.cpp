@@ -101,8 +101,14 @@ std::vector<unsigned int> GLVaoInvalidationRegistry::takePendingDeletedBuffers()
 // GLTexture
 // ============================================================
 
-GLTexture::GLTexture(unsigned int id, int width, int height)
-    : id_(id), width_(width), height_(height) {}
+GLTexture::GLTexture(unsigned int id,
+                     int width,
+                     int height,
+                     size_t sizeBytes)
+    : id_(id),
+      width_(width),
+      height_(height),
+      sizeBytes_(sizeBytes) {}
 
 GLTexture::~GLTexture() {
     if (id_) {
@@ -276,12 +282,36 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT);
 
-    if (desc.mipmap && desc.data) {
+    const bool allocatedMipChain = desc.mipmap && desc.data;
+    if (allocatedMipChain) {
         glGenerateMipmap(GL_TEXTURE_2D);
     }
 
     glBindTexture(GL_TEXTURE_2D, 0);
-    return std::make_unique<GLTexture>(id, desc.width, desc.height);
+    const size_t bytesPerPixel =
+        desc.format == TextureDesc::Format::R8
+            ? 1u
+            : (desc.format == TextureDesc::Format::RGB8 ? 3u : 4u);
+    size_t allocatedBytes = 0;
+    int levelWidth = std::max(1, desc.width);
+    int levelHeight = std::max(1, desc.height);
+    do {
+        allocatedBytes +=
+            static_cast<size_t>(levelWidth) *
+            static_cast<size_t>(levelHeight) *
+            bytesPerPixel;
+        if (!allocatedMipChain ||
+            (levelWidth == 1 && levelHeight == 1)) {
+            break;
+        }
+        levelWidth = std::max(1, levelWidth / 2);
+        levelHeight = std::max(1, levelHeight / 2);
+    } while (true);
+    return std::make_unique<GLTexture>(
+        id,
+        desc.width,
+        desc.height,
+        allocatedBytes);
 }
 
 bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
@@ -493,7 +523,14 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
-    auto color = std::make_unique<GLTexture>(colorTex, desc.width, desc.height);
+    const size_t attachmentBytes =
+        static_cast<size_t>(desc.width) *
+        static_cast<size_t>(desc.height) * 4u;
+    auto color = std::make_unique<GLTexture>(
+        colorTex,
+        desc.width,
+        desc.height,
+        attachmentBytes);
 
     // depth:renderbuffer(默认,不可采样)或纹理(depthSampleable)。两者
     // 都用 32F 匹配主 pass reverse-Z 精度。深度纹理必须 NEAREST 过滤
@@ -511,7 +548,11 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_2D, 0);
-        depthTex = std::make_unique<GLTexture>(tex, desc.width, desc.height);
+        depthTex = std::make_unique<GLTexture>(
+            tex,
+            desc.width,
+            desc.height,
+            attachmentBytes);
     } else if (desc.hasDepth) {
         glGenRenderbuffers(1, &depthRb);
         glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
@@ -690,7 +731,10 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         vaoKey.indexBuffer = ib ? ib->glId() : 0u;
         vaoKey.instanceBuffer =
             useInstanceAttribs ? instanceBuffer->glId() : 0u;
-        if (cmd.vertexStride == 32 || isGltfVertexLayout) {
+        if (cmd.vertexStride == 40) {
+            vaoKey.layout = VertexLayoutKind::Terrain40;
+            vaoKey.vertexStride = 40;
+        } else if (cmd.vertexStride == 32 || isGltfVertexLayout) {
             vaoKey.layout = isGltfVertexLayout
                 ? (useInstanceAttribs ? VertexLayoutKind::Gltf120Instanced
                                       : VertexLayoutKind::Gltf120)
@@ -1085,6 +1129,18 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
                                   reinterpret_cast<void*>(12));
             glEnableVertexAttribArray(2);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(24));
+            break;
+        case VertexLayoutKind::Terrain40:
+            // Terrain: POSITION(12) + NORMAL(12) + packed TEXCOORD_0/1(16).
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(12));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(24));
             break;
         case VertexLayoutKind::Gltf120:

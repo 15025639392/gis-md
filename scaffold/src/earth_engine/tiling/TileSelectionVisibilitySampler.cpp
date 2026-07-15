@@ -8,6 +8,30 @@
 #include <optional>
 
 namespace earth_engine {
+namespace {
+
+TileSelectionVisibilitySample sampleSingleBounds(
+    const TilesetTile& tile,
+    const std::vector<SelectorView>& views,
+    const TileSelectionVisibilityContext& context) {
+    TileSelectionVisibilitySample sample;
+    sample.cameraInside =
+        TileSelectionVisibilitySampler::cameraInsideSelectionBounds(
+            tile,
+            context);
+    for (const auto& view : views) {
+        if (TileBoundsMetrics::tileIntersectsFrustum(tile, view.frustum)) {
+            sample.inFrustum = true;
+            break;
+        }
+    }
+    sample.visibleFromCamera =
+        sample.inFrustum ||
+        (context.renderTilesUnderCamera && sample.cameraInside);
+    return sample;
+}
+
+} // namespace
 
 bool TileSelectionVisibilitySampler::cameraInsideSelectionBounds(
     const TilesetTile& tile,
@@ -26,31 +50,14 @@ bool TileSelectionVisibilitySampler::boundsVisible(
     const TilesetTile& tile,
     const std::vector<SelectorView>& views,
     const TileSelectionVisibilityContext& context) {
-    if (context.renderTilesUnderCamera &&
-        cameraInsideSelectionBounds(tile, context)) {
-        return true;
-    }
-
-    for (const auto& view : views) {
-        if (TileBoundsMetrics::tileIntersectsFrustum(tile, view.frustum)) {
-            return true;
-        }
-    }
-    return false;
+    return sampleSingleBounds(tile, views, context).visibleFromCamera;
 }
 
 TileSelectionVisibilitySample TileSelectionVisibilitySampler::sampleTileBounds(
     const TilesetTile& tile,
     const std::vector<SelectorView>& views,
     const TileSelectionVisibilityContext& context) {
-    TileSelectionVisibilitySample sample;
-    sample.visibleFromCamera = boundsVisible(tile, views, context);
-    for (const auto& view : views) {
-        sample.inFrustum =
-            sample.inFrustum ||
-            TileBoundsMetrics::tileIntersectsFrustum(tile, view.frustum);
-    }
-    return sample;
+    return sampleSingleBounds(tile, views, context);
 }
 
 TileSelectionVisibilitySample TileSelectionVisibilitySampler::sampleChildBounds(
@@ -59,15 +66,18 @@ TileSelectionVisibilitySample TileSelectionVisibilitySampler::sampleChildBounds(
     const TileSelectionVisibilityContext& context) {
     TileSelectionVisibilitySample sample;
     for (const TilesetTile* child : children) {
-        if (!child || !boundsVisible(*child, views, context)) {
+        if (!child) {
             continue;
         }
-
-        sample.visibleFromCamera = true;
-        for (const auto& view : views) {
-            sample.inFrustum =
-                sample.inFrustum ||
-                TileBoundsMetrics::tileIntersectsFrustum(*child, view.frustum);
+        const TileSelectionVisibilitySample childSample =
+            sampleSingleBounds(*child, views, context);
+        sample.visibleFromCamera =
+            sample.visibleFromCamera || childSample.visibleFromCamera;
+        sample.inFrustum = sample.inFrustum || childSample.inFrustum;
+        sample.cameraInside =
+            sample.cameraInside || childSample.cameraInside;
+        if (sample.visibleFromCamera && sample.inFrustum) {
+            break;
         }
     }
     return sample;
@@ -92,10 +102,16 @@ TileSelectionVisibilitySampler::sampleForTileSelection(
             !tile.children.empty(),
             hasUnconditionallyRefinedChild);
 
-    TileSelectionVisibilitySample s = cullWithChildrenBounds
-        ? sampleChildBounds(tile.children, views, context)
-        : sampleTileBounds(tile, views, context);
-    return s;
+    if (!cullWithChildrenBounds) {
+        return sampleTileBounds(tile, views, context);
+    }
+
+    TileSelectionVisibilitySample sample =
+        sampleChildBounds(tile.children, views, context);
+    // Child bounds may be tighter for culling, but frame summaries need the
+    // camera-inside state of the tile itself.
+    sample.cameraInside = cameraInsideSelectionBounds(tile, context);
+    return sample;
 }
 
 } // namespace earth_engine

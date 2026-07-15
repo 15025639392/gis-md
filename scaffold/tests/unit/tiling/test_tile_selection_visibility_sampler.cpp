@@ -30,6 +30,7 @@ TEST(
 
     EXPECT_TRUE(sample.visibleFromCamera);
     EXPECT_FALSE(sample.inFrustum);
+    EXPECT_TRUE(sample.cameraInside);
 }
 
 TEST(
@@ -47,6 +48,7 @@ TEST(
 
     EXPECT_FALSE(sample.visibleFromCamera);
     EXPECT_FALSE(sample.inFrustum);
+    EXPECT_TRUE(sample.cameraInside);
 }
 
 TEST(
@@ -74,6 +76,7 @@ TEST(
 
     EXPECT_TRUE(sample.visibleFromCamera);
     EXPECT_FALSE(sample.inFrustum);
+    EXPECT_TRUE(sample.cameraInside);
 }
 
 TEST(
@@ -96,6 +99,7 @@ TEST(
             cameraContext);
 
     EXPECT_TRUE(sample.visibleFromCamera);
+    EXPECT_FALSE(sample.cameraInside);
 }
 
 TEST(TileSelectionVisibilitySamplerTest, AddParentSamplesOwnBounds) {
@@ -116,6 +120,7 @@ TEST(TileSelectionVisibilitySamplerTest, AddParentSamplesOwnBounds) {
             cameraContext);
 
     EXPECT_TRUE(sample.visibleFromCamera);
+    EXPECT_TRUE(sample.cameraInside);
 }
 
 TEST(
@@ -139,6 +144,7 @@ TEST(
             cameraContext);
 
     EXPECT_TRUE(sample.visibleFromCamera);
+    EXPECT_TRUE(sample.cameraInside);
 }
 
 TEST(
@@ -161,6 +167,7 @@ TEST(
 
     EXPECT_TRUE(sample.visibleFromCamera);
     EXPECT_FALSE(sample.inFrustum);
+    EXPECT_TRUE(sample.cameraInside);
     EXPECT_TRUE(TileSelectionVisibilitySampler::cameraInsideSelectionBounds(
         tile,
         cameraContext));

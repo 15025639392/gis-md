@@ -17,20 +17,27 @@ class IPrepareRendererResources;
 class TileSubtreeRemovalCoordinator {
 public:
     template <typename CacheKeyForTileFn, typename EraseTileIndexStateFn>
-    static void clearChildrenRecursively(
+    static bool clearChildrenRecursively(
         TilesetTile* tile,
         std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
         IPrepareRendererResources* pPrepRenderer,
         CacheKeyForTileFn&& cacheKeyForTile,
         EraseTileIndexStateFn&& eraseTileIndexState) {
         if (!tile) {
-            return;
+            return false;
         }
 
         const std::vector<TileSubtreeRemovalEntry> descendants =
             TileSubtreeTraversal::collectDescendantsForRemoval(
                 *tile,
                 cacheKeyForTile);
+
+        for (const TileSubtreeRemovalEntry& descendant : descendants) {
+            if (descendant.tile &&
+                descendant.tile->referenceCount() > 0) {
+                return false;
+            }
+        }
 
         for (const TileSubtreeRemovalEntry& descendant : descendants) {
             if (!descendant.tile) {
@@ -50,7 +57,8 @@ public:
             eraseTileIndexState(it->cacheKey);
             tiles.erase(it->cacheKey);
         }
-        tile->children.clear();
+        tile->clearChildren();
+        return true;
     }
 
     static void detachInactiveRasterOverlays(

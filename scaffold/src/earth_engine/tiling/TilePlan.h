@@ -7,6 +7,8 @@
 
 namespace earth_engine {
 
+struct TilesetTile;
+
 /// TilePlan is the frame-derived selection result for one tile scheme. The
 /// selector owns visible/fading tile decisions and resolves the render entries
 /// that the renderer consumes without reselecting LOD.
@@ -56,6 +58,8 @@ struct TileRenderEntry {
     bool allowSynchronousMeshPrep = true;
     bool surfaceClipEnabled = false;
     std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
+    TilesetTile* selectedTile = nullptr;
+    TilesetTile* renderTile = nullptr;
 
     bool isAncestorFallback() const {
         return reason == TileRenderEntryReason::AncestorFallback &&
@@ -124,6 +128,12 @@ struct TileSelectionRecord {
 };
 
 struct TilePlan {
+    TilePlan() = default;
+    TilePlan(const TilePlan&) = delete;
+    TilePlan& operator=(const TilePlan&) = delete;
+    TilePlan(TilePlan&&) = default;
+    TilePlan& operator=(TilePlan&&) = default;
+
     uint64_t frameId = 0;
     int zoom = 0;
     int minVisibleZoom = 0;
@@ -134,6 +144,12 @@ struct TilePlan {
     double maxLodSizePixels = 0.0;
     std::vector<TileKey> visibleTiles;
     std::vector<TileTransition> tilesFadingOut;
+    // Cesium Native ViewUpdateResult carries intrusive Tile pointers. The
+    // selector appends these live handles with visibleTiles; traversal
+    // references protect them through finalization, and render-frame
+    // references protect them through command submission.
+    std::vector<TilesetTile*> tilesToRenderThisFrame;
+    std::vector<TilesetTile*> tilesFadingOutThisFrame;
     std::vector<TileTransition> tileTransitions;
     std::vector<TileRenderEntry> renderEntries;
     std::vector<std::string> frameCredits;

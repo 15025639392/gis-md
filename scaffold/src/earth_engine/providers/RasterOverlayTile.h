@@ -4,6 +4,8 @@
 #include "../core/math/Rectangle.h"
 
 #include <cstdint>
+#include <atomic>
+#include <list>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,6 +14,10 @@ namespace earth_engine {
 
 class RasterOverlayTileProvider;
 class Texture;
+
+struct RasterTextureByteLedger {
+    std::atomic<int64_t> bytes{0};
+};
 
 /// cesium-native RasterOverlayTile equivalent.
 /// Represents a single imagery tile in a quadtree with its own
@@ -184,12 +190,18 @@ public:
     }
 
 private:
+    friend class RasterOverlayTileProvider;
+
+    void updateTextureByteAccounting(int64_t nextBytes);
+
     RasterOverlayTileProvider& provider_;
     TileKey key_;
     std::string cacheKey_;
     Rectangle bounds_;
     LoadState state_ = LoadState::Unloaded;
     std::unique_ptr<Texture> texture_;
+    std::shared_ptr<RasterTextureByteLedger> textureByteLedger_;
+    int64_t accountedTextureBytes_ = 0;
     void* rendererResources_ = nullptr;
     int maxZoom_ = 22;
     MoreDetailAvailable moreDetailAvailable_ = MoreDetailAvailable::Unknown;
@@ -207,6 +219,8 @@ private:
     double targetScreenPixelsY_ = 256.0;
     float atlasOffsetU_ = 0.0f, atlasOffsetV_ = 0.0f;
     float atlasScaleU_ = 1.0f, atlasScaleV_ = 1.0f;
+    bool cacheLruLinked_ = false;
+    std::list<RasterOverlayTile*>::iterator cacheLruPosition_;
 
 public:
     /// cesium-native: last frame this tile was referenced.

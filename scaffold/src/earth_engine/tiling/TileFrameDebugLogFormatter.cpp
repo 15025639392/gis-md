@@ -4,22 +4,60 @@
 
 namespace earth_engine {
 
-std::array<char, 640> TileFrameDebugLogFormatter::updateDetail(
+std::array<char, 1536> TileFrameDebugLogFormatter::updateDetail(
     const TileUpdateDebugLogInput& input) {
-    std::array<char, 640> detail{};
+    std::array<char, 1536> detail{};
     std::snprintf(
         detail.data(),
         detail.size(),
-        "render=%zu load=%zu selector=%.2f prefetch=%.2f request=%.2f terrainUpload=%.2f rasterUpload=%.2f cache=%zu pending=%zu visited=%d culled=%d culledVisited=%d fog=%d occluded=%d occWait=%d kicked=%d notReady=%d reused=%d reuseMode=%d reuseReject=%d rasterUploads=%d interaction=%d smoothing=%d",
+        "render=%zu load=%zu selector=%.2f selTrav=%.2f selVis=%.2f selMetric=%.2f selPolicy=%.2f selRefine=%.2f selOv=%.2f selDec=%.2f selMat=%.2f selMatCalls=%d selMatChanged=%d selMatRetry=%d selMatFast=%d selCommit=%.2f selPlan=%.2f selReq=%.2f prefetch=%.2f prefetchBase=%.2f prefetchFill=%.2f prefRender=%.2f prefRenderUpdate=%.2f prefRenderAction=%.2f prefetchVisible=%.2f prefetchLoad=%.2f prefetchAdvance=%.2f prefetchMap=%.2f request=%.2f terrainUpload=%.2f rasterUpload=%.2f rasterPick=%.2f rasterFallback=%.2f rasterSnapshot=%.2f rasterIssue=%.2f rasterQueue=%.2f rasterTex=%.2f rasterFinalize=%.2f rasterBook=%.2f cache=%zu pending=%zu rsrc=%d activeSets=%d fallbacks=%d srcInflight=%d srcWaiters=%d pendUp=%d visited=%d culled=%d culledVisited=%d fog=%d occluded=%d occWait=%d kicked=%d notReady=%d reused=%d reuseMode=%d reuseReject=%d prefVis=%d prefLoad=%d prefAdv=%d prefMap=%d prefRenderTiles=%d prefRenderAuth=%d prefRenderReuse=%d rasterUploads=%d rasterMapped=%d rasterMax=%.2f rasterMaxSize=%dx%d interaction=%d smoothing=%d",
         input.renderTileCount,
         input.loadRequestCount,
         input.selectorMs,
+        input.selectorTraversalMs,
+        input.selectorVisitVisibilityMs,
+        input.selectorVisitInputMetricsMs,
+        input.selectorVisitPolicyMs,
+        input.selectorRefineMs,
+        input.selectorRefineOverlayMs,
+        input.selectorRefineDecisionMs,
+        input.selectorRefineMaterializeMs,
+        input.selectorRefineMaterializeCalls,
+        input.selectorRefineMaterializeChanged,
+        input.selectorRefineMaterializeRetry,
+        input.selectorRefineMaterializeFastPath,
+        input.selectorRefineCommitMs,
+        input.selectorRenderPlanMs,
+        input.selectorRequestPlanningMs,
         input.prefetchMs,
+        input.prefetchBaseMs,
+        input.prefetchFillMs,
+        input.prefetchRenderPlanMs,
+        input.prefetchRenderPlanUpdateMs,
+        input.prefetchRenderPlanActionMs,
+        input.prefetchVisibleMs,
+        input.prefetchLoadQueueMs,
+        input.prefetchAdvanceMs,
+        input.prefetchMapMs,
         input.requestMs,
         input.terrainUploadMs,
         input.rasterUploadMs,
+        input.rasterSelectTaskMs,
+        input.rasterSourceFallbackMs,
+        input.rasterSourceSnapshotMs,
+        input.rasterSourceIssueMs,
+        input.rasterUploadQueueSelectMs,
+        input.rasterUploadTextureMs,
+        input.rasterTileFinalizeMs,
+        input.rasterBookkeepingMs,
         input.terrainCacheSize,
         input.pendingRequestCount,
+        input.rasterSourceRequestsInFlight,
+        input.rasterActiveMappedSourceSets,
+        input.rasterPendingSourceFallbacks,
+        input.rasterInFlightSourceTiles,
+        input.rasterInFlightSourceWaiters,
+        input.rasterPendingUploads,
         input.selectionCounters.visited,
         input.selectionCounters.culled,
         input.selectionCounters.culledVisited,
@@ -31,15 +69,26 @@ std::array<char, 640> TileFrameDebugLogFormatter::updateDetail(
         input.reusedSelection ? 1 : 0,
         static_cast<int>(input.reuseMode),
         static_cast<int>(input.reuseRejectReason),
+        input.prefetchVisibleTiles,
+        input.prefetchLoadQueueTiles,
+        input.prefetchAdvanceCount,
+        input.prefetchMapCount,
+        input.prefetchRenderPlanTiles,
+        input.prefetchRenderPlanAuthoritativeUpdates,
+        input.prefetchRenderPlanStableReuses,
         input.rasterUploadsProcessed,
+        input.rasterMappedUploadsProcessed,
+        input.rasterUploadMaxMs,
+        input.rasterUploadMaxWidth,
+        input.rasterUploadMaxHeight,
         input.interactionActive ? 1 : 0,
         input.resourceSmoothingActive ? 1 : 0);
     return detail;
 }
 
-std::array<char, 640> TileFrameDebugLogFormatter::renderBuildDetail(
+std::array<char, 1024> TileFrameDebugLogFormatter::renderBuildDetail(
     const TileRenderDebugLogInput& input) {
-    std::array<char, 640> detail{};
+    std::array<char, 1024> detail{};
     std::snprintf(
         detail.data(),
         detail.size(),

@@ -30,6 +30,11 @@ public:
                             ContentCallback callback,
                             HttpRequestPriority priority =
                                 HttpRequestPriority::Normal) override;
+    void requestTileContent(const TileKey& key,
+                            CancellationToken token,
+                            ContentCallback callback,
+                            HttpRequestPriority priority,
+                            TileContentRequestOptions options) override;
     TileContentLoadResult decodeContent(const uint8_t* data,
                                         size_t size) override;
 

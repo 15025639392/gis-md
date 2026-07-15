@@ -12,9 +12,8 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class RenderDevice;
 class Renderer;
-class TileCacheOwnershipManager;
+class TileContentResourceInvalidator;
 class TileMeshPreparationManager;
-class TileRasterUpsampledChildCoordinator;
 struct TileSelectionReuseState;
 struct TilesetTile;
 
@@ -22,16 +21,13 @@ class TileRenderCommandManager {
 public:
     TileRenderCommandManager(
         TileMeshPreparationManager& meshPreparation,
-        TileCacheOwnershipManager& cacheOwnership,
-        TileRasterUpsampledChildCoordinator& rasterUpsampledChildren,
+        TileContentResourceInvalidator& resourceInvalidator,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        RenderDevice* device,
-        FrameResourceBudget& frameResourceBudget);
+        RenderDevice* device);
 
     void beginFrame(uint64_t frameNumber,
                     uint64_t generation,
-                    double currentFrameTimeSeconds,
-                    double maximumScreenSpaceError);
+                    double currentFrameTimeSeconds);
 
     void buildTileDrawCommand(
         Renderer& renderer,
@@ -42,17 +38,19 @@ public:
         const std::optional<std::array<float, 4>>& surfaceClipUv =
             std::nullopt);
 
+    const TileRenderCommandPerformanceTimings& frameTimings() const {
+        return frameTimings_;
+    }
+
 private:
     TileMeshPreparationManager& meshPreparation_;
-    TileCacheOwnershipManager& cacheOwnership_;
-    TileRasterUpsampledChildCoordinator& rasterUpsampledChildren_;
+    TileContentResourceInvalidator& resourceInvalidator_;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
     RenderDevice* device_ = nullptr;
-    FrameResourceBudget& frameResourceBudget_;
     uint64_t frameNumber_ = 0;
     uint64_t generation_ = 0;
     double currentFrameTimeSeconds_ = 0.0;
-    double maximumScreenSpaceError_ = 16.0;
+    TileRenderCommandPerformanceTimings frameTimings_;
 };
 
 } // namespace earth_engine

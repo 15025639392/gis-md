@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstddef>
 
 namespace earth_engine {
 
@@ -136,6 +137,8 @@ public:
     virtual ~Texture() = default;
     virtual int width() const = 0;
     virtual int height() const = 0;
+    /// Bytes allocated for this texture, including allocated mip levels.
+    virtual size_t sizeBytes() const = 0;
 };
 
 class Buffer {

@@ -13,9 +13,12 @@
 #include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/GpuUploadQueue.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileCacheOwnershipManager.h"
 #include "earth_engine/tiling/TileContentCacheManager.h"
+#include "earth_engine/tiling/TileContentResourceInvalidator.h"
+#include "earth_engine/tiling/TileFillProxyPreparer.h"
 #include "earth_engine/tiling/TileLoadQueue.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -98,7 +101,7 @@ struct ExternalSubtreeFixture {
 
     void unloadWithClear(bool& clearChildrenCalled) {
         manager.unloadCachedBytes(
-            0,
+            -1,
             0.0,
             false,
             tiles,
@@ -196,7 +199,7 @@ TEST(
 
     bool clearChildrenCalled = false;
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -207,7 +210,6 @@ TEST(
         });
 
     EXPECT_EQ(manager.totalBytesUsed(), 0);
-    EXPECT_FALSE(manager.cacheBytesDirty());
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_EQ(tiles[cacheKey]->content.loadState, TileLoadState::Unloaded);
@@ -241,6 +243,37 @@ TEST(
     EXPECT_EQ(TileContentKind::Unknown, tileRaw->content.contentKind);
     EXPECT_TRUE(tileRaw->rasterOverlayState.mappings().empty());
     EXPECT_TRUE(tileRaw->rasterOverlayState.missingProjections().empty());
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    DoesNotUnloadZeroByteEligibleTileWithoutCachePressureLikeCesiumNative) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::External;
+    tiles[cacheKey] = std::move(tile);
+
+    manager.updateTotalBytesUsed(tiles, lifecycle);
+    manager.markEligibleForUnloading(tileForKey(tiles, cacheKey), cacheKey);
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        tiles,
+        lifecycle,
+        nullptr,
+        [](TilesetTile&) {});
+
+    EXPECT_EQ(0, manager.totalBytesUsed());
+    EXPECT_TRUE(manager.unloadQueue().contains(cacheKey));
+    EXPECT_EQ(TileLoadState::Done, tiles[cacheKey]->content.loadState);
+    EXPECT_EQ(TileContentKind::External, tiles[cacheKey]->content.contentKind);
 }
 
 TEST(
@@ -327,7 +360,7 @@ TEST(
     bool clearChildrenCalled = false;
 
     fixture.manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         fixture.tiles,
@@ -356,7 +389,7 @@ TEST(
     bool clearChildrenCalled = false;
 
     fixture.manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         fixture.tiles,
@@ -434,7 +467,7 @@ TEST(
     bool clearedA = false;
     bool clearedB = false;
     manager.unloadCachedBytes(
-        0,
+        -1,
         0.0,
         false,
         tiles,
@@ -497,6 +530,7 @@ TEST(
     bool resourceSmoothingActive = false;
     int64_t maximumCachedBytes = 0;
     double unloadTimeLimitMs = 0.0;
+    std::vector<ActivatedRasterOverlay*> rasterOverlays;
 
     const TileKey rootKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
@@ -546,11 +580,12 @@ TEST(
         lifecycle,
         loadQueue,
         tiles,
+        rasterOverlays,
         resourceSmoothingActive,
         maximumCachedBytes,
         unloadTimeLimitMs);
 
-    ownership.unloadCachedBytes(0, nullptr);
+    ownership.unloadCachedBytes(-1, nullptr);
 
     EXPECT_EQ(tiles.end(), tiles.find(childCacheKey));
     EXPECT_EQ(tiles.end(), tiles.find(grandchildCacheKey));
@@ -577,6 +612,7 @@ TEST(
     bool resourceSmoothingActive = false;
     int64_t maximumCachedBytes = 0;
     double unloadTimeLimitMs = 0.0;
+    std::vector<ActivatedRasterOverlay*> rasterOverlays;
     const TileKey rootKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
     const TileKey grandchildKey{"test", 2, 0, 0};
@@ -607,6 +643,7 @@ TEST(
         lifecycle,
         loadQueue,
         tiles,
+        rasterOverlays,
         resourceSmoothingActive,
         maximumCachedBytes,
         unloadTimeLimitMs);
@@ -620,7 +657,7 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
-    SharedAncestorRasterUnloadRefreshesBytesEvenDuringSmoothing) {
+    TerrainLedgerExcludesProviderOwnedSharedRasterTextures) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -715,8 +752,8 @@ TEST(
     tiles.emplace(childCacheKey, std::move(childTile));
 
     manager.updateTotalBytesUsed(tiles, lifecycle);
-    ASSERT_EQ(4 * 4 * 4, manager.totalBytesUsed());
-    manager.cacheBytesDirty() = false;
+    ASSERT_EQ(0, manager.totalBytesUsed());
+    ASSERT_EQ(4 * 4 * 4, provider->tileTextureBytesUsed());
     manager.markEligibleForUnloading(
         tileForKey(tiles, childCacheKey),
         childCacheKey);
@@ -730,8 +767,229 @@ TEST(
         nullptr,
         [](TilesetTile&) {});
 
-    EXPECT_EQ(4 * 4 * 4, manager.totalBytesUsed());
-    EXPECT_FALSE(manager.cacheBytesDirty());
+    EXPECT_EQ(0, manager.totalBytesUsed());
+    EXPECT_EQ(4 * 4 * 4, provider->tileTextureBytesUsed());
     EXPECT_FALSE(manager.unloadQueue().contains(childCacheKey));
     EXPECT_EQ(TileLoadState::Unloaded, tiles[childCacheKey]->content.loadState);
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    ReconcilesOnlyTheChangedTileAndSubtractsExactAccountedBytes) {
+    TileContentCacheManager manager;
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    makeGltfRenderReady(tile);
+    ASSERT_TRUE(manager.reconcileTileBytes(tile));
+    const int64_t loadedBytes = manager.totalBytesUsed();
+    ASSERT_GT(loadedBytes, 0);
+    EXPECT_EQ(
+        loadedBytes,
+        manager.accountedTileBytes(TileCacheKey::forTile(tile.key)));
+
+    tile.content.renderContent.clearRenderContent();
+    EXPECT_TRUE(manager.reconcileTileBytes(tile));
+    EXPECT_EQ(0, manager.totalBytesUsed());
+    EXPECT_EQ(
+        0,
+        manager.accountedTileBytes(TileCacheKey::forTile(tile.key)));
+
+    EXPECT_FALSE(manager.reconcileTileBytes(tile));
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    ResourceRevisionReconcilesSameSizeOwnershipReplacementWithoutScanning) {
+    TileContentCacheManager manager;
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    GltfPrimitiveRenderResources first;
+    first.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(first));
+    ASSERT_TRUE(manager.reconcileTileBytes(tile));
+    ASSERT_EQ(64, manager.totalBytesUsed());
+    EXPECT_FALSE(manager.reconcileTileBytes(tile));
+
+    tile.content.renderContent.clearGltfPrimitiveResources();
+    GltfPrimitiveRenderResources replacement;
+    replacement.vertexBuffer = std::make_unique<DummyBuffer>(64);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        std::move(replacement));
+
+    EXPECT_TRUE(manager.reconcileTileBytes(tile));
+    EXPECT_EQ(64, manager.totalBytesUsed());
+    EXPECT_FALSE(manager.reconcileTileBytes(tile));
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    ScopedGltfEditAdvancesRevisionForRetainedByteChanges) {
+    TileContentCacheManager manager;
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    makeGltfRenderReady(tile);
+    ASSERT_TRUE(manager.reconcileTileBytes(tile));
+    const int64_t bytesBeforeEdit = manager.totalBytesUsed();
+
+    {
+        auto model = tile.content.renderContent.editGltfContent();
+        ASSERT_NE(nullptr, model);
+        ASSERT_FALSE(model->primitives.empty());
+        model->primitives.front().vertices.emplace_back();
+    }
+
+    EXPECT_TRUE(manager.reconcileTileBytes(tile));
+    EXPECT_EQ(
+        bytesBeforeEdit + static_cast<int64_t>(sizeof(SurfaceVertex)),
+        manager.totalBytesUsed());
+    EXPECT_FALSE(manager.reconcileTileBytes(tile));
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    OwnershipTotalIncludesPendingGpuPayloadAndCancellationRemovesIt) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    TileLoadQueue loadQueue;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::vector<ActivatedRasterOverlay*> rasterOverlays;
+    bool resourceSmoothingActive = false;
+    int64_t maximumCachedBytes = 1024;
+    double unloadTimeLimitMs = 0.0;
+    GpuUploadQueue gpuUploadQueue;
+
+    GpuReadyPrimitive primitive;
+    primitive.vertexBytes.resize(32);
+    primitive.indices.resize(4);
+    GpuReadyData data;
+    data.primitives.push_back(std::move(primitive));
+    const int64_t pendingBytes = data.byteSize();
+    gpuUploadQueue.push(PendingGpuUpload{
+        TileKey{"test", 0, 0, 0},
+        "pending",
+        std::move(data)});
+
+    TileCacheOwnershipManager ownership(
+        manager,
+        lifecycle,
+        loadQueue,
+        tiles,
+        rasterOverlays,
+        resourceSmoothingActive,
+        maximumCachedBytes,
+        unloadTimeLimitMs,
+        &gpuUploadQueue);
+
+    EXPECT_EQ(pendingBytes, ownership.totalBytesUsed());
+    ownership.eraseTileIndexState("pending");
+    EXPECT_EQ(0, gpuUploadQueue.pendingBytes());
+    EXPECT_EQ(0, ownership.totalBytesUsed());
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    AsyncPendingTransitionRemovesStaleUnloadQueueEntry) {
+    TileContentCacheManager manager;
+    uint64_t resourceRevision = 1;
+    TileContentResourceInvalidator invalidator(
+        resourceRevision,
+        manager);
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+
+    invalidator.markTileResourcesChanged(tile);
+    const std::string cacheKey = TileCacheKey::forTile(tile.key);
+    ASSERT_TRUE(manager.unloadQueue().contains(cacheKey));
+
+    tile.content.renderContent.asyncGpuUploadPending = true;
+    invalidator.markTileResourcesChanged(tile);
+
+    EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    ReconcileOnlyUpdatesFillLedgerWithoutInvalidatingSelection) {
+    TileContentCacheManager manager;
+    uint64_t resourceRevision = 17;
+    TileContentResourceInvalidator invalidator(
+        resourceRevision,
+        manager);
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-10.0, 20.0, -2.0, 28.0));
+    earth_engine::testing::MockRenderDevice device;
+
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        1));
+    invalidator.reconcileTileResources(tile);
+
+    EXPECT_EQ(17u, resourceRevision);
+    EXPECT_GT(
+        manager.accountedTileBytes(TileCacheKey::forTile(tile.key)),
+        0);
+    const std::string cacheKey = TileCacheKey::forTile(tile.key);
+    EXPECT_TRUE(manager.unloadQueue().contains(cacheKey));
+
+    invalidator.markTileResourcesChanged(tile);
+    EXPECT_EQ(18u, resourceRevision);
+
+    TileContentLifecycleManager lifecycle;
+    EXPECT_EQ(
+        TileCacheUnloadContentResult::Remove,
+        manager.unloadTileContent(tile, lifecycle, nullptr));
+    EXPECT_FALSE(tile.content.renderContent.isFillReady());
+    EXPECT_EQ(0, manager.accountedTileBytes(cacheKey));
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    UnloadedFillIsEvictedThroughLruAndItsLedgerReturnsToZero) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    uint64_t resourceRevision = 31;
+    TileContentResourceInvalidator invalidator(
+        resourceRevision,
+        manager);
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    const TileKey key{"Geographic-TMS", 2, 1, 1};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    auto tile = std::make_unique<TilesetTile>(
+        key,
+        Rectangle::fromDegrees(-10.0, 20.0, -2.0, 28.0));
+    TilesetTile* tilePtr = tile.get();
+    tiles.emplace(cacheKey, std::move(tile));
+    earth_engine::testing::MockRenderDevice device;
+
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        *tilePtr,
+        &device,
+        1));
+    tilePtr->rasterOverlayState.ensureMapping(0);
+    invalidator.reconcileTileResources(*tilePtr);
+    ASSERT_GT(manager.totalBytesUsed(), 0);
+    ASSERT_TRUE(manager.unloadQueue().contains(cacheKey));
+
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        tiles,
+        lifecycle,
+        nullptr,
+        [](TilesetTile&) {});
+
+    EXPECT_EQ(31u, resourceRevision);
+    EXPECT_EQ(0, manager.totalBytesUsed());
+    EXPECT_EQ(0, manager.accountedTileBytes(cacheKey));
+    EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
+    EXPECT_EQ(TileLoadState::Unloaded, tilePtr->content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, tilePtr->content.contentKind);
+    EXPECT_FALSE(tilePtr->content.renderContent.hasFillModel());
+    EXPECT_FALSE(tilePtr->content.renderContent.hasFillResources());
+    EXPECT_FALSE(tilePtr->content.renderContent.isFillReady());
+    EXPECT_EQ(0u, tilePtr->rasterOverlayState.mappingCount());
 }

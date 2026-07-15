@@ -5,6 +5,7 @@
 #include "TileBoundsMetrics.h"
 #include "TileContentTerrainResiduePolicy.h"
 #include "TileContentLifecycleManager.h"
+#include "TileContentResourceInvalidator.h"
 #include "TileLoadStatePredicates.h"
 #include "TileRefinementAvailabilityResolver.h"
 #include "TileSelectionRootPolicy.h"
@@ -21,14 +22,7 @@ namespace earth_engine {
 namespace {
 
 bool linkChildIfMissing(TilesetTile& parent, TilesetTile& child) {
-    child.parent = &parent;
-    auto& children = parent.children;
-    if (std::find(children.begin(), children.end(), &child) !=
-        children.end()) {
-        return false;
-    }
-    children.push_back(&child);
-    return true;
+    return parent.attachChild(child);
 }
 
 bool initializeTerrainChild(
@@ -38,10 +32,10 @@ bool initializeTerrainChild(
     IPrepareRendererResources* pPrepRenderer) {
     bool changed = false;
     if (!child.boundingVolume) {
-        child.boundingVolume = TileBoundingVolume::fromLooseRegion(
+        child.setBoundingVolume(TileBoundingVolume::fromLooseRegion(
             child.bounds,
             TileBoundsMetrics::terrainMinimumHeight(parent),
-            TileBoundsMetrics::terrainMaximumHeight(parent));
+            TileBoundsMetrics::terrainMaximumHeight(parent)));
         changed = true;
     }
 
@@ -65,34 +59,40 @@ bool initializeTerrainChild(
 TileContentAccess TileContentAccess::forContentTerrain(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TilesetContentProvider& contentProvider) {
+    const TilesetContentProvider& contentProvider,
+    TileContentResourceInvalidator* resourceInvalidator) {
     return TileContentAccess(
         tileRegistry,
         tileScheme,
         &contentProvider,
-        true);
+        true,
+        resourceInvalidator);
 }
 
 TileContentAccess TileContentAccess::forNoTerrain(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
-    const TilesetContentProvider* contentProvider) {
+    const TilesetContentProvider* contentProvider,
+    TileContentResourceInvalidator* resourceInvalidator) {
     return TileContentAccess(
         tileRegistry,
         tileScheme,
         contentProvider,
-        false);
+        false,
+        resourceInvalidator);
 }
 
 TileContentAccess::TileContentAccess(
     TilesetTileRegistry& tileRegistry,
     const TileScheme& tileScheme,
     const TilesetContentProvider* contentProvider,
-    bool contentProviderOwnsTerrainQuadtree)
+    bool contentProviderOwnsTerrainQuadtree,
+    TileContentResourceInvalidator* resourceInvalidator)
     : tileRegistry_(tileRegistry),
       tileScheme_(tileScheme),
       contentProvider_(contentProvider),
-      contentProviderOwnsTerrainQuadtree_(contentProviderOwnsTerrainQuadtree) {}
+      contentProviderOwnsTerrainQuadtree_(contentProviderOwnsTerrainQuadtree),
+      resourceInvalidator_(resourceInvalidator) {}
 
 TilesetTile* TileContentAccess::ensureTile(
     const TileKey& key,
@@ -102,9 +102,12 @@ TilesetTile* TileContentAccess::ensureTile(
         tileScheme_,
         contentProvider_);
     if (tile && contentProviderOwnsTerrainQuadtree()) {
-        TileContentTerrainResiduePolicy::clearRejectableResidue(
-            *tile,
-            pPrepRenderer);
+        if (TileContentTerrainResiduePolicy::clearRejectableResidue(
+                *tile,
+                pPrepRenderer) &&
+            resourceInvalidator_) {
+            resourceInvalidator_->markTileResourcesChanged(*tile);
+        }
     }
     return tile;
 }
@@ -132,6 +135,13 @@ TileContentAccess::ensureTileChildren(
                 pPrepRenderer);
             changed |= linkChildIfMissing(tile, *child);
         }
+        if (changed && resourceInvalidator_) {
+            for (TilesetTile* child : tile.children) {
+                if (child) {
+                    resourceInvalidator_->markTileResourcesChanged(*child);
+                }
+            }
+        }
         return TileChildFrameMaterializeResult{changed, false};
     }
 
@@ -147,13 +157,21 @@ TileContentAccess::ensureTileChildren(
             isAvailabilityBoundaryTile(tile) &&
                 !hasResolvedAvailabilityBoundaryContent(tile),
             contentProviderOwnsTerrainQuadtree(),
-            pPrepRenderer},
+            pPrepRenderer,
+            contentProvider_ ? contentProvider_->childTopologyRevision() : 0},
         [this](const TileKey& key) {
             return ensureTile(key);
         },
         [this](const TileKey& key) {
             return availabilityState(key);
         });
+    if (result.changed && resourceInvalidator_) {
+        for (TilesetTile* child : tile.children) {
+            if (child) {
+                resourceInvalidator_->markTileResourcesChanged(*child);
+            }
+        }
+    }
     return result;
 }
 

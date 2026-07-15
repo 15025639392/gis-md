@@ -2,6 +2,7 @@
 
 #include "../layers/RasterOverlay.h"
 
+#include <cstdint>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -67,6 +68,7 @@ struct SceneTilesetConfig {
     // 与 TilesetOptions::mainThreadLoadingTimeLimit 默认保持一致（8ms 时间闸门）。
     double mainThreadLoadingTimeLimit = 8.0;
     double tileCacheUnloadTimeLimit = 0.0;
+    int64_t maximumCachedBytes = 512LL * 1024 * 1024;
     // LOD 过渡淡入淡出（cesium enableLodTransitionPeriod）。默认关，与
     // TilesetOptions 默认一致（cesium 原生出厂即关）。开启后瓦片切换 LOD 时
     // 新旧瓦片按 lodTransitionLength 秒 alpha 交叉淡入淡出，消除 pop。

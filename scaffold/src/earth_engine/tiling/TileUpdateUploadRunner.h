@@ -21,6 +21,18 @@ struct TileUpdateUploadRunResult {
     double terrainUploadMs = 0.0;
     double rasterUploadMs = 0.0;
     int rasterUploadsProcessed = 0;
+    int rasterMappedUploadsProcessed = 0;
+    double rasterUploadMaxMs = 0.0;
+    int rasterUploadMaxWidth = 0;
+    int rasterUploadMaxHeight = 0;
+    double rasterSelectTaskMs = 0.0;
+    double rasterUploadTextureMs = 0.0;
+    double rasterTileFinalizeMs = 0.0;
+    double rasterBookkeepingMs = 0.0;
+    double rasterSourceFallbackMs = 0.0;
+    double rasterSourceSnapshotMs = 0.0;
+    double rasterSourceIssueMs = 0.0;
+    double rasterUploadQueueSelectMs = 0.0;
 };
 
 class TileUpdateUploadRunner {
@@ -52,6 +64,22 @@ public:
         }
         result.rasterUploadMs = perf::nowMs() - rasterUploadStartMs;
         result.rasterUploadsProcessed = rasterUploadResult.processedUploads;
+        result.rasterMappedUploadsProcessed = rasterUploadResult.mappedUploads;
+        result.rasterUploadMaxMs = rasterUploadResult.maxUploadMs;
+        result.rasterUploadMaxWidth = rasterUploadResult.maxUploadWidth;
+        result.rasterUploadMaxHeight = rasterUploadResult.maxUploadHeight;
+        result.rasterSelectTaskMs = rasterUploadResult.selectTaskMs;
+        result.rasterUploadTextureMs = rasterUploadResult.uploadTextureMs;
+        result.rasterTileFinalizeMs = rasterUploadResult.tileFinalizeMs;
+        result.rasterBookkeepingMs = rasterUploadResult.bookkeepingMs;
+        result.rasterSourceFallbackMs =
+            rasterUploadResult.sourceFallbackMs;
+        result.rasterSourceSnapshotMs =
+            rasterUploadResult.sourceSnapshotMs;
+        result.rasterSourceIssueMs =
+            rasterUploadResult.sourceIssueMs;
+        result.rasterUploadQueueSelectMs =
+            rasterUploadResult.uploadQueueSelectMs;
 
         return result;
     }

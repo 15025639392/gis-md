@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../tiling/TileRasterOverlayUploadResult.h"
+
 #include <cstdint>
 #include <memory>
 
@@ -39,12 +41,14 @@ public:
     /// cesium-native: the placeholder tile from the ensured provider.
     RasterOverlayTile* getPlaceholderTile();
 
-    int processPendingUploads(bool interactionActive,
-                              FrameResourceBudget* budget = nullptr);
+    TileRasterOverlayUploadResult processPendingUploads(
+        bool interactionActive,
+        FrameResourceBudget* budget = nullptr);
     bool hasPendingWork() const;
     uint64_t revision() const;
     void setFrameNumber(uint64_t frameNumber);
-    void trimUnusedTiles();
+    void trimUnusedTiles(bool cachePressure = false);
+    int64_t tileTextureBytesUsed() const;
     int getCachedTileCount() const;
 
     /// Maximum simultaneous tile loads (aligned with RasterOverlayOptions).

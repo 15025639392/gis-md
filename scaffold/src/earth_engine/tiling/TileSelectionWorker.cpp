@@ -53,7 +53,7 @@ void TileSelectionWorker::dispatch(
     cv_.notify_all();
 }
 
-const TileSelectionShadowRunner* TileSelectionWorker::tryTakeResult() {
+TileSelectionShadowRunner* TileSelectionWorker::tryTakeResult() {
     assert(std::this_thread::get_id() == renderThreadId_ &&
            "tryTakeResult must run on the render thread");
     {

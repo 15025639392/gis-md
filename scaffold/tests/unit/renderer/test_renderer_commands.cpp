@@ -23,6 +23,7 @@ public:
     explicit DummyTexture(int id) : id_(id) {}
     int width() const override { return 256; }
     int height() const override { return 256; }
+    size_t sizeBytes() const override { return 256u * 256u * 4u; }
     int id() const { return id_; }
 
 private:

@@ -4,9 +4,11 @@
 #include "TileLoadPriorityPolicy.h"
 #include "TilePlan.h"
 #include "TileRasterOverlayPrefetcher.h"
+#include "TileRasterOverlayUploadResult.h"
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
+#include "../debug/PerfTimer.h"
 #include "../layers/ActivatedRasterOverlay.h"
 
 #include <cstddef>
@@ -19,9 +21,27 @@ namespace earth_engine {
 
 class IPrepareRendererResources;
 
-struct TileRasterOverlayUploadResult {
-    int processedUploads = 0;
-    bool resourcesDirty = false;
+struct TileRasterOverlayPrefetchResult {
+    int visibleTilesConsidered = 0;
+    int loadQueueTilesConsidered = 0;
+    int advanceLoadsCount = 0;
+    int prefetchMappingsCount = 0;
+    double visibleLoopMs = 0.0;
+    double loadQueueLoopMs = 0.0;
+    double advanceLoadsMs = 0.0;
+    double prefetchMappingsMs = 0.0;
+};
+
+struct TileRasterOverlayRenderPlanPrepareResult {
+    int tilesConsidered = 0;
+    int authoritativeUpdates = 0;
+    int stableReuses = 0;
+    int unloadActions = 0;
+    int upsampleActions = 0;
+    int renderPlanRefreshes = 0;
+    double totalMs = 0.0;
+    double updateMs = 0.0;
+    double actionMs = 0.0;
 };
 
 class TileRasterOverlayFrameProcessor {
@@ -30,21 +50,37 @@ public:
         std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         bool interactionActive,
         FrameResourceBudget& frameResourceBudget) {
-        int processedUploads = 0;
+        TileRasterOverlayUploadResult result;
         for (auto* overlay : rasterOverlays) {
             if (overlay) {
-                processedUploads += overlay->processPendingUploads(
-                    interactionActive,
-                    &frameResourceBudget);
+                const TileRasterOverlayUploadResult overlayResult =
+                    overlay->processPendingUploads(
+                        interactionActive,
+                        &frameResourceBudget);
+                result.processedUploads += overlayResult.processedUploads;
+                result.mappedUploads += overlayResult.mappedUploads;
+                result.selectTaskMs += overlayResult.selectTaskMs;
+                result.uploadTextureMs += overlayResult.uploadTextureMs;
+                result.tileFinalizeMs += overlayResult.tileFinalizeMs;
+                result.bookkeepingMs += overlayResult.bookkeepingMs;
+                result.sourceFallbackMs += overlayResult.sourceFallbackMs;
+                result.sourceSnapshotMs += overlayResult.sourceSnapshotMs;
+                result.sourceIssueMs += overlayResult.sourceIssueMs;
+                result.uploadQueueSelectMs +=
+                    overlayResult.uploadQueueSelectMs;
+                if (overlayResult.maxUploadMs > result.maxUploadMs) {
+                    result.maxUploadMs = overlayResult.maxUploadMs;
+                    result.maxUploadWidth = overlayResult.maxUploadWidth;
+                    result.maxUploadHeight = overlayResult.maxUploadHeight;
+                }
             }
         }
-        return TileRasterOverlayUploadResult{
-            processedUploads,
-            processedUploads > 0};
+        result.resourcesDirty = result.processedUploads > 0;
+        return result;
     }
 
     template <typename EnsureTileFn>
-    static void prefetchSelection(
+    static TileRasterOverlayPrefetchResult prefetchSelection(
         const TilePlan& tilePlan,
         const std::vector<TileLoadRequest>& loadRequests,
         std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -58,6 +94,7 @@ public:
         const std::function<void(const TileKey&,
                                  TileLoadPriorityGroup,
                                  double)>& queueReload = {}) {
+        TileRasterOverlayPrefetchResult result;
         struct PrefetchTile {
             TileKey key;
             TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
@@ -79,41 +116,51 @@ public:
             }
         }
         TileLoadPriorityPolicy::sortByPriority(visibleTiles);
+        const double visibleLoopStartMs = perf::nowMs();
         for (const PrefetchTile& item : visibleTiles) {
             if (item.tile) {
+                ++result.visibleTilesConsidered;
                 if (!prefetchedTiles.insert(item.key).second) {
                     continue;
                 }
                 // cesium: the overlay geometry mapping is a once-at-load step,
                 // NOT per-frame. 闸1: not-Done 瓦片一律不在 prefetch 建映射——
-                // 映射交由几何加载完成(Done)后 render 路径的 RenderContent-
-                // RasterOverlayStateUpdater 建立(cesium 里 updateTileOverlays
-                // 只对已渲染 Done 瓦片)。这消除了拖动时对 not-Done 洪泛(数百
-                // 个)每帧首见映射的 8-18ms 开销。已映射的(先前 Done 后回到
-                // 加载中的)瓦片仅推进其 throttled 影像加载。
+                // 映射交由几何加载完成(Done)后的 update preparation 建立，
+                // 对齐 cesium updateDoneState/updateTileOverlays。draw 阶段只
+                // 消费已经完成的映射状态。这消除了拖动时对 not-Done 洪泛
+                // (数百个)每帧首见映射的 8-18ms 开销。已映射的(先前 Done
+                // 后回到加载中的)瓦片仅推进其 throttled 影像加载。
                 if (item.tile->rasterOverlayState.mappingCount() > 0) {
                     if (item.tile->content.loadState != TileLoadState::Done) {
+                        const double advanceStartMs = perf::nowMs();
                         TileRasterOverlayPrefetcher::advanceThrottledLoads(
                             *item.tile,
                             rasterOverlays,
                             overlayProcessingOrder,
                             device,
                             frameResourceBudget);
+                        result.advanceLoadsMs +=
+                            perf::nowMs() - advanceStartMs;
+                        ++result.advanceLoadsCount;
                     }
                     continue;
                 }
                 if (item.tile->content.loadState != TileLoadState::Done) {
                     continue;
                 }
+                const double prefetchStartMs = perf::nowMs();
                 const TileRasterOverlayPrefetchAction action =
                     TileRasterOverlayPrefetcher::prefetch(
-                    *item.tile,
-                    rasterOverlays,
-                    overlayProcessingOrder,
-                    device,
-                    maximumScreenSpaceError,
-                    frameResourceBudget,
-                    pPrepRenderer);
+                        *item.tile,
+                        rasterOverlays,
+                        overlayProcessingOrder,
+                        device,
+                        maximumScreenSpaceError,
+                        frameResourceBudget,
+                        pPrepRenderer,
+                        tilePlan.frameId);
+                result.prefetchMappingsMs += perf::nowMs() - prefetchStartMs;
+                ++result.prefetchMappingsCount;
                 if (action.unloadTileContent && unloadTileContent) {
                     unloadTileContent(*item.tile);
                     if (queueReload) {
@@ -123,8 +170,10 @@ public:
                 }
             }
         }
+        result.visibleLoopMs = perf::nowMs() - visibleLoopStartMs;
         std::vector<TileLoadRequest> sortedLoadRequests = loadRequests;
         TileLoadPriorityPolicy::sortByPriority(sortedLoadRequests);
+        const double loadQueueLoopStartMs = perf::nowMs();
         for (const TileLoadRequest& request : sortedLoadRequests) {
             if (!frameResourceBudget.canIssue(
                     FrameResourceLane::RasterRequest,
@@ -136,37 +185,47 @@ public:
                 continue;
             }
             if (TilesetTile* tile = ensureTile(request.key)) {
+                ++result.loadQueueTilesConsidered;
                 if (!prefetchedTiles.insert(request.key).second) {
                     continue;
                 }
                 // Same 闸1 rule as the visible loop: already-mapped load-queue
                 // tiles only advance throttled imagery loads; not-Done tiles are
-                // NOT mapped here (mapping happens at Done via render path).
+                // NOT mapped here (mapping happens in update preparation once
+                // the content reaches Done).
                 // Load-queue tiles are by definition still loading, so this
                 // removes their per-frame first-sighting mapping entirely.
                 if (tile->rasterOverlayState.mappingCount() > 0) {
                     if (tile->content.loadState != TileLoadState::Done) {
+                        const double advanceStartMs = perf::nowMs();
                         TileRasterOverlayPrefetcher::advanceThrottledLoads(
                             *tile,
                             rasterOverlays,
                             overlayProcessingOrder,
                             device,
                             frameResourceBudget);
+                        result.advanceLoadsMs +=
+                            perf::nowMs() - advanceStartMs;
+                        ++result.advanceLoadsCount;
                     }
                     continue;
                 }
                 if (tile->content.loadState != TileLoadState::Done) {
                     continue;
                 }
+                const double prefetchStartMs = perf::nowMs();
                 const TileRasterOverlayPrefetchAction action =
                     TileRasterOverlayPrefetcher::prefetch(
-                    *tile,
-                    rasterOverlays,
-                    overlayProcessingOrder,
-                    device,
-                    maximumScreenSpaceError,
-                    frameResourceBudget,
-                    pPrepRenderer);
+                        *tile,
+                        rasterOverlays,
+                        overlayProcessingOrder,
+                        device,
+                        maximumScreenSpaceError,
+                        frameResourceBudget,
+                        pPrepRenderer,
+                        tilePlan.frameId);
+                result.prefetchMappingsMs += perf::nowMs() - prefetchStartMs;
+                ++result.prefetchMappingsCount;
                 if (action.unloadTileContent && unloadTileContent) {
                     unloadTileContent(*tile);
                     if (queueReload) {
@@ -178,6 +237,106 @@ public:
                 }
             }
         }
+        result.loadQueueLoopMs = perf::nowMs() - loadQueueLoopStartMs;
+        return result;
+    }
+
+    template <typename UnloadTileContentFn,
+              typename CreateRasterOverlayUpsampledChildrenFn,
+              typename QueueReloadFn,
+              typename RefreshRenderPlanFn>
+    static TileRasterOverlayRenderPlanPrepareResult prepareRenderPlan(
+        TilePlan& tilePlan,
+        std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        const std::vector<size_t>& overlayProcessingOrder,
+        RenderDevice* device,
+        double maximumScreenSpaceError,
+        FrameResourceBudget& frameResourceBudget,
+        IPrepareRendererResources* pPrepRenderer,
+        UnloadTileContentFn&& unloadTileContent,
+        CreateRasterOverlayUpsampledChildrenFn&&
+            createRasterOverlayUpsampledChildren,
+        QueueReloadFn&& queueReload,
+        RefreshRenderPlanFn&& refreshRenderPlan) {
+        TileRasterOverlayRenderPlanPrepareResult result;
+        const double totalStartMs = perf::nowMs();
+        if (rasterOverlays.empty() || tilePlan.renderEntries.empty()) {
+            result.totalMs = perf::nowMs() - totalStartMs;
+            return result;
+        }
+
+        std::unordered_set<TilesetTile*> preparedTiles;
+        preparedTiles.reserve(tilePlan.renderEntries.size() * 2);
+        std::vector<TilesetTile*> pendingTiles;
+        pendingTiles.reserve(tilePlan.renderEntries.size());
+
+        while (true) {
+            pendingTiles.clear();
+            for (const TileRenderEntry& entry : tilePlan.renderEntries) {
+                TilesetTile* tile = entry.renderTile;
+                if (tile && preparedTiles.insert(tile).second) {
+                    pendingTiles.push_back(tile);
+                }
+            }
+            if (pendingTiles.empty()) {
+                break;
+            }
+
+            bool renderPlanInvalidated = false;
+            for (TilesetTile* tile : pendingTiles) {
+                if (!tile || !tile->canPrepareRasterOverlays()) {
+                    continue;
+                }
+                ++result.tilesConsidered;
+                const uint64_t updateCountBefore =
+                    tile->rasterOverlayState.authoritativeUpdateCount();
+                const double updateStartMs = perf::nowMs();
+                const TileRasterOverlayPrefetchAction action =
+                    TileRasterOverlayPrefetcher::prefetch(
+                        *tile,
+                        rasterOverlays,
+                        overlayProcessingOrder,
+                        device,
+                        maximumScreenSpaceError,
+                        frameResourceBudget,
+                        pPrepRenderer,
+                        tilePlan.frameId);
+                result.updateMs += perf::nowMs() - updateStartMs;
+                const uint64_t updateCountAfter =
+                    tile->rasterOverlayState.authoritativeUpdateCount();
+                if (updateCountAfter > updateCountBefore) {
+                    result.authoritativeUpdates += static_cast<int>(
+                        updateCountAfter - updateCountBefore);
+                } else {
+                    ++result.stableReuses;
+                }
+
+                const double actionStartMs = perf::nowMs();
+                if (action.unloadTileContent) {
+                    unloadTileContent(*tile);
+                    queueReload(
+                        tile->key,
+                        TileLoadPriorityGroup::Normal,
+                        tile->selectionFrameState.priority);
+                    ++result.unloadActions;
+                    renderPlanInvalidated = true;
+                } else if (
+                    action.createRasterOverlayUpsampledChildren &&
+                    tile->children.empty()) {
+                    createRasterOverlayUpsampledChildren(*tile);
+                    ++result.upsampleActions;
+                }
+                result.actionMs += perf::nowMs() - actionStartMs;
+            }
+
+            if (renderPlanInvalidated) {
+                refreshRenderPlan();
+                ++result.renderPlanRefreshes;
+            }
+        }
+
+        result.totalMs = perf::nowMs() - totalStartMs;
+        return result;
     }
 };
 

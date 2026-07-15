@@ -33,7 +33,7 @@ GltfPrimitiveRenderResources makePrimitive(RenderDevice& device,
                                            bool terrainVertexFormat) {
     GltfPrimitiveRenderResources primitive;
     BufferDesc vbDesc;
-    vbDesc.size = 32 * 3;  // three TerrainGpuVertex
+    vbDesc.size = 40 * 3;  // three TerrainGpuVertex
     vbDesc.type = BufferDesc::Type::Vertex;
     primitive.vertexBuffer = device.createBuffer(vbDesc);
     BufferDesc ibDesc;
@@ -62,7 +62,7 @@ TEST(TerrainShaderCommandTest, MakeTerrainPrimitiveCommandHasCorrectDefaults) {
     EXPECT_EQ(RenderCommandKind::GltfPrimitive, cmd.kind);
     EXPECT_EQ("terrain_primitive", cmd.owner);
     EXPECT_EQ("color", cmd.pass);
-    EXPECT_EQ(32, cmd.vertexStride);
+    EXPECT_EQ(40, cmd.vertexStride);
     EXPECT_EQ(36, cmd.indexCount);
     EXPECT_EQ(24, cmd.vertexCount);
     EXPECT_EQ(renderer.terrainShader(), cmd.shader);
@@ -123,7 +123,7 @@ TEST(TerrainShaderCommandTest, TerrainPrimitiveUsesTerrainShaderAndStride) {
 
     ASSERT_EQ(1u, commands.size());
     const RenderCommand& cmd = commands.front();
-    EXPECT_EQ(32, cmd.vertexStride);
+    EXPECT_EQ(40, cmd.vertexStride);
     EXPECT_EQ(renderer.terrainShader(), cmd.shader);
     EXPECT_EQ(RenderCommandKind::GltfPrimitive, cmd.kind);
     // The shared per-command population still runs on the terrain command.
@@ -188,10 +188,21 @@ TEST(TerrainShaderCommandTest, TerrainShadersDropPbrExtensionUniforms) {
         EXPECT_EQ(std::string::npos, source.find("u_transmissionFactor"));
     }
 
-    // Terrain vertex uses a 2-float texcoord (attribute 2), not the 120B vec4.
-    EXPECT_NE(std::string::npos, glslV.find("in vec2 a_texcoord;"));
-    EXPECT_EQ(std::string::npos, glslV.find("a_texcoord01"));
-    EXPECT_NE(std::string::npos, mslV.find("float2 texcoord [[attribute(2)]]"));
+    // Terrain keeps both supported projection UV sets in one packed attribute.
+    EXPECT_NE(
+        std::string::npos,
+        glslV.find("in vec4 a_texcoord01;"));
+    EXPECT_NE(
+        std::string::npos,
+        glslF.find(
+            "setIndex == 1 ? v_texcoord01.zw : v_texcoord01.xy"));
+    EXPECT_NE(
+        std::string::npos,
+        mslV.find("float4 texcoord01 [[attribute(2)]]"));
+    EXPECT_NE(
+        std::string::npos,
+        mslF.find(
+            "setIndex == 1 ? in.texcoord01.zw : in.texcoord01.xy"));
 }
 
 // ── Metal name -> [[buffer(N)]] parity, all indices <= 30 ──

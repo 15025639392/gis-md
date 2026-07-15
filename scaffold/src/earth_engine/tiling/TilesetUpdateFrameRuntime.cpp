@@ -31,7 +31,8 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     // to the reuse-gated selectTiles path deadlocks a static-camera bootstrap
     // (empty plan → no loads → revision static →永远 reuse). No-op unless the
     // true-async worker path is active with a ready result.
-    TilesetSelectionFrameFacade::consumeAsyncSelectionResult(tileset);
+    const bool acceptedAsyncSelection =
+        TilesetSelectionFrameFacade::consumeAsyncSelectionResult(tileset);
 
     TileFrameWorkResult frameWork = TileFrameWorkCoordinator::run(
         TileFrameWorkInput{
@@ -59,7 +60,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.options_.enableTerrainFillProxy,
             tileset.options_.terrainFillProxyGridSize,
             tileset.hasTerrainQuadtree(),
-            &tileset.tileRegistry_.tiles()},
+            pPrepRenderer},
         TileFrameWorkState{
             tileset.cameraMoving_,
             tileset.interactionActiveForFrame_,
@@ -92,10 +93,17 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
                     tileset.interactionActiveForFrame_,
                     tileset.resourceSmoothingActiveForFrame_});
         },
-        [&tileset](const FrameState& selectionFrameState) {
+        [&tileset, pPrepRenderer](
+            const FrameState& selectionFrameState,
+            TileSelectionPerformanceTimings& selectionTimings) {
             TilesetSelectionFrameFacade::selectTiles(
                 tileset,
-                selectionFrameState);
+                selectionFrameState,
+                &selectionTimings,
+                pPrepRenderer);
+        },
+        [&tileset](const TileKey& key) {
+            return tileset.tileRegistry_.findTile(key);
         },
         [&tileset](const TileKey& key) {
             return tileset.contentAccess_.ensureTile(key);
@@ -103,13 +111,26 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
         [&tileset, pPrepRenderer](TilesetTile& tile) {
             tileset.cacheOwnership_.unloadTileContent(tile, pPrepRenderer);
         },
-        [&tileset, pPrepRenderer](const std::vector<TileLoadRequest>& requests,
+        [&tileset, pPrepRenderer](TilesetTile& tile) {
+            tileset.rasterUpsampledChildren_
+                .createRasterOverlayUpsampledChildren(
+                    tile,
+                    pPrepRenderer);
+        },
+        [&tileset, pPrepRenderer](TileLoadQueue& requests,
                                   FrameResourceBudget* budget) {
             return tileset.requestMissingContent(
                 requests,
                 budget,
                 pPrepRenderer);
+        },
+        [&tileset](TilesetTile& tile) {
+            tileset.resourceInvalidator_.reconcileTileResources(tile);
         });
+    if (frameWork.selectionWork.reusedSelection &&
+        !acceptedAsyncSelection) {
+        tileset.retirePreviousSelectionReferencesForReuse();
+    }
     // Drain the async GPU upload queue.  Terrain CPU work dispatched to
     // worker threads by processPendingLoads lands here for GPU upload.
     {   const double t_drain = perf::nowMs();
@@ -124,27 +145,80 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     const TileUpdateUploadRunResult& uploadWork = frameWork.uploadWork;
     const TileUpdateSelectionWorkResult& selectionWork =
         frameWork.selectionWork;
+    const TilesetProviderDiagnosticsSnapshot rasterDiagnostics =
+        TilesetProviderDiagnosticsCollector::collectContentAndRaster(
+            tileset.terrainProviders_.contentProvider(),
+            tileset.rasterOverlays_);
     return TilesetUpdateFrameRuntimeResult{
         TileUpdateDebugLogInput{
             tileset.tilePlan_.visibleTiles.size(),
             tileset.loadQueue_.size(),
             selectionWork.computeMs,
+            selectionWork.selectorTraversalMs,
+            selectionWork.selectorRefineMs,
+            selectionWork.selectorRenderPlanMs,
+            selectionWork.selectorRequestPlanningMs,
             selectionWork.prefetchMs,
+            selectionWork.prefetchBaseMs,
+            selectionWork.prefetchFillMs,
+            selectionWork.prefetchVisibleMs,
+            selectionWork.prefetchLoadQueueMs,
+            selectionWork.prefetchAdvanceMs,
+            selectionWork.prefetchMapMs,
             selectionWork.requestMs,
             uploadWork.terrainUploadMs,
             uploadWork.rasterUploadMs,
+            uploadWork.rasterSelectTaskMs,
+            uploadWork.rasterUploadTextureMs,
+            uploadWork.rasterTileFinalizeMs,
+            uploadWork.rasterBookkeepingMs,
             static_cast<size_t>(
                 tileset.cachedHeightmapTerrainTilesForLegacySurfacePath()),
             tileset.contentLifecycle_.loadLifecycle()
                 .requestState()
                 .totalRequestCount(),
+            rasterDiagnostics.rasterSourceRequestsInFlight,
+            rasterDiagnostics.rasterActiveMappedSourceSets,
+            rasterDiagnostics.rasterPendingSourceFallbacks,
+            rasterDiagnostics.rasterInFlightSourceTiles,
+            rasterDiagnostics.rasterInFlightSourceWaiters,
+            rasterDiagnostics.rasterPendingUploads,
             tileset.selectionCounters_,
             selectionWork.reuseMode,
             selectionWork.reuseRejectReason,
             selectionWork.reusedSelection,
+            selectionWork.prefetchVisibleTiles,
+            selectionWork.prefetchLoadQueueTiles,
+            selectionWork.prefetchAdvanceCount,
+            selectionWork.prefetchMapCount,
             uploadWork.rasterUploadsProcessed,
+            uploadWork.rasterMappedUploadsProcessed,
+            uploadWork.rasterUploadMaxMs,
+            uploadWork.rasterUploadMaxWidth,
+            uploadWork.rasterUploadMaxHeight,
             frameWork.interactionActive,
-            frameWork.resourceSmoothingActive}};
+            frameWork.resourceSmoothingActive,
+            selectionWork.selectorRefineOverlayMs,
+            selectionWork.selectorRefineDecisionMs,
+            selectionWork.selectorRefineMaterializeMs,
+            selectionWork.selectorRefineCommitMs,
+            uploadWork.rasterSourceFallbackMs,
+            uploadWork.rasterSourceSnapshotMs,
+            uploadWork.rasterSourceIssueMs,
+            uploadWork.rasterUploadQueueSelectMs,
+            selectionWork.selectorRefineMaterializeCalls,
+            selectionWork.selectorRefineMaterializeChanged,
+            selectionWork.selectorRefineMaterializeRetry,
+            selectionWork.selectorRefineMaterializeFastPath,
+            selectionWork.selectorVisitVisibilityMs,
+            selectionWork.selectorVisitInputMetricsMs,
+            selectionWork.selectorVisitPolicyMs,
+            selectionWork.prefetchRenderPlanMs,
+            selectionWork.prefetchRenderPlanUpdateMs,
+            selectionWork.prefetchRenderPlanActionMs,
+            selectionWork.prefetchRenderPlanTiles,
+            selectionWork.prefetchRenderPlanAuthoritativeUpdates,
+            selectionWork.prefetchRenderPlanStableReuses}};
 }
 
 } // namespace earth_engine

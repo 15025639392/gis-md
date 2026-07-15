@@ -29,6 +29,9 @@ struct TileSelectionVisitPreparationResult {
     TileSelectionCullLoadPlan culledLoadPlan;
     bool viewerRequestVolumeAllowed = true;
     bool meetsScreenSpaceError = false;
+    double visibilityMs = 0.0;
+    double inputMetricsMs = 0.0;
+    double policyMs = 0.0;
 };
 
 enum class TileSelectionVisitEarlyExitCounter {

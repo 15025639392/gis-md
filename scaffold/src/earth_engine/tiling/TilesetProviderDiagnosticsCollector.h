@@ -18,6 +18,10 @@ struct TilesetProviderDiagnosticsSnapshot {
     ProviderRequestDiagnostics rasterProviderRequests;
     int rasterOverlayTilesLoading = 0;
     int rasterSourceRequestsInFlight = 0;
+    int rasterActiveMappedSourceSets = 0;
+    int rasterPendingSourceFallbacks = 0;
+    int rasterInFlightSourceTiles = 0;
+    int rasterInFlightSourceWaiters = 0;
     int rasterPendingUploads = 0;
     int64_t rasterPendingUploadBytes = 0;
     int64_t peakRasterPendingUploadBytes = 0;

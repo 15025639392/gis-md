@@ -31,6 +31,10 @@ public:
     TestTexture(int width, int height) : width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
+    size_t sizeBytes() const override {
+        return static_cast<size_t>(width_) *
+               static_cast<size_t>(height_) * 4u;
+    }
 
 private:
     int width_ = 0;
@@ -1173,6 +1177,125 @@ TEST(RasterOverlayDetailsGeneratorTest,
     EXPECT_NEAR(1.0f, maxU, 1e-3f);
     EXPECT_NEAR(0.0f, minV, 1e-3f);
     EXPECT_NEAR(1.0f, maxV, 1e-3f);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     ActiveOverlayGenerationIsNoOpWhenWorkerAlreadyProducedProjection) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, 35.0, -6.0, 55.0);
+    auto model = makeTerrainQuadModel(modelRegion);
+    RasterOverlayDetails details;
+    details.rasterOverlayProjections = {
+        RasterOverlayProjection::Geographic,
+        RasterOverlayProjection::WebMercator};
+    details.rasterOverlayRectangles = {
+        modelRegion,
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            modelRegion)};
+    details.rasterOverlayInvertedVCoordinates = {false, false};
+    details.boundingRegion = {modelRegion, -25.0, 125.0};
+    model->rasterOverlayDetails = details;
+    GltfPrimitive& primitive = model->primitives.front();
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 0.0f}};
+    primitive.vertexTexCoords[1] = {
+        std::array<float, 2>{0.1f, 0.9f},
+        std::array<float, 2>{0.9f, 0.9f},
+        std::array<float, 2>{0.9f, 0.1f},
+        std::array<float, 2>{0.1f, 0.1f}};
+    primitive.terrainGpuVertexBytes.assign(160u, 0x5Au);
+    const auto expectedWebMercatorUv = primitive.vertexTexCoords[1];
+    const auto expectedTerrainGpuVertexBytes =
+        primitive.terrainGpuVertexBytes;
+    renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    RasterOverlay::Options options{};
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    ActivatedRasterOverlay activated(*overlay);
+    ASSERT_NE(nullptr, activated.ensureTileProvider(nullptr));
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const TileBoundingVolume bounds =
+        TileBoundingVolume::fromRegion(modelRegion, -25.0, 125.0);
+
+    const int generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays(
+            renderContent,
+            &bounds,
+            overlays,
+            nullptr);
+
+    EXPECT_EQ(0, generated);
+    EXPECT_TRUE(renderContent.rasterOverlayDetails().equalsExact(details));
+    const GltfModel* preparedModel = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, preparedModel);
+    EXPECT_EQ(
+        expectedWebMercatorUv,
+        preparedModel->primitives.front().vertexTexCoords[1]);
+    EXPECT_EQ(
+        expectedTerrainGpuVertexBytes,
+        preparedModel->primitives.front().terrainGpuVertexBytes);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     ActiveOverlayGenerationInvalidatesPrebuiltTerrainVerticesForNewProjection) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, 35.0, -6.0, 55.0);
+    auto model = makeTerrainQuadModel(modelRegion);
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(modelRegion, -25.0, 125.0);
+    model->rasterOverlayDetails = details;
+    GltfPrimitive& primitive = model->primitives.front();
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 0.0f}};
+    primitive.terrainGpuVertexBytes.assign(160u, 0x5Au);
+    renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    RasterOverlay::Options options{};
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    ActivatedRasterOverlay activated(*overlay);
+    ASSERT_NE(nullptr, activated.ensureTileProvider(nullptr));
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const TileBoundingVolume bounds =
+        TileBoundingVolume::fromRegion(modelRegion, -25.0, 125.0);
+
+    const int generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays(
+            renderContent,
+            &bounds,
+            overlays,
+            nullptr);
+
+    EXPECT_EQ(1, generated);
+    const GltfModel* preparedModel = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, preparedModel);
+    ASSERT_EQ(1u, preparedModel->primitives.size());
+    const GltfPrimitive& preparedPrimitive =
+        preparedModel->primitives.front();
+    EXPECT_TRUE(preparedPrimitive.terrainGpuVertexBytes.empty());
+    EXPECT_EQ(
+        preparedPrimitive.vertices.size(),
+        preparedPrimitive.vertexTexCoords[1].size());
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,

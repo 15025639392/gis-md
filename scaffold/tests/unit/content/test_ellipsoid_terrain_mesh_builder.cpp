@@ -10,9 +10,9 @@
 #include "earth_engine/tiling/TilesetTile.h"
 #include "../../helpers/MockRenderDevice.h"
 
+#include <climits>
 #include <cmath>
-#include <unordered_map>
-
+#include <limits>
 using namespace earth_engine;
 
 namespace {
@@ -87,6 +87,30 @@ TEST(EllipsoidTerrainMeshBuilderTest,
     EXPECT_NEAR(1.0f, uv[se][1], 1e-5f);
 }
 
+TEST(EllipsoidTerrainMeshBuilderTest,
+     AntimeridianGridInterpolatesAcrossDateline) {
+    const Rectangle bounds = Rectangle::fromDegrees(
+        170.0,
+        -10.0,
+        -170.0,
+        10.0);
+    auto model = EllipsoidTerrainMeshBuilder::makeModel(
+        bounds,
+        RasterOverlayProjection::Geographic,
+        2);
+    ASSERT_NE(nullptr, model);
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(9u, primitive.vertices.size());
+    ASSERT_EQ(9u, primitive.vertexTexCoords[0].size());
+
+    const std::optional<Cartographic> center =
+        Ellipsoid::WGS84().tryCartesianToCartographic(
+            primitive.vertices[4].positionEcef);
+    ASSERT_TRUE(center.has_value());
+    EXPECT_GT(std::abs(center->longitude()), 3.0);
+    EXPECT_NEAR(0.5f, primitive.vertexTexCoords[0][4][0], 1e-5f);
+}
+
 TEST(EllipsoidTerrainMeshBuilderTest, AnchoredOnEllipsoidSurfaceAtHeightZero) {
     // The proxy is the "smooth globe" imagery drapes onto before real terrain
     // (with elevation) rises in, so it must sit on the WGS84 ellipsoid. The
@@ -147,27 +171,29 @@ TEST(EllipsoidTerrainMeshBuilderTest,
 TEST(EllipsoidTerrainMeshBuilderTest,
      FillProxyDrawsUntilRealTerrainResourcesAreReady) {
     const Rectangle bounds = testRectangle();
-    auto tile = std::make_unique<TilesetTile>(
+    TilesetTile tile(
         TileKey{"Geographic-TMS", 2, 1, 1},
         bounds);
-    TilesetTile* tileForAssertions = tile.get();
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    tiles.emplace("terrain", std::move(tile));
     earth_engine::testing::MockRenderDevice device;
 
     ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
-        *tileForAssertions,
-        tiles,
+        tile,
         &device,
         4));
     const TileRenderContentState& fillState =
-        tileForAssertions->content.renderContent;
-    ASSERT_TRUE(fillState.hasFillModel());
+        tile.content.renderContent;
+    EXPECT_FALSE(fillState.hasFillModel());
     ASSERT_TRUE(fillState.isFillReady());
+    ASSERT_TRUE(fillState.hasFillResources());
     EXPECT_TRUE(fillState.drawsFill());
     ASSERT_EQ(1u, fillState.drawPrimitiveResources().size());
     EXPECT_TRUE(
         fillState.drawPrimitiveResources().front().useTerrainVertexFormat);
+    EXPECT_EQ(2, device.createdBufferCount);
+    EXPECT_FALSE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        4));
     EXPECT_EQ(2, device.createdBufferCount);
 
     auto realTerrain = EllipsoidTerrainMeshBuilder::makeModel(
@@ -176,7 +202,8 @@ TEST(EllipsoidTerrainMeshBuilderTest,
         4);
     ASSERT_NE(nullptr, realTerrain);
     TileRenderContentState& realState =
-        tileForAssertions->content.renderContent;
+        tile.content.renderContent;
+    tile.rasterOverlayState.ensureMapping(0);
     realState.prepareGltfContent(std::move(realTerrain), Mat4::identity());
     realState.setTerrainRenderContent(true);
 
@@ -197,7 +224,193 @@ TEST(EllipsoidTerrainMeshBuilderTest,
     EXPECT_TRUE(realState.isGltfRenderReady());
     EXPECT_FALSE(realState.hasFillModel());
     EXPECT_FALSE(realState.drawsFill());
+    EXPECT_EQ(1u, tile.rasterOverlayState.mappingCount());
+    EXPECT_FALSE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        4));
+    EXPECT_EQ(1u, tile.rasterOverlayState.mappingCount());
     ASSERT_EQ(1u, realState.drawPrimitiveResources().size());
     EXPECT_FALSE(
         realState.drawPrimitiveResources().front().useTerrainVertexFormat);
+}
+
+TEST(EllipsoidTerrainMeshBuilderTest,
+     FillProxyRebuildsOnlyWhenGeometrySignatureChanges) {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        testRectangle());
+    earth_engine::testing::MockRenderDevice device;
+
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        4));
+    ASSERT_EQ(2, device.createdBufferCount);
+
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.bounds = Rectangle::fromDegrees(-9.0, 20.0, -1.0, 28.0);
+    EXPECT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        4));
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_EQ(4, device.createdBufferCount);
+
+    EXPECT_FALSE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        4));
+    EXPECT_EQ(4, device.createdBufferCount);
+
+    tile.rasterOverlayState.ensureMapping(0);
+    EXPECT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        5));
+    EXPECT_EQ(1u, tile.rasterOverlayState.mappingCount());
+    EXPECT_EQ(6, device.createdBufferCount);
+
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.key.schemeId = "XYZ-WebMercator";
+    EXPECT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        5));
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_EQ(8, device.createdBufferCount);
+}
+
+TEST(EllipsoidTerrainMeshBuilderTest,
+     FillProxyValidatesSignatureAndResolvesTerrainProjection) {
+    earth_engine::testing::MockRenderDevice device;
+    TilesetTile tmsTile(
+        TileKey{"TMS-WebMercator", 2, 1, 1},
+        testRectangle());
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        tmsTile,
+        &device,
+        0));
+    const TileFillGeometrySignature* tmsSignature =
+        tmsTile.content.renderContent.fillGeometrySignature();
+    ASSERT_NE(nullptr, tmsSignature);
+    EXPECT_EQ(RasterOverlayProjection::WebMercator,
+              tmsSignature->projection);
+    EXPECT_EQ(1, tmsSignature->gridSize);
+    EXPECT_FALSE(TileFillProxyPreparer::ensureFillProxy(
+        tmsTile,
+        &device,
+        1));
+
+    TilesetTile openGlobusMercator(
+        TileKey{"OpenGlobus-Earth", 2, 1, 3},
+        testRectangle());
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        openGlobusMercator,
+        &device,
+        1));
+    ASSERT_NE(
+        nullptr,
+        openGlobusMercator.content.renderContent.fillGeometrySignature());
+    EXPECT_EQ(
+        RasterOverlayProjection::WebMercator,
+        openGlobusMercator.content.renderContent
+            .fillGeometrySignature()
+            ->projection);
+
+    TilesetTile openGlobusPolar(
+        TileKey{"OpenGlobus-Earth", 2, 1, 4},
+        testRectangle());
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        openGlobusPolar,
+        &device,
+        1));
+    ASSERT_NE(
+        nullptr,
+        openGlobusPolar.content.renderContent.fillGeometrySignature());
+    EXPECT_EQ(
+        RasterOverlayProjection::Geographic,
+        openGlobusPolar.content.renderContent
+            .fillGeometrySignature()
+            ->projection);
+}
+
+TEST(EllipsoidTerrainMeshBuilderTest,
+     FillProxyRejectsInvalidGeometryAndClearsStaleResources) {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        testRectangle());
+    earth_engine::testing::MockRenderDevice device;
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(
+        tile,
+        &device,
+        1));
+    tile.rasterOverlayState.ensureMapping(0);
+
+    tile.bounds = Rectangle(
+        std::numeric_limits<double>::quiet_NaN(),
+        0.0,
+        1.0,
+        1.0);
+    const TileFillProxyPrepareResult invalidBounds =
+        TileFillProxyPreparer::ensureFillProxy(
+            tile,
+            &device,
+            1);
+    EXPECT_FALSE(invalidBounds.madeReady);
+    EXPECT_TRUE(invalidBounds.resourcesChanged);
+    EXPECT_FALSE(tile.content.renderContent.isFillReady());
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+
+    tile.bounds = testRectangle();
+    const TileFillProxyPrepareResult oversizedGrid =
+        TileFillProxyPreparer::ensureFillProxy(
+            tile,
+            &device,
+            INT_MAX);
+    EXPECT_FALSE(oversizedGrid.madeReady);
+    EXPECT_FALSE(tile.content.renderContent.isFillReady());
+}
+
+TEST(EllipsoidTerrainMeshBuilderTest,
+     FillProxySkipsReadySurfaceRenderContent) {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        testRectangle());
+    tile.content.renderContent.setMeshReady(true);
+    earth_engine::testing::MockRenderDevice device;
+
+    EXPECT_FALSE(TileFillProxyPreparer::ensureFillProxy(tile, &device, 4));
+    EXPECT_FALSE(tile.content.renderContent.isFillReady());
+    EXPECT_EQ(0, device.createdBufferCount);
+
+    tile.content.renderContent.setMeshReady(false);
+    ASSERT_TRUE(TileFillProxyPreparer::ensureFillProxy(tile, &device, 4));
+    tile.content.renderContent.setMeshReady(true);
+    EXPECT_FALSE(tile.content.renderContent.isFillReady());
+    EXPECT_EQ(nullptr, tile.content.renderContent.fillGeometrySignature());
+}
+
+TEST(EllipsoidTerrainMeshBuilderTest,
+     FillProxyUploadFailureDoesNotCommitPartialResourcesOrSignature) {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        testRectangle());
+    earth_engine::testing::MockRenderDevice device;
+    device.failBufferCreationAtAttempt = 2;
+
+    const TileFillProxyPrepareResult result =
+        TileFillProxyPreparer::ensureFillProxy(
+            tile,
+            &device,
+            4);
+
+    EXPECT_FALSE(result.madeReady);
+    EXPECT_FALSE(result.resourcesChanged);
+    EXPECT_EQ(2, device.bufferCreationAttempts);
+    EXPECT_EQ(1, device.createdBufferCount);
+    EXPECT_FALSE(tile.content.renderContent.hasFillModel());
+    EXPECT_FALSE(tile.content.renderContent.hasFillResources());
+    EXPECT_FALSE(tile.content.renderContent.isFillReady());
+    EXPECT_EQ(nullptr, tile.content.renderContent.fillGeometrySignature());
 }

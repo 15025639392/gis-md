@@ -5,6 +5,7 @@
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
 #include "../core/geodesy/WebMercatorProjection.h"
+#include "../core/math/MathUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -52,9 +53,15 @@ Rectangle projectRasterRectangle(const Rectangle& geographicRectangle,
 
 void rewriteProjectionTexCoords(GltfPrimitive& primitive,
                                 RasterOverlayProjection projection,
-                                const Rectangle& geographicRectangle) {
-    primitive.vertexTexCoords[0].clear();
-    primitive.vertexTexCoords[0].reserve(primitive.vertices.size());
+                                const Rectangle& geographicRectangle,
+                                size_t textureCoordinateIndex) {
+    if (textureCoordinateIndex >= kGltfMaxTexCoordSets) {
+        return;
+    }
+    std::vector<std::array<float, 2>>& texCoords =
+        primitive.vertexTexCoords[textureCoordinateIndex];
+    texCoords.clear();
+    texCoords.reserve(primitive.vertices.size());
     const Rectangle projectedRectangle =
         projectRasterRectangle(geographicRectangle, projection);
     const double width = projectedRectangle.width();
@@ -65,7 +72,7 @@ void rewriteProjectionTexCoords(GltfPrimitive& primitive,
         const std::optional<Cartographic> cartographic =
             ellipsoid.tryCartesianToCartographic(vertex.positionEcef);
         if (!cartographic || width <= 0.0 || height <= 0.0) {
-            primitive.vertexTexCoords[0].push_back({0.0f, 0.0f});
+            texCoords.push_back({0.0f, 0.0f});
             continue;
         }
         const Vec3 projected = projection == RasterOverlayProjection::WebMercator
@@ -74,9 +81,15 @@ void rewriteProjectionTexCoords(GltfPrimitive& primitive,
                   cartographic->longitude(),
                   cartographic->latitude(),
                   cartographic->height());
-        primitive.vertexTexCoords[0].push_back({
+        double projectedX = projected.x();
+        if (projection == RasterOverlayProjection::Geographic &&
+            projectedRectangle.crossesAntimeridian() &&
+            projectedX < projectedRectangle.west()) {
+            projectedX += MathUtils::TwoPi;
+        }
+        texCoords.push_back({
             static_cast<float>(std::clamp(
-                (projected.x() - projectedRectangle.west()) / width,
+                (projectedX - projectedRectangle.west()) / width,
                 0.0,
                 1.0)),
             // NW 约定（v=0 在北），与纹理行序及 UV 窗口换算一致
@@ -89,6 +102,18 @@ void rewriteProjectionTexCoords(GltfPrimitive& primitive,
 
 double mixValue(double a, double b, double t) {
     return a + (b - a) * t;
+}
+
+double longitudeAt(const Rectangle& rectangle, double t) {
+    double east = rectangle.east();
+    if (rectangle.crossesAntimeridian()) {
+        east += MathUtils::TwoPi;
+    }
+    double longitude = mixValue(rectangle.west(), east, t);
+    if (longitude > MathUtils::OnePi) {
+        longitude -= MathUtils::TwoPi;
+    }
+    return longitude;
 }
 
 // Regular ellipsoid-surface grid over the geographic rectangle. Vertices carry
@@ -118,8 +143,7 @@ void buildEllipsoidGrid(const Rectangle& tileBounds,
             const double u =
                 static_cast<double>(x) / static_cast<double>(safeGrid);
             const double clampedU = std::clamp(u, 0.0, 1.0);
-            const double lng = mixValue(tileBounds.west(), tileBounds.east(),
-                                        clampedU);
+            const double lng = longitudeAt(tileBounds, clampedU);
             // Borrow the loaded-terrain height at this lon/lat (edges shared
             // with loaded neighbours meet crack-free); fall back to the
             // ellipsoid surface (0) where no terrain is loaded. Height does not
@@ -165,11 +189,24 @@ void buildEllipsoidGrid(const Rectangle& tileBounds,
 RasterOverlayDetails EllipsoidTerrainMeshBuilder::makeRasterOverlayDetails(
     const Rectangle& geographicRectangle,
     RasterOverlayProjection projection) {
+    return makeRasterOverlayDetails(
+        geographicRectangle,
+        std::vector<RasterOverlayProjection>{projection});
+}
+
+RasterOverlayDetails EllipsoidTerrainMeshBuilder::makeRasterOverlayDetails(
+    const Rectangle& geographicRectangle,
+    const std::vector<RasterOverlayProjection>& projections) {
     RasterOverlayDetails details;
-    details.rasterOverlayProjections = {projection};
-    details.rasterOverlayRectangles = {
-        projectRasterRectangle(geographicRectangle, projection)};
-    details.rasterOverlayInvertedVCoordinates = {false};
+    details.rasterOverlayProjections = projections;
+    details.rasterOverlayRectangles.reserve(projections.size());
+    details.rasterOverlayInvertedVCoordinates.assign(
+        projections.size(),
+        false);
+    for (RasterOverlayProjection projection : projections) {
+        details.rasterOverlayRectangles.push_back(
+            projectRasterRectangle(geographicRectangle, projection));
+    }
     details.boundingRegion = {
         geographicRectangle,
         kEllipsoidTerrainMinimumHeight,
@@ -182,6 +219,18 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     RasterOverlayProjection projection,
     int gridSize,
     const EllipsoidProxyHeightSampler& heightSampler) {
+    return makeModel(
+        geographicRectangle,
+        std::vector<RasterOverlayProjection>{projection},
+        gridSize,
+        heightSampler);
+}
+
+std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
+    const Rectangle& geographicRectangle,
+    const std::vector<RasterOverlayProjection>& projections,
+    int gridSize,
+    const EllipsoidProxyHeightSampler& heightSampler) {
     std::vector<SurfaceVertex> gridVertices;
     std::vector<uint32_t> gridIndices;
     buildEllipsoidGrid(
@@ -192,13 +241,13 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
         gridIndices);
     auto model = std::make_unique<GltfModel>();
     const Cartographic center = Cartographic::fromRadians(
-        (geographicRectangle.west() + geographicRectangle.east()) * 0.5,
+        longitudeAt(geographicRectangle, 0.5),
         (geographicRectangle.south() + geographicRectangle.north()) * 0.5,
         0.0);
     const Vec3 localOrigin = Ellipsoid::WGS84().cartographicToCartesian(center);
     model->preferredLocalOriginEcef = localOrigin;
     model->rasterOverlayDetails =
-        makeRasterOverlayDetails(geographicRectangle, projection);
+        makeRasterOverlayDetails(geographicRectangle, projections);
 
     GltfNodeRuntime rootNode;
     rootNode.baseLocalTransform = Mat4::translation(localOrigin);
@@ -223,7 +272,15 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     primitive.roughnessFactor = 1.0f;
     primitive.unlit = false;
     primitive.runtime.nodeIndex = 0;
-    rewriteProjectionTexCoords(primitive, projection, geographicRectangle);
+    const size_t projectionCount =
+        std::min(projections.size(), kGltfMaxTexCoordSets);
+    for (size_t i = 0; i < projectionCount; ++i) {
+        rewriteProjectionTexCoords(
+            primitive,
+            projections[i],
+            geographicRectangle,
+            i);
+    }
     primitive.runtime.baseVertices = primitive.vertices;
     for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
         setLocalPosition(vertex, vertex.positionEcef - localOrigin);

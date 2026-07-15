@@ -13,13 +13,13 @@ struct TileCreationPolicy {
     static void applyContentMetadata(
         TilesetTile& tile,
         const TilesetContentTileMetadata& metadata) {
-        tile.bounds = metadata.bounds;
-        tile.geometricError = metadata.geometricError;
-        tile.refine = metadata.refine;
-        tile.unconditionallyRefine = metadata.unconditionallyRefine;
-        tile.boundingVolume = metadata.boundingVolume;
+        tile.setBounds(metadata.bounds);
+        tile.setGeometricError(metadata.geometricError);
+        tile.setRefine(metadata.refine);
+        tile.setUnconditionallyRefine(metadata.unconditionallyRefine);
+        tile.setBoundingVolume(metadata.boundingVolume);
         tile.viewerRequestVolume = metadata.viewerRequestVolume;
-        tile.contentBoundingVolume = metadata.contentBoundingVolume;
+        tile.setContentBoundingVolume(metadata.contentBoundingVolume);
         applyMetadataHeightRange(tile, metadata);
     }
 
@@ -28,15 +28,14 @@ struct TileCreationPolicy {
         const std::optional<TilesetContentTileMetadata>& metadata,
         const TilesetTile* parent,
         double defaultGeometricError) {
-        tile.geometricError = metadata
-            ? metadata->geometricError
-            : defaultGeometricError;
+        tile.setGeometricError(
+            metadata ? metadata->geometricError : defaultGeometricError);
         if (metadata) {
-            tile.refine = metadata->refine;
-            tile.unconditionallyRefine = metadata->unconditionallyRefine;
-            tile.boundingVolume = metadata->boundingVolume;
+            tile.setRefine(metadata->refine);
+            tile.setUnconditionallyRefine(metadata->unconditionallyRefine);
+            tile.setBoundingVolume(metadata->boundingVolume);
             tile.viewerRequestVolume = metadata->viewerRequestVolume;
-            tile.contentBoundingVolume = metadata->contentBoundingVolume;
+            tile.setContentBoundingVolume(metadata->contentBoundingVolume);
         }
         initializeTerrainHeightRange(tile, metadata, parent);
     }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "TileSelectionPerformanceTimings.h"
+
 namespace earth_engine {
 
 struct FrameState;
@@ -7,30 +9,43 @@ struct TilesetTile;
 class Tileset;
 class TileSelectionShadowRunner;
 class TileIncrementalFrontier;
+class IPrepareRendererResources;
 enum class TileOcclusionState;
 
 class TilesetSelectionFrameFacade {
 public:
-    static void selectTiles(Tileset& tileset, const FrameState& frameState);
+    static void selectTiles(
+        Tileset& tileset,
+        const FrameState& frameState,
+        TileSelectionPerformanceTimings* performanceTimings = nullptr,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
 
     // Land a finished async-worker selection, UNCONDITIONALLY each frame —
     // independent of the reuse gate. Must be called before the frame's reuse
     // decision (see TilesetUpdateFrameRuntime). No-op unless the true-async
     // (asyncSelectionNonBlocking) worker exists and has a ready result.
-    static void consumeAsyncSelectionResult(Tileset& tileset);
+    static bool consumeAsyncSelectionResult(Tileset& tileset);
 
 private:
     // Synchronous (default) path: traverse the live tree directly. `incremental`
     // non-null(增量路径)时,遍历捕获每子树净贡献到该缓存;nullptr 时零开销。
     static void selectTilesSync(Tileset& tileset,
                                 const FrameState& frameState,
-                                TileIncrementalFrontier* incremental = nullptr);
+                                TileIncrementalFrontier* incremental = nullptr,
+                                TileSelectionPerformanceTimings*
+                                    performanceTimings = nullptr,
+                                IPrepareRendererResources*
+                                    pPrepRenderer = nullptr);
 
     // ③ 增量切面路径(incrementalSelection 开关)。Layer 0:恒 delegate 全量
     // (identity),仅建入口 + 让 §8 oracle 覆盖增量分支。后续 Layer 逐步在此
     // 建子树缓存/dirty 失效/剪枝(见设计文档 §7)。输出必须逐位等于全量。
     static void selectTilesIncremental(Tileset& tileset,
-                                       const FrameState& frameState);
+                                       const FrameState& frameState,
+                                       TileSelectionPerformanceTimings*
+                                           performanceTimings = nullptr,
+                                       IPrepareRendererResources*
+                                           pPrepRenderer = nullptr);
 
     // asyncSelection path (kill-switch). Dispatches to the synchronous-shadow or
     // true-async worker variant based on asyncSelectionNonBlocking.
@@ -53,7 +68,7 @@ private:
     // and write each shadow tile's selection state back to its live tile for
     // cross-frame history. Render-thread only.
     static void reconcileShadowToLive(Tileset& tileset,
-                                      const TileSelectionShadowRunner& runner);
+                                      TileSelectionShadowRunner& runner);
 
     // §8 等价性 oracle(见 docs/issues/selector-incremental-frontier-design-
     // 2026-07-06.md)。仅 sync 路径 + verifySelectionEquivalence 开启时调用:

@@ -107,12 +107,23 @@ public:
     /// let traversal skip this lifecycle update.
     bool hasPendingNonPlaceholderLoadingTile() const;
 
+    /// True when a subsequent update can only repeat the Attached fast path.
+    bool hasStableUpdateState() const;
+
+    /// Keep the stable ready tile resident without re-running update().
+    void markStableReadyTileUsed();
+
     /// cesium-native: detach this raster from the geometry tile.
     void detachFromTile(IPrepareRendererResources* pPrepRenderer);
 
     /// Drop provider tile handles after the geometry tile stops rendering.
     /// This lets the provider evict unreferenced raster tiles safely.
     void releaseTileReferences(IPrepareRendererResources* pPrepRenderer);
+
+    /// Materialize only the renderer attachment for a ready raster tile.
+    /// Used when selection already advanced the mapping state in this frame.
+    void attachReadyTileInMainThread(
+        IPrepareRendererResources* pPrepRenderer);
 
     /// cesium-native: throttled load via the Provider.
     bool loadThrottled(RasterOverlayTileProvider& tileProvider,
@@ -199,6 +210,8 @@ public:
     float offsetV() const { return offsetV_; }
     float scaleU() const { return scaleU_; }
     float scaleV() const { return scaleV_; }
+
+    uint64_t runtimeStateSignature() const;
 
 private:
     void clearTileOwnershipState();

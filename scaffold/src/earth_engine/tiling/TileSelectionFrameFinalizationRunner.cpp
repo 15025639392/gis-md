@@ -19,6 +19,7 @@ TileSelectionFrameFinalizationRunner::finalize(
                 input.tilePlan,
                 input.tileRegistry,
                 input.activeTiles,
+                input.previousActiveTiles,
                 input.fadingKeys,
                 input.rasterOverlays,
                 deltaSeconds,

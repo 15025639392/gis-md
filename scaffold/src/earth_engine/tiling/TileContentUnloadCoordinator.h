@@ -40,6 +40,10 @@ public:
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer) {
         if (tile.content.loadState == TileLoadState::Unloaded) {
+            TileUnloadPolicy::releaseAndClearRasterOverlayReferences(
+                tile,
+                pPrepRenderer);
+            tile.content.renderContent.clearFillContent();
             return TileCacheUnloadContentResult::Remove;
         }
 
@@ -52,7 +56,8 @@ public:
             pPrepRenderer);
 
         if (tile.content.contentKind == TileContentKind::External &&
-            tile.referenceCount() > 0) {
+            (tile.referenceCount() > 0 ||
+             TileUnloadPolicy::hasReferencedDescendant(tile))) {
             return TileCacheUnloadContentResult::Keep;
         }
 

@@ -3,6 +3,7 @@
 #include "TileCacheKey.h"
 #include "TileContentAccess.h"
 #include "RasterMappedToTilesetTile.h"
+#include "TileRasterOverlayReadinessPolicy.h"
 #include "TileRenderPlanFinalizer.h"
 #include "TilesetTile.h"
 #include "../layers/ActivatedRasterOverlay.h"
@@ -83,25 +84,21 @@ void collectRasterOverlayProviderCredits(
 
 void refreshFrameCredits(TilePlan& tilePlan,
                          const std::vector<ActivatedRasterOverlay*>&
-                             rasterOverlays,
-                         TileContentAccess& contentAccess) {
+                             rasterOverlays) {
     tilePlan.frameCredits.clear();
     FrameCreditCollector credits{tilePlan.frameCredits, {}};
     collectRasterOverlayProviderCredits(rasterOverlays, credits);
 
     for (const TileRenderEntry& entry : tilePlan.renderEntries) {
-        if (TilesetTile* selectedTile =
-                contentAccess.ensureTile(entry.selectedKey)) {
-            collectRenderContentCredits(*selectedTile, credits);
-            collectReadyRasterTileCredits(*selectedTile, credits);
+        if (entry.selectedTile) {
+            collectRenderContentCredits(*entry.selectedTile, credits);
+            collectReadyRasterTileCredits(*entry.selectedTile, credits);
         }
 
-        if (entry.renderKey != entry.selectedKey) {
-            if (TilesetTile* renderTile =
-                    contentAccess.ensureTile(entry.renderKey)) {
-                collectRenderContentCredits(*renderTile, credits);
-                collectReadyRasterTileCredits(*renderTile, credits);
-            }
+        if (entry.renderTile &&
+            entry.renderTile != entry.selectedTile) {
+            collectRenderContentCredits(*entry.renderTile, credits);
+            collectReadyRasterTileCredits(*entry.renderTile, credits);
         }
     }
 }
@@ -135,28 +132,29 @@ int baseProgressTotalCount(const TilePlan& tilePlan) {
         tilePlan.visibleTiles.size() + tilePlan.tilesFadingOut.size());
 }
 
-void refreshFrameProgress(TilePlan& tilePlan,
-                          TileContentAccess& contentAccess) {
+void refreshFrameProgress(TilePlan& tilePlan) {
     tilePlan.frameMappedRasterTileCount = 0;
     tilePlan.frameMappedRasterTileLoadingCount = 0;
 
-    std::unordered_set<TileKey> visitedTiles;
+    std::unordered_set<TilesetTile*> visitedTiles;
     visitedTiles.reserve(tilePlan.renderEntries.size() * 2);
-    for (const TileRenderEntry& entry : tilePlan.renderEntries) {
-        if (visitedTiles.insert(entry.selectedKey).second) {
-            if (TilesetTile* selectedTile =
-                    contentAccess.ensureTile(entry.selectedKey)) {
-                collectMappedRasterProgress(*selectedTile, tilePlan);
-            }
+    auto visitTile = [&](TilesetTile* tile) {
+        if (!tile || !visitedTiles.insert(tile).second) {
+            return;
         }
+        collectMappedRasterProgress(*tile, tilePlan);
+    };
 
-        if (entry.renderKey != entry.selectedKey &&
-            visitedTiles.insert(entry.renderKey).second) {
-            if (TilesetTile* renderTile =
-                    contentAccess.ensureTile(entry.renderKey)) {
-                collectMappedRasterProgress(*renderTile, tilePlan);
-            }
-        }
+    for (TilesetTile* tile : tilePlan.tilesToRenderThisFrame) {
+        visitTile(tile);
+    }
+    for (TilesetTile* tile : tilePlan.tilesFadingOutThisFrame) {
+        visitTile(tile);
+    }
+
+    for (const TileRenderEntry& entry : tilePlan.renderEntries) {
+        visitTile(entry.selectedTile);
+        visitTile(entry.renderTile);
     }
 
     tilePlan.frameProgressTotalCount =
@@ -188,18 +186,24 @@ void TileRenderPlanFrameRefresher::refresh(
             options.interactionActive,
             kActiveInteractionRenderPrepBudget,
             kRecoveryRenderPrepBudget},
+        rasterOverlays,
         [&contentAccess](const TileKey& key) {
             return contentAccess.ensureTile(key);
         },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
         },
-        [](const TilesetTile& tile) {
-            return tile.hasSurfaceDrawable() ||
-                   tile.content.renderContent.isGltfRenderReady();
+        [&rasterOverlays](const TilesetTile& tile) {
+            const bool geometryDrawable =
+                tile.content.renderContent.hasDrawableResources();
+            return geometryDrawable &&
+                   TileRasterOverlayReadinessPolicy::
+                       terrainSurfaceImageryDrawableReady(
+                           tile,
+                           rasterOverlays);
         });
-    refreshFrameCredits(tilePlan, rasterOverlays, contentAccess);
-    refreshFrameProgress(tilePlan, contentAccess);
+    refreshFrameCredits(tilePlan, rasterOverlays);
+    refreshFrameProgress(tilePlan);
 }
 
 } // namespace earth_engine

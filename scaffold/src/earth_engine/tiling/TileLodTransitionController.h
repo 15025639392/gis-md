@@ -23,6 +23,7 @@ struct TileLodTransitionOptions {
     // instead of the whole registry (every rendered-last-frame tile is carried
     // in the active-set by resetActiveSelectionState).
     const std::vector<TilesetTile*>* activeTiles = nullptr;
+    const std::vector<TilesetTile*>* previousActiveTiles = nullptr;
     bool enableLodTransitionPeriod = false;
     double lodTransitionLength = 1.0;
 };
@@ -62,8 +63,12 @@ struct TileLodTransitionController {
             std::max(0.0, deltaSeconds) /
             std::max(1e-6, options.lodTransitionLength));
 
-        if (options.activeTiles) {
-            for (TilesetTile* tile : *options.activeTiles) {
+        const auto discoverFadeOutCandidates =
+            [&](const std::vector<TilesetTile*>* activeTiles) {
+            if (!activeTiles) {
+                return;
+            }
+            for (TilesetTile* tile : *activeTiles) {
                 if (!tile) continue;
                 const std::string ck = cacheKey(tile->key);
                 if (currentRenderKeys.find(ck) != currentRenderKeys.end()) {
@@ -78,7 +83,9 @@ struct TileLodTransitionController {
                         0.0f;
                 }
             }
-        }
+        };
+        discoverFadeOutCandidates(options.activeTiles);
+        discoverFadeOutCandidates(options.previousActiveTiles);
 
         std::unordered_set<std::string> returnedFromFadeOut;
         for (auto it = fadingKeys.begin(); it != fadingKeys.end();) {

@@ -22,16 +22,14 @@ void initializeVirtualTerrainRoot(TilesetTile& tile) {
     constexpr double kLooseMinimumHeight = -1000.0;
     constexpr double kLooseMaximumHeight = 9000.0;
 
-    tile.bounds = Rectangle::MAXIMUM;
-    tile.geometricError =
-        calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), tile.bounds);
-    tile.refine = TileRefine::Replace;
-    tile.unconditionallyRefine = true;
-    tile.boundingVolume = TileBoundingVolume::fromLooseRegion(
-        tile.bounds,
-        kLooseMinimumHeight,
-        kLooseMaximumHeight);
-    tile.contentBoundingVolume.reset();
+    tile.setBounds(Rectangle::MAXIMUM);
+    tile.setGeometricError(
+        calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), tile.bounds));
+    tile.setRefine(TileRefine::Replace);
+    tile.setUnconditionallyRefine(true);
+    tile.setBoundingVolume(TileBoundingVolume::fromLooseRegion(
+        tile.bounds, kLooseMinimumHeight, kLooseMaximumHeight));
+    tile.resetContentBoundingVolume();
     TileTerrainHeightRangePolicy::setTerrainHeightRange(
         tile,
         kLooseMinimumHeight,
@@ -46,20 +44,32 @@ TilesetTile* TilesetTileRegistry::ensureTile(
     const TileScheme& tileScheme,
     const TilesetContentProvider* contentProvider) {
     const std::string ck = TileCacheKey::forTile(key);
-    const std::optional<TilesetContentTileMetadata> contentMetadata =
-        contentProvider ? contentProvider->tileMetadata(key) : std::nullopt;
     auto it = tiles_.find(ck);
     if (it != tiles_.end() && it->second) {
-        if (contentMetadata &&
+        TilesetTile& tile = *it->second;
+        const uint64_t metadataRevision =
+            contentProvider ? contentProvider->tileMetadataRevision() : 0;
+        if (metadataRevision != 0 &&
+            metadataRevision != tile.appliedContentMetadataRevision &&
             TileLoadStatePredicates::
                 canRefreshContentMetadataBeforeContentAccepted(
-                    it->second->content.loadState)) {
-            TileCreationPolicy::applyContentMetadata(
-                *it->second,
-                *contentMetadata);
+                    tile.content.loadState)) {
+            const std::optional<TilesetContentTileMetadata> contentMetadata =
+                contentProvider->tileMetadata(key);
+            if (contentMetadata) {
+                TileCreationPolicy::applyContentMetadata(
+                    tile,
+                    *contentMetadata);
+            }
+            tile.appliedContentMetadataRevision = metadataRevision;
         }
-        return it->second.get();
+        return &tile;
     }
+
+    const uint64_t metadataRevision =
+        contentProvider ? contentProvider->tileMetadataRevision() : 0;
+    const std::optional<TilesetContentTileMetadata> contentMetadata =
+        contentProvider ? contentProvider->tileMetadata(key) : std::nullopt;
 
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(key)) {
         auto tile = std::make_unique<TilesetTile>(key, Rectangle::MAXIMUM);
@@ -67,6 +77,7 @@ TilesetTile* TilesetTileRegistry::ensureTile(
         if (contentMetadata) {
             TileCreationPolicy::applyContentMetadata(*tile, *contentMetadata);
         }
+        tile->appliedContentMetadataRevision = metadataRevision;
         TilesetTile* raw = tile.get();
         tiles_[ck] = std::move(tile);
         return raw;
@@ -94,15 +105,13 @@ TilesetTile* TilesetTileRegistry::ensureTile(
         contentMetadata,
         parent,
         calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), tile->bounds));
+    tile->appliedContentMetadataRevision = metadataRevision;
 
     TilesetTile* raw = tile.get();
     tiles_[ck] = std::move(tile);
 
     if (parent) {
-        auto& children = parent->children;
-        if (std::find(children.begin(), children.end(), raw) == children.end()) {
-            children.push_back(raw);
-        }
+        parent->attachChild(*raw);
     }
 
     return raw;

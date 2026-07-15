@@ -36,26 +36,32 @@ TEST(TileCacheUnloadCoordinatorTest, RotatesReferencedCandidateAndUnloadsLaterTi
 
     std::vector<std::string> unloadedKeys;
     std::vector<std::string> markedIneligibleKeys;
+    int64_t totalBytesUsed = 2;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
         tiles,
-        2,
         0,
         0.0,
-        false,
-        false,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
         [](const TilesetTile&) {
             return false;
         },
         [&](TilesetTile& tile) {
             unloadedKeys.push_back(tile.key.y == 1 ? "free" : "referenced");
+            --totalBytesUsed;
             return TileCacheUnloadContentResult::Remove;
         },
         [&](const std::string& key) {
             markedIneligibleKeys.push_back(key);
             unloadQueue.erase(key);
         },
-        [](TilesetTile&) {});
+        [](TilesetTile&) {},
+        []() {});
 
     ASSERT_EQ(unloadedKeys.size(), 1u);
     EXPECT_EQ(unloadedKeys.front(), "free");
@@ -63,8 +69,8 @@ TEST(TileCacheUnloadCoordinatorTest, RotatesReferencedCandidateAndUnloadsLaterTi
     EXPECT_EQ(markedIneligibleKeys.front(), "free");
     ASSERT_EQ(unloadQueue.size(), 1u);
     EXPECT_EQ(unloadQueue.front(), "referenced");
-    EXPECT_TRUE(result.cacheBytesDirty);
-    EXPECT_TRUE(result.shouldRefreshTotalBytes);
+    EXPECT_EQ(result.totalBytesUsed, 1);
+    EXPECT_EQ(result.unloadedTiles, 1u);
 }
 
 TEST(TileCacheUnloadCoordinatorTest, StopsAfterAllCandidatesAreDeferred) {
@@ -81,14 +87,18 @@ TEST(TileCacheUnloadCoordinatorTest, StopsAfterAllCandidatesAreDeferred) {
 
     int unloadAttempts = 0;
     int markedIneligibleCount = 0;
+    int64_t totalBytesUsed = 2;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
         tiles,
-        2,
         0,
         0.0,
-        false,
-        false,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
         [](const TilesetTile&) {
             return false;
         },
@@ -99,14 +109,15 @@ TEST(TileCacheUnloadCoordinatorTest, StopsAfterAllCandidatesAreDeferred) {
         [&](const std::string&) {
             ++markedIneligibleCount;
         },
-        [](TilesetTile&) {});
+        [](TilesetTile&) {},
+        []() {});
 
     EXPECT_EQ(unloadAttempts, 0);
     EXPECT_EQ(markedIneligibleCount, 0);
     ASSERT_EQ(unloadQueue.size(), 2u);
     EXPECT_EQ(unloadQueue.front(), "a");
-    EXPECT_FALSE(result.cacheBytesDirty);
-    EXPECT_FALSE(result.shouldRefreshTotalBytes);
+    EXPECT_EQ(result.totalBytesUsed, 2);
+    EXPECT_EQ(result.unloadedTiles, 0u);
 }
 
 TEST(TileCacheUnloadCoordinatorTest, DropsMissingKeysAndContinues) {
@@ -119,37 +130,43 @@ TEST(TileCacheUnloadCoordinatorTest, DropsMissingKeysAndContinues) {
 
     std::vector<std::string> unloadedKeys;
     std::vector<std::string> markedIneligibleKeys;
+    int64_t totalBytesUsed = 2;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
         tiles,
-        2,
         0,
         0.0,
-        false,
-        false,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
         [](const TilesetTile&) {
             return false;
         },
         [&](TilesetTile& tile) {
             unloadedKeys.push_back(tile.key.y == 1 ? "free" : "stale");
+            --totalBytesUsed;
             return TileCacheUnloadContentResult::Remove;
         },
         [&](const std::string& key) {
             markedIneligibleKeys.push_back(key);
             unloadQueue.erase(key);
         },
-        [](TilesetTile&) {});
+        [](TilesetTile&) {},
+        []() {});
 
     ASSERT_EQ(unloadedKeys.size(), 1u);
     EXPECT_EQ(unloadedKeys.front(), "free");
     ASSERT_EQ(markedIneligibleKeys.size(), 1u);
     EXPECT_EQ(markedIneligibleKeys.front(), "free");
     EXPECT_TRUE(unloadQueue.empty());
-    EXPECT_TRUE(result.cacheBytesDirty);
-    EXPECT_TRUE(result.shouldRefreshTotalBytes);
+    EXPECT_EQ(result.totalBytesUsed, 1);
+    EXPECT_EQ(result.unloadedTiles, 1u);
 }
 
-TEST(TileCacheUnloadCoordinatorTest, DefersByteRefreshDuringResourceSmoothing) {
+TEST(TileCacheUnloadCoordinatorTest, UsesLiveIncrementalBytesWithoutRefresh) {
     TileUnloadQueue unloadQueue;
     unloadQueue.pushBackIfAbsent("free");
 
@@ -157,27 +174,82 @@ TEST(TileCacheUnloadCoordinatorTest, DefersByteRefreshDuringResourceSmoothing) {
     tiles["free"] = makeUnloadableTile(0);
 
     int unloadAttempts = 0;
+    int64_t totalBytesUsed = 1;
     const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
         unloadQueue,
         tiles,
-        1,
         0,
         0.0,
-        true,
-        false,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
         [](const TilesetTile&) {
             return false;
         },
         [&](TilesetTile&) {
             ++unloadAttempts;
+            totalBytesUsed = 0;
             return TileCacheUnloadContentResult::Remove;
         },
         [&](const std::string& key) {
             unloadQueue.erase(key);
         },
-        [](TilesetTile&) {});
+        [](TilesetTile&) {},
+        []() {});
 
     EXPECT_EQ(unloadAttempts, 1);
-    EXPECT_TRUE(result.cacheBytesDirty);
-    EXPECT_FALSE(result.shouldRefreshTotalBytes);
+    EXPECT_EQ(result.totalBytesUsed, 0);
+    EXPECT_EQ(result.unloadedTiles, 1u);
+}
+
+TEST(
+    TileCacheUnloadCoordinatorTest,
+    RemovesStaleLoadingCandidateButKeepsProcessingUnloadableTiles) {
+    TileUnloadQueue unloadQueue;
+    unloadQueue.pushBackIfAbsent("loading");
+    unloadQueue.pushBackIfAbsent("free");
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto loading = makeUnloadableTile(0);
+    loading->content.loadState = TileLoadState::ContentLoading;
+    tiles["loading"] = std::move(loading);
+    tiles["free"] = makeUnloadableTile(1);
+
+    std::vector<std::string> markedIneligibleKeys;
+    int unloadAttempts = 0;
+    int64_t totalBytesUsed = 2;
+    TileCacheUnloadCoordinator::run(
+        unloadQueue,
+        tiles,
+        0,
+        0.0,
+        [&]() {
+            return totalBytesUsed;
+        },
+        [&](int64_t maximumBytes) {
+            return totalBytesUsed > maximumBytes;
+        },
+        [](const TilesetTile&) {
+            return false;
+        },
+        [&](TilesetTile&) {
+            ++unloadAttempts;
+            --totalBytesUsed;
+            return TileCacheUnloadContentResult::Remove;
+        },
+        [&](const std::string& key) {
+            markedIneligibleKeys.push_back(key);
+            unloadQueue.erase(key);
+        },
+        [](TilesetTile&) {},
+        []() {});
+
+    EXPECT_EQ(1, unloadAttempts);
+    EXPECT_EQ(
+        (std::vector<std::string>{"loading", "free"}),
+        markedIneligibleKeys);
+    EXPECT_TRUE(unloadQueue.empty());
 }

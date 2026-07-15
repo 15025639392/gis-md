@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileLoadLifecycle.h"
+#include "TileLoadQueue.h"
 #include "TileLoadRequestDispatcher.h"
 #include "TileLoadRequestPlanner.h"
 #include "TileLoadPriorityPolicy.h"
@@ -30,6 +31,8 @@ struct TileLoadSchedulerInput {
     TileLoadLifecycle& lifecycle;
     FrameResourceBudget& budget;
     TilesetContentProvider* contentProvider = nullptr;
+    const std::vector<RasterOverlayProjection>*
+        requiredRasterOverlayProjections = nullptr;
 };
 
 class TileLoadScheduler {
@@ -47,14 +50,92 @@ public:
         IsEmptyTileFn&& isEmptyTile,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         MarkTileContentLoadingFn&& markTileContentLoading) {
-        TileLoadRequestOutcome outcome;
-        std::vector<TileLoadRequest> sorted = loadRequests;
-        TileLoadPriorityPolicy::sortByPriority(sorted);
+        return processRequests(
+                   std::vector<TileLoadRequest>(
+                       loadRequests.begin(),
+                       loadRequests.end()),
+                   input,
+                   std::forward<CacheKeyForTileFn>(cacheKeyForTile),
+                   std::forward<MakeSnapshotFn>(makeSnapshot),
+                   std::forward<IsEmptyTileFn>(isEmptyTile),
+                   std::forward<PrepareUpsampleSourceTileFn>(
+                       prepareUpsampleSourceTile),
+                   std::forward<MarkTileContentLoadingFn>(
+                       markTileContentLoading))
+            .outcome;
+    }
 
-        for (const TileLoadRequest& request : sorted) {
+    template <typename CacheKeyForTileFn,
+              typename MakeSnapshotFn,
+              typename IsEmptyTileFn,
+              typename PrepareUpsampleSourceTileFn,
+              typename MarkTileContentLoadingFn>
+    static TileLoadRequestOutcome requestMissingTiles(
+        TileLoadQueue& loadQueue,
+        TileLoadSchedulerInput input,
+        CacheKeyForTileFn&& cacheKeyForTile,
+        MakeSnapshotFn&& makeSnapshot,
+        IsEmptyTileFn&& isEmptyTile,
+        PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
+        MarkTileContentLoadingFn&& markTileContentLoading) {
+        RequestPassResult pass = processRequests(
+            loadQueue.takeRequests(),
+            input,
+            std::forward<CacheKeyForTileFn>(cacheKeyForTile),
+            std::forward<MakeSnapshotFn>(makeSnapshot),
+            std::forward<IsEmptyTileFn>(isEmptyTile),
+            std::forward<PrepareUpsampleSourceTileFn>(
+                prepareUpsampleSourceTile),
+            std::forward<MarkTileContentLoadingFn>(markTileContentLoading));
+        // Source preparation can enqueue parent work while this pass runs.
+        // If one of those keys was also present in this pass and was consumed,
+        // the lifecycle now owns it; remove the callback-side duplicate before
+        // merging genuinely retryable requests back into the next batch.
+        for (const TileKey& key : pass.consumed) {
+            loadQueue.erase(key);
+        }
+        loadQueue.mergeRequests(std::move(pass.retained));
+        return pass.outcome;
+    }
+
+private:
+    struct RequestPassResult {
+        TileLoadRequestOutcome outcome;
+        std::vector<TileLoadRequest> retained;
+        std::vector<TileKey> consumed;
+    };
+
+    template <typename CacheKeyForTileFn,
+              typename MakeSnapshotFn,
+              typename IsEmptyTileFn,
+              typename PrepareUpsampleSourceTileFn,
+              typename MarkTileContentLoadingFn>
+    static RequestPassResult processRequests(
+        std::vector<TileLoadRequest> requests,
+        TileLoadSchedulerInput input,
+        CacheKeyForTileFn&& cacheKeyForTile,
+        MakeSnapshotFn&& makeSnapshot,
+        IsEmptyTileFn&& isEmptyTile,
+        PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
+        MarkTileContentLoadingFn&& markTileContentLoading) {
+        RequestPassResult pass;
+        TileLoadPriorityPolicy::sortByPriority(requests);
+
+        const auto retainRemaining = [&](size_t first) {
+            pass.retained.insert(
+                pass.retained.end(),
+                requests.begin() + static_cast<std::ptrdiff_t>(first),
+                requests.end());
+        };
+
+        for (size_t requestIndex = 0;
+             requestIndex < requests.size();
+             ++requestIndex) {
+            const TileLoadRequest& request = requests[requestIndex];
             {
                 std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                 if (input.lifecycle.requestState().destroying()) {
+                    retainRemaining(requestIndex);
                     break;
                 }
             }
@@ -62,15 +143,19 @@ public:
             const TileKey requestKey = request.key;
             const std::string cacheKey = cacheKeyForTile(requestKey);
             if (cacheKey.empty()) {
-                ++outcome.skippedEmptyCacheKey;
+                ++pass.outcome.skippedEmptyCacheKey;
+                pass.consumed.push_back(requestKey);
                 continue;
             }
             if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
-                ++outcome.skippedAlreadyPending;
+                // The request/pending lifecycle is now the sole owner.
+                ++pass.outcome.skippedAlreadyPending;
+                pass.consumed.push_back(requestKey);
                 continue;
             }
             if (isEmptyTile(cacheKey)) {
-                ++outcome.skippedEmptyTile;
+                ++pass.outcome.skippedEmptyTile;
+                pass.consumed.push_back(requestKey);
                 continue;
             }
 
@@ -81,17 +166,19 @@ public:
             // (项目自有的体验层退避,cesium-native 无此机制)。
             if (snapshot.loadState == TileLoadState::FailedTemporarily &&
                 tileState != nullptr &&
-                !TileRetryBackoffPolicy::isRetryDue(
-                    tileState->temporaryFailureRetryNotBeforeMs,
-                    perf::nowMs())) {
-                ++outcome.skippedClassified;
+                    !TileRetryBackoffPolicy::isRetryDue(
+                        tileState->temporaryFailureRetryNotBeforeMs,
+                        perf::nowMs())) {
+                ++pass.outcome.skippedClassified;
+                pass.retained.push_back(request);
                 continue;
             }
             const TileLoadRequestKind requestKind =
                 TileLoadRequestPlanner::classify(snapshot);
 
             if (requestKind == TileLoadRequestKind::Skip) {
-                ++outcome.skippedClassified;
+                ++pass.outcome.skippedClassified;
+                pass.consumed.push_back(requestKey);
                 continue;
             }
 
@@ -100,7 +187,8 @@ public:
                     !prepareUpsampleSourceTile(
                         *tileState,
                         request.priority)) {
-                    ++outcome.skippedUpsampleSourceNotReady;
+                    ++pass.outcome.skippedUpsampleSourceNotReady;
+                    pass.retained.push_back(request);
                     continue;
                 }
 
@@ -111,11 +199,13 @@ public:
                         canCreateLoadResult(*tileState);
                 if (needsRasterDetailUpsample &&
                     !hasTerrainContentSource) {
-                    ++outcome.skippedUpsampleNoContentSource;
+                    ++pass.outcome.skippedUpsampleNoContentSource;
+                    pass.consumed.push_back(requestKey);
                     continue;
                 }
                 if (!hasTerrainContentSource) {
-                    ++outcome.skippedUpsampleNoContentSource;
+                    ++pass.outcome.skippedUpsampleNoContentSource;
+                    pass.consumed.push_back(requestKey);
                     continue;
                 }
 
@@ -141,15 +231,18 @@ public:
                             TileLoadResult::createTerminal(
                                 TileLoadStatus::Failed));
                     if (shouldStopAfterDispatch(terminalResult)) {
-                        ++outcome.stoppedAtDispatch;
+                        ++pass.outcome.stoppedAtDispatch;
+                        retainRemaining(requestIndex);
                         break;
                     }
                     if (terminalResult == TileLoadDispatchResult::Skipped) {
-                        ++outcome.skippedDispatch;
+                        ++pass.outcome.skippedDispatch;
+                        pass.consumed.push_back(requestKey);
                         continue;
                     }
                     markTileContentLoading(requestKey);
-                    ++outcome.issued;
+                    ++pass.outcome.issued;
+                    pass.consumed.push_back(requestKey);
                     continue;
                 }
 
@@ -177,23 +270,26 @@ public:
                                 : TileLoadResult::createTerminal(
                                       TileLoadStatus::Failed);
                         },
-                        [&markTileContentLoading, &requestKey, &outcome]() {
+                        [&markTileContentLoading, &requestKey, &pass]() {
                             markTileContentLoading(requestKey);
-                            ++outcome.issued;
+                            ++pass.outcome.issued;
                         });
                 if (shouldStopAfterDispatch(dispatchResult)) {
-                    ++outcome.stoppedAtDispatch;
+                    ++pass.outcome.stoppedAtDispatch;
+                    retainRemaining(requestIndex);
                     break;
                 }
                 if (dispatchResult == TileLoadDispatchResult::Skipped) {
-                    ++outcome.skippedDispatch;
+                    ++pass.outcome.skippedDispatch;
                 }
+                pass.consumed.push_back(requestKey);
                 continue;
             }
 
             if (requestKind == TileLoadRequestKind::Content) {
                 if (!input.contentProvider) {
-                    ++outcome.skippedNoContentProvider;
+                    ++pass.outcome.skippedNoContentProvider;
+                    pass.consumed.push_back(requestKey);
                     continue;
                 }
                 // cesium-js cullRequestsWhileMoving:相机运动过快(相对瓦片尺寸)
@@ -208,7 +304,8 @@ public:
                             input.budget.cameraPositionDeltaMagnitude(),
                             TileMotionCullPolicy::boundingSphereRadius(
                                 *tileState)})) {
-                    ++outcome.skippedMotionCull;
+                    ++pass.outcome.skippedMotionCull;
+                    pass.retained.push_back(request);
                     continue;
                 }
                 const int estimatedFanout =
@@ -226,7 +323,8 @@ public:
                                     .requestState()
                                     .totalRequestCount()),
                             estimatedFanout)) {
-                        outcome.blockedByInflight = true;
+                        pass.outcome.blockedByInflight = true;
+                        retainRemaining(requestIndex);
                         break;
                     }
                 }
@@ -242,31 +340,43 @@ public:
                         cacheKey,
                         request.group,
                         request.priority,
-                        [&markTileContentLoading, &requestKey, &outcome]() {
+                        [&markTileContentLoading, &requestKey, &pass]() {
                             markTileContentLoading(requestKey);
-                            ++outcome.issued;
+                            ++pass.outcome.issued;
                         },
-                        requestOptionsForTile(*input.contentProvider, tileState));
+                        requestOptionsForTile(
+                            *input.contentProvider,
+                            tileState,
+                            input.requiredRasterOverlayProjections));
                 if (shouldStopAfterDispatch(dispatchResult)) {
-                    ++outcome.stoppedAtDispatch;
+                    ++pass.outcome.stoppedAtDispatch;
+                    retainRemaining(requestIndex);
                     break;
                 }
                 if (dispatchResult == TileLoadDispatchResult::Skipped) {
-                    ++outcome.skippedDispatch;
+                    ++pass.outcome.skippedDispatch;
                 }
+                pass.consumed.push_back(requestKey);
                 continue;
             }
         }
 
-        return outcome;
+        return pass;
     }
-
-private:
     static TileContentRequestOptions requestOptionsForTile(
         const TilesetContentProvider& provider,
-        const TilesetTile* tile) {
+        const TilesetTile* tile,
+        const std::vector<RasterOverlayProjection>*
+            requiredRasterOverlayProjections) {
         TileContentRequestOptions options;
-        if (!provider.providesTerrainQuadtree() || !tile) {
+        if (!provider.providesTerrainQuadtree()) {
+            return options;
+        }
+        if (requiredRasterOverlayProjections) {
+            options.requiredRasterOverlayProjections =
+                *requiredRasterOverlayProjections;
+        }
+        if (!tile) {
             return options;
         }
         for (const TilesetTile* child : tile->children) {

@@ -1,6 +1,9 @@
 #pragma once
 
+#include "TileRasterOverlayState.h"
+
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace earth_engine {
@@ -11,10 +14,8 @@ class RenderDevice;
 class Renderer;
 struct TilesetTile;
 
-struct RenderContentRasterOverlayUpdateAction {
-    bool unloadTileContent = false;
-    bool createRasterOverlayUpsampledChildren = false;
-};
+using RenderContentRasterOverlayUpdateAction =
+    TileRasterOverlayUpdateAction;
 
 class RenderContentRasterOverlayStateUpdater {
 public:
@@ -25,7 +26,8 @@ public:
         const std::vector<size_t>& overlayProcessingOrder,
         RenderDevice* device,
         double maximumScreenSpaceError,
-        FrameResourceBudget& frameResourceBudget);
+        FrameResourceBudget& frameResourceBudget,
+        uint64_t frameNumber = 0);
 };
 
 } // namespace earth_engine
