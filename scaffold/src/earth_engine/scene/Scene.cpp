@@ -195,6 +195,7 @@ bool Scene::render() {
         environment_->atmospherePass(),
         environment_->skyGradient(),
         tilesets_->primary(),
+        tilesets_->pendingPrimary(),
         tilesets_->contentTilesets(),
         layers_->vectorLayers(),
         [this]() { updatePresentationTrace(); }});

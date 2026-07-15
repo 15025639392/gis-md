@@ -40,8 +40,31 @@ public:
         CacheKeyFn&& cacheKey,
         ProtectTileFn&& protectTile,
         BuildTileDrawCommandFn&& buildTileDrawCommand) {
+        return buildEntries(
+            plan.renderEntries,
+            pass,
+            frameNumber,
+            renderer,
+            commands,
+            std::forward<CacheKeyFn>(cacheKey),
+            std::forward<ProtectTileFn>(protectTile),
+            std::forward<BuildTileDrawCommandFn>(buildTileDrawCommand));
+    }
+
+    template <typename CacheKeyFn,
+              typename ProtectTileFn,
+              typename BuildTileDrawCommandFn>
+    static TileRenderEntryCommandStats buildEntries(
+        const std::vector<TileRenderEntry>& entries,
+        TileRenderEntryPass pass,
+        uint64_t frameNumber,
+        Renderer& renderer,
+        RenderCommandList& commands,
+        CacheKeyFn&& cacheKey,
+        ProtectTileFn&& protectTile,
+        BuildTileDrawCommandFn&& buildTileDrawCommand) {
         TileRenderEntryCommandStats stats;
-        for (const TileRenderEntry& entry : plan.renderEntries) {
+        for (const TileRenderEntry& entry : entries) {
             if (entry.renderPass() != pass) {
                 continue;
             }

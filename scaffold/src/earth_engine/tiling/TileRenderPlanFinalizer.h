@@ -3,11 +3,8 @@
 #include "TileKey.h"
 #include "TilePlan.h"
 #include "TileRasterOverlayReadinessPolicy.h"
+#include "TileSurfaceClip.h"
 #include "TilesetTile.h"
-
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
-#include "../core/geodesy/WebMercatorProjection.h"
 
 #include <algorithm>
 #include <array>
@@ -97,7 +94,7 @@ struct TileRenderPlanFinalizer {
                         isFallbackRenderable);
                 if (renderableAncestor) {
                     commandTile = renderableAncestor;
-                    surfaceClipUv = clipUvForDescendantBounds(
+                    surfaceClipUv = TileSurfaceClip::forDescendantBounds(
                         *commandTile,
                         selectedTile.bounds);
                     if (!surfaceClipUv) {
@@ -277,100 +274,6 @@ private:
 
     static bool hasRenderableSurfaceForPlan(const TilesetTile& tile) {
         return tile.hasSurfaceDrawable();
-    }
-
-    static std::optional<std::array<float, 4>> clipUvForDescendantBounds(
-        const TilesetTile& commandTile,
-        const Rectangle& descendantBounds) {
-        // The terrain shader clips against texcoord set 0, which is
-        // normalized against the tile content's FIRST overlay-projection
-        // rectangle in PROJECTED space with V growing south->north (both QM
-        // native UVs and the rewritten web-mercator texcoords keep V=0 at
-        // the south edge — see rewriteTerrainProjectionTexCoords). The clip
-        // window must be computed in that same space: a linear-geographic,
-        // north-down window discards a vertically mirrored region and, on
-        // web-mercator groups, drifts with latitude.
-        constexpr double kTwoPiForLongitudeWrap =
-            3.14159265358979323846264338327950288 * 2.0;
-
-        Rectangle texcoordRect = commandTile.bounds;
-        RasterOverlayProjection projection =
-            RasterOverlayProjection::Geographic;
-        const TileFillGeometrySignature* fillSignature =
-            commandTile.content.renderContent.fillGeometrySignature();
-        if (commandTile.content.renderContent.drawsFill() &&
-            fillSignature) {
-            projection = fillSignature->projection;
-            texcoordRect =
-                projection == RasterOverlayProjection::WebMercator
-                ? projectRectangleSimple(
-                      WebMercatorProjection(Ellipsoid::WGS84()),
-                      fillSignature->bounds
-                          .splitAtAntimeridian()
-                          .first)
-                : fillSignature->bounds;
-        } else if (
-            commandTile.content.renderContent
-                .hasRasterOverlayDetailsContent()) {
-            const RasterOverlayDetails& details =
-                commandTile.content.renderContent.rasterOverlayDetails();
-            if (!details.rasterOverlayProjections.empty() &&
-                !details.rasterOverlayRectangles.empty() &&
-                !details.rasterOverlayRectangles[0].isEmpty()) {
-                projection = details.rasterOverlayProjections[0];
-                texcoordRect = details.rasterOverlayRectangles[0];
-            }
-        }
-
-        const Rectangle descendantProjected =
-            projection == RasterOverlayProjection::WebMercator
-                ? projectRectangleSimple(
-                      WebMercatorProjection(Ellipsoid::WGS84()),
-                      descendantBounds.splitAtAntimeridian().first)
-                : descendantBounds;
-
-        // Mercator x equals longitude radians, so wrap-aware width works for
-        // both projections; projected height needs the plain subtraction.
-        const double ancestorWidth = texcoordRect.width();
-        const double ancestorHeight = texcoordRect.computeHeight();
-        if (ancestorWidth <= 0.0 || ancestorHeight <= 0.0) {
-            return std::nullopt;
-        }
-
-        auto horizontalOffset = [&](double x) {
-            double offset = x - texcoordRect.west();
-            if (texcoordRect.crossesAntimeridian() && offset < 0.0) {
-                offset += kTwoPiForLongitudeWrap;
-            }
-            return offset;
-        };
-
-        double uMin =
-            horizontalOffset(descendantProjected.west()) / ancestorWidth;
-        double uMax =
-            horizontalOffset(descendantProjected.east()) / ancestorWidth;
-        if (texcoordRect.crossesAntimeridian() && uMax < uMin) {
-            uMax += 1.0;
-        }
-        // NW 约定（v=0 在北）：与 overlay texcoord 同基准
-        double vMin = (texcoordRect.north() - descendantProjected.north()) /
-                      ancestorHeight;
-        double vMax = (texcoordRect.north() - descendantProjected.south()) /
-                      ancestorHeight;
-
-        uMin = std::clamp(uMin, 0.0, 1.0);
-        uMax = std::clamp(uMax, 0.0, 1.0);
-        vMin = std::clamp(vMin, 0.0, 1.0);
-        vMax = std::clamp(vMax, 0.0, 1.0);
-        if (uMax <= uMin || vMax <= vMin) {
-            return std::nullopt;
-        }
-
-        return std::array<float, 4>{
-            static_cast<float>(uMin),
-            static_cast<float>(vMin),
-            static_cast<float>(uMax - uMin),
-            static_cast<float>(vMax - vMin)};
     }
 
     template <typename IsFallbackRenderableFn>

@@ -394,7 +394,9 @@ void Tileset::update(
 
 void Tileset::buildRenderCommands(Renderer& renderer,
                                   RenderCommandList& commands,
-                                  uint64_t renderFrameId) {
+                                  uint64_t renderFrameId,
+                                  const std::vector<TileRenderEntry>*
+                                      renderEntriesOverride) {
     if (!pendingRenderReferences_.empty()) {
         platformLog(
             LogLevel::Error,
@@ -420,7 +422,8 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                 options_.fogDensityTable,
                 selectionCounters_.fogCulled,
                 resourceSmoothingActiveForFrame_,
-                interactionActiveForFrame_},
+                interactionActiveForFrame_,
+                renderEntriesOverride},
             renderCommands_,
             cacheOwnership_,
             pendingRenderReferences_},

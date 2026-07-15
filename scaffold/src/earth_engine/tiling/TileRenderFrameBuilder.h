@@ -32,6 +32,7 @@ struct TileRenderFrameBuildInput {
     int fogCulled = 0;
     bool resourceSmoothingActive = false;
     bool interactionActive = false;
+    const std::vector<TileRenderEntry>* renderEntriesOverride = nullptr;
 };
 
 class TileRenderFrameBuilder {
@@ -139,8 +140,10 @@ public:
             };
         auto renderEntriesFor = [&](TileRenderEntryPass pass) {
             TileRenderEntryCommandStats stats =
-                TileRenderEntryCommandBuilder::build(
-                    input.tilePlan,
+                TileRenderEntryCommandBuilder::buildEntries(
+                    input.renderEntriesOverride
+                        ? *input.renderEntriesOverride
+                        : input.tilePlan.renderEntries,
                     pass,
                     input.frameNumber,
                     renderer,

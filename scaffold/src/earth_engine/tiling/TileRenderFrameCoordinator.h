@@ -17,6 +17,7 @@ struct TileRenderFrameCoordinatorInput {
     int fogCulled = 0;
     bool resourceSmoothingActive = false;
     bool interactionActive = false;
+    const std::vector<TileRenderEntry>* renderEntriesOverride = nullptr;
 };
 
 class TileRenderFrameCoordinator {
@@ -40,6 +41,7 @@ public:
         TileRenderFrameBuilder::build(
             TileRenderFrameInputBuilder::build(
                 input.tilePlan,
+                input.renderEntriesOverride,
                 input.rasterOverlays,
                 input.frameNumber,
                 input.lastCameraPosition,

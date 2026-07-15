@@ -190,6 +190,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/scene/ScenePresentationTraceBuilder.cpp
     earth_engine/scene/ScenePrimaryTilesetTakeoverPolicy.h
     earth_engine/scene/ScenePrimaryTilesetTakeoverPolicy.cpp
+    earth_engine/scene/ScenePrimaryTilesetRenderComposer.h
+    earth_engine/scene/ScenePrimaryTilesetRenderComposer.cpp
     earth_engine/scene/SceneTilesetCoordinator.h
     earth_engine/scene/SceneTilesetCoordinator.cpp
     earth_engine/scene/SceneRenderCommandUniformUpdater.h

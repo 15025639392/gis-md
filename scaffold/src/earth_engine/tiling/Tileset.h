@@ -151,7 +151,9 @@ public:
                 IPrepareRendererResources* pPrepRenderer = nullptr);
     void buildRenderCommands(Renderer& renderer,
                              RenderCommandList& commands,
-                             uint64_t renderFrameId = 0);
+                             uint64_t renderFrameId = 0,
+                             const std::vector<TileRenderEntry>*
+                                 renderEntriesOverride = nullptr);
 
     const TilePlan& tilePlan() const { return tilePlan_; }
     bool shouldHoldPresentationFrame() const;

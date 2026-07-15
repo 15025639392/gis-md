@@ -1,9 +1,11 @@
 #include "SceneRenderPipeline.h"
 #include "Camera.h"
 #include "SceneFrameDiagnosticsAggregator.h"
+#include "ScenePrimaryTilesetRenderComposer.h"
 #include "SceneRenderCommandUniformUpdater.h"
 #include "SceneRenderDiagnostics.h"
 #include "../debug/PerfTimer.h"
+#include "../debug/PlatformLog.h"
 #include "../environment/AtmosphereBackgroundPass.h"
 #include "../environment/SkyBox.h"
 #include "../environment/SkyGradient.h"
@@ -187,6 +189,7 @@ void SceneRenderPipeline::reserveCommands(Context& context) const {
         expectedCommands += tileset->tilePlan().renderEntries.size();
     };
     addExpectedTilesetCommands(context.terrainTileset);
+    addExpectedTilesetCommands(context.pendingTerrainTileset);
     for (const auto& tileset : context.additionalTilesets) {
         addExpectedTilesetCommands(tileset.get());
     }
@@ -272,7 +275,48 @@ void SceneRenderPipeline::buildLayerCommands(
     // 直接追加进帧列表:每命令每帧一次拷贝,无中转缓存。
     const double layerStartMs = perf::nowMs();
     if (context.terrainTileset) {
-        context.terrainTileset->buildRenderCommands(
+        if (context.pendingTerrainTileset) {
+            const ScenePrimaryTilesetRenderComposition composition =
+                ScenePrimaryTilesetRenderComposer::compose(
+                    *context.terrainTileset,
+                    *context.pendingTerrainTileset);
+            const int currentEntryCount =
+                static_cast<int>(composition.currentEntries.size());
+            const int pendingEntryCount =
+                static_cast<int>(composition.pendingEntries.size());
+            if (currentEntryCount != lastPrimaryCurrentEntryCount_ ||
+                pendingEntryCount != lastPrimaryPendingEntryCount_) {
+                platformLog(
+                    LogLevel::Info,
+                    "Tileset",
+                    "Primary regional composition current=%d pending=%d",
+                    currentEntryCount,
+                    pendingEntryCount);
+                lastPrimaryCurrentEntryCount_ = currentEntryCount;
+                lastPrimaryPendingEntryCount_ = pendingEntryCount;
+            }
+            context.terrainTileset->buildRenderCommands(
+                context.renderer,
+                context.commands,
+                context.frameState.frameId,
+                &composition.currentEntries);
+            if (composition.hasPendingCoverage()) {
+                context.pendingTerrainTileset->buildRenderCommands(
+                    context.renderer,
+                    context.commands,
+                    context.frameState.frameId,
+                    &composition.pendingEntries);
+            }
+        } else {
+            lastPrimaryCurrentEntryCount_ = -1;
+            lastPrimaryPendingEntryCount_ = -1;
+            context.terrainTileset->buildRenderCommands(
+                context.renderer,
+                context.commands,
+                context.frameState.frameId);
+        }
+    } else if (context.pendingTerrainTileset) {
+        context.pendingTerrainTileset->buildRenderCommands(
             context.renderer,
             context.commands,
             context.frameState.frameId);
@@ -397,6 +441,9 @@ bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
 void SceneRenderPipeline::releaseRenderReferences(Context& context) const {
     if (context.terrainTileset) {
         context.terrainTileset->releaseRenderReferences();
+    }
+    if (context.pendingTerrainTileset) {
+        context.pendingTerrainTileset->releaseRenderReferences();
     }
     for (auto& tileset : context.additionalTilesets) {
         if (tileset) {

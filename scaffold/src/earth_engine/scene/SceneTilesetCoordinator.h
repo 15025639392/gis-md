@@ -26,6 +26,7 @@ public:
     void addContent(std::unique_ptr<Tileset> tileset);
 
     Tileset* primary() const { return primary_.get(); }
+    Tileset* pendingPrimary() { return pendingPrimary_.get(); }
     const Tileset* pendingPrimary() const {
         return pendingPrimary_.get();
     }

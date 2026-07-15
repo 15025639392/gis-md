@@ -18,6 +18,7 @@
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
 #include "earth_engine/scene/ScenePresentationTraceBuilder.h"
+#include "earth_engine/scene/ScenePrimaryTilesetRenderComposer.h"
 #include "earth_engine/scene/ScenePrimaryTilesetTakeoverPolicy.h"
 #include "earth_engine/scene/SceneTilesetCoordinator.h"
 #include "earth_engine/tiling/GltfRenderResourcePreparer.h"
@@ -410,6 +411,294 @@ TEST(
 
     EXPECT_EQ(currentRaw, coordinator.primary());
     EXPECT_EQ(pendingRaw, coordinator.pendingPrimary());
+}
+
+TEST(
+    SceneFrameStateTest,
+    PendingRealTerrainReplacesOnlyItsReadyCoverageRegion) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey currentRoot{"Geographic-TMS", 0, 0, 0};
+    const TileKey pendingChild{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* currentTile =
+        makeTakeoverRenderTile(*current, currentRoot);
+    TilesetTile* pendingTile =
+        makeTakeoverRenderTile(*pending, pendingChild);
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_NE(nullptr, pendingTile);
+    setSingleTakeoverEntry(
+        *current,
+        *currentTile,
+        currentRoot,
+        currentRoot);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        pendingChild,
+        pendingChild);
+
+    const ScenePrimaryTilesetRenderComposition composition =
+        ScenePrimaryTilesetRenderComposer::compose(*current, *pending);
+
+    ASSERT_EQ(1u, composition.pendingEntries.size());
+    EXPECT_EQ(pendingChild, composition.pendingEntries.front().selectedKey);
+    ASSERT_EQ(3u, composition.currentEntries.size());
+    for (const TileRenderEntry& entry : composition.currentEntries) {
+        EXPECT_TRUE(entry.selectedThisFrame);
+        EXPECT_TRUE(entry.surfaceClipEnabled);
+        EXPECT_EQ(currentRoot, entry.renderKey);
+        EXPECT_NE(pendingChild, entry.selectedKey);
+        EXPECT_EQ(1, entry.selectedKey.z);
+    }
+}
+
+TEST(
+    SceneFrameStateTest,
+    PendingTransientSurfaceDoesNotReplaceCurrentCoverage) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey currentRoot{"Geographic-TMS", 0, 0, 0};
+    const TileKey pendingChild{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* currentTile =
+        makeTakeoverRenderTile(*current, currentRoot);
+    TilesetTile* pendingTile = makeTakeoverRenderTile(
+        *pending,
+        pendingChild,
+        SurfaceDrawableSource::EllipsoidFallback);
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_NE(nullptr, pendingTile);
+    setSingleTakeoverEntry(
+        *current,
+        *currentTile,
+        currentRoot,
+        currentRoot);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        pendingChild,
+        pendingChild);
+
+    const ScenePrimaryTilesetRenderComposition composition =
+        ScenePrimaryTilesetRenderComposer::compose(*current, *pending);
+
+    EXPECT_TRUE(composition.pendingEntries.empty());
+    ASSERT_EQ(1u, composition.currentEntries.size());
+    EXPECT_EQ(currentRoot, composition.currentEntries.front().selectedKey);
+    EXPECT_FALSE(composition.currentEntries.front().surfaceClipEnabled);
+}
+
+TEST(
+    SceneFrameStateTest,
+    PendingCoverageInOneGeographicRootKeepsTheOtherRootUnchanged) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey westRoot{"Geographic-TMS", 0, 0, 0};
+    const TileKey eastRoot{"Geographic-TMS", 0, 1, 0};
+    const TileKey westChild{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* westTile =
+        makeTakeoverRenderTile(*current, westRoot);
+    TilesetTile* eastTile =
+        makeTakeoverRenderTile(*current, eastRoot);
+    TilesetTile* pendingTile =
+        makeTakeoverRenderTile(*pending, westChild);
+    ASSERT_NE(nullptr, westTile);
+    ASSERT_NE(nullptr, eastTile);
+    ASSERT_NE(nullptr, pendingTile);
+
+    setSingleTakeoverEntry(*current, *westTile, westRoot, westRoot);
+    TilePlan& currentPlan = TilesetTestAccess::mutableTilePlan(*current);
+    TileRenderEntry eastEntry;
+    eastEntry.selectedKey = eastRoot;
+    eastEntry.renderKey = eastRoot;
+    eastEntry.selectedTile = eastTile;
+    eastEntry.renderTile = eastTile;
+    eastEntry.selectedThisFrame = true;
+    currentPlan.visibleTiles.push_back(eastRoot);
+    currentPlan.renderEntries.push_back(eastEntry);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        westChild,
+        westChild);
+
+    const ScenePrimaryTilesetRenderComposition composition =
+        ScenePrimaryTilesetRenderComposer::compose(*current, *pending);
+
+    ASSERT_EQ(4u, composition.currentEntries.size());
+    EXPECT_EQ(
+        1,
+        std::count_if(
+            composition.currentEntries.begin(),
+            composition.currentEntries.end(),
+            [&](const TileRenderEntry& entry) {
+                return entry.selectedKey == eastRoot &&
+                       !entry.surfaceClipEnabled;
+            }));
+}
+
+TEST(
+    SceneFrameStateTest,
+    MultiplePendingPatchesProduceCompleteNonOverlappingCoverage) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey root{"Geographic-TMS", 0, 0, 0};
+    const TileKey firstPatch{"Geographic-TMS", 2, 0, 0};
+    const TileKey secondPatch{"Geographic-TMS", 2, 3, 3};
+    TilesetTile* currentTile =
+        makeTakeoverRenderTile(*current, root);
+    TilesetTile* firstPendingTile =
+        makeTakeoverRenderTile(*pending, firstPatch);
+    TilesetTile* secondPendingTile =
+        makeTakeoverRenderTile(*pending, secondPatch);
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_NE(nullptr, firstPendingTile);
+    ASSERT_NE(nullptr, secondPendingTile);
+    setSingleTakeoverEntry(*current, *currentTile, root, root);
+    setSingleTakeoverEntry(
+        *pending,
+        *firstPendingTile,
+        firstPatch,
+        firstPatch);
+    TilePlan& pendingPlan = TilesetTestAccess::mutableTilePlan(*pending);
+    TileRenderEntry secondEntry;
+    secondEntry.selectedKey = secondPatch;
+    secondEntry.renderKey = secondPatch;
+    secondEntry.selectedTile = secondPendingTile;
+    secondEntry.renderTile = secondPendingTile;
+    secondEntry.selectedThisFrame = true;
+    pendingPlan.visibleTiles.push_back(secondPatch);
+    pendingPlan.renderEntries.push_back(secondEntry);
+
+    const ScenePrimaryTilesetRenderComposition composition =
+        ScenePrimaryTilesetRenderComposer::compose(*current, *pending);
+
+    ASSERT_EQ(2u, composition.pendingEntries.size());
+    auto isAncestorOrSame = [](const TileKey& ancestor,
+                               const TileKey& descendant) {
+        if (ancestor.schemeId != descendant.schemeId ||
+            ancestor.z > descendant.z) {
+            return false;
+        }
+        const int delta = descendant.z - ancestor.z;
+        return (descendant.x >> delta) == ancestor.x &&
+               (descendant.y >> delta) == ancestor.y;
+    };
+    double coveredArea = 0.0;
+    for (const TileRenderEntry& entry : composition.currentEntries) {
+        coveredArea += std::pow(0.25, entry.selectedKey.z - root.z);
+        for (const TileRenderEntry& pendingEntry :
+             composition.pendingEntries) {
+            EXPECT_FALSE(isAncestorOrSame(
+                entry.selectedKey,
+                pendingEntry.selectedKey));
+            EXPECT_FALSE(isAncestorOrSame(
+                pendingEntry.selectedKey,
+                entry.selectedKey));
+        }
+    }
+    for (const TileRenderEntry& entry : composition.pendingEntries) {
+        coveredArea += std::pow(0.25, entry.selectedKey.z - root.z);
+    }
+    EXPECT_NEAR(1.0, coveredArea, 1e-9);
+}
+
+TEST(
+    SceneFrameStateTest,
+    CoarsePendingRealTerrainDoesNotReplaceDetailedCurrentCoverage) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey currentKey{"Geographic-TMS", 6, 32, 20};
+    const TileKey pendingRoot{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* currentTile =
+        makeTakeoverRenderTile(*current, currentKey);
+    TilesetTile* pendingTile =
+        makeTakeoverRenderTile(*pending, pendingRoot);
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_NE(nullptr, pendingTile);
+    setSingleTakeoverEntry(
+        *current,
+        *currentTile,
+        currentKey,
+        currentKey);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        pendingRoot,
+        pendingRoot);
+
+    const ScenePrimaryTilesetRenderComposition composition =
+        ScenePrimaryTilesetRenderComposer::compose(*current, *pending);
+
+    EXPECT_TRUE(composition.pendingEntries.empty());
+    ASSERT_EQ(1u, composition.currentEntries.size());
+    EXPECT_EQ(currentKey, composition.currentEntries.front().selectedKey);
+}
+
+TEST(
+    SceneFrameStateTest,
+    PendingCoverageClipsCurrentFadingEntriesInsteadOfDroppingThem) {
+    DummyRenderDevice device;
+    auto current = makeTakeoverTileset(device);
+    auto pending = makeTakeoverTileset(device);
+    const TileKey root{"Geographic-TMS", 0, 0, 0};
+    const TileKey selectedChild{"Geographic-TMS", 1, 0, 0};
+    const TileKey pendingGrandchild{"Geographic-TMS", 2, 0, 0};
+    TilesetTile* rootTile =
+        makeTakeoverRenderTile(*current, root);
+    TilesetTile* selectedTile =
+        makeTakeoverRenderTile(*current, selectedChild);
+    TilesetTile* pendingTile =
+        makeTakeoverRenderTile(*pending, pendingGrandchild);
+    ASSERT_NE(nullptr, rootTile);
+    ASSERT_NE(nullptr, selectedTile);
+    ASSERT_NE(nullptr, pendingTile);
+    setSingleTakeoverEntry(
+        *current,
+        *selectedTile,
+        selectedChild,
+        selectedChild);
+    TilePlan& currentPlan = TilesetTestAccess::mutableTilePlan(*current);
+    TileRenderEntry fadingEntry;
+    fadingEntry.selectedKey = root;
+    fadingEntry.renderKey = root;
+    fadingEntry.reason = TileRenderEntryReason::FadingOut;
+    fadingEntry.opacity = 0.5f;
+    fadingEntry.selectedThisFrame = false;
+    fadingEntry.selectedTile = rootTile;
+    fadingEntry.renderTile = rootTile;
+    currentPlan.renderEntries.push_back(fadingEntry);
+    setSingleTakeoverEntry(
+        *pending,
+        *pendingTile,
+        pendingGrandchild,
+        pendingGrandchild);
+
+    const ScenePrimaryTilesetRenderComposition composition =
+        ScenePrimaryTilesetRenderComposer::compose(*current, *pending);
+
+    EXPECT_EQ(
+        6,
+        std::count_if(
+            composition.currentEntries.begin(),
+            composition.currentEntries.end(),
+            [](const TileRenderEntry& entry) {
+                return entry.isFadingOut() &&
+                       entry.surfaceClipEnabled;
+            }));
+    EXPECT_EQ(
+        3,
+        std::count_if(
+            composition.currentEntries.begin(),
+            composition.currentEntries.end(),
+            [](const TileRenderEntry& entry) {
+                return entry.selectedThisFrame &&
+                       entry.surfaceClipEnabled;
+            }));
 }
 
 TEST(

@@ -38,6 +38,7 @@ public:
         AtmosphereBackgroundPass* atmospherePass = nullptr;
         SkyGradient* skyGradient = nullptr;
         Tileset* terrainTileset = nullptr;
+        Tileset* pendingTerrainTileset = nullptr;
         const std::vector<std::unique_ptr<Tileset>>& additionalTilesets;
         std::vector<std::unique_ptr<VectorLayer>>& vectorLayers;
         std::function<void()> beforeSubmit;
@@ -60,6 +61,9 @@ private:
     void aggregateDiagnostics(Context& context, double& diagnosticsMs) const;
     bool shouldHoldPresentationAfterCommandBuild(const Context& context) const;
     void releaseRenderReferences(Context& context) const;
+
+    mutable int lastPrimaryCurrentEntryCount_ = -1;
+    mutable int lastPrimaryPendingEntryCount_ = -1;
 };
 
 } // namespace earth_engine
