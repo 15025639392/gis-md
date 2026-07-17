@@ -321,7 +321,16 @@ private:
                 // 时本帧跳过该瓦片的网络请求(回来时多半已划走),下一帧重评估。
                 // 只作用于网络 Content(上采样是本地、无"回来"延迟,不剔除)。
                 // 默认关 → 忠实 cesium-native,golden 不变。
+                //
+                // 近景豁免(**有意偏离 cesium**:cesium 纯按 movementRatio 不分
+                // 优先级):Urgent 组=当前帧直接被选中渲染的近景可见瓦片,它们
+                // 此刻就在屏上、加载永不浪费,运动期继续请求→停手时数据已到,
+                // 大幅缩短"停手后逐块补齐"暂态(真机实测 notReady 峰值 83→33、
+                // 补齐 ~4s→~2.1s)。只对 Preload/Normal(远/预取,会随运动划走)
+                // 保留 cull。代价=运动期近景请求触发的 raster 纹理上传尖刺
+                // (拖动帧时长上升),需真机权衡是否再上异步上传消尖刺。
                 if (input.budget.cullRequestsWhileMoving() && tileState &&
+                    request.group != TileLoadPriorityGroup::Urgent &&
                     TileMotionCullPolicy::shouldDeferForMotion(
                         TileMotionCullPolicy::Input{
                             true,
