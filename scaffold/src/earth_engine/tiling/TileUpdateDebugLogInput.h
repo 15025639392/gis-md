@@ -22,6 +22,7 @@ struct TileUpdateDebugLogInput {
     double prefetchLoadQueueMs = 0.0;
     double prefetchAdvanceMs = 0.0;
     double prefetchMapMs = 0.0;
+    double prefetchEarlyMapMs = 0.0;
     double requestMs = 0.0;
     double terrainUploadMs = 0.0;
     double rasterUploadMs = 0.0;
@@ -46,6 +47,10 @@ struct TileUpdateDebugLogInput {
     int prefetchLoadQueueTiles = 0;
     int prefetchAdvanceCount = 0;
     int prefetchMapCount = 0;
+    int prefetchEarlyMapCount = 0;
+    int prefetchVisibleEarlyMapCount = 0;
+    int prefetchLoadQueueEarlyMapCount = 0;
+    bool prefetchEarlyMapBudgetExhausted = false;
     int rasterUploadsProcessed = 0;
     int rasterMappedUploadsProcessed = 0;
     double rasterUploadMaxMs = 0.0;

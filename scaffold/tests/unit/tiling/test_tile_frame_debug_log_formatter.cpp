@@ -52,8 +52,13 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     input.requestIssuedRasterDetailUpsample = 5;
     input.requestUpsampleWorkerCapacity = 6;
     input.requestMotionDeferred = 7;
+    input.prefetchEarlyMapMs = 0.75;
+    input.prefetchEarlyMapCount = 4;
+    input.prefetchVisibleEarlyMapCount = 1;
+    input.prefetchLoadQueueEarlyMapCount = 3;
+    input.prefetchEarlyMapBudgetExhausted = true;
 
-    const std::array<char, 1536> detail =
+    const std::array<char, 2048> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
     const std::string text(detail.data());
 
@@ -95,6 +100,55 @@ TEST(TileFrameDebugLogFormatterTest, UpdateDetailReportsReuseMode) {
     EXPECT_NE(text.find("reqUpCap=6"), std::string::npos);
     EXPECT_NE(text.find("reqMotion=7"), std::string::npos);
     EXPECT_NE(text.find("gpuDrain=6.25"), std::string::npos);
+    EXPECT_NE(text.find("prefetchEarlyMap=0.75"), std::string::npos);
+    EXPECT_NE(text.find("prefEarly=4/1/3"), std::string::npos);
+    EXPECT_NE(text.find("prefEarlyEx=1"), std::string::npos);
+    EXPECT_NE(text.find("smoothing=0"), std::string::npos);
+}
+
+TEST(
+    TileFrameDebugLogFormatterTest,
+    UpdateTailDetailPreservesAndroidPerformanceFields) {
+    TileUpdateDebugLogInput input;
+    input.prefetchEarlyMapCount = 4;
+    input.prefetchVisibleEarlyMapCount = 1;
+    input.prefetchLoadQueueEarlyMapCount = 3;
+    input.prefetchEarlyMapBudgetExhausted = true;
+    input.prefetchVisibleTiles = 11;
+    input.prefetchLoadQueueTiles = 13;
+    input.prefetchAdvanceCount = 17;
+    input.prefetchMapCount = 19;
+    input.prefetchRenderPlanTiles = 23;
+    input.prefetchRenderPlanAuthoritativeUpdates = 29;
+    input.prefetchRenderPlanStableReuses = 31;
+    input.rasterUploadsProcessed = 37;
+    input.rasterMappedUploadsProcessed = 41;
+    input.rasterUploadMaxMs = 2.5;
+    input.rasterUploadMaxWidth = 256;
+    input.rasterUploadMaxHeight = 512;
+    input.interactionActive = true;
+    input.resourceSmoothingActive = true;
+
+    const std::array<char, 512> detail =
+        TileFrameDebugLogFormatter::updateTailDetail(input);
+    const std::string text(detail.data());
+
+    EXPECT_NE(text.find("prefEarly=4/1/3"), std::string::npos);
+    EXPECT_NE(text.find("prefEarlyEx=1"), std::string::npos);
+    EXPECT_NE(text.find("prefVis=11"), std::string::npos);
+    EXPECT_NE(text.find("prefLoad=13"), std::string::npos);
+    EXPECT_NE(text.find("prefAdv=17"), std::string::npos);
+    EXPECT_NE(text.find("prefMap=19"), std::string::npos);
+    EXPECT_NE(text.find("prefRenderTiles=23"), std::string::npos);
+    EXPECT_NE(text.find("prefRenderAuth=29"), std::string::npos);
+    EXPECT_NE(text.find("prefRenderReuse=31"), std::string::npos);
+    EXPECT_NE(text.find("rasterUploads=37"), std::string::npos);
+    EXPECT_NE(text.find("rasterMapped=41"), std::string::npos);
+    EXPECT_NE(text.find("rasterMax=2.50"), std::string::npos);
+    EXPECT_NE(text.find("rasterMaxSize=256x512"), std::string::npos);
+    EXPECT_NE(text.find("interaction=1"), std::string::npos);
+    EXPECT_NE(text.find("smoothing=1"), std::string::npos);
+    EXPECT_LT(text.size(), 900U);
 }
 
 TEST(

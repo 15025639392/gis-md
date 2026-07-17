@@ -9,7 +9,10 @@ namespace earth_engine {
 
 class TileFrameDebugLogFormatter {
 public:
-    static std::array<char, 1536> updateDetail(
+    static std::array<char, 2048> updateDetail(
+        const TileUpdateDebugLogInput& input);
+
+    static std::array<char, 512> updateTailDetail(
         const TileUpdateDebugLogInput& input);
 
     static std::array<char, 1024> renderBuildDetail(

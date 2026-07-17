@@ -74,10 +74,15 @@ struct TileUpdateSelectionWorkResult {
     double prefetchLoadQueueMs = 0.0;
     double prefetchAdvanceMs = 0.0;
     double prefetchMapMs = 0.0;
+    double prefetchEarlyMapMs = 0.0;
     int prefetchVisibleTiles = 0;
     int prefetchLoadQueueTiles = 0;
     int prefetchAdvanceCount = 0;
     int prefetchMapCount = 0;
+    int prefetchEarlyMapCount = 0;
+    int prefetchVisibleEarlyMapCount = 0;
+    int prefetchLoadQueueEarlyMapCount = 0;
+    bool prefetchEarlyMapBudgetExhausted = false;
     int prefetchRenderPlanTiles = 0;
     int prefetchRenderPlanAuthoritativeUpdates = 0;
     int prefetchRenderPlanStableReuses = 0;
@@ -201,11 +206,20 @@ public:
             result.prefetchLoadQueueMs = prefetchResult.loadQueueLoopMs;
             result.prefetchAdvanceMs = prefetchResult.advanceLoadsMs;
             result.prefetchMapMs = prefetchResult.prefetchMappingsMs;
+            result.prefetchEarlyMapMs = prefetchResult.earlyMappingsMs;
             result.prefetchVisibleTiles = prefetchResult.visibleTilesConsidered;
             result.prefetchLoadQueueTiles =
                 prefetchResult.loadQueueTilesConsidered;
             result.prefetchAdvanceCount = prefetchResult.advanceLoadsCount;
             result.prefetchMapCount = prefetchResult.prefetchMappingsCount;
+            result.prefetchEarlyMapCount =
+                prefetchResult.earlyMappingsCount;
+            result.prefetchVisibleEarlyMapCount =
+                prefetchResult.visibleEarlyMappingsCount;
+            result.prefetchLoadQueueEarlyMapCount =
+                prefetchResult.loadQueueEarlyMappingsCount;
+            result.prefetchEarlyMapBudgetExhausted =
+                prefetchResult.earlyMappingBudgetExhausted;
         }
 
         // Terrain fill proxy: give each visible tile still lacking real terrain

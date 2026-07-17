@@ -20,14 +20,23 @@ void TilesetUpdateFrameFacade::update(
     const TilesetUpdateFrameRuntimeResult updateResult =
         TilesetUpdateFrameRuntime::run(tileset, frameState, pPrepRenderer);
 
-    const std::array<char, 1536> updateDetail =
+    const std::array<char, 2048> updateDetail =
         TileFrameDebugLogFormatter::updateDetail(
             updateResult.debugLog);
+    const std::array<char, 512> updateTailDetail =
+        TileFrameDebugLogFormatter::updateTailDetail(
+            updateResult.debugLog);
+    const double updateElapsedMs = perf::nowMs() - updateStartMs;
     perf::logTimingAtLeast(frameState.frameId,
                            "Tileset.update",
-                           perf::nowMs() - updateStartMs,
+                           updateElapsedMs,
                            10.0,
                            updateDetail.data());
+    perf::logTimingAtLeast(frameState.frameId,
+                           "Tileset.update.tail",
+                           updateElapsedMs,
+                           10.0,
+                           updateTailDetail.data());
 }
 
 } // namespace earth_engine

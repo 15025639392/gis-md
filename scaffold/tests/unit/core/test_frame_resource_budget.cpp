@@ -119,3 +119,28 @@ TEST(FrameResourceBudgetTest, RasterFanoutDoesNotConsumeTerrainContentLane) {
     EXPECT_EQ(1u, budget.terrainContentNetworkRequestsIssued());
     EXPECT_EQ(5u, budget.networkRequestsIssued());
 }
+
+TEST(FrameResourceBudgetTest, RasterOverlayMappingHasIndependentCountAndTimeCaps) {
+    FrameResourceBudgetConfig config;
+    config.maxRasterOverlayMappingsPerFrame = 2;
+    config.rasterOverlayMappingTimeMs = 0.75;
+
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_TRUE(budget.tryStartRasterOverlayMapping());
+    budget.recordRasterOverlayMappingElapsed(0.25);
+    EXPECT_TRUE(budget.tryStartRasterOverlayMapping());
+    EXPECT_FALSE(budget.tryStartRasterOverlayMapping());
+
+    const FrameResourceBudgetSnapshot countSnapshot = budget.snapshot();
+    EXPECT_EQ(2u, countSnapshot.rasterOverlayMappingsUsed);
+    EXPECT_EQ(2u, countSnapshot.maxRasterOverlayMappingsPerFrame);
+    EXPECT_DOUBLE_EQ(0.25, countSnapshot.rasterOverlayMappingElapsedMs);
+    EXPECT_DOUBLE_EQ(0.75, countSnapshot.rasterOverlayMappingTimeMs);
+
+    budget.beginFrame(2, config);
+    budget.recordRasterOverlayMappingElapsed(0.75);
+    EXPECT_FALSE(budget.tryStartRasterOverlayMapping());
+    EXPECT_EQ(0u, budget.rasterOverlayMappingsUsed());
+}

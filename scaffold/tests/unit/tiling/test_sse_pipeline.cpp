@@ -5574,6 +5574,399 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
               budget.rasterNetworkRequestsIssued() > 0,
           "TileRasterOverlayFrameProcessor: raster prefetch starts the higher-priority tile first");
 }
+void testTileRasterOverlayFrameProcessorEarlyMapsVisibleNotDoneByPriority() {
+    auto imagery =
+        std::make_unique<PendingRectangleImageryProvider>();
+    PendingRectangleImageryProvider* rawImagery = imagery.get();
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::move(imagery),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> overlayOrder =
+        TileSelectionRasterOverlayPreparer::processingOrder(overlays);
+    const TileKey edgeKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey centerKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTile edge(
+        edgeKey,
+        Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0));
+    TilesetTile center(
+        centerKey,
+        Rectangle::fromDegrees(1.0, 0.0, 2.0, 1.0));
+    edge.boundingVolume =
+        TileBoundingVolume::fromRegion(edge.bounds, 0.0, 10.0);
+    center.boundingVolume =
+        TileBoundingVolume::fromRegion(center.bounds, 0.0, 10.0);
+    edge.geometricError = 1.0;
+    center.geometricError = 1.0;
+    edge.selectionFrameState.priority = 100.0;
+    center.selectionFrameState.priority = 1.0;
+
+    TilePlan plan;
+    plan.frameId = 1;
+    // Storage order is intentionally the reverse of request priority.
+    plan.visibleTiles = {edgeKey, centerKey};
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterOverlayMappingsPerFrame = 1;
+    config.rasterOverlayMappingTimeMs = 100.0;
+    config.cullRequestsWhileMoving = true;
+    config.cameraPositionDeltaMagnitude = 1000.0;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+
+    auto ensureTile =
+        [&](const TileKey& requestedKey) -> TilesetTile* {
+        if (requestedKey == edgeKey) return &edge;
+        if (requestedKey == centerKey) return &center;
+        return nullptr;
+    };
+    const TileRasterOverlayPrefetchResult firstResult =
+        TileRasterOverlayFrameProcessor::prefetchSelection(
+            plan,
+            {},
+            overlays,
+            overlayOrder,
+            nullptr,
+            16.0,
+            firstBudget,
+            ensureTile);
+
+    RasterMappedToTilesetTile* centerMapping =
+        center.rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* centerLoading =
+        centerMapping ? centerMapping->getLoadingTile() : nullptr;
+    check(firstResult.earlyMappingsCount == 1 &&
+              firstResult.visibleEarlyMappingsCount == 1 &&
+              firstResult.loadQueueEarlyMappingsCount == 0 &&
+              firstResult.earlyMappingBudgetExhausted &&
+              center.rasterOverlayState.mappingCount() == 1 &&
+              edge.rasterOverlayState.mappingCount() == 0,
+          "TileRasterOverlayFrameProcessor: early mapping count cap applies after priority sorting");
+    check(centerLoading &&
+              centerLoading->getState() ==
+                  RasterOverlayTile::LoadState::Loading &&
+              firstBudget.rasterNetworkRequestsIssued() > 0 &&
+              center.content.loadState == TileLoadState::Unloaded,
+          "TileRasterOverlayFrameProcessor: motion-culled geometry does not block visible imagery request generation");
+
+    const uint64_t centerUpdates =
+        center.rasterOverlayState.authoritativeUpdateCount();
+    plan.frameId = 2;
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(2, config);
+    const TileRasterOverlayPrefetchResult secondResult =
+        TileRasterOverlayFrameProcessor::prefetchSelection(
+            plan,
+            {},
+            overlays,
+            overlayOrder,
+            nullptr,
+            16.0,
+            secondBudget,
+            ensureTile);
+    check(center.rasterOverlayState.authoritativeUpdateCount() ==
+              centerUpdates &&
+              secondResult.advanceLoadsCount == 1,
+          "TileRasterOverlayFrameProcessor: next frame advances an early mapping without remapping it");
+
+    const auto pendingRequests = rawImagery->pendingRequests;
+    for (const auto& request : pendingRequests) {
+        request.callback(
+            request.key,
+            makeDecodedRgbaImage(64, 64));
+    }
+    RasterOverlayTileProvider* tileProvider =
+        activated.ensureTileProvider(nullptr);
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(3, config);
+    tileProvider->processPendingUploads(false, &uploadBudget);
+    const size_t requestsBeforeCommit =
+        rawImagery->pendingRequests.size();
+
+    auto centerGltf = makeQuadTerrainGltfModel(center.bounds);
+    centerGltf->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), center.bounds);
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(center.bounds, 0.0, 10.0);
+    TileContentUploadCommitter::prepareRenderContent(
+        center,
+        TileLoadedContent::fromContentResult(
+            TileContentLoadResult::renderTerrain(
+                std::move(centerGltf),
+                std::move(metadata))),
+        overlays,
+        nullptr);
+    check(center.rasterOverlayState.mappingCount() == 0,
+          "TileRasterOverlayFrameProcessor: real content commit clears the early geometry mapping");
+    center.content.renderContent.setTerrainRenderContent(true);
+    center.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    center.content.renderContent.markRenderContentReady();
+    center.content.loadState = TileLoadState::Done;
+    center.content.contentKind = TileContentKind::Render;
+    FrameResourceBudget doneBudget;
+    doneBudget.beginFrame(4, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        center,
+        overlays,
+        overlayOrder,
+        nullptr,
+        16.0,
+        doneBudget,
+        nullptr,
+        4);
+    check(center.rasterOverlayState.mappingCount() == 1 &&
+              rawImagery->pendingRequests.size() ==
+                  requestsBeforeCommit &&
+              doneBudget.rasterNetworkRequestsIssued() == 0,
+          "TileRasterOverlayFrameProcessor: precise remap after real content commit reuses early imagery without another source request");
+}
+void testTileRasterOverlayFrameProcessorEarlyMapsScreenRelevantLoadQueueByPriority() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<PendingRectangleImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> overlayOrder =
+        TileSelectionRasterOverlayPreparer::processingOrder(overlays);
+    const TileKey offscreenKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey centerKey{"Geographic-TMS", 2, 1, 0};
+    const TileKey edgeKey{"Geographic-TMS", 2, 2, 0};
+    const TileKey preloadKey{"Geographic-TMS", 2, 3, 0};
+    const TileKey urgentKey{"Geographic-TMS", 2, 0, 1};
+    TilesetTile offscreen(
+        offscreenKey,
+        Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0));
+    TilesetTile center(
+        centerKey,
+        Rectangle::fromDegrees(-1.0, 0.0, 0.0, 1.0));
+    TilesetTile edge(
+        edgeKey,
+        Rectangle::fromDegrees(0.0, 0.0, 1.0, 1.0));
+    TilesetTile preload(
+        preloadKey,
+        Rectangle::fromDegrees(1.0, 0.0, 2.0, 1.0));
+    TilesetTile urgent(
+        urgentKey,
+        Rectangle::fromDegrees(2.0, 0.0, 3.0, 1.0));
+    for (TilesetTile* tile :
+         {&offscreen, &center, &edge, &preload, &urgent}) {
+        tile->boundingVolume =
+            TileBoundingVolume::fromRegion(tile->bounds, 0.0, 10.0);
+        tile->geometricError = 1.0;
+    }
+    TilePlan plan;
+    plan.frameId = 1;
+    // Use the plan-owned selection snapshot. Live tile frame state may be
+    // stale when a shadow/async selection result is reconciled.
+    plan.selectionRecords = {
+        TileSelectionRecord{
+            offscreenKey,
+            TileSelectionState::RenderedAndKicked,
+            TileSelectionState::NotVisited,
+            0.0,
+            false,
+            false,
+            false},
+        TileSelectionRecord{
+            centerKey,
+            TileSelectionState::RenderedAndKicked,
+            TileSelectionState::NotVisited,
+            0.0,
+            true,
+            false,
+            false},
+        TileSelectionRecord{
+            edgeKey,
+            TileSelectionState::RenderedAndKicked,
+            TileSelectionState::NotVisited,
+            0.0,
+            false,
+            true,
+            false},
+        TileSelectionRecord{
+            preloadKey,
+            TileSelectionState::RenderedAndKicked,
+            TileSelectionState::NotVisited,
+            0.0,
+            false,
+            true,
+            false},
+        TileSelectionRecord{
+            urgentKey,
+            TileSelectionState::RenderedAndKicked,
+            TileSelectionState::NotVisited,
+            0.0,
+            true,
+            false,
+            false},
+    };
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterOverlayMappingsPerFrame = 2;
+    config.rasterOverlayMappingTimeMs = 100.0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileRasterOverlayPrefetchResult result =
+        TileRasterOverlayFrameProcessor::prefetchSelection(
+            plan,
+            {
+                // Storage order is intentionally unrelated to request
+                // priority. The offscreen request has the best numeric
+                // priority, but it must not consume the early-mapping budget.
+                TileLoadRequest{
+                    edgeKey,
+                    TileLoadPriorityGroup::Normal,
+                    100.0},
+                TileLoadRequest{
+                    preloadKey,
+                    TileLoadPriorityGroup::Preload,
+                    0.0},
+                TileLoadRequest{
+                    centerKey,
+                    TileLoadPriorityGroup::Normal,
+                    1.0},
+                TileLoadRequest{
+                    offscreenKey,
+                    TileLoadPriorityGroup::Normal,
+                    0.0},
+                TileLoadRequest{
+                    urgentKey,
+                    TileLoadPriorityGroup::Urgent,
+                    1000.0},
+            },
+            overlays,
+            overlayOrder,
+            nullptr,
+            16.0,
+            budget,
+            [&](const TileKey& requestedKey) -> TilesetTile* {
+                if (requestedKey == offscreenKey) return &offscreen;
+                if (requestedKey == centerKey) return &center;
+                if (requestedKey == edgeKey) return &edge;
+                if (requestedKey == preloadKey) return &preload;
+                if (requestedKey == urgentKey) return &urgent;
+                return nullptr;
+            });
+    RasterMappedToTilesetTile* centerMapping =
+        center.rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* centerLoading =
+        centerMapping ? centerMapping->getLoadingTile() : nullptr;
+    check(result.earlyMappingsCount == 2 &&
+              result.visibleEarlyMappingsCount == 0 &&
+              result.loadQueueEarlyMappingsCount == 2 &&
+              result.earlyMappingBudgetExhausted &&
+              center.rasterOverlayState.mappingCount() == 1 &&
+              urgent.rasterOverlayState.mappingCount() == 1 &&
+              edge.rasterOverlayState.mappingCount() == 0,
+          "TileRasterOverlayFrameProcessor: urgent and normal screen candidates share the priority-sorted early mapping budget");
+    check(offscreen.rasterOverlayState.mappingCount() == 0 &&
+              preload.rasterOverlayState.mappingCount() == 0,
+          "TileRasterOverlayFrameProcessor: offscreen and preload requests do not consume early mapping work");
+    check(centerLoading &&
+              centerLoading->getState() ==
+                  RasterOverlayTile::LoadState::Loading &&
+              budget.rasterNetworkRequestsIssued() > 0,
+          "TileRasterOverlayFrameProcessor: non-preload kicked load-queue tiles start imagery before geometry Done");
+
+    plan.frameId = 2;
+    FrameResourceBudget preloadBudget;
+    preloadBudget.beginFrame(2, config);
+    const TileRasterOverlayPrefetchResult preloadResult =
+        TileRasterOverlayFrameProcessor::prefetchSelection(
+            plan,
+            {TileLoadRequest{
+                preloadKey,
+                TileLoadPriorityGroup::Preload,
+                0.0}},
+            overlays,
+            overlayOrder,
+            nullptr,
+            16.0,
+            preloadBudget,
+            [&](const TileKey& requestedKey) -> TilesetTile* {
+                return requestedKey == preloadKey ? &preload : nullptr;
+            });
+    check(preloadResult.earlyMappingsCount == 0 &&
+              preload.rasterOverlayState.mappingCount() == 0 &&
+              preloadBudget.rasterNetworkRequestsIssued() == 0,
+          "TileRasterOverlayFrameProcessor: preload-only queue never starts early imagery even with free budget");
+
+    plan.frameId = 2;
+    FrameResourceBudget staleBudget;
+    staleBudget.beginFrame(3, config);
+    const TileRasterOverlayPrefetchResult staleResult =
+        TileRasterOverlayFrameProcessor::prefetchSelection(
+            plan,
+            {TileLoadRequest{
+                edgeKey,
+                TileLoadPriorityGroup::Normal,
+                0.0}},
+            overlays,
+            overlayOrder,
+            nullptr,
+            16.0,
+            staleBudget,
+            [&](const TileKey& requestedKey) -> TilesetTile* {
+                return requestedKey == edgeKey ? &edge : nullptr;
+            });
+    check(staleResult.loadQueueEarlyMappingsCount == 0 &&
+              edge.rasterOverlayState.mappingCount() == 0 &&
+              staleBudget.rasterNetworkRequestsIssued() == 0,
+          "TileRasterOverlayFrameProcessor: stale async selection plan cannot start load-queue imagery");
+}
+void testTileRasterOverlayFrameProcessorHonorsEarlyMappingElapsedBudget() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<PendingRectangleImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> overlayOrder =
+        TileSelectionRasterOverlayPreparer::processingOrder(overlays);
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    TilesetTile tile(
+        key,
+        Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0));
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(tile.bounds, 0.0, 10.0);
+    tile.geometricError = 1.0;
+    TilePlan plan;
+    plan.frameId = 1;
+    plan.visibleTiles.push_back(key);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterOverlayMappingsPerFrame = 8;
+    config.rasterOverlayMappingTimeMs = 0.5;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    budget.recordRasterOverlayMappingElapsed(0.5);
+
+    const TileRasterOverlayPrefetchResult result =
+        TileRasterOverlayFrameProcessor::prefetchSelection(
+            plan,
+            {},
+            overlays,
+            overlayOrder,
+            nullptr,
+            16.0,
+            budget,
+            [&tile](const TileKey& requestedKey) -> TilesetTile* {
+                return requestedKey == tile.key ? &tile : nullptr;
+            });
+    check(result.earlyMappingsCount == 0 &&
+              result.earlyMappingBudgetExhausted &&
+              tile.rasterOverlayState.mappingCount() == 0,
+          "TileRasterOverlayFrameProcessor: elapsed cap stops additional not-Done mappings");
+}
 void testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -17766,13 +18159,34 @@ void testTileFrameDebugLogFormatterReportsReuseMode() {
     input.reuseMode = TileSelectionReuseMode::Stale;
     input.reuseRejectReason =
         TileSelectionReuseRejectReason::SelectorMovedStaleDisabled;
-    const std::array<char, 1536> detail =
+    const std::array<char, 2048> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
     const std::string text(detail.data());
     check(text.find("reused=1") != std::string::npos &&
               text.find("reuseMode=2") != std::string::npos &&
               text.find("reuseReject=4") != std::string::npos,
           "TileFrameDebugLogFormatter: update detail reports selection reuse mode and reject reason");
+}
+void testTileFrameDebugLogFormatterReportsUpdateTail() {
+    TileUpdateDebugLogInput input;
+    input.prefetchEarlyMapCount = 4;
+    input.prefetchVisibleEarlyMapCount = 1;
+    input.prefetchLoadQueueEarlyMapCount = 3;
+    input.prefetchAdvanceCount = 17;
+    input.prefetchMapCount = 19;
+    input.rasterUploadsProcessed = 37;
+    input.interactionActive = true;
+    input.resourceSmoothingActive = true;
+    const std::array<char, 512> detail =
+        TileFrameDebugLogFormatter::updateTailDetail(input);
+    const std::string text(detail.data());
+    check(text.find("prefEarly=4/1/3") != std::string::npos &&
+              text.find("prefAdv=17") != std::string::npos &&
+              text.find("prefMap=19") != std::string::npos &&
+              text.find("rasterUploads=37") != std::string::npos &&
+              text.find("interaction=1") != std::string::npos &&
+              text.find("smoothing=1") != std::string::npos,
+          "TileFrameDebugLogFormatter: update tail preserves Android performance fields");
 }
 void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
     TileRenderDebugLogInput input;
@@ -27043,6 +27457,9 @@ int main() {
     testTilesetPrefetchUsesContentBoundingVolumeFallback();
     testTilesetPrefetchGeneratesRenderContentDetailsFromRegion();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
+    testTileRasterOverlayFrameProcessorEarlyMapsVisibleNotDoneByPriority();
+    testTileRasterOverlayFrameProcessorEarlyMapsScreenRelevantLoadQueueByPriority();
+    testTileRasterOverlayFrameProcessorHonorsEarlyMappingElapsedBudget();
     testTileRasterOverlayFrameProcessorReloadsMissingProjectionDuringPrefetch();
     testTileRasterOverlayFrameProcessorWaitsForDoneBeforeMissingProjectionReload();
     testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch();
@@ -27283,6 +27700,7 @@ int main() {
     testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative();
     testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing();
     testTileFrameDebugLogFormatterReportsReuseMode();
+    testTileFrameDebugLogFormatterReportsUpdateTail();
     testTileFrameDebugLogFormatterReportsRenderEntryPassCounts();
     testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse();
     testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload();

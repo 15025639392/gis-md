@@ -35,6 +35,15 @@ struct FrameResourceBudgetConfig {
     uint32_t maxMainThreadFinalizesPerFrame = 1;
     uint32_t maxTerminalStateTransitionsPerFrame = 64;
     uint32_t maxRasterUploadsPerFrame = 1;
+    // First-time geometry-to-raster mapping is synchronous CPU work performed
+    // before any raster request can be issued. Keep it independently bounded so
+    // visible imagery can start ahead of geometry without restoring the former
+    // not-Done mapping flood. Cost is ~0.15ms/mapping on-device; the count cap
+    // was starving imagery (notReady backlog ~200 drained at only 4/frame while
+    // the network could absorb far more), so the per-frame time budget is the
+    // real limiter and the count is set above network throughput.
+    uint32_t maxRasterOverlayMappingsPerFrame = 16;
+    double rasterOverlayMappingTimeMs = 2.0;
     double mainThreadTimeMs = 0.0;
     bool interactionActive = false;
     bool smoothingActive = false;
@@ -54,6 +63,7 @@ struct FrameResourceBudgetSnapshot {
     uint32_t mainThreadFinalizesUsed = 0;
     uint32_t terminalStateTransitionsUsed = 0;
     uint32_t rasterUploadsUsed = 0;
+    uint32_t rasterOverlayMappingsUsed = 0;
     uint32_t maxNetworkRequestsPerFrame = 0;
     uint32_t maxTerrainContentNetworkRequestsPerFrame = 0;
     uint32_t maxContentNetworkRequestsPerFrame = 0;
@@ -65,6 +75,9 @@ struct FrameResourceBudgetSnapshot {
     uint32_t maxMainThreadFinalizesPerFrame = 0;
     uint32_t maxTerminalStateTransitionsPerFrame = 0;
     uint32_t maxRasterUploadsPerFrame = 0;
+    uint32_t maxRasterOverlayMappingsPerFrame = 0;
+    double rasterOverlayMappingElapsedMs = 0.0;
+    double rasterOverlayMappingTimeMs = 0.0;
     double mainThreadElapsedMs = 0.0;
     double mainThreadTimeMs = 0.0;
     bool interactionActive = false;
@@ -97,6 +110,9 @@ public:
 
     void recordElapsed(FrameResourceLane lane, double elapsedMs);
     bool mainThreadTimeExpired() const;
+    bool canStartRasterOverlayMapping() const;
+    bool tryStartRasterOverlayMapping();
+    void recordRasterOverlayMappingElapsed(double elapsedMs);
 
     uint64_t frameNumber() const { return frameNumber_; }
     uint32_t networkRequestsIssued() const { return networkRequestsIssued_; }
@@ -110,6 +126,12 @@ public:
         return rasterNetworkRequestsIssued_;
     }
     uint32_t rasterUploadsUsed() const { return rasterUploadsUsed_; }
+    uint32_t rasterOverlayMappingsUsed() const {
+        return rasterOverlayMappingsUsed_;
+    }
+    double rasterOverlayMappingElapsedMs() const {
+        return rasterOverlayMappingElapsedMs_;
+    }
     double mainThreadElapsedMs() const { return mainThreadElapsedMs_; }
     bool cullRequestsWhileMoving() const {
         return config_.cullRequestsWhileMoving;
@@ -136,7 +158,9 @@ private:
     uint32_t mainThreadFinalizesUsed_ = 0;
     uint32_t terminalStateTransitionsUsed_ = 0;
     uint32_t rasterUploadsUsed_ = 0;
+    uint32_t rasterOverlayMappingsUsed_ = 0;
     double mainThreadElapsedMs_ = 0.0;
+    double rasterOverlayMappingElapsedMs_ = 0.0;
 };
 
 } // namespace earth_engine

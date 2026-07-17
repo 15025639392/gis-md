@@ -26,10 +26,15 @@ struct TileRasterOverlayPrefetchResult {
     int loadQueueTilesConsidered = 0;
     int advanceLoadsCount = 0;
     int prefetchMappingsCount = 0;
+    int earlyMappingsCount = 0;
+    int visibleEarlyMappingsCount = 0;
+    int loadQueueEarlyMappingsCount = 0;
+    bool earlyMappingBudgetExhausted = false;
     double visibleLoopMs = 0.0;
     double loadQueueLoopMs = 0.0;
     double advanceLoadsMs = 0.0;
     double prefetchMappingsMs = 0.0;
+    double earlyMappingsMs = 0.0;
 };
 
 struct TileRasterOverlayRenderPlanPrepareResult {
@@ -101,6 +106,55 @@ public:
             double priority = std::numeric_limits<double>::max();
             TilesetTile* tile = nullptr;
         };
+        const auto tryEarlyMapping =
+            [&](TilesetTile& tile,
+                const TileKey& key,
+                TileLoadPriorityGroup group,
+                double priority,
+                bool fromLoadQueue) {
+                const TileLoadState loadState = tile.content.loadState;
+                const bool canMapBeforeContentDone =
+                    loadState == TileLoadState::FailedTemporarily ||
+                    loadState == TileLoadState::Unloaded ||
+                    loadState == TileLoadState::ContentLoading;
+                if (!canMapBeforeContentDone || rasterOverlays.empty()) {
+                    return;
+                }
+                if (!frameResourceBudget.tryStartRasterOverlayMapping()) {
+                    result.earlyMappingBudgetExhausted = true;
+                    return;
+                }
+                const double earlyMappingStartMs = perf::nowMs();
+                const TileRasterOverlayPrefetchAction action =
+                    TileRasterOverlayPrefetcher::prefetch(
+                        tile,
+                        rasterOverlays,
+                        overlayProcessingOrder,
+                        device,
+                        maximumScreenSpaceError,
+                        frameResourceBudget,
+                        pPrepRenderer,
+                        tilePlan.frameId);
+                const double earlyMappingElapsedMs =
+                    perf::nowMs() - earlyMappingStartMs;
+                frameResourceBudget.recordRasterOverlayMappingElapsed(
+                    earlyMappingElapsedMs);
+                result.earlyMappingsMs += earlyMappingElapsedMs;
+                result.prefetchMappingsMs += earlyMappingElapsedMs;
+                ++result.earlyMappingsCount;
+                if (fromLoadQueue) {
+                    ++result.loadQueueEarlyMappingsCount;
+                } else {
+                    ++result.visibleEarlyMappingsCount;
+                }
+                ++result.prefetchMappingsCount;
+                if (action.unloadTileContent && unloadTileContent) {
+                    unloadTileContent(tile);
+                    if (queueReload) {
+                        queueReload(key, group, priority);
+                    }
+                }
+            };
 
         std::unordered_set<TileKey> prefetchedTiles;
         std::vector<PrefetchTile> visibleTiles;
@@ -123,13 +177,8 @@ public:
                 if (!prefetchedTiles.insert(item.key).second) {
                     continue;
                 }
-                // cesium: the overlay geometry mapping is a once-at-load step,
-                // NOT per-frame. 闸1: not-Done 瓦片一律不在 prefetch 建映射——
-                // 映射交由几何加载完成(Done)后的 update preparation 建立，
-                // 对齐 cesium updateDoneState/updateTileOverlays。draw 阶段只
-                // 消费已经完成的映射状态。这消除了拖动时对 not-Done 洪泛
-                // (数百个)每帧首见映射的 8-18ms 开销。已映射的(先前 Done
-                // 后回到加载中的)瓦片仅推进其 throttled 影像加载。
+                // Geometry-to-raster mapping is a once-at-load step. Already
+                // mapped tiles only need the cheap throttled request pump.
                 if (item.tile->rasterOverlayState.mappingCount() > 0) {
                     if (item.tile->content.loadState != TileLoadState::Done) {
                         const double advanceStartMs = perf::nowMs();
@@ -146,6 +195,16 @@ public:
                     continue;
                 }
                 if (item.tile->content.loadState != TileLoadState::Done) {
+                    // Cesium Native establishes overlay mappings before
+                    // starting geometry load. Restore that overlap only for
+                    // priority-sorted visible tiles under an independent CPU
+                    // budget.
+                    tryEarlyMapping(
+                        *item.tile,
+                        item.key,
+                        item.group,
+                        item.priority,
+                        false);
                     continue;
                 }
                 const double prefetchStartMs = perf::nowMs();
@@ -171,6 +230,19 @@ public:
             }
         }
         result.visibleLoopMs = perf::nowMs() - visibleLoopStartMs;
+        std::unordered_set<TileKey> screenRefinementLoadKeys;
+        screenRefinementLoadKeys.reserve(tilePlan.selectionRecords.size());
+        if (tilePlan.frameId == frameResourceBudget.frameNumber()) {
+            for (const TileSelectionRecord& record :
+                 tilePlan.selectionRecords) {
+                if (record.state ==
+                        TileSelectionState::RenderedAndKicked &&
+                    (record.inFrustum || record.cameraInside) &&
+                    !record.ancestorMeetsSse) {
+                    screenRefinementLoadKeys.insert(record.key);
+                }
+            }
+        }
         std::vector<TileLoadRequest> sortedLoadRequests = loadRequests;
         TileLoadPriorityPolicy::sortByPriority(sortedLoadRequests);
         const double loadQueueLoopStartMs = perf::nowMs();
@@ -211,6 +283,27 @@ public:
                     continue;
                 }
                 if (tile->content.loadState != TileLoadState::Done) {
+                    // REPLACE refinement keeps the renderable parent visible
+                    // while its screen-relevant children exist only in the
+                    // load queue. Motion culling may defer their geometry
+                    // requests for many frames, so start a bounded amount of
+                    // imagery work here as well. Use the plan-owned selection
+                    // snapshot because reconciled async selection does not
+                    // copy every live TileSelectionFrameState field.
+                    // Preload, continuity ancestors, and offscreen work remain
+                    // gated to avoid rebuilding the old queue-wide mapping
+                    // flood.
+                    const bool screenRelevant =
+                        request.group != TileLoadPriorityGroup::Preload &&
+                        screenRefinementLoadKeys.count(request.key) > 0;
+                    if (screenRelevant) {
+                        tryEarlyMapping(
+                            *tile,
+                            request.key,
+                            request.group,
+                            request.priority,
+                            true);
+                    }
                     continue;
                 }
                 const double prefetchStartMs = perf::nowMs();

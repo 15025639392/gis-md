@@ -16,7 +16,9 @@ void FrameResourceBudget::beginFrame(
     mainThreadFinalizesUsed_ = 0;
     terminalStateTransitionsUsed_ = 0;
     rasterUploadsUsed_ = 0;
+    rasterOverlayMappingsUsed_ = 0;
     mainThreadElapsedMs_ = 0.0;
+    rasterOverlayMappingElapsedMs_ = 0.0;
 }
 
 bool FrameResourceBudget::canIssue(FrameResourceLane lane,
@@ -153,6 +155,29 @@ bool FrameResourceBudget::mainThreadTimeExpired() const {
            mainThreadElapsedMs_ >= config_.mainThreadTimeMs;
 }
 
+bool FrameResourceBudget::canStartRasterOverlayMapping() const {
+    if (config_.maxRasterOverlayMappingsPerFrame == 0 ||
+        rasterOverlayMappingsUsed_ >=
+            config_.maxRasterOverlayMappingsPerFrame) {
+        return false;
+    }
+    return config_.rasterOverlayMappingTimeMs <= 0.0 ||
+           rasterOverlayMappingElapsedMs_ <
+               config_.rasterOverlayMappingTimeMs;
+}
+
+bool FrameResourceBudget::tryStartRasterOverlayMapping() {
+    if (!canStartRasterOverlayMapping()) {
+        return false;
+    }
+    ++rasterOverlayMappingsUsed_;
+    return true;
+}
+
+void FrameResourceBudget::recordRasterOverlayMappingElapsed(double elapsedMs) {
+    rasterOverlayMappingElapsedMs_ += std::max(0.0, elapsedMs);
+}
+
 FrameResourceBudgetSnapshot FrameResourceBudget::snapshot() const {
     FrameResourceBudgetSnapshot snapshot;
     snapshot.frameNumber = frameNumber_;
@@ -164,6 +189,7 @@ FrameResourceBudgetSnapshot FrameResourceBudget::snapshot() const {
     snapshot.mainThreadFinalizesUsed = mainThreadFinalizesUsed_;
     snapshot.terminalStateTransitionsUsed = terminalStateTransitionsUsed_;
     snapshot.rasterUploadsUsed = rasterUploadsUsed_;
+    snapshot.rasterOverlayMappingsUsed = rasterOverlayMappingsUsed_;
     snapshot.maxNetworkRequestsPerFrame =
         config_.maxNetworkRequestsPerFrame;
     snapshot.maxTerrainContentNetworkRequestsPerFrame =
@@ -184,6 +210,12 @@ FrameResourceBudgetSnapshot FrameResourceBudget::snapshot() const {
     snapshot.maxTerminalStateTransitionsPerFrame =
         config_.maxTerminalStateTransitionsPerFrame;
     snapshot.maxRasterUploadsPerFrame = config_.maxRasterUploadsPerFrame;
+    snapshot.maxRasterOverlayMappingsPerFrame =
+        config_.maxRasterOverlayMappingsPerFrame;
+    snapshot.rasterOverlayMappingElapsedMs =
+        rasterOverlayMappingElapsedMs_;
+    snapshot.rasterOverlayMappingTimeMs =
+        config_.rasterOverlayMappingTimeMs;
     snapshot.mainThreadElapsedMs = mainThreadElapsedMs_;
     snapshot.mainThreadTimeMs = config_.mainThreadTimeMs;
     snapshot.interactionActive = config_.interactionActive;
