@@ -41,6 +41,12 @@ struct alignas(16) GltfUniformBlock {
     // 重算 MVP，shader 不消费（描述表中无对应条目）。
     std::array<float, 3> modelOrigin{0.0f, 0.0f, 0.0f};
     float _reservedOrigin = 0.0f;
+    // geomorph(顶点阶段):xyz = 瓦片中心椭球法线(morph 方向,ECEF 单位向量;
+    // a_position 在 ECEF 平移轴系故方向不变),w = morphFactor。顶点 shader 做
+    // pos += xyz * a_heightDelta * (1 - w):w=1 无 morph(默认),w 从 0→1 时子瓦片
+    // 顶点高度从粗起点长到真实值。w 复用 lodTransitionFadePercentage(刚 refine
+    // 的子瓦片 0→1 over lodTransitionLength)。16 字节保持 alignas(16)。
+    std::array<float, 4> geomorphUpFactor{0.0f, 0.0f, 1.0f, 1.0f};
 
     // ---- fragment stage ----
     std::array<float, 3> lightDir{0.0f, 0.0f, 0.0f};
@@ -176,8 +182,9 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 87> table = {{
+    static const std::array<GltfUniformTableEntry, 88> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
+        EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
         EE_GLTF_ENTRY("u_ambient", ambient, 4),
         EE_GLTF_ENTRY("u_eyePositionRTC", eyePositionRTC, 3),

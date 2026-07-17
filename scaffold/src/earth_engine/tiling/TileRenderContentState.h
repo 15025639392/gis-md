@@ -118,6 +118,10 @@ struct GltfPrimitiveRenderResources {
 class TileRenderContentState {
 public:
     bool asyncGpuUploadPending = false;  // true = CPU work dispatched to worker, GPU upload pending next frame
+    // geomorph 变体 A:主线程用父瓦片表面高度重写本瓦片 heightDelta 的一次性
+    // 门控。每次 prepareGltfContent 换新模型时复位,由 TileGeomorphHeightDelta
+    // 在 CPU-ready→upload 缝里置位,避免逐帧重算父级采样。
+    bool geomorphHeightDeltaApplied = false;
 
     class GltfContentEdit {
     public:
@@ -844,6 +848,7 @@ public:
         gltfModel = std::move(model);
         gltfContentTransform = contentTransform;
         gltfResourcesReady_ = false;
+        geomorphHeightDeltaApplied = false;
         surface_.surfaceSource = SurfaceDrawableSource::GltfContent;
     }
 

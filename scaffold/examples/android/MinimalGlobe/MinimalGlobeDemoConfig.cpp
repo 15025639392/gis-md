@@ -53,11 +53,12 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // 地形 fill 代理:ion 地形协商/根瓦片加载期间,先把已到的影像贴到椭球代理,
     // 真实 quantized-mesh 到达后再替换,避免 provider 切换窗口只剩天空。
     config.tileset.enableTerrainFillProxy = true;
-    // NOTE: LOD-transition alpha cross-fade (enableLodTransitionPeriod) is
-    // available via SceneTilesetConfig but left OFF here. The current built-in
-    // cross-fade fades parent+child simultaneously, so mid-transition the black
-    // clear-color bleeds through (~25% at midpoint) → visible dark block. Pop
-    // looks better until the fade compositing is fixed to keep one opaque layer.
+    // LOD-transition alpha cross-fade:合成 bug 已修(outgoing 层保持不透明基底,
+    // 只淡入 incoming→过渡中点不再透出清屏黑)。启用后 LOD 切换平滑,消除硬 pop。
+    // 真机验证:cross-fade 激活(fadeCmds>0)且过渡期地形零黑透。已知取舍:无 incoming
+    // 替代的地平线离场退化为轻微 pop(换取每次 refine/coarsen 不透黑)。
+    config.tileset.enableLodTransitionPeriod = true;
+    config.tileset.lodTransitionLength = 1.0f;
 
     if (kUseGaodeSatelliteForDemo) {
         RasterOverlaySourceConfig satellite;

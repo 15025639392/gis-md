@@ -882,8 +882,10 @@ static const char* kTerrainVertexGLSL = R"glsl(
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_texcoord01;
+layout(location = 3) in float a_heightDelta;  // geomorph:粗起点−真实高度(米)
 
 uniform mat4 u_modelViewProjection;
+uniform vec4 u_geomorphUpFactor;  // xyz=瓦片中心椭球法线, w=morphFactor
 
 out vec3 v_normal;
 out vec3 v_position;
@@ -892,11 +894,15 @@ out vec4 v_texcoord01;
 void main() {
     // cesium-native RTC: tile origin is baked into the MVP matrix (computed in
     // CPU double precision). a_position is relative to the tile center.
+    // geomorph:沿瓦片中心椭球法线把顶点从粗起点(morph=0)长到真实高度(morph=1)。
+    // heightDelta=0(如上采样子瓦片)或 w=1(无 morph)时 offset 为 0,退化为原样。
+    vec3 morphPos = a_position +
+        u_geomorphUpFactor.xyz * a_heightDelta * (1.0 - u_geomorphUpFactor.w);
     v_normal = normalize(a_normal);
-    v_position = a_position;
+    v_position = morphPos;
     v_texcoord01 = a_texcoord01;
     gl_PointSize = 1.0;
-    gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
+    gl_Position = u_modelViewProjection * vec4(morphPos, 1.0);
 }
 )glsl";
 
@@ -1334,6 +1340,7 @@ struct GltfUniforms {
     float4x4 modelViewProjection;   // 仅 vertex 语义占位，fragment 不读
     packed_float3 modelOrigin;      // CPU-only，shader 不读
     float _reservedOrigin;
+    packed_float4 geomorphUpFactor; // xyz=瓦片中心椭球法线, w=morphFactor
     packed_float3 lightDir;
     float useNormalMap;
     float debugNormalMap;
@@ -2016,6 +2023,7 @@ struct TerrainVertexIn {
     // short4Normalized: xyz = snorm16 normal, w = layout pad (ignored).
     float4 normal   [[attribute(1)]];
     float4 texcoord01 [[attribute(2)]];
+    float heightDelta [[attribute(3)]];  // geomorph:粗起点−真实高度(米)
 };
 
 struct TerrainVertexOut {
@@ -2027,11 +2035,15 @@ struct TerrainVertexOut {
 
 vertex TerrainVertexOut terrainVertex(
     TerrainVertexIn in [[stage_in]],
-    constant float4x4& u_modelViewProjection [[buffer(1)]]) {
+    constant float4x4& u_modelViewProjection [[buffer(1)]],
+    constant float4& u_geomorphUpFactor [[buffer(2)]]) {
     TerrainVertexOut out;
-    out.position = u_modelViewProjection * float4(in.position, 1.0);
+    // geomorph:沿瓦片中心椭球法线把顶点从粗起点(w=0)长到真实高度(w=1)。
+    float3 morphPos = in.position +
+        u_geomorphUpFactor.xyz * in.heightDelta * (1.0 - u_geomorphUpFactor.w);
+    out.position = u_modelViewProjection * float4(morphPos, 1.0);
     out.normal = normalize(in.normal.xyz);
-    out.localPosition = in.position;
+    out.localPosition = morphPos;
     out.texcoord01 = in.texcoord01;
     return out;
 }
@@ -2053,6 +2065,7 @@ struct GltfUniforms {
     float4x4 modelViewProjection;   // 仅 vertex 语义占位，fragment 不读
     packed_float3 modelOrigin;      // CPU-only，shader 不读
     float _reservedOrigin;
+    packed_float4 geomorphUpFactor; // xyz=瓦片中心椭球法线, w=morphFactor
     packed_float3 lightDir;
     float useNormalMap;
     float debugNormalMap;
@@ -2642,7 +2655,7 @@ RenderCommand Renderer::makeTerrainPrimitiveCommand(Buffer* vertexBuffer,
     cmd.indexBuffer = indexBuffer;
     cmd.indexCount = indexCount;
     cmd.vertexCount = vertexCount;
-    cmd.vertexStride = 28;  // POSITION f32(12) + NORMAL snorm16+pad(8) + TEXCOORD_0/1 unorm16(8)
+    cmd.vertexStride = 32;  // POSITION f32(12) + NORMAL snorm16+pad(8) + TEXCOORD_0/1 unorm16(8) + geomorph heightDelta f32(4)
     cmd.primitive = RenderCommand::PrimitiveType::Triangles;
     cmd.indexType = RenderCommand::IndexType::UInt32;
     cmd.depthTest = true;

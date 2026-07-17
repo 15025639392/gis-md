@@ -212,10 +212,16 @@ std::vector<TerrainGpuVertex> GltfRenderGeometryBuilder::buildTerrainVertices(
     const GltfPrimitive& primitive,
     const Mat4& contentTransform,
     const Vec3& localOrigin) {
-    std::vector<TerrainGpuVertex> verts(primitive.vertices.size());
+    const size_t n = primitive.vertices.size();
+    std::vector<TerrainGpuVertex> verts(n);
     const glm::dmat3 normalMatrix = glm::inverseTranspose(
         glm::dmat3(contentTransform.raw()));
-    for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+
+    // geomorph(变体 A 父级采样):worker 侧只把 heightDelta 置 0;真正的 morph
+    // 起点由主线程 TileGeomorphHeightDelta::applyParentGeomorph 用**父瓦片当前
+    // 渲染面**在各顶点处的高度重写(offset 28)。这样子瓦片从上一层显示的地形
+    // 接着往下长细节(连续 LOD),而非每层从自平滑平版重新生长(旧变体 B 天花板)。
+    for (size_t i = 0; i < n; ++i) {
         const SurfaceVertex& src = primitive.vertices[i];
         const Vec3 rel = (contentTransform * src.positionEcef) - localOrigin;
         verts[i].pos[0] = static_cast<float>(rel.x());
@@ -242,6 +248,7 @@ std::vector<TerrainGpuVertex> GltfRenderGeometryBuilder::buildTerrainVertices(
         verts[i].texcoord01[1] = TerrainGpuVertex::packUnorm16(uv0[1]);
         verts[i].texcoord01[2] = TerrainGpuVertex::packUnorm16(uv1[0]);
         verts[i].texcoord01[3] = TerrainGpuVertex::packUnorm16(uv1[1]);
+        verts[i].heightDelta = 0.0f;  // morph 起点由主线程父级采样覆写(变体 A)。
     }
     return verts;
 }

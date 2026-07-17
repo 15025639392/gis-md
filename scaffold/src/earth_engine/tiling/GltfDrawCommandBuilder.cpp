@@ -130,6 +130,19 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
             static_cast<float>(localOrigin.x()),
             static_cast<float>(localOrigin.y()),
             static_cast<float>(localOrigin.z())};
+        // geomorph:瓦片中心椭球法线(morph 方向)。地心 up 近似=normalize(ECEF 中心),
+        // 与测地法线差 <0.2°,morph 视觉足够;a_position 在 ECEF 平移轴系故方向不变。
+        // w(morphFactor)每帧由 applyPerFrameCommandState 盖章为 transitionOpacity。
+        if (cmd.terrainRenderContent) {
+            const double upLen = localOrigin.length();
+            if (upLen > 1.0) {
+                u.geomorphUpFactor = {
+                    static_cast<float>(localOrigin.x() / upLen),
+                    static_cast<float>(localOrigin.y() / upLen),
+                    static_cast<float>(localOrigin.z() / upLen),
+                    1.0f};
+            }
+        }
         cmd.hasWorldSortCenter = true;
         cmd.worldSortCenter = {
             primitive.sortCenterEcef.x(),
@@ -317,6 +330,16 @@ void applyPerFrameCommandState(
     GltfUniformBlock& u = cmd.gltfUniforms;
     cmd.surfaceTransitionOpacity = context.transitionOpacity;
     u.renderOpacity = context.transitionOpacity;
+    // geomorph↔cross-fade 互斥:地形改用 geomorph 单层过渡(几何 morph),不走
+    // cross-fade 的 alpha 双层混合→消除双影 ghosting。morphFactor(w)复用
+    // transitionOpacity(刚 refine 的子瓦片 0→1),xyz(tileUp)常驻构建时已设。
+    // 地形 renderOpacity 恒 1(不透明,子瓦片起点≈父面平滑态覆盖父瓦片,morph 到
+    // 真实细节),parent 被不透明子瓦片遮住,过渡结束再移除。cross-fade(alpha)
+    // 保留给非地形内容(glTF 模型)。
+    if (cmd.terrainRenderContent) {
+        u.geomorphUpFactor[3] = context.transitionOpacity;
+        u.renderOpacity = 1.0f;
+    }
     if (cmd.terrainRenderContent && context.surfaceClipUv) {
         cmd.surfaceClipUv = *context.surfaceClipUv;
         cmd.surfaceClipEnabled = 1.0f;
@@ -403,7 +426,11 @@ void applyPerFrameCommandState(
     // 必须每帧重新派生,否则 fade 结束后命令会卡在半透明状态。
     // A2C 命令(实例化 blend)材质半透明改由 alpha-to-coverage 承担,不开常规
     // alpha 混合(那需逐实例排序);但 LOD 淡入淡出期整块 alpha 叠加仍需真混合。
-    const bool fading = context.transitionOpacity < 0.999f;
+    // 地形走 geomorph(几何 morph)单层过渡,不 alpha 淡入→过渡期保持不透明,
+    // 不进 blend(消除 cross-fade 双层 ghosting)。cross-fade alpha 仅用于非地形
+    // 内容(glTF 模型)。地形若材质本身半透明(水面 transmission)仍按材质走。
+    const bool fading =
+        context.transitionOpacity < 0.999f && !cmd.terrainRenderContent;
     const bool materialTranslucent =
         u.alphaMode == 2.0f || u.transmissionFactor > 0.0f;
     if (fading || (materialTranslucent && !cmd.alphaToCoverage)) {

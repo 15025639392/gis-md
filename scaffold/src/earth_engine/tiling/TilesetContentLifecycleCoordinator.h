@@ -10,6 +10,7 @@
 #include "TileContentUploadPolicy.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileFrameBudgetFallback.h"
+#include "TileGeomorphHeightDelta.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
 #include "TileMissingRequestScheduler.h"
@@ -159,6 +160,10 @@ public:
             ensureTile,
             ensureTileChildren,
             [&](TilesetTile& tile) {
+                // geomorph 变体 A:在 CPU-ready→GPU upload 之前(主线程,父瓦片
+                // 仍在注册表活着),用父级表面高度重写本瓦片每顶点 heightDelta,
+                // 使 morph 起点接上一层显示的地形。自门控:仅地形、每模型一次。
+                TileGeomorphHeightDelta::applyParentGeomorph(tile);
                 const GltfModel* model =
                     tile.content.renderContent.gltfModelForRead();
                 bool hasRenderablePrimitive = false;

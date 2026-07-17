@@ -740,9 +740,13 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         vaoKey.indexBuffer = ib ? ib->glId() : 0u;
         vaoKey.instanceBuffer =
             useInstanceAttribs ? instanceBuffer->glId() : 0u;
-        if (cmd.vertexStride == 28) {
-            vaoKey.layout = VertexLayoutKind::TerrainCompact28;
-            vaoKey.vertexStride = 28;
+        if (cmd.vertexStride == 32 &&
+            cmd.kind == RenderCommandKind::GltfPrimitive) {
+            // Terrain compact 布局(geomorph 后 32B)。地形恒 GltfPrimitive kind,
+            // glTF 材质模型是 stride 120,死代码 Surface32 是 SurfaceTile kind →
+            // GltfPrimitive@32 唯一对应地形,不与 Surface32(SurfaceTile@32)相撞。
+            vaoKey.layout = VertexLayoutKind::TerrainCompact32;
+            vaoKey.vertexStride = 32;
         } else if (cmd.vertexStride == 32 || isGltfVertexLayout) {
             vaoKey.layout = isGltfVertexLayout
                 ? (useInstanceAttribs ? VertexLayoutKind::Gltf120Instanced
@@ -1165,11 +1169,10 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(24));
             break;
-        case VertexLayoutKind::TerrainCompact28:
+        case VertexLayoutKind::TerrainCompact32:
             // Terrain: POSITION f32x3(12) + NORMAL snorm16x3+pad(8) +
-            // packed TEXCOORD_0/1 unorm16x4(8). Normalized attribute
-            // formats surface as floats in the shader — same interface as
-            // the former 40-byte float layout.
+            // packed TEXCOORD_0/1 unorm16x4(8) + geomorph heightDelta f32(4).
+            // Normalized attribute formats surface as floats in the shader.
             glEnableVertexAttribArray(0);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(0));
@@ -1179,6 +1182,11 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glEnableVertexAttribArray(2);
             glVertexAttribPointer(2, 4, GL_UNSIGNED_SHORT, GL_TRUE, stride,
                                   reinterpret_cast<void*>(20));
+            // attrib 3 = geomorph heightDelta @28(f32)。地形非实例化,slot 3-9
+            // 的 instance 矩阵路径不走本布局,故 slot 3 空闲可用。
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(28));
             break;
         case VertexLayoutKind::Gltf120:
         case VertexLayoutKind::Gltf120Instanced:

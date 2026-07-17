@@ -13949,12 +13949,10 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
         });
-    check(plan.renderEntries.size() == 1 &&
-              !plan.renderEntries.front().selectedThisFrame &&
-              plan.renderEntries.front().reason ==
-                  TileRenderEntryReason::FadingOut &&
-              std::abs(plan.renderEntries.front().opacity - 0.4f) < 1e-6f,
-          "TileRenderPlanFinalizer: fading tiles become fade-pass render entries");
+    // geomorph 契约:LOD 过渡期地形走几何 morph 单层不透明,fadingOut 父瓦片被
+    // 不透明 incoming 盖住且会 z-fighting 碎裂→不再产生渲染项(见 TileRenderPlanFinalizer)。
+    check(plan.renderEntries.empty(),
+          "TileRenderPlanFinalizer: geomorph skips fadingOut base (single-layer morph)");
     Renderer renderer(nullptr);
     RenderCommandList commands;
     auto cacheKey = [](const TileKey& key) {
@@ -13998,13 +13996,8 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
             cacheKey,
             protectTile,
             buildCommand);
-    check(commands.size() == 1 &&
-              fadeStats.plannedEntries == 1 &&
-              fadeStats.drawAttempts == 1 &&
-              std::abs(submittedOpacity - 0.4f) < 1e-6f &&
-              fading.lastUsedFrame() == 12 &&
-              fading.referenceCount() == 0,
-          "TileRenderEntryCommandBuilder: fade pass submits fading render entries with opacity");
+    check(commands.empty() && fadeStats.plannedEntries == 0,
+          "TileRenderEntryCommandBuilder: geomorph fade pass has no entries (fadingOut skipped)");
 }
 void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
     const TileKey rootKey{"test", 0, 0, 0};
@@ -25156,23 +25149,18 @@ void testPresentationTraceExposesFadingRenderEntry() {
         TileSelectionState::Rendered;
     TilesetTestAccess::updateLodTransitions(tileset, 0.25);
     const TilePlan& plan = tileset.tilePlan();
+    // geomorph 契约:控制器仍把离场瓦片放进 tilesFadingOut(过渡跟踪),但 finalizer
+    // 在 geomorph(enableLodTransitionPeriod)下**不渲染 fadingOut 基底**(单层 morph,
+    // 见 TileRenderPlanFinalizer)→无渲染项。孤立离场(本例无 incoming 替代)退化为
+    // 轻微 pop(已知取舍)。
     check(plan.visibleTiles.empty() &&
               plan.tilesFadingOut.size() == 1 &&
-              plan.renderEntries.size() == 1 &&
-              !plan.renderEntries.front().selectedThisFrame &&
-              plan.renderEntries.front().reason ==
-                  TileRenderEntryReason::FadingOut,
-          "Presentation trace: fading render entry is planned before rendering");
+              plan.renderEntries.empty(),
+          "Presentation trace: geomorph skips fadingOut render entry (single-layer morph)");
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
-    // Cross-fade 合成契约:outgoing 层是不透明基底(surfaceTransitionOpacity 1.0),
-    // incoming 在其上淡入;孤立离场(本例无 incoming)时 outgoing 保持不透明至移除
-    // (地平线离场退化为轻微 pop,换取每次 refine/coarsen 不透黑,已知取舍)。
-    check(commands.size() == 1 &&
-              commands.front().kind == RenderCommandKind::GltfPrimitive &&
-              std::abs(commands.front().surfaceTransitionOpacity - 1.0f) <
-                  1e-6f,
-          "Presentation trace: fading render entry emits an opaque base surface command");
+    check(commands.empty(),
+          "Presentation trace: geomorph fadingOut emits no surface command");
     if (commands.empty()) return;
     FrameState frameState;
     frameState.frameId = 7;

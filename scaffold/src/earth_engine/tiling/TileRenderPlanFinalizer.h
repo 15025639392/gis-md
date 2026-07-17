@@ -178,28 +178,32 @@ struct TileRenderPlanFinalizer {
             plan.renderEntries.push_back(std::move(entry));
         };
 
-        // Cross-fade 合成:先提交 fadingOut(outgoing)瓦片作为**不透明基底**
-        // (renderOpacity 恒 1.0,见 TileLodTransitionController),再提交 visibleTiles
-        // (含 incoming 淡入瓦片)。地形命令是 SurfaceTile kind,mvpCommandLess 对其
-        // 稳定排序保持提交顺序→基底先画、incoming 在其上 alpha 混合,任意时刻都有
-        // 一层不透明,过渡中点不透黑。reverse-Z GEQUAL 下同深度 incoming 仍能画在
-        // 基底之上。顺序对 refine(父垫底)/coarsen(子垫底)对称成立。
-        for (size_t i = 0; i < plan.tilesFadingOut.size(); ++i) {
-            const TileTransition& transition = plan.tilesFadingOut[i];
-            if (transition.opacity <= 0.001f) {
-                continue;
+        // geomorph 取代 cross-fade(enableLodTransitionPeriod 开启时):地形改用
+        // 几何 morph 单层不透明过渡(incoming 子瓦片从平滑起点≈父形状 morph 到真实
+        // 高度),**不再渲染 fadingOut 父瓦片基底**。原因:incoming 是不透明(非 alpha
+        // 淡入),若同时画不透明的 fadingOut 父瓦片,子瓦片 morph 顶起来下探到父面
+        // 下方时会被父深度挡住/穿插→z-fighting 碎裂;而 GltfPrimitive 固定状态
+        // 不变量要求 depthTest=true(不能靠关深度绕过)。incoming 从 morph=0 起就
+        // 不透明覆盖同区域,父瓦片纯多余。代价:无 incoming 替代的瓦片离场(如地平线
+        // 滑出)退化为轻微 pop(可接受)。cross-fade fadingOut 基底仅 geomorph 关时才需。
+        if (!options.enableLodTransitionPeriod) {
+            for (size_t i = 0; i < plan.tilesFadingOut.size(); ++i) {
+                const TileTransition& transition = plan.tilesFadingOut[i];
+                if (transition.opacity <= 0.001f) {
+                    continue;
+                }
+                TilesetTile* tile =
+                    i < fadingTileHandles.size() &&
+                            fadingTileHandles[i] &&
+                            fadingTileHandles[i]->key == transition.key
+                        ? fadingTileHandles[i]
+                        : ensureTile(transition.key);
+                if (!tile) {
+                    continue;
+                }
+                plan.tilesFadingOutThisFrame.push_back(tile);
+                appendRenderEntry(*tile, transition.opacity, false);
             }
-            TilesetTile* tile =
-                i < fadingTileHandles.size() &&
-                        fadingTileHandles[i] &&
-                        fadingTileHandles[i]->key == transition.key
-                    ? fadingTileHandles[i]
-                    : ensureTile(transition.key);
-            if (!tile) {
-                continue;
-            }
-            plan.tilesFadingOutThisFrame.push_back(tile);
-            appendRenderEntry(*tile, transition.opacity, false);
         }
 
         for (size_t i = 0; i < plan.visibleTiles.size(); ++i) {

@@ -1005,12 +1005,9 @@ TEST(TileRenderPlanFinalizerTest, FadingTilesBecomeFadePassEntries) {
             return tile.hasSurfaceDrawable();
         });
 
-    ASSERT_EQ(plan.renderEntries.size(), 1u);
-    const TileRenderEntry& entry = plan.renderEntries.front();
-    EXPECT_EQ(entry.selectedKey, fadingKey);
-    EXPECT_EQ(entry.renderKey, fadingKey);
-    EXPECT_FALSE(entry.selectedThisFrame);
-    EXPECT_EQ(entry.reason, TileRenderEntryReason::FadingOut);
-    EXPECT_EQ(entry.renderPass(), TileRenderEntryPass::Fading);
-    EXPECT_NEAR(entry.opacity, 0.4f, 1e-6f);
+    // geomorph 契约:LOD 过渡期(enableLodTransitionPeriod=true)地形走几何 morph
+    // 单层不透明,fadingOut 父瓦片被不透明 incoming 子瓦片完全盖住,渲染它会与
+    // morph 顶起来的子瓦片 z-fighting 碎裂(且 GltfPrimitive 固定状态不变量禁止关
+    // 深度绕过)→**不再产生 fadingOut 渲染项**。cross-fade 基底仅 geomorph 关时才有。
+    EXPECT_EQ(plan.renderEntries.size(), 0u);
 }

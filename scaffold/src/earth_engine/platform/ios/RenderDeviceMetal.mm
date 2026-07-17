@@ -477,10 +477,10 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[2].bufferIndex = 0;
         vd.layouts[0].stride = 32;
     } else if (layout == PipelineLayout::Terrain) {
-        // Terrain layout (28B): POSITION f32x3(12) + NORMAL snorm16x3+pad(8)
-        // + packed TEXCOORD_0/1 unorm16x4(8). Metal has no short3Normalized,
-        // so the normal reads as short4Normalized covering the pad short
-        // (shader consumes .xyz only).
+        // Terrain layout (32B): POSITION f32x3(12) + NORMAL snorm16x3+pad(8)
+        // + packed TEXCOORD_0/1 unorm16x4(8) + geomorph heightDelta f32(4).
+        // Metal has no short3Normalized, so the normal reads as
+        // short4Normalized covering the pad short (shader consumes .xyz only).
         vd.attributes[0].format = MTLVertexFormatFloat3;
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
@@ -490,7 +490,10 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[2].format = MTLVertexFormatUShort4Normalized;
         vd.attributes[2].offset = 20;
         vd.attributes[2].bufferIndex = 0;
-        vd.layouts[0].stride = 28;
+        vd.attributes[3].format = MTLVertexFormatFloat;  // geomorph heightDelta
+        vd.attributes[3].offset = 28;
+        vd.attributes[3].bufferIndex = 0;
+        vd.layouts[0].stride = 32;
     } else if (layout == PipelineLayout::Gltf) {
         vd.attributes[0].format = MTLVertexFormatFloat3;   // position
         vd.attributes[0].offset = 0;
@@ -831,12 +834,18 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                                            length:cmd.surfaceCameraRelativeOrigin.size() * sizeof(float)
                                           atIndex:4];
         } else if (cmd.hasGltfUniforms) {
-            // glTF/terrain 定长块：vertex 只需 MVP（buffer(1)，与旧签名一致）。
+            // glTF/terrain 定长块：vertex 绑 MVP（buffer(1)）+ geomorph up/factor
+            // （buffer(2)，terrain 顶点 morph 用；glTF 顶点 shader 不声明该参则忽略）。
             [impl_->currentEncoder
                 setVertexBytes:cmd.gltfUniforms.modelViewProjection.data()
                         length:cmd.gltfUniforms.modelViewProjection.size() *
                                sizeof(float)
                        atIndex:1];
+            [impl_->currentEncoder
+                setVertexBytes:cmd.gltfUniforms.geomorphUpFactor.data()
+                        length:cmd.gltfUniforms.geomorphUpFactor.size() *
+                               sizeof(float)
+                       atIndex:2];
         } else {
             setUniform("u_modelViewProjection", 1);
             setUniform("u_model", 2);

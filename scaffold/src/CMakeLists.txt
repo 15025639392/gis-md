@@ -241,6 +241,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/GltfRenderResourcePreparer.cpp
     earth_engine/tiling/TileFillProxyPreparer.h
     earth_engine/tiling/TileFillProxyPreparer.cpp
+    earth_engine/tiling/TileGeomorphHeightDelta.h
+    earth_engine/tiling/TileGeomorphHeightDelta.cpp
     earth_engine/tiling/LoadedTerrainHeightSampler.h
     earth_engine/tiling/LoadedTerrainHeightSampler.cpp
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.h

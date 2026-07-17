@@ -44,6 +44,10 @@ struct TerrainGpuVertex {
     int16_t nrmPad;          // @18 keeps texcoord01 4-byte aligned; Metal
                              //     reads normal as short4Normalized (w unused)
     uint16_t texcoord01[4];  // @20 unorm16 x4 (TEXCOORD_0/1)
+    // @28 geomorph 高度渐变量:= 粗起点高度 − 真实高度(沿椭球法线,米)。顶点
+    // shader 用 pos += tileUp * heightDelta * (1-morphFactor) 让子瓦片细节从
+    // 平滑起点长到真实高度,LOD 切入无 pop/双影。0 = 无 morph(如上采样子瓦片)。
+    float heightDelta;       // @28 float32
 
     static int16_t packSnorm16(float v) {
         const float clamped = v < -1.0f ? -1.0f : (v > 1.0f ? 1.0f : v);
@@ -64,9 +68,9 @@ struct TerrainGpuVertex {
 };
 
 static_assert(
-    sizeof(TerrainGpuVertex) == 28,
-    "Terrain GPU vertices pack POSITION(f32), NORMAL(snorm16) and "
-    "TEXCOORD_0/1(unorm16)");
+    sizeof(TerrainGpuVertex) == 32,
+    "Terrain GPU vertices pack POSITION(f32), NORMAL(snorm16), "
+    "TEXCOORD_0/1(unorm16) and geomorph heightDelta(f32)");
 
 struct GltfGpuInstance {
     float model[16];

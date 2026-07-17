@@ -132,16 +132,20 @@ TEST(GltfDrawCommandCacheTest, ResourceMutationInvalidatesCache) {
 TEST(GltfDrawCommandCacheTest, BlendStateRederivedEachFrame) {
     CacheHarness harness;
 
+    // geomorph 契约:地形走几何 morph 单层过渡,过渡期**保持不透明**(blend=false,
+    // depthWrite=true, renderOpacity=1),不走 cross-fade 的 alpha 双层混合。每帧
+    // 重派生的过渡量是 geomorphUpFactor.w(morphFactor),不再是 renderOpacity。
     GltfDrawCommandBuildContext fading;
     fading.frameNumber = 1;
     fading.transitionOpacity = 0.5f;
     RenderCommandList commands = harness.buildFrame(fading);
     ASSERT_EQ(1u, commands.size());
-    EXPECT_TRUE(commands[0].blend);
-    EXPECT_FALSE(commands[0].depthWrite);
-    EXPECT_FLOAT_EQ(0.5f, commands[0].gltfUniforms.renderOpacity);
+    EXPECT_FALSE(commands[0].blend);
+    EXPECT_TRUE(commands[0].depthWrite);
+    EXPECT_FLOAT_EQ(1.0f, commands[0].gltfUniforms.renderOpacity);
+    EXPECT_FLOAT_EQ(0.5f, commands[0].gltfUniforms.geomorphUpFactor[3]);
 
-    // fade 结束:同一常驻命令必须回到不透明状态,不能被上一帧污染。
+    // fade 结束:同一常驻命令的 morphFactor 必须回到 1(不 morph),不能被上帧污染。
     GltfDrawCommandBuildContext opaque;
     opaque.frameNumber = 2;
     opaque.transitionOpacity = 1.0f;
@@ -150,6 +154,7 @@ TEST(GltfDrawCommandCacheTest, BlendStateRederivedEachFrame) {
     EXPECT_FALSE(commands[0].blend);
     EXPECT_TRUE(commands[0].depthWrite);
     EXPECT_FLOAT_EQ(1.0f, commands[0].gltfUniforms.renderOpacity);
+    EXPECT_FLOAT_EQ(1.0f, commands[0].gltfUniforms.geomorphUpFactor[3]);
 }
 
 TEST(GltfDrawCommandCacheTest, ClipWindowStampedPerFrameWithoutPollution) {
