@@ -218,12 +218,30 @@ public:
     bool samplersConfigured() const { return samplersConfigured_; }
     void markSamplersConfigured() { samplersConfigured_ = true; }
 
+    /// 冗余 uniform 消除:GL 的 uniform 是 per-program 持久状态(跨帧保留),
+    /// 相邻地形 draw 的帧常量(光照/环境光/眼位/雾)与默认 raster 参数逐帧、
+    /// 逐瓦片重复。缓存上次为本 program 上传的 GltfUniformBlock 浮点副本,
+    /// 每条 entry 上传前与缓存比对,相等则跳过 glUniform(memcmp 16B 远快于
+    /// 驱动侧 glUniform 调用)。缓存反映真实 GL 程序状态,仅在实际上传时更新,
+    /// 故跨帧跳过安全。floatCount 恒为 sizeof(GltfUniformBlock)/4。
+    float* gltfBlockCache(size_t floatCount) {
+        if (gltfBlockCache_.size() != floatCount) {
+            gltfBlockCache_.assign(floatCount, 0.0f);
+            gltfBlockCacheValid_ = false;
+        }
+        return gltfBlockCache_.data();
+    }
+    bool gltfBlockCacheValid() const { return gltfBlockCacheValid_; }
+    void markGltfBlockCacheValid() { gltfBlockCacheValid_ = true; }
+
 private:
     unsigned int id_;
     std::unordered_map<std::string, int> uniformCache_;
     std::vector<int> gltfBlockLocations_;
     bool gltfBlockLocationsResolved_ = false;
     bool samplersConfigured_ = false;
+    std::vector<float> gltfBlockCache_;
+    bool gltfBlockCacheValid_ = false;
 };
 
 } // namespace earth_engine

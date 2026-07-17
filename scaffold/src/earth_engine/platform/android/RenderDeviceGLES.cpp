@@ -675,7 +675,16 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     bool cullFaceEnabled = true;
     bool depthWriteEnabled = true;
 
+    // [SUBMITDIAG] 逐 draw 三段耗时分解:bind(program/vao/texture/sampler) /
+    // uniform(逐条 glUniform 上传) / state+draw。仅在慢帧/采样帧记录成本
+    // 上限 ~3×perf::nowMs()/draw(clock_gettime,~30ns),对 10ms 级 submit 可忽略。
+    double bindMs = 0.0;
+    double uniformMs = 0.0;
+    double drawMs = 0.0;
+    uint64_t uniformCalls = 0;
+
     for (const auto& cmd : commands) {
+        const double iterStartMs = perf::nowMs();
         switch (cmd.kind) {
             case RenderCommandKind::SurfaceTile:
                 ++surfaceCommands;
@@ -822,6 +831,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         }
 
         // ---- Uniforms ----
+        const double uniformStartMs = perf::nowMs();
+        bindMs += uniformStartMs - iterStartMs;
         if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
             auto set1 = [&](const char* name, float value) {
                 int loc = program->uniformLocation(name);
@@ -873,12 +884,27 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             const std::vector<int>& locations = program->gltfBlockLocations();
             const float* block =
                 reinterpret_cast<const float*>(&cmd.gltfUniforms);
+            constexpr size_t kGltfBlockFloats =
+                sizeof(GltfUniformBlock) / sizeof(float);
+            float* cache = program->gltfBlockCache(kGltfBlockFloats);
+            const bool cacheValid = program->gltfBlockCacheValid();
             for (size_t entryIndex = 0; entryIndex < table.size();
                  ++entryIndex) {
                 const int loc = locations[entryIndex];
                 if (loc < 0) continue;
-                const float* values = block + table[entryIndex].floatOffset;
-                switch (table[entryIndex].count) {
+                const uint16_t offset = table[entryIndex].floatOffset;
+                const uint16_t count = table[entryIndex].count;
+                const float* values = block + offset;
+                float* cachedSlot = cache + offset;
+                // 冗余消除:值与本 program 上次上传相同则跳过(GL 仍持有)。
+                if (cacheValid &&
+                    std::memcmp(cachedSlot, values,
+                                count * sizeof(float)) == 0) {
+                    continue;
+                }
+                std::memcpy(cachedSlot, values, count * sizeof(float));
+                ++uniformCalls;
+                switch (count) {
                     case 1:
                         glUniform1f(loc, values[0]);
                         break;
@@ -896,6 +922,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                         break;
                 }
             }
+            program->markGltfBlockCacheValid();
         }
         for (const auto& [name, values] : cmd.uniforms) {
             int loc = program->uniformLocation(name);
@@ -924,6 +951,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         }
 
         // ---- 渲染状态 ----
+        const double stateStartMs = perf::nowMs();
+        uniformMs += stateStartMs - uniformStartMs;
         if (depthTestEnabled != cmd.depthTest) {
             if (cmd.depthTest) {
                 glEnable(GL_DEPTH_TEST);
@@ -1022,6 +1051,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 glDrawArrays(mode, 0, cmd.vertexCount);
             }
         }
+        drawMs += perf::nowMs() - stateStartMs;
     }
 
     // Batch-level cleanup keeps RenderDevice ownership explicit without
@@ -1041,13 +1071,17 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     }
 
     const double submitMs = perf::nowMs() - submitStartMs;
-    if (submitCount <= 1 || submitCount % 120 == 0 || submitMs >= 25.0) {
+    if (submitCount <= 1 || submitCount % 120 == 0 || submitMs >= 12.0) {
         GLenum err = glGetError();
         __android_log_print(ANDROID_LOG_INFO, "GLES",
-            "submit #%d: %zu commands, ms=%.3f surface=%d gltf=%d inst=%d(%d) vector=%d env=%d glError=%d",
+            "submit #%d: %zu commands, ms=%.3f bind=%.3f uniform=%.3f(%llu calls) draw=%.3f surface=%d gltf=%d inst=%d(%d) vector=%d env=%d glError=%d",
             submitCount,
             commands.size(),
             submitMs,
+            bindMs,
+            uniformMs,
+            static_cast<unsigned long long>(uniformCalls),
+            drawMs,
             surfaceCommands,
             gltfCommands,
             instancedCommands,
