@@ -28,16 +28,11 @@ std::atomic<uint32_t> gDeferredCpuReleasePendingTasks{0};
 
 struct DeferredGpuUploadCpuPayload {
     std::vector<std::vector<uint8_t>> byteBuffers;
-    std::vector<std::vector<uint32_t>> indexBuffers;
 
     int64_t allocatedBytes() const {
         int64_t bytes = 0;
         for (const std::vector<uint8_t>& buffer : byteBuffers) {
             bytes += static_cast<int64_t>(buffer.capacity());
-        }
-        for (const std::vector<uint32_t>& buffer : indexBuffers) {
-            bytes += static_cast<int64_t>(
-                buffer.capacity() * sizeof(uint32_t));
         }
         return bytes;
     }
@@ -46,9 +41,7 @@ struct DeferredGpuUploadCpuPayload {
 void deferCpuPayloadRelease(
     std::shared_ptr<DeferredGpuUploadCpuPayload> payload,
     GpuUploadMetrics* metrics) {
-    if (!payload ||
-        (payload->byteBuffers.empty() &&
-         payload->indexBuffers.empty())) {
+    if (!payload || payload->byteBuffers.empty()) {
         return;
     }
     const int64_t payloadBytes = payload->allocatedBytes();
@@ -65,7 +58,6 @@ void deferCpuPayloadRelease(
             payloadBytes,
             std::memory_order_acq_rel);
         payload->byteBuffers.clear();
-        payload->indexBuffers.clear();
         if (metrics) {
             metrics->deferredReleaseInlineFallback = true;
             metrics->deferredReleasePendingBytes =
@@ -85,7 +77,6 @@ void deferCpuPayloadRelease(
         payload = std::move(payload),
         payloadBytes]() mutable {
         payload->byteBuffers.clear();
-        payload->indexBuffers.clear();
         gDeferredCpuReleasePendingBytes.fetch_sub(
             payloadBytes,
             std::memory_order_acq_rel);
@@ -209,7 +200,10 @@ bool isValidGpuReadyPrimitive(const GpuReadyPrimitive& primitive) {
         primitive.vertexBytes.size() / primitive.vertexStride !=
             primitive.vertexCount ||
         primitive.indexCount == 0 ||
-        primitive.indexCount != primitive.indices.size()) {
+        (primitive.indexByteSize != sizeof(uint16_t) &&
+         primitive.indexByteSize != sizeof(uint32_t)) ||
+        primitive.indexBytes.size() !=
+            primitive.indexCount * primitive.indexByteSize) {
         return false;
     }
     if (!primitive.instances) {
@@ -453,9 +447,9 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
             }
         }
 
-        // Index data (just copy)
-        gpuPrim.indices = primitive.indices;
-        gpuPrim.indexCount = primitive.indices.size();
+        // Index data: narrow to uint16 whenever the vertex count allows —
+        // halves the index upload bytes for virtually every terrain tile.
+        gpuPrim.assignIndices(primitive.indices, gpuPrim.vertexCount);
 
         // Sort center
         gpuPrim.sortCenterEcef =
@@ -538,6 +532,7 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
         meta.useTerrainVertexFormat = useTerrainFormat;
         meta.vertexCount = static_cast<int>(primitive.vertices.size());
         meta.indexCount = static_cast<int>(primitive.indices.size());
+        meta.indexByteSize = static_cast<int>(gpuPrim.indexByteSize);
         meta.instanceCount = instanced
             ? static_cast<int>(primitive.instances.size()) : 0;
         meta.primitiveMode = primitive.primitiveMode;
@@ -603,8 +598,8 @@ bool GltfRenderResourcePreparer::uploadToGpu(
         for (const GpuReadyPrimitive& primitive : ready.primitives) {
             metrics->vertexBytes +=
                 static_cast<int64_t>(primitive.vertexBytes.size());
-            metrics->indexBytes += static_cast<int64_t>(
-                primitive.indices.size() * sizeof(uint32_t));
+            metrics->indexBytes +=
+                static_cast<int64_t>(primitive.indexBytes.size());
             if (primitive.instances) {
                 metrics->instanceBytes += static_cast<int64_t>(
                     primitive.instances->bytes.size());
@@ -638,8 +633,7 @@ bool GltfRenderResourcePreparer::uploadToGpu(
     auto deferredCpuPayload =
         std::make_shared<DeferredGpuUploadCpuPayload>();
     deferredCpuPayload->byteBuffers.reserve(
-        ready.primitives.size() * 2u + ready.textures.size());
-    deferredCpuPayload->indexBuffers.reserve(ready.primitives.size());
+        ready.primitives.size() * 3u + ready.textures.size());
 
     // Upload textures first (they're referenced by index in metadata)
     std::vector<std::unique_ptr<Texture>> gpuTextures;
@@ -683,6 +677,8 @@ bool GltfRenderResourcePreparer::uploadToGpu(
             static_cast<int>(prim.vertexCount);
         prim.metadata.indexCount =
             static_cast<int>(prim.indexCount);
+        prim.metadata.indexByteSize =
+            static_cast<int>(prim.indexByteSize);
         prim.metadata.instanceCount = prim.instances
             ? static_cast<int>(prim.instances->count)
             : 0;
@@ -708,8 +704,8 @@ bool GltfRenderResourcePreparer::uploadToGpu(
 
         // GPU: create index buffer
         BufferDesc ibDesc;
-        ibDesc.size = prim.indices.size() * sizeof(uint32_t);
-        ibDesc.data = prim.indices.data();
+        ibDesc.size = prim.indexBytes.size();
+        ibDesc.data = prim.indexBytes.data();
         ibDesc.usage = BufferDesc::Usage::Static;
         ibDesc.type = BufferDesc::Type::Index;
         const double indexBufferStartMs = perf::nowMs();
@@ -719,8 +715,8 @@ bool GltfRenderResourcePreparer::uploadToGpu(
                 perf::nowMs() - indexBufferStartMs;
             ++metrics->indexBufferCount;
         }
-        deferredCpuPayload->indexBuffers.push_back(
-            std::move(prim.indices));
+        deferredCpuPayload->byteBuffers.push_back(
+            std::move(prim.indexBytes));
 
         // GPU: create instance buffer if needed
         if (prim.instances) {

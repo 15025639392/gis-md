@@ -552,6 +552,10 @@ TEST(
     ASSERT_EQ(1u, ready->primitives.size());
     EXPECT_EQ(4u, ready->primitives.front().vertexCount);
     EXPECT_EQ(6u, ready->primitives.front().indexCount);
+    EXPECT_EQ(sizeof(uint16_t), ready->primitives.front().indexByteSize);
+    EXPECT_EQ(
+        6u * sizeof(uint16_t),
+        ready->primitives.front().indexBytes.size());
     ASSERT_EQ(1u, ready->textures.size());
     ASSERT_TRUE(
         ready->primitives.front().terrainWaterMaskTextureIndex.has_value());
@@ -925,4 +929,31 @@ TEST(
         tile.rasterOverlayState.authoritativeUpdateCount());
     EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
     ASSERT_EQ(1u, commands.size());
+}
+
+TEST(TileRenderCommandPreparerTest, AssignIndicesNarrowsToUint16WhenInRange) {
+    GpuReadyPrimitive primitive;
+    primitive.assignIndices({0, 1, 2, 65534}, 65535);
+    EXPECT_EQ(sizeof(uint16_t), primitive.indexByteSize);
+    EXPECT_EQ(4u, primitive.indexCount);
+    ASSERT_EQ(4u * sizeof(uint16_t), primitive.indexBytes.size());
+    const uint16_t* narrowed =
+        reinterpret_cast<const uint16_t*>(primitive.indexBytes.data());
+    EXPECT_EQ(0u, narrowed[0]);
+    EXPECT_EQ(1u, narrowed[1]);
+    EXPECT_EQ(2u, narrowed[2]);
+    EXPECT_EQ(65534u, narrowed[3]);
+}
+
+TEST(TileRenderCommandPreparerTest, AssignIndicesKeepsUint32AboveRange) {
+    GpuReadyPrimitive primitive;
+    // 65536 vertices would allow index 65535 == the GLES3 fixed
+    // primitive-restart sentinel for uint16, so the payload must stay wide.
+    primitive.assignIndices({0, 65535, 70000}, 70001);
+    EXPECT_EQ(sizeof(uint32_t), primitive.indexByteSize);
+    EXPECT_EQ(3u, primitive.indexCount);
+    ASSERT_EQ(3u * sizeof(uint32_t), primitive.indexBytes.size());
+    const uint32_t* wide =
+        reinterpret_cast<const uint32_t*>(primitive.indexBytes.data());
+    EXPECT_EQ(70000u, wide[2]);
 }

@@ -731,9 +731,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         vaoKey.indexBuffer = ib ? ib->glId() : 0u;
         vaoKey.instanceBuffer =
             useInstanceAttribs ? instanceBuffer->glId() : 0u;
-        if (cmd.vertexStride == 40) {
-            vaoKey.layout = VertexLayoutKind::Terrain40;
-            vaoKey.vertexStride = 40;
+        if (cmd.vertexStride == 28) {
+            vaoKey.layout = VertexLayoutKind::TerrainCompact28;
+            vaoKey.vertexStride = 28;
         } else if (cmd.vertexStride == 32 || isGltfVertexLayout) {
             vaoKey.layout = isGltfVertexLayout
                 ? (useInstanceAttribs ? VertexLayoutKind::Gltf120Instanced
@@ -1131,17 +1131,20 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(24));
             break;
-        case VertexLayoutKind::Terrain40:
-            // Terrain: POSITION(12) + NORMAL(12) + packed TEXCOORD_0/1(16).
+        case VertexLayoutKind::TerrainCompact28:
+            // Terrain: POSITION f32x3(12) + NORMAL snorm16x3+pad(8) +
+            // packed TEXCOORD_0/1 unorm16x4(8). Normalized attribute
+            // formats surface as floats in the shader — same interface as
+            // the former 40-byte float layout.
             glEnableVertexAttribArray(0);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(0));
             glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
+            glVertexAttribPointer(1, 3, GL_SHORT, GL_TRUE, stride,
                                   reinterpret_cast<void*>(12));
             glEnableVertexAttribArray(2);
-            glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(24));
+            glVertexAttribPointer(2, 4, GL_UNSIGNED_SHORT, GL_TRUE, stride,
+                                  reinterpret_cast<void*>(20));
             break;
         case VertexLayoutKind::Gltf120:
         case VertexLayoutKind::Gltf120Instanced:

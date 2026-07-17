@@ -3,7 +3,9 @@
 #include "../content/GltfModel.h"
 #include "../core/math/Vec3.h"
 
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -26,19 +28,45 @@ static_assert(
     sizeof(GltfGpuVertex) == 120,
     "glTF GPU vertices pack POSITION, NORMAL, eight TEXCOORD sets, COLOR_0 and TANGENT");
 
-/// Terrain-specific lightweight vertex format (40 bytes).
+/// Terrain-specific compact vertex format (28 bytes).
 /// The engine currently supports Geographic and WebMercator raster
 /// projections, so two packed texcoord sets preserve the complete terrain
 /// overlay contract without paying the 120-byte generic glTF vertex cost.
+/// Position stays float32 (bit-exact geometry); normal is snorm16 and the
+/// texcoord sets are unorm16. Both backends expose the quantized attributes
+/// to the shaders as floats via normalized vertex formats, so the shader
+/// sources are unchanged. Texcoords are clamped to [0,1] on encode — every
+/// terrain texcoord producer (QM uv, projection rewrite, upsample
+/// renormalization) already targets that range and samplers clamp to edge.
 struct TerrainGpuVertex {
-    float pos[3];
-    float nrm[3];
-    float texcoord01[4];
+    float pos[3];            // @0  float32 x3
+    int16_t nrm[3];          // @12 snorm16 x3
+    int16_t nrmPad;          // @18 keeps texcoord01 4-byte aligned; Metal
+                             //     reads normal as short4Normalized (w unused)
+    uint16_t texcoord01[4];  // @20 unorm16 x4 (TEXCOORD_0/1)
+
+    static int16_t packSnorm16(float v) {
+        const float clamped = v < -1.0f ? -1.0f : (v > 1.0f ? 1.0f : v);
+        return static_cast<int16_t>(std::lround(clamped * 32767.0f));
+    }
+    static uint16_t packUnorm16(float v) {
+        const float clamped = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+        return static_cast<uint16_t>(std::lround(clamped * 65535.0f));
+    }
+    // Decode mirrors the GLES3/Metal normalized-attribute rules.
+    float normComponent(int i) const {
+        const float v = static_cast<float>(nrm[i]) / 32767.0f;
+        return v < -1.0f ? -1.0f : v;
+    }
+    float texcoordComponent(int i) const {
+        return static_cast<float>(texcoord01[i]) / 65535.0f;
+    }
 };
 
 static_assert(
-    sizeof(TerrainGpuVertex) == 40,
-    "Terrain GPU vertices pack POSITION, NORMAL, and TEXCOORD_0/1");
+    sizeof(TerrainGpuVertex) == 28,
+    "Terrain GPU vertices pack POSITION(f32), NORMAL(snorm16) and "
+    "TEXCOORD_0/1(unorm16)");
 
 struct GltfGpuInstance {
     float model[16];

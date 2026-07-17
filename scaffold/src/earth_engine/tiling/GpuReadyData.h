@@ -5,6 +5,7 @@
 #include "../core/math/Vec3.h"
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -19,9 +20,37 @@ struct GpuReadyPrimitive {
     size_t vertexStride = 0;   // 40 (TerrainGpuVertex) or 120 (GltfGpuVertex)
     size_t vertexCount = 0;
 
-    // Index data
-    std::vector<uint32_t> indices;
+    // Index data, already in the exact byte layout uploaded to the GPU.
+    // indexByteSize is 2 (uint16) when every index fits below the GLES3
+    // fixed primitive-restart sentinel 0xFFFF, else 4 (uint32).
+    std::vector<uint8_t> indexBytes;
+    size_t indexByteSize = sizeof(uint32_t);
     size_t indexCount = 0;
+
+    // Converts model-space uint32 indices into the narrowest GPU upload
+    // format. vertexCount bounds the index range: indices are < vertexCount,
+    // so vertexCount <= 0xFFFF guarantees the max index stays below the
+    // 0xFFFF restart sentinel.
+    void assignIndices(const std::vector<uint32_t>& indices,
+                       size_t vertexCount) {
+        indexCount = indices.size();
+        if (vertexCount > 0 && vertexCount <= 0xFFFFu) {
+            indexByteSize = sizeof(uint16_t);
+            indexBytes.resize(indexCount * sizeof(uint16_t));
+            uint16_t* out =
+                reinterpret_cast<uint16_t*>(indexBytes.data());
+            for (size_t i = 0; i < indexCount; ++i) {
+                out[i] = static_cast<uint16_t>(indices[i]);
+            }
+            return;
+        }
+        indexByteSize = sizeof(uint32_t);
+        indexBytes.resize(indexCount * sizeof(uint32_t));
+        std::memcpy(
+            indexBytes.data(),
+            indices.data(),
+            indexBytes.size());
+    }
 
     // Metadata (material properties, texture bindings, etc.)
     // Populated by CPU phase, vertexBuffer/indexBuffer/texture filled by GPU phase.
@@ -97,8 +126,7 @@ struct GpuReadyData {
         int64_t bytes = 0;
         for (const GpuReadyPrimitive& primitive : primitives) {
             bytes += static_cast<int64_t>(primitive.vertexBytes.size());
-            bytes += static_cast<int64_t>(
-                primitive.indices.size() * sizeof(uint32_t));
+            bytes += static_cast<int64_t>(primitive.indexBytes.size());
             if (primitive.instances) {
                 bytes += static_cast<int64_t>(
                     primitive.instances->bytes.size());

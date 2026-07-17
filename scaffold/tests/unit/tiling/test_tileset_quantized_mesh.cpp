@@ -827,18 +827,25 @@ TEST(TilesetQuantizedMeshTest,
             primitive.terrainGpuVertexBytes.data() +
                 i * sizeof(TerrainGpuVertex),
             sizeof(TerrainGpuVertex));
-        EXPECT_FLOAT_EQ(
+        // texcoords are packed as unorm16 — compare via decode within
+        // half a quantization step.
+        constexpr float kUnorm16Eps = 0.5f / 65535.0f;
+        EXPECT_NEAR(
             primitive.vertexTexCoords[0][i][0],
-            packed.texcoord01[0]);
-        EXPECT_FLOAT_EQ(
+            packed.texcoordComponent(0),
+            kUnorm16Eps);
+        EXPECT_NEAR(
             primitive.vertexTexCoords[0][i][1],
-            packed.texcoord01[1]);
-        EXPECT_FLOAT_EQ(
+            packed.texcoordComponent(1),
+            kUnorm16Eps);
+        EXPECT_NEAR(
             primitive.vertexTexCoords[1][i][0],
-            packed.texcoord01[2]);
-        EXPECT_FLOAT_EQ(
+            packed.texcoordComponent(2),
+            kUnorm16Eps);
+        EXPECT_NEAR(
             primitive.vertexTexCoords[1][i][1],
-            packed.texcoord01[3]);
+            packed.texcoordComponent(3),
+            kUnorm16Eps);
     }
 }
 

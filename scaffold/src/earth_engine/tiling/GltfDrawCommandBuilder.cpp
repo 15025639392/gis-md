@@ -95,7 +95,7 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                 primitive.vertexCount,
                 primitive.instanceCount);
         } else if (primitive.useTerrainVertexFormat) {
-            // Terrain quantized-mesh primitive: 40-byte TerrainGpuVertex VBO
+            // Terrain quantized-mesh primitive: 28-byte compact TerrainGpuVertex VBO
             // drawn with the dedicated lightweight terrain shader. The
             // per-command population below (water mask, material subset)
             // stays identical — the terrain shader consumes the subset of
@@ -112,6 +112,10 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                 primitive.indexCount,
                 primitive.vertexCount);
         }
+        cmd.indexType = primitive.indexByteSize ==
+                static_cast<int>(sizeof(uint16_t))
+            ? RenderCommand::IndexType::UInt16
+            : RenderCommand::IndexType::UInt32;
         cmd.stableKey = tileCacheKey + "#" + std::to_string(stableIndex++);
         cmd.terrainRenderContent =
             tile.content.renderContent.drawIsTerrainContent();

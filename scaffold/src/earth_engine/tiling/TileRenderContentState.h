@@ -77,6 +77,9 @@ struct GltfPrimitiveRenderResources {
         0.0f};
     int vertexCount = 0;
     int indexCount = 0;
+    // Byte width of the uploaded index buffer: 2 (uint16) or 4 (uint32).
+    // Drives RenderCommand::indexType at draw command build time.
+    int indexByteSize = 4;
     int instanceCount = 0;
     GltfPrimitiveMode primitiveMode = GltfPrimitiveMode::Triangles;
     Vec3 sortCenterEcef = Vec3::zero();
@@ -109,7 +112,7 @@ struct GltfPrimitiveRenderResources {
     bool doubleSided = false;
     bool unlit = false;
     bool dynamicVertices = false;
-    bool useTerrainVertexFormat = false;  // true = 40-byte TerrainGpuVertex, false = 120-byte GltfGpuVertex
+    bool useTerrainVertexFormat = false;  // true = 28-byte TerrainGpuVertex, false = 120-byte GltfGpuVertex
 };
 
 class TileRenderContentState {

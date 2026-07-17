@@ -67,7 +67,8 @@ public:
 PendingGpuUpload makeUpload(const std::string& cacheKey) {
     GpuReadyPrimitive primitive;
     primitive.vertexBytes.resize(8);
-    primitive.indices.resize(2);
+    primitive.indexBytes.resize(2 * sizeof(uint32_t));
+    primitive.indexCount = 2;
     primitive.instances = GpuReadyPrimitive::InstanceData{};
     primitive.instances->bytes.resize(5);
 

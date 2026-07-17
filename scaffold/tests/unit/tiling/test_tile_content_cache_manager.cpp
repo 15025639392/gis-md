@@ -860,7 +860,8 @@ TEST(
 
     GpuReadyPrimitive primitive;
     primitive.vertexBytes.resize(32);
-    primitive.indices.resize(4);
+    primitive.indexBytes.resize(4 * sizeof(uint32_t));
+    primitive.indexCount = 4;
     GpuReadyData data;
     data.primitives.push_back(std::move(primitive));
     const int64_t pendingBytes = data.byteSize();

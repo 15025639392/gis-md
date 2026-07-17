@@ -228,14 +228,20 @@ std::vector<TerrainGpuVertex> GltfRenderGeometryBuilder::buildTerrainVertices(
         } else {
             nrm = Vec3::unitZ();
         }
-        verts[i].nrm[0] = static_cast<float>(nrm.x());
-        verts[i].nrm[1] = static_cast<float>(nrm.y());
-        verts[i].nrm[2] = static_cast<float>(nrm.z());
+        verts[i].nrm[0] =
+            TerrainGpuVertex::packSnorm16(static_cast<float>(nrm.x()));
+        verts[i].nrm[1] =
+            TerrainGpuVertex::packSnorm16(static_cast<float>(nrm.y()));
+        verts[i].nrm[2] =
+            TerrainGpuVertex::packSnorm16(static_cast<float>(nrm.z()));
+        verts[i].nrmPad = 0;
 
-        packTexCoordPair(
-            verts[i].texcoord01,
-            texCoordForVertex(primitive, 0, i),
-            texCoordForVertex(primitive, 1, i));
+        const std::array<float, 2> uv0 = texCoordForVertex(primitive, 0, i);
+        const std::array<float, 2> uv1 = texCoordForVertex(primitive, 1, i);
+        verts[i].texcoord01[0] = TerrainGpuVertex::packUnorm16(uv0[0]);
+        verts[i].texcoord01[1] = TerrainGpuVertex::packUnorm16(uv0[1]);
+        verts[i].texcoord01[2] = TerrainGpuVertex::packUnorm16(uv1[0]);
+        verts[i].texcoord01[3] = TerrainGpuVertex::packUnorm16(uv1[1]);
     }
     return verts;
 }

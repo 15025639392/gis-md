@@ -477,18 +477,20 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[2].bufferIndex = 0;
         vd.layouts[0].stride = 32;
     } else if (layout == PipelineLayout::Terrain) {
-        // Terrain layout: POSITION(12) + NORMAL(12) +
-        // packed TEXCOORD_0/1(16).
+        // Terrain layout (28B): POSITION f32x3(12) + NORMAL snorm16x3+pad(8)
+        // + packed TEXCOORD_0/1 unorm16x4(8). Metal has no short3Normalized,
+        // so the normal reads as short4Normalized covering the pad short
+        // (shader consumes .xyz only).
         vd.attributes[0].format = MTLVertexFormatFloat3;
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
-        vd.attributes[1].format = MTLVertexFormatFloat3;
+        vd.attributes[1].format = MTLVertexFormatShort4Normalized;
         vd.attributes[1].offset = 12;
         vd.attributes[1].bufferIndex = 0;
-        vd.attributes[2].format = MTLVertexFormatFloat4;
-        vd.attributes[2].offset = 24;
+        vd.attributes[2].format = MTLVertexFormatUShort4Normalized;
+        vd.attributes[2].offset = 20;
         vd.attributes[2].bufferIndex = 0;
-        vd.layouts[0].stride = 40;
+        vd.layouts[0].stride = 28;
     } else if (layout == PipelineLayout::Gltf) {
         vd.attributes[0].format = MTLVertexFormatFloat3;   // position
         vd.attributes[0].offset = 0;

@@ -2,6 +2,7 @@
 
 #include "earth_engine/renderer/Renderer.h"
 #include "earth_engine/tiling/GltfDrawCommandBuilder.h"
+#include "earth_engine/tiling/GltfRenderGeometryBuilder.h"
 #include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
@@ -33,7 +34,7 @@ GltfPrimitiveRenderResources makePrimitive(RenderDevice& device,
                                            bool terrainVertexFormat) {
     GltfPrimitiveRenderResources primitive;
     BufferDesc vbDesc;
-    vbDesc.size = 40 * 3;  // three TerrainGpuVertex
+    vbDesc.size = sizeof(TerrainGpuVertex) * 3;  // three TerrainGpuVertex
     vbDesc.type = BufferDesc::Type::Vertex;
     primitive.vertexBuffer = device.createBuffer(vbDesc);
     BufferDesc ibDesc;
@@ -62,7 +63,7 @@ TEST(TerrainShaderCommandTest, MakeTerrainPrimitiveCommandHasCorrectDefaults) {
     EXPECT_EQ(RenderCommandKind::GltfPrimitive, cmd.kind);
     EXPECT_EQ("terrain_primitive", cmd.owner);
     EXPECT_EQ("color", cmd.pass);
-    EXPECT_EQ(40, cmd.vertexStride);
+    EXPECT_EQ(static_cast<int>(sizeof(TerrainGpuVertex)), cmd.vertexStride);
     EXPECT_EQ(36, cmd.indexCount);
     EXPECT_EQ(24, cmd.vertexCount);
     EXPECT_EQ(renderer.terrainShader(), cmd.shader);
@@ -123,7 +124,7 @@ TEST(TerrainShaderCommandTest, TerrainPrimitiveUsesTerrainShaderAndStride) {
 
     ASSERT_EQ(1u, commands.size());
     const RenderCommand& cmd = commands.front();
-    EXPECT_EQ(40, cmd.vertexStride);
+    EXPECT_EQ(static_cast<int>(sizeof(TerrainGpuVertex)), cmd.vertexStride);
     EXPECT_EQ(renderer.terrainShader(), cmd.shader);
     EXPECT_EQ(RenderCommandKind::GltfPrimitive, cmd.kind);
     // The shared per-command population still runs on the terrain command.

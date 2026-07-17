@@ -868,8 +868,9 @@ void main() {
 )glsl";
 
 // ============================================================
-// Terrain lightweight shader — 40-byte TerrainGpuVertex layout
-// POSITION(vec3@0) + NORMAL(vec3@12) + TEXCOORD_0/1(vec4@24) = 40 bytes
+// Terrain lightweight shader — 28-byte compact TerrainGpuVertex layout
+// POSITION(f32x3@0) + NORMAL(snorm16x3+pad@12) + TEXCOORD_0/1(unorm16x4@20)
+// = 28 bytes. Quantized attributes arrive in the shader as normalized floats.
 // This is the glTF shader MINUS all PBR-extension uniforms: it keeps only
 // base color, raster-overlay compositing (slots 15-18), water mask (slot 19),
 // terrain clip, directional lighting and render opacity. RTC origin stays
@@ -1305,7 +1306,7 @@ vertex GltfVertexOut gltfVertex(GltfVertexIn in [[stage_in]],
                                  constant float4x4& u_modelViewProjection [[buffer(1)]]) {
     GltfVertexOut out;
     out.position = u_modelViewProjection * float4(in.position, 1.0);
-    out.normal = normalize(in.normal);
+    out.normal = normalize(in.normal.xyz);
     out.localPosition = in.position;
     out.texcoord01 = in.texcoord01;
     out.color = in.color;
@@ -1997,8 +1998,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
 
 // ============================================================
 // Terrain lightweight shader — MSL
-// 40-byte TerrainGpuVertex: position(vec3@0) normal(vec3@12)
-// texcoord01(vec4@24).
+// 28-byte compact TerrainGpuVertex: position(f32x3@0)
+// normal(short4Normalized@12, w = pad) texcoord01(ushort4Normalized@20).
 // Fragment consumes the shared GltfUniforms struct at buffer(0) (byte-exact
 // mirror of GltfUniformBlock.h), same as gltfFragment — one setFragmentBytes
 // per draw, far under Metal's 31-buffer cap.
@@ -2012,7 +2013,8 @@ using namespace metal;
 
 struct TerrainVertexIn {
     float3 position [[attribute(0)]];
-    float3 normal   [[attribute(1)]];
+    // short4Normalized: xyz = snorm16 normal, w = layout pad (ignored).
+    float4 normal   [[attribute(1)]];
     float4 texcoord01 [[attribute(2)]];
 };
 
@@ -2028,7 +2030,7 @@ vertex TerrainVertexOut terrainVertex(
     constant float4x4& u_modelViewProjection [[buffer(1)]]) {
     TerrainVertexOut out;
     out.position = u_modelViewProjection * float4(in.position, 1.0);
-    out.normal = normalize(in.normal);
+    out.normal = normalize(in.normal.xyz);
     out.localPosition = in.position;
     out.texcoord01 = in.texcoord01;
     return out;
@@ -2419,7 +2421,7 @@ struct Renderer::Impl {
     std::unique_ptr<ShaderProgram> gltfShader;
     std::unique_ptr<ShaderProgram> gltfInstancedShader;
 
-    // Terrain lightweight shader (40-byte vertex, no PBR extensions)
+    // Terrain lightweight shader (28-byte compact vertex, no PBR extensions)
     std::unique_ptr<ShaderProgram> terrainShader;
 
     // Color (vector)
@@ -2485,7 +2487,7 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] gltfShader failed — glTF models unavailable\n");
     }
 
-    // ---- Terrain lightweight shader (40-byte TerrainGpuVertex) ----
+    // ---- Terrain lightweight shader (28-byte compact TerrainGpuVertex) ----
     // Unlike gltfShader, this is a small shader (<=31 Metal buffers) so it must
     // compile on BOTH backends. Treat failure as fatal like surfaceTileShader.
     ShaderDesc terrainSd;
@@ -2640,7 +2642,7 @@ RenderCommand Renderer::makeTerrainPrimitiveCommand(Buffer* vertexBuffer,
     cmd.indexBuffer = indexBuffer;
     cmd.indexCount = indexCount;
     cmd.vertexCount = vertexCount;
-    cmd.vertexStride = 40;  // POSITION(12) + NORMAL(12) + TEXCOORD_0/1(16)
+    cmd.vertexStride = 28;  // POSITION f32(12) + NORMAL snorm16+pad(8) + TEXCOORD_0/1 unorm16(8)
     cmd.primitive = RenderCommand::PrimitiveType::Triangles;
     cmd.indexType = RenderCommand::IndexType::UInt32;
     cmd.depthTest = true;
