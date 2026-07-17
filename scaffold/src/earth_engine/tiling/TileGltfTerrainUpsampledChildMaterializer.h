@@ -85,8 +85,7 @@ public:
                     static_cast<size_t>(textureCoordinateIndex)];
 
         UpsampleClipInput input;
-        input.parentModel = std::make_unique<GltfModel>(*parentModel);
-        pruneClipSnapshot(*input.parentModel);
+        input.parentModel = cloneParentForClip(*parentModel);
         input.childKey = tile.key;
         input.tileBounds = tile.bounds;
         input.sourceBounds = source->bounds;
@@ -189,23 +188,84 @@ public:
                0;
     }
 
-private:
-    template <typename VectorT>
-    static void clearVectorMemory(VectorT& values) {
-        values.clear();
-        values.shrink_to_fit();
+    /// Snapshot copy for the clip worker. The clip path never reads the
+    /// six runtime-only CPU payloads below (they used to be pruned right
+    /// after a full deep copy — a pure white copy, baseVertices alone is
+    /// 104B/vertex on the main thread). Instead of copy-then-prune, they
+    /// are moved OUT of the parent for the duration of the copy and moved
+    /// back before returning: the copy constructor sees empty vectors, so
+    /// the snapshot is born pruned and the copy-ctor semantics still cover
+    /// every other (including future) member automatically.
+    /// Single-threaded contract: called on the main thread only; no other
+    /// thread reads a live model's runtime payloads (workers only read
+    /// their own snapshots), and the parent is bit-identical on return —
+    /// no renderer state derives from these fields, so no cache
+    /// invalidation is warranted (which is why this bypasses
+    /// editGltfContent and its markRetainedResourcesChanged side effect).
+    static std::unique_ptr<GltfModel> cloneParentForClip(
+        const GltfModel& parentModel) {
+        struct RuntimePayloadSteal {
+            struct Payload {
+                std::vector<uint8_t> terrainGpuVertexBytes;
+                std::vector<GltfInstance> instances;
+                std::vector<SurfaceVertex> baseVertices;
+                std::vector<std::array<float, 4>> baseTangents;
+                std::vector<GltfVertexSkinning> skinning;
+                std::vector<GltfMorphTarget> morphTargets;
+            };
+            GltfModel& model;
+            std::vector<Payload> payloads;
+
+            explicit RuntimePayloadSteal(GltfModel& liveModel)
+                : model(liveModel) {
+                payloads.resize(model.primitives.size());
+                for (size_t i = 0; i < model.primitives.size(); ++i) {
+                    GltfPrimitive& primitive = model.primitives[i];
+                    Payload& payload = payloads[i];
+                    payload.terrainGpuVertexBytes =
+                        std::move(primitive.terrainGpuVertexBytes);
+                    payload.instances = std::move(primitive.instances);
+                    payload.baseVertices =
+                        std::move(primitive.runtime.baseVertices);
+                    payload.baseTangents =
+                        std::move(primitive.runtime.baseTangents);
+                    payload.skinning =
+                        std::move(primitive.runtime.skinning);
+                    payload.morphTargets =
+                        std::move(primitive.runtime.morphTargets);
+                }
+            }
+            // Restore runs on every exit path (including a throwing copy).
+            ~RuntimePayloadSteal() {
+                for (size_t i = 0; i < payloads.size() &&
+                                   i < model.primitives.size();
+                     ++i) {
+                    GltfPrimitive& primitive = model.primitives[i];
+                    Payload& payload = payloads[i];
+                    primitive.terrainGpuVertexBytes =
+                        std::move(payload.terrainGpuVertexBytes);
+                    primitive.instances = std::move(payload.instances);
+                    primitive.runtime.baseVertices =
+                        std::move(payload.baseVertices);
+                    primitive.runtime.baseTangents =
+                        std::move(payload.baseTangents);
+                    primitive.runtime.skinning =
+                        std::move(payload.skinning);
+                    primitive.runtime.morphTargets =
+                        std::move(payload.morphTargets);
+                }
+            }
+        };
+
+        // The steal is a scoped, exactly-restored mutation of main-thread
+        // owned state; the const view is the tile API convention, not an
+        // immutability guarantee.
+        GltfModel& mutableParent = const_cast<GltfModel&>(parentModel);
+        RuntimePayloadSteal steal(mutableParent);
+        return std::make_unique<GltfModel>(mutableParent);
     }
 
-    static void pruneClipSnapshot(GltfModel& model) {
-        for (GltfPrimitive& primitive : model.primitives) {
-            clearVectorMemory(primitive.terrainGpuVertexBytes);
-            clearVectorMemory(primitive.instances);
-            clearVectorMemory(primitive.runtime.baseVertices);
-            clearVectorMemory(primitive.runtime.baseTangents);
-            clearVectorMemory(primitive.runtime.skinning);
-            clearVectorMemory(primitive.runtime.morphTargets);
-        }
-    }
+private:
 
     static bool isCommittedGltfTerrainSource(
         const TilesetTile& child,

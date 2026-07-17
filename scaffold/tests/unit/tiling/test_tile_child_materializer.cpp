@@ -272,9 +272,23 @@ TEST(TileChildMaterializerTest, GltfUpsampleClipInputDropsTransientMeshCopies) {
         parent.content.renderContent.gltfModelForRead();
     ASSERT_NE(nullptr, retainedModel);
     ASSERT_FALSE(retainedModel->primitives.empty());
+    // The snapshot is born pruned via a steal-copy-restore of the parent's
+    // runtime payloads — every stolen field must be back untouched.
+    const GltfPrimitive& retainedPrimitive =
+        retainedModel->primitives.front();
     EXPECT_EQ(
         retainedBaseVertexCount,
-        retainedModel->primitives.front().runtime.baseVertices.size());
+        retainedPrimitive.runtime.baseVertices.size());
+    EXPECT_EQ(4096u, retainedPrimitive.terrainGpuVertexBytes.size());
+    EXPECT_EQ(3, retainedPrimitive.terrainGpuVertexBytes.front());
+    EXPECT_EQ(8u, retainedPrimitive.instances.size());
+    EXPECT_EQ(
+        retainedPrimitive.vertices.size(),
+        retainedPrimitive.runtime.baseTangents.size());
+    EXPECT_EQ(
+        retainedPrimitive.vertices.size(),
+        retainedPrimitive.runtime.skinning.size());
+    EXPECT_EQ(2u, retainedPrimitive.runtime.morphTargets.size());
 
     std::unique_ptr<GltfModel> childModel =
         TileGltfTerrainUpsampledChildMaterializer::clipToModel(*input);
