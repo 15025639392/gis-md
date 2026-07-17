@@ -1,5 +1,6 @@
 #pragma once
 
+#include <initializer_list>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -18,6 +19,59 @@ static constexpr int kMaxGltfRasterOverlays = 4;
 static constexpr int kGltfWaterMaskTextureSlot =
     kGltfRasterOverlayTextureBase + kMaxGltfRasterOverlays;
 static constexpr int kGltfInstanceMatrixStride = 100;
+
+/// 固定容量纹理槽表（inline 存储，无堆分配）。
+/// 命令拷贝是每帧热路径——常驻缓存命令逐可见瓦片拷进帧列表，vector 版本
+/// 每次拷贝付一次堆分配；槽位全集有硬上限（material 0-14、raster overlay
+/// 15-18、water mask 19 = kGltfWaterMaskTextureSlot），定容数组即可承载。
+/// API 与既有 vector 用法兼容（size/operator[]/front/push_back/resize）。
+class RenderCommandTextureList {
+public:
+    static constexpr size_t kCapacity =
+        static_cast<size_t>(kGltfWaterMaskTextureSlot) + 1u;
+
+    RenderCommandTextureList() = default;
+    RenderCommandTextureList(std::initializer_list<Texture*> init) {
+        for (Texture* texture : init) {
+            push_back(texture);
+        }
+    }
+
+    Texture** begin() { return items_.data(); }
+    Texture** end() { return items_.data() + size_; }
+    Texture* const* begin() const { return items_.data(); }
+    Texture* const* end() const { return items_.data() + size_; }
+    size_t size() const { return size_; }
+    bool empty() const { return size_ == 0; }
+    Texture*& operator[](size_t index) { return items_[index]; }
+    Texture* operator[](size_t index) const { return items_[index]; }
+    Texture*& front() { return items_[0]; }
+    Texture* front() const { return items_[0]; }
+    void clear() {
+        items_.fill(nullptr);
+        size_ = 0;
+    }
+    // 超容量的 push_back 丢弃（槽位全集恒 <= kCapacity；防御式而非契约）。
+    void push_back(Texture* texture) {
+        if (size_ < kCapacity) {
+            items_[size_++] = texture;
+        }
+    }
+    void resize(size_t newSize, Texture* fill = nullptr) {
+        newSize = newSize < kCapacity ? newSize : kCapacity;
+        for (size_t i = size_; i < newSize; ++i) {
+            items_[i] = fill;
+        }
+        for (size_t i = newSize; i < size_; ++i) {
+            items_[i] = nullptr;
+        }
+        size_ = newSize;
+    }
+
+private:
+    std::array<Texture*, kCapacity> items_{};
+    size_t size_ = 0;
+};
 
 enum class RenderCommandKind {
     Unknown,
@@ -56,7 +110,7 @@ struct RenderCommand {
     Buffer* vertexBuffer = nullptr;
     Buffer* indexBuffer = nullptr;
     Buffer* instanceBuffer = nullptr;
-    std::vector<Texture*> textures;
+    RenderCommandTextureList textures;
     // Optional short-lived resource owners for raw pointers above. Commands can
     // keep raster/content resources alive through submit without taking over
     // renderer ownership.
