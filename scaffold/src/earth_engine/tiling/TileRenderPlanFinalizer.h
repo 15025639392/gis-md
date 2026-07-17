@@ -178,6 +178,30 @@ struct TileRenderPlanFinalizer {
             plan.renderEntries.push_back(std::move(entry));
         };
 
+        // Cross-fade 合成:先提交 fadingOut(outgoing)瓦片作为**不透明基底**
+        // (renderOpacity 恒 1.0,见 TileLodTransitionController),再提交 visibleTiles
+        // (含 incoming 淡入瓦片)。地形命令是 SurfaceTile kind,mvpCommandLess 对其
+        // 稳定排序保持提交顺序→基底先画、incoming 在其上 alpha 混合,任意时刻都有
+        // 一层不透明,过渡中点不透黑。reverse-Z GEQUAL 下同深度 incoming 仍能画在
+        // 基底之上。顺序对 refine(父垫底)/coarsen(子垫底)对称成立。
+        for (size_t i = 0; i < plan.tilesFadingOut.size(); ++i) {
+            const TileTransition& transition = plan.tilesFadingOut[i];
+            if (transition.opacity <= 0.001f) {
+                continue;
+            }
+            TilesetTile* tile =
+                i < fadingTileHandles.size() &&
+                        fadingTileHandles[i] &&
+                        fadingTileHandles[i]->key == transition.key
+                    ? fadingTileHandles[i]
+                    : ensureTile(transition.key);
+            if (!tile) {
+                continue;
+            }
+            plan.tilesFadingOutThisFrame.push_back(tile);
+            appendRenderEntry(*tile, transition.opacity, false);
+        }
+
         for (size_t i = 0; i < plan.visibleTiles.size(); ++i) {
             const TileKey& key = plan.visibleTiles[i];
             TilesetTile* tile =
@@ -195,24 +219,6 @@ struct TileRenderPlanFinalizer {
                     ? tile->selectionFrameState.lodTransitionFadePercentage
                     : 1.0f;
             appendRenderEntry(*tile, transitionOpacity, true);
-        }
-
-        for (size_t i = 0; i < plan.tilesFadingOut.size(); ++i) {
-            const TileTransition& transition = plan.tilesFadingOut[i];
-            if (transition.opacity <= 0.001f) {
-                continue;
-            }
-            TilesetTile* tile =
-                i < fadingTileHandles.size() &&
-                        fadingTileHandles[i] &&
-                        fadingTileHandles[i]->key == transition.key
-                    ? fadingTileHandles[i]
-                    : ensureTile(transition.key);
-            if (!tile) {
-                continue;
-            }
-            plan.tilesFadingOutThisFrame.push_back(tile);
-            appendRenderEntry(*tile, transition.opacity, false);
         }
     }
 

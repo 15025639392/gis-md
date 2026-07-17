@@ -115,8 +115,12 @@ struct TileLodTransitionController {
             selection.lodTransitionFadePercentage = std::min(
                 selection.lodTransitionFadePercentage + transitionDelta,
                 1.0f);
-            const float renderOpacity =
-                1.0f - selection.lodTransitionFadePercentage;
+            // Cross-fade 合成:outgoing(粗/旧)层全程保持**不透明**当基底,只让
+            // incoming 层在其上淡入(见下方 visibleTiles 循环)。这样任意时刻都有
+            // 一层不透明→过渡中点不再透出黑色清屏色(先前禁用 cross-fade 的根因,
+            // 见 MinimalGlobeDemoConfig 注释)。fadePercentage 计时器照常推进,
+            // 用于在 incoming 淡满(同一 lodTransitionLength)时移除本 outgoing 瓦片。
+            const float renderOpacity = 1.0f;
             plan.tilesFadingOut.push_back(TileTransition{
                 tile->key,
                 renderOpacity,
@@ -125,9 +129,7 @@ struct TileLodTransitionController {
                 tile->key,
                 renderOpacity,
                 1});
-            if (renderOpacity > 0.001f) {
-                ++plan.fadingNodeCount;
-            }
+            ++plan.fadingNodeCount;
             ++it;
         }
 

@@ -14046,7 +14046,7 @@ void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
                            ->selectionFrameState
                            .lodTransitionFadePercentage -
                        0.25f) < 1e-6f &&
-              std::abs(plan.tilesFadingOut.front().opacity - 0.75f) < 1e-6f &&
+              std::abs(plan.tilesFadingOut.front().opacity - 1.0f) < 1e-6f &&
               plan.fadingNodeCount == 1,
           "TileLodTransitionController: previous render content fades out after leaving selection");
 }
@@ -23831,8 +23831,8 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
               fadeOutPlan.tilesFadingOut.size() == 1,
           "Tileset: previously rendered tile leaves selection through tilesFadingOut");
     check(!fadeOutPlan.tilesFadingOut.empty() &&
-              std::abs(fadeOutPlan.tilesFadingOut.front().opacity - 0.75f) < 1e-6f,
-          "Tileset: fading-out render opacity is the inverse native fade percentage");
+              std::abs(fadeOutPlan.tilesFadingOut.front().opacity - 1.0f) < 1e-6f,
+          "Tileset: fading-out render opacity stays opaque (cross-fade base layer)");
     check(TilesetTestAccess::fadingOutSetSize(tileset) == 1,
           "Tileset: fading-out tile stays tracked across frames");
     TilesetTestAccess::beginTilePlan(tileset);
@@ -23841,8 +23841,11 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
     TilesetTestAccess::updateLodTransitions(tileset, 0.75);
     check(TilesetTestAccess::fadingOutSetSize(tileset) == 1 &&
               !TilesetTestAccess::tilePlan(tileset).tilesFadingOut.empty() &&
-              TilesetTestAccess::tilePlan(tileset).tilesFadingOut.front().opacity <= 0.001f,
-          "Tileset: fading-out tile reaches zero opacity before removal");
+              std::abs(TilesetTestAccess::tilePlan(tileset)
+                           .tilesFadingOut.front()
+                           .opacity -
+                       1.0f) < 1e-6f,
+          "Tileset: fading-out tile stays opaque base until removal");
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::updateLodTransitions(tileset, 0.016);
     check(TilesetTestAccess::fadingOutSetSize(tileset) == 0,
@@ -23883,8 +23886,8 @@ void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
     }
     check(childFadingOut,
           "Tileset: ADD refined previous tile enters tilesFadingOut like cesium-native");
-    check(std::abs(childOpacity - 0.75f) < 1e-6f,
-          "Tileset: ADD refined fade-out uses native opacity progression");
+    check(std::abs(childOpacity - 1.0f) < 1e-6f,
+          "Tileset: ADD refined fade-out stays opaque base (cross-fade)");
 }
 void testTilesetLodTransitionsIgnoreEmptyContent() {
     TilesetOptions options;
@@ -25162,11 +25165,14 @@ void testPresentationTraceExposesFadingRenderEntry() {
           "Presentation trace: fading render entry is planned before rendering");
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
+    // Cross-fade 合成契约:outgoing 层是不透明基底(surfaceTransitionOpacity 1.0),
+    // incoming 在其上淡入;孤立离场(本例无 incoming)时 outgoing 保持不透明至移除
+    // (地平线离场退化为轻微 pop,换取每次 refine/coarsen 不透黑,已知取舍)。
     check(commands.size() == 1 &&
               commands.front().kind == RenderCommandKind::GltfPrimitive &&
-              std::abs(commands.front().surfaceTransitionOpacity - 0.75f) <
+              std::abs(commands.front().surfaceTransitionOpacity - 1.0f) <
                   1e-6f,
-          "Presentation trace: fading render entry emits a translucent surface command");
+          "Presentation trace: fading render entry emits an opaque base surface command");
     if (commands.empty()) return;
     FrameState frameState;
     frameState.frameId = 7;
@@ -25191,7 +25197,7 @@ void testPresentationTraceExposesFadingRenderEntry() {
               !entryTrace.selectedThisFrame &&
               entryTrace.reason ==
                   TileRenderEntryReason::FadingOut &&
-              std::abs(entryTrace.opacity - 0.75f) < 1e-6f &&
+              std::abs(entryTrace.opacity - 1.0f) < 1e-6f &&
               tilesetTrace.renderEntryPlannedCommandCount == 1 &&
               tilesetTrace.renderEntrySelectedPlannedCommandCount == 0 &&
               tilesetTrace.renderEntryFadingPlannedCommandCount == 1 &&

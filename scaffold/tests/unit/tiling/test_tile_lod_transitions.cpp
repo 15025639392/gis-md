@@ -199,7 +199,9 @@ TEST(TileLodTransitionsTest, ControllerFadesOutPreviousRenderContent) {
         std::abs(
             root.selectionFrameState.lodTransitionFadePercentage - 0.25f),
         1e-6f);
-    EXPECT_LT(std::abs(plan.tilesFadingOut.front().opacity - 0.75f), 1e-6f);
+    // Cross-fade 合成契约:outgoing 层恒不透明(opacity 1.0)当基底,fadePercentage
+    // 计时器仍推进用于移除时机;不再是旧的 opacity=1-fade(那会导致中点透黑)。
+    EXPECT_LT(std::abs(plan.tilesFadingOut.front().opacity - 1.0f), 1e-6f);
     EXPECT_EQ(plan.fadingNodeCount, 1);
 }
 
@@ -316,7 +318,8 @@ TEST(TileLodTransitionsTest, UsesNativeDeltaState) {
     const TilePlan& fadeOutPlan = TilesetTestAccess::tilePlan(tileset);
     EXPECT_TRUE(fadeOutPlan.visibleTiles.empty());
     ASSERT_EQ(fadeOutPlan.tilesFadingOut.size(), 1u);
-    EXPECT_LT(std::abs(fadeOutPlan.tilesFadingOut.front().opacity - 0.75f),
+    // Cross-fade 合成契约:outgoing 恒不透明基底(opacity 1.0)。
+    EXPECT_LT(std::abs(fadeOutPlan.tilesFadingOut.front().opacity - 1.0f),
               1e-6f);
     EXPECT_EQ(TilesetTestAccess::fadingOutSetSize(tileset), 1u);
 
@@ -326,9 +329,15 @@ TEST(TileLodTransitionsTest, UsesNativeDeltaState) {
     TilesetTestAccess::updateLodTransitions(tileset, 0.75);
     EXPECT_EQ(TilesetTestAccess::fadingOutSetSize(tileset), 1u);
     ASSERT_FALSE(TilesetTestAccess::tilePlan(tileset).tilesFadingOut.empty());
-    EXPECT_LE(
-        TilesetTestAccess::tilePlan(tileset).tilesFadingOut.front().opacity,
-        0.001f);
+    // Cross-fade 合成契约:outgoing 层直到被移除前恒不透明基底(opacity 1.0),
+    // 不再是旧的"淡到 opacity→0"(移除时机仍由 fadePercentage>=1 触发,见下一帧)。
+    EXPECT_LT(
+        std::abs(
+            TilesetTestAccess::tilePlan(tileset)
+                .tilesFadingOut.front()
+                .opacity -
+            1.0f),
+        1e-6f);
 
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::updateLodTransitions(tileset, 0.016);
@@ -369,7 +378,8 @@ TEST(TileLodTransitionsTest, AdditiveRefinedTileFadesOutAfterLeavingSelection) {
     }
 
     EXPECT_TRUE(childFadingOut);
-    EXPECT_LT(std::abs(childOpacity - 0.75f), 1e-6f);
+    // Cross-fade 合成契约:outgoing 恒不透明基底(opacity 1.0)。
+    EXPECT_LT(std::abs(childOpacity - 1.0f), 1e-6f);
 }
 
 TEST(TileLodTransitionsTest, EmptyContentDoesNotCreateFakeFade) {
