@@ -289,3 +289,30 @@ cesium 的"octree texture"= 扁平数组，每节点 = 父指针 + 子槽入口�
 - **最小原型**(验门①)：建小 atlas + 扁平四叉树间接纹理 + terrain 片元 shader 加"间接降→采 atlas"，真机量逐片元开销 + 与 B fill(1 sample 1.3ms)对齐比较。CPU 页/页表/上传都largely现成，原型主要是 shader + 间接纹理 builder。
 - **⚠️ 缺口**：cesium 的实际 GLSL(`Octree.glsl`/`Megatexture.glsl`)不在 sparse checkout 里，写 shader 前值得从全 clone 取那段寻址数学(降索引→UV、flag 解包、槽→atlas UV)。
 - **低风险退路 Option-lite 仍在**：B 已实测可用(1.67ms 可缓存)，静态 base 走 B + 动态层走现成 raster/贴地。合成方案是"更省 + 动态多层友好"的目标形态，不是唯一出路。
+
+### 11.6 门① 原型真机结论(2026-07-19,PASS 带设计约束)
+`renderer/VtIndirectionSamplePoc.{h,cpp}`(commit c1e66da6c 建台 + 1b41389fe 修正+扫描)。纯旁路测量台,gate 与 camera/scene 无关(合成 fill),`kMeasureVtIndirectionSamplePoC` 一 flag 即测。
+
+**两个测量陷阱(踩坑,重要方法论)**:
+1. **纯 CPU 计时量的是「命令编码」非 GPU fill**——tiled Adreno 片元着色推迟到 resolve,`perf::nowMs()` 围 beginPass/submit 只量入队。首测 3.44MP fill 报 0.02ms、descent 反比 baseline 便宜(ratio 0.57)= 荒谬。**修**=每组末尾 1×1 回读强制 flush→resolve→等 GPU(同一 FBO 后画覆盖前画,回读逼所有 pass 执行完),计时纳入真实累计 GPU 时间;再减「仅同步」地板 `runPasses(_,0)` = 干净每-pass GPU fill。
+2. **单点会误导**——改一次 run 扫描深度 {1,2,3,4,6,8}(「别外推,直接量」)。
+
+**真机曲线**(7e045e39/Adreno,3.44MP 全屏 fill,已减同步地板,每-pass GPU ms):
+
+| descent 深度 | ms/pass | ×baseline | Δ/层 |
+|---|---|---|---|
+| base(0,仅 atlas 采样) | ~0.37 | 1.0× | — |
+| 1 | ~0.51 | **1.4×** | +0.14 |
+| 2 | ~0.70 | **1.9×** | +0.19 |
+| 3 | ~1.03 | 2.8× | +0.32 |
+| 4 | ~1.37 | 3.7× | +0.34 |
+| 6 | ~2.87 | 7.8× | +0.75 |
+| 8 | ~9.1 | **24.6×** | +3.9 💥 |
+
+**超线性悬崖**——依赖 fetch 链(下址依赖上次取回值)latency-hiding 失效,深降爆炸。线性外推 D4→D8 会预测 2.7ms、实际 9ms(3.4× 偏差),坐实「别外推」。
+
+**结论 = 门① PASS(带设计约束)**:
+- **浅降(1-2 层单次页表,id-Software megatexture 式)+0.14~0.33ms 基本免费 → 合成方案过门,定为 2b 目标形态。**
+- **设计约束(硬):间接降必须浅(≤2-3 依赖 fetch),优先「单次 fetch 扁平页表 + mip 回退」,禁 cesium-octree 式深度自顶向下降(≥6 层超线性爆炸)。** 2D 影像本就用不着深降——页表在最细虚拟页分辨率直接存槽指针,一次 fetch 到位。
+- 局限:间接寻址是代表性成本模型(N 依赖 fetch + atlas 采样),非 cesium `Octree.glsl` 逐字节等价。写生产 shader 前从全 clone 取寻址数学,但采**单次页表**设计,不照搬 octree 深降。
+- **下一步 = 按单次页表设计建合成方案生产原型**:CPU 定页(§11.1 现成)+ `updateTextureRegion` 上传填 atlas(§11.2)+ CPU 建扁平页表间接纹理 + terrain 片元加**单次**间接采样(单层 UV-remap 先例 applyMappedRaster,Renderer.cpp:964-972)。
