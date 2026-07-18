@@ -18,11 +18,15 @@
 #include "earth_engine/content/HeightmapTerrainContentProvider.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/threading/CancellationToken.h"
+#include "earth_engine/tiling/LoadedTerrainHeightSampler.h"
 #include "earth_engine/tiling/TileKey.h"
+#include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TilesetTile.h"
 
 namespace earth_engine {
 namespace {
@@ -348,6 +352,70 @@ TEST(HeightmapTerrainContent, FlatFieldBakesZeroGeomorphDelta) {
          captured.gltfModel->primitives.front().vertices) {
         EXPECT_NEAR(v.geomorphHeightDelta, 0.0f, 1e-2f);
     }
+}
+
+// ---- P5: terrain height sampler (camera clamp / picking / vector draping) ---
+// The sampler is source-agnostic — it walks GltfModel triangles and only checks
+// isTerrainRenderContent(). A CPU-baked regular-grid heightmap tile produces a
+// real per-vertex terrain GltfModel exactly like QM, so LoadedTerrainHeightSampler
+// must return the baked terrain height (NOT sea-level 0, NOT a skirt-dropped
+// value) for a point over the tile. This locks the "reuse, no code change"
+// claim for the height-query path.
+TEST(HeightmapTerrainContent, HeightSamplerReadsBakedTerrainHeight) {
+    SyntheticHeightBridge bridge;
+    bridge.width = 5;
+    bridge.height = 5;
+    bridge.encoding = HeightmapTerrainProvider::Encoding::MapboxTerrainRgb;
+    // Flat plateau so the expected sample height is unambiguous regardless of
+    // which surface triangle the query ray hits.
+    bridge.heightAt = [](int, int) { return 640.0f; };
+
+    auto provider = std::make_unique<HeightmapTerrainProvider>(
+        "file:///{z}/{x}/{y}.png", "");
+    provider->setEncoding(
+        HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+    provider->setZoomRange(0, 12);
+    provider->setPlatformBridge(&bridge);
+
+    HeightmapTerrainContentProvider content(std::move(provider), 12);
+    const TileKey key{"XYZ-WebMercator", 12, 3400, 1500};
+    CancellationToken token;
+    bool called = false;
+    TileContentLoadResult captured;
+    content.requestTileContent(
+        key, token,
+        [&](const TileKey&, TileContentLoadResult result) {
+            captured = std::move(result);
+            called = true;
+        });
+    ASSERT_TRUE(called);
+    ASSERT_NE(captured.gltfModel, nullptr);
+
+    // Register the baked tile in a loaded-terrain registry exactly as the
+    // runtime does (identity transform — heightmap vertices are absolute ECEF).
+    const Rectangle bounds =
+        TileScheme::createXYZWebMercator()->tileToRectangle(key);
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto tile = std::make_unique<TilesetTile>(key, bounds);
+    tile->content.renderContent.prepareGltfContent(
+        std::move(captured.gltfModel), Mat4::identity());
+    tile->content.renderContent.setTerrainRenderContent(true);
+    tile->markRenderContentDone();
+    tiles.emplace("heightmap/12/3400/1500", std::move(tile));
+
+    // Query the tile centre: must resolve to the ~640 m plateau, not sea level.
+    const double lon = (bounds.west() + bounds.east()) * 0.5;
+    const double lat = (bounds.south() + bounds.north()) * 0.5;
+    const std::optional<float> sampled =
+        LoadedTerrainHeightSampler::sampleHeightOptional(tiles, lon, lat);
+    ASSERT_TRUE(sampled.has_value());
+    EXPECT_NEAR(*sampled, 640.0f, 5.0f);
+
+    // A point outside the tile has no covering terrain → nullopt (must not be
+    // reported as a real 0 m sea-level height).
+    EXPECT_FALSE(LoadedTerrainHeightSampler::sampleHeightOptional(
+                     tiles, bounds.east() + 0.05, lat)
+                     .has_value());
 }
 
 }  // namespace
