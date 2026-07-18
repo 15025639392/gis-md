@@ -22,22 +22,37 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     }
 
     if (kEnableTerrainForDemo) {
-        config.terrain.kind = TerrainSourceKind::QuantizedMesh;
-        config.terrain.tileSize = 65;
-        config.terrain.enableWaterMask = true;
-        config.terrain.minimumZoom = 0;
-        if (kUseCesiumIonTerrain) {
-            // Cesium World Terrain：全球，运行时 ion endpoint 协商。
-            config.terrain.attribution = "Cesium World Terrain";
-            config.terrain.maximumZoom = 16;
-            config.terrain.cesiumIonAssetId = kCesiumIonTerrainAssetId;
-            config.terrain.cesiumIonAccessToken = kCesiumIonAccessToken;
-        } else {
-            // 本地 FABDEM（重庆，z0-12）。
-            config.terrain.urlTemplate = kQuantizedMeshTerrainTemplate;
-            config.terrain.layerJsonUrl = kQuantizedMeshTerrainLayerJson;
-            config.terrain.attribution = "QuantizedMesh Terrain";
+        if (kUseHeightmapTerrain) {
+            // 规则栅格 raster-DEM 高度图（P1 CPU 烘焙路径）。重庆 FABDEM z0-12，
+            // 65×65 顶点对齐 Mapbox Terrain-RGB PNG。无数据区回落椭球。
+            config.terrain.kind = TerrainSourceKind::Heightmap;
+            config.terrain.urlTemplate = kHeightmapTerrainTemplate;
+            config.terrain.heightmapEncoding =
+                TerrainHeightmapEncoding::MapboxTerrainRgb;
+            config.terrain.tileSize = 65;
+            config.terrain.minimumZoom = 0;
             config.terrain.maximumZoom = 12;
+            config.terrain.attribution = "FABDEM Terrain-RGB (grid65)";
+            config.terrain.ellipsoidFallback = true;
+            config.terrain.ellipsoidFallbackMaxZoom = 12;
+        } else {
+            config.terrain.kind = TerrainSourceKind::QuantizedMesh;
+            config.terrain.tileSize = 65;
+            config.terrain.enableWaterMask = true;
+            config.terrain.minimumZoom = 0;
+            if (kUseCesiumIonTerrain) {
+                // Cesium World Terrain：全球，运行时 ion endpoint 协商。
+                config.terrain.attribution = "Cesium World Terrain";
+                config.terrain.maximumZoom = 16;
+                config.terrain.cesiumIonAssetId = kCesiumIonTerrainAssetId;
+                config.terrain.cesiumIonAccessToken = kCesiumIonAccessToken;
+            } else {
+                // 本地 FABDEM（重庆，z0-12）。
+                config.terrain.urlTemplate = kQuantizedMeshTerrainTemplate;
+                config.terrain.layerJsonUrl = kQuantizedMeshTerrainLayerJson;
+                config.terrain.attribution = "QuantizedMesh Terrain";
+                config.terrain.maximumZoom = 12;
+            }
         }
     }
     config.tileset = {

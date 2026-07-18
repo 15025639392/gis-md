@@ -11,6 +11,16 @@ constexpr const char* kQuantizedMeshTerrainTemplate =
 constexpr const char* kQuantizedMeshTerrainLayerJson =
     "http://127.0.0.1:8090/layer.json";
 
+// 规则栅格 raster-DEM 高度图地形（P1 CPU 烘焙路径，TerrainSourceKind::Heightmap）。
+// 65×65 顶点对齐 Mapbox Terrain-RGB PNG（dem_test build_raster_dem_grid65.py 生成）。
+// kUseHeightmapTerrain=true 时取代 QM。**瓦片交付**（择一，heightmap 必须本地瓦片）：
+//   ① 本地服务器：serve_tiles.py 起在 8090 + adb reverse tcp:8090，用下方 http 模板；
+//   ② adb push + file://：把瓦片推到 app 可读目录，模板改 file:///<路径>/{z}/{x}/{y}.png。
+// 默认关，不影响现有 ion 地形。
+constexpr bool kUseHeightmapTerrain = false;
+constexpr const char* kHeightmapTerrainTemplate =
+    "http://127.0.0.1:8090/{z}/{x}/{y}.png";
+
 // Cesium ion World Terrain（asset 1）：全球地形，走 ion endpoint 运行时协商，
 // 脱离本地服务器 + adb reverse 依赖。临时凭证约 1 小时过期（当前无自动刷新）。
 constexpr bool kUseCesiumIonTerrain = true;
