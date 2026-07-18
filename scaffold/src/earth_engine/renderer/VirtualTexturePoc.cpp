@@ -99,6 +99,9 @@ bool VirtualTexturePoc::ensureResources(int surfaceWidthPixels,
     readbackBuffer_.assign(
         static_cast<size_t>(wantW) * static_cast<size_t>(wantH) * 4u,
         uint8_t{0});
+    // 尺寸变了,在途票号对应旧尺寸 PBO,作废(丢弃即可,设备侧 slot 会被后续
+    // enqueue 复用/覆盖;PoC 不再 acquire 它们)。
+    pendingTickets_.clear();
     return true;
 }
 
@@ -119,9 +122,41 @@ VirtualTexturePocFrameStats VirtualTexturePoc::tick() {
         stats.feedbackPassMs = perf::nowMs() - startMs;
     }
 
-    // 2) GPU→CPU 回读(**①的核心测量**):等管线冲刷,移动端可能 stall。
+    // 2) GPU→CPU 回读。两条路径:
+    //    异步(生产形态):enqueue 本帧 feedback(不 stall)+ acquire 隔够延迟帧的
+    //      在途回读(GPU 已完成 → 零 stall)。量的是「异步回读真实成本」。
+    //    同步(最坏上界):glReadPixels 强制冲刷。后端不支持异步时回落此路。
     size_t bytesRead = 0;
-    {
+    if (config_.asyncReadback) {
+        // 发起本帧回读(首帧探测后端是否支持)。
+        double enqStart = perf::nowMs();
+        const uint64_t ticket = device_->enqueueFramebufferReadback(
+            feedbackFbo_.get(), 0, 0, feedbackWidth_, feedbackHeight_);
+        stats.enqueueMs = perf::nowMs() - enqStart;
+        if (ticket != 0) {
+            asyncSupported_ = true;
+            pendingTickets_.push_back(ticket);
+        }
+    }
+    if (asyncSupported_) {
+        stats.async = true;
+        // 隔够延迟帧后取队首(此时 GPU 应已完成 → acquire 近零 stall)。
+        if (static_cast<int>(pendingTickets_.size()) >
+            config_.readbackLatencyFrames) {
+            const uint64_t due = pendingTickets_.front();
+            bool pending = false;
+            const double acqStart = perf::nowMs();
+            bytesRead = device_->acquireFramebufferReadback(
+                due, readbackBuffer_.data(), readbackBuffer_.size(), &pending);
+            stats.readbackMs = perf::nowMs() - acqStart;
+            stats.readbackPending = pending;
+            // 取到(或该票作废)即出队;仍 pending 则留队下帧再试。
+            if (bytesRead > 0 || !pending) {
+                pendingTickets_.pop_front();
+            }
+        }
+    } else {
+        // 同步回落(Metal/mock,或 asyncReadback=false)。
         const double startMs = perf::nowMs();
         bytesRead = device_->readFramebufferPixels(
             feedbackFbo_.get(), 0, 0, feedbackWidth_, feedbackHeight_,
@@ -193,6 +228,8 @@ void VirtualTexturePoc::dispose() {
     pageTable_.reset();
     readbackBuffer_.clear();
     indirectionCpu_.clear();
+    pendingTickets_.clear();
+    asyncSupported_ = false;
     feedbackWidth_ = 0;
     feedbackHeight_ = 0;
     lastStats_ = VirtualTexturePocFrameStats{};

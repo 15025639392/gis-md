@@ -159,6 +159,41 @@ public:
         return needed;
     }
 
+    uint64_t enqueueFramebufferReadback(Framebuffer*,
+                                        int,
+                                        int,
+                                        int width,
+                                        int height) override {
+        if (!supportsAsyncReadback) return 0;
+        ++enqueueCount;
+        lastEnqueueBytes =
+            static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+        return nextTicket_++;
+    }
+    size_t acquireFramebufferReadback(uint64_t ticket,
+                                      uint8_t* outPixels,
+                                      size_t outCapacity,
+                                      bool* outStillPending) override {
+        if (outStillPending) *outStillPending = false;
+        if (ticket == 0 || !outPixels) return 0;
+        ++acquireCount;
+        if (asyncAlwaysPending) {
+            if (outStillPending) *outStillPending = true;
+            return 0;
+        }
+        const size_t needed = lastEnqueueBytes;
+        if (outCapacity < needed) return 0;
+        if (cannedFeedbackPixels.empty()) {
+            std::fill(outPixels, outPixels + needed, uint8_t{0});
+        } else {
+            for (size_t i = 0; i < needed; ++i) {
+                outPixels[i] =
+                    cannedFeedbackPixels[i % cannedFeedbackPixels.size()];
+            }
+        }
+        return needed;
+    }
+
     void beginFrame() override { ++frameCount; }
     bool beginPass(Framebuffer* target) override {
         ++beginPassCount;
@@ -188,6 +223,9 @@ public:
     int frameCount = 0;
     int createdFramebufferCount = 0;
     int readbackCount = 0;
+    int enqueueCount = 0;
+    int acquireCount = 0;
+    size_t lastEnqueueBytes = 0;
     int beginPassCount = 0;
     int endPassCount = 0;
     Framebuffer* lastPassTarget = nullptr;
@@ -196,6 +234,11 @@ public:
     bool allowTextureCreation = true;
     bool allowBufferUpdates = true;
     bool allowFramebufferCreation = true;
+    bool supportsAsyncReadback = false;  // true → 走异步 enqueue/acquire 路径
+    bool asyncAlwaysPending = false;     // true → acquire 恒未就绪(测延迟路径)
+
+private:
+    uint64_t nextTicket_ = 1;
 };
 
 } // namespace testing

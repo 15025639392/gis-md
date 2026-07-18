@@ -677,6 +677,103 @@ size_t RenderDeviceGLES::readFramebufferPixels(Framebuffer* source,
     return needed;
 }
 
+uint64_t RenderDeviceGLES::enqueueFramebufferReadback(Framebuffer* source,
+                                                      int x,
+                                                      int y,
+                                                      int width,
+                                                      int height) {
+    // 异步回读发起:glReadPixels 到 GL_PIXEL_PACK_BUFFER(异步,不 stall)+ fence。
+    // 找空 slot;全占用(背压,调用方未及时 acquire)返回 0。
+    if (!source || width <= 0 || height <= 0) {
+        return 0;
+    }
+    const size_t needed =
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+    ReadbackSlot* slot = nullptr;
+    for (ReadbackSlot& s : readbackSlots_) {
+        if (!s.inUse) {
+            slot = &s;
+            break;
+        }
+    }
+    if (!slot) {
+        return 0;  // 环满,背压
+    }
+    if (slot->pbo == 0) {
+        glGenBuffers(1, &slot->pbo);
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, slot->pbo);
+    if (slot->bytes != needed) {
+        // 尺寸变化(或首次)→ 重分配。GL_STREAM_READ:GPU 写、CPU 读一次。
+        glBufferData(GL_PIXEL_PACK_BUFFER,
+                     static_cast<GLsizeiptr>(needed),
+                     nullptr,
+                     GL_STREAM_READ);
+        slot->bytes = needed;
+    }
+    auto* fbo = static_cast<GLFramebuffer*>(source);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo->glId());
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    // offset=0 → 读进当前绑定的 PACK buffer(异步,GPU 完成才落地)。
+    glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    slot->fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    slot->ticket = nextReadbackTicket_++;
+    slot->inUse = true;
+    return slot->ticket;
+}
+
+size_t RenderDeviceGLES::acquireFramebufferReadback(uint64_t ticket,
+                                                    uint8_t* outPixels,
+                                                    size_t outCapacity,
+                                                    bool* outStillPending) {
+    if (outStillPending) {
+        *outStillPending = false;
+    }
+    if (ticket == 0 || !outPixels) {
+        return 0;
+    }
+    ReadbackSlot* slot = nullptr;
+    for (ReadbackSlot& s : readbackSlots_) {
+        if (s.inUse && s.ticket == ticket) {
+            slot = &s;
+            break;
+        }
+    }
+    if (!slot) {
+        return 0;  // 无效/已消费票号
+    }
+    // 非阻塞查 fence。GL_SYNC_FLUSH_COMMANDS_BIT 保证 fence 已入队(防死等),
+    // 超时 0 → 立即返回,不 stall。这正是「异步回读真实 CPU 成本」的测量点。
+    auto sync = static_cast<GLsync>(slot->fence);
+    const GLenum r = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+    if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED) {
+        if (outStillPending) {
+            *outStillPending = true;  // GPU 尚未完成,下帧再取(无 stall)
+        }
+        return 0;
+    }
+    size_t copied = 0;
+    if (outCapacity >= slot->bytes) {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, slot->pbo);
+        void* mapped = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0,
+                                        static_cast<GLsizeiptr>(slot->bytes),
+                                        GL_MAP_READ_BIT);
+        if (mapped) {
+            std::memcpy(outPixels, mapped, slot->bytes);
+            copied = slot->bytes;
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    glDeleteSync(sync);
+    slot->fence = nullptr;
+    slot->ticket = 0;
+    slot->inUse = false;
+    return copied;
+}
+
 void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     static int submitCount = 0;
     submitCount++;
@@ -1364,6 +1461,14 @@ void RenderDeviceGLES::onSurfaceDestroyed() {
     // 实际使用时，应在 context 销毁前先销毁 RenderDeviceGLES
     // VAO 缓存同理：只丢弃 CPU 侧记录，GL 对象随 context 一起销毁。
     dropVaoCache(/*deleteGlObjects=*/false);
+    // 异步回读环:context 失效,只清 CPU 记录(PBO/fence 随 context 销毁)。
+    for (ReadbackSlot& s : readbackSlots_) {
+        s.pbo = 0;
+        s.fence = nullptr;
+        s.bytes = 0;
+        s.ticket = 0;
+        s.inUse = false;
+    }
 }
 
 } // namespace earth_engine

@@ -100,6 +100,41 @@ public:
         return 0;
     }
 
+    /// 异步回读(**VT feedback 的生产形态**):发起一次非阻塞的 FBO color 拷贝
+    /// (GLES 走 GL_PIXEL_PACK_BUFFER + fence),当帧不 stall;稍后帧用
+    /// acquireFramebufferReadback 取回(GPU 已完成则零 stall)。这是公平量「异步
+    /// 回读真实 CPU stall」的通路——同步 glReadPixels 强制冲刷不是生产做法。
+    /// 返回票号(>0);0 = 不支持(Metal/mock,调用方回落同步)或失败。
+    virtual uint64_t enqueueFramebufferReadback(Framebuffer* source,
+                                                int x,
+                                                int y,
+                                                int width,
+                                                int height) {
+        (void)source;
+        (void)x;
+        (void)y;
+        (void)width;
+        (void)height;
+        return 0;
+    }
+
+    /// 非阻塞取回 enqueue 发起的回读。ticket 就绪则拷进 outPixels、消费该 ticket、
+    /// 返回字节数;未就绪返回 0 且 *outStillPending=true;无效票号返回 0 且
+    /// *outStillPending=false。**不阻塞**——用 glClientWaitSync(0 超时)轮询 fence,
+    /// 故若隔够帧数取,acquire 耗时≈0(这正是要量的)。
+    virtual size_t acquireFramebufferReadback(uint64_t ticket,
+                                              uint8_t* outPixels,
+                                              size_t outCapacity,
+                                              bool* outStillPending) {
+        (void)ticket;
+        (void)outPixels;
+        (void)outCapacity;
+        if (outStillPending) {
+            *outStillPending = false;
+        }
+        return 0;
+    }
+
     // ---- 生命周期 ----
     /// 渲染 surface 首次创建或 context lost 后重建时调用
     virtual void onSurfaceCreated() = 0;

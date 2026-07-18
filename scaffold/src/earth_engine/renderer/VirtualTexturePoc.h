@@ -4,6 +4,7 @@
 #include "VirtualTexturePage.h"
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -42,19 +43,28 @@ struct VirtualTexturePocConfig {
     // 间接纹理边长(texels):每 texel 编码一个虚拟页当前落在哪个物理槽。
     // 骨架占位固定尺寸;真实尺寸应覆盖虚拟页网格,属 shader 子步再定。
     int indirectionSize = 128;
+    // 异步回读(VT 生产形态):true → 走 PBO+fence 管线(enqueue 本帧/acquire N
+    // 帧前的),量真实异步 stall;false → 同步 glReadPixels(量最坏上界)。后端不
+    // 支持异步(Metal/mock)时自动回落同步。
+    bool asyncReadback = true;
+    // 异步取回延迟帧数:enqueue 后隔几帧再 acquire(隔够则 GPU 已完成、零 stall)。
+    int readbackLatencyFrames = 2;
 };
 
 /// 一帧 tick 的测量结果(供 EarthPerf 报告与验收)。
 struct VirtualTexturePocFrameStats {
     double feedbackPassMs = 0.0;  // feedback pass(begin/submit/end)CPU 侧耗时
-    double readbackMs = 0.0;      // GPU→CPU 回读耗时(**①的核心数**)
+    double readbackMs = 0.0;      // 回读 CPU stall(同步=glReadPixels;异步=acquire)
+    double enqueueMs = 0.0;       // 异步 enqueue 耗时(同步模式恒 0)
     double updateMs = 0.0;        // 解码+页表+写间接纹理耗时
     int visiblePages = 0;
     int residentPages = 0;
     int newlyResident = 0;
     int evicted = 0;
     bool thrashed = false;
-    bool readbackOk = false;
+    bool readbackOk = false;      // 本帧取到了像素(异步下延迟帧内可能 false)
+    bool async = false;           // 本帧走的是异步路径
+    bool readbackPending = false; // 异步:acquire 时 GPU 未完成(需再等,非 stall)
 };
 
 class VirtualTexturePoc {
@@ -100,6 +110,9 @@ private:
     int feedbackWidth_ = 0;
     int feedbackHeight_ = 0;
     std::vector<uint8_t> readbackBuffer_;
+    // 异步回读在途票号队列(FIFO):enqueue 本帧尾,acquire 队首(隔够延迟帧)。
+    std::deque<uint64_t> pendingTickets_;
+    bool asyncSupported_ = false;  // 首次 enqueue 探测:后端是否真支持异步
     // 间接纹理 CPU 影像(RGBA8):页表更新逐槽写这里,再整张/局部上传 GPU。
     std::vector<uint8_t> indirectionCpu_;
     VirtualTexturePocFrameStats lastStats_;

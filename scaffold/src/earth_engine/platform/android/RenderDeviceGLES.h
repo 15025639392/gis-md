@@ -79,6 +79,15 @@ public:
                                  int height,
                                  uint8_t* outPixels,
                                  size_t outCapacity) override;
+    uint64_t enqueueFramebufferReadback(Framebuffer* source,
+                                        int x,
+                                        int y,
+                                        int width,
+                                        int height) override;
+    size_t acquireFramebufferReadback(uint64_t ticket,
+                                      uint8_t* outPixels,
+                                      size_t outCapacity,
+                                      bool* outStillPending) override;
 
     // ---- 生命周期 ----
     void onSurfaceCreated() override;
@@ -136,6 +145,20 @@ private:
     std::unordered_map<VaoKey, VaoEntry, VaoKeyHash> vaoCache_;
     uint64_t vaoUseCounter_ = 0;
     std::shared_ptr<GLVaoInvalidationRegistry> vaoRegistry_;
+
+    // 异步回读环:VT feedback 生产形态。每 slot = PBO + fence + 票号。enqueue 找
+    // 空 slot 发 glReadPixels 到 PBO(不 stall)+ glFenceSync;acquire 用
+    // glClientWaitSync(0 超时)非阻塞查 fence,就绪则 map+拷。环深 4 容 ~2 帧延迟。
+    static constexpr int kReadbackRing = 4;
+    struct ReadbackSlot {
+        unsigned int pbo = 0;
+        void* fence = nullptr;  // GLsync,void* 避头文件依赖
+        size_t bytes = 0;
+        uint64_t ticket = 0;
+        bool inUse = false;
+    };
+    ReadbackSlot readbackSlots_[kReadbackRing];
+    uint64_t nextReadbackTicket_ = 1;
 
     int viewportWidth_ = 0;
     int viewportHeight_ = 0;

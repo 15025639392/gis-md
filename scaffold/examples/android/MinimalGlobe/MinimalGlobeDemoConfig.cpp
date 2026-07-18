@@ -15,11 +15,14 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         };
     } else {
         // 北极星 Phase 0 测量台:编译期钉死相机(见 header kMeasure*)。
+        // kMeasureHorizonView 切地平线宽视野(低仰角高空),量 capped 瓦片数(B vs C)。
         config.initialCamera = {
             kMeasureLongitudeDegrees,
             kMeasureLatitudeDegrees,
-            kMeasureHeightMeters,
-            kMeasureObliqueElevationDegrees,
+            kMeasureHorizonView ? kMeasureHorizonHeightMeters
+                                : kMeasureHeightMeters,
+            kMeasureHorizonView ? kMeasureHorizonElevationDegrees
+                                : kMeasureObliqueElevationDegrees,
         };
     }
     // 测量台冻结相机：初始位姿设定后 update() 空转，far 位姿也可复现（见 header）。

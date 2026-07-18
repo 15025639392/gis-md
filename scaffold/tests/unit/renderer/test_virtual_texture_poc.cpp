@@ -120,6 +120,66 @@ TEST(VirtualTexturePoc, TickBeforeEnsureResourcesReturnsEmptyStats) {
     EXPECT_EQ(device.readbackCount, 0);
 }
 
+TEST(VirtualTexturePoc, AsyncPathUsedWhenDeviceSupportsItAfterLatency) {
+    MockRenderDevice device;
+    device.supportsAsyncReadback = true;
+    const auto rgba = vt_codec::encode(VtPageId{3u, 5u, 6u});
+    device.cannedFeedbackPixels.assign(rgba.begin(), rgba.end());
+
+    VirtualTexturePocConfig cfg = smallConfig();
+    cfg.asyncReadback = true;
+    cfg.readbackLatencyFrames = 2;
+    VirtualTexturePoc poc;
+    ASSERT_TRUE(poc.initialize(&device, cfg));
+    ASSERT_TRUE(poc.ensureResources(400, 300));
+
+    // 前 latency 帧:只 enqueue,还没到 acquire → readbackOk=false,但走的是异步路径。
+    VirtualTexturePocFrameStats s = poc.tick();
+    EXPECT_TRUE(s.async);
+    EXPECT_FALSE(s.readbackOk);
+    EXPECT_GE(device.enqueueCount, 1);
+    poc.tick();
+    // 第 3 帧:队列深度 > latency(2),开始 acquire → 取到像素。
+    s = poc.tick();
+    EXPECT_TRUE(s.async);
+    EXPECT_TRUE(s.readbackOk);
+    EXPECT_GE(device.acquireCount, 1);
+    EXPECT_EQ(s.visiblePages, 1);
+}
+
+TEST(VirtualTexturePoc, FallsBackToSyncWhenAsyncUnsupported) {
+    MockRenderDevice device;
+    device.supportsAsyncReadback = false;  // Metal/mock 不支持
+    VirtualTexturePocConfig cfg = smallConfig();
+    cfg.asyncReadback = true;  // 请求异步,但后端不支持 → 回落同步
+    VirtualTexturePoc poc;
+    ASSERT_TRUE(poc.initialize(&device, cfg));
+    ASSERT_TRUE(poc.ensureResources(400, 300));
+
+    const VirtualTexturePocFrameStats s = poc.tick();
+    EXPECT_FALSE(s.async);          // 未走异步
+    EXPECT_EQ(device.enqueueCount, 0);
+    EXPECT_EQ(device.readbackCount, 1);  // 走了同步 readFramebufferPixels
+    EXPECT_TRUE(s.readbackOk);
+}
+
+TEST(VirtualTexturePoc, AsyncPendingKeepsTicketQueuedNoStall) {
+    MockRenderDevice device;
+    device.supportsAsyncReadback = true;
+    device.asyncAlwaysPending = true;  // acquire 恒未就绪
+    VirtualTexturePocConfig cfg = smallConfig();
+    cfg.readbackLatencyFrames = 1;
+    VirtualTexturePoc poc;
+    ASSERT_TRUE(poc.initialize(&device, cfg));
+    ASSERT_TRUE(poc.ensureResources(400, 300));
+
+    for (int i = 0; i < 5; ++i) poc.tick();
+    const VirtualTexturePocFrameStats s = poc.lastStats();
+    EXPECT_TRUE(s.async);
+    EXPECT_TRUE(s.readbackPending);   // GPU 未完成 → pending(非 stall)
+    EXPECT_FALSE(s.readbackOk);
+}
+
 TEST(VirtualTexturePoc, DisposeReleasesResources) {
     MockRenderDevice device;
     VirtualTexturePoc poc;

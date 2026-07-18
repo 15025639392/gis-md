@@ -284,16 +284,16 @@ bool Engine::render(double deltaSeconds) {
     // 北极星 VT PoC 头行段(仅在 PoC 活跃时追加,默认关时为空 → 零污染):
     //   vtReadback = **①的核心固定开销数**(回读 stall);vtFeedback/vtUpdate 为
     //   feedback pass CPU 侧与解码+页表耗时;vis/res 为可见/驻留页;atlas=固定占用KB。
-    char vtDetail[128] = "";
+    char vtDetail[192] = "";
     if (virtualTexturePoc_ && virtualTexturePoc_->isReady()) {
         const VirtualTexturePocFrameStats& s = virtualTexturePoc_->lastStats();
         std::snprintf(vtDetail, sizeof(vtDetail),
-            " vtReadback=%.3f vtFeedback=%.3f vtUpdate=%.3f vtVis=%d vtRes=%d vtAtlasKB=%lld",
-            s.readbackMs, s.feedbackPassMs, s.updateMs,
-            s.visiblePages, s.residentPages,
+            " vtAsync=%d vtReadback=%.3f vtEnqueue=%.3f vtFeedback=%.3f vtUpdate=%.3f vtVis=%d vtRes=%d vtPend=%d vtAtlasKB=%lld",
+            s.async ? 1 : 0, s.readbackMs, s.enqueueMs, s.feedbackPassMs,
+            s.updateMs, s.visiblePages, s.residentPages, s.readbackPending ? 1 : 0,
             static_cast<long long>(virtualTexturePoc_->atlasBytes() / 1024));
     }
-    char detail[384];
+    char detail[448];
     std::snprintf(detail, sizeof(detail),
         "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s",
         diag.engineBeginFrameMs,

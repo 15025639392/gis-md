@@ -93,6 +93,15 @@ constexpr bool kMeasureDecoupleImageryFromGeometry = false;
 // pass 尚未接 page-id 片元 shader,故 vtVis 恒 0——回读 stall 计时依然有效。
 constexpr bool kMeasureVirtualTexturePoC = false;
 
+// kMeasureHorizonView:测量台视角切「斜视地平线」宽视野(低仰角+高空)。
+// true 时用下方 horizon 常量覆盖 kMeasureObliqueElevationDegrees/kMeasureHeightMeters。
+// 用途:验证「去耦后地平线视野下 capped 瓦片是否多到 B(逐瓦片合成)吃力」——
+// 这是 B vs C 决策的关键场景(近景 capped 瓦片少 B 够用,地平线瓦片多则偏 C)。
+// 仰角必须 ∈(0,90) 保持可复现(见相机可复现性注释);低仰角=望向地平线宽视野。
+constexpr bool kMeasureHorizonView = false;
+constexpr double kMeasureHorizonElevationDegrees = 10.0;
+constexpr double kMeasureHorizonHeightMeters = 12000.0;
+
 // 2026-06-10 14:00 UTC+8 = 06:00 UTC.
 constexpr double kFixedSimulationJulianDate = 2461188.75;
 
