@@ -106,6 +106,10 @@ public:
 
 private:
     GoogleMapTilesExistingSessionOptions options_;
+    // availabilityMutex_ guards both range vectors: writers run on HTTP
+    // callback threads (applyViewportAvailability), readers on the tile
+    // selection thread.
+    mutable std::mutex availabilityMutex_;
     std::vector<GoogleMapTilesTileRange> availableRanges_;
     std::vector<GoogleMapTilesTileRange> completeAvailabilityRanges_;
     std::mutex creditMutex_;

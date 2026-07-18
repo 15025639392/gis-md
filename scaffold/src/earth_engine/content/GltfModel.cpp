@@ -5271,12 +5271,21 @@ struct SkinRecord {
     bool valid = true;
 };
 
+// validateNodeHierarchy 已保证节点图无环，但对"合法却极深"的链式节点树，
+// 递归深度仍不可控——worker 线程栈(~1MB)在 debug 构建下几百层即可溢出。
+// 超过该深度的模型按畸形输入拒收(traverseNode 走 strictFailure)。
+constexpr int kMaxNodeHierarchyDepth = 256;
+
 void resolveNodeGlobalTransforms(
     const json& doc,
     int nodeIndex,
     const glm::dmat4& parentTransform,
-    std::vector<NodeRecord>& nodes) {
+    std::vector<NodeRecord>& nodes,
+    int depth) {
     const auto& nodeArray = doc.value("nodes", json::array());
+    if (depth >= kMaxNodeHierarchyDepth) {
+        return;
+    }
     if (nodeIndex < 0 || static_cast<size_t>(nodeIndex) >= nodes.size() ||
         static_cast<size_t>(nodeIndex) >= nodeArray.size()) {
         return;
@@ -5299,7 +5308,8 @@ void resolveNodeGlobalTransforms(
             doc,
             childIndex,
             record.globalTransform,
-            nodes);
+            nodes,
+            depth + 1);
     }
 }
 
@@ -5362,7 +5372,8 @@ std::vector<NodeRecord> parseNodes(const json& doc) {
                     doc,
                     *nodeIndex,
                     glm::dmat4(1.0),
-                    nodes);
+                    nodes,
+                    0);
             }
         }
     }
@@ -5373,7 +5384,8 @@ std::vector<NodeRecord> parseNodes(const json& doc) {
                 doc,
                 static_cast<int>(i),
                 glm::dmat4(1.0),
-                nodes);
+                nodes,
+                0);
         }
     }
     return nodes;
@@ -8093,9 +8105,14 @@ void traverseNode(
     GltfModel& model,
     bool meshQuantizationEnabled,
     bool allowLegacyBatchIdAttribute,
-    bool& strictFailure) {
+    bool& strictFailure,
+    int depth) {
     const auto& nodes = doc.value("nodes", json::array());
     const auto& meshes = doc.value("meshes", json::array());
+    if (depth >= kMaxNodeHierarchyDepth) {
+        strictFailure = true;
+        return;
+    }
     if (nodeIndex < 0 || static_cast<size_t>(nodeIndex) >= nodes.size()) {
         strictFailure = true;
         return;
@@ -8180,7 +8197,8 @@ void traverseNode(
             model,
             meshQuantizationEnabled,
             allowLegacyBatchIdAttribute,
-            strictFailure);
+            strictFailure,
+            depth + 1);
         if (strictFailure) return;
     }
 }
@@ -8997,7 +9015,8 @@ std::unique_ptr<GltfModel> GltfParser::parse(
             *model,
             meshQuantizationEnabled,
             options.allowLegacyBatchIdAttribute,
-            strictFailure);
+            strictFailure,
+            0);
     };
 
     if (!scenes.empty()) {

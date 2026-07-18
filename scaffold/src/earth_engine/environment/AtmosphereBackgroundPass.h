@@ -47,8 +47,8 @@ public:
     void dispose();
 
 private:
-    ShaderProgram* shader_ = nullptr;
-    Buffer* quadBuffer_ = nullptr;
+    std::unique_ptr<ShaderProgram> shader_;
+    std::unique_ptr<Buffer> quadBuffer_;
     RenderDevice* device_ = nullptr;
 };
 

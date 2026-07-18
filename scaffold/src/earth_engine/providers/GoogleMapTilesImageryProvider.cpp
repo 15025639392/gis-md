@@ -630,6 +630,7 @@ void GoogleMapTilesImageryProvider::requestTile(
 
 void GoogleMapTilesImageryProvider::addAvailableTileRanges(
     const std::vector<GoogleMapTilesTileRange>& ranges) {
+    std::lock_guard<std::mutex> lock(availabilityMutex_);
     availableRanges_.insert(
         availableRanges_.end(),
         ranges.begin(),
@@ -638,6 +639,7 @@ void GoogleMapTilesImageryProvider::addAvailableTileRanges(
 
 void GoogleMapTilesImageryProvider::addCompleteAvailabilityRanges(
     const std::vector<GoogleMapTilesTileRange>& ranges) {
+    std::lock_guard<std::mutex> lock(availabilityMutex_);
     completeAvailabilityRanges_.insert(
         completeAvailabilityRanges_.end(),
         ranges.begin(),
@@ -749,16 +751,19 @@ void GoogleMapTilesImageryProvider::applyViewportAvailability(
 }
 
 bool GoogleMapTilesImageryProvider::hasKnownAvailability() const {
+    std::lock_guard<std::mutex> lock(availabilityMutex_);
     return !availableRanges_.empty() || !completeAvailabilityRanges_.empty();
 }
 
 bool GoogleMapTilesImageryProvider::isTileKnownAvailable(
     const TileKey& key) const {
+    std::lock_guard<std::mutex> lock(availabilityMutex_);
     return tileInRanges(key, availableRanges_, schemeId());
 }
 
 bool GoogleMapTilesImageryProvider::isTileInCompleteAvailabilityRange(
     const TileKey& key) const {
+    std::lock_guard<std::mutex> lock(availabilityMutex_);
     return tileInRanges(key, completeAvailabilityRanges_, schemeId());
 }
 

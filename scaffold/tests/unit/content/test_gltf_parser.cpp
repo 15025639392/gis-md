@@ -7513,6 +7513,66 @@ TEST(GltfParserTest, RejectsNodeChildCycle) {
     EXPECT_EQ(nullptr, model);
 }
 
+namespace {
+
+// Linear node chain: node 0 (mesh) -> 1 -> ... -> nodeCount-1.
+std::string linearNodeChainJson(int nodeCount) {
+    std::string nodes = "\"nodes\":[";
+    for (int i = 0; i < nodeCount; ++i) {
+        if (i > 0) {
+            nodes += ",";
+        }
+        nodes += i == 0 ? "{\"mesh\":0,\"translation\":[10,20,30]" : "{";
+        if (i + 1 < nodeCount) {
+            if (i == 0) {
+                nodes += ",";
+            }
+            nodes += "\"children\":[" + std::to_string(i + 1) + "]";
+        }
+        nodes += "}";
+    }
+    nodes += "]";
+    return nodes;
+}
+
+} // namespace
+
+TEST(GltfParserTest, ParsesNodeChainWithinDepthLimit) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker =
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        linearNodeChainJson(256));
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    EXPECT_EQ(1u, model->primitives.size());
+}
+
+// Regression: unbounded recursion over a legal-but-extreme node chain used
+// to overflow the worker stack; chains past kMaxNodeHierarchyDepth are now
+// rejected as malformed input.
+TEST(GltfParserTest, RejectsNodeChainExceedingDepthLimit) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker =
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        linearNodeChainJson(400));
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsNodeDuplicateChildReference) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker =

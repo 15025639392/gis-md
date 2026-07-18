@@ -226,7 +226,7 @@ bool SkyBox::initialize(RenderDevice* device) {
         shaderDesc.vertexSource = kSkyBoxStarfieldVert;
         shaderDesc.fragmentSource = kSkyBoxStarfieldFrag;
     }
-    shader_ = device->createShader(shaderDesc).release();
+    shader_ = device->createShader(shaderDesc);
     if (!shader_) return false;
 
     // Load cubemap texture if paths provided
@@ -250,7 +250,7 @@ bool SkyBox::initialize(RenderDevice* device) {
     bufferDesc.data = scaledVertices;
     bufferDesc.usage = BufferDesc::Usage::Static;
     bufferDesc.type = BufferDesc::Type::Vertex;
-    vertexBuffer_ = device->createBuffer(bufferDesc).release();
+    vertexBuffer_ = device->createBuffer(bufferDesc);
     vertexCount_ = kCubeVertexCount;
 
     return vertexBuffer_ != nullptr;
@@ -266,8 +266,8 @@ RenderCommand SkyBox::buildCommand(
     cmd.kind = RenderCommandKind::SkyBackground;
     cmd.owner = "skybox";
     cmd.pass = "color";
-    cmd.shader = shader_;
-    cmd.vertexBuffer = vertexBuffer_;
+    cmd.shader = shader_.get();
+    cmd.vertexBuffer = vertexBuffer_.get();
     cmd.indexBuffer = nullptr;
     cmd.vertexCount = vertexCount_;
     cmd.vertexStride = 3 * sizeof(float);
@@ -317,8 +317,8 @@ RenderCommand SkyBox::buildCommand(
 }
 
 void SkyBox::dispose() {
-    shader_ = nullptr;
-    vertexBuffer_ = nullptr;
+    shader_.reset();
+    vertexBuffer_.reset();
     cubemapTexture_ = nullptr;
 }
 

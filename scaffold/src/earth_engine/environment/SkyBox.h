@@ -66,8 +66,8 @@ private:
     float size_ = 10000.0f;
     bool useCubemap_ = false;
 
-    ShaderProgram* shader_ = nullptr;
-    Buffer* vertexBuffer_ = nullptr;
+    std::unique_ptr<ShaderProgram> shader_;
+    std::unique_ptr<Buffer> vertexBuffer_;
     Texture* cubemapTexture_ = nullptr;
     int vertexCount_ = 0;
 };

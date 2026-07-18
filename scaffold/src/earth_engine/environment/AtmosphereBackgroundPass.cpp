@@ -314,7 +314,7 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
         LOGE("initialize: createShader returned null");
         return false;
     }
-    shader_ = shaderPtr.release();
+    shader_ = std::move(shaderPtr);
     LOGI("initialize: shader created ok");
 
     float quadVertices[] = {
@@ -334,7 +334,7 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
         LOGE("initialize: createBuffer returned null");
         return false;
     }
-    quadBuffer_ = bufPtr.release();
+    quadBuffer_ = std::move(bufPtr);
     LOGI("initialize: buffer created ok, ready");
     return true;
 }
@@ -355,8 +355,8 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.kind = RenderCommandKind::AtmosphereBackground;
     cmd.owner = "atmosphere_background";
     cmd.pass = "color";
-    cmd.shader = shader_;
-    cmd.vertexBuffer = quadBuffer_;
+    cmd.shader = shader_.get();
+    cmd.vertexBuffer = quadBuffer_.get();
     cmd.indexBuffer = nullptr;
     cmd.vertexCount = 4;
     cmd.vertexStride = 2 * sizeof(float);
@@ -399,8 +399,8 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
 }
 
 void AtmosphereBackgroundPass::dispose() {
-    shader_ = nullptr;
-    quadBuffer_ = nullptr;
+    shader_.reset();
+    quadBuffer_.reset();
 }
 
 } // namespace earth_engine

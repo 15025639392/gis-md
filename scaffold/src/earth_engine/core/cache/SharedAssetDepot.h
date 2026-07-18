@@ -2,9 +2,9 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <limits>
+#include <list>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -186,8 +186,11 @@ private:
 
     std::mutex mutex_;
     std::unordered_map<std::string, AssetPtr> cache_;
-    std::deque<std::string> lru_;
-    std::unordered_map<std::string, std::deque<std::string>::iterator> lruMap_;
+    // std::list: lruMap_ stores iterators into lru_, which must stay valid
+    // across push_front/pop_back/erase of other entries (deque invalidates
+    // all iterators on any insertion/removal).
+    std::list<std::string> lru_;
+    std::unordered_map<std::string, std::list<std::string>::iterator> lruMap_;
     std::unordered_map<std::string, InFlightEntry> inFlight_;
     int64_t cacheBytes_ = 0;
     int64_t maxCacheBytes_ = 16 * 1024 * 1024; // 16 MiB default
