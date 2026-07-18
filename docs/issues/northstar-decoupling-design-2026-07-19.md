@@ -130,13 +130,19 @@ FABDEM 源 ~30m。grid65 = 64 interval/tile。重庆纬度 29.617°：
 
 ---
 
-## 8. 待用户拍板的决策清单
+## 8. 决策（用户 2026-07-19 已拍板）
 
-1. **路径**：接受"先 2a 断耦合+cap 摘 80%，再 PoC 决 B/C"的分步？还是直接投入奔 C（需先接受 PoC 期）？
-2. **几何 cap 级别**：先 cap z12（数据零改，欠采样 4.4×）验证收益；是否计划后续重生成 grid65 到 z14 吃满 30m FABDEM？
-3. **影像纹理通路（2b）**：B（screen-sized 逐瓦片合成，复用 offscreen pass，工程小）vs C（共享 atlas VT，屏幕有界最优，需 PoC + 复杂）——**取决于 §9 的 PoC**。压缩格式 ETC2/ASTC 建议无论如何都上。
-4. **过渡兼容**：2a 用 flag 灰度（推荐）还是一次性替换？
-5. **是否先补"测量冻结相机"**（Phase 0 §6 遗留）：Phase 2 去耦对拍需要重载 far 位姿也可复现。
+1. **路径 = 分步（已定）**：先 2a 断耦合 + cap 摘 80%，再 PoC 决 B/C。不直奔 C。
+2. **几何 cap = 先 z12（已定）**：数据零改，引擎侧改动即可落地验证解耦收益；是否重生成到 z14 后续再评估（纯数据侧，引擎不变）。
+3. **影像纹理通路（2b）= 待 PoC 定**：先做最小 C-PoC 量移动端固定开销，对比 B，再拍板。ETC2/ASTC 压缩无论如何都上。
+4. **过渡兼容 = 2a flag 灰度**（低风险，推荐路径隐含）。
+5. **先补"测量冻结相机" = 是（已定）**：Phase 2 去耦对拍前补，让重载 far 位姿也可复现（冻 `CameraController::update`）。
+
+## 8b. 锁定的 Phase 2 执行顺序
+1. **补测量冻结相机**（决策 #5）：`CameraController::update` 加冻结开关 + demo `kMeasureFreezeCamera`，让 far 也可复现。→ 用 Phase 0 `kMeasure*` 同位姿采**去耦前**完整对照（含 far）。
+2. **Phase 2a 断耦合 + cap z12**（flag-gated）：断 `TileRasterUpsampledChildMaterializer.h:42-63` 的 `isMoreDetailAvailable→materializeRasterUpsampledChildren`；地形按 DEM 几何误差细化 cap 在 native max（z12）;影像四叉树独立继续（无几何/无 clip）。验收 = 同位姿瓦片数/selector/churn 回落到接近 capped-z12 列。**预期近景影像此时仍糊**（走已有 scale-bias 祖先复用，只到 ~z12），必接 2b。
+3. **并行 C-PoC**：最小虚拟纹理（一张 atlas + 间接纹理 + 一次 feedback）真机量固定开销，回填 §5 诚实账 → 定 §8 决策 #3（B vs C）。
+4. **Phase 2b 影像纹理源**：按 3 的结论建 B 或 C，让 capped 粗瓦片显 z18 清晰影像（复用现成 scale-bias 寻址原语 §2）。验收 = 同位姿去耦列"斜率≈0"且影像照清。
 
 ## 9. 建议的下一个动作（若用户走推荐路径）
 - **Phase 2a 第一刀**：断 `isMoreDetailAvailable→refine`，地形 cap z12，flag-gated。验收用 Phase 0 的 `kMeasure*` 同位姿对拍（去耦列应逼近 capped-z12 列，且影像走 §2 原语看能到多清）。
