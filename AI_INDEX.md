@@ -19,7 +19,7 @@
 7. [tiling — raster overlay mapping](#7-tiling-raster-overlay-mapping)
 8. [tiling — glTF geometry to GPU render prep (+ content loaders)](#8-tiling-gltf-geometry-to-gpu-render-prep-content-loaders)
 9. [providers — imagery + terrain + raster overlay tile providers](#9-providers-imagery-terrain-raster-overlay-tile-providers)
-10. [terrain — QuantizedMeshParser, TerrainTile, availability](#10-terrain-quantizedmeshparser-terraintile-availability)
+10. [terrain — TerrainTile, DecodedHeightmap](#10-terrain-terraintile-decodedheightmap)
 11. [camera — Camera, CameraController](#11-camera-camera-cameracontroller)
 12. [scene — Scene, coordinators, FrameState, Frustum, render pipeline](#12-scene-scene-coordinators-framestate-frustum-render-pipeline)
 13. [renderer — Renderer, RenderDevice, RenderCommand, streaming, texture](#13-renderer-renderer-renderdevice-rendercommand-streaming-texture)
@@ -65,11 +65,11 @@ Engine  (Engine.h/.cpp — thin lifecycle + surface + input facade)
                                                 RenderCommand (all terrain renders via the glTF path)
               │
               ├── Providers  (providers/) — feed tile content
-              │     ├── TerrainProvider: Heightmap / QuantizedMesh
+              │     ├── TerrainProvider: Heightmap
               │     └── ImageryProvider: XYZ / TMS / WMS / WMTS / BingMaps / GoogleMapTiles / Debug
               │         → RasterOverlayTileProvider → RasterOverlayTile
               └── Content loaders  (content/) — GltfContentProvider, EllipsoidTerrainContentProvider,
-                    QuantizedMeshContentLoader, GltfTerrainUpsampler
+                    GltfTerrainUpsampler
 
 Renderer  (renderer/) — RenderCommand list model, streaming/stable command set
   └── RenderDevice  (abstract) ──┬── RenderDeviceGLES   (platform/android — GLSL ES 3.0)
@@ -89,7 +89,7 @@ The engine is built on extreme decomposition: rather than a few large classes, r
 
 ### Recent architecture migration
 
-The engine was migrated away from its original custom globe stack — `BasemapLayerStack` and `TileQuadTree` (both **removed**) — to a cesium-native-aligned `Tileset` + glTF-content 3D-Tiles model. Terrain now flows through the glTF render path: heightmap and quantized-mesh terrain are converted into glTF render geometry and drawn as `GltfPrimitive` render commands, rather than through a bespoke surface-mesh renderer.
+The engine was migrated away from its original custom globe stack — `BasemapLayerStack` and `TileQuadTree` (both **removed**) — to a cesium-native-aligned `Tileset` + glTF-content 3D-Tiles model. Terrain now flows through the glTF render path: heightmap terrain is converted into glTF render geometry and drawn as `GltfPrimitive` render commands, rather than through a bespoke surface-mesh renderer.
 
 Update (2026-07-01): the `GlobeMesh` fallback and the `SurfaceTileMesh`/`TileSurface` geometry path were **removed** (build + 137/137 tests green). What this changed:
 - `GlobeMesh` / `Globe.{h,cpp}` / `GlobeVertex` — **deleted**. `Renderer::initialize()` no longer takes a mesh or builds globe buffers/shader; `makeGlobeCommand` and the `RenderCommandKind::GlobeSurface` kind are gone; `SceneRenderPipeline` no longer prepends a fallback-globe command. **Behavior change**: before the first terrain tiles stream in, the view now shows only the clear color (no fallback blue globe).
@@ -265,7 +265,7 @@ Incrementally accumulates a geodetic `Rectangle` + min/max height, with pole-tol
 
 ### QuadtreeGeometricError.h / .cpp
 
-Free functions for terrain quadtree geometric-error / skirt-height heuristics. cesium-native quantized-mesh geometric-error helpers.
+Free functions for terrain quadtree geometric-error / skirt-height heuristics. cesium-native terrain geometric-error helpers.
 
 | Function | Lines | Formula |
 |---|---|---|
@@ -1381,7 +1381,7 @@ Full glTF/GLB/B3DM in-memory model + parser + animation runtime. `.cpp` is ~8.96
 | `GltfInstance` | .h:83-87 | Per-instance `transform`+`featureId`+`featureProperties` (EXT_mesh_gpu_instancing / EXT_instance_features). |
 | `GltfVertexSkinning` / `GltfMorphTarget` / `GltfPrimitiveRuntime` | .h:89-109 | Skinning joints/weights, morph deltas, animation base state. |
 | `GltfPrimitive` | .h:111-181 | Geometry+material: `vertices` (`SurfaceVertex`), **`terrainGpuVertexBytes`** (.h:116) pre-built 32 B format, `vertexTexCoords[8]`, colors, tangents, `indices`, `instances`, `skirtMetadata`, terrain water-mask fields (`hasTerrainWaterMaskMetadata`, `terrainOnlyWater/Land`, translation/scale, .h:129-135), full PBR + KHR extension factor/texture set. |
-| `terrainGpuVertexBytes` | .h:113-116 | Populated during decode (worker) so main-thread upload skips SurfaceVertex re-conversion. Only `QuantizedMeshContentLoader` writes it. |
+| `terrainGpuVertexBytes` | .h:113-116 | 32 B `TerrainGpuVertex` fast-path field. No longer pre-built by anything (was QM-only); terrain now always routes through the CPU vertex path (`prepareCpuWork`/sync `prepare`). |
 | `GltfNodeRuntime`/`GltfSkinRuntime`/animation runtimes | .h:183-238 | Node hierarchy transforms, skins, animation samplers/channels (Linear/Step/CubicSpline). |
 | `GltfModel` | .h:240-272 | `primitives`, `textures`, `nodes`, `skins`, `animations`, `credits`, `rasterOverlayDetails`, `terrainWaterMask`, `preferredLocalOriginEcef`, animation state. |
 | `GltfModel::vertexCount/indexCount/byteSize` | .cpp:8561-8608 | Aggregate accessors. |
@@ -1419,26 +1419,13 @@ Fallback terrain provider: synthesizes a smooth-ellipsoid glTF grid mesh per til
 | `tileMetadata` / `childTiles` / `rootTiles` / `availabilityState` | .cpp:283-336 | Quadtree navigation + availability; virtual-terrain-root handling. |
 | `requestTileContent` / `decodeContent` | .cpp:338-377 | Returns `renderTerrain` result (with terrain height range + rasterOverlayDetails); `decodeContent` always fails (content synthesized in `requestTileContent`). |
 
-### content/QuantizedMeshContentLoader.h / .cpp
-
-Decodes Cesium quantized-mesh terrain tiles → glTF terrain model. **Sole producer of `terrainGpuVertexBytes`.** cesium-native `QuantizedMeshLoader`.
-
-| Item | Lines | Description |
-| --- | --- | --- |
-| `RasterOverlayDetailsMode` | .h:48-51 | None / GenerateTerrainProjection. |
-| `QuantizedMeshContentLoadResult` | .h:32-44 | `status`, `gltfModel`, `metadata`, availability updates, diagnostics; `success()`. |
-| `load` | .h:53-64; .cpp:305 | Decodes QM bytes (heights, edges, optional water mask), builds a terrain `GltfPrimitive` with `hasTerrainWaterMaskMetadata=true` (.cpp:88), generates terrain-projection rasterOverlayDetails when requested (.cpp:355-359). |
-| **`terrainGpuVertexBytes` producer** | .cpp:120-142 | After `rebuildRuntime()` (positions in ECEF), calls `buildTerrainVertices(prim, identity, localOriginEcef)` and memcpy's the 32 B `TerrainGpuVertex` array into `primitive.terrainGpuVertexBytes` — so the async main-thread upload skips CPU re-conversion. |
-| `loadTileContent` / `toTileContentLoadResult` | .h:66-81; .cpp:375-411 | Wrap into `TileContentLoadResult::renderTerrain`. |
-| Async consumer (context) | TilesetContentLifecycleCoordinator.h:143-184 | For terrain tiles with non-empty `terrainGpuVertexBytes`, copies bytes into a `GpuReadyPrimitive` (stride=`sizeof(TerrainGpuVertex)`), sets `useTerrainVertexFormat=true`, and pushes to the GPU upload queue — bypassing `prepareCpuWork`; non-terrain content falls to synchronous `prepare` (.h:185-190). Upload succeeds but **draw remains stride-120 / no terrain shader** (WIP gap). |
-
 ### content/GltfTerrainUpsampler.h / .cpp
 
 Generates a child terrain glTF by subdividing/upsampling a parent terrain model for a quadrant (used when a child tile lacks its own terrain but a raster overlay needs finer geometry). `.cpp` ~834 lines. cesium-native `upsampleGltfForRasterOverlays`.
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `upsampleForRasterOverlay` | .h:12-16; .cpp:807 | Subdivides `parentModel` into `childID` quadrant; `textureCoordinateIndex`, `hasInvertedVCoordinate`. Sets child `hasTerrainWaterMaskMetadata=true` (.cpp:761) and propagates water-mask translation/scale (halved scale, offset accumulation, .cpp:771-780). Does NOT pre-build `terrainGpuVertexBytes` (only QuantizedMeshContentLoader does), so upsampled terrain still routes through `prepareCpuWork`/sync `prepare`. |
+| `upsampleForRasterOverlay` | .h:12-16; .cpp:807 | Subdivides `parentModel` into `childID` quadrant; `textureCoordinateIndex`, `hasInvertedVCoordinate`. Sets child `hasTerrainWaterMaskMetadata=true` (.cpp:761) and propagates water-mask translation/scale (halved scale, offset accumulation, .cpp:771-780). Does NOT pre-build `terrainGpuVertexBytes` (nothing does anymore — see note above), so upsampled terrain still routes through `prepareCpuWork`/sync `prepare`. |
 
 ---
 
@@ -1577,11 +1564,11 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 
 ### TerrainProvider.h / .cpp
 
-Abstract terrain interface + `DecodedHeightmap`. cesium-native terrain data-source equivalent; owns no GPU resources. NOTE: `QuantizedMeshTerrainProvider` does NOT derive from this — it derives from `TilesetContentProvider` (glTF-content model). `HeightmapTerrainProvider` is the live subclass.
+Abstract terrain interface + `DecodedHeightmap`. cesium-native terrain data-source equivalent; owns no GPU resources. `HeightmapTerrainProvider` is the live subclass.
 
 | Item | Lines | Description |
 |---|---|---|
-| `DecodedHeightmap` | .h:27-53 | tileSize, `heights` (row-major N→S), min/max, `noDataValues`, `heightFactor`; QM metadata `metadataAvailability` (`QuantizedMeshAvailabilityRange`, ext ID=4) |
+| `DecodedHeightmap` | .h:27-53 | tileSize, `heights` (row-major N→S), min/max, `noDataValues`, `heightFactor` |
 | `isNoData` | .cpp:7-15 | `height > 50000` (OpenGlobus RgbTerrain) or sentinel match |
 | `sampleBilinear` | .cpp:17-43 | Bilinear over regular grid; clamps u,v to [0,1] |
 | `TerrainTileLoadResult` | .h:55-91 | status + heightmap; `successWithHeightmap`/`empty`/`retryLater`/`failed`/`cancelled` factories |
@@ -1601,36 +1588,9 @@ RGB-encoded heightmap terrain (Terrarium / Mapbox Terrain-RGB). Live `TerrainPro
 | `requestTile` | .cpp:79+ | Bridge/curl path with `HttpCache::shared()` hit path; decodes to `DecodedHeightmap` |
 | `decodeTile` | later | RGB→height per encoding (uses `EARTH_ENGINE_HAS_STB_IMAGE`) |
 
-### QuantizedMeshTerrainProvider.h / .cpp (~2400 lines)
+### BlockingHttpFetcher.h / .cpp
 
-quantized-mesh-1.0 content provider. **Derives from `TilesetContentProvider`** (glTF-content model), NOT `TerrainProvider` — QM content enters the tile lifecycle via `requestTileContent` (cesium-native content-loader ownership). Reference: `CesiumQuantizedMeshTerrain/QuantizedMeshLoader`. Binary QM decode is delegated to `QuantizedMeshContentLoader` (terrain module), NOT here (.cpp:1644).
-
-| Item | Lines | Description |
-|---|---|---|
-| ctor / `providesTerrainQuadtree` | .h:31-38 | Terrain quadtree source; `type()` = `"quantized-mesh-terrain"` |
-| `configureFromLayerJsonUrl` | .cpp:1099-1110 | Blocking `layer.json` fetch then configure (uses `QuantizedMeshLayerJsonFetcher`) |
-| `configureFromLayerJson` | .cpp:1111-1172 | Parse layer.json body; sets urlTemplate/scheme/version/zoom |
-| `appendLayerFromJson` | .cpp:1173-1271 | One `LayerConfig`; builds `extensions` query (`octvertexnormals`,`metadata`,+`watermask` if enabled .cpp:1202-1210) |
-| `appendParentLayers` | .cpp:1272-1336 | Multi-layer parent chain (fallback layers) |
-| `createExtensionsQueryParameter` | .cpp:1019-... | Comma-joined extension request list |
-| `rootTiles` / `childTiles` | .cpp:1337-1434 | Quadtree roots/children (`kLooseTerrainMinimumHeight`=−1000.0, `kLooseTerrainMaximumHeight`=9000.0, .cpp:55-56) |
-| `availabilityStateInLayer` | .cpp:1449-1489 | Content-availability quadtree center lookup + subtree-loaded check |
-| `availabilityState` | .cpp:1491-1563 | Available/Unknown/NotAvailable across layers; drives sparse fetch |
-| `estimatedRequestFanout` | .cpp:1565-1580 | Includes metadata/subtree fanout in budget |
-| `buildUrlForLayer` / `buildUrl` | .cpp:1581-1628 | Substitutes `{z\|level}{x}{y}{version}`, sets `extensions` query param |
-| `requestTileContent` (2 overloads) | .cpp:1658-1697+ | Async content fetch + fanned-out metadata/subtree requests; content/metadata coalesced via `AsyncTileRequestState` / `InFlightMetadataRequest` |
-| `loadQuantizedMeshTileContent` | .cpp:1629-1656 | Delegates to `QuantizedMeshContentLoader::loadTileContent` with terrain rectangle + raster-overlay projection |
-| `decodeTileContent` / `decodeContent` | .cpp:2368-2408 | Sync decode wrappers |
-| `mortonEncode2D` | .cpp:612 | 2D Morton (Z-order) index for subtree keys |
-| `TileRectangleAvailability` | .h:115-186 | cesium-native availability quadtree: `Node` (ll/lr/ul/ur), `putRectangleInQuadtree` (.cpp:809), `findMaxLevelFromNode` (.cpp:847-905), `maximumLevelAtTileCenter` (.cpp:223-235) |
-| `LayerConfig` | .h:188-203 | Per-layer scheme/version/availability/subtrees/zoom/fallback |
-| subtree tracking | .cpp:2280-2352 | `isSubtreeLoaded`/`markSubtreeLoaded`, `applyAvailabilityUpdates` (morton-keyed sets) |
-| `requestDiagnostics` | .cpp | started/completed/failed + worker-blocking peaks (blocking setup fetch pressure) |
-| constants | .h:328,331 | `availabilityLevels_` = −1 (non-subtree mode); `tileSize_` = 65 (64×64 grid) |
-
-### QuantizedMeshLayerJsonFetcher.h / .cpp
-
-Blocking `layer.json` fetcher (setup-time). Supports `file://`, `PlatformBridge`, and `CurlMultiRequestScheduler`; caches via `HttpCache::shared()`.
+Generic blocking HTTP GET (setup-time). Supports `file://`, `PlatformBridge`, and `CurlMultiRequestScheduler`; caches via `HttpCache::shared()`. Used by TMS/WMS/Bing imagery setup and (formerly) the terrain layer.json fetch. Renamed from `QuantizedMeshLayerJsonFetcher` when the quantized-mesh terrain path was removed; the class itself is unchanged (generic, not terrain-specific).
 
 | Item | Lines | Description |
 |---|---|---|
@@ -1702,46 +1662,13 @@ cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, as
 | `SourceTileAsset` / `InFlightSourceTileAsset` | .h:368-384 | cesium-native `SharedAssetDepot`: source imagery shared by `TileKey`, generation-tracked |
 | defaults | .h:456-459, 408 | `maximumScreenSpaceError_`=2.0, `maximumTextureSize_`=2048, `subTileCacheBytes`=16 MiB |
 
-Note (WIP, current branch): none of the raster-overlay path is affected by the async terrain GPU-upload refactor. That path (32-byte `TerrainGpuVertex`, now produce/upload/draw all wired — `GltfDrawCommandBuilder` branches on `useTerrainVertexFormat` to a stride-32 `terrainShader` command) lives in the terrain/renderer modules; providers here still stop at CPU-decoded `DecodedImage`/`DecodedHeightmap` and delegate QM binary decode to `QuantizedMeshContentLoader`.
+Note: none of the raster-overlay path is affected by the (now-vestigial) async terrain GPU-upload machinery. That path (32-byte `TerrainGpuVertex`; `GltfDrawCommandBuilder` branches on `useTerrainVertexFormat` to a stride-32 `terrainShader` command) lives in the terrain/renderer modules but is no longer fed by anything since the quantized-mesh terrain path was removed — providers here stop at CPU-decoded `DecodedImage`/`DecodedHeightmap`.
 
 ---
 
-## 10. terrain — QuantizedMeshParser, TerrainTile, availability
+## 10. terrain — TerrainTile, DecodedHeightmap
 
-### QuantizedMeshParser.h / .cpp
-
-Quantized-Mesh-1.0 decoder. Spec: github.com/CesiumGS/quantized-mesh. Mirrors cesium-native `QuantizedMeshLoader`. Produces a renderer-neutral `DecodedTile` (NOT the removed `SurfaceTileMesh`); the glTF terrain model is built downstream by `content/QuantizedMeshContentLoader.cpp` (calls `parseToDecodedTile` at :318). `SurfaceVertex`, `SkirtMetadata`, `WaterMask`, `QuantizedMeshAvailabilityRange` all come from `tiling/SurfaceTile.h`; `DecodedHeightmap` (separate, for `TerrainTile` sampling) from `providers/TerrainProvider.h`.
-
-| Item | Lines | Description |
-| --- | --- | --- |
-| `Header` struct | .h:20-27 | 11 doubles/floats + `vertexCount`; ECEF center, min/max height, bounding sphere, horizon occlusion point |
-| `DecodedTile` struct | .h:33-45 | vertices/indices, `localOriginEcef`, min/max height, horizon occlusion, `skirtMetadata`, `waterMask`, `metadataAvailability`, `diagnostics`. cesium-native `QuantizedMeshLoadResult` equivalent |
-| `MetadataAvailabilityParseResult` | .h:47-50 | availability rects + diagnostics |
-| `parseToDecodedTile()` | .h:54-57 / .cpp:195-651 | full decode; `enableWaterMask` gates ext ID=2; returns nullptr on malformed input |
-| `parseMetadataAvailability()` | .h:62 / .cpp:95-98 | cesium-native `loadMetadata` equivalent; ext ID=4 rects only, delegates to `…WithDiagnostics` |
-| `parseMetadataAvailabilityWithDiagnostics()` | .h:65 / .cpp:100-193 | skips vertex/index/edge payload to reach ext ID=4 without full decode |
-| `zigZagDecode()` | .h:69-71 | `(v>>1) ^ -(v&1)`, inline private |
-
-**`kHeaderSize`** = 92 (.cpp:21) — 3d center + 2f height + 7d bounds + 1u vertexCount. **vertexCount cap** = 500000 (.cpp:107, :226); reject 0. **idx32 threshold**: `vertexCount > 65536` → 32-bit indices (.cpp:117, :264). **`kExtHeaderSize`** = 5 (.cpp:141, :375) — 1-byte extId + 4-byte extLen.
-
-| Decode step | Lines | Algorithm |
-| --- | --- | --- |
-| header read (readD/readF/readU32) | .cpp:212-223 | little-endian memcpy readers |
-| U/V/H zigzag delta decode | .cpp:236-261 | accumulate `zigZagDecode`, store back into buffers |
-| index 4-byte alignment pad | .cpp:269-271 | idx32 only; skip 2-byte pad when `offset % 4 != 0` (matches cesium-native `QuantizedMeshLoader.cpp`); 16-bit NEVER padded |
-| high-watermark index decode | .cpp:292-301 | `dec = highest - code`; `++highest` when code==0; validates `< vc` |
-| edge indices (W/S/E/N) | .cpp:312-361 | `readEdge` bounds-checked; validates each `< vc` |
-| ECEF vertex build | .cpp:444-473 | u/v→lng/lat via `bounds`, h = hMin + hBuf·(hRange/32767); `cartographicToCartesian`; UV v-flip (QM south-origin → north-origin: `1.0 - v`) |
-| oct-normal ext ID=1 | .cpp:380-393, :479-483 | `AttributeCompression::octDecode(ox,oy)` per vertex; applied if count==vc |
-| face-average normal fallback | .cpp:484-503 | accumulate cross products, normalize, else `geodeticSurfaceNormal` |
-| water mask ext ID=2 | .cpp:394-404 | extLen==65536 → 256×256 R8 data; extLen==1 → allWater/allLand flag; gated on `enableWaterMask` |
-| metadata ext ID=4 | .cpp:405-439 | uint32 jsonLen + JSON `"available":[[{startX,startY,endX,endY}…]…]`; truncation → diagnostic |
-| skirt metadata / heights | .cpp:505-520 | `noSkirt*` ranges = real surface; skirt height via `calcQuadtreeSkirtHeight` (`core/geodesy/QuadtreeGeometricError`), lon/latOff = 0.0001·extent |
-| skirt edge build | .cpp:522-647 | `partial_sort_copy` each edge by quantized U/V (W:v↑, S:u↓, E:v↓, N:u↑, matches cesium-native `addSkirts`); `addSkirtEdge` drops bottom verts by `skirtH`, emits 2-tri strips |
-
-Helpers (anon namespace): `jsonUint32OrDefault` (.cpp:23-41, clamps to uint32), `parseMetadataAvailabilityJson` (.cpp:43-79, per-level subArrayIndex → levelOffset), `calculateSkirtHeight` (.cpp:81-84), `metadataExtensionTruncatedDiagnostic` (.cpp:86-91). Android `__android_log_print` diagnostics throughout under `#ifdef __ANDROID__`.
-
-WIP (current branch): async GPU-upload path uses a 32-byte `TerrainGpuVertex` (`tiling/GltfRenderGeometryBuilder.h:31-40`, `static_assert sizeof==32`), packing pos/nrm/texcoord only, distinct from the fat `SurfaceVertex` this parser emits. Produce/upload AND draw sides wired (2026-07-01) — `Renderer::terrainShader()` defined + `makeTerrainPrimitiveCommand` (stride 32).
+The quantized-mesh terrain path (`QuantizedMeshParser`, `QuantizedMeshAvailability`, `QuantizedMeshContentLoader`, `QuantizedMeshTerrainProvider`) and the Cesium ion terrain integration have been **fully removed**. Heightmap terrain (CPU-baked regular-grid, see `HeightmapTerrainProvider` in §9) is now the only terrain source; `EllipsoidTerrainContentProvider` remains as its ellipsoid fallback. This section now covers only the surviving terrain height-sampling type and the generic quadtree geometric-error helpers (§2, `QuadtreeGeometricError.h/.cpp`).
 
 ### TerrainTile.h / .cpp
 
@@ -1756,14 +1683,7 @@ Height-sampling tile wrapping a `DecodedHeightmap` (regular grid, distinct from 
 
 **`kTileCoordinateEpsilon`** = 1e-12 (.cpp:10) — absorbs ECEF↔cartographic round-trip ulps at tile edges. Sampling detail: u/v from bounds (.cpp:36-37, v = north→south), parent fallback on invalid coord or no-data (.cpp:44-47, :53-60); **OpenGlobus skipPositiveHeights**: parent zoom ≤ 8 with positive height → sea level 0 (.cpp:57-59).
 
-### QuantizedMeshAvailability.h
-
-Availability state + main-thread update record for layered QM terrain. cesium-native `LayerJsonTerrainLoader` availability-propagation equivalent. `QuantizedMeshAvailabilityRange` itself = `std::array<uint32_t,5>` `{levelOffset,startX,startY,endX,endY}`, defined in `tiling/SurfaceTile.h:16`.
-
-| Item | Lines | Description |
-| --- | --- | --- |
-| `TileAvailabilityState` enum | .h:10-14 | NotAvailable / Available / Unknown |
-| `QuantizedMeshAvailabilityUpdate` | .h:19-23 | `layerIndex`, `subtreeKey` (`TileKey`), `metadataAvailability` vector; applied on main thread when an upper-layer tile load also resolves underlying-layer availability |
+Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknown) previously lived in `terrain/QuantizedMeshAvailability.h`. It was relocated to a neutral header, `tiling/TileAvailabilityState.h`, when the quantized-mesh path (and the availability-update mechanism built around it — `QuantizedMeshAvailabilityUpdate`, `TileAvailabilityUpdateCommitter`) was removed; the enum is still used by the Ellipsoid/Heightmap/Composite terrain providers.
 
 ---
 
@@ -2612,7 +2532,7 @@ Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:186-495):
 | Kind | Lines | Notes |
 | --- | --- | --- |
 | Debug | .cpp:188-196 | `DebugImageryProvider` + XYZ-WebMercator scheme. |
-| TileMapService | .cpp:198-237 | **Blocking** fetch of `tilemapresource.xml` via `QuantizedMeshLayerJsonFetcher::fetchBlocking` (.cpp:202); parse via `createTileMapServiceImagerySource`; applies coverage rectangle if present. |
+| TileMapService | .cpp:198-237 | **Blocking** fetch of `tilemapresource.xml` via `BlockingHttpFetcher::fetchBlocking` (.cpp:202); parse via `createTileMapServiceImagerySource`; applies coverage rectangle if present. |
 | WebMapService | .cpp:239-288 | **Blocking** GetCapabilities fetch (.cpp:257) + `validateWebMapServiceCapabilities`; Geographic-TMS scheme. |
 | WebMapTileService | .cpp:290-330 | Scheme = Geographic-TMS if `wmtsSchemeId=="Geographic-TMS"` else XYZ-WebMercator (.cpp:325-327). No blocking fetch. |
 | BingMaps | .cpp:332-400 | Two paths: explicit `urlTemplate` (no fetch, .cpp:333-358) or **blocking** metadata fetch (.cpp:366) + `parseBingMapsMetadata`. |
@@ -2626,7 +2546,7 @@ Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:186-495):
 | `postBlocking(...)` | .cpp:69-110 | **Blocking HTTP POST**: `PlatformBridge::post` + mutex/condition_variable, default timeout 20s (.cpp:74); cancels request on timeout. Same blocking pattern as `fetchBlocking` — setup runs synchronously and stalls the caller thread. |
 | `applyConfiguredZoomRange` | .cpp:112-122 | Provider `setZoomRange`; no-op if both zooms ≤0. |
 | `createTileSchemeForId` | .cpp:124-130 | `"XYZ-WebMercator"` → XYZWebMercator else GeographicTMS. |
-| `SceneTerrainRuntimeSources` / `createTerrainRuntimeSources` | .cpp:132-165 | Terrain sources struct (default GeographicTMS scheme). None ⇒ ellipsoid; QuantizedMesh builds `QuantizedMeshTerrainProvider`, `configureFromLayerJsonUrl` (blocking-configured, logs on failure). |
+| `SceneTerrainRuntimeSources` / `createTerrainRuntimeSources` | .cpp:155-208 | Terrain sources struct. None ⇒ empty (ellipsoid fallback handled by the engine default); Heightmap builds `HeightmapTerrainProvider` wrapped in `HeightmapTerrainContentProvider`, and — if `config.ellipsoidFallback` — further wraps that in `CompositeTerrainProvider` alongside an `EllipsoidTerrainContentProvider` sharing the same tiling scheme (uncovered regions floor to smooth ellipsoid up to `ellipsoidFallbackMaxZoom`). |
 | Unified Tileset build | .cpp:497-508 | `new Tileset(tileScheme, rasterOverlays, &renderDevice_, options, contentProvider)` → `engine_.setTileset`. |
 | glTF Tileset build | .cpp:510-535 | If `config_.gltf.enabled`: `SingleGltfContentProvider` at `TileKey{schemeId,level,x,y}`, `setEastNorthUpPlacementDegrees(lon,lat,height,scale)`; empty overlay list; `engine_.addTileset`. |
 | sim time | .cpp:537 | `engine_.setTime(config_.fixedSimulationJulianDate)`. |
@@ -2637,10 +2557,11 @@ Declarative config consumed by `installScene`. No logic; enums + POD structs.
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `enum TerrainSourceKind` | .h:13-16 | `None`, `QuantizedMesh`. |
+| `enum TerrainSourceKind` | .h:14-20 | `None`, `Heightmap` (regular-grid raster-DEM heightmap terrain — the only real terrain source; quantized-mesh and Cesium ion terrain were **removed**). |
+| `enum TerrainHeightmapEncoding` | .h:23-28 | `MapboxTerrainRgb`, `Terrarium` — mirrors `HeightmapTerrainProvider::Encoding`. |
 | `enum ImagerySourceKind` | .h:18-26 | `Debug, Xyz, TileMapService, WebMapService, WebMapTileService, BingMaps, GoogleMapTiles`. |
 | `struct SceneCameraConfig` | .h:28-32 | lon/lat degrees + heightMeters (all default 0). |
-| `struct TerrainSourceConfig` | .h:34-43 | kind, urlTemplate, layerJsonUrl, attribution, min/maxZoom, tileSize, `enableWaterMask`. |
+| `struct TerrainSourceConfig` | .h:49-73 | kind, urlTemplate, attribution, min/maxZoom, tileSize; ellipsoid-fallback fields `ellipsoidFallback`/`ellipsoidFallbackMaxZoom`/`ellipsoidFallbackGridSize` (.h:60-62); heightmap fields `heightmapEncoding`/`heightmapHeightFactor`/`heightmapNoDataValues`/`heightmapMaxNativeZoom` (.h:67-72). |
 | `struct SceneTilesetConfig` | .h:45-48 | `mainThreadLoadingTimeLimit`, `tileCacheUnloadTimeLimit` (both 0.0 ⇒ Tileset defaults). |
 | `struct RasterOverlaySourceConfig` | .h:50-98 | Largest struct: imageryKind + shared fields (zoom/SSE/opacity/role/priority/fallback, **`maximumSimultaneousTileLoads`**=20 .h:59, **`maximumScreenSpaceError`**=2.0 .h:60) plus per-provider blocks — WMS (.h:67-69), tile W/H (.h:70-71), WMTS (.h:72-79, default `wmtsSchemeId="XYZ-WebMercator"` .h:76), Bing (.h:80-84, default `bingMapStyle="Aerial"` .h:81), GoogleMapTiles (.h:85-97, default apiBaseUrl .h:85, mapType `"satellite"` .h:89). |
 | `struct GltfSourceConfig` | .h:100-112 | `enabled`, `tileSchemeId="Geographic-TMS"`, tileLevel/X/Y (defaults 0/1/0), url, name, lon/lat/height, `uniformScale`=1.0. |
