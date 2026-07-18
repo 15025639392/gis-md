@@ -250,3 +250,42 @@ CPU 选择器 → 可见页集合(无 GPU feedback)
 **更省事退路（Option-lite）**：只烘"静态深层 base 影像"（2a 打破的那块），动态叠加层留在现成逐瓦片 raster draw / 贴地 pass。烘焙只碰 1 静态层 → 无动态多层重烘之苦，复杂度低得多，摘 80% 问题。
 
 **建议**：先起最小原型验证合成方案的两个门（②逐片元间接采样开销 + ③CPU 页 determination 可行性），过门 → 目标形态定合成方案；过不了 → 退 Option-lite。
+
+## 11. 合成方案调研结论（2026-07-19，三路 .ref/ 源码分析）
+
+三个 Explore agent 分别查了：①我方引擎的 CPU 页 determination；②我方 atlas 烘焙/间接机制；③cesium-js `Megatexture.js`+`VoxelTraversal`（体素渲染器，用的正是"CPU 遍历定驻留→打包 atlas→片元间接采样"，机制同构）。
+
+### 11.1 门②（CPU 页 determination）= 基本已解
+引擎**每帧已在 CPU 侧算出**每个可见地形瓦片采样哪张影像 `(z,x,y)`（或祖先回落 + scale-bias 窗口），全是 POD 状态，无 GPU feedback：
+```
+tileset.tilePlan().renderEntries → renderTile → rasterOverlayState.forEachMapping()
+  → getReadyTile()->getTileID()      // (z,x,y) = 页 id
+  → getScaleU/V, getTranslationU/V   // 页表子窗(已是 scale-bias!)
+  → getMappedSourceTiles()           // 复合源列表
+```
+`RasterMappedToTilesetTile::update` 的祖先回落走 `computeTranslationAndScale`（RasterMappedToTilesetTile.cpp:599-623）。⟹ **C 的 GPU 回读税(9ms 尾)对我们完全不必要，可见页从现成映射白捡。** 唯一细活：跨共享祖先的瓦片去重(cheap hash-set over renderEntries)+ 把 terrain-tile 粒度的映射细化到 sub-tile z18 页粒度(改 imagery SSE 选择 `chooseQuadtreeSourceZoom`，maxZoom=18，不再被 terrain z12 卡)。
+
+### 11.2 cesium Megatexture 的关键启示：**填 atlas 用「上传」不用「渲染」**
+cesium 的 Megatexture **不 render-to-texture**，而是把解码后的瓦片数据**上传进 atlas 槽**（`writeDataToTexture`→`texture.copyFrom`=texSubImage，Megatexture.js:423-447）。⟹ **绕开我方最大缺口**（agent②：createFramebuffer 总新建附件、beginPass 硬编码全 FBO viewport、零 scissor、clear 会污染邻槽）——**改用 `updateTextureRegion`（已有）把影像上传进槽**，不需要建"渲进 atlas 子区域"那套后端能力。
+- 槽管理 = O(1) 双链空闲表(add/remove)，非 LRU-walk；优先级/淘汰在遍历层(优先队列 capped 到 atlas 容量)。我方 `VtPageTable` 已是页→槽映射，补 atlas 纹理 + 槽上传即可。
+- **多层不 bake**：每层一张 atlas（各自上传瓦片进槽），共享同一间接结构；片元逐层采样 blend。**动态层 = 跳过该层采样(切换)/uniform(透明度)，零重烘**——彻底解掉 B 的动态层软肋。内存 = K 张屏幕封顶 atlas。
+
+### 11.3 间接结构 = CPU 建的扁平四叉树纹理
+cesium 的"octree texture"= 扁平数组，每节点 = 父指针 + 子槽入口，2-bit flag(INTERNAL/LEAF/PACKED_LEAF_FROM_PARENT)标记(VoxelTraversal.js:933-966)，CPU 每帧 `buildOctree` 深度优先建、整张上传、NEAREST 采样。**移到 2D 四叉树 = 5 texels/节点(1 父 + 4 子)**。片元自顶向下降：每层 1 次 texel fetch(深度受 SSE 上限约束) → 叶 → 槽 index → atlas UV → 采样。**2D 影像贴地比体素便宜**(单次自顶向下降，无 ray-march，无逐步重查)。
+
+### 11.4 落地账（做什么 / 现成 / 可移植）
+| 部件 | 状态 |
+|---|---|
+| CPU 页 determination(可见页+scale-bias) | **现成**(复用 raster 映射, §11.1) |
+| 页→槽 CPU 账本(VtPageTable) | **现成** |
+| 间接纹理小矩形更新(updateTextureRegion) | **现成**(改 dirty-rect,GLES 要求紧打包) |
+| 2D atlas + 槽空闲表 | 可移植(cesium Megatexture 降维,直白) |
+| 填槽(上传解码影像进槽) | 需改 raster 瓦片生命周期(留 CPU 像素)或加 GLES blit(Metal blitEncoder 已有) |
+| 扁平四叉树间接纹理(CPU 建+上传) | 新建(移植 cesium buildOctree→quadtree,小) |
+| 片元:间接降+atlas 采样 | **新建 = 唯一真未知(门①)**;单层 UV-remap 先例在(applyMappedRaster,Renderer.cpp:964-972),sampler 余量够 |
+
+### 11.5 结论 + 建议
+- **合成方案比"bake into atlas"初想的更可落地**：cesium 的"上传填 atlas"绕开渲染-into-atlas 缺口；门②(CPU 页)已解；间接纹理可移植;唯一真未知是**门①逐片元间接采样开销**(cesium 证 2D 下 depth-bounded 且便宜，但要在 Adreno 实测)。
+- **最小原型**(验门①)：建小 atlas + 扁平四叉树间接纹理 + terrain 片元 shader 加"间接降→采 atlas"，真机量逐片元开销 + 与 B fill(1 sample 1.3ms)对齐比较。CPU 页/页表/上传都largely现成，原型主要是 shader + 间接纹理 builder。
+- **⚠️ 缺口**：cesium 的实际 GLSL(`Octree.glsl`/`Megatexture.glsl`)不在 sparse checkout 里，写 shader 前值得从全 clone 取那段寻址数学(降索引→UV、flag 解包、槽→atlas UV)。
+- **低风险退路 Option-lite 仍在**：B 已实测可用(1.67ms 可缓存)，静态 base 走 B + 动态层走现成 raster/贴地。合成方案是"更省 + 动态多层友好"的目标形态，不是唯一出路。
