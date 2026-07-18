@@ -90,7 +90,7 @@
         satellite.priority = earth_engine::RasterOverlayPriority::High;
         satellite.fallbackPolicy =
             earth_engine::RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
-        satellite.blocksCompleteRenderable = false;  // [SELDIAG] TEMP test
+        satellite.blocksCompleteRenderable = true;
         config.rasterOverlays.push_back(satellite);
 
         _sdkFacade->installScene(config);
