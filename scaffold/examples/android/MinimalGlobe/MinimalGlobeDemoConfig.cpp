@@ -53,11 +53,13 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // 地形 fill 代理:ion 地形协商/根瓦片加载期间,先把已到的影像贴到椭球代理,
     // 真实 quantized-mesh 到达后再替换,避免 provider 切换窗口只剩天空。
     config.tileset.enableTerrainFillProxy = true;
-    // LOD-transition alpha cross-fade:合成 bug 已修(outgoing 层保持不透明基底,
-    // 只淡入 incoming→过渡中点不再透出清屏黑)。启用后 LOD 切换平滑,消除硬 pop。
-    // 真机验证:cross-fade 激活(fadeCmds>0)且过渡期地形零黑透。已知取舍:无 incoming
-    // 替代的地平线离场退化为轻微 pop(换取每次 refine/coarsen 不透黑)。
-    config.tileset.enableLodTransitionPeriod = true;
+    // LOD 过渡:暂时关闭(=硬 pop)。此前开启走 geomorph 几何 morph,但变体 A 的
+    // morph 起点采到粗祖先,山峰区表现为「从地壳浮上来」。已排期由地形连续 LOD
+    // 重设计(docs/issues/terrain-continuous-lod-redesign-2026-07-17.md)整体替换为
+    // 规则栅格 + GPU 高度纹理 + 距离连续 morph,届时重新开启。关闭后
+    // TileLodTransitionController 清空 tilesFadingOut→无 cross-fade 基底、纯 pop,
+    // 且 shader w=1 无位移 morph(配合 coordinator 跳过父采样彻底消除主线程开销)。
+    config.tileset.enableLodTransitionPeriod = false;
     config.tileset.lodTransitionLength = 1.0f;
 
     if (kUseGaodeSatelliteForDemo) {

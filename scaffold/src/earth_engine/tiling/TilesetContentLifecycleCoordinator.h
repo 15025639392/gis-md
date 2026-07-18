@@ -10,7 +10,6 @@
 #include "TileContentUploadPolicy.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileFrameBudgetFallback.h"
-#include "TileGeomorphHeightDelta.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
 #include "TileMissingRequestScheduler.h"
@@ -160,10 +159,13 @@ public:
             ensureTile,
             ensureTileChildren,
             [&](TilesetTile& tile) {
-                // geomorph 变体 A:在 CPU-ready→GPU upload 之前(主线程,父瓦片
-                // 仍在注册表活着),用父级表面高度重写本瓦片每顶点 heightDelta,
-                // 使 morph 起点接上一层显示的地形。自门控:仅地形、每模型一次。
-                TileGeomorphHeightDelta::applyParentGeomorph(tile);
+                // geomorph(变体 A 父级采样)已停用 —— 待地形连续 LOD 重设计
+                // (docs/issues/terrain-continuous-lod-redesign-2026-07-17.md)整体
+                // 换成规则栅格 + GPU 高度纹理 + 距离连续 morph。停用原因:变体 A 的
+                // morph 起点采到粗祖先,山峰区表现为「从地壳浮上来」;且这里的父级
+                // 采样在主线程执行,是拖动卡顿来源。demo 已同步关
+                // enableLodTransitionPeriod(shader w=1,无 morph),此处再跳过父采样
+                // 彻底消除主线程开销,heightDelta 维持 worker 写入的 0。
                 const GltfModel* model =
                     tile.content.renderContent.gltfModelForRead();
                 bool hasRenderablePrimitive = false;
