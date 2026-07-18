@@ -33,6 +33,10 @@ public:
 
     void updateTotalBytesUsed();
     int64_t totalBytesUsed() const;
+    // 北极星测量台:常驻字节按类拆分。content = 内容缓存(地形几何主导);
+    // imageryTexture = 栅格 overlay 纹理。O(1)/O(overlays),可每帧调用。
+    int64_t contentBytesUsed() const;
+    int64_t imageryTextureBytesUsed() const;
     bool shouldUnloadCachedBytes() const;
     void trimRasterCaches(bool cachePressure);
     void markEligibleForUnloading(const TilesetTile* tile, const std::string& key);

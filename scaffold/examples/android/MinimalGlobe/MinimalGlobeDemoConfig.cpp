@@ -14,10 +14,12 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
             28.0,
         };
     } else {
+        // 北极星 Phase 0 测量台:编译期钉死相机(见 header kMeasure*)。
         config.initialCamera = {
-            kDemoCameraLongitudeDegrees,
-            kDemoCameraLatitudeDegrees,
-            kDemoCameraHeightMeters,
+            kMeasureLongitudeDegrees,
+            kMeasureLatitudeDegrees,
+            kMeasureHeightMeters,
+            kMeasureObliqueElevationDegrees,
         };
     }
 
@@ -65,7 +67,7 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         satellite.urlTemplate = kGaodeSatelliteTemplate;
         satellite.attribution = "Gaode/Amap satellite";
         satellite.minimumZoom = 0;
-        satellite.maximumZoom = 18;
+        satellite.maximumZoom = kMeasureImageryMaxZoom;
         satellite.overlayMinimumZoom = 0;
         satellite.overlayMaximumZoom = 0;
         satellite.maximumSimultaneousTileLoads = 20;

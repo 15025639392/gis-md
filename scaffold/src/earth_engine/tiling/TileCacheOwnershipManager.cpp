@@ -52,6 +52,20 @@ int64_t TileCacheOwnershipManager::totalBytesUsed() const {
     return bytes;
 }
 
+int64_t TileCacheOwnershipManager::contentBytesUsed() const {
+    return contentCache_.totalBytesUsed();
+}
+
+int64_t TileCacheOwnershipManager::imageryTextureBytesUsed() const {
+    int64_t bytes = 0;
+    for (const ActivatedRasterOverlay* overlay : rasterOverlays_) {
+        if (overlay) {
+            bytes += overlay->tileTextureBytesUsed();
+        }
+    }
+    return bytes;
+}
+
 bool TileCacheOwnershipManager::shouldUnloadCachedBytes() const {
     return totalBytesUsed() > maximumCachedBytes_ ||
            contentCache_.hasPendingProtectedUnloads();

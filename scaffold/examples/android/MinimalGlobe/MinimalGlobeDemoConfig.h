@@ -47,6 +47,30 @@ constexpr double kDemoCameraLongitudeDegrees = 106.508;
 constexpr double kDemoCameraLatitudeDegrees = 29.617;
 constexpr double kDemoCameraHeightMeters = 30000.0;
 
+// === 北极星测量台:编译期钉死相机(改 kMeasure* 常量→重建→采一个 stop)。
+// 同一点(重庆)变高度做 zoom 梯度 + 改影像 maxZoom 做耦合/去耦对拍。
+// heightMeters = 眼睛离椭球面(海拔 0)高度;重庆地表 ~300m,最小离地 clamp 50m。
+//
+// ⭐ 相机可复现性(踩坑教训,务必遵守):
+//   • obliqueElevationDegrees ∈ (0,90) = **free-look 模式,精确可复现**——每帧
+//     update() 早退不动相机,静止无 clamp。实测 elev=45 两次启动逐位一致
+//     (camH/pitch/heading 完全相同)。**测量一律用此,推荐 pitch=-45(elev=45)。**
+//   • obliqueElevationDegrees = 0 = orbit 模式,**不可复现**:每帧重建 orbit +
+//     地形 clamp,settled 位姿随地形加载态漂移。**别用 0 测量。**
+//   • elev=90 退化(up∥viewDir 基座塌陷,朝向乱)。用 45,别用 90。
+//   • 重载耦合态(高空 + 深影像 churn)偶尔仍会漂(见 far-5000 stop);彻底稳需
+//     后续加"测量冻结相机"开关(冻 CameraController::update),Phase 2 前值得做。
+//   • CamPose logcat 行(GLESView 每帧采样打)= 相机位姿真值,采集时读它校验钉死。
+//
+// kMeasureImageryMaxZoom:高德影像 maxZoom。=18 耦合态(影像逼地形假细分到 z13-18);
+//   =12(=地形 native cap)则影像不再驱动上采样→隔离出"地形假细分"资源成本。
+//   同一相机位姿下 z18 vs z12 对拍 = 干净测出耦合浪费。生产默认 18。
+constexpr double kMeasureLongitudeDegrees = 106.508;
+constexpr double kMeasureLatitudeDegrees = 29.617;
+constexpr double kMeasureHeightMeters = 1500.0;
+constexpr double kMeasureObliqueElevationDegrees = 45.0;
+constexpr int kMeasureImageryMaxZoom = 18;
+
 // 2026-06-10 14:00 UTC+8 = 06:00 UTC.
 constexpr double kFixedSimulationJulianDate = 2461188.75;
 

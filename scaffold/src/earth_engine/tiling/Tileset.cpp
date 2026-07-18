@@ -160,6 +160,14 @@ int64_t Tileset::totalBytesUsed() const {
     return cacheOwnership_.totalBytesUsed();
 }
 
+int64_t Tileset::contentBytesUsed() const {
+    return cacheOwnership_.contentBytesUsed();
+}
+
+int64_t Tileset::imageryTextureBytesUsed() const {
+    return cacheOwnership_.imageryTextureBytesUsed();
+}
+
 void Tileset::setOcclusionCallback(OcclusionCallback callback) {
     occlusionCallback_ = std::move(callback);
 }

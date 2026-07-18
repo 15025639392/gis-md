@@ -89,6 +89,12 @@ struct TileUpdateDebugLogInput {
     size_t requestIssuedRasterDetailUpsample = 0;
     size_t requestUpsampleWorkerCapacity = 0;
     size_t requestMotionDeferred = 0;
+    // 北极星测量台:位姿无关的常驻资源字节(峰值内存 / 有界性核心指标)。
+    // memContent = 内容缓存(地形几何 VBO/索引/heightmap 源,地形主导)。
+    // memImagery = 影像栅格 overlay 纹理。memTotal = 二者 + 待上传总计。
+    int64_t residentTotalBytes = 0;
+    int64_t contentResidentBytes = 0;
+    int64_t imageryTextureBytes = 0;
 };
 
 } // namespace earth_engine

@@ -255,7 +255,10 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             selectionWork.requestOutcome.issuedRasterDetailUpsample,
             selectionWork.requestOutcome
                 .skippedUpsampleWorkerCapacity,
-            selectionWork.requestOutcome.skippedMotionCull}};
+            selectionWork.requestOutcome.skippedMotionCull,
+            tileset.totalBytesUsed(),
+            tileset.contentBytesUsed(),
+            tileset.imageryTextureBytesUsed()}};
 }
 
 } // namespace earth_engine

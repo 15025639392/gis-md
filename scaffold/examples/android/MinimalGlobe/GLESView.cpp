@@ -301,6 +301,18 @@ static void renderFrame() {
             callbackIntervalMs,
             presented ? 1 : 0,
             swapOk == EGL_TRUE ? 1 : 0);
+        // 北极星 Phase 0 测量台:每帧(采样)打相机真实位姿,消除"nadir/oblique"
+        // 猜测——用它标注每个 measure stop 的实际视角。
+        const auto& camTrace = gEngine->presentationTrace().camera;
+        LOGI("CamPose frame=%llu center=%.5f,%.5f camH=%.1f targetH=%.1f "
+             "pitchDeg=%.2f headingDeg=%.2f",
+             static_cast<unsigned long long>(frameId),
+             camTrace.targetLongitudeDegrees,
+             camTrace.targetLatitudeDegrees,
+             camTrace.cameraHeightMeters,
+             camTrace.targetHeightMeters,
+             camTrace.pitchRadians * 180.0 / M_PI,
+             camTrace.headingRadians * 180.0 / M_PI);
     }
 }
 

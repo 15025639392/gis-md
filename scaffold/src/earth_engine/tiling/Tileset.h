@@ -162,6 +162,9 @@ public:
     int cachedHeightmapTerrainTilesForLegacySurfacePath() const;
     int pendingRequests() const;
     int64_t totalBytesUsed() const;
+    // 北极星测量台:常驻资源字节按类拆分(内容缓存 vs 影像纹理),位姿无关。
+    int64_t contentBytesUsed() const;
+    int64_t imageryTextureBytesUsed() const;
     TilesetLoadDiagnostics loadDiagnostics() const;
 
     /// Sample the best loaded terrain height at longitude/latitude.
