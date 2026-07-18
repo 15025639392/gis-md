@@ -140,6 +140,8 @@ FABDEM 源 ~30m。grid65 = 64 interval/tile。重庆纬度 29.617°：
 
 ## 8b. 锁定的 Phase 2 执行顺序
 1. **补测量冻结相机**（决策 #5）：`CameraController::update` 加冻结开关 + demo `kMeasureFreezeCamera`，让 far 也可复现。→ 用 Phase 0 `kMeasure*` 同位姿采**去耦前**完整对照（含 far）。
+   - ✅ **引擎侧已落地（未提交）**：`CameraController::setMeasurementFreeze(bool)` — 置 true 后 `update()` 完全空转（跳惯性/zoom 惯性/orbit 重建，启用瞬间清零惯性），相机停在初始 `lookAt/viewDistance` 位姿逐帧字节稳定。`SceneCameraConfig::freezeCamera` 贯通，`resetCamera()` 两分支位姿设定后应用。demo `kMeasureFreezeCamera=true` 钉死。单测 `MeasurementFreezeHoldsPoseDespiteInertia`（甩动后冻结→120 帧视图矩阵字节不变）41/41 绿。
+   - ⏳ **待用户在真机采样**：开 `kMeasureFreezeCamera` 重建 → 用 Phase 0 各 `kMeasure*` 位姿（含 far-5000）采**去耦前**完整对照列（瓦片数/selector/churn/字节），回填 Phase 0 baseline 文档 far 行。
 2. **Phase 2a 断耦合 + cap z12**（flag-gated）：断 `TileRasterUpsampledChildMaterializer.h:42-63` 的 `isMoreDetailAvailable→materializeRasterUpsampledChildren`；地形按 DEM 几何误差细化 cap 在 native max（z12）;影像四叉树独立继续（无几何/无 clip）。验收 = 同位姿瓦片数/selector/churn 回落到接近 capped-z12 列。**预期近景影像此时仍糊**（走已有 scale-bias 祖先复用，只到 ~z12），必接 2b。
 3. **并行 C-PoC**：最小虚拟纹理（一张 atlas + 间接纹理 + 一次 feedback）真机量固定开销，回填 §5 诚实账 → 定 §8 决策 #3（B vs C）。
 4. **Phase 2b 影像纹理源**：按 3 的结论建 B 或 C，让 capped 粗瓦片显 z18 清晰影像（复用现成 scale-bias 寻址原语 §2）。验收 = 同位姿去耦列"斜率≈0"且影像照清。

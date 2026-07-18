@@ -71,6 +71,13 @@ constexpr double kMeasureHeightMeters = 1500.0;
 constexpr double kMeasureObliqueElevationDegrees = 45.0;
 constexpr int kMeasureImageryMaxZoom = 18;
 
+// kMeasureFreezeCamera:测量台冻结相机。true = 初始位姿设定后
+// CameraController::update() 完全空转,相机逐帧字节稳定 → 即便高空重载耦合态
+// (深影像 churn)的 far 位姿也精确可复现,让去耦前/后同位姿对拍成立(free-look
+// 静止本已稳,但 far-5000 类重载 stop 偶尔仍漂,此开关彻底钉死)。测量一律开;
+// 生产/交互路径保持 false(默认零影响)。
+constexpr bool kMeasureFreezeCamera = true;
+
 // 2026-06-10 14:00 UTC+8 = 06:00 UTC.
 constexpr double kFixedSimulationJulianDate = 2461188.75;
 

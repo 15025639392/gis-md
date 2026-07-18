@@ -22,6 +22,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
             kMeasureObliqueElevationDegrees,
         };
     }
+    // 测量台冻结相机：初始位姿设定后 update() 空转，far 位姿也可复现（见 header）。
+    config.initialCamera.freezeCamera = kMeasureFreezeCamera;
 
     if (kEnableTerrainForDemo) {
         // 唯一地形源 = 规则栅格 raster-DEM 高度图（CPU 烘焙路径）。重庆 FABDEM

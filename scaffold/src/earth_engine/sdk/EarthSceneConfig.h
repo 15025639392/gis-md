@@ -44,6 +44,10 @@ struct SceneCameraConfig {
     // 初始视角仰角(度): 0 = 正俯视(nadir orbit, 默认/向后兼容); >0 = 自由斜视,
     // 相机从目标点正南、以该仰角俯瞰(适合看竖直 foliage 等地表小物, nadir 下隐形)。
     double obliqueElevationDegrees = 0.0;
+    // 北极星测量台冻结相机: true 时初始位姿设定后 CameraController::update() 完全
+    // 空转，相机逐帧字节稳定，让重载耦合态下的 far 位姿也精确可复现（去耦对拍需
+    // 同位姿）。默认 false = 生产交互路径零影响。
+    bool freezeCamera = false;
 };
 
 struct TerrainSourceConfig {

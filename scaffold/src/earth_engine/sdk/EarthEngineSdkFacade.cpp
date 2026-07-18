@@ -634,6 +634,9 @@ void EarthEngineSdkFacade::resetCamera() {
             (upN * std::sin(elevRad) - northN * std::cos(elevRad)) * dist;
         engine_.camera().lookAt(eye, targetEcef, upN);
         engine_.cameraController().viewDistance(targetEcef, dist);
+        // 位姿设定后再冻结，让 update() 停止一切扰动（测量台专用）。
+        engine_.cameraController().setMeasurementFreeze(
+            config_.initialCamera.freezeCamera);
         return;
     }
     auto camEcef = ellipsoid.cartographicToCartesian(
@@ -683,6 +686,10 @@ void EarthEngineSdkFacade::resetCamera() {
     engine_.cameraController().setRotation(orbitRotation);
     engine_.cameraController().setDistance(
         static_cast<float>(distanceEarthRadii));
+    // 位姿设定后再冻结（测量台专用）；nadir 冻结时 update() 跳过 orbit 重建，
+    // 相机停在上面显式 lookAt 的正上方位姿。
+    engine_.cameraController().setMeasurementFreeze(
+        config_.initialCamera.freezeCamera);
 }
 
 void EarthEngineSdkFacade::addActivatedRasterOverlay(

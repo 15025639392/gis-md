@@ -955,3 +955,34 @@ TEST_F(CameraControllerTest, CameraLooksAtOrigin) {
     // 如果相机看向原点，pos 和 -dir 应同向，所以 pos · dir < 0
     EXPECT_LT(dot, 0.0);
 }
+
+// 北极星测量台冻结相机：冻结后 update() 完全空转，即便存在待处理的甩动惯性，
+// 相机位姿也逐帧字节稳定（far 重载耦合态可复现的机制基础）。
+TEST_F(CameraControllerTest, MeasurementFreezeHoldsPoseDespiteInertia) {
+    controller_->setDistance(1.0002f);  // 近地表，接管地表拾取
+    controller_->update(0.0);
+
+    // 甩一下产生惯性：drag start→move→end 后 inertiaAngularVelocity_ > 0。
+    controller_->onDragStart(400.0f, 300.0f, 0.0);
+    controller_->onDragMove(500.0f, 300.0f, 1.0 / 60.0);
+    controller_->onDragEnd();
+
+    // 冻结：应立即清零惯性，之后任意步进都不动相机。
+    controller_->setMeasurementFreeze(true);
+    EXPECT_TRUE(controller_->measurementFrozen());
+
+    const Mat4 frozenView = camera_->viewMatrix();
+    for (int i = 0; i < 120; ++i) {
+        controller_->update(1.0 / 60.0);
+    }
+    // 逐帧位姿不变（视图矩阵字节级稳定）。
+    EXPECT_LT(matrixAbsDiff(camera_->viewMatrix(), frozenView), 1e-9);
+
+    // 解冻后 update() 恢复正常（惯性已清零，故此处仅验证不再被锁死：
+    // orbit 重建把相机放回 distance_ 对应的位置）。
+    controller_->setMeasurementFreeze(false);
+    EXPECT_FALSE(controller_->measurementFrozen());
+    controller_->setDistance(2.0f);
+    controller_->update(1.0 / 60.0);
+    EXPECT_GT(matrixAbsDiff(camera_->viewMatrix(), frozenView), 1e-6);
+}

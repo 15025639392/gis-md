@@ -361,6 +361,11 @@ void CameraController::onPinchEnd() {
 }
 
 void CameraController::update(double deltaSeconds) {
+    // 测量台冻结：完全空转，让相机停在最近一次显式位姿上，逐帧字节稳定。
+    // 惯性/zoom 惯性/orbit 重建全部跳过 → far 位姿在重载耦合态下也可复现。
+    if (measurementFreeze_) {
+        return;
+    }
     // Flick inertia is velocity-based only: the released angular velocity
     // (rad/s, dt-scaled and exponentially damped below) continues the pan.
     // The previous quaternion "touch inertia" re-applied ~s^3 of the LAST
@@ -436,6 +441,16 @@ void CameraController::update(double deltaSeconds) {
         Vec3::zero(),                            // target (earth center)
         Vec3(rotatedUp.x, rotatedUp.y, rotatedUp.z)  // up
     );
+}
+
+void CameraController::setMeasurementFreeze(bool frozen) {
+    measurementFreeze_ = frozen;
+    if (frozen) {
+        // 冻结瞬间清零所有惯性，避免残留速度在解冻前被"锁"进状态。
+        inertiaAngularVelocity_ = 0.0;
+        hasZoomInertia_ = false;
+        zoomInertiaLogRate_ = 0.0;
+    }
 }
 
 void CameraController::setDistance(float earthRadii) {

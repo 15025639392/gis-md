@@ -60,6 +60,14 @@ public:
     /// @param deltaSeconds 上一帧到现在的秒数
     void update(double deltaSeconds);
 
+    /// 北极星测量台冻结开关：置 true 后 update() 变成完全空操作——不跑惯性、
+    /// 不跑 zoom 惯性、不做 orbit 重建、不碰相机。相机停在最近一次显式
+    /// lookAt/viewDistance 设定的位姿上，逐帧字节稳定，让重载耦合态（高空 + 深
+    /// 影像 churn）下的 far 位姿也精确可复现（对拍去耦前后必须同位姿）。
+    /// 启用时顺带清零所有惯性状态，避免冻结瞬间残留速度被"锁"进去。
+    void setMeasurementFreeze(bool frozen);
+    bool measurementFrozen() const { return measurementFreeze_; }
+
     // ---- 相机状态 ----
 
     /// 设置相机到地球中心的距离（地球半径单位，默认 7.0）
@@ -121,6 +129,8 @@ private:
     glm::dquat rotation_{1.0, 0.0, 0.0, 0.0};
     float distance_ = 7.0f;
     bool orbitMode_ = true;
+    // 测量台冻结：true 时 update() 完全空转（见 setMeasurementFreeze）。
+    bool measurementFreeze_ = false;
 
     // drag 状态
     bool dragging_ = false;
