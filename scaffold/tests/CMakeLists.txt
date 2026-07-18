@@ -837,6 +837,12 @@ add_executable(test_virtual_texture_poc
 target_link_libraries(test_virtual_texture_poc PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_virtual_texture_poc COMMAND test_virtual_texture_poc)
 
+add_executable(test_tile_composite_bake_poc
+    unit/renderer/test_tile_composite_bake_poc.cpp
+)
+target_link_libraries(test_tile_composite_bake_poc PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_composite_bake_poc COMMAND test_tile_composite_bake_poc)
+
 add_executable(test_gltf_draw_command_cache
     unit/tiling/test_gltf_draw_command_cache.cpp
 )

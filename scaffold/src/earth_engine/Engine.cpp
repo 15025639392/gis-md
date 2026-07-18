@@ -5,6 +5,7 @@
 #include "camera/CameraController.h"
 #include "renderer/OffscreenPostProcess.h"
 #include "renderer/VirtualTexturePoc.h"
+#include "renderer/TileCompositeBakePoc.h"
 #include "renderer/RenderDevice.h"
 #include "layers/VectorLayer.h"
 #include "debug/PlatformLog.h"
@@ -71,6 +72,11 @@ void Engine::onSurfaceDestroyed() {
         virtualTexturePoc_.reset();
     }
     virtualTexturePocInitFailed_ = false;
+    if (tileCompositeBakePoc_) {
+        tileCompositeBakePoc_->dispose();
+        tileCompositeBakePoc_.reset();
+    }
+    tileCompositeBakePocInitFailed_ = false;
     scene_->setRenderDevice(nullptr);
     if (device_) {
         device_->onSurfaceDestroyed();
@@ -105,6 +111,15 @@ void Engine::setVirtualTexturePocEnabled(bool enabled) {
     if (!enabled && virtualTexturePoc_) {
         virtualTexturePoc_->dispose();
         virtualTexturePoc_.reset();
+    }
+}
+
+void Engine::setTileCompositeBakePocEnabled(bool enabled) {
+    tileCompositeBakePocEnabled_ = enabled;
+    tileCompositeBakePocInitFailed_ = false;
+    if (!enabled && tileCompositeBakePoc_) {
+        tileCompositeBakePoc_->dispose();
+        tileCompositeBakePoc_.reset();
     }
 }
 
@@ -159,6 +174,22 @@ bool Engine::render(double deltaSeconds) {
             virtualTexturePoc_->ensureResources(surfaceWidthPixels_,
                                                 surfaceHeightPixels_)) {
             virtualTexturePoc_->tick();
+        }
+    }
+    // 北极星 B 方案 PoC(测量台专用,默认关):对当前可见瓦片数做 N 个离屏 bake
+    // pass,量 B 的每帧烘焙开销(与 C 回读税对比)。瓦片数取上帧诊断(冻结相机
+    // settled 下逐帧一致)。同样短路、纯旁路,不影响渲染。
+    if (tileCompositeBakePocEnabled_ && !tileCompositeBakePocInitFailed_) {
+        if (!tileCompositeBakePoc_) {
+            auto poc = std::make_unique<TileCompositeBakePoc>();
+            if (poc->initialize(device_, TileCompositeBakePocConfig{})) {
+                tileCompositeBakePoc_ = std::move(poc);
+            } else {
+                tileCompositeBakePocInitFailed_ = true;
+            }
+        }
+        if (tileCompositeBakePoc_ && tileCompositeBakePoc_->ensureResources()) {
+            tileCompositeBakePoc_->tick(scene_->diagnostics().visibleTiles);
         }
     }
     if (scene_->shouldHoldPresentationFrame()) {
@@ -293,9 +324,20 @@ bool Engine::render(double deltaSeconds) {
             s.updateMs, s.visiblePages, s.residentPages, s.readbackPending ? 1 : 0,
             static_cast<long long>(virtualTexturePoc_->atlasBytes() / 1024));
     }
-    char detail[448];
+    // 北极星 B 方案 PoC 头行段(仅活跃时追加):bBake=每帧 N 个逐瓦片 bake pass
+    //   总耗时(**B 的核心每帧成本**,vs C 的 vtReadback);bTiles=烘焙瓦片数;
+    //   bMemKB=B 逐瓦片纹理内存需求。
+    char bDetail[96] = "";
+    if (tileCompositeBakePoc_ && tileCompositeBakePoc_->isReady()) {
+        const TileCompositeBakeFrameStats& b = tileCompositeBakePoc_->lastStats();
+        std::snprintf(bDetail, sizeof(bDetail),
+            " bBake=%.3f bTiles=%d bMemKB=%lld",
+            b.bakeMs, b.bakedTiles,
+            static_cast<long long>(b.bakeBytes / 1024));
+    }
+    char detail[544];
     std::snprintf(detail, sizeof(detail),
-        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s",
+        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s%s",
         diag.engineBeginFrameMs,
         diag.sceneUpdateMs,
         diag.sceneRenderMs,
@@ -304,7 +346,8 @@ bool Engine::render(double deltaSeconds) {
         diag.drawCalls,
         diag.visibleTiles,
         scenePresented ? 0 : 1,
-        vtDetail);
+        vtDetail,
+        bDetail);
     perf::logTiming(scene_->frameState().frameId,
                     "Engine.render.total",
                     diag.engineFrameCpuMs,

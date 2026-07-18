@@ -17,6 +17,7 @@ class OffscreenPostProcess;
 class RenderDevice;
 class Scene;
 class VirtualTexturePoc;
+class TileCompositeBakePoc;
 class Tileset;
 class VectorLayer;
 struct PresentationTrace;
@@ -164,11 +165,16 @@ public:
     /// feedback→回读→页表整链,量移动端固定开销(回读 stall),数报进 EarthPerf。
     void setVirtualTexturePocEnabled(bool enabled);
 
+    /// 北极星 Phase 2b B 方案(逐瓦片合成)PoC(默认关,测量台专用):每帧对当前
+    /// 可见瓦片数做 N 个离屏 bake pass,量 B 的每帧烘焙开销,数报进 EarthPerf。
+    void setTileCompositeBakePocEnabled(bool enabled);
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
     std::unique_ptr<OffscreenPostProcess> offscreenPostProcess_;
     std::unique_ptr<VirtualTexturePoc> virtualTexturePoc_;
+    std::unique_ptr<TileCompositeBakePoc> tileCompositeBakePoc_;
     double lastRenderTime_ = 0.0;
     bool surfaceCreated_ = false;
     // 离屏后处理开关。优先级:AerialFog > FXAA > passthrough 调试直通。
@@ -183,6 +189,9 @@ private:
     // 北极星 VT PoC 开关 + 构建失败短路(默认关,不影响生产路径)。
     bool virtualTexturePocEnabled_ = false;
     bool virtualTexturePocInitFailed_ = false;
+    // 北极星 B 方案(逐瓦片合成)PoC 开关 + 短路。
+    bool tileCompositeBakePocEnabled_ = false;
+    bool tileCompositeBakePocInitFailed_ = false;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;

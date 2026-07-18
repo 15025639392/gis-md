@@ -102,6 +102,13 @@ constexpr bool kMeasureHorizonView = false;
 constexpr double kMeasureHorizonElevationDegrees = 10.0;
 constexpr double kMeasureHorizonHeightMeters = 12000.0;
 
+// kMeasureTileCompositeBakePoC:北极星 Phase 2b B 方案(逐瓦片合成)PoC。
+// true = 每帧对当前可见瓦片数做 N 个离屏 bake pass,把烘焙耗时报进 EarthPerf
+// 头行(bBake=)。**这是 B vs C 决策缺的第三块数据**——与 C 的 vtReadback 税对
+// 比:近景 N=3(B 该赢) vs 地平线 N=122(C 该赢?)。配 kMeasureHorizonView 测
+// 地平线。纯旁路测量,不改渲染。骨架量 pass 切换地板(合成 draw 待细化)。
+constexpr bool kMeasureTileCompositeBakePoC = false;
+
 // 2026-06-10 14:00 UTC+8 = 06:00 UTC.
 constexpr double kFixedSimulationJulianDate = 2461188.75;
 

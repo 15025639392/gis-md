@@ -607,6 +607,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     engine_.setAerialFogParams(config_.aerialFogDensity,
                                config_.aerialFogStartDistance);
     engine_.setVirtualTexturePocEnabled(config_.virtualTexturePoc);
+    engine_.setTileCompositeBakePocEnabled(config_.tileCompositeBakePoc);
 }
 
 void EarthEngineSdkFacade::resetCamera() {

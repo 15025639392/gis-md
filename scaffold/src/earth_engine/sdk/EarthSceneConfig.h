@@ -202,6 +202,10 @@ struct EarthSceneConfig {
     /// feedback→回读→页表整链,量移动端固定开销(回读 stall),数报进 EarthPerf
     /// 头行 vtReadback=。不改任何渲染,纯旁路测量。当前两后端回读均已实现。
     bool virtualTexturePoc = false;
+    /// 北极星 Phase 2b B 方案(逐瓦片合成)PoC(默认关,测量台专用):每帧对当前
+    /// 可见瓦片数做 N 个离屏 bake pass,量 B 的每帧烘焙开销(vs C 的回读税),报进
+    /// EarthPerf 头行 bBake=。纯旁路测量。
+    bool tileCompositeBakePoc = false;
 };
 
 } // namespace earth_engine
