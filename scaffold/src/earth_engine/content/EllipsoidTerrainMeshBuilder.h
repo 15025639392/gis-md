@@ -45,18 +45,34 @@ public:
     // neighbouring grid heights (central difference → correct slope shading for
     // real terrain). Default false keeps the flat geodetic surface normal used
     // by the ellipsoid proxy.
+    // When `computeGeomorphDelta` is true, each vertex's geomorphHeightDelta is
+    // baked = coarse-self height (2× self-downsample, osgEarth neighbour-average)
+    // − true height, so the distance-continuous LOD morph starts from a
+    // parent-like coarse surface with zero main-thread cost and no parent-tile
+    // dependency. Requires an even gridSize (odd vertex count per side) so the
+    // even-index subgrid includes both edges; otherwise the delta stays 0.
+    // When `buildSkirt` is true, a downward skirt wall is appended around the
+    // tile's 4 edges (edge vertices duplicated and dropped by a per-tile skirt
+    // height along the geodetic normal, imagery draped down). This hides the
+    // gaps otherwise visible between adjacent tiles at LOD boundaries
+    // (T-junctions) or at different geomorph morph factors. Skirt geometry is
+    // marked via GltfPrimitive::skirtMetadata (real-surface vertex/index ranges).
     static std::unique_ptr<GltfModel> makeModel(
         const Rectangle& geographicRectangle,
         RasterOverlayProjection projection,
         int gridSize,
         const EllipsoidProxyHeightSampler& heightSampler = {},
-        bool computeGridNormals = false);
+        bool computeGridNormals = false,
+        bool computeGeomorphDelta = false,
+        bool buildSkirt = false);
     static std::unique_ptr<GltfModel> makeModel(
         const Rectangle& geographicRectangle,
         const std::vector<RasterOverlayProjection>& projections,
         int gridSize,
         const EllipsoidProxyHeightSampler& heightSampler = {},
-        bool computeGridNormals = false);
+        bool computeGridNormals = false,
+        bool computeGeomorphDelta = false,
+        bool buildSkirt = false);
 
     /// The RasterOverlayDetails a proxy model of this rectangle/projection
     /// carries (projection list + projected rectangle + NW-V convention).

@@ -188,8 +188,15 @@ TEST(HeightmapTerrainContent, BuildsRegularGridMeshWithLiftedHeights) {
     ASSERT_FALSE(captured.gltfModel->primitives.empty());
 
     const GltfPrimitive& primitive = captured.gltfModel->primitives.front();
-    EXPECT_EQ(primitive.vertices.size(), 25u);            // 5×5 grid
-    EXPECT_EQ(primitive.indices.size(), 4u * 4u * 6u);    // 4×4 cells × 2 tris
+    // The real-surface (no-skirt) part is exactly the 5×5 grid; skirt geometry
+    // is appended after it and tracked via skirtMetadata.
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
+    EXPECT_EQ(primitive.skirtMetadata->noSkirtVerticesCount, 25u);       // 5×5
+    EXPECT_EQ(primitive.skirtMetadata->noSkirtIndicesCount, 4u * 4u * 6u);
+    // 4 edges × 5 vertices = 20 skirt vertices (corners duplicated per edge);
+    // 4 edges × 4 segments × 2 tris × 3 = 96 skirt indices.
+    EXPECT_EQ(primitive.vertices.size(), 25u + 20u);
+    EXPECT_EQ(primitive.indices.size(), 4u * 4u * 6u + 96u);
 
     // Height range tightened to the real min/max (heightFactor 1.0).
     ASSERT_TRUE(captured.metadata.terrainHeightRange.has_value());
@@ -199,11 +206,13 @@ TEST(HeightmapTerrainContent, BuildsRegularGridMeshWithLiftedHeights) {
     // Overlay UVs computed (draping works identically to real terrain).
     ASSERT_FALSE(captured.gltfModel->rasterOverlayDetails.empty());
 
-    // Vertices lifted off the ellipsoid: at least one sits well above height 0.
+    // Grid (no-skirt) vertices lifted off the ellipsoid with slope normals.
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     double maxHeightAbove = 0.0;
     bool anyTiltedNormal = false;
-    for (const SurfaceVertex& v : primitive.vertices) {
+    const uint32_t gridCount = primitive.skirtMetadata->noSkirtVerticesCount;
+    for (uint32_t i = 0; i < gridCount; ++i) {
+        const SurfaceVertex& v = primitive.vertices[i];
         const std::optional<Cartographic> c =
             ellipsoid.tryCartesianToCartographic(v.positionEcef);
         if (c) {
@@ -221,6 +230,124 @@ TEST(HeightmapTerrainContent, BuildsRegularGridMeshWithLiftedHeights) {
     }
     EXPECT_GT(maxHeightAbove, 1800.0);  // ~2000 m ramp reached
     EXPECT_TRUE(anyTiltedNormal);       // slope shading, not flat geodetic
+
+    // Skirt vertices hang below their edge parents (dropped along the normal),
+    // so at least one skirt vertex sits well under the lowest grid height.
+    double minSkirtHeight = 1e9;
+    for (size_t i = gridCount; i < primitive.vertices.size(); ++i) {
+        const std::optional<Cartographic> c =
+            ellipsoid.tryCartesianToCartographic(primitive.vertices[i].positionEcef);
+        if (c) {
+            minSkirtHeight = std::min(minSkirtHeight, c->height());
+        }
+    }
+    EXPECT_LT(minSkirtHeight, 0.0);  // dropped below the 0 m ramp base
+}
+
+// ---- P2: distance-continuous geomorph delta baked in the worker ------------
+
+TEST(HeightmapTerrainContent, BakesGeomorphDeltaFromCoarseSelfDownsample) {
+    SyntheticHeightBridge bridge;
+    bridge.width = 5;   // → gridSize 4 (even) → 5×5 = 25 vertices, even subgrid
+    bridge.height = 5;  //   {0,2,4} spans both edges → morph delta well-defined
+    bridge.encoding = HeightmapTerrainProvider::Encoding::MapboxTerrainRgb;
+    // Column-only quadratic h = 100·col² (row-independent so latitude-projection
+    // non-linearity can't perturb it; column sampling round-trips exactly through
+    // web-mercator). The 2× coarse-self downsample (osgEarth neighbour-average)
+    // then has an exact analytic delta = coarse − true:
+    //   even col → coarse == self            → delta 0
+    //   odd  col → ½(h[col-1] + h[col+1])−h  = ½·200 = +100 m  (curvature of x²)
+    bridge.heightAt = [](int col, int /*row*/) {
+        return 100.0f * static_cast<float>(col) * static_cast<float>(col);
+    };
+
+    auto provider = std::make_unique<HeightmapTerrainProvider>(
+        "file:///{z}/{x}/{y}.png", "");
+    provider->setEncoding(
+        HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+    provider->setZoomRange(0, 12);
+    provider->setPlatformBridge(&bridge);
+
+    HeightmapTerrainContentProvider content(std::move(provider), 12);
+
+    const TileKey key{"XYZ-WebMercator", 12, 3400, 1500};
+    CancellationToken token;
+    bool called = false;
+    TileContentLoadResult captured;
+    content.requestTileContent(
+        key,
+        token,
+        [&](const TileKey&, TileContentLoadResult result) {
+            captured = std::move(result);
+            called = true;
+        });
+
+    ASSERT_TRUE(called);
+    ASSERT_NE(captured.gltfModel, nullptr);
+    ASSERT_FALSE(captured.gltfModel->primitives.empty());
+    const GltfPrimitive& primitive = captured.gltfModel->primitives.front();
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
+    const uint32_t gridCount = primitive.skirtMetadata->noSkirtVerticesCount;
+    ASSERT_EQ(gridCount, 25u);  // 5×5 grid (skirt vertices follow)
+
+    constexpr int kN = 5;  // vertices per side (gridSize 4 + 1)
+    bool anyOddColMorph = false;
+    for (uint32_t i = 0; i < gridCount; ++i) {  // grid part only
+        const int col = static_cast<int>(i) % kN;
+        const float delta = primitive.vertices[i].geomorphHeightDelta;
+        if (col % 2 == 0) {
+            // Even columns are coarse grid points: morph delta is exactly 0
+            // (coarse == self), regardless of sampling noise.
+            EXPECT_NEAR(delta, 0.0f, 1e-2f)
+                << "even col=" << col << " index=" << i;
+        } else {
+            // Odd columns morph from the coarse (parent-like) surface: the
+            // quadratic curvature gives a known +100 m delta.
+            EXPECT_NEAR(delta, 100.0f, 1.0f)
+                << "odd col=" << col << " index=" << i;
+            anyOddColMorph = true;
+        }
+    }
+    EXPECT_TRUE(anyOddColMorph);  // morph machinery actually produced deltas
+}
+
+// A flat height field morphs to nothing — every vertex is already its own
+// coarse-self, so the baked geomorph delta must be identically 0 (no morph, no
+// spurious vertical wobble during LOD transitions over flat terrain).
+TEST(HeightmapTerrainContent, FlatFieldBakesZeroGeomorphDelta) {
+    SyntheticHeightBridge bridge;
+    bridge.width = 5;
+    bridge.height = 5;
+    bridge.encoding = HeightmapTerrainProvider::Encoding::MapboxTerrainRgb;
+    bridge.heightAt = [](int, int) { return 750.0f; };  // constant plateau
+
+    auto provider = std::make_unique<HeightmapTerrainProvider>(
+        "file:///{z}/{x}/{y}.png", "");
+    provider->setEncoding(
+        HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+    provider->setZoomRange(0, 12);
+    provider->setPlatformBridge(&bridge);
+
+    HeightmapTerrainContentProvider content(std::move(provider), 12);
+    const TileKey key{"XYZ-WebMercator", 12, 3400, 1500};
+    CancellationToken token;
+    bool called = false;
+    TileContentLoadResult captured;
+    content.requestTileContent(
+        key,
+        token,
+        [&](const TileKey&, TileContentLoadResult result) {
+            captured = std::move(result);
+            called = true;
+        });
+
+    ASSERT_TRUE(called);
+    ASSERT_NE(captured.gltfModel, nullptr);
+    ASSERT_FALSE(captured.gltfModel->primitives.empty());
+    for (const SurfaceVertex& v :
+         captured.gltfModel->primitives.front().vertices) {
+        EXPECT_NEAR(v.geomorphHeightDelta, 0.0f, 1e-2f);
+    }
 }
 
 }  // namespace

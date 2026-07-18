@@ -229,7 +229,8 @@ void TilesetSelectionFrameFacade::reconcileShadowToLive(
         TileRenderPlanFrameRefreshOptions{
             tileset.options_.enableLodTransitionPeriod,
             tileset.interactionActiveForFrame_,
-            tileset.resourceSmoothingActiveForFrame_});
+            tileset.resourceSmoothingActiveForFrame_,
+            tileset.options_.maximumScreenSpaceError});
 }
 
 void TilesetSelectionFrameFacade::selectTilesSyncShadow(
@@ -401,7 +402,8 @@ void TilesetSelectionFrameFacade::selectTilesSync(
                     TileRenderPlanFrameRefreshOptions{
                         tileset.options_.enableLodTransitionPeriod,
                         tileset.interactionActiveForFrame_,
-                        tileset.resourceSmoothingActiveForFrame_}});
+                        tileset.resourceSmoothingActiveForFrame_,
+                        tileset.options_.maximumScreenSpaceError}});
         });
 }
 

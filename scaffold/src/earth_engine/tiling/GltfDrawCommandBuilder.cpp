@@ -331,13 +331,13 @@ void applyPerFrameCommandState(
     cmd.surfaceTransitionOpacity = context.transitionOpacity;
     u.renderOpacity = context.transitionOpacity;
     // geomorph↔cross-fade 互斥:地形改用 geomorph 单层过渡(几何 morph),不走
-    // cross-fade 的 alpha 双层混合→消除双影 ghosting。morphFactor(w)复用
-    // transitionOpacity(刚 refine 的子瓦片 0→1),xyz(tileUp)常驻构建时已设。
-    // 地形 renderOpacity 恒 1(不透明,子瓦片起点≈父面平滑态覆盖父瓦片,morph 到
-    // 真实细节),parent 被不透明子瓦片遮住,过渡结束再移除。cross-fade(alpha)
-    // 保留给非地形内容(glTF 模型)。
+    // cross-fade 的 alpha 双层混合→消除双影 ghosting。morphFactor(w)= 距离连续
+    // 的 terrainMorphFactor(由 finalizer 从本瓦片 SSE 在有效 LOD 频带内的位置算出,
+    // 随相机连续移动平滑推进,替代旧的定时 transitionOpacity),xyz(tileUp)常驻
+    // 构建时已设。地形 renderOpacity 恒 1(不透明,子瓦片 morph=0 起点≈父面平滑态
+    // 覆盖父瓦片,morph 到真实细节),cross-fade(alpha)保留给非地形内容(glTF)。
     if (cmd.terrainRenderContent) {
-        u.geomorphUpFactor[3] = context.transitionOpacity;
+        u.geomorphUpFactor[3] = tile.selectionFrameState.terrainMorphFactor;
         u.renderOpacity = 1.0f;
     }
     if (cmd.terrainRenderContent && context.surfaceClipUv) {

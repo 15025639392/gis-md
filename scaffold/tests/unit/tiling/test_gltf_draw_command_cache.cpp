@@ -135,6 +135,9 @@ TEST(GltfDrawCommandCacheTest, BlendStateRederivedEachFrame) {
     // geomorph 契约:地形走几何 morph 单层过渡,过渡期**保持不透明**(blend=false,
     // depthWrite=true, renderOpacity=1),不走 cross-fade 的 alpha 双层混合。每帧
     // 重派生的过渡量是 geomorphUpFactor.w(morphFactor),不再是 renderOpacity。
+    // P2 起 morphFactor 来自**距离连续**的 selectionFrameState.terrainMorphFactor
+    // (由 finalizer 从本瓦片 SSE 算出),不再是定时 transitionOpacity。
+    harness.tile.selectionFrameState.terrainMorphFactor = 0.5f;
     GltfDrawCommandBuildContext fading;
     fading.frameNumber = 1;
     fading.transitionOpacity = 0.5f;
@@ -145,7 +148,9 @@ TEST(GltfDrawCommandCacheTest, BlendStateRederivedEachFrame) {
     EXPECT_FLOAT_EQ(1.0f, commands[0].gltfUniforms.renderOpacity);
     EXPECT_FLOAT_EQ(0.5f, commands[0].gltfUniforms.geomorphUpFactor[3]);
 
-    // fade 结束:同一常驻命令的 morphFactor 必须回到 1(不 morph),不能被上帧污染。
+    // morph 结束:同一常驻命令的 morphFactor 必须每帧重盖成当前值(此处回到 1=不
+    // morph),不能被上帧污染。
+    harness.tile.selectionFrameState.terrainMorphFactor = 1.0f;
     GltfDrawCommandBuildContext opaque;
     opaque.frameNumber = 2;
     opaque.transitionOpacity = 1.0f;

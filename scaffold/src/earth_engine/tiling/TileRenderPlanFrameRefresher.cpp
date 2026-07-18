@@ -185,7 +185,8 @@ void TileRenderPlanFrameRefresher::refresh(
             options.enableLodTransitionPeriod,
             options.interactionActive,
             kActiveInteractionRenderPrepBudget,
-            kRecoveryRenderPrepBudget},
+            kRecoveryRenderPrepBudget,
+            options.maximumScreenSpaceError},
         rasterOverlays,
         [&contentAccess](const TileKey& key) {
             return contentAccess.ensureTile(key);

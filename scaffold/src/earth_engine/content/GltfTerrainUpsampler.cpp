@@ -815,6 +815,17 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
 
     output.skirtMetadata = parent.skirtMetadata;
     addSkirts(output, sides, textureCoordinateIndex, hasInvertedVCoordinate);
+
+    // Upsampled tiles inherit the parent's per-vertex geomorph heightDelta via
+    // the SurfaceVertex copies above, but their clipped/interpolated vertices do
+    // not align with this tile's own regular grid — morphing that mismatched
+    // delta corrugates the surface (vertical combing on steep slopes). Upsampled
+    // tiles are a subdivided copy of the parent surface (no new coarse-self to
+    // morph from) and appear near-field where the SSE morph factor is ~1 anyway,
+    // so zero the delta: they render un-morphed, continuous with the parent.
+    for (SurfaceVertex& vertex : output.vertices) {
+        vertex.geomorphHeightDelta = 0.0f;
+    }
     return true;
 }
 

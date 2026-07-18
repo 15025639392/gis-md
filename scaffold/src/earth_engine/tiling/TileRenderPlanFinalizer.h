@@ -22,6 +22,9 @@ struct TileRenderPlanFinalizeOptions {
     bool interactionActive = false;
     int activeInteractionRenderPrepBudget = 0;
     int recoveryRenderPrepBudget = 1;
+    // Tileset SSE threshold for the distance-continuous geomorph factor
+    // (0 = derivation disabled → terrainMorphFactor stays 1 = no morph).
+    double maximumScreenSpaceError = 0.0;
 };
 
 struct TileRenderPlanFinalizer {
@@ -222,6 +225,30 @@ struct TileRenderPlanFinalizer {
                 options.enableLodTransitionPeriod
                     ? tile->selectionFrameState.lodTransitionFadePercentage
                     : 1.0f;
+            // 距离连续 geomorph:地形瓦片的 morph 进度由其自身 SSE 在有效 LOD 频带
+            // 内的位置决定(而非定时器),随相机连续移动平滑推进,消除硬 pop。halving
+            // 四叉树中,父级在 sse=maxSSE/2 时接管(parent.sse≈2·sse≤maxSSE),本瓦片
+            // 在 sse=maxSSE 时下钻,故有效频带 (maxSSE/2, maxSSE]:
+            //   t = clamp((sse/maxSSE − ½)/½, 0, 1) = clamp(2·sse/maxSSE − 1, 0, 1)
+            //   sse→maxSSE(相机近/将下钻)→ 1 全细节;
+            //   sse→maxSSE/2(刚从父级细化出)→ 0 粗起点≈父面。
+            // **与时序 fade(enableLodTransitionPeriod)解耦**:morph 纯由 SSE 驱动、
+            // 无需每帧 fade discovery/kick-keeps-fading(那会使运动期工作集膨胀=卡顿),
+            // 故仅 gate 在 maxSSE>0。非规则栅格内容 heightDelta=0 自动无位移(自门控),
+            // 非地形不读此值(见 applyPerFrameCommandState)。skirt 遮盖相邻瓦片不同
+            // morph 进度间的边缝。
+            constexpr double kMorphStartRatio = 0.5;  // parent-takeover 点(halving)
+            float terrainMorph = 1.0f;
+            if (options.maximumScreenSpaceError > 0.0) {
+                const double ratio =
+                    tile->selectionFrameState.screenSpaceError /
+                    options.maximumScreenSpaceError;
+                terrainMorph = static_cast<float>(std::clamp(
+                    (ratio - kMorphStartRatio) / (1.0 - kMorphStartRatio),
+                    0.0,
+                    1.0));
+            }
+            tile->selectionFrameState.terrainMorphFactor = terrainMorph;
             appendRenderEntry(*tile, transitionOpacity, true);
         }
     }

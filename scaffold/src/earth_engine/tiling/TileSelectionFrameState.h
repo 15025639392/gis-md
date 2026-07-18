@@ -17,6 +17,10 @@ struct TileSelectionFrameState {
     bool cameraInside = false;
     bool ancestorMeetsSse = false;
     float lodTransitionFadePercentage = 1.0f;
+    // 距离连续 geomorph 进度(terrain only):由本瓦片 SSE 在有效 LOD 频带
+    // (maxSSE/2, maxSSE] 内的位置决定,每帧刷新,喂给 geomorphUpFactor.w。
+    // 1 = 全细节(无 morph/geomorph 关);0 = 粗起点≈父面(刚从父级细化出)。
+    float terrainMorphFactor = 1.0f;
 
     void updateFrameRenderability(bool complete) {
         completeRenderable = complete;

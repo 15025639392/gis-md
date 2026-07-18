@@ -217,10 +217,11 @@ std::vector<TerrainGpuVertex> GltfRenderGeometryBuilder::buildTerrainVertices(
     const glm::dmat3 normalMatrix = glm::inverseTranspose(
         glm::dmat3(contentTransform.raw()));
 
-    // geomorph(变体 A 父级采样):worker 侧只把 heightDelta 置 0;真正的 morph
-    // 起点由主线程 TileGeomorphHeightDelta::applyParentGeomorph 用**父瓦片当前
-    // 渲染面**在各顶点处的高度重写(offset 28)。这样子瓦片从上一层显示的地形
-    // 接着往下长细节(连续 LOD),而非每层从自平滑平版重新生长(旧变体 B 天花板)。
+    // geomorph 距离连续 morph:heightDelta = 本瓦片 2×自降采样(coarse-self,
+    // osgEarth 邻居平均)− 真实高度,已由 regular-grid 网格构建 worker 一次算好并
+    // 存进 SurfaceVertex.geomorphHeightDelta(offset 28)。子瓦片从 coarse(≈父面)
+    // morph 到真实细节,in-tile 无父依赖、零主线程成本。非规则栅格内容(QM 上采样、
+    // 椭球代理)geomorphHeightDelta 保持 0 → 无 morph(硬 pop),行为不变。
     for (size_t i = 0; i < n; ++i) {
         const SurfaceVertex& src = primitive.vertices[i];
         const Vec3 rel = (contentTransform * src.positionEcef) - localOrigin;
@@ -248,7 +249,7 @@ std::vector<TerrainGpuVertex> GltfRenderGeometryBuilder::buildTerrainVertices(
         verts[i].texcoord01[1] = TerrainGpuVertex::packUnorm16(uv0[1]);
         verts[i].texcoord01[2] = TerrainGpuVertex::packUnorm16(uv1[0]);
         verts[i].texcoord01[3] = TerrainGpuVertex::packUnorm16(uv1[1]);
-        verts[i].heightDelta = 0.0f;  // morph 起点由主线程父级采样覆写(变体 A)。
+        verts[i].heightDelta = src.geomorphHeightDelta;  // worker 烘焙 coarse−true。
     }
     return verts;
 }

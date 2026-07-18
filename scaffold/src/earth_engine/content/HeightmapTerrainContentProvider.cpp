@@ -242,19 +242,25 @@ TileContentLoadResult HeightmapTerrainContentProvider::buildContent(
         projections,
         gridSize,
         heightSampler,
-        /*computeGridNormals=*/true);
+        /*computeGridNormals=*/true,
+        /*computeGeomorphDelta=*/true,
+        /*buildSkirt=*/true);
     if (!model) {
         return TileContentLoadResult::failed();
     }
 
     // Real height range from the decoded grid (heightFactor already applied
-    // during decode) tightens the bounding volume for culling / SSE.
+    // during decode) tightens the bounding volume for culling / SSE. Lower the
+    // min by the skirt height so the downward skirt wall stays inside the tile's
+    // bounding volume (otherwise its far-edge triangles could be frustum-culled).
     const double minHeight = static_cast<double>(heightmap.minHeight);
     const double maxHeight = static_cast<double>(heightmap.maxHeight);
+    const double skirtHeight =
+        calcQuadtreeSkirtHeight(Ellipsoid::WGS84(), bounds);
     TileLoadResultMetadata metadata;
     metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
         bounds,
-        std::min(minHeight, maxHeight),
+        std::min(minHeight, maxHeight) - skirtHeight,
         std::max(minHeight, maxHeight));
     metadata.terrainHeightRange = {
         std::min(minHeight, maxHeight),

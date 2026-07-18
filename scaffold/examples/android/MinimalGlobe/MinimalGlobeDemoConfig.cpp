@@ -68,12 +68,13 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // 地形 fill 代理:ion 地形协商/根瓦片加载期间,先把已到的影像贴到椭球代理,
     // 真实 quantized-mesh 到达后再替换,避免 provider 切换窗口只剩天空。
     config.tileset.enableTerrainFillProxy = true;
-    // LOD 过渡:暂时关闭(=硬 pop)。此前开启走 geomorph 几何 morph,但变体 A 的
-    // morph 起点采到粗祖先,山峰区表现为「从地壳浮上来」。已排期由地形连续 LOD
-    // 重设计(docs/issues/terrain-continuous-lod-redesign-2026-07-17.md)整体替换为
-    // 规则栅格 + GPU 高度纹理 + 距离连续 morph,届时重新开启。关闭后
-    // TileLodTransitionController 清空 tilesFadingOut→无 cross-fade 基底、纯 pop,
-    // 且 shader w=1 无位移 morph(配合 coordinator 跳过父采样彻底消除主线程开销)。
+    // LOD geomorph:距离连续 geomorph 已启用(P2 引擎 + P3 skirt 之上)。morph 进度
+    // 纯由本瓦片 SSE 驱动(finalizer,gate 在 maxSSE>0),**与时序 fade 计时器解耦**:
+    // enableLodTransitionPeriod 保持 false=计时器关(否则每帧 fade discovery +
+    // kick-keeps-fading 使运动期工作集膨胀=卡顿),morph 不需要它。子瓦片从
+    // morph=0(coarse-self≈父面,worker 烘焙 heightDelta,规则栅格 in-tile 自降采样,
+    // 根治旧变体 A「浮上来」)平滑 morph 到 morph=1(真实细节),随相机连续移动推进,
+    // 消除硬 pop。相邻瓦片不同 morph 进度间的边缝由 skirt 遮盖。
     config.tileset.enableLodTransitionPeriod = false;
     config.tileset.lodTransitionLength = 1.0f;
 

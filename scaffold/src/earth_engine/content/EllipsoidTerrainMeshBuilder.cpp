@@ -4,6 +4,7 @@
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
+#include "../core/geodesy/QuadtreeGeometricError.h"
 #include "../core/geodesy/WebMercatorProjection.h"
 #include "../core/math/MathUtils.h"
 
@@ -123,6 +124,7 @@ void buildEllipsoidGrid(const Rectangle& tileBounds,
                         int gridSize,
                         const EllipsoidProxyHeightSampler& heightSampler,
                         bool computeGridNormals,
+                        bool computeGeomorphDelta,
                         std::vector<SurfaceVertex>& outVertices,
                         std::vector<uint32_t>& outIndices) {
     const int safeGrid = std::max(1, gridSize);
@@ -133,6 +135,11 @@ void buildEllipsoidGrid(const Rectangle& tileBounds,
     outIndices.clear();
     outVertices.reserve(static_cast<size_t>(n * n));
     outIndices.reserve(static_cast<size_t>(safeGrid * safeGrid * 6));
+
+    // Sampled height per vertex (row-major), kept so the geomorph coarse-self
+    // downsample below reads them directly instead of re-projecting positions.
+    std::vector<double> gridHeights;
+    gridHeights.reserve(static_cast<size_t>(n) * n);
 
     for (int y = 0; y < n; ++y) {
         const double v = static_cast<double>(y) / static_cast<double>(safeGrid);
@@ -166,6 +173,7 @@ void buildEllipsoidGrid(const Rectangle& tileBounds,
                 static_cast<float>(clampedU),
                 static_cast<float>(clampedV)};
             outVertices.push_back(vertex);
+            gridHeights.push_back(height);
         }
     }
 
@@ -193,6 +201,39 @@ void buildEllipsoidGrid(const Rectangle& tileBounds,
         }
     }
 
+    // Geomorph coarse-self delta (osgEarth neighbour-average, baked once here in
+    // the decode worker → zero main-thread cost, no parent-tile dependency).
+    // coarse-self = bilinear of the 2× (even-index) subgrid at (x,y):
+    //   even/even → self (a coarse grid point, delta 0),
+    //   odd  col  → ½(left even + right even),  odd row → ½(top + bottom),
+    //   odd/odd   → ¼(4 diagonal even neighbours).
+    // heightDelta = coarse − true, so at morph=0 the vertex sits on the coarse
+    // (parent-like) surface and morphs up to true detail as morph→1. Requires an
+    // even gridSize (n odd) so the even subgrid spans both edges and adjacent
+    // tiles agree on shared boundary rows/cols (crack-free at any single morph).
+    if (computeGeomorphDelta && safeGrid % 2 == 0) {
+        const auto heightAt = [&](int gx, int gy) -> double {
+            return gridHeights[static_cast<size_t>(gy) * n + gx];
+        };
+        for (int y = 0; y < n; ++y) {
+            const int y0 = (y / 2) * 2;
+            const int y1 = std::min(y0 + 2, n - 1);
+            const double fy = static_cast<double>(y - y0) * 0.5;
+            for (int x = 0; x < n; ++x) {
+                const int x0 = (x / 2) * 2;
+                const int x1 = std::min(x0 + 2, n - 1);
+                const double fx = static_cast<double>(x - x0) * 0.5;
+                const double top =
+                    heightAt(x0, y0) * (1.0 - fx) + heightAt(x1, y0) * fx;
+                const double bottom =
+                    heightAt(x0, y1) * (1.0 - fx) + heightAt(x1, y1) * fx;
+                const double coarse = top * (1.0 - fy) + bottom * fy;
+                outVertices[static_cast<size_t>(y) * n + x].geomorphHeightDelta =
+                    static_cast<float>(coarse - heightAt(x, y));
+            }
+        }
+    }
+
     for (int y = 0; y < safeGrid; ++y) {
         for (int x = 0; x < safeGrid; ++x) {
             const uint32_t a = static_cast<uint32_t>(y * n + x);
@@ -207,6 +248,97 @@ void buildEllipsoidGrid(const Rectangle& tileBounds,
             outIndices.push_back(d);
         }
     }
+}
+
+// Append a downward skirt wall around the tile's 4 edges. Called after the grid
+// vertices/texcoords are final (primitive.vertices are absolute ECEF here).
+// Each perimeter vertex is duplicated, dropped by `skirtHeight` along the
+// geodetic normal, with imagery texcoords copied so the wall drapes seamlessly.
+// Edge ordering + triangle winding mirror GltfTerrainUpsampler::addSkirts
+// (west N→S, south W→E, east S→N, north E→W; (topA,topB,skirtA)/(skirtA,topB,
+// skirtB)) so the wall faces outward and is not back-face culled.
+void appendRegularGridSkirt(GltfPrimitive& primitive,
+                            int n,
+                            const Rectangle& geographicRectangle) {
+    if (n < 2 ||
+        static_cast<int>(primitive.vertices.size()) < n * n) {
+        return;
+    }
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const double skirtHeight =
+        calcQuadtreeSkirtHeight(ellipsoid, geographicRectangle);
+
+    SkirtMetadata meta;
+    meta.noSkirtVerticesBegin = 0;
+    meta.noSkirtVerticesCount =
+        static_cast<uint32_t>(primitive.vertices.size());
+    meta.noSkirtIndicesBegin = 0;
+    meta.noSkirtIndicesCount =
+        static_cast<uint32_t>(primitive.indices.size());
+    meta.meshCenter = Vec3::zero();  // vertices are absolute ECEF at this stage
+    meta.skirtWestHeight = skirtHeight;
+    meta.skirtSouthHeight = skirtHeight;
+    meta.skirtEastHeight = skirtHeight;
+    meta.skirtNorthHeight = skirtHeight;
+
+    const auto gridIndex = [n](int x, int y) {
+        return static_cast<uint32_t>(y * n + x);
+    };
+    const auto appendEdge = [&](const std::vector<uint32_t>& edge) {
+        if (edge.size() < 2) {
+            return;
+        }
+        const uint32_t firstSkirt =
+            static_cast<uint32_t>(primitive.vertices.size());
+        for (uint32_t sourceIndex : edge) {
+            SurfaceVertex skirtVertex = primitive.vertices[sourceIndex];
+            const Vec3 top = skirtVertex.positionEcef;  // absolute ECEF
+            Vec3 normal = ellipsoid.geodeticSurfaceNormal(top);
+            if (normal.lengthSquared() > 0.0) {
+                normal = normal.normalized();
+            }
+            setLocalPosition(skirtVertex, top - normal * skirtHeight);
+            primitive.vertices.push_back(skirtVertex);
+            // Copy the edge vertex's overlay texcoords so imagery drapes down
+            // the wall (skirt shares the edge's lon/lat, only height differs).
+            for (size_t set = 0; set < kGltfMaxTexCoordSets; ++set) {
+                if (primitive.vertexTexCoords[set].size() + 1 ==
+                    primitive.vertices.size()) {
+                    primitive.vertexTexCoords[set].push_back(
+                        primitive.vertexTexCoords[set][sourceIndex]);
+                }
+            }
+        }
+        for (size_t i = 0; i + 1 < edge.size(); ++i) {
+            const uint32_t topA = edge[i];
+            const uint32_t topB = edge[i + 1];
+            const uint32_t skirtA = firstSkirt + static_cast<uint32_t>(i);
+            const uint32_t skirtB = firstSkirt + static_cast<uint32_t>(i + 1);
+            primitive.indices.push_back(topA);
+            primitive.indices.push_back(topB);
+            primitive.indices.push_back(skirtA);
+            primitive.indices.push_back(skirtA);
+            primitive.indices.push_back(topB);
+            primitive.indices.push_back(skirtB);
+        }
+    };
+
+    std::vector<uint32_t> edge;
+    edge.reserve(static_cast<size_t>(n));
+    edge.clear();  // west: (0,0)→(0,n-1)  north→south
+    for (int y = 0; y < n; ++y) edge.push_back(gridIndex(0, y));
+    appendEdge(edge);
+    edge.clear();  // south: (0,n-1)→(n-1,n-1)  west→east
+    for (int x = 0; x < n; ++x) edge.push_back(gridIndex(x, n - 1));
+    appendEdge(edge);
+    edge.clear();  // east: (n-1,n-1)→(n-1,0)  south→north
+    for (int y = n - 1; y >= 0; --y) edge.push_back(gridIndex(n - 1, y));
+    appendEdge(edge);
+    edge.clear();  // north: (n-1,0)→(0,0)  east→west
+    for (int x = n - 1; x >= 0; --x) edge.push_back(gridIndex(x, 0));
+    appendEdge(edge);
+
+    primitive.skirtMetadata = meta;
 }
 
 } // namespace
@@ -244,13 +376,17 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     RasterOverlayProjection projection,
     int gridSize,
     const EllipsoidProxyHeightSampler& heightSampler,
-    bool computeGridNormals) {
+    bool computeGridNormals,
+    bool computeGeomorphDelta,
+    bool buildSkirt) {
     return makeModel(
         geographicRectangle,
         std::vector<RasterOverlayProjection>{projection},
         gridSize,
         heightSampler,
-        computeGridNormals);
+        computeGridNormals,
+        computeGeomorphDelta,
+        buildSkirt);
 }
 
 std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
@@ -258,7 +394,9 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     const std::vector<RasterOverlayProjection>& projections,
     int gridSize,
     const EllipsoidProxyHeightSampler& heightSampler,
-    bool computeGridNormals) {
+    bool computeGridNormals,
+    bool computeGeomorphDelta,
+    bool buildSkirt) {
     std::vector<SurfaceVertex> gridVertices;
     std::vector<uint32_t> gridIndices;
     buildEllipsoidGrid(
@@ -266,6 +404,7 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
         gridSize,
         heightSampler,
         computeGridNormals,
+        computeGeomorphDelta,
         gridVertices,
         gridIndices);
     auto model = std::make_unique<GltfModel>();
@@ -309,6 +448,15 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
             projections[i],
             geographicRectangle,
             i);
+    }
+    // Skirts are appended after texcoords so the wall's draped imagery copies
+    // the final edge texcoords, and before the baseVertices/localOrigin split so
+    // skirt vertices are localised together with the grid.
+    if (buildSkirt) {
+        appendRegularGridSkirt(
+            primitive,
+            std::max(1, gridSize) + 1,
+            geographicRectangle);
     }
     primitive.runtime.baseVertices = primitive.vertices;
     for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {

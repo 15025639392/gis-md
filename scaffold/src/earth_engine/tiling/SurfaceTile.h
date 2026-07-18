@@ -26,6 +26,11 @@ struct SurfaceVertex {
     Vec3 positionLowEcef;
     Vec3 normalEcef;
     std::array<float, 2> uv = {0.0f, 0.0f};
+    // geomorph 距离连续 morph 起点偏移（米，沿椭球法线）:= 本瓦片 2×自降采样
+    // 高度（osgEarth 邻居平均：偶数格点=self、奇数格点=相邻偶数格双线性）− 真实
+    // 高度。regular-grid worker 侧一次算好，复制进 TerrainGpuVertex.heightDelta，
+    // shader 做 pos += up·heightDelta·(1−morph)。0 = 无 morph（椭球代理/非规则栅格）。
+    float geomorphHeightDelta = 0.0f;
 };
 
 struct SurfaceGpuVertex {

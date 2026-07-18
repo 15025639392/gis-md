@@ -151,7 +151,8 @@ void TileSelectionShadowRunner::selectOnShadow(
                     TileRenderPlanFrameRefreshOptions{
                         input.options->enableLodTransitionPeriod,
                         input.interactionActive,
-                        input.resourceSmoothingActive}});
+                        input.resourceSmoothingActive,
+                        input.options->maximumScreenSpaceError}});
         });
 }
 

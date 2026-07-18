@@ -91,7 +91,8 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
                 TileRenderPlanFrameRefreshOptions{
                     tileset.options_.enableLodTransitionPeriod,
                     tileset.interactionActiveForFrame_,
-                    tileset.resourceSmoothingActiveForFrame_});
+                    tileset.resourceSmoothingActiveForFrame_,
+                    tileset.options_.maximumScreenSpaceError});
         },
         [&tileset, pPrepRenderer](
             const FrameState& selectionFrameState,
