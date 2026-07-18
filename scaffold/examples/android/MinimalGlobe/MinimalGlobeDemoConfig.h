@@ -78,6 +78,14 @@ constexpr int kMeasureImageryMaxZoom = 18;
 // 生产/交互路径保持 false(默认零影响)。
 constexpr bool kMeasureFreezeCamera = true;
 
+// kMeasureDecoupleImageryFromGeometry:北极星 Phase 2a 断纹理/几何耦合(flag 灰度)。
+// false = 耦合态(忠实 cesium,影像 isMoreDetailAvailable 捏造上采样地形子瓦片,
+//   瓦片数爆 22×,= 去耦前对照列)。
+// true  = 断耦合,几何 cap 在 DEM native max LOD(z12),影像不再驱动 refine,近景
+//   影像走 scale-bias 祖先复用(暂糊,Phase 2b 补清)。同位姿(配 kMeasureFreezeCamera)
+//   对拍 off/on 两列瓦片数/selector/churn = 干净测出解耦收益。
+constexpr bool kMeasureDecoupleImageryFromGeometry = false;
+
 // 2026-06-10 14:00 UTC+8 = 06:00 UTC.
 constexpr double kFixedSimulationJulianDate = 2461188.75;
 

@@ -83,6 +83,10 @@ struct TilesetOptions {
     // "rises") when it arrives. Default false = unchanged behavior / golden.
     bool enableTerrainFillProxy = false;
     int terrainFillProxyGridSize = 16;
+    // 北极星 Phase 2a 断纹理/几何耦合(见 EarthSceneConfig::decoupleImageryFromGeometry)。
+    // true → 影像 isMoreDetailAvailable 不再捏造上采样地形子瓦片,几何 cap 在 DEM
+    // native max LOD。默认 false = 忠实 cesium(不改 golden)。
+    bool decoupleImageryFromGeometry = false;
     bool renderTilesUnderCamera = true;
     int64_t maximumCachedBytes = 512LL * 1024 * 1024;
     bool enableLodTransitionPeriod = false;

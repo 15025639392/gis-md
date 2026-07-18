@@ -116,7 +116,8 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.rasterUpsampledChildren_
                 .createRasterOverlayUpsampledChildren(
                     tile,
-                    pPrepRenderer);
+                    pPrepRenderer,
+                    tileset.options_.decoupleImageryFromGeometry);
         },
         [&tileset, pPrepRenderer](TileLoadQueue& requests,
                                   FrameResourceBudget* budget) {

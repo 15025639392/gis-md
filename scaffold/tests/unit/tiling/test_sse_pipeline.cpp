@@ -260,6 +260,11 @@ struct TilesetTestAccess {
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
     }
+    static void createRasterOverlayUpsampledChildren(
+        Tileset& tileset, TilesetTile& tile, bool decoupleImageryFromGeometry) {
+        tileset.rasterUpsampledChildren_.createRasterOverlayUpsampledChildren(
+            tile, nullptr, decoupleImageryFromGeometry);
+    }
     static std::string terrainCacheKey(Tileset& tileset, const TileKey& key) {
         (void)tileset;
         return TileCacheKey::forTile(key);
@@ -15869,6 +15874,78 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
                   child->bounds.center().second),
           "TileRasterUpsampledChildMaterializer: glTF child keeps overlay projection and subdivision bounds");
 }
+// 北极星 Phase 2a 断耦合契约:同一"影像 more-detail、几何耗尽"的状态下,
+// 走 coordinator 时 decoupleImageryFromGeometry=true 必须早退不建子瓦片(几何
+// cap 在 native max),false 保持忠实 cesium 建满 4 个上采样子(A/B 同源验证)。
+void testRasterUpsampledChildrenDecoupleGateSuppressesFabrication() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(scheme),
+        {&activated},
+        &device,
+        TilesetOptions{});
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "decouple gate: glTF root tile is created");
+    if (!root) return;
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(&device);
+    if (!provider) return;
+    auto model = makeWebMercatorQuadTerrainGltfModel(root->bounds);
+    model->rasterOverlayDetails.rasterOverlayRectangles[1] =
+        projectForProvider(*provider, root->bounds);
+    model->rasterOverlayDetails.boundingRegion = {root->bounds, 0.0, 0.0};
+    root->content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->markRenderContentDone();
+    root->geometricError = 100.0;
+    Renderer renderer(nullptr);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> order{0};
+    RenderContentRasterOverlayStateUpdater::update(
+        renderer, *root, overlays, order, &device, 16.0, budget);
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    if (!mapped || !loadingTile) return;
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    const RenderContentRasterOverlayUpdateAction action =
+        RenderContentRasterOverlayStateUpdater::update(
+            renderer, *root, overlays, order, &device, 16.0, budget);
+    check(action.createRasterOverlayUpsampledChildren,
+          "decouple gate: more-detail raster still requests children (decision unchanged)");
+
+    // 断耦合开:coordinator 早退,几何不细分(children 保持 0)。
+    TilesetTestAccess::createRasterOverlayUpsampledChildren(
+        tileset, *root, /*decoupleImageryFromGeometry=*/true);
+    check(root->children.empty(),
+          "decouple gate: decouple=true suppresses upsampled child fabrication");
+    if (!root->children.empty()) return;
+
+    // 断耦合关:忠实 cesium,建满 4 个上采样子瓦片。
+    TilesetTestAccess::createRasterOverlayUpsampledChildren(
+        tileset, *root, /*decoupleImageryFromGeometry=*/false);
+    check(root->children.size() == 4,
+          "decouple gate: decouple=false keeps cesium-faithful 4-child fabrication");
+}
 void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
@@ -27878,6 +27955,7 @@ int main() {
     testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative();
     testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder();
     testRasterUpsampledChildrenMaterializeFromGltfRenderContent();
+    testRasterUpsampledChildrenDecoupleGateSuppressesFabrication();
     std::cout << "\n=== " << gFailures << " failures ===\n";
     return gFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

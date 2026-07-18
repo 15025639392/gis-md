@@ -55,6 +55,7 @@ TilesetOptions makeSceneTilesetOptions(const SceneTilesetConfig& config) {
         config.cullRequestsWhileMovingMultiplier;
     options.enableTerrainFillProxy = config.enableTerrainFillProxy;
     options.terrainFillProxyGridSize = config.terrainFillProxyGridSize;
+    options.decoupleImageryFromGeometry = config.decoupleImageryFromGeometry;
     return options;
 }
 

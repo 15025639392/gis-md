@@ -44,6 +44,9 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         4.0,
         2.0,
     };
+    // 北极星 Phase 2a 断纹理/几何耦合(flag 灰度,见 header)。
+    config.tileset.decoupleImageryFromGeometry =
+        kMeasureDecoupleImageryFromGeometry;
     // Android demo budget: keep visible detail unchanged, but do not retain the
     // desktop/cesium-native 512MB off-screen tile cache on a phone.
     config.tileset.maximumCachedBytes = 192LL * 1024 * 1024;

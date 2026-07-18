@@ -33,7 +33,14 @@ TileRasterUpsampledChildCoordinator::TileRasterUpsampledChildCoordinator(
 
 void TileRasterUpsampledChildCoordinator::createRasterOverlayUpsampledChildren(
     TilesetTile& tile,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    bool decoupleImageryFromGeometry) {
+    // 北极星 Phase 2a 断耦合:影像 isMoreDetailAvailable 不再驱动几何细分,
+    // 几何 cap 在 DEM native max LOD(不捏造上采样地形子瓦片)。近景影像改走
+    // scale-bias 祖先复用(暂糊),churn/瓦片数回落到 capped-z12。
+    if (decoupleImageryFromGeometry) {
+        return;
+    }
     const bool changed =
         TileRasterUpsampledChildMaterializer::materialize(
             tile,

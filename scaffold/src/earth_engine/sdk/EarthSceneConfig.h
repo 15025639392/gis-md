@@ -95,6 +95,11 @@ struct SceneTilesetConfig {
     // 代理网格,影像立即显示在平滑地球上,真实地形到达再"隆起"。默认关。
     bool enableTerrainFillProxy = false;
     int terrainFillProxyGridSize = 16;
+    // 北极星 Phase 2a 断纹理/几何耦合(flag 灰度):默认 false = 忠实 cesium
+    // (影像 isMoreDetailAvailable 捏造上采样地形子瓦片,几何随影像细分,瓦片数
+    // 爆 22×)。置 true = 几何按 DEM 几何误差细化,cap 在 native max LOD(z12);
+    // 影像不再驱动 refine,近景影像走 scale-bias 祖先复用(暂糊,Phase 2b 补清)。
+    bool decoupleImageryFromGeometry = false;
 };
 
 struct RasterOverlaySourceConfig {
