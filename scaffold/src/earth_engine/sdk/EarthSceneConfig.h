@@ -13,7 +13,19 @@ namespace earth_engine {
 
 enum class TerrainSourceKind {
     None,
-    QuantizedMesh
+    QuantizedMesh,
+    // 规则栅格高度图（raster DEM）地形：web-mercator XYZ 瓦片，每片一张
+    // tileSize×tileSize 的高程栅格（Mapbox Terrain-RGB 或 Terrarium PNG 编码），
+    // CPU 烘焙成规则栅格 glTF 网格（复用整条现有渲染管线）。
+    Heightmap
+};
+
+// 高度图 RGB 编码方式（对应 HeightmapTerrainProvider::Encoding）。
+enum class TerrainHeightmapEncoding {
+    // height(m) = -10000 + (R*65536 + G*256 + B) * 0.1
+    MapboxTerrainRgb,
+    // height(m) = R*256 + G + B/256 - 32768
+    Terrarium
 };
 
 enum class ImagerySourceKind {
@@ -62,6 +74,16 @@ struct TerrainSourceConfig {
     bool ellipsoidFallback = false;
     int ellipsoidFallbackMaxZoom = 13;
     int ellipsoidFallbackGridSize = 16;
+
+    // 高度图地形字段（kind == Heightmap 时用；复用 urlTemplate/minimumZoom/
+    // maximumZoom/attribution）。网格分辨率由解码后的 heightmap 尺寸自动决定
+    // （gridSize = tileSize − 1），不单独配置。
+    TerrainHeightmapEncoding heightmapEncoding =
+        TerrainHeightmapEncoding::MapboxTerrainRgb;
+    float heightmapHeightFactor = 1.0f;
+    std::vector<float> heightmapNoDataValues;
+    // 原生最大 zoom（0 → 取 maximumZoom）。超出后由上采样（父级重采样）供给。
+    int heightmapMaxNativeZoom = 0;
 };
 
 struct SceneTilesetConfig {

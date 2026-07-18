@@ -4,6 +4,7 @@
 #include "../content/CompositeTerrainProvider.h"
 #include "../content/EllipsoidTerrainContentProvider.h"
 #include "../content/GltfContentProvider.h"
+#include "../content/HeightmapTerrainContentProvider.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../layers/ActivatedRasterOverlay.h"
@@ -291,6 +292,49 @@ SceneTerrainRuntimeSources createTerrainRuntimeSources(
                     config.ellipsoidFallbackMaxZoom);
         } else {
             sources.contentProvider = std::move(qm);
+        }
+        return sources;
+    }
+
+    if (config.kind == TerrainSourceKind::Heightmap) {
+        const HeightmapTerrainProvider::Encoding encoding =
+            config.heightmapEncoding == TerrainHeightmapEncoding::Terrarium
+                ? HeightmapTerrainProvider::Encoding::Terrarium
+                : HeightmapTerrainProvider::Encoding::MapboxTerrainRgb;
+        auto hm = std::make_unique<HeightmapTerrainProvider>(
+            config.urlTemplate, config.attribution);
+        hm->setEncoding(encoding);
+        hm->setPlatformBridge(&platformBridge);
+        const int maxZoom = config.maximumZoom > 0 ? config.maximumZoom : 14;
+        hm->setZoomRange(config.minimumZoom, maxZoom);
+        if (config.heightmapMaxNativeZoom > 0) {
+            hm->setMaxNativeZoom(config.heightmapMaxNativeZoom);
+        }
+        if (config.tileSize > 0) {
+            hm->setTileSize(config.tileSize);
+        }
+        hm->setHeightFactor(config.heightmapHeightFactor);
+        if (!config.heightmapNoDataValues.empty()) {
+            hm->setNoDataValues(config.heightmapNoDataValues);
+        }
+        const std::string schemeId = hm->schemeId();
+        sources.tileScheme = createTileSchemeForId(schemeId);
+        auto content = std::make_unique<HeightmapTerrainContentProvider>(
+            std::move(hm), maxZoom);
+        if (config.ellipsoidFallback) {
+            // Ellipsoid floor for uncovered regions, sharing the tiling scheme
+            // (same as the QM path) so both quadtrees align.
+            auto ellipsoid = std::make_unique<EllipsoidTerrainContentProvider>(
+                schemeId,
+                config.ellipsoidFallbackMaxZoom,
+                config.ellipsoidFallbackGridSize);
+            sources.contentProvider =
+                std::make_unique<CompositeTerrainProvider>(
+                    std::move(content),
+                    std::move(ellipsoid),
+                    config.ellipsoidFallbackMaxZoom);
+        } else {
+            sources.contentProvider = std::move(content);
         }
         return sources;
     }

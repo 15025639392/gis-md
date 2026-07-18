@@ -967,6 +967,12 @@ add_test(NAME test_input_manager COMMAND test_input_manager)
 # stage 6 tests
 # ============================================================
 
+add_executable(test_heightmap_terrain
+    unit/content/test_heightmap_terrain.cpp
+)
+target_link_libraries(test_heightmap_terrain PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_heightmap_terrain COMMAND test_heightmap_terrain)
+
 add_executable(test_terrain_provider
     unit/providers/test_terrain_provider.cpp
 )

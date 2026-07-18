@@ -122,6 +122,7 @@ double longitudeAt(const Rectangle& rectangle, double t) {
 void buildEllipsoidGrid(const Rectangle& tileBounds,
                         int gridSize,
                         const EllipsoidProxyHeightSampler& heightSampler,
+                        bool computeGridNormals,
                         std::vector<SurfaceVertex>& outVertices,
                         std::vector<uint32_t>& outIndices) {
     const int safeGrid = std::max(1, gridSize);
@@ -165,6 +166,30 @@ void buildEllipsoidGrid(const Rectangle& tileBounds,
                 static_cast<float>(clampedU),
                 static_cast<float>(clampedV)};
             outVertices.push_back(vertex);
+        }
+    }
+
+    // Real-terrain slope normals: central difference of neighbouring grid
+    // heights (one-sided at tile edges). Overwrites the flat geodetic normal set
+    // above. East×North = outward up in the local ENU frame.
+    if (computeGridNormals) {
+        const auto posAt = [&](int gx, int gy) -> const Vec3& {
+            return outVertices[static_cast<size_t>(gy * n + gx)].positionEcef;
+        };
+        for (int y = 0; y < n; ++y) {
+            for (int x = 0; x < n; ++x) {
+                const Vec3 tangentEast =
+                    posAt(std::min(x + 1, n - 1), y) - posAt(std::max(x - 1, 0), y);
+                const Vec3 tangentNorth =
+                    posAt(x, std::max(y - 1, 0)) - posAt(x, std::min(y + 1, n - 1));
+                const Vec3 normal = tangentEast.cross(tangentNorth);
+                const double len = normal.length();
+                SurfaceVertex& vertex =
+                    outVertices[static_cast<size_t>(y * n + x)];
+                vertex.normalEcef = len > 1e-6
+                    ? Vec3(normal.x() / len, normal.y() / len, normal.z() / len)
+                    : ellipsoid.geodeticSurfaceNormal(vertex.positionEcef);
+            }
         }
     }
 
@@ -218,25 +243,29 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     const Rectangle& geographicRectangle,
     RasterOverlayProjection projection,
     int gridSize,
-    const EllipsoidProxyHeightSampler& heightSampler) {
+    const EllipsoidProxyHeightSampler& heightSampler,
+    bool computeGridNormals) {
     return makeModel(
         geographicRectangle,
         std::vector<RasterOverlayProjection>{projection},
         gridSize,
-        heightSampler);
+        heightSampler,
+        computeGridNormals);
 }
 
 std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     const Rectangle& geographicRectangle,
     const std::vector<RasterOverlayProjection>& projections,
     int gridSize,
-    const EllipsoidProxyHeightSampler& heightSampler) {
+    const EllipsoidProxyHeightSampler& heightSampler,
+    bool computeGridNormals) {
     std::vector<SurfaceVertex> gridVertices;
     std::vector<uint32_t> gridIndices;
     buildEllipsoidGrid(
         geographicRectangle,
         gridSize,
         heightSampler,
+        computeGridNormals,
         gridVertices,
         gridIndices);
     auto model = std::make_unique<GltfModel>();

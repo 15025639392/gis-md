@@ -41,16 +41,22 @@ public:
     /// When `heightSampler` is set, each grid vertex is lifted to the sampled
     /// terrain height (borrowed edge heights → crack-free meeting with loaded
     /// neighbours); unset or nullopt samples keep the flat ellipsoid surface.
+    // When `computeGridNormals` is true, per-vertex normals are derived from
+    // neighbouring grid heights (central difference → correct slope shading for
+    // real terrain). Default false keeps the flat geodetic surface normal used
+    // by the ellipsoid proxy.
     static std::unique_ptr<GltfModel> makeModel(
         const Rectangle& geographicRectangle,
         RasterOverlayProjection projection,
         int gridSize,
-        const EllipsoidProxyHeightSampler& heightSampler = {});
+        const EllipsoidProxyHeightSampler& heightSampler = {},
+        bool computeGridNormals = false);
     static std::unique_ptr<GltfModel> makeModel(
         const Rectangle& geographicRectangle,
         const std::vector<RasterOverlayProjection>& projections,
         int gridSize,
-        const EllipsoidProxyHeightSampler& heightSampler = {});
+        const EllipsoidProxyHeightSampler& heightSampler = {},
+        bool computeGridNormals = false);
 
     /// The RasterOverlayDetails a proxy model of this rectangle/projection
     /// carries (projection list + projected rectangle + NW-V convention).
