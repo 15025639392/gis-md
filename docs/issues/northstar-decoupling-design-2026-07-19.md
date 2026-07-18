@@ -145,7 +145,18 @@ FABDEM 源 ~30m。grid65 = 64 interval/tile。重庆纬度 29.617°：
    - ⏳ **待用户在真机采样**：开 `kMeasureFreezeCamera` 重建 → 用 Phase 0 各 `kMeasure*` 位姿（含 far-5000）采**去耦前**完整对照列（瓦片数/selector/churn/字节），回填 Phase 0 baseline 文档 far 行。
 2. **Phase 2a 断耦合 + cap z12**（flag-gated）：断 `TileRasterUpsampledChildMaterializer.h:42-63` 的 `isMoreDetailAvailable→materializeRasterUpsampledChildren`；地形按 DEM 几何误差细化 cap 在 native max（z12）;影像四叉树独立继续（无几何/无 clip）。验收 = 同位姿瓦片数/selector/churn 回落到接近 capped-z12 列。**预期近景影像此时仍糊**（走已有 scale-bias 祖先复用，只到 ~z12），必接 2b。
    - ✅ **引擎侧已落地（未提交）**：`TilesetOptions::decoupleImageryFromGeometry`（贯通 `EarthSceneConfig`→facade→options）。cut 点 = `TileRasterUpsampledChildCoordinator::createRasterOverlayUpsampledChildren` 早退（`decouple=true` 时不调 `materialize`，不捏造上采样地形子瓦片）；`prefetcher` 的 `createRasterOverlayUpsampledChildren` 决策位不变（保持忠实，只断消费）。几何自然 cap 在 DEM native max（z13+ 唯一来源就是这条捏造）。demo `kMeasureDecoupleImageryFromGeometry`（默认 false=耦合对照）。单测 `decouple gate`（同源 A/B：true→0 子/false→4 子，决策位不变）+ golden 11/11 + child-materializer 54/54 零回归。
-   - ⏳ **待用户真机 A/B**：`kMeasureFreezeCamera=true` 固定位姿，翻 `kMeasureDecoupleImageryFromGeometry` off→on 采两列（瓦片数/selector/churn），验证去耦列逼近 capped-z12。近景影像预期仍糊（Phase 2b 补清）。
+   - ✅ **真机 A/B 已采（2026-07-19，debug，冻结相机 elev45/z1500m 同位姿，设备 7e045e39，heightmap 地形 8091）——验收通过**：
+
+     | 指标（settled） | Run A 耦合 | Run B 去耦(2a) | Δ |
+     |---|---|---|---|
+     | **render 瓦片数** | **68** | **3** | **↓22.7× / -95.6%** |
+     | memImageryKB(影像纹理) | 43840 | 10816 | ↓4.05× / -75% |
+     | memContentKB(地形几何) | 84261 | 77957 | -7.5%(其次,符 Phase 0) |
+     | memTotalKB | 128101 | 88773 | -30.7% |
+     | Engine.render.total | 8-14ms | 5-6ms | ~2× |
+
+     **与 Phase 0 基线逐条吻合**(coupled 65 vs capped 3-6;影像 4.5×;几何字节其次)。**2a「断耦合+cap z12 摘 80%」在真机坐实**:头号成本瓦片数 68→3(砍 96%),影像纹理 4×降,总内存 -31%,帧时间~2×。selector/churn 在冻结相机 settled 态被 reuse 门跳过(=0),运动期杠杆需运动场景另测,但静态瓦片数已决定性证明收益。
+     - **⚠️ 代价(符预期)**:Run B 的 memImagery 只剩 10.6MB = **近景影像退回 z0-12 走 scale-bias 祖先复用 = Phase 0 那张糊图**。这正是 2a 单独的必然状态,**必接 2b 补清晰度**。
 3. **并行 C-PoC**：最小虚拟纹理（一张 atlas + 间接纹理 + 一次 feedback）真机量固定开销，回填 §5 诚实账 → 定 §8 决策 #3（B vs C）。
    - ✅ **骨架已落地（未提交）**：新模块 `renderer/VirtualTexturePage.{h,cpp}`（纯 CPU「页」数据模型：VtPageId + RGBA8 feedback 编解码 + VtPageTable LRU 驻留/间接纹理更新，B/C 共用）+ `renderer/VirtualTexturePoc.{h,cpp}`（GPU 编排：物理 atlas + 间接纹理 + feedback FBO，每帧 feedback pass→**回读(计时)**→解码→页表→写间接纹理）。**新增 `RenderDevice::readFramebufferPixels` 回读 API**（之前完全缺失,§5 头号未知量)——GLES `glReadPixels` + Metal blit→shared buffer+`waitUntilCompleted`（**故意同步 = 量最坏 stall 上界**，两后端已实现,macOS 下 Metal 也编过）。flag 灰度 `EarthSceneConfig::virtualTexturePoc`→facade→`Engine::setVirtualTexturePocEnabled`,每帧 tick,回读 ms 报进 EarthPerf 头行 `vtReadback=`。demo `kMeasureVirtualTexturePoC`（默认 false）。单测 page 9/9 + poc 9/9(mock canned feedback 走通整链)+ 全量 150/150 零回归。
    - ⚠️ **骨架局限（诚实标注）**：feedback pass 只清背景**未接 page-id 片元 shader**,故 on-device 解码可见页恒 0——但**①回读 stall 计时依然有效**（stall 在 GPU→CPU 同步屏障,与画了什么无关)。**②逐 fragment 间接采样固定开销是下一子步**（改 terrain 片元 shader;sampler 余量已核实充足:terrain 是独立小 shader,GLES unit 1-4 空 / Metal sampler 1-15 空,C 的 +2 装得下）。RGBA8 feedback 只到 z14(x/y 各 14 位),z18 需更宽格式(扩 TextureDesc,跟进项)。
