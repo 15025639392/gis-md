@@ -149,7 +149,11 @@ FABDEM 源 ~30m。grid65 = 64 interval/tile。重庆纬度 29.617°：
 3. **并行 C-PoC**：最小虚拟纹理（一张 atlas + 间接纹理 + 一次 feedback）真机量固定开销，回填 §5 诚实账 → 定 §8 决策 #3（B vs C）。
    - ✅ **骨架已落地（未提交）**：新模块 `renderer/VirtualTexturePage.{h,cpp}`（纯 CPU「页」数据模型：VtPageId + RGBA8 feedback 编解码 + VtPageTable LRU 驻留/间接纹理更新，B/C 共用）+ `renderer/VirtualTexturePoc.{h,cpp}`（GPU 编排：物理 atlas + 间接纹理 + feedback FBO，每帧 feedback pass→**回读(计时)**→解码→页表→写间接纹理）。**新增 `RenderDevice::readFramebufferPixels` 回读 API**（之前完全缺失,§5 头号未知量)——GLES `glReadPixels` + Metal blit→shared buffer+`waitUntilCompleted`（**故意同步 = 量最坏 stall 上界**，两后端已实现,macOS 下 Metal 也编过）。flag 灰度 `EarthSceneConfig::virtualTexturePoc`→facade→`Engine::setVirtualTexturePocEnabled`,每帧 tick,回读 ms 报进 EarthPerf 头行 `vtReadback=`。demo `kMeasureVirtualTexturePoC`（默认 false）。单测 page 9/9 + poc 9/9(mock canned feedback 走通整链)+ 全量 150/150 零回归。
    - ⚠️ **骨架局限（诚实标注）**：feedback pass 只清背景**未接 page-id 片元 shader**,故 on-device 解码可见页恒 0——但**①回读 stall 计时依然有效**（stall 在 GPU→CPU 同步屏障,与画了什么无关)。**②逐 fragment 间接采样固定开销是下一子步**（改 terrain 片元 shader;sampler 余量已核实充足:terrain 是独立小 shader,GLES unit 1-4 空 / Metal sampler 1-15 空,C 的 +2 装得下）。RGBA8 feedback 只到 z14(x/y 各 14 位),z18 需更宽格式(扩 TextureDesc,跟进项)。
-   - ⏳ **待用户真机**：开 `kMeasureVirtualTexturePoC` 采 `vtReadback` 毫秒数(不同 feedbackDownscale/atlas 尺寸),回填 §5「C 的诚实账」→ 对比 B → 拍板 §8 决策 #3。
+   - ✅ **真机首测已采（2026-07-19，debug 构建，feedbackDownscale=8，设备 7e045e39）**：`vtReadback` n=32 → **min 0.76 / 中位 3.84 / 均值 4.81 / p90 9.58 / max 10.35 ms**。**结论：同步 feedback 回读的 stall 在移动端真实且不进帧预算**——单 p90≈9.6ms 就吃掉 60fps 帧预算(16.7ms)大半，max 10.35ms。§5「回读可能 stall」得到实测证实。
+     - **测量语义**：`readbackMs` 包 `glReadPixels`(强制冲刷该 FBO 前所有 GPU 命令 + 传 135×300×4≈162KB)。这是 GPU 同步屏障耗时,**GPU-bound、与 -O0 debug 基本无关 → 该数可信**(不同于 [[perf-measured-on-debug-build]] 说的 CPU 侧膨胀)。含「冲刷帧内待完成 GPU 工作」成分,但这正是「往帧中段插同步回读」的真实代价。
+     - **⟹ 对 §8 决策 #3 的输入**：**同步回读不可用于生产 C**;C 若上必须**异步化**(PBO 双缓冲 + fence / completion handler,回读延迟 1-2 帧消费),固定开销才可控。**B(逐瓦片合成)完全不需回读通路,天然回避这个 stall**——B 相对 C 的一个实测优势。
+     - **⚠️ 骨架读数噪声**:`vtVis` 恒 1 = feedback FBO 被 `beginPass` 清成**天空色**(非背景 0),整帧同色 decode 成 1 假页;`vtUpdate` 15-23ms 是 -O0 下对 ~40K 像素的 decode 循环,**均骨架产物、无意义、忽略**。接 page-id 片元 shader + feedback 清 0 后才有真页数据。
+   - ⏳ **待跟进**：①接 page-id 片元 shader 量②逐 fragment 间接采样开销;②改异步 PBO 回读重测 `vtReadback`(看能否移出关键路径);③做 B 的对照 PoC → 拍板 §8 决策 #3。
 4. **Phase 2b 影像纹理源**：按 3 的结论建 B 或 C，让 capped 粗瓦片显 z18 清晰影像（复用现成 scale-bias 寻址原语 §2）。验收 = 同位姿去耦列"斜率≈0"且影像照清。
 
 ## 9. 建议的下一个动作（若用户走推荐路径）
