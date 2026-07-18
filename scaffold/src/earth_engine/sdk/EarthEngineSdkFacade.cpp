@@ -608,6 +608,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                                config_.aerialFogStartDistance);
     engine_.setVirtualTexturePocEnabled(config_.virtualTexturePoc);
     engine_.setTileCompositeBakePocEnabled(config_.tileCompositeBakePoc);
+    engine_.setVtIndirectionSamplePocEnabled(config_.vtIndirectionSamplePoc);
 }
 
 void EarthEngineSdkFacade::resetCamera() {

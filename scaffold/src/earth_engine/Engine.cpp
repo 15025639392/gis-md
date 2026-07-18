@@ -6,6 +6,7 @@
 #include "renderer/OffscreenPostProcess.h"
 #include "renderer/VirtualTexturePoc.h"
 #include "renderer/TileCompositeBakePoc.h"
+#include "renderer/VtIndirectionSamplePoc.h"
 #include "renderer/RenderDevice.h"
 #include "layers/VectorLayer.h"
 #include "debug/PlatformLog.h"
@@ -77,6 +78,11 @@ void Engine::onSurfaceDestroyed() {
         tileCompositeBakePoc_.reset();
     }
     tileCompositeBakePocInitFailed_ = false;
+    if (vtIndirectionSamplePoc_) {
+        vtIndirectionSamplePoc_->dispose();
+        vtIndirectionSamplePoc_.reset();
+    }
+    vtIndirectionSamplePocInitFailed_ = false;
     scene_->setRenderDevice(nullptr);
     if (device_) {
         device_->onSurfaceDestroyed();
@@ -120,6 +126,15 @@ void Engine::setTileCompositeBakePocEnabled(bool enabled) {
     if (!enabled && tileCompositeBakePoc_) {
         tileCompositeBakePoc_->dispose();
         tileCompositeBakePoc_.reset();
+    }
+}
+
+void Engine::setVtIndirectionSamplePocEnabled(bool enabled) {
+    vtIndirectionSamplePocEnabled_ = enabled;
+    vtIndirectionSamplePocInitFailed_ = false;
+    if (!enabled && vtIndirectionSamplePoc_) {
+        vtIndirectionSamplePoc_->dispose();
+        vtIndirectionSamplePoc_.reset();
     }
 }
 
@@ -190,6 +205,23 @@ bool Engine::render(double deltaSeconds) {
         }
         if (tileCompositeBakePoc_ && tileCompositeBakePoc_->ensureResources()) {
             tileCompositeBakePoc_->tick(scene_->diagnostics().visibleTiles);
+        }
+    }
+    // 北极星 合成方案 门① 原型(测量台专用,默认关):一屏 fill 量逐片元间接采样
+    // 倍率(baseline vs descent)。同样短路、纯旁路,不影响渲染。
+    if (vtIndirectionSamplePocEnabled_ && !vtIndirectionSamplePocInitFailed_) {
+        if (!vtIndirectionSamplePoc_) {
+            auto poc = std::make_unique<VtIndirectionSamplePoc>();
+            if (poc->initialize(device_, VtIndirectionSamplePocConfig{})) {
+                vtIndirectionSamplePoc_ = std::move(poc);
+            } else {
+                vtIndirectionSamplePocInitFailed_ = true;
+            }
+        }
+        if (vtIndirectionSamplePoc_ &&
+            vtIndirectionSamplePoc_->ensureResources(surfaceWidthPixels_,
+                                                     surfaceHeightPixels_)) {
+            vtIndirectionSamplePoc_->tick();
         }
     }
     if (scene_->shouldHoldPresentationFrame()) {
@@ -335,9 +367,21 @@ bool Engine::render(double deltaSeconds) {
             b.bakeMs, b.bakedTiles,
             static_cast<long long>(b.bakeBytes / 1024));
     }
-    char detail[544];
+    // 北极星 门① 原型头行段(仅活跃时追加):vtiRatio=descent/baseline(**门①核心
+    //   结论**:逐片元间接降相对一次平采样的倍率);vtiBase/vtiDesc=每-pass ms;
+    //   vtiLv=descent 层数;vtiMP=每 pass fill 的百万片元数。
+    char viDetail[128] = "";
+    if (vtIndirectionSamplePoc_ && vtIndirectionSamplePoc_->isReady()) {
+        const VtIndirectionSampleFrameStats& v =
+            vtIndirectionSamplePoc_->lastStats();
+        std::snprintf(viDetail, sizeof(viDetail),
+            " vtiRatio=%.2f vtiBase=%.3f vtiDesc=%.3f vtiLv=%d vtiMP=%.2f",
+            v.ratio, v.baselineMs, v.descentMs, v.descentLevels,
+            static_cast<double>(v.fillPixels) / 1.0e6);
+    }
+    char detail[672];
     std::snprintf(detail, sizeof(detail),
-        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s%s",
+        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s%s%s",
         diag.engineBeginFrameMs,
         diag.sceneUpdateMs,
         diag.sceneRenderMs,
@@ -347,7 +391,8 @@ bool Engine::render(double deltaSeconds) {
         diag.visibleTiles,
         scenePresented ? 0 : 1,
         vtDetail,
-        bDetail);
+        bDetail,
+        viDetail);
     perf::logTiming(scene_->frameState().frameId,
                     "Engine.render.total",
                     diag.engineFrameCpuMs,

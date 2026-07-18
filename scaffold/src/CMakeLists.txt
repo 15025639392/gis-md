@@ -148,6 +148,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/VirtualTexturePoc.cpp
     earth_engine/renderer/TileCompositeBakePoc.h
     earth_engine/renderer/TileCompositeBakePoc.cpp
+    earth_engine/renderer/VtIndirectionSamplePoc.h
+    earth_engine/renderer/VtIndirectionSamplePoc.cpp
     earth_engine/renderer/RenderDeviceRasterTextureUploader.h
     earth_engine/renderer/RenderDeviceRasterTextureUploader.cpp
     earth_engine/renderer/IPrepareRendererResources.h

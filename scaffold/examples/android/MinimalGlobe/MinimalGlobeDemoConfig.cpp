@@ -158,6 +158,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     config.virtualTexturePoc = kMeasureVirtualTexturePoC;
     // 北极星 Phase 2b B 方案逐瓦片合成 PoC(默认关,见 header)。
     config.tileCompositeBakePoc = kMeasureTileCompositeBakePoC;
+    // 北极星 Phase 2b 合成方案 门① 原型(默认关,见 header)。
+    config.vtIndirectionSamplePoc = kMeasureVtIndirectionSamplePoC;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;
     if (kEnableInstancedI3dmDemo) {
         // 默认固定时间是宾州凌晨(树在夜侧无光照=全黑),实例化观察改用当地白天

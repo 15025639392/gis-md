@@ -109,6 +109,13 @@ constexpr double kMeasureHorizonHeightMeters = 12000.0;
 // 地平线。纯旁路测量,不改渲染。骨架量 pass 切换地板(合成 draw 待细化)。
 constexpr bool kMeasureTileCompositeBakePoC = false;
 
+// kMeasureVtIndirectionSamplePoC:北极星 Phase 2b 合成方案「门①」原型。
+// true = 每帧一屏 fill 跑 baseline(1 次 atlas 采样)vs descent(N 次依赖间接
+// fetch + atlas 采样),把逐片元间接采样倍率报进 EarthPerf 头行(vtiRatio=)。
+// **这是合成方案唯一真未知(门①逐片元间接采样开销)的数据来源**——过门(倍率
+// 与 B fill 同量级)→ 目标形态定合成方案;过不了 → 退 Option-lite。纯旁路测量。
+constexpr bool kMeasureVtIndirectionSamplePoC = false;
+
 // 2026-06-10 14:00 UTC+8 = 06:00 UTC.
 constexpr double kFixedSimulationJulianDate = 2461188.75;
 

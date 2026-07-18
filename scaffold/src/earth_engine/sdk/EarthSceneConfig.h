@@ -206,6 +206,10 @@ struct EarthSceneConfig {
     /// 可见瓦片数做 N 个离屏 bake pass,量 B 的每帧烘焙开销(vs C 的回读税),报进
     /// EarthPerf 头行 bBake=。纯旁路测量。
     bool tileCompositeBakePoc = false;
+    /// 北极星 Phase 2b 合成方案「门①」原型(默认关,测量台专用):一屏 fill 跑
+    /// baseline(1 次 atlas 采样)vs descent(N 次依赖间接 fetch + atlas 采样),
+    /// 量逐片元间接采样倍率,报进 EarthPerf 头行 vtiRatio=。纯旁路测量。
+    bool vtIndirectionSamplePoc = false;
 };
 
 } // namespace earth_engine
