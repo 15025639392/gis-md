@@ -10,7 +10,6 @@ namespace {
 
 VtIndirectionSamplePocConfig cfg() {
     VtIndirectionSamplePocConfig c;
-    c.descentLevels = 4;
     c.indirectionSize = 32;
     c.atlasSize = 64;
     c.passesPerTick = 3;
@@ -19,12 +18,12 @@ VtIndirectionSamplePocConfig cfg() {
 
 }  // namespace
 
-TEST(VtIndirectionSamplePoc, InitializeBuildsTwoShadersAndTextures) {
+TEST(VtIndirectionSamplePoc, InitializeBuildsSweepShadersAndTextures) {
     MockRenderDevice device;
     VtIndirectionSamplePoc poc;
     ASSERT_TRUE(poc.initialize(&device, cfg()));
-    // baseline(descent 0)+ descent(descent N)两组 shader。
-    EXPECT_EQ(device.shaderCount, 2);
+    // baseline(descent 0)+ kVtSweepCount 个深度 shader。
+    EXPECT_EQ(device.shaderCount, 1 + kVtSweepCount);
     // 间接纹理 + atlas 两张。
     EXPECT_EQ(device.createdTextureCount, 2);
 }
@@ -64,14 +63,15 @@ TEST(VtIndirectionSamplePoc, TickRunsBothGroupsAndRecordsStats) {
 
     const VtIndirectionSampleFrameStats s = poc.tick();
     EXPECT_TRUE(s.ready);
-    EXPECT_EQ(s.descentLevels, 4);
     EXPECT_EQ(s.passes, 3);
-    // 两组各 passesPerTick 个全屏 pass。
-    EXPECT_EQ(device.beginPassCount, 2 * 3);
-    EXPECT_EQ(device.endPassCount, 2 * 3);
+    // 组:syncFloor(0 pass)+ baseline(N)+ kVtSweepCount 个深度组(各 N)。
+    EXPECT_EQ(device.beginPassCount, (1 + kVtSweepCount) * 3);
+    EXPECT_EQ(device.endPassCount, (1 + kVtSweepCount) * 3);
     EXPECT_EQ(s.fillPixels, 640LL * 480);
     EXPECT_GE(s.baselineMs, 0.0);
-    EXPECT_GE(s.descentMs, 0.0);
+    for (int i = 0; i < kVtSweepCount; ++i) {
+        EXPECT_GE(s.descentMs[i], 0.0);
+    }
 }
 
 TEST(VtIndirectionSamplePoc, TickBeforeEnsureIsNoop) {

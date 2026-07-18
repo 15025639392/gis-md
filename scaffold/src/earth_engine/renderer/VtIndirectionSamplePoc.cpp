@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace earth_engine {
@@ -75,7 +76,6 @@ bool VtIndirectionSamplePoc::initialize(
     }
     device_ = device;
     config_ = config;
-    config_.descentLevels = std::max(0, config_.descentLevels);
     config_.indirectionSize = std::max(1, config_.indirectionSize);
     config_.atlasSize = std::max(1, config_.atlasSize);
     config_.passesPerTick = std::max(1, config_.passesPerTick);
@@ -87,11 +87,17 @@ bool VtIndirectionSamplePoc::initialize(
     }
 
     baselineShader_ = buildShader(device_, 0);
-    descentShader_ = buildShader(device_, config_.descentLevels);
-    if (!baselineShader_ || !descentShader_) {
-        baselineShader_.reset();
-        descentShader_.reset();
+    if (!baselineShader_) {
         return false;
+    }
+    for (int i = 0; i < kVtSweepCount; ++i) {
+        auto sh = buildShader(device_, vtSweepDepths()[i]);
+        if (!sh) {
+            baselineShader_.reset();
+            descentShaders_.clear();
+            return false;
+        }
+        descentShaders_.push_back(std::move(sh));
     }
 
     const float quad[] = {-1.f, -1.f, 1.f, -1.f, -1.f, 1.f, 1.f, 1.f};
@@ -203,6 +209,15 @@ double VtIndirectionSamplePoc::runPasses(ShaderProgram* shader, int n) {
             device_->endPass();
         }
     }
+    // **强制 GPU 完成**:tiled GPU 上 beginPass/submit 只是入队,片元着色被推迟到
+    // resolve,纯 CPU 计时会量到「命令编码」而非真实 fill(实测 3.44MP fill 报
+    // 0.02ms = 不可信)。1×1 回读强制 flush→resolve→等 GPU:所有 N 个 pass(同
+    // 一 FBO,后画覆盖前画)必须先执行完回读才返回正确像素 → 计时区间纳入真实
+    // 累计 GPU 时间。回读固定开销对 baseline/descent 两组**相同**,故其偏置在
+    // 两组相消,delta(descent−baseline)= 纯逐片元间接采样开销(见 tick)。
+    uint8_t oneTexel[4] = {0, 0, 0, 0};
+    device_->readFramebufferPixels(fillFbo_.get(), 0, 0, 1, 1, oneTexel,
+                                   sizeof(oneTexel));
     return perf::nowMs() - startMs;
 }
 
@@ -215,17 +230,21 @@ VtIndirectionSampleFrameStats VtIndirectionSamplePoc::tick() {
     stats.ready = true;
     const int n = config_.passesPerTick;
     stats.passes = n;
-    stats.descentLevels = config_.descentLevels;
     stats.fillPixels =
         static_cast<int64_t>(fillWidth_) * static_cast<int64_t>(fillHeight_);
 
-    // 两组同帧同 GPU 态:先 baseline 再 descent,各取每-pass 均值。倍率 =
-    // descent/baseline = 门①核心结论(间接降相对一次平采样贵多少)。
+    // 同帧同 GPU 态,每组末尾强制 GPU 同步(runPasses 内 1×1 回读)后计时:
+    //   syncFloor = runPasses(_,0) = 仅同步屏障地板(无 draw);
+    //   每组 total = syncFloor + Σ_N(真实 per-pass GPU fill),故减 syncFloor 再 /N
+    //   = 干净的每-pass GPU fill。各组减的是同一 syncFloor,故组间可直接比。
+    const double syncFloor = runPasses(baselineShader_.get(), 0);
     const double baseTotal = runPasses(baselineShader_.get(), n);
-    const double descTotal = runPasses(descentShader_.get(), n);
-    stats.baselineMs = baseTotal / n;
-    stats.descentMs = descTotal / n;
-    stats.ratio = stats.baselineMs > 0.0 ? stats.descentMs / stats.baselineMs : 0.0;
+    stats.syncFloorMs = syncFloor;
+    stats.baselineMs = std::max(0.0, baseTotal - syncFloor) / n;
+    for (int i = 0; i < kVtSweepCount; ++i) {
+        const double total = runPasses(descentShaders_[i].get(), n);
+        stats.descentMs[i] = std::max(0.0, total - syncFloor) / n;
+    }
 
     lastStats_ = stats;
     return stats;
@@ -234,7 +253,7 @@ VtIndirectionSampleFrameStats VtIndirectionSamplePoc::tick() {
 void VtIndirectionSamplePoc::dispose() {
     fillFbo_.reset();
     baselineShader_.reset();
-    descentShader_.reset();
+    descentShaders_.clear();
     quadBuffer_.reset();
     indirectionTexture_.reset();
     atlasTexture_.reset();

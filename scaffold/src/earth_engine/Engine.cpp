@@ -367,19 +367,23 @@ bool Engine::render(double deltaSeconds) {
             b.bakeMs, b.bakedTiles,
             static_cast<long long>(b.bakeBytes / 1024));
     }
-    // 北极星 门① 原型头行段(仅活跃时追加):vtiRatio=descent/baseline(**门①核心
-    //   结论**:逐片元间接降相对一次平采样的倍率);vtiBase/vtiDesc=每-pass ms;
-    //   vtiLv=descent 层数;vtiMP=每 pass fill 的百万片元数。
-    char viDetail[128] = "";
+    // 北极星 门① 原型头行段(仅活跃时追加):**逐片元间接降深度曲线**——vtiBase=
+    //   无间接的 1 次 atlas 采样每-pass GPU fill ms(参照地板);vtiD{n}=降 n 层
+    //   (n 依赖 fetch + atlas 采样)每-pass ms;vtiSync=强制同步地板(已减去);
+    //   vtiMP=每 pass fill 的百万片元数。倍率自算 vtiDn/vtiBase。
+    char viDetail[240] = "";
     if (vtIndirectionSamplePoc_ && vtIndirectionSamplePoc_->isReady()) {
         const VtIndirectionSampleFrameStats& v =
             vtIndirectionSamplePoc_->lastStats();
+        const int* d = vtSweepDepths();
         std::snprintf(viDetail, sizeof(viDetail),
-            " vtiRatio=%.2f vtiBase=%.3f vtiDesc=%.3f vtiLv=%d vtiMP=%.2f",
-            v.ratio, v.baselineMs, v.descentMs, v.descentLevels,
-            static_cast<double>(v.fillPixels) / 1.0e6);
+            " vtiBase=%.3f vtiD%d=%.3f vtiD%d=%.3f vtiD%d=%.3f vtiD%d=%.3f vtiD%d=%.3f vtiD%d=%.3f vtiSync=%.3f vtiMP=%.2f",
+            v.baselineMs,
+            d[0], v.descentMs[0], d[1], v.descentMs[1], d[2], v.descentMs[2],
+            d[3], v.descentMs[3], d[4], v.descentMs[4], d[5], v.descentMs[5],
+            v.syncFloorMs, static_cast<double>(v.fillPixels) / 1.0e6);
     }
-    char detail[672];
+    char detail[800];
     std::snprintf(detail, sizeof(detail),
         "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s%s%s",
         diag.engineBeginFrameMs,
