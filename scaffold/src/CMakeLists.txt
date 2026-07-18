@@ -142,6 +142,10 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/Renderer.cpp
     earth_engine/renderer/OffscreenPostProcess.h
     earth_engine/renderer/OffscreenPostProcess.cpp
+    earth_engine/renderer/VirtualTexturePage.h
+    earth_engine/renderer/VirtualTexturePage.cpp
+    earth_engine/renderer/VirtualTexturePoc.h
+    earth_engine/renderer/VirtualTexturePoc.cpp
     earth_engine/renderer/RenderDeviceRasterTextureUploader.h
     earth_engine/renderer/RenderDeviceRasterTextureUploader.cpp
     earth_engine/renderer/IPrepareRendererResources.h

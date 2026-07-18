@@ -16,6 +16,7 @@ class CameraController;
 class OffscreenPostProcess;
 class RenderDevice;
 class Scene;
+class VirtualTexturePoc;
 class Tileset;
 class VectorLayer;
 struct PresentationTrace;
@@ -159,10 +160,15 @@ public:
     /// near/far/相机基/太阳由引擎每帧取。
     void setAerialFogParams(float density, float startDistance);
 
+    /// 北极星 Phase 2b 虚拟纹理 C 方案 PoC(默认关,测量台专用):每帧跑
+    /// feedback→回读→页表整链,量移动端固定开销(回读 stall),数报进 EarthPerf。
+    void setVirtualTexturePocEnabled(bool enabled);
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
     std::unique_ptr<OffscreenPostProcess> offscreenPostProcess_;
+    std::unique_ptr<VirtualTexturePoc> virtualTexturePoc_;
     double lastRenderTime_ = 0.0;
     bool surfaceCreated_ = false;
     // 离屏后处理开关。优先级:AerialFog > FXAA > passthrough 调试直通。
@@ -174,6 +180,9 @@ private:
     float aerialFogStartDistance_ = 0.0f;
     // initialize 失败(如 Metal 未接线)后不再逐帧重试。
     bool offscreenPostProcessInitFailed_ = false;
+    // 北极星 VT PoC 开关 + 构建失败短路(默认关,不影响生产路径)。
+    bool virtualTexturePocEnabled_ = false;
+    bool virtualTexturePocInitFailed_ = false;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;

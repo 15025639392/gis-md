@@ -72,6 +72,13 @@ public:
     void endPass() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;
+    size_t readFramebufferPixels(Framebuffer* source,
+                                 int x,
+                                 int y,
+                                 int width,
+                                 int height,
+                                 uint8_t* outPixels,
+                                 size_t outCapacity) override;
 
     // ---- 生命周期 ----
     void onSurfaceCreated() override;

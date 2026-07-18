@@ -78,6 +78,28 @@ public:
     virtual void submit(const RenderCommandList& commands) = 0;
     virtual void endFrame() = 0;
 
+    /// GPU→CPU 回读:把离屏 framebuffer 的 color attachment(RGBA8)读进 CPU 缓冲。
+    /// 北极星 Phase 2b 虚拟纹理 PoC 的 feedback 通路要量的**固定开销**就在这里——
+    /// 移动 GPU 回读需等管线冲刷(glReadPixels / Metal waitUntilCompleted),可能
+    /// stall。source=nullptr 或不支持时返回 0。outPixels 需预留 ≥ width*height*4
+    /// 字节;返回实际写入字节数(0=失败)。默认 no-op(mock/离屏),两后端各自实现。
+    virtual size_t readFramebufferPixels(Framebuffer* source,
+                                         int x,
+                                         int y,
+                                         int width,
+                                         int height,
+                                         uint8_t* outPixels,
+                                         size_t outCapacity) {
+        (void)source;
+        (void)x;
+        (void)y;
+        (void)width;
+        (void)height;
+        (void)outPixels;
+        (void)outCapacity;
+        return 0;
+    }
+
     // ---- 生命周期 ----
     /// 渲染 surface 首次创建或 context lost 后重建时调用
     virtual void onSurfaceCreated() = 0;

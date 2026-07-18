@@ -1,6 +1,7 @@
 #pragma once
 
 #include "earth_engine/renderer/RenderDevice.h"
+#include "earth_engine/renderer/RenderCommand.h"  // RenderCommandList 成员需完整类型
 
 #include <algorithm>
 #include <cstddef>
@@ -30,6 +31,19 @@ public:
     }
 private:
     int width_ = 0, height_ = 0;
+};
+
+class DummyFramebuffer final : public Framebuffer {
+public:
+    DummyFramebuffer(int width, int height)
+        : width_(width), height_(height),
+          colorTexture_(std::make_unique<DummyTexture>(width, height)) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+    Texture* colorTexture() const override { return colorTexture_.get(); }
+private:
+    int width_ = 0, height_ = 0;
+    std::unique_ptr<DummyTexture> colorTexture_;
 };
 
 class DummyBuffer final : public Buffer {
@@ -114,11 +128,44 @@ public:
         return std::make_unique<DummyShaderProgram>();
     }
 
-    std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc&) override {
-        return nullptr;
+    std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) override {
+        if (!allowFramebufferCreation) return nullptr;
+        ++createdFramebufferCount;
+        return std::make_unique<DummyFramebuffer>(desc.width, desc.height);
+    }
+
+    size_t readFramebufferPixels(Framebuffer*,
+                                 int,
+                                 int,
+                                 int width,
+                                 int height,
+                                 uint8_t* outPixels,
+                                 size_t outCapacity) override {
+        ++readbackCount;
+        const size_t needed =
+            static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+        if (!outPixels || outCapacity < needed) {
+            return 0;
+        }
+        // 用测试预置的 canned 像素填充(平铺/截断到请求尺寸);未设置则清 0(全背景)。
+        if (cannedFeedbackPixels.empty()) {
+            std::fill(outPixels, outPixels + needed, uint8_t{0});
+        } else {
+            for (size_t i = 0; i < needed; ++i) {
+                outPixels[i] =
+                    cannedFeedbackPixels[i % cannedFeedbackPixels.size()];
+            }
+        }
+        return needed;
     }
 
     void beginFrame() override { ++frameCount; }
+    bool beginPass(Framebuffer* target) override {
+        ++beginPassCount;
+        lastPassTarget = target;
+        return true;
+    }
+    void endPass() override { ++endPassCount; }
     void submit(const RenderCommandList& commands) override {
         submittedCommands = commands;
         ++submitCount;
@@ -139,8 +186,16 @@ public:
     int shaderCount = 0;
     int submitCount = 0;
     int frameCount = 0;
+    int createdFramebufferCount = 0;
+    int readbackCount = 0;
+    int beginPassCount = 0;
+    int endPassCount = 0;
+    Framebuffer* lastPassTarget = nullptr;
+    // 测试预置的 feedback 像素(RGBA8),readFramebufferPixels 平铺回填之。
+    std::vector<uint8_t> cannedFeedbackPixels;
     bool allowTextureCreation = true;
     bool allowBufferUpdates = true;
+    bool allowFramebufferCreation = true;
 };
 
 } // namespace testing

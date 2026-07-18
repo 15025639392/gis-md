@@ -86,6 +86,13 @@ constexpr bool kMeasureFreezeCamera = true;
 //   对拍 off/on 两列瓦片数/selector/churn = 干净测出解耦收益。
 constexpr bool kMeasureDecoupleImageryFromGeometry = false;
 
+// kMeasureVirtualTexturePoC:北极星 Phase 2b 虚拟纹理 C 方案 PoC(骨架)。
+// true = 每帧旁路跑 feedback→回读→页表整链,把回读 stall 毫秒数报进 EarthPerf
+// 头行(vtReadback=)。**这是量 C 移动端固定开销、回填设计 §5 诚实账、拍板
+// §8 决策 #3(B vs C)的数据来源。** 不改任何渲染,纯测量。骨架局限:feedback
+// pass 尚未接 page-id 片元 shader,故 vtVis 恒 0——回读 stall 计时依然有效。
+constexpr bool kMeasureVirtualTexturePoC = false;
+
 // 2026-06-10 14:00 UTC+8 = 06:00 UTC.
 constexpr double kFixedSimulationJulianDate = 2461188.75;
 

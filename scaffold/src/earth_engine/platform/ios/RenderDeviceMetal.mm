@@ -782,6 +782,59 @@ void RenderDeviceMetal::endPass() {
     }
 }
 
+size_t RenderDeviceMetal::readFramebufferPixels(Framebuffer* source,
+                                                int x,
+                                                int y,
+                                                int width,
+                                                int height,
+                                                uint8_t* outPixels,
+                                                size_t outCapacity) {
+    // 北极星 Phase 2b VT PoC feedback 回读:blit 私有 color 纹理 → shared MTLBuffer,
+    // 提交独立 command buffer 并 **waitUntilCompleted**(故意同步 → 量最坏 stall,
+    // 与 GLES 版语义一致)。生产实现应把 wait 换成 completion handler 延迟消费。
+    // ⚠️ 通道序:离屏 color 是 BGRA8Unorm(见 createFramebuffer),读回字节是 BGRA;
+    // decode 期望 RGBA。骨架先忠实拷字节;feedback shader 子步落地时,要么 shader
+    // 写 swizzle 成 BGRA、要么按后端在 decode 前换 R/B(与 GLES RGBA 对齐)。
+    if (!source || !outPixels || width <= 0 || height <= 0) {
+        return 0;
+    }
+    const size_t needed =
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+    if (outCapacity < needed) {
+        return 0;
+    }
+    auto* fbo = static_cast<MetalFramebuffer*>(source);
+    id<MTLTexture> colorTex = fbo->colorMtl();
+    if (!colorTex) {
+        return 0;
+    }
+    const NSUInteger bytesPerRow = static_cast<NSUInteger>(width) * 4u;
+    id<MTLBuffer> staging =
+        [impl_->device newBufferWithLength:needed
+                                  options:MTLResourceStorageModeShared];
+    if (!staging) {
+        return 0;
+    }
+    id<MTLCommandBuffer> cb = [impl_->commandQueue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+    [blit copyFromTexture:colorTex
+              sourceSlice:0
+              sourceLevel:0
+             sourceOrigin:MTLOriginMake(static_cast<NSUInteger>(x),
+                                        static_cast<NSUInteger>(y), 0)
+               sourceSize:MTLSizeMake(static_cast<NSUInteger>(width),
+                                      static_cast<NSUInteger>(height), 1)
+                 toBuffer:staging
+        destinationOffset:0
+   destinationBytesPerRow:bytesPerRow
+ destinationBytesPerImage:needed];
+    [blit endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+    std::memcpy(outPixels, [staging contents], needed);
+    return needed;
+}
+
 void RenderDeviceMetal::submit(const RenderCommandList& commands) {
     if (!impl_->currentEncoder) return;
 

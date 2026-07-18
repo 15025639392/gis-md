@@ -825,6 +825,18 @@ add_executable(test_terrain_shader_command
 target_link_libraries(test_terrain_shader_command PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_terrain_shader_command COMMAND test_terrain_shader_command)
 
+add_executable(test_virtual_texture_page
+    unit/renderer/test_virtual_texture_page.cpp
+)
+target_link_libraries(test_virtual_texture_page PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_virtual_texture_page COMMAND test_virtual_texture_page)
+
+add_executable(test_virtual_texture_poc
+    unit/renderer/test_virtual_texture_poc.cpp
+)
+target_link_libraries(test_virtual_texture_poc PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_virtual_texture_poc COMMAND test_virtual_texture_poc)
+
 add_executable(test_gltf_draw_command_cache
     unit/tiling/test_gltf_draw_command_cache.cpp
 )

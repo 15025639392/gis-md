@@ -4,6 +4,7 @@
 #include "scene/Camera.h"
 #include "camera/CameraController.h"
 #include "renderer/OffscreenPostProcess.h"
+#include "renderer/VirtualTexturePoc.h"
 #include "renderer/RenderDevice.h"
 #include "layers/VectorLayer.h"
 #include "debug/PlatformLog.h"
@@ -65,6 +66,11 @@ void Engine::onSurfaceDestroyed() {
         offscreenPostProcess_.reset();
     }
     offscreenPostProcessInitFailed_ = false;
+    if (virtualTexturePoc_) {
+        virtualTexturePoc_->dispose();
+        virtualTexturePoc_.reset();
+    }
+    virtualTexturePocInitFailed_ = false;
     scene_->setRenderDevice(nullptr);
     if (device_) {
         device_->onSurfaceDestroyed();
@@ -90,6 +96,16 @@ void Engine::setAerialFogEnabled(bool enabled) {
 void Engine::setAerialFogParams(float density, float startDistance) {
     aerialFogDensity_ = density;
     aerialFogStartDistance_ = startDistance;
+}
+
+void Engine::setVirtualTexturePocEnabled(bool enabled) {
+    virtualTexturePocEnabled_ = enabled;
+    virtualTexturePocInitFailed_ = false;
+    // 关闭时释放资源(避免持有离屏 FBO/atlas 占显存)。
+    if (!enabled && virtualTexturePoc_) {
+        virtualTexturePoc_->dispose();
+        virtualTexturePoc_.reset();
+    }
 }
 
 bool Engine::render(double deltaSeconds) {
@@ -126,6 +142,24 @@ bool Engine::render(double deltaSeconds) {
         scene_->recordEngineTiming(
             Scene::EngineTimingScope::SceneUpdate,
             perf::nowMs() - startMs);
+    }
+    // 北极星 VT PoC(测量台专用,默认关):在场景 update 后、主 draw 前跑一帧
+    // feedback→回读→页表整链,量移动端固定开销。任何一环失败都短路,绝不影响
+    // 生产渲染。lastStats() 在帧尾并进 EarthPerf 头行。
+    if (virtualTexturePocEnabled_ && !virtualTexturePocInitFailed_) {
+        if (!virtualTexturePoc_) {
+            auto poc = std::make_unique<VirtualTexturePoc>();
+            if (poc->initialize(device_, VirtualTexturePocConfig{})) {
+                virtualTexturePoc_ = std::move(poc);
+            } else {
+                virtualTexturePocInitFailed_ = true;
+            }
+        }
+        if (virtualTexturePoc_ &&
+            virtualTexturePoc_->ensureResources(surfaceWidthPixels_,
+                                                surfaceHeightPixels_)) {
+            virtualTexturePoc_->tick();
+        }
     }
     if (scene_->shouldHoldPresentationFrame()) {
         scene_->recordEngineTiming(Scene::EngineTimingScope::BeginFrame, 0.0);
@@ -247,9 +281,21 @@ bool Engine::render(double deltaSeconds) {
 
     scene_->finishEngineFrame(perf::nowMs() - frameStartMs);
     const Diagnostics& diag = scene_->diagnostics();
-    char detail[256];
+    // 北极星 VT PoC 头行段(仅在 PoC 活跃时追加,默认关时为空 → 零污染):
+    //   vtReadback = **①的核心固定开销数**(回读 stall);vtFeedback/vtUpdate 为
+    //   feedback pass CPU 侧与解码+页表耗时;vis/res 为可见/驻留页;atlas=固定占用KB。
+    char vtDetail[128] = "";
+    if (virtualTexturePoc_ && virtualTexturePoc_->isReady()) {
+        const VirtualTexturePocFrameStats& s = virtualTexturePoc_->lastStats();
+        std::snprintf(vtDetail, sizeof(vtDetail),
+            " vtReadback=%.3f vtFeedback=%.3f vtUpdate=%.3f vtVis=%d vtRes=%d vtAtlasKB=%lld",
+            s.readbackMs, s.feedbackPassMs, s.updateMs,
+            s.visiblePages, s.residentPages,
+            static_cast<long long>(virtualTexturePoc_->atlasBytes() / 1024));
+    }
+    char detail[384];
     std::snprintf(detail, sizeof(detail),
-        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d",
+        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s",
         diag.engineBeginFrameMs,
         diag.sceneUpdateMs,
         diag.sceneRenderMs,
@@ -257,7 +303,8 @@ bool Engine::render(double deltaSeconds) {
         diag.engineEndFrameMs,
         diag.drawCalls,
         diag.visibleTiles,
-        scenePresented ? 0 : 1);
+        scenePresented ? 0 : 1,
+        vtDetail);
     perf::logTiming(scene_->frameState().frameId,
                     "Engine.render.total",
                     diag.engineFrameCpuMs,

@@ -649,6 +649,34 @@ void RenderDeviceGLES::endPass() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+size_t RenderDeviceGLES::readFramebufferPixels(Framebuffer* source,
+                                               int x,
+                                               int y,
+                                               int width,
+                                               int height,
+                                               uint8_t* outPixels,
+                                               size_t outCapacity) {
+    // 北极星 Phase 2b VT PoC feedback 回读:同步 glReadPixels。这**故意同步**——
+    // 它会 stall 直到该 FBO 的 GPU 命令冲刷完(移动端可能很贵),而量这个 stall
+    // 正是 PoC 目的。生产实现应改双缓冲 PBO(GL_PIXEL_PACK_BUFFER + fence)把回读
+    // 延迟 1-2 帧异步化;骨架先用同步版拿到「最坏情况」固定开销上界。
+    if (!source || !outPixels || width <= 0 || height <= 0) {
+        return 0;
+    }
+    const size_t needed =
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+    if (outCapacity < needed) {
+        return 0;
+    }
+    auto* fbo = static_cast<GLFramebuffer*>(source);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo->glId());
+    // 紧打包(默认 alignment 4 对 RGBA8 已对齐,显式设 1 稳妥防非 4 倍宽)。
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, outPixels);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return needed;
+}
+
 void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     static int submitCount = 0;
     submitCount++;

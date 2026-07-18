@@ -151,6 +151,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // Aerial fog 距离雾:默认开,远处地形融进地平线霞(斜视地平线最明显,
     // nadir 下淡)。雾色/密度用 SDK 默认(亮地平线霞 + 6e-6 密度)。
     config.aerialFog = true;
+    // 北极星 Phase 2b 虚拟纹理 PoC(默认关,见 header)。
+    config.virtualTexturePoc = kMeasureVirtualTexturePoC;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;
     if (kEnableInstancedI3dmDemo) {
         // 默认固定时间是宾州凌晨(树在夜侧无光照=全黑),实例化观察改用当地白天
