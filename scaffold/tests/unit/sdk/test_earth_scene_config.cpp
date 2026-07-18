@@ -18,9 +18,8 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
     EarthSceneConfig config;
     config.initialCamera = {106.508, 29.617, 30000.0};
     config.terrain = {
-        TerrainSourceKind::QuantizedMesh,
-        "http://terrain.example/{z}/{x}/{y}.terrain",
-        "http://terrain.example/layer.json",
+        TerrainSourceKind::Heightmap,
+        "http://terrain.example/{z}/{x}/{y}.png",
         "terrain",
         0,
         12,
@@ -43,7 +42,7 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
 
     EarthSceneConfig copied = config;
     EXPECT_DOUBLE_EQ(copied.initialCamera.longitudeDegrees, 106.508);
-    EXPECT_EQ(copied.terrain.kind, TerrainSourceKind::QuantizedMesh);
+    EXPECT_EQ(copied.terrain.kind, TerrainSourceKind::Heightmap);
     EXPECT_EQ(copied.terrain.maximumZoom, 12);
     EXPECT_DOUBLE_EQ(copied.tileset.mainThreadLoadingTimeLimit, 4.0);
     EXPECT_DOUBLE_EQ(copied.tileset.tileCacheUnloadTimeLimit, 2.0);
@@ -58,7 +57,7 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
 }
 
 TEST(EarthSceneConfig, ExposesOnlyTilesetTerrainSourceKinds) {
-    EXPECT_NE(TerrainSourceKind::None, TerrainSourceKind::QuantizedMesh);
+    EXPECT_NE(TerrainSourceKind::None, TerrainSourceKind::Heightmap);
 }
 
 TEST(EarthSceneConfig, StoresTileMapServiceImagerySourceDefinitions) {

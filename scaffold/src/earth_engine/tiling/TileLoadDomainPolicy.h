@@ -5,28 +5,7 @@
 
 namespace earth_engine {
 
-struct TileAvailabilityUpdateSelection {
-    std::vector<QuantizedMeshAvailabilityUpdate>* updates = nullptr;
-    bool clearAfterApply = false;
-};
-
 struct TileLoadDomainPolicy {
-    static TileAvailabilityUpdateSelection availabilityUpdatesForDomain(
-        TileLoadDomain domain,
-        TileLoadResult& result) {
-        if (domain == TileLoadDomain::TerrainContent &&
-            result.status == TileLoadStatus::Failed &&
-            !result.quantizedMeshAvailabilityUpdates.empty()) {
-            return {&result.quantizedMeshAvailabilityUpdates, true};
-        }
-        if (result.status == TileLoadStatus::Renderable &&
-            result.content.satisfiesContentTerrainPayloadContract() &&
-            !result.content.quantizedMeshAvailabilityUpdates.empty()) {
-            return {&result.content.quantizedMeshAvailabilityUpdates, false};
-        }
-        return {};
-    }
-
     /// Determines whether the frame materializer should attempt to create
     /// terrain quadtree children for the given tile. Returns false when the
     /// tile is at max zoom, is itself an upsampled child (cannot refine
@@ -81,8 +60,7 @@ struct TileLoadDomainPolicy {
         TileLoadDomain domain,
         TileLoadResult&& result) {
         if (shouldFailUploadForDomain(domain, result)) {
-            return TileLoadResult::createFailedPreservingAvailability(
-                std::move(result));
+            return TileLoadResult::createTerminal(TileLoadStatus::Failed);
         }
         return std::move(result);
     }

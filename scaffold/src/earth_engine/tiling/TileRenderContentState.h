@@ -626,9 +626,6 @@ public:
             heightmap.heights.size() * sizeof(float));
         bytes += static_cast<int64_t>(
             heightmap.noDataValues.size() * sizeof(float));
-        bytes += static_cast<int64_t>(
-            heightmap.metadataAvailability.size() *
-            sizeof(QuantizedMeshAvailabilityRange));
         return bytes;
     }
 

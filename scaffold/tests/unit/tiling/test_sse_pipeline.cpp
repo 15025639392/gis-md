@@ -1,7 +1,7 @@
+#include "earth_engine/content/EllipsoidTerrainContentProvider.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/ProviderRequestDiagnosticsAggregator.h"
-#include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
@@ -25,7 +25,6 @@
 #include "earth_engine/scene/ScenePresentationTraceBuilder.h"
 #include "earth_engine/scene/SceneRenderDiagnostics.h"
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
-#include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/tiling/GltfRenderGeometryBuilder.h"
 #include "earth_engine/tiling/GltfRenderResourcePreparer.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
@@ -2010,11 +2009,8 @@ void testProviderExplicitRootOnlyZoomRangeLimitsTiles() {
         "https://example.invalid/{z}/{x}/{y}.png");
     HeightmapTerrainProvider heightmap(
         "https://example.invalid/{z}/{x}/{y}.png");
-    QuantizedMeshTerrainProvider quantizedMesh(
-        "https://example.invalid/{z}/{x}/{y}.terrain");
     imagery.setZoomRange(0, 0);
     heightmap.setZoomRange(0, 0);
-    quantizedMesh.setZoomRange(0, 0);
     check(imagery.maxZoom() == 0 &&
               imagery.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}) &&
               !imagery.supportsTile(TileKey{"XYZ-WebMercator", 1, 0, 0}),
@@ -2023,8 +2019,6 @@ void testProviderExplicitRootOnlyZoomRangeLimitsTiles() {
               heightmap.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}) &&
               !heightmap.supportsTile(TileKey{"XYZ-WebMercator", 1, 0, 0}),
           "HeightmapTerrainProvider: explicit 0..0 zoom range limits terrain to root tiles");
-    check(quantizedMesh.maxZoom() == 0,
-          "QuantizedMeshTerrainProvider: explicit 0..0 zoom range records root-only maximum");
 }
 void testProviderExplicitMaximumZoomStillLimitsTiles() {
     XYZImageryProvider imagery(
@@ -4577,8 +4571,8 @@ void testHeightmapTerrainProviderExposesAttribution() {
           "HeightmapTerrainProvider: terrain attribution metadata is exposed");
 }
 void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
-    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
-        "https://example.invalid/{z}/{x}/{y}.terrain");
+    auto provider = std::make_unique<EllipsoidTerrainContentProvider>(
+        "Geographic-TMS", 2, 16);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         std::move(scheme),
@@ -26833,7 +26827,6 @@ void testTilesetUnloadKeepsParentWithReferencedDescendant() {
           "Tileset: referenced-descendant unload root tile is created");
     if (!root) return;
     auto heightmap = makeFlatHeightmap(1.0f);
-    heightmap->metadataAvailability.resize(1);
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
     root->content.renderContent.setMeshReady(true);
@@ -27019,7 +27012,6 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
           "Tileset: render-content unload-preserve root tile is created");
     if (!root) return;
     auto rootHeightmap = makeFlatHeightmap(1.0f);
-    rootHeightmap->metadataAvailability.resize(1);
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
     root->content.renderContent.setMeshReady(true);
@@ -27030,7 +27022,6 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     TilesetTile* child = root->children.front();
     const TileKey childKey = child->key;
     auto childHeightmap = makeFlatHeightmap(2.0f);
-    childHeightmap->metadataAvailability.resize(1);
     child->content.contentKind = TileContentKind::Render;
     child->content.loadState = TileLoadState::Done;
     child->content.renderContent.setMeshReady(true);
@@ -27068,7 +27059,6 @@ void testTilesetUnloadExternalContentClearsChildren() {
     if (root->children.empty() || !root->children.front()) return;
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(3.0f);
-    childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     TilesetTestAccess::unloadCachedBytes(tileset, -1);
@@ -27099,7 +27089,6 @@ void testTilesetDirectExternalContentUnloadClearsChildren() {
     if (root->children.empty() || !root->children.front()) return;
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(5.0f);
-    childHeightmap->metadataAvailability.resize(1);
     root->addReference();
     TilesetTestAccess::unloadTileContent(tileset, *root, nullptr);
     check(root->content.loadState == TileLoadState::Done &&

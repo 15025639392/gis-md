@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ProviderRequestDiagnostics.h"
-#include "../terrain/QuantizedMeshAvailability.h"
+#include "../tiling/TileAvailabilityState.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileLoadStatus.h"
 #include "../tiling/SurfaceTile.h"
@@ -45,11 +45,6 @@ struct DecodedHeightmap {
     /// @param u 列归一化坐标 [0,1]（西→东）
     /// @param v 行归一化坐标 [0,1]（北→南）
     float sampleBilinear(float u, float v) const;
-
-    /// cesium-native: availability rectangles from QM metadata (extension ID=4).
-    /// Each entry: {levelOffset, startX, startY, endX, endY}
-    std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
-    bool metadataAvailabilityProcessed = false;
 };
 
 struct TerrainTileLoadResult {

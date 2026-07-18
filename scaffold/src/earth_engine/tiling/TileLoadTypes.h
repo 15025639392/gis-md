@@ -55,8 +55,6 @@ struct TileLoadedContent {
         content.metadata = std::move(result.metadata);
         content.terrainRenderContent = result.terrainRenderContent;
         content.terrainRenderSource = result.terrainRenderSource;
-        content.quantizedMeshAvailabilityUpdates =
-            std::move(result.quantizedMeshAvailabilityUpdates);
         return content;
     }
 
@@ -66,8 +64,6 @@ struct TileLoadedContent {
         TileTerrainRenderSource::Generic;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
-    std::vector<QuantizedMeshAvailabilityUpdate>
-        quantizedMeshAvailabilityUpdates;
 
     bool satisfiesContentTerrainPayloadContract() const {
         if (!terrainRenderContent || gltfModel == nullptr) {
@@ -121,19 +117,6 @@ struct TileLoadResult {
         return loadResult;
     }
 
-    static TileLoadResult createFailedPreservingAvailability(
-        TileLoadResult&& result) {
-        TileLoadResult failed = createTerminal(TileLoadStatus::Failed);
-        if (!result.quantizedMeshAvailabilityUpdates.empty()) {
-            failed.quantizedMeshAvailabilityUpdates =
-                std::move(result.quantizedMeshAvailabilityUpdates);
-        } else {
-            failed.quantizedMeshAvailabilityUpdates =
-                std::move(result.content.quantizedMeshAvailabilityUpdates);
-        }
-        return failed;
-    }
-
     static TileLoadResult createRenderableGltfTerrain(
         std::unique_ptr<GltfModel> model,
         TileLoadResultMetadata metadata = {},
@@ -150,8 +133,6 @@ struct TileLoadResult {
         if (result.status == TileLoadStatus::Renderable &&
             result.gltfModel == nullptr) {
             loadResult.status = TileLoadStatus::Failed;
-            loadResult.quantizedMeshAvailabilityUpdates =
-                std::move(result.quantizedMeshAvailabilityUpdates);
             return loadResult;
         }
         if (isSuccessfulTileLoadStatus(result.status)) {
@@ -159,19 +140,12 @@ struct TileLoadResult {
                 std::move(result));
             if (loadResult.content.terrainRenderContent &&
                 !loadResult.content.satisfiesContentTerrainPayloadContract()) {
-                auto availabilityUpdates = std::move(
-                    loadResult.content.quantizedMeshAvailabilityUpdates);
                 loadResult.status = TileLoadStatus::Failed;
                 loadResult.content = {};
-                loadResult.quantizedMeshAvailabilityUpdates =
-                    std::move(availabilityUpdates);
                 return loadResult;
             }
-            loadResult.quantizedMeshAvailabilityUpdates.clear();
             return loadResult;
         }
-        loadResult.quantizedMeshAvailabilityUpdates =
-            std::move(result.quantizedMeshAvailabilityUpdates);
         return loadResult;
     }
 
@@ -197,8 +171,6 @@ struct TileLoadResult {
 
     TileLoadStatus status = TileLoadStatus::Failed;
     TileLoadedContent content;
-    std::vector<QuantizedMeshAvailabilityUpdate>
-        quantizedMeshAvailabilityUpdates;
 };
 
 struct PendingTileLoad {

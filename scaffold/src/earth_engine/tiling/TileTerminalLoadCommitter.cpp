@@ -1,5 +1,4 @@
 #include "TileTerminalLoadCommitter.h"
-#include "TileAvailabilityUpdateCommitter.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadDomainPolicy.h"
 #include "TileLoadResultMetadataApplicator.h"
@@ -43,10 +42,7 @@ TileTerminalLoadCommitter::commitTerminalResult(
     TileEmptyContentRegistry& emptyContentRegistry,
     IPrepareRendererResources* pPrepRenderer,
     TilesetContentProvider* contentProvider) {
-    TileAvailabilityUpdateCommitter::applyAvailabilityUpdates(
-        domain,
-        result,
-        contentProvider);
+    (void)contentProvider;
     TileTerminalLoadAction action = commitTerminalResultImpl(
         domain,
         tile,

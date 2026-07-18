@@ -268,53 +268,6 @@ add_executable(test_tile_availability
 target_link_libraries(test_tile_availability PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_availability COMMAND test_tile_availability)
 
-add_executable(test_quantized_mesh_header_vertex
-    unit/terrain/test_quantized_mesh_header_vertex.cpp
-)
-target_link_libraries(test_quantized_mesh_header_vertex PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_quantized_mesh_header_vertex COMMAND test_quantized_mesh_header_vertex)
-
-add_executable(test_terrain_nadir_projection
-    unit/terrain/test_terrain_nadir_projection.cpp
-)
-target_link_libraries(test_terrain_nadir_projection PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_terrain_nadir_projection COMMAND test_terrain_nadir_projection)
-
-add_executable(test_quantized_mesh_metadata_availability
-    unit/terrain/test_quantized_mesh_metadata_availability.cpp
-)
-target_link_libraries(test_quantized_mesh_metadata_availability PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_quantized_mesh_metadata_availability COMMAND test_quantized_mesh_metadata_availability)
-
-add_executable(test_quantized_mesh_water_mask
-    unit/terrain/test_quantized_mesh_water_mask.cpp
-)
-target_link_libraries(test_quantized_mesh_water_mask PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_quantized_mesh_water_mask COMMAND test_quantized_mesh_water_mask)
-
-add_executable(test_quantized_mesh_index_width
-    unit/terrain/test_quantized_mesh_index_width.cpp
-)
-target_link_libraries(test_quantized_mesh_index_width PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_quantized_mesh_index_width COMMAND test_quantized_mesh_index_width)
-
-add_executable(test_quantized_mesh_skirts_normals
-    unit/terrain/test_quantized_mesh_skirts_normals.cpp
-)
-target_link_libraries(test_quantized_mesh_skirts_normals PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_quantized_mesh_skirts_normals COMMAND test_quantized_mesh_skirts_normals)
-
-add_executable(test_quantized_mesh_parser_validation
-    unit/terrain/test_quantized_mesh_parser_validation.cpp
-)
-target_link_libraries(test_quantized_mesh_parser_validation PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_quantized_mesh_parser_validation COMMAND test_quantized_mesh_parser_validation)
-
-add_executable(test_quantized_mesh_content_loader
-    unit/content/test_quantized_mesh_content_loader.cpp
-)
-target_link_libraries(test_quantized_mesh_content_loader PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_quantized_mesh_content_loader COMMAND test_quantized_mesh_content_loader)
 
 add_executable(test_gltf_terrain_upsampler
     unit/content/test_gltf_terrain_upsampler.cpp
@@ -753,11 +706,6 @@ target_compile_definitions(test_selector_cesium_golden_diff PRIVATE
 target_link_libraries(test_selector_cesium_golden_diff PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_selector_cesium_golden_diff COMMAND test_selector_cesium_golden_diff)
 
-add_executable(test_tileset_quantized_mesh
-    unit/tiling/test_tileset_quantized_mesh.cpp
-)
-target_link_libraries(test_tileset_quantized_mesh PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_tileset_quantized_mesh COMMAND test_tileset_quantized_mesh)
 
 add_executable(test_tile_visible_range_finalizer
     unit/tiling/test_tile_visible_range_finalizer.cpp
@@ -972,21 +920,6 @@ add_executable(test_heightmap_terrain
 )
 target_link_libraries(test_heightmap_terrain PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_heightmap_terrain COMMAND test_heightmap_terrain)
-
-add_executable(test_terrain_provider
-    unit/providers/test_terrain_provider.cpp
-)
-target_link_libraries(test_terrain_provider PRIVATE earth_engine_core GTest::gtest_main)
-find_package(CURL QUIET)
-if(CURL_FOUND)
-    target_link_libraries(test_terrain_provider PRIVATE CURL::libcurl)
-else()
-    find_library(CURL_LIB curl)
-    if(CURL_LIB)
-        target_link_libraries(test_terrain_provider PRIVATE ${CURL_LIB})
-    endif()
-endif()
-add_test(NAME test_terrain_provider COMMAND test_terrain_provider)
 
 add_executable(test_raster_overlay_lifecycle
     unit/providers/test_raster_overlay_lifecycle.cpp

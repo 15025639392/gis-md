@@ -332,13 +332,10 @@ TEST(TileCacheMetricsTest, CountsHeightmapAndRetainedTilePayloads) {
     DecodedHeightmap heightmap;
     heightmap.heights.resize(3);
     heightmap.noDataValues.resize(2);
-    heightmap.metadataAvailability.resize(4);
 
     const int64_t expectedHeightmapBytes =
         static_cast<int64_t>(3 * sizeof(float)) +
-        static_cast<int64_t>(2 * sizeof(float)) +
-        static_cast<int64_t>(
-            4 * sizeof(QuantizedMeshAvailabilityRange));
+        static_cast<int64_t>(2 * sizeof(float));
     EXPECT_EQ(expectedHeightmapBytes,
               TileCacheMetrics::estimateHeightmapBytes(heightmap));
 
@@ -376,9 +373,9 @@ TEST(TileCacheMetricsTest, TotalsTileAndTerrainCachePayloads) {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->metadataAvailability.resize(1);
+    heightmap->heights.resize(1);
     const int64_t expectedHeightmapBytes =
-        static_cast<int64_t>(sizeof(QuantizedMeshAvailabilityRange));
+        static_cast<int64_t>(sizeof(float));
     terrainCache["terrain"] = std::move(heightmap);
     terrainCache["null-terrain"] = nullptr;
 

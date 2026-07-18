@@ -2,7 +2,6 @@
 
 #include "TileContentUploadCommitter.h"
 #include "TileEmptyContentRegistry.h"
-#include "TileAvailabilityUpdateCommitter.h"
 #include "TileLoadDomainPolicy.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadTypes.h"
@@ -133,10 +132,6 @@ public:
 
         const double metadataStartMs = perf::nowMs();
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
-        TileAvailabilityUpdateCommitter::applyAvailabilityUpdates(
-            upload.domain,
-            upload.result,
-            contentProvider);
         logSlowCommitPhase(
             diagnosticFrameNumber,
             "TilePendingLoad.commitUpload.metadata",

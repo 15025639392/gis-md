@@ -108,11 +108,6 @@ bool CompositeTerrainProvider::isTerrainAvailabilityBoundaryLevel(
     return primary_->isTerrainAvailabilityBoundaryLevel(level);
 }
 
-void CompositeTerrainProvider::applyAvailabilityUpdates(
-    const std::vector<QuantizedMeshAvailabilityUpdate>& updates) {
-    primary_->applyAvailabilityUpdates(updates);
-}
-
 int CompositeTerrainProvider::estimatedRequestFanout(
     const TileKey& key) const {
     // Ellipsoid content resolves synchronously with no network fanout.

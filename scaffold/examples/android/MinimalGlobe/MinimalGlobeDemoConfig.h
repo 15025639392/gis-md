@@ -4,32 +4,14 @@
 
 namespace earth_engine::minimal_globe_demo {
 
-// 本地自建 quantized-mesh（重庆 FABDEM，经 adb reverse → 127.0.0.1:8090）。
-// kUseCesiumIonTerrain=false 时回退到这套。
-constexpr const char* kQuantizedMeshTerrainTemplate =
-    "http://127.0.0.1:8090/{z}/{x}/{y}.terrain";
-constexpr const char* kQuantizedMeshTerrainLayerJson =
-    "http://127.0.0.1:8090/layer.json";
-
-// 规则栅格 raster-DEM 高度图地形（P1 CPU 烘焙路径，TerrainSourceKind::Heightmap）。
+// 唯一地形源 = 规则栅格 raster-DEM 高度图地形（CPU 烘焙，TerrainSourceKind::Heightmap）。
 // 65×65 顶点对齐 Mapbox Terrain-RGB PNG（dem_test build_raster_dem_grid65.py 生成）。
-// kUseHeightmapTerrain=true 时取代 QM。**瓦片交付**（择一，heightmap 必须本地瓦片）：
-//   ① 本地服务器：serve_tiles.py 起在 8090 + adb reverse tcp:8090，用下方 http 模板；
+// QuantizedMesh / Cesium ion 路径已退役——heightmap 必须本地瓦片，**瓦片交付**（择一）：
+//   ① 本地服务器：serve_tiles.py 起在 8091 + adb reverse tcp:8091，用下方 http 模板；
 //   ② adb push + file://：把瓦片推到 app 可读目录，模板改 file:///<路径>/{z}/{x}/{y}.png。
-// 默认关，不影响现有 ion 地形。
-constexpr bool kUseHeightmapTerrain = false;
 constexpr const char* kHeightmapTerrainTemplate =
-    "http://127.0.0.1:8090/{z}/{x}/{y}.png";
+    "http://127.0.0.1:8091/{z}/{x}/{y}.png";
 
-// Cesium ion World Terrain（asset 1）：全球地形，走 ion endpoint 运行时协商，
-// 脱离本地服务器 + adb reverse 依赖。临时凭证约 1 小时过期（当前无自动刷新）。
-constexpr bool kUseCesiumIonTerrain = true;
-constexpr int kCesiumIonTerrainAssetId = 1;
-constexpr const char* kCesiumIonAccessToken =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJqdGkiOiI5YzU4ODg1YS01ZTY3LTRhODYtOGUyZi04ZjkxYjg0OTg2ZGMiLCJpZCI6NjM2"
-    "MDUsImlhdCI6MTYyODMxNzM2OH0."
-    "McSbZHfB5rO3TmWDHRGFdUWVayCvs8iiKuAUyPoYJyY";
 constexpr const char* kGaodeSatelliteTemplate =
     "http://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 constexpr const char* kGaodeRoadNetTemplate =

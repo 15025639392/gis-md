@@ -4,8 +4,8 @@
 #include "../core/math/Mat4.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/ProviderRequestDiagnostics.h"
-#include "../terrain/QuantizedMeshAvailability.h"
 #include "../threading/CancellationToken.h"
+#include "../tiling/TileAvailabilityState.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileLoadResultMetadata.h"
@@ -53,8 +53,6 @@ struct TileContentLoadResult {
     bool terrainRenderContent = false;
     TileTerrainRenderSource terrainRenderSource =
         TileTerrainRenderSource::Generic;
-    std::vector<QuantizedMeshAvailabilityUpdate>
-        quantizedMeshAvailabilityUpdates;
 
     static TileContentLoadResult render(std::unique_ptr<GltfModel> model) {
         TileContentLoadResult result;
@@ -153,8 +151,6 @@ public:
     virtual bool isTerrainAvailabilityBoundaryLevel(int) const {
         return false;
     }
-    virtual void applyAvailabilityUpdates(
-        const std::vector<QuantizedMeshAvailabilityUpdate>&) {}
     virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 
     using ContentCallback = std::function<void(

@@ -22,38 +22,19 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     }
 
     if (kEnableTerrainForDemo) {
-        if (kUseHeightmapTerrain) {
-            // 规则栅格 raster-DEM 高度图（P1 CPU 烘焙路径）。重庆 FABDEM z0-12，
-            // 65×65 顶点对齐 Mapbox Terrain-RGB PNG。无数据区回落椭球。
-            config.terrain.kind = TerrainSourceKind::Heightmap;
-            config.terrain.urlTemplate = kHeightmapTerrainTemplate;
-            config.terrain.heightmapEncoding =
-                TerrainHeightmapEncoding::MapboxTerrainRgb;
-            config.terrain.tileSize = 65;
-            config.terrain.minimumZoom = 0;
-            config.terrain.maximumZoom = 12;
-            config.terrain.attribution = "FABDEM Terrain-RGB (grid65)";
-            config.terrain.ellipsoidFallback = true;
-            config.terrain.ellipsoidFallbackMaxZoom = 12;
-        } else {
-            config.terrain.kind = TerrainSourceKind::QuantizedMesh;
-            config.terrain.tileSize = 65;
-            config.terrain.enableWaterMask = true;
-            config.terrain.minimumZoom = 0;
-            if (kUseCesiumIonTerrain) {
-                // Cesium World Terrain：全球，运行时 ion endpoint 协商。
-                config.terrain.attribution = "Cesium World Terrain";
-                config.terrain.maximumZoom = 16;
-                config.terrain.cesiumIonAssetId = kCesiumIonTerrainAssetId;
-                config.terrain.cesiumIonAccessToken = kCesiumIonAccessToken;
-            } else {
-                // 本地 FABDEM（重庆，z0-12）。
-                config.terrain.urlTemplate = kQuantizedMeshTerrainTemplate;
-                config.terrain.layerJsonUrl = kQuantizedMeshTerrainLayerJson;
-                config.terrain.attribution = "QuantizedMesh Terrain";
-                config.terrain.maximumZoom = 12;
-            }
-        }
+        // 唯一地形源 = 规则栅格 raster-DEM 高度图（CPU 烘焙路径）。重庆 FABDEM
+        // z0-12，65×65 顶点对齐 Mapbox Terrain-RGB PNG。无数据区回落椭球。
+        // QuantizedMesh / Cesium ion 路径已退役。
+        config.terrain.kind = TerrainSourceKind::Heightmap;
+        config.terrain.urlTemplate = kHeightmapTerrainTemplate;
+        config.terrain.heightmapEncoding =
+            TerrainHeightmapEncoding::MapboxTerrainRgb;
+        config.terrain.tileSize = 65;
+        config.terrain.minimumZoom = 0;
+        config.terrain.maximumZoom = 12;
+        config.terrain.attribution = "FABDEM Terrain-RGB (grid65)";
+        config.terrain.ellipsoidFallback = true;
+        config.terrain.ellipsoidFallbackMaxZoom = 12;
     }
     config.tileset = {
         4.0,
@@ -65,8 +46,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // 运动期跳过快速划走的瓦片网络请求(cesium-js cullRequestsWhileMoving)。
     // 拖动/缩放中减少瞬时加载洪泛,相机停下恢复正常加载。
     config.tileset.cullRequestsWhileMoving = true;
-    // 地形 fill 代理:ion 地形协商/根瓦片加载期间,先把已到的影像贴到椭球代理,
-    // 真实 quantized-mesh 到达后再替换,避免 provider 切换窗口只剩天空。
+    // 地形 fill 代理:根瓦片加载期间,先把已到的影像贴到椭球代理,真实地形网格
+    // 到达后再替换,避免加载窗口只剩天空。
     config.tileset.enableTerrainFillProxy = true;
     // LOD geomorph:距离连续 geomorph 已启用(P2 引擎 + P3 skirt 之上)。morph 进度
     // 纯由本瓦片 SSE 驱动(finalizer,gate 在 maxSSE>0),**与时序 fade 计时器解耦**:

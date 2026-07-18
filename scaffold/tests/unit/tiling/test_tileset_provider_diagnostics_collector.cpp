@@ -4,7 +4,6 @@
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/providers/ImageryProvider.h"
-#include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
@@ -325,67 +324,6 @@ TEST(
     EXPECT_EQ(loadDiagnostics.contentProviderRequests.requestsStarted, 1);
     EXPECT_EQ(snapshot.maximumTransportActiveRequests(20), 11u);
     (void)terrainProvider;
-}
-
-TEST(
-    TilesetProviderDiagnosticsCollectorTest,
-    ExposesQuantizedMeshContentProviderRequestDiagnosticsThroughTilesetAndScene) {
-    BlockingPlatformBridge bridge;
-    TilesetOptions options;
-    options.maximumSimultaneousTileLoads = 2;
-
-    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
-        "https://example.invalid/{z}/{x}/{y}.terrain");
-    provider->setPlatformBridge(&bridge);
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
-        std::move(scheme),
-        {},
-        nullptr,
-        options,
-        std::move(provider));
-
-    const TileKey key{"Geographic-TMS", 1, 0, 0};
-    TilesetTestAccess::ensureTile(tileset, key);
-    TilesetTestAccess::requestMissingTile(tileset, key);
-
-    ASSERT_TRUE(bridge.waitUntilEntered());
-    const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
-    EXPECT_EQ(diag.terrainProviderRequests.requestsStarted, 0);
-    EXPECT_EQ(diag.terrainProviderRequests.requestsCompleted, 0);
-    EXPECT_EQ(diag.contentProviderRequests.requestsStarted, 1);
-    EXPECT_EQ(diag.contentProviderRequests.requestsCompleted, 0);
-    EXPECT_EQ(
-        diag.contentProviderRequests.activeWorkerBlockingRequests,
-        0);
-    EXPECT_EQ(diag.contentProviderRequests.peakWorkerBlockingRequests, 0);
-    EXPECT_EQ(
-        diag.contentProviderRequests.maximumTransportActiveRequests,
-        11);
-
-    Diagnostics sceneDiagnostics;
-    SceneTilesetDiagnostics::reset(sceneDiagnostics);
-    SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, true);
-    EXPECT_EQ(sceneDiagnostics.terrainProviderRequestsStarted, 0);
-    EXPECT_EQ(sceneDiagnostics.terrainProviderRequestsCompleted, 0);
-    EXPECT_EQ(sceneDiagnostics.contentProviderRequestsStarted, 1);
-    EXPECT_EQ(sceneDiagnostics.contentProviderRequestsCompleted, 0);
-    EXPECT_EQ(
-        sceneDiagnostics.contentProviderActiveWorkerBlockingRequests,
-        0);
-    EXPECT_EQ(sceneDiagnostics.contentProviderPeakWorkerBlockingRequests, 0);
-    EXPECT_EQ(sceneDiagnostics.contentTransportActiveRequestLimit, 11);
-
-    ASSERT_TRUE(bridge.complete(404));
-    for (int i = 0; i < 200 &&
-                    tileset.loadDiagnostics()
-                            .contentProviderRequests.requestsCompleted == 0;
-         ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    EXPECT_EQ(
-        tileset.loadDiagnostics().contentProviderRequests.requestsCompleted,
-        1);
 }
 
 TEST(

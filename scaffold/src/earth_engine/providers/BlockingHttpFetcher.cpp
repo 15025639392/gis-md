@@ -1,4 +1,4 @@
-#include "QuantizedMeshLayerJsonFetcher.h"
+#include "BlockingHttpFetcher.h"
 #include "../core/cache/HttpCache.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -37,11 +37,11 @@ std::string cacheKeyFor(
 
 } // namespace
 
-QuantizedMeshLayerJsonFetcher::QuantizedMeshLayerJsonFetcher(
+BlockingHttpFetcher::BlockingHttpFetcher(
     PlatformBridge* platformBridge)
     : platformBridge_(platformBridge) {}
 
-std::vector<uint8_t> QuantizedMeshLayerJsonFetcher::fetchBlocking(
+std::vector<uint8_t> BlockingHttpFetcher::fetchBlocking(
     const std::string& url,
     HttpRequestPriority priority,
     const std::vector<HttpRequestOptions::Header>& headers,

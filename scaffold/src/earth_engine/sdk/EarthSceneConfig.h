@@ -13,7 +13,6 @@ namespace earth_engine {
 
 enum class TerrainSourceKind {
     None,
-    QuantizedMesh,
     // 规则栅格高度图（raster DEM）地形：web-mercator XYZ 瓦片，每片一张
     // tileSize×tileSize 的高程栅格（Mapbox Terrain-RGB 或 Terrarium PNG 编码），
     // CPU 烘焙成规则栅格 glTF 网格（复用整条现有渲染管线）。
@@ -50,27 +49,14 @@ struct SceneCameraConfig {
 struct TerrainSourceConfig {
     TerrainSourceKind kind = TerrainSourceKind::None;
     std::string urlTemplate;
-    std::string layerJsonUrl;
     std::string attribution;
     int minimumZoom = 0;
     int maximumZoom = 0;
     int tileSize = 0;
-    bool enableWaterMask = false;
-    // Cesium ion 集成：cesiumIonAssetId > 0 时，installScene 会先安装可贴图的
-    // 椭球地表，并在后台向 ionServerUrl 做 endpoint 协商
-    // （GET v1/assets/{id}/endpoint?access_token=<token>）。协商完成后，渲染
-    // 线程将椭球替换为真实 quantized-mesh；影像请求不等待这一过程。返回的
-    // 临时凭证 URL + token 覆盖 layerJsonUrl；QuantizedMeshTerrainProvider 经
-    // resolveTerrainTemplate/mergeBaseQuery 把 access_token 传播到每个瓦片请求。
-    // 临时 token 约 1 小时过期，当前无自动刷新（会话超时后重装场景即可）。
-    // assetId=0 时按 layerJsonUrl 原样加载（本地/自建 quantized-mesh）。
-    int cesiumIonAssetId = 0;
-    std::string cesiumIonAccessToken;
-    std::string cesiumIonServerUrl = "https://api.cesium.com/";
-    // 无细数据区回落椭球（partial 覆盖数据集）：主源（QM）无数据的瓦片在
+    // 无细数据区回落椭球（partial 覆盖数据集）：主源无数据的瓦片在
     // [0, ellipsoidFallbackMaxZoom] 内回落为平滑椭球面，而非停成粗叶子 +
-    // 巨型 skirt 裙墙。默认关 = 全局数据集（如 ion World Terrain）零改动零回归，
-    // 椭球源永不命中。maxZoom 界定纯空洞区的细化深度（椭球是平的，无需深细化）。
+    // 巨型 skirt 裙墙。默认关 = 全局数据集零改动零回归，椭球源永不命中。
+    // maxZoom 界定纯空洞区的细化深度（椭球是平的，无需深细化）。
     bool ellipsoidFallback = false;
     int ellipsoidFallbackMaxZoom = 13;
     int ellipsoidFallbackGridSize = 16;

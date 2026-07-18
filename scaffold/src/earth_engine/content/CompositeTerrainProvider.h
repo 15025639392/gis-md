@@ -42,8 +42,6 @@ public:
         const TileKey& key) const override;
     uint64_t childTopologyRevision() const override;
     bool isTerrainAvailabilityBoundaryLevel(int level) const override;
-    void applyAvailabilityUpdates(
-        const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override;
     int estimatedRequestFanout(const TileKey& key) const override;
 
     void requestTileContent(const TileKey& key,

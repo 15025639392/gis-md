@@ -12,9 +12,6 @@
 
 namespace earth_engine {
 
-using TileAvailabilityRect = std::array<uint32_t, 4>;
-using QuantizedMeshAvailabilityRange = std::array<uint32_t, 5>;
-
 enum class RasterOverlayProjection {
     Geographic = 0,
     WebMercator = 1

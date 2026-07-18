@@ -12,10 +12,9 @@
 #include "../camera/CameraController.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/BingMapsImageryProvider.h"
+#include "../providers/BlockingHttpFetcher.h"
 #include "../providers/DebugImageryProvider.h"
 #include "../providers/GoogleMapTilesImageryProvider.h"
-#include "../providers/QuantizedMeshLayerJsonFetcher.h"
-#include "../providers/QuantizedMeshTerrainProvider.h"
 #include "../providers/TileMapServiceImageryProvider.h"
 #include "../providers/TileMapServiceUrl.h"
 #include "../providers/WebMapServiceImageryProvider.h"
@@ -41,24 +40,6 @@
 #include <vector>
 
 namespace earth_engine {
-
-struct EarthEngineSdkFacade::IonTerrainNegotiationState {
-    enum class Stage {
-        Endpoint,
-        LayerJson
-    };
-
-    std::mutex mutex;
-    uint64_t generation = 0;
-    Stage stage = Stage::Endpoint;
-    bool completed = false;
-    int statusCode = -1;
-    std::vector<uint8_t> body;
-    std::string layerJsonUrl;
-    std::string urlTemplate;
-    std::string attribution;
-    int retryCount = 0;
-};
 
 namespace {
 
@@ -171,128 +152,11 @@ struct SceneTerrainRuntimeSources {
         TileScheme::createGeographicTMS();
 };
 
-struct CesiumIonTerrainEndpoint {
-    std::string layerJsonUrl;
-    std::string urlTemplate;
-    std::string attribution;
-};
-
-std::string cesiumIonEndpointUrl(const TerrainSourceConfig& config) {
-    std::string server = config.cesiumIonServerUrl;
-    if (server.empty()) {
-        server = "https://api.cesium.com/";
-    }
-    if (server.back() != '/') {
-        server += '/';
-    }
-    return server + "v1/assets/" + std::to_string(config.cesiumIonAssetId) +
-           "/endpoint?access_token=" + config.cesiumIonAccessToken;
-}
-
-int startupEllipsoidMaximumLevel(const TerrainSourceConfig& config) {
-    constexpr int kMaxStartupEllipsoidLevel = 8;
-    const int configured = config.ellipsoidFallbackMaxZoom > 0
-        ? config.ellipsoidFallbackMaxZoom
-        : config.maximumZoom;
-    return std::max(1, std::min(kMaxStartupEllipsoidLevel, configured));
-}
-
-std::optional<CesiumIonTerrainEndpoint> parseCesiumIonTerrainEndpoint(
-    const std::vector<uint8_t>& bytes) {
-    if (bytes.empty()) {
-        return std::nullopt;
-    }
-    try {
-        const nlohmann::json j =
-            nlohmann::json::parse(bytes.begin(), bytes.end());
-        std::string url = j.value("url", std::string());
-        const std::string token = j.value("accessToken", std::string());
-        if (url.empty() || token.empty()) {
-            return std::nullopt;
-        }
-        if (url.back() != '/') {
-            url += '/';
-        }
-        CesiumIonTerrainEndpoint endpoint;
-        endpoint.layerJsonUrl = url + "layer.json?access_token=" + token;
-        endpoint.urlTemplate =
-            url + "{z}/{x}/{y}.terrain?access_token=" + token;
-        if (j.contains("attributions") && j["attributions"].is_array() &&
-            !j["attributions"].empty()) {
-            endpoint.attribution =
-                j["attributions"].front().value("html", std::string());
-        }
-        return endpoint;
-    } catch (const std::exception&) {
-        return std::nullopt;
-    }
-}
-
-// Cesium ion endpoint 协商：用长期 token 换取临时凭证 URL + accessToken。
-// 返回的 layerJsonUrl 带 ?access_token=<temp>，QuantizedMeshTerrainProvider
-// 的 resolveTerrainTemplate 会把该 query 合并进每个瓦片请求。
-std::optional<CesiumIonTerrainEndpoint> resolveCesiumIonTerrainEndpoint(
-    const TerrainSourceConfig& config,
-    PlatformBridge& platformBridge) {
-    QuantizedMeshLayerJsonFetcher fetcher(&platformBridge);
-    return parseCesiumIonTerrainEndpoint(
-        fetcher.fetchBlocking(cesiumIonEndpointUrl(config)));
-}
-
 SceneTerrainRuntimeSources createTerrainRuntimeSources(
     const TerrainSourceConfig& config,
     PlatformBridge& platformBridge) {
     SceneTerrainRuntimeSources sources;
     if (config.kind == TerrainSourceKind::None) {
-        return sources;
-    }
-
-    if (config.kind == TerrainSourceKind::QuantizedMesh) {
-        std::string layerJsonUrl = config.layerJsonUrl;
-        std::string urlTemplate = config.urlTemplate;
-        std::string attribution = config.attribution;
-        if (config.cesiumIonAssetId > 0) {
-            const std::optional<CesiumIonTerrainEndpoint> endpoint =
-                resolveCesiumIonTerrainEndpoint(config, platformBridge);
-            if (!endpoint) {
-                logError(platformBridge,
-                         "Cesium ion terrain endpoint negotiation failed: asset " +
-                             std::to_string(config.cesiumIonAssetId));
-                return sources;
-            }
-            layerJsonUrl = endpoint->layerJsonUrl;
-            urlTemplate = endpoint->urlTemplate;
-            if (!endpoint->attribution.empty()) {
-                attribution = endpoint->attribution;
-            }
-        }
-        auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
-            urlTemplate, attribution);
-        qm->setTileSize(config.tileSize);
-        qm->setWaterMaskEnabled(config.enableWaterMask);
-        qm->setPlatformBridge(&platformBridge);
-        if (!qm->configureFromLayerJsonUrl(layerJsonUrl)) {
-            logError(platformBridge,
-                     "QuantizedMesh layer.json load failed: " + layerJsonUrl);
-        }
-        applyConfiguredZoomRange(*qm, config.minimumZoom, config.maximumZoom);
-        sources.tileScheme = createTileSchemeForId(qm->schemeId());
-        if (config.ellipsoidFallback) {
-            // Fuse the QM source with an ellipsoid floor so uncovered regions
-            // render as a smooth ellipsoid instead of a coarse-leaf skirt wall.
-            // The ellipsoid shares the QM tiling scheme so both quadtrees align.
-            auto ellipsoid = std::make_unique<EllipsoidTerrainContentProvider>(
-                qm->schemeId(),
-                config.ellipsoidFallbackMaxZoom,
-                config.ellipsoidFallbackGridSize);
-            sources.contentProvider =
-                std::make_unique<CompositeTerrainProvider>(
-                    std::move(qm),
-                    std::move(ellipsoid),
-                    config.ellipsoidFallbackMaxZoom);
-        } else {
-            sources.contentProvider = std::move(qm);
-        }
         return sources;
     }
 
@@ -323,7 +187,7 @@ SceneTerrainRuntimeSources createTerrainRuntimeSources(
             std::move(hm), maxZoom);
         if (config.ellipsoidFallback) {
             // Ellipsoid floor for uncovered regions, sharing the tiling scheme
-            // (same as the QM path) so both quadtrees align.
+            // so both quadtrees align.
             auto ellipsoid = std::make_unique<EllipsoidTerrainContentProvider>(
                 schemeId,
                 config.ellipsoidFallbackMaxZoom,
@@ -366,173 +230,13 @@ EarthEngineSdkFacade::activeRasterOverlays() const {
     return result;
 }
 
-void EarthEngineSdkFacade::beginCesiumIonTerrainNegotiation() {
-    const TerrainSourceConfig& terrain = config_.terrain;
-    if (terrain.cesiumIonAssetId <= 0) {
-        return;
-    }
-
-    auto state = std::make_shared<IonTerrainNegotiationState>();
-    state->generation = sceneGeneration_;
-    ionTerrainNegotiation_ = state;
-    ionTerrainNegotiationRequest_ = platformBridge_.get(
-        cesiumIonEndpointUrl(terrain),
-        [state](int statusCode, std::vector<uint8_t> body) {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            state->statusCode = statusCode;
-            state->body = std::move(body);
-            state->completed = true;
-        },
-        {HttpRequestPriority::High});
-}
-
 void EarthEngineSdkFacade::update() {
-    const std::shared_ptr<IonTerrainNegotiationState> state =
-        ionTerrainNegotiation_;
-    if (!state) {
-        return;
-    }
-
-    IonTerrainNegotiationState::Stage stage;
-    int statusCode = -1;
-    std::vector<uint8_t> body;
-    std::string layerJsonUrl;
-    std::string urlTemplate;
-    std::string attribution;
-    {
-        std::lock_guard<std::mutex> lock(state->mutex);
-        if (!state->completed || state->generation != sceneGeneration_) {
-            return;
-        }
-        stage = state->stage;
-        statusCode = state->statusCode;
-        body = std::move(state->body);
-        state->completed = false;
-        layerJsonUrl = state->layerJsonUrl;
-        urlTemplate = state->urlTemplate;
-        attribution = state->attribution;
-    }
-    ionTerrainNegotiationRequest_.reset();
-
-    if (statusCode != 200 || body.empty()) {
-        int retryCount = 0;
-        {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            retryCount = ++state->retryCount;
-        }
-        if (stage == IonTerrainNegotiationState::Stage::Endpoint) {
-            logError(
-                platformBridge_,
-                "Cesium ion terrain endpoint negotiation failed; retry " +
-                    std::to_string(retryCount) +
-                    " while keeping ellipsoid imagery surface");
-            ionTerrainNegotiationRequest_ = platformBridge_.get(
-                cesiumIonEndpointUrl(config_.terrain),
-                [state](int retryStatusCode, std::vector<uint8_t> retryBody) {
-                    std::lock_guard<std::mutex> lock(state->mutex);
-                    state->statusCode = retryStatusCode;
-                    state->body = std::move(retryBody);
-                    state->completed = true;
-                },
-                {HttpRequestPriority::High});
-        } else {
-            logError(
-                platformBridge_,
-                "Cesium ion terrain layer.json load failed; retry " +
-                    std::to_string(retryCount) +
-                    " while keeping ellipsoid imagery surface");
-            ionTerrainNegotiationRequest_ = platformBridge_.get(
-                layerJsonUrl,
-                [state](int retryStatusCode, std::vector<uint8_t> retryBody) {
-                    std::lock_guard<std::mutex> lock(state->mutex);
-                    state->statusCode = retryStatusCode;
-                    state->body = std::move(retryBody);
-                    state->completed = true;
-                },
-                {HttpRequestPriority::High});
-        }
-        return;
-    }
-
-    if (stage == IonTerrainNegotiationState::Stage::Endpoint) {
-        const std::optional<CesiumIonTerrainEndpoint> endpoint =
-            parseCesiumIonTerrainEndpoint(body);
-        if (!endpoint) {
-            logError(platformBridge_,
-                     "Cesium ion terrain endpoint response was invalid; "
-                     "keeping ellipsoid imagery surface");
-            ionTerrainNegotiation_.reset();
-            return;
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            state->stage = IonTerrainNegotiationState::Stage::LayerJson;
-            state->layerJsonUrl = endpoint->layerJsonUrl;
-            state->urlTemplate = endpoint->urlTemplate;
-            state->attribution = endpoint->attribution;
-            state->retryCount = 0;
-        }
-        ionTerrainNegotiationRequest_ = platformBridge_.get(
-            endpoint->layerJsonUrl,
-            [state](int layerStatusCode, std::vector<uint8_t> layerBody) {
-                std::lock_guard<std::mutex> lock(state->mutex);
-                state->statusCode = layerStatusCode;
-                state->body = std::move(layerBody);
-                state->completed = true;
-            },
-            {HttpRequestPriority::High});
-        return;
-    }
-
-    auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
-        urlTemplate,
-        attribution.empty() ? config_.terrain.attribution : attribution);
-    qm->setTileSize(config_.terrain.tileSize);
-    qm->setWaterMaskEnabled(config_.terrain.enableWaterMask);
-    qm->setPlatformBridge(&platformBridge_);
-    if (!qm->configureFromLayerJson(
-            std::string(body.begin(), body.end()), layerJsonUrl)) {
-        logError(platformBridge_,
-                 "Cesium ion terrain layer.json was rejected; keeping "
-                 "ellipsoid imagery surface");
-        ionTerrainNegotiation_.reset();
-        return;
-    }
-    applyConfiguredZoomRange(
-        *qm, config_.terrain.minimumZoom, config_.terrain.maximumZoom);
-    const std::string terrainSchemeId = qm->schemeId();
-
-    std::unique_ptr<TilesetContentProvider> terrainProvider = std::move(qm);
-    if (config_.terrain.ellipsoidFallback) {
-        auto ellipsoid = std::make_unique<EllipsoidTerrainContentProvider>(
-            terrainSchemeId,
-            config_.terrain.ellipsoidFallbackMaxZoom,
-            config_.terrain.ellipsoidFallbackGridSize);
-        terrainProvider = std::make_unique<CompositeTerrainProvider>(
-            std::move(terrainProvider),
-            std::move(ellipsoid),
-            config_.terrain.ellipsoidFallbackMaxZoom);
-    }
-
-    auto tileset = std::make_unique<Tileset>(
-        createTileSchemeForId(terrainSchemeId),
-        activeRasterOverlays(),
-        &renderDevice_,
-        makeSceneTilesetOptions(config_.tileset),
-        std::move(terrainProvider));
-    engine_.stageTilesetReplacement(std::move(tileset));
-    ionTerrainNegotiation_.reset();
-    logInfo(
-        platformBridge_,
-        "Cesium ion terrain staged; ellipsoid startup remains until real "
-        "terrain is presentation-ready");
+    // Deferred terrain negotiation has been retired; terrain sources are
+    // installed synchronously in installScene(). Kept as a per-frame hook.
 }
 
 void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     ++sceneGeneration_;
-    ionTerrainNegotiationRequest_.reset();
-    ionTerrainNegotiation_.reset();
     config_ = std::move(config);
     resetCamera();
 
@@ -555,7 +259,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
         if (overlayConfig.imageryKind == ImagerySourceKind::TileMapService) {
             const std::string xmlUrl =
                 tileMapServiceXmlUrl(overlayConfig.tileMapResourceUrl);
-            QuantizedMeshLayerJsonFetcher fetcher(&platformBridge_);
+            BlockingHttpFetcher fetcher(&platformBridge_);
             const std::vector<uint8_t> bytes = fetcher.fetchBlocking(xmlUrl);
             if (bytes.empty()) {
                 logError(platformBridge_,
@@ -610,7 +314,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             const std::string capabilitiesUrl =
                 webMapServiceCapabilitiesUrl(overlayConfig.urlTemplate,
                                              wmsOptions.version);
-            QuantizedMeshLayerJsonFetcher fetcher(&platformBridge_);
+            BlockingHttpFetcher fetcher(&platformBridge_);
             const std::vector<uint8_t> bytes =
                 fetcher.fetchBlocking(capabilitiesUrl);
             if (bytes.empty()) {
@@ -719,7 +423,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                 overlayConfig.bingMapStyle,
                 overlayConfig.bingKey,
                 overlayConfig.bingCulture);
-            QuantizedMeshLayerJsonFetcher fetcher(&platformBridge_);
+            BlockingHttpFetcher fetcher(&platformBridge_);
             const std::vector<uint8_t> bytes = fetcher.fetchBlocking(
                 metadataUrl);
             if (bytes.empty()) {
@@ -853,43 +557,16 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
 
     const TilesetOptions tilesetOptions =
         makeSceneTilesetOptions(config_.tileset);
-    std::unique_ptr<Tileset> tileset;
-    if (config_.terrain.kind == TerrainSourceKind::QuantizedMesh &&
-        config_.terrain.cesiumIonAssetId > 0) {
-        // Do not make imagery wait for ion's endpoint/layer.json handshake.
-        // The startup ellipsoid is a normal drape-ready terrain source, so
-        // raster requests and rendering begin immediately. update() replaces
-        // this tileset with real quantized-mesh terrain after negotiation.
-        auto startupEllipsoid =
-            std::make_unique<EllipsoidTerrainContentProvider>(
-                "Geographic-TMS",
-                startupEllipsoidMaximumLevel(config_.terrain),
-                config_.terrain.ellipsoidFallbackGridSize);
-        tileset = std::make_unique<Tileset>(
-            TileScheme::createGeographicTMS(),
-            std::move(rasterOverlays),
-            &renderDevice_,
-            tilesetOptions,
-            std::move(startupEllipsoid));
-    } else {
-        SceneTerrainRuntimeSources terrainSources =
-            createTerrainRuntimeSources(config_.terrain, platformBridge_);
-        tileset = std::make_unique<Tileset>(
-            std::move(terrainSources.tileScheme),
-            std::move(rasterOverlays),
-            &renderDevice_,
-            tilesetOptions,
-            std::move(terrainSources.contentProvider));
-    }
+    SceneTerrainRuntimeSources terrainSources =
+        createTerrainRuntimeSources(config_.terrain, platformBridge_);
+    auto tileset = std::make_unique<Tileset>(
+        std::move(terrainSources.tileScheme),
+        std::move(rasterOverlays),
+        &renderDevice_,
+        tilesetOptions,
+        std::move(terrainSources.contentProvider));
     engine_.setTileset(std::move(tileset));
     logInfo(platformBridge_, "Unified Tileset created");
-    if (config_.terrain.kind == TerrainSourceKind::QuantizedMesh &&
-        config_.terrain.cesiumIonAssetId > 0) {
-        beginCesiumIonTerrainNegotiation();
-        logInfo(platformBridge_,
-                "Ellipsoid startup terrain installed; Cesium ion handshake "
-                "continues in background");
-    }
 
     if (config_.gltf.enabled) {
         const TileKey gltfKey{

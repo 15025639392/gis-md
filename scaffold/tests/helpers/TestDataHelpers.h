@@ -1,7 +1,6 @@
 #pragma once
 
 #include "earth_engine/content/GltfModel.h"
-#include "earth_engine/terrain/QuantizedMeshParser.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -48,48 +47,6 @@ inline std::unique_ptr<DecodedImage> makeRgbImage(int width, int height,
         img->pixels[i + 2] = b;
     }
     return img;
-}
-
-/// Quantized-Mesh zigzag 编码
-inline uint16_t zigZagEncode16(int32_t value) {
-    return static_cast<uint16_t>(value >= 0 ? value * 2 : (-value * 2) - 1);
-}
-
-/// 构建最小的合法 QuantizedMesh 字节流（3 vertices, 1 triangle, no skirt）
-inline std::vector<uint8_t> makeQuantizedMeshBytes() {
-    auto append = [](std::vector<uint8_t>& bytes, auto value) {
-        const auto* p = reinterpret_cast<const uint8_t*>(&value);
-        bytes.insert(bytes.end(), p, p + sizeof(value));
-    };
-
-    std::vector<uint8_t> bytes;
-    // Header: center (3 doubles), minH/maxH (2 floats),
-    //         boundingSphere + horizon (7 doubles), vertexCount (1 uint32)
-    for (int i = 0; i < 3; ++i) append(bytes, 0.0);
-    append(bytes, 0.0f);
-    append(bytes, 100.0f);
-    for (int i = 0; i < 7; ++i) append(bytes, 0.0);
-    append(bytes, static_cast<uint32_t>(3));
-
-    // UVH: 3 vertices
-    const uint16_t u[] = {zigZagEncode16(0), zigZagEncode16(32767), zigZagEncode16(-32767)};
-    const uint16_t v[] = {zigZagEncode16(0), zigZagEncode16(0), zigZagEncode16(32767)};
-    const uint16_t h[] = {zigZagEncode16(0), zigZagEncode16(0), zigZagEncode16(0)};
-    for (uint16_t val : u) append(bytes, val);
-    for (uint16_t val : v) append(bytes, val);
-    for (uint16_t val : h) append(bytes, val);
-
-    // triCount = 1
-    append(bytes, static_cast<uint32_t>(1));
-    // indices: high-water zigzag for 1 triangle → 0, 1, 2
-    append(bytes, static_cast<uint16_t>(0));
-    append(bytes, static_cast<uint16_t>(0));
-    append(bytes, static_cast<uint16_t>(0));
-
-    // 4 edges: count=0 each
-    for (int i = 0; i < 4; ++i) append(bytes, static_cast<uint32_t>(0));
-
-    return bytes;
 }
 
 } // namespace testing

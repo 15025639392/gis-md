@@ -16,7 +16,6 @@ class PlatformBridge;
 class RasterOverlay;
 class RenderDevice;
 class TileScheme;
-class HttpRequest;
 
 /// Thin SDK entry point for installing a configured earth scene into an
 /// already-created Engine.
@@ -52,9 +51,6 @@ private:
         std::unique_ptr<TileScheme> scheme,
         RasterOverlay::Options options);
     std::vector<ActivatedRasterOverlay*> activeRasterOverlays() const;
-    void beginCesiumIonTerrainNegotiation();
-
-    struct IonTerrainNegotiationState;
 
     Engine& engine_;
     RenderDevice& renderDevice_;
@@ -63,8 +59,6 @@ private:
     std::vector<std::unique_ptr<RasterOverlay>> rasterOverlays_;
     std::vector<std::unique_ptr<ActivatedRasterOverlay>>
         activatedRasterOverlays_;
-    std::shared_ptr<IonTerrainNegotiationState> ionTerrainNegotiation_;
-    std::unique_ptr<HttpRequest> ionTerrainNegotiationRequest_;
     uint64_t sceneGeneration_ = 0;
 };
 

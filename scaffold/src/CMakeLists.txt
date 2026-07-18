@@ -121,8 +121,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/content/CompositeTerrainProvider.cpp
     earth_engine/content/GltfTerrainUpsampler.h
     earth_engine/content/GltfTerrainUpsampler.cpp
-    earth_engine/content/QuantizedMeshContentLoader.h
-    earth_engine/content/QuantizedMeshContentLoader.cpp
 )
 
 # ============================================================
@@ -296,7 +294,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileContentStateTransition.h
     earth_engine/tiling/TileContentUploadCommitter.h
     earth_engine/tiling/TileContentUploadCommitter.cpp
-    earth_engine/tiling/TileAvailabilityUpdateCommitter.h
+    earth_engine/tiling/TileAvailabilityState.h
     earth_engine/tiling/TileContentCacheManager.h
     earth_engine/tiling/TileContentCacheManager.cpp
     earth_engine/tiling/TileContentResourceInvalidator.h
@@ -529,10 +527,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/TerrainProvider.cpp
     earth_engine/providers/HeightmapTerrainProvider.h
     earth_engine/providers/HeightmapTerrainProvider.cpp
-    earth_engine/providers/QuantizedMeshTerrainProvider.h
-    earth_engine/providers/QuantizedMeshTerrainProvider.cpp
-    earth_engine/providers/QuantizedMeshLayerJsonFetcher.h
-    earth_engine/providers/QuantizedMeshLayerJsonFetcher.cpp
+    earth_engine/providers/BlockingHttpFetcher.h
+    earth_engine/providers/BlockingHttpFetcher.cpp
     earth_engine/providers/TileMapServiceUrl.h
     earth_engine/providers/TileMapServiceUrl.cpp
     earth_engine/providers/RasterOverlayTile.h
@@ -706,8 +702,6 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/terrain/TerrainTile.h
     earth_engine/terrain/TerrainTile.cpp
-    earth_engine/terrain/QuantizedMeshParser.h
-    earth_engine/terrain/QuantizedMeshParser.cpp
 )
 
 # ============================================================
