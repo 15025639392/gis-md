@@ -456,7 +456,7 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 - **miss 回退(决策② 共存延续)**:间接纹理 cell=miss(页未 resident)→ 片元回落 mappedRaster(祖先糊但有,不出洞);进阶=编 coarser 祖先页 layer+scale-bias 做 mip 回退(门① "单次页表+mip 回退",B3 再做)。
 
 ### 15.2 分步(3a/3b 式隔离,每步真机 gate)
-- **Step B1 — 间接渲染路径隔离(先不碰相机)**:池改页粒度(blockLayers=1,key=页)+ per-tile RGBA8 间接纹理 + shader 间接 fetch。**间接纹理先用 dense 映射填**(cell→连续 layer,行为=现 item①)隔离验证"间接 fetch 渲染路径+第二 sampler+RGBA8 解码"整链在真机点亮(观感应=item① 的 z14、glError=0)+ 量门① 真实渲染路径开销。fetch 仍走现 dense 枚举。
+- **Step B1 ✅ 真机 PASS(commit `072036479`,Adreno 7e045e39)**:per-tile RGBA8 间接纹理 + shader 间接 fetch,间接纹理 dense 填(cell→连续 layer,与闭式逐 cell 等价)隔离验证间接路径。**池未改**(dense 填保持连续块,风险最低;页粒度留 B2)。新 slot21 + `encode/decodeLayerRGBA8`(R=layer&0xFF/G=layer>>8,引擎无整数纹理故 RGBA8 承载 16bit)+ `buildIndirTexture`(NEAREST/Clamp,desc.data 一次创建)+ shader GLSL/MSL 双镜像(cell 不变,layer 换单次 NEAREST fetch+解码 R+G*256;MSL 用着色器内 constexpr nearest sampler)。两后端扩槽 21(GLES currentTextures 定容+setSampler unit11;Metal maxMaterialTextures)防 item① 孪生漏绑坑;NEAREST 由纹理自身 glTexParameteri 保证(GLES 无 sampler 对象)。**验收**:host 153/153(+3 RGBA8 round-trip 单测)+arm64 clean+真机 glError=0/tiles=3/**截图与 item① 逐像素一致**=间接路径整链正确(编解码/NEAREST/slot21 两后端;shader 已无闭式 fallback → 一致即证间接在跑)。**观感仍 z14 糊**(dense 填等价,crisp 在 B2)。门① 真实渲染路径开销未单独插桩量(间接路径已跑,与 PoC 的 +0.14ms 一致性可后补)。
 - **Step B0/B2 — 屏幕界定稀疏 determination(接相机)**:把可见页 walk 挪进选择帧(plumb SelectorView + 可见 capped 瓦片列表进 TerrainPageStore)→ 只 fetch 可见页 → 从 resident 页建**稀疏**间接纹理(miss→mappedRaster)。真机 gate=近景 crisp(z16-17)+内存有界(~17MB,非 dense 的 192MB)+无过取。
 - **Step B3(后)— mip/祖先回退**:间接 miss 编 coarser resident 页做平滑 page-in(替 mappedRaster 硬回退)。
 - 任一步卡 → 退 item① dense(近景 z14 但有界可用,无损)。
