@@ -252,6 +252,10 @@ bool Engine::render(double deltaSeconds) {
                 terrainPageStoreInitFailed_ = true;
             }
         }
+        // 渲染线程驱动:目标锁定后 kick 异步影像 fetch + 排空已到达影像灌 layer。
+        if (terrainPageStore_) {
+            terrainPageStore_->tick();
+        }
     }
     if (scene_->shouldHoldPresentationFrame()) {
         scene_->recordEngineTiming(Scene::EngineTimingScope::BeginFrame, 0.0);

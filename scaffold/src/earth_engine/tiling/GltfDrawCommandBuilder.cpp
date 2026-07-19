@@ -446,7 +446,7 @@ void applyPerFrameCommandState(
     // 挂 array 纹理 + 置 pageStoreParams.enabled=1(覆盖上采样 mappedRaster)。
     // 未启用(指针空)或非目标瓦片时 no-op → 逐字节走现状路径,零回归。
     if (TerrainPageStore* pageStore = renderer.terrainPageStore()) {
-        pageStore->applyToTerrainCommand(cmd, tile);
+        pageStore->applyToTerrainCommand(cmd, tile, overlays);
     }
 }
 
