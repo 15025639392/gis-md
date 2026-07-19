@@ -82,6 +82,14 @@ int TerrainPageLayerPool::acquire(uint64_t key, uint64_t frameId,
     return slot * blockLayers_;
 }
 
+void TerrainPageLayerPool::touch(uint64_t key, uint64_t frameId) {
+    const auto it = keyToSlot_.find(key);
+    if (it == keyToSlot_.end()) {
+        return;  // 不驻留 → no-op(不像 acquire 那样分配/淘汰)
+    }
+    slots_[static_cast<size_t>(it->second)].lastFrame = frameId;
+}
+
 void TerrainPageLayerPool::release(uint64_t key) {
     const auto it = keyToSlot_.find(key);
     if (it == keyToSlot_.end()) {
@@ -101,12 +109,12 @@ namespace {
 // terrain 采用 NW 约定(v=0 北,rewriteProjectionTexCoords)故不翻转即对齐。
 constexpr bool kFlipRowsOnUpload = false;
 
-// thick-OBB 过取收紧(§15.3①):capped 父瓦片高度带很厚(可上千米),z17 子 cell
-// 仅 ~150m 宽,套厚 OBB 在掠射/边缘会假阳性戳进视锥。视锥内再按 cell 自身屏幕误差
-// 二次剔除——SSE 远小于地形细化阈值的 cell 屏幕贡献可忽略(本应由 coarser 页服务,
-// 当前单-父瓦片 zoom 无法区分),丢弃以逼近 #3 屏幕工作集(近 68/地平线 185)。
-// 阈值取地形 SSE 阈值的一半(§15.3 建议):nadir cell SSE≈阈值,丢弃 >2× 距离低贡献 cell。
-constexpr double kCellSseCullFraction = 0.5;
+// per-cell 渐变 LOD 的真 miss 地板(§16.3⑥,替代 §15.3① 的 0.5 硬剔)。
+// §15.3① 曾按 cell 屏幕误差硬剔到 0.5×阈值——但被剔的中距 cell 一步跌回 z12
+// mappedRaster(5 级悬崖)= 高倾斜「模糊带」根因。§16.3 改为:视锥内 cell 按距离取
+// 自适应粗祖先页(渐变),仅保留一层**更低**的地板兜厚 OBB 掠射假阳性——屏幕贡献
+// < 1/4 阈值的 cell(远景/掠射误戳)才真 miss 回落 mappedRaster,防 near-nadir 枚举爆量。
+constexpr double kCellSseMissFloorFraction = 0.25;
 
 }  // namespace
 
@@ -123,11 +131,14 @@ struct TerrainPageStore::PendingInbox {
     std::vector<Item> pages;
 };
 
-void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident, uint8_t out[4]) {
+void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident, int depth,
+                                        uint8_t out[4]) {
     const unsigned int v = static_cast<unsigned int>(std::max(0, layer));
     out[0] = static_cast<uint8_t>(v & 0xFFu);          // R = layer & 0xFF
     out[1] = static_cast<uint8_t>((v >> 8) & 0xFFu);   // G = (layer >> 8) & 0xFF
-    out[2] = 0;                                         // B 保留
+    // B = per-cell 渐变 LOD 深度 d(§16.3),clamp [0, kMaxDetDepthLevels]。片元
+    // span=2^d 定位粗祖先页子区;d=0 逐字节=现状精页。
+    out[2] = static_cast<uint8_t>(std::clamp(depth, 0, kMaxDetDepthLevels));
     // A = resident 标志(B2b):片元 alphaOver factor。resident=页已 uploaded → 覆盖;
     // miss(视锥外/未 fetch/未到)→ 0 → 保留 base=mappedRaster(优雅降级不出洞)。
     out[3] = resident ? 255 : 0;
@@ -137,6 +148,10 @@ int TerrainPageStore::decodeLayerRGBA8(const uint8_t in[4]) {
     // 逐位镜像片元 shader:floor(r*255+0.5)+floor(g*255+0.5)*256(RGBA8 unorm
     // 采样后 r=R/255,floor(R+0.5)=R)。
     return static_cast<int>(in[0]) + static_cast<int>(in[1]) * 256;
+}
+
+int TerrainPageStore::decodeDepthRGBA8(const uint8_t in[4]) {
+    return static_cast<int>(in[2]);  // 镜像片元 floor(b*255+0.5)
 }
 
 std::unique_ptr<Texture> TerrainPageStore::createIndirTexture(
@@ -322,27 +337,44 @@ void TerrainPageStore::updateVisiblePages(
                     if (!obb || !view.frustum.intersectsOBB(*obb)) {
                         continue;  // 视锥外 → 不入 kept(编码时默认 miss)
                     }
-                    // thick-OBB 过取收紧(§15.3①):cell 自身屏幕误差二次剔除。
-                    const double subGeomError =
-                        p.tile->geometricError / static_cast<double>(p.gridN);
+                    // per-cell 渐变 LOD(§16.3):用**瓦片级** geomError 在 cell 距离处的
+                    // 屏幕误差 → cell 该细化到的影像 zoom Za。近 cell(cellDist≈瓦片距)→
+                    // cellSse≈tileSse → Za=Z、d=0(逐字节=现状精页);远 cell → Za 渐降
+                    // → 采粗祖先页,多远 cell 共享同一粗页(池去重)→ 工作集有界。替代
+                    // §15.3① 的硬剔到 z12 悬崖(=模糊带根因)为随距离单调 ≤1 级渐变。
                     const double cellDist = std::sqrt(
                         obb->computeDistanceSquaredToPosition(view.position));
                     const double cellSse =
                         TileSelectionInputMetrics::screenSpaceErrorForView(
-                            subGeomError, view.projectionMatrix,
+                            p.tile->geometricError, view.projectionMatrix,
                             view.viewportHeightPixels, cellDist);
-                    if (cellSse < threshold * kCellSseCullFraction) {
+                    // 真 miss 地板(§16.3⑥):屏幕贡献 < 1/4 阈值的 cell = 厚 OBB 掠射
+                    // 假阳性,不给页(回落 mappedRaster),防 near-nadir 枚举爆量。
+                    if (cellSse < threshold * kCellSseMissFloorFraction) {
                         ++culledBySse;
-                        continue;  // 贡献过小 → miss
+                        continue;
                     }
+                    int za = p.tile->key.z;
+                    if (cellSse > threshold) {
+                        za = p.tile->key.z +
+                             static_cast<int>(
+                                 std::lround(std::log2(cellSse / threshold)));
+                    }
+                    za = std::clamp(za, p.tile->key.z, p.zoom);  // [tileZ, Z]
+                    const int d = p.zoom - za;  // 相对精网格下降级数(≥0)
+                    // 粗祖先页(zoom=Za):cx=(tileX*gridN+dx)>>d、cy=(...)>>d。
+                    // (tileX*gridN 是 2^d 倍数,右移无进位污染,§13.4 对齐推导。)
                     DetKeptCell kc;
                     kc.dx = dx;
                     kc.dy = dy;
-                    kc.pageKey = packKey(sub);
+                    kc.d = d;
+                    const int cx = sub.x >> d;
+                    const int cy = sub.y >> d;
                     kc.fetchKey.schemeId = p.imgSchemeId;
-                    kc.fetchKey.z = p.zoom;
-                    kc.fetchKey.x = sub.x;
-                    kc.fetchKey.y = sub.y;
+                    kc.fetchKey.z = za;
+                    kc.fetchKey.x = cx;
+                    kc.fetchKey.y = cy;
+                    kc.pageKey = packKey(kc.fetchKey);  // 粗页去重 key(同祖先→同 key)
                     cache.kept.push_back(kc);
                 }
             }
@@ -354,27 +386,59 @@ void TerrainPageStore::updateVisiblePages(
         for (const DetKeptCell& kc : cache.kept) {
             uint8_t* texel = indirTexelsScratch_.data() +
                              (static_cast<size_t>(kc.dy) * p.gridN + kc.dx) * 4u;
-            visiblePagesScratch_.insert(kc.pageKey);  // 去重计数
-            zMin = std::min(zMin, p.zoom);
-            zMax = std::max(zMax, p.zoom);
+            visiblePagesScratch_.insert(kc.pageKey);  // 去重计数(粗页共享 → 少)
+            zMin = std::min(zMin, kc.fetchKey.z);  // 实际页 zoom = Za(渐变后 ≤ Z)
+            zMax = std::max(zMax, kc.fetchKey.z);
+            // 请求目标页(za,d)并占槽/touch。
             uint64_t evicted = 0;
             const int layer = pool_.acquire(kc.pageKey, frameId_, &evicted);
             if (evicted != 0) {
                 erasePageEntry(evicted);  // 淘汰页:cancel fetch + 移除账本
             }
-            if (layer < 0) {
-                encodeLayerRGBA8(0, false, texel);  // 池本帧满 → miss
-                continue;
+            if (layer >= 0) {
+                auto [it, inserted] = pages_.try_emplace(kc.pageKey);
+                PageEntry& pe = it->second;
+                if (inserted) {
+                    pe.layer = layer;
+                    pe.uploaded = false;
+                    kickPageFetch(kc.fetchKey, kc.pageKey, layer, pe.fetchToken);
+                }
+                if (pe.uploaded) {
+                    // 目标页就绪 = 理想 LOD(settled 逐字节=现状精/粗页)。
+                    encodeLayerRGBA8(pe.layer, true, kc.d, texel);
+                    continue;
+                }
             }
-            auto [it, inserted] = pages_.try_emplace(kc.pageKey);
-            PageEntry& pe = it->second;
-            if (inserted) {
-                pe.layer = layer;
-                pe.uploaded = false;
-                kickPageFetch(kc.fetchKey, kc.pageKey, layer, pe.fetchToken);
+            // 目标未就绪(page-in 中 / 池本帧满):回落**最细的已驻留祖先页**(§16.4
+            // 运动抗模糊带)。沿本 cell 祖先链从细到粗(ad 升序=za 降序)找首个 uploaded
+            // 页,用它 + 其深度 foundD 采样;touch 保活。运动中相邻距离带的祖先常已驻留
+            // (gradient 覆盖 + LRU 保留)→ 显略粗/略细一级而非 z12 mappedRaster 悬崖。
+            // 全冷(祖先链无驻留)才 A=0 回落 mappedRaster。settled 目标就绪走上分支不进此。
+            const int subX = p.tile->key.x * p.gridN + kc.dx;
+            const int subY = p.tile->key.y * p.gridN + kc.dy;
+            const int maxAd = p.zoom - p.tile->key.z;  // za=Z 到 tileZ 的最大深度
+            int foundLayer = -1;
+            int foundD = -1;
+            for (int ad = 0; ad <= maxAd; ++ad) {
+                TileKey aKey;
+                aKey.schemeId = p.imgSchemeId;
+                aKey.z = p.zoom - ad;
+                aKey.x = subX >> ad;
+                aKey.y = subY >> ad;
+                const uint64_t aPageKey = packKey(aKey);
+                const auto ait = pages_.find(aPageKey);
+                if (ait != pages_.end() && ait->second.uploaded) {
+                    foundLayer = ait->second.layer;
+                    foundD = ad;
+                    pool_.touch(aPageKey, frameId_);  // 显示中的祖先页不该被淘汰
+                    break;
+                }
             }
-            // resident=已 uploaded → A=255 覆盖;否则 A=0 保留 mappedRaster。
-            encodeLayerRGBA8(pe.layer, pe.uploaded, texel);
+            if (foundLayer >= 0) {
+                encodeLayerRGBA8(foundLayer, true, foundD, texel);
+            } else {
+                encodeLayerRGBA8(0, false, kc.d, texel);  // 全冷 → mappedRaster
+            }
         }
 
         TileIndir& ind = tileIndirs_[p.tileKeyPacked];

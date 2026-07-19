@@ -47,6 +47,10 @@ public:
     ///  - 所有块本帧都被 touch(lastFrame==frameId)→ 返回 -1(调用方回落 mappedRaster)。
     int acquire(uint64_t key, uint64_t frameId, uint64_t* outEvicted);
 
+    /// 若 key 驻留则 touch 到 frameId(祖先回退保活:被当帧显示的祖先页不该被淘汰)。
+    /// **不分配、不淘汰**——key 不驻留则 no-op(区别于 acquire)。
+    void touch(uint64_t key, uint64_t frameId);
+
     /// 显式移除 key(析构/失效)。key 不在则 no-op。
     void release(uint64_t key);
 
@@ -145,15 +149,21 @@ public:
 
     Texture* arrayTexture() const { return arrayTexture_.get(); }
 
-    /// 稀疏虚拟纹理间接纹理的 RGBA8 层编码:R=layer&0xFF、G=(layer>>8)&0xFF、B=0、
-    /// A=resident?255:0。引擎不支持整数纹理,故用 RGBA8 承载 16 位 layer 索引
-    /// (容 ≤ 65535 页)。**A 通道 = resident 标志(B2b)**:片元用它作 alphaOver
-    /// factor —— resident=1 页存储覆盖、miss=0 保留 mappedRaster(部分就绪/视锥外
-    /// cell 优雅降级,决策② 共存不出洞)。out 需 ≥4 字节。
-    static void encodeLayerRGBA8(int layer, bool resident, uint8_t out[4]);
+    /// 稀疏虚拟纹理间接纹理的 RGBA8 层编码:R=layer&0xFF、G=(layer>>8)&0xFF、
+    /// **B=depth(per-cell 渐变 LOD,§16.3)**、A=resident?255:0。引擎不支持整数纹理,
+    /// 故用 RGBA8 承载 16 位 layer 索引(容 ≤ 65535 页)+ 深度 d(≤ kMaxDetDepthLevels,
+    /// 单 fetch 无需第二张 RG16 纹理)。**depth = Z-Za**:该 cell 采样的粗祖先页相对本瓦片
+    /// 屏幕界定 max zoom Z 下降的级数(0=精页/现状,>0=粗页,片元用 span=2^d 定位子区)。
+    /// **A 通道 = resident 标志(B2b)**:片元用它作 alphaOver factor —— resident=1 页存储
+    /// 覆盖、miss=0 保留 mappedRaster(部分就绪/视锥外 cell 优雅降级,决策② 共存不出洞)。
+    /// out 需 ≥4 字节;depth clamp 到 [0, kMaxDetDepthLevels]。
+    static void encodeLayerRGBA8(int layer, bool resident, int depth,
+                                 uint8_t out[4]);
     /// 与片元 shader 解码逐位一致:floor(r*255+0.5)+floor(g*255+0.5)*256 = R+G*256。
     /// 供 host round-trip 单测证明「编 layer → RGBA8 → 解码回 layer」链路正确。
     static int decodeLayerRGBA8(const uint8_t in[4]);
+    /// B 通道深度解码(镜像片元 floor(b*255+0.5))。供 host round-trip 单测。
+    static int decodeDepthRGBA8(const uint8_t in[4]);
 
     // --- 诊断(单测/日志用)---
     int residentPageCount() const { return pool_.residentCount(); }
@@ -228,11 +238,12 @@ private:
                    maxH == o.maxH;
         }
     };
-    struct DetKeptCell {  // 缓存的「过视锥+SSE」cell(纯几何,不含驻留态)
+    struct DetKeptCell {  // 缓存的「过视锥」cell(纯几何,不含驻留态)
         int dx = 0;
         int dy = 0;
+        int d = 0;         // per-cell 渐变 LOD 深度(§16.3):Z-Za,pageKey/fetchKey=粗祖先
         uint64_t pageKey = 0;
-        TileKey fetchKey;  // 影像 provider schemeId 的子瓦片 key(kick fetch 用)
+        TileKey fetchKey;  // 影像 provider schemeId 的粗祖先页 key(kick fetch 用)
     };
     struct DetTileCacheEntry {
         int gridN = 1;

@@ -533,3 +533,16 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 **新会话验证计划**:①模糊带→z14-15(对齐耦合参考,无洞);②工作集有界(<~250);③近景 elev45 无回归(d=0 路径,z17 crisp,页数不暴涨);④fps 不回退(#1 缓存仍命中);⑤host round-trip(layer+d)+153/153+arm64。⑥near-nadir 页数若因取消硬剔而暴涨→加"cellSse<阈值*0.25→真 miss"地板兜 OBB 假阳性(§15.3① 那批)。
 
 **测量脚手架现状(未提交,新会话可复用/清)**:Engine.cpp 的 `PageDetPerf` 计时器已 `git checkout` 撤;demo measure flags 已复位默认(freeze off/elev45/height1500)。抓耦合参考 = 临时把 MinimalGlobeDemoConfig.cpp 的 decouple+pageStore 两行改 false + freeze on/elev15,测毕改回。
+
+### 16.3′ #2 实现 ✅(commit 本次)+ settled 真机 PASS
+`encode/decodeLayerRGBA8` 加 **B 通道 depth**(+`decodeDepthRGBA8`,clamp≤kMaxDetDepthLevels=6);`updateVisiblePages` 逐 cell 自适应 `Za=clamp(tileZ+round(log2(cellSse/threshold)),tileZ,Z)`(cellSse 用**瓦片级** geomError 在 cell 距离处的 SSE)、`d=Z-Za`、pageKey/fetchKey=粗祖先 `(Za, subX>>d, subY>>d)`;**§15.3① 的 0.5 硬剔 → 0.25 真 miss 地板**(`kCellSseMissFloorFraction`,只兜厚 OBB 掠射假阳性);4 个 shader 块(gltf/terrain × GLSL/MSL)解 `d`→`span=exp2(d)`/`origin=floor(cell/span)*span`/`sampleUv=(g-origin)/span`(**d=0 逐字节=现状**)。**真机 settled(elev15/2000 grazing)PASS**:zMin10→zMax15 **渐变谱**(非 z17/z12 二元)、uniquePages=135(<250)、culledBySse=0、glError=0;用户确认「最终观感正确,无模糊带」。host 153/153 + page_store 19/19 + arm64 clean。
+
+### 16.4 运动缺页祖先回退 ✅(commit 本次)= 修「运动中模糊带复现」
+**症状**:#2 settled 正确,但**运动中模糊带频繁复现**。**根因**:运动中距离环扫过地形,cell 跨 za 边界 → 请求新页 → page-in 延迟期该 cell A=0 → 回落 **mappedRaster(z12)= 模糊带**(§12.5#4 的"优雅降级"降得太狠)。**修(标准 VT 技术)**:缺页时不跌回 mappedRaster,而**沿本 cell 祖先链从细到粗找首个 uploaded 页**(`TerrainPageLayerPool::touch` 保活),用它 + 其深度 foundD 采样。运动中相邻距离带祖先常已驻留(gradient 覆盖 + LRU 保留)→ 显略粗/略细一级而非 z12 悬崖;**settled 逐字节不变**(目标就绪走原路);全冷才 A=0 回落 mappedRaster。**真机 scripted pan PASS**:运动瞬间 **fallbackUsed 988 : coldMiss 12(98.8% 未就绪 cell 走优雅粗页)**、工作集有界(residentPages ≤360<512 无 thrash)、zMin10→zMax16 渐变全程维持。host 19/19。
+
+### 16.5 ⚠️ 运动帧率真凶实测(改正 §16.1「选择器 37ms」的归因)
+用户报运动「太卡无法判像素」。临时 Engine.cpp 计时(未提交,已撤)拆分 grazing **运动**帧(scripted pan,~118-130ms/帧 ~8fps):**`sceneUpdate`(含选择器)~46ms + `updateVisiblePages`(页 determination)~72ms**。**头号成本是页 determination(72ms > 选择器 46ms),不是 §16.1 猜的选择器 horizon-jank。** 根因:`#1 determination 缓存`只覆盖 **settled**(视图不变跳过 walk);**运动每帧相机变 → cache miss → 全量重走 O(可见瓦片×gridN² cell) OBB+视锥+SSE = 72ms**。#2/§16.4 未制造此成本(B2b 逐 cell determination 从一开始就这么贵),但也没减。**全 DEBUG -O0(release ~2-3× 快,72ms→~25-30ms 估;必须测 release 定性)。determination + 选择器都在渲染线程串行堆帧时间。**
+
+**⟹ 两个新任务(单开):**
+- **① determination 性能**(头号):测 release 拿真值 → 搬出渲染线程(纯读可异步,同「异步选择」)/ 分层剔除(先瓦片/块粗剔再细分 cell,免几万 cell 全做 OBB)/ 运动期降规格。
+- **② sceneUpdate(含选择器 ~46ms)horizon-jank**([[horizon-view-jank-investigation]],pageStore 范围外的既有问题):~380 瓦片重视野遍历;异步选择已部分缓解,斜视仍重。

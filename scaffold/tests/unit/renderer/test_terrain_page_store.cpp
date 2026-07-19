@@ -77,6 +77,26 @@ TEST(TerrainPageLayerPool, TouchUpdatesRecencyProtectsFromEviction) {
     EXPECT_EQ(pool.layerBaseFor(11), -1);  // 被淘汰
 }
 
+// touch():驻留 key → 更新 recency 保活(祖先回退用);不驻留 key → no-op,
+// **不分配、不淘汰**(区别于 acquire)。§16.4 缺页祖先回退依赖此语义。
+TEST(TerrainPageLayerPool, TouchMethodProtectsResidentAndNoopsAbsent) {
+    TerrainPageLayerPool pool = makePool(3, 16);
+    uint64_t ev = 0;
+    pool.acquire(10, 1, &ev);
+    pool.acquire(11, 2, &ev);
+    pool.acquire(12, 3, &ev);
+    // 不驻留 key → no-op:不占块、不淘汰、residentCount 不变。
+    pool.touch(999, 4);
+    EXPECT_EQ(pool.residentCount(), 3);
+    EXPECT_EQ(pool.layerBaseFor(999), -1);
+    // 驻留 key 10(本最久)→ touch 保活,使 11 变最久。
+    pool.touch(10, 5);
+    pool.acquire(13, 6, &ev);  // 池满 → 淘汰现最久 key 11
+    EXPECT_EQ(ev, 11u);
+    EXPECT_EQ(pool.layerBaseFor(10), 0);   // 因 touch 存活
+    EXPECT_EQ(pool.layerBaseFor(11), -1);  // 被淘汰
+}
+
 TEST(TerrainPageLayerPool, RefusesEvictionWhenAllTouchedThisFrame) {
     TerrainPageLayerPool pool = makePool(2, 16);
     uint64_t ev = 0;
@@ -169,36 +189,58 @@ TEST(TerrainPageStoreIndir, EncodeDecodeRoundTrip) {
     for (int layer : {0, 1, 127, 254, 255, 256, 257, 511, 512,
                       1000, 4095, 4096, 12345, 65535}) {
         for (bool resident : {true, false}) {
-            uint8_t rgba[4] = {0, 0, 0, 0};
-            TerrainPageStore::encodeLayerRGBA8(layer, resident, rgba);
-            EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), layer)
-                << "layer=" << layer << " resident=" << resident;
+            for (int depth : {0, 1, 3, 6}) {  // §16.3:d 独立于 layer round-trip
+                uint8_t rgba[4] = {0, 0, 0, 0};
+                TerrainPageStore::encodeLayerRGBA8(layer, resident, depth, rgba);
+                EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), layer)
+                    << "layer=" << layer << " resident=" << resident
+                    << " depth=" << depth;
+                EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), depth)
+                    << "layer=" << layer << " depth=" << depth;
+            }
         }
     }
 }
 
-// 编码约定:R=layer&0xFF、G=(layer>>8)&0xFF、B=0、A=resident?255:0(B2b)。
+// §16.3:depth clamp 到 [0, kMaxDetDepthLevels]=6(B 通道容 0..255,但语义 ≤6)。
+// 负数 → 0,超 6 → 6;解码回值 = clamp 后。layer 编码不受 depth 影响。
+TEST(TerrainPageStoreIndir, DepthClampToMaxDetDepth) {
+    uint8_t rgba[4] = {0, 0, 0, 0};
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/-3, rgba);
+    EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 0);
+    EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), 42);
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/6, rgba);
+    EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 6);
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/99, rgba);
+    EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 6);  // clamp 到 6
+}
+
+// 编码约定:R=layer&0xFF、G=(layer>>8)&0xFF、B=depth(§16.3)、A=resident?255:0。
 TEST(TerrainPageStoreIndir, EncodeChannelLayout) {
     uint8_t rgba[4] = {9, 9, 9, 9};
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, rgba);
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 0);
     EXPECT_EQ(rgba[1], 0);
-    EXPECT_EQ(rgba[2], 0);    // B 保留 0
+    EXPECT_EQ(rgba[2], 0);    // B = depth 0
     EXPECT_EQ(rgba[3], 255);  // A = resident → 255
 
+    // B 通道 = depth(渐变 LOD 级数),独立于 layer/resident。
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*depth=*/2, rgba);
+    EXPECT_EQ(rgba[2], 2);
+
     // A 通道 = resident 标志:miss(resident=false)→ A=0,片元 alphaOver factor=0。
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, rgba);
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[3], 0);
 
-    TerrainPageStore::encodeLayerRGBA8(255, /*resident=*/true, rgba);
+    TerrainPageStore::encodeLayerRGBA8(255, /*resident=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 255);  // R 满
     EXPECT_EQ(rgba[1], 0);
 
-    TerrainPageStore::encodeLayerRGBA8(256, /*resident=*/true, rgba);
+    TerrainPageStore::encodeLayerRGBA8(256, /*resident=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 0);    // R 归零
     EXPECT_EQ(rgba[1], 1);    // 进 G 位
 
-    TerrainPageStore::encodeLayerRGBA8(513, /*resident=*/true, rgba);
+    TerrainPageStore::encodeLayerRGBA8(513, /*resident=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 1);    // 513 = 1 + 2*256
     EXPECT_EQ(rgba[1], 2);
 }

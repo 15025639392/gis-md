@@ -578,7 +578,14 @@ void main() {
         vec2 indirUv = (cell + 0.5) / gridN;
         vec4 e = texture(u_pageStoreIndir, indirUv);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
-        base = alphaOver(base, texture(u_pageStore, vec3(g - cell, layer)), e.a);
+        // per-cell 渐变 LOD(§16.3):d>0 → cell 采粗祖先页(覆盖 span=2^d 个精 cell)。
+        // origin=该粗页在精网格的左下角,sampleUv=片元在粗页内 [0,1] 子区。
+        // d=0:span=1、origin=cell → sampleUv=g-cell(逐字节=现状精页,无回归)。
+        float d = floor(e.b * 255.0 + 0.5);
+        vec2 span = vec2(exp2(d));
+        vec2 origin = floor(cell / span) * span;
+        vec2 sampleUv = (g - origin) / span;
+        base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1082,8 +1089,13 @@ void main() {
         vec2 indirUv = (cell + 0.5) / gridN;
         vec4 e = texture(u_pageStoreIndir, indirUv);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
+        // per-cell 渐变 LOD(§16.3,镜像 gltf):d>0 采粗祖先页;d=0=现状精页。
+        float d = floor(e.b * 255.0 + 0.5);
+        vec2 span = vec2(exp2(d));
+        vec2 origin = floor(cell / span) * span;
+        vec2 sampleUv = (g - origin) / span;
         base = alphaOver(
-            base, texture(u_pageStore, vec3(g - cell, layer)), e.a);
+            base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1780,9 +1792,14 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         float2 indirUv = (cell + 0.5) / gridN;
         float4 e = u_pageStoreIndir.sample(u_pageStoreIndirSampler, indirUv);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
+        // per-cell 渐变 LOD(§16.3,镜像 GLSL):d>0 采粗祖先页;d=0=现状精页。
+        float d = floor(e.b * 255.0 + 0.5);
+        float2 span = float2(exp2(d));
+        float2 origin = floor(cell / span) * span;
+        float2 sampleUv = (g - origin) / span;
         base = gltfAlphaOver(
             base,
-            u_pageStore.sample(u_tileSharedSampler, g - cell, uint(layer)),
+            u_pageStore.sample(u_tileSharedSampler, sampleUv, uint(layer)),
             e.a);
     }
     base = gltfApplyWaterMask(
@@ -2331,10 +2348,15 @@ fragment float4 terrainFragment(
         float2 indirUv = (cell + 0.5) / gridN;
         float4 e = u_pageStoreIndir.sample(u_pageStoreIndirSampler, indirUv);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
+        // per-cell 渐变 LOD(§16.3,镜像 GLSL):d>0 采粗祖先页;d=0=现状精页。
+        float d = floor(e.b * 255.0 + 0.5);
+        float2 span = float2(exp2(d));
+        float2 origin = floor(cell / span) * span;
+        float2 sampleUv = (g - origin) / span;
         // B2b(镜像 GLSL):factor = e.a(resident 标志)。miss=0 保留 mappedRaster。
         base = terrainAlphaOver(
             base,
-            u_pageStore.sample(u_terrainSampler, g - cell, uint(layer)),
+            u_pageStore.sample(u_terrainSampler, sampleUv, uint(layer)),
             e.a);
     }
     base = terrainApplyWaterMask(
