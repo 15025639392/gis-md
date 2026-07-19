@@ -93,6 +93,18 @@
 - **Phase 0 — 立基线 + 测量台（先做，别跳）**：release + 钉相机 + 位姿无关指标，采耦合态"之前"硬数字 + 参考画质截图。产出 §5 闸门表的"现状"列真实值。
 - **Phase 1 — 调研 + 出设计**：扒 `.ref/osgearth`（影像层 vs 地形 LOD 关系、有没有虚拟纹理）为基准，另看 cesium-native/maplibre；出 design doc 落 `docs/issues/`，**含 C 的移动端固定开销真机 PoC 数据 + 内存账 + GLES sampler 上限核算**；拆"几何 cap 精确级别"（真实数据算）；**让用户拍板档位/路径**，再写大码。
 - **Phase 2+ — 实现**：按闸门表每步验收；先拆 `isMoreDetailAvailable→refine` 耦合（几何按 DEM 误差 cap），再上解耦纹理通路。
+  - **Phase 2b（纹理侧）**：有界影像纹理通路（B/C 合成 atlas，Universal Texture）——让 capped 粗地形瓦片显 z18 清晰影像。详见 [northstar-decoupling-design-2026-07-19.md](northstar-decoupling-design-2026-07-19.md)。
+  - **Phase 2c（几何侧，2026-07-20 纳入北极星）= 地形几何 GPU 位移化**：详见 [terrain-gpu-displacement-redesign-2026-07-20.md](terrain-gpu-displacement-redesign-2026-07-20.md)。
+
+### 7c. Phase 2c —— 地形几何 GPU 位移化（几何侧北极星节点）
+
+**为什么是北极星节点**：北极星目标函数（§2）= 体验地板之上最小化**有界**资源。2b 把**影像纹理**做成有界（共享 atlas + 屏幕定尺）；2c 把**地形几何**做成有界的**对偶**——现状每 capped 地形瓦片仍烘一份 per-tile CPU 网格 + **per-tile VBO（65×65≈135KB）**，是 §5 闸门表「地形 VBO 字节」这一维的直接来源。2c 改为 **GPU 位移模型**：单份共享模板（per {LOD,mercator-row}）+ per-tile 高度纹理（65×65 R16UI≈**8.5KB**）+ 顶点 shader 采样椭球位移 → 地形 VBO 字节**斜率≈0（有界）**，且消灭 per-tile CPU 建网格（斜视地平线卡顿主凶 prefetchFill 8-29ms/帧的根，[[horizon-jank-terrain-tileset-2026-07-19]]）。**架构收敛**：2b 影像走 GPU 纹理采样，2c 地形也走 GPU 纹理采样（高度纹理）——纹理/几何两侧统一到「共享几何 + per-tile 纹理 + shader 采样」，是 GE 的完整形态。
+
+**与 2b 的关系**：正交、可并行（各自 flag-gated）。2c 不依赖 2b（在 2a capped 几何上做），2b 不依赖 2c。**急迫性**：2c 直接消斜视地平线卡顿（当前 release ~20-30fps 的痛点），是手上体验回报最快的一击。
+
+**闸门表贡献（§5）**：主打「地形 VBO 字节 斜率≈0」+「近景放大 CPU/内存平」；不降体验（morph/skirt/清晰度地板全守，P1 保留现有无缝 CPU heightDelta morph）。
+
+**执行**：P0 精度冒烟 → P1 GPU 位移路径（flag-gated，保留 CPU morph，吃掉卡顿主体）→ P2 morph 纹理化（缓）→ P3 高度查询迁移 → P4 skirt/normal-map/overlay → P5 退役旧路径。决策已拍板见 redesign doc §7-8。
 
 ---
 
