@@ -211,6 +211,58 @@ private:
     std::vector<uint8_t> indirTexelsScratch_;           // 间接纹理上传复用缓冲
     uint64_t pageDetFrameCounter_ = 0;                  // 节流 log 用(独立于 frameId_)
     int lastVisiblePageCount_ = 0;
+
+    // ===== determination 缓存(高倾斜 fps:视图+可见瓦片集逐值精确不变 → 跳过逐 cell
+    // 几何枚举 OBB/视锥/SSE,只重跑便宜的驻留编码。缓存的是**纯几何结果**(哪些 cell
+    // 过筛 + cell→pageKey),它只依赖视图+瓦片(key/zoom/minH/maxH)+threshold,不依赖
+    // 页驻留态。**失效判定逐字段 ==**(hash 有碰撞→误判为未变=雷,故用精确比对);
+    // 顺序/内容任一变化 → 全 re-walk(安全侧,只会多跑不会用错)。驻留层(pool.acquire/
+    // touch/淘汰/kick/编码)**每帧必跑**,故冻结相机下异步到页仍逐帧点亮,无 stale。=====
+    struct DetTileSig {  // per-tile 几何签名(决定 kept cells 的全部输入)
+        uint64_t tileKey = 0;
+        int zoom = 0;
+        double minH = 0.0;
+        double maxH = 0.0;
+        bool operator==(const DetTileSig& o) const {
+            return tileKey == o.tileKey && zoom == o.zoom && minH == o.minH &&
+                   maxH == o.maxH;
+        }
+    };
+    struct DetKeptCell {  // 缓存的「过视锥+SSE」cell(纯几何,不含驻留态)
+        int dx = 0;
+        int dy = 0;
+        uint64_t pageKey = 0;
+        TileKey fetchKey;  // 影像 provider schemeId 的子瓦片 key(kick fetch 用)
+    };
+    struct DetTileCacheEntry {
+        int gridN = 1;
+        uint64_t lastFrame = 0;  // 访问帧;sweep 清非本帧可见瓦片(同 tileIndirs_)
+        std::vector<DetKeptCell> kept;
+    };
+    struct DetTileParam {  // 本帧 per-tile 参数(签名阶段算,walk/encode 复用)
+        TilesetTile* tile = nullptr;
+        uint64_t tileKeyPacked = 0;
+        int zoom = 0;
+        int gridN = 0;
+        double minH = 0.0;
+        double maxH = 0.0;
+        SchemeId imgSchemeId;  // 影像 provider 的 schemeId(interned handle)
+    };
+    std::unordered_map<uint64_t, DetTileCacheEntry> detTileCache_;  // tileKey→几何缓存
+    std::vector<DetTileParam> detParamsScratch_;
+    std::vector<DetTileSig> detTilesScratch_;
+    // 上一帧几何输入签名(逐值精确比对)。几何只依赖:frustum(intersectsOBB)+
+    // position(cellDist)+ projection/viewportHeight(SSE)+ threshold + provider + 瓦片集。
+    // 存 6 frustum 平面(每面 normal.xyz + distance = 4 double,共 24)= 全朝向含 roll。
+    bool detSigValid_ = false;
+    double detPos_[3] = {};
+    double detPlanes_[24] = {};
+    double detProj_[16] = {};
+    int detVpH_ = 0;
+    double detThreshold_ = 0.0;
+    const void* detProvider_ = nullptr;
+    std::vector<DetTileSig> detTilesPrev_;
+    int lastCulledBySse_ = 0;  // TEMP 诊断:hit 帧复用(walk 跳过故不重算)
 };
 
 }  // namespace earth_engine

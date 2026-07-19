@@ -215,14 +215,14 @@ void TerrainPageStore::updateVisiblePages(
     const TileScheme& scheme = provider->getTileScheme();
     const int providerMaxLevel = provider->getMaximumLevel();
 
-    visiblePagesScratch_.clear();
-    int visibleCappedTiles = 0;
-    int zMin = std::numeric_limits<int>::max();
-    int zMax = std::numeric_limits<int>::min();
-    double maxTileSse = 0.0;  // TEMP 诊断:本帧最大瓦片屏幕 SSE(驱动 zoom)
-    int culledBySse = 0;      // TEMP 诊断:被 screen-SSE 过滤剔除的 cell 数(§15.3①)
-
-    for (const TilesetTile* tile : visibleTiles) {
+    // ===== Phase 1:构建 per-tile 参数 + determination 输入签名(便宜,无逐 cell)。
+    // zoom = 屏幕合适影像源 LOD = 相机相关(tileSSE 已烘距离;分母=地形阈值 16 匹配
+    // 「未 cap 会细化到的几何 LOD」;用 overlay MSE 2 会过取 z18)。=====
+    const double threshold = std::max(1e-3, terrainMaxScreenSpaceError);
+    detParamsScratch_.clear();
+    detTilesScratch_.clear();
+    double maxTileSse = 0.0;  // TEMP 诊断
+    for (TilesetTile* tile : visibleTiles) {
         if (!tile) {
             continue;
         }
@@ -231,25 +231,13 @@ void TerrainPageStore::updateVisiblePages(
             TerrainSurfaceCommandSource::RealTerrain) {
             continue;
         }
-        ++visibleCappedTiles;
-
-        // 1) 屏幕合适的影像源 zoom = **相机相关**(关键:不能用瓦片几何误差,那是
-        //    静态的、会复现几何/影像耦合 → capped z12 瓦片得 z12)。瓦片几何在屏幕
-        //    上占 tileSSE 像素误差(selectionFrameState.screenSpaceError,距离已烘进去);
-        //    若不 cap,selector 会把几何细化到 SSE≤地形阈值 = 深 log2(tileSSE/阈值) 级。
-        //    影像匹配那个「本应细化到的几何 LOD」= 耦合态清晰度(#3 近景 z16-17)。
-        //    **分母用地形细化阈值(16),不是 overlay MSE(2)**——tileSSE 就是对着 16
-        //    阈值量的;用 2 会深 log2(8)=3 级 → z18 过取。
         const double tileSse = tile->selectionFrameState.screenSpaceError;
         maxTileSse = std::max(maxTileSse, tileSse);
-        const double threshold = std::max(1e-3, terrainMaxScreenSpaceError);
         int zoom = tile->key.z;
         if (tileSse > threshold) {
             zoom = tile->key.z +
                    static_cast<int>(std::lround(std::log2(tileSse / threshold)));
         }
-        // 2) clamp:≥ 瓦片自身 z(否则不细分),≤ provider maxLevel,且深度 cap
-        //    (防远景/病态 zoom 枚举爆量)。
         zoom = std::min(zoom, providerMaxLevel);
         zoom = std::min(zoom, tile->key.z + kMaxDetDepthLevels);
         zoom = std::max(zoom, tile->key.z);
@@ -257,99 +245,152 @@ void TerrainPageStore::updateVisiblePages(
         const int gridN = subtileGridN(tile->key.z, zoom);
         const double minH = TileBoundsMetrics::terrainMinimumHeight(*tile);
         const double maxH = TileBoundsMetrics::terrainMaximumHeight(*tile);
-
-        // 3) 分配/复用该瓦片的稀疏间接纹理(gridN 变则重建)。逐 cell 填 resident/miss。
         const uint64_t tileKeyPacked = packKey(tile->key);
-        TileIndir& ind = tileIndirs_[tileKeyPacked];
-        indirTexelsScratch_.assign(
-            static_cast<size_t>(gridN) * static_cast<size_t>(gridN) * 4u, 0);
-
-        // 影像 fetch key 需影像 provider 的 schemeId(terrain tileKey.schemeId 可能异号):
-        // 由影像 scheme.positionToTile(瓦片中心)取,x/y/z 沿用共享 XYZ 网格。
+        // 影像 fetch schemeId(terrain tileKey.schemeId 可能异号)由影像 scheme 取。
         const Rectangle tileRect = scheme.tileToRectangle(tile->key);
         const double cLng = 0.5 * (tileRect.west() + tileRect.east());
         const double cLat = 0.5 * (tileRect.south() + tileRect.north());
-        const auto imgSchemeId =
+        const SchemeId imgSchemeId =
             scheme.positionToTile(cLng, cLat, tile->key.z).schemeId;
 
-        for (int dy = 0; dy < gridN; ++dy) {
-            for (int dx = 0; dx < gridN; ++dx) {
-                uint8_t* texel = indirTexelsScratch_.data() +
-                                 (static_cast<size_t>(dy) * gridN + dx) * 4u;
-                TileKey sub;
-                sub.schemeId = tile->key.schemeId;  // 视锥/rect 计算沿用 terrain scheme
-                sub.z = zoom;
-                sub.x = tile->key.x * gridN + dx;
-                sub.y = tile->key.y * gridN + dy;
-                const Rectangle subRect = scheme.tileToRectangle(sub);
-                const std::optional<OrientedBoundingBox> obb =
-                    TileBoundsMetrics::boundingRegionObb(subRect, minH, maxH);
-                if (!obb || !view.frustum.intersectsOBB(*obb)) {
-                    encodeLayerRGBA8(0, false, texel);  // 视锥外 → miss(mappedRaster)
-                    continue;
-                }
-                // thick-OBB 过取收紧(§15.3①):视锥内再按 cell 自身屏幕误差二次剔除。
-                // 子 geomError = 父/2^depth = 父/gridN(四叉树每级半);dist=相机到 cell
-                // OBB 最近点。SSE < 阈值*fraction → 屏幕贡献过小(厚 OBB 假阳性/远景掠射)
-                // → 丢弃当 miss(回落 mappedRaster,不出洞),逼近屏幕工作集。
-                const double subGeomError =
-                    tile->geometricError / static_cast<double>(gridN);
-                const double cellDist = std::sqrt(
-                    obb->computeDistanceSquaredToPosition(view.position));
-                const double cellSse =
-                    TileSelectionInputMetrics::screenSpaceErrorForView(
-                        subGeomError, view.projectionMatrix,
-                        view.viewportHeightPixels, cellDist);
-                if (cellSse < threshold * kCellSseCullFraction) {
-                    encodeLayerRGBA8(0, false, texel);  // 贡献过小 → miss
-                    ++culledBySse;
-                    continue;
-                }
-                const uint64_t pageKey = packKey(sub);
-                visiblePagesScratch_.insert(pageKey);  // 去重计数(跨瓦片共享祖先)
-                zMin = std::min(zMin, zoom);
-                zMax = std::max(zMax, zoom);
+        detParamsScratch_.push_back(
+            {tile, tileKeyPacked, zoom, gridN, minH, maxH, imgSchemeId});
+        detTilesScratch_.push_back({tileKeyPacked, zoom, minH, maxH});
+    }
 
-                // 4) pool.acquire 得 layer(页首次命中建 PageEntry + kick fetch)。
-                uint64_t evicted = 0;
-                const int layer = pool_.acquire(pageKey, frameId_, &evicted);
-                if (evicted != 0) {
-                    erasePageEntry(evicted);  // 淘汰页:cancel fetch + 移除账本
+    // ===== Phase 2:签名逐字段精确比对(任一不同 → miss,全部瓦片 re-walk 几何)。
+    // 精确 ==(非 hash)杜绝「视图变了却判成未变」的雷。几何输入 = frustum 6 平面 +
+    // position + projection + viewportHeight + threshold + provider + 瓦片集。=====
+    double curPlanes[24];
+    {
+        using PI = Frustum::PlaneIndex;
+        const PI order[6] = {PI::Left, PI::Right,  PI::Bottom,
+                             PI::Top,  PI::Near,   PI::Far};
+        for (int i = 0; i < 6; ++i) {
+            const FrustumPlane& pl = view.frustum.plane(order[i]);
+            curPlanes[i * 4 + 0] = pl.normal.x();
+            curPlanes[i * 4 + 1] = pl.normal.y();
+            curPlanes[i * 4 + 2] = pl.normal.z();
+            curPlanes[i * 4 + 3] = pl.distance;
+        }
+    }
+    double curProj[16];
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 4; ++r) {
+            curProj[c * 4 + r] = view.projectionMatrix(r, c);
+        }
+    }
+    bool viewMatch = detSigValid_ && detProvider_ == provider &&
+                     detVpH_ == view.viewportHeightPixels &&
+                     detThreshold_ == threshold &&
+                     detPos_[0] == view.position.x() &&
+                     detPos_[1] == view.position.y() &&
+                     detPos_[2] == view.position.z();
+    for (int i = 0; i < 24 && viewMatch; ++i) {
+        if (detPlanes_[i] != curPlanes[i]) viewMatch = false;
+    }
+    for (int i = 0; i < 16 && viewMatch; ++i) {
+        if (detProj_[i] != curProj[i]) viewMatch = false;
+    }
+    const bool hit = viewMatch && detTilesPrev_ == detTilesScratch_;
+
+    // ===== Phase 3:逐瓦片 —— miss 时 walk 几何填缓存;两路都跑驻留编码(每帧必跑,
+    // 故异步到页逐帧点亮无 stale)。=====
+    visiblePagesScratch_.clear();
+    int zMin = std::numeric_limits<int>::max();
+    int zMax = std::numeric_limits<int>::min();
+    int culledBySse = hit ? lastCulledBySse_ : 0;
+    const int visibleCappedTiles = static_cast<int>(detParamsScratch_.size());
+
+    for (const DetTileParam& p : detParamsScratch_) {
+        DetTileCacheEntry& cache = detTileCache_[p.tileKeyPacked];
+        // 几何 walk 仅在 miss(或 gridN 变=几何变的保险)时跑。
+        if (!hit || cache.gridN != p.gridN) {
+            cache.gridN = p.gridN;
+            cache.kept.clear();
+            for (int dy = 0; dy < p.gridN; ++dy) {
+                for (int dx = 0; dx < p.gridN; ++dx) {
+                    TileKey sub;
+                    sub.schemeId = p.tile->key.schemeId;  // 视锥/rect 用 terrain scheme
+                    sub.z = p.zoom;
+                    sub.x = p.tile->key.x * p.gridN + dx;
+                    sub.y = p.tile->key.y * p.gridN + dy;
+                    const Rectangle subRect = scheme.tileToRectangle(sub);
+                    const std::optional<OrientedBoundingBox> obb =
+                        TileBoundsMetrics::boundingRegionObb(subRect, p.minH,
+                                                             p.maxH);
+                    if (!obb || !view.frustum.intersectsOBB(*obb)) {
+                        continue;  // 视锥外 → 不入 kept(编码时默认 miss)
+                    }
+                    // thick-OBB 过取收紧(§15.3①):cell 自身屏幕误差二次剔除。
+                    const double subGeomError =
+                        p.tile->geometricError / static_cast<double>(p.gridN);
+                    const double cellDist = std::sqrt(
+                        obb->computeDistanceSquaredToPosition(view.position));
+                    const double cellSse =
+                        TileSelectionInputMetrics::screenSpaceErrorForView(
+                            subGeomError, view.projectionMatrix,
+                            view.viewportHeightPixels, cellDist);
+                    if (cellSse < threshold * kCellSseCullFraction) {
+                        ++culledBySse;
+                        continue;  // 贡献过小 → miss
+                    }
+                    DetKeptCell kc;
+                    kc.dx = dx;
+                    kc.dy = dy;
+                    kc.pageKey = packKey(sub);
+                    kc.fetchKey.schemeId = p.imgSchemeId;
+                    kc.fetchKey.z = p.zoom;
+                    kc.fetchKey.x = sub.x;
+                    kc.fetchKey.y = sub.y;
+                    cache.kept.push_back(kc);
                 }
-                if (layer < 0) {
-                    encodeLayerRGBA8(0, false, texel);  // 池本帧满 → miss
-                    continue;
-                }
-                auto [it, inserted] = pages_.try_emplace(pageKey);
-                PageEntry& pe = it->second;
-                if (inserted) {
-                    pe.layer = layer;
-                    pe.uploaded = false;
-                    TileKey fetchKey;
-                    fetchKey.schemeId = imgSchemeId;  // 影像 provider 的 schemeId
-                    fetchKey.z = zoom;
-                    fetchKey.x = sub.x;
-                    fetchKey.y = sub.y;
-                    kickPageFetch(fetchKey, pageKey, layer, pe.fetchToken);
-                }
-                // resident=已 uploaded → A=255 覆盖;否则 A=0 保留 mappedRaster。
-                encodeLayerRGBA8(pe.layer, pe.uploaded, texel);
             }
         }
 
-        // gridN 变(或首见)→ 建纹理(带初值);否则原地刷新(每帧 resident 变化)。
-        if (!ind.tex || ind.gridN != gridN) {
-            ind.tex = createIndirTexture(gridN, indirTexelsScratch_.data());
-            ind.gridN = gridN;
+        // 驻留编码(**每帧必跑**):按当前 resident/uploaded 重建间接纹理。
+        indirTexelsScratch_.assign(
+            static_cast<size_t>(p.gridN) * static_cast<size_t>(p.gridN) * 4u, 0);
+        for (const DetKeptCell& kc : cache.kept) {
+            uint8_t* texel = indirTexelsScratch_.data() +
+                             (static_cast<size_t>(kc.dy) * p.gridN + kc.dx) * 4u;
+            visiblePagesScratch_.insert(kc.pageKey);  // 去重计数
+            zMin = std::min(zMin, p.zoom);
+            zMax = std::max(zMax, p.zoom);
+            uint64_t evicted = 0;
+            const int layer = pool_.acquire(kc.pageKey, frameId_, &evicted);
+            if (evicted != 0) {
+                erasePageEntry(evicted);  // 淘汰页:cancel fetch + 移除账本
+            }
+            if (layer < 0) {
+                encodeLayerRGBA8(0, false, texel);  // 池本帧满 → miss
+                continue;
+            }
+            auto [it, inserted] = pages_.try_emplace(kc.pageKey);
+            PageEntry& pe = it->second;
+            if (inserted) {
+                pe.layer = layer;
+                pe.uploaded = false;
+                kickPageFetch(kc.fetchKey, kc.pageKey, layer, pe.fetchToken);
+            }
+            // resident=已 uploaded → A=255 覆盖;否则 A=0 保留 mappedRaster。
+            encodeLayerRGBA8(pe.layer, pe.uploaded, texel);
+        }
+
+        TileIndir& ind = tileIndirs_[p.tileKeyPacked];
+        if (!ind.tex || ind.gridN != p.gridN) {
+            ind.tex = createIndirTexture(p.gridN, indirTexelsScratch_.data());
+            ind.gridN = p.gridN;
         } else {
             device_->updateTextureRegion(
-                ind.tex.get(), 0, 0, gridN, gridN, indirTexelsScratch_.data(),
-                static_cast<size_t>(gridN) * 4u, 0);
+                ind.tex.get(), 0, 0, p.gridN, p.gridN, indirTexelsScratch_.data(),
+                static_cast<size_t>(p.gridN) * 4u, 0);
         }
         ind.lastFrame = frameId_;
+        cache.lastFrame = frameId_;
     }
 
-    // sweep:清除本帧不再可见的瓦片间接纹理(其页经 LRU 自然淘汰)。
+    // sweep:清本帧不再可见瓦片的间接纹理 + 几何缓存(页经 LRU 自然淘汰)。
     for (auto it = tileIndirs_.begin(); it != tileIndirs_.end();) {
         if (it->second.lastFrame != frameId_) {
             it = tileIndirs_.erase(it);
@@ -357,6 +398,30 @@ void TerrainPageStore::updateVisiblePages(
             ++it;
         }
     }
+    for (auto it = detTileCache_.begin(); it != detTileCache_.end();) {
+        if (it->second.lastFrame != frameId_) {
+            it = detTileCache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // 保存本帧签名(供下帧 Phase 2 逐值比对)。
+    detSigValid_ = true;
+    detProvider_ = provider;
+    detVpH_ = view.viewportHeightPixels;
+    detThreshold_ = threshold;
+    detPos_[0] = view.position.x();
+    detPos_[1] = view.position.y();
+    detPos_[2] = view.position.z();
+    for (int i = 0; i < 24; ++i) {
+        detPlanes_[i] = curPlanes[i];
+    }
+    for (int i = 0; i < 16; ++i) {
+        detProj_[i] = curProj[i];
+    }
+    detTilesPrev_ = detTilesScratch_;
+    lastCulledBySse_ = culledBySse;
 
     lastVisiblePageCount_ = static_cast<int>(visiblePagesScratch_.size());
     // 插桩:每 ~30 帧一次(节流,勿刷屏)。zMin/zMax 无页时归零。
