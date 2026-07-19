@@ -442,3 +442,27 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 - 异步 fetch 用 shared_ptr inbox(worker 回调安全,store 析构不悬垂)。
 - 单瓦片可见性:SSE 最大=nadir 顶视离屏;多瓦片生产后不再是问题。
 - §13.5 测量台清理:生产落定后删 PoC 脚手架。
+
+## 15. Step B = 稀疏虚拟纹理(sparse SVT,反悔决策① 的"无 indirection",2026-07-19)
+
+**触发**:item① 多瓦片页表真机 PASS 但**近景糊**(§14.4)。根因不是"depth 太浅"而是**dense uniform grid 是瓦片界定、非屏幕界定** → 结构上封顶 z14-15:capped z12 瓦片要 z16-17 crisp 需 dense gridN=16-32=256-1024 页/瓦片,而 #3 实测屏幕界定工作集**仅 68 页(近)/185(地平线)**,dense **过取 11×** → 爆 17-47MB 预算 → 只能 cap depth≈2(z14)→ 永远糊。**⟹ 达 GE-crisp 必须屏幕界定稀疏页存储 = indirection(决策① "dense uniform 无 indirection" 结构上到不了 crisp,用户 2026-07-19 拍板反悔 → 上 sparse SVT)。**
+
+### 15.1 设计(三路复用点已调研,file:line 见会话)
+- **门②(核心)= 屏幕可见影像子瓦片 walk**:数学原语**全现成可复用**(`TileBoundsMetrics::boundingRegionObb`+`Frustum::intersectsOBB`+`TileSelectionInputMetrics::screenSpaceErrorForView`+`approximateDistanceToTileBounds`,全矩形级、与地形四叉树解耦;`RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels`+`RasterOverlayTileProvider::buildQuadtreeSourcePlan` 独立影像四叉树 zoom 选择+枚举)。新建=外层"枚举 capped 瓦片 gridN×gridN 子矩形→逐个 frustum+SSE 过滤→可见页集"walk(几十行)。
+- **⚠️ 结构性瓶颈(最大工作量)= 相机不在 applyToTerrainCommand**:`SelectorView`(相机/frustum/projection)只活在 CPU **选择帧**(`FrameState::selectorViews`),render-command 装配阶段(`GltfDrawCommandBuilder::applyPerFrameCommandState`,`GltfDrawCommandBuildContext` 无相机)拿不到。⟹ **可见页 determination 必须挪到选择帧**(或把 SelectorView plumb 进 TerrainPageStore)。分工:选择帧 determine+fetch(有相机)→ render 帧只 bind(读预算好的 per-tile 间接数据,无需相机)。
+- **页粒度 LRU = 现成池天然退化**:`TerrainPageLayerPool` 传 `blockLayers=1` → layerBase=slot → 每页一层,acquire/release 逻辑一字不改;key 从瓦片 hash 换页 (z,x,y) hash(packKey 22 位分段够 z17);blockCount 放大到峰值工作集(~256 层)。
+- **间接纹理**:引擎**不支持整数纹理**(TextureDesc::Format 仅 RGBA8/RGB8/R8/Depth32F)→ **layer 索引编进 RGBA8**(8+8 位跨通道,复用现成格式+updateTextureRegion,零后端改动;§12.5#7 精度 RGBA8 双通道够 16bit)。per-tile 一张小间接纹理(gridN×gridN,cell→layer),CPU 每帧从 resident 页集建+小矩形上传。
+- **shader**:UV-remap 骨架原样(`Renderer.cpp:1053-1060` GLSL/`2271-2280` MSL),把闭式 `layer=layerBase+cell.y*gridN+cell.x` 换成**一次间接采样** `layer=decode(indirTex[cell])`(门① 单次 fetch,D1 +0.14ms 已验便宜)。加第二 sampler slot21:GLES `glesGltfTextureUnit(21)=11≤16`(unit 11-15 空 5)、Metal texture 槽宽松(整数纹理用 `.read()` 免 sampler);`RenderCommandTextureList::kCapacity` 20+1→21。
+- **miss 回退(决策② 共存延续)**:间接纹理 cell=miss(页未 resident)→ 片元回落 mappedRaster(祖先糊但有,不出洞);进阶=编 coarser 祖先页 layer+scale-bias 做 mip 回退(门① "单次页表+mip 回退",B3 再做)。
+
+### 15.2 分步(3a/3b 式隔离,每步真机 gate)
+- **Step B1 — 间接渲染路径隔离(先不碰相机)**:池改页粒度(blockLayers=1,key=页)+ per-tile RGBA8 间接纹理 + shader 间接 fetch。**间接纹理先用 dense 映射填**(cell→连续 layer,行为=现 item①)隔离验证"间接 fetch 渲染路径+第二 sampler+RGBA8 解码"整链在真机点亮(观感应=item① 的 z14、glError=0)+ 量门① 真实渲染路径开销。fetch 仍走现 dense 枚举。
+- **Step B0/B2 — 屏幕界定稀疏 determination(接相机)**:把可见页 walk 挪进选择帧(plumb SelectorView + 可见 capped 瓦片列表进 TerrainPageStore)→ 只 fetch 可见页 → 从 resident 页建**稀疏**间接纹理(miss→mappedRaster)。真机 gate=近景 crisp(z16-17)+内存有界(~17MB,非 dense 的 192MB)+无过取。
+- **Step B3(后)— mip/祖先回退**:间接 miss 编 coarser resident 页做平滑 page-in(替 mappedRaster 硬回退)。
+- 任一步卡 → 退 item① dense(近景 z14 但有界可用,无损)。
+
+### 15.3 待做/未量
+- 门① 真实渲染路径逐片元间接开销(B1 真机量,对齐 PoC 的 +0.14ms)。
+- 选择帧挂钩点(哪个 pass 遍历可见瓦片且 SelectorView 在手)—— B0 先定位。
+- RGBA8 编 16bit layer 的解码精度(近似 vs 精确整数)。
+- 动态/多叠加层:每层一间接结构 or 共享(§11.2 每层一 atlas)—— sparse 落定后再扩。
