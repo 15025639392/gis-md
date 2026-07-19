@@ -19,9 +19,11 @@ namespace earth_engine {
 
 namespace {
 
-// 影像行序:XYZ 瓦片 row 0 = 北(顶);terrain mesh UV v=0 约定与之相反,故上传
-// 时按行翻转让 array 层内 v 方向与地形一致。真机若上下颠倒则翻此常量。
-constexpr bool kFlipRowsOnUpload = true;
+// 影像行序:与生产 raster uploader 一致——DecodedImage row 0=北,行序原样上传,
+// terrain 采用 NW 约定(v=0 北,rewriteProjectionTexCoords)故不翻转即对齐
+// (RenderDeviceRasterTextureUploader 也是 createTexture 原样上传无翻转)。
+// 真机若上下颠倒则翻此常量。
+constexpr bool kFlipRowsOnUpload = false;
 
 // Step 3b 影像未到达前的占位色(逐层可区分,渐次被真实影像覆盖)。
 constexpr std::array<std::array<uint8_t, 4>, 4> kPlaceholderColors = {{
@@ -154,21 +156,40 @@ void TerrainPageStore::kickImageryFetch() {
     ImageryProvider& imagery = provider_->getImageryProvider();
     const TileScheme& scheme = provider_->getTileScheme();
     const int gridN = config_.gridN;
-    // 影像取比目标瓦片深 depthLevels 级(clamp 到 provider 最大层)。gridN=2^depth
-    // 恰好在 web-mercator 同分块下把目标瓦片铺成 gridN×gridN 对齐子瓦片。
-    const int zoom = std::min(targetZ_ + config_.depthLevels,
-                              provider_->getMaximumLevel());
-    const double west = targetBounds_.west();
-    const double south = targetBounds_.south();
-    const double east = targetBounds_.east();
-    const double north = targetBounds_.north();
+    const int zoom = targetZ_ + config_.depthLevels;
+    if (zoom > provider_->getMaximumLevel()) {
+        // 影像深度不足以铺 gridN×gridN 对齐子瓦片:跳过 fetch,留占位(不做
+        // 部分覆盖以免错位)。原型阶段影像 maxZoom≫z12+2,实际不触发。
+        platformLog(LogLevel::Warning, "PageStore",
+                    "skip fetch: zoom %d > maxLevel %d", zoom,
+                    provider_->getMaximumLevel());
+        return;
+    }
+    // **mercator 直接子瓦片**(修 lat-linear 枚举错位):terrain 与影像同 XYZ
+    // web-mercator 分块,故目标瓦片 (z,x,y) 的 z+depth 子瓦片直接 =
+    // (x*gridN+dx, y*gridN+dy),与 shader mercator UV 的 cell 网格逐格对齐
+    // (NW 约定 v=0 北 → cell.y=0=北 = 最小 y = y*gridN+0)。影像 schemeId 经
+    // positionToTile(瓦片中心) 取(interned);顺带校验分块与 terrain 一致。
+    const double centerLng =
+        0.5 * (targetBounds_.west() + targetBounds_.east());
+    const double centerLat =
+        0.5 * (targetBounds_.south() + targetBounds_.north());
+    const TileKey centerImg =
+        scheme.positionToTile(centerLng, centerLat, targetZ_);
+    const bool aligned = centerImg.z == targetKey_.z &&
+                         centerImg.x == targetKey_.x &&
+                         centerImg.y == targetKey_.y;
+    platformLog(LogLevel::Warning, "PageStore",
+                "kick fetch: %d tiles @ z%d (gridN=%d) aligned=%d img(%d/%d/%d)",
+                gridN * gridN, zoom, gridN, aligned ? 1 : 0, centerImg.z,
+                centerImg.x, centerImg.y);
     for (int dy = 0; dy < gridN; ++dy) {
         for (int dx = 0; dx < gridN; ++dx) {
-            const double u = (dx + 0.5) / gridN;
-            const double v = (dy + 0.5) / gridN;
-            const double lng = west + u * (east - west);
-            const double lat = south + v * (north - south);
-            const TileKey childKey = scheme.positionToTile(lng, lat, zoom);
+            TileKey childKey;
+            childKey.schemeId = centerImg.schemeId;
+            childKey.z = zoom;
+            childKey.x = targetKey_.x * gridN + dx;
+            childKey.y = targetKey_.y * gridN + dy;
             const int layer = dy * gridN + dx;  // 与 shader cell.y*gridN+cell.x 对齐
             std::shared_ptr<PendingInbox> inbox = inbox_;
             imagery.requestTile(
@@ -181,9 +202,6 @@ void TerrainPageStore::kickImageryFetch() {
                 });
         }
     }
-    platformLog(LogLevel::Warning, "PageStore",
-                "kick fetch: %d tiles @ z%d (gridN=%d)", gridN * gridN, zoom,
-                gridN);
 }
 
 void TerrainPageStore::drainInbox() {
