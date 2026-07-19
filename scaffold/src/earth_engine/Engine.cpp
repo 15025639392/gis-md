@@ -5,6 +5,7 @@
 #include "camera/CameraController.h"
 #include "renderer/OffscreenPostProcess.h"
 #include "renderer/VirtualTexturePoc.h"
+#include "renderer/TerrainPageStore.h"
 #include "renderer/TileCompositeBakePoc.h"
 #include "renderer/VtIndirectionSamplePoc.h"
 #include "renderer/RenderDevice.h"
@@ -83,6 +84,11 @@ void Engine::onSurfaceDestroyed() {
         vtIndirectionSamplePoc_.reset();
     }
     vtIndirectionSamplePocInitFailed_ = false;
+    if (terrainPageStore_) {
+        scene_->setTerrainPageStore(nullptr);
+        terrainPageStore_.reset();  // 释放 array 纹理(GPU context 即将失效)
+    }
+    terrainPageStoreInitFailed_ = false;
     scene_->setRenderDevice(nullptr);
     if (device_) {
         device_->onSurfaceDestroyed();
@@ -135,6 +141,15 @@ void Engine::setVtIndirectionSamplePocEnabled(bool enabled) {
     if (!enabled && vtIndirectionSamplePoc_) {
         vtIndirectionSamplePoc_->dispose();
         vtIndirectionSamplePoc_.reset();
+    }
+}
+
+void Engine::setTerrainPageStoreEnabled(bool enabled) {
+    terrainPageStoreEnabled_ = enabled;
+    terrainPageStoreInitFailed_ = false;
+    if (!enabled && terrainPageStore_) {
+        scene_->setTerrainPageStore(nullptr);
+        terrainPageStore_.reset();
     }
 }
 
@@ -222,6 +237,20 @@ bool Engine::render(double deltaSeconds) {
             vtIndirectionSamplePoc_->ensureResources(surfaceWidthPixels_,
                                                      surfaceHeightPixels_)) {
             vtIndirectionSamplePoc_->tick();
+        }
+    }
+    // 北极星 合成方案 门③ Step3 页存储原型(默认关):建 texture2DArray 页存储
+    // (Step3a 合成图案填充一次)并挂到内部 Renderer;GltfDrawCommandBuilder 对
+    // 目标 capped 真实地形瓦片挂 array + 门控采样。挂上后持久生效(下帧起应用)。
+    if (terrainPageStoreEnabled_ && !terrainPageStoreInitFailed_) {
+        if (!terrainPageStore_) {
+            auto store = std::make_unique<TerrainPageStore>();
+            if (store->initialize(device_, TerrainPageStore::Config{})) {
+                terrainPageStore_ = std::move(store);
+                scene_->setTerrainPageStore(terrainPageStore_.get());
+            } else {
+                terrainPageStoreInitFailed_ = true;
+            }
         }
     }
     if (scene_->shouldHoldPresentationFrame()) {

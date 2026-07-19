@@ -210,6 +210,10 @@ struct EarthSceneConfig {
     /// baseline(1 次 atlas 采样)vs descent(N 次依赖间接 fetch + atlas 采样),
     /// 量逐片元间接采样倍率,报进 EarthPerf 头行 vtiRatio=。纯旁路测量。
     bool vtIndirectionSamplePoc = false;
+    /// 北极星 合成方案「门③ Step3」页存储原型(默认关):建 texture2DArray 页存储
+    /// 挂到一个 capped 真实地形瓦片,terrain 片元按页表 layer 采样。Step3a 合成
+    /// 图案(隔离渲染路径),Step3b 换真实高清影像。生产渲染路径,非旁路测量台。
+    bool terrainPageStore = false;
 };
 
 } // namespace earth_engine

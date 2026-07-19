@@ -116,6 +116,13 @@ constexpr bool kMeasureTileCompositeBakePoC = false;
 // 与 B fill 同量级)→ 目标形态定合成方案;过不了 → 退 Option-lite。纯旁路测量。
 constexpr bool kMeasureVtIndirectionSamplePoC = false;
 
+// kEnableTerrainPageStore:北极星 合成方案「门③ Step3」页存储生产原型。
+// true = 建一张 texture2DArray 页存储,挂到绘制序里第一个 capped 真实地形瓦片,
+// terrain 片元按页表 layer 单次采样。Step3a = 合成图案填充(逐层红/绿/蓝/黄,
+// 隔离验证渲染路径+array 绑定+GLES array-bind 分支在真机点亮);目标瓦片显四象限
+// 纯色即整链通,其余瓦片=现状。Step3b 换真实高清影像。生产渲染路径,非旁路测量。
+constexpr bool kEnableTerrainPageStore = false;
+
 // 2026-06-10 14:00 UTC+8 = 06:00 UTC.
 constexpr double kFixedSimulationJulianDate = 2461188.75;
 

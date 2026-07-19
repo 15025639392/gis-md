@@ -26,6 +26,7 @@ class SceneRenderPipeline;
 class SceneTelemetryCoordinator;
 class SceneTilesetCoordinator;
 class SkyGradient;
+class TerrainPageStore;
 class Tileset;
 class VectorLayer;
 class Vec3;
@@ -43,6 +44,9 @@ public:
 
     bool setRenderDevice(RenderDevice* device);
     bool isReady() const { return renderer_ != nullptr; }
+
+    /// 门③ Step3:把 Engine 拥有的页存储挂到内部 Renderer(可空=未启用)。
+    void setTerrainPageStore(TerrainPageStore* store);
 
     Camera& camera() { return *camera_; }
     CameraController& cameraController() { return *cameraController_; }

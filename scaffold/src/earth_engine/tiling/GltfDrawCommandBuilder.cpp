@@ -8,6 +8,7 @@
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
 #include "../renderer/Renderer.h"
+#include "../renderer/TerrainPageStore.h"
 #include "../debug/PerfTimer.h"
 
 #include <string>
@@ -320,6 +321,7 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
 /// raster overlay 绑定(纹理指针/UV 窗口/透明度随加载逐帧变化)。
 /// 只写帧列表副本;常驻命令保持内容不变式,拷贝出来即处于默认每帧状态。
 void applyPerFrameCommandState(
+    Renderer& renderer,
     RenderCommand& cmd,
     TilesetTile& tile,
     const std::vector<ActivatedRasterOverlay*>& overlays,
@@ -439,6 +441,13 @@ void applyPerFrameCommandState(
         cmd.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
         cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
     }
+
+    // 北极星合成方案页存储(门③ Step3):最后一步,对目标 capped 真实地形瓦片
+    // 挂 array 纹理 + 置 pageStoreParams.enabled=1(覆盖上采样 mappedRaster)。
+    // 未启用(指针空)或非目标瓦片时 no-op → 逐字节走现状路径,零回归。
+    if (TerrainPageStore* pageStore = renderer.terrainPageStore()) {
+        pageStore->applyToTerrainCommand(cmd, tile);
+    }
 }
 
 } // namespace
@@ -494,6 +503,7 @@ void GltfDrawCommandBuilder::build(
         const double perFrameStateStartMs =
             timings ? perf::nowMs() : 0.0;
         applyPerFrameCommandState(
+            renderer,
             commands.back(),
             tile,
             overlays,

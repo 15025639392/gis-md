@@ -19,6 +19,7 @@ class Scene;
 class VirtualTexturePoc;
 class TileCompositeBakePoc;
 class VtIndirectionSamplePoc;
+class TerrainPageStore;
 class Tileset;
 class VectorLayer;
 struct PresentationTrace;
@@ -174,6 +175,11 @@ public:
     /// 逐片元间接采样倍率(baseline vs descent),数报进 EarthPerf 头行。
     void setVtIndirectionSamplePocEnabled(bool enabled);
 
+    /// 北极星 合成方案「门③ Step3」页存储原型(默认关):建一张 texture2DArray
+    /// 页存储,挂到一个 capped 真实地形瓦片,terrain 片元按页表 layer 采样。
+    /// Step3a = 合成图案(隔离渲染路径),Step3b 换真实高清影像。
+    void setTerrainPageStoreEnabled(bool enabled);
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
@@ -181,6 +187,7 @@ private:
     std::unique_ptr<VirtualTexturePoc> virtualTexturePoc_;
     std::unique_ptr<TileCompositeBakePoc> tileCompositeBakePoc_;
     std::unique_ptr<VtIndirectionSamplePoc> vtIndirectionSamplePoc_;
+    std::unique_ptr<TerrainPageStore> terrainPageStore_;
     double lastRenderTime_ = 0.0;
     bool surfaceCreated_ = false;
     // 离屏后处理开关。优先级:AerialFog > FXAA > passthrough 调试直通。
@@ -201,6 +208,9 @@ private:
     // 北极星 合成方案 门① 原型开关 + 短路。
     bool vtIndirectionSamplePocEnabled_ = false;
     bool vtIndirectionSamplePocInitFailed_ = false;
+    // 北极星 合成方案 门③ Step3 页存储原型开关 + 短路。
+    bool terrainPageStoreEnabled_ = false;
+    bool terrainPageStoreInitFailed_ = false;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;

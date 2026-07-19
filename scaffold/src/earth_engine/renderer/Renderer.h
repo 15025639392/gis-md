@@ -11,6 +11,7 @@ namespace earth_engine {
 struct FrameState;
 class RasterOverlayTile;
 struct TileKey;
+class TerrainPageStore;
 
 /// 平台无关渲染器。
 /// 管理共享 GPU 资源（shader、几何 buffer），供 Scene 和各 Layer 使用。
@@ -108,9 +109,18 @@ public:
         const TileKey& geometryKey,
         int32_t overlayIndex) noexcept override;
 
+    /// 北极星合成方案页存储(门③ Step3):Engine 每帧设置(可空=未启用)。
+    /// GltfDrawCommandBuilder 经此对目标 capped 瓦片挂 array 纹理并门控;
+    /// Renderer 不持有其生命周期(Engine 拥有)。
+    void setTerrainPageStore(TerrainPageStore* store) {
+        terrainPageStore_ = store;
+    }
+    TerrainPageStore* terrainPageStore() const { return terrainPageStore_; }
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    TerrainPageStore* terrainPageStore_ = nullptr;
 };
 
 } // namespace earth_engine

@@ -101,6 +101,12 @@ Scene::~Scene() {
     renderer_.reset();
 }
 
+void Scene::setTerrainPageStore(TerrainPageStore* store) {
+    if (renderer_) {
+        renderer_->setTerrainPageStore(store);
+    }
+}
+
 bool Scene::setRenderDevice(RenderDevice* device) {
     renderDevice_ = device;
     layers_->setRenderDevice(device);
