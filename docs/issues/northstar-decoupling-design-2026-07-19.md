@@ -430,8 +430,9 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 **14.4 item①(多瓦片页表)进度(commit `373290abf`)**
 - **代码完成 + host/编译已验**:`TerrainPageStore` 单目标 → 多瓦片页表;新 `TerrainPageLayerPool`(等尺寸块 LRU,纯 CPU)。**shader 零改动**(pageStoreParams.z 本就是 layerBase,per-command uniform → 每瓦片写自己的 enabled/gridN/layerBase)。每瓦片独立异步 fetch,inbox 带 packed-key+绝对 layer,drain 校验驻留(淘汰/换租丢弃)。层池本帧满 → acquire 返 -1 → 回落 mappedRaster(不淘汰可见块)。
 - **验证**:host 单测 `test_terrain_page_store` 10/10(分配/LRU/touch/换租/满帧拒淘汰/release)+ 全量 153/153 零回归 + Android arm64 NDK core 链接 clean。
-- ⏳ **待真机**:多个 capped 瓦片同时显 z14 真实影像(demo `kEnableTerrainPageStore`);量 §14.1② live 换页 ghost。
-- ⏳ **后续**:Step B 屏幕驱动深度(见上,地平线内存安全前置)+ item③ decouple ON 接生产主路径收底部露底。
+- ✅ **真机验收 PASS(机制,Adreno 7e045e39,2026-07-19)**:flags `kEnableTerrainPageStore + kMeasureDecoupleImageryFromGeometry + kMeasureFreezeCamera`=true,near view elev45/z1500m。诊断 `PageStore resident=3 rendered=3 uploadedLayers=48`——**3 个 capped z12 瓦片全部走页存储**(vs 单瓦片原型只 1),各灌满 16 层(3×16=48)真实 z14 影像,`glError=0`,`tiles=3`,帧 ~7.9ms 无崩。整屏显真实卫星影像(楼宇/体育场/路网),**跨瓦片+跨子瓦片边界连续无硬页缝**(CLAMP_TO_EDGE+mercator 对齐从 3b 延续到多块)。⟹ 多瓦片页表(per-tile entry/块分配/独立 fetch/per-tile uniform)真机坐实。
+  - ⚠️ **真机发现(诚实):影像偏糊,固定 depth 在近景也不够**。1.5km 近相机要 **z16-17**(正是 #3 实测近景工作集),`depthLevels=2` 只到 **z14**,浅 2-3 级 → 每 z14 texel 覆盖多屏幕像素 → 糊。**⟹ Step B 屏幕驱动深度不只为地平线内存,近景清晰度同样需要**(固定 depth 两头都错:地平线过取、近景欠取)。机制对,深度策略是 stepping-stone 的已知缺口。测毕复位 flags + 删 TEMP 诊断,工作树干净。
+- ⏳ **后续**:Step B 屏幕驱动深度(近景清晰 + 地平线内存,双重前置,复用 `chooseQuadtreeSourceZoom`)+ §14.1② live 换页 ghost + item③ decouple ON 接生产主路径收底部露底。
 
 **14.3 已确认可复用/踩过的坑(新会话直接吃)**
 - terrain UV = mercator(`rewriteProjectionTexCoords` set 0,NW v=0 北);**任何新 UV 代码复用它,勿用 lat/几何位置**(§13.4 Step3b mercator 坑)。
