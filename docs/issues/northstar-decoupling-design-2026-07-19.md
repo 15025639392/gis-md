@@ -390,7 +390,12 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 ### 13.4 剩余原型步骤(Step 2/3,开始动生产渲染)
 - **Step 2 ✅ 代码已落地**:`TextureDesc.arrayLayers` + `RenderDevice::updateTextureRegion` 加 `layer` 维,两后端各建 `texture2DArray`(GLES `glTexImage3D`+`glTexSubImage3D`、Metal `MTLTextureType2DArray`+`replaceRegion:slice:`)并可上传一页进指定 layer;越界 layer 返 false;每层 `CLAMP_TO_EDGE`(§13.1 消灭页缝)。主机 152/152 绿 + Android arm64 NDK 编译 clean。
   - **ghost 验证并入 Step 3**:ghost(§12.5 #6)只有在 array **正被采样**时驱动才会对 texSubImage rename/stall;Step 2 单独存在时 array 未接进任何 draw、无 live-sampling → 风险无从激发。故 texSubImage 灌 live array 的 ghost 真机观测天然随 Step 3(array 上屏被采 + 拖动中持续灌层)一起量,不单独造不采样的假 probe。
-- **Step 3**:terrain 片元从 `sampler2DArray` 按页表 layer 采样,一个 capped 粗瓦片显示正确高清影像,验①路径通 ②边界 = 现状;**并顺带量 Step 2 的 ghost**(拖动中对 live array 持续 texSubImage,看是否 rename/stall)。
+- **Step 3**:terrain 片元从 `sampler2DArray` 按页表 layer 采样,一个 capped 粗瓦片显示正确高清影像,验①路径通 ②边界 = 现状;**并顺带量 Step 2 的 ghost**(拖动中对 live array 持续 texSubImage,看是否 rename/stall)。拆两刀:
+  - **Step 3a ✅ 代码已落地(commit `e49ba2fe7` 渲染路径管线 + `ed5de3871` TerrainPageStore)**:整条渲染路径 + array 绑定先用**合成图案**隔离验证(把真实影像 fetch 的数据通路风险隔到 3b)。
+    - 管线:`GltfUniformBlock.pageStoreParams`(enabled/gridN/layerBase)过三方镜像;RenderCommand 加 array 纹理槽 20;两 terrain 片元 gated 采 `sampler2DArray`(mesh UV 落 gridN×gridN 格 → layer → 单次采样 alpha-over);Metal 绑 slot20 走共享 terrain sampler、GLES 按 `GLTexture::target()` 走 `GL_TEXTURE_2D_ARRAY` 分支 + `u_pageStore`@unit10(≤16 底线)。**enabled=0 全惰性 → 非目标瓦片逐字节走现状,零回归。**
+    - 页存储:新 `renderer/TerrainPageStore`,建 `texture2DArray` 逐层灌红/绿/蓝/黄;经 `Renderer` 裸指针挂进 `GltfDrawCommandBuilder`,`applyPerFrameCommandState` 锁定绘制序**第一个真实地形瓦片**为目标,挂 array + 置 enabled=1。flag `terrainPageStore`(demo `kEnableTerrainPageStore` 默认关)。host 152/152 + Android arm64 core 链接 clean。
+    - **真机预期**:目标瓦片显四象限红绿蓝黄(nearest 硬边界)= 渲染路径 / array 创建上传(Step2 layer)/ Metal slot20 绑定 / GLES array-bind 分支 / 格→层选择整链真机点亮;其余瓦片 = 现状。**ghost 未在 3a 激发**(合成图案一次性填充、无 live 上传),随 3b 一起量。
+  - **Step 3b(待做)**:页填充换真实更深 raster 影像(`ImageryProvider::requestTile` 拉目标瓦片的更深子瓦片 → `updateTextureRegion(layer)`;UV 用 `TileSurface::computeTranslationAndScale`),gridN 对齐真实子瓦片布局 → 目标瓦片显真实高清、比邻居更锐(①);拖动中 live 上传各层顺带量 ghost(§12.5#6)。
 - 任一步卡住 → 退 2D atlas + per-page clamp(§12.6③ 原计划,无损)。
 
 ### 13.5 测量台清理清单(合成方案生产原型落定后一并删)
