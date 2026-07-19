@@ -1447,6 +1447,17 @@ void RenderDeviceGLES::onSurfaceCreated() {
     __android_log_print(ANDROID_LOG_INFO, "GLES",
         "GL_MAX_TEXTURE_IMAGE_UNITS=%d GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS=%d",
         maxFragUnits, maxCombinedUnits);
+
+    // 北极星合成方案存储后端候选 = texture2DArray（每页一 layer,天然无 atlas
+    // 页缝）。层数上限是它唯一可能被否决的点：GLES 3.0 保底 256,地平线工作集
+    // 峰值实测 185 页 → 需 ≥185 且留多叠加层余量。一次性打出真机实际值以定案。
+    GLint maxArrayLayers = 0;
+    GLint max3dSize = 0;
+    glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &maxArrayLayers);
+    glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &max3dSize);
+    __android_log_print(ANDROID_LOG_INFO, "GLES",
+        "GL_MAX_ARRAY_TEXTURE_LAYERS=%d GL_MAX_3D_TEXTURE_SIZE=%d GL_MAX_TEXTURE_SIZE=%d",
+        maxArrayLayers, max3dSize, maxTextureSize());
 }
 
 void RenderDeviceGLES::onSurfaceChanged(int width, int height) {

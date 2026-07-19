@@ -76,7 +76,7 @@ constexpr int kMeasureImageryMaxZoom = 18;
 // (深影像 churn)的 far 位姿也精确可复现,让去耦前/后同位姿对拍成立(free-look
 // 静止本已稳,但 far-5000 类重载 stop 偶尔仍漂,此开关彻底钉死)。测量一律开;
 // 生产/交互路径保持 false(默认零影响)。
-constexpr bool kMeasureFreezeCamera = true;
+constexpr bool kMeasureFreezeCamera = false;
 
 // kMeasureDecoupleImageryFromGeometry:北极星 Phase 2a 断纹理/几何耦合(flag 灰度)。
 // false = 耦合态(忠实 cesium,影像 isMoreDetailAvailable 捏造上采样地形子瓦片,
