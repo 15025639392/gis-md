@@ -56,7 +56,8 @@ public:
                              int width,
                              int height,
                              const uint8_t* data,
-                             size_t rowBytes) override;
+                             size_t rowBytes,
+                             int layer = 0) override;
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override;
     bool updateBuffer(Buffer* buffer,
                       size_t offset,
@@ -176,16 +177,27 @@ private:
 
 class GLTexture : public Texture {
 public:
-    GLTexture(unsigned int id, int width, int height, size_t sizeBytes);
+    // target = GL_TEXTURE_2D(普通)或 GL_TEXTURE_2D_ARRAY(合成方案页存储);
+    // arrayLayers = 1 表示普通 2D,>1 表示数组层数。
+    GLTexture(unsigned int id,
+              int width,
+              int height,
+              size_t sizeBytes,
+              unsigned int target = 0x0DE1 /* GL_TEXTURE_2D */,
+              int arrayLayers = 1);
     ~GLTexture() override;
     int width() const override { return width_; }
     int height() const override { return height_; }
     size_t sizeBytes() const override { return sizeBytes_; }
     unsigned int glId() const { return id_; }
+    unsigned int target() const { return target_; }
+    int arrayLayers() const { return arrayLayers_; }
 private:
     unsigned int id_;
     int width_, height_;
     size_t sizeBytes_ = 0;
+    unsigned int target_;
+    int arrayLayers_ = 1;
 };
 
 /// 离屏 framebuffer:color 恒为可采样 GLTexture(生命周期归本对象)。

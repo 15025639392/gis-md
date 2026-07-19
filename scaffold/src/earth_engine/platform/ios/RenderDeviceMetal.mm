@@ -219,16 +219,33 @@ std::unique_ptr<Texture> RenderDeviceMetal::createTexture(const TextureDesc& des
     if (desc.format == TextureDesc::Format::R8) {
         pixelFormat = MTLPixelFormatR8Unorm;
     }
-    MTLTextureDescriptor* texDesc = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:pixelFormat
-                                     width:static_cast<NSUInteger>(desc.width)
-                                    height:static_cast<NSUInteger>(desc.height)
-                                 mipmapped:desc.mipmap];
+
+    // ---- texture2DArray 路径(合成方案页存储:一页一层)----
+    // 只分配层存储,各层随后经 updateTextureRegion(layer) 的 slice 维上传。
+    // Step 2 骨架不建 array mip 链(每层独立 mip 属 §12.5 #3 后续缓解)。
+    const bool isArray = desc.arrayLayers > 1;
+    MTLTextureDescriptor* texDesc = nil;
+    if (isArray) {
+        texDesc = [[MTLTextureDescriptor alloc] init];
+        texDesc.textureType = MTLTextureType2DArray;
+        texDesc.pixelFormat = pixelFormat;
+        texDesc.width = static_cast<NSUInteger>(desc.width);
+        texDesc.height = static_cast<NSUInteger>(desc.height);
+        texDesc.arrayLength = static_cast<NSUInteger>(desc.arrayLayers);
+        texDesc.mipmapLevelCount = 1;
+    } else {
+        texDesc = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:pixelFormat
+                                         width:static_cast<NSUInteger>(desc.width)
+                                        height:static_cast<NSUInteger>(desc.height)
+                                     mipmapped:desc.mipmap];
+    }
 
     id<MTLTexture> tex = [impl_->device newTextureWithDescriptor:texDesc];
     if (!tex) return nullptr;
 
-    if (desc.data) {
+    // 数组纹理创建时不带初始 data(逐层经 updateTextureRegion 上传)。
+    if (desc.data && !isArray) {
         MTLRegion region = MTLRegionMake2D(0, 0,
                                            static_cast<NSUInteger>(desc.width),
                                            static_cast<NSUInteger>(desc.height));
@@ -291,7 +308,8 @@ bool RenderDeviceMetal::updateTextureRegion(Texture* texture,
                                             int width,
                                             int height,
                                             const uint8_t* data,
-                                            size_t rowBytes) {
+                                            size_t rowBytes,
+                                            int layer) {
     auto* metalTexture = static_cast<MetalTexture*>(texture);
     if (!metalTexture || !data || width <= 0 || height <= 0) {
         return false;
@@ -301,14 +319,25 @@ bool RenderDeviceMetal::updateTextureRegion(Texture* texture,
         y + height > metalTexture->height()) {
         return false;
     }
+    id<MTLTexture> tex = metalTexture->mtl();
+    const bool isArray = tex.textureType == MTLTextureType2DArray;
+    // 普通 2D 只接受 slice 0;数组纹理 slice 须落在已分配层内。
+    if (layer < 0 ||
+        (isArray ? static_cast<NSUInteger>(layer) >= tex.arrayLength
+                 : layer != 0)) {
+        return false;
+    }
     MTLRegion region = MTLRegionMake2D(static_cast<NSUInteger>(x),
                                        static_cast<NSUInteger>(y),
                                        static_cast<NSUInteger>(width),
                                        static_cast<NSUInteger>(height));
-    [metalTexture->mtl() replaceRegion:region
-                           mipmapLevel:0
-                             withBytes:data
-                           bytesPerRow:static_cast<NSUInteger>(rowBytes)];
+    // 合成方案页上传:slice = 目标 layer(2D 纹理恒为 0)。
+    [tex replaceRegion:region
+           mipmapLevel:0
+                 slice:static_cast<NSUInteger>(layer)
+             withBytes:data
+           bytesPerRow:static_cast<NSUInteger>(rowBytes)
+         bytesPerImage:0];
     return true;
 }
 

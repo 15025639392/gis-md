@@ -104,11 +104,15 @@ std::vector<unsigned int> GLVaoInvalidationRegistry::takePendingDeletedBuffers()
 GLTexture::GLTexture(unsigned int id,
                      int width,
                      int height,
-                     size_t sizeBytes)
+                     size_t sizeBytes,
+                     unsigned int target,
+                     int arrayLayers)
     : id_(id),
       width_(width),
       height_(height),
-      sizeBytes_(sizeBytes) {}
+      sizeBytes_(sizeBytes),
+      target_(target),
+      arrayLayers_(arrayLayers) {}
 
 GLTexture::~GLTexture() {
     if (id_) {
@@ -221,9 +225,7 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
     glGenTextures(1, &id);
     if (!id) return nullptr;
 
-    glBindTexture(GL_TEXTURE_2D, id);
-
-    // 格式映射
+    // 格式映射(2D 与 array 共用)。
     GLenum internalFormat = GL_RGBA8;
     GLenum format = GL_RGBA;
     switch (desc.format) {
@@ -244,6 +246,58 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
             format = GL_DEPTH_COMPONENT;
             break;
     }
+
+    auto toGlWrap = [](TextureDesc::Wrap wrap) {
+        switch (wrap) {
+            case TextureDesc::Wrap::Repeat:
+                return GL_REPEAT;
+            case TextureDesc::Wrap::MirroredRepeat:
+                return GL_MIRRORED_REPEAT;
+            case TextureDesc::Wrap::Clamp:
+            default:
+                return GL_CLAMP_TO_EDGE;
+        }
+    };
+    const size_t bytesPerPixelFor =
+        desc.format == TextureDesc::Format::R8
+            ? 1u
+            : (desc.format == TextureDesc::Format::RGB8 ? 3u : 4u);
+
+    // ---- texture2DArray 路径(合成方案页存储:一页一层)----
+    // 只分配层存储(无初始 data),各层随后经 updateTextureRegion(layer) 上传。
+    // Step 2 骨架不建 array 的 mip 链(每层独立 mip 属 §12.5 #3 后续缓解)。
+    if (desc.arrayLayers > 1) {
+        const int layers = desc.arrayLayers;
+        glBindTexture(GL_TEXTURE_2D_ARRAY, id);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, internalFormat,
+                     desc.width, desc.height, layers, 0,
+                     format, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
+                        desc.minFilter == TextureDesc::Filter::Linear
+                            ? GL_LINEAR
+                            : GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER,
+                        desc.magFilter == TextureDesc::Filter::Linear
+                            ? GL_LINEAR
+                            : GL_NEAREST);
+        // 每层 CLAMP_TO_EDGE = §13.1 消灭页缝的关键(层内不跨页渗色)。
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,
+                        toGlWrap(desc.wrapS));
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,
+                        toGlWrap(desc.wrapT));
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        const size_t arrayBytes =
+            static_cast<size_t>(std::max(1, desc.width)) *
+            static_cast<size_t>(std::max(1, desc.height)) *
+            bytesPerPixelFor *
+            static_cast<size_t>(layers);
+        return std::make_unique<GLTexture>(
+            id, desc.width, desc.height, arrayBytes,
+            GL_TEXTURE_2D_ARRAY, layers);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, id);
 
     GLenum type = GL_UNSIGNED_BYTE;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -266,17 +320,6 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
     }
 
-    auto toGlWrap = [](TextureDesc::Wrap wrap) {
-        switch (wrap) {
-            case TextureDesc::Wrap::Repeat:
-                return GL_REPEAT;
-            case TextureDesc::Wrap::MirroredRepeat:
-                return GL_MIRRORED_REPEAT;
-            case TextureDesc::Wrap::Clamp:
-            default:
-                return GL_CLAMP_TO_EDGE;
-        }
-    };
     GLint wrapS = toGlWrap(desc.wrapS);
     GLint wrapT = toGlWrap(desc.wrapT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS);
@@ -288,10 +331,7 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
     }
 
     glBindTexture(GL_TEXTURE_2D, 0);
-    const size_t bytesPerPixel =
-        desc.format == TextureDesc::Format::R8
-            ? 1u
-            : (desc.format == TextureDesc::Format::RGB8 ? 3u : 4u);
+    const size_t bytesPerPixel = bytesPerPixelFor;
     size_t allocatedBytes = 0;
     int levelWidth = std::max(1, desc.width);
     int levelHeight = std::max(1, desc.height);
@@ -320,7 +360,8 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
                                            int width,
                                            int height,
                                            const uint8_t* data,
-                                           size_t rowBytes) {
+                                           size_t rowBytes,
+                                           int layer) {
     auto* glTexture = static_cast<GLTexture*>(texture);
     if (!glTexture || !data || width <= 0 || height <= 0) {
         return false;
@@ -334,18 +375,43 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
         return false;
     }
 
-    glBindTexture(GL_TEXTURE_2D, glTexture->glId());
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexSubImage2D(GL_TEXTURE_2D,
-                    0,
-                    x,
-                    y,
-                    width,
-                    height,
-                    GL_RGBA,
-                    GL_UNSIGNED_BYTE,
-                    data);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    const bool isArray = glTexture->target() == GL_TEXTURE_2D_ARRAY;
+    // 普通 2D 只接受 layer 0;数组纹理 layer 须落在已分配层内。
+    if (layer < 0 ||
+        (isArray ? layer >= glTexture->arrayLayers() : layer != 0)) {
+        return false;
+    }
+
+    if (isArray) {
+        // 合成方案页上传:texSubImage3D 灌指定 layer,depth=1(单页单层)。
+        glBindTexture(GL_TEXTURE_2D_ARRAY, glTexture->glId());
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
+                        0,
+                        x,
+                        y,
+                        layer,
+                        width,
+                        height,
+                        1,
+                        GL_RGBA,
+                        GL_UNSIGNED_BYTE,
+                        data);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, glTexture->glId());
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexSubImage2D(GL_TEXTURE_2D,
+                        0,
+                        x,
+                        y,
+                        width,
+                        height,
+                        GL_RGBA,
+                        GL_UNSIGNED_BYTE,
+                        data);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
     // glGetError 在 threaded-GL 驱动下是同步点，热路径仅 debug 保留。
 #ifndef NDEBUG
     return glGetError() == GL_NO_ERROR;

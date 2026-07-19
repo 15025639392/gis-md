@@ -388,8 +388,9 @@ cesium-native 官方原文:改 tileset SSE **"will not affect the sharpness of t
 commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno 730 `GL_MAX_ARRAY_TEXTURE_LAYERS=2048`**(vs 地平线工作集峰值 185 页 = **11× 余量**,叠 4 层 740 也稳)、`GL_MAX_3D_TEXTURE_SIZE=2048`、`GL_MAX_TEXTURE_SIZE=16384`;**Metal 规格保证 2048**。⟹ **array 不受层数限,存储后端定案 texture2DArray。**
 
 ### 13.4 剩余原型步骤(Step 2/3,开始动生产渲染)
-- **Step 2**:`RenderDevice::updateTextureRegion` 加 layer 维,两后端各上传一页进指定 layer;真机验 texSubImage 灌 live array 会否 ghost(§12.5 #6)。
-- **Step 3**:terrain 片元从 `sampler2DArray` 按页表 layer 采样,一个 capped 粗瓦片显示正确高清影像,验①路径通 ②边界 = 现状。
+- **Step 2 ✅ 代码已落地**:`TextureDesc.arrayLayers` + `RenderDevice::updateTextureRegion` 加 `layer` 维,两后端各建 `texture2DArray`(GLES `glTexImage3D`+`glTexSubImage3D`、Metal `MTLTextureType2DArray`+`replaceRegion:slice:`)并可上传一页进指定 layer;越界 layer 返 false;每层 `CLAMP_TO_EDGE`(§13.1 消灭页缝)。主机 152/152 绿 + Android arm64 NDK 编译 clean。
+  - **ghost 验证并入 Step 3**:ghost(§12.5 #6)只有在 array **正被采样**时驱动才会对 texSubImage rename/stall;Step 2 单独存在时 array 未接进任何 draw、无 live-sampling → 风险无从激发。故 texSubImage 灌 live array 的 ghost 真机观测天然随 Step 3(array 上屏被采 + 拖动中持续灌层)一起量,不单独造不采样的假 probe。
+- **Step 3**:terrain 片元从 `sampler2DArray` 按页表 layer 采样,一个 capped 粗瓦片显示正确高清影像,验①路径通 ②边界 = 现状;**并顺带量 Step 2 的 ghost**(拖动中对 live array 持续 texSubImage,看是否 rename/stall)。
 - 任一步卡住 → 退 2D atlas + per-page clamp(§12.6③ 原计划,无损)。
 
 ### 13.5 测量台清理清单(合成方案生产原型落定后一并删)

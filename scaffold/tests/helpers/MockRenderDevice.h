@@ -96,7 +96,7 @@ public:
     }
 
     bool updateTextureRegion(Texture*, int, int, int, int,
-                             const uint8_t*, size_t) override {
+                             const uint8_t*, size_t, int = 0) override {
         return false;
     }
 

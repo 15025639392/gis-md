@@ -39,13 +39,18 @@ public:
 
     // ---- 资源创建 ----
     virtual std::unique_ptr<Texture> createTexture(const TextureDesc& desc) = 0;
+    /// 把 CPU 像素上传进纹理的一个矩形子区域。
+    /// layer:目标数组层(texture2DArray,北极星合成方案页存储 = 一页一层)。
+    /// 普通 2D 纹理 layer 必须为 0;数组纹理 layer∈[0, arrayLayers)。
+    /// 越界 layer 返回 false(不写)。
     virtual bool updateTextureRegion(Texture* texture,
                                      int x,
                                      int y,
                                      int width,
                                      int height,
                                      const uint8_t* data,
-                                     size_t rowBytes) = 0;
+                                     size_t rowBytes,
+                                     int layer = 0) = 0;
     virtual std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) = 0;
     virtual bool updateBuffer(Buffer* buffer,
                               size_t offset,
@@ -151,6 +156,11 @@ public:
 struct TextureDesc {
     int width = 0;
     int height = 0;
+    /// 数组层数。1(默认)= 普通 2D 纹理;>1 = texture2DArray(每层独立
+    /// CLAMP_TO_EDGE、层间不插值 → 北极星合成方案页存储天然消灭页缝,
+    /// 见 §13)。数组纹理创建时不带初始 data,各层经 updateTextureRegion
+    /// 的 layer 维分别上传。
+    int arrayLayers = 1;
     enum class Format { RGBA8, RGB8, R8, Depth32F } format = Format::RGBA8;
     const uint8_t* data = nullptr;  // 原始像素缓冲区
     size_t dataSize = 0;

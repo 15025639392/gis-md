@@ -28,7 +28,8 @@ public:
                              int width,
                              int height,
                              const uint8_t* data,
-                             size_t rowBytes) override;
+                             size_t rowBytes,
+                             int layer = 0) override;
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override;
     bool updateBuffer(Buffer* buffer,
                       size_t offset,

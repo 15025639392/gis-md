@@ -163,7 +163,8 @@ public:
         int,
         int,
         const uint8_t*,
-        size_t) override {
+        size_t,
+        int = 0) override {
         return false;
     }
 
