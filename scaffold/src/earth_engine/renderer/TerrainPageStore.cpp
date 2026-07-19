@@ -17,6 +17,7 @@
 #include "../tiling/GltfDrawCommandBuilder.h"  // terrainSurfaceSourceForDraw
 #include "../tiling/TileBoundsMetrics.h"
 #include "../tiling/TileScheme.h"
+#include "../tiling/TileSelectionInputMetrics.h"
 #include "../tiling/TilesetTile.h"
 #include "RenderCommand.h"
 #include "RenderDevice.h"
@@ -99,6 +100,13 @@ namespace {
 // 影像行序:与生产 raster uploader 一致——DecodedImage row 0=北,行序原样上传,
 // terrain 采用 NW 约定(v=0 北,rewriteProjectionTexCoords)故不翻转即对齐。
 constexpr bool kFlipRowsOnUpload = false;
+
+// thick-OBB 过取收紧(§15.3①):capped 父瓦片高度带很厚(可上千米),z17 子 cell
+// 仅 ~150m 宽,套厚 OBB 在掠射/边缘会假阳性戳进视锥。视锥内再按 cell 自身屏幕误差
+// 二次剔除——SSE 远小于地形细化阈值的 cell 屏幕贡献可忽略(本应由 coarser 页服务,
+// 当前单-父瓦片 zoom 无法区分),丢弃以逼近 #3 屏幕工作集(近 68/地平线 185)。
+// 阈值取地形 SSE 阈值的一半(§15.3 建议):nadir cell SSE≈阈值,丢弃 >2× 距离低贡献 cell。
+constexpr double kCellSseCullFraction = 0.5;
 
 }  // namespace
 
@@ -212,6 +220,7 @@ void TerrainPageStore::updateVisiblePages(
     int zMin = std::numeric_limits<int>::max();
     int zMax = std::numeric_limits<int>::min();
     double maxTileSse = 0.0;  // TEMP 诊断:本帧最大瓦片屏幕 SSE(驱动 zoom)
+    int culledBySse = 0;      // TEMP 诊断:被 screen-SSE 过滤剔除的 cell 数(§15.3①)
 
     for (const TilesetTile* tile : visibleTiles) {
         if (!tile) {
@@ -279,6 +288,23 @@ void TerrainPageStore::updateVisiblePages(
                     encodeLayerRGBA8(0, false, texel);  // 视锥外 → miss(mappedRaster)
                     continue;
                 }
+                // thick-OBB 过取收紧(§15.3①):视锥内再按 cell 自身屏幕误差二次剔除。
+                // 子 geomError = 父/2^depth = 父/gridN(四叉树每级半);dist=相机到 cell
+                // OBB 最近点。SSE < 阈值*fraction → 屏幕贡献过小(厚 OBB 假阳性/远景掠射)
+                // → 丢弃当 miss(回落 mappedRaster,不出洞),逼近屏幕工作集。
+                const double subGeomError =
+                    tile->geometricError / static_cast<double>(gridN);
+                const double cellDist = std::sqrt(
+                    obb->computeDistanceSquaredToPosition(view.position));
+                const double cellSse =
+                    TileSelectionInputMetrics::screenSpaceErrorForView(
+                        subGeomError, view.projectionMatrix,
+                        view.viewportHeightPixels, cellDist);
+                if (cellSse < threshold * kCellSseCullFraction) {
+                    encodeLayerRGBA8(0, false, texel);  // 贡献过小 → miss
+                    ++culledBySse;
+                    continue;
+                }
                 const uint64_t pageKey = packKey(sub);
                 visiblePagesScratch_.insert(pageKey);  // 去重计数(跨瓦片共享祖先)
                 zMin = std::min(zMin, zoom);
@@ -339,10 +365,11 @@ void TerrainPageStore::updateVisiblePages(
         const int logZMax = visiblePagesScratch_.empty() ? 0 : zMax;
         platformLog(LogLevel::Warning, "PageDet",
                     "uniquePages=%d residentPages=%d uploadedTotal=%d "
-                    "visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f",
+                    "visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f "
+                    "culledBySse=%d",
                     lastVisiblePageCount_, pool_.residentCount(),
                     uploadedLayerTotal_, visibleCappedTiles, logZMin, logZMax,
-                    maxTileSse);
+                    maxTileSse, culledBySse);
     }
 }
 
