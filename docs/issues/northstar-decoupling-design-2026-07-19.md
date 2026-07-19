@@ -420,12 +420,18 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 2. **live 换页 + 量 ghost(§12.5#6,原型未激发)**:相机移动 → LRU 驱逐/载入 → 对**正被采样的 live array** 持续 `updateTextureRegion` = 真正触发 ghost 场景。真机量 Adreno 是否 rename/stall(双缓冲/PBO/staging 备选解)。
 3. **顺带收底部露底**(用户洞察已确认):生产合成 = **decouple ON**(几何 cap z12,`kMeasureDecoupleImageryFromGeometry`/`TilesetOptions::decoupleImageryFromGeometry`)+ 页存储在 z12 面贴 z14+ 影像 → 近景无捏造 z13+ 几何 notReady 空洞 → 底部露天空自然消失(见 issue near-foreground-skygap)。需把 decouple + 页存储接成**生产主路径**(非 demo flag 旁路)。
 
-**14.2 待决策(新会话先拍)**
-- **间接寻址**:现=每瓦片 uniform-grid 公式(cell→layer)。稀疏/不规则页表是否需真 indirection 纹理(§13.2/门①已验成本)?规则 capped 瓦片可能 uniform-grid 够。
-- **与 mapped-raster 关系**:页存储替换 vs 共存?(现:目标瓦片页存储覆盖 mappedRaster;生产要不要所有 capped 瓦片都走页存储、原生瓦片走 mappedRaster?)
-- **页 LOD 选择**:固定 depthLevels vs 按 SSE/屏幕像素密度动态选深。
-- **UV**:复用 mercator overlay UV(set 0,已确认对齐);精确 per-cell UV 是否需要(现 uniform-grid 对齐 XYZ 子瓦片已精确,aligned=1)。
-- **上传预算 / 涓流**:LRU 换页每帧上传几页(接 FrameResourceBudget lane,勿拖动期冻结,参考 raster upload interaction 修复)。
+**14.2 待决策 → 已拍板(2026-07-19)+ item① 落地**
+- ✅ **间接寻址(拍板)= 每瓦片 uniform-grid 公式 + 连续 layer 块 + 块粒度 LRU,不建 indirection 纹理**。依据:规则四叉树瓦片内页布局本就是 uniform grid(aligned=1,非近似);indirection 唯一增量价值=页粒度共享/LRU,而 #3 实测跨瓦片零共享 → 这份价值≈0,却要多付门① D1 的 +0.14ms/fragment + 第二 sampler + 每帧维护。uniform-grid 是门① 最佳档(0 依赖 fetch)。页模型留抽象,未来真要全局虚拟页去重换 indirection = 加 shader+builder 非重写。
+- ✅ **与 mapped-raster 关系(拍板)= 共存/分层 override**,不替换。mappedRaster 对所有瓦片继续算(祖先影像 fallback);页存储仅在该瓦片**整块**层就绪时置 enabled=1 接管。page-in 延迟/快平移期显祖先(糊但有)不出洞 = 优雅降级(§12.5#4);生产集成纯加法、低风险。
+- ⏳ **页 LOD 选择(被预算逼成必做,非自由 fork)**:固定 depthLevels 在地平线过取(122 瓦片×gridN²≫峰值 185 页 → 500MB 炸穿 47MB 预算)→ **必须屏幕驱动 per-tile 深度**(复用 `chooseQuadtreeSourceZoom`,depthLevels=chosenImageryZoom−tileZ)。这使 gridN 每瓦片可变 → 块尺寸不一 → 届时把等尺寸块池升级 buddy 分配器(接口不变)。**item① 先固定 depth 落地验证多瓦片架构,Step B 补屏幕驱动深度**。
+- **UV(不变)**:复用 mercator overlay UV(set 0,已确认对齐);uniform-grid 对齐 XYZ 子瓦片已精确(aligned=1),无需 per-cell UV。
+- ✅ **上传预算/涓流(已落地)**:drainInbox 每帧限 `maxUploadsPerFrame`,超额下帧续传(勿拖动期冻结)。
+
+**14.4 item①(多瓦片页表)进度(commit `373290abf`)**
+- **代码完成 + host/编译已验**:`TerrainPageStore` 单目标 → 多瓦片页表;新 `TerrainPageLayerPool`(等尺寸块 LRU,纯 CPU)。**shader 零改动**(pageStoreParams.z 本就是 layerBase,per-command uniform → 每瓦片写自己的 enabled/gridN/layerBase)。每瓦片独立异步 fetch,inbox 带 packed-key+绝对 layer,drain 校验驻留(淘汰/换租丢弃)。层池本帧满 → acquire 返 -1 → 回落 mappedRaster(不淘汰可见块)。
+- **验证**:host 单测 `test_terrain_page_store` 10/10(分配/LRU/touch/换租/满帧拒淘汰/release)+ 全量 153/153 零回归 + Android arm64 NDK core 链接 clean。
+- ⏳ **待真机**:多个 capped 瓦片同时显 z14 真实影像(demo `kEnableTerrainPageStore`);量 §14.1② live 换页 ghost。
+- ⏳ **后续**:Step B 屏幕驱动深度(见上,地平线内存安全前置)+ item③ decouple ON 接生产主路径收底部露底。
 
 **14.3 已确认可复用/踩过的坑(新会话直接吃)**
 - terrain UV = mercator(`rewriteProjectionTexCoords` set 0,NW v=0 北);**任何新 UV 代码复用它,勿用 lat/几何位置**(§13.4 Step3b mercator 坑)。
