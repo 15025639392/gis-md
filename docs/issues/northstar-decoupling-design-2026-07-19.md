@@ -469,11 +469,15 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 
 ### 15.3 剩余任务 + 下一会话入口(Step B 稀疏 SVT 主体已 PASS,以下为收尾/加固)
 
-**① thick-OBB 过取收紧(下一步优先,用户点名)**
-- **现象**:近景 uniquePages=125 vs #3 屏幕工作集 68 = ~1.8× 过取(内存/上传浪费,非出错;125×256KB=32MB 仍安全,但该收)。
+**① thick-OBB 过取收紧 ✅ 真机 PASS(commit `ed6463ac7`,Adreno 7e045e39)**
+- **现象(修前)**:近景 uniquePages=125 vs #3 屏幕工作集 68 = ~1.8× 过取(内存/上传浪费,非出错;125×256KB=32MB 仍安全,但该收)。
 - **根因 + 代码位**:`renderer/TerrainPageStore.cpp` `updateVisiblePages` 逐 cell 视锥剔除用 `TileBoundsMetrics::boundingRegionObb(subRect, minH, maxH)`,其中 `minH/maxH = TileBoundsMetrics::terrainMinimum/MaximumHeight(*tile)` = **父 capped 瓦片的整段高度带**(可能上千米厚)。z17 子瓦片仅 ~150m 宽,套一个上千米厚的 OBB → 掠射/边缘角度下 OBB 竖条戳进视锥、而其地表 cell 实际不可见 → 假阳性。
-- **两条修法(择一或组合,真机量页数是否逼近 68)**:(a) **screen-SSE 过滤**——对每 cell 算屏幕误差 `TileSelectionInputMetrics::screenSpaceErrorForView(子 geomError≈父 geomError/2^depth, view.projectionMatrix, view.viewportHeightPixels, dist)`,SSE 过小(如 < 阈值的一半)丢弃;(b) **更紧 per-subtile 高度**——OBB 高度带收窄(而非父全段),减少竖条厚度。**(a) 更对因(直接按屏幕贡献剔),推荐先试。**
-- **验收**:同 near/horizon 位姿 PageDet uniquePages 逼近 #3 的 68/185,观感不退(仍 crisp 无洞),内存降。
+- **修法(采 a,screen-SSE 过滤)**:视锥内每 cell 再按自身屏幕误差二次剔除——`子 geomError = 父 geomError / gridN`(gridN=2^depth,四叉树每级半)、`dist = sqrt(obb->computeDistanceSquaredToPosition(view.position))`(cell OBB 最近点)、`cellSse = TileSelectionInputMetrics::screenSpaceErrorForView(...)`;`cellSse < threshold * kCellSseCullFraction`(阈值=地形细化阈值 16、fraction=0.5)→ 丢弃当 miss(`encodeLayerRGBA8(0,false)`,回落 mappedRaster 不出洞)。miss 分支与视锥外同路径(决策② 共存延续),零回归。加 `culledBySse` 诊断计数进 PageDet log。
+- **真机验收(decouple+freeze+pageStore)**:
+  - **近景**:uniquePages **125→50**(culledBySse=75)zMax=z17;整屏仍 z17 **crisp 无洞**(楼宇/路网/车道线/球场/建筑阴影全锐)= 75 culled 全是厚 OBB 假阳性/远景低贡献;visible 内存 ~32MB→~13MB。**50 < #3 的 68 但像素全 crisp**⟹ 50 是本帧真实屏幕工作集,#3 的 68 是耦合态代理(偏高),非过剔。
+  - **地平线**:uniquePages **125,culledBySse=8**(横视野瓦片低 SSE=63、小 gridN≈1,过滤近乎惰性)zMax=z14;连续无洞无退化。
+  - host 153/153 + test_terrain_page_store 17/17 + arm64 clean。
+- **旋钮**:`kCellSseCullFraction=0.5` 唯一旋钮。近景已 crisp 且省内存 → 不再收紧;若未来某近角度出糊斑再放松(0.35~0.4 逼近 68,但那是把已剔的过取加回,当前无必要)。
 
 **② Metal 块设备验证**:`kGltfFragmentMSL` 的页存储块(commit `51a63e84d` 已镜像加,texture 20/21 + `gltfAlphaOver` + constexpr nearest sampler)**无 Metal 设备验证**,待 macOS/iOS 真机确认(GLSL 已 Adreno 验)。
 
@@ -485,4 +489,4 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 
 **⑥ 测量脚手架清理**:`PageDet` log + `maxTileSse` TEMP 诊断(`updateVisiblePages`)+ §13.5 列的 PoC 台,生产化后一并清。
 
-**下一会话直接吃**:改 `updateVisiblePages` 加 screen-SSE cell 过滤(①),翻 `kEnableTerrainPageStore+kMeasureDecoupleImageryFromGeometry+kMeasureFreezeCamera`=true near/horizon 真机看 PageDet uniquePages 是否降到 ~68/185 且观感不退。**渲染改动铁律(§15.2 根因教训):真机看像素,别信「糊得像/截图一致」;shader 分裂时逐 shader 染纯色定位活跃 shader。**
+**下一会话直接吃**:① 已 PASS(commit `ed6463ac7`)。剩 ⑤ decouple 接生产主路径(最有产品价值:近景无捏造 z13+ 空洞 → 收底部露天空,见 near-foreground-skygap)、④ live 换页 ghost(翻开相机量 Adreno rename/stall)、② Metal 块设备验证。**渲染改动铁律(§15.2 根因教训):真机看像素,别信「糊得像/截图一致」;shader 分裂时逐 shader 染纯色定位活跃 shader。**
