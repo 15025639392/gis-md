@@ -467,8 +467,22 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 - **Step B3(后)— mip/祖先回退**:间接 miss 编 coarser resident 页做平滑 page-in(替 mappedRaster 硬回退)。
 - 任一步卡 → 退 item① dense(近景 z14 但有界可用,无损)。
 
-### 15.3 待做/未量
-- 门① 真实渲染路径逐片元间接开销(B1 真机量,对齐 PoC 的 +0.14ms)。
-- 选择帧挂钩点(哪个 pass 遍历可见瓦片且 SelectorView 在手)—— B0 先定位。
-- RGBA8 编 16bit layer 的解码精度(近似 vs 精确整数)。
-- 动态/多叠加层:每层一间接结构 or 共享(§11.2 每层一 atlas)—— sparse 落定后再扩。
+### 15.3 剩余任务 + 下一会话入口(Step B 稀疏 SVT 主体已 PASS,以下为收尾/加固)
+
+**① thick-OBB 过取收紧(下一步优先,用户点名)**
+- **现象**:近景 uniquePages=125 vs #3 屏幕工作集 68 = ~1.8× 过取(内存/上传浪费,非出错;125×256KB=32MB 仍安全,但该收)。
+- **根因 + 代码位**:`renderer/TerrainPageStore.cpp` `updateVisiblePages` 逐 cell 视锥剔除用 `TileBoundsMetrics::boundingRegionObb(subRect, minH, maxH)`,其中 `minH/maxH = TileBoundsMetrics::terrainMinimum/MaximumHeight(*tile)` = **父 capped 瓦片的整段高度带**(可能上千米厚)。z17 子瓦片仅 ~150m 宽,套一个上千米厚的 OBB → 掠射/边缘角度下 OBB 竖条戳进视锥、而其地表 cell 实际不可见 → 假阳性。
+- **两条修法(择一或组合,真机量页数是否逼近 68)**:(a) **screen-SSE 过滤**——对每 cell 算屏幕误差 `TileSelectionInputMetrics::screenSpaceErrorForView(子 geomError≈父 geomError/2^depth, view.projectionMatrix, view.viewportHeightPixels, dist)`,SSE 过小(如 < 阈值的一半)丢弃;(b) **更紧 per-subtile 高度**——OBB 高度带收窄(而非父全段),减少竖条厚度。**(a) 更对因(直接按屏幕贡献剔),推荐先试。**
+- **验收**:同 near/horizon 位姿 PageDet uniquePages 逼近 #3 的 68/185,观感不退(仍 crisp 无洞),内存降。
+
+**② Metal 块设备验证**:`kGltfFragmentMSL` 的页存储块(commit `51a63e84d` 已镜像加,texture 20/21 + `gltfAlphaOver` + constexpr nearest sampler)**无 Metal 设备验证**,待 macOS/iOS 真机确认(GLSL 已 Adreno 验)。
+
+**③ 门① 真实渲染路径逐片元开销**:B1/B2b 间接 fetch 已跑但未单独插桩量,对齐 PoC 的 +0.14ms(可选)。
+
+**④ §14.1② live 换页 ghost**:相机移动 → LRU 驱逐/载入 → 对 live array `updateTextureRegion` 量 Adreno 是否 rename/stall(现只测冻结相机 settled;PageEntry/inbox 已支持,翻开相机即可量)。
+
+**⑤ §14.1③ decouple 接生产主路径 + 收底部露底**:现仍 demo flag(`kEnableTerrainPageStore`+`kMeasureDecoupleImageryFromGeometry`)旁路;接成生产主路径(非 demo flag)后,近景无捏造 z13+ 几何 notReady 空洞 → 底部露天空自然消失(见 near-foreground-skygap)。
+
+**⑥ 测量脚手架清理**:`PageDet` log + `maxTileSse` TEMP 诊断(`updateVisiblePages`)+ §13.5 列的 PoC 台,生产化后一并清。
+
+**下一会话直接吃**:改 `updateVisiblePages` 加 screen-SSE cell 过滤(①),翻 `kEnableTerrainPageStore+kMeasureDecoupleImageryFromGeometry+kMeasureFreezeCamera`=true near/horizon 真机看 PageDet uniquePages 是否降到 ~68/185 且观感不退。**渲染改动铁律(§15.2 根因教训):真机看像素,别信「糊得像/截图一致」;shader 分裂时逐 shader 染纯色定位活跃 shader。**
