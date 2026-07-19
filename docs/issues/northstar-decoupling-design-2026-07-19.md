@@ -406,3 +406,32 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 - `renderer/VtIndirectionSamplePoc.{h,cpp}`(门① 间接采样测量)+ 单测。
 - demo `kMeasure*PoC` flag(`MinimalGlobeDemoConfig.h`)+ `EarthSceneConfig` 的 `virtualTexturePoc/tileCompositeBakePoc/vtIndirectionSamplePoc` + facade/Engine 接线 + EarthPerf 头行 `vt*/b*/vti*` 段。
 - 保留:`RenderDevice` 的 `readFramebufferPixels/enqueue/acquireFramebufferReadback`(通用回读能力,可能生产复用)、`onSurfaceCreated` 的 array-layer cap 探测(一次性能力日志)、测量冻结相机(`kMeasureFreezeCamera`,调试有用)。
+
+## 14. 生产化路线(原型三步全过后,新会话接续)
+
+**当前状态(branch `feat/offscreen-render-pass`,均已提交)**:合成方案(CPU 驱动 SVT + texture2DArray)**单瓦片原型端到端真机打通** —— Step 2(`updateTextureRegion` +layer,`79739cff1`)+ Step 3a(渲染路径管线 `e49ba2fe7` + `TerrainPageStore` 合成图案 `ed5de3871` + 真机验收/GLES 漏绑修 `bd47e7709`)+ Step 3b(真实影像 requestTile 异步填充 `d86f32157` + mercator 对齐修 `fa5b29cba`)。`renderer/TerrainPageStore.{h,cpp}` 是生产种子;demo flag `kEnableTerrainPageStore`(默认关)。
+
+**14.1 生产化三件事(用户 2026-07-19 拍板一并做)**
+1. **多 capped 瓦片通用页表**(现=单目标瓦片):
+   - 页池 = 一张 texture2DArray + LRU 层管理(按 #3 工作集,地平线峰值 ~185 页 → ~256 层容量,Adreno cap 2048 够)。
+   - CPU 页表:每个可见 capped 瓦片 → 它占用的层集合(+ 每瓦片 `layerBase`/gridN)。
+   - 门控从"单 targetKey"改**每瓦片查页表**:`applyToTerrainCommand` 对每个 capped 真实地形瓦片挂它自己的层 + 写 per-tile `pageStoreParams`。
+   - 页粒度 = 每瓦片深 depthLevels(或 SSE 驱动选深)。
+2. **live 换页 + 量 ghost(§12.5#6,原型未激发)**:相机移动 → LRU 驱逐/载入 → 对**正被采样的 live array** 持续 `updateTextureRegion` = 真正触发 ghost 场景。真机量 Adreno 是否 rename/stall(双缓冲/PBO/staging 备选解)。
+3. **顺带收底部露底**(用户洞察已确认):生产合成 = **decouple ON**(几何 cap z12,`kMeasureDecoupleImageryFromGeometry`/`TilesetOptions::decoupleImageryFromGeometry`)+ 页存储在 z12 面贴 z14+ 影像 → 近景无捏造 z13+ 几何 notReady 空洞 → 底部露天空自然消失(见 issue near-foreground-skygap)。需把 decouple + 页存储接成**生产主路径**(非 demo flag 旁路)。
+
+**14.2 待决策(新会话先拍)**
+- **间接寻址**:现=每瓦片 uniform-grid 公式(cell→layer)。稀疏/不规则页表是否需真 indirection 纹理(§13.2/门①已验成本)?规则 capped 瓦片可能 uniform-grid 够。
+- **与 mapped-raster 关系**:页存储替换 vs 共存?(现:目标瓦片页存储覆盖 mappedRaster;生产要不要所有 capped 瓦片都走页存储、原生瓦片走 mappedRaster?)
+- **页 LOD 选择**:固定 depthLevels vs 按 SSE/屏幕像素密度动态选深。
+- **UV**:复用 mercator overlay UV(set 0,已确认对齐);精确 per-cell UV 是否需要(现 uniform-grid 对齐 XYZ 子瓦片已精确,aligned=1)。
+- **上传预算 / 涓流**:LRU 换页每帧上传几页(接 FrameResourceBudget lane,勿拖动期冻结,参考 raster upload interaction 修复)。
+
+**14.3 已确认可复用/踩过的坑(新会话直接吃)**
+- terrain UV = mercator(`rewriteProjectionTexCoords` set 0,NW v=0 北);**任何新 UV 代码复用它,勿用 lat/几何位置**(§13.4 Step3b mercator 坑)。
+- terrain↔影像同 XYZ 分块(`aligned=1`),子瓦片直接 `(z+d, x*gridN+dx, y*gridN+dy)`。
+- 影像上传 NW + 无翻转(对齐 `RenderDeviceRasterTextureUploader`)。
+- 加纹理槽两后端各扩上限(GLES `currentTextures`/`glesGltfTextureUnit` + Metal `maxMaterialTextures`,§13.4 Step3a GLES 漏绑坑)。
+- 异步 fetch 用 shared_ptr inbox(worker 回调安全,store 析构不悬垂)。
+- 单瓦片可见性:SSE 最大=nadir 顶视离屏;多瓦片生产后不再是问题。
+- §13.5 测量台清理:生产落定后删 PoC 脚手架。
