@@ -483,10 +483,14 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 
 **③ 门① 真实渲染路径逐片元开销**:B1/B2b 间接 fetch 已跑但未单独插桩量,对齐 PoC 的 +0.14ms(可选)。
 
-**④ §14.1② live 换页 ghost**:相机移动 → LRU 驱逐/载入 → 对 live array `updateTextureRegion` 量 Adreno 是否 rename/stall(现只测冻结相机 settled;PageEntry/inbox 已支持,翻开相机即可量)。
+**④ §14.1② live 换页 ghost(仍开,⑤ 顺带部分暴露但未净测)**:相机移动 → LRU 驱逐/载入 → 对 live array `updateTextureRegion` 量 Adreno 是否 rename/stall。⑤ 自由相机运动中观察到:新露边缘暂 mappedRaster 糊→page-in 后清(优雅降级无洞,预期);一次 pan-settle 见中段糊带 6s 未愈(疑 ④ 或仍惯性漂,confound 未定论)。**controlled motion 净测仍缺**:demo 无脚本相机,free swipe 惯性漂到不可控位姿 → 需脚本化相机路径才能干净量 ghost/stall。
 
-**⑤ §14.1③ decouple 接生产主路径 + 收底部露底**:现仍 demo flag(`kEnableTerrainPageStore`+`kMeasureDecoupleImageryFromGeometry`)旁路;接成生产主路径(非 demo flag)后,近景无捏造 z13+ 几何 notReady 空洞 → 底部露天空自然消失(见 near-foreground-skygap)。
+**⑤ decouple 接生产主路径 ✅ 核心 PASS(commit `0794ce949`,Adreno 7e045e39)**
+- **落地(决策:仅 demo 生产配置,SDK 结构体默认保持 false)**:`makeDefaultDemoSceneConfig` 里 `config.tileset.decoupleImageryFromGeometry = true` + `config.terrainPageStore = true`(直接置 true,脱离 `kMeasure*`/`kEnable*` 灰度常量;移除随之 orphan 的两常量留指针注释)。库默认保守、demo(当前唯一产品)显式 opt-in。二者是生产配对(decouple 断捏造几何、页存储补高清)。
+- **机制(收底部露天空)**:decouple → 几何 cap 在 DEM native z12、不再捏造 z13+ 上采样地形子瓦片 → 无 notReady 空洞 → 近景底部露天空自然消失(见 near-foreground-skygap);页存储在 capped z12 面贴屏幕界定 z14-17 高清补清。
+- **真机验收(自由相机,零 measure flag)**:干净初始位姿(**卸载重装排除相机持久化**)uniquePages=50 tiles=3 zMax=z17 glError=0,整屏 z17 crisp、影像贴到底边、**无露天空/无黑洞** = ⑤ 核心达成。
+- **⚠️ confound + 未尽(decision:先验证如实报告,不当场修)**:①**相机持久化跨启动**(known gotcha,`android-demo-env-gotchas`)——free swipe 把相机漂到 low-grazing 低空位姿后,force-stop+relaunch **恢复漂后位姿**(非初始),底部大片黑(partial heightmap 边界/掠射 pre-existing 行为,`coarse-tile-skirt-wall-exposure`,**非 ⑤ 回归**);净测须 `adb uninstall`+install 清持久化(`pm clear` 本机无权限)。②controlled motion 下 live 换页(④)仍未净测。**教训延续 `horizon-view-jank-investigation`:相机漂移害归因,真机验证必须钉死初始位姿。**
 
 **⑥ 测量脚手架清理**:`PageDet` log + `maxTileSse` TEMP 诊断(`updateVisiblePages`)+ §13.5 列的 PoC 台,生产化后一并清。
 
-**下一会话直接吃**:① 已 PASS(commit `ed6463ac7`)。剩 ⑤ decouple 接生产主路径(最有产品价值:近景无捏造 z13+ 空洞 → 收底部露天空,见 near-foreground-skygap)、④ live 换页 ghost(翻开相机量 Adreno rename/stall)、② Metal 块设备验证。**渲染改动铁律(§15.2 根因教训):真机看像素,别信「糊得像/截图一致」;shader 分裂时逐 shader 染纯色定位活跃 shader。**
+**下一会话直接吃**:①(commit `ed6463ac7`)、⑤(commit `0794ce949`)已 PASS。剩 ④ live 换页 ghost(**需脚本化 controlled 相机**才能净测,free swipe 惯性漂不可控;⑤ 已暴露中段糊带/low-grazing 底黑待定性)、② Metal 块设备验证、③ 门① 逐片元开销、⑥ 脚手架清理。**两条铁律:①渲染改动真机看像素,别信「糊得像/截图一致」,shader 分裂逐 shader 染纯色定位;②真机验证必钉死初始位姿(相机持久化跨启动,漂后位姿被 relaunch 恢复,须卸载重装清除)。**
