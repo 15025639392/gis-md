@@ -104,6 +104,29 @@ TEST(TerrainPageLayerPool, ReleaseFreesBlockForReuse) {
     pool.release(999);  // 不存在 → no-op
 }
 
+// B2b 页粒度:blockLayers=1 → layerBase == slot index(每页一层)。LRU 逐页淘汰。
+TEST(TerrainPageLayerPool, PageGranularBlockLayersOne) {
+    TerrainPageLayerPool pool;
+    pool.configure(/*blockCount=*/4, /*blockLayers=*/1);
+    EXPECT_EQ(pool.blockLayers(), 1);
+    uint64_t ev = 0;
+    // 每页认领一层,layer == slot index(连续 0,1,2,3)。
+    EXPECT_EQ(pool.acquire(/*key=*/100, /*frame=*/1, &ev), 0);
+    EXPECT_EQ(pool.acquire(101, 1, &ev), 1);
+    EXPECT_EQ(pool.acquire(102, 1, &ev), 2);
+    EXPECT_EQ(pool.acquire(103, 1, &ev), 3);
+    EXPECT_EQ(pool.residentCount(), 4);
+    // 已驻留页复取返回同层、不淘汰。
+    EXPECT_EQ(pool.acquire(101, 2, &ev), 1);
+    EXPECT_EQ(ev, 0u);
+    // 池满 + 新页(frame 3):淘汰 lastFrame 最小者(key 100,frame 1),复用其层 0。
+    const int reused = pool.acquire(200, 3, &ev);
+    EXPECT_EQ(ev, 100u);
+    EXPECT_EQ(reused, 0);
+    EXPECT_EQ(pool.layerBaseFor(100), -1);  // 页被淘汰
+    EXPECT_EQ(pool.layerBaseFor(200), 0);
+}
+
 TEST(TerrainPageLayerPool, ConfigureResetsResidency) {
     TerrainPageLayerPool pool = makePool(3, 16);
     uint64_t ev = 0;
@@ -127,49 +150,55 @@ TEST(TerrainPageStore, InitializeCreatesSharedArrayTexture) {
     MockRenderDevice device;
     TerrainPageStore store;
     TerrainPageStore::Config cfg;
-    cfg.depthLevels = 2;       // gridN=4 → 16 层/块
-    cfg.maxResidentTiles = 4;  // 4 块 → 64 层
+    cfg.maxPages = 64;  // B2b:每页一层 → array 层数 = maxPages
     ASSERT_TRUE(store.initialize(&device, cfg));
     EXPECT_TRUE(store.isReady());
     EXPECT_EQ(device.createdTextureCount, 1);
-    EXPECT_EQ(device.lastTextureDesc.arrayLayers, 64);  // 16*4
+    EXPECT_EQ(device.lastTextureDesc.arrayLayers, 64);  // = maxPages
     EXPECT_EQ(device.lastTextureDesc.width, 256);
-    EXPECT_EQ(store.residentTileCount(), 0);
+    EXPECT_EQ(store.residentPageCount(), 0);
     EXPECT_EQ(store.uploadedLayerTotal(), 0);
 }
 
 // ---------------- SVT 间接纹理 RGBA8 层编解码(Step B1)----------------
 
-// 编 layer → RGBA8 → 解码回 layer,逐位镜像片元 shader(R+G*256)。
+// 编 layer → RGBA8 → 解码回 layer,逐位镜像片元 shader(R+G*256)。decode 只看 RG,
+// resident(A)不影响 layer 还原 → 两种 resident 都应 round-trip。
 // 覆盖边界:0(全零)/255(R 满)/256(进 G 位)/511(R 满+G=1)/大值(双通道)。
 TEST(TerrainPageStoreIndir, EncodeDecodeRoundTrip) {
     for (int layer : {0, 1, 127, 254, 255, 256, 257, 511, 512,
                       1000, 4095, 4096, 12345, 65535}) {
-        uint8_t rgba[4] = {0, 0, 0, 0};
-        TerrainPageStore::encodeLayerRGBA8(layer, rgba);
-        EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), layer)
-            << "layer=" << layer;
+        for (bool resident : {true, false}) {
+            uint8_t rgba[4] = {0, 0, 0, 0};
+            TerrainPageStore::encodeLayerRGBA8(layer, resident, rgba);
+            EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), layer)
+                << "layer=" << layer << " resident=" << resident;
+        }
     }
 }
 
-// 编码约定:R=layer&0xFF、G=(layer>>8)&0xFF、B=0、A=255。
+// 编码约定:R=layer&0xFF、G=(layer>>8)&0xFF、B=0、A=resident?255:0(B2b)。
 TEST(TerrainPageStoreIndir, EncodeChannelLayout) {
     uint8_t rgba[4] = {9, 9, 9, 9};
-    TerrainPageStore::encodeLayerRGBA8(0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, rgba);
     EXPECT_EQ(rgba[0], 0);
     EXPECT_EQ(rgba[1], 0);
     EXPECT_EQ(rgba[2], 0);    // B 保留 0
-    EXPECT_EQ(rgba[3], 255);  // A 保留 255(不透明)
+    EXPECT_EQ(rgba[3], 255);  // A = resident → 255
 
-    TerrainPageStore::encodeLayerRGBA8(255, rgba);
+    // A 通道 = resident 标志:miss(resident=false)→ A=0,片元 alphaOver factor=0。
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, rgba);
+    EXPECT_EQ(rgba[3], 0);
+
+    TerrainPageStore::encodeLayerRGBA8(255, /*resident=*/true, rgba);
     EXPECT_EQ(rgba[0], 255);  // R 满
     EXPECT_EQ(rgba[1], 0);
 
-    TerrainPageStore::encodeLayerRGBA8(256, rgba);
+    TerrainPageStore::encodeLayerRGBA8(256, /*resident=*/true, rgba);
     EXPECT_EQ(rgba[0], 0);    // R 归零
     EXPECT_EQ(rgba[1], 1);    // 进 G 位
 
-    TerrainPageStore::encodeLayerRGBA8(513, rgba);
+    TerrainPageStore::encodeLayerRGBA8(513, /*resident=*/true, rgba);
     EXPECT_EQ(rgba[0], 1);    // 513 = 1 + 2*256
     EXPECT_EQ(rgba[1], 2);
 }

@@ -103,24 +103,26 @@ constexpr bool kFlipRowsOnUpload = false;
 }  // namespace
 
 // worker 回调把解码影像投进本箱(shared_ptr 持有 → 即使 TerrainPageStore 已析构
-// 也不悬垂);渲染线程 drainInbox 取走上传。每项带 packed key + 绝对 layer,
-// drain 时校验 entry 仍驻留于该 layerBase(淘汰后到达的丢弃)。
+// 也不悬垂);渲染线程 drainInbox 取走上传。每项带 pageKey + 目标 layer,
+// drain 时校验页仍驻留于该 layer(淘汰/换租后到达的丢弃)。
 struct TerrainPageStore::PendingInbox {
     struct Item {
-        uint64_t key = 0;
-        int layer = 0;  // 绝对层索引(layerBase + offset)
+        uint64_t key = 0;  // pageKey(packKey of 影像页 z/x/y)
+        int layer = 0;     // 目标 array 层(kick 时 pool 分配的 layer)
         std::unique_ptr<DecodedImage> image;
     };
     std::mutex mutex;
     std::vector<Item> pages;
 };
 
-void TerrainPageStore::encodeLayerRGBA8(int layer, uint8_t out[4]) {
+void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident, uint8_t out[4]) {
     const unsigned int v = static_cast<unsigned int>(std::max(0, layer));
     out[0] = static_cast<uint8_t>(v & 0xFFu);          // R = layer & 0xFF
     out[1] = static_cast<uint8_t>((v >> 8) & 0xFFu);   // G = (layer >> 8) & 0xFF
     out[2] = 0;                                         // B 保留
-    out[3] = 255;                                       // A 保留(不透明)
+    // A = resident 标志(B2b):片元 alphaOver factor。resident=页已 uploaded → 覆盖;
+    // miss(视锥外/未 fetch/未到)→ 0 → 保留 base=mappedRaster(优雅降级不出洞)。
+    out[3] = resident ? 255 : 0;
 }
 
 int TerrainPageStore::decodeLayerRGBA8(const uint8_t in[4]) {
@@ -129,31 +131,21 @@ int TerrainPageStore::decodeLayerRGBA8(const uint8_t in[4]) {
     return static_cast<int>(in[0]) + static_cast<int>(in[1]) * 256;
 }
 
-std::unique_ptr<Texture> TerrainPageStore::buildIndirTexture(int layerBase,
-                                                             int gridN) {
-    // dense 填:texel[cy][cx] = encode(layerBase + cy*gridN + cx),与闭式公式
-    // cell.y*gridN+cell.x 逐 cell 等价(NW 无翻转:cy=0=北=row0=最小 v,和影像
-    // 上传 kFlipRowsOnUpload=false + shader cell.y 一致)。片元 (cell+0.5)/gridN
-    // 命中 texel 中心 → NEAREST 取精确 layer。
-    std::vector<uint8_t> texels(static_cast<size_t>(gridN) *
-                                static_cast<size_t>(gridN) * 4u);
-    for (int cy = 0; cy < gridN; ++cy) {
-        for (int cx = 0; cx < gridN; ++cx) {
-            const int layer = layerBase + cy * gridN + cx;
-            encodeLayerRGBA8(layer,
-                             texels.data() +
-                                 (static_cast<size_t>(cy) * gridN + cx) * 4u);
-        }
-    }
+std::unique_ptr<Texture> TerrainPageStore::createIndirTexture(
+    int gridN, const uint8_t* texels) {
+    // gridN×gridN RGBA8 稀疏间接纹理,初值 = 本帧填好的 texels(NW 无翻转:cy=0=北=
+    // row0=最小 v,和影像上传 kFlipRowsOnUpload=false + shader cell.y 一致)。片元
+    // (cell+0.5)/gridN 命中 texel 中心 → NEAREST 取精确 layer + A 通道。后续帧经
+    // updateTextureRegion 原地刷新(两后端 create-with-data 与 region 更新行序一致)。
     TextureDesc desc;
     desc.width = gridN;
     desc.height = gridN;
     desc.arrayLayers = 1;  // 普通 2D(非 array):间接纹理是索引表,非页存储
     desc.format = TextureDesc::Format::RGBA8;
-    desc.data = texels.data();
-    desc.dataSize = texels.size();
+    desc.data = texels;
+    desc.dataSize = static_cast<size_t>(gridN) * static_cast<size_t>(gridN) * 4u;
     desc.mipmap = false;
-    // NEAREST:间接纹理必须点采样取精确 texel(线性会在 cell 边界串值→错 layer)。
+    // NEAREST:间接纹理必须点采样取精确 texel(线性会在 cell 边界串值→错 layer/A)。
     desc.minFilter = TextureDesc::Filter::Nearest;
     desc.magFilter = TextureDesc::Filter::Nearest;
     desc.wrapS = TextureDesc::Wrap::Clamp;
@@ -162,7 +154,8 @@ std::unique_ptr<Texture> TerrainPageStore::buildIndirTexture(int layerBase,
 }
 
 uint64_t TerrainPageStore::packKey(const TileKey& key) {
-    // capped 瓦片 z 小(≤~14),x/y < 2^z < 2^22,可无损打包进 64 位。
+    // B2b:页 = 影像瓦片,z ≤ 17,x/y < 2^17 < 2^22 → 无损打包进 64 位。schemeId 不入
+    // key(单一影像 provider,z/x/y 唯一定位页)。也复用于 capped 瓦片 tileKey。
     return (static_cast<uint64_t>(key.z) << 44) |
            (static_cast<uint64_t>(key.x) << 22) |
            static_cast<uint64_t>(key.y);
@@ -205,8 +198,11 @@ void TerrainPageStore::updateVisiblePages(
     RasterOverlayTileProvider* provider,
     double terrainMaxScreenSpaceError) {
     ++pageDetFrameCounter_;
-    if (!provider || visibleTiles.empty()) {
+    if (!arrayTexture_ || !provider || visibleTiles.empty()) {
         return;
+    }
+    if (!provider_) {
+        provider_ = provider;  // determination 也可首次捕获(供 kickPageFetch 用)
     }
     const TileScheme& scheme = provider->getTileScheme();
     const int providerMaxLevel = provider->getMaximumLevel();
@@ -249,21 +245,90 @@ void TerrainPageStore::updateVisiblePages(
         zoom = std::min(zoom, tile->key.z + kMaxDetDepthLevels);
         zoom = std::max(zoom, tile->key.z);
 
-        // 3) 枚举子瓦片 + 视锥剔除。minH/maxH 取瓦片自身高度范围(缺省 -1000/9000)。
-        enumerateSubtileKeys(tile->key, zoom, subtileScratch_);
+        const int gridN = subtileGridN(tile->key.z, zoom);
         const double minH = TileBoundsMetrics::terrainMinimumHeight(*tile);
         const double maxH = TileBoundsMetrics::terrainMaximumHeight(*tile);
-        for (const TileKey& sub : subtileScratch_) {
-            const Rectangle subRect = scheme.tileToRectangle(sub);
-            const std::optional<OrientedBoundingBox> obb =
-                TileBoundsMetrics::boundingRegionObb(subRect, minH, maxH);
-            if (!obb || !view.frustum.intersectsOBB(*obb)) {
-                continue;  // 视锥外 → 不是可见页
+
+        // 3) 分配/复用该瓦片的稀疏间接纹理(gridN 变则重建)。逐 cell 填 resident/miss。
+        const uint64_t tileKeyPacked = packKey(tile->key);
+        TileIndir& ind = tileIndirs_[tileKeyPacked];
+        indirTexelsScratch_.assign(
+            static_cast<size_t>(gridN) * static_cast<size_t>(gridN) * 4u, 0);
+
+        // 影像 fetch key 需影像 provider 的 schemeId(terrain tileKey.schemeId 可能异号):
+        // 由影像 scheme.positionToTile(瓦片中心)取,x/y/z 沿用共享 XYZ 网格。
+        const Rectangle tileRect = scheme.tileToRectangle(tile->key);
+        const double cLng = 0.5 * (tileRect.west() + tileRect.east());
+        const double cLat = 0.5 * (tileRect.south() + tileRect.north());
+        const auto imgSchemeId =
+            scheme.positionToTile(cLng, cLat, tile->key.z).schemeId;
+
+        for (int dy = 0; dy < gridN; ++dy) {
+            for (int dx = 0; dx < gridN; ++dx) {
+                uint8_t* texel = indirTexelsScratch_.data() +
+                                 (static_cast<size_t>(dy) * gridN + dx) * 4u;
+                TileKey sub;
+                sub.schemeId = tile->key.schemeId;  // 视锥/rect 计算沿用 terrain scheme
+                sub.z = zoom;
+                sub.x = tile->key.x * gridN + dx;
+                sub.y = tile->key.y * gridN + dy;
+                const Rectangle subRect = scheme.tileToRectangle(sub);
+                const std::optional<OrientedBoundingBox> obb =
+                    TileBoundsMetrics::boundingRegionObb(subRect, minH, maxH);
+                if (!obb || !view.frustum.intersectsOBB(*obb)) {
+                    encodeLayerRGBA8(0, false, texel);  // 视锥外 → miss(mappedRaster)
+                    continue;
+                }
+                const uint64_t pageKey = packKey(sub);
+                visiblePagesScratch_.insert(pageKey);  // 去重计数(跨瓦片共享祖先)
+                zMin = std::min(zMin, zoom);
+                zMax = std::max(zMax, zoom);
+
+                // 4) pool.acquire 得 layer(页首次命中建 PageEntry + kick fetch)。
+                uint64_t evicted = 0;
+                const int layer = pool_.acquire(pageKey, frameId_, &evicted);
+                if (evicted != 0) {
+                    erasePageEntry(evicted);  // 淘汰页:cancel fetch + 移除账本
+                }
+                if (layer < 0) {
+                    encodeLayerRGBA8(0, false, texel);  // 池本帧满 → miss
+                    continue;
+                }
+                auto [it, inserted] = pages_.try_emplace(pageKey);
+                PageEntry& pe = it->second;
+                if (inserted) {
+                    pe.layer = layer;
+                    pe.uploaded = false;
+                    TileKey fetchKey;
+                    fetchKey.schemeId = imgSchemeId;  // 影像 provider 的 schemeId
+                    fetchKey.z = zoom;
+                    fetchKey.x = sub.x;
+                    fetchKey.y = sub.y;
+                    kickPageFetch(fetchKey, pageKey, layer, pe.fetchToken);
+                }
+                // resident=已 uploaded → A=255 覆盖;否则 A=0 保留 mappedRaster。
+                encodeLayerRGBA8(pe.layer, pe.uploaded, texel);
             }
-            // 4) 汇入唯一页集合(跨瓦片可能共享祖先 → 去重)。
-            visiblePagesScratch_.insert(packKey(sub));
-            zMin = std::min(zMin, sub.z);
-            zMax = std::max(zMax, sub.z);
+        }
+
+        // gridN 变(或首见)→ 建纹理(带初值);否则原地刷新(每帧 resident 变化)。
+        if (!ind.tex || ind.gridN != gridN) {
+            ind.tex = createIndirTexture(gridN, indirTexelsScratch_.data());
+            ind.gridN = gridN;
+        } else {
+            device_->updateTextureRegion(
+                ind.tex.get(), 0, 0, gridN, gridN, indirTexelsScratch_.data(),
+                static_cast<size_t>(gridN) * 4u, 0);
+        }
+        ind.lastFrame = frameId_;
+    }
+
+    // sweep:清除本帧不再可见的瓦片间接纹理(其页经 LRU 自然淘汰)。
+    for (auto it = tileIndirs_.begin(); it != tileIndirs_.end();) {
+        if (it->second.lastFrame != frameId_) {
+            it = tileIndirs_.erase(it);
+        } else {
+            ++it;
         }
     }
 
@@ -273,15 +338,17 @@ void TerrainPageStore::updateVisiblePages(
         const int logZMin = visiblePagesScratch_.empty() ? 0 : zMin;
         const int logZMax = visiblePagesScratch_.empty() ? 0 : zMax;
         platformLog(LogLevel::Warning, "PageDet",
-                    "uniquePages=%d visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f",
-                    lastVisiblePageCount_, visibleCappedTiles, logZMin, logZMax,
+                    "uniquePages=%d residentPages=%d uploadedTotal=%d "
+                    "visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f",
+                    lastVisiblePageCount_, pool_.residentCount(),
+                    uploadedLayerTotal_, visibleCappedTiles, logZMin, logZMax,
                     maxTileSse);
     }
 }
 
 TerrainPageStore::~TerrainPageStore() {
-    for (auto& [packed, entry] : entries_) {
-        entry.fetchToken.cancel();  // 尽力取消在途 fetch(回调仍安全:只写 shared inbox)
+    for (auto& [pageKey, pe] : pages_) {
+        pe.fetchToken.cancel();  // 尽力取消在途 fetch(回调仍安全:只写 shared inbox)
     }
 }
 
@@ -292,19 +359,15 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
     device_ = device;
     config_ = config;
     config_.pageSizeTexels = std::max(1, config_.pageSizeTexels);
-    config_.depthLevels = std::clamp(config_.depthLevels, 0, 4);
-    config_.maxResidentTiles = std::max(1, config_.maxResidentTiles);
+    config_.maxPages = std::max(1, config_.maxPages);
     config_.maxUploadsPerFrame = std::max(1, config_.maxUploadsPerFrame);
-    gridN_ = 1 << config_.depthLevels;
-    const int blockLayers = gridN_ * gridN_;
-    const int totalLayers = blockLayers * config_.maxResidentTiles;
 
-    // 共享 texture2DArray:pageSize×pageSize×totalLayers,RGBA8,逐层 CLAMP_TO_EDGE
-    // (§13.1 无页缝),linear(真实影像放大平滑)。
+    // 共享 texture2DArray:pageSize×pageSize×maxPages(每页一层,blockLayers=1),
+    // RGBA8,逐层 CLAMP_TO_EDGE(§13.1 无页缝),linear(真实影像放大平滑)。
     TextureDesc desc;
     desc.width = config_.pageSizeTexels;
     desc.height = config_.pageSizeTexels;
-    desc.arrayLayers = totalLayers;
+    desc.arrayLayers = config_.maxPages;
     desc.format = TextureDesc::Format::RGBA8;
     desc.mipmap = false;
     desc.minFilter = TextureDesc::Filter::Linear;
@@ -316,18 +379,18 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
         device_ = nullptr;
         return false;
     }
-    pool_.configure(config_.maxResidentTiles, blockLayers);
+    pool_.configure(config_.maxPages, /*blockLayers=*/1);
     inbox_ = std::make_shared<PendingInbox>();
     return true;
 }
 
-void TerrainPageStore::eraseEntry(uint64_t packed) {
-    const auto it = entries_.find(packed);
-    if (it == entries_.end()) {
+void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
+    const auto it = pages_.find(pageKey);
+    if (it == pages_.end()) {
         return;
     }
     it->second.fetchToken.cancel();  // 在途 fetch 作废(到达也会被 drain 校验丢弃)
-    entries_.erase(it);
+    pages_.erase(it);
 }
 
 void TerrainPageStore::applyToTerrainCommand(
@@ -340,121 +403,56 @@ void TerrainPageStore::applyToTerrainCommand(
     if (cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain) {
         return;
     }
-    // 首帧捕获影像 provider(拉真实高清影像的数据源)。
+    // 首帧捕获影像 provider(拉真实高清影像的数据源;determination 通常已捕获)。
     if (!provider_ && !overlays.empty()) {
         provider_ = overlays.front()->getTileProvider();
     }
 
-    const uint64_t packed = packKey(tile.key);
-    const bool wasResident = pool_.layerBaseFor(packed) >= 0;
-    uint64_t evicted = 0;
-    const int layerBase = pool_.acquire(packed, frameId_, &evicted);
-    if (evicted != 0) {
-        eraseEntry(evicted);
-    }
-    if (layerBase < 0) {
-        return;  // 层池本帧满 → 回落 mappedRaster(决策② 共存)
-    }
-
-    if (!wasResident) {
-        TileEntry entry;
-        entry.key = tile.key;
-        entry.layerBase = layerBase;
-        entry.gridN = gridN_;
-        entry.depthLevels = config_.depthLevels;
-        entry.bounds = tile.bounds;
-        entry.targetZ = tile.key.z;
-        // Step B1:建 per-tile 间接纹理(dense 填,layerBase/gridN 存活期固定 →
-        // 一次填好)。片元经它单次 NEAREST fetch 定位 array 层。
-        entry.indirTexture = buildIndirTexture(layerBase, gridN_);
-        entries_[packed] = std::move(entry);
-        // 新块不灌占位:决策② 共存下,页存储只在**全部** gridN² 层就绪后才 enabled,
-        // 未就绪期走 mappedRaster fallback → 占位层永不被采样(灌了也是死上传)。
-    }
-
-    const TileEntry& entry = entries_[packed];
-    // 决策② 共存:仅在该瓦片**整块**层就绪后接管(避免上一租户残留渗入未到达 cell);
-    // 未就绪 → 不动 → mappedRaster fallback(优雅降级,§12.5#4)。
-    if (entry.uploadedLayers < entry.gridN * entry.gridN) {
+    // B2b:无相机,只 bind determination 本帧建好的稀疏间接纹理。无 TileIndir
+    // (未 determined / 无可见页)→ 不动 → mappedRaster(决策② 共存,零回归)。
+    const auto it = tileIndirs_.find(packKey(tile.key));
+    if (it == tileIndirs_.end() || !it->second.tex) {
         return;
     }
-    // Step B1:间接纹理必须就绪才接管(否则片元 fetch 空指针纹理)。dense 填在
-    // entry 创建时同步建好,理应非空;防御式短路 → 回落 mappedRaster。
-    if (!entry.indirTexture) {
-        return;
-    }
+    const TileIndir& ind = it->second;
     if (cmd.textures.size() <=
         static_cast<size_t>(kGltfPageStoreIndirTextureSlot)) {
         cmd.textures.resize(
             static_cast<size_t>(kGltfPageStoreIndirTextureSlot) + 1u, nullptr);
     }
     cmd.textures[kGltfPageStoreArrayTextureSlot] = arrayTexture_.get();
-    // Step B1:间接纹理绑 slot21,片元经它 fetch 定位层(替代闭式公式)。
-    cmd.textures[kGltfPageStoreIndirTextureSlot] = entry.indirTexture.get();
-    // enabled=1、gridN → 片元采页存储。.z(layerBase)现由间接纹理内容承载,
-    // shader 不再用(dense 填时间接纹理里编的就是 layerBase+... → 结果等价);
-    // 保留写入以最小化 uniform 布局改动。
-    cmd.gltfUniforms.pageStoreParams = {1.0f,
-                                        static_cast<float>(entry.gridN),
-                                        static_cast<float>(entry.layerBase),
-                                        0.0f};
+    // 间接纹理绑 slot21,片元经它 fetch 定位 layer + 读 A 通道作 miss 回退 factor。
+    cmd.textures[kGltfPageStoreIndirTextureSlot] = ind.tex.get();
+    // enabled=1、gridN → 片元采页存储。layer 由间接纹理 RG 承载,resident/miss 由
+    // 其 A 承载;pageStoreParams.z/.w 不再用(留 0)。
+    cmd.gltfUniforms.pageStoreParams = {1.0f, static_cast<float>(ind.gridN),
+                                        0.0f, 0.0f};
 }
 
 void TerrainPageStore::tick() {
     if (!arrayTexture_) {
         return;
     }
-    ++frameId_;  // 推进帧号(applyToTerrainCommand 用它 touch 本帧可见块)
-    // kick 未启动的 per-tile fetch。
-    if (provider_) {
-        for (auto& [packed, entry] : entries_) {
-            if (!entry.fetchKicked) {
-                kickImageryFetch(entry);
-                entry.fetchKicked = true;
-            }
-        }
-    }
-    drainInbox();
+    ++frameId_;  // 推进帧号(下帧 determination 的 LRU touch/淘汰基准)
+    drainInbox();  // fetch 已在 determination 页首次命中时 kick
 }
 
-void TerrainPageStore::kickImageryFetch(TileEntry& entry) {
-    ImageryProvider& imagery = provider_->getImageryProvider();
-    const TileScheme& scheme = provider_->getTileScheme();
-    const int gridN = entry.gridN;
-    const int zoom = entry.targetZ + entry.depthLevels;
-    if (zoom > provider_->getMaximumLevel()) {
-        // 影像深度不足以铺 gridN×gridN 对齐子瓦片:跳过(留占位,不做部分覆盖免错位)。
+void TerrainPageStore::kickPageFetch(const TileKey& pageTileKey,
+                                     uint64_t pageKey, int layer,
+                                     CancellationToken& token) {
+    if (!provider_) {
         return;
     }
-    // **mercator 直接子瓦片**(§13.4 修 lat-linear 枚举错位):terrain 与影像同 XYZ
-    // web-mercator 分块,故目标瓦片 (z,x,y) 的 z+depth 子瓦片 =
-    // (x*gridN+dx, y*gridN+dy),与 shader mercator UV 的 cell 网格逐格对齐
-    // (NW 约定 v=0 北 → cell.y=0=北=最小 y)。schemeId 经 positionToTile(瓦片中心)取。
-    const double centerLng = 0.5 * (entry.bounds.west() + entry.bounds.east());
-    const double centerLat = 0.5 * (entry.bounds.south() + entry.bounds.north());
-    const TileKey centerImg =
-        scheme.positionToTile(centerLng, centerLat, entry.targetZ);
-    const uint64_t packed = packKey(entry.key);
-    const int layerBase = entry.layerBase;
-    for (int dy = 0; dy < gridN; ++dy) {
-        for (int dx = 0; dx < gridN; ++dx) {
-            TileKey childKey;
-            childKey.schemeId = centerImg.schemeId;
-            childKey.z = zoom;
-            childKey.x = entry.key.x * gridN + dx;
-            childKey.y = entry.key.y * gridN + dy;
-            const int layer = layerBase + dy * gridN + dx;  // 与 shader cell.y*gridN+cell.x 对齐
-            std::shared_ptr<PendingInbox> inbox = inbox_;
-            imagery.requestTile(
-                childKey, entry.fetchToken,
-                [inbox, packed, layer](const TileKey&,
-                                       std::unique_ptr<DecodedImage> image) {
-                    if (!image) return;
-                    std::lock_guard<std::mutex> lock(inbox->mutex);
-                    inbox->pages.push_back({packed, layer, std::move(image)});
-                });
-        }
-    }
+    ImageryProvider& imagery = provider_->getImageryProvider();
+    std::shared_ptr<PendingInbox> inbox = inbox_;
+    imagery.requestTile(
+        pageTileKey, token,
+        [inbox, pageKey, layer](const TileKey&,
+                                std::unique_ptr<DecodedImage> image) {
+            if (!image) return;
+            std::lock_guard<std::mutex> lock(inbox->mutex);
+            inbox->pages.push_back({pageKey, layer, std::move(image)});
+        });
 }
 
 void TerrainPageStore::drainInbox() {
@@ -483,15 +481,17 @@ void TerrainPageStore::drainInbox() {
             image->pixels.empty()) {
             continue;  // 尺寸不符(非 256²)跳过,保留占位
         }
-        // 校验 entry 仍驻留且该 layer 属于它(淘汰/换租后 layerBase 变 → 丢弃)。
-        const auto it = entries_.find(item.key);
-        if (it == entries_.end()) {
-            continue;  // entry 已淘汰
+        // 校验页仍驻留且 layer 匹配(淘汰/换租后 layer 变或页消失 → 丢弃,防写错层)。
+        const auto it = pages_.find(item.key);
+        if (it == pages_.end()) {
+            continue;  // 页已淘汰(erasePageEntry)
         }
-        TileEntry& entry = it->second;
-        if (item.layer < entry.layerBase ||
-            item.layer >= entry.layerBase + entry.gridN * entry.gridN) {
-            continue;  // 该 layer 已不属于此 entry(换租)
+        PageEntry& pe = it->second;
+        if (pe.layer != item.layer) {
+            continue;  // 该 layer 已换租给别的页
+        }
+        if (pe.uploaded) {
+            continue;  // 已灌过(重复 fetch 到达)→ 跳过
         }
         const int ch = image->channels;
         const uint8_t* src = image->pixels.data();
@@ -517,7 +517,7 @@ void TerrainPageStore::drainInbox() {
                                      rgba.data(),
                                      static_cast<size_t>(side) * 4u,
                                      item.layer);
-        ++entry.uploadedLayers;
+        pe.uploaded = true;  // 下帧 determination 重建 indir 时该 cell 变 resident
         ++uploadedLayerTotal_;
         ++uploaded;
     }

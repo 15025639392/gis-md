@@ -65,30 +65,30 @@ private:
     std::unordered_map<uint64_t, int> keyToSlot_;  // key → slot index
 };
 
-/// 北极星合成方案「页存储」生产原型 → 多瓦片页表(门③ Step 3 + §14.1 item 1)。
+/// 北极星合成方案「稀疏页存储」(门③ Step B2b + §14.1)。
 ///
-/// 拥有一张共享 `texture2DArray`(§13,每层一页,天然消灭页缝),按 LRU 把层块分给
-/// **每个可见 capped 真实地形瓦片**:该瓦片异步拉它在更深 LOD(z + depthLevels)的
-/// gridN×gridN 覆盖影像子瓦片 → 灌进自己那块连续层 → 片元按 per-tile pageStoreParams
-/// (enabled/gridN/layerBase)单次 array 采样 → capped 粗瓦片显示比其几何 LOD 更细的
-/// 真实影像(①路径通)。
+/// 拥有一张共享 `texture2DArray`(§13,每层一页,天然消灭页缝),**按页粒度** LRU
+/// (blockLayers=1,一页一层)驻留屏幕界定的可见影像页。determination(updateVisiblePages)
+/// 每帧:遍历可见 capped 真实地形瓦片 → 屏幕驱动源 zoom → 枚举 gridN×gridN mercator 子
+/// 瓦片 → 视锥剔除 → 逐可见页 pool.acquire(得 layer)+ kick 单页 fetch → 按当前 resident
+/// 重建该瓦片的稀疏间接纹理(cell resident→RG=layer/A=255,miss→A=0)。片元经间接纹理
+/// 单次 NEAREST fetch 定位 layer + 用 A 作 alphaOver factor → capped z12 瓦片显示屏幕界定
+/// 的 z17 高清真实影像(crisp),内存有界(只驻留可见页)。
 ///
-/// **决策② 已拍板 = 共存/分层 override**:mappedRaster 对所有瓦片继续算(祖先影像
-/// fallback);页存储仅在该瓦片**已有 resident 层**时置 enabled=1 接管。page-in 延迟期
-/// 显祖先(糊但有)不出洞 = 优雅降级(§12.5#4)。非页存储瓦片逐字节走现状,零回归。
+/// **决策② 共存/分层 override**:mappedRaster 对所有瓦片继续算(祖先影像 fallback);
+/// 页存储按 **cell 粒度** 接管——resident cell A=1 覆盖,未 fetch/未到/视锥外 cell A=0
+/// 保留 mappedRaster。page-in 延迟期该 cell 显祖先(糊但有)不出洞 = 优雅降级(§12.5#4)。
+/// 非真实地形瓦片逐字节走现状,零回归。
 ///
-/// **决策 单瓦片 → 多瓦片(本文件重写)**:原单 targetKey 锁定改为 per-tile 页表
-/// (TerrainPageLayerPool + entries_)。gridN 现固定(config.depthLevels);Step B 改
-/// 屏幕驱动 per-tile 深度(复用 chooseQuadtreeSourceZoom)后 gridN 可变、升级 buddy 池。
-///
-/// ⚠️ **固定 depth 在地平线过取**(122 瓦片 × gridN² 页 ≫ 峰值工作集 185),必须 Step B
-/// 屏幕驱动深度才内存安全;近景/中景(3-6 瓦片)当前固定 depth 已正确。
+/// **LRU 自愈无悬垂**:间接纹理每帧重建 → 淘汰页的 cell 自动因 pages_ 查不到而变 miss;
+/// 淘汰时 erasePageEntry cancel fetch,在途到达经 drain 校验(pages_ 存在 + layer 匹配)丢弃。
 class TerrainPageStore {
 public:
     struct Config {
         int pageSizeTexels = 256;    // 每层边长(标准 XYZ 影像瓦片 256)
-        int depthLevels = 2;         // 影像比瓦片深几级(gridN = 1<<depthLevels)
-        int maxResidentTiles = 16;   // 层池块数(= 同时最多几个 capped 瓦片走页存储)
+        // B2b 稀疏页存储:array 层数 = LRU 页容量(每页一层,blockLayers=1)。
+        // 512×256²×4 ≈ 128MB VRAM 上限;实际按 LRU 只驻留屏幕可见 ~125-185 页。
+        int maxPages = 512;
         int maxUploadsPerFrame = 8;  // 每帧上传层数上限(涓流,勿拖动期冻结)
     };
 
@@ -98,20 +98,21 @@ public:
     TerrainPageStore(const TerrainPageStore&) = delete;
     TerrainPageStore& operator=(const TerrainPageStore&) = delete;
 
-    /// 创建共享 array 纹理(blockCount*gridN² 层)。失败返回 false(调用方短路)。
+    /// 创建共享 array 纹理(maxPages 层,每页一层)。失败返回 false(调用方短路)。
     bool initialize(RenderDevice* device, const Config& config);
 
     bool isReady() const { return arrayTexture_ != nullptr; }
 
-    /// 每帧(渲染线程,render 之前):推进帧号、kick 未启动的 per-tile 影像 fetch、
-    /// 排空已到达影像(限 maxUploadsPerFrame)灌对应 layer、剔除失效 entry。
+    /// 每帧(渲染线程,determination 之后、render 之前):推进帧号、排空已到达影像
+    /// (限 maxUploadsPerFrame)灌对应页 layer 并置 uploaded。fetch 由 determination
+    /// 在页首次命中时 kick(见 updateVisiblePages)。
     void tick();
 
-    // ==================== 门② 屏幕可见影像页 determination(Step B2a)====================
-    // 纯读 + 插桩:遍历本帧可见 capped 真实地形瓦片,对每个瓦片选屏幕合适影像 zoom、
-    // 枚举其 gridN×gridN mercator 子瓦片、视锥剔除 → 汇成唯一可见页 (z,x,y) 集合并
-    // log 页数/zRange。**不碰池/fetch/间接纹理/render**;供 B2b 接页存储前先隔离验证
-    // 页集大小(真机应 ≈ 近景 68 / 地平线 185)。
+    // ==================== 门② 屏幕可见影像页 determination(Step B2b)====================
+    // 遍历本帧可见 capped 真实地形瓦片,对每个瓦片选屏幕合适影像 zoom、枚举其 gridN×gridN
+    // mercator 子瓦片、视锥剔除 → **驱动**:逐可见页 pool.acquire(得 layer)+ 首次命中
+    // kick fetch,按当前 resident 重建该瓦片稀疏间接纹理(见 updateVisiblePages)。保留
+    // uniquePages/zRange 插桩(节流 log)验页数(真机应 ≈ 近景 125 / 地平线 185)。
 
     /// 给定瓦片层级与屏幕合适源 zoom → 子瓦片网格边长 gridN。
     /// sourceZoom ≤ tileZ → 1(不细分);否则 1 << (sourceZoom - tileZ)。纯函数,可单测。
@@ -133,9 +134,10 @@ public:
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
 
-    /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用:capped 真实地形瓦片
-    /// 认领(或复用)一块层、touch,若已有 resident 层则绑 array + 写 per-tile
-    /// pageStoreParams(enabled=1);否则不动(mappedRaster fallback)。
+    /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用(**无相机,只 bind**):
+    /// 若该瓦片本帧 determination 建了间接纹理(TileIndir)→ 绑 array slot20 + 间接纹理
+    /// slot21 + 写 pageStoreParams(enabled=1,gridN);否则不动(mappedRaster fallback)。
+    /// determination 已按 cell 粒度编好 resident/miss,此处仅 bind。
     /// overlays 用于首次捕获影像 provider。
     void applyToTerrainCommand(
         RenderCommand& cmd, const TilesetTile& tile,
@@ -143,64 +145,70 @@ public:
 
     Texture* arrayTexture() const { return arrayTexture_.get(); }
 
-    /// 稀疏虚拟纹理(Step B1)间接纹理的 RGBA8 层编码:R=layer&0xFF、
-    /// G=(layer>>8)&0xFF、B=0、A=255。引擎不支持整数纹理,故用 RGBA8 承载
-    /// 16 位 layer 索引(容 gridN²×maxResidentTiles ≤ 65535 页)。out 需 ≥4 字节。
-    static void encodeLayerRGBA8(int layer, uint8_t out[4]);
+    /// 稀疏虚拟纹理间接纹理的 RGBA8 层编码:R=layer&0xFF、G=(layer>>8)&0xFF、B=0、
+    /// A=resident?255:0。引擎不支持整数纹理,故用 RGBA8 承载 16 位 layer 索引
+    /// (容 ≤ 65535 页)。**A 通道 = resident 标志(B2b)**:片元用它作 alphaOver
+    /// factor —— resident=1 页存储覆盖、miss=0 保留 mappedRaster(部分就绪/视锥外
+    /// cell 优雅降级,决策② 共存不出洞)。out 需 ≥4 字节。
+    static void encodeLayerRGBA8(int layer, bool resident, uint8_t out[4]);
     /// 与片元 shader 解码逐位一致:floor(r*255+0.5)+floor(g*255+0.5)*256 = R+G*256。
     /// 供 host round-trip 单测证明「编 layer → RGBA8 → 解码回 layer」链路正确。
     static int decodeLayerRGBA8(const uint8_t in[4]);
 
     // --- 诊断(单测/日志用)---
-    int residentTileCount() const { return pool_.residentCount(); }
+    int residentPageCount() const { return pool_.residentCount(); }
     int uploadedLayerTotal() const { return uploadedLayerTotal_; }
 
 private:
     struct PendingInbox;  // 定义在 .cpp:worker 回调安全投递解码影像
 
-    /// 每个走页存储的 capped 瓦片的账本(层块 + 异步 fetch 状态)。
-    struct TileEntry {
-        TileKey key{};
-        int layerBase = -1;
+    /// 页粒度账本(B2b):每个屏幕可见影像页 (z,x,y) 一层 + 异步 fetch 状态。
+    /// pool.acquire 得 layer → 建 PageEntry → kick fetch → 到达置 uploaded。
+    /// 淘汰/换租时 cancel fetch(在途到达经 drain 校验丢弃)。
+    struct PageEntry {
+        int layer = -1;
+        bool uploaded = false;
+        CancellationToken fetchToken;
+    };
+
+    /// 每个屏幕可见 capped 瓦片的稀疏间接纹理(gridN×gridN RGBA8)。
+    /// **每帧在 determination 里按当前 resident 页重建**:cell 命中 resident+uploaded
+    /// 页 → 编 RG=layer、A=255;否则(视锥外/未 fetch/未到)→ A=0(miss)。
+    /// gridN 随屏幕驱动 zoom 变(换 gridN 时重建纹理)。tile 不再可见 → 清除。
+    struct TileIndir {
+        std::unique_ptr<Texture> tex;
         int gridN = 1;
-        int depthLevels = 0;
-        Rectangle bounds{0.0, 0.0, 0.0, 0.0};
-        int targetZ = 0;
-        bool fetchKicked = false;
-        int uploadedLayers = 0;
-        CancellationToken fetchToken;  // 淘汰/析构时 cancel(在途 fetch 丢弃)
-        // Step B1:per-tile 间接纹理(gridN×gridN RGBA8)。dense 填 cell→连续
-        // layer,片元经它单次 NEAREST fetch 定位层(替代闭式公式)。layerBase/
-        // gridN 在 entry 存活期固定 → 创建时一次填好即可,换租(淘汰)时随 entry 销毁。
-        std::unique_ptr<Texture> indirTexture;
+        uint64_t lastFrame = 0;  // determination 里 touch;sweep 清非本帧可见瓦片
     };
 
     static uint64_t packKey(const TileKey& key);
-    /// 建 entry 的间接纹理:gridN×gridN、texel[cy][cx]=encode(layerBase+cy*gridN+cx)、
-    /// NEAREST+Clamp。dense 填 → 与闭式公式逐 cell 等价(B1 隔离验证前提)。
-    std::unique_ptr<Texture> buildIndirTexture(int layerBase, int gridN);
-    void kickImageryFetch(TileEntry& entry);
+    /// 建 gridN×gridN、RGBA8、NEAREST+Clamp 的间接纹理(初值 = texels)。
+    /// 片元经它单次 NEAREST fetch 定位 array 层 + 读 A 通道作 miss 回退 factor。
+    std::unique_ptr<Texture> createIndirTexture(int gridN, const uint8_t* texels);
+    /// kick 单页影像 fetch(worker 回调把解码影像投进 inbox,带 pageKey+layer)。
+    void kickPageFetch(const TileKey& pageTileKey, uint64_t pageKey, int layer,
+                       CancellationToken& token);
     void drainInbox();
-    void eraseEntry(uint64_t packed);
+    void erasePageEntry(uint64_t pageKey);
 
     RenderDevice* device_ = nullptr;
     Config config_{};
-    int gridN_ = 1;
     std::unique_ptr<Texture> arrayTexture_;
 
     TerrainPageLayerPool pool_;
-    std::unordered_map<uint64_t, TileEntry> entries_;  // packed key → entry
+    std::unordered_map<uint64_t, PageEntry> pages_;      // pageKey → 页账本
+    std::unordered_map<uint64_t, TileIndir> tileIndirs_;  // tileKey → 稀疏间接纹理
     uint64_t frameId_ = 0;
     int uploadedLayerTotal_ = 0;
 
-    RasterOverlayTileProvider* provider_ = nullptr;  // 首帧从 overlays 捕获
+    RasterOverlayTileProvider* provider_ = nullptr;  // determination/render 首次捕获
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
 
-    // 门② determination(B2a):子瓦片相对 capped 瓦片的最大细分深度上限
+    // 门② determination:子瓦片相对 capped 瓦片的最大细分深度上限
     // (屏幕驱动一般 ≤5;cap 防远景/病态 zoom 枚举爆量,gridN ≤ 1<<cap)。
     static constexpr int kMaxDetDepthLevels = 6;
-    std::unordered_set<uint64_t> visiblePagesScratch_;  // 每次 determination 复用
-    std::vector<TileKey> subtileScratch_;               // 枚举复用缓冲
+    std::unordered_set<uint64_t> visiblePagesScratch_;  // 每次 determination 复用(dedup/计数)
+    std::vector<uint8_t> indirTexelsScratch_;           // 间接纹理上传复用缓冲
     uint64_t pageDetFrameCounter_ = 0;                  // 节流 log 用(独立于 frameId_)
     int lastVisiblePageCount_ = 0;
 };

@@ -307,6 +307,12 @@ uniform vec4 u_gltfWaterMaskTranslationScale;
 uniform vec4 u_gltfWaterMaskState;
 uniform vec4 u_clipUV;
 uniform float u_clipEnabled;
+// 稀疏虚拟纹理(Step B2b):真实 heightmap DEM 表面走**此** glTF shader(无 water-mask
+// 元数据 → useTerrainFormat=false),故 SVT 页存储采样必须在这里(非 kTerrainFragmentGLSL)。
+// x=enabled y=gridN z/w=保留;layer 由间接纹理 RG 承载、resident 标志由 A 承载。
+uniform highp sampler2DArray u_pageStore;
+uniform highp sampler2D u_pageStoreIndir;
+uniform vec4 u_pageStoreParams;
 
 out vec4 fragColor;
 
@@ -560,6 +566,19 @@ void main() {
             u_mappedRasterTexCoordSet3,
             u_mappedRasterTileUV3,
             u_mappedRasterOpacity3);
+    }
+    // 稀疏虚拟纹理(Step B2b):capped 真实地形瓦片经 per-tile 间接纹理单次 NEAREST
+    // fetch 定位共享 array 层 → 覆盖 mappedRaster 显更细影像。cell resident(A=1)才
+    // 覆盖,miss(A=0)保留 mappedRaster(决策② 共存优雅降级)。UV 复用 set 0 mercator。
+    if (u_pageStoreParams.x > 0.5) {
+        vec2 psUv = uvFromSet(0.0);
+        float gridN = max(u_pageStoreParams.y, 1.0);
+        vec2 g = clamp(psUv, 0.0, 1.0) * gridN;
+        vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
+        vec2 indirUv = (cell + 0.5) / gridN;
+        vec4 e = texture(u_pageStoreIndir, indirUv);
+        float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
+        base = alphaOver(base, texture(u_pageStore, vec3(g - cell, layer)), e.a);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1064,7 +1083,7 @@ void main() {
         vec4 e = texture(u_pageStoreIndir, indirUv);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
         base = alphaOver(
-            base, texture(u_pageStore, vec3(g - cell, layer)), 1.0);
+            base, texture(u_pageStore, vec3(g - cell, layer)), e.a);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1668,6 +1687,9 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_mappedRasterTexture2 [[texture(17)]],
                              texture2d<float> u_mappedRasterTexture3 [[texture(18)]],
                              texture2d<float> u_gltfWaterMaskTexture [[texture(19)]],
+                             // SVT(Step B2b):真实 DEM 表面走此 glTF shader,页存储在此。
+                             texture2d_array<float> u_pageStore [[texture(20)]],
+                             texture2d<float> u_pageStoreIndir [[texture(21)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -1745,6 +1767,23 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             u.mappedRasterTexCoordSet[3],
             float4(u.mappedRasterTileUV[3]),
             u.mappedRasterOpacity[3]);
+    }
+    // SVT(Step B2b,镜像 GLSL):per-tile 间接纹理单次 NEAREST fetch 定位 array 层
+    // 覆盖 mappedRaster;A 通道 resident 标志,miss 保留 mappedRaster(决策② 共存)。
+    if (u.pageStoreParams.x > 0.5) {
+        constexpr sampler u_pageStoreIndirSampler(coord::normalized,
+                                                  filter::nearest,
+                                                  address::clamp_to_edge);
+        float gridN = max(u.pageStoreParams.y, 1.0);
+        float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
+        float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
+        float2 indirUv = (cell + 0.5) / gridN;
+        float4 e = u_pageStoreIndir.sample(u_pageStoreIndirSampler, indirUv);
+        float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
+        base = gltfAlphaOver(
+            base,
+            u_pageStore.sample(u_tileSharedSampler, g - cell, uint(layer)),
+            e.a);
     }
     base = gltfApplyWaterMask(
         base,
@@ -2292,10 +2331,11 @@ fragment float4 terrainFragment(
         float2 indirUv = (cell + 0.5) / gridN;
         float4 e = u_pageStoreIndir.sample(u_pageStoreIndirSampler, indirUv);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
+        // B2b(镜像 GLSL):factor = e.a(resident 标志)。miss=0 保留 mappedRaster。
         base = terrainAlphaOver(
             base,
             u_pageStore.sample(u_terrainSampler, g - cell, uint(layer)),
-            1.0);
+            e.a);
     }
     base = terrainApplyWaterMask(
         base, in, u_gltfWaterMaskTexture, u_terrainSampler,
