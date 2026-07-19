@@ -363,6 +363,39 @@ cesium-native 官方原文:改 tileset SSE **"will not affect the sharpness of t
 | **7 页表编码精度** | **边界** | RGBA8 编槽索引:16×16=256 槽/轴 R/G 各 8bit 刚够,**再塞 level/scale-bias 就超精度→错页**。**用 RG16/RGBA16,别用 RGBA8。** |
 
 ### 12.6 结论
-**合成方案不是抽象全局最优,但在"我们这台 cesium-native 移植引擎"的具体约束下是正确工程选择**——理由是架构复用最大化(门②/scale-bias/updateTextureRegion 现成)+ 三 gate 已过 + 风险已中和,而非碾压 clipmap。**没有任何方案在我们的架构约束下严格优于它。** 拍板附带:①文档正名「CPU 驱动 SVT」;②补 §12.5 三条新风险(页缝/各向异性/上传 ghosting)+ 页表用 RG16;③**原型第一刀先解页缝(clamp vs gutter 真机对拍),再搭页表**——先钉最尖锐的新未知;④clipmap 存档长期备选。
+**合成方案不是抽象全局最优,但在"我们这台 cesium-native 移植引擎"的具体约束下是正确工程选择**——理由是架构复用最大化(门②/scale-bias/updateTextureRegion 现成)+ 三 gate 已过 + 风险已中和,而非碾压 clipmap。**没有任何方案在我们的架构约束下严格优于它。** 拍板附带:①文档正名「CPU 驱动 SVT」;②补 §12.5 三条新风险(页缝/各向异性/上传 ghosting)+ 页表用 RG16;③**原型第一刀先解页缝**——先钉最尖锐的新未知(**⚠️ 已被 §13 取代:改用 texture2DArray 存储直接规避页缝,Step 1 层数上限已过**);④clipmap 存档长期备选。
 
 来源:cesium How Raster Overlays Work、US7626591B2、Bar-Zeev、Tanner/Migdal/Jones 1998、Ellipsoidal Clipmaps(Dünkel/Kang 2015)、Sean Barrett SVT(GDC2008)、van Waveren Software Virtual Textures 2012、Sagristà Sparse Virtual Textures 2023、Dammertz VT notes、fgiesen Android texture uploads、id-Tech5 megatexture 过滤分析。
+
+## 13. 存储后端定案:texture2DArray(取代 §12.6③ 的 clamp-vs-gutter 计划)
+评审后追问"范式内更优解"→ 范式已穷尽(per-tile / clipmap / paged 三选一),但**物理存储层有更优变体**:合成方案的页不放进一张 2D 大 atlas,改放进 **`texture2DArray`(每页 = 一个 layer)**。**这直接规避 §12.5 风险 #1(页缝),取代 §12.6③ 的"先做 clamp vs gutter 对拍"计划。**
+
+### 13.1 为什么 array 消灭页缝
+"页缝"拆两个子问题:
+- **(A) 错内容渗色**(2D atlas 独有,严重):相邻页物理挨着塞,bilinear 在页边缘采样跨进**无关瓦片** → 渗色 + 随相机移动闪。**这是 2D atlas 引入、现状没有的新问题。**
+- **(B) 半 texel 边界不连续**(所有分块方案都有,轻):真正相邻两瓦片公共边,各自 clamp 不混合 → 半 texel 硬跳变。**= 现状逐瓦片 clamp 早已接受的行为。**
+
+`sampler2DArray`:第三坐标 layer **层间不插值**(硬件规定)+ 每层 `CLAMP_TO_EDGE` → **物理上没有隔壁页可渗 → (A) 从根上不存在**,不需 border/gutter/per-page clamp,§11.2"上传现成瓦片、1 瓦片=1 页独立上传"简化完整保住;(B) 降回 = 现状质量。⟹ **array 复现现状已接受的视觉,页缝新风险从"要对拍"变成"不用处理"。**
+
+### 13.2 array 对流水线的影响(基本更简单)
+- **片元**:仍**单次**间接 fetch(页表给 layer)→ 采 `sampler2DArray`(门① 结论原样适用,不引入新依赖链)。
+- **页表**:存 layer 索引(≤2048=11bit,顺带缓解 §12.5 #7 精度)。
+- **上传**:`updateTextureRegion` 加 layer 维(GLES `texSubImage3D` / Metal slice,**标准能力,非我们的后端缺口**)。
+- **mip / 内存**:每层独立 mip(缓 §12.5 #3);内存与"2D atlas 且 1 瓦片 1 页"同(47MB)。
+- **旁证**:≈ osgEarth bindless TextureArena 的 array 版 → 更贴成熟球面引擎做法。
+
+### 13.3 Step 1 真机结果(层数上限 = array 唯一可能否决点,已过)
+commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno 730 `GL_MAX_ARRAY_TEXTURE_LAYERS=2048`**(vs 地平线工作集峰值 185 页 = **11× 余量**,叠 4 层 740 也稳)、`GL_MAX_3D_TEXTURE_SIZE=2048`、`GL_MAX_TEXTURE_SIZE=16384`;**Metal 规格保证 2048**。⟹ **array 不受层数限,存储后端定案 texture2DArray。**
+
+### 13.4 剩余原型步骤(Step 2/3,开始动生产渲染)
+- **Step 2**:`RenderDevice::updateTextureRegion` 加 layer 维,两后端各上传一页进指定 layer;真机验 texSubImage 灌 live array 会否 ghost(§12.5 #6)。
+- **Step 3**:terrain 片元从 `sampler2DArray` 按页表 layer 采样,一个 capped 粗瓦片显示正确高清影像,验①路径通 ②边界 = 现状。
+- 任一步卡住 → 退 2D atlas + per-page clamp(§12.6③ 原计划,无损)。
+
+### 13.5 测量台清理清单(合成方案生产原型落定后一并删)
+门①/②/③ 与 B/C 决策已用完的**旁路测量台**,生产原型合入后应清理(它们是决策期脚手架,非生产代码):
+- `renderer/VirtualTexturePoc.{h,cpp}`(C 回读税测量,B/C 决策已定)+ `renderer/VirtualTexturePage.{h,cpp}`(页模型,若生产页表另起则删,否则提升为生产)+ 单测。
+- `renderer/TileCompositeBakePoc.{h,cpp}`(B 烘焙测量)+ 单测。
+- `renderer/VtIndirectionSamplePoc.{h,cpp}`(门① 间接采样测量)+ 单测。
+- demo `kMeasure*PoC` flag(`MinimalGlobeDemoConfig.h`)+ `EarthSceneConfig` 的 `virtualTexturePoc/tileCompositeBakePoc/vtIndirectionSamplePoc` + facade/Engine 接线 + EarthPerf 头行 `vt*/b*/vti*` 段。
+- 保留:`RenderDevice` 的 `readFramebufferPixels/enqueue/acquireFramebufferReadback`(通用回读能力,可能生产复用)、`onSurfaceCreated` 的 array-layer cap 探测(一次性能力日志)、测量冻结相机(`kMeasureFreezeCamera`,调试有用)。
