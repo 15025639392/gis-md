@@ -201,3 +201,59 @@ TEST(TerrainPageStore, TickBeforeAnyTileIsNoop) {
     store.tick();  // 无 entry、无 provider → 不崩、无上传
     EXPECT_EQ(store.uploadedLayerTotal(), 0);
 }
+
+// ---------------- 门② determination 纯函数(Step B2a)----------------
+
+// gridN = sourceZoom ≤ tileZ ? 1 : 1<<(sourceZoom-tileZ)。
+TEST(TerrainPageDet, SubtileGridNFormula) {
+    EXPECT_EQ(TerrainPageStore::subtileGridN(12, 12), 1);  // 相等 → 不细分
+    EXPECT_EQ(TerrainPageStore::subtileGridN(12, 11), 1);  // 源更浅 → guard 1
+    EXPECT_EQ(TerrainPageStore::subtileGridN(12, 13), 2);
+    EXPECT_EQ(TerrainPageStore::subtileGridN(12, 14), 4);
+    EXPECT_EQ(TerrainPageStore::subtileGridN(12, 16), 16);  // 近景 z16
+    EXPECT_EQ(TerrainPageStore::subtileGridN(12, 17), 32);  // 近景 z17
+    EXPECT_EQ(TerrainPageStore::subtileGridN(0, 3), 8);
+}
+
+// 子瓦片 key = mercator 直接子瓦片:(z=sourceZoom, x=tileX*gridN+dx, y=tileY*gridN+dy)。
+TEST(TerrainPageDet, EnumerateSubtileKeysAligned) {
+    TileKey parent;
+    parent.z = 12;
+    parent.x = 3;
+    parent.y = 5;
+    std::vector<TileKey> out;
+    TerrainPageStore::enumerateSubtileKeys(parent, /*sourceZoom=*/14, out);
+    ASSERT_EQ(out.size(), 16u);  // gridN=4 → 4×4
+    // 全部 z=14,schemeId 沿用,x∈[12,15]、y∈[20,23](= parent*4 + [0,3])。
+    for (const TileKey& k : out) {
+        EXPECT_EQ(k.z, 14);
+        EXPECT_EQ(k.schemeId, parent.schemeId);
+        EXPECT_GE(k.x, 12);
+        EXPECT_LE(k.x, 15);
+        EXPECT_GE(k.y, 20);
+        EXPECT_LE(k.y, 23);
+    }
+    // 枚举序 dy 外层、dx 内层(与 shader cell.y*gridN+cell.x + kickImageryFetch 一致):
+    // 首格 (dy=0,dx=0) = 西北角 (x=12,y=20);末格 = (x=15,y=23)。
+    EXPECT_EQ(out.front().x, 12);
+    EXPECT_EQ(out.front().y, 20);
+    EXPECT_EQ(out.back().x, 15);
+    EXPECT_EQ(out.back().y, 23);
+    // 第 5 格(index 4)= dy=1,dx=0 → (x=12,y=21)。
+    EXPECT_EQ(out[4].x, 12);
+    EXPECT_EQ(out[4].y, 21);
+}
+
+// sourceZoom == tileZ → gridN 1 → 单个 key 即瓦片自身。
+TEST(TerrainPageDet, EnumerateSubtileKeysNoSubdivision) {
+    TileKey parent;
+    parent.z = 12;
+    parent.x = 7;
+    parent.y = 9;
+    std::vector<TileKey> out;
+    TerrainPageStore::enumerateSubtileKeys(parent, /*sourceZoom=*/12, out);
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].z, 12);
+    EXPECT_EQ(out[0].x, 7);
+    EXPECT_EQ(out[0].y, 9);
+}

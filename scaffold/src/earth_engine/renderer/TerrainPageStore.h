@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "../core/math/Rectangle.h"
@@ -16,6 +17,7 @@ class Texture;
 class ActivatedRasterOverlay;
 class RasterOverlayTileProvider;
 struct RenderCommand;
+struct SelectorView;
 struct TilesetTile;
 
 /// 共享层池的等尺寸块 LRU 分配器(北极星合成方案「多瓦片页表」核心,§14.1)。
@@ -105,6 +107,32 @@ public:
     /// 排空已到达影像(限 maxUploadsPerFrame)灌对应 layer、剔除失效 entry。
     void tick();
 
+    // ==================== 门② 屏幕可见影像页 determination(Step B2a)====================
+    // 纯读 + 插桩:遍历本帧可见 capped 真实地形瓦片,对每个瓦片选屏幕合适影像 zoom、
+    // 枚举其 gridN×gridN mercator 子瓦片、视锥剔除 → 汇成唯一可见页 (z,x,y) 集合并
+    // log 页数/zRange。**不碰池/fetch/间接纹理/render**;供 B2b 接页存储前先隔离验证
+    // 页集大小(真机应 ≈ 近景 68 / 地平线 185)。
+
+    /// 给定瓦片层级与屏幕合适源 zoom → 子瓦片网格边长 gridN。
+    /// sourceZoom ≤ tileZ → 1(不细分);否则 1 << (sourceZoom - tileZ)。纯函数,可单测。
+    static int subtileGridN(int tileZ, int sourceZoom);
+
+    /// 枚举 capped 瓦片在 sourceZoom 的 mercator 对齐子瓦片 key(z=sourceZoom,
+    /// x=tileKey.x*gridN+dx, y=tileKey.y*gridN+dy)。schemeId 沿用 tileKey(几何/影像
+    /// 同 XYZ web-mercator 分块,§前序已证 aligned)。纯函数,可单测(勿用 lat 均分)。
+    static void enumerateSubtileKeys(const TileKey& tileKey, int sourceZoom,
+                                     std::vector<TileKey>& out);
+
+    /// 对本帧可见瓦片跑门② determination + 插桩(见类顶注释)。overlay 为空 /
+    /// provider 为空 / 无可见瓦片 → no-op。在 Engine tick() 之前、每帧调一次。
+    void updateVisiblePages(const SelectorView& view,
+                            const std::vector<TilesetTile*>& visibleTiles,
+                            RasterOverlayTileProvider* provider,
+                            double terrainMaxScreenSpaceError);
+
+    // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
+    int lastVisiblePageCount() const { return lastVisiblePageCount_; }
+
     /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用:capped 真实地形瓦片
     /// 认领(或复用)一块层、touch,若已有 resident 层则绑 array + 写 per-tile
     /// pageStoreParams(enabled=1);否则不动(mappedRaster fallback)。
@@ -167,6 +195,14 @@ private:
 
     RasterOverlayTileProvider* provider_ = nullptr;  // 首帧从 overlays 捕获
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
+
+    // 门② determination(B2a):子瓦片相对 capped 瓦片的最大细分深度上限
+    // (屏幕驱动一般 ≤5;cap 防远景/病态 zoom 枚举爆量,gridN ≤ 1<<cap)。
+    static constexpr int kMaxDetDepthLevels = 6;
+    std::unordered_set<uint64_t> visiblePagesScratch_;  // 每次 determination 复用
+    std::vector<TileKey> subtileScratch_;               // 枚举复用缓冲
+    uint64_t pageDetFrameCounter_ = 0;                  // 节流 log 用(独立于 frameId_)
+    int lastVisiblePageCount_ = 0;
 };
 
 }  // namespace earth_engine

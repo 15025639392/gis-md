@@ -15,20 +15,9 @@
 #include <utility>
 
 namespace earth_engine {
-namespace {
 
-float alphaModeUniform(GltfAlphaMode mode) {
-    switch (mode) {
-        case GltfAlphaMode::Mask:
-            return 1.0f;
-        case GltfAlphaMode::Blend:
-            return 2.0f;
-        case GltfAlphaMode::Opaque:
-        default:
-            return 0.0f;
-    }
-}
-
+// B2a 门② 页面 determination 也调用它(经 GltfDrawCommandBuilder.h 暴露),
+// 故置于 earth_engine 具名作用域(非匿名 namespace)以获外部链接。
 TerrainSurfaceCommandSource terrainSurfaceSourceForDraw(
     const TileRenderContentState& renderContent) {
     if (renderContent.drawsFill()) {
@@ -44,6 +33,20 @@ TerrainSurfaceCommandSource terrainSurfaceSourceForDraw(
         case SurfaceDrawableSource::GltfContent:
         default:
             return TerrainSurfaceCommandSource::RealTerrain;
+    }
+}
+
+namespace {
+
+float alphaModeUniform(GltfAlphaMode mode) {
+    switch (mode) {
+        case GltfAlphaMode::Mask:
+            return 1.0f;
+        case GltfAlphaMode::Blend:
+            return 2.0f;
+        case GltfAlphaMode::Opaque:
+        default:
+            return 0.0f;
     }
 }
 

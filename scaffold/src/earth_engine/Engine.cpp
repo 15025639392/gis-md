@@ -10,6 +10,7 @@
 #include "renderer/VtIndirectionSamplePoc.h"
 #include "renderer/RenderDevice.h"
 #include "layers/VectorLayer.h"
+#include "layers/ActivatedRasterOverlay.h"  // B2a 门②:overlays.front()->getTileProvider()
 #include "debug/PlatformLog.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
@@ -254,6 +255,25 @@ bool Engine::render(double deltaSeconds) {
         }
         // 渲染线程驱动:目标锁定后 kick 异步影像 fetch + 排空已到达影像灌 layer。
         if (terrainPageStore_) {
+            // 北极星 SVT B2a 门②:选择完成(FrameState + tilePlan 已填)后、tick 前,
+            // 跑「屏幕可见影像页 determination」并插桩(纯读 + log,不碰池/fetch/render)。
+            // 主相机视图 + 本帧可见瓦片 + 影像 provider 三者齐备才跑;否则跳过。
+            const FrameState& frameState = scene_->frameState();
+            Tileset* tileset = scene_->tileset();
+            if (!frameState.selectorViews.empty() && tileset != nullptr) {
+                const std::vector<ActivatedRasterOverlay*>& overlays =
+                    tileset->rasterOverlays();
+                RasterOverlayTileProvider* pageProvider =
+                    overlays.empty() ? nullptr
+                                     : overlays.front()->getTileProvider();
+                if (pageProvider != nullptr) {
+                    terrainPageStore_->updateVisiblePages(
+                        frameState.selectorViews.front(),
+                        tileset->tilePlan().tilesToRenderThisFrame,
+                        pageProvider,
+                        tileset->maximumScreenSpaceError());
+                }
+            }
             terrainPageStore_->tick();
         }
     }

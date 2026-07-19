@@ -11,7 +11,14 @@ namespace earth_engine {
 
 class ActivatedRasterOverlay;
 class Renderer;
+class TileRenderContentState;
 struct TilesetTile;
+
+/// 把一个瓦片的渲染内容分类成绘制用的地表来源(fill proxy / 椭球回落 /
+/// 真实地形 / 未知)。B2a 门② 页面 determination 复用它筛「真实地形」瓦片,
+/// 与 draw 命令构建走同一判定(单一事实源,勿复制粘贴逻辑)。
+TerrainSurfaceCommandSource terrainSurfaceSourceForDraw(
+    const TileRenderContentState& renderContent);
 
 struct GltfDrawCommandBuildContext {
     uint64_t frameNumber = 0;

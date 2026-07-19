@@ -6,10 +6,16 @@
 #include <mutex>
 #include <vector>
 
+#include "../core/math/OrientedBoundingBox.h"
+#include "../debug/PlatformLog.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../platform/bridge/PlatformBridge.h"  // DecodedImage
 #include "../providers/ImageryProvider.h"
 #include "../providers/RasterOverlayTileProvider.h"
+#include "../scene/Frustum.h"
+#include "../scene/SelectorView.h"
+#include "../tiling/GltfDrawCommandBuilder.h"  // terrainSurfaceSourceForDraw
+#include "../tiling/TileBoundsMetrics.h"
 #include "../tiling/TileScheme.h"
 #include "../tiling/TilesetTile.h"
 #include "RenderCommand.h"
@@ -160,6 +166,117 @@ uint64_t TerrainPageStore::packKey(const TileKey& key) {
     return (static_cast<uint64_t>(key.z) << 44) |
            (static_cast<uint64_t>(key.x) << 22) |
            static_cast<uint64_t>(key.y);
+}
+
+// ============================================================
+// 门② 屏幕可见影像页 determination(Step B2a,纯读 + 插桩)
+// ============================================================
+
+int TerrainPageStore::subtileGridN(int tileZ, int sourceZoom) {
+    if (sourceZoom <= tileZ) {
+        return 1;  // 影像不比瓦片深 → 不细分(1×1,即瓦片自身)。
+    }
+    return 1 << (sourceZoom - tileZ);
+}
+
+void TerrainPageStore::enumerateSubtileKeys(const TileKey& tileKey,
+                                            int sourceZoom,
+                                            std::vector<TileKey>& out) {
+    out.clear();
+    const int gridN = subtileGridN(tileKey.z, sourceZoom);
+    out.reserve(static_cast<size_t>(gridN) * static_cast<size_t>(gridN));
+    // mercator 直接子瓦片(§13.4):(z+depth) 子瓦片 = (x*gridN+dx, y*gridN+dy),
+    // 与 shader mercator cell 网格逐格对齐(NW:dy=0=北=最小 y)。勿用 lat 均分。
+    for (int dy = 0; dy < gridN; ++dy) {
+        for (int dx = 0; dx < gridN; ++dx) {
+            TileKey child;
+            child.schemeId = tileKey.schemeId;  // 同 XYZ 分块 → 沿用 schemeId
+            child.z = sourceZoom;
+            child.x = tileKey.x * gridN + dx;
+            child.y = tileKey.y * gridN + dy;
+            out.push_back(child);
+        }
+    }
+}
+
+void TerrainPageStore::updateVisiblePages(
+    const SelectorView& view,
+    const std::vector<TilesetTile*>& visibleTiles,
+    RasterOverlayTileProvider* provider,
+    double terrainMaxScreenSpaceError) {
+    ++pageDetFrameCounter_;
+    if (!provider || visibleTiles.empty()) {
+        return;
+    }
+    const TileScheme& scheme = provider->getTileScheme();
+    const int providerMaxLevel = provider->getMaximumLevel();
+
+    visiblePagesScratch_.clear();
+    int visibleCappedTiles = 0;
+    int zMin = std::numeric_limits<int>::max();
+    int zMax = std::numeric_limits<int>::min();
+    double maxTileSse = 0.0;  // TEMP 诊断:本帧最大瓦片屏幕 SSE(驱动 zoom)
+
+    for (const TilesetTile* tile : visibleTiles) {
+        if (!tile) {
+            continue;
+        }
+        // 只算真实地形瓦片(与 draw 命令构建同一判定,单一事实源)。
+        if (terrainSurfaceSourceForDraw(tile->content.renderContent) !=
+            TerrainSurfaceCommandSource::RealTerrain) {
+            continue;
+        }
+        ++visibleCappedTiles;
+
+        // 1) 屏幕合适的影像源 zoom = **相机相关**(关键:不能用瓦片几何误差,那是
+        //    静态的、会复现几何/影像耦合 → capped z12 瓦片得 z12)。瓦片几何在屏幕
+        //    上占 tileSSE 像素误差(selectionFrameState.screenSpaceError,距离已烘进去);
+        //    若不 cap,selector 会把几何细化到 SSE≤地形阈值 = 深 log2(tileSSE/阈值) 级。
+        //    影像匹配那个「本应细化到的几何 LOD」= 耦合态清晰度(#3 近景 z16-17)。
+        //    **分母用地形细化阈值(16),不是 overlay MSE(2)**——tileSSE 就是对着 16
+        //    阈值量的;用 2 会深 log2(8)=3 级 → z18 过取。
+        const double tileSse = tile->selectionFrameState.screenSpaceError;
+        maxTileSse = std::max(maxTileSse, tileSse);
+        const double threshold = std::max(1e-3, terrainMaxScreenSpaceError);
+        int zoom = tile->key.z;
+        if (tileSse > threshold) {
+            zoom = tile->key.z +
+                   static_cast<int>(std::lround(std::log2(tileSse / threshold)));
+        }
+        // 2) clamp:≥ 瓦片自身 z(否则不细分),≤ provider maxLevel,且深度 cap
+        //    (防远景/病态 zoom 枚举爆量)。
+        zoom = std::min(zoom, providerMaxLevel);
+        zoom = std::min(zoom, tile->key.z + kMaxDetDepthLevels);
+        zoom = std::max(zoom, tile->key.z);
+
+        // 3) 枚举子瓦片 + 视锥剔除。minH/maxH 取瓦片自身高度范围(缺省 -1000/9000)。
+        enumerateSubtileKeys(tile->key, zoom, subtileScratch_);
+        const double minH = TileBoundsMetrics::terrainMinimumHeight(*tile);
+        const double maxH = TileBoundsMetrics::terrainMaximumHeight(*tile);
+        for (const TileKey& sub : subtileScratch_) {
+            const Rectangle subRect = scheme.tileToRectangle(sub);
+            const std::optional<OrientedBoundingBox> obb =
+                TileBoundsMetrics::boundingRegionObb(subRect, minH, maxH);
+            if (!obb || !view.frustum.intersectsOBB(*obb)) {
+                continue;  // 视锥外 → 不是可见页
+            }
+            // 4) 汇入唯一页集合(跨瓦片可能共享祖先 → 去重)。
+            visiblePagesScratch_.insert(packKey(sub));
+            zMin = std::min(zMin, sub.z);
+            zMax = std::max(zMax, sub.z);
+        }
+    }
+
+    lastVisiblePageCount_ = static_cast<int>(visiblePagesScratch_.size());
+    // 插桩:每 ~30 帧一次(节流,勿刷屏)。zMin/zMax 无页时归零。
+    if (pageDetFrameCounter_ % 30u == 0u) {
+        const int logZMin = visiblePagesScratch_.empty() ? 0 : zMin;
+        const int logZMax = visiblePagesScratch_.empty() ? 0 : zMax;
+        platformLog(LogLevel::Warning, "PageDet",
+                    "uniquePages=%d visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f",
+                    lastVisiblePageCount_, visibleCappedTiles, logZMin, logZMax,
+                    maxTileSse);
+    }
 }
 
 TerrainPageStore::~TerrainPageStore() {

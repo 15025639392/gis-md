@@ -160,6 +160,15 @@ public:
                                  renderEntriesOverride = nullptr);
 
     const TilePlan& tilePlan() const { return tilePlan_; }
+    /// 地形细化阈值(SSE),SVT B2a 门② 用它把瓦片屏幕 SSE 换算成「未 cap 时会
+    /// 细化到的几何 LOD」= 屏幕合适的影像 zoom(匹配耦合态清晰度)。
+    double maximumScreenSpaceError() const {
+        return options_.maximumScreenSpaceError;
+    }
+    // 北极星 SVT B2a:页面 determination 需读影像 provider(front()->getTileProvider())。
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays() const {
+        return rasterOverlays_;
+    }
     bool shouldHoldPresentationFrame() const;
     bool requiresBaseImageryPresentationSurface() const;
     const TileScheme& tileScheme() const { return *tileScheme_; }
