@@ -27,6 +27,12 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     }
     // 测量台冻结相机：初始位姿设定后 update() 空转，far 位姿也可复现（见 header）。
     config.initialCamera.freezeCamera = kMeasureFreezeCamera;
+    // 测量台脚本化平移（§14.1② live 换页净测，见 header）：确定性受控运动量 ghost。
+    config.initialCamera.scriptedPan = kMeasureScriptedPan;
+    config.initialCamera.scriptedPanStartFrame = kMeasureScriptedPanStartFrame;
+    config.initialCamera.scriptedPanFrames = kMeasureScriptedPanFrames;
+    config.initialCamera.scriptedPanYawPerFrameRad =
+        kMeasureScriptedPanYawPerFrameDegrees * 0.017453292519943295;  // deg→rad
 
     if (kEnableTerrainForDemo) {
         // 唯一地形源 = 规则栅格 raster-DEM 高度图（CPU 烘焙路径）。重庆 FABDEM

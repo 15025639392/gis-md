@@ -366,6 +366,21 @@ void CameraController::update(double deltaSeconds) {
     if (measurementFreeze_) {
         return;
     }
+    // 脚本化平移(测量台,§14.1② live 换页净测):每帧原地偏航一步,绕相机所在
+    // 局部垂直轴(= 相机位置的径向,eye 在该轴上故不动、仅方位角扫掠),持续把新
+    // 影像子瓦片带进视野 → 逼 live page-in。内部帧计数确定性,frames 帧后 hold
+    // (停止扫掠让相机 settle,可截图看 ghost 是否随 settle 消退)。跳过惯性/orbit。
+    if (scriptedPanActive_) {
+        const int f = scriptedPanFrame_++;  // 内部时钟始终推进(确定性帧计数)
+        // [0, start) 先 hold 让冷启动场景 settle 到 crisp 初始位姿;
+        // [start, start+frames) 每帧原地偏航一步扫掠;之后 hold 让相机 settle。
+        if (f >= scriptedPanStartFrame_ &&
+            f < scriptedPanStartFrame_ + scriptedPanFrames_) {
+            applyRotationAroundAxis(camera_->position().raw(),
+                                    scriptedPanYawPerFrameRad_);
+        }
+        return;
+    }
     // Flick inertia is velocity-based only: the released angular velocity
     // (rad/s, dt-scaled and exponentially damped below) continues the pan.
     // The previous quaternion "touch inertia" re-applied ~s^3 of the LAST
@@ -447,6 +462,21 @@ void CameraController::setMeasurementFreeze(bool frozen) {
     measurementFreeze_ = frozen;
     if (frozen) {
         // 冻结瞬间清零所有惯性，避免残留速度在解冻前被"锁"进状态。
+        inertiaAngularVelocity_ = 0.0;
+        hasZoomInertia_ = false;
+        zoomInertiaLogRate_ = 0.0;
+    }
+}
+
+void CameraController::setScriptedPan(bool active, int startFrame, int frames,
+                                     double yawPerFrameRad) {
+    scriptedPanActive_ = active;
+    scriptedPanStartFrame_ = startFrame;
+    scriptedPanFrames_ = frames;
+    scriptedPanYawPerFrameRad_ = yawPerFrameRad;
+    scriptedPanFrame_ = 0;
+    if (active) {
+        // 启动瞬间清零惯性,避免残留速度叠加进脚本轨迹(破坏确定性)。
         inertiaAngularVelocity_ = 0.0;
         hasZoomInertia_ = false;
         zoomInertiaLogRate_ = 0.0;

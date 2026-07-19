@@ -48,6 +48,14 @@ struct SceneCameraConfig {
     // 空转，相机逐帧字节稳定，让重载耦合态下的 far 位姿也精确可复现（去耦对拍需
     // 同位姿）。默认 false = 生产交互路径零影响。
     bool freezeCamera = false;
+    // 北极星测量台脚本化确定性平移(§14.1② live 换页净测):true 时初始位姿设定后
+    // 相机每帧原地偏航一步、共 scriptedPanFrames 帧后 hold(见 CameraController::
+    // setScriptedPan)。给可复现受控运动量 ghost/stall,替 free swipe 惯性漂。
+    // 与 freezeCamera 互斥(freeze 优先)。默认 false = 生产交互路径零影响。
+    bool scriptedPan = false;
+    int scriptedPanStartFrame = 0;  // 扫掠前先 hold 的帧数(让冷启动 settle 到 crisp)
+    int scriptedPanFrames = 0;
+    double scriptedPanYawPerFrameRad = 0.0;
 };
 
 struct TerrainSourceConfig {

@@ -68,6 +68,16 @@ public:
     void setMeasurementFreeze(bool frozen);
     bool measurementFrozen() const { return measurementFreeze_; }
 
+    /// 北极星测量台脚本化确定性平移(净测 §14.1② live 换页 ghost):置 active 后
+    /// update() 每帧对当前视线施加固定 yawPerFrameRad 的"原地偏航"(绕相机所在
+    /// 局部垂直轴,eye 不动、方位角扫掠 → 持续 page-in),共 frames 帧后 hold。
+    /// 帧计数为内部计数器(每次 update 递增)故轨迹确定性、与 wall-clock/掉帧无关;
+    /// 无惯性介入。与 measurementFreeze 互斥(freeze 优先)。free swipe 惯性漂不可控,
+    /// 此脚本给可复现的受控运动,配 PageDet/截图量 ghost/stall。
+    void setScriptedPan(bool active, int startFrame, int frames,
+                        double yawPerFrameRad);
+    bool scriptedPanActive() const { return scriptedPanActive_; }
+
     // ---- 相机状态 ----
 
     /// 设置相机到地球中心的距离（地球半径单位，默认 7.0）
@@ -131,6 +141,14 @@ private:
     bool orbitMode_ = true;
     // 测量台冻结：true 时 update() 完全空转（见 setMeasurementFreeze）。
     bool measurementFreeze_ = false;
+
+    // 测量台脚本化平移(见 setScriptedPan):active 时 update() 每帧原地偏航一步,
+    // 内部帧计数确定性驱动,frames 帧后 hold。
+    bool scriptedPanActive_ = false;
+    int scriptedPanStartFrame_ = 0;  // 扫掠前先 hold 的帧数(让冷启动 settle)
+    int scriptedPanFrames_ = 0;
+    int scriptedPanFrame_ = 0;
+    double scriptedPanYawPerFrameRad_ = 0.0;
 
     // drag 状态
     bool dragging_ = false;

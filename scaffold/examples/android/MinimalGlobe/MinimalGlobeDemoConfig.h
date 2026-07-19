@@ -78,6 +78,17 @@ constexpr int kMeasureImageryMaxZoom = 18;
 // 生产/交互路径保持 false(默认零影响)。
 constexpr bool kMeasureFreezeCamera = false;
 
+// kMeasureScriptedPan:测量台脚本化确定性平移(净测 §14.1② live 换页 ghost)。
+// true = 相机从初始位姿起,每帧原地偏航固定增量、扫掠 kMeasureScriptedPanFrames
+// 帧后 hold(见 CameraController::setScriptedPan)。方位角持续扫掠把新影像子瓦片
+// 带进视野 → 逼 live page-in;帧计数确定性(内部计数,非 wall-clock)、无惯性 →
+// 可复现受控运动,替 free swipe 惯性漂(漂到不可控 low-grazing 位姿)。配 PageDet/
+// 逐帧截图量 ghost/stall。与 kMeasureFreezeCamera 互斥(freeze 优先)。
+constexpr bool kMeasureScriptedPan = false;
+constexpr int kMeasureScriptedPanStartFrame = 90;   // 扫掠前 hold 帧(让 settle)
+constexpr int kMeasureScriptedPanFrames = 600;  // 扫掠帧数(慢扫,宽运动窗)
+constexpr double kMeasureScriptedPanYawPerFrameDegrees = 0.1;   // 每帧偏航(600*0.1=60°)
+
 // 注:北极星纹理/几何解耦(decoupleImageryFromGeometry)已升为生产主路径默认开
 // (见 MinimalGlobeDemoConfig.cpp 中 config.tileset.decoupleImageryFromGeometry = true
 // 及 §15.3⑤),不再由此处灰度常量门控;A/B 测耦合基线时直接改那行为 false。

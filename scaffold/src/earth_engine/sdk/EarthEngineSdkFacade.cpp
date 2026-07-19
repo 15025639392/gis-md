@@ -642,6 +642,11 @@ void EarthEngineSdkFacade::resetCamera() {
         // 位姿设定后再冻结，让 update() 停止一切扰动（测量台专用）。
         engine_.cameraController().setMeasurementFreeze(
             config_.initialCamera.freezeCamera);
+        engine_.cameraController().setScriptedPan(
+            config_.initialCamera.scriptedPan,
+            config_.initialCamera.scriptedPanStartFrame,
+            config_.initialCamera.scriptedPanFrames,
+            config_.initialCamera.scriptedPanYawPerFrameRad);
         return;
     }
     auto camEcef = ellipsoid.cartographicToCartesian(
@@ -695,6 +700,11 @@ void EarthEngineSdkFacade::resetCamera() {
     // 相机停在上面显式 lookAt 的正上方位姿。
     engine_.cameraController().setMeasurementFreeze(
         config_.initialCamera.freezeCamera);
+    engine_.cameraController().setScriptedPan(
+        config_.initialCamera.scriptedPan,
+        config_.initialCamera.scriptedPanStartFrame,
+        config_.initialCamera.scriptedPanFrames,
+        config_.initialCamera.scriptedPanYawPerFrameRad);
 }
 
 void EarthEngineSdkFacade::addActivatedRasterOverlay(
