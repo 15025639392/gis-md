@@ -483,7 +483,11 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 
 **③ 门① 真实渲染路径逐片元开销**:B1/B2b 间接 fetch 已跑但未单独插桩量,对齐 PoC 的 +0.14ms(可选)。
 
-**④ §14.1② live 换页 ghost(仍开,⑤ 顺带部分暴露但未净测)**:相机移动 → LRU 驱逐/载入 → 对 live array `updateTextureRegion` 量 Adreno 是否 rename/stall。⑤ 自由相机运动中观察到:新露边缘暂 mappedRaster 糊→page-in 后清(优雅降级无洞,预期);一次 pan-settle 见中段糊带 6s 未愈(疑 ④ 或仍惯性漂,confound 未定论)。**controlled motion 净测仍缺**:demo 无脚本相机,free swipe 惯性漂到不可控位姿 → 需脚本化相机路径才能干净量 ghost/stall。
+**④ §14.1② live 换页 ghost ✅ 脚本化净测 = 受控运动无持续 ghost(commit `dd9a91abb`,Adreno 7e045e39)**
+- **落地脚本化相机(替 free swipe 惯性漂)**:`CameraController::setScriptedPan(active,startFrame,frames,yawPerFrameRad)`——update() 顶部(freeze 后、惯性前)按内部帧计数确定性驱动:`[0,start)` hold 让冷启动 settle、`[start,start+frames)` 每帧**原地偏航**一步(绕相机位置径向=局部垂直,eye 在轴上不动仅方位角扫掠,复用 `applyRotationAroundAxis`)、之后 hold。帧计数非 wall-clock → 轨迹与掉帧无关可复现、无惯性、与 freeze 互斥。经 `SceneCameraConfig::scriptedPan*` → `resetCamera` 两分支接线;demo `kMeasureScriptedPan*` 门控(默认关)。
+- **⚠️ 相机持久化认知纠正(⑤ 记的"持久化"实为误判)**:**引擎无任何相机位姿落盘持久化**(无 SharedPreferences/文件/onSaveInstanceState);每次冷启动 `installScene → resetCamera()` 无条件重置到编译期初始位姿。⑤ 见的漂后位姿实为 **`am force-stop` 未真杀进程 / relaunch 竞态命中存活进程**(曾见 "intent delivered to running instance")→ 内存态相机存活,非落盘。⟹ **无需加"持久化开关"**;清净复位真解 = `resetCamera()`(Reset 按钮已有)或确保 force-stop 真杀(`pidof` 轮询)后再 launch(`pm clear` 本机无权限,`uninstall` 必杀)。
+- **真机量(decouple+pageStore 生产默认,60° 慢扫 0.1°/帧,dense 截图)**:扫掠全程逐帧 **crisp z17,无 ghost / 无持续糊带 / 无黑洞**;residentPages 82→109(live page-in 边扫边灌)每帧仍 crisp = 受控运动下 array live `texSubImage` 未见可见 ghost。in-place yaw 距离不变故 maxTileSse/uniquePages 计数稳、页集 churn。
+- **局限(诚实)**:~0.7s 间隔截图**无法排除单帧瞬态 ghost 闪**(需 screenrecord+ffmpeg 逐帧;本机无 ffmpeg)。已确证 = 无持续/易见 ghost。⑤ free-swipe 糊带 = 快速运动 page-in 迟延(慢扫不触发,优雅降级 mappedRaster 无洞)。
 
 **⑤ decouple 接生产主路径 ✅ 核心 PASS(commit `0794ce949`,Adreno 7e045e39)**
 - **落地(决策:仅 demo 生产配置,SDK 结构体默认保持 false)**:`makeDefaultDemoSceneConfig` 里 `config.tileset.decoupleImageryFromGeometry = true` + `config.terrainPageStore = true`(直接置 true,脱离 `kMeasure*`/`kEnable*` 灰度常量;移除随之 orphan 的两常量留指针注释)。库默认保守、demo(当前唯一产品)显式 opt-in。二者是生产配对(decouple 断捏造几何、页存储补高清)。
@@ -493,4 +497,4 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 
 **⑥ 测量脚手架清理**:`PageDet` log + `maxTileSse` TEMP 诊断(`updateVisiblePages`)+ §13.5 列的 PoC 台,生产化后一并清。
 
-**下一会话直接吃**:①(commit `ed6463ac7`)、⑤(commit `0794ce949`)已 PASS。剩 ④ live 换页 ghost(**需脚本化 controlled 相机**才能净测,free swipe 惯性漂不可控;⑤ 已暴露中段糊带/low-grazing 底黑待定性)、② Metal 块设备验证、③ 门① 逐片元开销、⑥ 脚手架清理。**两条铁律:①渲染改动真机看像素,别信「糊得像/截图一致」,shader 分裂逐 shader 染纯色定位;②真机验证必钉死初始位姿(相机持久化跨启动,漂后位姿被 relaunch 恢复,须卸载重装清除)。**
+**下一会话直接吃**:①(`ed6463ac7`)、⑤(`0794ce949`)、④(`dd9a91abb`)已 PASS。剩 ② Metal 块设备验证、③ 门① 逐片元开销、④' 单帧瞬态 ghost 逐帧视频确认(本机无 ffmpeg)、⑥ 脚手架清理(含 ⑤ 遗留 orphan 常量 `kEnableTerrainPageStore`,已 hardcode true 待清)。**两条铁律:①渲染改动真机看像素,别信「糊得像/截图一致」,shader 分裂逐 shader 染纯色定位;②真机验证必钉死初始位姿——引擎无落盘持久化,但 `am force-stop` 竞态/未真杀会让内存态相机存活(⑤ 误判为持久化),净复位用 `resetCamera()` 或 `pidof` 确认进程死后再 launch,`kill-server` 会清掉 `adb reverse` 需重挂。**
