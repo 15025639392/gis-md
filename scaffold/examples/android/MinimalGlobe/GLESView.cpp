@@ -8,6 +8,7 @@
 #include <android/looper.h>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <deque>
 #include <functional>
 #include <future>
@@ -18,6 +19,7 @@
 
 #include "earth_engine/Engine.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
@@ -1054,6 +1056,30 @@ Java_com_earthengine_sdk_GLESView_nativeResetCamera(
         if (!gSdkFacade) return;
         gSdkFacade->resetCamera();
         LOGI("Camera reset to Chongqing demo viewpoint");
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGrazingView(
+    JNIEnv* /* env */, jobject /* this */) {
+    gRenderThread.post([]() {
+        if (!gEngine) return;
+        // 固定可复现的斜视地平线位姿(性能测量用,复现 horizon-jank 重视野):
+        // 相机在重庆上空低空(6km),视线仅比本地水平面下俯 4° → 近景高 LOD、
+        // 远景延伸到地平线,把最大数量的地形/底图瓦片纳入考量。
+        const auto& ellipsoid = Ellipsoid::WGS84();
+        const double centerLng = 106.508, centerLat = 29.617;
+        const double camAlt = 6000.0;
+        const double pitchDeg = 4.0;
+        auto camEcef = ellipsoid.cartographicToCartesian(
+            Cartographic::fromDegrees(centerLng, centerLat, camAlt));
+        Vec3 up = ellipsoid.geodeticSurfaceNormal(camEcef);
+        Vec3 north = (Vec3::unitZ() - up * up.dot(Vec3::unitZ())).normalized();
+        const double p = pitchDeg * 3.14159265358979323846 / 180.0;
+        Vec3 dir = (north * std::cos(p) - up * std::sin(p)).normalized();
+        gEngine->camera().setView(camEcef, dir, up);
+        LOGI("Grazing horizon view set (Chongqing %.0fm alt, pitch %.0f deg down)",
+             camAlt, pitchDeg);
     });
 }
 

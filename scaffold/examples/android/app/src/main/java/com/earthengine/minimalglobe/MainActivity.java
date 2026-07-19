@@ -128,6 +128,13 @@ public class MainActivity extends Activity {
         mBtnResetCamera.setOnClickListener(v -> resetCamera());
         actions.addView(mBtnResetCamera);
 
+        // 斜视地平线预设（性能测量用，可复现固定位姿）
+        Button btnHorizon = new Button(this);
+        btnHorizon.setText("Horizon");
+        btnHorizon.setTextSize(10);
+        btnHorizon.setOnClickListener(v -> mGLView.nativeGrazingView());
+        actions.addView(btnHorizon);
+
         panel.addView(actions);
 
         // Close button
