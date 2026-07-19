@@ -55,6 +55,7 @@ private:
     Config config_{};
     std::unique_ptr<Texture> arrayTexture_;
     TileKey targetKey_{};
+    double bestSse_ = 0.0;  // 已见最大屏幕空间误差(选最占屏瓦片为目标)
     bool targetLocked_ = false;
 };
 

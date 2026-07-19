@@ -858,7 +858,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
     GLuint currentProgram = 0;
     GLuint currentVao = 0;
-    std::array<GLuint, kGltfWaterMaskTextureSlot + 1> currentTextures{};
+    // +1 覆盖合成方案页存储 array 槽(kGltfPageStoreArrayTextureSlot=20):
+    // 此数组既是逐 unit 绑定缓存,也隐式界定纹理绑定循环的最大 vec 索引
+    // (min(cmd.textures.size(), 本数组 size))。旧值 kGltfWaterMaskTextureSlot+1
+    // =20 会把 slot20 排除出循环 → 页存储 array 永不绑定。
+    std::array<GLuint, kGltfPageStoreArrayTextureSlot + 1> currentTextures{};
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool alphaToCoverageEnabled = false;

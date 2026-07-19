@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "../tiling/TilesetTile.h"
+#include "../debug/PlatformLog.h"
 #include "RenderCommand.h"
 #include "RenderDevice.h"
 
@@ -71,6 +72,8 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
                                           page.data(),
                                           static_cast<size_t>(side) * 4u,
                                           layer)) {
+            platformLog(LogLevel::Error, "PageStore",
+                        "init FAIL: updateTextureRegion layer=%d", layer);
             arrayTexture_.reset();
             device_ = nullptr;
             return false;
@@ -88,10 +91,17 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     if (cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain) {
         return;
     }
-    // 锁定绘制序里第一个真实地形瓦片为目标(demo 相机静止下稳定)。
-    if (!targetLocked_) {
+    // 目标 = 屏幕空间误差最大(最近/最占屏)的真实地形瓦片,保证可见可辨。
+    // 逐瓦片更新 running max(静止相机下 1-2 帧收敛并稳定;"绘制序第一个"会
+    // 锁到远处/离屏瓦片,故改用 SSE)。
+    const double sse = tile.selectionFrameState.screenSpaceError;
+    if (!targetLocked_ || sse > bestSse_) {
         targetKey_ = tile.key;
+        bestSse_ = sse;
         targetLocked_ = true;
+        platformLog(LogLevel::Warning, "PageStore",
+                    "target -> z%d/%d/%d sse=%.1f", tile.key.z, tile.key.x,
+                    tile.key.y, sse);
     }
     if (tile.key != targetKey_) {
         return;
