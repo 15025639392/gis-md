@@ -115,6 +115,14 @@ public:
 
     Texture* arrayTexture() const { return arrayTexture_.get(); }
 
+    /// 稀疏虚拟纹理(Step B1)间接纹理的 RGBA8 层编码:R=layer&0xFF、
+    /// G=(layer>>8)&0xFF、B=0、A=255。引擎不支持整数纹理,故用 RGBA8 承载
+    /// 16 位 layer 索引(容 gridN²×maxResidentTiles ≤ 65535 页)。out 需 ≥4 字节。
+    static void encodeLayerRGBA8(int layer, uint8_t out[4]);
+    /// 与片元 shader 解码逐位一致:floor(r*255+0.5)+floor(g*255+0.5)*256 = R+G*256。
+    /// 供 host round-trip 单测证明「编 layer → RGBA8 → 解码回 layer」链路正确。
+    static int decodeLayerRGBA8(const uint8_t in[4]);
+
     // --- 诊断(单测/日志用)---
     int residentTileCount() const { return pool_.residentCount(); }
     int uploadedLayerTotal() const { return uploadedLayerTotal_; }
@@ -133,9 +141,16 @@ private:
         bool fetchKicked = false;
         int uploadedLayers = 0;
         CancellationToken fetchToken;  // 淘汰/析构时 cancel(在途 fetch 丢弃)
+        // Step B1:per-tile 间接纹理(gridN×gridN RGBA8)。dense 填 cell→连续
+        // layer,片元经它单次 NEAREST fetch 定位层(替代闭式公式)。layerBase/
+        // gridN 在 entry 存活期固定 → 创建时一次填好即可,换租(淘汰)时随 entry 销毁。
+        std::unique_ptr<Texture> indirTexture;
     };
 
     static uint64_t packKey(const TileKey& key);
+    /// 建 entry 的间接纹理:gridN×gridN、texel[cy][cx]=encode(layerBase+cy*gridN+cx)、
+    /// NEAREST+Clamp。dense 填 → 与闭式公式逐 cell 等价(B1 隔离验证前提)。
+    std::unique_ptr<Texture> buildIndirTexture(int layerBase, int gridN);
     void kickImageryFetch(TileEntry& entry);
     void drainInbox();
     void eraseEntry(uint64_t packed);

@@ -858,11 +858,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
     GLuint currentProgram = 0;
     GLuint currentVao = 0;
-    // +1 覆盖合成方案页存储 array 槽(kGltfPageStoreArrayTextureSlot=20):
-    // 此数组既是逐 unit 绑定缓存,也隐式界定纹理绑定循环的最大 vec 索引
-    // (min(cmd.textures.size(), 本数组 size))。旧值 kGltfWaterMaskTextureSlot+1
-    // =20 会把 slot20 排除出循环 → 页存储 array 永不绑定。
-    std::array<GLuint, kGltfPageStoreArrayTextureSlot + 1> currentTextures{};
+    // +1 覆盖 SVT 间接纹理槽(kGltfPageStoreIndirTextureSlot=21):此数组既是逐
+    // unit 绑定缓存,也隐式界定纹理绑定循环的最大 vec 索引
+    // (min(cmd.textures.size(), 本数组 size))。定容小于最高槽会把该槽排除出循环
+    // → 新纹理永不绑定(item① 真机踩过的孪生 bug),故随 slot21 同步扩容。
+    std::array<GLuint, kGltfPageStoreIndirTextureSlot + 1> currentTextures{};
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool alphaToCoverageEnabled = false;
@@ -1029,6 +1029,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 仍 ≤16 unit 底线)。非 terrain program 未声明此名 → loc=-1 无副作用。
             setSampler("u_pageStore",
                        glesGltfTextureUnit(kGltfPageStoreArrayTextureSlot));
+            // SVT 间接纹理(Step B1):紧随页存储 array 的 unit 11
+            // (slot21 经 glesGltfTextureUnit 压缩,仍 ≤16 unit 底线)。普通
+            // GL_TEXTURE_2D,NEAREST 由纹理自身 param 决定(见 createTexture)。
+            setSampler("u_pageStoreIndir",
+                       glesGltfTextureUnit(kGltfPageStoreIndirTextureSlot));
             setSampler("u_waterMask", 5);
             for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
                 std::string name = "u_overlayTexture" + std::to_string(i);

@@ -946,9 +946,12 @@ uniform vec4 u_gltfWaterMaskTranslationScale;
 uniform vec4 u_gltfWaterMaskState;
 uniform vec4 u_clipUV;
 uniform float u_clipEnabled;
-// 北极星合成方案页存储(Step 3):x=enabled y=gridN z=layerBase w=保留。
+// 北极星合成方案页存储(Step 3):x=enabled y=gridN z=layerBase(B1 起由间接
+// 纹理承载,shader 不再用)w=保留。
 uniform highp sampler2DArray u_pageStore;
 uniform vec4 u_pageStoreParams;
+// 稀疏虚拟纹理(Step B1):per-tile 间接纹理(RGBA8 编 layer 索引),NEAREST 采样。
+uniform highp sampler2D u_pageStoreIndir;
 
 out vec4 fragColor;
 
@@ -1054,7 +1057,12 @@ void main() {
         float gridN = max(u_pageStoreParams.y, 1.0);
         vec2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
         vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
-        float layer = u_pageStoreParams.z + cell.y * gridN + cell.x;
+        // Step B1:经 per-tile 间接纹理单次 NEAREST fetch 定位层(替代闭式
+        // layerBase+cell.y*gridN+cell.x)。(cell+0.5)/gridN 命中 texel 中心;
+        // RGBA8 解码 R+G*256(floor(x*255+0.5) 从 unorm 取回整数字节)。
+        vec2 indirUv = (cell + 0.5) / gridN;
+        vec4 e = texture(u_pageStoreIndir, indirUv);
+        float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
         base = alphaOver(
             base, texture(u_pageStore, vec3(g - cell, layer)), 1.0);
     }
@@ -2220,6 +2228,9 @@ fragment float4 terrainFragment(
     // 合成方案页存储(Step 3):sampler2DArray 页存储在 water mask 之后的槽 20,
     // 复用同一 clamp/linear 采样器(层间不插值 + 每层 clamp 无页缝,§13.1)。
     texture2d_array<float> u_pageStore [[texture(20)]],
+    // 稀疏虚拟纹理(Step B1):per-tile 间接纹理(RGBA8 编 layer 索引)。用下方
+    // 着色器内声明的 NEAREST constexpr sampler 点采样,不占共享 sampler 槽。
+    texture2d<float> u_pageStoreIndir [[texture(21)]],
     // Metal argument tables cap samplers at 0-15; terrain imagery all uses the
     // same clamp/linear sampling, so a single shared sampler at slot 0 covers
     // the base color, raster overlay (textures 15-18) and water mask (19)
@@ -2272,7 +2283,15 @@ fragment float4 terrainFragment(
         float gridN = max(u.pageStoreParams.y, 1.0);
         float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
         float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
-        float layer = u.pageStoreParams.z + cell.y * gridN + cell.x;
+        // Step B1(镜像 GLSL):经 per-tile 间接纹理单次 NEAREST fetch 定位层。
+        // 着色器内 constexpr 点采样 sampler(clamp),(cell+0.5)/gridN 命中 texel
+        // 中心;RGBA8 解码 R+G*256。
+        constexpr sampler u_pageStoreIndirSampler(coord::normalized,
+                                                  filter::nearest,
+                                                  address::clamp_to_edge);
+        float2 indirUv = (cell + 0.5) / gridN;
+        float4 e = u_pageStoreIndir.sample(u_pageStoreIndirSampler, indirUv);
+        float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
         base = terrainAlphaOver(
             base,
             u_pageStore.sample(u_terrainSampler, g - cell, uint(layer)),

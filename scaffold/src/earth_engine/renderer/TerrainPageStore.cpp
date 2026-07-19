@@ -109,6 +109,52 @@ struct TerrainPageStore::PendingInbox {
     std::vector<Item> pages;
 };
 
+void TerrainPageStore::encodeLayerRGBA8(int layer, uint8_t out[4]) {
+    const unsigned int v = static_cast<unsigned int>(std::max(0, layer));
+    out[0] = static_cast<uint8_t>(v & 0xFFu);          // R = layer & 0xFF
+    out[1] = static_cast<uint8_t>((v >> 8) & 0xFFu);   // G = (layer >> 8) & 0xFF
+    out[2] = 0;                                         // B 保留
+    out[3] = 255;                                       // A 保留(不透明)
+}
+
+int TerrainPageStore::decodeLayerRGBA8(const uint8_t in[4]) {
+    // 逐位镜像片元 shader:floor(r*255+0.5)+floor(g*255+0.5)*256(RGBA8 unorm
+    // 采样后 r=R/255,floor(R+0.5)=R)。
+    return static_cast<int>(in[0]) + static_cast<int>(in[1]) * 256;
+}
+
+std::unique_ptr<Texture> TerrainPageStore::buildIndirTexture(int layerBase,
+                                                             int gridN) {
+    // dense 填:texel[cy][cx] = encode(layerBase + cy*gridN + cx),与闭式公式
+    // cell.y*gridN+cell.x 逐 cell 等价(NW 无翻转:cy=0=北=row0=最小 v,和影像
+    // 上传 kFlipRowsOnUpload=false + shader cell.y 一致)。片元 (cell+0.5)/gridN
+    // 命中 texel 中心 → NEAREST 取精确 layer。
+    std::vector<uint8_t> texels(static_cast<size_t>(gridN) *
+                                static_cast<size_t>(gridN) * 4u);
+    for (int cy = 0; cy < gridN; ++cy) {
+        for (int cx = 0; cx < gridN; ++cx) {
+            const int layer = layerBase + cy * gridN + cx;
+            encodeLayerRGBA8(layer,
+                             texels.data() +
+                                 (static_cast<size_t>(cy) * gridN + cx) * 4u);
+        }
+    }
+    TextureDesc desc;
+    desc.width = gridN;
+    desc.height = gridN;
+    desc.arrayLayers = 1;  // 普通 2D(非 array):间接纹理是索引表,非页存储
+    desc.format = TextureDesc::Format::RGBA8;
+    desc.data = texels.data();
+    desc.dataSize = texels.size();
+    desc.mipmap = false;
+    // NEAREST:间接纹理必须点采样取精确 texel(线性会在 cell 边界串值→错 layer)。
+    desc.minFilter = TextureDesc::Filter::Nearest;
+    desc.magFilter = TextureDesc::Filter::Nearest;
+    desc.wrapS = TextureDesc::Wrap::Clamp;
+    desc.wrapT = TextureDesc::Wrap::Clamp;
+    return device_->createTexture(desc);
+}
+
 uint64_t TerrainPageStore::packKey(const TileKey& key) {
     // capped 瓦片 z 小(≤~14),x/y < 2^z < 2^22,可无损打包进 64 位。
     return (static_cast<uint64_t>(key.z) << 44) |
@@ -201,6 +247,9 @@ void TerrainPageStore::applyToTerrainCommand(
         entry.depthLevels = config_.depthLevels;
         entry.bounds = tile.bounds;
         entry.targetZ = tile.key.z;
+        // Step B1:建 per-tile 间接纹理(dense 填,layerBase/gridN 存活期固定 →
+        // 一次填好)。片元经它单次 NEAREST fetch 定位 array 层。
+        entry.indirTexture = buildIndirTexture(layerBase, gridN_);
         entries_[packed] = std::move(entry);
         // 新块不灌占位:决策② 共存下,页存储只在**全部** gridN² 层就绪后才 enabled,
         // 未就绪期走 mappedRaster fallback → 占位层永不被采样(灌了也是死上传)。
@@ -212,13 +261,22 @@ void TerrainPageStore::applyToTerrainCommand(
     if (entry.uploadedLayers < entry.gridN * entry.gridN) {
         return;
     }
+    // Step B1:间接纹理必须就绪才接管(否则片元 fetch 空指针纹理)。dense 填在
+    // entry 创建时同步建好,理应非空;防御式短路 → 回落 mappedRaster。
+    if (!entry.indirTexture) {
+        return;
+    }
     if (cmd.textures.size() <=
-        static_cast<size_t>(kGltfPageStoreArrayTextureSlot)) {
+        static_cast<size_t>(kGltfPageStoreIndirTextureSlot)) {
         cmd.textures.resize(
-            static_cast<size_t>(kGltfPageStoreArrayTextureSlot) + 1u, nullptr);
+            static_cast<size_t>(kGltfPageStoreIndirTextureSlot) + 1u, nullptr);
     }
     cmd.textures[kGltfPageStoreArrayTextureSlot] = arrayTexture_.get();
-    // enabled=1、gridN、per-tile layerBase → 片元 uniform-grid 采页存储(决策①)。
+    // Step B1:间接纹理绑 slot21,片元经它 fetch 定位层(替代闭式公式)。
+    cmd.textures[kGltfPageStoreIndirTextureSlot] = entry.indirTexture.get();
+    // enabled=1、gridN → 片元采页存储。.z(layerBase)现由间接纹理内容承载,
+    // shader 不再用(dense 填时间接纹理里编的就是 layerBase+... → 结果等价);
+    // 保留写入以最小化 uniform 布局改动。
     cmd.gltfUniforms.pageStoreParams = {1.0f,
                                         static_cast<float>(entry.gridN),
                                         static_cast<float>(entry.layerBase),

@@ -22,6 +22,10 @@ static constexpr int kGltfWaterMaskTextureSlot =
 // 仅目标 capped 瓦片的 terrain 命令绑定此槽(见 GltfDrawCommandBuilder 门控)。
 static constexpr int kGltfPageStoreArrayTextureSlot =
     kGltfWaterMaskTextureSlot + 1;
+// 稀疏虚拟纹理(Step B1):per-tile 间接纹理(RGBA8 编 layer 索引),片元经它
+// 单次 NEAREST fetch 定位 array 层,替代闭式公式。紧挨页存储 array 槽(20→21)。
+static constexpr int kGltfPageStoreIndirTextureSlot =
+    kGltfPageStoreArrayTextureSlot + 1;
 static constexpr int kGltfInstanceMatrixStride = 100;
 
 /// 固定容量纹理槽表（inline 存储，无堆分配）。
@@ -32,7 +36,7 @@ static constexpr int kGltfInstanceMatrixStride = 100;
 class RenderCommandTextureList {
 public:
     static constexpr size_t kCapacity =
-        static_cast<size_t>(kGltfPageStoreArrayTextureSlot) + 1u;
+        static_cast<size_t>(kGltfPageStoreIndirTextureSlot) + 1u;
 
     RenderCommandTextureList() = default;
     RenderCommandTextureList(std::initializer_list<Texture*> init) {

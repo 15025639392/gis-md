@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include "earth_engine/renderer/TerrainPageStore.h"
 #include "../../helpers/MockRenderDevice.h"
 
@@ -134,6 +136,62 @@ TEST(TerrainPageStore, InitializeCreatesSharedArrayTexture) {
     EXPECT_EQ(device.lastTextureDesc.width, 256);
     EXPECT_EQ(store.residentTileCount(), 0);
     EXPECT_EQ(store.uploadedLayerTotal(), 0);
+}
+
+// ---------------- SVT 间接纹理 RGBA8 层编解码(Step B1)----------------
+
+// 编 layer → RGBA8 → 解码回 layer,逐位镜像片元 shader(R+G*256)。
+// 覆盖边界:0(全零)/255(R 满)/256(进 G 位)/511(R 满+G=1)/大值(双通道)。
+TEST(TerrainPageStoreIndir, EncodeDecodeRoundTrip) {
+    for (int layer : {0, 1, 127, 254, 255, 256, 257, 511, 512,
+                      1000, 4095, 4096, 12345, 65535}) {
+        uint8_t rgba[4] = {0, 0, 0, 0};
+        TerrainPageStore::encodeLayerRGBA8(layer, rgba);
+        EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), layer)
+            << "layer=" << layer;
+    }
+}
+
+// 编码约定:R=layer&0xFF、G=(layer>>8)&0xFF、B=0、A=255。
+TEST(TerrainPageStoreIndir, EncodeChannelLayout) {
+    uint8_t rgba[4] = {9, 9, 9, 9};
+    TerrainPageStore::encodeLayerRGBA8(0, rgba);
+    EXPECT_EQ(rgba[0], 0);
+    EXPECT_EQ(rgba[1], 0);
+    EXPECT_EQ(rgba[2], 0);    // B 保留 0
+    EXPECT_EQ(rgba[3], 255);  // A 保留 255(不透明)
+
+    TerrainPageStore::encodeLayerRGBA8(255, rgba);
+    EXPECT_EQ(rgba[0], 255);  // R 满
+    EXPECT_EQ(rgba[1], 0);
+
+    TerrainPageStore::encodeLayerRGBA8(256, rgba);
+    EXPECT_EQ(rgba[0], 0);    // R 归零
+    EXPECT_EQ(rgba[1], 1);    // 进 G 位
+
+    TerrainPageStore::encodeLayerRGBA8(513, rgba);
+    EXPECT_EQ(rgba[0], 1);    // 513 = 1 + 2*256
+    EXPECT_EQ(rgba[1], 2);
+}
+
+// 解码逐位镜像片元 shader:floor(r*255+0.5)+floor(g*255+0.5)*256。
+// 直接用「采样后的 unorm 值」路径(byte/255→*255→floor+0.5)验与整数解码一致。
+TEST(TerrainPageStoreIndir, DecodeMirrorsShaderMath) {
+    for (int R = 0; R <= 255; R += 17) {
+        for (int G = 0; G <= 255; G += 51) {
+            const uint8_t rgba[4] = {static_cast<uint8_t>(R),
+                                     static_cast<uint8_t>(G), 0, 255};
+            const int viaHelper = TerrainPageStore::decodeLayerRGBA8(rgba);
+            // shader 路径:unorm 采样 r=R/255,floor(r*255+0.5)=R。
+            const float rf = static_cast<float>(R) / 255.0f;
+            const float gf = static_cast<float>(G) / 255.0f;
+            const int viaShader =
+                static_cast<int>(std::floor(rf * 255.0f + 0.5f)) +
+                static_cast<int>(std::floor(gf * 255.0f + 0.5f)) * 256;
+            EXPECT_EQ(viaHelper, viaShader) << "R=" << R << " G=" << G;
+            EXPECT_EQ(viaHelper, R + G * 256);
+        }
+    }
 }
 
 TEST(TerrainPageStore, TickBeforeAnyTileIsNoop) {
