@@ -316,3 +316,53 @@ cesium 的"octree texture"= 扁平数组，每节点 = 父指针 + 子槽入口�
 - **设计约束(硬):间接降必须浅(≤2-3 依赖 fetch),优先「单次 fetch 扁平页表 + mip 回退」,禁 cesium-octree 式深度自顶向下降(≥6 层超线性爆炸)。** 2D 影像本就用不着深降——页表在最细虚拟页分辨率直接存槽指针,一次 fetch 到位。
 - 局限:间接寻址是代表性成本模型(N 依赖 fetch + atlas 采样),非 cesium `Octree.glsl` 逐字节等价。写生产 shader 前从全 clone 取寻址数学,但采**单次页表**设计,不照搬 octree 深降。
 - **下一步 = 按单次页表设计建合成方案生产原型**:CPU 定页(§11.1 现成)+ `updateTextureRegion` 上传填 atlas(§11.2)+ CPU 建扁平页表间接纹理 + terrain 片元加**单次**间接采样(单层 UV-remap 先例 applyMappedRaster,Renderer.cpp:964-972)。
+
+### 11.7 #3 atlas 工作集真机量(合成方案第三个 gate,已清)
+临时插桩 `TileRenderPlanFrameRefresher::refreshFrameProgress`,收集本帧可见地形瓦片实际采样的**唯一影像页 (scheme/z/x/y) 集合**(= atlas 需常驻的页集),报 `AtlasWS uniquePages/renderTiles/mappings/zRange`(**插桩临时,已还原未提交**)。耦合态测量(耦合态影像已是屏幕合适 z,= 合成 atlas 工作集的忠实代理)。真机(7e045e39,冻结相机):
+
+| 视角 | 唯一页数 | zRange | mappings |
+|---|---|---|---|
+| 近景(elev45/1.5km) | **68** | z16-17 | 68 |
+| 地平线(elev10/12.4km) | **~185** | z2-14 | ≈185 |
+
+- **关键发现:`mappings ≈ uniquePages` → 跨瓦片几乎零页共享**(每可见地形瓦片采自己那张影像页)⟹ **atlas 容量必须按峰值可见页数(~185+余量)定,不能指望去重省**。
+- **换算(256²×4=256KB/页)**:近 68 页≈17MB,地平线 185 页≈**47MB**。对比现状耦合影像内存 `memImageryKB=77MB` → **atlas 峰值 47MB 比现状还省 ⟹ #3 不是 thrash/内存瓶颈**。设计"~16MB atlas"偏乐观,真实目标 **~48-64MB(256² 页)**。
+- ⟹ **三 gate 全过**(门①浅降 + 门②已解 + #3 不 thrash),生产原型无阻塞。
+
+## 12. 架构评审:合成方案 vs 成熟替代(2026-07-19,两路 opus 调研)
+基石级复核,对 Cesium/GE/osgEarth/Outerra 做基准核对 + 挑战"是否更优"。
+
+### 12.1 ⚠️ 重大事实纠正:GE Universal Texture = clipmap,不是 page-VT
+Chris Tanner(SGI clipmap 1998 原作者)发明 Universal Texture = 把 clipmap 移植到消费级显卡(专利 US7626591B2:逐级独立原点 toroidal clipmap + validity grid 处理部分覆盖)。⟹ **本文档此前"合成方案 = 复刻 GE"的说法从根上不准确**。**合成方案血统实为 id megatexture / SVT,只是 CPU 选择器替掉 GPU feedback ⟹ 正名「CPU 驱动 SVT / 去-feedback megatexture」,非 GE 路线。**(来源:Bar-Zeev "Was Google Earth Stolen?"、US7626591B2、Tanner clipmap 1998)
+
+### 12.2 Cesium 确实解耦(佐证问题真实 + B 覆盖中度解耦)
+cesium-native 官方原文:改 tileset SSE **"will not affect the sharpness of the raster overlays"**——raster overlay 有**独立 `maximumScreenSpaceError`**,纹理分辨率=目标屏幕像素/overlaySSE,clamp 到 `maximumTextureSize`。⟹ **"影像/几何 LOD 分离"是行业既有(我们非发明新范式);Cesium 的单纹理 scale-bias = 我们的"B",覆盖中度解耦**。但 **z12 几何/z18 影像极端比值下撞单纹理墙**(z12 覆盖 64×64 个 z18 = 需 16384²/瓦片,或大纹理逐瓦片显存爆炸),且 Cesium 解耦是**静态旋钮**(改 SSE 需整 Tileset 重载,非逐帧)。⟹ **极端比值确需新机器(atlas),这段判断成立。**(来源:cesium.com How Raster Overlays Work)
+
+### 12.3 clipmap 是真备选,且我们此前否定错了
+此前假设"clipmap 球面/部分覆盖不可行"——**被 GE 专利本身(球面上跑 clipmap)+ Ellipsoidal Clipmaps(Dünkel/Kang 2015,Outerra 在用)证伪**。clipmap 优势:片元**无间接 fetch**(绕开门①全部风险)、toroidal 增量、球面/部分覆盖有生产先例。**但对我们已被中和**:①门①实测浅降近免费(+0.14~0.33ms),clipmap"无间接"只值 ~0.2ms/片元;②代价=丢弃门②的 CPU 逐瓦片决策复用、另起视点中心 toroidal 平行管线、地平线各向异性同样弱、多层各一栈;③整台引擎建立在 per-tile 四叉树+scale-bias 上,上 clipmap = **架构级重写换已中和的收益**。⟹ **clipmap 存档为长期备选(地平线各向异性/深 LOD 成痛点且愿架构分叉时),非当下路线。**
+
+### 12.4 production 球面引擎实际用什么
+| 引擎 | 影像机制 |
+|---|---|
+| Cesium / osgEarth | per-tile scale-bias(=我们的"B";osgEarth 用 bindless TextureArena 后端) |
+| **Google Earth / Outerra** | **clipmap** |
+| id / Frostbite | page-VT / SVT(**游戏世界纹理,非行星影像**) |
+| **我们的合成方案** | CPU 驱动 SVT(**无现成先例,自研**——文档 §7 已诚实标注,成立) |
+
+**纯 page-VT 在"行星影像贴地"无主流先例**;per-tile 与 clipmap 才是两个生产阵营。合成方案是"per-tile CPU 决策 + SVT atlas 寻址"的杂交。
+
+### 12.5 落地风险表(VT 深挖,补进 §5 诚实账;无 dealbreaker)
+| # | 风险 | 会否中招 | 解法 / 落地代价 |
+|---|---|---|---|
+| **1 页缝/gutter**(**被低估,最该重视**) | **会** | atlas 相邻页纹理空间不相邻,bilinear 跨页取邻页错 texel→接缝。**与 §11.2"上传现成瓦片"简化冲突**:map tile 边到边不带 border,真无缝要每页留 gutter+page-in 取邻页拷边(打破"1 瓦片=1 页独立上传"、放大 #3 调入量)。**退路=片元 per-page clamp**(UV 夹页内)保底到**现状半 texel 缝质量**,不改善但独立上传保住。**原型期先做 clamp vs gutter 观感对拍。** |
+| **2 手动 mip** | **基本不中招(架构红利)** | CPU 逐瓦片选页→LOD 由选页定、硬件单页内正常 mip,**不用写 `textureGrad`**。经典单体 SVT 头号麻烦我们结构上没有。 |
+| **3 地平线掠射各向异性** | **会(打在英雄场景)** | 单页跨大深度范围无 aniso→走样;id-Tech5 实证 AF 限~4x。VT **和 clipmap 都弱**。每页 mip 缓 minification;真 aniso 移动端太贵一般放弃。**残留观感风险非阻塞——明确接受地平线无桌面级锐度。** |
+| **4 thrash/page-in pop** | **会(仅运动瞬态)** | #3 证的是**冻结稳态容量**不 thrash,**未证运动态**;快平移页需求无硬上限。上传预算封顶 + **粗祖先页常驻(缺细页显示糊而非空洞)**。呼应 [[ge-loading-experience-gap]]。 |
+| **5 球面寻址** | **不中招(架构红利)** | 页表复用现成 web-mercator (z,x,y) scheme,零新增;极区/反经线由现有 raster 映射处理。 |
+| **6 texSubImage 灌 live atlas ghosting** | **可能中招(移动端 gotcha,未提)** | 向本帧正被采样的大 atlas texSubImage,部分驱动 rename 整张(47MB)或 stall。**需真机验 Adreno**;解=双缓冲/staging blit/PBO/确保上传区本帧不采样。已有 `updateTextureRegion`+Metal blit 基础。 |
+| **7 页表编码精度** | **边界** | RGBA8 编槽索引:16×16=256 槽/轴 R/G 各 8bit 刚够,**再塞 level/scale-bias 就超精度→错页**。**用 RG16/RGBA16,别用 RGBA8。** |
+
+### 12.6 结论
+**合成方案不是抽象全局最优,但在"我们这台 cesium-native 移植引擎"的具体约束下是正确工程选择**——理由是架构复用最大化(门②/scale-bias/updateTextureRegion 现成)+ 三 gate 已过 + 风险已中和,而非碾压 clipmap。**没有任何方案在我们的架构约束下严格优于它。** 拍板附带:①文档正名「CPU 驱动 SVT」;②补 §12.5 三条新风险(页缝/各向异性/上传 ghosting)+ 页表用 RG16;③**原型第一刀先解页缝(clamp vs gutter 真机对拍),再搭页表**——先钉最尖锐的新未知;④clipmap 存档长期备选。
+
+来源:cesium How Raster Overlays Work、US7626591B2、Bar-Zeev、Tanner/Migdal/Jones 1998、Ellipsoidal Clipmaps(Dünkel/Kang 2015)、Sean Barrett SVT(GDC2008)、van Waveren Software Virtual Textures 2012、Sagristà Sparse Virtual Textures 2023、Dammertz VT notes、fgiesen Android texture uploads、id-Tech5 megatexture 过滤分析。
