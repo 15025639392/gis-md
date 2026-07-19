@@ -47,9 +47,11 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         4.0,
         2.0,
     };
-    // 北极星 Phase 2a 断纹理/几何耦合(flag 灰度,见 header)。
-    config.tileset.decoupleImageryFromGeometry =
-        kMeasureDecoupleImageryFromGeometry;
+    // 北极星生产主路径:纹理/几何解耦默认开(几何 cap 在 DEM native z12,影像不再
+    // 驱动几何 refine → 无捏造 z13+ notReady 空洞 = 收底部露天空)。配下方
+    // terrainPageStore 在 capped z12 面贴 z14+ 屏幕界定高清影像(近景仍 crisp)。
+    // 二者是生产配对(§15.3⑤)。A/B 测耦合基线时把此处改 false。
+    config.tileset.decoupleImageryFromGeometry = true;
     // Android demo budget: keep visible detail unchanged, but do not retain the
     // desktop/cesium-native 512MB off-screen tile cache on a phone.
     config.tileset.maximumCachedBytes = 192LL * 1024 * 1024;
@@ -160,8 +162,9 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     config.tileCompositeBakePoc = kMeasureTileCompositeBakePoC;
     // 北极星 Phase 2b 合成方案 门① 原型(默认关,见 header)。
     config.vtIndirectionSamplePoc = kMeasureVtIndirectionSamplePoC;
-    // 北极星 合成方案 门③ Step3 页存储原型(默认关,见 header)。
-    config.terrainPageStore = kEnableTerrainPageStore;
+    // 北极星生产主路径:SVT 页存储默认开(配上方 decouple)。稀疏页存储在 capped
+    // z12 地形面上贴屏幕界定 z14-17 高清影像(§15 Step B)。A/B 测时改 false。
+    config.terrainPageStore = true;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;
     if (kEnableInstancedI3dmDemo) {
         // 默认固定时间是宾州凌晨(树在夜侧无光照=全黑),实例化观察改用当地白天

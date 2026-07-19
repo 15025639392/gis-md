@@ -78,13 +78,9 @@ constexpr int kMeasureImageryMaxZoom = 18;
 // 生产/交互路径保持 false(默认零影响)。
 constexpr bool kMeasureFreezeCamera = false;
 
-// kMeasureDecoupleImageryFromGeometry:北极星 Phase 2a 断纹理/几何耦合(flag 灰度)。
-// false = 耦合态(忠实 cesium,影像 isMoreDetailAvailable 捏造上采样地形子瓦片,
-//   瓦片数爆 22×,= 去耦前对照列)。
-// true  = 断耦合,几何 cap 在 DEM native max LOD(z12),影像不再驱动 refine,近景
-//   影像走 scale-bias 祖先复用(暂糊,Phase 2b 补清)。同位姿(配 kMeasureFreezeCamera)
-//   对拍 off/on 两列瓦片数/selector/churn = 干净测出解耦收益。
-constexpr bool kMeasureDecoupleImageryFromGeometry = false;
+// 注:北极星纹理/几何解耦(decoupleImageryFromGeometry)已升为生产主路径默认开
+// (见 MinimalGlobeDemoConfig.cpp 中 config.tileset.decoupleImageryFromGeometry = true
+// 及 §15.3⑤),不再由此处灰度常量门控;A/B 测耦合基线时直接改那行为 false。
 
 // kMeasureVirtualTexturePoC:北极星 Phase 2b 虚拟纹理 C 方案 PoC(骨架)。
 // true = 每帧旁路跑 feedback→回读→页表整链,把回读 stall 毫秒数报进 EarthPerf
