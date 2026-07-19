@@ -134,6 +134,15 @@ struct alignas(16) GltfUniformBlock {
 
     std::array<float, 4> clipUv{0.0f, 0.0f, 1.0f, 1.0f};
     float clipEnabled = 0.0f;
+
+    // 北极星合成方案页存储采样(Step 3):
+    //   x = enabled(0=走原 mappedRaster 路径,不动;>0.5=改采 sampler2DArray 页存储)
+    //   y = gridN(瓦片被规则切成 gridN×gridN 页;layer = base + row*gridN + col)
+    //   z = layerBase(本瓦片首页在 array 中的层号)
+    //   w = 保留(补齐 vec4;后续接不透明度/LOD)
+    // 仅目标 capped 瓦片被 GltfDrawCommandBuilder 置 enabled=1,其余瓦片恒 0
+    // → 非目标瓦片逐字节走现状路径,零回归。
+    std::array<float, 4> pageStoreParams{0.0f, 1.0f, 0.0f, 0.0f};
 };
 
 static_assert(alignof(GltfUniformBlock) == 16,
@@ -182,7 +191,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 88> table = {{
+    static const std::array<GltfUniformTableEntry, 89> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -266,6 +275,7 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_gltfWaterMaskState", waterMaskState, 4),
         EE_GLTF_ENTRY("u_clipUV", clipUv, 4),
         EE_GLTF_ENTRY("u_clipEnabled", clipEnabled, 1),
+        EE_GLTF_ENTRY("u_pageStoreParams", pageStoreParams, 4),
     }};
 #undef EE_GLTF_ENTRY_AT
 #undef EE_GLTF_TRANSFORM

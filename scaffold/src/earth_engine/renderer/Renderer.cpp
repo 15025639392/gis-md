@@ -946,6 +946,9 @@ uniform vec4 u_gltfWaterMaskTranslationScale;
 uniform vec4 u_gltfWaterMaskState;
 uniform vec4 u_clipUV;
 uniform float u_clipEnabled;
+// 北极星合成方案页存储(Step 3):x=enabled y=gridN z=layerBase w=保留。
+uniform highp sampler2DArray u_pageStore;
+uniform vec4 u_pageStoreParams;
 
 out vec4 fragColor;
 
@@ -1042,6 +1045,18 @@ void main() {
             u_mappedRasterTexCoordSet3,
             u_mappedRasterTileUV3,
             u_mappedRasterOpacity3);
+    }
+    // 合成方案页存储(Step 3):目标 capped 瓦片改采 sampler2DArray 页存储
+    // (enabled=1),覆盖上采样 mappedRaster → 显示真实高清影像。瓦片规则切
+    // gridN×gridN 页,mesh UV 落格算 layer + 层内局部 UV,单次索引 + 单次采样;
+    // 层间不插值 + 每层 CLAMP_TO_EDGE 天然无页缝(§13.1)。enabled=0 恒不进。
+    if (u_pageStoreParams.x > 0.5) {
+        float gridN = max(u_pageStoreParams.y, 1.0);
+        vec2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
+        vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
+        float layer = u_pageStoreParams.z + cell.y * gridN + cell.x;
+        base = alphaOver(
+            base, texture(u_pageStore, vec3(g - cell, layer)), 1.0);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1404,6 +1419,7 @@ struct GltfUniforms {
     packed_float4 waterMaskState;
     packed_float4 clipUV;
     float clipEnabled;
+    packed_float4 pageStoreParams;
 };
 
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
@@ -2129,6 +2145,7 @@ struct GltfUniforms {
     packed_float4 waterMaskState;
     packed_float4 clipUV;
     float clipEnabled;
+    packed_float4 pageStoreParams;
 };
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the
@@ -2200,6 +2217,9 @@ fragment float4 terrainFragment(
     texture2d<float> u_mappedRasterTexture2 [[texture(17)]],
     texture2d<float> u_mappedRasterTexture3 [[texture(18)]],
     texture2d<float> u_gltfWaterMaskTexture [[texture(19)]],
+    // 合成方案页存储(Step 3):sampler2DArray 页存储在 water mask 之后的槽 20,
+    // 复用同一 clamp/linear 采样器(层间不插值 + 每层 clamp 无页缝,§13.1)。
+    texture2d_array<float> u_pageStore [[texture(20)]],
     // Metal argument tables cap samplers at 0-15; terrain imagery all uses the
     // same clamp/linear sampling, so a single shared sampler at slot 0 covers
     // the base color, raster overlay (textures 15-18) and water mask (19)
@@ -2245,6 +2265,18 @@ fragment float4 terrainFragment(
             base, in, u_mappedRasterTexture3, u_terrainSampler,
             u.mappedRasterTexCoordSet[3],
             float4(u.mappedRasterTileUV[3]), u.mappedRasterOpacity[3]);
+    }
+    // 合成方案页存储(Step 3,镜像 GLSL 侧):目标 capped 瓦片改采页存储,
+    // 覆盖上采样 mappedRaster → 真实高清影像。enabled=0 恒不进,零回归。
+    if (u.pageStoreParams.x > 0.5) {
+        float gridN = max(u.pageStoreParams.y, 1.0);
+        float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
+        float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
+        float layer = u.pageStoreParams.z + cell.y * gridN + cell.x;
+        base = terrainAlphaOver(
+            base,
+            u_pageStore.sample(u_terrainSampler, g - cell, uint(layer)),
+            1.0);
     }
     base = terrainApplyWaterMask(
         base, in, u_gltfWaterMaskTexture, u_terrainSampler,

@@ -987,7 +987,10 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             if (currentTextures[unitIdx] != glTex->glId()) {
                 currentTextures[unitIdx] = glTex->glId();
                 glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));
-                glBindTexture(GL_TEXTURE_2D, currentTextures[unitIdx]);
+                // 页存储是 GL_TEXTURE_2D_ARRAY(合成方案),按纹理自身 target
+                // 绑定;其余全是 GL_TEXTURE_2D。每个 unit 专属单一 target
+                // (页存储恒占 unit 10),故 id 缓存无 target 混淆。
+                glBindTexture(glTex->target(), currentTextures[unitIdx]);
             }
         }
         // Sampler uniform 是 program 的持久状态且单位分配固定，每个 program
@@ -1017,6 +1020,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 setSampler(name.c_str(), kGlesGltfRasterUnitBase + i);
             }
             setSampler("u_gltfWaterMaskTexture", kGlesGltfWaterUnit);
+            // 合成方案页存储 sampler2DArray:紧随 water mask 的 unit 10
+            // (kGltfPageStoreArrayTextureSlot 经 glesGltfTextureUnit 压缩,
+            // 仍 ≤16 unit 底线)。非 terrain program 未声明此名 → loc=-1 无副作用。
+            setSampler("u_pageStore",
+                       glesGltfTextureUnit(kGltfPageStoreArrayTextureSlot));
             setSampler("u_waterMask", 5);
             for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
                 std::string name = "u_overlayTexture" + std::to_string(i);

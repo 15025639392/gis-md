@@ -1106,8 +1106,10 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         }  // end else (non-terrain fragment uniform table)
 
         // 纹理绑定 (shared: raster overlays at 15-18, water mask at 19; the
-        // terrain shader also samples texture(0) for base color)
-        const NSUInteger maxMaterialTextures = kGltfWaterMaskTextureSlot + 1;
+        // terrain shader also samples texture(0) for base color, and the
+        // 合成方案页存储 sampler2DArray at slot 20)。纹理槽上限远高于 sampler
+        // 上限(16);页存储复用共享 terrain sampler(0),不占新 sampler 槽。
+        const NSUInteger maxMaterialTextures = kGltfPageStoreArrayTextureSlot + 1;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
         id<MTLSamplerState> sharedTileSampler = nil;

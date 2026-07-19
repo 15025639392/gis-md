@@ -18,6 +18,10 @@ static constexpr int kGltfRasterOverlayTextureBase = 15;
 static constexpr int kMaxGltfRasterOverlays = 4;
 static constexpr int kGltfWaterMaskTextureSlot =
     kGltfRasterOverlayTextureBase + kMaxGltfRasterOverlays;
+// 北极星合成方案页存储(Step 3):sampler2DArray 页存储占 water mask 之后的下一槽。
+// 仅目标 capped 瓦片的 terrain 命令绑定此槽(见 GltfDrawCommandBuilder 门控)。
+static constexpr int kGltfPageStoreArrayTextureSlot =
+    kGltfWaterMaskTextureSlot + 1;
 static constexpr int kGltfInstanceMatrixStride = 100;
 
 /// 固定容量纹理槽表（inline 存储，无堆分配）。
@@ -28,7 +32,7 @@ static constexpr int kGltfInstanceMatrixStride = 100;
 class RenderCommandTextureList {
 public:
     static constexpr size_t kCapacity =
-        static_cast<size_t>(kGltfWaterMaskTextureSlot) + 1u;
+        static_cast<size_t>(kGltfPageStoreArrayTextureSlot) + 1u;
 
     RenderCommandTextureList() = default;
     RenderCommandTextureList(std::initializer_list<Texture*> init) {
