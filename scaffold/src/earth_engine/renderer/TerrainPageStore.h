@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "../core/math/Rectangle.h"
@@ -17,29 +18,76 @@ class RasterOverlayTileProvider;
 struct RenderCommand;
 struct TilesetTile;
 
-/// 北极星合成方案「页存储」生产原型(门③ Step 3)。
+/// 共享层池的等尺寸块 LRU 分配器(北极星合成方案「多瓦片页表」核心,§14.1)。
 ///
-/// 拥有一张 `texture2DArray`(每页一层,§13),把它挂到**一个** capped 粗地形
-/// 瓦片的 terrain 绘制命令上,片元按页表 layer 单次采样 → 该瓦片显示高清影像
-/// (①路径通)、其余瓦片逐字节走现状(②边界=现状)。
+/// texture2DArray 的 [0, blockCount*blockLayers) 层被切成 `blockCount` 个等尺寸块
+/// (每块 `blockLayers` = gridN² 层)。每个 capped 地形瓦片认领**一整块连续层**
+/// (§决策① uniform-grid:layerBase + row*gridN + col 闭式寻址,无 indirection 纹理);
+/// 跨瓦片零共享(#3 实测 mappings≈uniquePages),故块粒度 LRU 足够、天然无碎片。
 ///
-/// **Step 3a(已真机验收 PASS)= 合成图案填充**:各层灌可区分纯色,隔离验证
-/// 「渲染路径 + array 绑定 + GLES array-bind 分支」整链真机点亮。
+/// **决策① 已拍板**:等尺寸块 + 块粒度 LRU + uniform-grid 公式(不建 indirection
+/// 纹理)。可变 depth(Step B 屏幕驱动)时块尺寸不一 → 届时升级为 buddy 分配器,
+/// 接口不变。
 ///
-/// **Step 3b(本类当前形态)= 真实高清影像填充**:目标瓦片锁定后,异步拉它在
-/// **更深 LOD**(z + kDepthLevels)的覆盖影像子瓦片(`ImageryProvider::requestTile`
-/// → 解码 RGBA)填进各层 → capped 粗瓦片显示比其几何 LOD 更细的真实影像。
-/// gridN×gridN = 2^kDepthLevels 覆盖,cell→layer 与 3a 同。合成图案作为影像
-/// 到达前的占位(渐次被真实影像覆盖)。
+/// 纯 CPU、可 host 单测(与 RenderDevice/TilesetTile 解耦)。
+class TerrainPageLayerPool {
+public:
+    /// blockCount 个块,每块 blockLayers 层。重配清空所有驻留。
+    void configure(int blockCount, int blockLayers);
+
+    /// key 已驻留 → 返回其 layerBase(否则 -1)。不改动 recency。
+    int layerBaseFor(uint64_t key) const;
+
+    /// 认领 key 的块并返回 layerBase:
+    ///  - 已驻留:touch 到 frameId,返回其 base(*outEvicted=0)。
+    ///  - 有空块:占用,返回 base(*outEvicted=0)。
+    ///  - 无空块:淘汰 lastFrame < frameId 的最久块(*outEvicted=被淘汰 key),返回其 base。
+    ///  - 所有块本帧都被 touch(lastFrame==frameId)→ 返回 -1(调用方回落 mappedRaster)。
+    int acquire(uint64_t key, uint64_t frameId, uint64_t* outEvicted);
+
+    /// 显式移除 key(析构/失效)。key 不在则 no-op。
+    void release(uint64_t key);
+
+    int blockLayers() const { return blockLayers_; }
+    int blockCount() const { return static_cast<int>(slots_.size()); }
+    int residentCount() const { return static_cast<int>(keyToSlot_.size()); }
+
+private:
+    struct Slot {
+        bool used = false;
+        uint64_t key = 0;
+        uint64_t lastFrame = 0;
+    };
+    std::vector<Slot> slots_;
+    int blockLayers_ = 1;
+    std::unordered_map<uint64_t, int> keyToSlot_;  // key → slot index
+};
+
+/// 北极星合成方案「页存储」生产原型 → 多瓦片页表(门③ Step 3 + §14.1 item 1)。
 ///
-/// 目标瓦片选择:屏幕空间误差最大(最近/最占屏)的真实地形瓦片。
+/// 拥有一张共享 `texture2DArray`(§13,每层一页,天然消灭页缝),按 LRU 把层块分给
+/// **每个可见 capped 真实地形瓦片**:该瓦片异步拉它在更深 LOD(z + depthLevels)的
+/// gridN×gridN 覆盖影像子瓦片 → 灌进自己那块连续层 → 片元按 per-tile pageStoreParams
+/// (enabled/gridN/layerBase)单次 array 采样 → capped 粗瓦片显示比其几何 LOD 更细的
+/// 真实影像(①路径通)。
+///
+/// **决策② 已拍板 = 共存/分层 override**:mappedRaster 对所有瓦片继续算(祖先影像
+/// fallback);页存储仅在该瓦片**已有 resident 层**时置 enabled=1 接管。page-in 延迟期
+/// 显祖先(糊但有)不出洞 = 优雅降级(§12.5#4)。非页存储瓦片逐字节走现状,零回归。
+///
+/// **决策 单瓦片 → 多瓦片(本文件重写)**:原单 targetKey 锁定改为 per-tile 页表
+/// (TerrainPageLayerPool + entries_)。gridN 现固定(config.depthLevels);Step B 改
+/// 屏幕驱动 per-tile 深度(复用 chooseQuadtreeSourceZoom)后 gridN 可变、升级 buddy 池。
+///
+/// ⚠️ **固定 depth 在地平线过取**(122 瓦片 × gridN² 页 ≫ 峰值工作集 185),必须 Step B
+/// 屏幕驱动深度才内存安全;近景/中景(3-6 瓦片)当前固定 depth 已正确。
 class TerrainPageStore {
 public:
     struct Config {
-        int pageSizeTexels = 256;  // 每页(每层)边长(标准 XYZ 影像瓦片 256)
-        int gridN = 4;             // 瓦片切 gridN×gridN 页 → gridN² 层;
-                                   // gridN 必须 = 2^kDepthLevels(与影像深度对齐)
-        int depthLevels = 2;       // 影像比目标瓦片深几级(gridN=1<<depthLevels)
+        int pageSizeTexels = 256;    // 每层边长(标准 XYZ 影像瓦片 256)
+        int depthLevels = 2;         // 影像比瓦片深几级(gridN = 1<<depthLevels)
+        int maxResidentTiles = 16;   // 层池块数(= 同时最多几个 capped 瓦片走页存储)
+        int maxUploadsPerFrame = 8;  // 每帧上传层数上限(涓流,勿拖动期冻结)
     };
 
     TerrainPageStore() = default;
@@ -48,46 +96,61 @@ public:
     TerrainPageStore(const TerrainPageStore&) = delete;
     TerrainPageStore& operator=(const TerrainPageStore&) = delete;
 
-    /// 创建 array 纹理并灌合成图案占位。失败返回 false(调用方短路)。
+    /// 创建共享 array 纹理(blockCount*gridN² 层)。失败返回 false(调用方短路)。
     bool initialize(RenderDevice* device, const Config& config);
 
     bool isReady() const { return arrayTexture_ != nullptr; }
 
-    /// 每帧(渲染线程)驱动:目标锁定后 kick 一次异步影像 fetch;排空已到达的
-    /// 解码影像 → updateTextureRegion 灌对应 layer。
+    /// 每帧(渲染线程,render 之前):推进帧号、kick 未启动的 per-tile 影像 fetch、
+    /// 排空已到达影像(限 maxUploadsPerFrame)灌对应 layer、剔除失效 entry。
     void tick();
 
-    /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用:若命令是真实地形
-    /// 且是(或锁成)目标瓦片,绑定 array 纹理 + 写 pageStoreParams(enabled=1)。
-    /// overlays 用于锁定时捕获影像 provider(拉真实高清影像的数据源)。
+    /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用:capped 真实地形瓦片
+    /// 认领(或复用)一块层、touch,若已有 resident 层则绑 array + 写 per-tile
+    /// pageStoreParams(enabled=1);否则不动(mappedRaster fallback)。
+    /// overlays 用于首次捕获影像 provider。
     void applyToTerrainCommand(
         RenderCommand& cmd, const TilesetTile& tile,
         const std::vector<ActivatedRasterOverlay*>& overlays);
 
     Texture* arrayTexture() const { return arrayTexture_.get(); }
 
+    // --- 诊断(单测/日志用)---
+    int residentTileCount() const { return pool_.residentCount(); }
+    int uploadedLayerTotal() const { return uploadedLayerTotal_; }
+
 private:
     struct PendingInbox;  // 定义在 .cpp:worker 回调安全投递解码影像
 
-    void fillSyntheticPlaceholder();
-    void kickImageryFetch();
+    /// 每个走页存储的 capped 瓦片的账本(层块 + 异步 fetch 状态)。
+    struct TileEntry {
+        TileKey key{};
+        int layerBase = -1;
+        int gridN = 1;
+        int depthLevels = 0;
+        Rectangle bounds{0.0, 0.0, 0.0, 0.0};
+        int targetZ = 0;
+        bool fetchKicked = false;
+        int uploadedLayers = 0;
+        CancellationToken fetchToken;  // 淘汰/析构时 cancel(在途 fetch 丢弃)
+    };
+
+    static uint64_t packKey(const TileKey& key);
+    void kickImageryFetch(TileEntry& entry);
     void drainInbox();
+    void eraseEntry(uint64_t packed);
 
     RenderDevice* device_ = nullptr;
     Config config_{};
+    int gridN_ = 1;
     std::unique_ptr<Texture> arrayTexture_;
 
-    TileKey targetKey_{};
-    double bestSse_ = 0.0;  // 已见最大屏幕空间误差(选最占屏瓦片为目标)
-    bool targetLocked_ = false;
+    TerrainPageLayerPool pool_;
+    std::unordered_map<uint64_t, TileEntry> entries_;  // packed key → entry
+    uint64_t frameId_ = 0;
+    int uploadedLayerTotal_ = 0;
 
-    // Step 3b 异步 fetch 状态。
-    RasterOverlayTileProvider* provider_ = nullptr;  // 锁定时从 overlays 捕获
-    Rectangle targetBounds_{0.0, 0.0, 0.0, 0.0};     // 目标瓦片地理范围(radian)
-    int targetZ_ = 0;
-    bool fetchKicked_ = false;
-    int uploadedLayers_ = 0;                         // 已灌真实影像的层数
-    CancellationToken fetchToken_;                   // dtor 取消在途 fetch
+    RasterOverlayTileProvider* provider_ = nullptr;  // 首帧从 overlays 捕获
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
 };
 

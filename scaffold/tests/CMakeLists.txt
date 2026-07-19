@@ -843,6 +843,12 @@ add_executable(test_tile_composite_bake_poc
 target_link_libraries(test_tile_composite_bake_poc PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_composite_bake_poc COMMAND test_tile_composite_bake_poc)
 
+add_executable(test_terrain_page_store
+    unit/renderer/test_terrain_page_store.cpp
+)
+target_link_libraries(test_terrain_page_store PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_page_store COMMAND test_terrain_page_store)
+
 add_executable(test_vt_indirection_sample_poc
     unit/renderer/test_vt_indirection_sample_poc.cpp
 )
