@@ -497,4 +497,39 @@ commit `1a0b5ffde`,`RenderDeviceGLES::onSurfaceCreated` 一次性探测:**Adreno
 
 **⑥ 测量脚手架清理**:`PageDet` log + `maxTileSse` TEMP 诊断(`updateVisiblePages`)+ §13.5 列的 PoC 台,生产化后一并清。
 
-**下一会话直接吃**:①(`ed6463ac7`)、⑤(`0794ce949`)、④(`dd9a91abb`)已 PASS。剩 ② Metal 块设备验证、③ 门① 逐片元开销、④' 单帧瞬态 ghost 逐帧视频确认(本机无 ffmpeg)、⑥ 脚手架清理(含 ⑤ 遗留 orphan 常量 `kEnableTerrainPageStore`,已 hardcode true 待清)。**两条铁律:①渲染改动真机看像素,别信「糊得像/截图一致」,shader 分裂逐 shader 染纯色定位;②真机验证必钉死初始位姿——引擎无落盘持久化,但 `am force-stop` 竞态/未真杀会让内存态相机存活(⑤ 误判为持久化),净复位用 `resetCamera()` 或 `pidof` 确认进程死后再 launch,`kill-server` 会清掉 `adb reverse` 需重挂。**
+**下一会话直接吃**:①(`ed6463ac7`)、⑤(`0794ce949`)、④(`dd9a91abb`)已 PASS。剩 ② Metal 块设备验证、③ 门① 逐片元开销、④' 单帧瞬态 ghost 逐帧视频确认(本机无 ffmpeg)、⑥ 脚手架清理(PageDet/maxTileSse/culledBySse TEMP + PoC 台;⑤ 遗留 orphan 常量已清 commit `32bf375f3`)。**两条铁律:①渲染改动真机看像素,别信「糊得像/截图一致」,shader 分裂逐 shader 染纯色定位;②真机验证必钉死初始位姿——引擎无落盘持久化,但 `am force-stop` 竞态/未真杀会让内存态相机存活(⑤ 误判为持久化),净复位用 `resetCamera()` 或 `pidof` 确认进程死后再 launch,`kill-server` 会清掉 `adb reverse` 需重挂。**
+
+## 16. 高倾斜三症状:诊断 + determination 缓存(#1 done)+ per-cell 渐变 LOD 设计(#2,新会话做,2026-07-19)
+
+**触发**:用户高倾斜(grazing)真机报三症状:①清晰→模糊→清晰→模糊(空间分带);②帧率极低;③瓦片加载慢。测量台 = 冻结 elev15°/2000m grazing 位姿(重庆城区),decouple+pageStore 生产默认。
+
+### 16.1 实测根因(先诊断,别猜)
+真机 EarthPerf + 临时 `PageDetPerf`(Engine.cpp 包 updateVisiblePages 计时,**未提交脚手架**)+ PageDet:
+- **症状2「低帧率」= 67.8ms/帧(~15fps),两块各半**:`Tileset.update`(选择器)**37ms**(既有 horizon-jank,与 pageStore 无关)+ `updateVisiblePages`(页存储 determination)**~28ms**(**新增**,decouple+pageStore 引入)。determination = O(Σ可见瓦片 gridN²) **每帧**逐 cell OBB+视锥+SSE,106 瓦片 × 最多 1024 cell。
+- **症状1「分带」= 空间**(3 帧冻结略有差=轻微时间闪):近 crisp z17 → **中距 z12 mappedRaster 悬崖** → 城区带 crisp → 远粗。**A/B 实测(cull 关)**:uniquePages 166→358、池撞 512、uploadedTotal 1067 thrash、扁平绿+悬浮图斑=**更糟** ⟹ **cull 必须留**(控工作集);模糊带真因 = cull 剔的中距 cell **一步跌到 z12**(5 级悬崖),非"cull 太狠"。
+- **症状3「加载慢」**:166~358 页 × 8 上传/帧 @低 fps ≈ 1.4~3s;被低 fps 放大。
+
+### 16.2 #1 determination 缓存 ✅ 真机 PASS(commit `32b58bf2c`)
+缓存**纯几何结果**(哪些 cell 过筛 + cell→pageKey),只依赖视图(frustum/position/projection/vpH)+瓦片集(key/zoom/minH/maxH)+threshold,**不依赖页驻留态**。拆两层:几何层(贵,缓存,签名**逐字段精确==**杜绝「视图变却判未变」的雷:6 frustum 平面+position+16 projection+vpH+threshold+provider+瓦片有序表,任一变→全 re-walk 安全侧)/ 驻留层(便宜,**每帧必跑** pool.acquire/touch/淘汰/kick/编码,故异步到页逐帧点亮无 stale)。真机:settled determination **28→0.9~2.0ms(~25×)**、帧 67.8→37~42ms(~15→~26fps);运动期正确 miss(re-walk 22~71ms)= **绝不 stale**;像素/uploadedTotal 与非缓存逐字节一致(透明优化)。host 153/153+page_store 17/17。**选择器 37ms 是既有 horizon-jank,单列不在本改动。**
+
+### 16.3 #2 per-cell 渐变 LOD SVT(新会话实现,grounding 已做)
+**先观感正确性、后方案(用户要求)。**
+
+**Grounding(2026-07-19,真机+源码)**:
+- **耦合态参考图(ground truth,同 elev15 grazing,decouple+pageStore 均 false 抓)**:近→地平线**细节平滑连续衰减,无模糊带、无悬崖**。这是"正确观感"锚。
+- **cesium-native 源码**:影像 = **逐瓦片 scale-bias 采样**(`overlayUv=tileUV.xy+v_gridUv*tileUV.zw`,Renderer.cpp:110),**无 `textureLod`/trilinear**;LOD 过渡 = 瓦片级 geomorph/cross-fade(`lodTransitionFade`,默认关)。
+- **⟹ 关键**:耦合态那种平滑**不是 trilinear**,是"很多瓦片、每块 ≤1 级 LOD"的**渐变**。pageStore 模糊带 = 用单一 z17 + 硬剔到 z12(5 级悬崖),不渐变。**⟹ trilinear 是过度设计(cesium 都不用),真正要的是渐变。**
+
+**设计 = per-cell 自适应 zoom,单 fetch,对齐 cesium 耦合态**:
+- 每 cell 取距离合适 zoom(替代 per-tile 单一 zoom + 硬剔):`Za = clamp(tileZ + round(log2(cellScreenError/16)), tileZ, Z)`,`cellScreenError = screenSpaceErrorForView(tile.geomError, proj, vpH, cellDist)`。近 cell(cellDist≈中心)→ Za=Z、d=0(**逐字节=现状近景无回归**);远 cell → Za<Z 渐降;最远 clamp tileZ。`d = Z-Za`。多个远 cell 指同一粗祖先页 `(Za, cx>>d, cy>>d)` → 池按 key 去重 → 粗页极少(共享)→ **工作集有界**(替代硬剔的控量作用)。
+- **间接纹理复用现成 RGBA8**:R+G=layer、**B=d(0..6)**、A=resident。**不需第二张 RG16 纹理**(单 fetch,无 trilinear)。
+- **shader(GltfFragmentGLSL/MSL,一次间接 fetch 不变)**:`d=floor(e.b*255+.5); sampleUv=fract(uv*gridN/exp2(d));`(d=0→现状等价;d>0→采粗页子区)`if(e.a>.5) alphaOver(base, texture(array, vec3(sampleUv,layer)))`。三态:A>.5&d=0=精页/A>.5&d>0=粗页回退/A=0=miss(mappedRaster,粗页未到/池满)。
+- **决策(grounding 后塌缩)**:A=自适应(确认)/B=d 塞 B 通道(单 fetch 够)/**C=cross-fade 防 pop 延后**(cesium 默认也关,看真机运动是否刺眼再补)。
+
+**观感验收判据(有客观锚)**:同 elev15 grazing,pageStore 输出**对齐耦合态参考图**——近→远平滑衰减、**无 z12 模糊带、无 >1 级突兀台阶**。**唯一观感雷 = 步长必须 ≤1 级且随距离单调**(Za 的 round() 相邻距离带只差 1,真机验)。
+
+**正确性契约(防雷,同 #1 风格)**:与 #1 缓存交互(DetKeptCell 加 `int d`,pageKey=祖先 key;kept 仍是签名纯函数,缓存不失效)/池共享(多 cell 同祖先 key→acquire 幂等)/d≤kMaxDetDepthLevels(6,B 通道够,round-trip 单测)/粗页未到→A=0→mappedRaster(=现状,到达后升 z14 严格更优)/池有界(Za≥tileZ 构造性,**真机验 uniquePages<~250 不撞 512**)。MSL 镜像加但无设备验(延续 §15.3②)。
+
+**新会话验证计划**:①模糊带→z14-15(对齐耦合参考,无洞);②工作集有界(<~250);③近景 elev45 无回归(d=0 路径,z17 crisp,页数不暴涨);④fps 不回退(#1 缓存仍命中);⑤host round-trip(layer+d)+153/153+arm64。⑥near-nadir 页数若因取消硬剔而暴涨→加"cellSse<阈值*0.25→真 miss"地板兜 OBB 假阳性(§15.3① 那批)。
+
+**测量脚手架现状(未提交,新会话可复用/清)**:Engine.cpp 的 `PageDetPerf` 计时器已 `git checkout` 撤;demo measure flags 已复位默认(freeze off/elev45/height1500)。抓耦合参考 = 临时把 MinimalGlobeDemoConfig.cpp 的 decouple+pageStore 两行改 false + freeze on/elev15,测毕改回。
