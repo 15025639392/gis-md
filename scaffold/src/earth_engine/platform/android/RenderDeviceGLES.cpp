@@ -1034,6 +1034,10 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // GL_TEXTURE_2D,NEAREST 由纹理自身 param 决定(见 createTexture)。
             setSampler("u_pageStoreIndir",
                        glesGltfTextureUnit(kGltfPageStoreIndirTextureSlot));
+            // Phase 2c Stage B 地形高度纹理(**顶点级** texelFetch,slot 22 经压缩
+            // 成 unit 12,仍 ≤16 底线)。非地形 program 未声明此名 → loc=-1 无副作用。
+            setSampler("u_heightTexture",
+                       glesGltfTextureUnit(kGltfHeightTextureSlot));
             setSampler("u_waterMask", 5);
             for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
                 std::string name = "u_overlayTexture" + std::to_string(i);

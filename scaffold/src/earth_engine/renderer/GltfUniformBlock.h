@@ -143,6 +143,13 @@ struct alignas(16) GltfUniformBlock {
     // 仅目标 capped 瓦片被 GltfDrawCommandBuilder 置 enabled=1,其余瓦片恒 0
     // → 非目标瓦片逐字节走现状路径,零回归。
     std::array<float, 4> pageStoreParams{0.0f, 1.0f, 0.0f, 0.0f};
+
+    // 北极星 Phase 2c Stage B 地形 GPU 位移(顶点阶段消费):
+    //   x = minHeight(米)  y = heightRange = maxHeight−minHeight
+    //   z = enabled(0=不位移,走原样;>0.5=采高度纹理反量化沿法线位移)
+    //   w = gridSize(高度纹理栅格单元数,texel 下标 = uv×gridSize)
+    // 仅真实地形 GPU 位移命令置 enabled=1,其余瓦片恒 0 → 零回归。
+    std::array<float, 4> heightDisplace{0.0f, 1.0f, 0.0f, 64.0f};
 };
 
 static_assert(alignof(GltfUniformBlock) == 16,
@@ -191,7 +198,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 89> table = {{
+    static const std::array<GltfUniformTableEntry, 90> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -276,6 +283,7 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_clipUV", clipUv, 4),
         EE_GLTF_ENTRY("u_clipEnabled", clipEnabled, 1),
         EE_GLTF_ENTRY("u_pageStoreParams", pageStoreParams, 4),
+        EE_GLTF_ENTRY("u_heightDisplace", heightDisplace, 4),
     }};
 #undef EE_GLTF_ENTRY_AT
 #undef EE_GLTF_TRANSFORM

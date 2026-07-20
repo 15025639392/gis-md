@@ -10,6 +10,7 @@
 #include "../renderer/Renderer.h"
 #include "../renderer/TerrainPageStore.h"
 #include "../content/TerrainDisplacementTemplate.h"
+#include "../providers/TerrainProvider.h"  // DecodedHeightmap
 #include "TerrainDisplacementTemplatePool.h"
 #include "../debug/PerfTimer.h"
 
@@ -180,6 +181,30 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                     }
                     // 模板在 ENU 帧,morph up = 局部 +Z(heightDelta=0 时无 morph)。
                     u.geomorphUpFactor = {0.0f, 0.0f, 1.0f, 1.0f};
+
+                    // Stage B:若保留了高度图 → 建/取 per-tile 高度纹理并绑到顶点级
+                    // 槽,shader texelFetch 反量化沿法线位移到真实高度。无高度图则
+                    // 退化为 Stage A 贴椭球(enabled 保持 0)。
+                    const DecodedHeightmap* hm =
+                        tile.content.renderContent.retainedHeightmap();
+                    if (hm) {
+                        const TerrainDisplacementTemplatePool::HeightTexture*
+                            ht = pool->acquireHeightTexture(
+                                tile.key, *hm, kTerrainDisplacementGridSize);
+                        if (ht && ht->texture) {
+                            if (cmd.textures.size() <=
+                                static_cast<size_t>(kGltfHeightTextureSlot)) {
+                                cmd.textures.resize(
+                                    static_cast<size_t>(kGltfHeightTextureSlot) +
+                                    1);
+                            }
+                            cmd.textures[kGltfHeightTextureSlot] = ht->texture;
+                            u.heightDisplace = {
+                                ht->minHeight, ht->heightRange, 1.0f,
+                                static_cast<float>(
+                                    kTerrainDisplacementGridSize)};
+                        }
+                    }
                 }
             }
         }

@@ -912,6 +912,9 @@ layout(location = 3) in float a_heightDelta;  // geomorph:粗起点−真实高�
 
 uniform mat4 u_modelViewProjection;
 uniform vec4 u_geomorphUpFactor;  // xyz=瓦片中心椭球法线, w=morphFactor
+// Phase 2c Stage B 地形 GPU 位移:x=minHeight y=heightRange z=enabled w=gridSize。
+uniform vec4 u_heightDisplace;
+uniform highp sampler2D u_heightTexture;  // gridN+1 方,RG 打包 16bit 归一化高度
 
 out vec3 v_normal;
 out vec3 v_position;
@@ -924,6 +927,18 @@ void main() {
     // heightDelta=0(如上采样子瓦片)或 w=1(无 morph)时 offset 为 0,退化为原样。
     vec3 morphPos = a_position +
         u_geomorphUpFactor.xyz * a_heightDelta * (1.0 - u_geomorphUpFactor.w);
+    // Phase 2c Stage B:共享模板 a_position=零高程面点,沿法线采高度纹理位移到真实
+    // 高度。按栅格下标 texelFetch(NEAREST,无插值)→ RG 反量化 16bit → 米。仅位移
+    // 命令 enabled=1;其余瓦片 z=0 退化(不采纹理,零回归)。
+    if (u_heightDisplace.z > 0.5) {
+        ivec2 texel = ivec2(
+            int(a_texcoord01.x * u_heightDisplace.w + 0.5),
+            int(a_texcoord01.y * u_heightDisplace.w + 0.5));
+        vec4 packed = texelFetch(u_heightTexture, texel, 0);
+        float t = (packed.r * 255.0 * 256.0 + packed.g * 255.0) / 65535.0;
+        float h = u_heightDisplace.x + t * u_heightDisplace.y;
+        morphPos += normalize(a_normal) * h;
+    }
     v_normal = normalize(a_normal);
     v_position = morphPos;
     v_texcoord01 = a_texcoord01;
@@ -1459,6 +1474,7 @@ struct GltfUniforms {
     packed_float4 clipUV;
     float clipEnabled;
     packed_float4 pageStoreParams;
+    packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
 };
 
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
@@ -2116,11 +2132,24 @@ struct TerrainVertexOut {
 vertex TerrainVertexOut terrainVertex(
     TerrainVertexIn in [[stage_in]],
     constant float4x4& u_modelViewProjection [[buffer(1)]],
-    constant float4& u_geomorphUpFactor [[buffer(2)]]) {
+    constant float4& u_geomorphUpFactor [[buffer(2)]],
+    constant float4& u_heightDisplace [[buffer(3)]],
+    texture2d<float> u_heightTexture [[texture(22)]]) {
     TerrainVertexOut out;
     // geomorph:沿瓦片中心椭球法线把顶点从粗起点(w=0)长到真实高度(w=1)。
     float3 morphPos = in.position +
         u_geomorphUpFactor.xyz * in.heightDelta * (1.0 - u_geomorphUpFactor.w);
+    // Phase 2c Stage B:共享模板零高程面点沿法线采高度纹理位移到真实高度。
+    // read(NEAREST) 按栅格下标取回、RG 反量化 16bit。仅位移命令 enabled=1。
+    if (u_heightDisplace.z > 0.5) {
+        uint2 texel = uint2(
+            uint(in.texcoord01.x * u_heightDisplace.w + 0.5),
+            uint(in.texcoord01.y * u_heightDisplace.w + 0.5));
+        float4 packed = u_heightTexture.read(texel, 0);
+        float t = (packed.r * 255.0 * 256.0 + packed.g * 255.0) / 65535.0;
+        float h = u_heightDisplace.x + t * u_heightDisplace.y;
+        morphPos += normalize(in.normal.xyz) * h;
+    }
     out.position = u_modelViewProjection * float4(morphPos, 1.0);
     out.normal = normalize(in.normal.xyz);
     out.localPosition = morphPos;
@@ -2210,6 +2239,7 @@ struct GltfUniforms {
     packed_float4 clipUV;
     float clipEnabled;
     packed_float4 pageStoreParams;
+    packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
 };
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the
