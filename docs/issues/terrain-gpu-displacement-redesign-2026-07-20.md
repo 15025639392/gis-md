@@ -6,6 +6,8 @@
 2026-07-20。承接 `terrain-continuous-lod-redesign-2026-07-17.md`，用**当前 b20 架构实测**+**osgEarth REX 生产引擎源码调研**（`.ref/osgearth`、`.ref/cesiumjs`）更新。
 起因：斜视地平线卡顿根因坐实 = 地形 fill-proxy **逐瓦片 CPU 建 289 顶点网格 + per-tile VBO**（掠视运动期 ~29 瓦片/帧首建，prefetchFill 8-29ms + selTrav 12ms，release ~20-30fps）。用户裁决：不打增量补丁，直接投入 GPU 位移 Clipmap 重构（同时根治 fill 卡顿 + geomorph 连续性）。
 
+> **⚠️ 2026-07-20 复审更新（战术修已并入）**：`feat/offscreen-render-pass` 的 `b3b717395`（fill-proxy rebuild 风暴战术修：`hasProtectedRetryableFill` 保护状态集加 `Failed` 终态）已 merge 进本分支（merge commit `a97b3f5eb`）。**该修已把 prefetchFill 40ms→~1ms、整帧 45-53ms→~11-18ms**（release 真机，见 [[fill-proxy-rebuild-storm-fixed-2026-07-19]]）。⟹ **本重构的「消急性卡顿」理由已基本被战术修兑现**，Phase 2c 的价值应重锚到 **§5 闸门「地形 VBO 字节 斜率≈0」（有界几何）+ geomorph 连续性 + 架构收敛（与 2b 统一到共享几何+per-tile 纹理+shader 采样）**，**不再是救火**。残留掠视成本 = 周期性 full-selection 帧 selector ~11ms（是**另一条杠杆**，2c 不碰 selector，别把 2c 当它的解）。开工前先真机复测当前帧时间重估急迫性。
+
 ---
 
 ## 1. 关键结论：这是**转换**不是**重写**（相比 2026-07-17 大幅降风险）
@@ -92,7 +94,7 @@ per-tile uniform：MVM（double→f32）、高度纹理句柄、bounds  ──�
 ## 6. 分阶段（每阶段二元验证；flag 切换 A/B，全程零回归）
 
 **P0 精度地基（先摸底最大风险）**：单瓦片 per-tile RTC 局部帧 + MVM uniform，CPU 参考位置对比。验证：GPU 位移位置 vs CPU `cartographicToCartesian` 参考 < 1m，两后端。
-**P1 GPU 位移（保留 CPU morph 数据，最稳中间态）**：共享模板 + per-tile 高度纹理 + shader 采样位移；**morph 仍用现有 heightDelta 属性**（已无缝）。位置上 GPU，morph 数据暂留 CPU。验证：真机掠视 grazing preset 前后 prefetchFill 8-29ms→~0、terrain= 大降、60fps；出图与旧路径像素近似；glError=0；host 全绿。**这一步就吃掉 horizon 卡顿主体。**
+**P1 GPU 位移（保留 CPU morph 数据，最稳中间态）**：共享模板 + per-tile 高度纹理 + shader 采样位移；**morph 仍用现有 heightDelta 属性**（已无缝）。位置上 GPU，morph 数据暂留 CPU。验证（战术修后重锚——急性卡顿已不是 P1 的靶）：**主靶 = 地形 VBO 字节从「随可见瓦片数线性」压到「共享模板单份 + per-tile 8.5KB 纹理」（§5 有界闸门）+ 峰值内存降**；掠视 grazing preset 前后帧时间不回退（战术修后基线 ~11-18ms）；出图与旧路径像素近似；glError=0；host 全绿。（prefetchFill 已被战术修压到 ~1ms，不再是 P1 的胜负手。）
 **P2 morph 纹理化（可选，去 CPU morph 残余）**：heightDelta→本纹理双分辨率采样（单 fetch 打包 fine/coarse）。验证：morph 边界无新缝（对比 P1）；掠视更平滑。**若 P1 已达 60fps 可暂缓**（morph 数据烘焙不是瓶颈）。
 **P3 高度查询迁移**：拾取/相机贴地/矢量贴地改采 DecodedHeightmap。验证：拾取准、相机不穿地、矢量贴合。
 **P4 skirt/法线/normal-map + overlay 回归**：验证：无 LOD 裂缝、浮雕正确、overlay 贴合。
