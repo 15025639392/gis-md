@@ -202,6 +202,12 @@ add_executable(test_ellipsoid
 target_link_libraries(test_ellipsoid PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_ellipsoid COMMAND test_ellipsoid)
 
+add_executable(test_terrain_gpu_displacement_precision
+    unit/geodesy/test_terrain_gpu_displacement_precision.cpp
+)
+target_link_libraries(test_terrain_gpu_displacement_precision PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_gpu_displacement_precision COMMAND test_terrain_gpu_displacement_precision)
+
 add_executable(test_ellipsoid_tangent_plane
     unit/geodesy/test_ellipsoid_tangent_plane.cpp
 )

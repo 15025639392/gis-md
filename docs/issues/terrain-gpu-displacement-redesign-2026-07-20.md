@@ -72,14 +72,14 @@ per-tile uniform：MVM（double→f32）、高度纹理句柄、bounds  ──�
 | 6 | 法线 `EllipsoidTerrainMeshBuilder.cpp:183` | CPU 中心差分 | 模板解析法线（位移方向）；浮雕着色可选 CPU normal-map 纹理 |
 | 7 | skirt `appendRegularGridSkirt` :260 | per-tile 生成 | 共享模板 skirt 环，随纹理一起位移 |
 | 8 | morphFactor/uniform `TileRenderPlanFinalizer.h:240`+`GltfDrawCommandBuilder.cpp:344` | 已距离连续 | **基本原样复用**（只喂 w+up，独立于顶点来源） |
-| 9 | 精度 | pos[3]f32（现疑似非 RTC，含 positionHigh/Low 死字段） | **per-tile RTC**：瓦片局部帧 + MVM uniform，双→f32 |
+| 9 | 精度 | pos[3]f32 **已是 per-tile RTC**（`buildTerrainVertices` 双精度算 ECEF−origin 再降 f32；无 positionHigh/Low split）| **基本不动**：RTC 基建现成且正确，GPU 位移只把「面点+法线·elev」的加法从 CPU 挪进 shader（恒等式，f32 亚毫米）。P0 host 单测锁死 |
 | 10 | 高度查询 `LoadedTerrainHeightSampler`（拾取/相机贴地/矢量贴地） | 遍历 CPU 地形网格三角形 | **改直接采 `DecodedHeightmap`**（更简单）；须保 heightmap 常驻 CPU |
 
 ---
 
 ## 5. 潜在问题（精度/性能/内存/扩展/接缝，诚实全列）
 
-- **精度（最大正确性风险）**：per-tile RTC 必须两后端（GLES+Metal）都对。MVM 双→f32 降精、局部帧原点选取、morph 后位置仍要 RTC 安全。osgEarth 已验证可行，但我们的 `TerrainGpuVertex.pos` 现是 f32 绝对/split，迁 RTC 是硬改动。**先做精度冒烟**（单瓦片 GPU 位移对 CPU 参考位置 < 1m）。
+- **精度（2026-07-20 P0 代码审计后大幅下调，原判「最大风险」不成立）**：审计坐实两点——(a) **RTC 已存在且正确**：`TerrainGpuVertex.pos` 现**已是瓦片局部 RTC float**（`GltfRenderGeometryBuilder::buildTerrainVertices` 用 `f64(ECEF·contentTransform − tileOriginECEF)` 双精度算完再单次降 f32，`GltfRenderGeometryBuilder.cpp:225-230`；原点 = `makeModel` 的 `preferredLocalOriginEcef` 双精度）；**无 positionHigh/Low split**（那是 CPU-only `SurfaceVertex` 上采样用的死字段，不上 GPU）。MVP 每帧在 `SceneRenderCommandUniformUpdater` 双精度 compose 后单次降 f32。⟹「迁 RTC 是硬改动」**已不成立，RTC 基建现成且正确**。(b) **位移分解是恒等式非近似**：`cartographicToCartesian(lat,lng,h) ≡ surfacePoint(lat,lng) + geodeticSurfaceNormal(lat,lng)·h`，因 `geodeticSurfaceNormal` 只依赖 lat/lng、height 项在参考实现里就是线性叠加（`Ellipsoid.cpp:46-54,81-88` 实读证）。⟹ GPU 位移 `pos = 模板面点_local + 法线_local·elev` 与现 CPU 烘焙路径**代数等价**，唯一新增 f32 误差 = 单位法线·elev(≤~9km) 加到 km 量级局部向量 → **亚毫米级**。**P0 因此降级为纯 host 单测**（无需设备/shader：跨高纬最坏瓦片，f32 RTC-local 分解 vs f64 baked 参考，max<1m），shader 两后端 parity 留 P1 附带验。
 - **morph 接缝（我们的简化的真风险）**：「本纹理 2× bilinear 当 coarse」仅当 coarse LOD 真实数据用同款 box 下采样才无缝；若各 LOD 独立生成（不同源分辨率/滤波）→ morph 边界可见缝。osgEarth 用**真 coarse 网格派生的 a_neighbor** 属性避此。**退路**：保留 `heightDelta` 属性（现有 coarse-self 烘焙，已无缝）当 morph 目标，只把**位置**上 GPU；即 morph 数据仍 CPU 烘（省不掉那点，但那不是瓶颈），位置省掉。**这是最稳的中间态**——见 §6 P1。
 - **顶点纹理取样**：GLES3 保证顶点纹理单元（GLES2 不保）；Metal 原生支持。R16UI/R32F 两后端 OK。需确认 Adreno 730 真机顶点纹理取样性能（老 GPU VTF 可能慢）。
 - **性能**：上传省 ~16×（8.5KB vs 135KB）+ 消灭 CPU 建网格（掠视 prefetchFill 8-29ms→~0）。但顶点 shader 加纹理取样（每顶点 1-2 次）；draw 数不变（每瓦片 1 draw，模板 instanced/rebind）。net 需真机实测（掠视 grazing preset 前后对比）。
@@ -93,7 +93,7 @@ per-tile uniform：MVM（double→f32）、高度纹理句柄、bounds  ──�
 
 ## 6. 分阶段（每阶段二元验证；flag 切换 A/B，全程零回归）
 
-**P0 精度地基（先摸底最大风险）**：单瓦片 per-tile RTC 局部帧 + MVM uniform，CPU 参考位置对比。验证：GPU 位移位置 vs CPU `cartographicToCartesian` 参考 < 1m，两后端。
+**P0 精度地基 ✅ 已完成（2026-07-20，纯 host 单测，无需设备）**：`scaffold/tests/unit/geodesy/test_terrain_gpu_displacement_precision.cpp`（3 test PASS）。做法=跨 LOD(z3 粗→z12 native)×纬度(0/45/60/72/80°)×高程(0/9km) 的 65×65 栅格，逐顶点比 GPU 位移 f32 RTC 分解 vs 双精度 baked 参考。**实测**：candidate-vs-truth **全 <1m**（最坏 z3-45°-72°N-9km = **0.26m**，4× 余量）；与现 shipping f32 RTC 路径**同阶**（~1.5-1.9×，非质变）；**z12 native = 0.8mm**；elev=0 时 candidate≡current 逐值相等（证分解代数等价）。⟹ **精度轴已彻底 de-risk，RTC 基建现成、位移分解是恒等式**。残留 = shader 两后端 f32 parity（GLES/Metal 与 host f32 一致），并入 P1 附带冒烟。
 **P1 GPU 位移（保留 CPU morph 数据，最稳中间态）**：共享模板 + per-tile 高度纹理 + shader 采样位移；**morph 仍用现有 heightDelta 属性**（已无缝）。位置上 GPU，morph 数据暂留 CPU。验证（战术修后重锚——急性卡顿已不是 P1 的靶）：**主靶 = 地形 VBO 字节从「随可见瓦片数线性」压到「共享模板单份 + per-tile 8.5KB 纹理」（§5 有界闸门）+ 峰值内存降**；掠视 grazing preset 前后帧时间不回退（战术修后基线 ~11-18ms）；出图与旧路径像素近似；glError=0；host 全绿。（prefetchFill 已被战术修压到 ~1ms，不再是 P1 的胜负手。）
 **P2 morph 纹理化（可选，去 CPU morph 残余）**：heightDelta→本纹理双分辨率采样（单 fetch 打包 fine/coarse）。验证：morph 边界无新缝（对比 P1）；掠视更平滑。**若 P1 已达 60fps 可暂缓**（morph 数据烘焙不是瓶颈）。
 **P3 高度查询迁移**：拾取/相机贴地/矢量贴地改采 DecodedHeightmap。验证：拾取准、相机不穿地、矢量贴合。
