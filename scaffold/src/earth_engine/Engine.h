@@ -20,6 +20,7 @@ class VirtualTexturePoc;
 class TileCompositeBakePoc;
 class VtIndirectionSamplePoc;
 class TerrainPageStore;
+class TerrainDisplacementTemplatePool;
 class Tileset;
 class VectorLayer;
 struct PresentationTrace;
@@ -180,6 +181,11 @@ public:
     /// Step3a = 合成图案(隔离渲染路径),Step3b 换真实高清影像。
     void setTerrainPageStoreEnabled(bool enabled);
 
+    /// 北极星 Phase 2c 地形 GPU 位移(默认关,flag-gated A/B):启用后地形瓦片改用
+    /// 共享位移模板 VBO/IBO(同 {LOD,row} 复用,§5 有界)+ per-tile 刚体帧。Stage A
+    /// 零起伏(贴椭球);起伏由后续高度纹理在 shader 位移。关闭走现 per-tile baked VBO。
+    void setTerrainGpuDisplacementEnabled(bool enabled);
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
@@ -188,6 +194,7 @@ private:
     std::unique_ptr<TileCompositeBakePoc> tileCompositeBakePoc_;
     std::unique_ptr<VtIndirectionSamplePoc> vtIndirectionSamplePoc_;
     std::unique_ptr<TerrainPageStore> terrainPageStore_;
+    std::unique_ptr<TerrainDisplacementTemplatePool> terrainDisplacementPool_;
     double lastRenderTime_ = 0.0;
     bool surfaceCreated_ = false;
     // 离屏后处理开关。优先级:AerialFog > FXAA > passthrough 调试直通。
@@ -211,6 +218,8 @@ private:
     // 北极星 合成方案 门③ Step3 页存储原型开关 + 短路。
     bool terrainPageStoreEnabled_ = false;
     bool terrainPageStoreInitFailed_ = false;
+    // 北极星 Phase 2c 地形 GPU 位移开关(默认关,flag-gated A/B)。
+    bool terrainGpuDisplacementEnabled_ = false;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;

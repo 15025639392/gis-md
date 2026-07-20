@@ -1083,6 +1083,19 @@ Java_com_earthengine_sdk_GLESView_nativeGrazingView(
     });
 }
 
+// 北极星 Phase 2c 地形 GPU 位移 A/B 运行时开关(设备侧前后对比用)。
+// on=启用共享位移模板路径(Stage A 贴椭球);off=回现 per-tile baked VBO。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeSetGpuTerrain(
+    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
+    const bool on = (enabled == JNI_TRUE);
+    gRenderThread.post([on]() {
+        if (!gEngine) return;
+        gEngine->setTerrainGpuDisplacementEnabled(on);
+        LOGI("Terrain GPU displacement %s", on ? "ENABLED" : "disabled");
+    });
+}
+
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativePause(
     JNIEnv* /* env */, jobject /* this */) {

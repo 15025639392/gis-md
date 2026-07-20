@@ -167,6 +167,19 @@ struct RenderCommand {
     bool hasGltfUniforms = false;
     GltfUniformBlock gltfUniforms;
 
+    // 北极星 Phase 2c（地形 GPU 位移）：per-tile 全刚体模型帧（ENU→ECEF），
+    // 承载共享位移模板的经纬度落位。CPU-only、不上 GPU（不进 GltfUniformBlock/
+    // MSL 镜像/描述表）——SceneRenderCommandUniformUpdater 每帧双精度 compose
+    // mvp = viewProj·frame（替 translate(modelOrigin) 平移路径）并据其反算
+    // eyePositionRTC。列主序 16 double（与 Mat4::raw()/glm 一致）。默认 false
+    // → 所有现有 glTF/terrain 命令逐字节走原 translation 路径，零回归。
+    bool hasTerrainDisplacementFrame = false;
+    std::array<double, 16> terrainDisplacementModelMatrix{
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0};
+
     // Render-chain step 10: SurfaceTile command organization lives here.
     // These fields describe draw order inputs, depth/cull/blend state, base
     // texture, overlay count, and UV windows before any GLES/Metal API call.

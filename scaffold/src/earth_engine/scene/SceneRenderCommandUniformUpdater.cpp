@@ -51,8 +51,14 @@ void SceneRenderCommandUniformUpdater::apply(
 
         if (cmd.kind == RenderCommandKind::GltfPrimitive ||
             cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) {
+            // 北极星 Phase 2c 地形 GPU 位移：per-tile 全刚体 ENU→ECEF 帧承载
+            // 落位（顶点在 ENU 局部帧），替 translation-only 路径。gated——
+            // 未置该标志的命令逐字节走原 modelOrigin 平移。
             glm::dmat4 model(1.0);
-            if (cmd.hasGltfUniforms) {
+            if (cmd.hasTerrainDisplacementFrame) {
+                model = glm::make_mat4(
+                    cmd.terrainDisplacementModelMatrix.data());
+            } else if (cmd.hasGltfUniforms) {
                 glm::dvec3 origin(cmd.gltfUniforms.modelOrigin[0],
                                   cmd.gltfUniforms.modelOrigin[1],
                                   cmd.gltfUniforms.modelOrigin[2]);
@@ -64,22 +70,45 @@ void SceneRenderCommandUniformUpdater::apply(
                 std::memcpy(cmd.gltfUniforms.modelViewProjection.data(),
                             glm::value_ptr(mvpFloat),
                             16 * sizeof(float));
-                cmd.gltfUniforms.lightDir = {frameState.lightDir.x,
-                                             frameState.lightDir.y,
-                                             frameState.lightDir.z};
+                // 位移帧路径下 v_normal 在 ENU 局部帧（模板法线随帧共享），故
+                // lightDir 也须变到该帧，否则片元光照帧不匹配而错。方向量只旋转
+                // (R 正交，R^T = R^-1)。平移路径下 lightDir 仍是世界向量。
+                if (cmd.hasTerrainDisplacementFrame) {
+                    const glm::dvec3 lightWorld(frameState.lightDir.x,
+                                                frameState.lightDir.y,
+                                                frameState.lightDir.z);
+                    const glm::dvec3 lightLocal =
+                        glm::transpose(glm::dmat3(model)) * lightWorld;
+                    cmd.gltfUniforms.lightDir = {
+                        static_cast<float>(lightLocal.x),
+                        static_cast<float>(lightLocal.y),
+                        static_cast<float>(lightLocal.z)};
+                } else {
+                    cmd.gltfUniforms.lightDir = {frameState.lightDir.x,
+                                                 frameState.lightDir.y,
+                                                 frameState.lightDir.z};
+                }
                 cmd.gltfUniforms.ambient = {frameState.ambient.r,
                                             frameState.ambient.g,
                                             frameState.ambient.b,
                                             1.0f};
-                // 相机世界坐标相对本瓦片 RTC 原点的偏移。RTC 相减在双精度下
+                // 相机世界坐标相对本瓦片局部帧原点的偏移。RTC 相减在双精度下
                 // 完成，float 只承载小量级差值 → 水面 sun-glint 求视向量 V。
+                // 位移帧路径下 v_position 在 ENU 局部帧，故 eye 也变到该帧
+                // (inverse(frame)·eyeWorld)；平移路径下即 eyeWorld − tileOrigin。
                 const glm::dvec3 eyeWorld(cam.position().x(),
                                           cam.position().y(),
                                           cam.position().z());
-                const glm::dvec3 tileOrigin(cmd.gltfUniforms.modelOrigin[0],
-                                            cmd.gltfUniforms.modelOrigin[1],
-                                            cmd.gltfUniforms.modelOrigin[2]);
-                const glm::dvec3 eyeRtc = eyeWorld - tileOrigin;
+                glm::dvec3 eyeRtc;
+                if (cmd.hasTerrainDisplacementFrame) {
+                    eyeRtc = glm::dvec3(glm::inverse(model) *
+                                        glm::dvec4(eyeWorld, 1.0));
+                } else {
+                    const glm::dvec3 tileOrigin(cmd.gltfUniforms.modelOrigin[0],
+                                                cmd.gltfUniforms.modelOrigin[1],
+                                                cmd.gltfUniforms.modelOrigin[2]);
+                    eyeRtc = eyeWorld - tileOrigin;
+                }
                 cmd.gltfUniforms.eyePositionRTC = {
                     static_cast<float>(eyeRtc.x),
                     static_cast<float>(eyeRtc.y),

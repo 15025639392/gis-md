@@ -9,6 +9,8 @@
 #include "../layers/RasterOverlay.h"
 #include "../renderer/Renderer.h"
 #include "../renderer/TerrainPageStore.h"
+#include "../content/TerrainDisplacementTemplate.h"
+#include "TerrainDisplacementTemplatePool.h"
 #include "../debug/PerfTimer.h"
 
 #include <string>
@@ -145,6 +147,35 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                     static_cast<float>(localOrigin.y() / upLen),
                     static_cast<float>(localOrigin.z() / upLen),
                     1.0f};
+            }
+        }
+        // 北极星 Phase 2c 地形 GPU 位移(flag-gated,仿页存储非空门控):把地形
+        // 命令改绑共享位移模板 VBO/IBO(同 {LOD,row} 复用)+ per-tile 刚体 ENU→
+        // ECEF 帧(承载落位)。池空=未启用 → 保持现 per-tile baked VBO,零回归。
+        // Stage A:模板 heightDelta=0 → 渲染为贴椭球规则栅格(imagery 照常 drape);
+        // 起伏由后续 Stage B 高度纹理在顶点 shader 位移。
+        if (cmd.terrainRenderContent) {
+            if (TerrainDisplacementTemplatePool* pool =
+                    renderer.terrainDisplacementPool()) {
+                const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
+                    pool->acquire(tile.key, tile.bounds,
+                                  kTerrainDisplacementGridSize);
+                if (tb) {
+                    cmd.vertexBuffer = tb->vertexBuffer;
+                    cmd.indexBuffer = tb->indexBuffer;
+                    cmd.indexCount = tb->indexCount;
+                    cmd.vertexCount = tb->vertexCount;
+                    cmd.indexType = RenderCommand::IndexType::UInt32;
+                    cmd.vertexStride = 32;  // TerrainCompact32
+                    cmd.hasTerrainDisplacementFrame = true;
+                    const Mat4 frame = terrainTemplateTileFrame(tile.bounds);
+                    const double* r = frame.data();  // 列主序 16 double
+                    for (int m = 0; m < 16; ++m) {
+                        cmd.terrainDisplacementModelMatrix[m] = r[m];
+                    }
+                    // 模板在 ENU 帧,morph up = 局部 +Z(heightDelta=0 时无 morph)。
+                    u.geomorphUpFactor = {0.0f, 0.0f, 1.0f, 1.0f};
+                }
             }
         }
         cmd.hasWorldSortCenter = true;

@@ -27,6 +27,7 @@ class SceneTelemetryCoordinator;
 class SceneTilesetCoordinator;
 class SkyGradient;
 class TerrainPageStore;
+class TerrainDisplacementTemplatePool;
 class Tileset;
 class VectorLayer;
 class Vec3;
@@ -47,6 +48,9 @@ public:
 
     /// 门③ Step3:把 Engine 拥有的页存储挂到内部 Renderer(可空=未启用)。
     void setTerrainPageStore(TerrainPageStore* store);
+
+    /// 北极星 Phase 2c:把 Engine 拥有的地形位移模板池挂到内部 Renderer(可空)。
+    void setTerrainDisplacementPool(TerrainDisplacementTemplatePool* pool);
 
     Camera& camera() { return *camera_; }
     CameraController& cameraController() { return *cameraController_; }

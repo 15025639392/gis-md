@@ -247,6 +247,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/DecodedHeightmapSampler.cpp
     earth_engine/tiling/GltfDrawCommandBuilder.h
     earth_engine/tiling/GltfDrawCommandBuilder.cpp
+    earth_engine/tiling/TerrainDisplacementTemplatePool.h
+    earth_engine/tiling/TerrainDisplacementTemplatePool.cpp
     earth_engine/tiling/GltfRenderGeometryBuilder.h
     earth_engine/tiling/GltfRenderGeometryBuilder.cpp
     earth_engine/tiling/GltfRenderResourcePreparer.h

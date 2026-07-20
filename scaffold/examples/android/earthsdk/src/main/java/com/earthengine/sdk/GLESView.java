@@ -258,4 +258,5 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     public native void nativeAddDemoVectorLayer();
     public native void nativeResetCamera();
     public native void nativeGrazingView();
+    public native void nativeSetGpuTerrain(boolean enabled);
 }

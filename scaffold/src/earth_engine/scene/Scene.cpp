@@ -107,6 +107,12 @@ void Scene::setTerrainPageStore(TerrainPageStore* store) {
     }
 }
 
+void Scene::setTerrainDisplacementPool(TerrainDisplacementTemplatePool* pool) {
+    if (renderer_) {
+        renderer_->setTerrainDisplacementPool(pool);
+    }
+}
+
 bool Scene::setRenderDevice(RenderDevice* device) {
     renderDevice_ = device;
     layers_->setRenderDevice(device);

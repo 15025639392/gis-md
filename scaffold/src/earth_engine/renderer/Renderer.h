@@ -12,6 +12,7 @@ struct FrameState;
 class RasterOverlayTile;
 struct TileKey;
 class TerrainPageStore;
+class TerrainDisplacementTemplatePool;
 
 /// 平台无关渲染器。
 /// 管理共享 GPU 资源（shader、几何 buffer），供 Scene 和各 Layer 使用。
@@ -117,10 +118,21 @@ public:
     }
     TerrainPageStore* terrainPageStore() const { return terrainPageStore_; }
 
+    /// 北极星 Phase 2c 地形 GPU 位移:Engine 惰性设置(可空=未启用 flag)。
+    /// GltfDrawCommandBuilder 经此非空即把地形命令改绑共享位移模板 + 刚体帧;
+    /// Renderer 不持有其生命周期(Engine 拥有)。
+    void setTerrainDisplacementPool(TerrainDisplacementTemplatePool* pool) {
+        terrainDisplacementPool_ = pool;
+    }
+    TerrainDisplacementTemplatePool* terrainDisplacementPool() const {
+        return terrainDisplacementPool_;
+    }
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     TerrainPageStore* terrainPageStore_ = nullptr;
+    TerrainDisplacementTemplatePool* terrainDisplacementPool_ = nullptr;
 };
 
 } // namespace earth_engine

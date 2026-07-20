@@ -28,6 +28,7 @@ public class MainActivity extends Activity {
     private TextView mDiagnosticsText;
     private Button mBtnAddVectorLayer;
     private Button mBtnResetCamera;
+    private boolean mGpuTerrainOn = false;
     private Handler mHandler;
 
     @Override
@@ -103,13 +104,12 @@ public class MainActivity extends Activity {
         title.setTextSize(12);
         panel.addView(title);
 
-        // Diagnostics
+        // Diagnostics（放到 action 按钮之后 addView，避免长诊断文本把按钮挤出屏幕）
         mDiagnosticsText = new TextView(this);
         mDiagnosticsText.setTextColor(0xFFE0E0E0);
         mDiagnosticsText.setTextSize(9);
         mDiagnosticsText.setIncludeFontPadding(false);
         mDiagnosticsText.setPadding(0, dp(6), 0, dp(6));
-        panel.addView(mDiagnosticsText);
 
         // Action buttons
         LinearLayout actions = new LinearLayout(this);
@@ -135,7 +135,19 @@ public class MainActivity extends Activity {
         btnHorizon.setOnClickListener(v -> mGLView.nativeGrazingView());
         actions.addView(btnHorizon);
 
+        // 北极星 Phase 2c 地形 GPU 位移 A/B 开关(设备侧前后对比)。
+        Button btnGpuTerrain = new Button(this);
+        btnGpuTerrain.setText("GPU Terr: OFF");
+        btnGpuTerrain.setTextSize(10);
+        btnGpuTerrain.setOnClickListener(v -> {
+            mGpuTerrainOn = !mGpuTerrainOn;
+            mGLView.nativeSetGpuTerrain(mGpuTerrainOn);
+            btnGpuTerrain.setText(mGpuTerrainOn ? "GPU Terr: ON" : "GPU Terr: OFF");
+        });
+        actions.addView(btnGpuTerrain);
+
         panel.addView(actions);
+        panel.addView(mDiagnosticsText);
 
         // Close button
         Button closeBtn = new Button(this);

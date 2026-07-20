@@ -6,6 +6,7 @@
 #include "renderer/OffscreenPostProcess.h"
 #include "renderer/VirtualTexturePoc.h"
 #include "renderer/TerrainPageStore.h"
+#include "tiling/TerrainDisplacementTemplatePool.h"
 #include "renderer/TileCompositeBakePoc.h"
 #include "renderer/VtIndirectionSamplePoc.h"
 #include "renderer/RenderDevice.h"
@@ -90,6 +91,10 @@ void Engine::onSurfaceDestroyed() {
         terrainPageStore_.reset();  // 释放 array 纹理(GPU context 即将失效)
     }
     terrainPageStoreInitFailed_ = false;
+    if (terrainDisplacementPool_) {
+        scene_->setTerrainDisplacementPool(nullptr);
+        terrainDisplacementPool_.reset();  // 释放模板 VBO/IBO(GPU context 失效)
+    }
     scene_->setRenderDevice(nullptr);
     if (device_) {
         device_->onSurfaceDestroyed();
@@ -151,6 +156,14 @@ void Engine::setTerrainPageStoreEnabled(bool enabled) {
     if (!enabled && terrainPageStore_) {
         scene_->setTerrainPageStore(nullptr);
         terrainPageStore_.reset();
+    }
+}
+
+void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
+    terrainGpuDisplacementEnabled_ = enabled;
+    if (!enabled && terrainDisplacementPool_) {
+        scene_->setTerrainDisplacementPool(nullptr);
+        terrainDisplacementPool_.reset();
     }
 }
 
@@ -238,6 +251,16 @@ bool Engine::render(double deltaSeconds) {
             vtIndirectionSamplePoc_->ensureResources(surfaceWidthPixels_,
                                                      surfaceHeightPixels_)) {
             vtIndirectionSamplePoc_->tick();
+        }
+    }
+    // 北极星 Phase 2c 地形 GPU 位移(默认关):惰性建共享位移模板池并挂到内部
+    // Renderer;GltfDrawCommandBuilder 对地形命令改绑共享模板 VBO/IBO + 刚体帧。
+    if (terrainGpuDisplacementEnabled_) {
+        if (!terrainDisplacementPool_) {
+            terrainDisplacementPool_ =
+                std::make_unique<TerrainDisplacementTemplatePool>();
+            terrainDisplacementPool_->initialize(device_);
+            scene_->setTerrainDisplacementPool(terrainDisplacementPool_.get());
         }
     }
     // 北极星 合成方案 门③ Step3 页存储原型(默认关):建 texture2DArray 页存储
