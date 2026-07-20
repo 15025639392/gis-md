@@ -115,6 +115,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/content/EllipsoidTerrainContentProvider.cpp
     earth_engine/content/EllipsoidTerrainMeshBuilder.h
     earth_engine/content/EllipsoidTerrainMeshBuilder.cpp
+    earth_engine/content/TerrainDisplacementTemplate.h
+    earth_engine/content/TerrainDisplacementTemplate.cpp
     earth_engine/content/HeightmapTerrainContentProvider.h
     earth_engine/content/HeightmapTerrainContentProvider.cpp
     earth_engine/content/CompositeTerrainProvider.h

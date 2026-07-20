@@ -293,6 +293,12 @@ add_executable(test_ellipsoid_terrain_mesh_builder
 target_link_libraries(test_ellipsoid_terrain_mesh_builder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_ellipsoid_terrain_mesh_builder COMMAND test_ellipsoid_terrain_mesh_builder)
 
+add_executable(test_terrain_displacement_template
+    unit/content/test_terrain_displacement_template.cpp
+)
+target_link_libraries(test_terrain_displacement_template PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_displacement_template COMMAND test_terrain_displacement_template)
+
 add_executable(test_tile_bounding_volume
     unit/tiling/test_tile_bounding_volume.cpp
 )
