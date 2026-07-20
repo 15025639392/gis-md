@@ -12,6 +12,8 @@ namespace earth_engine {
 
 class RenderDevice;
 class Buffer;
+class Texture;
+struct DecodedHeightmap;
 
 // 共享模板固定栅格单元数（n=65=2^6+1，GE 嵌套栅格约定；与 grid64 一致）。
 // 模板独立于瓦片原始网格密度——所有地形瓦片用同一密度共享模板，UV 均匀。
@@ -47,6 +49,19 @@ public:
     const TemplateBuffers* acquire(const TileKey& key, const Rectangle& bounds,
                                    int gridSize);
 
+    // Stage B:per-tile 高度纹理(gridN+1 方 RGBA8,RG 打包 16bit 归一化高度,
+    // NEAREST)。shader 顶点级 texelFetch 取回、按 (minHeight,heightRange) 反量化
+    // → pos = 面点 + 法线·h。按整块瓦片键缓存(高度逐瓦片不同,不跨列共享)。
+    struct HeightTexture {
+        Texture* texture = nullptr;
+        float minHeight = 0.0f;
+        float heightRange = 1.0f;  // maxHeight − minHeight(下限保护 >0)
+        int gridSize = 0;
+    };
+    const HeightTexture* acquireHeightTexture(const TileKey& key,
+                                              const DecodedHeightmap& heightmap,
+                                              int gridSize);
+
     size_t residentTemplateCount() const { return cache_.size(); }
     // 已上传模板 VBO 总字节（§5 有界性观测：应随可见 {LOD,row} 数封顶）。
     size_t totalVertexBytes() const { return totalVertexBytes_; }
@@ -57,10 +72,16 @@ private:
         std::unique_ptr<Buffer> indexBuffer;
         TemplateBuffers view;
     };
+    struct HeightEntry {
+        std::unique_ptr<Texture> texture;
+        HeightTexture view;
+    };
     static uint64_t cacheKey(const TileKey& key, int gridSize);
+    static uint64_t heightCacheKey(const TileKey& key);  // 逐瓦片(含列)
 
     RenderDevice* device_ = nullptr;
     std::unordered_map<uint64_t, Entry> cache_;
+    std::unordered_map<uint64_t, HeightEntry> heightCache_;
     size_t totalVertexBytes_ = 0;
 };
 

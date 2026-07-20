@@ -2,6 +2,7 @@
 
 #include "GltfModel.h"
 #include "../core/math/Mat4.h"
+#include "../providers/TerrainProvider.h"  // DecodedHeightmap
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/ProviderRequestDiagnostics.h"
 #include "../threading/CancellationToken.h"
@@ -53,6 +54,9 @@ struct TileContentLoadResult {
     bool terrainRenderContent = false;
     TileTerrainRenderSource terrainRenderSource =
         TileTerrainRenderSource::Generic;
+    // 北极星 Phase 2c Stage B:保留 worker 解码的原始高度图,供 GL 线程建 per-tile
+    // 高度纹理(shader 位移)+ 后续高度查询(P3)。仅真实地形 heightmap 路径填充。
+    std::unique_ptr<DecodedHeightmap> retainedHeightmap;
 
     static TileContentLoadResult render(std::unique_ptr<GltfModel> model) {
         TileContentLoadResult result;

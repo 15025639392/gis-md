@@ -34,6 +34,11 @@ void TileContentUploadPolicy::prepareGltfRenderContent(
         content.contentTransform);
     tile.content.renderContent.setTerrainRenderContent(terrainRenderContent);
     tile.content.renderContent.setSurfaceSource(surfaceSource);
+    // Phase 2c Stage B:保留原始高度图(供 GPU 位移建高度纹理 + 高度查询)。
+    if (content.retainedHeightmap) {
+        tile.content.renderContent.setRetainedHeightmap(
+            std::move(content.retainedHeightmap));
+    }
     TileLoadResultMetadataApplicator::apply(
         tile,
         std::move(content.metadata));

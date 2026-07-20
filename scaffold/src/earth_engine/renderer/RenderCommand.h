@@ -26,6 +26,10 @@ static constexpr int kGltfPageStoreArrayTextureSlot =
 // 单次 NEAREST fetch 定位 array 层,替代闭式公式。紧挨页存储 array 槽(20→21)。
 static constexpr int kGltfPageStoreIndirTextureSlot =
     kGltfPageStoreArrayTextureSlot + 1;
+// 北极星 Phase 2c Stage B:per-tile 高度纹理槽(**顶点级** sampler,首个;地形
+// 顶点 shader texelFetch 取回归一化高度反量化位移)。紧接页存储 indir 槽(21→22)。
+static constexpr int kGltfHeightTextureSlot =
+    kGltfPageStoreIndirTextureSlot + 1;
 static constexpr int kGltfInstanceMatrixStride = 100;
 
 /// 固定容量纹理槽表（inline 存储，无堆分配）。
@@ -36,7 +40,7 @@ static constexpr int kGltfInstanceMatrixStride = 100;
 class RenderCommandTextureList {
 public:
     static constexpr size_t kCapacity =
-        static_cast<size_t>(kGltfPageStoreIndirTextureSlot) + 1u;
+        static_cast<size_t>(kGltfHeightTextureSlot) + 1u;
 
     RenderCommandTextureList() = default;
     RenderCommandTextureList(std::initializer_list<Texture*> init) {

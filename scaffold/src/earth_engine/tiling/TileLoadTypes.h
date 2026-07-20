@@ -55,6 +55,7 @@ struct TileLoadedContent {
         content.metadata = std::move(result.metadata);
         content.terrainRenderContent = result.terrainRenderContent;
         content.terrainRenderSource = result.terrainRenderSource;
+        content.retainedHeightmap = std::move(result.retainedHeightmap);
         return content;
     }
 
@@ -64,6 +65,8 @@ struct TileLoadedContent {
         TileTerrainRenderSource::Generic;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
+    // Phase 2c Stage B:worker 解码的原始高度图,GL 线程建高度纹理后消费。
+    std::unique_ptr<DecodedHeightmap> retainedHeightmap;
 
     bool satisfiesContentTerrainPayloadContract() const {
         if (!terrainRenderContent || gltfModel == nullptr) {

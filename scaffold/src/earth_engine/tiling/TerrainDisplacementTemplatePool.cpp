@@ -1,9 +1,13 @@
 #include "TerrainDisplacementTemplatePool.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <functional>
 #include <vector>
 
 #include "../content/TerrainDisplacementTemplate.h"
+#include "../providers/TerrainProvider.h"  // DecodedHeightmap
 #include "../renderer/RenderDevice.h"
 #include "GltfRenderGeometryBuilder.h"  // TerrainGpuVertex
 #include "SchemeId.h"
@@ -90,6 +94,77 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
     totalVertexBytes_ += vboDesc.size;
 
     auto inserted = cache_.emplace(k, std::move(entry));
+    return &inserted.first->second.view;
+}
+
+uint64_t TerrainDisplacementTemplatePool::heightCacheKey(const TileKey& key) {
+    // 逐瓦片(含 x 列):高度逐瓦片不同,不跨列共享。
+    uint64_t h = static_cast<uint64_t>(std::hash<SchemeId>()(key.schemeId));
+    auto mix = [&h](uint64_t v) {
+        h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    };
+    mix(static_cast<uint64_t>(key.z));
+    mix(static_cast<uint64_t>(key.x));
+    mix(static_cast<uint64_t>(key.y));
+    return h;
+}
+
+const TerrainDisplacementTemplatePool::HeightTexture*
+TerrainDisplacementTemplatePool::acquireHeightTexture(
+    const TileKey& key, const DecodedHeightmap& heightmap, int gridSize) {
+    if (!device_ || gridSize < 1 || !heightmap.valid()) {
+        return nullptr;
+    }
+    const uint64_t k = heightCacheKey(key);
+    auto it = heightCache_.find(k);
+    if (it != heightCache_.end()) {
+        return &it->second.view;
+    }
+
+    // gridN+1 方栅格:texel(i,j) = 顶点(i,j)高度(shader 按栅格下标 texelFetch)。
+    // 高度归一化 [0,1] 打进 RG 两通道(16bit):R=高字节,G=低字节。B/A=0。
+    // u 用 i/gridSize(mercator-x 线性于经度,精确);v 用 j/gridSize(线性纬度近似
+    // mercator-v,细瓦片亚 texel,粗瓦片略偏——Stage B 先验证,必要时补 mercator-v)。
+    const int n = gridSize + 1;
+    const float minH = heightmap.minHeight;
+    const float range = std::max(1e-3f, heightmap.maxHeight - heightmap.minHeight);
+    std::vector<uint8_t> bytes(static_cast<size_t>(n) * n * 4, 0);
+    for (int j = 0; j < n; ++j) {
+        const float v = static_cast<float>(j) / static_cast<float>(gridSize);
+        for (int i = 0; i < n; ++i) {
+            const float u = static_cast<float>(i) / static_cast<float>(gridSize);
+            const float hMeters = heightmap.sampleBilinear(u, v);
+            const float t = std::clamp((hMeters - minH) / range, 0.0f, 1.0f);
+            const uint32_t v16 =
+                static_cast<uint32_t>(std::lround(t * 65535.0f));
+            const size_t idx = (static_cast<size_t>(j) * n + i) * 4;
+            bytes[idx + 0] = static_cast<uint8_t>((v16 >> 8) & 0xFF);
+            bytes[idx + 1] = static_cast<uint8_t>(v16 & 0xFF);
+        }
+    }
+
+    TextureDesc desc;
+    desc.width = n;
+    desc.height = n;
+    desc.format = TextureDesc::Format::RGBA8;
+    desc.data = bytes.data();
+    desc.dataSize = bytes.size();
+    desc.mipmap = false;
+    desc.minFilter = TextureDesc::Filter::Nearest;
+    desc.magFilter = TextureDesc::Filter::Nearest;
+    desc.wrapS = TextureDesc::Wrap::Clamp;
+    desc.wrapT = TextureDesc::Wrap::Clamp;
+
+    HeightEntry entry;
+    entry.texture = device_->createTexture(desc);
+    if (!entry.texture) {
+        return nullptr;
+    }
+    entry.view.texture = entry.texture.get();
+    entry.view.minHeight = minH;
+    entry.view.heightRange = range;
+    entry.view.gridSize = gridSize;
+    auto inserted = heightCache_.emplace(k, std::move(entry));
     return &inserted.first->second.view;
 }
 
