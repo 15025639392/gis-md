@@ -29,11 +29,20 @@ struct TileContentTerrainResiduePolicy {
             tile.content.renderContent;
         const TileFillGeometrySignature* signature =
             renderContent.fillGeometrySignature();
-        const bool retryable =
+        // Fill-bridge-eligible load states. Besides the retryable-loading states
+        // (Unloaded/ContentLoading/FailedTemporarily), `Failed` (terminal — real
+        // terrain will not arrive, e.g. horizon tiles beyond heightmap coverage)
+        // must also protect a valid fill: for such tiles the ellipsoid fill proxy
+        // IS the permanent draped surface, not stale residue. Omitting Failed made
+        // clearRejectableResidue wipe their fill every full-selection frame, and the
+        // fill-proxy prep loop rebuilt it (makeModel + GPU buffers) — a per-frame
+        // build/clear storm costing ~20-30ms during grazing-horizon motion.
+        const bool fillBridgeState =
             state == TileLoadState::Unloaded ||
             state == TileLoadState::ContentLoading ||
-            state == TileLoadState::FailedTemporarily;
-        return retryable &&
+            state == TileLoadState::FailedTemporarily ||
+            state == TileLoadState::Failed;
+        return fillBridgeState &&
                tile.content.contentKind == TileContentKind::Unknown &&
                renderContent.isFillReady() &&
                signature &&
