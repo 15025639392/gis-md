@@ -149,12 +149,17 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                     1.0f};
             }
         }
-        // 北极星 Phase 2c 地形 GPU 位移(flag-gated,仿页存储非空门控):把地形
-        // 命令改绑共享位移模板 VBO/IBO(同 {LOD,row} 复用)+ per-tile 刚体 ENU→
-        // ECEF 帧(承载落位)。池空=未启用 → 保持现 per-tile baked VBO,零回归。
-        // Stage A:模板 heightDelta=0 → 渲染为贴椭球规则栅格(imagery 照常 drape);
-        // 起伏由后续 Stage B 高度纹理在顶点 shader 位移。
-        if (cmd.terrainRenderContent) {
+        // 北极星 Phase 2c 地形 GPU 位移(flag-gated,仿页存储非空门控):把**真实
+        // 地形**命令改绑共享位移模板 VBO/IBO(同 {LOD,row} 复用)+ per-tile 刚体
+        // ENU→ECEF 帧(承载落位)。池空=未启用 → 保持现 per-tile baked VBO,零回归。
+        // **只动 RealTerrain,不碰 FillProxy**:fill 本就是贴椭球代理(小 VBO),覆写它
+        // 会扰乱 fill→real 生命周期(实测导致 fill 瓦片卡住不转 real + 每帧 fill 预备
+        // 开销);且 §5 有界目标针对的是真实地形的大 per-tile VBO,非 fill。
+        // Stage A:模板 heightDelta=0 → 真实地形渲染为贴椭球规则栅格(imagery 照常
+        // drape);起伏由后续 Stage B 高度纹理在顶点 shader 位移。
+        if (cmd.terrainRenderContent &&
+            cmd.terrainSurfaceSource ==
+                TerrainSurfaceCommandSource::RealTerrain) {
             if (TerrainDisplacementTemplatePool* pool =
                     renderer.terrainDisplacementPool()) {
                 const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
