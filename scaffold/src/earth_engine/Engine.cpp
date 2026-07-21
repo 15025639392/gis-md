@@ -161,7 +161,30 @@ void Engine::setTerrainPageStoreEnabled(bool enabled) {
 
 void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
     terrainGpuDisplacementEnabled_ = enabled;
-    if (!enabled && terrainDisplacementPool_) {
+    Tileset* tileset = scene_ ? scene_->tileset() : nullptr;
+    if (enabled) {
+        if (!terrainDisplacementPool_ && device_) {
+            // 急切创建 pool(而非等 render() 里惰性建):render() 的惰性块在
+            // scene_->update()(瓦片选择+重建 draw 命令)之后,导致首帧瓦片 build
+            // 时 pool 仍为空、命令缓存成 CPU 路径,之后不再重建 → GPU 位移永不
+            // 生效。本函数在 render 线程调用(GL context 已就绪),此处建可保证
+            // pool 先于任何瓦片 build 存在。
+            terrainDisplacementPool_ =
+                std::make_unique<TerrainDisplacementTemplatePool>();
+            terrainDisplacementPool_->initialize(device_);
+            scene_->setTerrainDisplacementPool(terrainDisplacementPool_.get());
+        }
+        // 失效已缓存的地形命令 → 下帧全部按 GPU 位移路径重建(否则开关前已加载
+        // 的瓦片永远停留在 CPU baked VBO,运行时开关只对新瓦片生效)。
+        if (tileset) {
+            tileset->invalidateTerrainDrawCommands();
+        }
+    } else if (terrainDisplacementPool_) {
+        // 关闭:先失效命令(清掉命令对 pool GPU buffer 的裸指针),再释放 pool,
+        // 消除 ON→OFF 悬垂句柄崩溃;命令随后按 CPU baked VBO 路径重建。
+        if (tileset) {
+            tileset->invalidateTerrainDrawCommands();
+        }
         scene_->setTerrainDisplacementPool(nullptr);
         terrainDisplacementPool_.reset();
     }

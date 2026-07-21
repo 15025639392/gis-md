@@ -208,6 +208,9 @@ static bool createEngine() {
                 *gPlatformBridge);
         gSdkFacade->installScene(
             minimal_globe_demo::makeDefaultDemoSceneConfig());
+        // [Phase 2c 测试] 启动即启用 GPU 位移,让瓦片从加载起就带 pool 重建
+        // (运行时 toggle 不重建已缓存命令,settled 近景开关无效——见 Engine.cpp)。
+        gEngine->setTerrainGpuDisplacementEnabled(true);
     } else {
         LOGE("Engine initialization failed");
         clearDemoEngineObjects();

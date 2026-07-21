@@ -169,6 +169,20 @@ public:
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays() const {
         return rasterOverlays_;
     }
+    // Phase 2c:GPU 位移开关切换时,失效所有地形瓦片的缓存 draw 命令,强制下帧
+    // 按新状态重建(开→改绑共享位移模板;关→回落 CPU baked VBO)。无此失效,已
+    // 缓存命令永不重建(rebuildCachedDrawCommands 仅在缓存空时触发),运行时开关
+    // 对已加载瓦片零效果;且关闭前失效可清掉命令对 pool GPU buffer 的裸指针引用,
+    // 消除 pool 释放后的悬垂句柄崩溃。
+    void invalidateTerrainDrawCommands() {
+        for (auto& entry : tileRegistry_.tiles()) {
+            TilesetTile* tile = entry.second.get();
+            if (tile &&
+                tile->content.renderContent.isTerrainRenderContent()) {
+                tile->content.renderContent.invalidateCachedDrawCommands();
+            }
+        }
+    }
     bool shouldHoldPresentationFrame() const;
     bool requiresBaseImageryPresentationSurface() const;
     const TileScheme& tileScheme() const { return *tileScheme_; }

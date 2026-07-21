@@ -154,11 +154,16 @@ TEST(TerrainDisplacementTemplate, ReconstructsCartographicToCartesian) {
     }
 }
 
-// 模板拓扑健全：顶点数 n²、索引数 grid²*6。
+// 模板拓扑健全：栅格 n² 顶点 + 4*n 裙墙顶点；栅格 grid²*6 索引 +
+// 4*(n-1)*6 裙墙索引（四边各 n 顶点、n-1 段墙、每段两三角）。
 TEST(TerrainDisplacementTemplate, TopologyCountsMatchGrid) {
     const TerrainDisplacementTemplate t = buildTerrainDisplacementTemplate(
         webMercatorTileRect(6, 30, 24), kGrid);
     const int n = kGrid + 1;
-    EXPECT_EQ(t.vertices.size(), static_cast<size_t>(n) * n);
-    EXPECT_EQ(t.indices.size(), static_cast<size_t>(kGrid) * kGrid * 6);
+    const size_t gridVerts = static_cast<size_t>(n) * n;
+    const size_t skirtVerts = static_cast<size_t>(4) * n;
+    const size_t gridIndices = static_cast<size_t>(kGrid) * kGrid * 6;
+    const size_t skirtIndices = static_cast<size_t>(4) * (n - 1) * 6;
+    EXPECT_EQ(t.vertices.size(), gridVerts + skirtVerts);
+    EXPECT_EQ(t.indices.size(), gridIndices + skirtIndices);
 }

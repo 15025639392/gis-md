@@ -858,11 +858,13 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
     GLuint currentProgram = 0;
     GLuint currentVao = 0;
-    // +1 覆盖 SVT 间接纹理槽(kGltfPageStoreIndirTextureSlot=21):此数组既是逐
-    // unit 绑定缓存,也隐式界定纹理绑定循环的最大 vec 索引
+    // +1 覆盖最高纹理槽(kGltfHeightTextureSlot=22,Phase 2c 地形高度纹理):此
+    // 数组既是逐 unit 绑定缓存,也隐式界定纹理绑定循环的最大 vec 索引
     // (min(cmd.textures.size(), 本数组 size))。定容小于最高槽会把该槽排除出循环
-    // → 新纹理永不绑定(item① 真机踩过的孪生 bug),故随 slot21 同步扩容。
-    std::array<GLuint, kGltfPageStoreIndirTextureSlot + 1> currentTextures{};
+    // → 新纹理永不绑定(真机踩过的孪生 bug:高度纹理槽 22 加入时此处未同步扩容,
+    // 导致 GPU 位移瓦片高度纹理永不绑定 → texelFetch 恒 0 → 地形平抬无起伏),故
+    // **每新增最高纹理槽都必须同步扩容此数组**。
+    std::array<GLuint, kGltfHeightTextureSlot + 1> currentTextures{};
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool alphaToCoverageEnabled = false;

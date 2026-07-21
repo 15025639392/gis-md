@@ -5,6 +5,7 @@
 
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/QuadtreeGeometricError.h"
 #include "../core/geodesy/Transforms.h"
 #include "../core/math/MathUtils.h"
 
@@ -100,6 +101,67 @@ TerrainDisplacementTemplate buildTerrainDisplacementTemplate(
             tmpl.indices.push_back(d);
         }
     }
+
+    // 裙墙（P4）：绕四条边挂一圈向下的墙，遮住相邻 LOD/高度不连续处的接缝。
+    // GPU 位移路径的巧解——裙顶点复制边顶点，UV 逐字保持一致（→ shader
+    // 按 UV*gridSize 取到**同一** height texel → 采同一高度 h），只把
+    // localPos 沿局部法线预降 skirtHeight。位移 shader 做 morphPos =
+    // a_position + normal*h，于是裙墙自动挂在「位移后的边缘」下方：
+    // 裙顶 = 边缘位移点，裙底 = 边缘位移点 - normal*skirtHeight。零 shader 改动。
+    // skirtHeight = 5*maxGeomError*width，只随 LOD（经度宽）变 → 逐列不变 →
+    // 仍可跨该 {LOD,row} 共享。heightDelta 保持 0（pool 打包默认 0），
+    // 故 geomorph 项对裙顶点恒为 0。
+    const double skirtHeight = calcQuadtreeSkirtHeight(ellipsoid, tileBounds);
+
+    const auto gridIndex = [n](int x, int y) {
+        return static_cast<uint32_t>(y * n + x);
+    };
+    // 边序 + 缠绕镜像 EllipsoidTerrainMeshBuilder::appendRegularGridSkirt
+    // （west N→S, south W→E, east S→N, north E→W；(topA,topB,skirtA)/
+    // (skirtA,topB,skirtB)），令墙面朝外不被背面剔除。
+    const auto appendSkirtEdge = [&](const std::vector<uint32_t>& edge) {
+        if (edge.size() < 2) {
+            return;
+        }
+        const uint32_t firstSkirt =
+            static_cast<uint32_t>(tmpl.vertices.size());
+        for (uint32_t src : edge) {
+            TerrainDisplacementTemplateVertex sv = tmpl.vertices[src];
+            const Vec3 localPos(sv.localPos[0], sv.localPos[1], sv.localPos[2]);
+            const Vec3 localNormal(
+                sv.localNormal[0], sv.localNormal[1], sv.localNormal[2]);
+            // 只降 localPos；localNormal / uv 与边顶点保持逐字一致。
+            storeVec3(sv.localPos, localPos - localNormal * skirtHeight);
+            tmpl.vertices.push_back(sv);
+        }
+        for (size_t i = 0; i + 1 < edge.size(); ++i) {
+            const uint32_t topA = edge[i];
+            const uint32_t topB = edge[i + 1];
+            const uint32_t skirtA = firstSkirt + static_cast<uint32_t>(i);
+            const uint32_t skirtB = firstSkirt + static_cast<uint32_t>(i + 1);
+            tmpl.indices.push_back(topA);
+            tmpl.indices.push_back(topB);
+            tmpl.indices.push_back(skirtA);
+            tmpl.indices.push_back(skirtA);
+            tmpl.indices.push_back(topB);
+            tmpl.indices.push_back(skirtB);
+        }
+    };
+
+    std::vector<uint32_t> edge;
+    edge.reserve(static_cast<size_t>(n));
+    edge.clear();  // west: (0,0)→(0,n-1)  north→south
+    for (int y = 0; y < n; ++y) edge.push_back(gridIndex(0, y));
+    appendSkirtEdge(edge);
+    edge.clear();  // south: (0,n-1)→(n-1,n-1)  west→east
+    for (int x = 0; x < n; ++x) edge.push_back(gridIndex(x, n - 1));
+    appendSkirtEdge(edge);
+    edge.clear();  // east: (n-1,n-1)→(n-1,0)  south→north
+    for (int y = n - 1; y >= 0; --y) edge.push_back(gridIndex(n - 1, y));
+    appendSkirtEdge(edge);
+    edge.clear();  // north: (n-1,0)→(0,0)  east→west
+    for (int x = n - 1; x >= 0; --x) edge.push_back(gridIndex(x, 0));
+    appendSkirtEdge(edge);
 
     return tmpl;
 }

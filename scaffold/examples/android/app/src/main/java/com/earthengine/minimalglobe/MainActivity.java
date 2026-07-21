@@ -28,7 +28,7 @@ public class MainActivity extends Activity {
     private TextView mDiagnosticsText;
     private Button mBtnAddVectorLayer;
     private Button mBtnResetCamera;
-    private boolean mGpuTerrainOn = false;
+    private boolean mGpuTerrainOn = true;
     private Handler mHandler;
 
     @Override
@@ -137,7 +137,7 @@ public class MainActivity extends Activity {
 
         // 北极星 Phase 2c 地形 GPU 位移 A/B 开关(设备侧前后对比)。
         Button btnGpuTerrain = new Button(this);
-        btnGpuTerrain.setText("GPU Terr: OFF");
+        btnGpuTerrain.setText("GPU Terr: ON");
         btnGpuTerrain.setTextSize(10);
         btnGpuTerrain.setOnClickListener(v -> {
             mGpuTerrainOn = !mGpuTerrainOn;

@@ -294,7 +294,12 @@ public:
                surface_.surfaceSource != SurfaceDrawableSource::HeightmapTerrain;
     }
     void setRetainedHeightmap(std::unique_ptr<DecodedHeightmap> decoded) {
-        if (isGltfOwnedContentState()) {
+        // Phase 2c:heightmap 地形虽当 glTF 交付(prepareGltfContent 设 gltfModel
+        // → isGltfOwnedContentState() 为 true),但 GPU 位移需保留其原始高度图建
+        // per-tile 高度纹理。故只要**显式传入非空高度图**(仅 heightmap 地形的
+        // 上传路径这么做,真 glTF 内容从不传)就保留;仅当 decoded 为空(意在清理)
+        // 且已是 gltf-owned 态时,才丢弃可能残留的 stale 高度图。
+        if (!decoded && isGltfOwnedContentState()) {
             if (surface_.heightmap) {
                 surface_.heightmap.reset();
                 markRetainedResourcesChanged();

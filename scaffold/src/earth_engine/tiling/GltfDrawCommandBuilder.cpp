@@ -150,62 +150,6 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                     1.0f};
             }
         }
-        // 北极星 Phase 2c 地形 GPU 位移(flag-gated,仿页存储非空门控):把**真实
-        // 地形**命令改绑共享位移模板 VBO/IBO(同 {LOD,row} 复用)+ per-tile 刚体
-        // ENU→ECEF 帧(承载落位)。池空=未启用 → 保持现 per-tile baked VBO,零回归。
-        // **只动 RealTerrain,不碰 FillProxy**:fill 本就是贴椭球代理(小 VBO),覆写它
-        // 会扰乱 fill→real 生命周期(实测导致 fill 瓦片卡住不转 real + 每帧 fill 预备
-        // 开销);且 §5 有界目标针对的是真实地形的大 per-tile VBO,非 fill。
-        // **只对有自有高度图的瓦片走共享模板 GPU 位移**:原生 z≤12 瓦片有
-        // retainedHeightmap → 建/取 per-tile 高度纹理,shader 沿法线位移+双分辨率
-        // morph。上采样 z13+ 瓦片(父级裁剪来,无自有高度图)保持现 per-tile baked
-        // VBO(其顶点已含父级真实高度)——绝不绑平模板(否则 enabled=0 → 深近景
-        // 变平椭球回归)。先取高度纹理、成功才换模板 VBO;高度图缺失/纹理未就绪
-        // 一律不碰 cmd(零回归回落 CPU baked VBO)。
-        if (cmd.terrainRenderContent &&
-            cmd.terrainSurfaceSource ==
-                TerrainSurfaceCommandSource::RealTerrain) {
-            if (TerrainDisplacementTemplatePool* pool =
-                    renderer.terrainDisplacementPool()) {
-                const DecodedHeightmap* hm =
-                    tile.content.renderContent.retainedHeightmap();
-                const TerrainDisplacementTemplatePool::HeightTexture* ht =
-                    hm ? pool->acquireHeightTexture(
-                             tile.key, *hm, kTerrainDisplacementGridSize)
-                       : nullptr;
-                const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
-                    (ht && ht->texture)
-                        ? pool->acquire(tile.key, tile.bounds,
-                                        kTerrainDisplacementGridSize)
-                        : nullptr;
-                if (tb && ht && ht->texture) {
-                    cmd.vertexBuffer = tb->vertexBuffer;
-                    cmd.indexBuffer = tb->indexBuffer;
-                    cmd.indexCount = tb->indexCount;
-                    cmd.vertexCount = tb->vertexCount;
-                    cmd.indexType = RenderCommand::IndexType::UInt32;
-                    cmd.vertexStride = 32;  // TerrainCompact32
-                    cmd.hasTerrainDisplacementFrame = true;
-                    const Mat4 frame = terrainTemplateTileFrame(tile.bounds);
-                    const double* r = frame.data();  // 列主序 16 double
-                    for (int m = 0; m < 16; ++m) {
-                        cmd.terrainDisplacementModelMatrix[m] = r[m];
-                    }
-                    // 模板在 ENU 帧,morph up = 局部 +Z。w(morphFactor)每帧由
-                    // applyPerFrameCommandState 盖章为 terrainMorphFactor。
-                    u.geomorphUpFactor = {0.0f, 0.0f, 1.0f, 1.0f};
-                    if (cmd.textures.size() <=
-                        static_cast<size_t>(kGltfHeightTextureSlot)) {
-                        cmd.textures.resize(
-                            static_cast<size_t>(kGltfHeightTextureSlot) + 1);
-                    }
-                    cmd.textures[kGltfHeightTextureSlot] = ht->texture;
-                    u.heightDisplace = {
-                        ht->minHeight, ht->heightRange, 1.0f,
-                        static_cast<float>(kTerrainDisplacementGridSize)};
-                }
-            }
-        }
         cmd.hasWorldSortCenter = true;
         cmd.worldSortCenter = {
             primitive.sortCenterEcef.x(),
@@ -374,6 +318,73 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
         u.hasWaterMask = cmd.gltfHasWaterMask;
         u.waterMaskTranslationScale = cmd.gltfWaterMaskTranslationScale;
         u.waterMaskState = cmd.gltfWaterMaskState;
+
+        // 北极星 Phase 2c 地形 GPU 位移(flag-gated,仿页存储非空门控):把**真实
+        // 地形**命令改绑共享位移模板 VBO/IBO(同 {LOD,row} 复用)+ per-tile 刚体
+        // ENU→ECEF 帧(承载落位)。池空=未启用 → 保持现 per-tile baked VBO,零回归。
+        // **只动 RealTerrain,不碰 FillProxy**:fill 本就是贴椭球代理(小 VBO),覆写它
+        // 会扰乱 fill→real 生命周期(实测导致 fill 瓦片卡住不转 real + 每帧 fill 预备
+        // 开销);且 §5 有界目标针对的是真实地形的大 per-tile VBO,非 fill。
+        // **只对有自有高度图的瓦片走共享模板 GPU 位移**:原生 z≤12 瓦片有
+        // retainedHeightmap → 建/取 per-tile 高度纹理,shader 沿法线位移+双分辨率
+        // morph。上采样 z13+ 瓦片(父级裁剪来,无自有高度图)保持现 per-tile baked
+        // VBO(其顶点已含父级真实高度)——绝不绑平模板(否则 enabled=0 → 深近景
+        // 变平椭球回归)。先取高度纹理、成功才换模板 VBO;高度图缺失/纹理未就绪
+        // 一律不碰 cmd(零回归回落 CPU baked VBO)。
+        // **必须放在材质纹理块之后**:上面的 cmd.textures.resize(15) + water mask
+        // 会重置纹理表,若在其前设置高度纹理槽(slot 22)会被 resize(15) 清空
+        // → texelFetch 恒 0 → 地形平抬无起伏(真机踩过的排序 bug)。
+        if (cmd.terrainRenderContent &&
+            cmd.terrainSurfaceSource ==
+                TerrainSurfaceCommandSource::RealTerrain) {
+            if (TerrainDisplacementTemplatePool* pool =
+                    renderer.terrainDisplacementPool()) {
+                const DecodedHeightmap* hm =
+                    tile.content.renderContent.retainedHeightmap();
+                const TerrainDisplacementTemplatePool::HeightTexture* ht =
+                    hm ? pool->acquireHeightTexture(
+                             tile.key, *hm, kTerrainDisplacementGridSize)
+                       : nullptr;
+                const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
+                    (ht && ht->texture)
+                        ? pool->acquire(tile.key, tile.bounds,
+                                        kTerrainDisplacementGridSize)
+                        : nullptr;
+                if (tb && ht && ht->texture) {
+                    cmd.vertexBuffer = tb->vertexBuffer;
+                    cmd.indexBuffer = tb->indexBuffer;
+                    cmd.indexCount = tb->indexCount;
+                    cmd.vertexCount = tb->vertexCount;
+                    cmd.indexType = RenderCommand::IndexType::UInt32;
+                    cmd.vertexStride = 32;  // TerrainCompact32
+                    cmd.hasTerrainDisplacementFrame = true;
+                    // 关键:切到 terrainShader。本 demo 地形无水面掩码元数据 →
+                    // useTerrainFormat=false → 原 cmd 用 gltfShader(120B 布局、**无
+                    // 位移逻辑**),模板(32B,零高程)经它原样渲染=永远平。位移逻辑
+                    // 只在 terrainShader(kTerrainVertexGLSL),且它读 32B TerrainGpuVertex
+                    // 布局、fragment 处理影像叠加,与本模板天然匹配。不切 shader =
+                    // Phase 2c 位移对本 demo 地形全程死代码。
+                    cmd.shader = renderer.terrainShader();
+                    const Mat4 frame = terrainTemplateTileFrame(tile.bounds);
+                    const double* r = frame.data();  // 列主序 16 double
+                    for (int m = 0; m < 16; ++m) {
+                        cmd.terrainDisplacementModelMatrix[m] = r[m];
+                    }
+                    // 模板在 ENU 帧,morph up = 局部 +Z。w(morphFactor)每帧由
+                    // applyPerFrameCommandState 盖章为 terrainMorphFactor。
+                    u.geomorphUpFactor = {0.0f, 0.0f, 1.0f, 1.0f};
+                    if (cmd.textures.size() <=
+                        static_cast<size_t>(kGltfHeightTextureSlot)) {
+                        cmd.textures.resize(
+                            static_cast<size_t>(kGltfHeightTextureSlot) + 1);
+                    }
+                    cmd.textures[kGltfHeightTextureSlot] = ht->texture;
+                    u.heightDisplace = {
+                        ht->minHeight, ht->heightRange, 1.0f,
+                        static_cast<float>(kTerrainDisplacementGridSize)};
+                }
+            }
+        }
         cmd.cullFace = !primitive.doubleSided;
         cached.push_back(std::move(cmd));
     }

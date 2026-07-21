@@ -33,8 +33,11 @@ struct TerrainDisplacementTemplateVertex {
 
 struct TerrainDisplacementTemplate {
     int gridSize = 0;  // 单元格数；顶点行/列数 n = gridSize + 1
-    std::vector<TerrainDisplacementTemplateVertex> vertices;  // n*n，行主序
-    std::vector<uint32_t> indices;                            // gridSize²*6
+    // n*n 栅格顶点（行主序）+ 尾随 4*n 裙墙顶点（四边周界复制、沿法线预降
+    // skirtHeight；UV 与边顶点一致 → 采同一高度）。
+    std::vector<TerrainDisplacementTemplateVertex> vertices;
+    // gridSize²*6 栅格索引 + 4*(n-1)*6 裙墙索引。
+    std::vector<uint32_t> indices;
 };
 
 // 为一块瓦片（其纬度范围 + 经度宽度决定形状）生成共享位移模板。
