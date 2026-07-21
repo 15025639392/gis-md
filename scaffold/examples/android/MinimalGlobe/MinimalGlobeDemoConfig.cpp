@@ -84,7 +84,10 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         satellite.attribution = "Gaode/Amap satellite";
         satellite.minimumZoom = 0;
         satellite.maximumZoom = kMeasureImageryMaxZoom;
-        satellite.overlayMinimumZoom = 0;
+        // Gaode 卫星 z0(整幅世界瓦片)是「无卫星图」橄榄灰占位图,z1 起才是真实
+        // 影像。overlayMinimumZoom=1 让映射永不请求 z0 占位图 → 全球尺度粗瓦片
+        // 直接贴 z1+ 真实影像(不再露橄榄灰)。
+        satellite.overlayMinimumZoom = 1;
         satellite.overlayMaximumZoom = 0;
         satellite.maximumSimultaneousTileLoads = 20;
         satellite.maximumScreenSpaceError = 2.0;
