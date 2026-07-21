@@ -920,6 +920,13 @@ out vec3 v_normal;
 out vec3 v_position;
 out vec4 v_texcoord01;
 
+// Phase 2c P2 morph:反量化 RG 16bit 高度纹素→米(mr = (minHeight, heightRange))。
+float eeSampleTerrainHeight(highp sampler2D tex, ivec2 texel, vec2 mr) {
+    vec4 p = texelFetch(tex, texel, 0);
+    float t = (p.r * 255.0 * 256.0 + p.g * 255.0) / 65535.0;
+    return mr.x + t * mr.y;
+}
+
 void main() {
     // cesium-native RTC: tile origin is baked into the MVP matrix (computed in
     // CPU double precision). a_position is relative to the tile center.
@@ -927,16 +934,29 @@ void main() {
     // heightDelta=0(如上采样子瓦片)或 w=1(无 morph)时 offset 为 0,退化为原样。
     vec3 morphPos = a_position +
         u_geomorphUpFactor.xyz * a_heightDelta * (1.0 - u_geomorphUpFactor.w);
-    // Phase 2c Stage B:共享模板 a_position=零高程面点,沿法线采高度纹理位移到真实
-    // 高度。按栅格下标 texelFetch(NEAREST,无插值)→ RG 反量化 16bit → 米。仅位移
-    // 命令 enabled=1;其余瓦片 z=0 退化(不采纹理,零回归)。
+    // Phase 2c P2:共享模板零高程面点沿法线采高度纹理位移。morph 连续生长——本纹理
+    // 双分辨率采样:fine=本顶点栅格纹素(texelFetch NEAREST),coarse=四个偶数格点
+    // 双线性(osgEarth 邻居平均:偶点=self→delta0,奇点=相邻偶点均值)。按 SSE 驱动
+    // morphFactor(=u_geomorphUpFactor.w:0=粗起点≈父面,1=细真实)mix→跨 LOD 无 pop、
+    // 相邻瓦片共享偶点高度一致→无接缝。enabled=0 的瓦片跳过(零回归)。
     if (u_heightDisplace.z > 0.5) {
-        ivec2 texel = ivec2(
-            int(a_texcoord01.x * u_heightDisplace.w + 0.5),
-            int(a_texcoord01.y * u_heightDisplace.w + 0.5));
-        vec4 packed = texelFetch(u_heightTexture, texel, 0);
-        float t = (packed.r * 255.0 * 256.0 + packed.g * 255.0) / 65535.0;
-        float h = u_heightDisplace.x + t * u_heightDisplace.y;
+        float gridN = u_heightDisplace.w;
+        vec2 gf = a_texcoord01.xy * gridN;                 // 栅格坐标 [0,gridN]
+        vec2 mr = u_heightDisplace.xy;                      // (minHeight, heightRange)
+        float hFine = eeSampleTerrainHeight(
+            u_heightTexture, ivec2(gf + 0.5), mr);
+        vec2 g0 = floor(gf * 0.5) * 2.0;                    // 左下偶数格点
+        vec2 fr = (gf - g0) * 0.5;                          // 2× 格内插值系数 [0,1]
+        float e00 = eeSampleTerrainHeight(u_heightTexture, ivec2(g0), mr);
+        float e10 = eeSampleTerrainHeight(
+            u_heightTexture, ivec2(min(g0.x + 2.0, gridN), g0.y), mr);
+        float e01 = eeSampleTerrainHeight(
+            u_heightTexture, ivec2(g0.x, min(g0.y + 2.0, gridN)), mr);
+        float e11 = eeSampleTerrainHeight(
+            u_heightTexture,
+            ivec2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), mr);
+        float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
+        float h = mix(hCoarse, hFine, u_geomorphUpFactor.w);
         morphPos += normalize(a_normal) * h;
     }
     v_normal = normalize(a_normal);
@@ -2129,6 +2149,14 @@ struct TerrainVertexOut {
     float4 texcoord01;
 };
 
+// Phase 2c P2 morph:反量化 RG 16bit 高度纹素→米(mr = (minHeight, heightRange))。
+static inline float eeSampleTerrainHeight(
+    texture2d<float> tex, uint2 texel, float2 mr) {
+    float4 p = tex.read(texel, 0);
+    float t = (p.r * 255.0 * 256.0 + p.g * 255.0) / 65535.0;
+    return mr.x + t * mr.y;
+}
+
 vertex TerrainVertexOut terrainVertex(
     TerrainVertexIn in [[stage_in]],
     constant float4x4& u_modelViewProjection [[buffer(1)]],
@@ -2139,15 +2167,28 @@ vertex TerrainVertexOut terrainVertex(
     // geomorph:沿瓦片中心椭球法线把顶点从粗起点(w=0)长到真实高度(w=1)。
     float3 morphPos = in.position +
         u_geomorphUpFactor.xyz * in.heightDelta * (1.0 - u_geomorphUpFactor.w);
-    // Phase 2c Stage B:共享模板零高程面点沿法线采高度纹理位移到真实高度。
-    // read(NEAREST) 按栅格下标取回、RG 反量化 16bit。仅位移命令 enabled=1。
+    // Phase 2c P2:共享模板零高程面点沿法线采高度纹理位移。morph 连续生长——本纹理
+    // 双分辨率采样:fine=本顶点栅格纹素,coarse=四个偶数格点双线性(osgEarth 邻居平均)。
+    // 按 SSE 驱动 morphFactor(=u_geomorphUpFactor.w:0=粗起点≈父面,1=细真实)mix→
+    // 跨 LOD 无 pop、相邻瓦片共享偶点高度一致→无接缝。enabled=0 跳过(零回归)。
     if (u_heightDisplace.z > 0.5) {
-        uint2 texel = uint2(
-            uint(in.texcoord01.x * u_heightDisplace.w + 0.5),
-            uint(in.texcoord01.y * u_heightDisplace.w + 0.5));
-        float4 packed = u_heightTexture.read(texel, 0);
-        float t = (packed.r * 255.0 * 256.0 + packed.g * 255.0) / 65535.0;
-        float h = u_heightDisplace.x + t * u_heightDisplace.y;
+        float gridN = u_heightDisplace.w;
+        float2 gf = in.texcoord01.xy * gridN;              // 栅格坐标 [0,gridN]
+        float2 mr = u_heightDisplace.xy;                   // (minHeight, heightRange)
+        float hFine = eeSampleTerrainHeight(
+            u_heightTexture, uint2(gf + 0.5), mr);
+        float2 g0 = floor(gf * 0.5) * 2.0;                 // 左下偶数格点
+        float2 fr = (gf - g0) * 0.5;                       // 2× 格内插值系数 [0,1]
+        float e00 = eeSampleTerrainHeight(u_heightTexture, uint2(g0), mr);
+        float e10 = eeSampleTerrainHeight(
+            u_heightTexture, uint2(min(g0.x + 2.0, gridN), g0.y), mr);
+        float e01 = eeSampleTerrainHeight(
+            u_heightTexture, uint2(g0.x, min(g0.y + 2.0, gridN)), mr);
+        float e11 = eeSampleTerrainHeight(
+            u_heightTexture,
+            uint2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), mr);
+        float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
+        float h = mix(hCoarse, hFine, u_geomorphUpFactor.w);
         morphPos += normalize(in.normal.xyz) * h;
     }
     out.position = u_modelViewProjection * float4(morphPos, 1.0);
