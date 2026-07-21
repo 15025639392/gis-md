@@ -156,17 +156,29 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
         // **只动 RealTerrain,不碰 FillProxy**:fill 本就是贴椭球代理(小 VBO),覆写它
         // 会扰乱 fill→real 生命周期(实测导致 fill 瓦片卡住不转 real + 每帧 fill 预备
         // 开销);且 §5 有界目标针对的是真实地形的大 per-tile VBO,非 fill。
-        // Stage A:模板 heightDelta=0 → 真实地形渲染为贴椭球规则栅格(imagery 照常
-        // drape);起伏由后续 Stage B 高度纹理在顶点 shader 位移。
+        // **只对有自有高度图的瓦片走共享模板 GPU 位移**:原生 z≤12 瓦片有
+        // retainedHeightmap → 建/取 per-tile 高度纹理,shader 沿法线位移+双分辨率
+        // morph。上采样 z13+ 瓦片(父级裁剪来,无自有高度图)保持现 per-tile baked
+        // VBO(其顶点已含父级真实高度)——绝不绑平模板(否则 enabled=0 → 深近景
+        // 变平椭球回归)。先取高度纹理、成功才换模板 VBO;高度图缺失/纹理未就绪
+        // 一律不碰 cmd(零回归回落 CPU baked VBO)。
         if (cmd.terrainRenderContent &&
             cmd.terrainSurfaceSource ==
                 TerrainSurfaceCommandSource::RealTerrain) {
             if (TerrainDisplacementTemplatePool* pool =
                     renderer.terrainDisplacementPool()) {
+                const DecodedHeightmap* hm =
+                    tile.content.renderContent.retainedHeightmap();
+                const TerrainDisplacementTemplatePool::HeightTexture* ht =
+                    hm ? pool->acquireHeightTexture(
+                             tile.key, *hm, kTerrainDisplacementGridSize)
+                       : nullptr;
                 const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
-                    pool->acquire(tile.key, tile.bounds,
-                                  kTerrainDisplacementGridSize);
-                if (tb) {
+                    (ht && ht->texture)
+                        ? pool->acquire(tile.key, tile.bounds,
+                                        kTerrainDisplacementGridSize)
+                        : nullptr;
+                if (tb && ht && ht->texture) {
                     cmd.vertexBuffer = tb->vertexBuffer;
                     cmd.indexBuffer = tb->indexBuffer;
                     cmd.indexCount = tb->indexCount;
@@ -179,32 +191,18 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                     for (int m = 0; m < 16; ++m) {
                         cmd.terrainDisplacementModelMatrix[m] = r[m];
                     }
-                    // 模板在 ENU 帧,morph up = 局部 +Z(heightDelta=0 时无 morph)。
+                    // 模板在 ENU 帧,morph up = 局部 +Z。w(morphFactor)每帧由
+                    // applyPerFrameCommandState 盖章为 terrainMorphFactor。
                     u.geomorphUpFactor = {0.0f, 0.0f, 1.0f, 1.0f};
-
-                    // Stage B:若保留了高度图 → 建/取 per-tile 高度纹理并绑到顶点级
-                    // 槽,shader texelFetch 反量化沿法线位移到真实高度。无高度图则
-                    // 退化为 Stage A 贴椭球(enabled 保持 0)。
-                    const DecodedHeightmap* hm =
-                        tile.content.renderContent.retainedHeightmap();
-                    if (hm) {
-                        const TerrainDisplacementTemplatePool::HeightTexture*
-                            ht = pool->acquireHeightTexture(
-                                tile.key, *hm, kTerrainDisplacementGridSize);
-                        if (ht && ht->texture) {
-                            if (cmd.textures.size() <=
-                                static_cast<size_t>(kGltfHeightTextureSlot)) {
-                                cmd.textures.resize(
-                                    static_cast<size_t>(kGltfHeightTextureSlot) +
-                                    1);
-                            }
-                            cmd.textures[kGltfHeightTextureSlot] = ht->texture;
-                            u.heightDisplace = {
-                                ht->minHeight, ht->heightRange, 1.0f,
-                                static_cast<float>(
-                                    kTerrainDisplacementGridSize)};
-                        }
+                    if (cmd.textures.size() <=
+                        static_cast<size_t>(kGltfHeightTextureSlot)) {
+                        cmd.textures.resize(
+                            static_cast<size_t>(kGltfHeightTextureSlot) + 1);
                     }
+                    cmd.textures[kGltfHeightTextureSlot] = ht->texture;
+                    u.heightDisplace = {
+                        ht->minHeight, ht->heightRange, 1.0f,
+                        static_cast<float>(kTerrainDisplacementGridSize)};
                 }
             }
         }
