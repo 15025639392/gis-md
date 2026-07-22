@@ -66,7 +66,10 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
         packed[i].texcoord01[1] = TerrainGpuVertex::packUnorm16(v.uv[1]);
         packed[i].texcoord01[2] = TerrainGpuVertex::packUnorm16(v.uv[0]);
         packed[i].texcoord01[3] = TerrainGpuVertex::packUnorm16(v.uv[1]);
-        packed[i].heightDelta = 0.0f;
+        // heightDelta：栅格顶点 0（无 geomorph）；裙顶点 -1 哨兵 → 位移 shader
+        // 认出后对其跳过位移（停在椭球面 h=0），使裙墙自适应撑到位移后边缘之下。
+        packed[i].heightDelta =
+            (i >= tmpl.skirtVerticesBegin) ? -1.0f : 0.0f;
     }
 
     BufferDesc vboDesc;

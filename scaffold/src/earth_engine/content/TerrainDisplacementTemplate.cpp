@@ -5,7 +5,6 @@
 
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/QuadtreeGeometricError.h"
 #include "../core/geodesy/Transforms.h"
 #include "../core/math/MathUtils.h"
 
@@ -102,16 +101,17 @@ TerrainDisplacementTemplate buildTerrainDisplacementTemplate(
         }
     }
 
-    // 裙墙（P4）：绕四条边挂一圈向下的墙，遮住相邻 LOD/高度不连续处的接缝。
-    // GPU 位移路径的巧解——裙顶点复制边顶点，UV 逐字保持一致（→ shader
-    // 按 UV*gridSize 取到**同一** height texel → 采同一高度 h），只把
-    // localPos 沿局部法线预降 skirtHeight。位移 shader 做 morphPos =
-    // a_position + normal*h，于是裙墙自动挂在「位移后的边缘」下方：
-    // 裙顶 = 边缘位移点，裙底 = 边缘位移点 - normal*skirtHeight。零 shader 改动。
-    // skirtHeight = 5*maxGeomError*width，只随 LOD（经度宽）变 → 逐列不变 →
-    // 仍可跨该 {LOD,row} 共享。heightDelta 保持 0（pool 打包默认 0），
-    // 故 geomorph 项对裙顶点恒为 0。
-    const double skirtHeight = calcQuadtreeSkirtHeight(ellipsoid, tileBounds);
+    // 裙墙（P4，自适应版）：绕四条边挂一圈墙，遮住相邻 LOD/高度不连续处的接缝。
+    // 关键——裙顶点**不预降**，而是与边顶点**逐字一致**（同 localPos/法线/UV），
+    // 但打包时被标记为哨兵（heightDelta=-1）→ 位移 shader 认出后对裙顶点**跳过
+    // 位移**（停在椭球面 h=0），而对应边顶点照常位移到真实地形高度。于是裙墙
+    // 自动 = 从「位移后的边缘」垂到「椭球面」的那面墙：
+    //   裙顶（边顶点）= 边缘位移点（h=真实高度）；裙底（裙顶点）= 边缘椭球点（h=0）。
+    // 墙高 = 该边真实地形高度，逐瓦片自适应、精确覆盖「位移瓦片↔更低/未位移邻居」
+    // 接缝、**零过冲**（绝不伸到椭球面以下）——根治旧版 skirtHeight=5*maxGeomError*
+    // width 在粗 LOD 膨胀成 24-385 km 巨墙、被部分覆盖暴露成断崖/黑杠的问题。
+    // localPos/法线/UV 逐列不变 → 仍可跨该 {LOD,row} 共享。
+    tmpl.skirtVerticesBegin = static_cast<uint32_t>(tmpl.vertices.size());
 
     const auto gridIndex = [n](int x, int y) {
         return static_cast<uint32_t>(y * n + x);
@@ -126,12 +126,11 @@ TerrainDisplacementTemplate buildTerrainDisplacementTemplate(
         const uint32_t firstSkirt =
             static_cast<uint32_t>(tmpl.vertices.size());
         for (uint32_t src : edge) {
-            TerrainDisplacementTemplateVertex sv = tmpl.vertices[src];
-            const Vec3 localPos(sv.localPos[0], sv.localPos[1], sv.localPos[2]);
-            const Vec3 localNormal(
-                sv.localNormal[0], sv.localNormal[1], sv.localNormal[2]);
-            // 只降 localPos；localNormal / uv 与边顶点保持逐字一致。
-            storeVec3(sv.localPos, localPos - localNormal * skirtHeight);
+            // 裙顶点 = 边顶点逐字复制（localPos/法线/UV 全同）。不改 localPos——
+            // 墙由 shader 对裙顶点跳过位移自动撑开，无需在几何里预降。先取值拷贝
+            // 再 push_back：vertices 只 reserve 了 n*n，追加裙顶点会扩容，直接传
+            // vertices[src] 引用会在扩容后悬垂。
+            const TerrainDisplacementTemplateVertex sv = tmpl.vertices[src];
             tmpl.vertices.push_back(sv);
         }
         for (size_t i = 0; i + 1 < edge.size(); ++i) {

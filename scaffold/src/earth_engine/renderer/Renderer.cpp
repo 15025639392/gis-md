@@ -932,8 +932,14 @@ void main() {
     // CPU double precision). a_position is relative to the tile center.
     // geomorph:沿瓦片中心椭球法线把顶点从粗起点(morph=0)长到真实高度(morph=1)。
     // heightDelta=0(如上采样子瓦片)或 w=1(无 morph)时 offset 为 0,退化为原样。
+    // Phase 2c 裙墙自适应:裙顶点以 heightDelta=-1 哨兵标记(仅位移路径下有效)。
+    // 对裙顶点 geomorph delta 归零(哨兵非真实 delta),位移 h 也归零(下方)→ 裙底
+    // 停在椭球面,与位移后的边顶点撑成逐瓦片自适应墙(墙高=边缘真实地形高度)。
+    float heightDelta = a_heightDelta;
+    float skirt = (u_heightDisplace.z > 0.5 && heightDelta < -0.5) ? 1.0 : 0.0;
+    heightDelta = mix(heightDelta, 0.0, skirt);
     vec3 morphPos = a_position +
-        u_geomorphUpFactor.xyz * a_heightDelta * (1.0 - u_geomorphUpFactor.w);
+        u_geomorphUpFactor.xyz * heightDelta * (1.0 - u_geomorphUpFactor.w);
     // Phase 2c P2:共享模板零高程面点沿法线采高度纹理位移。morph 连续生长——本纹理
     // 双分辨率采样:fine=本顶点栅格纹素(texelFetch NEAREST),coarse=四个偶数格点
     // 双线性(osgEarth 邻居平均:偶点=self→delta0,奇点=相邻偶点均值)。按 SSE 驱动
@@ -956,7 +962,8 @@ void main() {
             u_heightTexture,
             ivec2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), mr);
         float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
-        float h = mix(hCoarse, hFine, u_geomorphUpFactor.w);
+        // 裙顶点(skirt=1)h 归零 → 停在椭球面,撑起自适应裙墙。
+        float h = mix(hCoarse, hFine, u_geomorphUpFactor.w) * (1.0 - skirt);
         morphPos += normalize(a_normal) * h;
     }
     v_normal = normalize(a_normal);
@@ -2164,9 +2171,15 @@ vertex TerrainVertexOut terrainVertex(
     constant float4& u_heightDisplace [[buffer(3)]],
     texture2d<float> u_heightTexture [[texture(22)]]) {
     TerrainVertexOut out;
-    // geomorph:沿瓦片中心椭球法线把顶点从粗起点(w=0)长到真实高度(w=1)。
+    // Phase 2c 裙墙自适应:裙顶点以 heightDelta=-1 哨兵标记(仅位移路径下有效)。
+    // 对裙顶点 geomorph delta 归零、位移 h 归零 → 裙底停在椭球面,与位移后的边
+    // 顶点撑成逐瓦片自适应墙。geomorph:沿瓦片中心椭球法线把顶点从粗起点(w=0)长
+    // 到真实高度(w=1)。
+    float heightDelta = in.heightDelta;
+    float skirt = (u_heightDisplace.z > 0.5 && heightDelta < -0.5) ? 1.0 : 0.0;
+    heightDelta = mix(heightDelta, 0.0, skirt);
     float3 morphPos = in.position +
-        u_geomorphUpFactor.xyz * in.heightDelta * (1.0 - u_geomorphUpFactor.w);
+        u_geomorphUpFactor.xyz * heightDelta * (1.0 - u_geomorphUpFactor.w);
     // Phase 2c P2:共享模板零高程面点沿法线采高度纹理位移。morph 连续生长——本纹理
     // 双分辨率采样:fine=本顶点栅格纹素,coarse=四个偶数格点双线性(osgEarth 邻居平均)。
     // 按 SSE 驱动 morphFactor(=u_geomorphUpFactor.w:0=粗起点≈父面,1=细真实)mix→
@@ -2188,7 +2201,8 @@ vertex TerrainVertexOut terrainVertex(
             u_heightTexture,
             uint2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), mr);
         float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
-        float h = mix(hCoarse, hFine, u_geomorphUpFactor.w);
+        // 裙顶点(skirt=1)h 归零 → 停在椭球面,撑起自适应裙墙。
+        float h = mix(hCoarse, hFine, u_geomorphUpFactor.w) * (1.0 - skirt);
         morphPos += normalize(in.normal.xyz) * h;
     }
     out.position = u_modelViewProjection * float4(morphPos, 1.0);

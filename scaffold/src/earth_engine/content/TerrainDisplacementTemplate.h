@@ -33,9 +33,14 @@ struct TerrainDisplacementTemplateVertex {
 
 struct TerrainDisplacementTemplate {
     int gridSize = 0;  // 单元格数；顶点行/列数 n = gridSize + 1
-    // n*n 栅格顶点（行主序）+ 尾随 4*n 裙墙顶点（四边周界复制、沿法线预降
-    // skirtHeight；UV 与边顶点一致 → 采同一高度）。
+    // n*n 栅格顶点（行主序）+ 尾随 4*n 裙墙顶点（四边周界复制，localPos/UV/法线
+    // 与边顶点逐字一致）。裙墙**不预降**：裙顶点在 shader 里被标记为「不位移」
+    // （停在椭球面 h=0），而对应边顶点照常位移 → 裙墙自动 = 从「位移后边缘」到
+    // 「椭球面」的那面墙，精确覆盖接缝、零过冲、无需 skirtHeight 常量。
     std::vector<TerrainDisplacementTemplateVertex> vertices;
+    // 裙墙顶点起始下标（= n*n）。打包时据此把裙顶点 heightDelta 设为哨兵 -1，
+    // 位移 shader 认出后对其跳过位移（h=0）。
+    uint32_t skirtVerticesBegin = 0;
     // gridSize²*6 栅格索引 + 4*(n-1)*6 裙墙索引。
     std::vector<uint32_t> indices;
 };
