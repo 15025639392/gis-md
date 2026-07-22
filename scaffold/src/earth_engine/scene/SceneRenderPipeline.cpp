@@ -124,6 +124,12 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     buildSkyCommands(context, skyMs);
     buildAtmosphereCommands(context, atmosphereMs);
     buildLayerCommands(context, layerCommandsMs, vectorCommandsMs);
+    // Fill the web-mercator polar gap (±85°→pole) so it degrades to a flat
+    // polar surface instead of showing through to space at globe scale.
+    // Appended before the MVP pass so the caps receive per-frame uniforms.
+    polarCap_.appendCommands(
+        context.commands, context.renderer, context.renderDevice,
+        context.frameState.frameId);
     applyMvpUniforms(context, mvpUniformsMs);
     sortAndValidate(context, sortMs, surfaceDiagnosticsMs, validateMs);
     aggregateDiagnostics(context, diagnosticsMs);

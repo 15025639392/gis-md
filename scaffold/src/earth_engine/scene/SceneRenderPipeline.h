@@ -2,6 +2,7 @@
 
 #include "Diagnostics.h"
 #include "FrameState.h"
+#include "PolarCapRenderer.h"
 #include "../renderer/RenderCommand.h"
 
 #include <functional>
@@ -12,6 +13,7 @@ namespace earth_engine {
 
 class AtmosphereBackgroundPass;
 class Renderer;
+class RenderDevice;
 class SkyBox;
 class SkyGradient;
 class Tileset;
@@ -42,6 +44,7 @@ public:
         const std::vector<std::unique_ptr<Tileset>>& additionalTilesets;
         std::vector<std::unique_ptr<VectorLayer>>& vectorLayers;
         std::function<void()> beforeSubmit;
+        RenderDevice* renderDevice = nullptr;
     };
 
     Result render(Context context);
@@ -64,6 +67,7 @@ private:
 
     mutable int lastPrimaryCurrentEntryCount_ = -1;
     mutable int lastPrimaryPendingEntryCount_ = -1;
+    PolarCapRenderer polarCap_;
 };
 
 } // namespace earth_engine

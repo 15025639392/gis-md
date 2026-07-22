@@ -210,7 +210,8 @@ bool Scene::render() {
         tilesets_->pendingPrimary(),
         tilesets_->contentTilesets(),
         layers_->vectorLayers(),
-        [this]() { updatePresentationTrace(); }});
+        [this]() { updatePresentationTrace(); },
+        renderDevice_});
     telemetry_->replaceRenderDiagnostics(renderResult.diagnostics);
     return renderResult.presentable;
 }

@@ -210,6 +210,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/scene/SceneRenderCommandUniformUpdater.cpp
     earth_engine/scene/SceneRenderPipeline.h
     earth_engine/scene/SceneRenderPipeline.cpp
+    earth_engine/scene/PolarCapRenderer.h
+    earth_engine/scene/PolarCapRenderer.cpp
     earth_engine/scene/SceneRenderDiagnostics.h
     earth_engine/scene/SceneRenderDiagnostics.cpp
     earth_engine/scene/SceneTelemetryCoordinator.h
