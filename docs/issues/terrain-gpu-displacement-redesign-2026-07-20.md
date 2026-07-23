@@ -104,6 +104,12 @@ per-tile uniform：MVM（double→f32）、高度纹理句柄、bounds  ──�
 **P4 skirt/法线/normal-map + overlay 回归**：验证：无 LOD 裂缝、浮雕正确、overlay 贴合。
 **P5 收尾**：QM/旧 CPU 网格路径退役或保留 flag、golden 重建、AI_INDEX+测试更新。
 
+> **📍 2026-07-23 复测佐证 P5 的价值（terrainUpload 尖刺根因 = legacy 路径没退役）**：measure-first 复测激进掠视（脚本偏航 0.5°/帧，release 真机 7e045e39），拆解 `terrainUpload`（=`processPendingUploads` scope）发现 **4–6ms 尖刺主体 = `GltfRenderResourcePreparer::prepareCpuWork` 在主线程重建 `TerrainGpuVertex`**（`buildTerrainVertices`）。分支归因：demo 默认态下**每个地形瓦片** `hasCompletePrebuiltTerrainPayload==false`（无预建 `terrainGpuVertexBytes` + 无水面掩码），全部落**同步** `prepare()` 路径 → 异步 GPU 上传队列成死代码。
+> - **根因 = GPU 位移未 default-on**：这是**legacy 每瓦片 CPU-baked VBO 路径**的固有成本（`prepareCpuWork` 逐瓦片建 289+ 顶点）。**P1（共享模板 + per-tile 高度纹理 + shader 位移）default-on 后，per-tile 地形 VBO 整个消失 → 这条 prepareCpuWork 重建成本随之根除**。⟹ **本发现是 §5「地形 VBO 字节有界」闸门 + P5「退役旧路径」价值的直接真机佐证**，不是独立新问题。
+> - **❌ 证伪的 stopgap（勿重试）**：单放宽 `hasCompletePrebuiltTerrainPayload` 门控让 legacy 地形走异步上传队列——路由确翻转（terrainPrepped 0→N），**但只 defer 了 GPU 上传（非大头），顶点重建仍在主线程**；成本搬家到 gpuDrain（med 0→1.98ms）+ 加队列开销 → 整帧**更差**（激进掠视 >16.6ms 帧 1→7）。已回退。教训：异步化只在 defer 的是大头时才赢，此处大头是 CPU 顶点构建。
+> - **legacy 路径 stopgap（若 P1 default-on 短期不做）**：让 heightmap decode worker **预建 `terrainGpuVertexBytes`**（像 QM/upsampler 路径 `GltfTerrainUpsampler.cpp:844` 那样）→ `prepareCpuWork` 退化成 memcpy、顶点构建挪进 worker 线程。中等改动，碰 heightmap decode 路径 + `TerrainGpuVertex` 格式（与位移路径需一致）。**但正解仍是 P1 default-on**（stopgap 只在 legacy 路径需长期保留时才做）。
+> - **ROI 提示**：典型运动已 60fps，此尖刺仅激进快拖 + 与 selector/request/prefetch 相撞时才偶破 16.6ms（见 [[perf-remeasure-wall-moved-2026-07-23]]）。急迫性低，随 P1 default-on / P5 一并了结最干净。
+
 ---
 
 ## 7. 决策（2026-07-20 已拍板 ✅）
