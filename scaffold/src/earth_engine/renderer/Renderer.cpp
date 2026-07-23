@@ -914,15 +914,19 @@ uniform mat4 u_modelViewProjection;
 uniform vec4 u_geomorphUpFactor;  // xyz=瓦片中心椭球法线, w=morphFactor
 // Phase 2c Stage B 地形 GPU 位移:x=minHeight y=heightRange z=enabled w=gridSize。
 uniform vec4 u_heightDisplace;
-uniform highp sampler2D u_heightTexture;  // gridN+1 方,RG 打包 16bit 归一化高度
+// 合批 Step 1:per-tile 高度纹理搬共享 texture2DArray(gridN+1 方每层,RG 打包
+// 16bit 归一化高度),层号由 u_terrainLayers.x 给出。
+uniform highp sampler2DArray u_heightTexture;
+uniform vec4 u_terrainLayers;  // x=高度纹理层号
 
 out vec3 v_normal;
 out vec3 v_position;
 out vec4 v_texcoord01;
 
 // Phase 2c P2 morph:反量化 RG 16bit 高度纹素→米(mr = (minHeight, heightRange))。
-float eeSampleTerrainHeight(highp sampler2D tex, ivec2 texel, vec2 mr) {
-    vec4 p = texelFetch(tex, texel, 0);
+float eeSampleTerrainHeight(
+    highp sampler2DArray tex, ivec2 texel, int layer, vec2 mr) {
+    vec4 p = texelFetch(tex, ivec3(texel, layer), 0);
     float t = (p.r * 255.0 * 256.0 + p.g * 255.0) / 65535.0;
     return mr.x + t * mr.y;
 }
@@ -947,20 +951,21 @@ void main() {
     // 相邻瓦片共享偶点高度一致→无接缝。enabled=0 的瓦片跳过(零回归)。
     if (u_heightDisplace.z > 0.5) {
         float gridN = u_heightDisplace.w;
+        int hLayer = int(u_terrainLayers.x + 0.5);
         vec2 gf = a_texcoord01.xy * gridN;                 // 栅格坐标 [0,gridN]
         vec2 mr = u_heightDisplace.xy;                      // (minHeight, heightRange)
         float hFine = eeSampleTerrainHeight(
-            u_heightTexture, ivec2(gf + 0.5), mr);
+            u_heightTexture, ivec2(gf + 0.5), hLayer, mr);
         vec2 g0 = floor(gf * 0.5) * 2.0;                    // 左下偶数格点
         vec2 fr = (gf - g0) * 0.5;                          // 2× 格内插值系数 [0,1]
-        float e00 = eeSampleTerrainHeight(u_heightTexture, ivec2(g0), mr);
+        float e00 = eeSampleTerrainHeight(u_heightTexture, ivec2(g0), hLayer, mr);
         float e10 = eeSampleTerrainHeight(
-            u_heightTexture, ivec2(min(g0.x + 2.0, gridN), g0.y), mr);
+            u_heightTexture, ivec2(min(g0.x + 2.0, gridN), g0.y), hLayer, mr);
         float e01 = eeSampleTerrainHeight(
-            u_heightTexture, ivec2(g0.x, min(g0.y + 2.0, gridN)), mr);
+            u_heightTexture, ivec2(g0.x, min(g0.y + 2.0, gridN)), hLayer, mr);
         float e11 = eeSampleTerrainHeight(
             u_heightTexture,
-            ivec2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), mr);
+            ivec2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), hLayer, mr);
         float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
         // 裙顶点(skirt=1)h 归零 → 停在椭球面,撑起自适应裙墙。
         float h = mix(hCoarse, hFine, u_geomorphUpFactor.w) * (1.0 - skirt);
@@ -1515,6 +1520,7 @@ struct GltfUniforms {
     float clipEnabled;
     packed_float4 pageStoreParams;
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
+    packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
 };
 
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
@@ -2170,9 +2176,10 @@ struct TerrainVertexOut {
 };
 
 // Phase 2c P2 morph:反量化 RG 16bit 高度纹素→米(mr = (minHeight, heightRange))。
+// 合批 Step 1:高度纹理搬 texture2d_array,层号经 u_terrainLayers.x(buffer(4))。
 static inline float eeSampleTerrainHeight(
-    texture2d<float> tex, uint2 texel, float2 mr) {
-    float4 p = tex.read(texel, 0);
+    texture2d_array<float> tex, uint2 texel, uint layer, float2 mr) {
+    float4 p = tex.read(texel, layer, 0);
     float t = (p.r * 255.0 * 256.0 + p.g * 255.0) / 65535.0;
     return mr.x + t * mr.y;
 }
@@ -2182,7 +2189,8 @@ vertex TerrainVertexOut terrainVertex(
     constant float4x4& u_modelViewProjection [[buffer(1)]],
     constant float4& u_geomorphUpFactor [[buffer(2)]],
     constant float4& u_heightDisplace [[buffer(3)]],
-    texture2d<float> u_heightTexture [[texture(22)]]) {
+    constant float4& u_terrainLayers [[buffer(4)]],
+    texture2d_array<float> u_heightTexture [[texture(22)]]) {
     TerrainVertexOut out;
     // Phase 2c 裙墙自适应:裙顶点以 heightDelta=-1 哨兵标记(仅位移路径下有效)。
     // 对裙顶点 geomorph delta 归零、位移 h 归零 → 裙底停在椭球面,与位移后的边
@@ -2199,20 +2207,21 @@ vertex TerrainVertexOut terrainVertex(
     // 跨 LOD 无 pop、相邻瓦片共享偶点高度一致→无接缝。enabled=0 跳过(零回归)。
     if (u_heightDisplace.z > 0.5) {
         float gridN = u_heightDisplace.w;
+        uint hLayer = uint(u_terrainLayers.x + 0.5);
         float2 gf = in.texcoord01.xy * gridN;              // 栅格坐标 [0,gridN]
         float2 mr = u_heightDisplace.xy;                   // (minHeight, heightRange)
         float hFine = eeSampleTerrainHeight(
-            u_heightTexture, uint2(gf + 0.5), mr);
+            u_heightTexture, uint2(gf + 0.5), hLayer, mr);
         float2 g0 = floor(gf * 0.5) * 2.0;                 // 左下偶数格点
         float2 fr = (gf - g0) * 0.5;                       // 2× 格内插值系数 [0,1]
-        float e00 = eeSampleTerrainHeight(u_heightTexture, uint2(g0), mr);
+        float e00 = eeSampleTerrainHeight(u_heightTexture, uint2(g0), hLayer, mr);
         float e10 = eeSampleTerrainHeight(
-            u_heightTexture, uint2(min(g0.x + 2.0, gridN), g0.y), mr);
+            u_heightTexture, uint2(min(g0.x + 2.0, gridN), g0.y), hLayer, mr);
         float e01 = eeSampleTerrainHeight(
-            u_heightTexture, uint2(g0.x, min(g0.y + 2.0, gridN)), mr);
+            u_heightTexture, uint2(g0.x, min(g0.y + 2.0, gridN)), hLayer, mr);
         float e11 = eeSampleTerrainHeight(
             u_heightTexture,
-            uint2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), mr);
+            uint2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), hLayer, mr);
         float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
         // 裙顶点(skirt=1)h 归零 → 停在椭球面,撑起自适应裙墙。
         float h = mix(hCoarse, hFine, u_geomorphUpFactor.w) * (1.0 - skirt);
@@ -2308,6 +2317,7 @@ struct GltfUniforms {
     float clipEnabled;
     packed_float4 pageStoreParams;
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
+    packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
 };
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the

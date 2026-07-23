@@ -112,16 +112,58 @@ uint64_t TerrainDisplacementTemplatePool::heightCacheKey(const TileKey& key) {
     return h;
 }
 
+bool TerrainDisplacementTemplatePool::ensureHeightArray(int gridSize) {
+    if (heightArray_) {
+        // 全部调用方恒传 kTerrainDisplacementGridSize;防御:层边长不匹配拒绝
+        // (array 层等尺寸是硬约束)。
+        return heightArrayGridSize_ == gridSize;
+    }
+    TextureDesc desc;
+    desc.width = gridSize + 1;
+    desc.height = gridSize + 1;
+    desc.arrayLayers = kHeightArrayLayers;
+    desc.format = TextureDesc::Format::RGBA8;
+    desc.mipmap = false;
+    desc.minFilter = TextureDesc::Filter::Nearest;
+    desc.magFilter = TextureDesc::Filter::Nearest;
+    desc.wrapS = TextureDesc::Wrap::Clamp;
+    desc.wrapT = TextureDesc::Wrap::Clamp;
+    heightArray_ = device_->createTexture(desc);
+    if (!heightArray_) {
+        return false;
+    }
+    heightArrayGridSize_ = gridSize;
+    heightLayerPool_.configure(kHeightArrayLayers, 1);
+    heightLayerEpochs_.assign(static_cast<size_t>(kHeightArrayLayers), 0u);
+    return true;
+}
+
 const TerrainDisplacementTemplatePool::HeightTexture*
 TerrainDisplacementTemplatePool::acquireHeightTexture(
-    const TileKey& key, const DecodedHeightmap& heightmap, int gridSize) {
-    if (!device_ || gridSize < 1 || !heightmap.valid()) {
+    const TileKey& key, const DecodedHeightmap& heightmap, int gridSize,
+    uint64_t frameId) {
+    if (!device_ || gridSize < 1 || !heightmap.valid() ||
+        !ensureHeightArray(gridSize)) {
         return nullptr;
     }
     const uint64_t k = heightCacheKey(key);
-    auto it = heightCache_.find(k);
-    if (it != heightCache_.end()) {
-        return &it->second.view;
+    auto it = heightIndex_.find(k);
+    if (it != heightIndex_.end()) {
+        heightLayerPool_.touch(k, frameId);
+        return &it->second;
+    }
+
+    // 认领一层(LRU;当帧被 touch 的层不淘汰,全满 → 返回 -1 = 本帧放弃,
+    // draw 侧回落 P5b 兜底重试)。被淘汰瓦片的旧视图删除 + 层 epoch 自增,
+    // 使仍引用旧层的常驻命令在 heightLayerCurrent() 校验时失效自愈。
+    uint64_t evicted = 0;
+    const int layer = heightLayerPool_.acquire(k, frameId, &evicted);
+    if (layer < 0) {
+        return nullptr;
+    }
+    if (evicted != 0) {
+        heightIndex_.erase(evicted);
+        ++heightLayerEpochs_[static_cast<size_t>(layer)];
     }
 
     // gridN+1 方栅格:texel(i,j) = 顶点(i,j)高度(shader 按栅格下标 texelFetch)。
@@ -145,30 +187,27 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
             bytes[idx + 1] = static_cast<uint8_t>(v16 & 0xFF);
         }
     }
-
-    TextureDesc desc;
-    desc.width = n;
-    desc.height = n;
-    desc.format = TextureDesc::Format::RGBA8;
-    desc.data = bytes.data();
-    desc.dataSize = bytes.size();
-    desc.mipmap = false;
-    desc.minFilter = TextureDesc::Filter::Nearest;
-    desc.magFilter = TextureDesc::Filter::Nearest;
-    desc.wrapS = TextureDesc::Wrap::Clamp;
-    desc.wrapT = TextureDesc::Wrap::Clamp;
-
-    HeightEntry entry;
-    entry.texture = device_->createTexture(desc);
-    if (!entry.texture) {
+    if (!device_->updateTextureRegion(heightArray_.get(), 0, 0, n, n,
+                                      bytes.data(),
+                                      static_cast<size_t>(n) * 4, layer)) {
+        heightLayerPool_.release(k);
         return nullptr;
     }
-    entry.view.texture = entry.texture.get();
-    entry.view.minHeight = minH;
-    entry.view.heightRange = range;
-    entry.view.gridSize = gridSize;
-    auto inserted = heightCache_.emplace(k, std::move(entry));
-    return &inserted.first->second.view;
+
+    HeightTexture view;
+    view.texture = heightArray_.get();
+    view.minHeight = minH;
+    view.heightRange = range;
+    view.gridSize = gridSize;
+    view.layer = layer;
+    view.epoch = heightLayerEpochs_[static_cast<size_t>(layer)];
+    auto inserted = heightIndex_.emplace(k, view);
+    return &inserted.first->second;
+}
+
+void TerrainDisplacementTemplatePool::touchHeightTexture(const TileKey& key,
+                                                         uint64_t frameId) {
+    heightLayerPool_.touch(heightCacheKey(key), frameId);
 }
 
 }  // namespace earth_engine

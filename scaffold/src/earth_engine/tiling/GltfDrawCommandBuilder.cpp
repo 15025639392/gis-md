@@ -92,7 +92,8 @@ RenderCommand::PrimitiveType renderPrimitiveType(GltfPrimitiveMode mode) {
 /// (重)创建、动画改写、内容卸载都会经 TileRenderContentState 的失效点。
 /// 每帧字段(frameId/opacity/blend 派生/clip/overlay 绑定)一律不写在常驻
 /// 命令上,由 applyPerFrameCommandState 盖在帧列表副本上。
-void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
+void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
+                               uint64_t frameNumber) {
     RenderCommandList& cached =
         tile.content.renderContent.restartCachedDrawCommands();
     const std::string tileCacheKey = TileCacheKey::forTile(tile.key);
@@ -375,7 +376,8 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                     tile.content.renderContent.retainedHeightmap();
                 const TerrainDisplacementTemplatePool::HeightTexture* ht =
                     hm ? pool->acquireHeightTexture(
-                             tile.key, *hm, kTerrainDisplacementGridSize)
+                             tile.key, *hm, kTerrainDisplacementGridSize,
+                             frameNumber)
                        : nullptr;
                 const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
                     (ht && ht->texture)
@@ -416,6 +418,11 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                     u.heightDisplace = {
                         ht->minHeight * reliefFade, ht->heightRange * reliefFade,
                         1.0f, static_cast<float>(kTerrainDisplacementGridSize)};
+                    // 合批 Step 1:高度数据在共享 array 的层号进 uniform;
+                    // (layer, epoch) 记在命令上供 build 侧 staleness 校验。
+                    u.terrainLayers[0] = static_cast<float>(ht->layer);
+                    cmd.terrainHeightLayer = ht->layer;
+                    cmd.terrainHeightLayerEpoch = ht->epoch;
                 }
             }
         }
@@ -613,10 +620,35 @@ void GltfDrawCommandBuilder::build(
         timings->eligibilityMs +=
             perf::nowMs() - eligibilityStartMs;
     }
+    // 合批 Step 1:常驻命令引用的高度 array 层被 LRU 重分配(epoch 失配)时
+    // invalidate → 下方立即 rebuild 重新 acquire(自愈,与 P5b 同模式)。
+    // 可见瓦片每帧 touch 保活,失配只发生在离屏久驻后重新入视野的瓦片。
+    if (renderContent.hasCachedDrawCommands()) {
+        if (TerrainDisplacementTemplatePool* pool =
+                renderer.terrainDisplacementPool()) {
+            bool touched = false;
+            for (const RenderCommand& cached :
+                 renderContent.cachedDrawCommands()) {
+                if (cached.terrainHeightLayer < 0) {
+                    continue;
+                }
+                if (!pool->heightLayerCurrent(
+                        cached.terrainHeightLayer,
+                        cached.terrainHeightLayerEpoch)) {
+                    renderContent.invalidateCachedDrawCommands();
+                    break;
+                }
+                if (!touched) {
+                    pool->touchHeightTexture(tile.key, context.frameNumber);
+                    touched = true;
+                }
+            }
+        }
+    }
     if (!renderContent.hasCachedDrawCommands()) {
         const double cacheRebuildStartMs =
             timings ? perf::nowMs() : 0.0;
-        rebuildCachedDrawCommands(renderer, tile);
+        rebuildCachedDrawCommands(renderer, tile, context.frameNumber);
         if (timings) {
             timings->cacheRebuildMs +=
                 perf::nowMs() - cacheRebuildStartMs;

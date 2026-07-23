@@ -183,6 +183,10 @@ struct RenderCommand {
         0.0, 1.0, 0.0, 0.0,
         0.0, 0.0, 1.0, 0.0,
         0.0, 0.0, 0.0, 1.0};
+    // 合批 Step 1(CPU-only):本命令高度纹理占用的共享 array (layer, epoch)。
+    // 层被 LRU 重分配后 epoch 失配 → build 侧 invalidate 命令缓存自愈重建。
+    int terrainHeightLayer = -1;
+    uint32_t terrainHeightLayerEpoch = 0;
 
     // Render-chain step 10: SurfaceTile command organization lives here.
     // These fields describe draw order inputs, depth/cull/blend state, base

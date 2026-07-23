@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include "../core/math/Rectangle.h"
+#include "../renderer/TerrainPageStore.h"  // TerrainPageLayerPool(层 LRU)
 #include "TileKey.h"
 
 namespace earth_engine {
@@ -67,18 +69,46 @@ public:
     const TemplateBuffers* acquire(const TileKey& key, const Rectangle& bounds,
                                    int gridSize);
 
-    // Stage B:per-tile 高度纹理(gridN+1 方 RGBA8,RG 打包 16bit 归一化高度,
+    // Stage B:per-tile 高度数据(gridN+1 方 RGBA8,RG 打包 16bit 归一化高度,
     // NEAREST)。shader 顶点级 texelFetch 取回、按 (minHeight,heightRange) 反量化
-    // → pos = 面点 + 法线·h。按整块瓦片键缓存(高度逐瓦片不同,不跨列共享)。
+    // → pos = 面点 + 法线·h。
+    //
+    // 合批 Step 1:存储从「每瓦片一张 2D 纹理(无界增长)」改为**共享
+    // texture2DArray**(每瓦片一层,固定 kHeightArrayLayers 层,层 LRU 复用
+    // TerrainPageLayerPool)——实例化批内高度纹理经实例 layer id 寻址的前提;
+    // 逐 draw 路径同步迁移(u_terrainLayers.x),不留双存储形态。
+    //
+    // 层淘汰一致性:每层带 epoch(重分配自增)。常驻 draw 命令记录其
+    // (layer, epoch),draw 侧每帧用 heightLayerCurrent() 校验,失配 →
+    // invalidate 命令缓存 → rebuild 重新 acquire(P5b 自愈模式)。可见瓦片
+    // 每帧 touchHeightTexture 保活,当帧被 touch 的层绝不被淘汰(池语义),
+    // 故只要容量 ≥ 峰值可见瓦片数(实测 ~185 << 256),淘汰只落在离屏瓦片。
     struct HeightTexture {
-        Texture* texture = nullptr;
+        Texture* texture = nullptr;  // 共享 array 纹理
         float minHeight = 0.0f;
         float heightRange = 1.0f;  // maxHeight − minHeight(下限保护 >0)
         int gridSize = 0;
+        int layer = -1;            // 本瓦片高度数据所在层
+        uint32_t epoch = 0;        // 该层分配代;层被重分配后旧 epoch 失效
     };
+    // GLES3.0 GL_MAX_ARRAY_TEXTURE_LAYERS 规范下限 256(Adreno 实测 2048),
+    // 按规范下限定容;峰值可见 ~185 层留有余量。65²×4B×256 ≈ 4.3MB。
+    static constexpr int kHeightArrayLayers = 256;
+
     const HeightTexture* acquireHeightTexture(const TileKey& key,
                                               const DecodedHeightmap& heightmap,
-                                              int gridSize);
+                                              int gridSize,
+                                              uint64_t frameId);
+
+    // 可见瓦片每帧保活(recency + 当帧免淘汰)。key 未驻留则 no-op。
+    void touchHeightTexture(const TileKey& key, uint64_t frameId);
+
+    // 常驻命令缓存的 staleness 校验:该 (layer, epoch) 是否仍指向当初的瓦片。
+    bool heightLayerCurrent(int layer, uint32_t epoch) const {
+        return layer >= 0 &&
+               static_cast<size_t>(layer) < heightLayerEpochs_.size() &&
+               heightLayerEpochs_[static_cast<size_t>(layer)] == epoch;
+    }
 
     size_t residentTemplateCount() const { return cache_.size(); }
     // 已上传模板 VBO 总字节（§5 有界性观测：应随可见 {LOD,row} 数封顶）。
@@ -90,17 +120,22 @@ private:
         std::unique_ptr<Buffer> indexBuffer;
         TemplateBuffers view;
     };
-    struct HeightEntry {
-        std::unique_ptr<Texture> texture;
-        HeightTexture view;
-    };
     static uint64_t cacheKey(const TileKey& key, int gridSize);
     static uint64_t heightCacheKey(const TileKey& key);  // 逐瓦片(含列)
 
+    // 惰性建共享高度 array(首次 acquire;gridSize 定层边长)。失败返回 false。
+    bool ensureHeightArray(int gridSize);
+
     RenderDevice* device_ = nullptr;
     std::unordered_map<uint64_t, Entry> cache_;
-    std::unordered_map<uint64_t, HeightEntry> heightCache_;
     size_t totalVertexBytes_ = 0;
+
+    // ---- 高度纹理共享 array 存储(合批 Step 1)----
+    std::unique_ptr<Texture> heightArray_;
+    int heightArrayGridSize_ = 0;  // 建 array 时的 gridSize(层边长-1);不匹配拒绝
+    TerrainPageLayerPool heightLayerPool_;  // 层 LRU(blockLayers=1)
+    std::vector<uint32_t> heightLayerEpochs_;  // 每层分配代
+    std::unordered_map<uint64_t, HeightTexture> heightIndex_;  // 瓦片键 → 驻留视图
 };
 
 }  // namespace earth_engine

@@ -150,6 +150,12 @@ struct alignas(16) GltfUniformBlock {
     //   w = gridSize(高度纹理栅格单元数,texel 下标 = uv×gridSize)
     // 仅真实地形 GPU 位移命令置 enabled=1,其余瓦片恒 0 → 零回归。
     std::array<float, 4> heightDisplace{0.0f, 1.0f, 0.0f, 64.0f};
+
+    // 地形合批 Step 1(per-tile 小纹理 array 化):
+    //   x = 高度纹理在共享 texture2DArray 中的层号(顶点阶段消费)
+    //   y = 保留给间接纹理层号(Step 2)  z/w = 保留
+    // 仅位移命令有效(heightDisplace.z=1 时才被采样),其余恒 0。
+    std::array<float, 4> terrainLayers{0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 static_assert(alignof(GltfUniformBlock) == 16,
@@ -198,7 +204,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 90> table = {{
+    static const std::array<GltfUniformTableEntry, 91> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -284,6 +290,7 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_clipEnabled", clipEnabled, 1),
         EE_GLTF_ENTRY("u_pageStoreParams", pageStoreParams, 4),
         EE_GLTF_ENTRY("u_heightDisplace", heightDisplace, 4),
+        EE_GLTF_ENTRY("u_terrainLayers", terrainLayers, 4),
     }};
 #undef EE_GLTF_ENTRY_AT
 #undef EE_GLTF_TRANSFORM
