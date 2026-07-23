@@ -411,6 +411,16 @@ void SceneRenderPipeline::aggregateDiagnostics(
     Context& context,
     double& diagnosticsMs) const {
     const double startMs = perf::nowMs();
+    // 诊断聚合含全 registry 瓦片状态遍历(TileLoadDiagnosticsCollector::collect
+    // 逐瓦片数 load 状态),掠视宽视野(百级可见瓦片/千级 registry)下 ~3-5ms/帧,
+    // 且字段纯诊断消费(调试面板/EarthPerf 日志,无功能逻辑读取)。节流到每 15
+    // 帧聚合一次,其余帧保留上次值(最多 15 帧陈旧;EarthPerf 120 帧心跳是 15
+    // 的倍数,心跳行永远拿到当帧新值)。
+    constexpr uint64_t kAggregateIntervalFrames = 15;
+    if (context.frameState.frameId % kAggregateIntervalFrames != 0u) {
+        diagnosticsMs = perf::nowMs() - startMs;
+        return;
+    }
     SceneFrameDiagnosticsAggregator::aggregateRenderFrame(
         context.commands,
         context.terrainTileset,
