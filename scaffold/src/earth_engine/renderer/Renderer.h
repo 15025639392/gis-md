@@ -94,6 +94,18 @@ public:
                                                     int vertexCount,
                                                     int instanceCount) const;
 
+    /// 地形实例化合批命令(方案 A/Step 3)。共享 32B 位移模板 VBO/IBO +
+    /// 96B per-instance 流(kTerrainInstanceStride:rel 帧 + dispMorph +
+    /// clipUv + layers)。kind=GltfPrimitiveInstanced,shader=terrainInstanced,
+    /// instanceStride 与 glTF 实例区分 → 后端分派 Terrain32Instanced 布局。
+    RenderCommand makeTerrainInstancedCommand(Buffer* vertexBuffer,
+                                              Buffer* indexBuffer,
+                                              Buffer* instanceBuffer,
+                                              int indexCount,
+                                              int vertexCount,
+                                              int instanceCount) const;
+    ShaderProgram* terrainInstancedShader() const;
+
     // ── IPrepareRendererResources implementation ──
 
     /// cesium-native: attachRasterInMainThread.

@@ -106,6 +106,7 @@ private:
         Surface32,          ///< 32B：POSITION(12)+NORMAL(12)+TEXCOORD(8)
         Surface32Instanced, ///< 32B + 7 条 instance 矩阵属性（attrib 3-9）
         TerrainCompact32,   ///< 32B：POSITION(f32)+NORMAL(snorm16)+packed TEXCOORD_0/1(unorm16)+geomorph heightDelta(f32)
+        TerrainCompact32Instanced, ///< TerrainCompact32 + 6 条 96B instance 属性(attrib 4-9,合批 Step3)
         Gltf120,            ///< 120B glTF：POSITION/NORMAL + packed TEXCOORD + COLOR/TANGENT
         Gltf120Instanced,   ///< 120B glTF + 7 条 instance 矩阵属性
         Terrain20,          ///< 20B：pos(12)+uv(8)，normal 由 shader 计算

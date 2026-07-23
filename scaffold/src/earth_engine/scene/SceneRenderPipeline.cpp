@@ -115,6 +115,7 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     double atmosphereMs = 0.0;
     double layerCommandsMs = 0.0;
     double vectorCommandsMs = 0.0;
+    double batchMs = 0.0;
     double mvpUniformsMs = 0.0;
     double sortMs = 0.0;
     double surfaceDiagnosticsMs = 0.0;
@@ -130,6 +131,9 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     polarCap_.appendCommands(
         context.commands, context.renderer, context.renderDevice,
         context.frameState.frameId);
+    // 地形实例化合批(Step3):MVP compose 之前把资格瓦片合成 instanced 命令
+    // (批命令置 hasTerrainDisplacementFrame → updater 算 mvp=viewProj·frame0)。
+    assembleTerrainBatches(context, batchMs);
     applyMvpUniforms(context, mvpUniformsMs);
     sortAndValidate(context, sortMs, surfaceDiagnosticsMs, validateMs);
     aggregateDiagnostics(context, diagnosticsMs);
@@ -154,13 +158,16 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
     releaseRenderReferences(context);
 
-    char buildDetail[384];
+    char buildDetail[448];
     std::snprintf(buildDetail, sizeof(buildDetail),
-        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
+        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
         skyMs,
         atmosphereMs,
         layerCommandsMs,
         vectorCommandsMs,
+        batchMs,
+        context.diagnostics.terrainBatches,
+        context.diagnostics.batchedTerrainCommands,
         mvpUniformsMs,
         sortMs,
         surfaceDiagnosticsMs,
@@ -345,6 +352,17 @@ void SceneRenderPipeline::buildLayerCommands(
         }
     }
     vectorCommandsMs = perf::nowMs() - vectorStartMs;
+}
+
+void SceneRenderPipeline::assembleTerrainBatches(
+    Context& context,
+    double& batchMs) const {
+    const double startMs = perf::nowMs();
+    const TerrainInstanceBatcher::Stats stats = terrainBatcher_.assemble(
+        context.commands, context.renderDevice, context.renderer);
+    context.diagnostics.batchedTerrainCommands = stats.batchedCommands;
+    context.diagnostics.terrainBatches = stats.batches;
+    batchMs = perf::nowMs() - startMs;
 }
 
 void SceneRenderPipeline::applyMvpUniforms(

@@ -931,13 +931,25 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             cmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
             instanceBuffer &&
             cmd.instanceStride == kGltfInstanceMatrixStride;
+        // 地形合批(Step3):32B 模板 + 96B per-instance 流(kTerrainInstance
+        // Stride 区别于 glTF/Surface 实例布局)。
+        const bool useTerrainInstanceAttribs =
+            cmd.vertexStride == 32 &&
+            cmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+            instanceBuffer &&
+            cmd.instanceStride == kTerrainInstanceStride;
 
         VaoKey vaoKey;
         vaoKey.vertexBuffer = vb->glId();
         vaoKey.indexBuffer = ib ? ib->glId() : 0u;
         vaoKey.instanceBuffer =
-            useInstanceAttribs ? instanceBuffer->glId() : 0u;
-        if (cmd.vertexStride == 32 &&
+            (useInstanceAttribs || useTerrainInstanceAttribs)
+                ? instanceBuffer->glId()
+                : 0u;
+        if (useTerrainInstanceAttribs) {
+            vaoKey.layout = VertexLayoutKind::TerrainCompact32Instanced;
+            vaoKey.vertexStride = 32;
+        } else if (cmd.vertexStride == 32 &&
             cmd.kind == RenderCommandKind::GltfPrimitive) {
             // Terrain compact 布局(geomorph 后 32B)。地形恒 GltfPrimitive kind,
             // glTF 材质模型是 stride 120,死代码 Surface32 是 SurfaceTile kind →
@@ -1402,6 +1414,21 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(28));
             break;
+        case VertexLayoutKind::TerrainCompact32Instanced:
+            // 合批 Step3:逐顶点 attr 0-3 = TerrainCompact32(32B 模板),完全一致。
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_SHORT, GL_TRUE, stride,
+                                  reinterpret_cast<void*>(12));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 4, GL_UNSIGNED_SHORT, GL_TRUE, stride,
+                                  reinterpret_cast<void*>(20));
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(28));
+            break;
         case VertexLayoutKind::Gltf120:
         case VertexLayoutKind::Gltf120Instanced:
             // glTF: POSITION/NORMAL + 8 packed TEXCOORD sets + COLOR_0 + TANGENT.
@@ -1462,6 +1489,18 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
                 7 + i, 3, GL_FLOAT, GL_FALSE, kGltfInstanceMatrixStride,
                 reinterpret_cast<void*>(static_cast<uintptr_t>(64 + 12 * i)));
             glVertexAttribDivisor(7 + i, 1);
+        }
+    } else if (key.layout == VertexLayoutKind::TerrainCompact32Instanced) {
+        // 合批 Step3 per-instance 属性:attrib 4-9 = 6× vec4(96B 流),逐
+        // instance 前进(divisor=1)。4/5/6=rel 三行,7=dispMorph,8=clipUv,
+        // 9=layers。逐顶点 attr 0-3 已由上方 case 设好。
+        glBindBuffer(GL_ARRAY_BUFFER, key.instanceBuffer);
+        for (GLuint i = 0; i < 6; ++i) {
+            glEnableVertexAttribArray(4 + i);
+            glVertexAttribPointer(
+                4 + i, 4, GL_FLOAT, GL_FALSE, kTerrainInstanceStride,
+                reinterpret_cast<void*>(static_cast<uintptr_t>(16 * i)));
+            glVertexAttribDivisor(4 + i, 1);
         }
     }
 

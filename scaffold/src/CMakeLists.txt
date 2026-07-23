@@ -150,6 +150,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/VirtualTexturePoc.cpp
     earth_engine/renderer/TerrainPageStore.h
     earth_engine/renderer/TerrainPageStore.cpp
+    earth_engine/renderer/TerrainInstanceBatcher.h
+    earth_engine/renderer/TerrainInstanceBatcher.cpp
     earth_engine/renderer/TileCompositeBakePoc.h
     earth_engine/renderer/TileCompositeBakePoc.cpp
     earth_engine/renderer/VtIndirectionSamplePoc.h

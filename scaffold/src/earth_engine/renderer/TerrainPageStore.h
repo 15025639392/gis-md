@@ -199,6 +199,7 @@ private:
     struct TileIndir {
         int layer = -1;
         int gridN = 1;
+        bool fullyResident = false;  // 全 cell 高清页驻留 = 合批资格(丢 mappedRaster)
         uint64_t lastFrame = 0;  // determination 里 touch;sweep 清非本帧可见瓦片
     };
 

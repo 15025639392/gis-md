@@ -22,6 +22,10 @@ struct Diagnostics {
     double renderCommandBuildMs = 0.0;
     double renderSubmitMs = 0.0;
     int drawCalls = 0;
+    // 地形实例化合批(Step3):本帧被合并进 instanced 命令的逐瓦片数 / 生成的
+    // 批数。batchedTerrainCommands 大 = draw 省得多;batches 小 = 分组紧凑。
+    int batchedTerrainCommands = 0;
+    int terrainBatches = 0;
     int visibleTiles = 0;
     int contentTilesets = 0;
     int contentVisibleTiles = 0;

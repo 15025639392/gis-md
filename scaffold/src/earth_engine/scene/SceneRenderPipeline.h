@@ -4,6 +4,7 @@
 #include "FrameState.h"
 #include "PolarCapRenderer.h"
 #include "../renderer/RenderCommand.h"
+#include "../renderer/TerrainInstanceBatcher.h"
 
 #include <functional>
 #include <memory>
@@ -56,6 +57,7 @@ private:
     void buildLayerCommands(Context& context,
                             double& layerCommandsMs,
                             double& vectorCommandsMs) const;
+    void assembleTerrainBatches(Context& context, double& batchMs) const;
     void applyMvpUniforms(Context& context, double& mvpUniformsMs) const;
     void sortAndValidate(Context& context,
                          double& sortMs,
@@ -68,6 +70,7 @@ private:
     mutable int lastPrimaryCurrentEntryCount_ = -1;
     mutable int lastPrimaryPendingEntryCount_ = -1;
     PolarCapRenderer polarCap_;
+    mutable TerrainInstanceBatcher terrainBatcher_;
 };
 
 } // namespace earth_engine

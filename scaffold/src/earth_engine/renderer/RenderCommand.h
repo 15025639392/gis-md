@@ -31,6 +31,11 @@ static constexpr int kGltfPageStoreIndirTextureSlot =
 static constexpr int kGltfHeightTextureSlot =
     kGltfPageStoreIndirTextureSlot + 1;
 static constexpr int kGltfInstanceMatrixStride = 100;
+// 地形合批(Step 3)实例流步长:6× vec4 = 96B。rel 帧 3 行(相对批参考帧
+// frame0)+ dispMorph(minH·fade,range·fade,morphFactor,gridN)+ clipUv +
+// layers(heightLayer,indirLayer,clipEnabled,_)。与 kGltfInstanceMatrixStride
+// 不同值 → 后端据此分派 Terrain32Instanced 布局(非 Gltf/Surface 实例布局)。
+static constexpr int kTerrainInstanceStride = 96;
 
 /// 固定容量纹理槽表（inline 存储，无堆分配）。
 /// 命令拷贝是每帧热路径——常驻缓存命令逐可见瓦片拷进帧列表，vector 版本
@@ -187,6 +192,10 @@ struct RenderCommand {
     // 层被 LRU 重分配后 epoch 失配 → build 侧 invalidate 命令缓存自愈重建。
     int terrainHeightLayer = -1;
     uint32_t terrainHeightLayerEpoch = 0;
+    // 合批 Step 3(CPU-only):pageStore 本瓦片全 cell 高清页驻留 → mappedRaster
+    // fallback 必不被采样 → 该命令可进实例化批(批 shader 丢 mappedRaster)。
+    // 由 TerrainPageStore::applyToTerrainCommand 设,TerrainInstanceBatcher 读。
+    bool terrainPageStoreFullyResident = false;
 
     // Render-chain step 10: SurfaceTile command organization lives here.
     // These fields describe draw order inputs, depth/cull/blend state, base

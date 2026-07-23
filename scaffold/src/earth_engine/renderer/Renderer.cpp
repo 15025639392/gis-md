@@ -1186,6 +1186,156 @@ void main() {
 )glsl";
 
 // ============================================================
+// Terrain instanced shader (合批 Step 3)
+// ============================================================
+// 32B 位移模板逐顶点(loc 0-3,同 terrainShader)+ 96B per-instance 流
+// (loc 4-9)。同 {schemeId,z,row} 可见瓦片一次 glDrawElementsInstanced 画完。
+// per-instance:rel 帧 3 行(相对批参考帧 frame0 的刚体变换)+ dispMorph
+// (minH·fade,range·fade,morphFactor,pageStore gridN)+ clipUv + layers
+// (heightLayer,indirLayer,clipEnabled,_)。批级 u_modelViewProjection=
+// viewProj·frame0,u_lightDir/u_eyePositionRTC 已变到 frame0 帧(updater)。
+static const char* kTerrainInstancedVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_texcoord01;
+layout(location = 3) in float a_heightDelta;
+layout(location = 4) in vec4 i_relRow0;
+layout(location = 5) in vec4 i_relRow1;
+layout(location = 6) in vec4 i_relRow2;
+layout(location = 7) in vec4 i_dispMorph;  // minH·fade, range·fade, morph, gridN
+layout(location = 8) in vec4 i_clipUv;
+layout(location = 9) in vec4 i_layers;     // heightLayer, indirLayer, clipEn, _
+
+uniform mat4 u_modelViewProjection;  // = viewProj · frame0
+uniform highp sampler2DArray u_heightTexture;
+
+out vec3 v_normal;
+out vec3 v_position;
+out vec4 v_texcoord01;
+flat out vec4 v_pageParams;  // x=gridN y=indirLayer z=clipEnabled w=_
+flat out vec4 v_clipUv;
+
+const float kGridSize = 64.0;  // = kTerrainDisplacementGridSize(模板常量)
+
+float eeSampleTerrainHeight(
+    highp sampler2DArray tex, ivec2 texel, int layer, vec2 mr) {
+    vec4 p = texelFetch(tex, ivec3(texel, layer), 0);
+    float t = (p.r * 255.0 * 256.0 + p.g * 255.0) / 65535.0;
+    return mr.x + t * mr.y;
+}
+
+void main() {
+    float morph = i_dispMorph.z;
+    int hLayer = int(i_layers.x + 0.5);
+    vec2 mr = i_dispMorph.xy;
+    // 裙墙自适应:裙顶点(heightDelta=-1 哨兵)geomorph delta 与位移 h 均归零。
+    float heightDelta = a_heightDelta;
+    float skirt = (heightDelta < -0.5) ? 1.0 : 0.0;
+    heightDelta = mix(heightDelta, 0.0, skirt);
+    // geomorph 方向 = 模板局部 +Z(共享模板恒在 ENU 帧,与 terrainShader 一致)。
+    vec3 morphPos = a_position + vec3(0.0, 0.0, 1.0) * heightDelta * (1.0 - morph);
+    // 双分辨率高度采样(fine=本栅格纹素,coarse=偶数格点双线性),morph 混合。
+    vec2 gf = a_texcoord01.xy * kGridSize;
+    float hFine = eeSampleTerrainHeight(u_heightTexture, ivec2(gf + 0.5), hLayer, mr);
+    vec2 g0 = floor(gf * 0.5) * 2.0;
+    vec2 fr = (gf - g0) * 0.5;
+    float e00 = eeSampleTerrainHeight(u_heightTexture, ivec2(g0), hLayer, mr);
+    float e10 = eeSampleTerrainHeight(
+        u_heightTexture, ivec2(min(g0.x + 2.0, kGridSize), g0.y), hLayer, mr);
+    float e01 = eeSampleTerrainHeight(
+        u_heightTexture, ivec2(g0.x, min(g0.y + 2.0, kGridSize)), hLayer, mr);
+    float e11 = eeSampleTerrainHeight(
+        u_heightTexture,
+        ivec2(min(g0.x + 2.0, kGridSize), min(g0.y + 2.0, kGridSize)), hLayer, mr);
+    float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
+    float h = mix(hCoarse, hFine, morph) * (1.0 - skirt);
+    morphPos += normalize(a_normal) * h;
+    // 相对批参考帧的刚体变换(rel 三行,行主序;第 4 行恒 0001)。
+    vec4 mp = vec4(morphPos, 1.0);
+    vec3 world = vec3(dot(i_relRow0, mp), dot(i_relRow1, mp), dot(i_relRow2, mp));
+    vec3 nrm = normalize(a_normal);
+    vec3 worldN = normalize(vec3(
+        dot(i_relRow0.xyz, nrm), dot(i_relRow1.xyz, nrm), dot(i_relRow2.xyz, nrm)));
+    v_normal = worldN;
+    v_position = world;
+    v_texcoord01 = a_texcoord01;
+    v_pageParams = vec4(i_dispMorph.w, i_layers.y, i_layers.z, 0.0);
+    v_clipUv = i_clipUv;
+    gl_Position = u_modelViewProjection * vec4(world, 1.0);
+}
+)glsl";
+
+static const char* kTerrainInstancedFragmentGLSL = R"glsl(
+#version 300 es
+precision highp float;
+
+in vec3 v_normal;
+in vec3 v_position;
+in vec4 v_texcoord01;
+flat in vec4 v_pageParams;  // x=gridN y=indirLayer z=clipEnabled w=_
+flat in vec4 v_clipUv;
+
+uniform vec3 u_lightDir;
+uniform vec4 u_ambient;
+uniform vec4 u_baseColor;
+uniform highp sampler2DArray u_pageStore;
+uniform highp sampler2DArray u_pageStoreIndir;
+
+out vec4 fragColor;
+
+vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
+    overlay.a *= clamp(opacity, 0.0, 1.0);
+    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
+    base.a = max(base.a, overlay.a);
+    return base;
+}
+
+void main() {
+    vec2 terrainUv = v_texcoord01.xy;
+    if (v_pageParams.z > 0.5 &&
+        (terrainUv.x < v_clipUv.x || terrainUv.x > v_clipUv.x + v_clipUv.z ||
+         terrainUv.y < v_clipUv.y || terrainUv.y > v_clipUv.y + v_clipUv.w)) {
+        discard;
+    }
+    // 位移面真实几何法线(屏幕空间导数叉积),与 terrainShader 一致。
+    vec3 dpx = dFdx(v_position);
+    vec3 dpy = dFdy(v_position);
+    vec3 reliefN = cross(dpx, dpy);
+    vec3 geomN = normalize(v_normal);
+    if (dot(reliefN, reliefN) > 1e-12) {
+        geomN = normalize(reliefN);
+        if (dot(geomN, v_normal) < 0.0) { geomN = -geomN; }
+    }
+    vec3 N = gl_FrontFacing ? geomN : -geomN;
+    vec3 L = normalize(u_lightDir);
+    float NdotL = max(dot(N, L), 0.0);
+
+    vec4 base = u_baseColor;
+    // 页存储:资格闸保证全 cell 驻留 → 直接覆盖(无 mappedRaster fallback)。
+    float gridN = max(v_pageParams.x, 1.0);
+    int indirLayer = int(v_pageParams.y + 0.5);
+    vec2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
+    vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
+    vec4 e = texelFetch(u_pageStoreIndir, ivec3(ivec2(cell), indirLayer), 0);
+    float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
+    float d = floor(e.b * 255.0 + 0.5);
+    vec2 span = vec2(exp2(d));
+    vec2 origin = floor(cell / span) * span;
+    vec2 sampleUv = (g - origin) / span;
+    base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
+
+    // GE 式半球光照(与 terrainShader 一致)。
+    float directional = smoothstep(0.0, 1.0, NdotL);
+    vec3 sunTint = vec3(1.05, 1.0, 0.91);
+    vec3 color = base.rgb * (0.72 + 0.28 * directional)
+                          * mix(vec3(1.0), sunTint, directional)
+               + base.rgb * u_ambient.rgb * (1.0 - directional);
+    fragColor = vec4(color, 1.0);
+}
+)glsl";
+
+// ============================================================
 // Deprecated shaders (kept for reference)
 // ============================================================
 
@@ -2571,6 +2721,162 @@ gltfInstancedVertex(GltfInstancedVertexIn in [[stage_in]],
 }
 )msl";
 
+// 地形实例化(合批 Step 3)MSL,镜像 kTerrainInstanced{Vertex,Fragment}GLSL。
+// 逐顶点 attr 0-3 = 32B 位移模板;per-instance attr 4-9 = 96B 流(rel 3 行 +
+// dispMorph + clipUv + layers),由顶点描述表 perInstance step 绑定。
+static const char* kTerrainInstancedVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct TerrainInstancedVertexIn {
+    float3 position   [[attribute(0)]];
+    float4 normal     [[attribute(1)]];
+    float4 texcoord01 [[attribute(2)]];
+    float heightDelta [[attribute(3)]];
+    float4 relRow0    [[attribute(4)]];
+    float4 relRow1    [[attribute(5)]];
+    float4 relRow2    [[attribute(6)]];
+    float4 dispMorph  [[attribute(7)]];  // minH·fade, range·fade, morph, gridN
+    float4 clipUv     [[attribute(8)]];
+    float4 layers     [[attribute(9)]];  // heightLayer, indirLayer, clipEn, _
+};
+
+struct TerrainInstancedVertexOut {
+    float4 position [[position]];
+    float3 normal;
+    float3 localPosition;
+    float4 texcoord01;
+    float4 pageParams [[flat]];  // x=gridN y=indirLayer z=clipEnabled w=_
+    float4 clipUv [[flat]];
+};
+
+constant float kGridSize = 64.0;
+
+static inline float eeSampleTerrainHeight(
+    texture2d_array<float> tex, uint2 texel, uint layer, float2 mr) {
+    float4 p = tex.read(texel, layer, 0);
+    float t = (p.r * 255.0 * 256.0 + p.g * 255.0) / 65535.0;
+    return mr.x + t * mr.y;
+}
+
+vertex TerrainInstancedVertexOut terrainInstancedVertex(
+    TerrainInstancedVertexIn in [[stage_in]],
+    constant float4x4& u_modelViewProjection [[buffer(1)]],
+    texture2d_array<float> u_heightTexture [[texture(22)]]) {
+    TerrainInstancedVertexOut out;
+    float morph = in.dispMorph.z;
+    uint hLayer = uint(in.layers.x + 0.5);
+    float2 mr = in.dispMorph.xy;
+    float heightDelta = in.heightDelta;
+    float skirt = (heightDelta < -0.5) ? 1.0 : 0.0;
+    heightDelta = mix(heightDelta, 0.0, skirt);
+    float3 morphPos = in.position + float3(0.0, 0.0, 1.0) * heightDelta * (1.0 - morph);
+    float2 gf = in.texcoord01.xy * kGridSize;
+    float hFine = eeSampleTerrainHeight(u_heightTexture, uint2(gf + 0.5), hLayer, mr);
+    float2 g0 = floor(gf * 0.5) * 2.0;
+    float2 fr = (gf - g0) * 0.5;
+    float e00 = eeSampleTerrainHeight(u_heightTexture, uint2(g0), hLayer, mr);
+    float e10 = eeSampleTerrainHeight(
+        u_heightTexture, uint2(min(g0.x + 2.0, kGridSize), g0.y), hLayer, mr);
+    float e01 = eeSampleTerrainHeight(
+        u_heightTexture, uint2(g0.x, min(g0.y + 2.0, kGridSize)), hLayer, mr);
+    float e11 = eeSampleTerrainHeight(
+        u_heightTexture,
+        uint2(min(g0.x + 2.0, kGridSize), min(g0.y + 2.0, kGridSize)), hLayer, mr);
+    float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
+    float h = mix(hCoarse, hFine, morph) * (1.0 - skirt);
+    morphPos += normalize(in.normal.xyz) * h;
+    float4 mp = float4(morphPos, 1.0);
+    float3 world = float3(dot(in.relRow0, mp), dot(in.relRow1, mp), dot(in.relRow2, mp));
+    float3 nrm = normalize(in.normal.xyz);
+    float3 worldN = normalize(float3(
+        dot(in.relRow0.xyz, nrm), dot(in.relRow1.xyz, nrm), dot(in.relRow2.xyz, nrm)));
+    out.position = u_modelViewProjection * float4(world, 1.0);
+    out.normal = worldN;
+    out.localPosition = world;
+    out.texcoord01 = in.texcoord01;
+    out.pageParams = float4(in.dispMorph.w, in.layers.y, in.layers.z, 0.0);
+    out.clipUv = in.clipUv;
+    return out;
+}
+)msl";
+
+static const char* kTerrainInstancedFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct TerrainInstancedVertexOut {
+    float4 position [[position]];
+    float3 normal;
+    float3 localPosition;
+    float4 texcoord01;
+    float4 pageParams [[flat]];
+    float4 clipUv [[flat]];
+};
+
+struct TerrainInstancedFragUniforms {
+    packed_float3 lightDir;
+    float _pad0;
+    packed_float4 ambient;
+    packed_float4 baseColor;
+};
+
+static inline float4 tiAlphaOver(float4 base, float4 overlay, float opacity) {
+    overlay.a *= clamp(opacity, 0.0, 1.0);
+    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
+    base.a = max(base.a, overlay.a);
+    return base;
+}
+
+fragment float4 terrainInstancedFragment(
+    TerrainInstancedVertexOut in [[stage_in]],
+    constant TerrainInstancedFragUniforms& u [[buffer(0)]],
+    texture2d_array<float> u_pageStore [[texture(20)]],
+    texture2d_array<float> u_pageStoreIndir [[texture(21)]],
+    sampler u_pageSampler [[sampler(0)]]) {
+    float2 terrainUv = in.texcoord01.xy;
+    if (in.pageParams.z > 0.5 &&
+        (terrainUv.x < in.clipUv.x || terrainUv.x > in.clipUv.x + in.clipUv.z ||
+         terrainUv.y < in.clipUv.y || terrainUv.y > in.clipUv.y + in.clipUv.w)) {
+        discard_fragment();
+    }
+    float3 dpx = dfdx(in.localPosition);
+    float3 dpy = dfdy(in.localPosition);
+    float3 reliefN = cross(dpx, dpy);
+    float3 geomN = normalize(in.normal);
+    if (dot(reliefN, reliefN) > 1e-12) {
+        geomN = normalize(reliefN);
+        if (dot(geomN, in.normal) < 0.0) { geomN = -geomN; }
+    }
+    bool front = in.position.z >= 0.0;  // (占位;Metal 无 gl_FrontFacing 语义差)
+    float3 N = geomN;
+    (void)front;
+    float3 L = normalize(float3(u.lightDir));
+    float NdotL = max(dot(N, L), 0.0);
+
+    float4 base = float4(u.baseColor);
+    float gridN = max(in.pageParams.x, 1.0);
+    uint indirLayer = uint(in.pageParams.y + 0.5);
+    float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
+    float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
+    float4 e = u_pageStoreIndir.read(uint2(cell), indirLayer, 0);
+    float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
+    float d = floor(e.b * 255.0 + 0.5);
+    float2 span = float2(exp2(d));
+    float2 origin = floor(cell / span) * span;
+    float2 sampleUv = (g - origin) / span;
+    base = tiAlphaOver(
+        base, u_pageStore.sample(u_pageSampler, sampleUv, uint(layer)), e.a);
+
+    float directional = smoothstep(0.0, 1.0, NdotL);
+    float3 sunTint = float3(1.05, 1.0, 0.91);
+    float3 color = base.rgb * (0.72 + 0.28 * directional)
+                            * mix(float3(1.0), sunTint, directional)
+                 + base.rgb * float3(u.ambient.rgb) * (1.0 - directional);
+    return float4(color, 1.0);
+}
+)msl";
+
 // ============================================================
 // Shared SurfaceTile geometry: unit grid mesh
 // ============================================================
@@ -2669,6 +2975,8 @@ struct Renderer::Impl {
 
     // Terrain lightweight shader (28-byte compact vertex, no PBR extensions)
     std::unique_ptr<ShaderProgram> terrainShader;
+    // Terrain instanced shader (合批 Step 3:32B 模板 + 96B per-instance 流)
+    std::unique_ptr<ShaderProgram> terrainInstancedShader;
 
     // Color (vector)
     std::unique_ptr<ShaderProgram> colorShader;
@@ -2758,6 +3066,25 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] gltfInstancedShader failed — instanced glTF unavailable\n");
     }
 
+    // 地形实例化合批 shader(合批 Step 3)。GLES 侧本步接线 Terrain32Instanced
+    // 顶点布局;Metal 侧的 per-instance 顶点描述表留 Step 4,此前不建(→
+    // terrainInstancedShader()==null → TerrainInstanceBatcher no-op → Metal
+    // 逐字节走逐 draw,零回归)。创建失败非致命,同样回落逐 draw。
+    if (!isMetal) {
+        ShaderDesc terrainInstancedSd;
+        terrainInstancedSd.vertexSource = kTerrainInstancedVertexGLSL;
+        terrainInstancedSd.fragmentSource = kTerrainInstancedFragmentGLSL;
+        impl_->terrainInstancedShader = dev->createShader(terrainInstancedSd);
+        if (!impl_->terrainInstancedShader) {
+            fprintf(stderr,
+                    "[Renderer] terrainInstancedShader failed — terrain "
+                    "batching disabled, per-draw fallback\n");
+        }
+    } else {
+        (void)kTerrainInstancedVertexMSL;
+        (void)kTerrainInstancedFragmentMSL;
+    }
+
     // Shared index buffer for surface tiles (64×64 grid)
     auto [tileVerts, tileIndices] = makeTileGeometry(64);
     (void)tileVerts;  // VBOs are per-tile now
@@ -2794,6 +3121,7 @@ void Renderer::dispose() {
     impl_->gltfShader.reset();
     impl_->gltfInstancedShader.reset();
     impl_->terrainShader.reset();
+    impl_->terrainInstancedShader.reset();
     impl_->colorShader.reset();
     impl_->tileIndexCount = 0;
     impl_->initialized = false;
@@ -2920,6 +3248,32 @@ RenderCommand Renderer::makeGltfPrimitiveInstancedCommand(
     cmd.instanceCount = instanceCount;
     cmd.instanceStride = kGltfInstanceMatrixStride;
     return cmd;
+}
+
+RenderCommand Renderer::makeTerrainInstancedCommand(
+    Buffer* vertexBuffer,
+    Buffer* indexBuffer,
+    Buffer* instanceBuffer,
+    int indexCount,
+    int vertexCount,
+    int instanceCount) const {
+    // 复用地形单命令(32B 模板布局 + terrain uniform 默认),仅换 kind/shader/
+    // 实例流。vertexStride=32 + kind=Instanced + instanceStride=kTerrainInstance
+    // Stride → 后端分派 Terrain32Instanced 顶点布局(见 RenderDeviceGLES)。
+    RenderCommand cmd = makeTerrainPrimitiveCommand(
+        vertexBuffer, indexBuffer, indexCount, vertexCount);
+    cmd.kind = RenderCommandKind::GltfPrimitiveInstanced;
+    cmd.owner = "terrain_instanced";
+    cmd.shader = impl_->terrainInstancedShader.get();
+    cmd.indexType = RenderCommand::IndexType::UInt32;  // 模板 IBO 恒 uint32
+    cmd.instanceBuffer = instanceBuffer;
+    cmd.instanceCount = instanceCount;
+    cmd.instanceStride = kTerrainInstanceStride;
+    return cmd;
+}
+
+ShaderProgram* Renderer::terrainInstancedShader() const {
+    return impl_->terrainInstancedShader.get();
 }
 
 std::array<float, 16> Renderer::earthModelMatrix() {

@@ -359,8 +359,12 @@ void TerrainPageStore::updateVisiblePages(
         }
 
         // 驻留编码(**每帧必跑**):按当前 resident/uploaded 重建间接纹理。
+        // residentCells 统计本帧真正拿到高清页(A=255,含祖先回退)的 cell 数;
+        // == gridN² 即「全 cell 驻留」= 合批资格闸(此时 mappedRaster fallback
+        // 必不被采样 → 批命令可丢 mappedRaster,见 TerrainInstanceBatcher)。
         indirTexelsScratch_.assign(
             static_cast<size_t>(p.gridN) * static_cast<size_t>(p.gridN) * 4u, 0);
+        int residentCells = 0;
         for (const DetKeptCell& kc : cache.kept) {
             uint8_t* texel = indirTexelsScratch_.data() +
                              (static_cast<size_t>(kc.dy) * p.gridN + kc.dx) * 4u;
@@ -384,6 +388,7 @@ void TerrainPageStore::updateVisiblePages(
                 if (pe.uploaded) {
                     // 目标页就绪 = 理想 LOD(settled 逐字节=现状精/粗页)。
                     encodeLayerRGBA8(pe.layer, true, kc.d, texel);
+                    ++residentCells;
                     continue;
                 }
             }
@@ -414,6 +419,7 @@ void TerrainPageStore::updateVisiblePages(
             }
             if (foundLayer >= 0) {
                 encodeLayerRGBA8(foundLayer, true, foundD, texel);
+                ++residentCells;
             } else {
                 encodeLayerRGBA8(0, false, kc.d, texel);  // 全冷 → mappedRaster
             }
@@ -444,6 +450,10 @@ void TerrainPageStore::updateVisiblePages(
                 static_cast<size_t>(p.gridN) * 4u, ind.layer);
         }
         ind.gridN = p.gridN;
+        // 全 cell 驻留(含被 frustum/SSE 剔除的 cell 未 kept → 不计 → 达不到
+        // gridN²,该瓦片留逐 draw = 保守但安全,决不丢影像)= 合批资格。
+        ind.fullyResident =
+            ind.layer >= 0 && residentCells == p.gridN * p.gridN;
         ind.lastFrame = frameId_;
         cache.lastFrame = frameId_;
     }
@@ -602,6 +612,7 @@ void TerrainPageStore::applyToTerrainCommand(
     cmd.gltfUniforms.pageStoreParams = {1.0f, static_cast<float>(ind.gridN),
                                         0.0f, 0.0f};
     cmd.gltfUniforms.terrainLayers[1] = static_cast<float>(ind.layer);
+    cmd.terrainPageStoreFullyResident = ind.fullyResident;
 }
 
 void TerrainPageStore::tick() {
