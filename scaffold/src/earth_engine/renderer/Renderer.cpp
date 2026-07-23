@@ -1077,7 +1077,20 @@ void main() {
         discard;
     }
     float faceSign = gl_FrontFacing ? 1.0 : -1.0;
-    vec3 N = normalize(v_normal) * faceSign;
+    // Phase 2c P4 浮雕法线:模板着色法线是光滑椭球法线(v_normal),位移出的地形若
+    // 用它则每瓦片近乎平光照——无坡面明暗。改用位移面的真实几何法线:局部位置的屏幕
+    // 空间导数叉积 = 面法线(v_position 已是位移后局部米坐标,u_lightDir 同 ENU 帧)。
+    // 平坦(reliefFade→0 / skirt 底)时导数≈椭球 up,自然退化,无需 gate。叉积符号随
+    // 屏幕朝向/winding 不定,用 v_normal 定向保证朝外。
+    vec3 dpx = dFdx(v_position);
+    vec3 dpy = dFdy(v_position);
+    vec3 reliefN = cross(dpx, dpy);
+    vec3 geomN = normalize(v_normal);
+    if (dot(reliefN, reliefN) > 1e-12) {
+        geomN = normalize(reliefN);
+        if (dot(geomN, v_normal) < 0.0) { geomN = -geomN; }
+    }
+    vec3 N = geomN * faceSign;
     vec3 L = normalize(u_lightDir);
     float NdotL = max(dot(N, L), 0.0);
 
@@ -2386,7 +2399,17 @@ fragment float4 terrainFragment(
         discard_fragment();
     }
     float faceSign = frontFacing ? 1.0 : -1.0;
-    float3 n = normalize(in.normal) * faceSign;
+    // Phase 2c P4 浮雕法线(同 GLES):位移面真实几何法线 = 局部位置屏幕导数叉积,
+    // 替光滑椭球法线消除位移地形平光照。平坦时自然退化;用 in.normal 定向朝外。
+    float3 dpx = dfdx(in.localPosition);
+    float3 dpy = dfdy(in.localPosition);
+    float3 reliefN = cross(dpx, dpy);
+    float3 geomN = normalize(in.normal);
+    if (dot(reliefN, reliefN) > 1e-12) {
+        geomN = normalize(reliefN);
+        if (dot(geomN, in.normal) < 0.0) { geomN = -geomN; }
+    }
+    float3 n = geomN * faceSign;
     float3 light = normalize(float3(u.lightDir));
     float NdotL = max(dot(n, light), 0.0);
 
