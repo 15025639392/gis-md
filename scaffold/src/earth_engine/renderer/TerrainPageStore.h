@@ -149,6 +149,11 @@ public:
 
     Texture* arrayTexture() const { return arrayTexture_.get(); }
 
+    // 合批 Step 2:间接纹理共享 array 的层边长与层数(层边长 = 最大 gridN =
+    // 1<<kMaxDetDepthLevels;层数按峰值可见瓦片 ~185 留余量,64²×4B×256≈4.2MB)。
+    static constexpr int kIndirSideTexels = 64;
+    static constexpr int kIndirArrayLayers = 256;
+
     /// 稀疏虚拟纹理间接纹理的 RGBA8 层编码:R=layer&0xFF、G=(layer>>8)&0xFF、
     /// **B=depth(per-cell 渐变 LOD,§16.3)**、A=resident?255:0。引擎不支持整数纹理,
     /// 故用 RGBA8 承载 16 位 layer 索引(容 ≤ 65535 页)+ 深度 d(≤ kMaxDetDepthLevels,
@@ -184,17 +189,20 @@ private:
     /// 每个屏幕可见 capped 瓦片的稀疏间接纹理(gridN×gridN RGBA8)。
     /// **每帧在 determination 里按当前 resident 页重建**:cell 命中 resident+uploaded
     /// 页 → 编 RG=layer、A=255;否则(视锥外/未 fetch/未到)→ A=0(miss)。
-    /// gridN 随屏幕驱动 zoom 变(换 gridN 时重建纹理)。tile 不再可见 → 清除。
+    ///
+    /// 合批 Step 2:per-tile 纹理 → 共享 texture2DArray(固定 kIndirSideTexels²
+    /// 每层,texel 写左上 gridN² 区,片元 texelFetch 整数寻址不受空余区影响)。
+    /// 层由 indirPool_ LRU 认领;可见瓦片每帧重建即 touch,当帧层不被淘汰;层
+    /// 被夺走(离屏久驻)→ layer 置 -1 → applyToTerrainCommand 跳过 → 回落
+    /// mappedRaster(优雅降级,无 stale 采样——绑定每帧从本表读,无常驻引用)。
+    /// tile 不再可见 → sweep 清除 + 释放层。
     struct TileIndir {
-        std::unique_ptr<Texture> tex;
+        int layer = -1;
         int gridN = 1;
         uint64_t lastFrame = 0;  // determination 里 touch;sweep 清非本帧可见瓦片
     };
 
     static uint64_t packKey(const TileKey& key);
-    /// 建 gridN×gridN、RGBA8、NEAREST+Clamp 的间接纹理(初值 = texels)。
-    /// 片元经它单次 NEAREST fetch 定位 array 层 + 读 A 通道作 miss 回退 factor。
-    std::unique_ptr<Texture> createIndirTexture(int gridN, const uint8_t* texels);
     /// kick 单页影像 fetch(worker 回调把解码影像投进 inbox,带 pageKey+layer)。
     void kickPageFetch(const TileKey& pageTileKey, uint64_t pageKey, int layer,
                        CancellationToken& token);
@@ -208,6 +216,8 @@ private:
     TerrainPageLayerPool pool_;
     std::unordered_map<uint64_t, PageEntry> pages_;      // pageKey → 页账本
     std::unordered_map<uint64_t, TileIndir> tileIndirs_;  // tileKey → 稀疏间接纹理
+    std::unique_ptr<Texture> indirArrayTexture_;  // 合批 Step 2:间接纹理共享 array
+    TerrainPageLayerPool indirPool_;              // 间接纹理层 LRU(blockLayers=1)
     uint64_t frameId_ = 0;
     int uploadedLayerTotal_ = 0;
 

@@ -173,9 +173,13 @@ TEST(TerrainPageStore, InitializeCreatesSharedArrayTexture) {
     cfg.maxPages = 64;  // B2b:每页一层 → array 层数 = maxPages
     ASSERT_TRUE(store.initialize(&device, cfg));
     EXPECT_TRUE(store.isReady());
-    EXPECT_EQ(device.createdTextureCount, 1);
-    EXPECT_EQ(device.lastTextureDesc.arrayLayers, 64);  // = maxPages
-    EXPECT_EQ(device.lastTextureDesc.width, 256);
+    // 合批 Step 2:页存储 array + 间接纹理共享 array 各一张(后创建的
+    // indir array 是 lastTextureDesc:固定 64² × kIndirArrayLayers 层)。
+    EXPECT_EQ(device.createdTextureCount, 2);
+    EXPECT_EQ(device.lastTextureDesc.arrayLayers,
+              TerrainPageStore::kIndirArrayLayers);
+    EXPECT_EQ(device.lastTextureDesc.width,
+              TerrainPageStore::kIndirSideTexels);
     EXPECT_EQ(store.residentPageCount(), 0);
     EXPECT_EQ(store.uploadedLayerTotal(), 0);
 }

@@ -311,8 +311,11 @@ uniform float u_clipEnabled;
 // 元数据 → useTerrainFormat=false),故 SVT 页存储采样必须在这里(非 kTerrainFragmentGLSL)。
 // x=enabled y=gridN z/w=保留;layer 由间接纹理 RG 承载、resident 标志由 A 承载。
 uniform highp sampler2DArray u_pageStore;
-uniform highp sampler2D u_pageStoreIndir;
+// 合批 Step 2:per-tile 间接纹理搬共享 texture2DArray(固定 64² 每层,texel 写
+// 左上 gridN² 区),层号由 u_terrainLayers.y 给出,texelFetch 整数寻址。
+uniform highp sampler2DArray u_pageStoreIndir;
 uniform vec4 u_pageStoreParams;
+uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
 
 out vec4 fragColor;
 
@@ -575,8 +578,9 @@ void main() {
         float gridN = max(u_pageStoreParams.y, 1.0);
         vec2 g = clamp(psUv, 0.0, 1.0) * gridN;
         vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
-        vec2 indirUv = (cell + 0.5) / gridN;
-        vec4 e = texture(u_pageStoreIndir, indirUv);
+        vec4 e = texelFetch(
+            u_pageStoreIndir,
+            ivec3(ivec2(cell), int(u_terrainLayers.y + 0.5)), 0);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
         // per-cell 渐变 LOD(§16.3):d>0 → cell 采粗祖先页(覆盖 span=2^d 个精 cell)。
         // origin=该粗页在精网格的左下角,sampleUv=片元在粗页内 [0,1] 子区。
@@ -1023,8 +1027,10 @@ uniform float u_clipEnabled;
 // 纹理承载,shader 不再用)w=保留。
 uniform highp sampler2DArray u_pageStore;
 uniform vec4 u_pageStoreParams;
-// 稀疏虚拟纹理(Step B1):per-tile 间接纹理(RGBA8 编 layer 索引),NEAREST 采样。
-uniform highp sampler2D u_pageStoreIndir;
+// 稀疏虚拟纹理(Step B1):间接纹理(RGBA8 编 layer 索引)。合批 Step 2:搬共享
+// texture2DArray(固定 64² 每层,texel 写左上 gridN² 区),层号 u_terrainLayers.y。
+uniform highp sampler2DArray u_pageStoreIndir;
+uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
 
 out vec4 fragColor;
 
@@ -1143,11 +1149,12 @@ void main() {
         float gridN = max(u_pageStoreParams.y, 1.0);
         vec2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
         vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
-        // Step B1:经 per-tile 间接纹理单次 NEAREST fetch 定位层(替代闭式
-        // layerBase+cell.y*gridN+cell.x)。(cell+0.5)/gridN 命中 texel 中心;
+        // Step B1:经间接纹理单次 fetch 定位层(替代闭式 layerBase+…)。
         // RGBA8 解码 R+G*256(floor(x*255+0.5) 从 unorm 取回整数字节)。
-        vec2 indirUv = (cell + 0.5) / gridN;
-        vec4 e = texture(u_pageStoreIndir, indirUv);
+        // 合批 Step 2:texelFetch 整数寻址 array 层(texel 在左上 gridN² 区)。
+        vec4 e = texelFetch(
+            u_pageStoreIndir,
+            ivec3(ivec2(cell), int(u_terrainLayers.y + 0.5)), 0);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
         // per-cell 渐变 LOD(§16.3,镜像 gltf):d>0 采粗祖先页;d=0=现状精页。
         float d = floor(e.b * 255.0 + 0.5);
@@ -1762,8 +1769,9 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_mappedRasterTexture3 [[texture(18)]],
                              texture2d<float> u_gltfWaterMaskTexture [[texture(19)]],
                              // SVT(Step B2b):真实 DEM 表面走此 glTF shader,页存储在此。
+                             // 合批 Step 2:间接纹理搬 array(64² 每层,层号 u.terrainLayers.y)。
                              texture2d_array<float> u_pageStore [[texture(20)]],
-                             texture2d<float> u_pageStoreIndir [[texture(21)]],
+                             texture2d_array<float> u_pageStoreIndir [[texture(21)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -1845,14 +1853,12 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     // SVT(Step B2b,镜像 GLSL):per-tile 间接纹理单次 NEAREST fetch 定位 array 层
     // 覆盖 mappedRaster;A 通道 resident 标志,miss 保留 mappedRaster(决策② 共存)。
     if (u.pageStoreParams.x > 0.5) {
-        constexpr sampler u_pageStoreIndirSampler(coord::normalized,
-                                                  filter::nearest,
-                                                  address::clamp_to_edge);
         float gridN = max(u.pageStoreParams.y, 1.0);
         float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
         float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
-        float2 indirUv = (cell + 0.5) / gridN;
-        float4 e = u_pageStoreIndir.sample(u_pageStoreIndirSampler, indirUv);
+        // 合批 Step 2:read() 整数寻址 array 层(texel 在左上 gridN² 区)。
+        float4 e = u_pageStoreIndir.read(
+            uint2(cell), uint(u.terrainLayers.y + 0.5), 0);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
         // per-cell 渐变 LOD(§16.3,镜像 GLSL):d>0 采粗祖先页;d=0=现状精页。
         float d = floor(e.b * 255.0 + 0.5);
@@ -2392,9 +2398,9 @@ fragment float4 terrainFragment(
     // 合成方案页存储(Step 3):sampler2DArray 页存储在 water mask 之后的槽 20,
     // 复用同一 clamp/linear 采样器(层间不插值 + 每层 clamp 无页缝,§13.1)。
     texture2d_array<float> u_pageStore [[texture(20)]],
-    // 稀疏虚拟纹理(Step B1):per-tile 间接纹理(RGBA8 编 layer 索引)。用下方
-    // 着色器内声明的 NEAREST constexpr sampler 点采样,不占共享 sampler 槽。
-    texture2d<float> u_pageStoreIndir [[texture(21)]],
+    // 稀疏虚拟纹理(Step B1):间接纹理(RGBA8 编 layer 索引)。合批 Step 2:搬
+    // array(64² 每层,层号 u.terrainLayers.y),read() 整数寻址不占 sampler 槽。
+    texture2d_array<float> u_pageStoreIndir [[texture(21)]],
     // Metal argument tables cap samplers at 0-15; terrain imagery all uses the
     // same clamp/linear sampling, so a single shared sampler at slot 0 covers
     // the base color, raster overlay (textures 15-18) and water mask (19)
@@ -2457,14 +2463,10 @@ fragment float4 terrainFragment(
         float gridN = max(u.pageStoreParams.y, 1.0);
         float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
         float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
-        // Step B1(镜像 GLSL):经 per-tile 间接纹理单次 NEAREST fetch 定位层。
-        // 着色器内 constexpr 点采样 sampler(clamp),(cell+0.5)/gridN 命中 texel
-        // 中心;RGBA8 解码 R+G*256。
-        constexpr sampler u_pageStoreIndirSampler(coord::normalized,
-                                                  filter::nearest,
-                                                  address::clamp_to_edge);
-        float2 indirUv = (cell + 0.5) / gridN;
-        float4 e = u_pageStoreIndir.sample(u_pageStoreIndirSampler, indirUv);
+        // Step B1(镜像 GLSL):经间接纹理单次 fetch 定位层;RGBA8 解码 R+G*256。
+        // 合批 Step 2:read() 整数寻址 array 层(texel 在左上 gridN² 区)。
+        float4 e = u_pageStoreIndir.read(
+            uint2(cell), uint(u.terrainLayers.y + 0.5), 0);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
         // per-cell 渐变 LOD(§16.3,镜像 GLSL):d>0 采粗祖先页;d=0=现状精页。
         float d = floor(e.b * 255.0 + 0.5);

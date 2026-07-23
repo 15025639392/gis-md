@@ -154,28 +154,6 @@ int TerrainPageStore::decodeDepthRGBA8(const uint8_t in[4]) {
     return static_cast<int>(in[2]);  // 镜像片元 floor(b*255+0.5)
 }
 
-std::unique_ptr<Texture> TerrainPageStore::createIndirTexture(
-    int gridN, const uint8_t* texels) {
-    // gridN×gridN RGBA8 稀疏间接纹理,初值 = 本帧填好的 texels(NW 无翻转:cy=0=北=
-    // row0=最小 v,和影像上传 kFlipRowsOnUpload=false + shader cell.y 一致)。片元
-    // (cell+0.5)/gridN 命中 texel 中心 → NEAREST 取精确 layer + A 通道。后续帧经
-    // updateTextureRegion 原地刷新(两后端 create-with-data 与 region 更新行序一致)。
-    TextureDesc desc;
-    desc.width = gridN;
-    desc.height = gridN;
-    desc.arrayLayers = 1;  // 普通 2D(非 array):间接纹理是索引表,非页存储
-    desc.format = TextureDesc::Format::RGBA8;
-    desc.data = texels;
-    desc.dataSize = static_cast<size_t>(gridN) * static_cast<size_t>(gridN) * 4u;
-    desc.mipmap = false;
-    // NEAREST:间接纹理必须点采样取精确 texel(线性会在 cell 边界串值→错 layer/A)。
-    desc.minFilter = TextureDesc::Filter::Nearest;
-    desc.magFilter = TextureDesc::Filter::Nearest;
-    desc.wrapS = TextureDesc::Wrap::Clamp;
-    desc.wrapT = TextureDesc::Wrap::Clamp;
-    return device_->createTexture(desc);
-}
-
 uint64_t TerrainPageStore::packKey(const TileKey& key) {
     // B2b:页 = 影像瓦片,z ≤ 17,x/y < 2^17 < 2^22 → 无损打包进 64 位。schemeId 不入
     // key(单一影像 provider,z/x/y 唯一定位页)。也复用于 capped 瓦片 tileKey。
@@ -441,15 +419,31 @@ void TerrainPageStore::updateVisiblePages(
             }
         }
 
+        // 合批 Step 2:认领/保活本瓦片的 array 层,texel 写左上 gridN² 区。
+        // 池满(理论上不可能:层数 256 > 峰值可见 ~185)→ 本帧放弃 indir,
+        // 该瓦片回落 mappedRaster(优雅降级)。层被夺走的离屏瓦片由 evicted
+        // 分支置 layer=-1(其 sweep 稍后清除)。
         TileIndir& ind = tileIndirs_[p.tileKeyPacked];
-        if (!ind.tex || ind.gridN != p.gridN) {
-            ind.tex = createIndirTexture(p.gridN, indirTexelsScratch_.data());
-            ind.gridN = p.gridN;
+        if (ind.layer < 0 ||
+            indirPool_.layerBaseFor(p.tileKeyPacked) != ind.layer) {
+            uint64_t evicted = 0;
+            ind.layer = indirPool_.acquire(p.tileKeyPacked, frameId_, &evicted);
+            if (evicted != 0) {
+                auto eit = tileIndirs_.find(evicted);
+                if (eit != tileIndirs_.end()) {
+                    eit->second.layer = -1;
+                }
+            }
         } else {
-            device_->updateTextureRegion(
-                ind.tex.get(), 0, 0, p.gridN, p.gridN, indirTexelsScratch_.data(),
-                static_cast<size_t>(p.gridN) * 4u, 0);
+            indirPool_.touch(p.tileKeyPacked, frameId_);
         }
+        if (ind.layer >= 0) {
+            device_->updateTextureRegion(
+                indirArrayTexture_.get(), 0, 0, p.gridN, p.gridN,
+                indirTexelsScratch_.data(),
+                static_cast<size_t>(p.gridN) * 4u, ind.layer);
+        }
+        ind.gridN = p.gridN;
         ind.lastFrame = frameId_;
         cache.lastFrame = frameId_;
     }
@@ -457,6 +451,9 @@ void TerrainPageStore::updateVisiblePages(
     // sweep:清本帧不再可见瓦片的间接纹理 + 几何缓存(页经 LRU 自然淘汰)。
     for (auto it = tileIndirs_.begin(); it != tileIndirs_.end();) {
         if (it->second.lastFrame != frameId_) {
+            if (it->second.layer >= 0) {
+                indirPool_.release(it->first);
+            }
             it = tileIndirs_.erase(it);
         } else {
             ++it;
@@ -535,7 +532,26 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
         device_ = nullptr;
         return false;
     }
+    // 合批 Step 2:间接纹理共享 array(固定 64² 每层,NEAREST 语义由片元
+    // texelFetch/read 整数寻址保证,滤波参数仅防御)。
+    TextureDesc indirDesc;
+    indirDesc.width = kIndirSideTexels;
+    indirDesc.height = kIndirSideTexels;
+    indirDesc.arrayLayers = kIndirArrayLayers;
+    indirDesc.format = TextureDesc::Format::RGBA8;
+    indirDesc.mipmap = false;
+    indirDesc.minFilter = TextureDesc::Filter::Nearest;
+    indirDesc.magFilter = TextureDesc::Filter::Nearest;
+    indirDesc.wrapS = TextureDesc::Wrap::Clamp;
+    indirDesc.wrapT = TextureDesc::Wrap::Clamp;
+    indirArrayTexture_ = device_->createTexture(indirDesc);
+    if (!indirArrayTexture_) {
+        arrayTexture_.reset();
+        device_ = nullptr;
+        return false;
+    }
     pool_.configure(config_.maxPages, /*blockLayers=*/1);
+    indirPool_.configure(kIndirArrayLayers, /*blockLayers=*/1);
     inbox_ = std::make_shared<PendingInbox>();
     return true;
 }
@@ -565,9 +581,10 @@ void TerrainPageStore::applyToTerrainCommand(
     }
 
     // B2b:无相机,只 bind determination 本帧建好的稀疏间接纹理。无 TileIndir
-    // (未 determined / 无可见页)→ 不动 → mappedRaster(决策② 共存,零回归)。
+    // (未 determined / 无可见页 / 层被夺)→ 不动 → mappedRaster(决策② 共存,
+    // 零回归)。合批 Step 2:间接纹理 = 共享 array + 层号(u_terrainLayers.y)。
     const auto it = tileIndirs_.find(packKey(tile.key));
-    if (it == tileIndirs_.end() || !it->second.tex) {
+    if (it == tileIndirs_.end() || it->second.layer < 0) {
         return;
     }
     const TileIndir& ind = it->second;
@@ -577,12 +594,14 @@ void TerrainPageStore::applyToTerrainCommand(
             static_cast<size_t>(kGltfPageStoreIndirTextureSlot) + 1u, nullptr);
     }
     cmd.textures[kGltfPageStoreArrayTextureSlot] = arrayTexture_.get();
-    // 间接纹理绑 slot21,片元经它 fetch 定位 layer + 读 A 通道作 miss 回退 factor。
-    cmd.textures[kGltfPageStoreIndirTextureSlot] = ind.tex.get();
+    // 间接纹理 array 绑 slot21,片元经层号 fetch 定位 layer + 读 A 通道作 miss
+    // 回退 factor。
+    cmd.textures[kGltfPageStoreIndirTextureSlot] = indirArrayTexture_.get();
     // enabled=1、gridN → 片元采页存储。layer 由间接纹理 RG 承载,resident/miss 由
     // 其 A 承载;pageStoreParams.z/.w 不再用(留 0)。
     cmd.gltfUniforms.pageStoreParams = {1.0f, static_cast<float>(ind.gridN),
                                         0.0f, 0.0f};
+    cmd.gltfUniforms.terrainLayers[1] = static_cast<float>(ind.layer);
 }
 
 void TerrainPageStore::tick() {
