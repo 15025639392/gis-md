@@ -14,10 +14,34 @@
 #include "TerrainDisplacementTemplatePool.h"
 #include "../debug/PerfTimer.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
 namespace earth_engine {
+
+namespace {
+
+// 北极星 Phase 2c:地形位移随 LOD 连续衰减到平（GE 式「从太空看是光滑椭球，
+// 靠近才长出起伏」）。粗/远瓦片（低 z，占屏大、facet 达上百 km）的真实 relief
+// 在全球视角地平线极掠视下会被粗网格 faceting 成规则钻石尖刺 + 边缘 skirt 墙外露；
+// 这些瓦片的 relief 本就不可分辨，应压平。fade→0 时 shader 位移 h=fade·h_orig=0
+// → 停在椭球面（与 GPU:OFF 平椭球一致，chevron/skirt 墙全消）；fade→1 时全起伏。
+// 仅缩放 minHeight/heightRange（h=minH+t·range 两端同乘 = h 整体乘 fade），零 shader
+// 改动、零新 uniform、skirt 哨兵与 enabled 逻辑不受影响。maximumZoom=12，近景恒 z10-12
+// → fade=1 无回归；全球视角 z1-5 → fade≈0 平椭球。
+constexpr double kTerrainReliefFadeZLo = 6.0;  // z≤6 全压平
+constexpr double kTerrainReliefFadeZHi = 9.0;  // z≥9 全起伏
+
+float terrainReliefFade(int z) {
+    const double t = std::clamp(
+        (static_cast<double>(z) - kTerrainReliefFadeZLo) /
+            (kTerrainReliefFadeZHi - kTerrainReliefFadeZLo),
+        0.0, 1.0);
+    return static_cast<float>(t * t * (3.0 - 2.0 * t));  // smoothstep
+}
+
+}  // namespace
 
 // B2a 门② 页面 determination 也调用它(经 GltfDrawCommandBuilder.h 暴露),
 // 故置于 earth_engine 具名作用域(非匿名 namespace)以获外部链接。
@@ -334,7 +358,17 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
         // **必须放在材质纹理块之后**:上面的 cmd.textures.resize(15) + water mask
         // 会重置纹理表,若在其前设置高度纹理槽(slot 22)会被 resize(15) 清空
         // → texelFetch 恒 0 → 地形平抬无起伏(真机踩过的排序 bug)。
-        if (cmd.terrainRenderContent &&
+        // 位移随 LOD 连续衰减到平(见文件顶 terrainReliefFade 注释)。fade≈0 的
+        // 粗/远瓦片**完全跳过位移路径** → 保持原 CPU baked VBO + gltfShader(平、
+        // 光滑,= GPU:OFF),既消除 chevron/skirt 墙,又避免平模板在地平线极掠视下
+        // 的粗 facet 微纹(纯缩放 h→0 仍绑粗模板会留 limb faceting)。fade>0 才绑模板。
+        const float reliefFade =
+            (cmd.terrainRenderContent &&
+             cmd.terrainSurfaceSource ==
+                 TerrainSurfaceCommandSource::RealTerrain)
+                ? terrainReliefFade(tile.key.z)
+                : 0.0f;
+        if (reliefFade > 0.001f &&
             cmd.terrainSurfaceSource ==
                 TerrainSurfaceCommandSource::RealTerrain) {
             if (TerrainDisplacementTemplatePool* pool =
@@ -379,9 +413,11 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                             static_cast<size_t>(kGltfHeightTextureSlot) + 1);
                     }
                     cmd.textures[kGltfHeightTextureSlot] = ht->texture;
+                    // 位移随 LOD 衰减到平:minHeight/heightRange 同乘 reliefFade →
+                    // 顶点 shader h = minH·f + t·range·f = f·h_orig,过渡带瓦片压平。
                     u.heightDisplace = {
-                        ht->minHeight, ht->heightRange, 1.0f,
-                        static_cast<float>(kTerrainDisplacementGridSize)};
+                        ht->minHeight * reliefFade, ht->heightRange * reliefFade,
+                        1.0f, static_cast<float>(kTerrainDisplacementGridSize)};
                 }
             }
         }
