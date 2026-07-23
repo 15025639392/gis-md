@@ -1,8 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/content/GltfContentProvider.h"
-#include "earth_engine/core/geodesy/Cartographic.h"
-#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
@@ -13,29 +11,17 @@ using namespace earth_engine;
 
 namespace earth_engine {
 struct TilesetTestAccess {
-    static Tileset makeLegacyTerrainTileset(
-        std::unique_ptr<TerrainProvider> terrainProvider,
-        std::unique_ptr<TileScheme> tileScheme) {
-        return Tileset(
-            TilesetTerrainProviders(nullptr),
-            std::move(tileScheme),
-            {},
-            nullptr,
-            TilesetOptions{});
-    }
-
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
     }
 
-    static void setLoadedGltfTerrainContent(
+    // Height comes from a retained DecodedHeightmap (the GPU-displacement
+    // source of truth); mirrors how real heightmap terrain tiles are delivered.
+    static void setLoadedHeightmapTerrainContent(
         TilesetTile& tile,
-        std::unique_ptr<GltfModel> model) {
-        tile.content.renderContent.prepareGltfContent(
-            std::move(model),
-            Mat4::identity());
+        std::unique_ptr<DecodedHeightmap> heightmap) {
         tile.content.renderContent.setTerrainRenderContent(true);
-        tile.markRenderContentDone();
+        tile.content.renderContent.setRetainedHeightmap(std::move(heightmap));
     }
 };
 } // namespace earth_engine
@@ -55,94 +41,15 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     return heightmap;
 }
 
-std::unique_ptr<GltfModel> makeTerrainGltfTriangle(
-    const Rectangle& bounds,
-    double southwestHeight,
-    double southeastHeight,
-    double northwestHeight) {
-    auto model = std::make_unique<GltfModel>();
-    GltfPrimitive primitive;
-    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
-    primitive.vertices.resize(3);
-    primitive.vertices[0].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.west(),
-            bounds.south(),
-            southwestHeight));
-    primitive.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.east(),
-            bounds.south(),
-            southeastHeight));
-    primitive.vertices[2].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.west(),
-            bounds.north(),
-            northwestHeight));
-    primitive.indices = {0, 1, 2};
-    primitive.primitiveMode = GltfPrimitiveMode::Triangles;
-    primitive.runtime.nodeIndex = 0;
-    primitive.runtime.baseVertices = primitive.vertices;
-    model->primitives.push_back(std::move(primitive));
-    model->rasterOverlayDetails.setGeographicRectangle(bounds);
-    return model;
-}
-
-std::unique_ptr<GltfModel> makeStackedTerrainGltfTriangles(
-    const Rectangle& bounds,
-    double lowerHeight,
-    double upperHeight) {
-    std::unique_ptr<GltfModel> model =
-        makeTerrainGltfTriangle(
-            bounds,
-            lowerHeight,
-            lowerHeight,
-            lowerHeight);
-    std::unique_ptr<GltfModel> upper =
-        makeTerrainGltfTriangle(
-            bounds,
-            upperHeight,
-            upperHeight,
-            upperHeight);
-    model->primitives.push_back(std::move(upper->primitives.front()));
-    return model;
-}
-
-std::pair<double, double> tileCenter(
-    const TileScheme& scheme,
-    const TileKey& key) {
-    const Rectangle bounds = scheme.tileToRectangle(key);
-    return {
-        (bounds.west() + bounds.east()) * 0.5,
-        (bounds.south() + bounds.north()) * 0.5};
-}
-
-class TestLegacyTerrainProvider final : public TerrainProvider {
-public:
-    std::string id() const override { return "test-legacy-terrain"; }
-    std::string schemeId() const override { return "Geographic-TMS"; }
-    int minZoom() const override { return 0; }
-    int maxZoom() const override { return 24; }
-    int tileSize() const override { return 2; }
-    std::string buildUrl(const TileKey&) const override { return {}; }
-    void requestTile(
-        const TileKey& key,
-        CancellationToken,
-        TerrainCallback callback,
-        HttpRequestPriority = HttpRequestPriority::Normal) override {
-        callback(key, TerrainTileLoadResult::retryLater());
-    }
-    std::unique_ptr<DecodedHeightmap> decodeTile(
-        const uint8_t*,
-        size_t) override {
-        return {};
-    }
-};
-
-Tileset makeHeightSamplingTileset() {
-    return TilesetTestAccess::makeLegacyTerrainTileset(
-        std::make_unique<TestLegacyTerrainProvider>(),
-        TileScheme::createGeographicTMS());
+// Row-major, north→south rows / west→east cols: {NW, NE, SW, SE}.
+std::unique_ptr<DecodedHeightmap> makeCornerHeightmap(
+    float nw, float ne, float sw, float se) {
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {nw, ne, sw, se};
+    heightmap->minHeight = std::min({nw, ne, sw, se});
+    heightmap->maxHeight = std::max({nw, ne, sw, se});
+    return heightmap;
 }
 
 class ContentTerrainQuadtreeProvider final : public TilesetContentProvider {
@@ -173,17 +80,19 @@ Tileset makeContentTerrainSamplingTileset() {
 
 } // namespace
 
-TEST(TilesetSampleHeightTest, ContentTerrainQuadtreeSamplesLoadedGltfTerrain) {
+TEST(TilesetSampleHeightTest, ContentTerrainQuadtreeSamplesLoadedTerrain) {
     Tileset tileset = makeContentTerrainSamplingTileset();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
 
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
-    const Rectangle bounds = tileset.tileScheme().tileToRectangle(rootKey);
-    TilesetTestAccess::setLoadedGltfTerrainContent(
+    // Corner heights (NW=30, NE=40, SW=10, SE=20) bilinearly interpolate to
+    // 17.5 at (0.25 from west, 0.25 from south).
+    TilesetTestAccess::setLoadedHeightmapTerrainContent(
         *root,
-        makeTerrainGltfTriangle(bounds, 10.0, 20.0, 30.0));
+        makeCornerHeightmap(30.0f, 40.0f, 10.0f, 20.0f));
 
+    const Rectangle bounds = tileset.tileScheme().tileToRectangle(rootKey);
     const double longitude = bounds.west() + bounds.width() * 0.25;
     const double latitude = bounds.south() + bounds.height() * 0.25;
 
@@ -191,7 +100,7 @@ TEST(TilesetSampleHeightTest, ContentTerrainQuadtreeSamplesLoadedGltfTerrain) {
 }
 
 TEST(TilesetSampleHeightTest,
-     ContentTerrainQuadtreeUsesMostDetailedLoadedGltfTerrainTile) {
+     ContentTerrainQuadtreeUsesMostDetailedLoadedTerrainTile) {
     Tileset tileset = makeContentTerrainSamplingTileset();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -201,16 +110,13 @@ TEST(TilesetSampleHeightTest,
     ASSERT_NE(root, nullptr);
     ASSERT_NE(child, nullptr);
 
-    const Rectangle rootBounds = tileset.tileScheme().tileToRectangle(rootKey);
+    TilesetTestAccess::setLoadedHeightmapTerrainContent(
+        *root, makeFlatHeightmap(10.0f));
+    TilesetTestAccess::setLoadedHeightmapTerrainContent(
+        *child, makeFlatHeightmap(42.0f));
+
     const Rectangle childBounds =
         tileset.tileScheme().tileToRectangle(childKey);
-    TilesetTestAccess::setLoadedGltfTerrainContent(
-        *root,
-        makeTerrainGltfTriangle(rootBounds, 10.0, 10.0, 10.0));
-    TilesetTestAccess::setLoadedGltfTerrainContent(
-        *child,
-        makeTerrainGltfTriangle(childBounds, 42.0, 42.0, 42.0));
-
     const double longitude = childBounds.west() + childBounds.width() * 0.25;
     const double latitude = childBounds.south() + childBounds.height() * 0.25;
 
@@ -218,43 +124,24 @@ TEST(TilesetSampleHeightTest,
 }
 
 TEST(TilesetSampleHeightTest,
-     ContentTerrainQuadtreeFallsBackToLoadedGltfAncestorTerrain) {
+     ContentTerrainQuadtreeFallsBackToLoadedAncestorTerrain) {
     Tileset tileset = makeContentTerrainSamplingTileset();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
 
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
+    // Child exists but has no terrain data → scan falls back to the covering
+    // ancestor that has a retained heightmap.
     ASSERT_NE(TilesetTestAccess::ensureTile(tileset, childKey), nullptr);
 
-    const Rectangle rootBounds = tileset.tileScheme().tileToRectangle(rootKey);
+    TilesetTestAccess::setLoadedHeightmapTerrainContent(
+        *root, makeFlatHeightmap(123.0f));
+
     const Rectangle childBounds =
         tileset.tileScheme().tileToRectangle(childKey);
-    TilesetTestAccess::setLoadedGltfTerrainContent(
-        *root,
-        makeTerrainGltfTriangle(rootBounds, 123.0, 123.0, 123.0));
-
     const double longitude = childBounds.west() + childBounds.width() * 0.25;
     const double latitude = childBounds.south() + childBounds.height() * 0.25;
 
     EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 123.0f, 1e-4f);
-}
-
-TEST(TilesetSampleHeightTest,
-     ContentTerrainQuadtreeReturnsHighestLoadedGltfTerrainAtLocationLikeCesiumNative) {
-    Tileset tileset = makeContentTerrainSamplingTileset();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    ASSERT_NE(root, nullptr);
-
-    const Rectangle rootBounds = tileset.tileScheme().tileToRectangle(rootKey);
-    TilesetTestAccess::setLoadedGltfTerrainContent(
-        *root,
-        makeStackedTerrainGltfTriangles(rootBounds, 78.0, 83.0));
-
-    const double longitude = rootBounds.west() + rootBounds.width() * 0.25;
-    const double latitude = rootBounds.south() + rootBounds.height() * 0.25;
-
-    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 83.0f, 1e-4f);
 }

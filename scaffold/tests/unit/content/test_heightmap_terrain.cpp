@@ -400,6 +400,11 @@ TEST(HeightmapTerrainContent, HeightSamplerReadsBakedTerrainHeight) {
     tile->content.renderContent.prepareGltfContent(
         std::move(captured.gltfModel), Mat4::identity());
     tile->content.renderContent.setTerrainRenderContent(true);
+    // The runtime retains the decoded heightmap alongside the baked mesh; the
+    // height sampler reads it (the mesh is a flat shared template under GPU
+    // displacement, so the heightmap is the source of truth).
+    tile->content.renderContent.setRetainedHeightmap(
+        std::move(captured.retainedHeightmap));
     tile->markRenderContentDone();
     tiles.emplace("heightmap/12/3400/1500", std::move(tile));
 

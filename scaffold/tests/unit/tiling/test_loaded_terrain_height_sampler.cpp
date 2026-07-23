@@ -1,11 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/content/GltfContentProvider.h"
-#include "earth_engine/core/geodesy/Cartographic.h"
-#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/tiling/LoadedTerrainHeightSampler.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetTile.h"
 
@@ -25,149 +21,32 @@ std::string cacheKeyFor(const TileKey& key) {
            std::to_string(key.y);
 }
 
-std::unique_ptr<GltfModel> makeTerrainGltfTriangle(
-    const Rectangle& bounds,
-    double southwestHeight,
-    double southeastHeight,
-    double northwestHeight) {
-    auto model = std::make_unique<GltfModel>();
-    GltfPrimitive primitive;
-    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
-    primitive.vertices.resize(3);
-    primitive.vertices[0].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.west(),
-            bounds.south(),
-            southwestHeight));
-    primitive.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.east(),
-            bounds.south(),
-            southeastHeight));
-    primitive.vertices[2].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.west(),
-            bounds.north(),
-            northwestHeight));
-    primitive.indices = {0, 1, 2};
-    primitive.primitiveMode = GltfPrimitiveMode::Triangles;
-    primitive.runtime.nodeIndex = 0;
-    primitive.runtime.baseVertices = primitive.vertices;
-    model->primitives.push_back(std::move(primitive));
-    model->rasterOverlayDetails.setGeographicRectangle(bounds);
-    return model;
+// A 2x2 heightmap with a single uniform height. These tests exercise the
+// tile-SELECTION semantics of LoadedTerrainHeightSampler (coverage → nullopt,
+// deepest-tile-wins, ancestor fallback, equal-detail highest-wins); the
+// per-sample bilinear/bounds/no-data math is covered separately in
+// test_decoded_heightmap_sampler.cpp, so uniform maps keep these assertions
+// free of interpolation ambiguity.
+std::unique_ptr<DecodedHeightmap> makeUniformHeightmap(float height) {
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {height, height, height, height};
+    heightmap->minHeight = height;
+    heightmap->maxHeight = height;
+    return heightmap;
 }
 
-void appendTerrainGltfTriangle(GltfModel& model,
-                               const Rectangle& bounds,
-                               double southwestHeight,
-                               double southeastHeight,
-                               double northwestHeight) {
-    GltfPrimitive primitive;
-    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
-    primitive.vertices.resize(3);
-    primitive.vertices[0].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.west(),
-            bounds.south(),
-            southwestHeight));
-    primitive.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.east(),
-            bounds.south(),
-            southeastHeight));
-    primitive.vertices[2].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(
-            bounds.west(),
-            bounds.north(),
-            northwestHeight));
-    primitive.indices = {0, 1, 2};
-    primitive.primitiveMode = GltfPrimitiveMode::Triangles;
-    primitive.runtime.nodeIndex =
-        static_cast<int32_t>(model.primitives.size());
-    primitive.runtime.baseVertices = primitive.vertices;
-    model.primitives.push_back(std::move(primitive));
-    model.rasterOverlayDetails.setGeographicRectangle(bounds);
-}
-
-std::unique_ptr<GltfModel> makeStackedTerrainGltfTriangles(
-    const Rectangle& bounds,
-    double lowerHeight,
-    double upperHeight) {
-    auto model = std::make_unique<GltfModel>();
-    appendTerrainGltfTriangle(
-        *model,
-        bounds,
-        lowerHeight,
-        lowerHeight,
-        lowerHeight);
-    appendTerrainGltfTriangle(
-        *model,
-        bounds,
-        upperHeight,
-        upperHeight,
-        upperHeight);
-    return model;
-}
-
-std::unique_ptr<GltfModel> makeFlatTerrainGltfQuad(
-    const Rectangle& bounds,
-    double height,
-    GltfPrimitiveMode primitiveMode,
-    std::vector<uint32_t> indices) {
-    auto model = std::make_unique<GltfModel>();
-    GltfPrimitive primitive;
-    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
-    primitive.vertices.resize(4);
-    primitive.vertices[0].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(bounds.west(), bounds.south(), height));
-    primitive.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(bounds.east(), bounds.south(), height));
-    primitive.vertices[2].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(bounds.west(), bounds.north(), height));
-    primitive.vertices[3].positionEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(bounds.east(), bounds.north(), height));
-    primitive.indices = std::move(indices);
-    primitive.primitiveMode = primitiveMode;
-    primitive.runtime.nodeIndex = 0;
-    primitive.runtime.baseVertices = primitive.vertices;
-    model->primitives.push_back(std::move(primitive));
-    model->rasterOverlayDetails.setGeographicRectangle(bounds);
-    return model;
-}
-
-std::unique_ptr<GltfModel> makeTransformedTerrainGltfTriangle(
-    const Rectangle& bounds,
-    double southwestHeight,
-    double southeastHeight,
-    double northwestHeight,
-    const Mat4& transform) {
-    std::unique_ptr<GltfModel> model = makeTerrainGltfTriangle(
-        bounds,
-        southwestHeight,
-        southeastHeight,
-        northwestHeight);
-    for (GltfPrimitive& primitive : model->primitives) {
-        for (SurfaceVertex& vertex : primitive.vertices) {
-            vertex.positionEcef = transform * vertex.positionEcef;
-        }
-        primitive.runtime.baseVertices = primitive.vertices;
-    }
-    return model;
-}
-
-void putLoadedGltfTerrainTile(
+// Install a loaded terrain tile whose height comes from a retained
+// DecodedHeightmap (the GPU-displacement source of truth), mirroring how real
+// heightmap terrain tiles are delivered.
+void putLoadedHeightmapTerrainTile(
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     const TileKey& key,
     const Rectangle& bounds,
-    std::unique_ptr<GltfModel> model,
-    const Mat4& contentTransform = Mat4::identity()) {
+    std::unique_ptr<DecodedHeightmap> heightmap) {
     auto tile = std::make_unique<TilesetTile>(key, bounds);
-    tile->content.renderContent.prepareGltfContent(
-        std::move(model),
-        contentTransform);
     tile->content.renderContent.setTerrainRenderContent(true);
-    tile->markRenderContentDone();
+    tile->content.renderContent.setRetainedHeightmap(std::move(heightmap));
     tiles.emplace(cacheKeyFor(key), std::move(tile));
 }
 
@@ -182,9 +61,8 @@ TEST(LoadedTerrainHeightSamplerTest, ReturnsNulloptWhenNoLoadedTerrainCovers) {
     // which is a real sea-level height).
     const TileKey coveredKey{"Geographic-TMS", 1, 0, 0};
     const Rectangle coveredBounds = scheme->tileToRectangle(coveredKey);
-    putLoadedGltfTerrainTile(
-        tiles, coveredKey, coveredBounds,
-        makeTerrainGltfTriangle(coveredBounds, 55.0, 55.0, 55.0));
+    putLoadedHeightmapTerrainTile(
+        tiles, coveredKey, coveredBounds, makeUniformHeightmap(55.0f));
 
     const TileKey elsewhereKey{"Geographic-TMS", 1, 1, 1};
     const Rectangle elsewhere = scheme->tileToRectangle(elsewhereKey);
@@ -211,22 +89,18 @@ TEST(LoadedTerrainHeightSamplerTest, UsesBestLoadedTerrainTile) {
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
     const Rectangle childBounds = scheme->tileToRectangle(childKey);
-    putLoadedGltfTerrainTile(
-        tiles, rootKey, rootBounds,
-        makeTerrainGltfTriangle(rootBounds, 10.0, 10.0, 10.0));
-    putLoadedGltfTerrainTile(
-        tiles, childKey, childBounds,
-        makeTerrainGltfTriangle(childBounds, 42.0, 42.0, 42.0));
+    putLoadedHeightmapTerrainTile(
+        tiles, rootKey, rootBounds, makeUniformHeightmap(10.0f));
+    putLoadedHeightmapTerrainTile(
+        tiles, childKey, childBounds, makeUniformHeightmap(42.0f));
 
     const double longitude = (childBounds.west() + childBounds.east()) * 0.5;
     const double latitude = (childBounds.south() + childBounds.north()) * 0.5;
 
+    // Both root and child cover the point; the deeper (child) tile wins.
     EXPECT_NEAR(
         42.0f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            longitude,
-            latitude),
+        LoadedTerrainHeightSampler::sampleHeight(tiles, longitude, latitude),
         1e-4f);
 }
 
@@ -238,10 +112,11 @@ TEST(LoadedTerrainHeightSamplerTest, FallsBackToLoadedAncestorTerrain) {
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
     const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
     const Rectangle childBounds = scheme->tileToRectangle(childKey);
-    // Only root has glTF content; child is empty.
-    putLoadedGltfTerrainTile(
-        tiles, rootKey, rootBounds,
-        makeTerrainGltfTriangle(rootBounds, 123.0, 123.0, 123.0));
+    // Only root has a retained heightmap; the deeper child has no terrain data
+    // (e.g. an upsampled child with no own heightmap) → scan must fall back to
+    // the covering ancestor rather than returning nullopt.
+    putLoadedHeightmapTerrainTile(
+        tiles, rootKey, rootBounds, makeUniformHeightmap(123.0f));
     tiles.emplace(cacheKeyFor(childKey),
                   std::make_unique<TilesetTile>(childKey, childBounds));
 
@@ -250,189 +125,48 @@ TEST(LoadedTerrainHeightSamplerTest, FallsBackToLoadedAncestorTerrain) {
 
     EXPECT_NEAR(
         123.0f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            longitude,
-            latitude),
+        LoadedTerrainHeightSampler::sampleHeight(tiles, longitude, latitude),
         1e-4f);
 }
 
-TEST(LoadedTerrainHeightSamplerTest, SamplesLoadedGltfTerrainTile) {
+TEST(LoadedTerrainHeightSamplerTest, SamplesUniformHeightmapTerrainTile) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    putLoadedGltfTerrainTile(
-        tiles,
-        rootKey,
-        bounds,
-        makeTerrainGltfTriangle(bounds, 10.0, 20.0, 30.0));
+    putLoadedHeightmapTerrainTile(
+        tiles, rootKey, bounds, makeUniformHeightmap(37.5f));
 
     const double longitude = bounds.west() + bounds.width() * 0.25;
     const double latitude = bounds.south() + bounds.height() * 0.25;
 
     EXPECT_NEAR(
-        17.5f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            longitude,
-            latitude),
+        37.5f,
+        LoadedTerrainHeightSampler::sampleHeight(tiles, longitude, latitude),
         1e-4f);
 }
 
 TEST(LoadedTerrainHeightSamplerTest,
-     SamplesHighestGltfTerrainSurfaceWithinTileLikeCesiumNative) {
+     SamplesHighestTerrainSurfaceAcrossEqualDetailTilesLikeCesiumNative) {
     auto scheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
 
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    putLoadedGltfTerrainTile(
-        tiles,
-        rootKey,
-        bounds,
-        makeStackedTerrainGltfTriangles(bounds, 78.0, 83.0));
-
-    const double longitude = bounds.west() + bounds.width() * 0.25;
-    const double latitude = bounds.south() + bounds.height() * 0.25;
-
-    EXPECT_NEAR(
-        83.0f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            longitude,
-            latitude),
-        1e-4f);
-}
-
-TEST(LoadedTerrainHeightSamplerTest,
-     SamplesHighestGltfTerrainSurfaceAcrossEqualDetailTilesLikeCesiumNative) {
-    auto scheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
+    // Two equal-detail tiles cover the same point (a transition/overlap seam);
+    // the higher surface wins, matching Cesium-native height sampling.
     const TileKey lowerKey{"Geographic-TMS", 1, 0, 0};
     const TileKey upperKey{"Geographic-TMS", 1, 1, 0};
     const Rectangle bounds = scheme->tileToRectangle(lowerKey);
-    putLoadedGltfTerrainTile(
-        tiles,
-        lowerKey,
-        bounds,
-        makeTerrainGltfTriangle(bounds, 78.0, 78.0, 78.0));
-    putLoadedGltfTerrainTile(
-        tiles,
-        upperKey,
-        bounds,
-        makeTerrainGltfTriangle(bounds, 83.0, 83.0, 83.0));
+    putLoadedHeightmapTerrainTile(
+        tiles, lowerKey, bounds, makeUniformHeightmap(78.0f));
+    putLoadedHeightmapTerrainTile(
+        tiles, upperKey, bounds, makeUniformHeightmap(83.0f));
 
     const double longitude = bounds.west() + bounds.width() * 0.25;
     const double latitude = bounds.south() + bounds.height() * 0.25;
 
     EXPECT_NEAR(
         83.0f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            longitude,
-            latitude),
+        LoadedTerrainHeightSampler::sampleHeight(tiles, longitude, latitude),
         1e-4f);
-}
-
-TEST(LoadedTerrainHeightSamplerTest,
-     SamplesLoadedGltfTerrainTriangleStripLikeCesiumNative) {
-    auto scheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    putLoadedGltfTerrainTile(
-        tiles,
-        rootKey,
-        bounds,
-        makeFlatTerrainGltfQuad(
-            bounds,
-            42.0,
-            GltfPrimitiveMode::TriangleStrip,
-            {0, 1, 2, 3}));
-
-    const double longitude = bounds.west() + bounds.width() * 0.25;
-    const double latitude = bounds.south() + bounds.height() * 0.25;
-
-    EXPECT_NEAR(
-        42.0f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            longitude,
-            latitude),
-        1e-4f);
-}
-
-TEST(LoadedTerrainHeightSamplerTest,
-     SamplesLoadedGltfTerrainTriangleFanLikeCesiumNative) {
-    auto scheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    putLoadedGltfTerrainTile(
-        tiles,
-        rootKey,
-        bounds,
-        makeFlatTerrainGltfQuad(
-            bounds,
-            24.0,
-            GltfPrimitiveMode::TriangleFan,
-            {0, 1, 3, 2}));
-
-    const double longitude = bounds.west() + bounds.width() * 0.25;
-    const double latitude = bounds.south() + bounds.height() * 0.25;
-
-    EXPECT_NEAR(
-        24.0f,
-        LoadedTerrainHeightSampler::sampleHeight(
-            tiles,
-            longitude,
-            latitude),
-        1e-4f);
-}
-
-TEST(LoadedTerrainHeightSamplerTest,
-     SamplesLoadedGltfTerrainWithContentTransform) {
-    auto scheme = TileScheme::createGeographicTMS();
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>>
-        transformedTiles;
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> bakedTiles;
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    const Mat4 transform = Mat4::scale(Vec3(1.00001, 1.00001, 1.00001));
-    putLoadedGltfTerrainTile(
-        transformedTiles,
-        rootKey,
-        bounds,
-        makeTerrainGltfTriangle(bounds, 10.0, 20.0, 30.0),
-        transform);
-    putLoadedGltfTerrainTile(
-        bakedTiles,
-        rootKey,
-        bounds,
-        makeTransformedTerrainGltfTriangle(
-            bounds,
-            10.0,
-            20.0,
-            30.0,
-            transform));
-
-    const double longitude = bounds.west() + bounds.width() * 0.25;
-    const double latitude = bounds.south() + bounds.height() * 0.25;
-    const float transformedHeight = LoadedTerrainHeightSampler::sampleHeight(
-        transformedTiles,
-        longitude,
-        latitude);
-    const float bakedHeight = LoadedTerrainHeightSampler::sampleHeight(
-        bakedTiles,
-        longitude,
-        latitude);
-
-    EXPECT_GT(transformedHeight, 17.5f);
-    EXPECT_NEAR(transformedHeight, bakedHeight, 1e-4f);
 }
