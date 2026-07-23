@@ -48,14 +48,13 @@ constexpr uint32_t kCmptMagic = 0x74706d63u;
 constexpr size_t kCmptHeaderLength = 16;
 constexpr size_t kCmptInnerHeaderLength = 12;
 
-struct ContentRequestCompletionGuard {
-    explicit ContentRequestCompletionGuard(std::atomic<int>& completed)
-        : completed(completed) {}
-    ~ContentRequestCompletionGuard() {
-        completed.fetch_add(1, std::memory_order_relaxed);
-    }
-    std::atomic<int>& completed;
-};
+// 计数必须发生在 callback 之前:TileLoadLifecycle::markDestroyingCancelAndWait
+// 在 callback 内部触发 completeContentRequest 的瞬间即放行 provider 析构,
+// callback 之后再写 requestsCompleted_(旧 guard 析构式计数)会踩已释放的
+// atomic。completed 语义随之微变为「进入完成处理」,纯诊断字段可接受。
+void noteRequestCompleted(std::atomic<int>& completed) {
+    completed.fetch_add(1, std::memory_order_relaxed);
+}
 
 struct ContentExternalResourceCompletionGuard {
     explicit ContentExternalResourceCompletionGuard(
@@ -2477,7 +2476,7 @@ void requestBodyAsync(
         std::make_shared<StashAwareDecodeFn>(std::move(decode));
 
     if (tokenPtr->isCancelled()) {
-        ContentRequestCompletionGuard completion{requestsCompleted};
+        noteRequestCompleted(requestsCompleted);
         (*callbackPtr)(key, TileContentLoadResult::cancelled());
         return;
     }
@@ -2495,12 +2494,12 @@ void requestBodyAsync(
          &requestsCompleted](int statusCode, std::vector<uint8_t> body) mutable {
             (void)requestHandle;
             if (tokenPtr->isCancelled()) {
-                ContentRequestCompletionGuard completion{requestsCompleted};
+                noteRequestCompleted(requestsCompleted);
                 (*callbackPtr)(key, TileContentLoadResult::cancelled());
                 return;
             }
             if (statusCode != 200 || body.empty()) {
-                ContentRequestCompletionGuard completion{requestsCompleted};
+                noteRequestCompleted(requestsCompleted);
                 (*callbackPtr)(key, TileContentLoadResult::failed());
                 return;
             }
@@ -2526,8 +2525,7 @@ void requestBodyAsync(
                     // 一致——旧实现在网络线程上无条件 put)。
                     HttpCache::shared().putResponse(url, responsePtr);
                     if (tokenPtr->isCancelled()) {
-                        ContentRequestCompletionGuard completion{
-                            requestsCompleted};
+                        noteRequestCompleted(requestsCompleted);
                         (*callbackPtr)(key, TileContentLoadResult::cancelled());
                         return;
                     }
@@ -2547,8 +2545,7 @@ void requestBodyAsync(
                          responsePtr,
                          &requestsCompleted](
                             std::shared_ptr<ExternalResourceStash> stash) {
-                            ContentRequestCompletionGuard completion{
-                                requestsCompleted};
+                            noteRequestCompleted(requestsCompleted);
                             if (tokenPtr->isCancelled()) {
                                 (*callbackPtr)(
                                     key,
@@ -2575,7 +2572,7 @@ void requestBodyAsync(
     }
 
     if (!*requestHandle) {
-        ContentRequestCompletionGuard completion{requestsCompleted};
+        noteRequestCompleted(requestsCompleted);
         (*callbackPtr)(key, TileContentLoadResult::retryLater());
     }
 }
@@ -3632,8 +3629,7 @@ void SingleGltfContentProvider::requestTileContent(
              callback = std::make_shared<ContentCallback>(
                  std::move(callback))]() mutable {
                 if (token->isCancelled()) {
-                    ContentRequestCompletionGuard completion{
-                        requestsCompleted_};
+                    noteRequestCompleted(requestsCompleted_);
                     (*callback)(key, TileContentLoadResult::cancelled());
                     return;
                 }
@@ -3645,8 +3641,7 @@ void SingleGltfContentProvider::requestTileContent(
                     priority,
                     [this, key, body, token, callback](
                         std::shared_ptr<ExternalResourceStash> stash) {
-                        ContentRequestCompletionGuard completion{
-                            requestsCompleted_};
+                        noteRequestCompleted(requestsCompleted_);
                         if (token->isCancelled()) {
                             (*callback)(key,
                                         TileContentLoadResult::cancelled());
@@ -3669,7 +3664,7 @@ void SingleGltfContentProvider::requestTileContent(
     }
 
     if (url_.empty()) {
-        ContentRequestCompletionGuard completion{requestsCompleted_};
+        noteRequestCompleted(requestsCompleted_);
         callback(key, TileContentLoadResult::retryLater());
         return;
     }
@@ -3888,16 +3883,14 @@ void TilesetJsonContentProvider::requestTileContent(
              callback = std::make_shared<ContentCallback>(
                  std::move(callback))]() mutable {
                 if (token->isCancelled()) {
-                    ContentRequestCompletionGuard completion{
-                        requestsCompleted_};
+                    noteRequestCompleted(requestsCompleted_);
                     (*callback)(key, TileContentLoadResult::cancelled());
                     return;
                 }
                 if (!urlLooksLikeGltf(record.resolvedContentUrl) &&
                     (urlLooksLikeJson(record.resolvedContentUrl) ||
                      bytesLookLikeJson(body->data(), body->size()))) {
-                    ContentRequestCompletionGuard completion{
-                        requestsCompleted_};
+                    noteRequestCompleted(requestsCompleted_);
                     const bool parsed = parseTilesetJson(
                         body->data(),
                         body->size(),
@@ -3921,8 +3914,7 @@ void TilesetJsonContentProvider::requestTileContent(
                     priority,
                     [this, key, record, body, token, callback](
                         std::shared_ptr<ExternalResourceStash> stash) {
-                        ContentRequestCompletionGuard completion{
-                            requestsCompleted_};
+                        noteRequestCompleted(requestsCompleted_);
                         if (token->isCancelled()) {
                             (*callback)(key,
                                         TileContentLoadResult::cancelled());

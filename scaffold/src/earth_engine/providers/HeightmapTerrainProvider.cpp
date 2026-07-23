@@ -22,12 +22,13 @@ namespace earth_engine {
 
 namespace {
 
-struct RequestCompletionGuard {
-    std::atomic<int>& completed;
-    ~RequestCompletionGuard() {
-        completed.fetch_add(1, std::memory_order_relaxed);
-    }
-};
+// 计数必须发生在 callback 之前:TileLoadLifecycle::markDestroyingCancelAndWait
+// 在 callback 内部触发 completeContentRequest 的瞬间即放行 provider 析构,
+// callback 之后再写 requestsCompleted_(旧 guard 析构式计数)会踩已释放的
+// atomic。completed 语义随之微变为「进入完成处理」,纯诊断字段可接受。
+void noteRequestCompleted(std::atomic<int>& completed) {
+    completed.fetch_add(1, std::memory_order_relaxed);
+}
 
 } // namespace
 
@@ -101,7 +102,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                  key,
                  token = std::move(token),
                  callback = std::move(callback)]() mutable {
-                    RequestCompletionGuard completion{requestsCompleted_};
+                    noteRequestCompleted(requestsCompleted_);
                     if (token.isCancelled()) {
                         callback(key, TerrainTileLoadResult::cancelled());
                         return;
@@ -125,7 +126,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
              token = std::move(token),
              callback = std::move(callback),
              requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
-                RequestCompletionGuard completion{requestsCompleted_};
+                noteRequestCompleted(requestsCompleted_);
                 (void)requestHandle;
                 if (token.isCancelled()) {
                     callback(key, TerrainTileLoadResult::cancelled());
@@ -151,7 +152,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
              key,
              token = std::move(token),
              callback = std::move(callback)]() mutable {
-                RequestCompletionGuard completion{requestsCompleted_};
+                noteRequestCompleted(requestsCompleted_);
                 if (token.isCancelled()) {
                     callback(key, TerrainTileLoadResult::cancelled());
                     return;
@@ -171,7 +172,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
              token = std::move(token),
              priority,
              callback = std::move(callback)]() mutable {
-                RequestCompletionGuard completion{requestsCompleted_};
+                noteRequestCompleted(requestsCompleted_);
                 if (token.isCancelled()) {
                     callback(key, TerrainTileLoadResult::cancelled());
                     return;
@@ -216,7 +217,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                  callbackPtr,
                  statusCode,
                  bodyPtr]() mutable {
-                    RequestCompletionGuard completion{requestsCompleted_};
+                    noteRequestCompleted(requestsCompleted_);
                     if (tokenPtr->isCancelled()) {
                         (*callbackPtr)(
                             key,
