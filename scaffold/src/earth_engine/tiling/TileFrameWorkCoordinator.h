@@ -49,6 +49,9 @@ struct TileFrameWorkInput {
     int terrainFillProxyGridSize = 16;
     bool hasTerrainQuadtree = false;
     IPrepareRendererResources* pPrepRenderer = nullptr;
+    // P5b:presentation hold(首屏 base 影像未达成)→ 禁止 selection reuse,
+    // 保证 overlay prefetch/影像请求持续推进直到首屏可上屏(防启动死锁)。
+    bool presentationHeld = false;
 };
 
 struct TileFrameWorkResult {
@@ -146,7 +149,8 @@ public:
                     input.tilePlan.fadingNodeCount > 0,
                 hasTilesetPendingWork(),
                 TileRasterOverlaySignature::hasPendingWork(
-                    input.rasterOverlays));
+                    input.rasterOverlays),
+                input.presentationHeld);
         const TileSelectionReuseMode reuseMode = reuseClassification.mode;
         const bool reusedSelection =
             reuseMode != TileSelectionReuseMode::None;

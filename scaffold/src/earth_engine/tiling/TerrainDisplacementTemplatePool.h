@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -18,6 +19,23 @@ struct DecodedHeightmap;
 // 共享模板固定栅格单元数（n=65=2^6+1，GE 嵌套栅格约定；与 grid64 一致）。
 // 模板独立于瓦片原始网格密度——所有地形瓦片用同一密度共享模板，UV 均匀。
 inline constexpr int kTerrainDisplacementGridSize = 64;
+
+// 北极星 Phase 2c:地形位移随 LOD 连续衰减到平（GE 式「从太空看是光滑椭球，
+// 靠近才长出起伏」）。粗/远瓦片（低 z）真实 relief 被粗网格 faceting 成钻石
+// 尖刺 + skirt 墙外露,本就不可分辨,压平;fade→0 完全跳过位移路径(平椭球),
+// fade→1 全起伏。**单一事实源**:draw 侧(GltfDrawCommandBuilder 模板 swap)与
+// prepare 侧(P5b 跳过废弃 per-tile VBO 的判据)必须用同一函数,两侧判据不一致
+// 会导致「建了但不画」或「不建又要画」。
+inline constexpr double kTerrainReliefFadeZLo = 6.0;  // z≤6 全压平
+inline constexpr double kTerrainReliefFadeZHi = 9.0;  // z≥9 全起伏
+
+inline float terrainReliefFade(int z) {
+    const double t = std::clamp(
+        (static_cast<double>(z) - kTerrainReliefFadeZLo) /
+            (kTerrainReliefFadeZHi - kTerrainReliefFadeZLo),
+        0.0, 1.0);
+    return static_cast<float>(t * t * (3.0 - 2.0 * t));  // smoothstep
+}
 
 // 北极星 Phase 2c（地形 GPU 位移）：共享位移模板的 GPU 缓冲池。
 //

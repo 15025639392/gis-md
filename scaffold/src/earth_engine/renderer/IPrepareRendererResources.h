@@ -55,6 +55,13 @@ public:
     virtual void detachRasterInMainThread(
         const TileKey& geometryKey,
         int32_t overlayIndex) noexcept = 0;
+
+    /// 北极星 Phase 2c P5b:共享位移模板几何是否活跃(= Renderer 持有
+    /// TerrainDisplacementTemplatePool)。prepare 侧用它决定是否跳过「必走共享
+    /// 模板」的 fine 地形瓦片的废弃 per-tile VBO 建/传(判据其余部分见
+    /// GltfRenderResourcePreparer)。默认 false = 行为与 P5b 前逐字节一致,mock
+    /// 实现零改动。
+    virtual bool terrainSharedTemplateActive() const { return false; }
 };
 
 } // namespace earth_engine

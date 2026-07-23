@@ -30,16 +30,8 @@ namespace {
 // 仅缩放 minHeight/heightRange（h=minH+t·range 两端同乘 = h 整体乘 fade），零 shader
 // 改动、零新 uniform、skirt 哨兵与 enabled 逻辑不受影响。maximumZoom=12，近景恒 z10-12
 // → fade=1 无回归；全球视角 z1-5 → fade≈0 平椭球。
-constexpr double kTerrainReliefFadeZLo = 6.0;  // z≤6 全压平
-constexpr double kTerrainReliefFadeZHi = 9.0;  // z≥9 全起伏
-
-float terrainReliefFade(int z) {
-    const double t = std::clamp(
-        (static_cast<double>(z) - kTerrainReliefFadeZLo) /
-            (kTerrainReliefFadeZHi - kTerrainReliefFadeZLo),
-        0.0, 1.0);
-    return static_cast<float>(t * t * (3.0 - 2.0 * t));  // smoothstep
-}
+// terrainReliefFade 本体已挪 TerrainDisplacementTemplatePool.h(P5b:prepare 侧
+// 跳过废弃 per-tile VBO 的判据与本文件模板 swap 判据必须同源)。
 
 }  // namespace
 
@@ -420,6 +412,14 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
                         1.0f, static_cast<float>(kTerrainDisplacementGridSize)};
                 }
             }
+        }
+        // P5b 兜底:共享模板几何 primitive 的 per-tile buffer 有意为空,正常
+        // 情况上方模板 swap 已换绑共享 VBO/IBO;若 swap 未发生(病理态:高度
+        // 纹理 acquire 失败/池被运行时关闭而内容未重建),丢弃该命令——宁可
+        // 该瓦片本帧不画,绝不携带 null buffer 下发 draw(UB)。带 buffer 的
+        // 常规命令(legacy VBO/fill/实例化)不受影响。
+        if (!cmd.vertexBuffer || !cmd.indexBuffer) {
+            continue;
         }
         cmd.cullFace = !primitive.doubleSided;
         cached.push_back(std::move(cmd));

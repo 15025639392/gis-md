@@ -22,6 +22,7 @@
 #include "../core/resources/FrameResourceBudget.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
+#include "../renderer/IPrepareRendererResources.h"
 #include "../renderer/RenderDevice.h"
 
 #include <algorithm>
@@ -67,6 +68,14 @@ struct TilesetContentUploadContext {
 
 class TilesetContentLifecycleCoordinator {
 public:
+    /// P5b:共享位移模板几何是否活跃(prepare 侧跳过废弃 per-tile VBO 的
+    /// 总开关),经 IPrepareRendererResources 查询 Renderer 的 pool 状态,
+    /// 与 draw 侧模板 swap 的「pool 非空」门控同源。
+    static bool terrainSharedTemplateActive(
+        const TilesetContentUploadContext& context) {
+        return context.pPrepRenderer != nullptr &&
+               context.pPrepRenderer->terrainSharedTemplateActive();
+    }
     template <typename LoadRequests,
               typename PrepareUpsampleSourceTileFn,
               typename EnsureTileFn>
@@ -209,7 +218,8 @@ public:
                         GltfRenderResourcePreparer::prepare(
                             tile,
                             context.device,
-                            context.currentFrameTimeSeconds);
+                            context.currentFrameTimeSeconds,
+                            terrainSharedTemplateActive(context));
                         return;
                     }
                     tile.content.renderContent.asyncGpuUploadPending = true;
@@ -221,9 +231,12 @@ public:
                         std::move(*ready)});
                 } else {
                     // Non-terrain content: synchronous path.
+                    // (P5b:原生 heightmap 地形也走此路——无预建 payload;
+                    // 判据传入让「必走共享模板」瓦片跳过废弃 VBO 建/传。)
                     GltfRenderResourcePreparer::prepare(
                         tile, context.device,
-                        context.currentFrameTimeSeconds);
+                        context.currentFrameTimeSeconds,
+                        terrainSharedTemplateActive(context));
                 }
             },
             markResourcesDirty);

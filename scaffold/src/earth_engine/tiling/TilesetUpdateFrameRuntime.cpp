@@ -60,7 +60,9 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.options_.enableTerrainFillProxy,
             tileset.options_.terrainFillProxyGridSize,
             tileset.hasTerrainQuadtree(),
-            pPrepRenderer},
+            pPrepRenderer,
+            // P5b:hold 期间禁 reuse——见 TileSelectionReuseInput::presentationHeld。
+            tileset.shouldHoldPresentationFrame()},
         TileFrameWorkState{
             tileset.cameraMoving_,
             tileset.interactionActiveForFrame_,

@@ -127,12 +127,28 @@ public:
     TerrainDisplacementTemplatePool* terrainDisplacementPool() const {
         return terrainDisplacementPool_;
     }
+    /// P5b:prepare 侧经 IPrepareRendererResources 查询共享模板几何是否活跃,
+    /// 与 draw 侧模板 swap 的「pool 非空」门控同源。
+    /// ⚠️ skip flag 默认关:P5b skip(跳过废弃 per-tile VBO)机制已真机验证
+    /// (z=12 skip/coarse 保留/每瓦片省 ~538KB),但它把几何 Done 提速一个数量级,
+    /// 触发影像启动链竞态死锁(mapping→fetch→attach 以「几何加载慢、多帧非
+    /// reuse」为隐含前提;已修 strict-reuse 一环 presentationHeld,仍有残留竞态
+    /// →偶发首屏黑屏 hold 不释放)。影像启动链健壮性专项修复后再置 true。
+    void setTerrainBakedVboSkipEnabled(bool enabled) {
+        terrainBakedVboSkipEnabled_ = enabled;
+    }
+    bool terrainSharedTemplateActive() const override {
+        return terrainBakedVboSkipEnabled_ &&
+               terrainDisplacementPool_ != nullptr;
+    }
 
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     TerrainPageStore* terrainPageStore_ = nullptr;
     TerrainDisplacementTemplatePool* terrainDisplacementPool_ = nullptr;
+    // P5b skip flag(默认关,见 setTerrainBakedVboSkipEnabled 注释)。
+    bool terrainBakedVboSkipEnabled_ = false;
 };
 
 } // namespace earth_engine

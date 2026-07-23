@@ -80,6 +80,12 @@ struct GltfPrimitiveRenderResources {
     // Byte width of the uploaded index buffer: 2 (uint16) or 4 (uint32).
     // Drives RenderCommand::indexType at draw command build time.
     int indexByteSize = 4;
+    // 北极星 Phase 2c P5b:本 primitive 的几何由共享位移模板承担(draw 时
+    // GltfDrawCommandBuilder 把命令换绑模板 VBO/IBO),per-tile vertex/index
+    // buffer 被有意跳过(nullptr)——省去主线程顶点重建(terrainUpload 尖刺)与
+    // 每瓦片 ~507KB 废弃显存。true 时 null buffer 视为「已就绪」,不得再触发
+    // 重 prepare;draw 侧若模板 swap 失败则丢弃该命令(不画,绝不解引用 null)。
+    bool sharedTemplateGeometry = false;
     int instanceCount = 0;
     GltfPrimitiveMode primitiveMode = GltfPrimitiveMode::Triangles;
     Vec3 sortCenterEcef = Vec3::zero();

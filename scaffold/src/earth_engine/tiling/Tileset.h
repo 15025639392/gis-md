@@ -237,6 +237,11 @@ public:
         return incrementalFrontier_;
     }
 
+    /// 标记内容资源脏(下轮 upload 生命周期重走 prepare)。P5b:Engine 在运行时
+    /// 关闭 GPU 位移(pool reset)后调用,让模板活跃期间跳过 per-tile VBO 的
+    /// fine 地形瓦片重建 legacy VBO 补洞(原为 friend-only,提为 public API)。
+    void markContentResourcesDirty();
+
 private:
     friend struct TilesetTestAccess;
     friend class TilesetSelectionFrameFacade;
@@ -275,7 +280,6 @@ private:
         IPrepareRendererResources* pPrepRenderer = nullptr,
         uint32_t maxUploadsPerFrame = 20);
 
-    void markContentResourcesDirty();
     TileOcclusionState checkSingleTileOcclusion(
         const TilesetTile& tile) const;
     TileOcclusionState checkOcclusion(const TilesetTile& tile) const;

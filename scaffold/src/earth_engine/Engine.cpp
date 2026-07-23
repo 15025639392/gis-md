@@ -182,8 +182,13 @@ void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
     } else if (terrainDisplacementPool_) {
         // 关闭:先失效命令(清掉命令对 pool GPU buffer 的裸指针),再释放 pool,
         // 消除 ON→OFF 悬垂句柄崩溃;命令随后按 CPU baked VBO 路径重建。
+        // P5b:模板活跃期间加载的 fine 地形瓦片没有 per-tile VBO(有意跳过),
+        // 关闭后其命令无几何可绑会被 draw builder 兜底丢弃 → 标记内容资源脏,
+        // 让 prepare 按「模板不活跃」重走 allReady(sharedTemplateGeometry 不再
+        // 视为就绪)→ 重建 legacy VBO 补洞。
         if (tileset) {
             tileset->invalidateTerrainDrawCommands();
+            tileset->markContentResourcesDirty();
         }
         scene_->setTerrainDisplacementPool(nullptr);
         terrainDisplacementPool_.reset();

@@ -25,7 +25,8 @@ enum class TileSelectionReuseRejectReason {
     PendingTilesetWork,
     PendingRasterOverlayWork,
     LastRequestIssuedWork,
-    LastRequestBlockedByInflight
+    LastRequestBlockedByInflight,
+    PresentationHeld
 };
 
 struct TileSelectionReuseClassification {
@@ -55,6 +56,14 @@ struct TileSelectionReuseInput {
     bool hasPendingRasterOverlayWork = false;
     bool lastRequestIssuedWork = false;
     bool lastRequestBlockedByInflight = false;
+    // P5b:presentation hold(首屏 base 影像未达成)期间禁止 reuse。strict reuse
+    // 跳过 overlay prefetch(映射推进+影像请求发起),其安全前提=「pending 工作会
+    // 经 revision 变化打破 reuse」;但几何在单帧内全部 Done 时(GPU 位移 skip 让
+    // upload 近零成本)revision 随即恒定 → 立即 reuse → 影像请求永不发出 → hold
+    // 永不释放的启动死锁(与 TilesetUpdateFrameRuntime 顶部 async bootstrap
+    // 死锁同型)。hold 仅启动/瞬态为真,不回退「泛泛 pending 阻断→静态反复
+    // traverse」的历史权衡。
+    bool presentationHeld = false;
 };
 
 class TileSelectionReusePolicy {

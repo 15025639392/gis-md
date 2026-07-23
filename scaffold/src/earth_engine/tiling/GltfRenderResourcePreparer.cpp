@@ -3,8 +3,10 @@
 #include "GltfRenderGeometryBuilder.h"
 #include "GpuReadyData.h"
 #include "RasterMappedToTilesetTile.h"
+#include "TerrainDisplacementTemplatePool.h"  // terrainReliefFade(P5b 判据同源)
 #include "TilesetTile.h"
 #include "../content/GltfModel.h"
+#include "../providers/TerrainProvider.h"  // DecodedHeightmap
 #include "../core/async/AsyncSystem.h"
 #include "../debug/PerfTimer.h"
 #include "../renderer/RenderDevice.h"
@@ -193,6 +195,13 @@ GltfPrimitiveRenderResources::TextureBinding makeGltfTextureBinding(
 }
 
 bool isValidGpuReadyPrimitive(const GpuReadyPrimitive& primitive) {
+    // P5b:共享模板几何 primitive 有意不带顶点/索引字节(draw 时换绑共享模板),
+    // 只要求计数如实——否则空 bytes 被判无效 → markRenderContentFailedTemporarily
+    // → 每帧重试风暴且永不上传。
+    if (primitive.metadata.sharedTemplateGeometry) {
+        return primitive.vertexCount > 0 && primitive.indexCount > 0 &&
+               !primitive.instances;
+    }
     if (primitive.vertexStride == 0 ||
         primitive.vertexCount == 0 ||
         primitive.vertexBytes.empty() ||
@@ -224,7 +233,8 @@ bool isValidGpuReadyPrimitive(const GpuReadyPrimitive& primitive) {
 
 void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                                          RenderDevice* device,
-                                         double currentFrameTimeSeconds) {
+                                         double currentFrameTimeSeconds,
+                                         bool sharedTemplateGeometryActive) {
     const GltfModel* model =
         tile.content.renderContent.gltfModelForRead();
     if (!model) return;
@@ -255,7 +265,16 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
         const bool allReady = std::all_of(
             primitiveResources.begin(),
             primitiveResources.end(),
-            [](const GltfPrimitiveRenderResources& resources) {
+            [sharedTemplateGeometryActive](
+                const GltfPrimitiveRenderResources& resources) {
+                // P5b:共享模板几何 primitive 的 per-tile buffer 有意为空,
+                // 模板活跃时视为就绪(否则每帧误判未就绪→无限重 prepare)。
+                // 模板被运行时关闭(pool reset)后不再视为就绪 → 走下方重建
+                // 路径补回 legacy VBO(toggle OFF 自愈)。
+                if (resources.sharedTemplateGeometry &&
+                    sharedTemplateGeometryActive) {
+                    return resources.indexCount > 0;
+                }
                 return resources.vertexBuffer != nullptr &&
                        resources.indexBuffer != nullptr &&
                        resources.indexCount > 0 &&
@@ -351,8 +370,8 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
     if (!device) {
         return;
     }
-    std::optional<GpuReadyData> ready =
-        prepareCpuWork(tile, currentFrameTimeSeconds);
+    std::optional<GpuReadyData> ready = prepareCpuWork(
+        tile, currentFrameTimeSeconds, sharedTemplateGeometryActive);
     if (!ready) {
         tile.content.renderContent.clearGltfGpuResources();
         tile.markRenderContentFailedTemporarily();
@@ -367,7 +386,8 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
 
 std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
     const TilesetTile& tile,
-    double currentFrameTimeSeconds) {
+    double currentFrameTimeSeconds,
+    bool sharedTemplateGeometryActive) {
     const GltfModel* model = tile.content.renderContent.gltfModelForRead();
     if (!model) {
         return std::nullopt;
@@ -376,18 +396,33 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
         tile.content.renderContent.gltfTransform();
     const Vec3 localOrigin =
         GltfRenderGeometryBuilder::localOrigin(*model, transform);
+    // P5b tile 级判据(镜像 GltfDrawCommandBuilder 模板 swap 的 tile 条件,
+    // reliefFade 同源 TerrainDisplacementTemplatePool.h):真实地形 + 自有
+    // retainedHeightmap + fade>0.001 的瓦片,draw 时必换共享模板 → per-tile
+    // baked VBO 从不被绘制,跳过其构建/上传。上采样 z13+(无自有高度图)与
+    // coarse z≤6(fade=0)判据为 false,保持 legacy VBO 路径。primitive 级
+    // 排除(水面掩码格式/实例化)在 prepareCpuWorkFromModel 内完成。
+    const DecodedHeightmap* heightmap =
+        tile.content.renderContent.retainedHeightmap();
+    const bool skipBakedTerrainGeometry =
+        sharedTemplateGeometryActive &&
+        tile.content.renderContent.isTerrainRenderContent() &&
+        heightmap != nullptr && heightmap->valid() &&
+        terrainReliefFade(tile.key.z) > 0.001f;
     return prepareCpuWorkFromModel(
         *model,
         transform,
         localOrigin,
-        currentFrameTimeSeconds);
+        currentFrameTimeSeconds,
+        skipBakedTerrainGeometry);
 }
 
 std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
     const GltfModel& model,
     const Mat4& transform,
     const Vec3& localOrigin,
-    double /*currentFrameTimeSeconds*/) {
+    double /*currentFrameTimeSeconds*/,
+    bool skipBakedTerrainGeometry) {
     if (model.primitives.empty()) return std::nullopt;
 
     GpuReadyData ready;
@@ -426,6 +461,17 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
             }
             gpuPrim.vertexStride = sizeof(TerrainGpuVertex);
             gpuPrim.vertexCount = primitive.vertices.size();
+        } else if (skipBakedTerrainGeometry && !instanced) {
+            // P5b:tile 级判据成立(真实地形+retainedHeightmap+fade>0.001)且
+            // primitive 非水面掩码格式、非实例化 → draw 时必换共享位移模板,
+            // per-tile baked VBO 从不被绘制。跳过顶点构建(主线程 terrainUpload
+            // 尖刺大头 = buildVertices 逐顶点重建)与索引字节;计数仍如实填
+            // (供 metadata/命令构建),buffer 留空由 sharedTemplateGeometry
+            // 标志向 allReady/uploadToGpu/draw 三方声明「有意为空」。
+            gpuPrim.metadata.sharedTemplateGeometry = true;
+            gpuPrim.vertexStride = sizeof(GltfGpuVertex);
+            gpuPrim.vertexCount = primitive.vertices.size();
+            gpuPrim.indexCount = primitive.indices.size();
         } else {
             auto gltfVerts = GltfRenderGeometryBuilder::buildVertices(
                 primitive, transform, localOrigin);
@@ -449,7 +495,10 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
 
         // Index data: narrow to uint16 whenever the vertex count allows —
         // halves the index upload bytes for virtually every terrain tile.
-        gpuPrim.assignIndices(primitive.indices, gpuPrim.vertexCount);
+        // (P5b 共享模板几何 primitive 无索引字节,跳过。)
+        if (!gpuPrim.metadata.sharedTemplateGeometry) {
+            gpuPrim.assignIndices(primitive.indices, gpuPrim.vertexCount);
+        }
 
         // Sort center
         gpuPrim.sortCenterEcef =
@@ -684,6 +733,9 @@ bool GltfRenderResourcePreparer::uploadToGpu(
             : 0;
         prim.metadata.sortCenterEcef = prim.sortCenterEcef;
 
+        // P5b:共享模板几何 primitive 有意不建 per-tile vertex/index buffer
+        // (draw 时换绑共享模板,建了也从不绘制 = 每瓦片 ~507KB 废弃显存)。
+        if (!prim.metadata.sharedTemplateGeometry) {
         // GPU: create vertex buffer
         BufferDesc vbDesc;
         vbDesc.size = prim.vertexBytes.size();
@@ -717,6 +769,7 @@ bool GltfRenderResourcePreparer::uploadToGpu(
         }
         deferredCpuPayload->byteBuffers.push_back(
             std::move(prim.indexBytes));
+        }  // !sharedTemplateGeometry
 
         // GPU: create instance buffer if needed
         if (prim.instances) {
@@ -739,10 +792,11 @@ bool GltfRenderResourcePreparer::uploadToGpu(
         }
 
         const double resourceCommitStartMs = perf::nowMs();
-        // Validate
-        if (!prim.metadata.vertexBuffer ||
-            !prim.metadata.indexBuffer ||
-            (prim.instances && !prim.metadata.instanceBuffer)) {
+        // Validate(P5b:共享模板几何 primitive 的 null buffer 是有意的,不算失败)
+        if (!prim.metadata.sharedTemplateGeometry &&
+            (!prim.metadata.vertexBuffer ||
+             !prim.metadata.indexBuffer ||
+             (prim.instances && !prim.metadata.instanceBuffer))) {
             success = false;
             if (metrics) {
                 metrics->resourceCommitMs +=

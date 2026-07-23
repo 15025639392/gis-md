@@ -92,6 +92,14 @@ TileSelectionReusePolicy::classifyReuseWithReason(
             TileSelectionReuseMode::None,
             TileSelectionReuseRejectReason::NoReusableSelection};
     }
+    // P5b:presentation hold 期间不 reuse——strict reuse 跳过 overlay prefetch,
+    // 若此时首屏 base 影像尚未达成,影像请求可能还没发出,reuse 会把加载链
+    // 冻死(黑屏死锁,详见 TileSelectionReuseInput::presentationHeld 注释)。
+    if (input.presentationHeld) {
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::PresentationHeld};
+    }
     if (input.frameState.viewportWidthPixels != input.lastViewportWidth ||
         input.frameState.viewportHeightPixels != input.lastViewportHeight) {
         return {

@@ -52,7 +52,8 @@ struct TileSelectionReuseState {
         bool allowStaleSelection,
         bool hasFadingTiles,
         bool hasPendingTilesetWork,
-        bool hasPendingRasterOverlayWork) const {
+        bool hasPendingRasterOverlayWork,
+        bool presentationHeld = false) const {
         return TileSelectionReusePolicy::classifyReuse(
             TileSelectionReuseInput{
                 frameState,
@@ -74,7 +75,8 @@ struct TileSelectionReuseState {
                 hasPendingTilesetWork,
                 hasPendingRasterOverlayWork,
                 lastRequestIssuedWork,
-                lastRequestBlockedByInflight});
+                lastRequestBlockedByInflight,
+                presentationHeld});
     }
 
     TileSelectionReuseClassification classifyReuseWithReason(
@@ -84,7 +86,8 @@ struct TileSelectionReuseState {
         bool allowStaleSelection,
         bool hasFadingTiles,
         bool hasPendingTilesetWork,
-        bool hasPendingRasterOverlayWork) const {
+        bool hasPendingRasterOverlayWork,
+        bool presentationHeld = false) const {
         return TileSelectionReusePolicy::classifyReuseWithReason(
             TileSelectionReuseInput{
                 frameState,
@@ -106,7 +109,8 @@ struct TileSelectionReuseState {
                 hasPendingTilesetWork,
                 hasPendingRasterOverlayWork,
                 lastRequestIssuedWork,
-                lastRequestBlockedByInflight});
+                lastRequestBlockedByInflight,
+                presentationHeld});
     }
 
     bool canReuse(const FrameState& frameState,
