@@ -13,6 +13,7 @@
 #include "../providers/TerrainProvider.h"  // DecodedHeightmap
 #include "TerrainDisplacementTemplatePool.h"
 #include "../debug/PerfTimer.h"
+#include "../debug/PlatformLog.h"
 
 #include <algorithm>
 #include <string>
@@ -101,10 +102,15 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
     // local origin) go through the draw-effective getters so the fill draws
     // through the identical command path and swaps to real geometry the frame
     // real terrain becomes ready (which invalidates the cache).
+    bool sharedTemplateSwapFailed = false;
     for (const GltfPrimitiveRenderResources& primitive :
          tile.content.renderContent.drawPrimitiveResources()) {
-        if (!primitive.vertexBuffer || !primitive.indexBuffer ||
-            primitive.indexCount <= 0) {
+        // P5b:共享模板几何 primitive 的 per-tile buffer 有意为空(nullptr),
+        // 必须放行到下方模板 swap 换绑共享 VBO/IBO;swap 未成时由循环尾的
+        // null-buffer 兜底丢弃。其余 primitive 保持原护栏。
+        if (!primitive.sharedTemplateGeometry &&
+            (!primitive.vertexBuffer || !primitive.indexBuffer ||
+             primitive.indexCount <= 0)) {
             continue;
         }
 
@@ -419,10 +425,27 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile) {
         // 该瓦片本帧不画,绝不携带 null buffer 下发 draw(UB)。带 buffer 的
         // 常规命令(legacy VBO/fill/实例化)不受影响。
         if (!cmd.vertexBuffer || !cmd.indexBuffer) {
+            if (primitive.sharedTemplateGeometry) {
+                sharedTemplateSwapFailed = true;
+                platformLog(LogLevel::Warning, "GltfDrawCmd",
+                    "shared-template swap missed, retry next frame: "
+                    "key=%d/%d/%d relief=%.3f pool=%d hm=%d",
+                    tile.key.z, tile.key.x, tile.key.y,
+                    static_cast<double>(reliefFade),
+                    renderer.terrainDisplacementPool() ? 1 : 0,
+                    tile.content.renderContent.retainedHeightmap() ? 1 : 0);
+            }
             continue;
         }
         cmd.cullFace = !primitive.doubleSided;
         cached.push_back(std::move(cmd));
+    }
+    // P5b:共享模板 swap 失败(瞬态:高度纹理未就绪/池分配失败)时不把缓存
+    // 定格为 valid——否则空命令列表因内容 revision 不变永不重建,该瓦片永久
+    // 不可见(启动期 = 无 surface command → presentation hold 永不释放的黑屏
+    // 死锁)。置 invalid 让下一帧重试 rebuild,成功即自愈。
+    if (sharedTemplateSwapFailed) {
+        tile.content.renderContent.invalidateCachedDrawCommands();
     }
 }
 

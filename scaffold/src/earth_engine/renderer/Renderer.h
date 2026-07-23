@@ -129,11 +129,14 @@ public:
     }
     /// P5b:prepare 侧经 IPrepareRendererResources 查询共享模板几何是否活跃,
     /// 与 draw 侧模板 swap 的「pool 非空」门控同源。
-    /// ⚠️ skip flag 默认关:P5b skip(跳过废弃 per-tile VBO)机制已真机验证
-    /// (z=12 skip/coarse 保留/每瓦片省 ~538KB),但它把几何 Done 提速一个数量级,
-    /// 触发影像启动链竞态死锁(mapping→fetch→attach 以「几何加载慢、多帧非
-    /// reuse」为隐含前提;已修 strict-reuse 一环 presentationHeld,仍有残留竞态
-    /// →偶发首屏黑屏 hold 不释放)。影像启动链健壮性专项修复后再置 true。
+    /// 默认开(2026-07-23 收口):历史「影像启动链竞态死锁」已定位并根治——
+    /// 真因不在影像链(mapping→fetch→attach 每帧健康推进),而是
+    /// rebuildCachedDrawCommands 循环入口护栏把 sharedTemplateGeometry 的
+    /// 有意空 buffer primitive 无条件 continue,模板 swap 永远执行不到→常驻
+    /// 命令缓存定格为空→无 surface command→presentation hold 永不释放(黑屏
+    /// 100% 确定性复现,非偶发竞态)。修 = 入口护栏放行 + swap 失败不定格空
+    /// 缓存(下一帧重试自愈)。flag 保留作紧急回退开关(false = 恢复 per-tile
+    /// baked VBO 全量构建/上传,行为与 P5b 前逐字节一致)。
     void setTerrainBakedVboSkipEnabled(bool enabled) {
         terrainBakedVboSkipEnabled_ = enabled;
     }
@@ -147,8 +150,8 @@ private:
     std::unique_ptr<Impl> impl_;
     TerrainPageStore* terrainPageStore_ = nullptr;
     TerrainDisplacementTemplatePool* terrainDisplacementPool_ = nullptr;
-    // P5b skip flag(默认关,见 setTerrainBakedVboSkipEnabled 注释)。
-    bool terrainBakedVboSkipEnabled_ = false;
+    // P5b skip flag(默认开,见 setTerrainBakedVboSkipEnabled 注释)。
+    bool terrainBakedVboSkipEnabled_ = true;
 };
 
 } // namespace earth_engine
