@@ -91,13 +91,27 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
 
         auto cached = HttpCache::shared().get(url);
         if (!cached.empty()) {
-            RequestCompletionGuard completion{requestsCompleted_};
-            if (token.isCancelled()) {
-                callback(key, TerrainTileLoadResult::cancelled());
-                return;
-            }
-            auto hm = decodeTile(cached.data(), cached.size());
-            callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(hm)));
+            // cache 命中也必须下沉 worker(与下方无 bridge 分支同模式):此处
+            // 曾在主线程同步 decode+callback(callback 内含整块网格构建),
+            // 运动重访已缓存区域时批量命中(每个 2-4ms)= requestMissingContent
+            // 的 request 分发尖刺(帧 14-24ms)真因,真机逐时间戳对齐坐实。
+            AsyncSystem::pool().enqueue(
+                [this,
+                 body = std::move(cached),
+                 key,
+                 token = std::move(token),
+                 callback = std::move(callback)]() mutable {
+                    RequestCompletionGuard completion{requestsCompleted_};
+                    if (token.isCancelled()) {
+                        callback(key, TerrainTileLoadResult::cancelled());
+                        return;
+                    }
+                    auto hm = decodeTile(body.data(), body.size());
+                    callback(
+                        key,
+                        TerrainTileLoadResult::successWithHeightmap(
+                            std::move(hm)));
+                });
             return;
         }
 

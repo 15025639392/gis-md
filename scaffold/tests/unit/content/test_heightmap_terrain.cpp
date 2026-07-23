@@ -13,6 +13,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 #include "earth_engine/content/GltfModel.h"
 #include "earth_engine/content/HeightmapTerrainContentProvider.h"
@@ -109,6 +112,16 @@ private:
     }
 };
 
+
+// requestTileContent 的回调契约是异步的(生产网络路径与 HttpCache 命中路径均
+// 在 worker 线程完成,见 HeightmapTerrainProvider::requestTile),先等回调落地
+// 再断言;超时上限 2s 防死等。
+void waitForContentCallback(const std::atomic<bool>& called) {
+    for (int i = 0; i < 2000 && !called.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 // ---- P0: decode contract ----------------------------------------------------
 
 TEST(HeightmapTerrainDecode, MapboxTerrainRgbRoundTrip) {
@@ -175,7 +188,7 @@ TEST(HeightmapTerrainContent, BuildsRegularGridMeshWithLiftedHeights) {
     ASSERT_TRUE(content.supportsTile(key));
 
     CancellationToken token;
-    bool called = false;
+    std::atomic<bool> called{false};
     TileContentLoadResult captured;
     content.requestTileContent(
         key,
@@ -185,6 +198,7 @@ TEST(HeightmapTerrainContent, BuildsRegularGridMeshWithLiftedHeights) {
             called = true;
         });
 
+    waitForContentCallback(called);
     ASSERT_TRUE(called);
     EXPECT_EQ(captured.status, TileLoadStatus::Renderable);
     EXPECT_TRUE(captured.terrainRenderContent);
@@ -276,7 +290,7 @@ TEST(HeightmapTerrainContent, BakesGeomorphDeltaFromCoarseSelfDownsample) {
 
     const TileKey key{"XYZ-WebMercator", 12, 3400, 1500};
     CancellationToken token;
-    bool called = false;
+    std::atomic<bool> called{false};
     TileContentLoadResult captured;
     content.requestTileContent(
         key,
@@ -286,6 +300,7 @@ TEST(HeightmapTerrainContent, BakesGeomorphDeltaFromCoarseSelfDownsample) {
             called = true;
         });
 
+    waitForContentCallback(called);
     ASSERT_TRUE(called);
     ASSERT_NE(captured.gltfModel, nullptr);
     ASSERT_FALSE(captured.gltfModel->primitives.empty());
@@ -335,7 +350,7 @@ TEST(HeightmapTerrainContent, FlatFieldBakesZeroGeomorphDelta) {
     HeightmapTerrainContentProvider content(std::move(provider), 12);
     const TileKey key{"XYZ-WebMercator", 12, 3400, 1500};
     CancellationToken token;
-    bool called = false;
+    std::atomic<bool> called{false};
     TileContentLoadResult captured;
     content.requestTileContent(
         key,
@@ -345,6 +360,7 @@ TEST(HeightmapTerrainContent, FlatFieldBakesZeroGeomorphDelta) {
             called = true;
         });
 
+    waitForContentCallback(called);
     ASSERT_TRUE(called);
     ASSERT_NE(captured.gltfModel, nullptr);
     ASSERT_FALSE(captured.gltfModel->primitives.empty());
@@ -380,7 +396,7 @@ TEST(HeightmapTerrainContent, HeightSamplerReadsBakedTerrainHeight) {
     HeightmapTerrainContentProvider content(std::move(provider), 12);
     const TileKey key{"XYZ-WebMercator", 12, 3400, 1500};
     CancellationToken token;
-    bool called = false;
+    std::atomic<bool> called{false};
     TileContentLoadResult captured;
     content.requestTileContent(
         key, token,
@@ -388,6 +404,7 @@ TEST(HeightmapTerrainContent, HeightSamplerReadsBakedTerrainHeight) {
             captured = std::move(result);
             called = true;
         });
+    waitForContentCallback(called);
     ASSERT_TRUE(called);
     ASSERT_NE(captured.gltfModel, nullptr);
 
