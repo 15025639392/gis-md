@@ -213,6 +213,18 @@ bool Engine::render(double deltaSeconds) {
         lastRenderTime_ = nowSec;
     }
 
+    // 北极星 Phase 2c 地形 GPU 位移(默认开,P5):惰性建共享位移模板池并挂到内部
+    // Renderer。**必须在 scene_->update() 之前**——draw 命令的模板 swap 在命令 build
+    // 时(update 内)定型,pool 晚于首次 update 建则首帧命令缓存成 CPU baked 路径且不
+    // 再重建 → GPU 位移永不生效(运行时 toggle 靠 invalidateTerrainDrawCommands 兜底,
+    // 但 default-on 从启动即需 pool 先于首个瓦片 build 存在)。
+    if (terrainGpuDisplacementEnabled_ && !terrainDisplacementPool_) {
+        terrainDisplacementPool_ =
+            std::make_unique<TerrainDisplacementTemplatePool>();
+        terrainDisplacementPool_->initialize(device_);
+        scene_->setTerrainDisplacementPool(terrainDisplacementPool_.get());
+    }
+
     {
         // Update first so this frame's FrameState (camera + sky clear color) is
         // ready before beginFrame() clears the color/depth attachments. GPU
@@ -274,16 +286,6 @@ bool Engine::render(double deltaSeconds) {
             vtIndirectionSamplePoc_->ensureResources(surfaceWidthPixels_,
                                                      surfaceHeightPixels_)) {
             vtIndirectionSamplePoc_->tick();
-        }
-    }
-    // 北极星 Phase 2c 地形 GPU 位移(默认关):惰性建共享位移模板池并挂到内部
-    // Renderer;GltfDrawCommandBuilder 对地形命令改绑共享模板 VBO/IBO + 刚体帧。
-    if (terrainGpuDisplacementEnabled_) {
-        if (!terrainDisplacementPool_) {
-            terrainDisplacementPool_ =
-                std::make_unique<TerrainDisplacementTemplatePool>();
-            terrainDisplacementPool_->initialize(device_);
-            scene_->setTerrainDisplacementPool(terrainDisplacementPool_.get());
         }
     }
     // 北极星 合成方案 门③ Step3 页存储原型(默认关):建 texture2DArray 页存储
