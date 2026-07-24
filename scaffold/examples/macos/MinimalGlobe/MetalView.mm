@@ -64,13 +64,19 @@
 
         earth_engine::EarthSceneConfig config;
         config.initialCamera = {106.508, 29.617, 30000.0};
-        config.terrain = {
-            earth_engine::TerrainSourceKind::QuantizedMesh,
-            "http://127.0.0.1:8099/{z}/{x}/{y}.terrain",
-            "http://127.0.0.1:8099/layer.json",
-            "QuantizedMesh Terrain",
-            0, 12, 65, false
-        };
+        // 与 Android demo 同源：规则栅格 raster-DEM 高度图（QuantizedMesh 路径
+        // 已随北极星退役，枚举里已无该值）。本地 8091 FABDEM z0-12 / 65×65 /
+        // Mapbox Terrain-RGB PNG，无数据区回落椭球。
+        config.terrain.kind = earth_engine::TerrainSourceKind::Heightmap;
+        config.terrain.urlTemplate = "http://127.0.0.1:8091/{z}/{x}/{y}.png";
+        config.terrain.attribution = "FABDEM Terrain-RGB (grid65)";
+        config.terrain.minimumZoom = 0;
+        config.terrain.maximumZoom = 12;
+        config.terrain.tileSize = 65;
+        config.terrain.heightmapEncoding =
+            earth_engine::TerrainHeightmapEncoding::MapboxTerrainRgb;
+        config.terrain.ellipsoidFallback = true;
+        config.terrain.ellipsoidFallbackMaxZoom = 12;
         config.tileset = {4.0, 2.0};
 
         // Gaode satellite base imagery (same as Android demo)
