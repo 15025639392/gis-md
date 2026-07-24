@@ -1301,7 +1301,10 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     }
 
     const double submitMs = perf::nowMs() - submitStartMs;
-    if (submitCount <= 1 || submitCount % 120 == 0 || submitMs >= 12.0) {
+    // 采样步长必须与「每帧 submit 次数」互质:每帧有 2 次 submit(主场景 +
+    // 单命令附加 pass),用偶数步长(旧值 120)会恒定采到同一奇偶位 → 只看得见
+    // 单命令那次,主场景永远采不到。121 与 2 互质,轮流覆盖两次 submit。
+    if (submitCount <= 1 || submitCount % 121 == 0 || submitMs >= 12.0) {
         GLenum err = glGetError();
         __android_log_print(ANDROID_LOG_INFO, "GLES",
             "submit #%d: %zu commands, ms=%.3f bind=%.3f uniform=%.3f(%llu calls) draw=%.3f surface=%d gltf=%d inst=%d(%d) vector=%d env=%d glError=%d",
