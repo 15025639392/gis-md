@@ -36,6 +36,15 @@ struct DecodedHeightmap {
     /// 高度缩放因子（OpenGlobus _heightFactor），默认为 1.0
     float heightFactor = 1.0f;
 
+    /// 边界内缩（像素）。sampleBilinear 把 u/v∈[0,1] 映射到像素
+    /// [borderInset, tileSize-1-borderInset] 而非 [0, tileSize-1]。
+    /// = 0：顶点栅格源（如自产 grid65，像素 0/N-1 就落在瓦片边界上）。
+    /// = 0.5：cell-registered + 1px 重叠环源（如 Mapbox 514 Terrain-RGB，
+    ///        512 个 cell 中心在像素 1..512、瓦片真实边界在半像素 0.5/512.5、
+    ///        像素 0 与 513 是邻居重叠 backfill）。半像素内缩后相邻瓦片共享
+    ///        边界采样值完全一致 → 无缝（已真机对拍验证 maxdiff=0）。
+    float borderInset = 0.0f;
+
     bool valid() const { return tileSize > 0 && heights.size() == static_cast<size_t>(tileSize * tileSize); }
 
     /// 检查高度是否为无效值（哨兵值匹配 或 值 > 50000）

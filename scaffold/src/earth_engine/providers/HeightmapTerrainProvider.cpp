@@ -289,6 +289,7 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
         auto hm = std::make_unique<DecodedHeightmap>();
         hm->tileSize = img->width;
         hm->heightFactor = heightFactor_;
+        hm->borderInset = borderInset_;
         hm->noDataValues = noDataValues_;
 
         size_t count = static_cast<size_t>(img->width * img->height);
@@ -325,6 +326,7 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
     auto hm = std::make_unique<DecodedHeightmap>();
     hm->tileSize = w;
     hm->heightFactor = heightFactor_;
+    hm->borderInset = borderInset_;
     hm->noDataValues = noDataValues_;
 
     size_t count = static_cast<size_t>(w * h);

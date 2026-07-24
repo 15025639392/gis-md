@@ -179,6 +179,7 @@ SceneTerrainRuntimeSources createTerrainRuntimeSources(
             hm->setTileSize(config.tileSize);
         }
         hm->setHeightFactor(config.heightmapHeightFactor);
+        hm->setBorderInset(config.heightmapBorderInset);
         if (!config.heightmapNoDataValues.empty()) {
             hm->setNoDataValues(config.heightmapNoDataValues);
         }

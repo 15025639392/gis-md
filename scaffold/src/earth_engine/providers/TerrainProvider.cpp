@@ -21,8 +21,13 @@ float DecodedHeightmap::sampleBilinear(float u, float v) const {
     u = std::max(0.0f, std::min(1.0f, u));
     v = std::max(0.0f, std::min(1.0f, v));
 
-    float fx = u * static_cast<float>(tileSize - 1);
-    float fy = v * static_cast<float>(tileSize - 1);
+    // 边界内缩:u/v∈[0,1] 映射到 [inset, tileSize-1-inset]。inset=0 时退化为
+    // 原顶点栅格映射 [0, tileSize-1](自产 grid65);inset=0.5 时映射到瓦片真实
+    // 边界所在的半像素处(Mapbox 514 cell-registered + 重叠环)→ 无缝。
+    const float inset = borderInset;
+    const float span = static_cast<float>(tileSize - 1) - 2.0f * inset;
+    float fx = inset + u * span;
+    float fy = inset + v * span;
 
     int x0 = static_cast<int>(fx);
     int y0 = static_cast<int>(fy);

@@ -80,6 +80,11 @@ struct TerrainSourceConfig {
         TerrainHeightmapEncoding::MapboxTerrainRgb;
     float heightmapHeightFactor = 1.0f;
     std::vector<float> heightmapNoDataValues;
+    // 边界内缩(像素),透传到 HeightmapTerrainProvider::setBorderInset →
+    // DecodedHeightmap::borderInset。0 = 顶点栅格源(自产 grid65,像素落在瓦片
+    // 边界上);0.5 = cell-registered + 1px 重叠环(Mapbox 514 Terrain-RGB,真实
+    // 边界在半像素处,内缩后相邻瓦片无缝)。见 DecodedHeightmap::borderInset。
+    float heightmapBorderInset = 0.0f;
     // 原生最大 zoom（0 → 取 maximumZoom）。超出后由上采样（父级重采样）供给。
     int heightmapMaxNativeZoom = 0;
 };

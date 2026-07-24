@@ -53,6 +53,10 @@ public:
     void setEncoding(Encoding encoding);
     void setTileSize(int size) { tileSize_ = size; }
     void setHeightFactor(float factor) { heightFactor_ = factor; }
+    // 解码出的 heightmap 的边界内缩(像素),写进 DecodedHeightmap::borderInset。
+    // 0 = 顶点栅格源(自产 grid65);0.5 = cell-registered + 1px 重叠环
+    // (Mapbox 514 Terrain-RGB)。见 DecodedHeightmap::borderInset 注释。
+    void setBorderInset(float insetPixels) { borderInset_ = insetPixels; }
     void setNoDataValues(std::vector<float> values) { noDataValues_ = std::move(values); }
 
     std::string buildUrl(const TileKey& key) const override;
@@ -81,6 +85,7 @@ private:
     int maxNativeZoom_ = 14;
     int tileSize_ = 256;
     float heightFactor_ = 1.0f;
+    float borderInset_ = 0.0f;
     std::vector<float> noDataValues_;
     PlatformBridge* platformBridge_ = nullptr;
     std::atomic<int> requestsStarted_{0};
