@@ -544,6 +544,18 @@ void applyPerFrameCommandState(
                 RasterOverlayRole::BaseImagery) {
             cmd.surfaceBaseRasterState = 1;
             cmd.surfaceBaseIsMappedRasterTile = 1;
+            // 加载质量诊断:记下这片瓦片的底图到底贴的是第几级影像,以及
+            // 距离"想要的那级"差多少 —— 差值就是屏幕上肉眼看到的糊的程度。
+            // _pLoadingTile = 想要的目标层(还在加载),_pReadyTile = 实际渲染
+            // 的那张(可能是祖先)。settled 时 loading 为空,二者相等 → delta 0。
+            const RasterOverlayTile* wantedTile =
+                mapped->getLoadingTile() ? mapped->getLoadingTile()
+                                         : binding.tile;
+            cmd.surfaceGeometryZoom = tile.key.z;
+            cmd.surfaceTextureZoom = binding.tile->getTileID().z;
+            cmd.imageryAncestorLevelDelta =
+                std::max(0, wantedTile->getTileID().z -
+                                binding.tile->getTileID().z);
         }
         ++rasterOverlayTextureCount;
     }

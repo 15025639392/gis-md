@@ -16,6 +16,7 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     firstSurface.textures = {sharedTexture};
     firstSurface.surfaceGeometryZoom = 3;
     firstSurface.surfaceTextureZoom = 4;
+    firstSurface.imageryAncestorLevelDelta = 0;  // 贴的是本级影像 = 清晰
 
     RenderCommand secondSurface;
     secondSurface.kind = RenderCommandKind::GltfPrimitive;
@@ -25,6 +26,7 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     secondSurface.textures = {sharedTexture, secondTexture};
     secondSurface.surfaceGeometryZoom = 7;
     secondSurface.surfaceTextureZoom = 6;
+    secondSurface.imageryAncestorLevelDelta = 1;  // 退回父级上采样 = 糊 1 级
 
     RenderCommand missingImagerySurface;
     missingImagerySurface.kind = RenderCommandKind::GltfPrimitive;
@@ -61,7 +63,12 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     EXPECT_EQ(snapshot.terrainSurfaceUnknownCommands, 1);
     EXPECT_EQ(snapshot.renderGltfPrimitives, 5);
     EXPECT_EQ(snapshot.gpuTextureCount, 2);
-    EXPECT_EQ(snapshot.imageryExactAttachments, 2);
+    // exact 的语义是「贴的是本级影像」,不是「有任意纹理」:两条带纹理的命令
+    // 一条 delta=0(清晰)、一条 delta=1(退回父级上采样)。
+    EXPECT_EQ(snapshot.imageryExactAttachments, 1);
+    EXPECT_EQ(snapshot.imageryAncestor1Attachments, 1);
+    EXPECT_EQ(snapshot.imageryAncestor2Attachments, 0);
+    EXPECT_EQ(snapshot.imageryAncestor3PlusAttachments, 0);
     EXPECT_EQ(snapshot.imageryMissingTiles, 2);
     EXPECT_EQ(snapshot.imageryMinTargetZoom, 3);
     EXPECT_EQ(snapshot.imageryMaxTargetZoom, 7);
@@ -121,25 +128,59 @@ TEST(
     invalidZoomSurface.textures = {nullptr, texture, texture};
     invalidZoomSurface.surfaceGeometryZoom = -1;
     invalidZoomSurface.surfaceTextureZoom = -1;
+    invalidZoomSurface.imageryAncestorLevelDelta = 0;
 
-    RenderCommand missingImagerySurface;
-    missingImagerySurface.kind = RenderCommandKind::GltfPrimitive;
-    missingImagerySurface.surfaceGeometryZoom = 5;
-    missingImagerySurface.surfaceTextureZoom = 6;
+    // 非地形、无纹理的 glTF 命令(极帽就是这种):不算「缺影像瓦片」。
+    RenderCommand nonTerrainNoTexture;
+    nonTerrainNoTexture.kind = RenderCommandKind::GltfPrimitive;
+    nonTerrainNoTexture.surfaceGeometryZoom = 5;
+    nonTerrainNoTexture.surfaceTextureZoom = 6;
 
     const SceneRenderCommandDiagnosticsSnapshot snapshot =
         SceneRenderCommandDiagnosticsSnapshot::fromCommands(
-            {invalidZoomSurface, missingImagerySurface});
+            {invalidZoomSurface, nonTerrainNoTexture});
 
     EXPECT_EQ(snapshot.drawCalls, 2);
     EXPECT_EQ(snapshot.renderSurfaceTiles, 0);
     EXPECT_EQ(snapshot.imageryExactAttachments, 1);
-    EXPECT_EQ(snapshot.imageryMissingTiles, 1);
+    // 极帽契约:非地形命令没有影像是常态,不是空洞。此前把它计进 missing,
+    // 导致调试面板恒显示「2 missing」(两个极帽)从不消失。
+    EXPECT_EQ(snapshot.imageryMissingTiles, 0);
     EXPECT_EQ(snapshot.gpuTextureCount, 1);
     EXPECT_EQ(snapshot.imageryMinTargetZoom, 0);
     EXPECT_EQ(snapshot.imageryMaxTargetZoom, 0);
     EXPECT_EQ(snapshot.imageryMinTextureZoom, 0);
     EXPECT_EQ(snapshot.imageryMaxTextureZoom, 0);
+}
+
+// 地形合批后一条实例化命令代表 instanceCount 片瓦片。影像直方图是「屏幕上
+// 有多少片糊」的口径,必须按瓦片加权,否则掠视下 128 片可见瓦片只数到命令数。
+// (绘制开销口径的 drawCalls/terrainSurface* 仍按命令计,不加权。)
+TEST(SceneRenderCommandDiagnosticsSnapshotTest, WeightsBatchedTilesByInstance) {
+    Texture* texture = reinterpret_cast<Texture*>(0x1);
+
+    RenderCommand batch;
+    batch.kind = RenderCommandKind::GltfPrimitiveInstanced;
+    batch.terrainRenderContent = true;
+    batch.terrainSurfaceSource = TerrainSurfaceCommandSource::RealTerrain;
+    batch.textures = {texture};
+    batch.instanceCount = 7;
+    batch.imageryAncestorLevelDelta = 2;
+
+    RenderCommand single;
+    single.kind = RenderCommandKind::GltfPrimitive;
+    single.terrainRenderContent = true;
+    single.terrainSurfaceSource = TerrainSurfaceCommandSource::RealTerrain;
+    single.textures = {texture};
+    single.imageryAncestorLevelDelta = 0;
+
+    const SceneRenderCommandDiagnosticsSnapshot snapshot =
+        SceneRenderCommandDiagnosticsSnapshot::fromCommands({batch, single});
+
+    EXPECT_EQ(snapshot.imageryAncestor2Attachments, 7);  // 按瓦片
+    EXPECT_EQ(snapshot.imageryExactAttachments, 1);
+    EXPECT_EQ(snapshot.drawCalls, 2);                    // 按命令
+    EXPECT_EQ(snapshot.terrainSurfaceRealCommands, 2);   // 按命令
 }
 
 TEST(

@@ -21,6 +21,18 @@ void applyRenderCommandSnapshot(
         snapshot.terrainRenderContentCommands;
     diagnostics.surfaceMeshCount = snapshot.surfaceMeshCount;
     diagnostics.imageryExactAttachments = snapshot.imageryExactAttachments;
+    diagnostics.imageryAncestor1Attachments =
+        snapshot.imageryAncestor1Attachments;
+    diagnostics.imageryAncestor2Attachments =
+        snapshot.imageryAncestor2Attachments;
+    diagnostics.imageryAncestor3PlusAttachments =
+        snapshot.imageryAncestor3PlusAttachments;
+    // 旧的二值 parent 字段无人赋值恒 0,现聚合成「用了祖先上采样的总片数」,
+    // 分档细节看上面三个。
+    diagnostics.imageryParentFallbackAttachments =
+        snapshot.imageryAncestor1Attachments +
+        snapshot.imageryAncestor2Attachments +
+        snapshot.imageryAncestor3PlusAttachments;
     diagnostics.imageryMissingTiles = snapshot.imageryMissingTiles;
     diagnostics.imageryMinTargetZoom = snapshot.imageryMinTargetZoom;
     diagnostics.imageryMaxTargetZoom = snapshot.imageryMaxTargetZoom;
@@ -63,9 +75,37 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
     bool sawSurfaceTextureZoom = false;
 
     for (const RenderCommand& command : commands) {
-        if (command.kind == RenderCommandKind::GltfPrimitive) {
+        // 逐 draw 与地形合批两种命令走同一套统计。合批落地时曾把实例化分支
+        // 拆成独立的一段,只抄了地形来源计数、漏了影像统计 —— 掠视 128 片
+        // 可见瓦片因此只数到 35 片有影像(18 条批命令整段被跳过)。合并回一处
+        // 避免再次漏抄。
+        if (command.kind == RenderCommandKind::GltfPrimitive ||
+            command.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             if (!command.textures.empty()) {
-                ++snapshot.imageryExactAttachments;
+                // 「有纹理」不等于「贴的是本级影像」——按 builder 记下的
+                // 祖先层级差分档,这才是屏幕上糊的程度。delta<0 表示这条命令
+                // 没有底图影像(例如只有材质纹理的非地形 glTF),不入直方图。
+                //
+                // 按实例数加权:地形合批后一条命令代表 instanceCount 片瓦片,
+                // 不加权直方图会缩水成命令数(掠视 128 片只数到 35)。合批的
+                // 资格闸要求成员同 {z,row} 模板且页存储全 cell 驻留、共享同一
+                // 份纹理状态,故成员影像来源同档,用首实例的分类代表整批。
+                // 注意只有本直方图按瓦片加权;drawCalls/terrainSurface* 等是
+                // 绘制开销口径,仍按命令数计。
+                const int delta = command.imageryAncestorLevelDelta;
+                const int tiles =
+                    command.kind == RenderCommandKind::GltfPrimitiveInstanced
+                        ? std::max(1, command.instanceCount)
+                        : 1;
+                if (delta == 0) {
+                    snapshot.imageryExactAttachments += tiles;
+                } else if (delta == 1) {
+                    snapshot.imageryAncestor1Attachments += tiles;
+                } else if (delta == 2) {
+                    snapshot.imageryAncestor2Attachments += tiles;
+                } else if (delta >= 3) {
+                    snapshot.imageryAncestor3PlusAttachments += tiles;
+                }
                 for (const Texture* texture : command.textures) {
                     if (texture) {
                         surfaceTextures.insert(texture);
@@ -103,33 +143,12 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
                                      command.surfaceTextureZoom);
                     }
                 }
-            } else {
+            } else if (command.terrainRenderContent) {
+                // 只有「地形瓦片没挂上影像」才算真空洞。极帽(PolarCapRenderer)
+                // 复用 glTF primitive 且本就无纹理,此前被误计成缺影像瓦片 ——
+                // 这就是面板上那个恒定不消失的「2 missing」的由来。
                 ++snapshot.imageryMissingTiles;
             }
-            ++snapshot.renderGltfPrimitives;
-            if (command.terrainRenderContent) {
-                ++snapshot.terrainRenderContentCommands;
-                ++snapshot.terrainGltfPrimitiveCommands;
-                ++snapshot.terrainSurfaceTileCommands;
-                ++snapshot.renderSurfaceTiles;
-                ++snapshot.surfaceMeshCount;
-                switch (command.terrainSurfaceSource) {
-                    case TerrainSurfaceCommandSource::RealTerrain:
-                        ++snapshot.terrainSurfaceRealCommands;
-                        break;
-                    case TerrainSurfaceCommandSource::FillProxy:
-                        ++snapshot.terrainSurfaceFillProxyCommands;
-                        break;
-                    case TerrainSurfaceCommandSource::EllipsoidFallback:
-                        ++snapshot.terrainSurfaceEllipsoidCommands;
-                        break;
-                    case TerrainSurfaceCommandSource::Unknown:
-                    default:
-                        ++snapshot.terrainSurfaceUnknownCommands;
-                        break;
-                }
-            }
-        } else if (command.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             ++snapshot.renderGltfPrimitives;
             if (command.terrainRenderContent) {
                 ++snapshot.terrainRenderContentCommands;
@@ -223,6 +242,9 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.surfaceMeshCount = 0;
     diagnostics.imageryAttachments = 0;
     diagnostics.imageryExactAttachments = 0;
+    diagnostics.imageryAncestor1Attachments = 0;
+    diagnostics.imageryAncestor2Attachments = 0;
+    diagnostics.imageryAncestor3PlusAttachments = 0;
     diagnostics.imageryParentFallbackAttachments = 0;
     diagnostics.imageryMissingTiles = 0;
     diagnostics.imageryUnsupportedTiles = 0;

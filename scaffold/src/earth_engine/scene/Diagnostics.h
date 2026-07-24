@@ -132,7 +132,13 @@ struct Diagnostics {
     int terrainSurfaceUnknownCommands = 0;
     int surfaceMeshCount = 0;
     int imageryAttachments = 0;
+    // 加载质量:底图「糊几级」直方图。exact=贴本级(清晰);ancestor1/2/3plus=
+    // 目标层未到、退回祖先上采样差 1/2/3+ 级;parentFallback=后三者之和。
+    // missing=地形瓦片没挂上底图(真空洞;极帽等非地形命令不计入)。
     int imageryExactAttachments = 0;
+    int imageryAncestor1Attachments = 0;
+    int imageryAncestor2Attachments = 0;
+    int imageryAncestor3PlusAttachments = 0;
     int imageryParentFallbackAttachments = 0;
     int imageryMissingTiles = 0;
     int imageryUnsupportedTiles = 0;

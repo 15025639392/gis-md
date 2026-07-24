@@ -323,11 +323,11 @@ static void renderFrame() {
     // 加载体验记分卡:把"糊/露底/台阶"这些观感症状翻成可 A/B 的计数,免去
     // 靠录屏和主观描述定位。采样策略与 FrameLoop 不同——**暂态期逐帧打、
     // 稳态期心跳打**:糊块/露底只在加载暂态出现,120 帧心跳会整段错过。
-    //   exact/parent/missing = 可见瓦片的影像来源(自身层/祖先上采样/没有)
-    //                          → parent+missing>0 即"屏幕上有糊块或空块"
+    //   sharp/a1/a2/a3+/miss  = 底图「糊几级」直方图:贴本级 / 退回祖先差
+    //                           1、2、3+ 级上采样 / 地形瓦片压根没影像。
+    //                           a*+miss>0 即"屏幕上有糊块或空块"。
     //   src=real/fill/ell/unk = 地形几何来源 → fill/ell>0 即"露代理面或裸椭球"
-    //   targetZ vs texZ       = 想要的影像层 vs 实际贴上的层,差值=糊几级
-    //   z                     = 可见几何 LOD 跨度(粗看台阶,精确邻接差待补)
+    //   z / texZ              = 可见几何 LOD 跨度 / 实际贴上的影像层跨度
     //   fade                  = cross-fade 正在过渡的瓦片数
     const auto& q = gEngine->diagnostics();
     const bool loadDirty = (q.imageryParentFallbackAttachments > 0 ||
@@ -337,12 +337,14 @@ static void renderFrame() {
     static bool sLoadDirtyPrev = false;
     // 暂态期逐帧 + 刚回到干净的那一帧(记 settle 落点)+ 稳态心跳
     if (loadDirty || sLoadDirtyPrev || frameId % 120 == 0) {
-        LOGI("LoadQual frame=%llu vis=%d exact=%d parent=%d missing=%d "
-             "src=%d/%d/%d/%d targetZ=%d-%d texZ=%d-%d z=%d-%d fade=%d dirty=%d",
+        LOGI("LoadQual frame=%llu vis=%d sharp=%d a1=%d a2=%d a3+=%d miss=%d "
+             "src=%d/%d/%d/%d geoZ=%d-%d texZ=%d-%d z=%d-%d fade=%d dirty=%d",
              static_cast<unsigned long long>(frameId),
              q.visibleTiles,
              q.imageryExactAttachments,
-             q.imageryParentFallbackAttachments,
+             q.imageryAncestor1Attachments,
+             q.imageryAncestor2Attachments,
+             q.imageryAncestor3PlusAttachments,
              q.imageryMissingTiles,
              q.terrainSurfaceRealCommands,
              q.terrainSurfaceFillProxyCommands,

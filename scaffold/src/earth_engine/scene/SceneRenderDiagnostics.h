@@ -14,7 +14,13 @@ struct SceneRenderCommandDiagnosticsSnapshot {
     int renderGltfPrimitives = 0;
     int terrainRenderContentCommands = 0;
     int surfaceMeshCount = 0;
+    // 加载质量:底图影像的「糊几级」直方图。exact = 贴的是本级(清晰);
+    // ancestor1/2/3plus = 目标层未到、退回祖先上采样,差 1/2/3+ 级;
+    // missing = 地形瓦片压根没挂上底图影像(真空洞,极帽等非地形命令不计入)。
     int imageryExactAttachments = 0;
+    int imageryAncestor1Attachments = 0;
+    int imageryAncestor2Attachments = 0;
+    int imageryAncestor3PlusAttachments = 0;
     int imageryMissingTiles = 0;
     int imageryMinTargetZoom = 0;
     int imageryMaxTargetZoom = 0;

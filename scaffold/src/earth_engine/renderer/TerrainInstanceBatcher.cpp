@@ -162,6 +162,12 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
         batch.terrainDisplacementModelMatrix =
             first.terrainDisplacementModelMatrix;
         batch.textures = first.textures;
+        // 加载质量诊断承自首实例:资格闸要求成员同 {z,row} 模板 + 页存储全
+        // cell 驻留 + 共享同一份纹理状态,故整批影像来源同档。不承的话批命令
+        // 的 delta 停在 -1,直方图会把整批漏计(掠视 128 片只数到未合批的 35)。
+        batch.surfaceGeometryZoom = first.surfaceGeometryZoom;
+        batch.surfaceTextureZoom = first.surfaceTextureZoom;
+        batch.imageryAncestorLevelDelta = first.imageryAncestorLevelDelta;
         batch.gltfUniforms.baseColor = first.gltfUniforms.baseColor;
         batch.gltfUniforms.pageStoreParams = {1.0f, 0.0f, 0.0f, 0.0f};
         batch.hasWorldSortCenter = first.hasWorldSortCenter;

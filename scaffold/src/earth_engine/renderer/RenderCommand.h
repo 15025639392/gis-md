@@ -228,8 +228,16 @@ struct RenderCommand {
         1.0f,
         0.0f};
     std::array<float, 4> surfaceWaterMaskState{1.0f, 0.0f, 0.0f, 0.0f};
-    int surfaceGeometryZoom = -1;
-    int surfaceTextureZoom = -1;
+    // 加载质量诊断(CPU-only,不进 GPU)。SurfaceTile 路径删除后这两个字段一度
+    // 无人赋值恒 -1(诊断层的 z/texZ 因此恒 0),现由 GltfDrawCommandBuilder 在
+    // 绑定 BaseImagery 时填回真值。
+    int surfaceGeometryZoom = -1;   // 本瓦片几何层级
+    int surfaceTextureZoom = -1;    // 实际贴上的底图影像层级
+    // 「糊几级」:0 = 用的是本级影像(清晰);N>0 = 想要的影像还没到,退回用了
+    // N 级之上的祖先纹理上采样(屏幕上就是糊块)。-1 = 没有底图影像。
+    // 影像层级与几何层级无法互推(纹理/几何解耦后几何 cap 在 z12、影像可到
+    // z18),所以必须单独记,不能用上面两者相减。
+    int imageryAncestorLevelDelta = -1;
     int surfaceMeshIndexCount = 0;
     int surfaceNoSkirtIndexCount = 0;
     int surfaceSkirtIndexCount = 0;
