@@ -8,6 +8,7 @@
 #include "../core/geodesy/QuadtreeGeometricError.h"
 #include "../core/geodesy/WebMercatorProjection.h"
 #include "../providers/TerrainProvider.h"
+#include "../tiling/TerrainDisplacementTemplatePool.h"
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileScheme.h"
 #include "../tiling/TileSelectionRootPolicy.h"
@@ -236,9 +237,16 @@ TileContentLoadResult HeightmapTerrainContentProvider::buildContent(
         }
     }
 
-    // Regular-grid mesh resolution follows the decoded sample count: N samples
-    // per side → N−1 cells (vertex-aligned, so edges are shared with neighbours).
-    const int gridSize = std::max(1, heightmap.tileSize - 1);
+    // 网格镶嵌密度 = min(源采样数-1, 共享位移模板格数)。**与纹理分辨率解耦**:
+    // GPU 位移(P5b)激活时渲染换用共享 kTerrainDisplacementGridSize(64) 模板 +
+    // 高度纹理,这个 per-tile 网格的顶点几乎全被丢弃(仅在模板 swap 失败时作为
+    // 同分辨率回退渲染)。旧代码 gridSize=tileSize-1 让 514 源建 513×513=26 万
+    // 顶点/片,decode 主线程 O(N²) prep 涨到 44-110ms(FABDEM 65→~4ms 的 64×)——
+    // 纯浪费,因为渲染只吃 64 格模板。cap 到 64 后 decode prep 与源分辨率脱钩
+    // (mapbox/cesium 同理:镶嵌密度不跟纹理走)。retainedHeightmap 仍存全分辨率
+    // 514²,高度纹理与 CPU 高度查询精度不受影响。
+    const int gridSize =
+        std::min(std::max(1, heightmap.tileSize - 1), kTerrainDisplacementGridSize);
     const EllipsoidProxyHeightSampler heightSampler =
         makeHeightSampler(heightmap, bounds);
     std::unique_ptr<GltfModel> model = EllipsoidTerrainMeshBuilder::makeModel(
