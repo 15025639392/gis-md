@@ -150,3 +150,51 @@ test_scene_frame_state);`test_selector_cesium_golden_diff` Passed(未碰选择�
 - **调试面板口径**:`Surface meshes` / `Attachments` 按**命令数**统计,合批后显示
   53/35 而非 128,不是几何丢失(draw calls + inst 计数已对齐)。属诊断口径未跟上
   合批,独立小项。
+
+---
+
+## 8. ⚠️ 订正:§6④「慢帧簇 = pan 停止后的加载 settle 涌入」是**错误归因**(2026-07-24 当日复查)
+
+§6④ 把两个 build 的慢帧簇解释为「pan 停止后的加载 settle 窗口」。**复查证伪**——
+慢帧发生时**根本没有在加载**:
+
+- 合批轮 frame=720 与 frame=840 的输入**逐字节相同**:`entries=138` `render=138`
+  `visited=0` `reused=1` `notReady=0` `pending=0` `memTotalKB=394401`(完全一致)。
+- 但 `buildRenderCommands` 1.651 → 3.969ms、Engine total 14.8 → 25.2ms。
+- 分段看:`layers` 2.12→4.67、`diag` 1.91→3.63、`batch` 0.49→0.98 —— **三个互不
+  相关的代码路径同步翻倍**。相同输入 + 多段等比膨胀 ⇒ 不可能是算法,只能是时钟。
+
+**受控验证**(冻结 HORIZON 机位,workload 恒定 draw=57/tiles=128,采样 2.5 分钟):
+
+| t | Engine 帧时 | cpu4 频率 |
+|---|---|---|
+| 30s | 20.1ms | 2457 MHz |
+| 75s | **7.2ms** | 2457 MHz |
+| 105s | 11.2ms | **634 MHz** |
+| 135s | 13.8ms | 2457 MHz |
+
+帧时在 7-20ms 间随机跳、**无单调劣化**;渲染线程所在的 cpu4 簇频率在
+634-2457 MHz 间摆 **4×**(cpu7 全程 parked 在 787 MHz)。`dumpsys thermalservice`
+报 `Thermal Status: 0`(框架层未判节流),CPU 53-60°C —— 属**常规 DVFS/governor
+行为,非过热降频**。
+
+### 对结论的影响(哪些站得住、哪些要打折)
+
+- **站得住(不受 DVFS 影响)**:所有**计数类**指标 —— draw calls 132→57、
+  glUniform 调用 690→162、GPU 纹理对象 111→18、18 批/93 实例、batch 段
+  in-pan 0.10-0.15ms、以及 §6① 的 **callback 间隔 33.3→16.6ms**(vsync 量化的
+  结构性跳变,不是小幅 ms 差)。§6①②③ 结论**不变**。
+- **要打折**:§6④ 里「慢帧条数 16 vs 15」的比较本身仍有效(两轮都在同一台设备
+  同样的 DVFS 环境下、慢帧位置量级对齐 ⇒ 合批未引入新尖刺),但**成因写错了**:
+  它是调频抖动,不是加载涌入。「合批无新尖刺」的结论保留,「慢帧簇 = 加载 settle
+  窗口」的说法作废。
+
+### 测量纪律(新增,与 [[perf-measured-on-debug-build]] 同级)
+
+本机单次运行的帧时带 **±2× 的 DVFS 噪声**。因此:
+1. **优先用计数类指标做 A/B**(draw 数 / uniform 调用数 / 纹理对象数 / 命令数),
+   它们对时钟免疫。
+2. 用 ms 做 A/B 时,必须**多点采样取中位**,并优先看**跨越 vsync 档位的结构性
+   跳变**(60→30fps)而非几毫秒的差。
+3. 判「有没有变慢」时,**先查输入是否相同**(entries/visited/notReady/memTotalKB);
+   输入相同而多个不相关段等比膨胀 = 时钟,不是代码。
