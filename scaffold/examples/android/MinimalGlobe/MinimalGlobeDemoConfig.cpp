@@ -39,15 +39,31 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         // z0-12，65×65 顶点对齐 Mapbox Terrain-RGB PNG。无数据区回落椭球。
         // QuantizedMesh / Cesium ion 路径已退役。
         config.terrain.kind = TerrainSourceKind::Heightmap;
-        config.terrain.urlTemplate = kHeightmapTerrainTemplate;
         config.terrain.heightmapEncoding =
             TerrainHeightmapEncoding::MapboxTerrainRgb;
-        config.terrain.tileSize = 65;
-        config.terrain.minimumZoom = 0;
-        config.terrain.maximumZoom = 12;
-        config.terrain.attribution = "FABDEM Terrain-RGB (grid65)";
         config.terrain.ellipsoidFallback = true;
-        config.terrain.ellipsoidFallbackMaxZoom = 12;
+        if (kUseGlobalTerrainSource) {
+            // 全球 NASA/Mapbox 514×514 Terrain-RGB,z6-12。cell-registered +
+            // 1px 重叠环 → borderInset=0.5(半像素内缩,相邻瓦片无缝,已单测
+            // 锁定)。z0-5 无数据由 ellipsoidFallback 兜底(回落椭球面贴影像)。
+            config.terrain.urlTemplate = kGlobalTerrainTemplate;
+            config.terrain.tileSize = 514;
+            config.terrain.minimumZoom = 6;
+            config.terrain.maximumZoom = 12;
+            config.terrain.heightmapMaxNativeZoom = 12;
+            config.terrain.heightmapBorderInset = 0.5f;
+            config.terrain.attribution = "NASA/Mapbox Terrain-RGB (514 global)";
+            config.terrain.ellipsoidFallbackMaxZoom = 12;
+        } else {
+            // 本地自产 FABDEM raster-DEM,grid65 顶点栅格,重庆局部,z0-12。
+            config.terrain.urlTemplate = kHeightmapTerrainTemplate;
+            config.terrain.tileSize = 65;
+            config.terrain.minimumZoom = 0;
+            config.terrain.maximumZoom = 12;
+            config.terrain.heightmapBorderInset = 0.0f;
+            config.terrain.attribution = "FABDEM Terrain-RGB (grid65)";
+            config.terrain.ellipsoidFallbackMaxZoom = 12;
+        }
     }
     config.tileset = {
         4.0,

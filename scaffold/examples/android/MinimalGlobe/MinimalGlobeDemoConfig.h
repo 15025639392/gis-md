@@ -9,8 +9,20 @@ namespace earth_engine::minimal_globe_demo {
 // QuantizedMesh / Cesium ion 路径已退役——heightmap 必须本地瓦片，**瓦片交付**（择一）：
 //   ① 本地服务器：serve_tiles.py 起在 8091 + adb reverse tcp:8091，用下方 http 模板；
 //   ② adb push + file://：把瓦片推到 app 可读目录，模板改 file:///<路径>/{z}/{x}/{y}.png。
+// 本地自产 FABDEM raster-DEM(grid65 顶点栅格,仅覆盖重庆 ~700km 见方)。
+// 需 serve_tiles.py@8091 + adb reverse tcp:8091。
 constexpr const char* kHeightmapTerrainTemplate =
     "http://127.0.0.1:8091/{z}/{x}/{y}.png";
+
+// 全球 NASA/Mapbox Terrain-RGB(514×514,cell-registered + 1px 重叠环,z6-12,
+// 全球大部分覆盖)。直连 HTTPS(CA bundle 已内嵌),无需 adb reverse。用于测掠视/
+// 大范围移动的加载体验——本地 FABDEM 覆盖太小,掠视视野大半落在数据外污染测量。
+// 切换见 kUseGlobalTerrainSource。
+constexpr const char* kGlobalTerrainTemplate =
+    "https://mapoverlay.xinzhi.space/3dterrain/nasa/tiles/{z}/{x}/{y}.png";
+
+// true = 用全球 NASA 源(测掠视加载体验);false = 本地重庆 FABDEM(默认生产/离线)。
+constexpr bool kUseGlobalTerrainSource = true;
 
 constexpr const char* kGaodeSatelliteTemplate =
     "http://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
