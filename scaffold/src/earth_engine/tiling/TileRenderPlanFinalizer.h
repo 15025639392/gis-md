@@ -70,6 +70,13 @@ struct TileRenderPlanFinalizer {
         plan.renderEntryDeferredPrepCount = 0;
         plan.renderEntryDropClipUvCount = 0;
         plan.renderEntryDropNotBuildableCount = 0;
+        plan.renderEntryDropNoGeometryCount = 0;
+        plan.renderEntryDropNoMappingCount = 0;
+        plan.renderEntryDropNoReadyTextureCount = 0;
+        plan.renderEntryDropTexcoordInvalidCount = 0;
+        plan.renderEntryDropOtherCount = 0;
+        plan.renderEntryDropMinZoom = 0;
+        plan.renderEntryDropMaxZoom = 0;
 
         std::unordered_set<RenderGeometryIdentity, RenderGeometryIdentityHash>
             renderedGeometry;
@@ -118,7 +125,12 @@ struct TileRenderPlanFinalizer {
                     DirectRenderFallbackPolicy::
                         AllowTransientSurfaceAsLastResort)) {
                 // 破洞诊断:自身不可直画、也没有可回落的祖先 → 真空洞。
+                // 再按成因分桶,用来定「补影像兜底」这件事的范围:几何就没有
+                // (nogeo)是一回事;几何在手只差影像,则要分清是「还没建
+                // mapping」(时序)还是「建了但连祖先纹理都没有」(真缺常驻粗
+                // 影像)—— 两者修法完全不同。
                 ++plan.renderEntryDropNotBuildableCount;
+                recordDropReason(plan, *commandTile, rasterOverlays);
                 return;
             }
 
@@ -310,6 +322,48 @@ private:
                 terrainSurfaceImageryDrawableReady(tile, rasterOverlays);
         }
         return hasRenderableSurfaceForPlan(tile);
+    }
+
+    // 记录一次 NotBuildable 丢弃的成因,并记下被丢瓦片的 zoom 跨度(判断是粗
+    // 层还是叶子层在漏)。
+    static void recordDropReason(
+        TilePlan& plan,
+        const TilesetTile& tile,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+        if (plan.renderEntryDropNotBuildableCount == 1) {
+            plan.renderEntryDropMinZoom = tile.key.z;
+            plan.renderEntryDropMaxZoom = tile.key.z;
+        } else {
+            plan.renderEntryDropMinZoom =
+                std::min(plan.renderEntryDropMinZoom, tile.key.z);
+            plan.renderEntryDropMaxZoom =
+                std::max(plan.renderEntryDropMaxZoom, tile.key.z);
+        }
+
+        // 几何本身就不可画 —— 与影像无关,补影像兜底救不了这一类。
+        if (!tile.content.renderContent.hasDrawableResources() &&
+            !hasRenderableSurfaceForPlan(tile)) {
+            ++plan.renderEntryDropNoGeometryCount;
+            return;
+        }
+        switch (TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
+                    tile,
+                    rasterOverlays)) {
+            case BaseImageryBlockReason::NoMapping:
+                ++plan.renderEntryDropNoMappingCount;
+                break;
+            case BaseImageryBlockReason::NoReadyTexture:
+                ++plan.renderEntryDropNoReadyTextureCount;
+                break;
+            case BaseImageryBlockReason::TexcoordInvalid:
+                ++plan.renderEntryDropTexcoordInvalidCount;
+                break;
+            case BaseImageryBlockReason::None:
+                // 影像可画、几何也在,却仍被拦下 —— 只可能是 transient 代理面
+                // 在 PreferAncestor 模式下被让位。计入 other 便于发现漏判。
+                ++plan.renderEntryDropOtherCount;
+                break;
+        }
     }
 
     static bool needsSurfaceGeometryPrep(const TilesetTile& tile) {

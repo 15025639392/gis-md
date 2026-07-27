@@ -37,7 +37,8 @@ bool TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
     return true;
 }
 
-bool TileRasterOverlayReadinessPolicy::requiredBaseImageryDrawableReady(
+BaseImageryBlockReason
+TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
     const TilesetTile& tile,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
     for (size_t i = 0; i < rasterOverlays.size(); ++i) {
@@ -58,17 +59,26 @@ bool TileRasterOverlayReadinessPolicy::requiredBaseImageryDrawableReady(
                 activeOverlay,
                 mapped,
                 binding)) {
-            return false;
+            return mapped
+                ? BaseImageryBlockReason::NoReadyTexture
+                : BaseImageryBlockReason::NoMapping;
         }
         const int32_t textureCoordinateID =
             mapped ? mapped->getTextureCoordinateID() : -1;
         if (textureCoordinateID < 0 ||
             textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
-            return false;
+            return BaseImageryBlockReason::TexcoordInvalid;
         }
     }
 
-    return true;
+    return BaseImageryBlockReason::None;
+}
+
+bool TileRasterOverlayReadinessPolicy::requiredBaseImageryDrawableReady(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    return baseImageryBlockReason(tile, rasterOverlays) ==
+           BaseImageryBlockReason::None;
 }
 
 bool TileRasterOverlayReadinessPolicy::terrainSurfaceImageryDrawableReady(

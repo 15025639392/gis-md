@@ -141,6 +141,14 @@ struct Diagnostics {
     int terrainSelectedForRenderTiles = 0;
     int terrainRenderEntryDropClipUv = 0;
     int terrainRenderEntryDropNotBuildable = 0;
+    // NotBuildable 的成因分桶 + 被丢瓦片的 zoom 跨度。
+    int terrainRenderEntryDropNoGeometry = 0;
+    int terrainRenderEntryDropNoMapping = 0;
+    int terrainRenderEntryDropNoReadyTexture = 0;
+    int terrainRenderEntryDropTexcoordInvalid = 0;
+    int terrainRenderEntryDropOther = 0;
+    int terrainRenderEntryDropMinZoom = 0;
+    int terrainRenderEntryDropMaxZoom = 0;
     int terrainRenderEntriesMissingSelected = 0;
     int terrainRenderEntriesMissingRender = 0;
     int terrainZeroDrawNoContentNoFill = 0;

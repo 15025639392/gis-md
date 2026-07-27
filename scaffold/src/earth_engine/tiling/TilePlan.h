@@ -202,6 +202,15 @@ struct TilePlan {
     // dedup —— 这两类才是屏幕上真的没有几何。
     int renderEntryDropClipUvCount = 0;
     int renderEntryDropNotBuildableCount = 0;
+    // NotBuildable 的成因分桶(定「补影像兜底」的范围用):几何就没有 /
+    // 没建 mapping / 建了但无可用纹理(含祖先)/ texcoord 越界 / 其它。
+    int renderEntryDropNoGeometryCount = 0;
+    int renderEntryDropNoMappingCount = 0;
+    int renderEntryDropNoReadyTextureCount = 0;
+    int renderEntryDropTexcoordInvalidCount = 0;
+    int renderEntryDropOtherCount = 0;
+    int renderEntryDropMinZoom = 0;
+    int renderEntryDropMaxZoom = 0;
     int renderEntryZeroDrawNoContentNoFillCount = 0;
     int renderEntryZeroDrawFillNoCommandsCount = 0;
     int renderEntryZeroDrawContentNoCommandsCount = 0;

@@ -237,6 +237,13 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.terrainSelectedForRenderTiles = 0;
     diagnostics.terrainRenderEntryDropClipUv = 0;
     diagnostics.terrainRenderEntryDropNotBuildable = 0;
+    diagnostics.terrainRenderEntryDropNoGeometry = 0;
+    diagnostics.terrainRenderEntryDropNoMapping = 0;
+    diagnostics.terrainRenderEntryDropNoReadyTexture = 0;
+    diagnostics.terrainRenderEntryDropTexcoordInvalid = 0;
+    diagnostics.terrainRenderEntryDropOther = 0;
+    diagnostics.terrainRenderEntryDropMinZoom = 0;
+    diagnostics.terrainRenderEntryDropMaxZoom = 0;
     diagnostics.terrainRenderEntriesMissingSelected = 0;
     diagnostics.terrainRenderEntriesMissingRender = 0;
     diagnostics.terrainZeroDrawNoContentNoFill = 0;

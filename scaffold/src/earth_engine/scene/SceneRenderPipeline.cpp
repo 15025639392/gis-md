@@ -72,6 +72,13 @@ void applyTerrainRenderEntryDiagnostics(
     diagnostics.terrainSelectedForRenderTiles = 0;
     diagnostics.terrainRenderEntryDropClipUv = 0;
     diagnostics.terrainRenderEntryDropNotBuildable = 0;
+    diagnostics.terrainRenderEntryDropNoGeometry = 0;
+    diagnostics.terrainRenderEntryDropNoMapping = 0;
+    diagnostics.terrainRenderEntryDropNoReadyTexture = 0;
+    diagnostics.terrainRenderEntryDropTexcoordInvalid = 0;
+    diagnostics.terrainRenderEntryDropOther = 0;
+    diagnostics.terrainRenderEntryDropMinZoom = 0;
+    diagnostics.terrainRenderEntryDropMaxZoom = 0;
     diagnostics.terrainRenderEntriesMissingSelected = 0;
     diagnostics.terrainRenderEntriesMissingRender = 0;
     diagnostics.terrainZeroDrawNoContentNoFill = 0;
@@ -116,6 +123,20 @@ void applyTerrainRenderEntryDiagnostics(
         plan.renderEntryDropClipUvCount;
     diagnostics.terrainRenderEntryDropNotBuildable =
         plan.renderEntryDropNotBuildableCount;
+    diagnostics.terrainRenderEntryDropNoGeometry =
+        plan.renderEntryDropNoGeometryCount;
+    diagnostics.terrainRenderEntryDropNoMapping =
+        plan.renderEntryDropNoMappingCount;
+    diagnostics.terrainRenderEntryDropNoReadyTexture =
+        plan.renderEntryDropNoReadyTextureCount;
+    diagnostics.terrainRenderEntryDropTexcoordInvalid =
+        plan.renderEntryDropTexcoordInvalidCount;
+    diagnostics.terrainRenderEntryDropOther =
+        plan.renderEntryDropOtherCount;
+    diagnostics.terrainRenderEntryDropMinZoom =
+        plan.renderEntryDropMinZoom;
+    diagnostics.terrainRenderEntryDropMaxZoom =
+        plan.renderEntryDropMaxZoom;
     diagnostics.terrainRenderEntriesMissingSelected =
         plan.renderEntryCommandMissingSelectedCount;
     diagnostics.terrainRenderEntriesMissingRender =

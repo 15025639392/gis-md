@@ -380,13 +380,24 @@ static void renderFrame() {
     const bool holeDirty = holeCount > 0;
     // 破洞只在加载暂态出现,120 帧心跳会整段错过:暂态期(loadDirty)逐帧打。
     if (holeDirty || sHolePrev || loadDirty || frameId % 120 == 0) {
-        LOGI("HoleQual frame=%llu sel=%d ent=%d drop=%d/%d miss=%d nofill=%d "
+        // dropwhy = 几何就没有 / 没建 mapping / 建了但无可用纹理(含祖先)/
+        //           texcoord 越界 / 其它;dropz = 被丢瓦片的 zoom 跨度。
+        //           nomap 占多 = 时序问题;notex 占多 = 真缺常驻粗影像。
+        LOGI("HoleQual frame=%llu sel=%d ent=%d drop=%d/%d "
+             "dropwhy=%d/%d/%d/%d/%d dropz=%d-%d miss=%d nofill=%d "
              "fillnc=%d ctnc=%d nulls=%d/%d defer=%d drawn=%d dirty=%d",
              static_cast<unsigned long long>(frameId),
              q.terrainSelectedForRenderTiles,
              q.terrainRenderEntriesPlanned,
              q.terrainRenderEntryDropClipUv,
              q.terrainRenderEntryDropNotBuildable,
+             q.terrainRenderEntryDropNoGeometry,
+             q.terrainRenderEntryDropNoMapping,
+             q.terrainRenderEntryDropNoReadyTexture,
+             q.terrainRenderEntryDropTexcoordInvalid,
+             q.terrainRenderEntryDropOther,
+             q.terrainRenderEntryDropMinZoom,
+             q.terrainRenderEntryDropMaxZoom,
              q.terrainRenderEntriesMissed,
              q.terrainZeroDrawNoContentNoFill,
              q.terrainZeroDrawFillNoCommands,
