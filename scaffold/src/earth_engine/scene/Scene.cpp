@@ -1,4 +1,5 @@
 #include "Scene.h"
+#include "../debug/PlatformLog.h"
 #include "Camera.h"
 #include "SceneEnvironmentCoordinator.h"
 #include "SceneInteractionCoordinator.h"
@@ -224,10 +225,20 @@ bool Scene::shouldHoldPresentationFrame() const {
     if (primaryTileset->shouldHoldPresentationFrame()) {
         return true;
     }
-    return shouldHoldTerrainCoverageTakeover(
+    const bool takeoverHold = shouldHoldTerrainCoverageTakeover(
         *primaryTileset,
         frameRuntime_.frameState(),
         telemetry_->presentationTrace());
+    if (takeoverHold) {
+        static int sTakeoverLogCount = 0;
+        if ((sTakeoverLogCount++ % 60) == 0) {
+            platformLog(LogLevel::Info, "EarthPerf",
+                        "HoldTakeover entries=%zu visible=%zu",
+                        primaryTileset->tilePlan().renderEntries.size(),
+                        primaryTileset->tilePlan().visibleTiles.size());
+        }
+    }
+    return takeoverHold;
 }
 
 void Scene::updatePresentationTrace() {

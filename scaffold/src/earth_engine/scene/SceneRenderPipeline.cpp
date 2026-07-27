@@ -538,16 +538,54 @@ bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
         return false;
     }
     bool hasTerrainSurfaceCommand = false;
+    int terrainCommands = 0;
+    int noTexCount = 0;
+    int noBaseStateCount = 0;
+    const RenderCommand* firstOffender = nullptr;
     for (const RenderCommand& command : context.commands) {
         if (!isTerrainSurfaceCommand(command)) {
             continue;
         }
         hasTerrainSurfaceCommand = true;
+        ++terrainCommands;
         if (!isTerrainSurfaceCommandWithBaseImagery(command)) {
-            return true;
+            if (command.gltfRasterOverlayTextureCount <= 0) {
+                ++noTexCount;
+            }
+            if (command.surfaceBaseRasterState <= 0) {
+                ++noBaseStateCount;
+            }
+            if (!firstOffender) {
+                firstOffender = &command;
+            }
         }
     }
-    return !hasTerrainSurfaceCommand;
+    const bool hold = !hasTerrainSurfaceCommand || firstOffender != nullptr;
+    // hold 会把整帧扣住不 present,而 present 不发生时 frameId 不前进 → 所有
+    // %120 的心跳诊断全哑火,现场只剩一块不动的屏幕。所以这里独立限频打印,
+    // 不依赖 frameId。
+    if (hold) {
+        static int sHoldLogCount = 0;
+        if ((sHoldLogCount++ % 60) == 0) {
+            platformLog(
+                LogLevel::Info,
+                "EarthPerf",
+                "HoldDiag cmds=%zu terrainCmds=%d noTex=%d noBaseState=%d "
+                "firstOffender[tex=%d baseState=%d mapped=%d ancDelta=%d "
+                "idx=%d skirt=%d]",
+                context.commands.size(),
+                terrainCommands,
+                noTexCount,
+                noBaseStateCount,
+                firstOffender ? firstOffender->gltfRasterOverlayTextureCount : -1,
+                firstOffender ? firstOffender->surfaceBaseRasterState : -1,
+                firstOffender ? firstOffender->surfaceBaseIsMappedRasterTile : -1,
+                firstOffender ? firstOffender->imageryAncestorLevelDelta : -1,
+                firstOffender ? firstOffender->surfaceMeshIndexCount : -1,
+                firstOffender ? firstOffender->surfaceSkirtIndexCount : -1);
+        }
+    }
+    return hold;
 }
 
 void SceneRenderPipeline::releaseRenderReferences(Context& context) const {

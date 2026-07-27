@@ -448,6 +448,15 @@ bool Tileset::shouldHoldPresentationFrame() const {
     }
 
     if (tilePlan_.renderEntries.empty()) {
+        static int sEmptyLogCount = 0;
+        if ((sEmptyLogCount++ % 60) == 0) {
+            platformLog(
+                LogLevel::Info,
+                "EarthPerf",
+                "HoldEntriesEmpty visible=%zu fading=%zu",
+                tilePlan_.visibleTiles.size(),
+                tilePlan_.tilesFadingOut.size());
+        }
         return true;
     }
 
@@ -476,20 +485,58 @@ bool Tileset::requiresBaseImageryPresentationSurface() const {
 }
 
 bool Tileset::plannedRenderEntriesHaveRequiredBaseImagery() const {
+    // 这条 hold 发生在建命令之前,一旦成立整帧不 present;而 present 不发生时
+    // frameId 不前进 → 所有 %120 的心跳诊断全哑火,现场只剩一块不动的屏幕。
+    // 所以这里独立限频打印成因,不依赖 frameId。
+    int missingTile = 0;
+    int notDrawable = 0;
+    TileKey firstMissingKey{};
+    TileKey firstNotDrawableKey{};
+    BaseImageryBlockReason firstReason = BaseImageryBlockReason::None;
     for (const TileRenderEntry& entry : tilePlan_.renderEntries) {
         const TilesetTile* renderTile =
             tileRegistry_.findTile(entry.renderKey);
         if (!renderTile) {
-            return false;
+            if (missingTile++ == 0) {
+                firstMissingKey = entry.renderKey;
+            }
+            continue;
         }
         if (!TileRasterOverlayReadinessPolicy::
                 terrainSurfaceImageryDrawableReady(
                     *renderTile,
                     rasterOverlays_)) {
-            return false;
+            if (notDrawable++ == 0) {
+                firstNotDrawableKey = entry.renderKey;
+                firstReason =
+                    TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
+                        *renderTile,
+                        rasterOverlays_);
+            }
         }
     }
-    return true;
+    if (missingTile == 0 && notDrawable == 0) {
+        return true;
+    }
+    static int sHoldLogCount = 0;
+    if ((sHoldLogCount++ % 60) == 0) {
+        platformLog(
+            LogLevel::Info,
+            "EarthPerf",
+            "HoldPlanDiag entries=%zu missingTile=%d(%d/%d/%d) "
+            "notDrawable=%d(%d/%d/%d) reason=%d",
+            tilePlan_.renderEntries.size(),
+            missingTile,
+            firstMissingKey.z,
+            firstMissingKey.x,
+            firstMissingKey.y,
+            notDrawable,
+            firstNotDrawableKey.z,
+            firstNotDrawableKey.x,
+            firstNotDrawableKey.y,
+            static_cast<int>(firstReason));
+    }
+    return false;
 }
 
 void Tileset::releaseRenderReferences() {
