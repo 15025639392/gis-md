@@ -74,6 +74,70 @@ TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
     return BaseImageryBlockReason::None;
 }
 
+BaseImageryNoTextureProbe
+TileRasterOverlayReadinessPolicy::probeNoReadyTexture(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    BaseImageryNoTextureProbe probe;
+    for (size_t i = 0; i < rasterOverlays.size(); ++i) {
+        const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
+        if (!activeOverlay || !activeOverlay->visible()) {
+            continue;
+        }
+        const RasterOverlay& overlay = activeOverlay->getOverlay();
+        if (overlay.role() != RasterOverlayRole::BaseImagery ||
+            !overlay.blocksCompleteRenderable()) {
+            continue;
+        }
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlayState.mappingAt(i);
+        if (!mapped) {
+            continue;  // NoMapping,不是本探针的对象。
+        }
+        if (rasterOverlayBindingAllowedByPolicy(
+                activeOverlay,
+                mapped,
+                chooseSurfaceRasterBinding(mapped))) {
+            continue;
+        }
+
+        probe.valid = true;
+        probe.zoom = tile.key.z;
+        if (const RasterOverlayTile* loading = mapped->getLoadingTile()) {
+            probe.loadingState = static_cast<int>(loading->getState());
+        }
+        if (const RasterOverlayTile* ready = mapped->getReadyTile()) {
+            probe.readyState = static_cast<int>(ready->getState());
+            probe.readyHasTexture = ready->getTexture() != nullptr;
+        }
+        probe.mappingState = static_cast<int>(mapped->getState());
+        probe.authoritativeUpdates =
+            tile.rasterOverlayState.authoritativeUpdateCount();
+        probe.tileLoadState = static_cast<int>(tile.content.loadState);
+        probe.tileContentKind = static_cast<int>(tile.content.contentKind);
+        // 祖先链画像:用 index i 直接查(mapping 槽位与 overlay 列表同序,见
+        // ensureMappingSlots),不复刻 findLoadedTileOverlay 的 provider 匹配 ——
+        // 这里要回答的是"祖先手上到底有没有可画的底图",不是复现那次查找。
+        for (const TilesetTile* ancestor = tile.parent;
+             ancestor;
+             ancestor = ancestor->parent) {
+            ++probe.ancestorDepth;
+            const RasterMappedToTilesetTile* ancestorMapped =
+                ancestor->rasterOverlayState.mappingAt(i);
+            if (!ancestorMapped) {
+                continue;
+            }
+            ++probe.ancestorsWithMapping;
+            if (chooseSurfaceRasterBinding(ancestorMapped).kind !=
+                SurfaceRasterBindingKind::None) {
+                ++probe.ancestorsWithTexture;
+            }
+        }
+        break;
+    }
+    return probe;
+}
+
 bool TileRasterOverlayReadinessPolicy::requiredBaseImageryDrawableReady(
     const TilesetTile& tile,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {

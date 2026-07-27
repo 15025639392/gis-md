@@ -77,6 +77,17 @@ struct TileRenderPlanFinalizer {
         plan.renderEntryDropOtherCount = 0;
         plan.renderEntryDropMinZoom = 0;
         plan.renderEntryDropMaxZoom = 0;
+        plan.renderEntryDropNoTexZoom = -1;
+        plan.renderEntryDropNoTexLoadingState = -1;
+        plan.renderEntryDropNoTexReadyState = -1;
+        plan.renderEntryDropNoTexReadyHasTexture = 0;
+        plan.renderEntryDropNoTexAncestorDepth = 0;
+        plan.renderEntryDropNoTexAncestorsWithMapping = 0;
+        plan.renderEntryDropNoTexAncestorsWithTexture = 0;
+        plan.renderEntryDropNoTexMappingState = -1;
+        plan.renderEntryDropNoTexAuthoritativeUpdates = 0;
+        plan.renderEntryDropNoTexTileLoadState = -99;
+        plan.renderEntryDropNoTexTileContentKind = -1;
 
         std::unordered_set<RenderGeometryIdentity, RenderGeometryIdentityHash>
             renderedGeometry;
@@ -354,6 +365,9 @@ private:
                 break;
             case BaseImageryBlockReason::NoReadyTexture:
                 ++plan.renderEntryDropNoReadyTextureCount;
+                if (plan.renderEntryDropNoTexZoom < 0) {
+                    recordNoTextureProbe(plan, tile, rasterOverlays);
+                }
                 break;
             case BaseImageryBlockReason::TexcoordInvalid:
                 ++plan.renderEntryDropTexcoordInvalidCount;
@@ -364,6 +378,35 @@ private:
                 ++plan.renderEntryDropOtherCount;
                 break;
         }
+    }
+
+    // 只记本帧第一片:同帧的 notex 丢弃基本是同一批兄弟,画像相同。
+    static void recordNoTextureProbe(
+        TilePlan& plan,
+        const TilesetTile& tile,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+        const BaseImageryNoTextureProbe probe =
+            TileRasterOverlayReadinessPolicy::probeNoReadyTexture(
+                tile,
+                rasterOverlays);
+        if (!probe.valid) {
+            return;
+        }
+        plan.renderEntryDropNoTexZoom = probe.zoom;
+        plan.renderEntryDropNoTexLoadingState = probe.loadingState;
+        plan.renderEntryDropNoTexReadyState = probe.readyState;
+        plan.renderEntryDropNoTexReadyHasTexture =
+            probe.readyHasTexture ? 1 : 0;
+        plan.renderEntryDropNoTexAncestorDepth = probe.ancestorDepth;
+        plan.renderEntryDropNoTexAncestorsWithMapping =
+            probe.ancestorsWithMapping;
+        plan.renderEntryDropNoTexAncestorsWithTexture =
+            probe.ancestorsWithTexture;
+        plan.renderEntryDropNoTexMappingState = probe.mappingState;
+        plan.renderEntryDropNoTexAuthoritativeUpdates =
+            probe.authoritativeUpdates;
+        plan.renderEntryDropNoTexTileLoadState = probe.tileLoadState;
+        plan.renderEntryDropNoTexTileContentKind = probe.tileContentKind;
     }
 
     static bool needsSurfaceGeometryPrep(const TilesetTile& tile) {

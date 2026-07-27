@@ -407,6 +407,28 @@ static void renderFrame() {
              q.terrainRenderEntriesDeferred,
              q.terrainRenderEntriesDrawn,
              holeDirty ? 1 : 0);
+        // notex 细分:z=被丢瓦片层级 load/ready=该 mapping 两个 RasterOverlayTile
+        // 的 LoadState(-1=空) tex=ready 手上有没有纹理
+        // anc=祖先链深度/其中建了 mapping 的/其中能拿出可画纹理的。
+        //   anc=0/*/*     → 这片是根,没祖先可借
+        //   anc=N/0/0     → 祖先在但从没建过 mapping
+        //   anc=N/M>0/0   → mapping 在、纹理没了(淘汰或没上传)← 淘汰假说
+        if (q.terrainRenderEntryDropNoTexZoom >= 0) {
+            LOGI("HoleNoTex frame=%llu z=%d load=%d ready=%d tex=%d "
+                 "anc=%d/%d/%d mstate=%d upd=%llu tload=%d tkind=%d",
+                 static_cast<unsigned long long>(frameId),
+                 q.terrainRenderEntryDropNoTexZoom,
+                 q.terrainRenderEntryDropNoTexLoadingState,
+                 q.terrainRenderEntryDropNoTexReadyState,
+                 q.terrainRenderEntryDropNoTexReadyHasTexture,
+                 q.terrainRenderEntryDropNoTexAncestorDepth,
+                 q.terrainRenderEntryDropNoTexAncestorsWithMapping,
+                 q.terrainRenderEntryDropNoTexAncestorsWithTexture,
+                 q.terrainRenderEntryDropNoTexMappingState,
+                 q.terrainRenderEntryDropNoTexAuthoritativeUpdates,
+                 q.terrainRenderEntryDropNoTexTileLoadState,
+                 q.terrainRenderEntryDropNoTexTileContentKind);
+        }
     }
     sHolePrev = holeDirty;
 }

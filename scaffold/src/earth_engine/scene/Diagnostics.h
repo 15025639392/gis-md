@@ -149,6 +149,18 @@ struct Diagnostics {
     int terrainRenderEntryDropOther = 0;
     int terrainRenderEntryDropMinZoom = 0;
     int terrainRenderEntryDropMaxZoom = 0;
+    // NoReadyTexture 丢弃的细分画像(本帧第一片)。
+    int terrainRenderEntryDropNoTexZoom = -1;
+    int terrainRenderEntryDropNoTexLoadingState = -1;
+    int terrainRenderEntryDropNoTexReadyState = -1;
+    int terrainRenderEntryDropNoTexReadyHasTexture = 0;
+    int terrainRenderEntryDropNoTexAncestorDepth = 0;
+    int terrainRenderEntryDropNoTexAncestorsWithMapping = 0;
+    int terrainRenderEntryDropNoTexAncestorsWithTexture = 0;
+    int terrainRenderEntryDropNoTexMappingState = -1;
+    unsigned long long terrainRenderEntryDropNoTexAuthoritativeUpdates = 0;
+    int terrainRenderEntryDropNoTexTileLoadState = -99;
+    int terrainRenderEntryDropNoTexTileContentKind = -1;
     int terrainRenderEntriesMissingSelected = 0;
     int terrainRenderEntriesMissingRender = 0;
     int terrainZeroDrawNoContentNoFill = 0;

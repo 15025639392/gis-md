@@ -79,6 +79,17 @@ void applyTerrainRenderEntryDiagnostics(
     diagnostics.terrainRenderEntryDropOther = 0;
     diagnostics.terrainRenderEntryDropMinZoom = 0;
     diagnostics.terrainRenderEntryDropMaxZoom = 0;
+    diagnostics.terrainRenderEntryDropNoTexZoom = -1;
+    diagnostics.terrainRenderEntryDropNoTexLoadingState = -1;
+    diagnostics.terrainRenderEntryDropNoTexReadyState = -1;
+    diagnostics.terrainRenderEntryDropNoTexReadyHasTexture = 0;
+    diagnostics.terrainRenderEntryDropNoTexAncestorDepth = 0;
+    diagnostics.terrainRenderEntryDropNoTexAncestorsWithMapping = 0;
+    diagnostics.terrainRenderEntryDropNoTexAncestorsWithTexture = 0;
+    diagnostics.terrainRenderEntryDropNoTexMappingState = -1;
+    diagnostics.terrainRenderEntryDropNoTexAuthoritativeUpdates = 0;
+    diagnostics.terrainRenderEntryDropNoTexTileLoadState = -99;
+    diagnostics.terrainRenderEntryDropNoTexTileContentKind = -1;
     diagnostics.terrainRenderEntriesMissingSelected = 0;
     diagnostics.terrainRenderEntriesMissingRender = 0;
     diagnostics.terrainZeroDrawNoContentNoFill = 0;
@@ -137,6 +148,28 @@ void applyTerrainRenderEntryDiagnostics(
         plan.renderEntryDropMinZoom;
     diagnostics.terrainRenderEntryDropMaxZoom =
         plan.renderEntryDropMaxZoom;
+    diagnostics.terrainRenderEntryDropNoTexZoom =
+        plan.renderEntryDropNoTexZoom;
+    diagnostics.terrainRenderEntryDropNoTexLoadingState =
+        plan.renderEntryDropNoTexLoadingState;
+    diagnostics.terrainRenderEntryDropNoTexReadyState =
+        plan.renderEntryDropNoTexReadyState;
+    diagnostics.terrainRenderEntryDropNoTexReadyHasTexture =
+        plan.renderEntryDropNoTexReadyHasTexture;
+    diagnostics.terrainRenderEntryDropNoTexAncestorDepth =
+        plan.renderEntryDropNoTexAncestorDepth;
+    diagnostics.terrainRenderEntryDropNoTexAncestorsWithMapping =
+        plan.renderEntryDropNoTexAncestorsWithMapping;
+    diagnostics.terrainRenderEntryDropNoTexAncestorsWithTexture =
+        plan.renderEntryDropNoTexAncestorsWithTexture;
+    diagnostics.terrainRenderEntryDropNoTexMappingState =
+        plan.renderEntryDropNoTexMappingState;
+    diagnostics.terrainRenderEntryDropNoTexAuthoritativeUpdates =
+        plan.renderEntryDropNoTexAuthoritativeUpdates;
+    diagnostics.terrainRenderEntryDropNoTexTileLoadState =
+        plan.renderEntryDropNoTexTileLoadState;
+    diagnostics.terrainRenderEntryDropNoTexTileContentKind =
+        plan.renderEntryDropNoTexTileContentKind;
     diagnostics.terrainRenderEntriesMissingSelected =
         plan.renderEntryCommandMissingSelectedCount;
     diagnostics.terrainRenderEntriesMissingRender =

@@ -211,6 +211,20 @@ struct TilePlan {
     int renderEntryDropOtherCount = 0;
     int renderEntryDropMinZoom = 0;
     int renderEntryDropMaxZoom = 0;
+    // 本帧第一片 NoReadyTexture 丢弃的画像(见 BaseImageryNoTextureProbe)。
+    // 取快照而非累加:每帧这类丢弃只有 1-4 片且多为同源兄弟,看一片的完整
+    // 病历比看四片的和更能定因。
+    int renderEntryDropNoTexZoom = -1;
+    int renderEntryDropNoTexLoadingState = -1;
+    int renderEntryDropNoTexReadyState = -1;
+    int renderEntryDropNoTexReadyHasTexture = 0;
+    int renderEntryDropNoTexAncestorDepth = 0;
+    int renderEntryDropNoTexAncestorsWithMapping = 0;
+    int renderEntryDropNoTexAncestorsWithTexture = 0;
+    int renderEntryDropNoTexMappingState = -1;
+    unsigned long long renderEntryDropNoTexAuthoritativeUpdates = 0;
+    int renderEntryDropNoTexTileLoadState = -99;
+    int renderEntryDropNoTexTileContentKind = -1;
     int renderEntryZeroDrawNoContentNoFillCount = 0;
     int renderEntryZeroDrawFillNoCommandsCount = 0;
     int renderEntryZeroDrawContentNoCommandsCount = 0;

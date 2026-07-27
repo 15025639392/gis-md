@@ -1011,3 +1011,97 @@ TEST(TileRenderPlanFinalizerTest, FadingTilesBecomeFadePassEntries) {
     // 深度绕过)→**不再产生 fadingOut 渲染项**。cross-fade 基底仅 geomorph 关时才有。
     EXPECT_EQ(plan.renderEntries.size(), 0u);
 }
+
+// 破洞诊断第三轮:真机实测的残余 drop 形态 —— mapping 建过、影像也已 Loaded,
+// 却因为几何瓦片停在 Failed 态、再没有任何路径调用 mapped.update(),Loading→Ready
+// 的提升永远不发生。这个测试把那一帧的状态原样搭出来,钉死探针的读数含义:
+// load=Loaded / ready=空 / 祖先链一个 mapping 都没有。
+TEST(
+    TileRenderPlanFinalizerTest,
+    ProbesUnpromotedLoadedImageryAsNoReadyTexture) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    root.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(root.bounds), Mat4::identity());
+    root.content.renderContent.setTerrainRenderContent(true);
+    root.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root.content.renderContent.markRenderContentReady();
+    root.markRenderContentDone();
+
+    auto baseOverlay = makeBlockingBaseOverlay();
+    ActivatedRasterOverlay activeBase(*baseOverlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activeBase};
+
+    RasterOverlayTileProvider* provider =
+        activeBase.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+    std::vector<RasterOverlayProjection> missingProjections;
+    RasterMappedToTilesetTile& mapped =
+        root.rasterOverlayState.ensureMapping(0);
+    mapped.update(
+        rootKey,
+        root.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        *provider,
+        nullptr,
+        missingProjections,
+        root.parent,
+        0);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    // 影像到手(Loaded),但故意不再调 update() —— 真机上正是这一步没人替它做。
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+
+    EXPECT_EQ(
+        TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
+            root,
+            overlays),
+        BaseImageryBlockReason::NoReadyTexture);
+
+    const BaseImageryNoTextureProbe probe =
+        TileRasterOverlayReadinessPolicy::probeNoReadyTexture(root, overlays);
+    EXPECT_TRUE(probe.valid);
+    EXPECT_EQ(probe.zoom, 0);
+    EXPECT_EQ(
+        probe.loadingState,
+        static_cast<int>(RasterOverlayTile::LoadState::Loaded));
+    EXPECT_EQ(probe.readyState, -1);
+    EXPECT_FALSE(probe.readyHasTexture);
+    EXPECT_EQ(probe.ancestorDepth, 0);
+    EXPECT_EQ(probe.ancestorsWithMapping, 0);
+    EXPECT_EQ(probe.ancestorsWithTexture, 0);
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        overlays,
+        [&root](const TileKey& key) -> TilesetTile* {
+            return key == root.key ? &root : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [&overlays](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile) &&
+                   TileRasterOverlayReadinessPolicy::
+                       terrainSurfaceImageryDrawableReady(tile, overlays);
+        });
+
+    EXPECT_TRUE(plan.renderEntries.empty());
+    EXPECT_EQ(plan.renderEntryDropNotBuildableCount, 1);
+    EXPECT_EQ(plan.renderEntryDropNoReadyTextureCount, 1);
+    EXPECT_EQ(plan.renderEntryDropNoMappingCount, 0);
+    EXPECT_EQ(
+        plan.renderEntryDropNoTexLoadingState,
+        static_cast<int>(RasterOverlayTile::LoadState::Loaded));
+    EXPECT_EQ(plan.renderEntryDropNoTexReadyState, -1);
+    EXPECT_EQ(plan.renderEntryDropNoTexAncestorsWithMapping, 0);
+}
