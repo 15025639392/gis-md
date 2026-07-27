@@ -234,6 +234,14 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.terrainRenderEntriesDeferred = 0;
     diagnostics.terrainRenderEntriesSelectedDeferred = 0;
     diagnostics.terrainRenderEntriesFadingDeferred = 0;
+    diagnostics.terrainSelectedForRenderTiles = 0;
+    diagnostics.terrainRenderEntryDropClipUv = 0;
+    diagnostics.terrainRenderEntryDropNotBuildable = 0;
+    diagnostics.terrainRenderEntriesMissingSelected = 0;
+    diagnostics.terrainRenderEntriesMissingRender = 0;
+    diagnostics.terrainZeroDrawNoContentNoFill = 0;
+    diagnostics.terrainZeroDrawFillNoCommands = 0;
+    diagnostics.terrainZeroDrawContentNoCommands = 0;
     diagnostics.terrainSurfaceCommandsSubmitted = 0;
     diagnostics.terrainSurfaceRealCommands = 0;
     diagnostics.terrainSurfaceFillProxyCommands = 0;

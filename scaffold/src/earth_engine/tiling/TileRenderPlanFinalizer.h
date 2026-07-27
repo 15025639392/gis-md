@@ -68,6 +68,8 @@ struct TileRenderPlanFinalizer {
         plan.renderEntryAncestorFallbackCount = 0;
         plan.renderEntrySynchronousPrepCount = 0;
         plan.renderEntryDeferredPrepCount = 0;
+        plan.renderEntryDropClipUvCount = 0;
+        plan.renderEntryDropNotBuildableCount = 0;
 
         std::unordered_set<RenderGeometryIdentity, RenderGeometryIdentityHash>
             renderedGeometry;
@@ -101,6 +103,10 @@ struct TileRenderPlanFinalizer {
                         *commandTile,
                         selectedTile.bounds);
                     if (!surfaceClipUv) {
+                        // 破洞诊断:祖先在手却算不出 clip UV → 该选中瓦片这一帧
+                        // 没有任何几何(与下面的 dedup return 不同,那些是"已被
+                        // 别的 entry 覆盖",不是洞)。
+                        ++plan.renderEntryDropClipUvCount;
                         return;
                     }
                     usesAncestorFallback = true;
@@ -111,6 +117,8 @@ struct TileRenderPlanFinalizer {
                     rasterOverlays,
                     DirectRenderFallbackPolicy::
                         AllowTransientSurfaceAsLastResort)) {
+                // 破洞诊断:自身不可直画、也没有可回落的祖先 → 真空洞。
+                ++plan.renderEntryDropNotBuildableCount;
                 return;
             }
 

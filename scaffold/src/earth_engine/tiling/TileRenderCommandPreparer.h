@@ -27,6 +27,19 @@ struct TileRenderCommandPrepareContext {
     std::optional<std::array<float, 4>> surfaceClipUv;
 };
 
+// 破洞诊断:一个已被选中的瓦片走完 build 却一条命令都没产出 = 屏幕上这块
+// 区域本帧彻底不出现(真·透空)。TileRenderEntryCommandBuilder 只知道"零命令"
+// 这一个总数(missedDrawEntries),这里按成因分桶,用来判定破洞是"没兜底"
+// 还是"有内容但 draw builder 吞了"。
+struct TileRenderCommandZeroDrawBreakdown {
+    // 既无真几何也无 fill 代理 → 兜底缺失(cesium 在此处有 TerrainFillMesh)。
+    int noContentNoFill = 0;
+    // fill 代理 ready,但 draw builder 没产出命令。
+    int fillNoCommands = 0;
+    // 真几何在手,但 draw builder 没产出命令(5d1b89fac 那一族)。
+    int contentNoCommands = 0;
+};
+
 struct TileRenderCommandPerformanceTimings {
     double totalMs = 0.0;
     double ensureMeshMs = 0.0;
@@ -34,6 +47,7 @@ struct TileRenderCommandPerformanceTimings {
     double drawBuildMs = 0.0;
     int tileCount = 0;
     GltfDrawCommandBuildTimings drawCommand;
+    TileRenderCommandZeroDrawBreakdown zeroDraw;
 };
 
 class TileRenderCommandPreparer {
@@ -52,8 +66,14 @@ public:
         if (timings) {
             ++timings->tileCount;
         }
-        auto finish = [&](bool resourcesChanged) {
+        const size_t commandsBefore = commands.size();
+        auto finish = [&](bool resourcesChanged,
+                          int TileRenderCommandZeroDrawBreakdown::*zeroDrawBucket
+                              = nullptr) {
             if (timings) {
+                if (zeroDrawBucket && commands.size() == commandsBefore) {
+                    ++(timings->zeroDraw.*zeroDrawBucket);
+                }
                 timings->totalMs += perf::nowMs() - totalStartMs;
             }
             return resourcesChanged;
@@ -125,7 +145,9 @@ public:
                 timings->drawBuildMs +=
                     perf::nowMs() - drawBuildStartMs;
             }
-            return finish(resourcesChanged);
+            return finish(
+                resourcesChanged,
+                &TileRenderCommandZeroDrawBreakdown::contentNoCommands);
         }
 
         // Terrain fill: real content is not present yet, but a drape-ready
@@ -156,12 +178,16 @@ public:
                 timings->drawBuildMs +=
                     perf::nowMs() - drawBuildStartMs;
             }
-            return finish(false);
+            return finish(
+                false,
+                &TileRenderCommandZeroDrawBreakdown::fillNoCommands);
         }
 
         // No glTF content - nothing to render
         tile.clearFrameRenderability();
-        return finish(false);
+        return finish(
+            false,
+            &TileRenderCommandZeroDrawBreakdown::noContentNoFill);
     }
 };
 

@@ -125,6 +125,27 @@ struct Diagnostics {
     int terrainRenderEntriesDeferred = 0;
     int terrainRenderEntriesSelectedDeferred = 0;
     int terrainRenderEntriesFadingDeferred = 0;
+    // 破洞诊断(假设 A:选中却零绘制 = 屏幕上这块本帧彻底不出现)。
+    //   selectedForRender      = 选择器本帧要渲染的瓦片数(分母)
+    //   missingSelected/Render = render entry 的 tile 指针为空 → 无几何
+    //   zeroDrawNoContentNoFill= 既无真几何也无 fill 兜底(cesium 此处有
+    //                            TerrainFillMesh)→ A 的头号嫌疑
+    //   zeroDrawFillNoCommands / zeroDrawContentNoCommands
+    //                          = 有内容但 draw builder 没产出命令
+    // 任一 > 0 即屏幕上存在无几何区域。
+    //   dropClipUv/dropNotBuildable
+    //                          = 选中瓦片被 finalizer 丢弃(非 dedup)→ 该瓦片
+    //                            这一帧零几何。注意 selectedForRender >
+    //                            renderEntriesPlanned 本身不等于洞:一个祖先
+    //                            entry 可以覆盖多个选中瓦片(dedup)。
+    int terrainSelectedForRenderTiles = 0;
+    int terrainRenderEntryDropClipUv = 0;
+    int terrainRenderEntryDropNotBuildable = 0;
+    int terrainRenderEntriesMissingSelected = 0;
+    int terrainRenderEntriesMissingRender = 0;
+    int terrainZeroDrawNoContentNoFill = 0;
+    int terrainZeroDrawFillNoCommands = 0;
+    int terrainZeroDrawContentNoCommands = 0;
     int terrainSurfaceCommandsSubmitted = 0;
     int terrainSurfaceRealCommands = 0;
     int terrainSurfaceFillProxyCommands = 0;

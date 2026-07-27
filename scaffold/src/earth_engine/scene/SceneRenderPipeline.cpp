@@ -69,6 +69,14 @@ void applyTerrainRenderEntryDiagnostics(
     diagnostics.terrainRenderEntriesDeferred = 0;
     diagnostics.terrainRenderEntriesSelectedDeferred = 0;
     diagnostics.terrainRenderEntriesFadingDeferred = 0;
+    diagnostics.terrainSelectedForRenderTiles = 0;
+    diagnostics.terrainRenderEntryDropClipUv = 0;
+    diagnostics.terrainRenderEntryDropNotBuildable = 0;
+    diagnostics.terrainRenderEntriesMissingSelected = 0;
+    diagnostics.terrainRenderEntriesMissingRender = 0;
+    diagnostics.terrainZeroDrawNoContentNoFill = 0;
+    diagnostics.terrainZeroDrawFillNoCommands = 0;
+    diagnostics.terrainZeroDrawContentNoCommands = 0;
     if (!tileset) {
         return;
     }
@@ -102,6 +110,22 @@ void applyTerrainRenderEntryDiagnostics(
         plan.renderEntrySelectedCommandDeferredCount;
     diagnostics.terrainRenderEntriesFadingDeferred =
         plan.renderEntryFadingCommandDeferredCount;
+    diagnostics.terrainSelectedForRenderTiles =
+        static_cast<int>(plan.tilesToRenderThisFrame.size());
+    diagnostics.terrainRenderEntryDropClipUv =
+        plan.renderEntryDropClipUvCount;
+    diagnostics.terrainRenderEntryDropNotBuildable =
+        plan.renderEntryDropNotBuildableCount;
+    diagnostics.terrainRenderEntriesMissingSelected =
+        plan.renderEntryCommandMissingSelectedCount;
+    diagnostics.terrainRenderEntriesMissingRender =
+        plan.renderEntryCommandMissingRenderCount;
+    diagnostics.terrainZeroDrawNoContentNoFill =
+        plan.renderEntryZeroDrawNoContentNoFillCount;
+    diagnostics.terrainZeroDrawFillNoCommands =
+        plan.renderEntryZeroDrawFillNoCommandsCount;
+    diagnostics.terrainZeroDrawContentNoCommands =
+        plan.renderEntryZeroDrawContentNoCommandsCount;
 }
 
 } // namespace

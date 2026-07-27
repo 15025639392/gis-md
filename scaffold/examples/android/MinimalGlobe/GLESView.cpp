@@ -6,6 +6,7 @@
 #include <GLES3/gl3.h>
 #include <android/choreographer.h>
 #include <android/looper.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -357,6 +358,46 @@ static void renderFrame() {
              loadDirty ? 1 : 0);
     }
     sLoadDirtyPrev = loadDirty;
+
+    // 破洞诊断(假设 A:选中却零绘制 → 屏幕上这块本帧没有任何几何,看到的是
+    // 天空/大气而不是地面)。LoadQual 只回答"糊不糊/是不是代理面",回答不了
+    // "有没有一块地压根没画"——这条补上那个缺口。
+    //   sel/ent   = 选择器要渲染的瓦片数 / 实际拿到 render entry 的条目数
+    //               (sel 明显大于 ent = 有瓦片连 entry 都没有 → 必然是洞)
+    //   miss      = entry 走完 draw 却零命令(= 下面三个桶之和)
+    //   nofill    = 既无真几何也无 fill 兜底 ← A 的头号嫌疑
+    //   fillnc/ctnc = 有 fill / 有真几何,但 draw builder 没产出命令
+    //   nulls     = entry 的 selectedTile / renderTile 指针为空
+    //   defer     = 本帧主动跳过同步 prep(也不出现,但属预期节流)
+    // ⚠ sel>ent 本身**不是**洞:一个祖先 entry 可覆盖多个选中瓦片(finalizer
+    // dedup)。真的没几何的只有 finalizer 的两条丢弃路径(dropcu/dropnb)。
+    const int holeCount = q.terrainRenderEntriesMissed +
+                          q.terrainRenderEntriesMissingSelected +
+                          q.terrainRenderEntriesMissingRender +
+                          q.terrainRenderEntryDropClipUv +
+                          q.terrainRenderEntryDropNotBuildable;
+    static bool sHolePrev = false;
+    const bool holeDirty = holeCount > 0;
+    // 破洞只在加载暂态出现,120 帧心跳会整段错过:暂态期(loadDirty)逐帧打。
+    if (holeDirty || sHolePrev || loadDirty || frameId % 120 == 0) {
+        LOGI("HoleQual frame=%llu sel=%d ent=%d drop=%d/%d miss=%d nofill=%d "
+             "fillnc=%d ctnc=%d nulls=%d/%d defer=%d drawn=%d dirty=%d",
+             static_cast<unsigned long long>(frameId),
+             q.terrainSelectedForRenderTiles,
+             q.terrainRenderEntriesPlanned,
+             q.terrainRenderEntryDropClipUv,
+             q.terrainRenderEntryDropNotBuildable,
+             q.terrainRenderEntriesMissed,
+             q.terrainZeroDrawNoContentNoFill,
+             q.terrainZeroDrawFillNoCommands,
+             q.terrainZeroDrawContentNoCommands,
+             q.terrainRenderEntriesMissingSelected,
+             q.terrainRenderEntriesMissingRender,
+             q.terrainRenderEntriesDeferred,
+             q.terrainRenderEntriesDrawn,
+             holeDirty ? 1 : 0);
+    }
+    sHolePrev = holeDirty;
 }
 
 // ============================================================

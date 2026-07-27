@@ -54,6 +54,14 @@ void TilesetRenderFrameExecutor::buildRenderCommands(
 
     const TileRenderCommandPerformanceTimings& timings =
         context.renderCommandTimings();
+    // 破洞诊断:零命令成因分桶从 draw 侧回填到 tilePlan,与既有 renderEntry*
+    // 计数一起被 SceneRenderPipeline 抄进 Diagnostics。
+    context.input.tilePlan.renderEntryZeroDrawNoContentNoFillCount =
+        timings.zeroDraw.noContentNoFill;
+    context.input.tilePlan.renderEntryZeroDrawFillNoCommandsCount =
+        timings.zeroDraw.fillNoCommands;
+    context.input.tilePlan.renderEntryZeroDrawContentNoCommandsCount =
+        timings.zeroDraw.contentNoCommands;
     const GltfDrawCommandBuildTimings& draw = timings.drawCommand;
     std::array<char, 512> detail{};
     std::snprintf(

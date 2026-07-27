@@ -210,6 +210,70 @@ TEST(TileRenderCommandPreparerTest, DefersMeshPrepWhenSynchronousPrepDisabled) {
     EXPECT_TRUE(commands.empty());
 }
 
+// 破洞诊断:选中的瓦片既无真几何也无 fill 代理时,本帧一条命令都不产出 ——
+// 屏幕上这块区域没有任何地面。该情形必须落进 noContentNoFill 桶,HoleQual 的
+// nofill 计数(假设 A 的判据)才有意义。
+TEST(TileRenderCommandPreparerTest, CountsZeroDrawWithoutContentOrFill) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    std::vector<ActivatedRasterOverlay*> overlays;
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TileRenderCommandPerformanceTimings timings;
+
+    TileRenderCommandPreparer::build(
+        renderer,
+        tile,
+        commands,
+        overlays,
+        nullptr,
+        makeContext(true),
+        [](TilesetTile&) {},
+        &timings);
+
+    EXPECT_TRUE(commands.empty());
+    EXPECT_EQ(timings.zeroDraw.noContentNoFill, 1);
+    EXPECT_EQ(timings.zeroDraw.fillNoCommands, 0);
+    EXPECT_EQ(timings.zeroDraw.contentNoCommands, 0);
+}
+
+// 反向闸:真的画出来了就不许进任何零绘制桶,否则 nofill>0 会变成常态噪声。
+TEST(TileRenderCommandPreparerTest, LeavesZeroDrawCountersClearWhenDrawn) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    std::vector<ActivatedRasterOverlay*> overlays;
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TileRenderCommandPerformanceTimings timings;
+
+    TileRenderCommandPreparer::build(
+        renderer,
+        tile,
+        commands,
+        overlays,
+        nullptr,
+        makeContext(true),
+        [](TilesetTile& meshTile) {
+            meshTile.markRenderContentDone();
+            auto gltfModel = makeQuadTerrainGltfModel(meshTile.bounds);
+            meshTile.content.renderContent.prepareGltfContent(
+                std::move(gltfModel), Mat4::identity());
+            meshTile.content.renderContent.setTerrainRenderContent(true);
+            GltfPrimitiveRenderResources resources;
+            resources.vertexBuffer = std::make_unique<DummyBuffer>(64);
+            resources.indexBuffer = std::make_unique<DummyBuffer>(12);
+            resources.indexCount = 6;
+            resources.vertexCount = 4;
+            meshTile.content.renderContent.addGltfPrimitiveResource(
+                std::move(resources));
+            meshTile.content.renderContent.markRenderContentReady();
+        },
+        &timings);
+
+    EXPECT_FALSE(commands.empty());
+    EXPECT_EQ(timings.zeroDraw.noContentNoFill, 0);
+    EXPECT_EQ(timings.zeroDraw.fillNoCommands, 0);
+    EXPECT_EQ(timings.zeroDraw.contentNoCommands, 0);
+}
+
 TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     std::vector<ActivatedRasterOverlay*> overlays;

@@ -196,6 +196,15 @@ struct TilePlan {
     int renderEntryCommandDeferredCount = 0;
     int renderEntrySelectedCommandDeferredCount = 0;
     int renderEntryFadingCommandDeferredCount = 0;
+    // 破洞诊断:零命令的成因分桶(见 TileRenderCommandZeroDrawBreakdown)。
+    // 三者之和 ≈ renderEntryCommandMissedDrawCount。
+    // 破洞诊断:选中瓦片被 finalizer 丢弃、且不是"已被别的 entry 覆盖"的
+    // dedup —— 这两类才是屏幕上真的没有几何。
+    int renderEntryDropClipUvCount = 0;
+    int renderEntryDropNotBuildableCount = 0;
+    int renderEntryZeroDrawNoContentNoFillCount = 0;
+    int renderEntryZeroDrawFillNoCommandsCount = 0;
+    int renderEntryZeroDrawContentNoCommandsCount = 0;
 };
 
 class TilePlanBuilder {
