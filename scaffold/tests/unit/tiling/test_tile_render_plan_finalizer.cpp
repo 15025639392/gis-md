@@ -12,7 +12,9 @@
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileRasterOverlayReadinessPolicy.h"
 #include "earth_engine/tiling/TileRenderPlanFinalizer.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -1104,4 +1106,91 @@ TEST(
         static_cast<int>(RasterOverlayTile::LoadState::Loaded));
     EXPECT_EQ(plan.renderEntryDropNoTexReadyState, -1);
     EXPECT_EQ(plan.renderEntryDropNoTexAncestorsWithMapping, 0);
+}
+
+// 上一个测试钉住的病:影像 Loaded 了却没人提升。修法 = 让节流泵既发也收。
+// 这里验证泵跑一次之后瓦片重新可画,并且 finalizer 不再丢弃它。
+TEST(
+    TileRenderPlanFinalizerTest,
+    ThrottledPumpPromotesLoadedImageryWithoutFullUpdate) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    root.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(root.bounds), Mat4::identity());
+    root.content.renderContent.setTerrainRenderContent(true);
+    root.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root.content.renderContent.markRenderContentReady();
+    root.markRenderContentDone();
+
+    auto baseOverlay = makeBlockingBaseOverlay();
+    ActivatedRasterOverlay activeBase(*baseOverlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activeBase};
+
+    RasterOverlayTileProvider* provider =
+        activeBase.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+    std::vector<RasterOverlayProjection> missingProjections;
+    RasterMappedToTilesetTile& mapped =
+        root.rasterOverlayState.ensureMapping(0);
+    mapped.update(
+        rootKey,
+        root.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        *provider,
+        nullptr,
+        missingProjections,
+        root.parent,
+        0);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+    ASSERT_FALSE(
+        TileRasterOverlayReadinessPolicy::terrainSurfaceImageryDrawableReady(
+            root,
+            overlays));
+
+    // 泵一次 —— 这是这批瓦片唯一还会被调用到的路径,不走 mapped.update()。
+    FrameResourceBudget budget;
+    TileRasterOverlayPrefetcher::advanceThrottledLoads(
+        root,
+        overlays,
+        TileRasterOverlayReadinessPolicy::processingOrder(overlays),
+        nullptr,
+        budget);
+
+    EXPECT_EQ(mapped.getLoadingTile(), nullptr);
+    ASSERT_NE(mapped.getReadyTile(), nullptr);
+    EXPECT_NE(mapped.getReadyTile()->getTexture(), nullptr);
+    EXPECT_TRUE(
+        TileRasterOverlayReadinessPolicy::terrainSurfaceImageryDrawableReady(
+            root,
+            overlays));
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        overlays,
+        [&root](const TileKey& key) -> TilesetTile* {
+            return key == root.key ? &root : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [&overlays](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile) &&
+                   TileRasterOverlayReadinessPolicy::
+                       terrainSurfaceImageryDrawableReady(tile, overlays);
+        });
+
+    EXPECT_EQ(plan.renderEntries.size(), 1u);
+    EXPECT_EQ(plan.renderEntryDropNotBuildableCount, 0);
+    EXPECT_EQ(plan.renderEntryDropNoReadyTextureCount, 0);
 }

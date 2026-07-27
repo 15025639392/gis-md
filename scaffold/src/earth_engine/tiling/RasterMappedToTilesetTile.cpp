@@ -253,6 +253,12 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         mappingRectangle = &*boundingVolumeRectangle;
         mappingRectangleInvertedV = false;
     }
+    // 记下本次用的 mapping 矩形,供 promoteLoadedTileWithoutGeometryWork 在
+    // 拿不到 update() 调用的瓦片上复算 UV(见该函数注释)。
+    if (mappingRectangle) {
+        lastMappingRectangle_ = *mappingRectangle;
+        lastMappingRectangleInvertedV_ = mappingRectangleInvertedV;
+    }
 
     // cesium-native RasterOverlayCollection::updateTileOverlays:
     // placeholder mappings are retried once the provider is ready.
@@ -475,6 +481,42 @@ bool RasterMappedToTilesetTile::hasStableUpdateState() const {
     return _pLoadingTile == nullptr &&
            _pReadyTile != nullptr &&
            state_ == State::Attached;
+}
+
+bool RasterMappedToTilesetTile::promoteLoadedTileWithoutGeometryWork(
+    IPrepareRendererResources* pPrepRenderer) {
+    if (_pLoadingTile == nullptr) {
+        return false;
+    }
+    const RasterOverlayTile::LoadState loadState = _pLoadingTile->getState();
+    if (loadState != RasterOverlayTile::LoadState::Loaded &&
+        loadState != RasterOverlayTile::LoadState::Done) {
+        return false;
+    }
+    const bool canPromoteReadyRaster =
+        pPrepRenderer != nullptr || state_ == State::Unattached ||
+        _pReadyTile == nullptr;
+    if (!canPromoteReadyRaster) {
+        return false;
+    }
+    if (_pReadyTile != nullptr && state_ != State::Unattached) {
+        detachFromTile(pPrepRenderer);
+    }
+    _pReadyTile = _pLoadingTile;
+    _pLoadingTile = nullptr;
+    readyTileSource_ = loadingTileSource_;
+    loadingTileSource_ = ReadyTileSource::None;
+    readyTexture_ = _pReadyTile->getTexture();
+    // UV 用上一次 update() 记下的 mapping 矩形重算 —— 这里刻意不碰 overlayDetails
+    // / 包围体,因为本函数存在的前提就是"没人替这片瓦片跑 update()"。矩形只在
+    // update() 里更新,内容重载会重新走 update() 并覆盖它,不会读到陈旧值。
+    if (lastMappingRectangle_) {
+        computeTranslationAndScale(
+            *lastMappingRectangle_,
+            _pReadyTile->getRectangle(),
+            lastMappingRectangleInvertedV_);
+    }
+    return true;
 }
 
 void RasterMappedToTilesetTile::markStableReadyTileUsed() {

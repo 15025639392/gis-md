@@ -275,7 +275,8 @@ public:
                             input.rasterOverlays,
                             fillOverlayOrder,
                             input.device,
-                            input.frameResourceBudget);
+                            input.frameResourceBudget,
+                            input.pPrepRenderer);
                     }
                 }
             }

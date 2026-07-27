@@ -261,7 +261,8 @@ void TileRasterOverlayPrefetcher::advanceThrottledLoads(
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     const std::vector<size_t>& overlayProcessingOrder,
     RenderDevice* device,
-    FrameResourceBudget& frameResourceBudget) {
+    FrameResourceBudget& frameResourceBudget,
+    IPrepareRendererResources* pPrepRenderer) {
     for (size_t i : overlayProcessingOrder) {
         if (i >= tile.rasterOverlayState.mappingCount()) {
             continue;
@@ -275,6 +276,17 @@ void TileRasterOverlayPrefetcher::advanceThrottledLoads(
         if (!mapped) {
             continue;
         }
+        // 这条泵路服务的正是「有 mapping、却到不了 Done」的瓦片,而它们拿不到
+        // mapped->update()。所以泵必须既发也收:先消费已经加载完的影像(不做
+        // 几何解算),否则影像下载完也永远上不了屏(破洞真因,见
+        // promoteLoadedTileWithoutGeometryWork)。
+        if (mapped->promoteLoadedTileWithoutGeometryWork(pPrepRenderer)) {
+            tile.rasterOverlayState.invalidateFrameUpdateCache();
+        }
+        // 提升出来的 ready 瓦片没有任何 update 路径替它 markUsed,会被 provider
+        // 当成无人引用淘汰掉。这片瓦片本帧可见,保活。
+        mapped->markStableReadyTileUsed();
+
         RasterOverlayTile* loadingTile = mapped->getLoadingTile();
         if (!loadingTile ||
             loadingTile->getState() ==

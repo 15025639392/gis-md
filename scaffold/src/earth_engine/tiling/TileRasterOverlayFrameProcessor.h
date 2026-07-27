@@ -187,7 +187,8 @@ public:
                             rasterOverlays,
                             overlayProcessingOrder,
                             device,
-                            frameResourceBudget);
+                            frameResourceBudget,
+                            pPrepRenderer);
                         result.advanceLoadsMs +=
                             perf::nowMs() - advanceStartMs;
                         ++result.advanceLoadsCount;

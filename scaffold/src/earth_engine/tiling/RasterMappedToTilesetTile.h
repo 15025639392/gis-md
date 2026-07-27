@@ -110,6 +110,20 @@ public:
     /// True when a subsequent update can only repeat the Attached fast path.
     bool hasStableUpdateState() const;
 
+    /// 消费一个已经加载完的 loading 瓦片,把它提升为 ready —— 等价于 update()
+    /// 的 Step 3,但**不做任何几何解算**。
+    ///
+    /// 为什么需要它:调用 update() 的三条路径(渲染项循环、
+    /// TileSelectionRasterOverlayPreparer、可见瓦片循环的 Done 分支)全都要求
+    /// 几何瓦片 Done+Render。停在 Failed 态、只有 fill 代理的瓦片一条都不满足,
+    /// 而可见瓦片循环对"已有 mapping 的非 Done 瓦片"只泵 advanceThrottledLoads
+    /// ——「只发不收」。结果是影像下载完了却永远躺在 loading 槽里,瓦片一直不
+    /// 可画 → 每帧被 finalizer 丢弃 → 破洞(实测 z4/z5,见 HoleNoTex 探针)。
+    ///
+    /// @return true 表示这次真的完成了一次提升。
+    bool promoteLoadedTileWithoutGeometryWork(
+        IPrepareRendererResources* pPrepRenderer);
+
     /// Keep the stable ready tile resident without re-running update().
     void markStableReadyTileUsed();
 
@@ -246,6 +260,11 @@ private:
     double cachedTargetScreenPixelsX_ = 0.0;
     double cachedTargetScreenPixelsY_ = 0.0;
     std::optional<Rectangle> cachedBoundingVolumeRectangle_;
+
+    /// update() 最近一次实际用于 computeTranslationAndScale 的几何矩形。
+    /// 供 promoteLoadedTileWithoutGeometryWork 在无 update() 的瓦片上复算 UV。
+    std::optional<Rectangle> lastMappingRectangle_;
+    bool lastMappingRectangleInvertedV_ = false;
 
     /// Set once when the original desired-zoom tile fails.
     /// Never cleared — suppresses MoreDetailAvailable::Yes.
