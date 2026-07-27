@@ -3,6 +3,7 @@
 #include "GltfRenderGeometryBuilder.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TerrainRasterOverlayProjectionResolver.h"
+#include "LoadedTerrainHeightSampler.h"
 #include "TileFillGeometrySignature.h"
 #include "TileSelectionRootPolicy.h"
 #include "TilesetTile.h"
@@ -121,11 +122,17 @@ TileFillProxyPrepareResult TileFillProxyPreparer::ensureFillProxy(
     }
     const RasterOverlayProjection projection =
         TerrainRasterOverlayProjectionResolver::forTileKey(tile.key);
+    // 借最近已加载祖先的高度,代理才能停在粗版真实地形面上而不是海平面。
+    const TilesetTile* heightSource =
+        TerrainAncestorHeightSource::find(tile);
     const std::optional<TileFillGeometrySignature> signature =
         TileFillGeometrySignature::tryCreate(
             tile.bounds,
             projection,
-            gridSize);
+            gridSize,
+            heightSource
+                ? std::optional<TileKey>(heightSource->key)
+                : std::nullopt);
     if (!signature) {
         return TileFillProxyPrepareResult{
             false,
@@ -153,16 +160,34 @@ TileFillProxyPrepareResult TileFillProxyPreparer::ensureFillProxy(
         resourcesChanged = true;
     }
 
-    // Fill is a temporary visual bridge while real terrain is loading.
-    // Sampling loaded terrain for every grid vertex scans terrain triangles
-    // repeatedly and can block the render thread for seconds on Android.
-    // Keep the proxy on the smooth ellipsoid; real terrain replaces it as soon
-    // as its renderer resources are ready.
+    // Fill is a temporary visual bridge while real terrain is loading. It used
+    // to stay flat on the ellipsoid because sampling per grid vertex meant
+    // scanning terrain triangles — that cost is gone (P3 moved height queries
+    // onto the retained heightmap), so the proxy now borrows the nearest
+    // ancestor's heights: 17² O(1) bilinear samples against one heightmap.
+    //
+    // 平代理是「海平面凹坑」的来源:代理停在 h=0,而旁边已加载的真地形在几百到
+    // 几千米高,交界处只能靠真瓦片的裙墙拉出一堵拉伸纹理的断崖。借了祖先高度后
+    // 代理与真地形处在同一量级的面上,自身也带裙墙兜住残余落差。
+    // 影像不受影响:overlay UV 是 lon/lat 的纯函数,顶点升高不移动纹理。
+    EllipsoidProxyHeightSampler heightSampler;
+    if (heightSource) {
+        heightSampler = [heightSource](double longitudeRadians,
+                                       double latitudeRadians) {
+            return TerrainAncestorHeightSource::sample(
+                *heightSource,
+                longitudeRadians,
+                latitudeRadians);
+        };
+    }
     std::unique_ptr<GltfModel> proxy = EllipsoidTerrainMeshBuilder::makeModel(
         tile.bounds,
         projection,
         signature->gridSize,
-        {});
+        heightSampler,
+        /*computeGridNormals=*/heightSource != nullptr,
+        /*computeGeomorphDelta=*/false,
+        /*buildSkirt=*/true);
     if (!proxy) {
         return TileFillProxyPrepareResult{false, resourcesChanged};
     }

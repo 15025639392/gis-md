@@ -36,6 +36,25 @@ private:
     std::vector<const TilesetTile*> candidates_;
 };
 
+// 沿 parent 链取"最近的、带 retained heightmap 的地形祖先"作为高度来源。
+// fill 代理用它把自己从海平面抬到粗版真实地形面(cesium TerrainFillMesh 在没有
+// 可用邻居时同样回落到祖先高度)。
+//
+// 为什么是祖先而不是邻居:sample(lon,lat) 只能取"覆盖该点"的瓦片,而同级邻居
+// 与本瓦片矩形相邻、不相交 —— 除边界线外根本不覆盖代理的任何顶点。真正覆盖
+// 代理全域的只有祖先链,而祖先指针本就挂在 tile 上,无需扫瓦片注册表。
+class TerrainAncestorHeightSource {
+public:
+    /// 最近的可用高度来源祖先,没有则 nullptr。O(树深)。
+    static const TilesetTile* find(const TilesetTile& tile);
+
+    /// 从指定来源瓦片取 (lon, lat) 的高度;该点不在其 heightmap 内则 nullopt。
+    static std::optional<float> sample(
+        const TilesetTile& source,
+        double longitudeRadians,
+        double latitudeRadians);
+};
+
 class LoadedTerrainHeightSampler {
 public:
     // 返回 nullopt 表示"该点无任何已加载地形瓦片覆盖"(无数据),与真实海平面

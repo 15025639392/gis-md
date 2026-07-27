@@ -79,6 +79,45 @@ std::optional<float> sampleFromSortedCandidates(
 
 } // namespace
 
+namespace {
+
+bool hasUsableHeightmap(const TilesetTile& tile) {
+    const TileRenderContentState& renderContent = tile.content.renderContent;
+    if (!renderContent.isTerrainRenderContent()) {
+        return false;
+    }
+    const DecodedHeightmap* heightmap = renderContent.retainedHeightmap();
+    return heightmap && heightmap->valid();
+}
+
+} // namespace
+
+const TilesetTile* TerrainAncestorHeightSource::find(const TilesetTile& tile) {
+    for (const TilesetTile* ancestor = tile.parent;
+         ancestor;
+         ancestor = ancestor->parent) {
+        if (hasUsableHeightmap(*ancestor)) {
+            return ancestor;
+        }
+    }
+    return nullptr;
+}
+
+std::optional<float> TerrainAncestorHeightSource::sample(
+    const TilesetTile& source,
+    double longitudeRadians,
+    double latitudeRadians) {
+    if (!hasUsableHeightmap(source) ||
+        !source.bounds.contains(longitudeRadians, latitudeRadians)) {
+        return std::nullopt;
+    }
+    return DecodedHeightmapSampler::sampleHeight(
+        *source.content.renderContent.retainedHeightmap(),
+        source.bounds,
+        longitudeRadians,
+        latitudeRadians);
+}
+
 LoadedTerrainAreaSampler::LoadedTerrainAreaSampler(
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     const Rectangle& area) {

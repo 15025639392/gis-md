@@ -170,3 +170,76 @@ TEST(LoadedTerrainHeightSamplerTest,
         LoadedTerrainHeightSampler::sampleHeight(tiles, longitude, latitude),
         1e-4f);
 }
+
+// === TerrainAncestorHeightSource:fill 代理的高度来源 ===
+// 代理顶点全部落在自己的矩形内,而同级邻居与该矩形相邻、不相交 —— 真正覆盖
+// 代理全域的只有祖先链。以下三条钉住"沿 parent 链找最近可用祖先"的语义。
+
+TEST(TerrainAncestorHeightSourceTest, FindsNearestAncestorWithHeightmap) {
+    auto scheme = TileScheme::createGeographicTMS();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey midKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey leafKey{"Geographic-TMS", 2, 0, 0};
+
+    TilesetTile root(rootKey, scheme->tileToRectangle(rootKey));
+    root.content.renderContent.setTerrainRenderContent(true);
+    root.content.renderContent.setRetainedHeightmap(
+        makeUniformHeightmap(10.0f));
+
+    TilesetTile mid(midKey, scheme->tileToRectangle(midKey));
+    mid.content.renderContent.setTerrainRenderContent(true);
+    mid.content.renderContent.setRetainedHeightmap(
+        makeUniformHeightmap(600.0f));
+    mid.parent = &root;
+
+    // leaf 自身还在加载(无 heightmap)—— 正是需要 fill 代理的状态。
+    TilesetTile leaf(leafKey, scheme->tileToRectangle(leafKey));
+    leaf.parent = &mid;
+
+    const TilesetTile* source = TerrainAncestorHeightSource::find(leaf);
+    ASSERT_NE(nullptr, source);
+    EXPECT_EQ(midKey, source->key);
+
+    const Rectangle leafBounds = scheme->tileToRectangle(leafKey);
+    const double longitude = (leafBounds.west() + leafBounds.east()) * 0.5;
+    const double latitude = (leafBounds.south() + leafBounds.north()) * 0.5;
+    const std::optional<float> height =
+        TerrainAncestorHeightSource::sample(*source, longitude, latitude);
+    ASSERT_TRUE(height.has_value());
+    EXPECT_NEAR(600.0f, *height, 1e-4f);
+}
+
+TEST(TerrainAncestorHeightSourceTest, SkipsAncestorsWithoutHeightmap) {
+    auto scheme = TileScheme::createGeographicTMS();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey midKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey leafKey{"Geographic-TMS", 2, 0, 0};
+
+    TilesetTile root(rootKey, scheme->tileToRectangle(rootKey));
+    root.content.renderContent.setTerrainRenderContent(true);
+    root.content.renderContent.setRetainedHeightmap(
+        makeUniformHeightmap(10.0f));
+
+    // 中间层自己也是 fill / 上采样(无 retained heightmap)→ 必须继续上溯,
+    // 否则代理会退回海平面。
+    TilesetTile mid(midKey, scheme->tileToRectangle(midKey));
+    mid.parent = &root;
+
+    TilesetTile leaf(leafKey, scheme->tileToRectangle(leafKey));
+    leaf.parent = &mid;
+
+    const TilesetTile* source = TerrainAncestorHeightSource::find(leaf);
+    ASSERT_NE(nullptr, source);
+    EXPECT_EQ(rootKey, source->key);
+}
+
+TEST(TerrainAncestorHeightSourceTest, ReturnsNullWhenNoAncestorLoaded) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile root(rootKey, scheme->tileToRectangle(rootKey));
+
+    // 无祖先可借 → nullptr,调用方保持平椭球(不能假装 0 是真高度)。
+    EXPECT_EQ(nullptr, TerrainAncestorHeightSource::find(root));
+}
