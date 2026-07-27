@@ -6,6 +6,7 @@
 #include <GLES3/gl3.h>
 #include <android/choreographer.h>
 #include <android/looper.h>
+#include <sched.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -38,6 +39,7 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 using namespace earth_engine;
+
 
 // ============================================================
 // EGL / GL ES 3.0 上下文
@@ -297,7 +299,7 @@ static void renderFrame() {
         frameTotalMs >= 25.0 || swapMs >= 8.0) {
         LOGI(
             "FrameLoop frame=%llu total=%.3f sdk=%.3f engine=%.3f "
-            "post=%.3f swap=%.3f callback=%.3f presented=%d swapOk=%d",
+            "post=%.3f swap=%.3f callback=%.3f cpu=%d presented=%d swapOk=%d",
             static_cast<unsigned long long>(frameId),
             frameTotalMs,
             sdkMs,
@@ -305,6 +307,11 @@ static void renderFrame() {
             postEngineMs,
             swapMs,
             callbackIntervalMs,
+            // 渲染线程当前所在核心。这条线程是裸 std::thread(无优先级/无亲和/
+            // 无 ADPF 提示),Android 不知道它有显示截止期,实测 ~91% 的帧被放在
+            // 小核簇(cpu0-3),同样的活 ~8ms 涨到 ~21ms → 错过 16.67ms 预算掉到
+            // 30fps。判"卡"先看这个字段,不要先怀疑引擎做多了活。
+            sched_getcpu(),
             presented ? 1 : 0,
             swapOk == EGL_TRUE ? 1 : 0);
         // 北极星 Phase 0 测量台:每帧(采样)打相机真实位姿,消除"nadir/oblique"
