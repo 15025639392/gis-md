@@ -47,6 +47,9 @@ bool cameraStillMatchesPresentedFrame(const FrameState& frameState,
                previousDirection.normalized()) >= kTwoDegreesCos;
 }
 
+// presentation hold 的连续帧上限(~1s @60fps)。见 Scene::shouldHoldPresentationFrame。
+constexpr int kMaximumConsecutiveHeldFrames = 60;
+
 bool shouldHoldTerrainCoverageTakeover(
     const Tileset& primaryTileset,
     const FrameState& frameState,
@@ -57,19 +60,22 @@ bool shouldHoldTerrainCoverageTakeover(
         return false;
     }
 
-    const PresentationTilesetTrace& previousTerrain =
-        previousTrace.tilesets.front();
-    const int previousEntryCount =
-        static_cast<int>(previousTerrain.renderEntries.size());
-    const int currentEntryCount =
-        static_cast<int>(primaryTileset.tilePlan().renderEntries.size());
-    if (previousEntryCount < 2 || currentEntryCount == 0) {
-        return false;
-    }
-
-    const int minimumTakeoverEntries =
-        std::min(previousEntryCount, 32);
-    return currentEntryCount < minimumTakeoverEntries;
+    // 覆盖度用 finalizer 的丢弃计数,**不用渲染项条数**。
+    //
+    // 旧实现比的是「本帧渲染项条数 < 上一张呈现帧的条数」。条数不等于覆盖度:
+    // 一个祖先 entry 可以覆盖多个选中瓦片(finalizer dedup),LOD 收敛合并也会让
+    // 条数下降,这两种情况覆盖分毫未变。而参照值取自 presentationTrace,trace 又
+    // 只在真的 present 时才刷新 —— 一旦把正常收敛误判成覆盖倒退,就会 hold,
+    // hold 又让参照值永远停在旧值,相机不动便永不恢复(近景默认相机整屏不动的
+    // 真因,划一下屏幕才解锁)。
+    //
+    // finalizer 已经算好了精确信号:这两个计数是「本帧被选中、却一点几何都没拿到」
+    // 的瓦片数,为 0 就说明覆盖完整,没有任何需要压的缺口。
+    const TilePlan& plan = primaryTileset.tilePlan();
+    const int uncoveredSelectedTiles =
+        plan.renderEntryDropNotBuildableCount +
+        plan.renderEntryDropClipUvCount;
+    return uncoveredSelectedTiles > 0;
 }
 
 } // namespace
@@ -217,28 +223,53 @@ bool Scene::render() {
     return renderResult.presentable;
 }
 
-bool Scene::shouldHoldPresentationFrame() const {
+bool Scene::shouldHoldPresentationFrame() {
     const Tileset* primaryTileset = tilesets_->primary();
     if (!primaryTileset) {
+        consecutiveHeldFrames_ = 0;
         return false;
     }
-    if (primaryTileset->shouldHoldPresentationFrame()) {
-        return true;
-    }
-    const bool takeoverHold = shouldHoldTerrainCoverageTakeover(
-        *primaryTileset,
-        frameRuntime_.frameState(),
-        telemetry_->presentationTrace());
-    if (takeoverHold) {
-        static int sTakeoverLogCount = 0;
-        if ((sTakeoverLogCount++ % 60) == 0) {
-            platformLog(LogLevel::Info, "EarthPerf",
-                        "HoldTakeover entries=%zu visible=%zu",
-                        primaryTileset->tilePlan().renderEntries.size(),
-                        primaryTileset->tilePlan().visibleTiles.size());
+    bool hold = primaryTileset->shouldHoldPresentationFrame();
+    if (!hold) {
+        hold = shouldHoldTerrainCoverageTakeover(
+            *primaryTileset,
+            frameRuntime_.frameState(),
+            telemetry_->presentationTrace());
+        if (hold) {
+            static int sTakeoverLogCount = 0;
+            if ((sTakeoverLogCount++ % 60) == 0) {
+                platformLog(LogLevel::Info, "EarthPerf",
+                            "HoldTakeover entries=%zu visible=%zu",
+                            primaryTileset->tilePlan().renderEntries.size(),
+                            primaryTileset->tilePlan().visibleTiles.size());
+            }
         }
     }
-    return takeoverHold;
+    if (!hold) {
+        consecutiveHeldFrames_ = 0;
+        return false;
+    }
+
+    // 活性兜底。这些闸的本意都是压掉**瞬时**的覆盖/纹理缺口闪烁;缺口一旦不是
+    // 瞬时的(瓦片停在 Failed 态、影像始终不来),继续扣就是整屏定格 —— 那比露出
+    // 一块缺口糟得多。更要紧的是:hold 会让 presentationTrace 停止刷新,任何以
+    // trace 为参照的闸都可能自锁,所以必须有一条无条件的出口。
+    //
+    // 超限后**不清零**,让后续帧继续放行,直到 hold 条件自己消失 —— 否则会退化成
+    // "扣 N 帧、放 1 帧"的抽帧循环。
+    if (consecutiveHeldFrames_ <= kMaximumConsecutiveHeldFrames) {
+        ++consecutiveHeldFrames_;
+    }
+    if (consecutiveHeldFrames_ > kMaximumConsecutiveHeldFrames) {
+        static int sReleaseLogCount = 0;
+        if ((sReleaseLogCount++ % 60) == 0) {
+            platformLog(LogLevel::Info, "EarthPerf",
+                        "HoldReleasedByCap frames=%d — 缺口非瞬时,照常呈现",
+                        consecutiveHeldFrames_);
+        }
+        return false;
+    }
+    return true;
 }
 
 void Scene::updatePresentationTrace() {

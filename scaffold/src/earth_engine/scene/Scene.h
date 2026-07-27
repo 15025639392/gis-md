@@ -58,7 +58,8 @@ public:
     void setViewport(int widthPixels, int heightPixels, float dpr = 1.0f);
     void update(double deltaSeconds);
     bool render();
-    bool shouldHoldPresentationFrame() const;
+    // 非 const:内部要累计"已连续扣住多少帧"以保证活性(见 .cpp 实现注释)。
+    bool shouldHoldPresentationFrame();
     void setSelectorViewOverride(
         std::vector<SelectorView> selectorViews);
     void clearSelectorViewOverride();
@@ -129,6 +130,9 @@ private:
 
     // 诊断与 presentation trace
     std::unique_ptr<SceneTelemetryCoordinator> telemetry_;
+
+    // presentation hold 的活性兜底计数(见 shouldHoldPresentationFrame)。
+    int consecutiveHeldFrames_ = 0;
 };
 
 } // namespace earth_engine
