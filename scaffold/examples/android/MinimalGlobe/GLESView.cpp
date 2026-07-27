@@ -7,6 +7,14 @@
 #include <android/choreographer.h>
 #include <android/looper.h>
 #include <sched.h>
+#include <android/api-level.h>
+#include <cerrno>
+#include <dlfcn.h>
+#include <sys/syscall.h>
+#include <cstdio>
+#include <vector>
+#include <sys/resource.h>
+#include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -39,6 +47,217 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 using namespace earth_engine;
+
+// ── 渲染线程放置策略 ──────────────────────────────────────────────────────
+// 自建渲染线程对系统是匿名的:Android 只对自家 RenderThread 做特殊调度,这条裸
+// std::thread 会被 EAS 判成"利用率不到 50%,小核装得下"。但小核上同样一份工作
+// (命令数/瓦片数逐字段相同)要 ~21ms 而不是 ~8ms,必然错过 16.67ms 预算 →
+// 实测 91% 的帧落在 cpu0-3,其中约 90% 掉到 30fps。
+//
+// 三级降级,每级都比下一级更"正确",只在上一级不可用时下探:
+//   ① ADPF hint session —— 官方机制,申报目标时长,系统自己决定选核与升频
+//   ② uclamp_min       —— ADPF 的底层机制,给任务算力下界,轻载时仍可省电
+//   ③ 亲和到性能核簇    —— 兜底,写死放置
+// 实测本机(PHK110 / api 36):① PowerHAL 未实现 hint session(createSession
+// 返回 null、preferredRate<0),② EPERM,最终落在 ③。nice 也试过:setpriority(-8)
+// 被接受但放置完全不变 —— nice 只影响同一 runqueue 内的时间片权重,不参与选核。
+namespace {
+
+constexpr unsigned kRenderThreadUclampMin = 512;  // 0-1024,约需半个大核算力
+
+struct SchedAttr {
+    uint32_t size;
+    uint32_t schedPolicy;
+    uint64_t schedFlags;
+    int32_t schedNice;
+    uint32_t schedPriority;
+    uint64_t schedRuntime;
+    uint64_t schedDeadline;
+    uint64_t schedPeriod;
+    uint32_t schedUtilMin;
+    uint32_t schedUtilMax;
+};
+
+bool setCurrentThreadUclampMin(unsigned utilMin) {
+    constexpr uint64_t kKeepPolicy = 0x08;
+    constexpr uint64_t kKeepParams = 0x10;
+    constexpr uint64_t kUtilClampMin = 0x20;
+    SchedAttr attr{};
+    attr.size = sizeof(SchedAttr);
+    attr.schedFlags = kKeepPolicy | kKeepParams | kUtilClampMin;
+    attr.schedUtilMin = utilMin;
+    // bionic 没有 sched_setattr 包装,直接走系统调用。
+    return syscall(__NR_sched_setattr, 0, &attr, 0u) == 0;
+}
+
+long readCpuMaxFreqKHz(int cpu) {
+    char path[128];
+    std::snprintf(path, sizeof(path),
+                  "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq",
+                  cpu);
+    FILE* file = std::fopen(path, "r");
+    if (!file) {
+        return 0;
+    }
+    long value = 0;
+    if (std::fscanf(file, "%ld", &value) != 1) {
+        value = 0;
+    }
+    std::fclose(file);
+    return value;
+}
+
+// 性能核 = cpuinfo_max_freq 高于最低档的所有核心(即"除最小簇之外")。按运行时
+// 拓扑判定,不写死核号 —— 大小核数量与编号在不同 SoC 上并不一致。
+bool pinCurrentThreadToPerformanceCores(int* pinnedCountOut) {
+    const int cpuCount = static_cast<int>(sysconf(_SC_NPROCESSORS_CONF));
+    if (cpuCount <= 1) {
+        return false;
+    }
+    long minMaxFreq = 0;
+    std::vector<long> freqs(static_cast<size_t>(cpuCount), 0);
+    for (int cpu = 0; cpu < cpuCount; ++cpu) {
+        freqs[static_cast<size_t>(cpu)] = readCpuMaxFreqKHz(cpu);
+        const long freq = freqs[static_cast<size_t>(cpu)];
+        if (freq > 0 && (minMaxFreq == 0 || freq < minMaxFreq)) {
+            minMaxFreq = freq;
+        }
+    }
+    if (minMaxFreq == 0) {
+        return false;  // 读不到拓扑就不要乱绑。
+    }
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    int pinned = 0;
+    for (int cpu = 0; cpu < cpuCount; ++cpu) {
+        if (freqs[static_cast<size_t>(cpu)] > minMaxFreq) {
+            CPU_SET(cpu, &set);
+            ++pinned;
+        }
+    }
+    // 同构 SoC(全部核心同频)→ 没有"性能簇"可言,绑了反而只是缩小可用集合。
+    if (pinned == 0 || pinned == cpuCount) {
+        return false;
+    }
+    if (sched_setaffinity(0, sizeof(set), &set) != 0) {
+        return false;
+    }
+    if (pinnedCountOut) {
+        *pinnedCountOut = pinned;
+    }
+    return true;
+}
+
+} // namespace
+
+
+namespace {
+
+// ADPF(Android Dynamic Performance Framework)性能提示。
+//
+// 为什么需要:自建渲染线程对系统是匿名的。Android 只对自家 RenderThread 做特殊
+// 调度,我们这条裸 std::thread 会被当普通工作线程扔进小核簇 —— 实测 91% 的帧落在
+// cpu0-3,同一份工作(命令数/瓦片数逐字段相同)大核 ~8ms、小核 ~21ms,必然错过
+// 16.67ms 预算掉到 30fps。
+//
+// 这里向系统申报「每帧目标时长」并逐帧回报实际耗时,由调度器自己决定核心放置与
+// 升频。相比 sched_setaffinity 硬绑大核:不写死核心拓扑、不与 governor 对抗、
+// 负载轻时仍能降频省电。
+//
+// 符号 API 33 引入而 minSdk 是 26,所以全部走 dlsym 运行时解析 —— 低版本上
+// createSession 拿不到函数指针,自动退化为「不发提示」,行为与本改动之前一致。
+class RenderThreadPerformanceHint {
+public:
+    // 必须在目标线程内调用(用 gettid() 登记的是当前线程)。
+    void attachCurrentThread(int64_t targetWorkDurationNanos) {
+        using GetManagerFn = void* (*)();
+        using CreateSessionFn =
+            void* (*)(void*, const int32_t*, size_t, int64_t);
+
+        auto getManager = reinterpret_cast<GetManagerFn>(
+            dlsym(RTLD_DEFAULT, "APerformanceHint_getManager"));
+        auto createSession = reinterpret_cast<CreateSessionFn>(
+            dlsym(RTLD_DEFAULT, "APerformanceHint_createSession"));
+        updateTarget_ = reinterpret_cast<UpdateTargetFn>(
+            dlsym(RTLD_DEFAULT, "APerformanceHint_updateTargetWorkDuration"));
+        reportActual_ = reinterpret_cast<ReportActualFn>(
+            dlsym(RTLD_DEFAULT, "APerformanceHint_reportActualWorkDuration"));
+        closeSession_ = reinterpret_cast<CloseSessionFn>(
+            dlsym(RTLD_DEFAULT, "APerformanceHint_closeSession"));
+
+        if (!getManager || !createSession || !reportActual_) {
+            LOGI("PerfHint unavailable (API<33) — 不发提示,行为不变");
+            return;
+        }
+        void* manager = getManager();
+        if (!manager) {
+            LOGI("PerfHint getManager returned null");
+            return;
+        }
+        // 设备是否真的实现了 hint session:preferredRate <= 0 = PowerHAL 没接。
+        using PreferredRateFn = int64_t (*)(void*);
+        auto preferredRate = reinterpret_cast<PreferredRateFn>(
+            dlsym(RTLD_DEFAULT,
+                  "APerformanceHint_getPreferredUpdateRateNanos"));
+        const int64_t rateNanos = preferredRate ? preferredRate(manager) : -1;
+        const int32_t tid = static_cast<int32_t>(gettid());
+        errno = 0;
+        session_ = createSession(manager, &tid, 1, targetWorkDurationNanos);
+        LOGI("PerfHint probe preferredRate=%lldns createErrno=%d api=%d",
+             static_cast<long long>(rateNanos),
+             errno,
+             android_get_device_api_level());
+        targetNanos_ = targetWorkDurationNanos;
+        LOGI("PerfHint session=%p tid=%d target=%.2fms",
+             session_,
+             tid,
+             static_cast<double>(targetWorkDurationNanos) / 1e6);
+    }
+
+    // 每帧回报本帧实际 CPU 工作耗时(不含等 vsync 的时间,否则系统会以为我们
+    // 一直刚好用满预算,提不上频)。
+    void reportActualWorkDuration(double actualMs) {
+        if (!session_ || !reportActual_) {
+            return;
+        }
+        const int64_t nanos = static_cast<int64_t>(actualMs * 1e6);
+        // 0 或负数会被系统当非法参数拒绝。
+        reportActual_(session_, nanos > 0 ? nanos : 1);
+    }
+
+    void setTargetWorkDuration(int64_t targetNanos) {
+        if (!session_ || !updateTarget_ || targetNanos == targetNanos_) {
+            return;
+        }
+        updateTarget_(session_, targetNanos);
+        targetNanos_ = targetNanos;
+    }
+
+    void detach() {
+        if (session_ && closeSession_) {
+            closeSession_(session_);
+        }
+        session_ = nullptr;
+    }
+
+    bool active() const { return session_ != nullptr; }
+
+private:
+    using UpdateTargetFn = int (*)(void*, int64_t);
+    using ReportActualFn = int (*)(void*, int64_t);
+    using CloseSessionFn = void (*)(void*);
+
+    void* session_ = nullptr;
+    int64_t targetNanos_ = 0;
+    UpdateTargetFn updateTarget_ = nullptr;
+    ReportActualFn reportActual_ = nullptr;
+    CloseSessionFn closeSession_ = nullptr;
+};
+
+RenderThreadPerformanceHint gPerformanceHint;
+
+} // namespace
+
 
 
 // ============================================================
@@ -294,12 +513,15 @@ static void renderFrame() {
 
     const double frameTotalMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - frameStart).count();
+    // 回报本帧 CPU 工作耗时。**刻意不含 swapMs** —— eglSwapBuffers 里绝大部分是
+    // 等 vsync 的空转,算进去会让系统以为我们每帧都刚好用满预算,反而不提速。
+    gPerformanceHint.reportActualWorkDuration(engineMs + postEngineMs);
     const uint64_t frameId = gEngine->presentationTrace().camera.frameId;
     if (frameId <= 3 || frameId % 120 == 0 ||
         frameTotalMs >= 25.0 || swapMs >= 8.0) {
         LOGI(
             "FrameLoop frame=%llu total=%.3f sdk=%.3f engine=%.3f "
-            "post=%.3f swap=%.3f callback=%.3f cpu=%d presented=%d swapOk=%d",
+            "post=%.3f swap=%.3f callback=%.3f cpu=%d hint=%d presented=%d swapOk=%d",
             static_cast<unsigned long long>(frameId),
             frameTotalMs,
             sdkMs,
@@ -312,6 +534,7 @@ static void renderFrame() {
             // 小核簇(cpu0-3),同样的活 ~8ms 涨到 ~21ms → 错过 16.67ms 预算掉到
             // 30fps。判"卡"先看这个字段,不要先怀疑引擎做多了活。
             sched_getcpu(),
+            gPerformanceHint.active() ? 1 : 0,
             presented ? 1 : 0,
             swapOk == EGL_TRUE ? 1 : 0);
         // 北极星 Phase 0 测量台:每帧(采样)打相机真实位姿,消除"nadir/oblique"
@@ -551,6 +774,28 @@ private:
             std::lock_guard<std::mutex> lock(looperMutex_);
             looper_ = ALooper_prepare(0);
         }
+        // 渲染线程优先级。裸 std::thread 继承 nice=0,EAS 看它利用率不到 50% 就
+        // 判定"小核装得下" —— 但小核上同样的活要 21ms,反而错过 16.67ms。
+        // Android 自家 RenderThread 跑在 display 优先级(-4),这里对齐到
+        // urgent-display(-8),让调度器按延迟敏感任务对待。nice 是 per-thread 的。
+        // 见上方「渲染线程放置策略」。① 必须在本线程内登记(登记的是 gettid());
+        // 目标时长申报 16.6ms 而非 16.67ms,留一点余量让系统把"刚好用满"判成需要
+        // 提速。① 生效时就不再下探 ②③ —— 让系统自己调度总比我们写死好。
+        setpriority(PRIO_PROCESS, 0, -8);
+        gPerformanceHint.attachCurrentThread(static_cast<int64_t>(16.6 * 1e6));
+        const char* placement = "adpf";
+        int pinnedCores = 0;
+        if (!gPerformanceHint.active()) {
+            if (setCurrentThreadUclampMin(kRenderThreadUclampMin)) {
+                placement = "uclamp";
+            } else if (pinCurrentThreadToPerformanceCores(&pinnedCores)) {
+                placement = "affinity";
+            } else {
+                placement = "none";
+            }
+        }
+        LOGI("RenderThreadPlacement mode=%s pinnedCores=%d nice=%d",
+             placement, pinnedCores, getpriority(PRIO_PROCESS, 0));
         if (!initEGL(window)) {
             LOGE("Failed to initialize EGL on render thread");
         } else if (!createEngine()) {
@@ -568,6 +813,8 @@ private:
         }
 
         drainTasks();
+        // 与 attachCurrentThread 配对:session 绑的是本线程 tid,线程退出前关掉。
+        gPerformanceHint.detach();
         // destroyEGL 内部先清引擎对象（GPU 资源析构需当前 context），再拆 EGL
         destroyEGL();
         choreographer_ = nullptr;
