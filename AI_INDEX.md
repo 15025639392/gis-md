@@ -2196,11 +2196,24 @@ Process-wide singleton (`shared()`, .cpp:576-579) owning one libcurl `multi` han
 | `drainCompletedRequests` | .cpp:470-536 | Reads `CURLMSG_DONE`; status = httpCode or `-1`; body moved to callback only if status==200; Android-only failure log |
 | `getBlocking` | .cpp:608-655 | Sync wrapper over async `get` (default 20s timeout); polls `shouldCancel` every 20ms; cancels on timeout/cancel |
 
+### threading/RenderThreadPlacement.h + android/RenderThreadPlacementAndroid.cpp (+ threading/RenderThreadPlacementNoop.cpp)
+
+Host-facing helper that keeps a caller-owned render thread off the little cluster — the SDK never creates that thread, so this is opt-in, not engine-internal. Cross-platform header, CMake-selected impl (Android real, everything else no-op) like `RenderDevice`/`PlatformBridge`.
+
+| Item | Lines | Description |
+| --- | --- | --- |
+| `applyToCurrentThread` | Android .cpp:182-209 | Must run *on* the render thread (ADPF registers `gettid()`). `setpriority(-8)`, then three-tier fallback: ① ADPF `APerformanceHint` session (all symbols via `dlsym`, API 33 vs minSdk 26) → ② `uclamp_min` via raw `sched_setattr` syscall (no bionic wrapper) → ③ affinity to the performance cluster. Returns `Status{mode, pinnedCoreCount, threadNice}` |
+| `reportActualWorkDurationMs` | Android .cpp:211-218 | Per-frame CPU work; **must exclude vsync wait** (`eglSwapBuffers`) or the system reads "always exactly on budget" and never boosts. No-op unless ① is live |
+| `pinCurrentThreadToPerformanceCores` | Android .cpp:73-110 | ③'s core set from runtime `cpuinfo_max_freq` (anything above the lowest tier), never hardcoded core ids; bails on unreadable topology or homogeneous SoCs |
+| `release` | Android .cpp:230-235 | Closes the ① session (bound to the registering tid) before the thread dies; dtor calls it; ②③ die with the thread |
+
+Measured (PHK110 / api 36, release A/B): before = 91% of frames on cpu0-3, engine 21-22ms, ~30fps; after = 100% on cpu4-7, engine 6.6-9.4ms, locked 60fps. On that device ① is unimplemented by the PowerHAL and ② returns EPERM, so it lands on ③. `nice` alone does nothing for placement (it only weights timeslices inside one runqueue). Demo call sites: `examples/android/MinimalGlobe/GLESView.cpp` (thread entry / per-frame / thread exit), which logs `RenderThreadPlacement mode=… pinnedCores=… nice=…` plus the per-frame `cpu=` / `hint=` fields.
+
 ### stb_image_impl.cpp
 
 Single translation unit defining `STB_IMAGE_IMPLEMENTATION` (avoids multiple-definition link errors); `__has_include(<stb_image.h>)`-guarded (.cpp:2-5).
 
-**File paths (all under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/platform/`):** `android/RenderDeviceGLES.{h,cpp}`, `android/AndroidPlatformBridge.{h,cpp}`, `ios/RenderDeviceMetal.{h,mm}`, `macos/MacPlatformBridge.{h,mm}`, `bridge/PlatformBridge.h`, `bridge/CurlPlatformBridge.{h,cpp}`, `bridge/CurlMultiRequestScheduler.{h,cpp}`, `stb_image_impl.cpp`. Shared render constants live in `../../renderer/RenderCommand.h:14-19`. Undefined `terrainShader()` decl at `../../renderer/Renderer.h:57` (no .cpp definition). Post-refactor: no `RenderCommandKind::GlobeSurface`, no globe shader/mesh path in either backend.
+**File paths (all under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/platform/`):** `android/RenderDeviceGLES.{h,cpp}`, `android/AndroidPlatformBridge.{h,cpp}`, `ios/RenderDeviceMetal.{h,mm}`, `macos/MacPlatformBridge.{h,mm}`, `bridge/PlatformBridge.h`, `bridge/CurlPlatformBridge.{h,cpp}`, `bridge/CurlMultiRequestScheduler.{h,cpp}`, `stb_image_impl.cpp`, `android/RenderThreadPlacementAndroid.cpp` (paired with `../../threading/RenderThreadPlacement.h` + `../../threading/RenderThreadPlacementNoop.cpp`). Shared render constants live in `../../renderer/RenderCommand.h:14-19`. Undefined `terrainShader()` decl at `../../renderer/Renderer.h:57` (no .cpp definition). Post-refactor: no `RenderCommandKind::GlobeSurface`, no globe shader/mesh path in either backend.
 
 ---
 

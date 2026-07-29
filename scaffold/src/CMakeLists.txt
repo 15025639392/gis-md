@@ -598,6 +598,7 @@ if(ANDROID)
         earth_engine/platform/android/RenderDeviceGLES.cpp
         earth_engine/platform/android/AndroidPlatformBridge.h
         earth_engine/platform/android/AndroidPlatformBridge.cpp
+        earth_engine/platform/android/RenderThreadPlacementAndroid.cpp
     )
     # Android NDK 自带 GLES3
     find_library(GLESv3_LIBRARY GLESv3)
@@ -757,7 +758,15 @@ target_sources(earth_engine_core PRIVATE
 # ============================================================
 target_sources(earth_engine_core PRIVATE
     earth_engine/threading/CancellationToken.h
+    earth_engine/threading/RenderThreadPlacement.h
 )
+# 渲染线程放置策略：接口跨平台，实现按平台二选一（Android 走 ADPF/uclamp/亲和
+# 三级降级，其它平台空实现），与 RenderDevice/PlatformBridge 同一套 adapter 选择法。
+if(NOT ANDROID)
+    target_sources(earth_engine_core PRIVATE
+        earth_engine/threading/RenderThreadPlacementNoop.cpp
+    )
+endif()
 
 # ============================================================
 # 依赖库
