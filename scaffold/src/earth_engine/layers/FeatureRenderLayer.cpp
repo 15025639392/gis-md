@@ -2,6 +2,7 @@
 
 #include "../data/PolygonTessellator.h"
 #include "../data/LineTessellator.h"
+#include "../renderer/GlyphAtlas.h"
 #include "../renderer/RenderDevice.h"
 #include "../renderer/Renderer.h"
 #include "../scene/FrameState.h"
@@ -248,7 +249,9 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<float>& lineVerts,
     std::vector<uint32_t>& lineIndices,
     std::vector<float>& pointVerts,
-    std::vector<uint32_t>& pointIndices) const {
+    std::vector<uint32_t>& pointIndices,
+    std::vector<float>& labelVerts,
+    std::vector<uint32_t>& labelIndices) const {
     // 贴地:预变换出细分+采样高度的副本(高度已含 offset),镶嵌时
     // heightOffset 传 0 防二次叠加;Absolute 走原几何 + offset。
     const bool clamp =
@@ -346,6 +349,100 @@ void FeatureRenderLayer::tessellateFeatureInto(
             break;
         }
     }
+
+    // ---- P5b 文字标注(先无避让全画) ----
+    // properties[labelProperty] 非空且字体就绪 → 锚点处 glyph quads
+    // (28B:anchor+offsetPx+uv)。锚点:Point 本体/LineString 中点顶点/
+    // Polygon 环 bbox 中心;贴地时中心点单独采样。
+    if (glyphAtlas_ && glyphAtlas_->ready() &&
+        !geometry->rings.empty() && !geometry->rings[0].empty()) {
+        const auto propIt = feature.properties.find(style_.labelProperty);
+        if (propIt == feature.properties.end() || propIt->second.empty()) {
+            return;
+        }
+        // 锚点地理坐标(高度语义:clamp 时 geometry 顶点已含 offset,中心
+        // 点走 sample+offset;absolute 时统一 + tessHeightOffset)。
+        Cartographic anchorCarto = geometry->rings[0][0];
+        if (geometry->type == GeometryType::LineString) {
+            const auto& ring = geometry->rings[0];
+            anchorCarto = ring[ring.size() / 2];
+        } else if (geometry->type == GeometryType::Polygon) {
+            double west = std::numeric_limits<double>::max();
+            double east = std::numeric_limits<double>::lowest();
+            double south = std::numeric_limits<double>::max();
+            double north = std::numeric_limits<double>::lowest();
+            for (const auto& c : geometry->rings[0]) {
+                west = std::min(west, c.longitude());
+                east = std::max(east, c.longitude());
+                south = std::min(south, c.latitude());
+                north = std::max(north, c.latitude());
+            }
+            const double lng = (west + east) * 0.5;
+            const double lat = (south + north) * 0.5;
+            const bool clampMode =
+                style_.altitudeMode == FeatureAltitudeMode::ClampToGround;
+            const double h =
+                clampMode
+                    ? (sample ? static_cast<double>(
+                                    sample(lng, lat).value_or(0.0f))
+                              : 0.0) +
+                          style_.heightOffset
+                    : geometry->rings[0][0].height();
+            anchorCarto = Cartographic(lng, lat, h);
+        }
+        const Vec3 anchor = ellipsoid_.cartographicToCartesian(Cartographic(
+            anchorCarto.longitude(), anchorCarto.latitude(),
+            anchorCarto.height() + tessHeightOffset));
+        ensureOrigin(anchor);
+        const Vec3 rel = anchor - origin;
+        const float ax = static_cast<float>(rel.x());
+        const float ay = static_cast<float>(rel.y());
+        const float az = static_cast<float>(rel.z());
+
+        // 布局:单行 LTR advance,水平居中,基线抬 labelOffsetPx。
+        const float s =
+            style_.labelSizePx /
+            static_cast<float>(GlyphAtlas::kGlyphPixelHeight);
+        const std::vector<uint32_t> codepoints =
+            GlyphAtlas::decodeUtf8(propIt->second);
+        float totalAdvance = 0.0f;
+        for (uint32_t cp : codepoints) {
+            if (const GlyphAtlas::Glyph* g = glyphAtlas_->ensureGlyph(cp)) {
+                totalAdvance += g->advance * s;
+            }
+        }
+        float penX = -totalAdvance * 0.5f;
+        const float baseY = style_.labelOffsetPx;
+        for (uint32_t cp : codepoints) {
+            const GlyphAtlas::Glyph* g = glyphAtlas_->ensureGlyph(cp);
+            if (!g) continue;
+            if (g->hasBitmap) {
+                const float x0 = penX + g->offsetX * s;
+                const float x1 = x0 + g->width * s;
+                const float yTop = baseY + g->offsetY * s;
+                const float yBot = yTop - g->height * s;
+                const uint32_t base =
+                    static_cast<uint32_t>(labelVerts.size() / 7);
+                const float corners[4][4] = {
+                    {x0, yBot, g->u0, g->v1},
+                    {x1, yBot, g->u1, g->v1},
+                    {x1, yTop, g->u1, g->v0},
+                    {x0, yTop, g->u0, g->v0}};
+                for (const auto& c : corners) {
+                    labelVerts.push_back(ax);
+                    labelVerts.push_back(ay);
+                    labelVerts.push_back(az);
+                    labelVerts.push_back(c[0]);
+                    labelVerts.push_back(c[1]);
+                    labelVerts.push_back(c[2]);
+                    labelVerts.push_back(c[3]);
+                }
+                const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
+                for (uint32_t idx : quad) labelIndices.push_back(base + idx);
+            }
+            penX += g->advance * s;
+        }
+    }
 }
 
 bool FeatureRenderLayer::uploadBucketGpu(
@@ -356,9 +453,22 @@ bool FeatureRenderLayer::uploadBucketGpu(
     const std::vector<uint32_t>& lineIndices,
     const std::vector<float>& pointVerts,
     const std::vector<uint32_t>& pointIndices,
+    const std::vector<float>& labelVerts,
+    const std::vector<uint32_t>& labelIndices,
     BucketGpu& out) const {
     out = BucketGpu{};
     out.origin = origin;
+    if (!labelIndices.empty()) {
+        out.labelVertexBuffer = makeBuffer(
+            renderDevice_, labelVerts.data(),
+            labelVerts.size() * sizeof(float), BufferDesc::Type::Vertex);
+        out.labelIndexBuffer = makeBuffer(
+            renderDevice_, labelIndices.data(),
+            labelIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
+        if (out.labelVertexBuffer && out.labelIndexBuffer) {
+            out.labelIndexCount = static_cast<int>(labelIndices.size());
+        }
+    }
     if (!pointIndices.empty()) {
         out.pointVertexBuffer = makeBuffer(
             renderDevice_, pointVerts.data(),
@@ -393,7 +503,7 @@ bool FeatureRenderLayer::uploadBucketGpu(
         }
     }
     return out.fillIndexCount > 0 || out.lineIndexCount > 0 ||
-           out.pointIndexCount > 0;
+           out.pointIndexCount > 0 || out.labelIndexCount > 0;
 }
 
 void FeatureRenderLayer::rebuildBucket(BucketKey key) {
@@ -413,6 +523,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     std::vector<uint32_t> lineIndices;
     std::vector<float> pointVerts;     // 5 float/顶点(anchor+corner)
     std::vector<uint32_t> pointIndices;
+    std::vector<float> labelVerts;     // 7 float/顶点(anchor+offsetPx+uv)
+    std::vector<uint32_t> labelIndices;
     Vec3 origin = Vec3::zero();
     bool hasOrigin = false;
 
@@ -432,10 +544,12 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         if (!feature) continue;
         tessellateFeatureInto(*feature, sample, origin, hasOrigin,
                               fillVerts, fillIndices, lineVerts, lineIndices,
-                              pointVerts, pointIndices);
+                              pointVerts, pointIndices,
+                              labelVerts, labelIndices);
     }
 
-    if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty()) {
+    if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty() &&
+        labelIndices.empty()) {
         buckets_.erase(key);
         return;
     }
@@ -443,7 +557,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     BucketGpu gpu;
     if (!uploadBucketGpu(origin, fillVerts, fillIndices,
                          lineVerts, lineIndices,
-                         pointVerts, pointIndices, gpu)) {
+                         pointVerts, pointIndices,
+                         labelVerts, labelIndices, gpu)) {
         // buffer 创建失败:丢弃本桶,脏区已消费 → 下次编辑该桶时重试。
         buckets_.erase(key);
         return;
@@ -456,6 +571,19 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                                              RenderCommandList& commands) {
     if (!visible_ || !renderDevice_) return;
     if (!frameState.camera) return;
+
+    // 文字标注(P5b):缓存图集指针(重镶/预览路径无 Renderer 引用);字体
+    // 就绪状态翻转 → 全部桶重镶补标注(字体注入通常晚于要素导入)。
+    glyphAtlas_ = renderer.glyphAtlas();
+    const bool atlasReady = glyphAtlas_ && glyphAtlas_->ready();
+    if (atlasReady != lastAtlasReady_) {
+        lastAtlasReady_ = atlasReady;
+        std::vector<BucketKey> keys;
+        keys.reserve(buckets_.size());
+        for (const auto& entry : buckets_) keys.push_back(entry.first);
+        for (BucketKey key : keys) rebuildBucket(key);
+        previewDirty_ = true;
+    }
 
     // 贴地重钳(P3 方案 A 过渡态):地形代次变化 → 节流重镶全部桶
     // (LOD 细化/加载会改高度;不重钳则要素浮沉)。120 帧节流防加载期
@@ -492,6 +620,8 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         std::vector<uint32_t> lineIndices;
         std::vector<float> pointVerts;
         std::vector<uint32_t> pointIndices;
+        std::vector<float> labelVerts;
+        std::vector<uint32_t> labelIndices;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
         tessellateFeatureInto(previewFeature,
@@ -499,11 +629,13 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                               origin, hasOrigin,
                               fillVerts, fillIndices,
                               lineVerts, lineIndices,
-                              pointVerts, pointIndices);
+                              pointVerts, pointIndices,
+                              labelVerts, labelIndices);
         if (hasOrigin) {
             previewGpuValid_ = uploadBucketGpu(
                 origin, fillVerts, fillIndices, lineVerts, lineIndices,
-                pointVerts, pointIndices, previewGpu_);
+                pointVerts, pointIndices, labelVerts, labelIndices,
+                previewGpu_);
         }
     }
 
@@ -619,6 +751,48 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
                                           static_cast<float>(vpH)};
             cmd.uniforms["u_pointSizePx"] = {style_.pointSizePx};
+            commands.push_back(std::move(cmd));
+        }
+
+        if (gpu.labelIndexCount > 0 && renderer.vectorLabelShader() &&
+            glyphAtlas_ && glyphAtlas_->texture()) {
+            RenderCommand cmd;
+            cmd.kind = RenderCommandKind::VectorLabel;
+            cmd.owner = layerId_;
+            cmd.pass = "color";
+            cmd.frameId = frameState.frameId;
+            cmd.shader = renderer.vectorLabelShader();
+            cmd.vertexBuffer = gpu.labelVertexBuffer.get();
+            cmd.indexBuffer = gpu.labelIndexBuffer.get();
+            cmd.indexCount = gpu.labelIndexCount;
+            cmd.indexType = RenderCommand::IndexType::UInt32;
+            cmd.vertexStride = 28;  // anchor(12)+offsetPx(8)+uv(8)
+            cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+            cmd.depthTest = true;
+            cmd.depthWrite = false;
+            cmd.blend = true;
+            cmd.cullFace = false;
+            cmd.textures.push_back(glyphAtlas_->texture());
+            cmd.uniforms["u_modelViewProjection"] = mvpUniform;
+            cmd.uniforms["u_color"] = {style_.labelColor[0],
+                                       style_.labelColor[1],
+                                       style_.labelColor[2],
+                                       style_.labelColor[3]};
+            cmd.uniforms["u_haloColor"] = {style_.labelHaloColor[0],
+                                           style_.labelHaloColor[1],
+                                           style_.labelHaloColor[2],
+                                           style_.labelHaloColor[3]};
+            cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
+                                          static_cast<float>(vpH)};
+            cmd.uniforms["u_sdfEdge"] = {
+                static_cast<float>(GlyphAtlas::kSdfOnEdge) / 255.0f};
+            // halo 宽(px,标注字号尺度)→ 字形栅格 px → SDF 值差。
+            const float glyphScale =
+                style_.labelSizePx /
+                static_cast<float>(GlyphAtlas::kGlyphPixelHeight);
+            cmd.uniforms["u_sdfHaloDelta"] = {
+                style_.labelHaloPx / std::max(0.01f, glyphScale) *
+                GlyphAtlas::kSdfDistScale / 255.0f};
             commands.push_back(std::move(cmd));
         }
     }

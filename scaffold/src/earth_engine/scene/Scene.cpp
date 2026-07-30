@@ -14,6 +14,7 @@
 #include "../interaction/InputEvent.h"
 #include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
+#include "../renderer/GlyphAtlas.h"
 #include "../renderer/Renderer.h"
 #include "../tiling/Tileset.h"
 
@@ -324,6 +325,11 @@ void Scene::addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer) {
 std::unique_ptr<FeatureRenderLayer> Scene::removeFeatureRenderLayer(
     const std::string& layerId) {
     return layers_->removeFeatureRenderLayer(layerId);
+}
+
+bool Scene::setLabelFontData(std::vector<uint8_t> fontData) {
+    if (!renderer_ || !renderer_->glyphAtlas()) return false;
+    return renderer_->glyphAtlas()->setFontData(std::move(fontData));
 }
 
 size_t Scene::vectorLayerCount() const {

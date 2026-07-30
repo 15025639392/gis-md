@@ -898,6 +898,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             case RenderCommandKind::VectorFill:
             case RenderCommandKind::VectorLine:
             case RenderCommandKind::VectorPoint:
+            case RenderCommandKind::VectorLabel:
                 ++vectorCommands;
                 break;
             case RenderCommandKind::SkyBackground:
@@ -975,6 +976,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 矢量线 ribbon(P1 §6.2):按 kind 分派,不与其他 44B 布局撞
             vaoKey.layout = VertexLayoutKind::VectorLine44;
             vaoKey.vertexStride = 44;
+        } else if (cmd.kind == RenderCommandKind::VectorLabel &&
+                   cmd.vertexStride == 28) {
+            // 矢量标注(P5b):按 kind 分派
+            vaoKey.layout = VertexLayoutKind::VectorLabel28;
+            vaoKey.vertexStride = 28;
         } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）
             vaoKey.layout = VertexLayoutKind::SimpleStride;
@@ -1027,6 +1033,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 if (loc >= 0) glUniform1i(loc, unit);
             };
             setSampler("u_tileTexture", 0);
+            // 矢量 P5b 文字标注:SDF 字形图集恒绑 unit 0(标注命令
+            // textures[0];其它 program 未声明此名 → loc=-1 无副作用)。
+            setSampler("u_glyphAtlas", 0);
             // 离屏后处理 aerial fog:depth 采样器绑 unit 1(其它 program
             // 未声明此名 → loc=-1 无副作用)。
             setSampler("u_depthTexture", 1);
@@ -1488,6 +1497,18 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glEnableVertexAttribArray(4);
             glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(40));
+            break;
+        case VertexLayoutKind::VectorLabel28:
+            // 矢量标注:anchor(12)+offsetPx(8)+uv(8)
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(12));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(20));
             break;
         case VertexLayoutKind::SimpleStride: {
             // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）

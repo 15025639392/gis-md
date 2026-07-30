@@ -14,6 +14,7 @@
 namespace earth_engine {
 
 class Ellipsoid;
+class GlyphAtlas;
 class RenderDevice;
 class Renderer;
 struct FrameState;
@@ -53,6 +54,15 @@ struct FeatureRenderStyle {
     /// 点符号(P5a):SDF 圆 billboard 颜色与直径(px)。
     std::array<float, 4> pointColor{1.00f, 1.00f, 1.00f, 0.95f};
     float pointSizePx = 14.0f;
+    /// 文字标注(P5b,先无避让全画):取 properties[labelProperty] 为文本,
+    /// 锚点=Point 本体/LineString 中点顶点/Polygon 环心;字体经
+    /// Engine::setLabelFontData 注入,未注入则不出标注。
+    std::string labelProperty = "name";
+    std::array<float, 4> labelColor{1.00f, 1.00f, 1.00f, 1.00f};
+    std::array<float, 4> labelHaloColor{0.05f, 0.05f, 0.05f, 0.90f};
+    float labelSizePx = 28.0f;    ///< 文字行高(px)
+    float labelOffsetPx = 18.0f;  ///< 基线抬离锚点(px,屏幕向上)
+    float labelHaloPx = 2.0f;     ///< halo 描边宽(px)
     FeatureAltitudeMode altitudeMode = FeatureAltitudeMode::Absolute;
     /// 高程偏移(m),语义见 FeatureAltitudeMode。Clamp 模式下兼作防
     /// z-fight 抬升(地形网格是 65 格下采样,面与网格间存在格内起伏差)。
@@ -162,6 +172,9 @@ private:
         std::unique_ptr<Buffer> pointVertexBuffer;
         std::unique_ptr<Buffer> pointIndexBuffer;
         int pointIndexCount = 0;
+        std::unique_ptr<Buffer> labelVertexBuffer;
+        std::unique_ptr<Buffer> labelIndexBuffer;
+        int labelIndexCount = 0;
     };
 
     /// 重镶单桶:镶嵌桶内全部要素 → 减原点转 float → 建 buffer。
@@ -192,7 +205,9 @@ private:
                                std::vector<float>& lineVerts,
                                std::vector<uint32_t>& lineIndices,
                                std::vector<float>& pointVerts,
-                               std::vector<uint32_t>& pointIndices) const;
+                               std::vector<uint32_t>& pointIndices,
+                               std::vector<float>& labelVerts,
+                               std::vector<uint32_t>& labelIndices) const;
 
     /// CPU 数组 → BucketGpu(buffer 创建;全空返回 false)。
     bool uploadBucketGpu(const Vec3& origin,
@@ -202,6 +217,8 @@ private:
                          const std::vector<uint32_t>& lineIndices,
                          const std::vector<float>& pointVerts,
                          const std::vector<uint32_t>& pointIndices,
+                         const std::vector<float>& labelVerts,
+                         const std::vector<uint32_t>& labelIndices,
                          BucketGpu& out) const;
 
     /// 生成一对 fill/line 命令追加进 commands(常驻桶与预览路径共用)。
@@ -230,6 +247,12 @@ private:
     FeatureTerrainSampling terrainSampling_;
     uint64_t lastClampRevision_ = 0;
     uint64_t lastReclampFrameId_ = 0;
+
+    // ---- 文字标注(P5b) ----
+    // buildRenderCommands 每帧缓存(编辑预览/重镶路径无 Renderer 引用);
+    // 字体就绪状态翻转 → 全部桶重镶补标注。
+    GlyphAtlas* glyphAtlas_ = nullptr;
+    bool lastAtlasReady_ = false;
 };
 
 } // namespace earth_engine

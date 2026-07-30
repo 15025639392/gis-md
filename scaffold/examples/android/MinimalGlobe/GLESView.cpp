@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <memory>
@@ -278,6 +279,7 @@ static bool createEngine() {
                 Cartographic(106.5105 * kDeg, 29.6250 * kDeg),
                 Cartographic(106.5055 * kDeg, 29.6250 * kDeg),
                 Cartographic(106.5055 * kDeg, 29.6200 * kDeg)}};
+            poly.properties["name"] = "示范区 A";
             vectorLayer->store().addFeature(std::move(poly));
 
             Feature route;
@@ -287,7 +289,31 @@ static bool createEngine() {
                 Cartographic(106.5060 * kDeg, 29.6220 * kDeg),
                 Cartographic(106.5100 * kDeg, 29.6190 * kDeg),
                 Cartographic(106.5140 * kDeg, 29.6230 * kDeg)}};
+            route.properties["name"] = "巡线 Route-1";
             vectorLayer->store().addFeature(std::move(route));
+
+            // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。候选序:
+            // Oplus-Serif=本机中文 TrueType;NotoSansCJK.ttc 是 CFF 会被
+            // stbtt 拒(留在表里做健壮性验证);Roboto 兜底拉丁。
+            const char* fontCandidates[] = {
+                "/system/fonts/Oplus-Serif.ttf",
+                "/system/fonts/DroidSansFallback.ttf",
+                "/system/fonts/NotoSansCJK-Regular.ttc",
+                "/system/fonts/Roboto-Regular.ttf",
+            };
+            for (const char* path : fontCandidates) {
+                std::ifstream in(path, std::ios::binary);
+                if (!in) continue;
+                std::vector<uint8_t> bytes(
+                    (std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+                if (bytes.empty()) continue;
+                if (gEngine->setLabelFontData(std::move(bytes))) {
+                    LOGI("VectorP5b label font: %s", path);
+                    break;
+                }
+                LOGI("VectorP5b font rejected (CFF/parse): %s", path);
+            }
 
             gDemoFeatureLayer = vectorLayer.get();
             gEngine->addFeatureRenderLayer(std::move(vectorLayer));

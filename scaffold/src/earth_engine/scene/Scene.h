@@ -85,6 +85,9 @@ public:
     std::unique_ptr<FeatureRenderLayer> removeFeatureRenderLayer(
         const std::string& layerId);
 
+    /// 矢量标注字体注入(P5b;TrueType 字节,渲染线程调用)。
+    bool setLabelFontData(std::vector<uint8_t> fontData);
+
     // ---- 统一 Tileset（cesium-native 对齐） ----
     void setTileset(std::unique_ptr<Tileset> tileset);
     void stageTilesetReplacement(std::unique_ptr<Tileset> tileset);

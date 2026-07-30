@@ -154,6 +154,8 @@ int mvpRenderOrder(RenderCommandKind kind) {
         case RenderCommandKind::VectorLine:
         case RenderCommandKind::VectorPoint:
             return 30;
+        case RenderCommandKind::VectorLabel:
+            return 31;  // 文字压其它矢量之上
         case RenderCommandKind::Unknown:
         default:
             return 100;
@@ -281,17 +283,12 @@ validateMvpRenderCommands(const RenderCommandList& commands,
             case RenderCommandKind::VectorFill:
             case RenderCommandKind::VectorLine:
             case RenderCommandKind::VectorPoint:
+            case RenderCommandKind::VectorLabel:
                 // 矢量 P1/P5 固定状态:压深度测试出图但不写深度(半透明叠加、
                 // 顺序即桶序),双面(球面绕向视半球翻转),alpha 混合。
                 if (!requireColorPass(i, cmd, error)) return error;
                 if (!requireState(i, cmd, true, false, false, true,
-                                  cmd.kind == RenderCommandKind::VectorFill
-                                      ? "VectorFill"
-                                      : (cmd.kind ==
-                                                 RenderCommandKind::VectorLine
-                                             ? "VectorLine"
-                                             : "VectorPoint"),
-                                  error)) {
+                                  "Vector*", error)) {
                     return error;
                 }
                 break;

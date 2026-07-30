@@ -95,6 +95,10 @@ public:
     std::unique_ptr<FeatureRenderLayer> removeFeatureRenderLayer(
         const std::string& layerId);
 
+    /// 矢量标注字体注入(P5b):应用层读字体文件供字节(引擎不碰文件系统)。
+    /// TrueType/ttc 首字体;CFF/OTF 不支持返回 false。渲染线程调用。
+    bool setLabelFontData(std::vector<uint8_t> fontData);
+
     /// cesium-native 对齐：设置统一 Tileset。
     void setTileset(std::unique_ptr<Tileset> tileset);
     /// 保持当前地表可交互渲染，直到替代 Tileset 达到接管门槛。

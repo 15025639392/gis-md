@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "GlyphAtlas.h"
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
 #include "../core/math/Vec3.h"
@@ -1807,6 +1808,121 @@ fragment float4 vectorPointFragment(
 }
 )msl";
 
+// ============================================================
+// Vector Label Shader (矢量 P5b SDF 文字标注)
+// 顶点 28B:anchor(12)+offsetPx(8)+uv(8),对应 GLES VectorLabel28。
+// 锚点投影后按像素偏移屏幕展开(billboard);fragment 采 SDF 图集
+// smoothstep 出字 + halo 描边(单 pass 双阈值)。
+// ============================================================
+
+static const char* kVectorLabelVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_anchor;
+layout(location = 1) in vec2 a_offsetPx;   // 相对锚点屏幕像素偏移(y 向上)
+layout(location = 2) in vec2 a_uv;
+
+uniform mat4 u_modelViewProjection;
+uniform vec2 u_viewport;
+
+out vec2 v_uv;
+
+void main() {
+    vec4 cp = u_modelViewProjection * vec4(a_anchor, 1.0);
+    v_uv = a_uv;
+    if (cp.w <= 0.0) {
+        gl_Position = cp;
+        return;
+    }
+    vec2 offsetNdc = a_offsetPx * 2.0 / u_viewport;
+    gl_Position = cp + vec4(offsetNdc * cp.w, 0.0, 0.0);
+}
+)glsl";
+
+static const char* kVectorLabelFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+
+uniform sampler2D u_glyphAtlas;
+uniform vec4 u_color;
+uniform vec4 u_haloColor;
+uniform float u_sdfEdge;       // 轮廓阈值(kSdfOnEdge/255)
+uniform float u_sdfHaloDelta;  // halo 宽换算的 SDF 值差
+
+in vec2 v_uv;
+out vec4 fragColor;
+
+void main() {
+    float d = texture(u_glyphAtlas, v_uv).r;
+    float w = fwidth(d);
+    float fill = smoothstep(u_sdfEdge - w, u_sdfEdge + w, d);
+    float halo = smoothstep(u_sdfEdge - u_sdfHaloDelta - w,
+                            u_sdfEdge - u_sdfHaloDelta + w, d);
+    float alpha = max(fill * u_color.a, halo * u_haloColor.a);
+    if (alpha <= 0.004) discard;
+    vec3 rgb = mix(u_haloColor.rgb, u_color.rgb, fill);
+    fragColor = vec4(rgb, alpha);
+}
+)glsl";
+
+// MSL 双份约定;Metal 端矢量路径当前不出货,未经真机验证。
+static const char* kVectorLabelVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorLabelVertexIn {
+    float3 anchor [[attribute(0)]];
+    float2 offsetPx [[attribute(1)]];
+    float2 uv [[attribute(2)]];
+};
+
+struct VectorLabelVertexOut {
+    float4 position [[position]];
+    float2 uv;
+};
+
+vertex VectorLabelVertexOut vectorLabelVertex(
+        VectorLabelVertexIn in [[stage_in]],
+        constant float4x4& u_modelViewProjection [[buffer(1)]],
+        constant float2& u_viewport [[buffer(2)]]) {
+    VectorLabelVertexOut out;
+    float4 cp = u_modelViewProjection * float4(in.anchor, 1.0);
+    out.uv = in.uv;
+    out.position = cp;
+    if (cp.w <= 0.0) return out;
+    float2 offsetNdc = in.offsetPx * 2.0 / u_viewport;
+    out.position = cp + float4(offsetNdc * cp.w, 0.0, 0.0);
+    return out;
+}
+)msl";
+
+static const char* kVectorLabelFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorLabelFragmentIn {
+    float2 uv;
+};
+
+fragment float4 vectorLabelFragment(
+        VectorLabelFragmentIn in [[stage_in]],
+        texture2d<float> u_glyphAtlas [[texture(0)]],
+        sampler u_sampler [[sampler(0)]],
+        constant float4& u_color [[buffer(0)]],
+        constant float4& u_haloColor [[buffer(1)]],
+        constant float& u_sdfEdge [[buffer(2)]],
+        constant float& u_sdfHaloDelta [[buffer(3)]]) {
+    float d = u_glyphAtlas.sample(u_sampler, in.uv).r;
+    float w = fwidth(d);
+    float fill = smoothstep(u_sdfEdge - w, u_sdfEdge + w, d);
+    float halo = smoothstep(u_sdfEdge - u_sdfHaloDelta - w,
+                            u_sdfEdge - u_sdfHaloDelta + w, d);
+    float alpha = max(fill * u_color.a, halo * u_haloColor.a);
+    if (alpha <= 0.004) discard_fragment();
+    float3 rgb = mix(u_haloColor.rgb, u_color.rgb, fill);
+    return float4(rgb, alpha);
+}
+)msl";
+
 static const char* kTileFragmentMSL = R"msl(
 #include <metal_stdlib>
 using namespace metal;
@@ -3264,6 +3380,9 @@ struct Renderer::Impl {
     std::unique_ptr<ShaderProgram> vectorLineShader;
     // 矢量点符号 billboard(P5a,SDF 圆)。
     std::unique_ptr<ShaderProgram> vectorPointShader;
+    // 矢量文字标注(P5b):SDF 字形图集 + 文字 shader。
+    std::unique_ptr<GlyphAtlas> glyphAtlas;
+    std::unique_ptr<ShaderProgram> vectorLabelShader;
 
     bool initialized = false;
 };
@@ -3413,6 +3532,19 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] vectorPointShader failed — vector points unavailable\n");
     }
 
+    // ---- Vector label shader + glyph atlas (矢量 P5b 文字标注) ----
+    ShaderDesc vectorLabelSd;
+    vectorLabelSd.vertexSource =
+        isMetal ? kVectorLabelVertexMSL : kVectorLabelVertexGLSL;
+    vectorLabelSd.fragmentSource =
+        isMetal ? kVectorLabelFragmentMSL : kVectorLabelFragmentGLSL;
+    impl_->vectorLabelShader = dev->createShader(vectorLabelSd);
+    if (!impl_->vectorLabelShader) {
+        // 非致命:标注不出图,其余矢量/地形不受影响
+        fprintf(stderr, "[Renderer] vectorLabelShader failed — vector labels unavailable\n");
+    }
+    impl_->glyphAtlas = std::make_unique<GlyphAtlas>(dev);
+
     impl_->initialized = true;
     return true;
 }
@@ -3433,6 +3565,8 @@ void Renderer::dispose() {
     impl_->colorShader.reset();
     impl_->vectorLineShader.reset();
     impl_->vectorPointShader.reset();
+    impl_->vectorLabelShader.reset();
+    impl_->glyphAtlas.reset();
     impl_->tileIndexCount = 0;
     impl_->initialized = false;
 }
@@ -3446,6 +3580,10 @@ ShaderProgram* Renderer::vectorLineShader() const {
 ShaderProgram* Renderer::vectorPointShader() const {
     return impl_->vectorPointShader.get();
 }
+ShaderProgram* Renderer::vectorLabelShader() const {
+    return impl_->vectorLabelShader.get();
+}
+GlyphAtlas* Renderer::glyphAtlas() const { return impl_->glyphAtlas.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
 Texture* Renderer::surfacePlaceholderTexture() const {

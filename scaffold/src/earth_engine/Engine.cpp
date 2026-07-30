@@ -567,6 +567,10 @@ std::unique_ptr<FeatureRenderLayer> Engine::removeFeatureRenderLayer(
     return scene_->removeFeatureRenderLayer(layerId);
 }
 
+bool Engine::setLabelFontData(std::vector<uint8_t> fontData) {
+    return scene_->setLabelFontData(std::move(fontData));
+}
+
 size_t Engine::vectorLayerCount() const {
     return scene_->vectorLayerCount();
 }

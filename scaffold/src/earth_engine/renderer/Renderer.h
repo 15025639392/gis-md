@@ -9,6 +9,7 @@
 namespace earth_engine {
 
 struct FrameState;
+class GlyphAtlas;
 class RasterOverlayTile;
 struct TileKey;
 class TerrainPageStore;
@@ -47,6 +48,12 @@ public:
 
     /// 矢量点符号 billboard shader（矢量 P5a,SDF 圆;编辑手柄/Point 要素）
     ShaderProgram* vectorPointShader() const;
+
+    /// 矢量文字标注 shader（矢量 P5b,SDF 字形 + halo）
+    ShaderProgram* vectorLabelShader() const;
+
+    /// SDF 字形图集（矢量 P5b;字体字节由应用层经 Engine 注入）
+    GlyphAtlas* glyphAtlas() const;
 
     /// Tile 共享索引 buffer（64×64 grid，所有 surface tile 共用）
     Buffer* tileIndexBuffer() const;

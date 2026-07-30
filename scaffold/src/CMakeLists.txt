@@ -142,6 +142,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderCommand.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
+    earth_engine/renderer/GlyphAtlas.h
+    earth_engine/renderer/GlyphAtlas.cpp
     earth_engine/renderer/OffscreenPostProcess.h
     earth_engine/renderer/OffscreenPostProcess.cpp
     earth_engine/renderer/VirtualTexturePage.h
@@ -589,6 +591,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/platform/bridge/CurlMultiRequestScheduler.h
     earth_engine/platform/bridge/CurlMultiRequestScheduler.cpp
     earth_engine/platform/stb_image_impl.cpp
+    earth_engine/platform/stb_truetype_impl.cpp
 )
 
 # ============================================================
@@ -907,10 +910,28 @@ unset(_EARTH_ENGINE_OPENSSL_CONFIG_DIR)
 unset(_EARTH_ENGINE_ZLIB_ROOT)
 unset(_EARTH_ENGINE_VCPKG_TRIPLET)
 
-# stb_image 是 header-only；当前核心库尚未直接使用，缺失时不阻断。
+# stb 是 header-only;缺失时不阻断(stb_image/stb_truetype 的
+# __has_include 守卫路径随之编译掉)。
 find_package(stb CONFIG QUIET)
 if(stb_FOUND)
     target_link_libraries(earth_engine_core PRIVATE stb::stb)
+else()
+    # vcpkg 的 stb 包只带 FindStb.cmake(无 config),CONFIG 模式必失败 →
+    # 按 GLM 同款 fallback 直接找头目录(各 triplet 头文件内容相同)。
+    # 矢量 P5b 文字标注(stb_truetype SDF 字形)依赖此路径。
+    find_path(STB_INCLUDE_DIR stb_truetype.h
+        HINTS
+            ${STB_INCLUDE_DIR}
+            $ENV{STB_INCLUDE_DIR}
+            ${CMAKE_CURRENT_LIST_DIR}/../../../globe/third_party/vcpkg/packages/stb_arm64-android/include
+            ${CMAKE_CURRENT_LIST_DIR}/../../../globe/third_party/vcpkg/packages/stb_arm64-osx/include
+            /opt/homebrew/include
+            /usr/local/include
+        NO_CMAKE_FIND_ROOT_PATH
+    )
+    if(STB_INCLUDE_DIR)
+        target_include_directories(earth_engine_core PUBLIC ${STB_INCLUDE_DIR})
+    endif()
 endif()
 
 # ============================================================

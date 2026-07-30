@@ -279,3 +279,121 @@ TEST_F(FeatureRenderLayerTest, SameBucketFeaturesShareOneCommandPair) {
         }
     }
 }
+
+// ============================================================
+// P5b 文字标注(SDF 字形图集 + VectorLabel)
+// ============================================================
+
+#include "earth_engine/renderer/GlyphAtlas.h"
+#include <fstream>
+
+namespace {
+
+// host 侧真字体(TrueType glyf):按候选表读第一个能被 stbtt 解析的。
+std::vector<uint8_t> loadHostFont() {
+    const char* candidates[] = {
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Geneva.ttf",
+    };
+    for (const char* path : candidates) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) continue;
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        if (!bytes.empty()) return bytes;
+    }
+    return {};
+}
+
+} // namespace
+
+TEST(GlyphAtlasTest, DecodeUtf8MixedText) {
+    const auto cps = GlyphAtlas::decodeUtf8("A中\xF0\x9F\x99\x82");
+    ASSERT_EQ(3u, cps.size());
+    EXPECT_EQ(0x41u, cps[0]);
+    EXPECT_EQ(0x4E2Du, cps[1]);
+    EXPECT_EQ(0x1F642u, cps[2]);
+}
+
+TEST(GlyphAtlasTest, RasterizesAndPacksGlyphs) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+
+    earth_engine::testing::MockRenderDevice device;
+    GlyphAtlas atlas(&device);
+    if (!atlas.setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    ASSERT_TRUE(atlas.ready());
+    EXPECT_GT(atlas.ascent(), 0.0f);
+
+    const GlyphAtlas::Glyph* a = atlas.ensureGlyph('A');
+    const GlyphAtlas::Glyph* b = atlas.ensureGlyph('B');
+    ASSERT_NE(nullptr, a);
+    ASSERT_NE(nullptr, b);
+    EXPECT_TRUE(a->hasBitmap);
+    EXPECT_GT(a->advance, 0.0f);
+    EXPECT_GT(a->width, 0.0f);
+    // uv 合法且 A/B 不重叠(shelf 打包同一行左右排)
+    EXPECT_GE(a->u0, 0.0f);
+    EXPECT_LE(a->u1, 1.0f);
+    EXPECT_LT(a->u0, a->u1);
+    EXPECT_LE(a->u1, b->u0 + 1e-6f);
+    // 空格:无位图只前进
+    const GlyphAtlas::Glyph* space = atlas.ensureGlyph(' ');
+    ASSERT_NE(nullptr, space);
+    EXPECT_FALSE(space->hasBitmap);
+    EXPECT_GT(space->advance, 0.0f);
+    // 重复取:同一实例(缓存)
+    EXPECT_EQ(a, atlas.ensureGlyph('A'));
+}
+
+TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+
+    Feature p;
+    p.type = GeometryType::Point;
+    p.rings = {{Cartographic(106.0 * kDeg, 29.0 * kDeg)}};
+    p.properties["name"] = "AB";
+    layer_->store().addFeature(std::move(p));
+
+    RenderCommandList commands = build();
+    const RenderCommand* label = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
+    }
+    ASSERT_NE(nullptr, label);
+    EXPECT_EQ(28, label->vertexStride);
+    EXPECT_EQ(12, label->indexCount);  // 2 字形 × 6
+    ASSERT_EQ(1u, label->textures.size());
+    EXPECT_NE(nullptr, label->textures[0]);
+    ASSERT_EQ(1u, label->uniforms.count("u_sdfEdge"));
+    ASSERT_EQ(1u, label->uniforms.count("u_sdfHaloDelta"));
+    EXPECT_EQ("color", label->pass);
+    EXPECT_TRUE(label->blend);
+
+    // 顶点打包:2 字形 × 4 顶点 × 28B;offsetPx 水平居中(首字形 x < 0)
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        label->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    ASSERT_EQ(2u * 4u * 28u, vb->bytes().size());
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_LT(floats[3], 0.0f);  // 首顶点 offsetPx.x 在锚点左侧
+}
+
+TEST_F(FeatureRenderLayerTest, NoLabelWithoutFontOrName) {
+    // 字体未注入:有 name 也不出标注
+    Feature p;
+    p.type = GeometryType::Point;
+    p.rings = {{Cartographic(106.0 * kDeg, 29.0 * kDeg)}};
+    p.properties["name"] = "X";
+    layer_->store().addFeature(std::move(p));
+    for (const auto& cmd : build()) {
+        EXPECT_NE(RenderCommandKind::VectorLabel, cmd.kind);
+    }
+}
