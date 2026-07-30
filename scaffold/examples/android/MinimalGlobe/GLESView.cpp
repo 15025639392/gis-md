@@ -252,28 +252,33 @@ static bool createEngine() {
             style.fillColor = {0.20f, 0.55f, 0.95f, 0.35f};
             style.lineColor = {1.00f, 0.72f, 0.05f, 0.95f};
             style.lineWidthPx = 6.0f;
-            style.heightOffset = 500.0;
+            // 高于本区山体(~550m)防地形从 fill 平面穿出被 depthTest 切碎
+            // (穿出即"破碎多边形"观感),又低于 RESET 相机(1500m)保持在视野
+            // 内;贴地钳制(P3)是根治。
+            style.heightOffset = 800.0;
             vectorLayer->setStyle(style);
 
             // 尺寸压到 RESET 预设视角(106.508,29.617,1.5km,-45°)一屏内:
             // 面 ~1.1km 见方带边界,线折两折穿过视野中心。
+            // 尺寸 ~550m,钉在 RESET 视角(1500m/-45°)中带:800m 面高下
+            // 角点全部可见可拾取。
             Feature poly;
             poly.type = GeometryType::Polygon;
             poly.rings = {{
-                Cartographic(106.503 * kDeg, 29.622 * kDeg),
-                Cartographic(106.513 * kDeg, 29.622 * kDeg),
-                Cartographic(106.513 * kDeg, 29.632 * kDeg),
-                Cartographic(106.503 * kDeg, 29.632 * kDeg),
-                Cartographic(106.503 * kDeg, 29.622 * kDeg)}};
+                Cartographic(106.5055 * kDeg, 29.6200 * kDeg),
+                Cartographic(106.5105 * kDeg, 29.6200 * kDeg),
+                Cartographic(106.5105 * kDeg, 29.6250 * kDeg),
+                Cartographic(106.5055 * kDeg, 29.6250 * kDeg),
+                Cartographic(106.5055 * kDeg, 29.6200 * kDeg)}};
             vectorLayer->store().addFeature(std::move(poly));
 
             Feature route;
             route.type = GeometryType::LineString;
             route.rings = {{
-                Cartographic(106.496 * kDeg, 29.618 * kDeg),
-                Cartographic(106.504 * kDeg, 29.626 * kDeg),
-                Cartographic(106.512 * kDeg, 29.622 * kDeg),
-                Cartographic(106.520 * kDeg, 29.630 * kDeg)}};
+                Cartographic(106.5020 * kDeg, 29.6180 * kDeg),
+                Cartographic(106.5060 * kDeg, 29.6220 * kDeg),
+                Cartographic(106.5100 * kDeg, 29.6190 * kDeg),
+                Cartographic(106.5140 * kDeg, 29.6230 * kDeg)}};
             vectorLayer->store().addFeature(std::move(route));
 
             gDemoFeatureLayer = vectorLayer.get();

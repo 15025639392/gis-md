@@ -4,6 +4,7 @@
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <unordered_map>
@@ -82,6 +83,130 @@ TessellatedFill PolygonTessellator::tessellate(const Feature& feature,
     }
 
     if (points2D.size() < 3 || constraints.empty()) return out;
+
+    // ---- 约束边求交预分裂(编辑畸形输入) ----
+    // 编辑把顶点拖过对边会产生自交环,而 CDT 前置约定约束边不交叉(违约
+    // 输入会搅乱奇偶 flood-fill → fill 与 outline 对不上的"破碎多边形")。
+    // 这里建立前置条件:对每对非共端点约束边求交——真交叉插入交点为
+    // Steiner 点、端点落在对方边内(T 型接触)记为对方的分裂点、共线重叠
+    // 按互相包含的端点分裂;逐边按参数排序重建子段。分裂后 flood-fill 的
+    // 奇偶计数即 even-odd 填充语义(蝴蝶结两叶都填)。子段仍在原线段上,
+    // 不产生新交叉,单趟即收敛。O(E²) 对编辑尺度(几十~几百边)可忽略。
+    {
+        // 交点的 Cartographic 沿边端点线性插值(容差尺度下误差可忽略)。
+        auto internLerp = [&](const ConstrainedDelaunay::Edge& e,
+                              double t) -> uint32_t {
+            const Cartographic& a = uniqueCart[e.first];
+            const Cartographic& b = uniqueCart[e.second];
+            return internUnique(Cartographic(
+                a.longitude() + (b.longitude() - a.longitude()) * t,
+                a.latitude() + (b.latitude() - a.latitude()) * t,
+                a.height() + (b.height() - a.height()) * t));
+        };
+        auto cross2 = [](const glm::dvec2& a, const glm::dvec2& b) {
+            return a.x * b.y - a.y * b.x;
+        };
+
+        // 每条边的分裂点:(沿边参数 t, 唯一点索引)。
+        std::vector<std::vector<std::pair<double, uint32_t>>> cuts(
+            constraints.size());
+        for (size_t i = 0; i < constraints.size(); ++i) {
+            const glm::dvec2 a1 = points2D[constraints[i].first];
+            const glm::dvec2 a2 = points2D[constraints[i].second];
+            const glm::dvec2 r = a2 - a1;
+            const double rLen2 = glm::dot(r, r);
+            if (rLen2 <= 0.0) continue;
+            // 参数容差 = 量化格(kQuantum)换算到本边参数空间:交点离端点
+            // 不足一个量化格 → 视为端点接触,不分裂。
+            const double tEps = 2.0 * kQuantum / std::sqrt(rLen2);
+            for (size_t j = i + 1; j < constraints.size(); ++j) {
+                const bool shareEndpoint =
+                    constraints[i].first == constraints[j].first ||
+                    constraints[i].first == constraints[j].second ||
+                    constraints[i].second == constraints[j].first ||
+                    constraints[i].second == constraints[j].second;
+                const glm::dvec2 b1 = points2D[constraints[j].first];
+                const glm::dvec2 b2 = points2D[constraints[j].second];
+                const glm::dvec2 s = b2 - b1;
+                const double sLen2 = glm::dot(s, s);
+                if (sLen2 <= 0.0) continue;
+                const double uEps = 2.0 * kQuantum / std::sqrt(sLen2);
+                const glm::dvec2 d = b1 - a1;
+                const double denom = cross2(r, s);
+                // 近平行阈值:sin(夹角) 小于量化格/边长量级时走共线分支。
+                const double parallelEps =
+                    2.0 * kQuantum * std::sqrt(std::max(rLen2, sLen2));
+                if (std::abs(denom) <= parallelEps) {
+                    // 平行:仅共线重叠需要处理(把对方端点投影为分裂点)。
+                    if (std::abs(cross2(d, r)) >
+                        2.0 * kQuantum * std::sqrt(rLen2)) {
+                        continue;  // 平行不共线
+                    }
+                    const uint32_t jEnds[2] = {constraints[j].first,
+                                               constraints[j].second};
+                    for (uint32_t pIdx : jEnds) {
+                        const double t =
+                            glm::dot(points2D[pIdx] - a1, r) / rLen2;
+                        if (t > tEps && t < 1.0 - tEps) {
+                            cuts[i].emplace_back(t, pIdx);
+                        }
+                    }
+                    const uint32_t iEnds[2] = {constraints[i].first,
+                                               constraints[i].second};
+                    for (uint32_t pIdx : iEnds) {
+                        const double u =
+                            glm::dot(points2D[pIdx] - b1, s) / sLen2;
+                        if (u > uEps && u < 1.0 - uEps) {
+                            cuts[j].emplace_back(u, pIdx);
+                        }
+                    }
+                    continue;
+                }
+                const double t = cross2(d, s) / denom;
+                const double u = cross2(d, r) / denom;
+                if (t < -tEps || t > 1.0 + tEps ||
+                    u < -uEps || u > 1.0 + uEps) {
+                    continue;  // 延长线相交,不在两线段上
+                }
+                const bool tInterior = t > tEps && t < 1.0 - tEps;
+                const bool uInterior = u > uEps && u < 1.0 - uEps;
+                if (tInterior && uInterior) {
+                    // 真交叉(共端点边到不了这里):插 Steiner 点,两边都分裂
+                    const uint32_t pIdx = internLerp(constraints[i], t);
+                    cuts[i].emplace_back(t, pIdx);
+                    cuts[j].emplace_back(u, pIdx);
+                } else if (tInterior && !shareEndpoint) {
+                    // j 的端点落在 i 内部(T 型):分裂 i
+                    cuts[i].emplace_back(t, u < 0.5 ? constraints[j].first
+                                                    : constraints[j].second);
+                } else if (uInterior && !shareEndpoint) {
+                    cuts[j].emplace_back(u, t < 0.5 ? constraints[i].first
+                                                    : constraints[i].second);
+                }
+            }
+        }
+
+        std::vector<ConstrainedDelaunay::Edge> splitConstraints;
+        splitConstraints.reserve(constraints.size());
+        for (size_t i = 0; i < constraints.size(); ++i) {
+            if (cuts[i].empty()) {
+                splitConstraints.push_back(constraints[i]);
+                continue;
+            }
+            std::sort(cuts[i].begin(), cuts[i].end());
+            uint32_t prev = constraints[i].first;
+            for (const auto& [t, idx] : cuts[i]) {
+                if (idx != prev) {
+                    splitConstraints.emplace_back(prev, idx);
+                    prev = idx;
+                }
+            }
+            if (constraints[i].second != prev) {
+                splitConstraints.emplace_back(prev, constraints[i].second);
+            }
+        }
+        constraints = std::move(splitConstraints);
+    }
 
     std::vector<uint32_t> tris =
         ConstrainedDelaunay::triangulate(points2D, constraints);

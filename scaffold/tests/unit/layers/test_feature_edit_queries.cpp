@@ -145,6 +145,41 @@ TEST_F(FeatureEditQueriesTest, PickPrefersVertexOverEdgeAndFill) {
     EXPECT_EQ(0, hit.vertexIndex);
 }
 
+TEST_F(FeatureEditQueriesTest, PickObliqueWithHeightOffsetFindsSmallFeature) {
+    // 真机踩过的 miss:预筛用裸椭球交点,斜视下比 heightOffset 面上的
+    // 要素偏出 ~offset·tan(俯角),小要素整体漏筛。
+    FeatureRenderStyle style = layer_->style();
+    style.heightOffset = 800.0;
+    layer_->setStyle(style);
+
+    // ~550m 小方形 + 45° 斜视相机(从南侧 2km 外、高 2km 看向原点)
+    Feature small;
+    small.type = GeometryType::Polygon;
+    small.rings = {{Cartographic(-0.0025 * kDeg, -0.0025 * kDeg),
+                    Cartographic(0.0025 * kDeg, -0.0025 * kDeg),
+                    Cartographic(0.0025 * kDeg, 0.0025 * kDeg),
+                    Cartographic(-0.0025 * kDeg, 0.0025 * kDeg),
+                    Cartographic(-0.0025 * kDeg, 0.0025 * kDeg)}};
+    const FeatureId id = layer_->store().addFeature(std::move(small));
+
+    const Vec3 target = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0, 800.0));
+    const Vec3 south = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, -2000.0 / 6.378137e6, 800.0));
+    camera_.lookAt(south + Vec3(2000.0, 0.0, 0.0), target,
+                   Vec3(0.0, 0.0, 1.0));
+
+    // 点击位置 = 顶点在 heightOffset 面上的投影(与渲染一致)
+    float sx = 0, sy = 0;
+    projectToScreen(
+        Cartographic(0.0025 * kDeg, 0.0025 * kDeg, 800.0), sx, sy);
+    const FeaturePickResult hit = layer_->pick(frame_, sx, sy, 12.0f);
+    ASSERT_TRUE(hit.isValid());
+    EXPECT_EQ(FeaturePickResult::Part::Vertex, hit.part);
+    EXPECT_EQ(id, hit.featureId);
+    EXPECT_EQ(2, hit.vertexIndex);
+}
+
 // ============================================================
 // snap
 // ============================================================

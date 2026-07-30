@@ -464,11 +464,17 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
     const double vpH = static_cast<double>(frameState.viewportHeightPixels);
     if (vpW <= 0.0 || vpH <= 0.0) return result;
 
-    // 1. 射线∩椭球定拾取邻域中心(要素在 heightOffset 面上,偏差被预筛
-    //    半径的宽松系数吸收)。
+    // 1. 射线∩"抬高 heightOffset 的椭球面"定拾取邻域中心。必须用要素
+    //    实际所在面:斜视下裸椭球交点沿视线偏出 ~heightOffset·tan(俯角),
+    //    800m 面高 45° 斜视即偏 ~800m,足以让 R-tree 预筛整体落空
+    //    (真机踩过:小要素 pick 恒 miss)。
     const Ray ray = cam.getPickRay(screenXPx, screenYPx, vpW, vpH);
+    const Ellipsoid offsetSurface(
+        ellipsoid_.radii().x() + style_.heightOffset,
+        ellipsoid_.radii().y() + style_.heightOffset,
+        ellipsoid_.radii().z() + style_.heightOffset);
     const auto interval =
-        ellipsoid_.rayIntersectionInterval(ray.origin(), ray.direction());
+        offsetSurface.rayIntersectionInterval(ray.origin(), ray.direction());
     if (!interval) return result;
     const double tHit = interval->entryDistance > 0.0
                             ? interval->entryDistance
