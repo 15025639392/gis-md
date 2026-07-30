@@ -126,3 +126,68 @@ TEST(DecodedHeightmapSamplerTest, BorderInsetZeroPreservesVertexGrid) {
     EXPECT_NEAR(20.0f, hm.sampleBilinear(1.0f, 0.5f), 1e-4f);  // 像素 2
     EXPECT_NEAR(10.0f, hm.sampleBilinear(0.5f, 0.5f), 1e-4f);  // 像素 1
 }
+
+// ============================================================
+// 渲染网格一致采样(矢量贴地 P3)
+// ============================================================
+
+TEST(DecodedHeightmapSamplerTest, RenderGridIgnoresIntraCellSpike) {
+    // 129×129 源 → 渲染格 = min(128,64) = 64 cells,节点落在偶数细格上。
+    // 在奇数细格(节点之间)放尖峰:全分辨率采样看得见,渲染网格采样看不见
+    // (渲染面就是看不见它 —— 贴地几何必须跟渲染面同源,否则结构性穿插)。
+    DecodedHeightmap heightmap;
+    heightmap.tileSize = 129;
+    heightmap.heights.assign(129 * 129, 0.0f);
+    heightmap.heights[static_cast<size_t>(65) * 129 + 65] = 500.0f;  // 奇数格
+    const Rectangle bounds = rootBounds();
+
+    // 尖峰所在位置(u = 65/128, v = 65/128 → 北南翻转的纬度)
+    const double lon = bounds.west() + bounds.width() * (65.0 / 128.0);
+    const double lat = bounds.north() - bounds.height() * (65.0 / 128.0);
+
+    const float fullRes =
+        DecodedHeightmapSampler::sampleHeight(heightmap, bounds, lon, lat);
+    EXPECT_NEAR(500.0f, fullRes, 1.0f);  // 全分辨率:尖峰可见
+
+    const float renderGrid = DecodedHeightmapSampler::sampleHeightRenderGrid(
+        heightmap, bounds, lon, lat);
+    EXPECT_NEAR(0.0f, renderGrid, 1e-3f);  // 渲染网格:节点全 0 → 面为 0
+}
+
+TEST(DecodedHeightmapSamplerTest, RenderGridMatchesFullResAtGridNodes) {
+    // 节点上两种采样必须一致(渲染面经过节点)。
+    DecodedHeightmap heightmap;
+    heightmap.tileSize = 129;
+    heightmap.heights.assign(129 * 129, 0.0f);
+    heightmap.heights[static_cast<size_t>(64) * 129 + 64] = 300.0f;  // 偶数格=节点
+    const Rectangle bounds = rootBounds();
+
+    const double lon = bounds.west() + bounds.width() * (64.0 / 128.0);
+    const double lat = bounds.north() - bounds.height() * (64.0 / 128.0);
+
+    const float fullRes =
+        DecodedHeightmapSampler::sampleHeight(heightmap, bounds, lon, lat);
+    const float renderGrid = DecodedHeightmapSampler::sampleHeightRenderGrid(
+        heightmap, bounds, lon, lat);
+    EXPECT_NEAR(fullRes, renderGrid, 1e-3f);
+    EXPECT_NEAR(300.0f, renderGrid, 1.0f);
+}
+
+TEST(DecodedHeightmapSamplerTest, RenderGridSmallSourceEqualsFullRes) {
+    // 源 ≤ 65:渲染格 = 源格,两种采样恒等。
+    DecodedHeightmap heightmap;
+    heightmap.tileSize = 5;
+    heightmap.heights.assign(25, 0.0f);
+    heightmap.heights[12] = 100.0f;  // 中心
+    const Rectangle bounds = rootBounds();
+
+    for (double f : {0.1, 0.37, 0.5, 0.73, 0.9}) {
+        const double lon = bounds.west() + bounds.width() * f;
+        const double lat = bounds.south() + bounds.height() * f;
+        EXPECT_NEAR(
+            DecodedHeightmapSampler::sampleHeight(heightmap, bounds, lon, lat),
+            DecodedHeightmapSampler::sampleHeightRenderGrid(heightmap, bounds,
+                                                            lon, lat),
+            1e-3f) << "f=" << f;
+    }
+}

@@ -434,7 +434,30 @@ void SceneRenderPipeline::buildLayerCommands(
                 context.frameState, context.renderer, context.commands);
         }
     }
+    // 贴地(P3):把主地形的区域采样器/代次注入矢量层。每帧刷新以跟随
+    // pending 地形接管等主 tileset 指针变化;闭包只在渲染线程当帧使用。
+    Tileset* terrainForClamp = context.terrainTileset
+                                   ? context.terrainTileset
+                                   : context.pendingTerrainTileset;
     for (auto& fLayer : context.featureRenderLayers) {
+        FeatureTerrainSampling sampling;
+        if (terrainForClamp) {
+            sampling.makeAreaSampler =
+                [terrainForClamp](const Rectangle& area)
+                -> std::function<std::optional<float>(double, double)> {
+                auto sampler = std::make_shared<LoadedTerrainAreaSampler>(
+                    terrainForClamp->createAreaHeightSampler(area));
+                if (sampler->empty()) return nullptr;
+                return [sampler](double lng, double lat) {
+                    return sampler->sample(lng, lat);
+                };
+            };
+            sampling.revision = [terrainForClamp]() {
+                return static_cast<uint64_t>(
+                    terrainForClamp->contentBytesUsed());
+            };
+        }
+        fLayer->setTerrainSampling(std::move(sampling));
         if (fLayer->visible()) {
             fLayer->buildRenderCommands(
                 context.frameState, context.renderer, context.commands);

@@ -24,12 +24,17 @@ struct TessellatedFill {
 /// 顶点几何在 ECEF。
 ///
 /// 处理:闭合环去重末点、全局近重合点去重(编辑可能产生)、退化(点数不足)返回空。
-/// 高度取各顶点 cartographic 高 + heightOffset(Absolute);贴地钳制属后续子系统。
+/// 高度取各顶点 cartographic 高 + heightOffset;贴地钳制由调用方预变换顶点高度。
 class PolygonTessellator {
 public:
-    static TessellatedFill tessellate(const Feature& feature,
-                                      const Ellipsoid& ellipsoid,
-                                      double heightOffset = 0.0);
+    /// @param steinerPoints 可选内部散点(P3 贴地:面内网格采样点,CDT 把
+    ///        它们连进三角网让 fill 跟随地形起伏)。须落在多边形内部;
+    ///        环外的点会被 flood-fill 自然排除,不产生错误三角形。
+    static TessellatedFill tessellate(
+        const Feature& feature,
+        const Ellipsoid& ellipsoid,
+        double heightOffset = 0.0,
+        const std::vector<Cartographic>* steinerPoints = nullptr);
 };
 
 } // namespace earth_engine

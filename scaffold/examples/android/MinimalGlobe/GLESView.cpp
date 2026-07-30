@@ -252,10 +252,12 @@ static bool createEngine() {
             style.fillColor = {0.20f, 0.55f, 0.95f, 0.35f};
             style.lineColor = {1.00f, 0.72f, 0.05f, 0.95f};
             style.lineWidthPx = 6.0f;
-            // 高于本区山体(~550m)防地形从 fill 平面穿出被 depthTest 切碎
-            // (穿出即"破碎多边形"观感),又低于 RESET 相机(1500m)保持在视野
-            // 内;贴地钳制(P3)是根治。
-            style.heightOffset = 800.0;
+            // P3 贴地:逐顶点采样地形高钳制(渲染网格一致采样)。残余误差
+            // = fill 三角形横跨网格折痕(山脊)的线性切角项,随细分间距二次
+            // 收缩;offset 10m 覆盖之(像素级贴合属 stencil 方案 B 终态)。
+            style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+            style.heightOffset = 10.0;
+            style.clampDensifyMeters = 40.0;
             vectorLayer->setStyle(style);
 
             // 尺寸压到 RESET 预设视角(106.508,29.617,1.5km,-45°)一屏内:

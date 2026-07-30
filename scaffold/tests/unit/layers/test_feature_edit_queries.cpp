@@ -15,6 +15,7 @@
 #include <memory>
 
 using namespace earth_engine;
+using earth_engine::testing::DummyBuffer;
 using earth_engine::testing::MockRenderDevice;
 
 namespace {
@@ -331,4 +332,187 @@ TEST_F(FeatureEditQueriesTest, PreviewKeepsBucketSiblingsRendered) {
     layer_->endEditPreview();
     RenderCommandList after = build();
     EXPECT_EQ(2u, after.size());
+}
+
+// ============================================================
+// P3 贴地(方案 A:高程采样钳制)
+// ============================================================
+
+namespace {
+
+/// 合成斜坡地形:h(lat) = slope · lat(rad)。可注入、逐点可验。
+FeatureTerrainSampling makeSlopeSampling(double slopeMetersPerRad,
+                                         uint64_t* revisionCounter) {
+    FeatureTerrainSampling s;
+    s.makeAreaSampler = [slopeMetersPerRad](const Rectangle&) {
+        return [slopeMetersPerRad](double /*lng*/, double lat) {
+            return std::optional<float>(
+                static_cast<float>(slopeMetersPerRad * lat));
+        };
+    };
+    s.revision = [revisionCounter]() { return *revisionCounter; };
+    return s;
+}
+
+Feature smallSquare() {
+    Feature f;
+    f.type = GeometryType::Polygon;
+    f.rings = {{Cartographic(0.0, 0.0),
+                Cartographic(0.005 * kDeg, 0.0),
+                Cartographic(0.005 * kDeg, 0.005 * kDeg),
+                Cartographic(0.0, 0.005 * kDeg),
+                Cartographic(0.0, 0.0)}};
+    return f;
+}
+
+} // namespace
+
+TEST_F(FeatureEditQueriesTest, ClampSetsSampledVertexHeights) {
+    uint64_t revision = 1;
+    constexpr double kSlope = 2.0e5;  // m / rad
+    layer_->setTerrainSampling(makeSlopeSampling(kSlope, &revision));
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.heightOffset = 10.0;
+    style.clampDensifyMeters = 1.0e9;  // 关细分/内部撒点,只验角点高度
+    layer_->setStyle(style);
+
+    layer_->store().addFeature(smallSquare());
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+
+    // fill 顶点 = 4 角(无细分/无内部点),第一顶点即环首点 → 其 ECEF 就是
+    // 桶原点。逐角验证 |rel + origin| == |椭球面(采样高+offset)|。
+    const RenderCommand* fill = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorFill) fill = &cmd;
+    }
+    ASSERT_NE(nullptr, fill);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(fill->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t vertexCount = vb->bytes().size() / 12;
+    ASSERT_EQ(4u, vertexCount);
+
+    const auto& ring = layer_->store().features().begin()->second.rings[0];
+    const Vec3 origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(ring[0].longitude(), ring[0].latitude(),
+                     kSlope * ring[0].latitude() + 10.0));
+    for (size_t v = 0; v < vertexCount; ++v) {
+        const Vec3 world =
+            origin + Vec3(floats[v * 3], floats[v * 3 + 1],
+                          floats[v * 3 + 2]) -
+            Vec3(0, 0, 0);
+        const Cartographic c =
+            Ellipsoid::WGS84().cartesianToCartographic(world);
+        const double expected = kSlope * c.latitude() + 10.0;
+        EXPECT_NEAR(expected, c.height(), 1.0)
+            << "vertex " << v << " height mismatch";
+    }
+}
+
+TEST_F(FeatureEditQueriesTest, ClampDensifiesEdgesAndAddsInteriorPoints) {
+    uint64_t revision = 1;
+    layer_->setTerrainSampling(makeSlopeSampling(1.0e4, &revision));
+
+    // 基线:Absolute,无细分
+    layer_->store().addFeature(smallSquare());
+    RenderCommandList absolute = build();
+    ASSERT_EQ(2u, absolute.size());
+    size_t absoluteFillVerts = 0, absoluteLineVerts = 0;
+    for (const auto& cmd : absolute) {
+        const auto* vb = dynamic_cast<const DummyBuffer*>(cmd.vertexBuffer);
+        ASSERT_NE(nullptr, vb);
+        if (cmd.kind == RenderCommandKind::VectorFill) {
+            absoluteFillVerts = vb->bytes().size() / 12;
+        } else {
+            absoluteLineVerts = vb->bytes().size() / 44;
+        }
+    }
+
+    // Clamp + 50m 细分:~550m 边 → 每边 ~11 段
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.clampDensifyMeters = 50.0;
+    layer_->setStyle(style);
+    RenderCommandList clamped = build();
+    ASSERT_EQ(2u, clamped.size());
+    for (const auto& cmd : clamped) {
+        const auto* vb = dynamic_cast<const DummyBuffer*>(cmd.vertexBuffer);
+        ASSERT_NE(nullptr, vb);
+        if (cmd.kind == RenderCommandKind::VectorFill) {
+            // 边细分 + 内部网格点都进 CDT → 顶点数远超 4 角
+            EXPECT_GT(vb->bytes().size() / 12, absoluteFillVerts * 8);
+        } else {
+            EXPECT_GT(vb->bytes().size() / 44, absoluteLineVerts * 8);
+        }
+        EXPECT_GT(cmd.indexCount, 0);
+    }
+}
+
+TEST_F(FeatureEditQueriesTest, ClampReclampsOnRevisionChangeThrottled) {
+    uint64_t revision = 1;
+    double slope = 1.0e4;
+    FeatureTerrainSampling sampling;
+    sampling.makeAreaSampler = [&slope](const Rectangle&) {
+        double s = slope;  // 按当前值捕获
+        return [s](double, double lat) {
+            return std::optional<float>(static_cast<float>(s * lat));
+        };
+    };
+    sampling.revision = [&revision]() { return revision; };
+    layer_->setTerrainSampling(std::move(sampling));
+
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.clampDensifyMeters = 1.0e9;
+    layer_->setStyle(style);
+    layer_->store().addFeature(smallSquare());
+
+    frame_.frameId = 200;
+    RenderCommandList first = build();
+    ASSERT_EQ(2u, first.size());
+    const int buffersAfterFirst = device_.createdBufferCount;
+
+    // 代次变化但节流窗内(首次重钳发生在 frame 200,窗=120 帧)→ 不重钳
+    slope = 2.0e4;
+    revision = 2;
+    frame_.frameId = 250;
+    build();
+    EXPECT_EQ(buffersAfterFirst, device_.createdBufferCount);
+
+    // 过节流窗 → 重钳(新 buffer)
+    frame_.frameId = 400;
+    build();
+    const int buffersAfterReclamp = device_.createdBufferCount;
+    EXPECT_GT(buffersAfterReclamp, buffersAfterFirst);
+
+    // 代次不再变化 → 稳定,不再重钳
+    frame_.frameId = 600;
+    build();
+    EXPECT_EQ(buffersAfterReclamp, device_.createdBufferCount);
+}
+
+TEST_F(FeatureEditQueriesTest, PickWorksInClampMode) {
+    uint64_t revision = 1;
+    constexpr double kSlope = 2.0e5;
+    layer_->setTerrainSampling(makeSlopeSampling(kSlope, &revision));
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.heightOffset = 5.0;
+    style.clampDensifyMeters = 1.0e9;
+    layer_->setStyle(style);
+    const FeatureId id = layer_->store().addFeature(smallSquare());
+
+    // 点击位置 = 角点在"采样高+offset"处的投影(与渲染一致)
+    const Cartographic corner(0.005 * kDeg, 0.005 * kDeg);
+    float sx = 0, sy = 0;
+    projectToScreen(Cartographic(corner.longitude(), corner.latitude(),
+                                 kSlope * corner.latitude() + 5.0),
+                    sx, sy);
+    const FeaturePickResult hit = layer_->pick(frame_, sx, sy, 12.0f);
+    ASSERT_TRUE(hit.isValid());
+    EXPECT_EQ(FeaturePickResult::Part::Vertex, hit.part);
+    EXPECT_EQ(id, hit.featureId);
+    EXPECT_EQ(2, hit.vertexIndex);
 }

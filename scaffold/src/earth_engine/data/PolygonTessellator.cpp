@@ -30,9 +30,11 @@ uint64_t coordKey(double lng, double lat) {
 
 } // namespace
 
-TessellatedFill PolygonTessellator::tessellate(const Feature& feature,
-                                               const Ellipsoid& ellipsoid,
-                                               double heightOffset) {
+TessellatedFill PolygonTessellator::tessellate(
+    const Feature& feature,
+    const Ellipsoid& ellipsoid,
+    double heightOffset,
+    const std::vector<Cartographic>* steinerPoints) {
     TessellatedFill out;
     if (feature.type != GeometryType::Polygon || feature.rings.empty()) {
         return out;
@@ -80,6 +82,12 @@ TessellatedFill PolygonTessellator::tessellate(const Feature& feature,
             outline.push_back(u);
             outline.push_back(v);
         }
+    }
+
+    // 内部 Steiner 散点(P3 贴地):进唯一点表参与 CDT,无约束边。落在
+    // 环外/与已有点重合的经 intern 去重与 flood-fill 自然无害。
+    if (steinerPoints) {
+        for (const Cartographic& c : *steinerPoints) internUnique(c);
     }
 
     if (points2D.size() < 3 || constraints.empty()) return out;

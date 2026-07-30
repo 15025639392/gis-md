@@ -18,10 +18,15 @@ class Rectangle;
 // proxy (all inside the tile's rectangle) to loaded-terrain height cheaply.
 class LoadedTerrainAreaSampler {
 public:
+    /// @param renderGridConsistent true = 按渲染网格分段线性取高
+    ///        (DecodedHeightmapSampler::sampleHeightRenderGrid,矢量贴地用:
+    ///        全分辨率采样与渲染面的格内起伏差是结构性穿插来源);
+    ///        false = 全分辨率双线性(fill 代理抬升等既有语义)。
     LoadedTerrainAreaSampler(
         const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
             tiles,
-        const Rectangle& area);
+        const Rectangle& area,
+        bool renderGridConsistent = false);
 
     /// Height at (lon, lat) in radians from the deepest covering candidate, or
     /// nullopt if no loaded terrain in the area covers the point.
@@ -34,6 +39,7 @@ public:
 
 private:
     std::vector<const TilesetTile*> candidates_;
+    bool renderGridConsistent_ = false;
 };
 
 // 沿 parent 链取"最近的、带 retained heightmap 的地形祖先"作为高度来源。

@@ -388,6 +388,13 @@ std::optional<float> Tileset::sampleHeightOptional(
         latRad);
 }
 
+LoadedTerrainAreaSampler Tileset::createAreaHeightSampler(
+    const Rectangle& area) const {
+    // 矢量贴地专用 → 渲染网格一致采样(与上屏地形面同一分段线性面)。
+    return LoadedTerrainAreaSampler(tileRegistry_.tiles(), area,
+                                    /*renderGridConsistent=*/true);
+}
+
 void Tileset::update(
     const FrameState& frameState,
     IPrepareRendererResources* pPrepRenderer) {

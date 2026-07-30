@@ -9,6 +9,7 @@
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/math/Mat4.h"
 #include "../core/math/Ray.h"
+#include "../debug/PlatformLog.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -82,6 +83,152 @@ FeatureRenderLayer::FeatureRenderLayer(std::string layerId,
 
 FeatureRenderLayer::~FeatureRenderLayer() = default;
 
+void FeatureRenderLayer::setStyle(const FeatureRenderStyle& s) {
+    style_ = s;
+    // 高度/细分/模式都影响几何:已建桶按新样式全部重镶。
+    std::vector<BucketKey> keys;
+    keys.reserve(buckets_.size());
+    for (const auto& entry : buckets_) keys.push_back(entry.first);
+    for (BucketKey key : keys) rebuildBucket(key);
+    previewDirty_ = true;
+}
+
+// ============================================================
+// 贴地钳制(P3 方案 A)
+// ============================================================
+
+namespace {
+
+constexpr double kEarthRadiusMeters = 6.378137e6;
+
+double segmentLengthMeters(const Cartographic& a, const Cartographic& b) {
+    const double cosLat = std::cos((a.latitude() + b.latitude()) * 0.5);
+    const double dLng = (b.longitude() - a.longitude()) * cosLat;
+    const double dLat = b.latitude() - a.latitude();
+    return kEarthRadiusMeters * std::sqrt(dLng * dLng + dLat * dLat);
+}
+
+/// 2D(lng,lat) even-odd 点包含测试(内部 Steiner 撒点用)。
+bool pointInRings2D(double lng, double lat,
+                    const std::vector<std::vector<Cartographic>>& rings) {
+    bool inside = false;
+    for (const auto& ring : rings) {
+        const size_t n = ring.size();
+        for (size_t i = 0, j = n - 1; i < n; j = i++) {
+            const double yi = ring[i].latitude();
+            const double yj = ring[j].latitude();
+            if ((yi > lat) != (yj > lat)) {
+                const double xAtY = ring[j].longitude() +
+                    (ring[i].longitude() - ring[j].longitude()) *
+                        (lat - ring[j].latitude()) / (yi - yj);
+                if (lng < xAtY) inside = !inside;
+            }
+        }
+    }
+    return inside;
+}
+
+} // namespace
+
+FeatureRenderLayer::AreaSampleFn FeatureRenderLayer::makeClampSampler(
+    const std::vector<std::vector<Cartographic>>& rings) const {
+    if (style_.altitudeMode != FeatureAltitudeMode::ClampToGround ||
+        !terrainSampling_.makeAreaSampler) {
+        return nullptr;
+    }
+    double west = std::numeric_limits<double>::max();
+    double east = std::numeric_limits<double>::lowest();
+    double south = std::numeric_limits<double>::max();
+    double north = std::numeric_limits<double>::lowest();
+    bool any = false;
+    for (const auto& ring : rings) {
+        for (const auto& c : ring) {
+            west = std::min(west, c.longitude());
+            east = std::max(east, c.longitude());
+            south = std::min(south, c.latitude());
+            north = std::max(north, c.latitude());
+            any = true;
+        }
+    }
+    if (!any) return nullptr;
+    // 细分点仍在原边上,bbox 不需膨胀;留一格余量吸收数值边界。
+    const double pad = style_.clampDensifyMeters / kEarthRadiusMeters;
+    return terrainSampling_.makeAreaSampler(
+        Rectangle(west - pad, south - pad, east + pad, north + pad));
+}
+
+Feature FeatureRenderLayer::prepareClampedFeature(
+    const Feature& feature,
+    const AreaSampleFn& sample,
+    std::vector<Cartographic>* outSteiner) const {
+    const double spacing = std::max(1.0, style_.clampDensifyMeters);
+    auto clampHeight = [&](double lng, double lat) {
+        // 无数据回落椭球面(对齐 no-fine-data-ellipsoid-fallback 约定)。
+        const double ground =
+            sample ? static_cast<double>(sample(lng, lat).value_or(0.0f))
+                   : 0.0;
+        return ground + style_.heightOffset;
+    };
+
+    Feature clamped;
+    clamped.id = feature.id;
+    clamped.sourceId = feature.sourceId;
+    clamped.type = feature.type;
+    clamped.rings.reserve(feature.rings.size());
+
+    for (const auto& ring : feature.rings) {
+        std::vector<Cartographic> densified;
+        densified.reserve(ring.size() * 2);
+        for (size_t i = 0; i < ring.size(); ++i) {
+            const Cartographic& a = ring[i];
+            densified.emplace_back(
+                a.longitude(), a.latitude(),
+                clampHeight(a.longitude(), a.latitude()));
+            if (i + 1 >= ring.size()) break;
+            const Cartographic& b = ring[i + 1];
+            const int pieces = static_cast<int>(
+                std::ceil(segmentLengthMeters(a, b) / spacing));
+            for (int p = 1; p < pieces; ++p) {
+                const double t = static_cast<double>(p) / pieces;
+                const double lng =
+                    a.longitude() + (b.longitude() - a.longitude()) * t;
+                const double lat =
+                    a.latitude() + (b.latitude() - a.latitude()) * t;
+                densified.emplace_back(lng, lat, clampHeight(lng, lat));
+            }
+        }
+        clamped.rings.push_back(std::move(densified));
+    }
+
+    // polygon 内部网格 Steiner 点:CDT 散点,面几何真正跟随地形起伏
+    // (只钳外环时面内部仍是平面,横跨山谷即穿插)。
+    if (outSteiner && feature.type == GeometryType::Polygon &&
+        !feature.rings.empty()) {
+        const double dLat = spacing / kEarthRadiusMeters;
+        double west = std::numeric_limits<double>::max();
+        double east = std::numeric_limits<double>::lowest();
+        double south = std::numeric_limits<double>::max();
+        double north = std::numeric_limits<double>::lowest();
+        for (const auto& c : feature.rings.front()) {
+            west = std::min(west, c.longitude());
+            east = std::max(east, c.longitude());
+            south = std::min(south, c.latitude());
+            north = std::max(north, c.latitude());
+        }
+        const double cosLat =
+            std::max(0.01, std::cos((south + north) * 0.5));
+        const double dLng = dLat / cosLat;
+        // 从半步进开始,避免撒在边界上(边界已由环细分覆盖)。
+        for (double lat = south + dLat * 0.5; lat < north; lat += dLat) {
+            for (double lng = west + dLng * 0.5; lng < east; lng += dLng) {
+                if (!pointInRings2D(lng, lat, feature.rings)) continue;
+                outSteiner->emplace_back(lng, lat, clampHeight(lng, lat));
+            }
+        }
+    }
+    return clamped;
+}
+
 int FeatureRenderLayer::syncDirtyBuckets() {
     if (!renderDevice_) return 0;
     const auto dirty = store_.consumeDirtyBuckets();
@@ -93,12 +240,28 @@ int FeatureRenderLayer::syncDirtyBuckets() {
 
 void FeatureRenderLayer::tessellateFeatureInto(
     const Feature& feature,
+    const AreaSampleFn& sample,
     Vec3& origin,
     bool& hasOrigin,
     std::vector<float>& fillVerts,
     std::vector<uint32_t>& fillIndices,
     std::vector<float>& lineVerts,
     std::vector<uint32_t>& lineIndices) const {
+    // 贴地:预变换出细分+采样高度的副本(高度已含 offset),镶嵌时
+    // heightOffset 传 0 防二次叠加;Absolute 走原几何 + offset。
+    const bool clamp =
+        style_.altitudeMode == FeatureAltitudeMode::ClampToGround;
+    std::vector<Cartographic> steinerPoints;
+    Feature clampedStorage;
+    const Feature* geometry = &feature;
+    double tessHeightOffset = style_.heightOffset;
+    if (clamp) {
+        clampedStorage =
+            prepareClampedFeature(feature, sample, &steinerPoints);
+        geometry = &clampedStorage;
+        tessHeightOffset = 0.0;
+    }
+
     // 原点 = 首个 ECEF 顶点。桶尺度 ~0.02rad(≈128km)→ 相对坐标幅值
     // ~1e5 m 级,float 精度 ~0.01m,满足编辑显示。
     auto ensureOrigin = [&](const Vec3& candidate) {
@@ -108,10 +271,11 @@ void FeatureRenderLayer::tessellateFeatureInto(
         }
     };
 
-    switch (feature.type) {
+    switch (geometry->type) {
         case GeometryType::Polygon: {
             TessellatedFill fill = PolygonTessellator::tessellate(
-                feature, ellipsoid_, style_.heightOffset);
+                *geometry, ellipsoid_, tessHeightOffset,
+                steinerPoints.empty() ? nullptr : &steinerPoints);
             if (!fill.positions.empty() && !fill.fillIndices.empty()) {
                 ensureOrigin(fill.positions.front());
                 const uint32_t base =
@@ -133,9 +297,9 @@ void FeatureRenderLayer::tessellateFeatureInto(
             // 孔环 outline 留后续。
             Feature outlineFeature;
             outlineFeature.type = GeometryType::LineString;
-            outlineFeature.rings = {feature.rings.front()};
+            outlineFeature.rings = {geometry->rings.front()};
             TessellatedLine outline = LineTessellator::tessellate(
-                outlineFeature, ellipsoid_, style_.heightOffset,
+                outlineFeature, ellipsoid_, tessHeightOffset,
                 /*closed=*/true);
             if (!outline.vertices.empty()) {
                 ensureOrigin(outline.vertices.front().pos);
@@ -145,7 +309,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
         }
         case GeometryType::LineString: {
             TessellatedLine line = LineTessellator::tessellate(
-                feature, ellipsoid_, style_.heightOffset,
+                *geometry, ellipsoid_, tessHeightOffset,
                 /*closed=*/false);
             if (!line.vertices.empty()) {
                 ensureOrigin(line.vertices.front().pos);
@@ -211,11 +375,21 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     Vec3 origin = Vec3::zero();
     bool hasOrigin = false;
 
+    // 贴地采样器:桶内全部要素的 rings 并集区域,一次收集候选瓦片。
+    std::vector<std::vector<Cartographic>> allRings;
+    for (FeatureId fid : ids) {
+        if (fid == previewFeatureId_) continue;
+        if (const Feature* f = store_.getFeature(fid)) {
+            for (const auto& ring : f->rings) allRings.push_back(ring);
+        }
+    }
+    const AreaSampleFn sample = makeClampSampler(allRings);
+
     for (FeatureId fid : ids) {
         if (fid == previewFeatureId_) continue;  // 预览摘除中,走瞬态路径
         const Feature* feature = store_.getFeature(fid);
         if (!feature) continue;
-        tessellateFeatureInto(*feature, origin, hasOrigin,
+        tessellateFeatureInto(*feature, sample, origin, hasOrigin,
                               fillVerts, fillIndices, lineVerts, lineIndices);
     }
 
@@ -240,6 +414,24 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     if (!visible_ || !renderDevice_) return;
     if (!frameState.camera) return;
 
+    // 贴地重钳(P3 方案 A 过渡态):地形代次变化 → 节流重镶全部桶
+    // (LOD 细化/加载会改高度;不重钳则要素浮沉)。120 帧节流防加载期
+    // 重镶风暴;万级桶规模需配可见性门控(后续)。
+    if (style_.altitudeMode == FeatureAltitudeMode::ClampToGround &&
+        terrainSampling_.revision) {
+        const uint64_t rev = terrainSampling_.revision();
+        if (rev != lastClampRevision_ &&
+            frameState.frameId >= lastReclampFrameId_ + 120) {
+            lastClampRevision_ = rev;
+            lastReclampFrameId_ = frameState.frameId;
+            std::vector<BucketKey> keys;
+            keys.reserve(buckets_.size());
+            for (const auto& entry : buckets_) keys.push_back(entry.first);
+            for (BucketKey key : keys) rebuildBucket(key);
+            previewDirty_ = true;
+        }
+    }
+
     syncDirtyBuckets();
 
     // 编辑预览:rings 变了才重镶(拖拽帧间未动 = 零成本),瞬态 buffer
@@ -257,7 +449,9 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         std::vector<uint32_t> lineIndices;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
-        tessellateFeatureInto(previewFeature, origin, hasOrigin,
+        tessellateFeatureInto(previewFeature,
+                              makeClampSampler(previewRings_),
+                              origin, hasOrigin,
                               fillVerts, fillIndices,
                               lineVerts, lineIndices);
         if (hasOrigin) {
@@ -464,23 +658,51 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
     const double vpH = static_cast<double>(frameState.viewportHeightPixels);
     if (vpW <= 0.0 || vpH <= 0.0) return result;
 
-    // 1. 射线∩"抬高 heightOffset 的椭球面"定拾取邻域中心。必须用要素
-    //    实际所在面:斜视下裸椭球交点沿视线偏出 ~heightOffset·tan(俯角),
-    //    800m 面高 45° 斜视即偏 ~800m,足以让 R-tree 预筛整体落空
-    //    (真机踩过:小要素 pick 恒 miss)。
+    // 1. 射线∩"要素实际所在面"定拾取邻域中心。必须抬到位:斜视下裸椭球
+    //    交点沿视线偏出 ~面高·tan(俯角),800m 面 45° 斜视即偏 ~800m,足以
+    //    让 R-tree 预筛整体落空(真机踩过:小要素 pick 恒 miss)。
+    //    Clamp 模式两段法:先裸椭球定 lng/lat → 采地形高 → 抬高面重交
+    //    (一次迭代对贴地面足够收敛)。
+    const bool clampMode =
+        style_.altitudeMode == FeatureAltitudeMode::ClampToGround;
     const Ray ray = cam.getPickRay(screenXPx, screenYPx, vpW, vpH);
-    const Ellipsoid offsetSurface(
-        ellipsoid_.radii().x() + style_.heightOffset,
-        ellipsoid_.radii().y() + style_.heightOffset,
-        ellipsoid_.radii().z() + style_.heightOffset);
-    const auto interval =
-        offsetSurface.rayIntersectionInterval(ray.origin(), ray.direction());
-    if (!interval) return result;
-    const double tHit = interval->entryDistance > 0.0
-                            ? interval->entryDistance
-                            : interval->exitDistance;
-    if (tHit <= 0.0) return result;
-    const Vec3 hitEcef = ray.pointAt(tHit);
+    auto intersectAtHeight =
+        [&](double surfaceHeight) -> std::optional<Vec3> {
+        const Ellipsoid surface(ellipsoid_.radii().x() + surfaceHeight,
+                                ellipsoid_.radii().y() + surfaceHeight,
+                                ellipsoid_.radii().z() + surfaceHeight);
+        const auto interval =
+            surface.rayIntersectionInterval(ray.origin(), ray.direction());
+        if (!interval) return std::nullopt;
+        const double t = interval->entryDistance > 0.0
+                             ? interval->entryDistance
+                             : interval->exitDistance;
+        if (t <= 0.0) return std::nullopt;
+        return ray.pointAt(t);
+    };
+
+    double surfaceHeight = style_.heightOffset;
+    if (clampMode) {
+        surfaceHeight = style_.heightOffset;  // 无地形回落椭球+offset
+        if (const auto ground0 = intersectAtHeight(0.0);
+            ground0 && terrainSampling_.makeAreaSampler) {
+            const Cartographic c0 =
+                ellipsoid_.cartesianToCartographic(*ground0);
+            const double padRad = 2000.0 / 6.378137e6;  // 邻域 2km 采样窗
+            const AreaSampleFn probe = terrainSampling_.makeAreaSampler(
+                Rectangle(c0.longitude() - padRad, c0.latitude() - padRad,
+                          c0.longitude() + padRad, c0.latitude() + padRad));
+            if (probe) {
+                surfaceHeight =
+                    static_cast<double>(
+                        probe(c0.longitude(), c0.latitude()).value_or(0.0f)) +
+                    style_.heightOffset;
+            }
+        }
+    }
+    const auto hit = intersectAtHeight(surfaceHeight);
+    if (!hit) return result;
+    const Vec3 hitEcef = *hit;
     const Cartographic hitCarto = ellipsoid_.cartesianToCartographic(hitEcef);
 
     // 2. R-tree 预筛:容差像素 → 地面米(距离 × 每像素弧度)→ 弧度 bbox。
@@ -507,10 +729,33 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
     const double py = static_cast<double>(screenYPx);
     const double tol = static_cast<double>(tolerancePx);
 
+    // Clamp 模式:投影须用与渲染同源的采样高度(候选要素 rings 并集区域)。
+    AreaSampleFn pickSample;
+    if (clampMode) {
+        std::vector<std::vector<Cartographic>> candidateRings;
+        for (FeatureId fid : candidates) {
+            if (const Feature* f = store_.getFeature(fid)) {
+                for (const auto& ring : f->rings) {
+                    candidateRings.push_back(ring);
+                }
+            }
+        }
+        pickSample = makeClampSampler(candidateRings);
+    }
+
     auto projectVertex = [&](const Cartographic& c) {
         ScreenVertex sv;
-        const Vec3 ecef = ellipsoid_.cartographicToCartesian(Cartographic(
-            c.longitude(), c.latitude(), c.height() + style_.heightOffset));
+        const double h =
+            clampMode
+                ? static_cast<double>(
+                      pickSample
+                          ? pickSample(c.longitude(), c.latitude())
+                                .value_or(0.0f)
+                          : 0.0f) +
+                      style_.heightOffset
+                : c.height() + style_.heightOffset;
+        const Vec3 ecef = ellipsoid_.cartographicToCartesian(
+            Cartographic(c.longitude(), c.latitude(), h));
         const glm::dvec4 clip =
             viewProj * glm::dvec4(ecef.x(), ecef.y(), ecef.z(), 1.0);
         if (clip.w <= 0.0) return sv;
@@ -597,6 +842,20 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
             bestFill.position = Cartographic(
                 hitCarto.longitude(), hitCarto.latitude(), 0.0);
         }
+    }
+
+    // [PICKDIAG] clamp 模式命中质量诊断:最近顶点像素距离与采样状态。
+    // 只在 debug 且拾取被调用时打(每次 tap 一条),定位投影/渲染偏差。
+    if (clampMode) {
+        platformLog(LogLevel::Info, "FeatureRenderLayer",
+                    "PickDiag surfaceH=%.1f sampler=%d cand=%zu "
+                    "bestVtx=%.1fpx bestEdge=%.1fpx fill=%d",
+                    surfaceHeight,
+                    pickSample ? 1 : 0,
+                    candidates.size(),
+                    bestVertex.distancePx,
+                    bestEdge.distancePx,
+                    bestFill.isValid() ? 1 : 0);
     }
 
     if (bestVertex.distancePx <= tol) return bestVertex;

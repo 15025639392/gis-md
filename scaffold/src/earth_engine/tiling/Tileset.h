@@ -26,6 +26,7 @@
 #include "TileSelectionReuseState.h"
 #include "TilesetTerrainProviders.h"
 #include "TilesetTileRegistry.h"
+#include "LoadedTerrainHeightSampler.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../core/math/Vec3.h"
 #include "../content/GltfContentProvider.h"
@@ -207,6 +208,12 @@ public:
     float sampleHeight(double lngRad, double latRad) const {
         return sampleHeightOptional(lngRad, latRad).value_or(0.0f);
     }
+
+    /// 区域批量高程采样器(矢量贴地 P3):候选瓦片按区域一次收集,之后的
+    /// 逐顶点查询只扫该候选集,免去 sampleHeightOptional 的逐次全注册表
+    /// 扫描。返回值持瓦片裸指针,仅限渲染线程当帧同步使用。
+    LoadedTerrainAreaSampler createAreaHeightSampler(
+        const Rectangle& area) const;
 
     /// cesium-native: release all render references after GPU submit.
     /// Called by Scene after renderer_->submit(commands) so that

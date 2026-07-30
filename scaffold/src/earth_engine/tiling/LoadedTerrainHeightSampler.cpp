@@ -44,7 +44,8 @@ void commitBestSample(std::optional<LoadedTerrainSample>& bestSample,
 std::optional<float> sampleFromSortedCandidates(
     const std::vector<const TilesetTile*>& candidates,
     double longitudeRadians,
-    double latitudeRadians) {
+    double latitudeRadians,
+    bool renderGridConsistent = false) {
     std::optional<LoadedTerrainSample> bestSample;
     for (const TilesetTile* tile : candidates) {
         if (bestSample && tile->key.z < bestSample->zoom) {
@@ -62,11 +63,14 @@ std::optional<float> sampleFromSortedCandidates(
         if (!heightmap || !heightmap->valid()) {
             continue;
         }
-        const float height = DecodedHeightmapSampler::sampleHeight(
-            *heightmap,
-            tile->bounds,
-            longitudeRadians,
-            latitudeRadians);
+        const float height =
+            renderGridConsistent
+                ? DecodedHeightmapSampler::sampleHeightRenderGrid(
+                      *heightmap, tile->bounds,
+                      longitudeRadians, latitudeRadians)
+                : DecodedHeightmapSampler::sampleHeight(
+                      *heightmap, tile->bounds,
+                      longitudeRadians, latitudeRadians);
         commitBestSample(
             bestSample,
             LoadedTerrainSample{height, tile->key.z});
@@ -120,7 +124,9 @@ std::optional<float> TerrainAncestorHeightSource::sample(
 
 LoadedTerrainAreaSampler::LoadedTerrainAreaSampler(
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
-    const Rectangle& area) {
+    const Rectangle& area,
+    bool renderGridConsistent)
+    : renderGridConsistent_(renderGridConsistent) {
     for (const auto& [cacheKey, tile] : tiles) {
         (void)cacheKey;
         if (tile && tile->content.renderContent.isTerrainRenderContent() &&
@@ -143,7 +149,8 @@ std::optional<float> LoadedTerrainAreaSampler::sample(
     return sampleFromSortedCandidates(
         candidates_,
         longitudeRadians,
-        latitudeRadians);
+        latitudeRadians,
+        renderGridConsistent_);
 }
 
 std::optional<float> LoadedTerrainHeightSampler::sampleHeightOptional(
