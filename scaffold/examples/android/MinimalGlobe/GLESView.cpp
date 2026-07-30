@@ -23,6 +23,7 @@
 #include "earth_engine/Engine.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/layers/FeatureRenderLayer.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
@@ -219,6 +220,45 @@ static bool createEngine() {
                 *gPlatformBridge);
         gSdkFacade->installScene(
             minimal_globe_demo::makeDefaultDemoSceneConfig());
+
+        // 矢量数据系统 P1 真机验证:demo 相机(重庆)附近挂一面一线。
+        // heightOffset 抬离地表(该区地形 ~200-800m)防 depthTest 埋没;
+        // 贴地钳制属 P3。
+        {
+            constexpr double kDeg = M_PI / 180.0;
+            auto vectorLayer = std::make_unique<FeatureRenderLayer>(
+                "demo-vector-p1", gRenderDevice.get(), Ellipsoid::WGS84());
+            FeatureRenderStyle style;
+            style.fillColor = {0.20f, 0.55f, 0.95f, 0.35f};
+            style.lineColor = {1.00f, 0.72f, 0.05f, 0.95f};
+            style.lineWidthPx = 6.0f;
+            style.heightOffset = 500.0;
+            vectorLayer->setStyle(style);
+
+            // 尺寸压到 RESET 预设视角(106.508,29.617,1.5km,-45°)一屏内:
+            // 面 ~1.1km 见方带边界,线折两折穿过视野中心。
+            Feature poly;
+            poly.type = GeometryType::Polygon;
+            poly.rings = {{
+                Cartographic(106.503 * kDeg, 29.622 * kDeg),
+                Cartographic(106.513 * kDeg, 29.622 * kDeg),
+                Cartographic(106.513 * kDeg, 29.632 * kDeg),
+                Cartographic(106.503 * kDeg, 29.632 * kDeg),
+                Cartographic(106.503 * kDeg, 29.622 * kDeg)}};
+            vectorLayer->store().addFeature(std::move(poly));
+
+            Feature route;
+            route.type = GeometryType::LineString;
+            route.rings = {{
+                Cartographic(106.496 * kDeg, 29.618 * kDeg),
+                Cartographic(106.504 * kDeg, 29.626 * kDeg),
+                Cartographic(106.512 * kDeg, 29.622 * kDeg),
+                Cartographic(106.520 * kDeg, 29.630 * kDeg)}};
+            vectorLayer->store().addFeature(std::move(route));
+
+            gEngine->addFeatureRenderLayer(std::move(vectorLayer));
+            LOGI("VectorP1 demo layer installed: 1 polygon + 1 line");
+        }
         // Phase 2c P5:GPU 位移已引擎默认开(Engine.h terrainGpuDisplacementEnabled_
         // = true,pool 在首次 scene update 前急切创建)。运行时 A/B 关闭仍走调试面板
         // 的 setTerrainGpuDisplacementEnabled(false)(GLESView.cpp toggle)。

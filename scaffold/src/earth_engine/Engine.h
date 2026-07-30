@@ -22,6 +22,7 @@ class VtIndirectionSamplePoc;
 class TerrainPageStore;
 class TerrainDisplacementTemplatePool;
 class Tileset;
+class FeatureRenderLayer;
 class VectorLayer;
 struct PresentationTrace;
 struct InputEvent;
@@ -84,6 +85,15 @@ public:
 
     /// 矢量图层数量
     size_t vectorLayerCount() const;
+
+    // ---- FeatureStore 渲染桥接层(矢量数据系统 P1) ----
+
+    /// 添加 FeatureStore 渲染层(要素经 layer->store() 写入/编辑)
+    void addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer);
+
+    /// 移除 FeatureStore 渲染层
+    std::unique_ptr<FeatureRenderLayer> removeFeatureRenderLayer(
+        const std::string& layerId);
 
     /// cesium-native 对齐：设置统一 Tileset。
     void setTileset(std::unique_ptr<Tileset> tileset);

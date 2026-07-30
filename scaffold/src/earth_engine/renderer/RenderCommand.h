@@ -97,7 +97,11 @@ enum class RenderCommandKind {
     SurfaceTile,           // order 10
     GltfPrimitive,         // order 15
     GltfPrimitiveInstanced, // order 15
-    VectorOverlay          // order 30
+    VectorOverlay,         // order 30
+    // 矢量数据系统 P1(设计 §6.1):FeatureStore 桶几何的两类命令。
+    // 与 VectorOverlay(旧 GeoJSON 标注路径)平行,同 order 30。
+    VectorFill,            // order 30: 多边形 fill(CDT 三角化,pos-only 顶点)
+    VectorLine             // order 30: 线 ribbon(44B 顶点,shader 屏幕挤出)
 };
 
 enum class TerrainSurfaceCommandSource {

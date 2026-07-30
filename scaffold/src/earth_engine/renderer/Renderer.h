@@ -42,6 +42,9 @@ public:
     /// 简单颜色 shader（矢量图层线/面渲染）
     ShaderProgram* colorShader() const;
 
+    /// 矢量线 ribbon shader（矢量 P1,§6.2 屏幕空间线宽;fill 复用 colorShader）
+    ShaderProgram* vectorLineShader() const;
+
     /// Tile 共享索引 buffer（64×64 grid，所有 surface tile 共用）
     Buffer* tileIndexBuffer() const;
     int tileIndexCount() const;

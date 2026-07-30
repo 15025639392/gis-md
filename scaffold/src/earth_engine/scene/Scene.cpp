@@ -12,6 +12,7 @@
 #include "../camera/CameraController.h"
 #include "../environment/SkyGradient.h"
 #include "../interaction/InputEvent.h"
+#include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/Renderer.h"
 #include "../tiling/Tileset.h"
@@ -217,6 +218,7 @@ bool Scene::render() {
         tilesets_->pendingPrimary(),
         tilesets_->contentTilesets(),
         layers_->vectorLayers(),
+        layers_->featureRenderLayers(),
         [this]() { updatePresentationTrace(); },
         renderDevice_});
     telemetry_->replaceRenderDiagnostics(renderResult.diagnostics);
@@ -313,6 +315,15 @@ void Scene::addVectorLayer(std::unique_ptr<VectorLayer> layer) {
 
 std::unique_ptr<VectorLayer> Scene::removeVectorLayer(const std::string& layerId) {
     return layers_->removeVectorLayer(layerId);
+}
+
+void Scene::addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer) {
+    layers_->addFeatureRenderLayer(std::move(layer));
+}
+
+std::unique_ptr<FeatureRenderLayer> Scene::removeFeatureRenderLayer(
+    const std::string& layerId) {
+    return layers_->removeFeatureRenderLayer(layerId);
 }
 
 size_t Scene::vectorLayerCount() const {

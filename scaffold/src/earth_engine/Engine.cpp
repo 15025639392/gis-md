@@ -10,6 +10,7 @@
 #include "renderer/TileCompositeBakePoc.h"
 #include "renderer/VtIndirectionSamplePoc.h"
 #include "renderer/RenderDevice.h"
+#include "layers/FeatureRenderLayer.h"
 #include "layers/VectorLayer.h"
 #include "layers/ActivatedRasterOverlay.h"  // B2a 门②:overlays.front()->getTileProvider()
 #include "debug/PlatformLog.h"
@@ -555,6 +556,15 @@ void Engine::addVectorLayer(std::unique_ptr<VectorLayer> layer) {
 
 std::unique_ptr<VectorLayer> Engine::removeVectorLayer(const std::string& layerId) {
     return scene_->removeVectorLayer(layerId);
+}
+
+void Engine::addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer) {
+    scene_->addFeatureRenderLayer(std::move(layer));
+}
+
+std::unique_ptr<FeatureRenderLayer> Engine::removeFeatureRenderLayer(
+    const std::string& layerId) {
+    return scene_->removeFeatureRenderLayer(layerId);
 }
 
 size_t Engine::vectorLayerCount() const {

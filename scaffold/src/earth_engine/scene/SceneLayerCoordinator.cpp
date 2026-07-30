@@ -1,5 +1,6 @@
 #include "SceneLayerCoordinator.h"
 #include "../interaction/SelectionManager.h"
+#include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 
 #include <algorithm>
@@ -37,6 +38,27 @@ std::unique_ptr<VectorLayer> SceneLayerCoordinator::removeVectorLayer(
 
     auto removed = std::move(*it);
     vectorLayers_.erase(it);
+    return removed;
+}
+
+void SceneLayerCoordinator::addFeatureRenderLayer(
+    std::unique_ptr<FeatureRenderLayer> layer) {
+    if (!layer) return;
+    featureRenderLayers_.push_back(std::move(layer));
+}
+
+std::unique_ptr<FeatureRenderLayer>
+SceneLayerCoordinator::removeFeatureRenderLayer(const std::string& layerId) {
+    auto it = std::find_if(
+        featureRenderLayers_.begin(),
+        featureRenderLayers_.end(),
+        [&](const auto& layer) {
+            return layer && layer->id() == layerId;
+        });
+    if (it == featureRenderLayers_.end()) return nullptr;
+
+    auto removed = std::move(*it);
+    featureRenderLayers_.erase(it);
     return removed;
 }
 

@@ -13,6 +13,7 @@
 namespace earth_engine {
 
 class AtmosphereBackgroundPass;
+class FeatureRenderLayer;
 class Renderer;
 class RenderDevice;
 class SkyBox;
@@ -44,6 +45,8 @@ public:
         Tileset* pendingTerrainTileset = nullptr;
         const std::vector<std::unique_ptr<Tileset>>& additionalTilesets;
         std::vector<std::unique_ptr<VectorLayer>>& vectorLayers;
+        // FeatureStore 渲染桥接层(矢量 P1),与 vectorLayers 平行的新路径
+        std::vector<std::unique_ptr<FeatureRenderLayer>>& featureRenderLayers;
         std::function<void()> beforeSubmit;
         RenderDevice* renderDevice = nullptr;
     };

@@ -1527,6 +1527,188 @@ fragment float4 colorFragment(constant float4& u_color [[buffer(0)]]) {
 }
 )msl";
 
+// ============================================================
+// Vector Line Shader (矢量数据系统 P1,设计 §6.2)
+// 顶点带 prev/next,屏幕垂向 + miter join 在顶点着色器现算(球面上
+// 屏幕垂向视角相关,不能预烘焙)。44B 顶点:pos(12)+prev(12)+next(12)
+// +side(4)+lengthSoFar(4),对应 GLES VertexLayoutKind::VectorLine44。
+// ============================================================
+
+static const char* kVectorLineVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_prev;
+layout(location = 2) in vec3 a_next;
+layout(location = 3) in float a_side;
+layout(location = 4) in float a_lengthSoFar;
+
+uniform mat4 u_modelViewProjection;
+uniform vec2 u_viewport;      // 视口像素 (w, h)
+uniform float u_lineWidthPx;  // 全线宽(px),半宽 = /2
+
+out float v_lengthSoFar;
+
+// miter 长度下限对应 miter-limit(尖角防爆);挤出上限防近地平线
+// w→0 时发散(设计 §6.2 锁定)。
+const float kMiterMin = 0.25;         // miter-limit = 4
+const float kMaxExtrudeNdc = 0.25;    // 单侧挤出 ≤ 1/4 半屏
+
+void main() {
+    vec4 cp = u_modelViewProjection * vec4(a_position, 1.0);
+    vec4 cpr = u_modelViewProjection * vec4(a_prev, 1.0);
+    vec4 cnx = u_modelViewProjection * vec4(a_next, 1.0);
+    v_lengthSoFar = a_lengthSoFar;
+
+    // 相机后方顶点不挤出(除法翻向会把 ribbon 拉花;段的可见部分由
+    // 另一端撑开 + clip 收尾)。
+    if (cp.w <= 0.0) {
+        gl_Position = cp;
+        return;
+    }
+
+    float aspect = u_viewport.x / max(u_viewport.y, 1.0);
+    // NDC → 各向同性空间(x 乘 aspect),屏幕角度才是真角度
+    vec2 s  = cp.xy  / cp.w;  s.x  *= aspect;
+    vec2 sp = cpr.xy / cpr.w; sp.x *= aspect;
+    vec2 sn = cnx.xy / cnx.w; sn.x *= aspect;
+
+    vec2 dirA = s - sp;   // 前段方向(端点哨兵 prev==pos → 零向量)
+    vec2 dirB = sn - s;   // 后段方向
+    float lenA = length(dirA);
+    float lenB = length(dirB);
+    bool hasA = lenA > 1e-7 && cpr.w > 0.0;
+    bool hasB = lenB > 1e-7 && cnx.w > 0.0;
+
+    vec2 dir;
+    float scale = 1.0;
+    if (hasA && hasB) {
+        vec2 na = normalize(dirA);
+        vec2 nb = normalize(dirB);
+        dir = normalize(na + nb);            // 角平分方向
+        // miter 长度 = 1/cos(半夹角) = 1/dot(miter法向, 段法向),带下限
+        vec2 normalB = vec2(-nb.y, nb.x);
+        vec2 miterNormal = vec2(-dir.y, dir.x);
+        scale = 1.0 / max(dot(miterNormal, normalB), kMiterMin);
+    } else if (hasA) {
+        dir = dirA / lenA;                   // 尾端点:用前段方向(butt cap)
+    } else if (hasB) {
+        dir = dirB / lenB;                   // 首端点:用后段方向
+    } else {
+        gl_Position = cp;                    // 完全退化(单点/共点)
+        return;
+    }
+
+    vec2 normal = vec2(-dir.y, dir.x);
+    // 半宽(px) → NDC:1px = 2/vpH NDC → halfWidth*2/vpH = lineWidth/vpH
+    float halfWidthNdc = u_lineWidthPx / max(u_viewport.y, 1.0);
+    vec2 offset = normal * a_side * halfWidthNdc * scale;
+    float offLen = length(offset);
+    if (offLen > kMaxExtrudeNdc) {
+        offset *= kMaxExtrudeNdc / offLen;
+    }
+    offset.x /= aspect;                      // 回到 NDC 各向异性
+    gl_Position = cp + vec4(offset * cp.w, 0.0, 0.0);
+}
+)glsl";
+
+static const char* kVectorLineFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+
+uniform vec4 u_color;
+in float v_lengthSoFar;   // dash 留口(P1 未接 u_dashPattern)
+out vec4 fragColor;
+
+void main() {
+    fragColor = u_color;
+}
+)glsl";
+
+// MSL 双份约定(设计 §6.1)。Metal 端矢量路径当前不出货(Metal 合批
+// Step4 同期挂起),源码保持契约、未经真机验证。
+static const char* kVectorLineVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorLineVertexIn {
+    float3 position [[attribute(0)]];
+    float3 prev [[attribute(1)]];
+    float3 next [[attribute(2)]];
+    float side [[attribute(3)]];
+    float lengthSoFar [[attribute(4)]];
+};
+
+struct VectorLineVertexOut {
+    float4 position [[position]];
+    float lengthSoFar;
+};
+
+constant float kMiterMin = 0.25;
+constant float kMaxExtrudeNdc = 0.25;
+
+vertex VectorLineVertexOut vectorLineVertex(
+        VectorLineVertexIn in [[stage_in]],
+        constant float4x4& u_modelViewProjection [[buffer(1)]],
+        constant float2& u_viewport [[buffer(2)]],
+        constant float& u_lineWidthPx [[buffer(3)]]) {
+    VectorLineVertexOut out;
+    float4 cp = u_modelViewProjection * float4(in.position, 1.0);
+    float4 cpr = u_modelViewProjection * float4(in.prev, 1.0);
+    float4 cnx = u_modelViewProjection * float4(in.next, 1.0);
+    out.lengthSoFar = in.lengthSoFar;
+    out.position = cp;
+    if (cp.w <= 0.0) return out;
+
+    float aspect = u_viewport.x / max(u_viewport.y, 1.0f);
+    float2 s = cp.xy / cp.w;   s.x *= aspect;
+    float2 sp = cpr.xy / cpr.w; sp.x *= aspect;
+    float2 sn = cnx.xy / cnx.w; sn.x *= aspect;
+    float2 dirA = s - sp;
+    float2 dirB = sn - s;
+    float lenA = length(dirA);
+    float lenB = length(dirB);
+    bool hasA = lenA > 1e-7f && cpr.w > 0.0;
+    bool hasB = lenB > 1e-7f && cnx.w > 0.0;
+
+    float2 dir;
+    float scale = 1.0;
+    if (hasA && hasB) {
+        float2 na = normalize(dirA);
+        float2 nb = normalize(dirB);
+        dir = normalize(na + nb);
+        float2 normalB = float2(-nb.y, nb.x);
+        float2 miterNormal = float2(-dir.y, dir.x);
+        scale = 1.0 / max(dot(miterNormal, normalB), kMiterMin);
+    } else if (hasA) {
+        dir = dirA / lenA;
+    } else if (hasB) {
+        dir = dirB / lenB;
+    } else {
+        return out;
+    }
+
+    float2 normal = float2(-dir.y, dir.x);
+    float halfWidthNdc = u_lineWidthPx / max(u_viewport.y, 1.0f);
+    float2 offset = normal * in.side * halfWidthNdc * scale;
+    float offLen = length(offset);
+    if (offLen > kMaxExtrudeNdc) {
+        offset *= kMaxExtrudeNdc / offLen;
+    }
+    offset.x /= aspect;
+    out.position = cp + float4(offset * cp.w, 0.0, 0.0);
+    return out;
+}
+)msl";
+
+static const char* kVectorLineFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+fragment float4 vectorLineFragment(constant float4& u_color [[buffer(0)]]) {
+    return u_color;
+}
+)msl";
+
 static const char* kTileFragmentMSL = R"msl(
 #include <metal_stdlib>
 using namespace metal;
@@ -2980,6 +3162,8 @@ struct Renderer::Impl {
 
     // Color (vector)
     std::unique_ptr<ShaderProgram> colorShader;
+    // 矢量线 ribbon(P1,§6.2 屏幕挤出)。fill 复用 colorShader。
+    std::unique_ptr<ShaderProgram> vectorLineShader;
 
     bool initialized = false;
 };
@@ -3105,6 +3289,18 @@ bool Renderer::initialize() {
     impl_->colorShader = dev->createShader(colorSd);
     // colorShader failure is non-fatal (vector layers won't render but tiles still work)
 
+    // ---- Vector line shader (矢量 P1 线 ribbon) ----
+    ShaderDesc vectorLineSd;
+    vectorLineSd.vertexSource =
+        isMetal ? kVectorLineVertexMSL : kVectorLineVertexGLSL;
+    vectorLineSd.fragmentSource =
+        isMetal ? kVectorLineFragmentMSL : kVectorLineFragmentGLSL;
+    impl_->vectorLineShader = dev->createShader(vectorLineSd);
+    if (!impl_->vectorLineShader) {
+        // 非致命:矢量线不出图,fill/地形不受影响
+        fprintf(stderr, "[Renderer] vectorLineShader failed — vector lines unavailable\n");
+    }
+
     impl_->initialized = true;
     return true;
 }
@@ -3123,6 +3319,7 @@ void Renderer::dispose() {
     impl_->terrainShader.reset();
     impl_->terrainInstancedShader.reset();
     impl_->colorShader.reset();
+    impl_->vectorLineShader.reset();
     impl_->tileIndexCount = 0;
     impl_->initialized = false;
 }
@@ -3130,6 +3327,9 @@ void Renderer::dispose() {
 // ---- 共享资源访问 ----
 
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
+ShaderProgram* Renderer::vectorLineShader() const {
+    return impl_->vectorLineShader.get();
+}
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
 Texture* Renderer::surfacePlaceholderTexture() const {

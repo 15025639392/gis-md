@@ -1,0 +1,243 @@
+#include <gtest/gtest.h>
+
+#include "earth_engine/layers/FeatureRenderLayer.h"
+#include "earth_engine/renderer/Renderer.h"
+#include "earth_engine/scene/Camera.h"
+#include "earth_engine/scene/FrameState.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "../../helpers/MockRenderDevice.h"
+
+#include <cmath>
+#include <cstring>
+#include <memory>
+
+using namespace earth_engine;
+using earth_engine::testing::DummyBuffer;
+using earth_engine::testing::MockRenderDevice;
+
+namespace {
+
+constexpr double kDeg = M_PI / 180.0;
+
+Feature makePolygon(double lonDeg, double latDeg, double sizeDeg) {
+    const double w = lonDeg * kDeg;
+    const double s = latDeg * kDeg;
+    const double e = (lonDeg + sizeDeg) * kDeg;
+    const double n = (latDeg + sizeDeg) * kDeg;
+    Feature f;
+    f.type = GeometryType::Polygon;
+    f.rings = {{Cartographic(w, s), Cartographic(e, s), Cartographic(e, n),
+                Cartographic(w, n), Cartographic(w, s)}};
+    return f;
+}
+
+Feature makeLine(double lonDeg, double latDeg, double spanDeg) {
+    Feature f;
+    f.type = GeometryType::LineString;
+    f.rings = {{Cartographic(lonDeg * kDeg, latDeg * kDeg),
+                Cartographic((lonDeg + spanDeg) * kDeg, latDeg * kDeg),
+                Cartographic((lonDeg + spanDeg) * kDeg,
+                             (latDeg + spanDeg) * kDeg)}};
+    return f;
+}
+
+/// 测试夹具:MockRenderDevice + Renderer(initialize 建 shader)+ 相机帧。
+class FeatureRenderLayerTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        renderer_ = std::make_unique<Renderer>(&device_);
+        ASSERT_TRUE(renderer_->initialize());
+        layer_ = std::make_unique<FeatureRenderLayer>(
+            "test-features", &device_, Ellipsoid::WGS84());
+
+        camera_.lookAt(Vec3(1.5e7, 0.0, 0.0), Vec3(0.0, 0.0, 0.0),
+                       Vec3(0.0, 0.0, 1.0));
+        frame_.camera = &camera_;
+        frame_.frameId = 7;
+        frame_.viewportWidthPixels = 800;
+        frame_.viewportHeightPixels = 600;
+    }
+
+    RenderCommandList build() {
+        RenderCommandList commands;
+        layer_->buildRenderCommands(frame_, *renderer_, commands);
+        return commands;
+    }
+
+    MockRenderDevice device_;
+    std::unique_ptr<Renderer> renderer_;
+    std::unique_ptr<FeatureRenderLayer> layer_;
+    Camera camera_;
+    FrameState frame_;
+};
+
+} // namespace
+
+// ============================================================
+// 命令生成契约
+// ============================================================
+
+TEST_F(FeatureRenderLayerTest, PolygonEmitsFillAndOutlineCommands) {
+    layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+
+    const RenderCommand* fill = nullptr;
+    const RenderCommand* line = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorFill) fill = &cmd;
+        if (cmd.kind == RenderCommandKind::VectorLine) line = &cmd;
+    }
+    ASSERT_NE(nullptr, fill);
+    ASSERT_NE(nullptr, line);
+
+    // 固定状态契约(与 validateMvpRenderCommands 的 VectorFill/Line 分支一致)
+    for (const RenderCommand* cmd : {fill, line}) {
+        EXPECT_EQ("color", cmd->pass);
+        EXPECT_TRUE(cmd->depthTest);
+        EXPECT_FALSE(cmd->depthWrite);
+        EXPECT_FALSE(cmd->cullFace);
+        EXPECT_TRUE(cmd->blend);
+        EXPECT_EQ(RenderCommand::IndexType::UInt32, cmd->indexType);
+        EXPECT_NE(nullptr, cmd->shader);
+        EXPECT_NE(nullptr, cmd->vertexBuffer);
+        EXPECT_NE(nullptr, cmd->indexBuffer);
+        EXPECT_GT(cmd->indexCount, 0);
+        EXPECT_EQ(7u, cmd->frameId);
+        ASSERT_EQ(1u, cmd->uniforms.count("u_modelViewProjection"));
+    }
+    EXPECT_EQ(12, fill->vertexStride);
+    EXPECT_EQ(44, line->vertexStride);
+    ASSERT_EQ(1u, line->uniforms.count("u_viewport"));
+    ASSERT_EQ(1u, line->uniforms.count("u_lineWidthPx"));
+    // 方形外环 4 顶点闭合 ribbon:2n=8 顶点,6·段数=24 索引
+    EXPECT_EQ(24, line->indexCount);
+    // 方形 CDT:4 顶点 → 2 三角形 = 6 索引
+    EXPECT_EQ(6, fill->indexCount);
+}
+
+TEST_F(FeatureRenderLayerTest, LineStringEmitsOnlyLineCommand) {
+    layer_->store().addFeature(makeLine(106.0, 29.0, 0.05));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorLine, commands[0].kind);
+    // open 3 顶点:2n=6 顶点,6·(n-1)=12 索引
+    EXPECT_EQ(12, commands[0].indexCount);
+}
+
+TEST_F(FeatureRenderLayerTest, PointFeatureIsSkippedInP1) {
+    Feature p;
+    p.type = GeometryType::Point;
+    p.rings = {{Cartographic(106.0 * kDeg, 29.0 * kDeg)}};
+    layer_->store().addFeature(std::move(p));
+
+    EXPECT_TRUE(build().empty());
+    EXPECT_EQ(0u, layer_->gpuBucketCount());
+}
+
+TEST_F(FeatureRenderLayerTest, InvisibleLayerEmitsNothing) {
+    layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+    layer_->setVisible(false);
+    EXPECT_TRUE(build().empty());
+}
+
+// ============================================================
+// 精度:顶点相对桶原点(RTE)
+// ============================================================
+
+TEST_F(FeatureRenderLayerTest, VerticesAreBucketOriginRelative) {
+    // 0.1° ≈ 11km 要素:相对桶原点的顶点幅值必须在 ~10^5 m 以内,
+    // 而 ECEF 绝对坐标是 ~6.4e6 m —— 判据区分两者(RTE 是否生效)。
+    layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+    RenderCommandList commands = build();
+    ASSERT_FALSE(commands.empty());
+
+    for (const auto& cmd : commands) {
+        const auto* vb = dynamic_cast<const DummyBuffer*>(cmd.vertexBuffer);
+        ASSERT_NE(nullptr, vb);
+        const auto& bytes = vb->bytes();
+        ASSERT_FALSE(bytes.empty());
+        const int strideFloats = cmd.vertexStride / 4;
+        const auto* floats = reinterpret_cast<const float*>(bytes.data());
+        const size_t vertexCount = bytes.size() / cmd.vertexStride;
+        // fill 前 3 float 是 pos;line 前 9 float 是 pos/prev/next,全部应
+        // 是原点相对小量
+        const int posFloats =
+            cmd.kind == RenderCommandKind::VectorLine ? 9 : 3;
+        for (size_t v = 0; v < vertexCount; ++v) {
+            for (int i = 0; i < posFloats; ++i) {
+                const float value = floats[v * strideFloats + i];
+                EXPECT_LT(std::fabs(value), 1.0e6f)
+                    << "vertex " << v << " component " << i
+                    << " looks like absolute ECEF (RTE broken)";
+            }
+        }
+    }
+
+    // mvp 必须吸收原点平移:与直接 viewProj(float) 不同
+    const auto& mvpU = commands[0].uniforms.at("u_modelViewProjection");
+    ASSERT_EQ(16u, mvpU.size());
+}
+
+// ============================================================
+// 脏桶增量重镶
+// ============================================================
+
+TEST_F(FeatureRenderLayerTest, DirtyBucketRebuildIsIncremental) {
+    // 两个远隔要素 → 两个桶(cell 0.02rad,隔 >2° 必不同桶)
+    const FeatureId idA =
+        layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+    layer_->store().addFeature(makePolygon(110.0, 33.0, 0.1));
+
+    EXPECT_EQ(2, layer_->syncDirtyBuckets());
+    EXPECT_EQ(2u, layer_->gpuBucketCount());
+    const int buffersAfterInitial = device_.createdBufferCount;
+
+    // 无脏区 → 不重镶不建 buffer
+    EXPECT_EQ(0, layer_->syncDirtyBuckets());
+    EXPECT_EQ(buffersAfterInitial, device_.createdBufferCount);
+
+    // 编辑 A → 只有 A 的桶重镶(4 buffer:fill vb/ib + line vb/ib)
+    Feature edited = *layer_->store().getFeature(idA);
+    edited.bounds = Rectangle();  // 让 store 重算 bounds
+    for (auto& ring : edited.rings) {
+        for (auto& c : ring) {
+            c = Cartographic(c.longitude() + 0.001, c.latitude(), c.height());
+        }
+    }
+    ASSERT_TRUE(layer_->store().updateFeature(edited));
+    EXPECT_EQ(1, layer_->syncDirtyBuckets());
+    EXPECT_EQ(buffersAfterInitial + 4, device_.createdBufferCount);
+    EXPECT_EQ(2u, layer_->gpuBucketCount());
+}
+
+TEST_F(FeatureRenderLayerTest, RemovingLastFeatureDropsBucket) {
+    const FeatureId id =
+        layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+    layer_->syncDirtyBuckets();
+    ASSERT_EQ(1u, layer_->gpuBucketCount());
+
+    ASSERT_TRUE(layer_->store().removeFeature(id));
+    layer_->syncDirtyBuckets();
+    EXPECT_EQ(0u, layer_->gpuBucketCount());
+    EXPECT_TRUE(build().empty());
+}
+
+TEST_F(FeatureRenderLayerTest, SameBucketFeaturesShareOneCommandPair) {
+    // 两个近邻小要素落同桶 → 仍是一对 fill/line 命令(合桶绘制)
+    layer_->store().addFeature(makePolygon(106.000, 29.000, 0.002));
+    layer_->store().addFeature(makePolygon(106.003, 29.003, 0.002));
+
+    RenderCommandList commands = build();
+    EXPECT_EQ(1u, layer_->gpuBucketCount());
+    ASSERT_EQ(2u, commands.size());
+    // 两方形 fill 合并:2×6=12 索引
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorFill) {
+            EXPECT_EQ(12, cmd.indexCount);
+        }
+    }
+}

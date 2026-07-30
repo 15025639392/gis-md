@@ -9,6 +9,7 @@
 #include "../environment/AtmosphereBackgroundPass.h"
 #include "../environment/SkyBox.h"
 #include "../environment/SkyGradient.h"
+#include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/Renderer.h"
 #include "../tiling/Tileset.h"
@@ -275,6 +276,10 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
 void SceneRenderPipeline::reserveCommands(Context& context) const {
     size_t expectedCommands = 4 + context.vectorLayers.size() * 4;
+    // FeatureRenderLayer:每 GPU 桶至多 fill+line 两命令
+    for (const auto& fLayer : context.featureRenderLayers) {
+        expectedCommands += fLayer->gpuBucketCount() * 2;
+    }
     auto addExpectedTilesetCommands = [&](const Tileset* tileset) {
         if (!tileset) return;
         expectedCommands += tileset->tilePlan().renderEntries.size();
@@ -426,6 +431,12 @@ void SceneRenderPipeline::buildLayerCommands(
     for (auto& vLayer : context.vectorLayers) {
         if (vLayer->visible()) {
             vLayer->buildRenderCommands(
+                context.frameState, context.renderer, context.commands);
+        }
+    }
+    for (auto& fLayer : context.featureRenderLayers) {
+        if (fLayer->visible()) {
+            fLayer->buildRenderCommands(
                 context.frameState, context.renderer, context.commands);
         }
     }

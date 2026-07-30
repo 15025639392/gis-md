@@ -29,6 +29,7 @@ class SkyGradient;
 class TerrainPageStore;
 class TerrainDisplacementTemplatePool;
 class Tileset;
+class FeatureRenderLayer;
 class VectorLayer;
 class Vec3;
 
@@ -78,6 +79,11 @@ public:
     void addVectorLayer(std::unique_ptr<VectorLayer> layer);
     std::unique_ptr<VectorLayer> removeVectorLayer(const std::string& layerId);
     size_t vectorLayerCount() const;
+
+    // ---- FeatureStore 渲染桥接层(矢量数据系统 P1) ----
+    void addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer);
+    std::unique_ptr<FeatureRenderLayer> removeFeatureRenderLayer(
+        const std::string& layerId);
 
     // ---- 统一 Tileset（cesium-native 对齐） ----
     void setTileset(std::unique_ptr<Tileset> tileset);
