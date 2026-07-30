@@ -50,6 +50,9 @@ struct FeatureRenderStyle {
     std::array<float, 4> fillColor{0.25f, 0.55f, 0.95f, 0.35f};
     std::array<float, 4> lineColor{1.00f, 0.80f, 0.10f, 0.90f};
     float lineWidthPx = 4.0f;
+    /// 点符号(P5a):SDF 圆 billboard 颜色与直径(px)。
+    std::array<float, 4> pointColor{1.00f, 1.00f, 1.00f, 0.95f};
+    float pointSizePx = 14.0f;
     FeatureAltitudeMode altitudeMode = FeatureAltitudeMode::Absolute;
     /// 高程偏移(m),语义见 FeatureAltitudeMode。Clamp 模式下兼作防
     /// z-fight 抬升(地形网格是 65 格下采样,面与网格间存在格内起伏差)。
@@ -147,7 +150,7 @@ public:
     size_t gpuBucketCount() const { return buckets_.size(); }
 
 private:
-    /// 单桶常驻 GPU 几何。fill/line 任一可空(indexCount=0)。
+    /// 单桶常驻 GPU 几何。fill/line/point 任一可空(indexCount=0)。
     struct BucketGpu {
         Vec3 origin = Vec3::zero();        ///< ECEF double 原点
         std::unique_ptr<Buffer> fillVertexBuffer;
@@ -156,6 +159,9 @@ private:
         std::unique_ptr<Buffer> lineVertexBuffer;
         std::unique_ptr<Buffer> lineIndexBuffer;
         int lineIndexCount = 0;
+        std::unique_ptr<Buffer> pointVertexBuffer;
+        std::unique_ptr<Buffer> pointIndexBuffer;
+        int pointIndexCount = 0;
     };
 
     /// 重镶单桶:镶嵌桶内全部要素 → 减原点转 float → 建 buffer。
@@ -184,7 +190,9 @@ private:
                                std::vector<float>& fillVerts,
                                std::vector<uint32_t>& fillIndices,
                                std::vector<float>& lineVerts,
-                               std::vector<uint32_t>& lineIndices) const;
+                               std::vector<uint32_t>& lineIndices,
+                               std::vector<float>& pointVerts,
+                               std::vector<uint32_t>& pointIndices) const;
 
     /// CPU 数组 → BucketGpu(buffer 创建;全空返回 false)。
     bool uploadBucketGpu(const Vec3& origin,
@@ -192,6 +200,8 @@ private:
                          const std::vector<uint32_t>& fillIndices,
                          const std::vector<float>& lineVerts,
                          const std::vector<uint32_t>& lineIndices,
+                         const std::vector<float>& pointVerts,
+                         const std::vector<uint32_t>& pointIndices,
                          BucketGpu& out) const;
 
     /// 生成一对 fill/line 命令追加进 commands(常驻桶与预览路径共用)。

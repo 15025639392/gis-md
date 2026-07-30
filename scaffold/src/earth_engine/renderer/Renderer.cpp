@@ -1709,6 +1709,104 @@ fragment float4 vectorLineFragment(constant float4& u_color [[buffer(0)]]) {
 }
 )msl";
 
+// ============================================================
+// Vector Point Shader (矢量 P5a 点符号/编辑手柄)
+// billboard quad 屏幕空间展开 + fragment SDF 圆软边(无纹理)。
+// 顶点 20B:anchor(12)+corner(8),布局复用 GLES Terrain20
+// (attr0 vec3@0 + attr2 vec2@12),无需新 VertexLayoutKind。
+// ============================================================
+
+static const char* kVectorPointVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_anchor;
+layout(location = 2) in vec2 a_corner;   // ±1 quad 角
+
+uniform mat4 u_modelViewProjection;
+uniform vec2 u_viewport;       // 视口像素
+uniform float u_pointSizePx;   // 圆直径(px)
+
+out vec2 v_corner;
+
+void main() {
+    vec4 cp = u_modelViewProjection * vec4(a_anchor, 1.0);
+    v_corner = a_corner;
+    if (cp.w <= 0.0) {
+        gl_Position = cp;      // 相机后方:不展开
+        return;
+    }
+    // 半径 px → NDC:corner ±1 展开半个直径。x/y 各自按视口尺寸换算。
+    vec2 offset = a_corner * u_pointSizePx / u_viewport;
+    gl_Position = cp + vec4(offset * cp.w, 0.0, 0.0);
+}
+)glsl";
+
+static const char* kVectorPointFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+
+uniform vec4 u_color;
+in vec2 v_corner;
+out vec4 fragColor;
+
+void main() {
+    // SDF 圆:quad 内 corner 插值即单位圆坐标;软边 ~1.5px 由
+    // smoothstep 固定比例近似(尺寸 10-30px 时观感平滑)。
+    float dist = length(v_corner);
+    float alpha = 1.0 - smoothstep(0.82, 0.98, dist);
+    if (alpha <= 0.004) discard;
+    fragColor = vec4(u_color.rgb, u_color.a * alpha);
+}
+)glsl";
+
+// MSL 双份约定;Metal 端矢量路径当前不出货,未经真机验证。
+static const char* kVectorPointVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorPointVertexIn {
+    float3 anchor [[attribute(0)]];
+    float2 corner [[attribute(2)]];
+};
+
+struct VectorPointVertexOut {
+    float4 position [[position]];
+    float2 corner;
+};
+
+vertex VectorPointVertexOut vectorPointVertex(
+        VectorPointVertexIn in [[stage_in]],
+        constant float4x4& u_modelViewProjection [[buffer(1)]],
+        constant float2& u_viewport [[buffer(2)]],
+        constant float& u_pointSizePx [[buffer(3)]]) {
+    VectorPointVertexOut out;
+    float4 cp = u_modelViewProjection * float4(in.anchor, 1.0);
+    out.corner = in.corner;
+    out.position = cp;
+    if (cp.w <= 0.0) return out;
+    float2 offset = in.corner * u_pointSizePx / u_viewport;
+    out.position = cp + float4(offset * cp.w, 0.0, 0.0);
+    return out;
+}
+)msl";
+
+static const char* kVectorPointFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorPointFragmentIn {
+    float2 corner;
+};
+
+fragment float4 vectorPointFragment(
+        VectorPointFragmentIn in [[stage_in]],
+        constant float4& u_color [[buffer(0)]]) {
+    float dist = length(in.corner);
+    float alpha = 1.0 - smoothstep(0.82, 0.98, dist);
+    if (alpha <= 0.004) discard_fragment();
+    return float4(u_color.rgb, u_color.a * alpha);
+}
+)msl";
+
 static const char* kTileFragmentMSL = R"msl(
 #include <metal_stdlib>
 using namespace metal;
@@ -3164,6 +3262,8 @@ struct Renderer::Impl {
     std::unique_ptr<ShaderProgram> colorShader;
     // 矢量线 ribbon(P1,§6.2 屏幕挤出)。fill 复用 colorShader。
     std::unique_ptr<ShaderProgram> vectorLineShader;
+    // 矢量点符号 billboard(P5a,SDF 圆)。
+    std::unique_ptr<ShaderProgram> vectorPointShader;
 
     bool initialized = false;
 };
@@ -3301,6 +3401,18 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] vectorLineShader failed — vector lines unavailable\n");
     }
 
+    // ---- Vector point shader (矢量 P5a 点符号) ----
+    ShaderDesc vectorPointSd;
+    vectorPointSd.vertexSource =
+        isMetal ? kVectorPointVertexMSL : kVectorPointVertexGLSL;
+    vectorPointSd.fragmentSource =
+        isMetal ? kVectorPointFragmentMSL : kVectorPointFragmentGLSL;
+    impl_->vectorPointShader = dev->createShader(vectorPointSd);
+    if (!impl_->vectorPointShader) {
+        // 非致命:点符号不出图,其余矢量/地形不受影响
+        fprintf(stderr, "[Renderer] vectorPointShader failed — vector points unavailable\n");
+    }
+
     impl_->initialized = true;
     return true;
 }
@@ -3320,6 +3432,7 @@ void Renderer::dispose() {
     impl_->terrainInstancedShader.reset();
     impl_->colorShader.reset();
     impl_->vectorLineShader.reset();
+    impl_->vectorPointShader.reset();
     impl_->tileIndexCount = 0;
     impl_->initialized = false;
 }
@@ -3329,6 +3442,9 @@ void Renderer::dispose() {
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 ShaderProgram* Renderer::vectorLineShader() const {
     return impl_->vectorLineShader.get();
+}
+ShaderProgram* Renderer::vectorPointShader() const {
+    return impl_->vectorPointShader.get();
 }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }

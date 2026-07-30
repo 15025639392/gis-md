@@ -128,14 +128,52 @@ TEST_F(FeatureRenderLayerTest, LineStringEmitsOnlyLineCommand) {
     EXPECT_EQ(12, commands[0].indexCount);
 }
 
-TEST_F(FeatureRenderLayerTest, PointFeatureIsSkippedInP1) {
+TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
+    // P5a:Point 要素 = billboard quad(4 顶点 6 索引,20B 顶点)。
     Feature p;
     p.type = GeometryType::Point;
     p.rings = {{Cartographic(106.0 * kDeg, 29.0 * kDeg)}};
     layer_->store().addFeature(std::move(p));
 
-    EXPECT_TRUE(build().empty());
-    EXPECT_EQ(0u, layer_->gpuBucketCount());
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    const RenderCommand& cmd = commands[0];
+    EXPECT_EQ(RenderCommandKind::VectorPoint, cmd.kind);
+    EXPECT_EQ(20, cmd.vertexStride);
+    EXPECT_EQ(6, cmd.indexCount);
+    EXPECT_EQ("color", cmd.pass);
+    EXPECT_TRUE(cmd.depthTest);
+    EXPECT_FALSE(cmd.depthWrite);
+    EXPECT_TRUE(cmd.blend);
+    ASSERT_EQ(1u, cmd.uniforms.count("u_pointSizePx"));
+    ASSERT_EQ(1u, cmd.uniforms.count("u_viewport"));
+
+    // 顶点打包:4 × (anchor rel 3f + corner 2f);首顶点 anchor = 桶原点
+    // → rel(0,0,0),corner=(-1,-1)。
+    const auto* vb =
+        dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+            cmd.vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    ASSERT_EQ(4u * 20u, vb->bytes().size());
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_FLOAT_EQ(0.0f, floats[0]);
+    EXPECT_FLOAT_EQ(0.0f, floats[1]);
+    EXPECT_FLOAT_EQ(0.0f, floats[2]);
+    EXPECT_FLOAT_EQ(-1.0f, floats[3]);
+    EXPECT_FLOAT_EQ(-1.0f, floats[4]);
+}
+
+TEST_F(FeatureRenderLayerTest, MultiplePointsShareOneCommand) {
+    for (int i = 0; i < 3; ++i) {
+        Feature p;
+        p.type = GeometryType::Point;
+        p.rings = {{Cartographic((106.0 + i * 0.001) * kDeg, 29.0 * kDeg)}};
+        layer_->store().addFeature(std::move(p));
+    }
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorPoint, commands[0].kind);
+    EXPECT_EQ(18, commands[0].indexCount);  // 3 quad × 6
 }
 
 TEST_F(FeatureRenderLayerTest, InvisibleLayerEmitsNothing) {

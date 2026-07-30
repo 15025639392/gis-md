@@ -897,6 +897,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             case RenderCommandKind::VectorOverlay:
             case RenderCommandKind::VectorFill:
             case RenderCommandKind::VectorLine:
+            case RenderCommandKind::VectorPoint:
                 ++vectorCommands;
                 break;
             case RenderCommandKind::SkyBackground:

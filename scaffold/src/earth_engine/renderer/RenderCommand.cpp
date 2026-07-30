@@ -152,6 +152,7 @@ int mvpRenderOrder(RenderCommandKind kind) {
         case RenderCommandKind::VectorOverlay:
         case RenderCommandKind::VectorFill:
         case RenderCommandKind::VectorLine:
+        case RenderCommandKind::VectorPoint:
             return 30;
         case RenderCommandKind::Unknown:
         default:
@@ -279,13 +280,17 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 
             case RenderCommandKind::VectorFill:
             case RenderCommandKind::VectorLine:
-                // 矢量 P1 固定状态:压深度测试出图但不写深度(半透明叠加、
+            case RenderCommandKind::VectorPoint:
+                // 矢量 P1/P5 固定状态:压深度测试出图但不写深度(半透明叠加、
                 // 顺序即桶序),双面(球面绕向视半球翻转),alpha 混合。
                 if (!requireColorPass(i, cmd, error)) return error;
                 if (!requireState(i, cmd, true, false, false, true,
                                   cmd.kind == RenderCommandKind::VectorFill
                                       ? "VectorFill"
-                                      : "VectorLine",
+                                      : (cmd.kind ==
+                                                 RenderCommandKind::VectorLine
+                                             ? "VectorLine"
+                                             : "VectorPoint"),
                                   error)) {
                     return error;
                 }

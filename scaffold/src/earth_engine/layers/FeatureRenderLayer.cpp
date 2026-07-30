@@ -246,7 +246,9 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<float>& fillVerts,
     std::vector<uint32_t>& fillIndices,
     std::vector<float>& lineVerts,
-    std::vector<uint32_t>& lineIndices) const {
+    std::vector<uint32_t>& lineIndices,
+    std::vector<float>& pointVerts,
+    std::vector<uint32_t>& pointIndices) const {
     // 贴地:预变换出细分+采样高度的副本(高度已含 offset),镶嵌时
     // heightOffset 传 0 防二次叠加;Absolute 走原几何 + offset。
     const bool clamp =
@@ -317,9 +319,32 @@ void FeatureRenderLayer::tessellateFeatureInto(
             }
             break;
         }
-        case GeometryType::Point:
-            // P5 符号系统前不渲染点要素。
+        case GeometryType::Point: {
+            // P5a 点符号:每点 billboard quad(anchor 3f + corner 2f = 20B,
+            // corner 展开在顶点着色器)。约定 Point 几何 = rings[0][0];
+            // 高度贴地时 geometry 已由预变换写好(clamp 采样 + offset)。
+            if (geometry->rings.empty() || geometry->rings[0].empty()) break;
+            const Cartographic& c = geometry->rings[0][0];
+            const Vec3 anchor = ellipsoid_.cartographicToCartesian(
+                Cartographic(c.longitude(), c.latitude(),
+                             c.height() + tessHeightOffset));
+            ensureOrigin(anchor);
+            const Vec3 rel = anchor - origin;
+            const uint32_t base =
+                static_cast<uint32_t>(pointVerts.size() / 5);
+            static constexpr float kCorners[4][2] = {
+                {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f}};
+            for (const auto& corner : kCorners) {
+                pointVerts.push_back(static_cast<float>(rel.x()));
+                pointVerts.push_back(static_cast<float>(rel.y()));
+                pointVerts.push_back(static_cast<float>(rel.z()));
+                pointVerts.push_back(corner[0]);
+                pointVerts.push_back(corner[1]);
+            }
+            const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
+            for (uint32_t idx : quad) pointIndices.push_back(base + idx);
             break;
+        }
     }
 }
 
@@ -329,9 +354,22 @@ bool FeatureRenderLayer::uploadBucketGpu(
     const std::vector<uint32_t>& fillIndices,
     const std::vector<float>& lineVerts,
     const std::vector<uint32_t>& lineIndices,
+    const std::vector<float>& pointVerts,
+    const std::vector<uint32_t>& pointIndices,
     BucketGpu& out) const {
     out = BucketGpu{};
     out.origin = origin;
+    if (!pointIndices.empty()) {
+        out.pointVertexBuffer = makeBuffer(
+            renderDevice_, pointVerts.data(),
+            pointVerts.size() * sizeof(float), BufferDesc::Type::Vertex);
+        out.pointIndexBuffer = makeBuffer(
+            renderDevice_, pointIndices.data(),
+            pointIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
+        if (out.pointVertexBuffer && out.pointIndexBuffer) {
+            out.pointIndexCount = static_cast<int>(pointIndices.size());
+        }
+    }
     if (!fillIndices.empty()) {
         out.fillVertexBuffer = makeBuffer(
             renderDevice_, fillVerts.data(),
@@ -354,7 +392,8 @@ bool FeatureRenderLayer::uploadBucketGpu(
             out.lineIndexCount = static_cast<int>(lineIndices.size());
         }
     }
-    return out.fillIndexCount > 0 || out.lineIndexCount > 0;
+    return out.fillIndexCount > 0 || out.lineIndexCount > 0 ||
+           out.pointIndexCount > 0;
 }
 
 void FeatureRenderLayer::rebuildBucket(BucketKey key) {
@@ -372,6 +411,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     std::vector<uint32_t> fillIndices;
     std::vector<float> lineVerts;      // 11 float/顶点(VectorLine44)
     std::vector<uint32_t> lineIndices;
+    std::vector<float> pointVerts;     // 5 float/顶点(anchor+corner)
+    std::vector<uint32_t> pointIndices;
     Vec3 origin = Vec3::zero();
     bool hasOrigin = false;
 
@@ -390,17 +431,19 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         const Feature* feature = store_.getFeature(fid);
         if (!feature) continue;
         tessellateFeatureInto(*feature, sample, origin, hasOrigin,
-                              fillVerts, fillIndices, lineVerts, lineIndices);
+                              fillVerts, fillIndices, lineVerts, lineIndices,
+                              pointVerts, pointIndices);
     }
 
-    if (fillIndices.empty() && lineIndices.empty()) {
+    if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty()) {
         buckets_.erase(key);
         return;
     }
 
     BucketGpu gpu;
     if (!uploadBucketGpu(origin, fillVerts, fillIndices,
-                         lineVerts, lineIndices, gpu)) {
+                         lineVerts, lineIndices,
+                         pointVerts, pointIndices, gpu)) {
         // buffer 创建失败:丢弃本桶,脏区已消费 → 下次编辑该桶时重试。
         buckets_.erase(key);
         return;
@@ -447,17 +490,20 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         std::vector<uint32_t> fillIndices;
         std::vector<float> lineVerts;
         std::vector<uint32_t> lineIndices;
+        std::vector<float> pointVerts;
+        std::vector<uint32_t> pointIndices;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
         tessellateFeatureInto(previewFeature,
                               makeClampSampler(previewRings_),
                               origin, hasOrigin,
                               fillVerts, fillIndices,
-                              lineVerts, lineIndices);
+                              lineVerts, lineIndices,
+                              pointVerts, pointIndices);
         if (hasOrigin) {
             previewGpuValid_ = uploadBucketGpu(
                 origin, fillVerts, fillIndices, lineVerts, lineIndices,
-                previewGpu_);
+                pointVerts, pointIndices, previewGpu_);
         }
     }
 
@@ -545,6 +591,34 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
                                           static_cast<float>(vpH)};
             cmd.uniforms["u_lineWidthPx"] = {style_.lineWidthPx};
+            commands.push_back(std::move(cmd));
+        }
+
+        if (gpu.pointIndexCount > 0 && renderer.vectorPointShader()) {
+            RenderCommand cmd;
+            cmd.kind = RenderCommandKind::VectorPoint;
+            cmd.owner = layerId_;
+            cmd.pass = "color";
+            cmd.frameId = frameState.frameId;
+            cmd.shader = renderer.vectorPointShader();
+            cmd.vertexBuffer = gpu.pointVertexBuffer.get();
+            cmd.indexBuffer = gpu.pointIndexBuffer.get();
+            cmd.indexCount = gpu.pointIndexCount;
+            cmd.indexType = RenderCommand::IndexType::UInt32;
+            cmd.vertexStride = 20;  // anchor(12)+corner(8),复用 Terrain20 布局
+            cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+            cmd.depthTest = true;
+            cmd.depthWrite = false;
+            cmd.blend = true;
+            cmd.cullFace = false;
+            cmd.uniforms["u_modelViewProjection"] = mvpUniform;
+            cmd.uniforms["u_color"] = {style_.pointColor[0],
+                                       style_.pointColor[1],
+                                       style_.pointColor[2],
+                                       style_.pointColor[3]};
+            cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
+                                          static_cast<float>(vpH)};
+            cmd.uniforms["u_pointSizePx"] = {style_.pointSizePx};
             commands.push_back(std::move(cmd));
         }
     }

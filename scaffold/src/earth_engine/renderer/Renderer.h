@@ -45,6 +45,9 @@ public:
     /// 矢量线 ribbon shader（矢量 P1,§6.2 屏幕空间线宽;fill 复用 colorShader）
     ShaderProgram* vectorLineShader() const;
 
+    /// 矢量点符号 billboard shader（矢量 P5a,SDF 圆;编辑手柄/Point 要素）
+    ShaderProgram* vectorPointShader() const;
+
     /// Tile 共享索引 buffer（64×64 grid，所有 surface tile 共用）
     Buffer* tileIndexBuffer() const;
     int tileIndexCount() const;

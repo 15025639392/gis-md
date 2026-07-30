@@ -113,6 +113,10 @@ struct EditDragState {
 };
 static EditDragState gEditDrag;
 static std::vector<Feature> gEditUndoStack;  // 抓取时的编辑前快照
+// P5a 编辑手柄(应用层):抓取时把被编辑环的顶点灌成 Point 要素,专用
+// 手柄层渲染;拖拽实时更新被拖顶点,松手/取消清空。引擎只出点渲染能力。
+static FeatureRenderLayer* gEditHandleLayer = nullptr;  // Engine 持有所有权
+static std::vector<FeatureId> gEditHandleIds;
 
 static double androidUptimeSeconds();
 static void postInputEvent(const InputEvent& event);
@@ -132,6 +136,8 @@ static void cancelInputIfNeeded() {
 
 static void clearDemoEngineObjects() {
     gDemoFeatureLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
+    gEditHandleLayer = nullptr;
+    gEditHandleIds.clear();
     gEditDrag = EditDragState{};
     gEditUndoStack.clear();
     gSdkFacade.reset();
@@ -285,6 +291,18 @@ static bool createEngine() {
 
             gDemoFeatureLayer = vectorLayer.get();
             gEngine->addFeatureRenderLayer(std::move(vectorLayer));
+
+            // P5a 编辑手柄层(应用层):白色 SDF 圆点,贴地略高于要素防遮。
+            auto handleLayer = std::make_unique<FeatureRenderLayer>(
+                "edit-handles", gRenderDevice.get(), Ellipsoid::WGS84());
+            FeatureRenderStyle handleStyle;
+            handleStyle.pointColor = {1.0f, 1.0f, 1.0f, 0.95f};
+            handleStyle.pointSizePx = 20.0f;
+            handleStyle.altitudeMode = FeatureAltitudeMode::ClampToGround;
+            handleStyle.heightOffset = 14.0;
+            handleLayer->setStyle(handleStyle);
+            gEditHandleLayer = handleLayer.get();
+            gEngine->addFeatureRenderLayer(std::move(handleLayer));
             LOGI("VectorP1 demo layer installed: 1 polygon + 1 line");
         }
         // Phase 2c P5:GPU 位移已引擎默认开(Engine.h terrainGpuDisplacementEnabled_
@@ -297,7 +315,53 @@ static bool createEngine() {
     return gEngineReady;
 }
 
-// ---- 矢量 P2 demo 编辑流(以下三个函数仅渲染线程调用) ----
+// ---- 矢量 P2 demo 编辑流(以下函数仅渲染线程调用) ----
+
+static void clearEditHandles() {
+    if (!gEditHandleLayer) return;
+    for (FeatureId id : gEditHandleIds) {
+        gEditHandleLayer->store().removeFeature(id);
+    }
+    gEditHandleIds.clear();
+}
+
+// 抓取时:被编辑环的每个顶点一个手柄(polygon 闭合末点不重复)。
+static void populateEditHandles() {
+    if (!gEditHandleLayer || !gEditDrag.active) return;
+    clearEditHandles();
+    const auto& ring =
+        gEditDrag.rings[static_cast<size_t>(gEditDrag.ringIndex)];
+    const Feature* feature =
+        gDemoFeatureLayer->store().getFeature(gEditDrag.featureId);
+    const bool closedDup =
+        feature && feature->type == GeometryType::Polygon &&
+        ring.size() >= 2 &&
+        ring.front().longitude() == ring.back().longitude() &&
+        ring.front().latitude() == ring.back().latitude();
+    const size_t count = ring.size() - (closedDup ? 1 : 0);
+    gEditHandleIds.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        Feature handle;
+        handle.type = GeometryType::Point;
+        handle.rings = {{ring[i]}};
+        gEditHandleIds.push_back(
+            gEditHandleLayer->store().addFeature(std::move(handle)));
+    }
+}
+
+// 拖拽中:只更新被拖顶点的手柄(闭合末点映射回首手柄)。
+static void updateDraggedHandle(const Cartographic& target) {
+    if (!gEditHandleLayer || gEditHandleIds.empty()) return;
+    const size_t idx =
+        static_cast<size_t>(gEditDrag.vertexIndex) % gEditHandleIds.size();
+    const Feature* handle =
+        gEditHandleLayer->store().getFeature(gEditHandleIds[idx]);
+    if (!handle) return;
+    Feature moved = *handle;
+    moved.rings = {{target}};
+    moved.bounds = Rectangle();
+    gEditHandleLayer->store().updateFeature(moved);
+}
 
 // 手势起点:pick 顶点 → 抓取(undo 快照 + beginEditPreview)。
 static void editTouchDown(float x, float y) {
@@ -324,9 +388,11 @@ static void editTouchDown(float x, float y) {
     gEditDrag.vertexIndex = hit.vertexIndex;
     gEditDrag.vertexHeight = hit.position.height();
     gEditDrag.rings = feature->rings;
-    LOGI("EditFlow: grab feature=%llu ring=%d vertex=%d distPx=%.1f",
+    populateEditHandles();
+    LOGI("EditFlow: grab feature=%llu ring=%d vertex=%d distPx=%.1f handles=%zu",
          static_cast<unsigned long long>(hit.featureId),
-         hit.ringIndex, hit.vertexIndex, hit.distancePx);
+         hit.ringIndex, hit.vertexIndex, hit.distancePx,
+         gEditHandleIds.size());
 }
 
 // 拖拽:指尖地面坐标 → snap 候选吸附 → 更新预览。
@@ -370,6 +436,7 @@ static void editTouchMove(float x, float y) {
         }
     }
     gDemoFeatureLayer->updateEditPreview(gEditDrag.rings);
+    updateDraggedHandle(target);
 }
 
 // 松手:commit 落库(undo 快照已在抓取时入栈)+ 结束预览。
@@ -391,6 +458,7 @@ static void editTouchUp() {
     }
     gDemoFeatureLayer->endEditPreview();
     gEditDrag = EditDragState{};
+    clearEditHandles();
 }
 
 static int gFrameCount = 0;
@@ -1433,6 +1501,7 @@ Java_com_earthengine_sdk_GLESView_nativeSetEditMode(
         if (!on && gEditDrag.active && gDemoFeatureLayer) {
             gDemoFeatureLayer->endEditPreview();
             gEditDrag = EditDragState{};
+            clearEditHandles();
             if (!gEditUndoStack.empty()) gEditUndoStack.pop_back();
         }
         LOGI("EditFlow: edit mode %s", on ? "ON" : "OFF");
