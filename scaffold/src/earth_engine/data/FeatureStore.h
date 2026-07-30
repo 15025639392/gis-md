@@ -69,6 +69,14 @@ public:
         return buckets_.featuresIn(key);
     }
 
+    /// 要素当前归属的桶(编辑预览通道用;不存在返 kOversizedBucket 之外
+    /// 也无所谓——调用方拿它 rebuild,空桶 rebuild 是 no-op)。
+    BucketKey bucketOf(FeatureId id) const {
+        const Feature* f = getFeature(id);
+        return f ? buckets_.bucketFor(f->bounds)
+                 : FeatureBucketGrid::kOversizedBucket;
+    }
+
     /// 取走并清空脏桶(编辑/新增后需重镶的单元)。
     std::unordered_set<BucketKey> consumeDirtyBuckets() {
         return buckets_.consumeDirty();

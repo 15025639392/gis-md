@@ -713,6 +713,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/LineTessellator.cpp
     earth_engine/data/FeatureStore.h
     earth_engine/data/FeatureStore.cpp
+    earth_engine/data/FeatureSnapQuery.h
+    earth_engine/data/FeatureSnapQuery.cpp
     earth_engine/data/GeoJsonImporter.h
     earth_engine/data/GeoJsonImporter.cpp
 )

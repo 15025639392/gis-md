@@ -24,6 +24,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/layers/FeatureRenderLayer.h"
+#include "earth_engine/data/FeatureSnapQuery.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
@@ -97,6 +98,22 @@ static bool gTouchMoved = false;
 // Debug panel state
 static bool gDebugPinchActive = false;
 
+// ---- 矢量 P2 demo 编辑流(应用层最小实现) ----
+// 引擎只出 pick/snap/预览接口;会话状态/undo 栈全在这里(demo 即参考实现)。
+// gEditMode 由 UI 线程写、两线程读;其余编辑态仅渲染线程访问。
+static std::atomic<bool> gEditMode{false};
+static FeatureRenderLayer* gDemoFeatureLayer = nullptr;  // Engine 持有所有权
+struct EditDragState {
+    bool active = false;
+    FeatureId featureId = kInvalidFeatureId;
+    int ringIndex = -1;
+    int vertexIndex = -1;
+    double vertexHeight = 0.0;
+    std::vector<std::vector<Cartographic>> rings;  // 工作副本
+};
+static EditDragState gEditDrag;
+static std::vector<Feature> gEditUndoStack;  // 抓取时的编辑前快照
+
 static double androidUptimeSeconds();
 static void postInputEvent(const InputEvent& event);
 
@@ -114,6 +131,9 @@ static void cancelInputIfNeeded() {
 }
 
 static void clearDemoEngineObjects() {
+    gDemoFeatureLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
+    gEditDrag = EditDragState{};
+    gEditUndoStack.clear();
     gSdkFacade.reset();
     gEngine.reset();
     gRenderDevice.reset();
@@ -256,6 +276,7 @@ static bool createEngine() {
                 Cartographic(106.520 * kDeg, 29.630 * kDeg)}};
             vectorLayer->store().addFeature(std::move(route));
 
+            gDemoFeatureLayer = vectorLayer.get();
             gEngine->addFeatureRenderLayer(std::move(vectorLayer));
             LOGI("VectorP1 demo layer installed: 1 polygon + 1 line");
         }
@@ -267,6 +288,102 @@ static bool createEngine() {
         clearDemoEngineObjects();
     }
     return gEngineReady;
+}
+
+// ---- 矢量 P2 demo 编辑流(以下三个函数仅渲染线程调用) ----
+
+// 手势起点:pick 顶点 → 抓取(undo 快照 + beginEditPreview)。
+static void editTouchDown(float x, float y) {
+    if (!gEngine || !gDemoFeatureLayer || gEditDrag.active) return;
+    FrameState pickFrame;
+    pickFrame.camera = &gEngine->camera();
+    pickFrame.viewportWidthPixels = gWidth.load();
+    pickFrame.viewportHeightPixels = gHeight.load();
+    const FeaturePickResult hit =
+        gDemoFeatureLayer->pick(pickFrame, x, y, 48.0f);
+    if (hit.part != FeaturePickResult::Part::Vertex) {
+        LOGI("EditFlow: no vertex at (%.0f,%.0f) part=%d", x, y,
+             static_cast<int>(hit.part));
+        return;
+    }
+    const Feature* feature =
+        gDemoFeatureLayer->store().getFeature(hit.featureId);
+    if (!feature) return;
+    if (!gDemoFeatureLayer->beginEditPreview(hit.featureId)) return;
+    gEditUndoStack.push_back(*feature);
+    gEditDrag.active = true;
+    gEditDrag.featureId = hit.featureId;
+    gEditDrag.ringIndex = hit.ringIndex;
+    gEditDrag.vertexIndex = hit.vertexIndex;
+    gEditDrag.vertexHeight = hit.position.height();
+    gEditDrag.rings = feature->rings;
+    LOGI("EditFlow: grab feature=%llu ring=%d vertex=%d distPx=%.1f",
+         static_cast<unsigned long long>(hit.featureId),
+         hit.ringIndex, hit.vertexIndex, hit.distancePx);
+}
+
+// 拖拽:指尖地面坐标 → snap 候选吸附 → 更新预览。
+static void editTouchMove(float x, float y) {
+    if (!gEngine || !gDemoFeatureLayer || !gEditDrag.active) return;
+    const PickResult ground = gEngine->pick(x, y);
+    if (!ground.isValid()) return;
+    Cartographic target(ground.cartographic.longitude(),
+                        ground.cartographic.latitude(),
+                        gEditDrag.vertexHeight);
+    // snap 容差 = 24px 换算地面米(相机距离 × 每像素弧度),排除自身。
+    const double dist =
+        (ground.worldPosition - gEngine->camera().position()).length();
+    const double tolMeters = std::max(
+        5.0, dist * gEngine->camera().verticalFovRadians() /
+                 std::max(1, gHeight.load()) * 24.0);
+    const auto snap = FeatureSnapQuery::nearest(
+        gDemoFeatureLayer->store(), Ellipsoid::WGS84(), target, tolMeters,
+        gEditDrag.featureId);
+    if (snap) {
+        target = Cartographic(snap->position.longitude(),
+                              snap->position.latitude(),
+                              gEditDrag.vertexHeight);
+        LOGI("EditFlow: snap to feature=%llu %s idx=%d dist=%.1fm",
+             static_cast<unsigned long long>(snap->featureId),
+             snap->part == SnapCandidate::Part::Vertex ? "vertex" : "edge",
+             snap->vertexIndex, snap->distanceMeters);
+    }
+    auto& ring = gEditDrag.rings[gEditDrag.ringIndex];
+    ring[static_cast<size_t>(gEditDrag.vertexIndex)] = target;
+    // polygon 闭合环:拖首/末点时同步另一端保持闭合。
+    const Feature* feature =
+        gDemoFeatureLayer->store().getFeature(gEditDrag.featureId);
+    if (feature && feature->type == GeometryType::Polygon &&
+        ring.size() >= 2) {
+        if (gEditDrag.vertexIndex == 0) {
+            ring.back() = target;
+        } else if (static_cast<size_t>(gEditDrag.vertexIndex) ==
+                   ring.size() - 1) {
+            ring.front() = target;
+        }
+    }
+    gDemoFeatureLayer->updateEditPreview(gEditDrag.rings);
+}
+
+// 松手:commit 落库(undo 快照已在抓取时入栈)+ 结束预览。
+static void editTouchUp() {
+    if (!gDemoFeatureLayer || !gEditDrag.active) return;
+    const Feature* feature =
+        gDemoFeatureLayer->store().getFeature(gEditDrag.featureId);
+    if (feature) {
+        Feature edited = *feature;
+        edited.rings = gEditDrag.rings;
+        edited.bounds = Rectangle();  // store 从 rings 重算
+        gDemoFeatureLayer->store().updateFeature(edited);
+        LOGI("EditFlow: commit feature=%llu version=%llu undoDepth=%zu",
+             static_cast<unsigned long long>(gEditDrag.featureId),
+             static_cast<unsigned long long>(
+                 gDemoFeatureLayer->store()
+                     .getFeature(gEditDrag.featureId)->version),
+             gEditUndoStack.size());
+    }
+    gDemoFeatureLayer->endEditPreview();
+    gEditDrag = EditDragState{};
 }
 
 static int gFrameCount = 0;
@@ -782,6 +899,17 @@ Java_com_earthengine_sdk_GLESView_nativeDrag(
     jint /*width*/, jint /*height*/) {
     gTouchMoved = true;
 
+    // 编辑模式:触摸走顶点拖拽编辑流(渲染线程),不喂相机。
+    if (gEditMode.load(std::memory_order_relaxed)) {
+        const bool first = !gDragStarted;
+        gDragStarted = true;
+        gRenderThread.post([first, startX, startY, endX, endY]() {
+            if (first) editTouchDown(startX, startY);
+            editTouchMove(endX, endY);
+        });
+        return;
+    }
+
     double ts = androidUptimeSeconds();
 
     if (!gDragStarted) {
@@ -808,6 +936,11 @@ JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeTouchUp(
     JNIEnv* /* env */, jobject /* this */, jfloat x, jfloat y) {
     gTouching = false;
+
+    if (gEditMode.load(std::memory_order_relaxed)) {
+        gRenderThread.post([]() { editTouchUp(); });
+        return;
+    }
 
     double ts = androidUptimeSeconds();
 
@@ -1280,6 +1413,43 @@ Java_com_earthengine_sdk_GLESView_nativeSetGpuTerrain(
         if (!gEngine) return;
         gEngine->setTerrainGpuDisplacementEnabled(on);
         LOGI("Terrain GPU displacement %s", on ? "ENABLED" : "disabled");
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeSetEditMode(
+    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
+    const bool on = (enabled == JNI_TRUE);
+    gEditMode.store(on, std::memory_order_relaxed);
+    gRenderThread.post([on]() {
+        // 关闭时若拖拽中:cancel(不落库,弹掉抓取时压入的 undo 快照)。
+        if (!on && gEditDrag.active && gDemoFeatureLayer) {
+            gDemoFeatureLayer->endEditPreview();
+            gEditDrag = EditDragState{};
+            if (!gEditUndoStack.empty()) gEditUndoStack.pop_back();
+        }
+        LOGI("EditFlow: edit mode %s", on ? "ON" : "OFF");
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeUndoEdit(
+    JNIEnv* /* env */, jobject /* this */) {
+    gRenderThread.post([]() {
+        if (!gDemoFeatureLayer || gEditDrag.active) return;
+        if (gEditUndoStack.empty()) {
+            LOGI("EditFlow: undo stack empty");
+            return;
+        }
+        Feature snapshot = gEditUndoStack.back();
+        gEditUndoStack.pop_back();
+        snapshot.bounds = Rectangle();  // store 从 rings 重算
+        gDemoFeatureLayer->store().updateFeature(snapshot);
+        LOGI("EditFlow: undo feature=%llu → version=%llu undoDepth=%zu",
+             static_cast<unsigned long long>(snapshot.id),
+             static_cast<unsigned long long>(
+                 gDemoFeatureLayer->store().getFeature(snapshot.id)->version),
+             gEditUndoStack.size());
     });
 }
 

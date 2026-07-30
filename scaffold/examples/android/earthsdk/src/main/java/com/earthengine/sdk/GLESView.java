@@ -259,4 +259,9 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     public native void nativeResetCamera();
     public native void nativeGrazingView();
     public native void nativeSetGpuTerrain(boolean enabled);
+
+    // 矢量 P2 demo 编辑流(应用层最小实现:引擎只出 pick/snap/预览接口)。
+    // EDIT 开启期间触摸走顶点拖拽编辑,相机手势被抑制。
+    public native void nativeSetEditMode(boolean enabled);
+    public native void nativeUndoEdit();
 }

@@ -29,6 +29,7 @@ public class MainActivity extends Activity {
     private Button mBtnAddVectorLayer;
     private Button mBtnResetCamera;
     private boolean mGpuTerrainOn = true;
+    private boolean mEditModeOn = false;
     private Handler mHandler;
 
     @Override
@@ -147,6 +148,29 @@ public class MainActivity extends Activity {
         actions.addView(btnGpuTerrain);
 
         panel.addView(actions);
+
+        // 矢量 P2 编辑流(demo 应用层):EDIT 切换 + UNDO,独立第二行
+        LinearLayout editActions = new LinearLayout(this);
+        editActions.setOrientation(LinearLayout.HORIZONTAL);
+        editActions.setGravity(Gravity.START);
+
+        Button btnEdit = new Button(this);
+        btnEdit.setText("Edit: OFF");
+        btnEdit.setTextSize(10);
+        btnEdit.setOnClickListener(v -> {
+            mEditModeOn = !mEditModeOn;
+            mGLView.nativeSetEditMode(mEditModeOn);
+            btnEdit.setText(mEditModeOn ? "Edit: ON" : "Edit: OFF");
+        });
+        editActions.addView(btnEdit);
+
+        Button btnUndo = new Button(this);
+        btnUndo.setText("Undo");
+        btnUndo.setTextSize(10);
+        btnUndo.setOnClickListener(v -> mGLView.nativeUndoEdit());
+        editActions.addView(btnUndo);
+
+        panel.addView(editActions);
         panel.addView(mDiagnosticsText);
 
         // Close button

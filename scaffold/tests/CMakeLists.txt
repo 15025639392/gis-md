@@ -142,6 +142,12 @@ add_executable(test_feature_render_layer
 target_link_libraries(test_feature_render_layer PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_feature_render_layer COMMAND test_feature_render_layer)
 
+add_executable(test_feature_edit_queries
+    unit/layers/test_feature_edit_queries.cpp
+)
+target_link_libraries(test_feature_edit_queries PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_feature_edit_queries COMMAND test_feature_edit_queries)
+
 add_executable(test_shared_asset_depot
     unit/core/test_shared_asset_depot.cpp
 )
