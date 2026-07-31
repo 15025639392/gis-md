@@ -1816,6 +1816,11 @@ layout(location = 4) in float a_shape;      // >=0 内置形状;<0 图集
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;       // 视口像素
 uniform float u_pointSizePx;   // 符号基准尺寸(px:圆直径/方边长/图标高)
+// >0 = 高空模式:深度顶到近平面(z/w = 该值,reverse-Z 近=1)。billboard
+// 是锚点常数深度,高空下 quad 覆盖数百 km 地面,地形逐像素深度会把符号
+// 斜切/整吞;该高度下地形起伏不足一像素,遮挡语义已无意义。背面点不会
+// 误显:视野外/背面桶已被层级的地平线圆裁剪掉。
+uniform float u_depthPushNdc;
 
 out vec2 v_uv;
 out vec4 v_color;
@@ -1833,6 +1838,9 @@ void main() {
     // 像素偏移 → NDC:视口跨 2 个 NDC 单位。
     vec2 offsetNdc = a_offsetUnit * u_pointSizePx * 2.0 / u_viewport;
     gl_Position = cp + vec4(offsetNdc * cp.w, 0.0, 0.0);
+    if (u_depthPushNdc > 0.0) {
+        gl_Position.z = gl_Position.w * u_depthPushNdc;
+    }
 }
 )glsl";
 
@@ -1959,7 +1967,8 @@ vertex VectorPointVertexOut vectorPointVertex(
         VectorPointVertexIn in [[stage_in]],
         constant float4x4& u_modelViewProjection [[buffer(1)]],
         constant float2& u_viewport [[buffer(2)]],
-        constant float& u_pointSizePx [[buffer(3)]]) {
+        constant float& u_pointSizePx [[buffer(3)]],
+        constant float& u_depthPushNdc [[buffer(4)]]) {
     VectorPointVertexOut out;
     float4 cp = u_modelViewProjection * float4(in.anchor, 1.0);
     out.uv = in.uv;
@@ -1969,6 +1978,10 @@ vertex VectorPointVertexOut vectorPointVertex(
     if (cp.w <= 0.0) return out;
     float2 offsetNdc = in.offsetUnit * u_pointSizePx * 2.0 / u_viewport;
     out.position = cp + float4(offsetNdc * cp.w, 0.0, 0.0);
+    // 语义见 GLSL 版注释:高空深度顶近平面(reverse-Z 近=1)。
+    if (u_depthPushNdc > 0.0) {
+        out.position.z = out.position.w * u_depthPushNdc;
+    }
     return out;
 }
 )msl";
@@ -2022,6 +2035,8 @@ layout(location = 2) in vec2 a_uv;
 
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;
+// 语义同 VectorPoint 的 u_depthPushNdc(高空深度顶近平面)。
+uniform float u_depthPushNdc;
 
 out vec2 v_uv;
 out float v_opacity;
@@ -2037,6 +2052,9 @@ void main() {
     }
     vec2 offsetNdc = a_offsetPx.xy * 2.0 / u_viewport;
     gl_Position = cp + vec4(offsetNdc * cp.w, 0.0, 0.0);
+    if (u_depthPushNdc > 0.0) {
+        gl_Position.z = gl_Position.w * u_depthPushNdc;
+    }
 }
 )glsl";
 
@@ -2087,7 +2105,8 @@ struct VectorLabelVertexOut {
 vertex VectorLabelVertexOut vectorLabelVertex(
         VectorLabelVertexIn in [[stage_in]],
         constant float4x4& u_modelViewProjection [[buffer(1)]],
-        constant float2& u_viewport [[buffer(2)]]) {
+        constant float2& u_viewport [[buffer(2)]],
+        constant float& u_depthPushNdc [[buffer(3)]]) {
     VectorLabelVertexOut out;
     float4 cp = u_modelViewProjection * float4(in.anchor, 1.0);
     out.uv = in.uv;
@@ -2098,6 +2117,10 @@ vertex VectorLabelVertexOut vectorLabelVertex(
     }
     float2 offsetNdc = in.offsetPx.xy * 2.0 / u_viewport;
     out.position = cp + float4(offsetNdc * cp.w, 0.0, 0.0);
+    // 语义见 GLSL 版注释:高空深度顶近平面(reverse-Z 近=1)。
+    if (u_depthPushNdc > 0.0) {
+        out.position.z = out.position.w * u_depthPushNdc;
+    }
     return out;
 }
 )msl";

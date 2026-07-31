@@ -207,6 +207,39 @@ TEST_F(FeatureRenderLayerTest, OversizedFeatureDrawnRegardlessOfView) {
     EXPECT_EQ(2u, commands.size());  // fill + outline
 }
 
+TEST_F(FeatureRenderLayerTest, SymbolDepthPushedToNearAtHighAltitude) {
+    // 高空(fixture 相机大地高 ~8.6e6m > 200km 阈值):点符号命令携带
+    // u_depthPushNdc > 0 —— VS 把深度顶到近平面,防 billboard 锚点常数
+    // 深度被地形逐像素深度斜切/吞没(真机 2.6e7m 实测半切复现)。
+    Feature p;
+    p.type = GeometryType::Point;
+    p.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    layer_->store().addFeature(std::move(p));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    ASSERT_EQ(1u, commands[0].uniforms.count("u_depthPushNdc"));
+    EXPECT_GT(commands[0].uniforms.at("u_depthPushNdc")[0], 0.9f);
+}
+
+TEST_F(FeatureRenderLayerTest, SymbolDepthTestedNormallyAtLowAltitude) {
+    // 低空(5km < 200km 阈值):u_depthPushNdc = 0,保留地形遮挡语义
+    // (billboard 斜视被前方地面按锚点深度遮挡是既定行为)。
+    const auto eye = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 5000.0));
+    camera_.lookAt(eye, Vec3::zero(), Vec3(0.0, 0.0, 1.0));
+
+    Feature p;
+    p.type = GeometryType::Point;
+    p.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    layer_->store().addFeature(std::move(p));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    ASSERT_EQ(1u, commands[0].uniforms.count("u_depthPushNdc"));
+    EXPECT_FLOAT_EQ(0.0f, commands[0].uniforms.at("u_depthPushNdc")[0]);
+}
+
 TEST_F(FeatureRenderLayerTest, InvisibleLayerEmitsNothing) {
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     layer_->setVisible(false);

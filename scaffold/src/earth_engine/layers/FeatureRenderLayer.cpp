@@ -1216,13 +1216,19 @@ void FeatureRenderLayer::appendBucketCommands(
     // P6b zoom 驱动宽度/尺寸:每帧按相机大地高求 zoom(web 墨卡托惯例
     // zoom ≈ log2(赤道周长 4e7m / 视高),z0 ≈ 全球一屏),表达式求值进
     // uniform;求值失败/非数值回落字面量。
+    const double camHeight =
+        ellipsoid_.cartesianToCartographic(cam.position()).height();
+    // 高空符号深度顶近平面(语义见 FeatureRenderStyle 字段注释)。0.9999
+    // 而非 1.0:留一线近平面余量,避免恰在 near 上被裁。
+    constexpr float kSymbolDepthPushNdc = 0.9999f;
+    const float symbolDepthPush =
+        (style_.symbolDepthPushCameraHeightMeters > 0.0f &&
+         camHeight > style_.symbolDepthPushCameraHeightMeters)
+            ? kSymbolDepthPushNdc
+            : 0.0f;
     float lineWidthPx = style_.lineWidthPx;
     float pointSizePx = style_.pointSizePx;
     if (style_.lineWidthExpr || style_.pointSizeExpr) {
-        const double camHeight =
-            ellipsoid_
-                .cartesianToCartographic(cam.position())
-                .height();
         const double zoomLevel = std::min(
             24.0,
             std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
@@ -1350,6 +1356,7 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
                                           static_cast<float>(vpH)};
             cmd.uniforms["u_pointSizePx"] = {pointSizePx};
+            cmd.uniforms["u_depthPushNdc"] = {symbolDepthPush};
             // P6c:图集通道的顶点(shape<0)要采位图。纹理常挂(有图标才
             // 存在),无图集时桶里也不会有图集顶点,shader 分支不触达。
             if (iconAtlas_ && iconAtlas_->texture()) {
@@ -1390,6 +1397,7 @@ void FeatureRenderLayer::appendBucketCommands(
                                           static_cast<float>(vpH)};
             cmd.uniforms["u_sdfEdge"] = {
                 static_cast<float>(GlyphAtlas::kSdfOnEdge) / 255.0f};
+            cmd.uniforms["u_depthPushNdc"] = {symbolDepthPush};
             // halo 宽(px,标注字号尺度)→ 字形栅格 px → SDF 值差。
             const float glyphScale =
                 style_.labelSizePx /

@@ -77,6 +77,13 @@ struct FeatureRenderStyle {
     float labelSizePx = 28.0f;    ///< 文字行高(px)
     float labelOffsetPx = 18.0f;  ///< 基线抬离锚点(px,屏幕向上)
     float labelHaloPx = 2.0f;     ///< halo 描边宽(px)
+    /// 符号/标注深度语义的行星尺度开关:相机大地高超过该值后,点符号与
+    /// 标注在 VS 里把深度顶到近平面(不再与地形做深度测试)。billboard
+    /// 是锚点常数深度,高空下 34px quad 覆盖数百 km 地面,地形逐像素
+    /// 深度会把符号斜切成半个/整个吞掉;而该高度下地形起伏已不足一像素,
+    /// 遮挡语义无意义。背面不误显:视野外/背面桶被层级地平线圆裁剪,
+    /// 标签另有 placement 地平线剔除。0 = 永不顶(纯深度测试语义)。
+    float symbolDepthPushCameraHeightMeters = 200000.0f;
     // ---- 数据驱动样式表达式(P6b,设计 §12;空 = 用上面字面量) ----
     // 语义分割(setStyle 校验,越界降级字面量+警告):
     // 颜色表达式 = 数据驱动(镶嵌期逐要素求值烘进顶点色,禁 zoom——
