@@ -283,11 +283,14 @@ private:
     AreaSampleFn makeClampSampler(
         const std::vector<std::vector<Cartographic>>& rings) const;
 
-    /// 贴地预变换:边按 clampDensifyMeters 细分 + 逐顶点高度 = 采样 +
-    /// offset;polygon 另产出内部网格 Steiner 点(CDT 散点,面披盖地形)。
+    /// 贴地预变换:边按 densifyMeters 细分 + 逐顶点高度 = 采样 + offset;
+    /// polygon 另产出内部网格 Steiner 点(CDT 散点,面披盖地形)。
+    /// densifyMeters 由调用方定:方案 A 传 style_.clampDensifyMeters(细分
+    /// 兼防露头);stencil 线路径放宽(细分只服务线形曲率 + 高度采样)。
     Feature prepareClampedFeature(const Feature& feature,
                                   const AreaSampleFn& sample,
-                                  std::vector<Cartographic>* outSteiner) const;
+                                  std::vector<Cartographic>* outSteiner,
+                                  double densifyMeters) const;
 
     /// 镶嵌单要素几何并追加进 CPU 侧数组(rebuildBucket 与预览路径共用)。
     /// sample 非空 → 先做贴地预变换。

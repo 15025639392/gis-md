@@ -274,8 +274,9 @@ FeatureRenderLayer::AreaSampleFn FeatureRenderLayer::makeClampSampler(
 Feature FeatureRenderLayer::prepareClampedFeature(
     const Feature& feature,
     const AreaSampleFn& sample,
-    std::vector<Cartographic>* outSteiner) const {
-    const double spacing = std::max(1.0, style_.clampDensifyMeters);
+    std::vector<Cartographic>* outSteiner,
+    double densifyMeters) const {
+    const double spacing = std::max(1.0, densifyMeters);
     auto clampHeight = [&](double lng, double lat) {
         // 无数据回落椭球面(对齐 no-fine-data-ellipsoid-fallback 约定)。
         const double ground =
@@ -403,8 +404,17 @@ void FeatureRenderLayer::tessellateFeatureInto(
     double tessHeightOffset = style_.heightOffset;
     if (clamp) {
         // stencil fill 不需要内部 Steiner 撒点(fill 不再按网格采高)。
+        // 细分密度解耦:stencil 线不靠细分防露头(贴地是像素级分类),
+        // 细分只服务线形曲率 + 沿线高度采样(±margin 罩差),放宽到
+        // ≥100m;方案 A 回落仍用 clampDensifyMeters(细分兼防扎地)。
+        // 用户显式设得更粗时尊重更粗值。
+        constexpr double kStencilLineDensifyMeters = 100.0;
+        const double densify =
+            stencilLine ? std::max(style_.clampDensifyMeters,
+                                   kStencilLineDensifyMeters)
+                        : style_.clampDensifyMeters;
         clampedStorage = prepareClampedFeature(
-            feature, sample, stencilFill ? nullptr : &steinerPoints);
+            feature, sample, stencilFill ? nullptr : &steinerPoints, densify);
         geometry = &clampedStorage;
         tessHeightOffset = 0.0;
     }

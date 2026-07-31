@@ -836,6 +836,35 @@ TEST_F(FeatureRenderLayerTest, ClampedPolygonOutlineBecomesClosedLineVolume) {
         << (validation ? validation->message : "");
 }
 
+TEST_F(FeatureRenderLayerTest, StencilLineDensifyDecoupledFromSchemeA) {
+    // 细分解耦:方案 A 档位(8m,防扎地)不该传染 stencil 线——stencil
+    // 贴地是像素级分类,细分只服务曲率/高度采样,放宽到 ≥100m。
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.clampDensifyMeters = 8.0;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    // 两段各 ~5.6km:100m 细分 → ~113 横截面;8m 会是 ~1400。
+    layer_->store().addFeature(makeLine(0.0, 0.0, 0.05));
+
+    RenderCommandList commands = build();
+    const RenderCommand* vol = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorStencil &&
+            cmd.stencilPhase == StencilPhase::ClassifyVolume) {
+            vol = &cmd;
+            break;
+        }
+    }
+    ASSERT_NE(nullptr, vol);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const size_t sections = vb->bytes().size() / (4 * 24);
+    EXPECT_GE(sections, 100u);
+    EXPECT_LE(sections, 200u);
+    expectWatertight(*vol);
+}
+
 TEST_F(FeatureRenderLayerTest, StencilLineFallsBackToRibbonWithoutSupport) {
     device_.stencilClassificationSupported = false;
     FeatureRenderStyle style = layer_->style();
