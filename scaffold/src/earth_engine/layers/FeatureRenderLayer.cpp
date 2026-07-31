@@ -366,7 +366,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<float>& labelVerts,
     std::vector<uint32_t>& labelIndices,
     std::vector<LabelEntry>& labelEntries,
-    VolumeCpuGroups& volumeGroups) const {
+    VolumeCpuGroups& volumeGroups,
+    VolumeCpuGroups& lineVolumeGroups) const {
     // P6b 数据驱动色:镶嵌期逐要素求值(上下文 = 属性,无 zoom),失败
     // 回落图层字面量;打包 RGBA8 烘进顶点流。
     const std::array<float, 4> fillColor =
@@ -387,10 +388,14 @@ void FeatureRenderLayer::tessellateFeatureInto(
     const bool clamp =
         style_.altitudeMode == FeatureAltitudeMode::ClampToGround;
     // P6 方案 B:后端支持 stencil 分类 → clamp 面 fill 走挤出体双 pass
-    // (像素级贴合,LOD 切换免重钳);不支持回落方案 A。outline/线/点仍走
-    // 方案 A(§7.3 分而治之)。
+    // (像素级贴合,LOD 切换免重钳);不支持回落方案 A。
     const bool stencilFill =
         clamp && feature.type == GeometryType::Polygon && renderDevice_ &&
+        renderDevice_->supportsStencilClassification();
+    // P6d:clamp 线(LineString + polygon outline)同走 stencil 双 pass
+    // (墙带体,像素级贴地,宽度 VS 按眼深挤出);不支持回落方案 A ribbon。
+    const bool stencilLine =
+        clamp && renderDevice_ &&
         renderDevice_->supportsStencilClassification();
     std::vector<Cartographic> steinerPoints;
     Feature clampedStorage;
@@ -442,9 +447,16 @@ void FeatureRenderLayer::tessellateFeatureInto(
                     }
                 }
             }
-            // 外环 outline(闭合 ribbon)。LineTessellator 契约只收
-            // LineString(有测试锁死),把外环包成临时 LineString。
-            // 孔环 outline 留后续。
+            // 外环 outline。孔环 outline 留后续。
+            if (stencilLine) {
+                // P6d:闭合墙带体(首尾 wrap)。
+                appendLineVolume(geometry->rings.front(), /*closed=*/true,
+                                 lineColor, origin, hasOrigin,
+                                 lineVolumeGroups);
+                break;
+            }
+            // 方案 A 闭合 ribbon。LineTessellator 契约只收 LineString
+            // (有测试锁死),把外环包成临时 LineString。
             Feature outlineFeature;
             outlineFeature.type = GeometryType::LineString;
             outlineFeature.rings = {geometry->rings.front()};
@@ -459,6 +471,14 @@ void FeatureRenderLayer::tessellateFeatureInto(
             break;
         }
         case GeometryType::LineString: {
+            if (stencilLine) {
+                // P6d:每条 ring 一条开放墙带体。
+                for (const auto& ring : geometry->rings) {
+                    appendLineVolume(ring, /*closed=*/false, lineColor,
+                                     origin, hasOrigin, lineVolumeGroups);
+                }
+                break;
+            }
             TessellatedLine line = LineTessellator::tessellate(
                 *geometry, ellipsoid_, tessHeightOffset,
                 /*closed=*/false);
@@ -805,6 +825,150 @@ void FeatureRenderLayer::appendFillVolume(
     }
 }
 
+void FeatureRenderLayer::appendLineVolume(
+    const std::vector<Cartographic>& points,
+    bool closed,
+    const std::array<float, 4>& lineColor,
+    Vec3& origin,
+    bool& hasOrigin,
+    VolumeCpuGroups& lineVolumeGroups) const {
+    // 闭合环:末点 = 首点时去重,横截面靠 wrap 共享。
+    size_t n = points.size();
+    if (closed && n >= 2 &&
+        points.front().longitude() == points.back().longitude() &&
+        points.front().latitude() == points.back().latitude()) {
+        --n;
+    }
+    if (n < 2) return;
+    if (closed && n < 3) closed = false;  // 退化环按开放线处理
+
+    // ---- 逐点中心/上方向(点高度已含采样 + heightOffset;±margin 吞掉
+    // offset 差异,stencil 染色本身与抬升无关) ----
+    std::vector<Vec3> centers(n);
+    std::vector<Vec3> ups(n);
+    for (size_t i = 0; i < n; ++i) {
+        centers[i] = ellipsoid_.cartographicToCartesian(points[i]);
+        ups[i] = ellipsoid_.geodeticSurfaceNormal(points[i]);
+    }
+
+    // 切平面内单位方向(对齐 cesium computeVertexMiterNormal 的正交化,
+    // 见 .ref/cesiumjs/groundpolyline/GroundPolylineGeometry.js:380-438)。
+    auto tangentDir = [](const Vec3& from, const Vec3& to,
+                         const Vec3& up) -> Vec3 {
+        Vec3 d = to - from;
+        d = d - up * d.dot(up);
+        const double len = d.length();
+        if (len < 1e-9) return Vec3::zero();
+        return d / len;
+    };
+
+    // miter 长度下限 = 屏幕线 shader 同款 miter-limit 4。尖角只会宽度过冲,
+    // 横截面共享保证不会破洞(与 cesium breakMiter 不同,那是平面裁剪需要)。
+    constexpr double kMiterMin = 0.25;
+
+    // ---- 逐点挤出向量:extrude = 右向 miter 方向 × miter 缩放(左侧顶点
+    // 取负)。方向/缩放全烘进向量,VS 只做 pos + extrude * halfWidthMeters。
+    std::vector<Vec3> extrudes(n);
+    for (size_t i = 0; i < n; ++i) {
+        const Vec3& up = ups[i];
+        const bool hasIn = closed || i > 0;
+        const bool hasOut = closed || i + 1 < n;
+        const Vec3 dirIn =
+            hasIn ? tangentDir(centers[(i + n - 1) % n], centers[i], up)
+                  : Vec3::zero();
+        const Vec3 dirOut =
+            hasOut ? tangentDir(centers[i], centers[(i + 1) % n], up)
+                   : Vec3::zero();
+        const bool okIn = dirIn.lengthSquared() > 0.25;
+        const bool okOut = dirOut.lengthSquared() > 0.25;
+        Vec3 lateral;
+        double scale = 1.0;
+        if (okIn && okOut) {
+            Vec3 bisect = dirIn + dirOut;
+            if (bisect.lengthSquared() < 1e-12) {
+                // 180° 折返:任取一段右向,不放缩。
+                lateral = dirIn.cross(up).normalized();
+            } else {
+                bisect = bisect.normalized();
+                lateral = bisect.cross(up).normalized();
+                const Vec3 rightOut = dirOut.cross(up).normalized();
+                scale = 1.0 / std::max(lateral.dot(rightOut), kMiterMin);
+            }
+        } else if (okIn) {
+            lateral = dirIn.cross(up).normalized();
+        } else if (okOut) {
+            lateral = dirOut.cross(up).normalized();
+        } else {
+            // 相邻点重合退化:零挤出(该横截面塌成线,仍水密)。
+            lateral = Vec3::zero();
+        }
+        extrudes[i] = lateral * scale;
+    }
+
+    VolumeCpuGroup& group = lineVolumeGroups[packColorU32(lineColor)];
+    group.color = lineColor;
+    std::vector<float>& verts = group.verts;
+    std::vector<uint32_t>& indices = group.indices;
+
+    // ---- 横截面 4 顶点(CPU 零宽,24B = pos 3f + extrude 3f):
+    // corner 0 = 底左(-) 1 = 底右(+) 2 = 顶左(-) 3 = 顶右(+)。 ----
+    const uint32_t base = static_cast<uint32_t>(verts.size() / 6);
+    for (size_t i = 0; i < n; ++i) {
+        const Cartographic& c = points[i];
+        const Vec3 bottom = ellipsoid_.cartographicToCartesian(Cartographic(
+            c.longitude(), c.latitude(), c.height() - kVolumeMarginMeters));
+        const Vec3 top = ellipsoid_.cartographicToCartesian(Cartographic(
+            c.longitude(), c.latitude(), c.height() + kVolumeMarginMeters));
+        if (!hasOrigin) {
+            origin = bottom;
+            hasOrigin = true;
+        }
+        auto pushVert = [&](const Vec3& p, double side) {
+            const Vec3 rel = p - origin;
+            const Vec3 ext = extrudes[i] * side;
+            verts.push_back(static_cast<float>(rel.x()));
+            verts.push_back(static_cast<float>(rel.y()));
+            verts.push_back(static_cast<float>(rel.z()));
+            verts.push_back(static_cast<float>(ext.x()));
+            verts.push_back(static_cast<float>(ext.y()));
+            verts.push_back(static_cast<float>(ext.z()));
+        };
+        pushVert(bottom, -1.0);
+        pushVert(bottom, 1.0);
+        pushVert(top, -1.0);
+        pushVert(top, 1.0);
+    }
+
+    // ---- 相邻横截面间四面墙(底/顶/左/右各 1 quad = 2 tri);顶点全共享
+    // → 任意边恰被 2 三角引用(水密,测试锁流形)。开放线补首尾端 cap。
+    auto vi = [&](size_t section, int corner) -> uint32_t {
+        return base + static_cast<uint32_t>(section) * 4 +
+               static_cast<uint32_t>(corner);
+    };
+    auto pushQuad = [&](uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+        indices.push_back(a);
+        indices.push_back(b);
+        indices.push_back(c);
+        indices.push_back(a);
+        indices.push_back(c);
+        indices.push_back(d);
+    };
+    const size_t segCount = closed ? n : n - 1;
+    for (size_t s = 0; s < segCount; ++s) {
+        const size_t a = s;
+        const size_t b = (s + 1) % n;
+        pushQuad(vi(a, 0), vi(a, 1), vi(b, 1), vi(b, 0));  // 底(外向下)
+        pushQuad(vi(a, 3), vi(a, 2), vi(b, 2), vi(b, 3));  // 顶(外向上)
+        pushQuad(vi(a, 0), vi(b, 0), vi(b, 2), vi(a, 2));  // 左墙
+        pushQuad(vi(a, 1), vi(a, 3), vi(b, 3), vi(b, 1));  // 右墙
+    }
+    if (!closed) {
+        pushQuad(vi(0, 0), vi(0, 2), vi(0, 3), vi(0, 1));          // 首 cap
+        pushQuad(vi(n - 1, 0), vi(n - 1, 1), vi(n - 1, 3),
+                 vi(n - 1, 2));                                    // 尾 cap
+    }
+}
+
 bool FeatureRenderLayer::uploadBucketGpu(
     const Vec3& origin,
     const std::vector<float>& fillVerts,
@@ -817,25 +981,35 @@ bool FeatureRenderLayer::uploadBucketGpu(
     const std::vector<uint32_t>& labelIndices,
     std::vector<LabelEntry>&& labelEntries,
     const VolumeCpuGroups& volumeGroups,
+    const VolumeCpuGroups& lineVolumeGroups,
     BucketGpu& out) const {
     out = BucketGpu{};
     out.origin = origin;
-    for (const auto& [colorKey, group] : volumeGroups) {
-        if (group.indices.empty()) continue;
-        BucketGpu::VolumeGroupGpu gpu;
-        gpu.color = group.color;
-        gpu.vertexBuffer = makeBuffer(
-            renderDevice_, group.verts.data(),
-            group.verts.size() * sizeof(float), BufferDesc::Type::Vertex);
-        gpu.indexBuffer = makeBuffer(
-            renderDevice_, group.indices.data(),
-            group.indices.size() * sizeof(uint32_t),
-            BufferDesc::Type::Index);
-        if (gpu.vertexBuffer && gpu.indexBuffer) {
-            gpu.indexCount = static_cast<int>(group.indices.size());
-            out.volumeGroups.push_back(std::move(gpu));
-        }
-    }
+    auto uploadGroups =
+        [&](const VolumeCpuGroups& cpu,
+            std::vector<BucketGpu::VolumeGroupGpu>& gpuOut) {
+            for (const auto& [colorKey, group] : cpu) {
+                if (group.indices.empty()) continue;
+                BucketGpu::VolumeGroupGpu gpu;
+                gpu.color = group.color;
+                gpu.vertexBuffer = makeBuffer(renderDevice_,
+                                              group.verts.data(),
+                                              group.verts.size() *
+                                                  sizeof(float),
+                                              BufferDesc::Type::Vertex);
+                gpu.indexBuffer = makeBuffer(renderDevice_,
+                                             group.indices.data(),
+                                             group.indices.size() *
+                                                 sizeof(uint32_t),
+                                             BufferDesc::Type::Index);
+                if (gpu.vertexBuffer && gpu.indexBuffer) {
+                    gpu.indexCount = static_cast<int>(group.indices.size());
+                    gpuOut.push_back(std::move(gpu));
+                }
+            }
+        };
+    uploadGroups(volumeGroups, out.volumeGroups);
+    uploadGroups(lineVolumeGroups, out.lineVolumeGroups);
     if (!labelIndices.empty()) {
         out.labelVertexBuffer = makeBuffer(
             renderDevice_, labelVerts.data(),
@@ -885,7 +1059,7 @@ bool FeatureRenderLayer::uploadBucketGpu(
     }
     return out.fillIndexCount > 0 || out.lineIndexCount > 0 ||
            out.pointIndexCount > 0 || out.labelIndexCount > 0 ||
-           !out.volumeGroups.empty();
+           !out.volumeGroups.empty() || !out.lineVolumeGroups.empty();
 }
 
 void FeatureRenderLayer::rebuildBucket(BucketKey key) {
@@ -909,6 +1083,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     std::vector<uint32_t> labelIndices;
     std::vector<LabelEntry> labelEntries;
     VolumeCpuGroups volumeGroups;      // P6 stencil 挤出体(按色分组)
+    VolumeCpuGroups lineVolumeGroups;  // P6d stencil 线墙带(按色分组)
     Vec3 origin = Vec3::zero();
     bool hasOrigin = false;
 
@@ -930,11 +1105,12 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
                               fillVerts, fillIndices, lineVerts, lineIndices,
                               pointVerts, pointIndices,
                               labelVerts, labelIndices, labelEntries,
-                              volumeGroups);
+                              volumeGroups, lineVolumeGroups);
     }
 
     if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty() &&
-        labelIndices.empty() && volumeGroups.empty()) {
+        labelIndices.empty() && volumeGroups.empty() &&
+        lineVolumeGroups.empty()) {
         buckets_.erase(key);
         return;
     }
@@ -945,7 +1121,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
                          pointVerts, pointIndices,
                          std::move(labelVerts), labelIndices,
                          std::move(labelEntries),
-                         volumeGroups, gpu)) {
+                         volumeGroups, lineVolumeGroups, gpu)) {
         // buffer 创建失败:丢弃本桶,脏区已消费 → 下次编辑该桶时重试。
         buckets_.erase(key);
         return;
@@ -1016,6 +1192,7 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         std::vector<uint32_t> labelIndices;
         std::vector<LabelEntry> labelEntries;
         VolumeCpuGroups volumeGroups;
+        VolumeCpuGroups lineVolumeGroups;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
         tessellateFeatureInto(previewFeature,
@@ -1025,13 +1202,13 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                               lineVerts, lineIndices,
                               pointVerts, pointIndices,
                               labelVerts, labelIndices, labelEntries,
-                              volumeGroups);
+                              volumeGroups, lineVolumeGroups);
         if (hasOrigin) {
             previewGpuValid_ = uploadBucketGpu(
                 origin, fillVerts, fillIndices, lineVerts, lineIndices,
                 pointVerts, pointIndices, std::move(labelVerts),
                 labelIndices, std::move(labelEntries),
-                volumeGroups, previewGpu_);
+                volumeGroups, lineVolumeGroups, previewGpu_);
         }
     }
 
@@ -1286,6 +1463,57 @@ void FeatureRenderLayer::appendBucketCommands(
                                        group.color[2], group.color[3]};
             commands.push_back(std::move(vol));
             commands.push_back(std::move(col));
+        }
+
+        // P6d stencil 贴地线:墙带体命令对(同 order 29 + 插入序紧邻契约;
+        // 每组色 pass op ZERO 清零,与 fill 组间互不串)。宽度在 VS 按眼深
+        // 换算世界米挤出:halfW = u_halfWidthPerEyeZ * |ec.z|,
+        // u_halfWidthPerEyeZ = lineWidthPx * tan(fovy/2) / vpH(即每米眼深
+        // 对应的半宽米数),像素语义与方案 A ribbon 一致。
+        if (!gpu.lineVolumeGroups.empty() &&
+            renderer.vectorLineStencilShader()) {
+            const glm::dmat4 view(cam.viewMatrix().raw());
+            const glm::mat4 modelView = glm::mat4(view * model);
+            std::vector<float> modelViewUniform(16);
+            std::memcpy(modelViewUniform.data(), glm::value_ptr(modelView),
+                        16 * sizeof(float));
+            const float halfWidthPerEyeZ = static_cast<float>(
+                static_cast<double>(lineWidthPx) *
+                std::tan(cam.verticalFovRadians() * 0.5) /
+                std::max(1.0, vpH));
+            for (const auto& group : gpu.lineVolumeGroups) {
+                if (group.indexCount <= 0) continue;
+                RenderCommand vol;
+                vol.kind = RenderCommandKind::VectorStencil;
+                vol.stencilPhase = StencilPhase::ClassifyVolume;
+                vol.owner = layerId_;
+                vol.pass = "color";
+                vol.frameId = frameState.frameId;
+                vol.shader = renderer.vectorLineStencilShader();
+                vol.vertexBuffer = group.vertexBuffer.get();
+                vol.indexBuffer = group.indexBuffer.get();
+                vol.indexCount = group.indexCount;
+                vol.indexType = RenderCommand::IndexType::UInt32;
+                vol.vertexStride = 24;  // pos(12)+extrude(12)
+                vol.primitive = RenderCommand::PrimitiveType::Triangles;
+                vol.depthTest = true;   // z-fail 计数依赖地形深度
+                vol.depthWrite = false;
+                vol.blend = false;
+                vol.cullFace = false;   // 两侧 stencil op 需要双面
+                vol.uniforms["u_modelViewProjection"] = mvpUniform;
+                vol.uniforms["u_modelView"] = modelViewUniform;
+                vol.uniforms["u_halfWidthPerEyeZ"] = {halfWidthPerEyeZ};
+                vol.uniforms["u_color"] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+                RenderCommand col = vol;
+                col.stencilPhase = StencilPhase::ClassifyColor;
+                col.depthTest = false;
+                col.blend = true;
+                col.uniforms["u_color"] = {group.color[0], group.color[1],
+                                           group.color[2], group.color[3]};
+                commands.push_back(std::move(vol));
+                commands.push_back(std::move(col));
+            }
         }
 
         if (gpu.fillIndexCount > 0 && renderer.vectorFillShader()) {

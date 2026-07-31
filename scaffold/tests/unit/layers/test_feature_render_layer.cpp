@@ -12,7 +12,9 @@
 
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <utility>
 
 using namespace earth_engine;
 using earth_engine::testing::DummyBuffer;
@@ -724,6 +726,134 @@ TEST_F(FeatureRenderLayerTest, AbsoluteModePolygonHasNoStencilVolume) {
 }
 
 // ============================================================
+// P6d stencil 贴地线(墙带体双 pass 分类)
+// ============================================================
+
+namespace {
+
+/// 流形断言:体积网格任意无向边必须恰被 2 个三角形引用(水密;z-fail
+/// 计数正确性的机器可检查前提)。
+void expectWatertight(const RenderCommand& vol) {
+    const auto* ib =
+        dynamic_cast<const DummyBuffer*>(vol.indexBuffer);
+    ASSERT_NE(nullptr, ib);
+    const auto* idx = reinterpret_cast<const uint32_t*>(ib->bytes().data());
+    const size_t idxCount = ib->bytes().size() / sizeof(uint32_t);
+    ASSERT_EQ(static_cast<size_t>(vol.indexCount), idxCount);
+    std::map<std::pair<uint32_t, uint32_t>, int> edges;
+    for (size_t t = 0; t + 2 < idxCount; t += 3) {
+        for (int e = 0; e < 3; ++e) {
+            const uint32_t a = idx[t + e];
+            const uint32_t b = idx[t + (e + 1) % 3];
+            ++edges[{std::min(a, b), std::max(a, b)}];
+        }
+    }
+    for (const auto& [edge, count] : edges) {
+        EXPECT_EQ(2, count) << "edge " << edge.first << "-" << edge.second
+                            << " referenced " << count << "x";
+    }
+}
+
+} // namespace
+
+TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    layer_->store().addFeature(makeLine(0.0, 0.0, 0.05));
+
+    RenderCommandList commands = build();
+    const RenderCommand* vol = nullptr;
+    const RenderCommand* col = nullptr;
+    for (size_t i = 0; i < commands.size(); ++i) {
+        if (commands[i].kind == RenderCommandKind::VectorStencil) {
+            vol = &commands[i];
+            ASSERT_LT(i + 1, commands.size());
+            col = &commands[i + 1];
+            break;
+        }
+    }
+    ASSERT_NE(nullptr, vol);
+    ASSERT_EQ(RenderCommandKind::VectorStencil, col->kind);
+    EXPECT_EQ(StencilPhase::ClassifyVolume, vol->stencilPhase);
+    EXPECT_EQ(StencilPhase::ClassifyColor, col->stencilPhase);
+    EXPECT_EQ(24, vol->vertexStride);  // pos(12)+extrude(12)
+    EXPECT_EQ(vol->vertexBuffer, col->vertexBuffer);
+    // 宽度挤出 uniform 齐备(mvp + modelView + 每米眼深半宽)。
+    ASSERT_EQ(1u, vol->uniforms.count("u_modelViewProjection"));
+    ASSERT_EQ(1u, vol->uniforms.count("u_modelView"));
+    ASSERT_EQ(1u, vol->uniforms.count("u_halfWidthPerEyeZ"));
+    // stencil 模式下不再产出方案 A 的线 ribbon。
+    for (const auto& cmd : commands) {
+        EXPECT_NE(RenderCommandKind::VectorLine, cmd.kind);
+    }
+    // 开放墙带:n 横截面 → 8(n-1) 墙三角 + 4 端 cap 三角。
+    const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const size_t sections = vb->bytes().size() / (4 * 24);
+    ASSERT_GE(sections, 2u);
+    EXPECT_EQ(static_cast<int>(8 * (sections - 1) + 4) * 3, vol->indexCount);
+    expectWatertight(*vol);
+
+    const auto validation = validateMvpRenderCommands(commands, frame_.frameId);
+    EXPECT_FALSE(validation.has_value())
+        << (validation ? validation->message : "");
+}
+
+TEST_F(FeatureRenderLayerTest, ClampedPolygonOutlineBecomesClosedLineVolume) {
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
+
+    RenderCommandList commands = build();
+    // fill 体(stride 12)与 outline 墙带(stride 24)各一对,共 4 条。
+    const RenderCommand* fillVol = nullptr;
+    const RenderCommand* lineVol = nullptr;
+    int stencilCount = 0;
+    for (const auto& cmd : commands) {
+        if (cmd.kind != RenderCommandKind::VectorStencil) continue;
+        ++stencilCount;
+        if (cmd.stencilPhase != StencilPhase::ClassifyVolume) continue;
+        if (cmd.vertexStride == 12) fillVol = &cmd;
+        if (cmd.vertexStride == 24) lineVol = &cmd;
+    }
+    EXPECT_EQ(4, stencilCount);
+    ASSERT_NE(nullptr, fillVol);
+    ASSERT_NE(nullptr, lineVol);
+    // 闭合墙带:n 横截面 wrap → 8n 三角,无端 cap。
+    const auto* vb = dynamic_cast<const DummyBuffer*>(lineVol->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const size_t sections = vb->bytes().size() / (4 * 24);
+    ASSERT_GE(sections, 3u);
+    EXPECT_EQ(static_cast<int>(8 * sections) * 3, lineVol->indexCount);
+    expectWatertight(*lineVol);
+
+    const auto validation = validateMvpRenderCommands(commands, frame_.frameId);
+    EXPECT_FALSE(validation.has_value())
+        << (validation ? validation->message : "");
+}
+
+TEST_F(FeatureRenderLayerTest, StencilLineFallsBackToRibbonWithoutSupport) {
+    device_.stencilClassificationSupported = false;
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    layer_->store().addFeature(makeLine(0.0, 0.0, 0.05));
+
+    RenderCommandList commands = build();
+    bool hasLine = false;
+    for (const auto& cmd : commands) {
+        EXPECT_NE(RenderCommandKind::VectorStencil, cmd.kind);
+        if (cmd.kind == RenderCommandKind::VectorLine) hasLine = true;
+    }
+    EXPECT_TRUE(hasLine);  // 回落方案 A(采样钳制 ribbon)
+}
+
+// ============================================================
 // P6b 样式表达式(数据驱动顶点色 + zoom 驱动宽度/尺寸)
 // ============================================================
 
@@ -817,6 +947,9 @@ TEST_F(FeatureRenderLayerTest, StencilVolumesGroupedByResolvedColor) {
     for (size_t i = 0; i < commands.size(); ++i) {
         const auto& cmd = commands[i];
         if (cmd.kind != RenderCommandKind::VectorStencil) continue;
+        // 只统计 fill 挤出体(stride 12);outline 墙带(stride 24)归
+        // P6d 测试段管。
+        if (cmd.vertexStride != 12) continue;
         if (cmd.stencilPhase == StencilPhase::ClassifyVolume) {
             ++volumePasses;
             ASSERT_LT(i + 1, commands.size());

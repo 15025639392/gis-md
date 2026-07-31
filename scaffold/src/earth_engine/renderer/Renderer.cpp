@@ -1793,6 +1793,83 @@ fragment float4 vectorLineFragment(VectorLineFragmentIn in [[stage_in]]) {
 )msl";
 
 // ============================================================
+// Vector Line Stencil Shader(P6d stencil 贴地线)
+// 墙带体 24B:pos(12)+extrude(12,miter 方向×缩放×左右符号,CPU 烘入)。
+// VS 按眼深把像素线宽换算世界米挤出:halfW = u_halfWidthPerEyeZ*|ec.z|
+// (u_halfWidthPerEyeZ = lineWidthPx*tan(fovy/2)/vpH)。世界空间挤出无
+// 除 w,不需要屏幕线 shader 的 NDC 挤出上限防御。两个 stencil pass 共用
+// (体 pass 颜色写被后端关闭,u_color 无效)。
+// ============================================================
+
+static const char* kVectorLineStencilVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_extrude;  // miter 方向×缩放×侧符号
+
+uniform mat4 u_modelViewProjection;
+uniform mat4 u_modelView;
+uniform float u_halfWidthPerEyeZ;  // 每米眼深对应的半宽(m)
+
+void main() {
+    vec4 ec = u_modelView * vec4(a_position, 1.0);
+    float halfW = u_halfWidthPerEyeZ * abs(ec.z);
+    vec3 world = a_position + a_extrude * halfW;
+    gl_Position = u_modelViewProjection * vec4(world, 1.0);
+}
+)glsl";
+
+static const char* kVectorLineStencilFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+
+uniform vec4 u_color;
+out vec4 fragColor;
+
+void main() {
+    fragColor = u_color;
+}
+)glsl";
+
+// MSL 双份约定。Metal 端 stencil 分类未接线(supportsStencilClassification
+// 恒 false),源码保持契约、未经真机验证。
+static const char* kVectorLineStencilVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorLineStencilVertexIn {
+    float3 position [[attribute(0)]];
+    float3 extrude [[attribute(1)]];
+};
+
+struct VectorLineStencilVertexOut {
+    float4 position [[position]];
+};
+
+vertex VectorLineStencilVertexOut vectorLineStencilVertex(
+        VectorLineStencilVertexIn in [[stage_in]],
+        constant float4x4& u_modelViewProjection [[buffer(1)]],
+        constant float4x4& u_modelView [[buffer(2)]],
+        constant float& u_halfWidthPerEyeZ [[buffer(3)]]) {
+    VectorLineStencilVertexOut out;
+    float4 ec = u_modelView * float4(in.position, 1.0);
+    float halfW = u_halfWidthPerEyeZ * abs(ec.z);
+    float3 world = in.position + in.extrude * halfW;
+    out.position = u_modelViewProjection * float4(world, 1.0);
+    return out;
+}
+)msl";
+
+static const char* kVectorLineStencilFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+fragment float4 vectorLineStencilFragment(
+        constant float4& u_color [[buffer(0)]]) {
+    return u_color;
+}
+)msl";
+
+// ============================================================
 // Vector Point/Symbol Shader
 //   (矢量 P5a 点符号/编辑手柄 + P6b 顶点色 + P6c 图标)
 // billboard quad 屏幕空间展开;fragment 双通道:
@@ -3610,6 +3687,8 @@ struct Renderer::Impl {
     // 矢量线 ribbon(P1,§6.2 屏幕挤出)。fill 走 vectorFillShader(P6b
     // 顶点色);colorShader 留给 stencil 分类等 uniform 色路径。
     std::unique_ptr<ShaderProgram> vectorLineShader;
+    // P6d stencil 贴地线(墙带体,两 stencil pass 共用)。
+    std::unique_ptr<ShaderProgram> vectorLineStencilShader;
     std::unique_ptr<ShaderProgram> vectorFillShader;
     // 矢量点符号/图标 billboard(P5a 解析 SDF 形状 + P6c 位图图集)。
     std::unique_ptr<ShaderProgram> vectorPointShader;
@@ -3766,6 +3845,21 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] vectorLineShader failed — vector lines unavailable\n");
     }
 
+    // ---- Vector line stencil shader (P6d stencil 贴地线墙带体) ----
+    ShaderDesc vectorLineStencilSd;
+    vectorLineStencilSd.vertexSource =
+        isMetal ? kVectorLineStencilVertexMSL : kVectorLineStencilVertexGLSL;
+    vectorLineStencilSd.fragmentSource = isMetal
+                                             ? kVectorLineStencilFragmentMSL
+                                             : kVectorLineStencilFragmentGLSL;
+    impl_->vectorLineStencilShader = dev->createShader(vectorLineStencilSd);
+    if (!impl_->vectorLineStencilShader) {
+        // 非致命:贴地线命令对不生成(shader 指针为空即跳过),不影响其余
+        fprintf(stderr,
+                "[Renderer] vectorLineStencilShader failed — stencil ground "
+                "lines unavailable\n");
+    }
+
     // ---- Vector point/symbol shader (矢量 P5a 点符号 + P6c 图标) ----
     ShaderDesc vectorPointSd;
     vectorPointSd.vertexSource =
@@ -3812,6 +3906,7 @@ void Renderer::dispose() {
     impl_->terrainInstancedShader.reset();
     impl_->colorShader.reset();
     impl_->vectorLineShader.reset();
+    impl_->vectorLineStencilShader.reset();
     impl_->vectorPointShader.reset();
     impl_->vectorLabelShader.reset();
     impl_->glyphAtlas.reset();
@@ -3825,6 +3920,9 @@ void Renderer::dispose() {
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 ShaderProgram* Renderer::vectorLineShader() const {
     return impl_->vectorLineShader.get();
+}
+ShaderProgram* Renderer::vectorLineStencilShader() const {
+    return impl_->vectorLineStencilShader.get();
 }
 ShaderProgram* Renderer::vectorFillShader() const {
     return impl_->vectorFillShader.get();

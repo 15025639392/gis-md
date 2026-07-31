@@ -1002,6 +1002,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 矢量线 ribbon(P1 §6.2 + P6b 顶点色):按 kind 分派
             vaoKey.layout = VertexLayoutKind::VectorLine48;
             vaoKey.vertexStride = 48;
+        } else if (cmd.kind == RenderCommandKind::VectorStencil &&
+                   cmd.vertexStride == 24) {
+            // P6d stencil 贴地线墙带:按 kind+stride 分派(stride 12 的
+            // fill 挤出体继续走下方 SimpleStride pos-only 分支)
+            vaoKey.layout = VertexLayoutKind::VectorStencilLine24;
+            vaoKey.vertexStride = 24;
         } else if (cmd.kind == RenderCommandKind::VectorFill &&
                    cmd.vertexStride == 16) {
             // 矢量 fill(P6b 顶点色):按 kind 分派
@@ -1568,6 +1574,15 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glEnableVertexAttribArray(5);
             glVertexAttribPointer(5, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
                                   reinterpret_cast<void*>(44));
+            break;
+        case VertexLayoutKind::VectorStencilLine24:
+            // P6d stencil 贴地线墙带:pos(12)+extrude(12)
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(12));
             break;
         case VertexLayoutKind::VectorFill16:
             // 矢量 fill:pos(12)+color(4,RGBA8 归一化)

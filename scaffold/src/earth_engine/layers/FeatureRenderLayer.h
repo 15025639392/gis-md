@@ -257,6 +257,11 @@ private:
             int indexCount = 0;
         };
         std::vector<VolumeGroupGpu> volumeGroups;
+        /// P6d stencil 贴地线:连续横截面墙带(pos 3f + extrude 3f = 24B,
+        /// 相对桶原点;宽度 VS 按眼深挤出)。按解析线色分组,与 fill 的
+        /// volumeGroups 分开存(同色 fill/line 不得并组)。非空 → 该桶
+        /// clamp 线走 stencil 双 pass,不再产出方案 A 的线 ribbon。
+        std::vector<VolumeGroupGpu> lineVolumeGroups;
     };
 
     /// stencil 体积的 CPU 侧按色分组(key = RGBA8 打包)。
@@ -299,7 +304,8 @@ private:
                                std::vector<float>& labelVerts,
                                std::vector<uint32_t>& labelIndices,
                                std::vector<LabelEntry>& labelEntries,
-                               VolumeCpuGroups& volumeGroups) const;
+                               VolumeCpuGroups& volumeGroups,
+                               VolumeCpuGroups& lineVolumeGroups) const;
 
     /// P6 stencil 贴地:polygon footprint 挤成水密体(底/顶两层同拓扑
     /// CDT cap + 环边墙),按解析 fill 色归组。高度范围 = 环顶点+粗内部
@@ -310,6 +316,17 @@ private:
                           Vec3& origin,
                           bool& hasOrigin,
                           VolumeCpuGroups& volumeGroups) const;
+
+    /// P6d stencil 贴地线:细分折线挤成连续横截面墙带(每细分点一个
+    /// 4 顶点横截面:高度 = 点采样高 ± margin,CPU 侧零宽;VS 沿烘入的
+    /// miter 挤出向量按眼深换算世界半宽)。横截面共享 → 水密免段间缝。
+    /// closed = 闭合环(polygon outline,首尾 wrap 无端 cap)。
+    void appendLineVolume(const std::vector<Cartographic>& points,
+                          bool closed,
+                          const std::array<float, 4>& lineColor,
+                          Vec3& origin,
+                          bool& hasOrigin,
+                          VolumeCpuGroups& lineVolumeGroups) const;
 
     /// CPU 数组 → BucketGpu(buffer 创建;全空返回 false)。
     bool uploadBucketGpu(const Vec3& origin,
@@ -323,6 +340,7 @@ private:
                          const std::vector<uint32_t>& labelIndices,
                          std::vector<LabelEntry>&& labelEntries,
                          const VolumeCpuGroups& volumeGroups,
+                         const VolumeCpuGroups& lineVolumeGroups,
                          BucketGpu& out) const;
 
     /// P5c:每帧跑 placement(collect 全桶 LabelEntry → place/commit),

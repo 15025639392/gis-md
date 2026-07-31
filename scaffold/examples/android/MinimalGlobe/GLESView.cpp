@@ -276,15 +276,11 @@ static bool createEngine() {
             style.fillColor = {0.20f, 0.55f, 0.95f, 0.35f};
             style.lineColor = {1.00f, 0.72f, 0.05f, 0.95f};
             style.lineWidthPx = 6.0f;
-            // P3 贴地:逐顶点采样地形高钳制(渲染网格一致采样)。fill 已走
-            // stencil 像素贴合(P6a);线仍方案 A 抬升(过渡态,终态 = 线也走
-            // stencil 贴地)。depth-bias 方向已修正(reverse-Z 下 +1,+1)。
+            // 贴地:fill 走 stencil 像素贴合(P6a),线/outline 同走 stencil
+            // 墙带体(P6d 终态,免疫陡变地形断线与抬升视差)。下面两个参数
+            // 只服务后端不支持 stencil 时的方案 A 回落(细分 + 抬升过渡档,
+            // 断线根因与实测档位见 commit 588e5afde)。
             style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-            // 方案 A 的固有短板:采样点之间是直线段,跨越地形陡变单元
-            // (道路切坡/林冠墙)时中段扎入三角化地面 → 描边断裂。真机
-            // A/B(40m/1m 东缘断线 vs 8m/2.5m 全周完整,GPU/CPU 地形路径
-            // 同断证非位移特有):细分让线段贴住渲染面,残余段内起伏由
-            // 抬升覆盖。offset 越低视差越小,2.5m 是断线消失的实测下界档。
             style.heightOffset = 2.5;
             style.clampDensifyMeters = 8.0;
             // P6b 数据驱动样式:fill 色按 zone 属性(stencil 按色分组)、
