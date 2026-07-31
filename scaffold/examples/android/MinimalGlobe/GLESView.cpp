@@ -1215,6 +1215,37 @@ static void beginDebugPinchIfNeeded(float centerX,
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeTouchDown(
+    JNIEnv* /* env */, jobject /* this */, jfloat x, jfloat y) {
+    endDebugPinchIfNeeded(static_cast<float>(gWidth) * 0.5f,
+                          static_cast<float>(gHeight) * 0.5f);
+    gTouching = true;
+    gDragStarted = false;
+    gTouchMoved = false;
+
+    // 编辑模式的触摸不喂相机手势流（editTouchDown 由 nativeDrag 首个 move 发）。
+    if (gEditMode.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    // 真按下即投递 PointerDown。此前只在 nativeDrag 的首个 move 里补发，
+    // 于是"按下即抬手"的纯点击只到达一个 PointerUp，InputManager 处在 Idle
+    // 直接早退 —— Android 上 Click / DoubleClick 从未触发过（单击选中、
+    // 双击缩放全是死的）。iOS 侧 touchesBegan 一直是正常发的。
+    InputEvent event;
+    event.type = InputEvent::Type::PointerDown;
+    event.screenX = x;
+    event.screenY = y;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.timestamp = androidUptimeSeconds();
+    postInputEvent(event);
+    gDragStarted = true;  // nativeDrag 不必再补发
+}
+
+// 双指抬起一指后，剩余手指续接单指拖拽。刻意不投递 PointerDown：这一段是
+// 多指手势的尾巴，不应产生 click/double-click；PointerDown 仍由 nativeDrag
+// 的首个 move 补发（=改动前的行为）。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeResumePointer(
     JNIEnv* /* env */, jobject /* this */) {
     endDebugPinchIfNeeded(static_cast<float>(gWidth) * 0.5f,
                           static_cast<float>(gHeight) * 0.5f);

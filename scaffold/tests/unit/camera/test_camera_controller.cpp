@@ -342,6 +342,67 @@ TEST_F(CameraControllerTest, PinchCombinedZoomAndRotateKeepsAnchorPinned) {
     EXPECT_NEAR(cy, projected.y, 2.0);
 }
 
+TEST_F(CameraControllerTest, PinchZoomMagnitudeMatchesFingerSpread) {
+    // 跟手判据：双指分开 s 倍，画面就该放大 s 倍——地表两点的屏幕间距比值 = s。
+    // 旧实现沿视线移动 d*(s-1)（应为朝锚点移动 d*(1-1/s)），有效缩放变成
+    // 1/(2-s)：s=1.25 时实际 1.333，超出手指 6.7%，且质心偏离屏幕中心时还带
+    // 一阶横向漂移。质心刻意取在屏幕中心之外以覆盖后者。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    constexpr double cx = 460.0;
+    constexpr double cy = 350.0;
+    const Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+    // 探针朝屏幕中心一侧取，避免落到球缘外（distance=5R 时球只占屏幕中央一块）。
+    const Vec3 probe = intersectEarthSphere(
+        camera_->getPickRay(cx - 40.0, cy - 20.0, 800.0, 600.0));
+    const double spreadBefore =
+        glm::length(projectToScreen(*camera_, probe) -
+                    projectToScreen(*camera_, anchor));
+
+    constexpr float kScale = 1.25f;
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(kScale, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    const double spreadAfter =
+        glm::length(projectToScreen(*camera_, probe) -
+                    projectToScreen(*camera_, anchor));
+    EXPECT_NEAR(kScale, spreadAfter / spreadBefore, 0.025);
+
+    // 锚点仍钉在双指中心。
+    const glm::dvec2 projected = projectToScreen(*camera_, anchor);
+    EXPECT_NEAR(cx, projected.x, 2.0);
+    EXPECT_NEAR(cy, projected.y, 2.0);
+}
+
+TEST_F(CameraControllerTest, PinchJerkClampCarriesResidualInsteadOfDroppingIt) {
+    // 单事件 jerk 限幅只该把突跳摊到相邻事件上，不该丢量：一次 s=2.0 的粗事件
+    // 之后跟若干静止事件，累计缩放必须收敛到 2.0。旧实现直接夹到 1.3 并丢弃
+    // 余量——快速捏合永久少缩放一截。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    constexpr double cx = 400.0;
+    constexpr double cy = 300.0;
+    const Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+    const double distBefore = camera_->position().distanceTo(anchor);
+
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(2.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 4; ++i) {  // 残差在限幅余量内逐事件补回
+        controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->update(0.0);
+
+    const double distAfter = camera_->position().distanceTo(anchor);
+    EXPECT_NEAR(2.0, distBefore / distAfter, 0.04);
+}
+
 TEST_F(CameraControllerTest, PinchSlowRotateRespondsAndKeepsAnchorPinned) {
     // A1：缓慢拧动（每帧远小于旧 0.003rad 死区）不应被死区吞掉——相机必须
     // 逐帧响应，同时地表锚点保持在双指中心。旧实现下 20×0.001rad 全被丢弃，
@@ -459,8 +520,13 @@ TEST_F(CameraControllerTest, HighAltitudeZoomOutRecentersGlobeToScreenCenter) {
     const double miss0 = viewLineMissDistance(*camera_);
     ASSERT_GT(theta0, 0.2);  // ~15°
 
-    constexpr float ax = 300.0f;  // off-center 捏合，代表性更强
-    constexpr float ay = 250.0f;
+    // 锚点必须取屏幕中心：本用例把"视线到地心垂距"当作回中是否介入的无噪声
+    // 信号，而该信号成立的前提是 dolly 沿视线（见上方 viewLineMissDistance
+    // 注释）。锚点钉住的 dolly 是沿 eye→anchor 的，只有锚点在屏幕中心时两者
+    // 重合；旧的 off-center 取值下，θ 的收敛大部分来自"沿视线后退"这一被动
+    // 效应而非回中本身，信号被污染。off-center 的锚点跟手由 Pinch* 系列用例覆盖。
+    constexpr float ax = 400.0f;
+    constexpr float ay = 300.0f;
     controller_->onPinchGesture(1.0f, ax, ay, 0.0f, 0.0f, 0.0f);
     for (int i = 0; i < 40; ++i) {
         controller_->onPinchGesture(0.93f, ax, ay, 0.0f, 0.0f, 0.0f);
@@ -1074,4 +1140,73 @@ TEST_F(CameraControllerTest, MeasurementFreezeHoldsPoseDespiteInertia) {
     controller_->setDistance(2.0f);
     controller_->update(1.0 / 60.0);
     EXPECT_GT(matrixAbsDiff(camera_->viewMatrix(), frozenView), 1e-6);
+}
+
+// 模拟 PickingService::pickTerrain 的返回形态：与球面求交后，把交点沿局部垂直
+// 抬起地形高——返回点因此不在拾取射线上。真机上这段落差在斜视低空可达数百像素。
+CameraController::SurfacePicker makeOffRayTerrainPicker(const Camera& camera,
+                                                        double liftMeters) {
+    return [&camera, liftMeters](float x, float y, Vec3& out) {
+        const Ray ray = camera.getPickRay(x, y, 800.0, 600.0);
+        const glm::dvec3 o = ray.origin().raw();
+        const glm::dvec3 d = ray.direction().raw();
+        const double b = 2.0 * glm::dot(o, d);
+        const double c = glm::dot(o, o) - kEarthRadiusMeters * kEarthRadiusMeters;
+        const double disc = b * b - 4.0 * c;
+        if (disc < 0.0) return false;
+        const double t0 = (-b - std::sqrt(disc)) * 0.5;
+        const double t1 = (-b + std::sqrt(disc)) * 0.5;
+        const double t = t0 > 0.0 ? t0 : t1;
+        if (t <= 0.0) return false;
+        const glm::dvec3 hit = ray.pointAt(t).raw();
+        out = Vec3(hit + glm::normalize(hit) * liftMeters);
+        return true;
+    };
+}
+
+TEST_F(CameraControllerTest, DragStartDoesNotJumpWhenPickIsOffRay) {
+    // 起手不跳：抓取之后手指原地不动的 move 必须不产生任何相机运动。
+    // 锚点跟手的数学假定抓取点在起始射线上，而 pickTerrain 返回的点是沿局部
+    // 垂直抬起的、不在射线上；旧实现把这段落差当作手指位移，在第一个 move
+    // 一次性补掉——真机 GESTDIAG 实测起手 anchorErr 达 227~471px。
+    setTiltedPose(*camera_, 2.0e4, 45.0);
+    controller_->setSurfacePicker(makeOffRayTerrainPicker(*camera_, 3000.0));
+
+    const glm::dvec3 eyeBefore = camera_->position().raw();
+    controller_->onDragStart(430.0f, 260.0f, 1.0);
+    controller_->onDragMove(430.0f, 260.0f, 1.016);
+
+    EXPECT_LT(glm::length(camera_->position().raw() - eyeBefore), 1.0);
+}
+
+TEST_F(CameraControllerTest, PinchKeepsVisibleSurfacePointUnderFingerWhenPickIsOffRay) {
+    // 捏合路径的同一根因。判据取"用户真正看到的那个点"：双指质心像素射线上的
+    // 地表点。旧实现把偏离射线的拾取点当锚点钉住，于是钉的是别的东西——手指
+    // 下的地物反而被推开。scale 必须 ≠1，否则 zoomIntent 为假，
+    // keepAnchorAtScreenPoint 根本不会被调用，测不到东西。
+    constexpr double kLift = 3000.0;
+    constexpr double cx = 430.0;
+    constexpr double cy = 260.0;
+    setTiltedPose(*camera_, 2.0e4, 45.0);
+    controller_->setSurfacePicker(makeOffRayTerrainPicker(*camera_, kLift));
+
+    // 手指下可见的地表点 = 拾取射线与半径 R+lift 球面的交点（fake picker 抬起
+    // 后半径恒为 R+lift）。
+    const Ray ray = camera_->getPickRay(cx, cy, 800.0, 600.0);
+    const glm::dvec3 o = ray.origin().raw();
+    const glm::dvec3 d = ray.direction().raw();
+    const double radius = kEarthRadiusMeters + kLift;
+    const double b = 2.0 * glm::dot(o, d);
+    const double c = glm::dot(o, o) - radius * radius;
+    const double disc = b * b - 4.0 * c;
+    ASSERT_GE(disc, 0.0);
+    const Vec3 visible = ray.pointAt((-b - std::sqrt(disc)) * 0.5);
+
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.2f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    const glm::dvec2 projected = projectToScreen(*camera_, visible);
+    EXPECT_NEAR(cx, projected.x, 2.0);
+    EXPECT_NEAR(cy, projected.y, 2.0);
 }
