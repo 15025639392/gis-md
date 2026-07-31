@@ -265,11 +265,12 @@ static bool createEngine() {
             style.fillColor = {0.20f, 0.55f, 0.95f, 0.35f};
             style.lineColor = {1.00f, 0.72f, 0.05f, 0.95f};
             style.lineWidthPx = 6.0f;
-            // P3 贴地:逐顶点采样地形高钳制(渲染网格一致采样)。残余误差
-            // = fill 三角形横跨网格折痕(山脊)的线性切角项,随细分间距二次
-            // 收缩;offset 10m 覆盖之(像素级贴合属 stencil 方案 B 终态)。
+            // P3 贴地:逐顶点采样地形高钳制(渲染网格一致采样)。fill 已走
+            // stencil 像素贴合(P6a);线仍方案 A 抬升。polygon offset 符号
+            // 修正(reverse-Z 下 +1,+1)后 1m 真机验证无埋线断线,视差偏移
+            // 随 offset 压低同步缩小。
             style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-            style.heightOffset = 10.0;
+            style.heightOffset = 1.0;
             style.clampDensifyMeters = 40.0;
             // P6b 数据驱动样式:fill 色按 zone 属性(stencil 按色分组)、
             // 点色按 kind 三色、线宽随 zoom 插值(拉远变细凑近变粗)。

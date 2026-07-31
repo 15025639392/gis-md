@@ -1293,7 +1293,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         if (polygonOffsetEnabled != cmd.blend) {
             if (cmd.blend) {
                 glEnable(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(-1.0f, -1.0f);
+                // Reverse-Z(GEQUAL,depth 大=近):拉向观察者需增大深度 → 正 offset。
+                // 负号是 pre-reverse-Z(传统 LEQUAL)时代遗留,方向恰好相反。
+                glPolygonOffset(1.0f, 1.0f);
             } else {
                 glDisable(GL_POLYGON_OFFSET_FILL);
             }
