@@ -113,9 +113,13 @@ Cesium 每段独立 8 顶点盒 + 起止 miter 平面,是为 FS 解析裁剪服�
 - **重钳节流**:地形代次变化触发的 120 帧节流重镶原样适用(体高依赖采样高)。
   注意 stencil 线对重钳的敏感度远低于方案 A(±120m 余量内 LOD 变化免重钳也不
   断线),重钳只为收紧体高。
-- **dash/lengthSoFar**:方案 A 线 shader 的 dash 留口本就未接;stencil 路径 v1 不带,
-  如需 dash 需在顶点带 lengthSoFar 并在 FS 做纹理坐标(Cesium FS:68-70 有对齐
-  平面方案可抄),列 TODO。
+- **dash/lengthSoFar**:已做(P6d 收尾,b964c6697)。顶点扩 28B 带沿线弧长,
+  FS 按世界米制里程调 alpha。三条硬约束:①空隙输出 alpha=0 **禁 discard**
+  (discard 跳过色 pass 的 stencil ZERO 清零 → 残留计数污染后续组);②底面
+  quad 全部先发射(色 pass 首个通过 stencil 的 fragment 定色,里程恒取自底面
+  单一曲面,防沿线低角度视线混取侧墙里程撕裂花纹);③闭环加 seam 复制截面
+  (pos/extrude 逐位相同、里程取总长,防 wrap quad 里程倒灌)。方案 A ribbon
+  接同一对 uniform(P1 dash 留口收编)。
 - **pick**:纯 CPU 几何拾取,不读 GPU 资源,零影响。
 - **内存**:24B × 4 顶点/细分点;8m 细分下 1km 线 ≈ 12KB 顶点 + 索引,demo 规模
   无压力;放宽细分后再降一档。
