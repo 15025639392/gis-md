@@ -252,18 +252,27 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<uint32_t>& pointIndices,
     std::vector<float>& labelVerts,
     std::vector<uint32_t>& labelIndices,
-    std::vector<LabelEntry>& labelEntries) const {
+    std::vector<LabelEntry>& labelEntries,
+    std::vector<float>& volumeVerts,
+    std::vector<uint32_t>& volumeIndices) const {
     // 贴地:预变换出细分+采样高度的副本(高度已含 offset),镶嵌时
     // heightOffset 传 0 防二次叠加;Absolute 走原几何 + offset。
     const bool clamp =
         style_.altitudeMode == FeatureAltitudeMode::ClampToGround;
+    // P6 方案 B:后端支持 stencil 分类 → clamp 面 fill 走挤出体双 pass
+    // (像素级贴合,LOD 切换免重钳);不支持回落方案 A。outline/线/点仍走
+    // 方案 A(§7.3 分而治之)。
+    const bool stencilFill =
+        clamp && feature.type == GeometryType::Polygon && renderDevice_ &&
+        renderDevice_->supportsStencilClassification();
     std::vector<Cartographic> steinerPoints;
     Feature clampedStorage;
     const Feature* geometry = &feature;
     double tessHeightOffset = style_.heightOffset;
     if (clamp) {
-        clampedStorage =
-            prepareClampedFeature(feature, sample, &steinerPoints);
+        // stencil fill 不需要内部 Steiner 撒点(fill 不再按网格采高)。
+        clampedStorage = prepareClampedFeature(
+            feature, sample, stencilFill ? nullptr : &steinerPoints);
         geometry = &clampedStorage;
         tessHeightOffset = 0.0;
     }
@@ -279,23 +288,29 @@ void FeatureRenderLayer::tessellateFeatureInto(
 
     switch (geometry->type) {
         case GeometryType::Polygon: {
-            TessellatedFill fill = PolygonTessellator::tessellate(
-                *geometry, ellipsoid_, tessHeightOffset,
-                steinerPoints.empty() ? nullptr : &steinerPoints);
-            if (!fill.positions.empty() && !fill.fillIndices.empty()) {
-                ensureOrigin(fill.positions.front());
-                const uint32_t base =
-                    static_cast<uint32_t>(fillVerts.size() / 3);
-                fillVerts.reserve(fillVerts.size() +
-                                  fill.positions.size() * 3);
-                for (const Vec3& p : fill.positions) {
-                    const Vec3 rel = p - origin;
-                    fillVerts.push_back(static_cast<float>(rel.x()));
-                    fillVerts.push_back(static_cast<float>(rel.y()));
-                    fillVerts.push_back(static_cast<float>(rel.z()));
-                }
-                for (uint32_t idx : fill.fillIndices) {
-                    fillIndices.push_back(base + idx);
+            if (stencilFill) {
+                // 体积从原始 footprint 出(2D 拓扑,高度由采样范围决定)。
+                appendFillVolume(feature, sample, origin, hasOrigin,
+                                 volumeVerts, volumeIndices);
+            } else {
+                TessellatedFill fill = PolygonTessellator::tessellate(
+                    *geometry, ellipsoid_, tessHeightOffset,
+                    steinerPoints.empty() ? nullptr : &steinerPoints);
+                if (!fill.positions.empty() && !fill.fillIndices.empty()) {
+                    ensureOrigin(fill.positions.front());
+                    const uint32_t base =
+                        static_cast<uint32_t>(fillVerts.size() / 3);
+                    fillVerts.reserve(fillVerts.size() +
+                                      fill.positions.size() * 3);
+                    for (const Vec3& p : fill.positions) {
+                        const Vec3 rel = p - origin;
+                        fillVerts.push_back(static_cast<float>(rel.x()));
+                        fillVerts.push_back(static_cast<float>(rel.y()));
+                        fillVerts.push_back(static_cast<float>(rel.z()));
+                    }
+                    for (uint32_t idx : fill.fillIndices) {
+                        fillIndices.push_back(base + idx);
+                    }
                 }
             }
             // 外环 outline(闭合 ribbon)。LineTessellator 契约只收
@@ -492,6 +507,145 @@ void FeatureRenderLayer::tessellateFeatureInto(
     }
 }
 
+// ============================================================
+// P6 stencil 贴地(方案 B):footprint 挤出水密体
+// ============================================================
+
+namespace {
+
+/// 体积上下越出地形采样范围的保险余量(m)。采样缺失(椭球回落地形恒 0)
+/// 时单靠它罩住;采样存在时叠加在 min/max 外侧,吸收粗网格漏峰。
+constexpr double kVolumeMarginMeters = 120.0;
+
+} // namespace
+
+void FeatureRenderLayer::appendFillVolume(
+    const Feature& feature,
+    const AreaSampleFn& sample,
+    Vec3& origin,
+    bool& hasOrigin,
+    std::vector<float>& volumeVerts,
+    std::vector<uint32_t>& volumeIndices) const {
+    if (feature.rings.empty() || feature.rings.front().size() < 3) return;
+
+    // ---- 高度范围:环顶点 + 粗内部网格采样 min/max ± margin ----
+    double minH = std::numeric_limits<double>::max();
+    double maxH = std::numeric_limits<double>::lowest();
+    auto probe = [&](double lng, double lat) {
+        const double h =
+            sample ? static_cast<double>(sample(lng, lat).value_or(0.0f))
+                   : 0.0;
+        minH = std::min(minH, h);
+        maxH = std::max(maxH, h);
+    };
+    double west = std::numeric_limits<double>::max();
+    double east = std::numeric_limits<double>::lowest();
+    double south = std::numeric_limits<double>::max();
+    double north = std::numeric_limits<double>::lowest();
+    for (const auto& ring : feature.rings) {
+        for (const auto& c : ring) {
+            probe(c.longitude(), c.latitude());
+            west = std::min(west, c.longitude());
+            east = std::max(east, c.longitude());
+            south = std::min(south, c.latitude());
+            north = std::max(north, c.latitude());
+        }
+    }
+    // 内部粗网格(≤8×8):面内山峰高于环顶点是常态(demo 面即横跨山体),
+    // 只测环会漏峰 → 体顶不够高 → 分类在峰顶断面。网格粗 + margin 兜底。
+    const int kGrid = 8;
+    for (int gy = 1; gy < kGrid; ++gy) {
+        for (int gx = 1; gx < kGrid; ++gx) {
+            const double lng = west + (east - west) * gx / kGrid;
+            const double lat = south + (north - south) * gy / kGrid;
+            if (pointInRings2D(lng, lat, feature.rings)) probe(lng, lat);
+        }
+    }
+    const double bottom = minH - kVolumeMarginMeters;
+    const double top = maxH + kVolumeMarginMeters;
+
+    // ---- 两层同拓扑 cap:压平高度后同一 2D 输入,CDT 确定性保证底/顶
+    // 顶点一一对应(索引可复用) ----
+    Feature flat;
+    flat.id = feature.id;
+    flat.type = GeometryType::Polygon;
+    flat.rings.reserve(feature.rings.size());
+    for (const auto& ring : feature.rings) {
+        std::vector<Cartographic> flatRing;
+        flatRing.reserve(ring.size());
+        for (const auto& c : ring) {
+            flatRing.emplace_back(c.longitude(), c.latitude(), 0.0);
+        }
+        flat.rings.push_back(std::move(flatRing));
+    }
+    const TessellatedFill capBottom =
+        PolygonTessellator::tessellate(flat, ellipsoid_, bottom);
+    const TessellatedFill capTop =
+        PolygonTessellator::tessellate(flat, ellipsoid_, top);
+    if (capBottom.positions.empty() || capBottom.fillIndices.empty() ||
+        capTop.positions.size() != capBottom.positions.size()) {
+        return;  // 退化/拓扑不一致(不应发生):放弃体积,宁缺勿错
+    }
+
+    if (!hasOrigin) {
+        origin = capBottom.positions.front();
+        hasOrigin = true;
+    }
+
+    const uint32_t base = static_cast<uint32_t>(volumeVerts.size() / 3);
+    auto pushPos = [&](const Vec3& p) {
+        const Vec3 rel = p - origin;
+        volumeVerts.push_back(static_cast<float>(rel.x()));
+        volumeVerts.push_back(static_cast<float>(rel.y()));
+        volumeVerts.push_back(static_cast<float>(rel.z()));
+    };
+    for (const Vec3& p : capBottom.positions) pushPos(p);
+    for (const Vec3& p : capTop.positions) pushPos(p);
+    const uint32_t topOffset =
+        static_cast<uint32_t>(capBottom.positions.size());
+
+    // 底 cap 翻转绕向(外向下),顶 cap 原样(外向上)。INCR/DECR wrap 的
+    // 非零计数对整体绕向翻转免疫,这里仍保持一致朝外,便于日后复用。
+    const auto& tris = capBottom.fillIndices;
+    for (size_t i = 0; i + 2 < tris.size(); i += 3) {
+        volumeIndices.push_back(base + tris[i]);
+        volumeIndices.push_back(base + tris[i + 2]);
+        volumeIndices.push_back(base + tris[i + 1]);
+    }
+    for (size_t i = 0; i + 2 < tris.size(); i += 3) {
+        volumeIndices.push_back(base + topOffset + tris[i]);
+        volumeIndices.push_back(base + topOffset + tris[i + 1]);
+        volumeIndices.push_back(base + topOffset + tris[i + 2]);
+    }
+
+    // ---- 环边墙:直接按环顶点(闭合重复末点跳过)接底/顶两层。墙顶点与
+    // cap 顶点数值同源(同 lng/lat/height 过同一投影)→ 缝水密。 ----
+    for (const auto& ring : feature.rings) {
+        size_t n = ring.size();
+        if (n >= 2 && ring.front().longitude() == ring.back().longitude() &&
+            ring.front().latitude() == ring.back().latitude()) {
+            --n;  // 闭合环:末点=首点,墙按 wrap 生成
+        }
+        if (n < 3) continue;
+        for (size_t i = 0; i < n; ++i) {
+            const Cartographic& a = ring[i];
+            const Cartographic& b = ring[(i + 1) % n];
+            const uint32_t wallBase =
+                static_cast<uint32_t>(volumeVerts.size() / 3);
+            pushPos(ellipsoid_.cartographicToCartesian(
+                Cartographic(a.longitude(), a.latitude(), bottom)));
+            pushPos(ellipsoid_.cartographicToCartesian(
+                Cartographic(b.longitude(), b.latitude(), bottom)));
+            pushPos(ellipsoid_.cartographicToCartesian(
+                Cartographic(b.longitude(), b.latitude(), top)));
+            pushPos(ellipsoid_.cartographicToCartesian(
+                Cartographic(a.longitude(), a.latitude(), top)));
+            const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
+            for (uint32_t q : quad) volumeIndices.push_back(wallBase + q);
+        }
+    }
+}
+
 bool FeatureRenderLayer::uploadBucketGpu(
     const Vec3& origin,
     const std::vector<float>& fillVerts,
@@ -503,9 +657,22 @@ bool FeatureRenderLayer::uploadBucketGpu(
     std::vector<float>&& labelVerts,
     const std::vector<uint32_t>& labelIndices,
     std::vector<LabelEntry>&& labelEntries,
+    const std::vector<float>& volumeVerts,
+    const std::vector<uint32_t>& volumeIndices,
     BucketGpu& out) const {
     out = BucketGpu{};
     out.origin = origin;
+    if (!volumeIndices.empty()) {
+        out.volumeVertexBuffer = makeBuffer(
+            renderDevice_, volumeVerts.data(),
+            volumeVerts.size() * sizeof(float), BufferDesc::Type::Vertex);
+        out.volumeIndexBuffer = makeBuffer(
+            renderDevice_, volumeIndices.data(),
+            volumeIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
+        if (out.volumeVertexBuffer && out.volumeIndexBuffer) {
+            out.volumeIndexCount = static_cast<int>(volumeIndices.size());
+        }
+    }
     if (!labelIndices.empty()) {
         out.labelVertexBuffer = makeBuffer(
             renderDevice_, labelVerts.data(),
@@ -554,7 +721,8 @@ bool FeatureRenderLayer::uploadBucketGpu(
         }
     }
     return out.fillIndexCount > 0 || out.lineIndexCount > 0 ||
-           out.pointIndexCount > 0 || out.labelIndexCount > 0;
+           out.pointIndexCount > 0 || out.labelIndexCount > 0 ||
+           out.volumeIndexCount > 0;
 }
 
 void FeatureRenderLayer::rebuildBucket(BucketKey key) {
@@ -577,6 +745,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     std::vector<float> labelVerts;     // 8 float/顶点(anchor+offsetPx+uv+opacity)
     std::vector<uint32_t> labelIndices;
     std::vector<LabelEntry> labelEntries;
+    std::vector<float> volumeVerts;    // xyz,P6 stencil 挤出体
+    std::vector<uint32_t> volumeIndices;
     Vec3 origin = Vec3::zero();
     bool hasOrigin = false;
 
@@ -597,11 +767,12 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         tessellateFeatureInto(*feature, sample, origin, hasOrigin,
                               fillVerts, fillIndices, lineVerts, lineIndices,
                               pointVerts, pointIndices,
-                              labelVerts, labelIndices, labelEntries);
+                              labelVerts, labelIndices, labelEntries,
+                              volumeVerts, volumeIndices);
     }
 
     if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty() &&
-        labelIndices.empty()) {
+        labelIndices.empty() && volumeIndices.empty()) {
         buckets_.erase(key);
         return;
     }
@@ -611,7 +782,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
                          lineVerts, lineIndices,
                          pointVerts, pointIndices,
                          std::move(labelVerts), labelIndices,
-                         std::move(labelEntries), gpu)) {
+                         std::move(labelEntries),
+                         volumeVerts, volumeIndices, gpu)) {
         // buffer 创建失败:丢弃本桶,脏区已消费 → 下次编辑该桶时重试。
         buckets_.erase(key);
         return;
@@ -676,6 +848,8 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         std::vector<float> labelVerts;
         std::vector<uint32_t> labelIndices;
         std::vector<LabelEntry> labelEntries;
+        std::vector<float> volumeVerts;
+        std::vector<uint32_t> volumeIndices;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
         tessellateFeatureInto(previewFeature,
@@ -684,12 +858,14 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                               fillVerts, fillIndices,
                               lineVerts, lineIndices,
                               pointVerts, pointIndices,
-                              labelVerts, labelIndices, labelEntries);
+                              labelVerts, labelIndices, labelEntries,
+                              volumeVerts, volumeIndices);
         if (hasOrigin) {
             previewGpuValid_ = uploadBucketGpu(
                 origin, fillVerts, fillIndices, lineVerts, lineIndices,
                 pointVerts, pointIndices, std::move(labelVerts),
-                labelIndices, std::move(labelEntries), previewGpu_);
+                labelIndices, std::move(labelEntries),
+                volumeVerts, volumeIndices, previewGpu_);
         }
     }
 
@@ -793,6 +969,42 @@ void FeatureRenderLayer::appendBucketCommands(
         std::vector<float> mvpUniform(16);
         std::memcpy(mvpUniform.data(), glm::value_ptr(mvp),
                     16 * sizeof(float));
+
+        // P6 stencil 贴地(方案 B):同一体积几何两条相邻命令。stable_sort
+        // 按 order(29)保持插入序 → 体 pass 必在色 pass 前。多要素体积
+        // 并集计数,重叠区域也只着色一次(同层同色语义正确)。
+        if (gpu.volumeIndexCount > 0 && fillShader) {
+            RenderCommand vol;
+            vol.kind = RenderCommandKind::VectorStencil;
+            vol.stencilPhase = StencilPhase::ClassifyVolume;
+            vol.owner = layerId_;
+            vol.pass = "color";
+            vol.frameId = frameState.frameId;
+            vol.shader = fillShader;
+            vol.vertexBuffer = gpu.volumeVertexBuffer.get();
+            vol.indexBuffer = gpu.volumeIndexBuffer.get();
+            vol.indexCount = gpu.volumeIndexCount;
+            vol.indexType = RenderCommand::IndexType::UInt32;
+            vol.vertexStride = 12;
+            vol.primitive = RenderCommand::PrimitiveType::Triangles;
+            vol.depthTest = true;   // z-fail 计数依赖地形深度
+            vol.depthWrite = false;
+            vol.blend = false;      // 后端关颜色写,blend 无意义
+            vol.cullFace = false;   // 两侧 stencil op 需要双面
+            vol.uniforms["u_modelViewProjection"] = mvpUniform;
+            vol.uniforms["u_color"] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+            RenderCommand col = vol;
+            col.stencilPhase = StencilPhase::ClassifyColor;
+            col.depthTest = false;  // 覆盖面自身别被地形挡
+            col.blend = true;
+            col.uniforms["u_color"] = {style_.fillColor[0],
+                                       style_.fillColor[1],
+                                       style_.fillColor[2],
+                                       style_.fillColor[3]};
+            commands.push_back(std::move(vol));
+            commands.push_back(std::move(col));
+        }
 
         if (gpu.fillIndexCount > 0 && fillShader) {
             RenderCommand cmd;

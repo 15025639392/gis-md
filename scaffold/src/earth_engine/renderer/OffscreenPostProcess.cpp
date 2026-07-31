@@ -262,6 +262,9 @@ Framebuffer* OffscreenPostProcess::ensureFramebuffer(int width, int height) {
         desc.samples = 1;
         // AerialFog 要采样场景深度重建视距 → 深度须可采样。
         desc.depthSampleable = (effect_ == Effect::AerialFog);
+        // 场景主 pass 落在本 FBO 上:矢量 stencil 分类(P6)需要 stencil
+        // 附件,否则测试恒通过分类失效。
+        desc.hasStencil = true;
         framebuffer_ = device_->createFramebuffer(desc);
         if (framebuffer_) {
             platformLog(LogLevel::Info, diagTag(effect_),

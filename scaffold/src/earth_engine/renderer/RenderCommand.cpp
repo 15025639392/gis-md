@@ -149,6 +149,8 @@ int mvpRenderOrder(RenderCommandKind kind) {
             return 15;
         case RenderCommandKind::AtmosphereBackground:
             return 20;
+        case RenderCommandKind::VectorStencil:
+            return 29;  // 分类 fill 压在其它矢量之下(色 pass 关深度测)
         case RenderCommandKind::VectorOverlay:
         case RenderCommandKind::VectorFill:
         case RenderCommandKind::VectorLine:
@@ -289,6 +291,28 @@ validateMvpRenderCommands(const RenderCommandList& commands,
                 if (!requireColorPass(i, cmd, error)) return error;
                 if (!requireState(i, cmd, true, false, false, true,
                                   "Vector*", error)) {
+                    return error;
+                }
+                break;
+
+            case RenderCommandKind::VectorStencil:
+                // P6 分类两 phase 状态锁死(顺序错/状态错 = 整屏染色或全丢):
+                // 体 pass 深度测开写关(z-fail 计数)、不混合、双面;
+                // 色 pass 关深度测(覆盖面自身别被地形挡)、开混合、双面。
+                if (!requireColorPass(i, cmd, error)) return error;
+                if (cmd.stencilPhase == StencilPhase::ClassifyVolume) {
+                    if (!requireState(i, cmd, true, false, false, false,
+                                      "VectorStencil volume", error)) {
+                        return error;
+                    }
+                } else if (cmd.stencilPhase == StencilPhase::ClassifyColor) {
+                    if (!requireState(i, cmd, false, false, false, true,
+                                      "VectorStencil color", error)) {
+                        return error;
+                    }
+                } else {
+                    fail(i, cmd, "VectorStencil requires a stencil phase",
+                         error);
                     return error;
                 }
                 break;

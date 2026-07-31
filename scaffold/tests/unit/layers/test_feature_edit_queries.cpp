@@ -368,6 +368,9 @@ Feature smallSquare() {
 } // namespace
 
 TEST_F(FeatureEditQueriesTest, ClampSetsSampledVertexHeights) {
+    // 本组 Clamp* 测试锁方案 A(采样钳制)行为;P6 后它是 stencil 不可用
+    // 时的回退路径,显式关闭 stencil 走它。
+    device_.stencilClassificationSupported = false;
     uint64_t revision = 1;
     constexpr double kSlope = 2.0e5;  // m / rad
     layer_->setTerrainSampling(makeSlopeSampling(kSlope, &revision));
@@ -412,6 +415,7 @@ TEST_F(FeatureEditQueriesTest, ClampSetsSampledVertexHeights) {
 }
 
 TEST_F(FeatureEditQueriesTest, ClampDensifiesEdgesAndAddsInteriorPoints) {
+    device_.stencilClassificationSupported = false;  // 锁方案 A 路径
     uint64_t revision = 1;
     layer_->setTerrainSampling(makeSlopeSampling(1.0e4, &revision));
 
@@ -451,6 +455,7 @@ TEST_F(FeatureEditQueriesTest, ClampDensifiesEdgesAndAddsInteriorPoints) {
 }
 
 TEST_F(FeatureEditQueriesTest, ClampReclampsOnRevisionChangeThrottled) {
+    device_.stencilClassificationSupported = false;  // 锁方案 A 路径
     uint64_t revision = 1;
     double slope = 1.0e4;
     FeatureTerrainSampling sampling;

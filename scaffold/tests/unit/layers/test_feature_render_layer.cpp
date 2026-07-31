@@ -545,6 +545,117 @@ TEST_F(FeatureLabelPlacementTest, BucketRebuildResyncsSettledOpacity) {
     }
 }
 
+// ============================================================
+// P6 stencil 终态贴地(方案 B:挤出体双 pass 分类)
+// ============================================================
+
+namespace {
+
+/// 合成地形采样:恒定 50m(体积高度范围可手算)。
+FeatureTerrainSampling makeFlatSampling(float height) {
+    FeatureTerrainSampling s;
+    s.makeAreaSampler = [height](const Rectangle&) {
+        return [height](double, double) -> std::optional<float> {
+            return height;
+        };
+    };
+    s.revision = []() -> uint64_t { return 1; };
+    return s;
+}
+
+} // namespace
+
+TEST_F(FeatureRenderLayerTest, StencilVolumePairForClampedPolygon) {
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
+
+    RenderCommandList commands = build();
+    // 命令对相邻:体 pass 在前、色 pass 在后,几何同源。
+    const RenderCommand* vol = nullptr;
+    const RenderCommand* col = nullptr;
+    for (size_t i = 0; i < commands.size(); ++i) {
+        if (commands[i].kind == RenderCommandKind::VectorStencil) {
+            vol = &commands[i];
+            ASSERT_LT(i + 1, commands.size());
+            col = &commands[i + 1];
+            break;
+        }
+    }
+    ASSERT_NE(nullptr, vol);
+    ASSERT_EQ(RenderCommandKind::VectorStencil, col->kind);
+    EXPECT_EQ(StencilPhase::ClassifyVolume, vol->stencilPhase);
+    EXPECT_EQ(StencilPhase::ClassifyColor, col->stencilPhase);
+    // 体 pass:深度测开写关、不混合、双面;色 pass:关深度测、开混合。
+    EXPECT_TRUE(vol->depthTest);
+    EXPECT_FALSE(vol->depthWrite);
+    EXPECT_FALSE(vol->blend);
+    EXPECT_FALSE(vol->cullFace);
+    EXPECT_FALSE(col->depthTest);
+    EXPECT_FALSE(col->depthWrite);
+    EXPECT_TRUE(col->blend);
+    EXPECT_EQ(vol->vertexBuffer, col->vertexBuffer);
+    EXPECT_EQ(vol->indexBuffer, col->indexBuffer);
+    EXPECT_EQ(12, vol->vertexStride);
+
+    // 方形 footprint 水密体:cap 4 顶点×2 层 + 4 边墙×4 顶点 = 24 顶点;
+    // 索引 = 2 cap×2 三角×3 + 4 墙×6 = 36。
+    const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    EXPECT_EQ(24u * 12u, vb->bytes().size());
+    EXPECT_EQ(36, vol->indexCount);
+
+    // stencil 模式下不再产出方案 A 的采样钳制 fill。
+    for (const auto& cmd : commands) {
+        EXPECT_NE(RenderCommandKind::VectorFill, cmd.kind);
+    }
+
+    // 底/顶两层高差 = (50-120) 到 (50+120) = 240m(体积罩住采样面)。
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    // cap 顶点相对桶原点,还原绝对长度比较壳层半径。
+    // 原点 = 首个底 cap 顶点(绝对) → rel(0)=0。比较底层与顶层首顶点。
+    // 无法直接拿 origin,改比较底/顶 cap 对应顶点的 rel 差向量长度。
+    double shell = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        const double d = static_cast<double>(floats[4 * 3 + i]) -
+                         static_cast<double>(floats[0 + i]);
+        shell += d * d;
+    }
+    EXPECT_NEAR(240.0, std::sqrt(shell), 1.0);
+
+    // 状态校验通过(两 phase 各自规则 + order 29 在其它矢量之前)。
+    const auto validation = validateMvpRenderCommands(commands, frame_.frameId);
+    EXPECT_FALSE(validation.has_value())
+        << (validation ? validation->message : "");
+}
+
+TEST_F(FeatureRenderLayerTest, StencilFallsBackToSamplingWithoutSupport) {
+    device_.stencilClassificationSupported = false;
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
+
+    RenderCommandList commands = build();
+    bool hasFill = false;
+    for (const auto& cmd : commands) {
+        EXPECT_NE(RenderCommandKind::VectorStencil, cmd.kind);
+        if (cmd.kind == RenderCommandKind::VectorFill) hasFill = true;
+    }
+    EXPECT_TRUE(hasFill);  // 回落方案 A(采样钳制 fill)
+}
+
+TEST_F(FeatureRenderLayerTest, AbsoluteModePolygonHasNoStencilVolume) {
+    // Absolute 模式与 stencil 无关:普通 fill,无分类命令。
+    layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
+    for (const auto& cmd : build()) {
+        EXPECT_NE(RenderCommandKind::VectorStencil, cmd.kind);
+    }
+}
+
 TEST_F(FeatureRenderLayerTest, NoLabelWithoutFontOrName) {
     // 字体未注入:有 name 也不出标注
     Feature p;

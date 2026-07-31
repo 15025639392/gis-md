@@ -103,7 +103,18 @@ enum class RenderCommandKind {
     VectorFill,            // order 30: 多边形 fill(CDT 三角化,pos-only 顶点)
     VectorLine,            // order 30: 线 ribbon(44B 顶点,shader 屏幕挤出)
     VectorPoint,           // order 30: 点符号 billboard(20B 顶点,SDF 圆)
-    VectorLabel            // order 31: SDF 文字标注(28B 顶点,压最后画)
+    VectorLabel,           // order 31: SDF 文字标注(28B 顶点,压最后画)
+    // P6 stencil 终态贴地(设计 §7.2 方案 B):面 fill 挤成水密体做阴影体
+    // 分类,像素级贴合已渲染地形深度。同一体积几何两条相邻命令:
+    // ClassifyVolume(z-fail 计数)→ ClassifyColor(stencil≠0 着色并清零)。
+    VectorStencil          // order 29: 分类 fill 压在其它矢量之下
+};
+
+/// VectorStencil 命令的阶段(后端据此设置 stencil/colorMask 组合)。
+enum class StencilPhase : uint8_t {
+    None,            ///< 非 stencil 命令(默认)
+    ClassifyVolume,  ///< 体 pass:两侧 z-fail INCR/DECR_WRAP,关颜色写,深度测开/写关
+    ClassifyColor    ///< 色 pass:NOTEQUAL 0 着色,op ZERO 顺手清零,关深度测,开混合
 };
 
 enum class TerrainSurfaceCommandSource {
@@ -153,6 +164,9 @@ struct RenderCommand {
     bool depthTest = true;
     bool depthWrite = true;
     bool blend = false;
+    // P6 stencil 分类阶段(仅 VectorStencil kind 非 None;后端翻译成
+    // glStencil*/colorMask 状态,None = 关 stencil 测试)。
+    StencilPhase stencilPhase = StencilPhase::None;
     // 实例化 blend/透射 primitive 走 alpha-to-coverage(MSAA 覆盖抖动)而非逐实例
     // alpha 排序:顺序无关、单 draw 画完所有实例,避免 blend 实例化退化成每实例
     // 一个 draw call(见 GltfDrawCommandBuilder + RenderDeviceGLES)。true 时后端

@@ -211,6 +211,12 @@ private:
         /// 标签 CPU 侧:顶点流副本(opacity 分量可改写重传)+ 登记表。
         std::vector<float> labelVertsCpu;
         std::vector<LabelEntry> labelEntries;
+        /// P6 stencil 分类贴地(方案 B):面 fill 的水密挤出体(pos-only
+        /// 12B,相对桶原点)。非空 → 该桶 clamp 面走 stencil 双 pass,
+        /// 不再产出方案 A 的采样钳制 fill 网格。
+        std::unique_ptr<Buffer> volumeVertexBuffer;
+        std::unique_ptr<Buffer> volumeIndexBuffer;
+        int volumeIndexCount = 0;
     };
 
     /// 重镶单桶:镶嵌桶内全部要素 → 减原点转 float → 建 buffer。
@@ -244,7 +250,19 @@ private:
                                std::vector<uint32_t>& pointIndices,
                                std::vector<float>& labelVerts,
                                std::vector<uint32_t>& labelIndices,
-                               std::vector<LabelEntry>& labelEntries) const;
+                               std::vector<LabelEntry>& labelEntries,
+                               std::vector<float>& volumeVerts,
+                               std::vector<uint32_t>& volumeIndices) const;
+
+    /// P6 stencil 贴地:polygon footprint 挤成水密体(底/顶两层同拓扑
+    /// CDT cap + 环边墙)。高度范围 = 环顶点+粗内部网格采样 min/max ±
+    /// margin;无采样器回落 ±kVolumeMarginMeters(椭球面地形恒 0)。
+    void appendFillVolume(const Feature& feature,
+                          const AreaSampleFn& sample,
+                          Vec3& origin,
+                          bool& hasOrigin,
+                          std::vector<float>& volumeVerts,
+                          std::vector<uint32_t>& volumeIndices) const;
 
     /// CPU 数组 → BucketGpu(buffer 创建;全空返回 false)。
     bool uploadBucketGpu(const Vec3& origin,
@@ -257,6 +275,8 @@ private:
                          std::vector<float>&& labelVerts,
                          const std::vector<uint32_t>& labelIndices,
                          std::vector<LabelEntry>&& labelEntries,
+                         const std::vector<float>& volumeVerts,
+                         const std::vector<uint32_t>& volumeIndices,
                          BucketGpu& out) const;
 
     /// P5c:每帧跑 placement(collect 全桶 LabelEntry → place/commit),

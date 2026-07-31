@@ -86,6 +86,11 @@ public:
     int maxDrawBuffers() const override { return 4; }
     bool supportsFloatTextures() const override { return true; }
     bool supportsInstancing() const override { return true; }
+    // P6 stencil 分类:默认支持,测试可关(验证回落方案 A 路径)。
+    bool supportsStencilClassification() const override {
+        return stencilClassificationSupported;
+    }
+    bool stencilClassificationSupported = true;
     std::string rendererString() const override { return "MockRenderDevice"; }
 
     std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override {

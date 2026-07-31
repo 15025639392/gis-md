@@ -601,13 +601,21 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     // depth:renderbuffer(默认,不可采样)或纹理(depthSampleable)。两者
     // 都用 32F 匹配主 pass reverse-Z 精度。深度纹理必须 NEAREST 过滤
     // (深度值不可线性插值)。
+    // P6 stencil 分类:hasStencil → 深度附件换 DEPTH32F_STENCIL8(深度
+    // 精度不变),挂 GL_DEPTH_STENCIL_ATTACHMENT。⚠️ 无 stencil 附件时
+    // stencil 测试按规范恒通过(分类静默失效)。
+    const GLenum depthFormat = desc.hasStencil ? GL_DEPTH32F_STENCIL8
+                                               : GL_DEPTH_COMPONENT32F;
+    const GLenum depthAttachment = desc.hasStencil
+        ? GL_DEPTH_STENCIL_ATTACHMENT
+        : GL_DEPTH_ATTACHMENT;
     GLuint depthRb = 0;
     std::unique_ptr<GLTexture> depthTex;
     if (desc.hasDepth && desc.depthSampleable) {
         GLuint tex = 0;
         glGenTextures(1, &tex);
         glBindTexture(GL_TEXTURE_2D, tex);
-        glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT32F,
+        glTexStorage2D(GL_TEXTURE_2D, 1, depthFormat,
                        desc.width, desc.height);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -622,7 +630,7 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     } else if (desc.hasDepth) {
         glGenRenderbuffers(1, &depthRb);
         glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F,
+        glRenderbufferStorage(GL_RENDERBUFFER, depthFormat,
                               desc.width, desc.height);
         glBindRenderbuffer(GL_RENDERBUFFER, 0);
     }
@@ -633,10 +641,10 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, colorTex, 0);
     if (depthTex) {
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+        glFramebufferTexture2D(GL_FRAMEBUFFER, depthAttachment,
                                GL_TEXTURE_2D, depthTex->glId(), 0);
     } else if (depthRb) {
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, depthAttachment,
                                   GL_RENDERBUFFER, depthRb);
     }
     const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -688,12 +696,19 @@ bool RenderDeviceGLES::beginPass(Framebuffer* target) {
     glDisable(GL_BLEND);
     glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     glDisable(GL_POLYGON_OFFSET_FILL);
+    // P6 stencil 分类:归位 + 全掩码(glClear 的 stencil 清除受 stencilMask
+    // 约束,掩码不全开会清不干净)。
+    glDisable(GL_STENCIL_TEST);
+    glStencilMask(0xFFu);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glClearStencil(0);
     // Clear color: sky color for this frame, pushed by Engine via setClearColor()
     // from FrameState before beginFrame(). The fullscreen atmosphere pass covers
     // this on the globe; it shows through at the horizon and empty sky.
     glClearColor(clearR_, clearG_, clearB_, clearA_);
     glClearDepthf(0.0f);   // Reverse-Z: clear to 0 (farthest)
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+            GL_STENCIL_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
     glEnable(GL_CULL_FACE);
@@ -871,6 +886,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     bool polygonOffsetEnabled = false;
     bool cullFaceEnabled = true;
     bool depthWriteEnabled = true;
+    // P6 stencil 分类:上一 submit 可能停在任意 phase(每帧两次 submit),
+    // 入口无条件归位 None 再按命令切换。
+    StencilPhase stencilPhaseApplied = StencilPhase::None;
+    glDisable(GL_STENCIL_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     // [SUBMITDIAG] 逐 draw 三段耗时分解:bind(program/vao/texture/sampler) /
     // uniform(逐条 glUniform 上传) / state+draw。仅在慢帧/采样帧记录成本
@@ -899,6 +919,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             case RenderCommandKind::VectorLine:
             case RenderCommandKind::VectorPoint:
             case RenderCommandKind::VectorLabel:
+            case RenderCommandKind::VectorStencil:
                 ++vectorCommands;
                 break;
             case RenderCommandKind::SkyBackground:
@@ -1212,6 +1233,40 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         if (depthWriteEnabled != cmd.depthWrite) {
             glDepthMask(cmd.depthWrite ? GL_TRUE : GL_FALSE);
             depthWriteEnabled = cmd.depthWrite;
+        }
+
+        // P6 stencil 分类(VectorStencil 两 phase;其余命令恒 None)。
+        if (stencilPhaseApplied != cmd.stencilPhase) {
+            switch (cmd.stencilPhase) {
+                case StencilPhase::ClassifyVolume:
+                    // 体 pass:两侧 z-fail 计数(cesium 分类同款)。反向 Z 下
+                    // z-fail 语义不变(仍=片元被地形挡);多要素体积并集 =
+                    // 非零区域。颜色不写。⚠️ 本状态只在带 stencil 附件的
+                    // 目标上有效(见 FramebufferDesc::hasStencil)。
+                    glEnable(GL_STENCIL_TEST);
+                    glStencilFunc(GL_ALWAYS, 0, 0xFFu);
+                    glStencilMask(0xFFu);
+                    glStencilOpSeparate(GL_BACK, GL_KEEP, GL_INCR_WRAP,
+                                        GL_KEEP);
+                    glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_DECR_WRAP,
+                                        GL_KEEP);
+                    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+                    break;
+                case StencilPhase::ClassifyColor:
+                    // 色 pass:计数非零处着色;pass/fail 全 ZERO = 画完顺手
+                    // 清零,下一个分类体不受残留影响。
+                    glEnable(GL_STENCIL_TEST);
+                    glStencilFunc(GL_NOTEQUAL, 0, 0xFFu);
+                    glStencilMask(0xFFu);
+                    glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+                    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                    break;
+                case StencilPhase::None:
+                    glDisable(GL_STENCIL_TEST);
+                    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                    break;
+            }
+            stencilPhaseApplied = cmd.stencilPhase;
         }
 
         if (blendEnabled != cmd.blend) {

@@ -158,11 +158,13 @@ static bool initEGL(ANativeWindow* window) {
     // 优先请求 4x MSAA(默认帧缓冲多重采样,eglSwapBuffers 自动 resolve,无需
     // 改 shader/离屏帧缓冲);驱动不支持则回退无 MSAA。消除地形/海岸线/建筑轮廓
     // 边缘爬行。
+    // stencil 8 位:P6 矢量 stencil 分类贴地(阴影体计数)需要。
     const EGLint msaaAttribs[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
         EGL_DEPTH_SIZE, 24,
+        EGL_STENCIL_SIZE, 8,
         EGL_SAMPLE_BUFFERS, 1, EGL_SAMPLES, 4,
         EGL_NONE
     };
@@ -171,6 +173,7 @@ static bool initEGL(ANativeWindow* window) {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
         EGL_DEPTH_SIZE, 24,
+        EGL_STENCIL_SIZE, 8,
         EGL_NONE
     };
 
@@ -183,10 +186,13 @@ static bool initEGL(ANativeWindow* window) {
         }
         if (numConfigs < 1) return false;
     }
-    EGLint chosenSamples = 0;
+    EGLint chosenSamples = 0, chosenStencil = 0, chosenDepth = 0;
     eglGetConfigAttrib(gDisplay, config, EGL_SAMPLES, &chosenSamples);
+    eglGetConfigAttrib(gDisplay, config, EGL_STENCIL_SIZE, &chosenStencil);
+    eglGetConfigAttrib(gDisplay, config, EGL_DEPTH_SIZE, &chosenDepth);
     __android_log_print(ANDROID_LOG_INFO, "GLESView",
-                        "EGL config MSAA samples=%d", chosenSamples);
+                        "EGL config MSAA samples=%d depth=%d stencil=%d",
+                        chosenSamples, chosenDepth, chosenStencil);
 
     gSurface = eglCreateWindowSurface(gDisplay, config, window, nullptr);
     if (gSurface == EGL_NO_SURFACE) return false;

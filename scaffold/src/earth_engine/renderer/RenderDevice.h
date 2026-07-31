@@ -35,6 +35,11 @@ public:
     virtual int maxDrawBuffers() const = 0;
     virtual bool supportsFloatTextures() const = 0;
     virtual bool supportsInstancing() const = 0;
+    /// P6 stencil 分类贴地(方案 B)可用性:后端能执行 VectorStencil 两
+    /// phase(需 stencil buffer + 两侧 stencil op)。false → 调用方回落
+    /// 方案 A(CPU 高程采样钳制)。默认 false,GLES 覆写 true;Metal 矢量
+    /// 路径不出货保持 false。
+    virtual bool supportsStencilClassification() const { return false; }
     virtual std::string rendererString() const = 0;
 
     // ---- 资源创建 ----
@@ -193,6 +198,12 @@ struct FramebufferDesc {
     // false(默认)→ GLES 用 renderbuffer 更省;true → GLES 换深度纹理、
     // Metal 加 ShaderRead usage,经 Framebuffer::depthTexture() 暴露。
     bool depthSampleable = false;
+    // P6 stencil 分类需要:深度附件带 8 位 stencil(GLES 用
+    // DEPTH32F_STENCIL8,深度精度不变)。⚠️ 无 stencil 附件的
+    // framebuffer 上 stencil 测试按 GL 规范恒通过 → VectorStencil
+    // 分类静默失效(真机踩过:离屏场景 pass 没 stencil,整个体积侧影
+    // 被染色)。场景主 pass 的离屏目标必须开。
+    bool hasStencil = false;
 };
 
 // ============================================================

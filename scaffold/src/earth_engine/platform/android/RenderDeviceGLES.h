@@ -46,6 +46,9 @@ public:
     int maxDrawBuffers() const override;
     bool supportsFloatTextures() const override;
     bool supportsInstancing() const override;
+    /// P6 stencil 分类:GLES3 有两侧 stencil op;EGL config 已带 8 位
+    /// stencil(GLESView)。
+    bool supportsStencilClassification() const override { return true; }
     std::string rendererString() const override;
 
     // ---- 资源创建 ----
