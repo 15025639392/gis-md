@@ -7,6 +7,7 @@
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/RenderCommand.h"
 #include "earth_engine/renderer/RenderDevice.h"
@@ -50,11 +51,22 @@ struct TilesetTestAccess {
     static void setLoadedGltfTerrainContent(
         TilesetTile& tile,
         std::unique_ptr<GltfModel> model,
+        double heightMeters,
         RenderDevice* device = nullptr) {
         tile.content.renderContent.prepareGltfContent(
             std::move(model),
             Mat4::identity());
         tile.content.renderContent.setTerrainRenderContent(true);
+        // heightmap 地形虽以 glTF 交付,原始高度图仍随内容保留:GPU 位移建
+        // per-tile 高度纹理、高度查询(LoadedTerrainHeightSampler)都以它为唯一
+        // 真值源,而不读渲染网格顶点。所以「已加载的地形瓦片」这个夹具必须像
+        // 生产上传路径(TileContentUploadPolicy)那样两者都给。
+        auto heightmap = std::make_unique<DecodedHeightmap>();
+        heightmap->tileSize = 2;
+        heightmap->heights.assign(4, static_cast<float>(heightMeters));
+        heightmap->minHeight = static_cast<float>(heightMeters);
+        heightmap->maxHeight = static_cast<float>(heightMeters);
+        tile.content.renderContent.setRetainedHeightmap(std::move(heightmap));
         if (device) {
             tile.markRenderContentLoaded();
             GltfRenderResourcePreparer::prepare(tile, device, 0.0);
@@ -289,6 +301,19 @@ std::unique_ptr<GltfModel> makeFlatGeographicTerrainGltfModel(
     model->primitives.push_back(std::move(primitive));
     model->rasterOverlayDetails.setGeographicRectangle(rectangle);
     return model;
+}
+
+// 极帽(PolarCapRenderer)每帧发两条 glTF primitive 命令补 web-mercator ±85°
+// 缺口,不带 terrainRenderContent。凡是拿「全部 glTF 命令数」对账的用例都要把
+// 它算进来。
+int countPolarCapCommands(const DummyRenderDevice& device) {
+    return static_cast<int>(std::count_if(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive &&
+                   cmd.owner == "polar_cap";
+        }));
 }
 
 RasterOverlay::Options makeRasterOverlayOptions() {
@@ -1164,10 +1189,12 @@ TEST(
     ASSERT_NE(eastTile, nullptr);
     TilesetTestAccess::setLoadedGltfTerrainContent(
         *westTile,
-        makeFlatGeographicTerrainGltfModel(westTile->bounds, 123.0));
+        makeFlatGeographicTerrainGltfModel(westTile->bounds, 123.0),
+        123.0);
     TilesetTestAccess::setLoadedGltfTerrainContent(
         *eastTile,
-        makeFlatGeographicTerrainGltfModel(eastTile->bounds, 123.0));
+        makeFlatGeographicTerrainGltfModel(eastTile->bounds, 123.0),
+        123.0);
 
     scene.setTileset(std::move(terrainTileset));
     ASSERT_EQ(scene.tileset(), terrainRaw);
@@ -1214,6 +1241,7 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     TilesetTestAccess::setLoadedGltfTerrainContent(
         *terrainRoot,
         makeFlatGeographicTerrainGltfModel(terrainRoot->bounds, 123.0),
+        123.0,
         &device);
     scene.setTileset(std::move(terrainTileset));
 
@@ -1321,8 +1349,19 @@ TEST(SceneFrameStateTest, GltfTerrainCountsAsTerrainRenderContent) {
             return cmd.kind == RenderCommandKind::GltfPrimitive &&
                    cmd.terrainRenderContent;
         }));
+    const int gltfCommands = static_cast<int>(std::count_if(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive;
+        }));
+    // renderGltfPrimitives 统计的是本帧提交的全部 glTF primitive 命令,不只是
+    // 地形:极帽(PolarCapRenderer)复用同一命令种类但不带 terrainRenderContent,
+    // 所以总数 = 地形命令 + 两片极帽。本用例断言的是「glTF 地形被计成地形内容」,
+    // 由 terrainRenderContentCommands 来钉,总数只需与真实提交量一致。
     EXPECT_GT(terrainGltfCommands, 0);
-    EXPECT_EQ(scene.diagnostics().renderGltfPrimitives, terrainGltfCommands);
+    EXPECT_EQ(scene.diagnostics().renderGltfPrimitives, gltfCommands);
+    EXPECT_EQ(gltfCommands - terrainGltfCommands, countPolarCapCommands(device));
     EXPECT_GE(
         scene.diagnostics().terrainRenderContentCommands,
         terrainGltfCommands);
@@ -1491,6 +1530,7 @@ TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
     TilesetTestAccess::setLoadedGltfTerrainContent(
         *root,
         makeFlatGeographicTerrainGltfModel(root->bounds, 0.0),
+        0.0,
         &device);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -1521,7 +1561,11 @@ TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 1);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesMissed, 0);
     EXPECT_GT(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
-    EXPECT_EQ(scene.diagnostics().renderGltfPrimitives, 1);
+    // 地形一条 + 极帽两条(见 countPolarCapCommands):本用例钉的是「地形走 glTF
+    // 命令、不走 legacy surface prep」,由 terrainRenderContentCommands 断言。
+    EXPECT_EQ(
+        scene.diagnostics().renderGltfPrimitives,
+        1 + countPolarCapCommands(device));
     EXPECT_EQ(scene.diagnostics().terrainRenderContentCommands, 1);
 }
 

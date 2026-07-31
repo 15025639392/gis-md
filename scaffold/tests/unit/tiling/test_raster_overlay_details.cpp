@@ -192,6 +192,11 @@ TEST(RasterOverlayDetailsTest,
     model->rasterOverlayDetails = std::move(gltfDetails);
     renderContent.prepareGltfContent(std::move(model), Mat4::identity());
     renderContent.setTerrainRenderContent(true);
+    // 前一份内容保留的高度图(Phase 2c 起 heightmap 地形以 glTF 交付,高度图作为
+    // GPU 位移/高度查询的真值源随内容一起保留)。换新内容时它必须随旧模型一起被
+    // 丢弃,否则新瓦片会按上一份地形的高程位移与采样。
+    renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
+    ASSERT_TRUE(renderContent.hasRetainedHeightmap());
 
     const Rectangle staleRectangle(2.0, 2.0, 3.0, 3.0);
     auto staleModel = makeTerrainQuadModel(staleRectangle);
@@ -205,7 +210,6 @@ TEST(RasterOverlayDetailsTest,
     renderContent.setTerrainRenderContent(true);
     renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
     renderContent.markRenderContentReady();
-    renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
     renderContent.setSurfaceSource(SurfaceDrawableSource::HeightmapTerrain);
 
     EXPECT_TRUE(renderContent.hasGltfContent());
