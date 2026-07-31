@@ -52,6 +52,14 @@ constexpr double kZoomInertiaDampingPerSecond = 6.0;
 constexpr double kMaxZoomInertiaLogRate = 6.0;   // |d(ln dist)/dt| 上限，滤抖动尖峰
 constexpr double kMinZoomInertiaLogRate = 0.08;  // 低于此停止滑行
 
+// 高空缩放回中：拉远到高空时把"视线偏离地心"的夹角 θ 逐步收敛到 0，让球心
+// 随缩放进度回到屏幕中心。收敛量 ∝ 本步 zoom-out 的对数距离步长（手势驱动、
+// 停手即停，zoom 惯性滑行期继续收尾），权重随海拔在 [start, full] 间平滑爬升，
+// 低空(城市/地形视角)完全不介入。绕地心的锚点跟手旋转不改变 θ，故与跟手正交。
+constexpr double kRecenterStartAltitudeMeters = 1.5e6;  // 低于此海拔不回中
+constexpr double kRecenterFullAltitudeMeters = 8.0e6;   // 高于此海拔全权重
+constexpr double kRecenterGainPerLogStep = 2.5;  // θ 收敛速率 / 单位 ln(距离)
+
 glm::dvec3 cartographicNormal(double lngDeg, double latDeg) {
     const double lng = glm::radians(lngDeg);
     const double lat = glm::radians(latDeg);
@@ -323,6 +331,10 @@ void CameraController::onPinchGesture(float scale,
                     currentCenterPoint.length() * kPinchAnchorFollow;
             }
         }
+
+        if (clampedScale < 1.0) {
+            applyHighAltitudeRecenter(-std::log(clampedScale));
+        }
     } else {
         // 无有效 pinch anchor 时，沿视线方向缩放相机。
         // 不能仅设置 distance_，因为 orbitMode_ 已关闭，update() 不消费它。
@@ -335,6 +347,9 @@ void CameraController::onPinchGesture(float scale,
         if ((glm::length(nextEye) / kEarthRadiusMeters) <= kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
             syncDistanceFromCamera();
+        }
+        if (clampedScale < 1.0) {
+            applyHighAltitudeRecenter(-std::log(clampedScale));
         }
     }
 
@@ -420,6 +435,11 @@ void CameraController::update(double deltaSeconds) {
                 camera_->setView(Vec3(nextEye), camera_->direction(),
                                  camera_->up());
                 syncDistanceFromCamera();
+            }
+            // 拉远方向的惯性滑行（rate<0 = 距离增大）延续回中收尾。
+            if (zoomInertiaLogRate_ < 0.0) {
+                applyHighAltitudeRecenter(
+                    -zoomInertiaLogRate_ * deltaSeconds);
             }
         }
         zoomInertiaLogRate_ *=
@@ -596,6 +616,36 @@ void CameraController::rotateCameraVerticalAroundPoint(const glm::dvec3& center,
     camera_->setView(Vec3(nextEye), Vec3(nextDirection), Vec3(nextUp));
     rotation_ = glm::normalize(delta * rotation_);
     syncDistanceFromCamera();
+}
+
+void CameraController::applyHighAltitudeRecenter(double zoomOutLogStep) {
+    if (zoomOutLogStep <= 0.0) return;
+
+    const glm::dvec3 eye = camera_->position().raw();
+    const double eyeRadius = glm::length(eye);
+    const double altitude = eyeRadius - kEarthRadiusMeters;
+    if (altitude <= kRecenterStartAltitudeMeters) return;
+
+    const glm::dvec3 toCenter = -eye / eyeRadius;
+    const glm::dvec3 dir = glm::normalize(camera_->direction().raw());
+    const double cosTheta = std::clamp(glm::dot(dir, toCenter), -1.0, 1.0);
+    const double theta = std::acos(cosTheta);
+    if (theta < 1e-6) return;
+
+    glm::dvec3 axis = glm::cross(dir, toCenter);
+    const double axisLength = glm::length(axis);
+    if (axisLength < 1e-12) return;
+    axis /= axisLength;
+
+    double w = (altitude - kRecenterStartAltitudeMeters) /
+               (kRecenterFullAltitudeMeters - kRecenterStartAltitudeMeters);
+    w = std::clamp(w, 0.0, 1.0);
+    w = w * w * (3.0 - 2.0 * w);  // smoothstep：介入边界无手感突变
+
+    const double fraction =
+        std::min(1.0, w * kRecenterGainPerLogStep * zoomOutLogStep);
+    // 绕相机自身位置旋转：eye 不动，仅视线向地心方向收敛 → 球心向屏幕中心靠。
+    rotateCameraAroundPoint(eye, axis, theta * fraction);
 }
 
 void CameraController::syncDistanceFromCamera() {

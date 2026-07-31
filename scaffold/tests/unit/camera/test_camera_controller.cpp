@@ -425,6 +425,74 @@ TEST_F(CameraControllerTest, PinchZoomWithTerrainPickerKeepsAnchorPinned) {
     EXPECT_NEAR(ay, projected.y, 1.5);
 }
 
+namespace {
+
+// 视线偏离地心的夹角 θ：θ=0 ⟺ 球心恰在屏幕中心。
+double offCenterAngle(const Camera& camera) {
+    const glm::dvec3 toCenter = -glm::normalize(camera.position().raw());
+    const glm::dvec3 dir = glm::normalize(camera.direction().raw());
+    return std::acos(std::clamp(glm::dot(dir, toCenter), -1.0, 1.0));
+}
+
+// 视线(直线)到地心的垂距：dolly 与绕地心旋转(锚点跟手)都严格保持它，
+// 只有高空回中会缩小它 → 作为回中是否介入的无噪声二元信号。
+double viewLineMissDistance(const Camera& camera) {
+    return glm::length(glm::cross(camera.position().raw(),
+                                  glm::normalize(camera.direction().raw())));
+}
+
+// 倾斜视角初始位姿：eye 在 +X 轴上指定海拔，视线在 xz 平面内偏离地心 tiltDeg。
+void setTiltedPose(Camera& camera, double altitudeMeters, double tiltDeg) {
+    const double r = kEarthRadiusMeters + altitudeMeters;
+    const glm::dvec3 eye(r, 0.0, 0.0);
+    const double t = tiltDeg * glm::pi<double>() / 180.0;
+    const glm::dvec3 dir(-std::cos(t), 0.0, std::sin(t));
+    camera.lookAt(Vec3(eye), Vec3(eye + dir * 1.0e6), Vec3(0.0, 1.0, 0.0));
+}
+
+}  // namespace
+
+TEST_F(CameraControllerTest, HighAltitudeZoomOutRecentersGlobeToScreenCenter) {
+    // 高空拉远时球心应随缩放进度逐步回到屏幕中心（视线收敛向地心）。
+    setTiltedPose(*camera_, 3.0e6, 15.0);
+    const double theta0 = offCenterAngle(*camera_);
+    const double miss0 = viewLineMissDistance(*camera_);
+    ASSERT_GT(theta0, 0.2);  // ~15°
+
+    constexpr float ax = 300.0f;  // off-center 捏合，代表性更强
+    constexpr float ay = 250.0f;
+    controller_->onPinchGesture(1.0f, ax, ay, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 40; ++i) {
+        controller_->onPinchGesture(0.93f, ax, ay, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->onPinchEnd();
+
+    const double thetaFinal = offCenterAngle(*camera_);
+    EXPECT_LT(thetaFinal, 0.1 * theta0);
+    EXPECT_LT(viewLineMissDistance(*camera_), 0.5 * miss0);
+
+    // 球心投影落在屏幕中心附近。
+    const glm::dvec2 centerPx = projectToScreen(*camera_, Vec3::zero());
+    EXPECT_NEAR(400.0, centerPx.x, 30.0);
+    EXPECT_NEAR(300.0, centerPx.y, 30.0);
+}
+
+TEST_F(CameraControllerTest, LowAltitudeZoomOutDoesNotRecenter) {
+    // 低空(低于回中介入海拔)拉远：回中不得介入——视线到地心的垂距是 dolly 与
+    // 锚点跟手的严格不变量，任何变化都只能来自回中，故用它做精确判据。
+    setTiltedPose(*camera_, 3.0e5, 15.0);
+    const double miss0 = viewLineMissDistance(*camera_);
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 5; ++i) {
+        controller_->onPinchGesture(0.95f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->onPinchEnd();
+
+    EXPECT_LT(camera_->position().length() - kEarthRadiusMeters, 1.5e6);
+    EXPECT_NEAR(1.0, viewLineMissDistance(*camera_) / miss0, 1e-6);
+}
+
 TEST_F(CameraControllerTest, PinchZoomFlickGlidesThenSettles) {
     // A2：捏合缩放松手后应沿视线朝锚点继续滑一小段（惯性），最终停住。
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));

@@ -117,6 +117,9 @@ private:
     void rotateCameraVerticalAroundPoint(const glm::dvec3& center,
                                          double angle,
                                          double minSlope);
+    /// 高空 zoom-out 回中：按本步拉远的对数距离步长，把视线向地心方向收敛，
+    /// 让球心随缩放进度逐步回到屏幕中心（低空不介入，见 .cpp 常量说明）。
+    void applyHighAltitudeRecenter(double zoomOutLogStep);
     void applyCameraRotation(const glm::dquat& delta);
     void syncDistanceFromCamera();
 

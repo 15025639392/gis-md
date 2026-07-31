@@ -884,16 +884,21 @@ static void renderFrame() {
     static bool sHolePrev = false;
     const bool holeDirty = holeCount > 0;
     // 破洞只在加载暂态出现,120 帧心跳会整段错过:暂态期(loadDirty)逐帧打。
-    if (holeDirty || sHolePrev || loadDirty || frameId % 120 == 0) {
+    // 裁剪回退活跃期(clip>0)同样逐帧打——接缝细缝与它的相关性要逐帧对齐。
+    if (holeDirty || sHolePrev || loadDirty ||
+        q.terrainRenderEntriesAncestorFallback > 0 || frameId % 120 == 0) {
         // dropwhy = 几何就没有 / 没建 mapping / 建了但无可用纹理(含祖先)/
         //           texcoord 越界 / 其它;dropz = 被丢瓦片的 zoom 跨度。
         //           nomap 占多 = 时序问题;notex 占多 = 真缺常驻粗影像。
-        LOGI("HoleQual frame=%llu sel=%d ent=%d drop=%d/%d "
+        // clip = 走「祖先裁剪回退」的 entry 数(切缝无裙墙,是运动期瓦片
+        // 边界天色细缝的头号嫌疑,与截图逐帧对齐用)。
+        LOGI("HoleQual frame=%llu sel=%d ent=%d clip=%d drop=%d/%d "
              "dropwhy=%d/%d/%d/%d/%d dropz=%d-%d miss=%d nofill=%d "
              "fillnc=%d ctnc=%d nulls=%d/%d defer=%d drawn=%d dirty=%d",
              static_cast<unsigned long long>(frameId),
              q.terrainSelectedForRenderTiles,
              q.terrainRenderEntriesPlanned,
+             q.terrainRenderEntriesAncestorFallback,
              q.terrainRenderEntryDropClipUv,
              q.terrainRenderEntryDropNotBuildable,
              q.terrainRenderEntryDropNoGeometry,
