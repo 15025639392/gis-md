@@ -342,6 +342,67 @@ TEST_F(CameraControllerTest, PinchCombinedZoomAndRotateKeepsAnchorPinned) {
     EXPECT_NEAR(cy, projected.y, 2.0);
 }
 
+TEST_F(CameraControllerTest, PinchZoomMagnitudeMatchesFingerSpread) {
+    // 跟手判据：双指分开 s 倍，画面就该放大 s 倍——地表两点的屏幕间距比值 = s。
+    // 旧实现沿视线移动 d*(s-1)（应为朝锚点移动 d*(1-1/s)），有效缩放变成
+    // 1/(2-s)：s=1.25 时实际 1.333，超出手指 6.7%，且质心偏离屏幕中心时还带
+    // 一阶横向漂移。质心刻意取在屏幕中心之外以覆盖后者。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    constexpr double cx = 460.0;
+    constexpr double cy = 350.0;
+    const Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+    // 探针朝屏幕中心一侧取，避免落到球缘外（distance=5R 时球只占屏幕中央一块）。
+    const Vec3 probe = intersectEarthSphere(
+        camera_->getPickRay(cx - 40.0, cy - 20.0, 800.0, 600.0));
+    const double spreadBefore =
+        glm::length(projectToScreen(*camera_, probe) -
+                    projectToScreen(*camera_, anchor));
+
+    constexpr float kScale = 1.25f;
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(kScale, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    const double spreadAfter =
+        glm::length(projectToScreen(*camera_, probe) -
+                    projectToScreen(*camera_, anchor));
+    EXPECT_NEAR(kScale, spreadAfter / spreadBefore, 0.025);
+
+    // 锚点仍钉在双指中心。
+    const glm::dvec2 projected = projectToScreen(*camera_, anchor);
+    EXPECT_NEAR(cx, projected.x, 2.0);
+    EXPECT_NEAR(cy, projected.y, 2.0);
+}
+
+TEST_F(CameraControllerTest, PinchJerkClampCarriesResidualInsteadOfDroppingIt) {
+    // 单事件 jerk 限幅只该把突跳摊到相邻事件上，不该丢量：一次 s=2.0 的粗事件
+    // 之后跟若干静止事件，累计缩放必须收敛到 2.0。旧实现直接夹到 1.3 并丢弃
+    // 余量——快速捏合永久少缩放一截。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    constexpr double cx = 400.0;
+    constexpr double cy = 300.0;
+    const Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(cx, cy, 800.0, 600.0));
+    const double distBefore = camera_->position().distanceTo(anchor);
+
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(2.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 4; ++i) {  // 残差在限幅余量内逐事件补回
+        controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->update(0.0);
+
+    const double distAfter = camera_->position().distanceTo(anchor);
+    EXPECT_NEAR(2.0, distBefore / distAfter, 0.04);
+}
+
 TEST_F(CameraControllerTest, PinchSlowRotateRespondsAndKeepsAnchorPinned) {
     // A1：缓慢拧动（每帧远小于旧 0.003rad 死区）不应被死区吞掉——相机必须
     // 逐帧响应，同时地表锚点保持在双指中心。旧实现下 20×0.001rad 全被丢弃，
@@ -459,8 +520,13 @@ TEST_F(CameraControllerTest, HighAltitudeZoomOutRecentersGlobeToScreenCenter) {
     const double miss0 = viewLineMissDistance(*camera_);
     ASSERT_GT(theta0, 0.2);  // ~15°
 
-    constexpr float ax = 300.0f;  // off-center 捏合，代表性更强
-    constexpr float ay = 250.0f;
+    // 锚点必须取屏幕中心：本用例把"视线到地心垂距"当作回中是否介入的无噪声
+    // 信号，而该信号成立的前提是 dolly 沿视线（见上方 viewLineMissDistance
+    // 注释）。锚点钉住的 dolly 是沿 eye→anchor 的，只有锚点在屏幕中心时两者
+    // 重合；旧的 off-center 取值下，θ 的收敛大部分来自"沿视线后退"这一被动
+    // 效应而非回中本身，信号被污染。off-center 的锚点跟手由 Pinch* 系列用例覆盖。
+    constexpr float ax = 400.0f;
+    constexpr float ay = 300.0f;
     controller_->onPinchGesture(1.0f, ax, ay, 0.0f, 0.0f, 0.0f);
     for (int i = 0; i < 40; ++i) {
         controller_->onPinchGesture(0.93f, ax, ay, 0.0f, 0.0f, 0.0f);

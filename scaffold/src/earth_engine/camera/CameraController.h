@@ -190,6 +190,9 @@ private:
     float pinchAnchorScreenX_ = 0.0f;
     float pinchAnchorScreenY_ = 0.0f;
     double lastPinchTimestamp_ = 0.0;
+    // 单事件 jerk 限幅削掉的缩放量（对数空间），由后续事件在限幅余量内补回，
+    // 使一段捏合的总缩放倍数与手指分开倍数一致。手势起止清零。
+    double pinchScaleResidualLog_ = 0.0;
 
     // zoom 惯性状态（对数距离空间，见 .cpp 常量说明）
     bool hasZoomInertia_ = false;

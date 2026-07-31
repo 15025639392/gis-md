@@ -43,6 +43,9 @@ constexpr double kPinchTiltMaxStepRadians = 0.08;
 // 刻意的慢速旋转整段吞掉，手感 steppy），又足够大以滤除双指角度传感抖动。
 constexpr double kPinchRotateThresholdRadians = 0.0003;
 constexpr double kPinchAnchorFollow = 0.12;
+// Jerk 限幅残差上限（对数距离空间，≈2.7×）。限幅只该把单事件的突跳摊到相邻
+// 几个事件上，不该让长时间单向饱和攒出松手后仍在补的欠账。
+constexpr double kMaxPinchScaleResidualLog = 1.0;
 
 // Zoom 惯性：捏合松手后沿视线朝锚点继续滑一小段。刻意建模在"对数距离"空间
 // （每秒的 ln(距离) 变化率），有三个好处：① 与高度无关，海拔 10km 和 100m
@@ -210,6 +213,7 @@ void CameraController::onPinchGesture(float scale,
         // 新捏合打断上一段 zoom 惯性滑行，并重置速率累积。
         hasZoomInertia_ = false;
         zoomInertiaLogRate_ = 0.0;
+        pinchScaleResidualLog_ = 0.0;  // 上一段手势的限幅欠账不带进新手势
         lastPinchTimestamp_ = timestamp;
 
         Vec3 anchorPoint;
@@ -236,19 +240,38 @@ void CameraController::onPinchGesture(float scale,
 
     inertiaAngularVelocity_ = 0.0;
 
+    // Jerk 限幅补残差：超出单事件限幅的缩放量存入残差（对数空间），后续事件
+    // 在限幅余量内补回。旧实现直接丢弃超出量——快速捏合会永久少缩放一截，
+    // 手指分开的倍数与画面缩放倍数对不上＝不跟手。残差有界，防止事件流长时间
+    // 单向饱和后攒出一段松手仍在自走的"欠账"。
     const double jerkMin = 1.0 - kTouchJerkLimit;
     const double jerkMax = 1.0 + kTouchJerkLimit;
-    const double clampedScale = std::clamp(static_cast<double>(scale), jerkMin, jerkMax);
+    const double requestedLog =
+        std::log(static_cast<double>(scale)) + pinchScaleResidualLog_;
+    const double appliedLog =
+        std::clamp(requestedLog, std::log(jerkMin), std::log(jerkMax));
+    pinchScaleResidualLog_ = std::clamp(requestedLog - appliedLog,
+                                        -kMaxPinchScaleResidualLog,
+                                        kMaxPinchScaleResidualLog);
+    const double clampedScale = std::exp(appliedLog);
 
     if (hasPinchAnchor_) {
         const glm::dvec3 pointOnEarth =
             pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
-        const Vec3 anchorPoint(pointOnEarth);
-        const double distanceToAnchor = camera_->position().distanceTo(anchorPoint);
-        const double moveMeters = distanceToAnchor * (clampedScale - 1.0);
-        glm::dvec3 nextEye =
-            camera_->position().raw() +
-            camera_->direction().raw() * moveMeters;
+        // 锚点钉住的精确 dolly：沿 eye→anchor 直线把该距离缩到 d/s，位移
+        // d*(1-1/s)。旧实现沿 camera direction（屏幕中心视线）移动 d*(s-1)：
+        // ① 方向错——双指质心不在屏幕中心时锚点产生一阶横向漂移，只能靠随后
+        // 绕地心旋转硬补，代价是整幅画面被多转一下；② 量错——缩进过冲、
+        // 拉远不足，两侧不对称。zoom 惯性滑行(update)本来就是沿 eye→anchor
+        // 做的，这里改齐后手势期与滑行期同一条直线，交接处不再有折角。
+        const glm::dvec3 eye = camera_->position().raw();
+        const glm::dvec3 toAnchor = pointOnEarth - eye;
+        const double distanceToAnchor = glm::length(toAnchor);
+        const double moveMeters =
+            distanceToAnchor * (1.0 - 1.0 / clampedScale);
+        glm::dvec3 nextEye = distanceToAnchor > 1e-6
+            ? eye + (toAnchor / distanceToAnchor) * moveMeters
+            : eye;
         nextEye = clampEyeAltitude(nextEye);
         const double nextDistanceRadii =
             glm::length(nextEye) / kEarthRadiusMeters;
@@ -336,10 +359,12 @@ void CameraController::onPinchGesture(float scale,
             applyHighAltitudeRecenter(-std::log(clampedScale));
         }
     } else {
-        // 无有效 pinch anchor 时，沿视线方向缩放相机。
+        // 无有效 pinch anchor 时，沿视线方向缩放相机（无锚点可钉，只能以
+        // 地心距当作被缩放的距离）。位移量与有锚点分支同一公式 d*(1-1/s)，
+        // 否则缩进过冲、拉远不足。
         // 不能仅设置 distance_，因为 orbitMode_ 已关闭，update() 不消费它。
         const double moveMeters =
-            camera_->position().length() * (clampedScale - 1.0);
+            camera_->position().length() * (1.0 - 1.0 / clampedScale);
         glm::dvec3 nextEye =
             camera_->position().raw() +
             camera_->direction().raw() * moveMeters;
@@ -363,6 +388,7 @@ void CameraController::onPinchEnd() {
     logGestureDiag("pinchEnd", pinchAnchorScreenX_, pinchAnchorScreenY_);
     pinching_ = false;
     inertiaAngularVelocity_ = 0.0;
+    pinchScaleResidualLog_ = 0.0;
     // 松手时若刚才在缩放且留有足够动量，启动 zoom 惯性滑行（锚点仍需保留以
     // 沿视线朝它 dolly）。否则清零。
     if (hasPinchAnchor_ &&
