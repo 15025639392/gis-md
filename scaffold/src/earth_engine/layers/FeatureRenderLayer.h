@@ -260,15 +260,6 @@ private:
             std::unique_ptr<Buffer> vertexBuffer;
             std::unique_ptr<Buffer> indexBuffer;
             int indexCount = 0;
-            /// P6d dash 侧视修正:色 pass 专用索引(中心 ribbon 在前 +
-            /// hull 在后,共享 vertexBuffer)。ribbon 紧贴采样高程,色
-            /// pass 首个 fragment 的 dash 里程视差从 ±120m 体面降到
-            /// DEM-网格高度差;hull 随后补剩余覆盖 + stencil 清零。体
-            /// pass 恒用上面的 hull 索引——开放 ribbon 会破坏 z-fail
-            /// 双面计数,绝不能进体 pass。空 = 无 ribbon(fill 组),
-            /// 色 pass 回落 hull 索引。
-            std::unique_ptr<Buffer> colorIndexBuffer;
-            int colorIndexCount = 0;
         };
         std::vector<VolumeGroupGpu> volumeGroups;
         /// P6d stencil 贴地线:连续横截面墙带(pos 3f + extrude 3f +
@@ -284,9 +275,6 @@ private:
         std::array<float, 4> color{0, 0, 0, 1};
         std::vector<float> verts;
         std::vector<uint32_t> indices;
-        /// 线组专用:色 pass 前置的中心 ribbon 索引(语义见
-        /// VolumeGroupGpu::colorIndexBuffer)。fill 组恒空。
-        std::vector<uint32_t> ribbonIndices;
     };
     using VolumeCpuGroups = std::map<uint32_t, VolumeCpuGroup>;
 

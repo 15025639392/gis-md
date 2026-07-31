@@ -915,7 +915,7 @@ void FeatureRenderLayer::appendLineVolume(
         extrudes[i] = lateral * scale;
     }
 
-    // ---- 沿线累计弧长(m,chord 累加;dash 花纹的世界米制参数) ----
+    // ---- 沿线累计弧长(m,chord 累加;dash 切分的世界米制参数) ----
     std::vector<double> lengthSoFar(n, 0.0);
     for (size_t i = 1; i < n; ++i) {
         lengthSoFar[i] =
@@ -924,124 +924,156 @@ void FeatureRenderLayer::appendLineVolume(
     const double totalLength =
         lengthSoFar[n - 1] +
         (closed ? (centers[0] - centers[n - 1]).length() : 0.0);
+    if (totalLength <= 0.0) return;
 
     VolumeCpuGroup& group = lineVolumeGroups[packColorU32(lineColor)];
     group.color = lineColor;
     std::vector<float>& verts = group.verts;
     std::vector<uint32_t>& indices = group.indices;
 
-    // ---- 横截面 4 顶点(CPU 零宽,28B = pos 3f + extrude 3f +
-    // lengthSoFar 1f):corner 0 = 底左(-) 1 = 底右(+) 2 = 顶左(-)
-    // 3 = 顶右(+)。闭环为 dash 复制 seam 截面(几何/extrude 与首截面
-    // 逐位相同 → 光栅水密;仅 lengthSoFar 取总长而非 0,避免 wrap quad
-    // 里程插值倒灌撕裂花纹)。 ----
-    const size_t sectionCount = closed ? n + 1 : n;
-    const uint32_t base = static_cast<uint32_t>(verts.size() / 7);
-    for (size_t si = 0; si < sectionCount; ++si) {
-        const size_t i = si % n;
-        const double s = (closed && si == n) ? totalLength : lengthSoFar[i];
-        const Cartographic& c = points[i];
-        const Vec3 bottom = ellipsoid_.cartographicToCartesian(Cartographic(
-            c.longitude(), c.latitude(), c.height() - kVolumeMarginMeters));
-        const Vec3 top = ellipsoid_.cartographicToCartesian(Cartographic(
-            c.longitude(), c.latitude(), c.height() + kVolumeMarginMeters));
-        if (!hasOrigin) {
-            origin = bottom;
-            hasOrigin = true;
+    // ---- 沿线任意里程处的截面样本。段内**线性插值**(而非重算 miter):
+    // 保证切分出的划体恰是原连续墙带的一个子段,几何逐点吻合光栅化插值
+    // 结果,dash 切口不会改变线的形状/宽度。 ----
+    struct SectionSample {
+        Vec3 center;
+        Vec3 up;
+        Vec3 extrude;
+    };
+    auto sectionAt = [&](size_t i) -> SectionSample {
+        return {centers[i], ups[i], extrudes[i]};
+    };
+    auto sampleAlong = [&](double s) -> SectionSample {
+        // 定位 s 所在段 [i, i+1)(闭环末段回绕到 0)。
+        size_t i = 0;
+        while (i + 1 < n && lengthSoFar[i + 1] <= s) ++i;
+        const size_t j = (i + 1) % n;
+        const double segStart = lengthSoFar[i];
+        const double segEnd =
+            (i + 1 < n) ? lengthSoFar[i + 1] : totalLength;
+        const double segLen = segEnd - segStart;
+        const double t =
+            segLen > 1e-9 ? std::clamp((s - segStart) / segLen, 0.0, 1.0)
+                          : 0.0;
+        SectionSample out;
+        out.center = centers[i] + (centers[j] - centers[i]) * t;
+        const Vec3 up = ups[i] + (ups[j] - ups[i]) * t;
+        out.up = up.lengthSquared() > 1e-18 ? up.normalized() : ups[i];
+        out.extrude = extrudes[i] + (extrudes[j] - extrudes[i]) * t;
+        return out;
+    };
+
+    // ---- 发射一条墙带(每截面 4 顶点:0 底左 1 底右 2 顶左 3 顶右;
+    // 段间底/顶/左/右各 1 quad;wrap=false 补首尾端 cap)。顶点全共享 →
+    // 任意边恰被 2 三角引用(水密,z-fail 双面计数的前提)。 ----
+    auto emitStrip = [&](const std::vector<SectionSample>& secs, bool wrap) {
+        const size_t sectionCount = secs.size();
+        if (sectionCount < 2) return;
+        const uint32_t base = static_cast<uint32_t>(verts.size() / 6);
+        for (const SectionSample& sec : secs) {
+            const Vec3 bottom = sec.center - sec.up * kVolumeMarginMeters;
+            const Vec3 top = sec.center + sec.up * kVolumeMarginMeters;
+            if (!hasOrigin) {
+                origin = bottom;
+                hasOrigin = true;
+            }
+            auto pushVert = [&](const Vec3& p, double side) {
+                const Vec3 rel = p - origin;
+                const Vec3 ext = sec.extrude * side;
+                verts.push_back(static_cast<float>(rel.x()));
+                verts.push_back(static_cast<float>(rel.y()));
+                verts.push_back(static_cast<float>(rel.z()));
+                verts.push_back(static_cast<float>(ext.x()));
+                verts.push_back(static_cast<float>(ext.y()));
+                verts.push_back(static_cast<float>(ext.z()));
+            };
+            pushVert(bottom, -1.0);
+            pushVert(bottom, 1.0);
+            pushVert(top, -1.0);
+            pushVert(top, 1.0);
         }
-        auto pushVert = [&](const Vec3& p, double side) {
-            const Vec3 rel = p - origin;
-            const Vec3 ext = extrudes[i] * side;
-            verts.push_back(static_cast<float>(rel.x()));
-            verts.push_back(static_cast<float>(rel.y()));
-            verts.push_back(static_cast<float>(rel.z()));
-            verts.push_back(static_cast<float>(ext.x()));
-            verts.push_back(static_cast<float>(ext.y()));
-            verts.push_back(static_cast<float>(ext.z()));
-            verts.push_back(static_cast<float>(s));
+        auto vi = [&](size_t section, int corner) -> uint32_t {
+            return base + static_cast<uint32_t>(section % sectionCount) * 4 +
+                   static_cast<uint32_t>(corner);
         };
-        pushVert(bottom, -1.0);
-        pushVert(bottom, 1.0);
-        pushVert(top, -1.0);
-        pushVert(top, 1.0);
-    }
-
-    // ---- 中心 ribbon 顶点(每截面 2 个,采样高程处 ±侧;色 pass 的
-    // dash 里程主源,见下方索引发射注释)。 ----
-    const uint32_t ribbonBase =
-        base + static_cast<uint32_t>(sectionCount) * 4;
-    for (size_t si = 0; si < sectionCount; ++si) {
-        const size_t i = si % n;
-        const double s = (closed && si == n) ? totalLength : lengthSoFar[i];
-        const Vec3 center = centers[i];
-        auto pushRibbonVert = [&](double side) {
-            const Vec3 rel = center - origin;
-            const Vec3 ext = extrudes[i] * side;
-            verts.push_back(static_cast<float>(rel.x()));
-            verts.push_back(static_cast<float>(rel.y()));
-            verts.push_back(static_cast<float>(rel.z()));
-            verts.push_back(static_cast<float>(ext.x()));
-            verts.push_back(static_cast<float>(ext.y()));
-            verts.push_back(static_cast<float>(ext.z()));
-            verts.push_back(static_cast<float>(s));
+        auto pushQuad = [&](uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+            indices.push_back(a);
+            indices.push_back(b);
+            indices.push_back(c);
+            indices.push_back(a);
+            indices.push_back(c);
+            indices.push_back(d);
         };
-        pushRibbonVert(-1.0);
-        pushRibbonVert(1.0);
+        const size_t segCount = wrap ? sectionCount : sectionCount - 1;
+        for (size_t s = 0; s < segCount; ++s) {
+            const size_t a = s;
+            const size_t b = s + 1;
+            pushQuad(vi(a, 0), vi(a, 1), vi(b, 1), vi(b, 0));  // 底
+            pushQuad(vi(a, 3), vi(a, 2), vi(b, 2), vi(b, 3));  // 顶
+            pushQuad(vi(a, 0), vi(b, 0), vi(b, 2), vi(a, 2));  // 左墙
+            pushQuad(vi(a, 1), vi(a, 3), vi(b, 3), vi(b, 1));  // 右墙
+        }
+        if (!wrap) {
+            const size_t last = sectionCount - 1;
+            pushQuad(vi(0, 0), vi(0, 2), vi(0, 3), vi(0, 1));        // 首 cap
+            pushQuad(vi(last, 0), vi(last, 1), vi(last, 3),
+                     vi(last, 2));                                   // 尾 cap
+        }
+    };
+
+    // ---- dash:**几何切分**(不在 FS 判里程)。色 pass 光栅化的是体、
+    // 着色的却是地形像素,任何从体面插值来的里程在侧视低角度下都有百米
+    // 级视差且相邻像素混取不同面 → 花纹撕裂(真机复现)。改为每一「划」
+    // 生成独立封闭墙带体、空隙不出几何:dash 边界 = 几何边界,零视差、
+    // 像素级锐利,并省掉空隙处的 overdraw。
+    // (对照:cesium PolylineDashMaterial.glsl:22-25 用 gl_FragCoord 旋转
+    // 取相位规避视差,但花纹锚在屏幕上、相机一动就在地面游动;maplibre
+    // line_sdf 的精确里程来自「光栅化的就是线本身」,我们给不了。) ----
+    const double period = static_cast<double>(style_.lineDashPeriodMeters);
+    const double onFraction = std::clamp(
+        static_cast<double>(style_.lineDashOnFraction), 0.0, 1.0);
+    /// 划段短于此长度直接跳过(避免退化体与顶点爆炸)。
+    constexpr double kMinDashMeters = 0.5;
+    /// 单条线的划数上限(period 远小于线长时的护栏,超限退化实线)。
+    constexpr double kMaxDashCount = 4096.0;
+    const bool dashed = period > 0.0 && onFraction > 0.0 &&
+                        onFraction < 1.0 &&
+                        totalLength / period <= kMaxDashCount;
+
+    if (!dashed) {
+        std::vector<SectionSample> secs;
+        secs.reserve(n);
+        for (size_t i = 0; i < n; ++i) secs.push_back(sectionAt(i));
+        emitStrip(secs, closed);
+        return;
     }
 
-    // ---- 索引发射。hull(体 pass + 色 pass 共用):相邻横截面间四面墙
-    // (底/顶/左/右各 1 quad = 2 tri),顶点全共享 → 任意边恰被 2 三角
-    // 引用(水密,测试按 pos+extrude 量化锁流形);开放线补首尾端 cap。
-    // 色 pass 另有**中心 ribbon 前置**(ribbonIndices,上传时拼在 hull
-    // 之前):色 pass 里首个通过 stencil 的 fragment 定色并清零
-    // (NOTEQUAL + op ZERO),dash 里程于是优先取自紧贴地形的 ribbon,
-    // 视差 = DEM-渲染网格高度差(米级);若直接用 hull 面取里程,侧视
-    // 低角度视线先命中 ±120m 外的底面/前方段侧墙,视差达百米级、且
-    // 相邻像素混取不同面 → 花纹撕裂(真机复现过)。hull 在 ribbon 后
-    // 补画:覆盖 ribbon 投影不及的残余像素并完成 stencil 清零;组内
-    // hull 仍底面先行(次级里程源,取更贴地形的那侧)。 ----
-    auto vi = [&](size_t section, int corner) -> uint32_t {
-        return base + static_cast<uint32_t>(section) * 4 +
-               static_cast<uint32_t>(corner);
-    };
-    auto pushQuad = [&](uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
-        indices.push_back(a);
-        indices.push_back(b);
-        indices.push_back(c);
-        indices.push_back(a);
-        indices.push_back(c);
-        indices.push_back(d);
-    };
-    const size_t segCount = sectionCount - 1;
-    for (size_t s = 0; s < segCount; ++s) {
-        pushQuad(vi(s, 0), vi(s, 1), vi(s + 1, 1), vi(s + 1, 0));  // 底
+    // 闭环把周期微调成整数节:seam 处花纹连续(开放线保持标称周期)。
+    double effPeriod = period;
+    if (closed) {
+        const double cycles = std::max(1.0, std::round(totalLength / period));
+        effPeriod = totalLength / cycles;
     }
-    for (size_t s = 0; s < segCount; ++s) {
-        pushQuad(vi(s, 3), vi(s, 2), vi(s + 1, 2), vi(s + 1, 3));  // 顶
-        pushQuad(vi(s, 0), vi(s + 1, 0), vi(s + 1, 2), vi(s, 2));  // 左墙
-        pushQuad(vi(s, 1), vi(s, 3), vi(s + 1, 3), vi(s + 1, 1));  // 右墙
-    }
-    if (!closed) {
-        pushQuad(vi(0, 0), vi(0, 2), vi(0, 3), vi(0, 1));          // 首 cap
-        pushQuad(vi(n - 1, 0), vi(n - 1, 1), vi(n - 1, 3),
-                 vi(n - 1, 2));                                    // 尾 cap
-    }
+    const double onLength = effPeriod * onFraction;
 
-    // 中心 ribbon 索引(仅色 pass;开放面禁入体 pass 的 z-fail 计数)。
-    std::vector<uint32_t>& ribbon = group.ribbonIndices;
-    auto ri = [&](size_t section, int side) -> uint32_t {
-        return ribbonBase + static_cast<uint32_t>(section) * 2 +
-               static_cast<uint32_t>(side);
-    };
-    for (size_t s = 0; s < segCount; ++s) {
-        ribbon.push_back(ri(s, 0));
-        ribbon.push_back(ri(s, 1));
-        ribbon.push_back(ri(s + 1, 1));
-        ribbon.push_back(ri(s, 0));
-        ribbon.push_back(ri(s + 1, 1));
-        ribbon.push_back(ri(s + 1, 0));
+    std::vector<SectionSample> secs;
+    for (double start = 0.0; start < totalLength - 1e-6;
+         start += effPeriod) {
+        const double end = std::min(start + onLength, totalLength);
+        if (end - start < kMinDashMeters) continue;
+        secs.clear();
+        secs.push_back(sampleAlong(start));
+        // 划内的原折线点必须保留,否则划会直线穿过弯道。
+        for (size_t i = 0; i < n; ++i) {
+            const double s = lengthSoFar[i];
+            if (s > start + 1e-6 && s < end - 1e-6) {
+                secs.push_back(sectionAt(i));
+            }
+        }
+        secs.push_back(sampleAlong(end));
+        emitStrip(secs, /*wrap=*/false);
     }
 }
+
 
 bool FeatureRenderLayer::uploadBucketGpu(
     const Vec3& origin,
@@ -1078,28 +1110,6 @@ bool FeatureRenderLayer::uploadBucketGpu(
                                              BufferDesc::Type::Index);
                 if (!gpu.vertexBuffer || !gpu.indexBuffer) continue;
                 gpu.indexCount = static_cast<int>(group.indices.size());
-                if (!group.ribbonIndices.empty()) {
-                    // 色 pass 索引 = ribbon 前置 + hull(语义见
-                    // VolumeGroupGpu::colorIndexBuffer)。拼接失败回落
-                    // hull(colorIndexBuffer 留空),dash 侧视退化但不丢线。
-                    std::vector<uint32_t> colorIndices;
-                    colorIndices.reserve(group.ribbonIndices.size() +
-                                         group.indices.size());
-                    colorIndices.insert(colorIndices.end(),
-                                        group.ribbonIndices.begin(),
-                                        group.ribbonIndices.end());
-                    colorIndices.insert(colorIndices.end(),
-                                        group.indices.begin(),
-                                        group.indices.end());
-                    gpu.colorIndexBuffer = makeBuffer(
-                        renderDevice_, colorIndices.data(),
-                        colorIndices.size() * sizeof(uint32_t),
-                        BufferDesc::Type::Index);
-                    if (gpu.colorIndexBuffer) {
-                        gpu.colorIndexCount =
-                            static_cast<int>(colorIndices.size());
-                    }
-                }
                 gpuOut.push_back(std::move(gpu));
             }
         };
@@ -1589,7 +1599,7 @@ void FeatureRenderLayer::appendBucketCommands(
                 vol.indexBuffer = group.indexBuffer.get();
                 vol.indexCount = group.indexCount;
                 vol.indexType = RenderCommand::IndexType::UInt32;
-                vol.vertexStride = 28;  // pos(12)+extrude(12)+lengthSoFar(4)
+                vol.vertexStride = 24;  // pos(12)+extrude(12)
                 vol.primitive = RenderCommand::PrimitiveType::Triangles;
                 vol.depthTest = true;   // z-fail 计数依赖地形深度
                 vol.depthWrite = false;
@@ -1598,24 +1608,13 @@ void FeatureRenderLayer::appendBucketCommands(
                 vol.uniforms["u_modelViewProjection"] = mvpUniform;
                 vol.uniforms["u_modelView"] = modelViewUniform;
                 vol.uniforms["u_halfWidthPerEyeZ"] = {halfWidthPerEyeZ};
-                // dash:空隙 alpha=0 而非 discard(stencil ZERO 清零必须
-                // 照常执行,否则残留计数污染后续组)。
-                vol.uniforms["u_dashPeriodMeters"] = {
-                    style_.lineDashPeriodMeters};
-                vol.uniforms["u_dashOnFraction"] = {
-                    style_.lineDashOnFraction};
+                // dash 已在镶嵌期切成独立划体(几何边界),FS 无需判里程。
                 vol.uniforms["u_color"] = {0.0f, 0.0f, 0.0f, 0.0f};
 
                 RenderCommand col = vol;
                 col.stencilPhase = StencilPhase::ClassifyColor;
                 col.depthTest = false;
                 col.blend = true;
-                // 色 pass 用 ribbon 前置索引(dash 里程主源贴地形;体
-                // pass 恒 hull——开放 ribbon 会破坏 z-fail 计数)。
-                if (group.colorIndexBuffer && group.colorIndexCount > 0) {
-                    col.indexBuffer = group.colorIndexBuffer.get();
-                    col.indexCount = group.colorIndexCount;
-                }
                 col.uniforms["u_color"] = {group.color[0], group.color[1],
                                            group.color[2], group.color[3]};
                 commands.push_back(std::move(vol));

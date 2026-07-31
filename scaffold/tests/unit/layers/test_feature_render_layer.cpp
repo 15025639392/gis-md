@@ -797,7 +797,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
     ASSERT_EQ(RenderCommandKind::VectorStencil, col->kind);
     EXPECT_EQ(StencilPhase::ClassifyVolume, vol->stencilPhase);
     EXPECT_EQ(StencilPhase::ClassifyColor, col->stencilPhase);
-    EXPECT_EQ(28, vol->vertexStride);  // pos(12)+extrude(12)+lengthSoFar(4)
+    EXPECT_EQ(24, vol->vertexStride);  // pos(12)+extrude(12)
     EXPECT_EQ(vol->vertexBuffer, col->vertexBuffer);
     // 宽度挤出 uniform 齐备(mvp + modelView + 每米眼深半宽)。
     ASSERT_EQ(1u, vol->uniforms.count("u_modelViewProjection"));
@@ -810,7 +810,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
     // 开放墙带:n 横截面 → 8(n-1) 墙三角 + 4 端 cap 三角。
     const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (6 * 28);
+    const size_t sections = vb->bytes().size() / (4 * 24);
     ASSERT_GE(sections, 2u);
     EXPECT_EQ(static_cast<int>(8 * (sections - 1) + 4) * 3, vol->indexCount);
     expectWatertight(*vol);
@@ -837,19 +837,17 @@ TEST_F(FeatureRenderLayerTest, ClampedPolygonOutlineBecomesClosedLineVolume) {
         ++stencilCount;
         if (cmd.stencilPhase != StencilPhase::ClassifyVolume) continue;
         if (cmd.vertexStride == 12) fillVol = &cmd;
-        if (cmd.vertexStride == 28) lineVol = &cmd;
+        if (cmd.vertexStride == 24) lineVol = &cmd;
     }
     EXPECT_EQ(4, stencilCount);
     ASSERT_NE(nullptr, fillVol);
     ASSERT_NE(nullptr, lineVol);
-    // 闭合墙带:n+1 横截面(seam 复制截面,dash 里程不倒灌)
-    // → 8·(sections-1) 三角,无端 cap。
+    // 闭合墙带(实线):n 横截面 wrap → 8n 三角,无端 cap。
     const auto* vb = dynamic_cast<const DummyBuffer*>(lineVol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (6 * 28);
+    const size_t sections = vb->bytes().size() / (4 * 24);
     ASSERT_GE(sections, 3u);
-    EXPECT_EQ(static_cast<int>(8 * (sections - 1)) * 3,
-              lineVol->indexCount);
+    EXPECT_EQ(static_cast<int>(8 * sections) * 3, lineVol->indexCount);
     expectWatertight(*lineVol);
 
     const auto validation = validateMvpRenderCommands(commands, frame_.frameId);
@@ -880,66 +878,86 @@ TEST_F(FeatureRenderLayerTest, StencilLineDensifyDecoupledFromSchemeA) {
     ASSERT_NE(nullptr, vol);
     const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (6 * 28);
+    const size_t sections = vb->bytes().size() / (4 * 24);
     EXPECT_GE(sections, 100u);
     EXPECT_LE(sections, 200u);
     expectWatertight(*vol);
 }
 
-TEST_F(FeatureRenderLayerTest, StencilLineDashUniformsAndArcLength) {
+TEST_F(FeatureRenderLayerTest, StencilLineDashSplitsIntoClosedBodies) {
+    // P6d dash = 镶嵌期几何切分:每一「划」一个独立封闭墙带体,空隙不
+    // 出几何(FS 不判里程 → 侧视零视差)。
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-    style.lineDashPeriodMeters = 30.0f;
+    style.lineDashPeriodMeters = 300.0f;
     style.lineDashOnFraction = 0.5f;
     layer_->setStyle(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
 
     RenderCommandList commands = build();
-    const RenderCommand* lineVol = nullptr;
-    const RenderCommand* lineCol = nullptr;
+    const RenderCommand* vol = nullptr;
+    const RenderCommand* col = nullptr;
     for (const auto& cmd : commands) {
         if (cmd.kind != RenderCommandKind::VectorStencil ||
-            cmd.vertexStride != 28) {
+            cmd.vertexStride != 24) {
             continue;
         }
-        if (cmd.stencilPhase == StencilPhase::ClassifyVolume) lineVol = &cmd;
-        if (cmd.stencilPhase == StencilPhase::ClassifyColor) lineCol = &cmd;
+        if (cmd.stencilPhase == StencilPhase::ClassifyVolume) vol = &cmd;
+        if (cmd.stencilPhase == StencilPhase::ClassifyColor) col = &cmd;
     }
-    ASSERT_NE(nullptr, lineVol);
-    ASSERT_NE(nullptr, lineCol);
-    ASSERT_EQ(1u, lineCol->uniforms.count("u_dashPeriodMeters"));
-    EXPECT_FLOAT_EQ(30.0f, lineCol->uniforms.at("u_dashPeriodMeters")[0]);
-    ASSERT_EQ(1u, lineCol->uniforms.count("u_dashOnFraction"));
-    EXPECT_FLOAT_EQ(0.5f, lineCol->uniforms.at("u_dashOnFraction")[0]);
+    ASSERT_NE(nullptr, vol);
+    ASSERT_NE(nullptr, col);
+    // FS 不再判里程:dash uniform 与顶点里程分量一并退役。
+    EXPECT_EQ(0u, vol->uniforms.count("u_dashPeriodMeters"));
+    EXPECT_EQ(0u, vol->uniforms.count("u_dashOnFraction"));
+    // 体/色 pass 共用同一份几何(前置 ribbon 的双索引已退役)。
+    EXPECT_EQ(vol->indexBuffer, col->indexBuffer);
+    EXPECT_EQ(vol->indexCount, col->indexCount);
 
-    // 顶点里程:同截面 4 顶点同值、沿截面单调不减;闭环 seam 复制截面 =
-    // 首截面几何逐位相同 + 里程 = 周长(≈ 0.01°×4 边 ≈ 4.45km)。
-    const auto* vb =
-        dynamic_cast<const DummyBuffer*>(lineCol->vertexBuffer);
+    // 环长 ≈ 4.45km,周期吸附成整数节 → ~15 划,每划独立封闭体
+    // (2 端 cap + 段墙);全部划体合起来仍逐边成对(每体自封闭)。
+    const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
-    const size_t sections = vb->bytes().size() / (6 * 28);
-    ASSERT_GE(sections, 4u);
-    float prev = -1.0f;
-    for (size_t si = 0; si < sections; ++si) {
-        const float s0 = f[(si * 4 + 0) * 7 + 6];
-        for (int c = 1; c < 4; ++c) {
-            EXPECT_FLOAT_EQ(s0, f[(si * 4 + c) * 7 + 6]);
+    const size_t sections = vb->bytes().size() / (4 * 24);
+    EXPECT_GE(sections, 20u);
+    expectWatertight(*vol);
+
+    // 划体总数 = 索引里 cap 对数:每体 2 个 cap(各 2 三角)。用三角总数
+    // 反推:体 b 有 k_b 段 → 8·k_b + 4 三角。∑k_b = 覆盖段数。
+    const int triangles = vol->indexCount / 3;
+    const int totalSections = static_cast<int>(sections);
+    // triangles = 8·(totalSections - bodies) + 4·bodies → 解出 bodies。
+    ASSERT_EQ(0, (8 * totalSections - triangles) % 4);
+    const int bodies = (8 * totalSections - triangles) / 4;
+    EXPECT_GE(bodies, 10);
+    EXPECT_LE(bodies, 20);
+}
+
+TEST_F(FeatureRenderLayerTest, StencilLineSolidWhenDashDisabled) {
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.lineDashPeriodMeters = 0.0f;  // 实线
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    layer_->store().addFeature(makeLine(0.0, 0.0, 0.05));
+
+    RenderCommandList commands = build();
+    const RenderCommand* vol = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorStencil &&
+            cmd.stencilPhase == StencilPhase::ClassifyVolume &&
+            cmd.vertexStride == 24) {
+            vol = &cmd;
         }
-        EXPECT_GE(s0, prev);
-        prev = s0;
     }
-    for (int k = 0; k < 3; ++k) {  // seam 截面与首截面几何逐位相同
-        EXPECT_EQ(f[k], f[((sections - 1) * 4) * 7 + k]);
-    }
-    EXPECT_NEAR(4450.0f, prev, 100.0f);
-    // 水密只约束体 pass 的 hull;色 pass 前置开放中心 ribbon(dash 里程
-    // 贴地形,侧视防花纹撕裂),索引 = ribbon(6·段数)+ hull。
-    expectWatertight(*lineVol);
-    EXPECT_NE(lineVol->indexBuffer, lineCol->indexBuffer);
-    EXPECT_EQ(lineVol->indexCount + static_cast<int>(6 * (sections - 1)),
-              lineCol->indexCount);
+    ASSERT_NE(nullptr, vol);
+    // 单条连续墙带:8·(sections-1) 墙 + 4 端 cap 三角。
+    const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const size_t sections = vb->bytes().size() / (4 * 24);
+    EXPECT_EQ(static_cast<int>(8 * (sections - 1) + 4) * 3, vol->indexCount);
+    expectWatertight(*vol);
 }
 
 TEST_F(FeatureRenderLayerTest, StencilLineFallsBackToRibbonWithoutSupport) {
