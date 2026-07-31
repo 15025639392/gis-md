@@ -740,13 +740,28 @@ void FeatureRenderLayer::appendFillVolume(
             north = std::max(north, c.latitude());
         }
     }
-    // 内部粗网格(≤8×8):面内山峰高于环顶点是常态(demo 面即横跨山体),
-    // 只测环会漏峰 → 体顶不够高 → 分类在峰顶断面。网格粗 + margin 兜底。
-    const int kGrid = 8;
-    for (int gy = 1; gy < kGrid; ++gy) {
-        for (int gx = 1; gx < kGrid; ++gx) {
-            const double lng = west + (east - west) * gx / kGrid;
-            const double lat = south + (north - south) * gy / kGrid;
+    // 内部网格采样:面内山峰/深谷高于(低于)环顶点是常态(demo 面即横跨
+    // 山体),只测环会漏 → 体顶不够高/体底不够低 → 分类在峰顶或谷底断面。
+    // 网格步长跟随 clampDensifyMeters(与线路径同一密度语义),单边上限
+    // kMaxGrid 防大面采样爆炸。**保证边界**:尺度大于网格步长的地形特征
+    // 不会漏;更尖的特征仍靠 ±kVolumeMarginMeters 兜底(纯采样无法根治,
+    // 根治需地形侧的区域 min/max 元数据)。
+    const int kMaxGrid = 64;
+    const double spacing = std::max(1.0, style_.clampDensifyMeters);
+    const double midLat = (south + north) * 0.5;
+    const double lngSpanMeters =
+        (east - west) * kEarthRadiusMeters * std::max(0.01, std::cos(midLat));
+    const double latSpanMeters = (north - south) * kEarthRadiusMeters;
+    const int gridX = std::clamp(
+        static_cast<int>(std::ceil(lngSpanMeters / spacing)), 1, kMaxGrid);
+    const int gridY = std::clamp(
+        static_cast<int>(std::ceil(latSpanMeters / spacing)), 1, kMaxGrid);
+    for (int gy = 0; gy <= gridY; ++gy) {
+        for (int gx = 0; gx <= gridX; ++gx) {
+            const double lng =
+                west + (east - west) * gx / gridX;
+            const double lat =
+                south + (north - south) * gy / gridY;
             if (pointInRings2D(lng, lat, feature.rings)) probe(lng, lat);
         }
     }
@@ -1538,6 +1553,11 @@ void FeatureRenderLayer::appendBucketCommands(
         // P6 stencil 贴地(方案 B):体积按解析色分组(P6b),每组一对相邻
         // 命令。stable_sort 按 order(29)保持插入序 → 体 pass 必在色 pass
         // 前;色 pass op ZERO 顺手清零,组间不串。组内多要素并集计数。
+        // **契约**:色 pass 恒用 pos-only + uniform 纯色。分类着色的是地形
+        // 像素、光栅化的却是体表面,任何"从体面插值 varying 再决定 fragment
+        // 外观"的做法(pattern/渐变/沿线里程)在侧视下都有视差,线 dash 已
+        // 为此付过代价(终态改镶嵌期几何切分)。fill 要加图案同理走几何或
+        // 地形深度重建,别加 varying。
         for (const auto& group : gpu.volumeGroups) {
             if (group.indexCount <= 0 || !fillShader) continue;
             RenderCommand vol;

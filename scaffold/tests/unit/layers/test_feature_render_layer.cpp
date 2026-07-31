@@ -635,6 +635,54 @@ FeatureTerrainSampling makeFlatSampling(float height) {
 
 } // namespace
 
+namespace {
+
+/// 流形断言:体积网格任意无向边必须恰被 2 个三角形引用(水密;z-fail
+/// 计数正确性的机器可检查前提)。顶点按**位置+extrude 量化**(mm)判等
+/// 而非索引:CPU 侧墙带零宽,±两侧顶点仅 extrude 符号可分;闭环 dash 的
+/// seam 复制截面与首截面 pos/extrude 逐位相同、仅 lengthSoFar 不同 →
+/// 正确合并——挤出后几何水密即光栅水密。
+void expectWatertight(const RenderCommand& vol) {
+    const auto* ib =
+        dynamic_cast<const DummyBuffer*>(vol.indexBuffer);
+    const auto* vb =
+        dynamic_cast<const DummyBuffer*>(vol.vertexBuffer);
+    ASSERT_NE(nullptr, ib);
+    ASSERT_NE(nullptr, vb);
+    const auto* idx = reinterpret_cast<const uint32_t*>(ib->bytes().data());
+    const size_t idxCount = ib->bytes().size() / sizeof(uint32_t);
+    ASSERT_EQ(static_cast<size_t>(vol.indexCount), idxCount);
+    const auto* verts = reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t strideFloats =
+        static_cast<size_t>(vol.vertexStride) / sizeof(float);
+    // pos-only 体(fill,stride 12)只比位置;墙带(line,stride 24)连
+    // extrude 一起比——CPU 侧零宽,±两侧顶点仅 extrude 符号可分。
+    const size_t keyFloats = std::min<size_t>(strideFloats, 6);
+    auto posKey = [&](uint32_t v) -> std::array<int64_t, 6> {
+        const float* p = verts + v * strideFloats;
+        std::array<int64_t, 6> k{};
+        for (size_t i = 0; i < keyFloats; ++i) {
+            k[i] = static_cast<int64_t>(std::llround(p[i] * 1000.0));
+        }
+        return k;
+    };
+    using EdgeKey = std::pair<std::array<int64_t, 6>, std::array<int64_t, 6>>;
+    std::map<EdgeKey, int> edges;
+    for (size_t t = 0; t + 2 < idxCount; t += 3) {
+        for (int e = 0; e < 3; ++e) {
+            auto a = posKey(idx[t + e]);
+            auto b = posKey(idx[t + (e + 1) % 3]);
+            if (b < a) std::swap(a, b);
+            ++edges[{a, b}];
+        }
+    }
+    for (const auto& [edge, count] : edges) {
+        EXPECT_EQ(2, count) << "position-edge referenced " << count << "x";
+    }
+}
+
+} // namespace
+
 TEST_F(FeatureRenderLayerTest, StencilVolumePairForClampedPolygon) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
@@ -701,6 +749,104 @@ TEST_F(FeatureRenderLayerTest, StencilVolumePairForClampedPolygon) {
         << (validation ? validation->message : "");
 }
 
+TEST_F(FeatureRenderLayerTest, FillVolumeIsWatertight) {
+    // z-fail 双面计数要求体封闭。fill 体的墙顶点与 cap 顶点索引不共享、
+    // 但**位置同源**,故按位置量化判边(与线墙带同一断言口径)。
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
+
+    const RenderCommand* vol = nullptr;
+    for (const auto& cmd : build()) {
+        if (cmd.kind == RenderCommandKind::VectorStencil &&
+            cmd.stencilPhase == StencilPhase::ClassifyVolume &&
+            cmd.vertexStride == 12) {
+            vol = &cmd;
+        }
+    }
+    ASSERT_NE(nullptr, vol);
+    expectWatertight(*vol);
+}
+
+namespace {
+
+/// 合成地形:除一个小尖峰区域外恒 0。尖峰放在 8×8 粗网格采样点之间,
+/// 用于验证体高范围是否漏掉面内峰值。
+FeatureTerrainSampling makeSpikeSampling(double spikeLngDeg,
+                                         double spikeLatDeg,
+                                         double radiusDeg,
+                                         float peak) {
+    FeatureTerrainSampling s;
+    s.makeAreaSampler = [spikeLngDeg, spikeLatDeg, radiusDeg,
+                         peak](const Rectangle&) {
+        return [spikeLngDeg, spikeLatDeg, radiusDeg,
+                peak](double lng, double lat) -> std::optional<float> {
+            const double dl = lng / kDeg - spikeLngDeg;
+            const double dt = lat / kDeg - spikeLatDeg;
+            return (dl * dl + dt * dt < radiusDeg * radiusDeg) ? peak : 0.0f;
+        };
+    };
+    s.revision = []() -> uint64_t { return 1; };
+    return s;
+}
+
+/// 体积顶点相对桶原点,原点 = 首个底 cap 顶点。用「顶点到地心距离 −
+/// 原点到地心距离」还原相对高差不可行(缺原点绝对值),改用体自身的
+/// 底/顶跨度:同一 (lng,lat) 的底顶顶点对间距 = top − bottom。
+double volumeShellSpanMeters(const RenderCommand& vol) {
+    const auto* vb = dynamic_cast<const DummyBuffer*>(vol.vertexBuffer);
+    if (!vb) return 0.0;
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t count = vb->bytes().size() / 12;
+    // 底 cap 与顶 cap 同拓扑,顶 cap 顶点紧随底 cap;取首顶点对。
+    const size_t capVerts = count / 2 >= 4 ? 4 : 1;
+    double best = 0.0;
+    for (size_t i = 0; i < capVerts; ++i) {
+        const size_t j = i + capVerts;
+        if (j >= count) break;
+        double d = 0.0;
+        for (int k = 0; k < 3; ++k) {
+            const double delta = static_cast<double>(f[j * 3 + k]) -
+                                 static_cast<double>(f[i * 3 + k]);
+            d += delta * delta;
+        }
+        best = std::max(best, std::sqrt(d));
+    }
+    return best;
+}
+
+} // namespace
+
+TEST_F(FeatureRenderLayerTest, FillVolumeCoversInteriorPeakBetweenGridSamples) {
+    // fill 体高 = 环顶点 + 8×8 粗内部网格采样的 min/max ± 120m margin。
+    // 面内尖峰若落在网格采样点之间会被漏掉 → 体顶不够高 → 峰顶处分类
+    // 断面。这里把尖峰放在网格缝隙里,验证 margin 是否兜得住。
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyle(style);
+    // 面 0..0.08°,8×8 网格采样点在 0.01/0.02/.../0.07;尖峰放 0.045
+    // (恰在 0.04 与 0.05 之间),半径 0.002° ≈ 220m。
+    layer_->setTerrainSampling(
+        makeSpikeSampling(0.045, 0.045, 0.002, 400.0f));
+    layer_->store().addFeature(makePolygon(0.0, 0.0, 0.08));
+
+    const RenderCommand* vol = nullptr;
+    for (const auto& cmd : build()) {
+        if (cmd.kind == RenderCommandKind::VectorStencil &&
+            cmd.stencilPhase == StencilPhase::ClassifyVolume &&
+            cmd.vertexStride == 12) {
+            vol = &cmd;
+        }
+    }
+    ASSERT_NE(nullptr, vol);
+    // 体壳跨度必须罩住 400m 尖峰(顶 ≥ 峰高才不会在峰顶断面)。
+    // 采到峰 → 跨度 ≈ 400+240;漏峰 → 仅 240。
+    const double span = volumeShellSpanMeters(*vol);
+    EXPECT_GT(span, 400.0) << "体高未罩住面内尖峰,峰顶会断面;span=" << span;
+}
+
 TEST_F(FeatureRenderLayerTest, StencilFallsBackToSamplingWithoutSupport) {
     device_.stencilClassificationSupported = false;
     FeatureRenderStyle style = layer_->style();
@@ -730,50 +876,6 @@ TEST_F(FeatureRenderLayerTest, AbsoluteModePolygonHasNoStencilVolume) {
 // P6d stencil 贴地线(墙带体双 pass 分类)
 // ============================================================
 
-namespace {
-
-/// 流形断言:体积网格任意无向边必须恰被 2 个三角形引用(水密;z-fail
-/// 计数正确性的机器可检查前提)。顶点按**位置+extrude 量化**(mm)判等
-/// 而非索引:CPU 侧墙带零宽,±两侧顶点仅 extrude 符号可分;闭环 dash 的
-/// seam 复制截面与首截面 pos/extrude 逐位相同、仅 lengthSoFar 不同 →
-/// 正确合并——挤出后几何水密即光栅水密。
-void expectWatertight(const RenderCommand& vol) {
-    const auto* ib =
-        dynamic_cast<const DummyBuffer*>(vol.indexBuffer);
-    const auto* vb =
-        dynamic_cast<const DummyBuffer*>(vol.vertexBuffer);
-    ASSERT_NE(nullptr, ib);
-    ASSERT_NE(nullptr, vb);
-    const auto* idx = reinterpret_cast<const uint32_t*>(ib->bytes().data());
-    const size_t idxCount = ib->bytes().size() / sizeof(uint32_t);
-    ASSERT_EQ(static_cast<size_t>(vol.indexCount), idxCount);
-    const auto* verts = reinterpret_cast<const float*>(vb->bytes().data());
-    const size_t strideFloats =
-        static_cast<size_t>(vol.vertexStride) / sizeof(float);
-    auto posKey = [&](uint32_t v) -> std::array<int64_t, 6> {
-        const float* p = verts + v * strideFloats;
-        std::array<int64_t, 6> k{};
-        for (int i = 0; i < 6; ++i) {
-            k[i] = static_cast<int64_t>(std::llround(p[i] * 1000.0));
-        }
-        return k;
-    };
-    using EdgeKey = std::pair<std::array<int64_t, 6>, std::array<int64_t, 6>>;
-    std::map<EdgeKey, int> edges;
-    for (size_t t = 0; t + 2 < idxCount; t += 3) {
-        for (int e = 0; e < 3; ++e) {
-            auto a = posKey(idx[t + e]);
-            auto b = posKey(idx[t + (e + 1) % 3]);
-            if (b < a) std::swap(a, b);
-            ++edges[{a, b}];
-        }
-    }
-    for (const auto& [edge, count] : edges) {
-        EXPECT_EQ(2, count) << "position-edge referenced " << count << "x";
-    }
-}
-
-} // namespace
 
 TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
     FeatureRenderStyle style = layer_->style();
