@@ -919,6 +919,12 @@ add_executable(test_feature_store
 target_link_libraries(test_feature_store PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_feature_store COMMAND test_feature_store)
 
+add_executable(test_feature_cluster_index
+    unit/data/test_feature_cluster_index.cpp
+)
+target_link_libraries(test_feature_cluster_index PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_feature_cluster_index COMMAND test_feature_cluster_index)
+
 add_executable(test_style_expression
     unit/data/test_style_expression.cpp
 )

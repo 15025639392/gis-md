@@ -723,6 +723,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/FeatureStore.cpp
     earth_engine/data/FeatureSnapQuery.h
     earth_engine/data/FeatureSnapQuery.cpp
+    earth_engine/data/FeatureClusterIndex.h
+    earth_engine/data/FeatureClusterIndex.cpp
     earth_engine/data/StyleExpression.h
     earth_engine/data/StyleExpression.cpp
     earth_engine/data/GeoJsonImporter.h

@@ -24,6 +24,7 @@
 #include "earth_engine/Engine.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/data/FeatureClusterIndex.h"
 #include "earth_engine/layers/FeatureRenderLayer.h"
 #include "earth_engine/data/FeatureSnapQuery.h"
 #include "earth_engine/scene/Camera.h"
@@ -117,6 +118,14 @@ static std::vector<Feature> gEditUndoStack;  // 抓取时的编辑前快照
 // P5a 编辑手柄(应用层):抓取时把被编辑环的顶点灌成 Point 要素,专用
 // 手柄层渲染;拖拽实时更新被拖顶点,松手/取消清空。引擎只出点渲染能力。
 static FeatureRenderLayer* gEditHandleLayer = nullptr;  // Engine 持有所有权
+
+// ---- P6c 聚合演示(应用层)。引擎只出层级聚合索引与查询,聚合点怎么画、
+// 何时刷新全在这里:源数据存在本地 FeatureStore(不进渲染),按相机 zoom
+// 查询索引 → 结果写进一个普通 FeatureRenderLayer 当"显示层"。 ----
+static FeatureStore gClusterSourceStore;
+static FeatureClusterIndex gClusterIndex;
+static FeatureRenderLayer* gClusterLayer = nullptr;  // Engine 持有所有权
+static int gClusterShownLevel = -9999;               // 上次刷新用的 zoom 档
 static std::vector<FeatureId> gEditHandleIds;
 
 static double androidUptimeSeconds();
@@ -138,6 +147,8 @@ static void cancelInputIfNeeded() {
 static void clearDemoEngineObjects() {
     gDemoFeatureLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
     gEditHandleLayer = nullptr;
+    gClusterLayer = nullptr;
+    gClusterShownLevel = -9999;  // 下次装载重新刷一遍聚合显示层
     gEditHandleIds.clear();
     gEditDrag = EditDragState{};
     gEditUndoStack.clear();
@@ -440,6 +451,61 @@ static bool createEngine() {
             handleLayer->setStyle(handleStyle);
             gEditHandleLayer = handleLayer.get();
             gEngine->addFeatureRenderLayer(std::move(handleLayer));
+
+            // ---- P6c 聚合演示(应用层)----
+            // 源数据:重庆周边 ~25km 内 300 个点,分三团(团内密、团间疏),
+            // 拉远看是三个大簇、凑近逐级散开。源 store 不进引擎渲染。
+            {
+                gClusterSourceStore.clear();
+                const double clusterCenters[3][2] = {{106.50, 29.60},
+                                                     {106.62, 29.66},
+                                                     {106.44, 29.72}};
+                uint32_t seed = 12345u;
+                auto nextRand = [&seed]() {
+                    // 固定种子的 LCG:每次启动布点一致,便于 A/B 比对。
+                    seed = seed * 1664525u + 1013904223u;
+                    return static_cast<double>(seed >> 8) /
+                           static_cast<double>(1u << 24);
+                };
+                for (int i = 0; i < 300; ++i) {
+                    const auto& c = clusterCenters[i % 3];
+                    Feature p;
+                    p.type = GeometryType::Point;
+                    p.rings = {{Cartographic(
+                        (c[0] + (nextRand() - 0.5) * 0.06) * kDeg,
+                        (c[1] + (nextRand() - 0.5) * 0.04) * kDeg)}};
+                    gClusterSourceStore.addFeature(std::move(p));
+                }
+                FeatureClusterOptions clusterOpts;
+                clusterOpts.minZoom = 0;
+                clusterOpts.maxZoom = 16;
+                clusterOpts.radiusPx = 70.0;
+                gClusterIndex.build(gClusterSourceStore, clusterOpts);
+
+                // 显示层:簇与单点共用一层,靠 cluster 属性数据驱动区分
+                // (簇 = 青圆 + 计数标签;单点 = 白圆无标签。尺寸是 zoom
+                // 驱动的 uniform,不能逐要素分大小,故只用颜色区分)。
+                auto clusterLayer = std::make_unique<FeatureRenderLayer>(
+                    "demo-clusters", gRenderDevice.get(), Ellipsoid::WGS84());
+                FeatureRenderStyle cs;
+                cs.altitudeMode = FeatureAltitudeMode::ClampToGround;
+                cs.heightOffset = 8.0;
+                cs.labelProperty = "name";  // 簇写 count,单点留空不出标签
+                cs.labelSizePx = 22.0f;
+                cs.pointSizePx = 34.0f;
+                cs.pointAnchor = SymbolAnchor::Bottom;  // 同上:整圆立在锚点上
+                cs.labelOffsetPx = 0.5f * cs.pointSizePx;  // 计数压在圆心
+                cs.pointColorExpr = StyleExpression::match(
+                    "cluster",
+                    {{"1", StyleExpression::literal(
+                               {0.10f, 0.75f, 0.85f, 0.85f})}},
+                    StyleExpression::literal({1.0f, 1.0f, 1.0f, 0.9f}));
+                clusterLayer->setStyle(cs);
+                gClusterLayer = clusterLayer.get();
+                gEngine->addFeatureRenderLayer(std::move(clusterLayer));
+                LOGI("VectorP6c cluster demo: %zu source points, %zu levels",
+                     gClusterSourceStore.size(), gClusterIndex.levelCount());
+            }
             LOGI("VectorP1 demo layer installed: 1 polygon + 1 line");
         }
         // Phase 2c P5:GPU 位移已引擎默认开(Engine.h terrainGpuDisplacementEnabled_
@@ -601,6 +667,39 @@ static void editTouchUp() {
 }
 
 static int gFrameCount = 0;
+/// P6c 聚合演示的每帧刷新(应用层职责:引擎只出索引,画什么由这里定)。
+/// 相机 zoom 档变化才重建显示层——聚合是层级预聚,同一档内结果不变,
+/// 平移不需要重建(300 点直接全量查,不做视口裁剪)。渲染线程调用。
+static void refreshClusterDisplay() {
+    if (!gClusterLayer || gClusterIndex.empty()) return;
+    const double camHeight =
+        Ellipsoid::WGS84()
+            .cartesianToCartographic(gEngine->camera().position())
+            .height();
+    // 与引擎 zoom 驱动样式同一换算(web 墨卡托惯例)。
+    const double zoom = std::min(
+        24.0, std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
+    const int level = static_cast<int>(std::lround(zoom));
+    if (level == gClusterShownLevel) return;
+    gClusterShownLevel = level;
+
+    const Rectangle world(-M_PI, -M_PI / 2.0, M_PI, M_PI / 2.0);
+    const auto clusters = gClusterIndex.query(world, zoom);
+    gClusterLayer->store().clear();
+    for (const auto& c : clusters) {
+        Feature f;
+        f.type = GeometryType::Point;
+        f.rings = {{Cartographic(c.longitude, c.latitude)}};
+        if (c.isCluster()) {
+            f.properties["cluster"] = "1";
+            f.properties["name"] = std::to_string(c.count);
+        }
+        gClusterLayer->store().addFeature(std::move(f));
+    }
+    LOGI("VectorP6c clusters: zoom=%.2f level=%d entries=%zu", zoom, level,
+         clusters.size());
+}
+
 static void renderFrame() {
     if (!gEngineReady) return;
 
@@ -626,6 +725,7 @@ static void renderFrame() {
 
     // 环境系统：时间步进，render 中 update() 计算当前帧天空色
     gEngine->advanceTime(dt);
+    refreshClusterDisplay();
     const auto engineStart = std::chrono::steady_clock::now();
     const bool presented =
         gEngine->render(0.0);  // auto-delta（内部 update；必要时 beginFrame→render→endFrame）
