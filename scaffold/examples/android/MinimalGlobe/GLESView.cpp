@@ -265,15 +265,16 @@ static bool createEngine() {
             style.fillColor = {0.20f, 0.55f, 0.95f, 0.35f};
             style.lineColor = {1.00f, 0.72f, 0.05f, 0.95f};
             style.lineWidthPx = 6.0f;
-            // P3 贴地:逐顶点采样地形高钳制(渲染网格一致采样)。残余误差
-            // = fill 三角形横跨网格折痕(山脊)的线性切角项,随细分间距二次
-            // 收缩;offset 10m 覆盖之(像素级贴合属 stencil 方案 B 终态)。
+            // P3 贴地:逐顶点采样地形高钳制(渲染网格一致采样)。fill 已走
+            // stencil 像素贴合(P6a);线仍方案 A 抬升。polygon offset 符号
+            // 修正(reverse-Z 下 +1,+1)后 1m 真机验证无埋线断线,视差偏移
+            // 随 offset 压低同步缩小。
             style.altitudeMode = FeatureAltitudeMode::ClampToGround;
             // P6b 后 fill 走 stencil 像素级贴地(不吃 offset),outline/点仍
-            // 方案 A 抬升 —— 抬得越高斜视视差偏移越大(10m ≈ 几 px),越低
-            // 埋线断线风险越大(2m 真机实测东缘断线)。5m = 实测两者兼顾;
-            // 根治 = 线 stencil 化(P6a TODO)或 depth-bias 方向修正后压 1m。
-            style.heightOffset = 5.0;
+            // 方案 A 抬升。depth-bias 方向已修正(reverse-Z 下 +1,+1,原负号
+            // 是 pre-reverse-Z 遗留反向),1m 真机 A/B 验证无埋线断线(此前
+            // 2m 东缘断线是错向 bias 下的实测);视差偏移随之压到最小。
+            style.heightOffset = 1.0;
             style.clampDensifyMeters = 40.0;
             // P6b 数据驱动样式:fill 色按 zone 属性(stencil 按色分组)、
             // 点色按 kind 三色、线宽随 zoom 插值(拉远变细凑近变粗)。
