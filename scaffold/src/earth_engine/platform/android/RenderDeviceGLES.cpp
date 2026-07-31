@@ -999,10 +999,20 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             vaoKey.layout = VertexLayoutKind::Terrain20;
             vaoKey.vertexStride = 20;
         } else if (cmd.kind == RenderCommandKind::VectorLine &&
-                   cmd.vertexStride == 44) {
-            // 矢量线 ribbon(P1 §6.2):按 kind 分派,不与其他 44B 布局撞
-            vaoKey.layout = VertexLayoutKind::VectorLine44;
-            vaoKey.vertexStride = 44;
+                   cmd.vertexStride == 48) {
+            // 矢量线 ribbon(P1 §6.2 + P6b 顶点色):按 kind 分派
+            vaoKey.layout = VertexLayoutKind::VectorLine48;
+            vaoKey.vertexStride = 48;
+        } else if (cmd.kind == RenderCommandKind::VectorFill &&
+                   cmd.vertexStride == 16) {
+            // 矢量 fill(P6b 顶点色):按 kind 分派
+            vaoKey.layout = VertexLayoutKind::VectorFill16;
+            vaoKey.vertexStride = 16;
+        } else if (cmd.kind == RenderCommandKind::VectorPoint &&
+                   cmd.vertexStride == 24) {
+            // 矢量点(P5a + P6b 顶点色):按 kind 分派(不再复用 Terrain20)
+            vaoKey.layout = VertexLayoutKind::VectorPoint24;
+            vaoKey.vertexStride = 24;
         } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）
             vaoKey.layout = VertexLayoutKind::SimpleStride;
@@ -1536,8 +1546,9 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(12));
             break;
-        case VertexLayoutKind::VectorLine44:
-            // 矢量线 ribbon:pos(12)+prev(12)+next(12)+side(4)+lengthSoFar(4)
+        case VertexLayoutKind::VectorLine48:
+            // 矢量线 ribbon:pos(12)+prev(12)+next(12)+side(4)+
+            // lengthSoFar(4)+color(4,RGBA8 归一化)
             glEnableVertexAttribArray(0);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(0));
@@ -1553,6 +1564,31 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glEnableVertexAttribArray(4);
             glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(40));
+            glEnableVertexAttribArray(5);
+            glVertexAttribPointer(5, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+                                  reinterpret_cast<void*>(44));
+            break;
+        case VertexLayoutKind::VectorFill16:
+            // 矢量 fill:pos(12)+color(4,RGBA8 归一化)
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+                                  reinterpret_cast<void*>(12));
+            break;
+        case VertexLayoutKind::VectorPoint24:
+            // 矢量点:anchor(12)+corner(8)+color(4,RGBA8 归一化)。
+            // attr 位与 shader 对齐:0=anchor,2=corner,3=color。
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(12));
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+                                  reinterpret_cast<void*>(20));
             break;
         case VertexLayoutKind::VectorLabel32:
             // 矢量标注:anchor(12)+offsetPx+opacity(12,vec3 的 z)+uv(8)

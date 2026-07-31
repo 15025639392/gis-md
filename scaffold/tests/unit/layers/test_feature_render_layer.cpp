@@ -108,8 +108,8 @@ TEST_F(FeatureRenderLayerTest, PolygonEmitsFillAndOutlineCommands) {
         EXPECT_EQ(7u, cmd->frameId);
         ASSERT_EQ(1u, cmd->uniforms.count("u_modelViewProjection"));
     }
-    EXPECT_EQ(12, fill->vertexStride);
-    EXPECT_EQ(44, line->vertexStride);
+    EXPECT_EQ(16, fill->vertexStride);  // P6b:+color(RGBA8)
+    EXPECT_EQ(48, line->vertexStride);  // P6b:+color(RGBA8)
     ASSERT_EQ(1u, line->uniforms.count("u_viewport"));
     ASSERT_EQ(1u, line->uniforms.count("u_lineWidthPx"));
     // 方形外环 4 顶点闭合 ribbon:2n=8 顶点,6·段数=24 索引
@@ -139,7 +139,7 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     ASSERT_EQ(1u, commands.size());
     const RenderCommand& cmd = commands[0];
     EXPECT_EQ(RenderCommandKind::VectorPoint, cmd.kind);
-    EXPECT_EQ(20, cmd.vertexStride);
+    EXPECT_EQ(24, cmd.vertexStride);  // P6b:+color(RGBA8)
     EXPECT_EQ(6, cmd.indexCount);
     EXPECT_EQ("color", cmd.pass);
     EXPECT_TRUE(cmd.depthTest);
@@ -148,13 +148,13 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     ASSERT_EQ(1u, cmd.uniforms.count("u_pointSizePx"));
     ASSERT_EQ(1u, cmd.uniforms.count("u_viewport"));
 
-    // 顶点打包:4 × (anchor rel 3f + corner 2f);首顶点 anchor = 桶原点
-    // → rel(0,0,0),corner=(-1,-1)。
+    // 顶点打包:4 × (anchor rel 3f + corner 2f + color 4B);首顶点
+    // anchor = 桶原点 → rel(0,0,0),corner=(-1,-1)。
     const auto* vb =
         dynamic_cast<const earth_engine::testing::DummyBuffer*>(
             cmd.vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    ASSERT_EQ(4u * 20u, vb->bytes().size());
+    ASSERT_EQ(4u * 24u, vb->bytes().size());
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
     EXPECT_FLOAT_EQ(0.0f, floats[0]);
     EXPECT_FLOAT_EQ(0.0f, floats[1]);
@@ -654,6 +654,140 @@ TEST_F(FeatureRenderLayerTest, AbsoluteModePolygonHasNoStencilVolume) {
     for (const auto& cmd : build()) {
         EXPECT_NE(RenderCommandKind::VectorStencil, cmd.kind);
     }
+}
+
+// ============================================================
+// P6b 样式表达式(数据驱动顶点色 + zoom 驱动宽度/尺寸)
+// ============================================================
+
+namespace {
+
+/// 顶点流末位 float 的 RGBA8 位模式还原(小端 R 低字节)。
+std::array<int, 4> unpackVertexColor(float packed) {
+    uint32_t bits;
+    std::memcpy(&bits, &packed, sizeof(bits));
+    return {static_cast<int>(bits & 0xFF),
+            static_cast<int>((bits >> 8) & 0xFF),
+            static_cast<int>((bits >> 16) & 0xFF),
+            static_cast<int>((bits >> 24) & 0xFF)};
+}
+
+Feature makeKindPoint(double lonDeg, const char* kind) {
+    Feature p;
+    p.type = GeometryType::Point;
+    p.rings = {{Cartographic(lonDeg * kDeg, 29.0 * kDeg)}};
+    p.properties["kind"] = kind;
+    return p;
+}
+
+} // namespace
+
+TEST_F(FeatureRenderLayerTest, DataDrivenPointColorBakedPerFeature) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointColorExpr = StyleExpression::match(
+        "kind",
+        {{"tower", StyleExpression::literal({1.0f, 0.0f, 0.0f, 1.0f})}},
+        StyleExpression::literal({0.0f, 0.0f, 1.0f, 1.0f}));
+    layer_->setStyle(style);
+    layer_->store().addFeature(makeKindPoint(106.0, "tower"));
+    layer_->store().addFeature(makeKindPoint(106.001, "gate"));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        commands[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    // 2 要素 × 4 顶点 × 6 float(24B):颜色在每顶点第 6 位(下标 5)。
+    ASSERT_EQ(2u * 4u * 24u, vb->bytes().size());
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    const auto c0 = unpackVertexColor(floats[5]);           // 要素1 tower
+    const auto c1 = unpackVertexColor(floats[4 * 6 + 5]);   // 要素2 gate
+    EXPECT_EQ((std::array<int, 4>{255, 0, 0, 255}), c0);
+    EXPECT_EQ((std::array<int, 4>{0, 0, 255, 255}), c1);
+    // u_color 已退役(顶点色接管)。
+    EXPECT_EQ(0u, commands[0].uniforms.count("u_color"));
+}
+
+TEST_F(FeatureRenderLayerTest, ZoomDrivenLineWidthUniform) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineWidthExpr = StyleExpression::interpolateLinear(
+        StyleExpression::zoom(),
+        {{0.0, StyleExpression::literal(2.0)},
+         {24.0, StyleExpression::literal(26.0)}});
+    layer_->setStyle(style);
+    layer_->store().addFeature(makeLine(106.0, 29.0, 0.05));
+
+    // 相机高 ~8.6e6m → zoom = log2(4e7/高) ≈ 2.2 → 宽度 ≈ 2 + 2.2 ≈ 4.2
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    ASSERT_EQ(1u, commands[0].uniforms.count("u_lineWidthPx"));
+    const float width = commands[0].uniforms.at("u_lineWidthPx")[0];
+    EXPECT_GT(width, 2.0f);
+    EXPECT_LT(width, 8.0f);
+}
+
+TEST_F(FeatureRenderLayerTest, StencilVolumesGroupedByResolvedColor) {
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.fillColorExpr = StyleExpression::match(
+        "kind",
+        {{"tower", StyleExpression::literal({1.0f, 0.0f, 0.0f, 0.5f})}},
+        StyleExpression::literal({0.0f, 0.0f, 1.0f, 0.5f}));
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+
+    Feature a = makePolygon(0.0, 0.0, 0.01);
+    a.properties["kind"] = "tower";
+    Feature b = makePolygon(0.02, 0.0, 0.01);
+    b.properties["kind"] = "gate";
+    layer_->store().addFeature(std::move(a));
+    layer_->store().addFeature(std::move(b));
+
+    // 两个解析色 → 两对 Volume/Color 命令,色 pass u_color 分别取组色。
+    RenderCommandList commands = build();
+    int volumePasses = 0;
+    std::vector<float> reds;
+    for (size_t i = 0; i < commands.size(); ++i) {
+        const auto& cmd = commands[i];
+        if (cmd.kind != RenderCommandKind::VectorStencil) continue;
+        if (cmd.stencilPhase == StencilPhase::ClassifyVolume) {
+            ++volumePasses;
+            ASSERT_LT(i + 1, commands.size());
+            const auto& col = commands[i + 1];
+            ASSERT_EQ(StencilPhase::ClassifyColor, col.stencilPhase);
+            reds.push_back(col.uniforms.at("u_color")[0]);
+        }
+    }
+    EXPECT_EQ(2, volumePasses);
+    ASSERT_EQ(2u, reds.size());
+    // 两组色都在(要素可能分属不同桶,组序不保证)。
+    std::sort(reds.begin(), reds.end());
+    EXPECT_FLOAT_EQ(0.0f, reds[0]);
+    EXPECT_FLOAT_EQ(1.0f, reds[1]);
+}
+
+TEST_F(FeatureRenderLayerTest, OutOfScopeExpressionsFallBackToLiterals) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointColor = {0.0f, 1.0f, 0.0f, 1.0f};
+    // 颜色引用 zoom(禁)→ 剥离降级字面量;宽度引用属性(禁)→ 同。
+    style.pointColorExpr = StyleExpression::interpolateLinear(
+        StyleExpression::zoom(),
+        {{0.0, StyleExpression::literal({1.0f, 0.0f, 0.0f, 1.0f})},
+         {24.0, StyleExpression::literal({0.0f, 0.0f, 1.0f, 1.0f})}});
+    style.lineWidthExpr = StyleExpression::get("width");
+    layer_->setStyle(style);
+    EXPECT_EQ(nullptr, layer_->style().pointColorExpr);
+    EXPECT_EQ(nullptr, layer_->style().lineWidthExpr);
+
+    layer_->store().addFeature(makeKindPoint(106.0, "tower"));
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        commands[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_EQ((std::array<int, 4>{0, 255, 0, 255}),
+              unpackVertexColor(floats[5]));  // 字面量绿
 }
 
 TEST_F(FeatureRenderLayerTest, NoLabelWithoutFontOrName) {

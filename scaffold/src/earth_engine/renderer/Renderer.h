@@ -43,8 +43,11 @@ public:
     /// 简单颜色 shader（矢量图层线/面渲染）
     ShaderProgram* colorShader() const;
 
-    /// 矢量线 ribbon shader（矢量 P1,§6.2 屏幕空间线宽;fill 复用 colorShader）
+    /// 矢量线 ribbon shader（矢量 P1,§6.2 屏幕空间线宽,P6b 顶点色）
     ShaderProgram* vectorLineShader() const;
+    /// 矢量 fill shader(P6b:pos+顶点色 16B;colorShader 保持 pos-only
+    /// 服务 stencil 分类等 uniform 色路径)
+    ShaderProgram* vectorFillShader() const;
 
     /// 矢量点符号 billboard shader（矢量 P5a,SDF 圆;编辑手柄/Point 要素）
     ShaderProgram* vectorPointShader() const;

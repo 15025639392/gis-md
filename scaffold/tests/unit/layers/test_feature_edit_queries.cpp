@@ -394,7 +394,7 @@ TEST_F(FeatureEditQueriesTest, ClampSetsSampledVertexHeights) {
     const auto* vb = dynamic_cast<const DummyBuffer*>(fill->vertexBuffer);
     ASSERT_NE(nullptr, vb);
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
-    const size_t vertexCount = vb->bytes().size() / 12;
+    const size_t vertexCount = vb->bytes().size() / 16;  // P6b:pos+color
     ASSERT_EQ(4u, vertexCount);
 
     const auto& ring = layer_->store().features().begin()->second.rings[0];
@@ -403,8 +403,8 @@ TEST_F(FeatureEditQueriesTest, ClampSetsSampledVertexHeights) {
                      kSlope * ring[0].latitude() + 10.0));
     for (size_t v = 0; v < vertexCount; ++v) {
         const Vec3 world =
-            origin + Vec3(floats[v * 3], floats[v * 3 + 1],
-                          floats[v * 3 + 2]) -
+            origin + Vec3(floats[v * 4], floats[v * 4 + 1],
+                          floats[v * 4 + 2]) -
             Vec3(0, 0, 0);
         const Cartographic c =
             Ellipsoid::WGS84().cartesianToCartographic(world);

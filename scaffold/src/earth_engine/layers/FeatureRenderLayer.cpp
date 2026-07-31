@@ -26,12 +26,32 @@ namespace earth_engine {
 
 namespace {
 
-/// line ribbon 顶点的 GPU 打包(44B,对齐 GLES VectorLine44 布局与
-/// §6.2 shader attribute 0-4)。CPU 侧 LineVertex 是 double,不能直传。
-constexpr int kLineVertexFloats = 11;
+/// line ribbon 顶点的 GPU 打包(48B,对齐 GLES VectorLine48 布局与
+/// §6.2 shader attribute 0-5)。CPU 侧 LineVertex 是 double,不能直传。
+constexpr int kLineVertexFloats = 12;
+
+/// RGBA [0,1] → RGBA8 打包(小端布局 R 在低字节)。
+uint32_t packColorU32(const std::array<float, 4>& c) {
+    auto to8 = [](float v) -> uint32_t {
+        const float x = std::min(1.0f, std::max(0.0f, v));
+        return static_cast<uint32_t>(x * 255.0f + 0.5f);
+    };
+    return to8(c[0]) | (to8(c[1]) << 8) | (to8(c[2]) << 16) |
+           (to8(c[3]) << 24);
+}
+
+/// RGBA8 打包值以 float 位模式进顶点流(顶点流是 float 数组,GLES 按
+/// GL_UNSIGNED_BYTE×4 归一化读回)。
+float packColorFloat(const std::array<float, 4>& c) {
+    const uint32_t packed = packColorU32(c);
+    float f;
+    std::memcpy(&f, &packed, sizeof(f));
+    return f;
+}
 
 void appendLineMesh(const TessellatedLine& line,
                     const Vec3& origin,
+                    float packedColor,
                     std::vector<float>& outVerts,
                     std::vector<uint32_t>& outIndices) {
     if (line.vertices.empty() || line.indices.empty()) return;
@@ -54,11 +74,24 @@ void appendLineMesh(const TessellatedLine& line,
         outVerts.push_back(static_cast<float>(nx.z()));
         outVerts.push_back(v.side);
         outVerts.push_back(v.lengthSoFar);
+        outVerts.push_back(packedColor);
     }
     outIndices.reserve(outIndices.size() + line.indices.size());
     for (uint32_t idx : line.indices) {
         outIndices.push_back(base + idx);
     }
+}
+
+/// 颜色表达式求值(P6b 数据驱动,镶嵌期上下文 = 属性,无 zoom)。
+/// 求值失败/非颜色值 → 回落字面量(表达式永不让渲染断链)。
+std::array<float, 4> resolveColor(
+    const StyleExpression::Ptr& expr,
+    const std::unordered_map<std::string, std::string>& properties,
+    const std::array<float, 4>& fallback) {
+    if (!expr) return fallback;
+    const auto v = expr->evaluate(&properties, std::nan(""));
+    if (!v || v->kind() != StyleValue::Kind::Color) return fallback;
+    return v->color();
 }
 
 std::unique_ptr<Buffer> makeBuffer(RenderDevice* device,
@@ -86,6 +119,28 @@ FeatureRenderLayer::~FeatureRenderLayer() = default;
 
 void FeatureRenderLayer::setStyle(const FeatureRenderStyle& s) {
     style_ = s;
+    // P6b 表达式语义校验:颜色 = 数据驱动(镶嵌期无 zoom 上下文,引用
+    // zoom 的颜色表达式恒求值失败 → 直接剥离降级字面量并警告);宽度/
+    // 尺寸 = zoom 驱动(每帧无属性上下文,引用属性同理)。
+    auto sanitize = [this](StyleExpression::Ptr& expr, bool allowProperties,
+                           bool allowZoom, const char* name) {
+        if (!expr) return;
+        if ((!allowZoom && expr->referencesZoom()) ||
+            (!allowProperties && expr->referencesProperties())) {
+            platformLog(LogLevel::Warning, "FeatureRenderLayer",
+                        "style expr '%s' out of semantic scope "
+                        "(%s), falling back to literal",
+                        name,
+                        allowZoom ? "properties-only 禁 zoom 之外引用"
+                                  : "zoom-only 禁 properties 引用");
+            expr = nullptr;
+        }
+    };
+    sanitize(style_.fillColorExpr, true, false, "fillColor");
+    sanitize(style_.lineColorExpr, true, false, "lineColor");
+    sanitize(style_.pointColorExpr, true, false, "pointColor");
+    sanitize(style_.lineWidthExpr, false, true, "lineWidth");
+    sanitize(style_.pointSizeExpr, false, true, "pointSize");
     // 高度/细分/模式都影响几何:已建桶按新样式全部重镶。
     std::vector<BucketKey> keys;
     keys.reserve(buckets_.size());
@@ -253,8 +308,22 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<float>& labelVerts,
     std::vector<uint32_t>& labelIndices,
     std::vector<LabelEntry>& labelEntries,
-    std::vector<float>& volumeVerts,
-    std::vector<uint32_t>& volumeIndices) const {
+    VolumeCpuGroups& volumeGroups) const {
+    // P6b 数据驱动色:镶嵌期逐要素求值(上下文 = 属性,无 zoom),失败
+    // 回落图层字面量;打包 RGBA8 烘进顶点流。
+    const std::array<float, 4> fillColor =
+        resolveColor(style_.fillColorExpr, feature.properties,
+                     style_.fillColor);
+    const std::array<float, 4> lineColor =
+        resolveColor(style_.lineColorExpr, feature.properties,
+                     style_.lineColor);
+    const std::array<float, 4> pointColor =
+        resolveColor(style_.pointColorExpr, feature.properties,
+                     style_.pointColor);
+    const float fillColorPacked = packColorFloat(fillColor);
+    const float lineColorPacked = packColorFloat(lineColor);
+    const float pointColorPacked = packColorFloat(pointColor);
+
     // 贴地:预变换出细分+采样高度的副本(高度已含 offset),镶嵌时
     // heightOffset 传 0 防二次叠加;Absolute 走原几何 + offset。
     const bool clamp =
@@ -289,9 +358,10 @@ void FeatureRenderLayer::tessellateFeatureInto(
     switch (geometry->type) {
         case GeometryType::Polygon: {
             if (stencilFill) {
-                // 体积从原始 footprint 出(2D 拓扑,高度由采样范围决定)。
-                appendFillVolume(feature, sample, origin, hasOrigin,
-                                 volumeVerts, volumeIndices);
+                // 体积从原始 footprint 出(2D 拓扑,高度由采样范围决定),
+                // 按解析色归组(每组独立命令对,不同色互不污染)。
+                appendFillVolume(feature, sample, fillColor, origin,
+                                 hasOrigin, volumeGroups);
             } else {
                 TessellatedFill fill = PolygonTessellator::tessellate(
                     *geometry, ellipsoid_, tessHeightOffset,
@@ -299,14 +369,15 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 if (!fill.positions.empty() && !fill.fillIndices.empty()) {
                     ensureOrigin(fill.positions.front());
                     const uint32_t base =
-                        static_cast<uint32_t>(fillVerts.size() / 3);
+                        static_cast<uint32_t>(fillVerts.size() / 4);
                     fillVerts.reserve(fillVerts.size() +
-                                      fill.positions.size() * 3);
+                                      fill.positions.size() * 4);
                     for (const Vec3& p : fill.positions) {
                         const Vec3 rel = p - origin;
                         fillVerts.push_back(static_cast<float>(rel.x()));
                         fillVerts.push_back(static_cast<float>(rel.y()));
                         fillVerts.push_back(static_cast<float>(rel.z()));
+                        fillVerts.push_back(fillColorPacked);
                     }
                     for (uint32_t idx : fill.fillIndices) {
                         fillIndices.push_back(base + idx);
@@ -324,7 +395,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 /*closed=*/true);
             if (!outline.vertices.empty()) {
                 ensureOrigin(outline.vertices.front().pos);
-                appendLineMesh(outline, origin, lineVerts, lineIndices);
+                appendLineMesh(outline, origin, lineColorPacked,
+                               lineVerts, lineIndices);
             }
             break;
         }
@@ -334,14 +406,15 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 /*closed=*/false);
             if (!line.vertices.empty()) {
                 ensureOrigin(line.vertices.front().pos);
-                appendLineMesh(line, origin, lineVerts, lineIndices);
+                appendLineMesh(line, origin, lineColorPacked,
+                               lineVerts, lineIndices);
             }
             break;
         }
         case GeometryType::Point: {
-            // P5a 点符号:每点 billboard quad(anchor 3f + corner 2f = 20B,
-            // corner 展开在顶点着色器)。约定 Point 几何 = rings[0][0];
-            // 高度贴地时 geometry 已由预变换写好(clamp 采样 + offset)。
+            // P5a 点符号:每点 billboard quad(anchor 3f + corner 2f +
+            // color 4B = 24B,corner 展开在顶点着色器)。Point 几何 =
+            // rings[0][0];贴地时 geometry 已由预变换写好(采样 + offset)。
             if (geometry->rings.empty() || geometry->rings[0].empty()) break;
             const Cartographic& c = geometry->rings[0][0];
             const Vec3 anchor = ellipsoid_.cartographicToCartesian(
@@ -350,7 +423,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
             ensureOrigin(anchor);
             const Vec3 rel = anchor - origin;
             const uint32_t base =
-                static_cast<uint32_t>(pointVerts.size() / 5);
+                static_cast<uint32_t>(pointVerts.size() / 6);
             static constexpr float kCorners[4][2] = {
                 {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f}};
             for (const auto& corner : kCorners) {
@@ -359,6 +432,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 pointVerts.push_back(static_cast<float>(rel.z()));
                 pointVerts.push_back(corner[0]);
                 pointVerts.push_back(corner[1]);
+                pointVerts.push_back(pointColorPacked);
             }
             const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
             for (uint32_t idx : quad) pointIndices.push_back(base + idx);
@@ -522,11 +596,17 @@ constexpr double kVolumeMarginMeters = 120.0;
 void FeatureRenderLayer::appendFillVolume(
     const Feature& feature,
     const AreaSampleFn& sample,
+    const std::array<float, 4>& fillColor,
     Vec3& origin,
     bool& hasOrigin,
-    std::vector<float>& volumeVerts,
-    std::vector<uint32_t>& volumeIndices) const {
+    VolumeCpuGroups& volumeGroups) const {
     if (feature.rings.empty() || feature.rings.front().size() < 3) return;
+
+    // P6b:按解析色归组(同色体积并集计数,组间独立命令对)。
+    VolumeCpuGroup& group = volumeGroups[packColorU32(fillColor)];
+    group.color = fillColor;
+    std::vector<float>& volumeVerts = group.verts;
+    std::vector<uint32_t>& volumeIndices = group.indices;
 
     // ---- 高度范围:环顶点 + 粗内部网格采样 min/max ± margin ----
     double minH = std::numeric_limits<double>::max();
@@ -657,20 +737,24 @@ bool FeatureRenderLayer::uploadBucketGpu(
     std::vector<float>&& labelVerts,
     const std::vector<uint32_t>& labelIndices,
     std::vector<LabelEntry>&& labelEntries,
-    const std::vector<float>& volumeVerts,
-    const std::vector<uint32_t>& volumeIndices,
+    const VolumeCpuGroups& volumeGroups,
     BucketGpu& out) const {
     out = BucketGpu{};
     out.origin = origin;
-    if (!volumeIndices.empty()) {
-        out.volumeVertexBuffer = makeBuffer(
-            renderDevice_, volumeVerts.data(),
-            volumeVerts.size() * sizeof(float), BufferDesc::Type::Vertex);
-        out.volumeIndexBuffer = makeBuffer(
-            renderDevice_, volumeIndices.data(),
-            volumeIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
-        if (out.volumeVertexBuffer && out.volumeIndexBuffer) {
-            out.volumeIndexCount = static_cast<int>(volumeIndices.size());
+    for (const auto& [colorKey, group] : volumeGroups) {
+        if (group.indices.empty()) continue;
+        BucketGpu::VolumeGroupGpu gpu;
+        gpu.color = group.color;
+        gpu.vertexBuffer = makeBuffer(
+            renderDevice_, group.verts.data(),
+            group.verts.size() * sizeof(float), BufferDesc::Type::Vertex);
+        gpu.indexBuffer = makeBuffer(
+            renderDevice_, group.indices.data(),
+            group.indices.size() * sizeof(uint32_t),
+            BufferDesc::Type::Index);
+        if (gpu.vertexBuffer && gpu.indexBuffer) {
+            gpu.indexCount = static_cast<int>(group.indices.size());
+            out.volumeGroups.push_back(std::move(gpu));
         }
     }
     if (!labelIndices.empty()) {
@@ -722,7 +806,7 @@ bool FeatureRenderLayer::uploadBucketGpu(
     }
     return out.fillIndexCount > 0 || out.lineIndexCount > 0 ||
            out.pointIndexCount > 0 || out.labelIndexCount > 0 ||
-           out.volumeIndexCount > 0;
+           !out.volumeGroups.empty();
 }
 
 void FeatureRenderLayer::rebuildBucket(BucketKey key) {
@@ -745,8 +829,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     std::vector<float> labelVerts;     // 8 float/顶点(anchor+offsetPx+uv+opacity)
     std::vector<uint32_t> labelIndices;
     std::vector<LabelEntry> labelEntries;
-    std::vector<float> volumeVerts;    // xyz,P6 stencil 挤出体
-    std::vector<uint32_t> volumeIndices;
+    VolumeCpuGroups volumeGroups;      // P6 stencil 挤出体(按色分组)
     Vec3 origin = Vec3::zero();
     bool hasOrigin = false;
 
@@ -768,11 +851,11 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
                               fillVerts, fillIndices, lineVerts, lineIndices,
                               pointVerts, pointIndices,
                               labelVerts, labelIndices, labelEntries,
-                              volumeVerts, volumeIndices);
+                              volumeGroups);
     }
 
     if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty() &&
-        labelIndices.empty() && volumeIndices.empty()) {
+        labelIndices.empty() && volumeGroups.empty()) {
         buckets_.erase(key);
         return;
     }
@@ -783,7 +866,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
                          pointVerts, pointIndices,
                          std::move(labelVerts), labelIndices,
                          std::move(labelEntries),
-                         volumeVerts, volumeIndices, gpu)) {
+                         volumeGroups, gpu)) {
         // buffer 创建失败:丢弃本桶,脏区已消费 → 下次编辑该桶时重试。
         buckets_.erase(key);
         return;
@@ -848,8 +931,7 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         std::vector<float> labelVerts;
         std::vector<uint32_t> labelIndices;
         std::vector<LabelEntry> labelEntries;
-        std::vector<float> volumeVerts;
-        std::vector<uint32_t> volumeIndices;
+        VolumeCpuGroups volumeGroups;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
         tessellateFeatureInto(previewFeature,
@@ -859,13 +941,13 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                               lineVerts, lineIndices,
                               pointVerts, pointIndices,
                               labelVerts, labelIndices, labelEntries,
-                              volumeVerts, volumeIndices);
+                              volumeGroups);
         if (hasOrigin) {
             previewGpuValid_ = uploadBucketGpu(
                 origin, fillVerts, fillIndices, lineVerts, lineIndices,
                 pointVerts, pointIndices, std::move(labelVerts),
                 labelIndices, std::move(labelEntries),
-                volumeVerts, volumeIndices, previewGpu_);
+                volumeGroups, previewGpu_);
         }
     }
 
@@ -960,6 +1042,30 @@ void FeatureRenderLayer::appendBucketCommands(
     ShaderProgram* fillShader = renderer.colorShader();
     ShaderProgram* lineShader = renderer.vectorLineShader();
 
+    // P6b zoom 驱动宽度/尺寸:每帧按相机大地高求 zoom(web 墨卡托惯例
+    // zoom ≈ log2(赤道周长 4e7m / 视高),z0 ≈ 全球一屏),表达式求值进
+    // uniform;求值失败/非数值回落字面量。
+    float lineWidthPx = style_.lineWidthPx;
+    float pointSizePx = style_.pointSizePx;
+    if (style_.lineWidthExpr || style_.pointSizeExpr) {
+        const double camHeight =
+            ellipsoid_
+                .cartesianToCartographic(cam.position())
+                .height();
+        const double zoomLevel = std::min(
+            24.0,
+            std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
+        auto evalNumber = [&](const StyleExpression::Ptr& expr,
+                              float fallback) -> float {
+            if (!expr) return fallback;
+            const auto v = expr->evaluate(nullptr, zoomLevel);
+            if (!v || v->kind() != StyleValue::Kind::Number) return fallback;
+            return static_cast<float>(v->number());
+        };
+        lineWidthPx = evalNumber(style_.lineWidthExpr, lineWidthPx);
+        pointSizePx = evalNumber(style_.pointSizeExpr, pointSizePx);
+    }
+
     {
         // 双精度 compose 后降 float(RTE):顶点已相对 origin,mvp 吸收平移。
         const glm::dmat4 model = glm::translate(
@@ -970,10 +1076,11 @@ void FeatureRenderLayer::appendBucketCommands(
         std::memcpy(mvpUniform.data(), glm::value_ptr(mvp),
                     16 * sizeof(float));
 
-        // P6 stencil 贴地(方案 B):同一体积几何两条相邻命令。stable_sort
-        // 按 order(29)保持插入序 → 体 pass 必在色 pass 前。多要素体积
-        // 并集计数,重叠区域也只着色一次(同层同色语义正确)。
-        if (gpu.volumeIndexCount > 0 && fillShader) {
+        // P6 stencil 贴地(方案 B):体积按解析色分组(P6b),每组一对相邻
+        // 命令。stable_sort 按 order(29)保持插入序 → 体 pass 必在色 pass
+        // 前;色 pass op ZERO 顺手清零,组间不串。组内多要素并集计数。
+        for (const auto& group : gpu.volumeGroups) {
+            if (group.indexCount <= 0 || !fillShader) continue;
             RenderCommand vol;
             vol.kind = RenderCommandKind::VectorStencil;
             vol.stencilPhase = StencilPhase::ClassifyVolume;
@@ -981,9 +1088,9 @@ void FeatureRenderLayer::appendBucketCommands(
             vol.pass = "color";
             vol.frameId = frameState.frameId;
             vol.shader = fillShader;
-            vol.vertexBuffer = gpu.volumeVertexBuffer.get();
-            vol.indexBuffer = gpu.volumeIndexBuffer.get();
-            vol.indexCount = gpu.volumeIndexCount;
+            vol.vertexBuffer = group.vertexBuffer.get();
+            vol.indexBuffer = group.indexBuffer.get();
+            vol.indexCount = group.indexCount;
             vol.indexType = RenderCommand::IndexType::UInt32;
             vol.vertexStride = 12;
             vol.primitive = RenderCommand::PrimitiveType::Triangles;
@@ -998,36 +1105,30 @@ void FeatureRenderLayer::appendBucketCommands(
             col.stencilPhase = StencilPhase::ClassifyColor;
             col.depthTest = false;  // 覆盖面自身别被地形挡
             col.blend = true;
-            col.uniforms["u_color"] = {style_.fillColor[0],
-                                       style_.fillColor[1],
-                                       style_.fillColor[2],
-                                       style_.fillColor[3]};
+            col.uniforms["u_color"] = {group.color[0], group.color[1],
+                                       group.color[2], group.color[3]};
             commands.push_back(std::move(vol));
             commands.push_back(std::move(col));
         }
 
-        if (gpu.fillIndexCount > 0 && fillShader) {
+        if (gpu.fillIndexCount > 0 && renderer.vectorFillShader()) {
             RenderCommand cmd;
             cmd.kind = RenderCommandKind::VectorFill;
             cmd.owner = layerId_;
             cmd.pass = "color";
             cmd.frameId = frameState.frameId;
-            cmd.shader = fillShader;
+            cmd.shader = renderer.vectorFillShader();
             cmd.vertexBuffer = gpu.fillVertexBuffer.get();
             cmd.indexBuffer = gpu.fillIndexBuffer.get();
             cmd.indexCount = gpu.fillIndexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
-            cmd.vertexStride = 12;
+            cmd.vertexStride = 16;  // pos(12)+color(4,RGBA8)
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
             cmd.depthTest = true;
             cmd.depthWrite = false;
             cmd.blend = true;
             cmd.cullFace = false;
             cmd.uniforms["u_modelViewProjection"] = mvpUniform;
-            cmd.uniforms["u_color"] = {style_.fillColor[0],
-                                       style_.fillColor[1],
-                                       style_.fillColor[2],
-                                       style_.fillColor[3]};
             commands.push_back(std::move(cmd));
         }
 
@@ -1043,20 +1144,16 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.indexCount = gpu.lineIndexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
             cmd.vertexStride =
-                static_cast<int>(kLineVertexFloats * sizeof(float));  // 44
+                static_cast<int>(kLineVertexFloats * sizeof(float));  // 48
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
             cmd.depthTest = true;
             cmd.depthWrite = false;
             cmd.blend = true;
             cmd.cullFace = false;
             cmd.uniforms["u_modelViewProjection"] = mvpUniform;
-            cmd.uniforms["u_color"] = {style_.lineColor[0],
-                                       style_.lineColor[1],
-                                       style_.lineColor[2],
-                                       style_.lineColor[3]};
             cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
                                           static_cast<float>(vpH)};
-            cmd.uniforms["u_lineWidthPx"] = {style_.lineWidthPx};
+            cmd.uniforms["u_lineWidthPx"] = {lineWidthPx};
             commands.push_back(std::move(cmd));
         }
 
@@ -1071,20 +1168,16 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.indexBuffer = gpu.pointIndexBuffer.get();
             cmd.indexCount = gpu.pointIndexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
-            cmd.vertexStride = 20;  // anchor(12)+corner(8),复用 Terrain20 布局
+            cmd.vertexStride = 24;  // anchor(12)+corner(8)+color(4,RGBA8)
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
             cmd.depthTest = true;
             cmd.depthWrite = false;
             cmd.blend = true;
             cmd.cullFace = false;
             cmd.uniforms["u_modelViewProjection"] = mvpUniform;
-            cmd.uniforms["u_color"] = {style_.pointColor[0],
-                                       style_.pointColor[1],
-                                       style_.pointColor[2],
-                                       style_.pointColor[3]};
             cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
                                           static_cast<float>(vpH)};
-            cmd.uniforms["u_pointSizePx"] = {style_.pointSizePx};
+            cmd.uniforms["u_pointSizePx"] = {pointSizePx};
             commands.push_back(std::move(cmd));
         }
 

@@ -1,12 +1,14 @@
 #pragma once
 
 #include "../data/FeatureStore.h"
+#include "../data/StyleExpression.h"
 #include "../renderer/RenderCommand.h"
 #include "../core/math/Vec3.h"
 #include "LabelPlacement.h"
 
 #include <array>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -64,6 +66,17 @@ struct FeatureRenderStyle {
     float labelSizePx = 28.0f;    ///< 文字行高(px)
     float labelOffsetPx = 18.0f;  ///< 基线抬离锚点(px,屏幕向上)
     float labelHaloPx = 2.0f;     ///< halo 描边宽(px)
+    // ---- 数据驱动样式表达式(P6b,设计 §12;空 = 用上面字面量) ----
+    // 语义分割(setStyle 校验,越界降级字面量+警告):
+    // 颜色表达式 = 数据驱动(镶嵌期逐要素求值烘进顶点色,禁 zoom——
+    //   zoom 依赖色需逐帧重烘,后置);
+    // 宽度/尺寸表达式 = zoom 驱动(每帧求值进 uniform,禁 properties——
+    //   逐要素宽度需顶点属性,后置)。
+    StyleExpression::Ptr fillColorExpr;
+    StyleExpression::Ptr lineColorExpr;
+    StyleExpression::Ptr pointColorExpr;
+    StyleExpression::Ptr lineWidthExpr;
+    StyleExpression::Ptr pointSizeExpr;
     FeatureAltitudeMode altitudeMode = FeatureAltitudeMode::Absolute;
     /// 高程偏移(m),语义见 FeatureAltitudeMode。Clamp 模式下兼作防
     /// z-fight 抬升(地形网格是 65 格下采样,面与网格间存在格内起伏差)。
@@ -212,12 +225,25 @@ private:
         std::vector<float> labelVertsCpu;
         std::vector<LabelEntry> labelEntries;
         /// P6 stencil 分类贴地(方案 B):面 fill 的水密挤出体(pos-only
-        /// 12B,相对桶原点)。非空 → 该桶 clamp 面走 stencil 双 pass,
-        /// 不再产出方案 A 的采样钳制 fill 网格。
-        std::unique_ptr<Buffer> volumeVertexBuffer;
-        std::unique_ptr<Buffer> volumeIndexBuffer;
-        int volumeIndexCount = 0;
+        /// 12B,相对桶原点)。P6b 按解析 fill 色分组——每组一对
+        /// Volume/Color 命令(组内并集计数,不同色互不污染)。非空 →
+        /// 该桶 clamp 面走 stencil 双 pass,不再产出方案 A 的 fill 网格。
+        struct VolumeGroupGpu {
+            std::array<float, 4> color{0, 0, 0, 1};
+            std::unique_ptr<Buffer> vertexBuffer;
+            std::unique_ptr<Buffer> indexBuffer;
+            int indexCount = 0;
+        };
+        std::vector<VolumeGroupGpu> volumeGroups;
     };
+
+    /// stencil 体积的 CPU 侧按色分组(key = RGBA8 打包)。
+    struct VolumeCpuGroup {
+        std::array<float, 4> color{0, 0, 0, 1};
+        std::vector<float> verts;
+        std::vector<uint32_t> indices;
+    };
+    using VolumeCpuGroups = std::map<uint32_t, VolumeCpuGroup>;
 
     /// 重镶单桶:镶嵌桶内全部要素 → 减原点转 float → 建 buffer。
     /// 桶空/全退化 → 从 buckets_ 移除。预览摘除中的要素跳过。
@@ -251,18 +277,17 @@ private:
                                std::vector<float>& labelVerts,
                                std::vector<uint32_t>& labelIndices,
                                std::vector<LabelEntry>& labelEntries,
-                               std::vector<float>& volumeVerts,
-                               std::vector<uint32_t>& volumeIndices) const;
+                               VolumeCpuGroups& volumeGroups) const;
 
     /// P6 stencil 贴地:polygon footprint 挤成水密体(底/顶两层同拓扑
-    /// CDT cap + 环边墙)。高度范围 = 环顶点+粗内部网格采样 min/max ±
-    /// margin;无采样器回落 ±kVolumeMarginMeters(椭球面地形恒 0)。
+    /// CDT cap + 环边墙),按解析 fill 色归组。高度范围 = 环顶点+粗内部
+    /// 网格采样 min/max ± margin;无采样器回落 ±kVolumeMarginMeters。
     void appendFillVolume(const Feature& feature,
                           const AreaSampleFn& sample,
+                          const std::array<float, 4>& fillColor,
                           Vec3& origin,
                           bool& hasOrigin,
-                          std::vector<float>& volumeVerts,
-                          std::vector<uint32_t>& volumeIndices) const;
+                          VolumeCpuGroups& volumeGroups) const;
 
     /// CPU 数组 → BucketGpu(buffer 创建;全空返回 false)。
     bool uploadBucketGpu(const Vec3& origin,
@@ -275,8 +300,7 @@ private:
                          std::vector<float>&& labelVerts,
                          const std::vector<uint32_t>& labelIndices,
                          std::vector<LabelEntry>&& labelEntries,
-                         const std::vector<float>& volumeVerts,
-                         const std::vector<uint32_t>& volumeIndices,
+                         const VolumeCpuGroups& volumeGroups,
                          BucketGpu& out) const;
 
     /// P5c:每帧跑 placement(collect 全桶 LabelEntry → place/commit),

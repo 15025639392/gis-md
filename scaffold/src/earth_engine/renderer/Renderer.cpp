@@ -1535,6 +1535,76 @@ fragment float4 colorFragment(constant float4& u_color [[buffer(0)]]) {
 // +side(4)+lengthSoFar(4),对应 GLES VertexLayoutKind::VectorLine44。
 // ============================================================
 
+// ============================================================
+// Vector Fill Shader (矢量 P6b 数据驱动顶点色 fill)
+// 顶点 16B:pos(12)+color(4,RGBA8),对应 GLES VectorFill16。
+// colorShader 保持 pos-only + u_color(stencil 分类/旧路径用)。
+// ============================================================
+
+static const char* kVectorFillVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec4 a_color;   // RGBA8 归一化
+
+uniform mat4 u_modelViewProjection;
+
+out vec4 v_color;
+
+void main() {
+    v_color = a_color;
+    gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
+}
+)glsl";
+
+static const char* kVectorFillFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+
+in vec4 v_color;
+out vec4 fragColor;
+
+void main() {
+    fragColor = v_color;
+}
+)glsl";
+
+static const char* kVectorFillVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorFillVertexIn {
+    float3 position [[attribute(0)]];
+    float4 color [[attribute(1)]];
+};
+
+struct VectorFillVertexOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex VectorFillVertexOut vectorFillVertex(
+        VectorFillVertexIn in [[stage_in]],
+        constant float4x4& u_modelViewProjection [[buffer(1)]]) {
+    VectorFillVertexOut out;
+    out.color = in.color;
+    out.position = u_modelViewProjection * float4(in.position, 1.0);
+    return out;
+}
+)msl";
+
+static const char* kVectorFillFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorFillFragmentIn {
+    float4 color;
+};
+
+fragment float4 vectorFillFragment(VectorFillFragmentIn in [[stage_in]]) {
+    return in.color;
+}
+)msl";
+
 static const char* kVectorLineVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_position;
@@ -1542,12 +1612,14 @@ layout(location = 1) in vec3 a_prev;
 layout(location = 2) in vec3 a_next;
 layout(location = 3) in float a_side;
 layout(location = 4) in float a_lengthSoFar;
+layout(location = 5) in vec4 a_color;   // P6b 数据驱动色(RGBA8 归一化)
 
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;      // 视口像素 (w, h)
 uniform float u_lineWidthPx;  // 全线宽(px),半宽 = /2
 
 out float v_lengthSoFar;
+out vec4 v_color;
 
 // miter 长度下限对应 miter-limit(尖角防爆);挤出上限防近地平线
 // w→0 时发散(设计 §6.2 锁定)。
@@ -1559,6 +1631,7 @@ void main() {
     vec4 cpr = u_modelViewProjection * vec4(a_prev, 1.0);
     vec4 cnx = u_modelViewProjection * vec4(a_next, 1.0);
     v_lengthSoFar = a_lengthSoFar;
+    v_color = a_color;
 
     // 相机后方顶点不挤出(除法翻向会把 ribbon 拉花;段的可见部分由
     // 另一端撑开 + clip 收尾)。
@@ -1616,12 +1689,12 @@ static const char* kVectorLineFragmentGLSL = R"glsl(
 #version 300 es
 precision mediump float;
 
-uniform vec4 u_color;
 in float v_lengthSoFar;   // dash 留口(P1 未接 u_dashPattern)
+in vec4 v_color;          // P6b 顶点色(逐要素,镶嵌期表达式求值烘入)
 out vec4 fragColor;
 
 void main() {
-    fragColor = u_color;
+    fragColor = v_color;
 }
 )glsl";
 
@@ -1637,11 +1710,13 @@ struct VectorLineVertexIn {
     float3 next [[attribute(2)]];
     float side [[attribute(3)]];
     float lengthSoFar [[attribute(4)]];
+    float4 color [[attribute(5)]];   // P6b 数据驱动色
 };
 
 struct VectorLineVertexOut {
     float4 position [[position]];
     float lengthSoFar;
+    float4 color;
 };
 
 constant float kMiterMin = 0.25;
@@ -1657,6 +1732,7 @@ vertex VectorLineVertexOut vectorLineVertex(
     float4 cpr = u_modelViewProjection * float4(in.prev, 1.0);
     float4 cnx = u_modelViewProjection * float4(in.next, 1.0);
     out.lengthSoFar = in.lengthSoFar;
+    out.color = in.color;
     out.position = cp;
     if (cp.w <= 0.0) return out;
 
@@ -1705,32 +1781,39 @@ static const char* kVectorLineFragmentMSL = R"msl(
 #include <metal_stdlib>
 using namespace metal;
 
-fragment float4 vectorLineFragment(constant float4& u_color [[buffer(0)]]) {
-    return u_color;
+struct VectorLineFragmentIn {
+    float lengthSoFar;
+    float4 color;
+};
+
+fragment float4 vectorLineFragment(VectorLineFragmentIn in [[stage_in]]) {
+    return in.color;
 }
 )msl";
 
 // ============================================================
-// Vector Point Shader (矢量 P5a 点符号/编辑手柄)
+// Vector Point Shader (矢量 P5a 点符号/编辑手柄 + P6b 顶点色)
 // billboard quad 屏幕空间展开 + fragment SDF 圆软边(无纹理)。
-// 顶点 20B:anchor(12)+corner(8),布局复用 GLES Terrain20
-// (attr0 vec3@0 + attr2 vec2@12),无需新 VertexLayoutKind。
+// 顶点 24B:anchor(12)+corner(8)+color(4,RGBA8),GLES VectorPoint24。
 // ============================================================
 
 static const char* kVectorPointVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_anchor;
 layout(location = 2) in vec2 a_corner;   // ±1 quad 角
+layout(location = 3) in vec4 a_color;    // P6b 数据驱动色(RGBA8 归一化)
 
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;       // 视口像素
 uniform float u_pointSizePx;   // 圆直径(px)
 
 out vec2 v_corner;
+out vec4 v_color;
 
 void main() {
     vec4 cp = u_modelViewProjection * vec4(a_anchor, 1.0);
     v_corner = a_corner;
+    v_color = a_color;
     if (cp.w <= 0.0) {
         gl_Position = cp;      // 相机后方:不展开
         return;
@@ -1745,8 +1828,8 @@ static const char* kVectorPointFragmentGLSL = R"glsl(
 #version 300 es
 precision mediump float;
 
-uniform vec4 u_color;
 in vec2 v_corner;
+in vec4 v_color;
 out vec4 fragColor;
 
 void main() {
@@ -1755,7 +1838,7 @@ void main() {
     float dist = length(v_corner);
     float alpha = 1.0 - smoothstep(0.82, 0.98, dist);
     if (alpha <= 0.004) discard;
-    fragColor = vec4(u_color.rgb, u_color.a * alpha);
+    fragColor = vec4(v_color.rgb, v_color.a * alpha);
 }
 )glsl";
 
@@ -1767,11 +1850,13 @@ using namespace metal;
 struct VectorPointVertexIn {
     float3 anchor [[attribute(0)]];
     float2 corner [[attribute(2)]];
+    float4 color [[attribute(3)]];   // P6b 数据驱动色
 };
 
 struct VectorPointVertexOut {
     float4 position [[position]];
     float2 corner;
+    float4 color;
 };
 
 vertex VectorPointVertexOut vectorPointVertex(
@@ -1782,6 +1867,7 @@ vertex VectorPointVertexOut vectorPointVertex(
     VectorPointVertexOut out;
     float4 cp = u_modelViewProjection * float4(in.anchor, 1.0);
     out.corner = in.corner;
+    out.color = in.color;
     out.position = cp;
     if (cp.w <= 0.0) return out;
     float2 offset = in.corner * u_pointSizePx / u_viewport;
@@ -1796,15 +1882,15 @@ using namespace metal;
 
 struct VectorPointFragmentIn {
     float2 corner;
+    float4 color;
 };
 
 fragment float4 vectorPointFragment(
-        VectorPointFragmentIn in [[stage_in]],
-        constant float4& u_color [[buffer(0)]]) {
+        VectorPointFragmentIn in [[stage_in]]) {
     float dist = length(in.corner);
     float alpha = 1.0 - smoothstep(0.82, 0.98, dist);
     if (alpha <= 0.004) discard_fragment();
-    return float4(u_color.rgb, u_color.a * alpha);
+    return float4(in.color.rgb, in.color.a * alpha);
 }
 )msl";
 
@@ -3388,8 +3474,10 @@ struct Renderer::Impl {
 
     // Color (vector)
     std::unique_ptr<ShaderProgram> colorShader;
-    // 矢量线 ribbon(P1,§6.2 屏幕挤出)。fill 复用 colorShader。
+    // 矢量线 ribbon(P1,§6.2 屏幕挤出)。fill 走 vectorFillShader(P6b
+    // 顶点色);colorShader 留给 stencil 分类等 uniform 色路径。
     std::unique_ptr<ShaderProgram> vectorLineShader;
+    std::unique_ptr<ShaderProgram> vectorFillShader;
     // 矢量点符号 billboard(P5a,SDF 圆)。
     std::unique_ptr<ShaderProgram> vectorPointShader;
     // 矢量文字标注(P5b):SDF 字形图集 + 文字 shader。
@@ -3520,6 +3608,18 @@ bool Renderer::initialize() {
     impl_->colorShader = dev->createShader(colorSd);
     // colorShader failure is non-fatal (vector layers won't render but tiles still work)
 
+    // ---- Vector fill shader (矢量 P6b 顶点色 fill) ----
+    ShaderDesc vectorFillSd;
+    vectorFillSd.vertexSource =
+        isMetal ? kVectorFillVertexMSL : kVectorFillVertexGLSL;
+    vectorFillSd.fragmentSource =
+        isMetal ? kVectorFillFragmentMSL : kVectorFillFragmentGLSL;
+    impl_->vectorFillShader = dev->createShader(vectorFillSd);
+    if (!impl_->vectorFillShader) {
+        // 非致命:fill 不出图,其余矢量/地形不受影响
+        fprintf(stderr, "[Renderer] vectorFillShader failed — vector fills unavailable\n");
+    }
+
     // ---- Vector line shader (矢量 P1 线 ribbon) ----
     ShaderDesc vectorLineSd;
     vectorLineSd.vertexSource =
@@ -3588,6 +3688,9 @@ void Renderer::dispose() {
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 ShaderProgram* Renderer::vectorLineShader() const {
     return impl_->vectorLineShader.get();
+}
+ShaderProgram* Renderer::vectorFillShader() const {
+    return impl_->vectorFillShader.get();
 }
 ShaderProgram* Renderer::vectorPointShader() const {
     return impl_->vectorPointShader.get();

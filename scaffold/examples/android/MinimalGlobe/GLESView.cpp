@@ -271,6 +271,24 @@ static bool createEngine() {
             style.altitudeMode = FeatureAltitudeMode::ClampToGround;
             style.heightOffset = 10.0;
             style.clampDensifyMeters = 40.0;
+            // P6b 数据驱动样式:fill 色按 zone 属性(stencil 按色分组)、
+            // 点色按 kind 三色、线宽随 zoom 插值(拉远变细凑近变粗)。
+            style.fillColorExpr = StyleExpression::match(
+                "zone",
+                {{"core",
+                  StyleExpression::literal({0.20f, 0.55f, 0.95f, 0.35f})}},
+                StyleExpression::literal({0.90f, 0.30f, 0.20f, 0.35f}));
+            style.pointColorExpr = StyleExpression::match(
+                "kind",
+                {{"tower",
+                  StyleExpression::literal({1.00f, 0.35f, 0.25f, 0.95f})},
+                 {"gate",
+                  StyleExpression::literal({1.00f, 0.85f, 0.20f, 0.95f})}},
+                StyleExpression::literal({0.35f, 0.95f, 0.45f, 0.95f}));
+            style.lineWidthExpr = StyleExpression::interpolateLinear(
+                StyleExpression::zoom(),
+                {{10.0, StyleExpression::literal(2.0)},
+                 {15.0, StyleExpression::literal(10.0)}});
             vectorLayer->setStyle(style);
 
             // 尺寸压到 RESET 预设视角(106.508,29.617,1.5km,-45°)一屏内:
@@ -286,7 +304,21 @@ static bool createEngine() {
                 Cartographic(106.5055 * kDeg, 29.6250 * kDeg),
                 Cartographic(106.5055 * kDeg, 29.6200 * kDeg)}};
             poly.properties["name"] = "示范区 A";
+            poly.properties["zone"] = "core";
             vectorLayer->store().addFeature(std::move(poly));
+
+            // P6b 验证:第二个面 zone 缺省 → fill 表达式兜底红,与示范区 A
+            // 的 core 蓝形成 stencil 双色组。
+            Feature annex;
+            annex.type = GeometryType::Polygon;
+            annex.rings = {{
+                Cartographic(106.5115 * kDeg, 29.6200 * kDeg),
+                Cartographic(106.5145 * kDeg, 29.6200 * kDeg),
+                Cartographic(106.5145 * kDeg, 29.6230 * kDeg),
+                Cartographic(106.5115 * kDeg, 29.6230 * kDeg),
+                Cartographic(106.5115 * kDeg, 29.6200 * kDeg)}};
+            annex.properties["name"] = "附属区 B";
+            vectorLayer->store().addFeature(std::move(annex));
 
             Feature route;
             route.type = GeometryType::LineString;
@@ -308,6 +340,9 @@ static bool createEngine() {
                     (29.6260 + 0.0005 * (i / 3)) * kDeg)}};
                 obs.properties["name"] =
                     std::string("观测点-") + std::to_string(i + 1);
+                // P6b:kind 轮转 tower/gate/(缺省) → 点色红/黄/兜底绿。
+                if (i % 3 == 0) obs.properties["kind"] = "tower";
+                else if (i % 3 == 1) obs.properties["kind"] = "gate";
                 vectorLayer->store().addFeature(std::move(obs));
             }
 
