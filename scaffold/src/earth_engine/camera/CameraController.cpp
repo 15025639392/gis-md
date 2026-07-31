@@ -223,7 +223,10 @@ void CameraController::onPinchGesture(float scale,
             "pinchStart hasAnchor=%d center=(%.0f,%.0f)",
             hasPinchAnchor_, centerX, centerY);
         if (hasPinchAnchor_) {
+            // 同 grabSurfacePoint：锚点重投影回双指质心的射线上，否则起手第一帧
+            // keepAnchorAtScreenPoint 会把这段落差一次性补掉＝可见跳变。
             grabbedRadiusMeters_ = anchorPoint.length();
+            snapPickOntoRay(centerX, centerY, anchorPoint);
             pinchAnchorNormal_ = anchorPoint.normalized();
             Vec3 screenCenterPoint;
             if (pickSurfacePoint(static_cast<float>(viewportWidth_) * 0.5f,
@@ -854,10 +857,16 @@ void CameraController::keepAnchorAtScreenPoint(const Vec3& anchorNormal,
 // ============================================================
 
 bool CameraController::intersectGrabSphere(const Ray& ray, Vec3& outPoint) const {
+    return intersectSphere(ray, grabbedRadiusMeters_, outPoint);
+}
+
+bool CameraController::intersectSphere(const Ray& ray,
+                                       double radiusMeters,
+                                       Vec3& outPoint) {
     const glm::dvec3 o = ray.origin().raw();
     const glm::dvec3 d = ray.direction().raw();
     const double b = 2.0 * glm::dot(o, d);
-    const double c = glm::dot(o, o) - grabbedRadiusMeters_ * grabbedRadiusMeters_;
+    const double c = glm::dot(o, o) - radiusMeters * radiusMeters;
     const double disc = b * b - 4.0 * c;
     if (disc < 0.0) {
         return false;
@@ -888,6 +897,25 @@ bool CameraController::pickSurfacePoint(float xPixels, float yPixels, Vec3& outP
     return intersectGrabSphere(ray, outPoint);
 }
 
+bool CameraController::snapPickOntoRay(float xPixels, float yPixels,
+                                       Vec3& point) const {
+    const double radius = point.length();
+    if (radius < 1e-6) {
+        return false;
+    }
+    const Ray ray = camera_->getPickRay(
+        static_cast<double>(xPixels),
+        static_cast<double>(yPixels),
+        static_cast<double>(viewportWidth_),
+        static_cast<double>(viewportHeight_));
+    Vec3 onRay;
+    if (!intersectSphere(ray, radius, onRay)) {
+        return false;  // 掠射角下同半径球可能被错过——保持原拾取点，行为不退化
+    }
+    point = onRay;
+    return true;
+}
+
 bool CameraController::grabSurfacePoint(float xPixels, float yPixels) {
     grabbedRadiusMeters_ = kEarthRadiusMeters;
 
@@ -897,7 +925,14 @@ bool CameraController::grabSurfacePoint(float xPixels, float yPixels) {
         return false;
     }
 
+    // 锚点必须落在拾取射线上。PickingService::pickTerrain 是"先与椭球求交、
+    // 再按该经纬度的地形高沿局部垂直抬起"，返回点并不在射线上；而锚点跟手的
+    // 整套数学（抓取球、keepAnchorAtScreenPoint）都假定锚点就在起始射线上，
+    // 这段落差会被第一个 move 当成手指位移一次性补掉——真机实测起手跳变
+    // 227~471px，海拔越低越大。半径仍取拾取点的半径（保留地形高），只把方向
+    // 换成同半径球与该射线的交点，于是 t=0 时锚点投影严格等于手指像素。
     grabbedRadiusMeters_ = grabbedPoint.length();
+    snapPickOntoRay(xPixels, yPixels, grabbedPoint);
     grabbedPoint_ = grabbedPoint;
     grabbedNormal_ = grabbedPoint.normalized();
     hasGrabbedPoint_ = true;

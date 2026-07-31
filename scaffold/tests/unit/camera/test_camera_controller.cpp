@@ -1141,3 +1141,72 @@ TEST_F(CameraControllerTest, MeasurementFreezeHoldsPoseDespiteInertia) {
     controller_->update(1.0 / 60.0);
     EXPECT_GT(matrixAbsDiff(camera_->viewMatrix(), frozenView), 1e-6);
 }
+
+// 模拟 PickingService::pickTerrain 的返回形态：与球面求交后，把交点沿局部垂直
+// 抬起地形高——返回点因此不在拾取射线上。真机上这段落差在斜视低空可达数百像素。
+CameraController::SurfacePicker makeOffRayTerrainPicker(const Camera& camera,
+                                                        double liftMeters) {
+    return [&camera, liftMeters](float x, float y, Vec3& out) {
+        const Ray ray = camera.getPickRay(x, y, 800.0, 600.0);
+        const glm::dvec3 o = ray.origin().raw();
+        const glm::dvec3 d = ray.direction().raw();
+        const double b = 2.0 * glm::dot(o, d);
+        const double c = glm::dot(o, o) - kEarthRadiusMeters * kEarthRadiusMeters;
+        const double disc = b * b - 4.0 * c;
+        if (disc < 0.0) return false;
+        const double t0 = (-b - std::sqrt(disc)) * 0.5;
+        const double t1 = (-b + std::sqrt(disc)) * 0.5;
+        const double t = t0 > 0.0 ? t0 : t1;
+        if (t <= 0.0) return false;
+        const glm::dvec3 hit = ray.pointAt(t).raw();
+        out = Vec3(hit + glm::normalize(hit) * liftMeters);
+        return true;
+    };
+}
+
+TEST_F(CameraControllerTest, DragStartDoesNotJumpWhenPickIsOffRay) {
+    // 起手不跳：抓取之后手指原地不动的 move 必须不产生任何相机运动。
+    // 锚点跟手的数学假定抓取点在起始射线上，而 pickTerrain 返回的点是沿局部
+    // 垂直抬起的、不在射线上；旧实现把这段落差当作手指位移，在第一个 move
+    // 一次性补掉——真机 GESTDIAG 实测起手 anchorErr 达 227~471px。
+    setTiltedPose(*camera_, 2.0e4, 45.0);
+    controller_->setSurfacePicker(makeOffRayTerrainPicker(*camera_, 3000.0));
+
+    const glm::dvec3 eyeBefore = camera_->position().raw();
+    controller_->onDragStart(430.0f, 260.0f, 1.0);
+    controller_->onDragMove(430.0f, 260.0f, 1.016);
+
+    EXPECT_LT(glm::length(camera_->position().raw() - eyeBefore), 1.0);
+}
+
+TEST_F(CameraControllerTest, PinchKeepsVisibleSurfacePointUnderFingerWhenPickIsOffRay) {
+    // 捏合路径的同一根因。判据取"用户真正看到的那个点"：双指质心像素射线上的
+    // 地表点。旧实现把偏离射线的拾取点当锚点钉住，于是钉的是别的东西——手指
+    // 下的地物反而被推开。scale 必须 ≠1，否则 zoomIntent 为假，
+    // keepAnchorAtScreenPoint 根本不会被调用，测不到东西。
+    constexpr double kLift = 3000.0;
+    constexpr double cx = 430.0;
+    constexpr double cy = 260.0;
+    setTiltedPose(*camera_, 2.0e4, 45.0);
+    controller_->setSurfacePicker(makeOffRayTerrainPicker(*camera_, kLift));
+
+    // 手指下可见的地表点 = 拾取射线与半径 R+lift 球面的交点（fake picker 抬起
+    // 后半径恒为 R+lift）。
+    const Ray ray = camera_->getPickRay(cx, cy, 800.0, 600.0);
+    const glm::dvec3 o = ray.origin().raw();
+    const glm::dvec3 d = ray.direction().raw();
+    const double radius = kEarthRadiusMeters + kLift;
+    const double b = 2.0 * glm::dot(o, d);
+    const double c = glm::dot(o, o) - radius * radius;
+    const double disc = b * b - 4.0 * c;
+    ASSERT_GE(disc, 0.0);
+    const Vec3 visible = ray.pointAt((-b - std::sqrt(disc)) * 0.5);
+
+    controller_->onPinchGesture(1.0f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.2f, cx, cy, 0.0f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    const glm::dvec2 projected = projectToScreen(*camera_, visible);
+    EXPECT_NEAR(cx, projected.x, 2.0);
+    EXPECT_NEAR(cy, projected.y, 2.0);
+}

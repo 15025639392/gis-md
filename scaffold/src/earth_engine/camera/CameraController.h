@@ -119,6 +119,11 @@ public:
 
 private:
     bool intersectGrabSphere(const Ray& ray, Vec3& outPoint) const;
+    static bool intersectSphere(const Ray& ray, double radiusMeters,
+                                Vec3& outPoint);
+    /// 把拾取点重投影到该像素的射线上（半径不变，只换方向）。掠射角下同半径
+    /// 球可能被错过，此时返回 false 且不改动 point。
+    bool snapPickOntoRay(float xPixels, float yPixels, Vec3& point) const;
     bool pickSurfacePoint(float xPixels, float yPixels, Vec3& outPoint) const;
     bool grabSurfacePoint(float xPixels, float yPixels);
     void applyAnchorDrag(float xPixels, float yPixels, double timestamp);
