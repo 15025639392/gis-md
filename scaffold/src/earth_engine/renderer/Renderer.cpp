@@ -1690,12 +1690,19 @@ static const char* kVectorLineFragmentGLSL = R"glsl(
 #version 300 es
 precision mediump float;
 
-in float v_lengthSoFar;   // dash 留口(P1 未接 u_dashPattern)
+in float v_lengthSoFar;   // 沿线累计弧长(m)
 in vec4 v_color;          // P6b 顶点色(逐要素,镶嵌期表达式求值烘入)
+uniform float u_dashPeriodMeters;  // P6d dash:<=0 = 实线(与 stencil 路径同语义)
+uniform float u_dashOnFraction;
 out vec4 fragColor;
 
 void main() {
-    fragColor = v_color;
+    float a = v_color.a;
+    if (u_dashPeriodMeters > 0.0) {
+        float phase = fract(v_lengthSoFar / u_dashPeriodMeters);
+        if (phase >= u_dashOnFraction) a = 0.0;
+    }
+    fragColor = vec4(v_color.rgb, a);
 }
 )glsl";
 
@@ -1787,8 +1794,16 @@ struct VectorLineFragmentIn {
     float4 color;
 };
 
-fragment float4 vectorLineFragment(VectorLineFragmentIn in [[stage_in]]) {
-    return in.color;
+fragment float4 vectorLineFragment(
+        VectorLineFragmentIn in [[stage_in]],
+        constant float& u_dashPeriodMeters [[buffer(0)]],
+        constant float& u_dashOnFraction [[buffer(1)]]) {
+    float a = in.color.a;
+    if (u_dashPeriodMeters > 0.0) {
+        float phase = fract(in.lengthSoFar / u_dashPeriodMeters);
+        if (phase >= u_dashOnFraction) a = 0.0;
+    }
+    return float4(in.color.rgb, a);
 }
 )msl";
 
@@ -1805,15 +1820,19 @@ static const char* kVectorLineStencilVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_extrude;  // miter 方向×缩放×侧符号
+layout(location = 2) in float a_lengthSoFar;  // 沿线累计弧长(m,dash)
 
 uniform mat4 u_modelViewProjection;
 uniform mat4 u_modelView;
 uniform float u_halfWidthPerEyeZ;  // 每米眼深对应的半宽(m)
 
+out float v_lengthSoFar;
+
 void main() {
     vec4 ec = u_modelView * vec4(a_position, 1.0);
     float halfW = u_halfWidthPerEyeZ * abs(ec.z);
     vec3 world = a_position + a_extrude * halfW;
+    v_lengthSoFar = a_lengthSoFar;
     gl_Position = u_modelViewProjection * vec4(world, 1.0);
 }
 )glsl";
@@ -1822,11 +1841,21 @@ static const char* kVectorLineStencilFragmentGLSL = R"glsl(
 #version 300 es
 precision mediump float;
 
+in float v_lengthSoFar;
 uniform vec4 u_color;
+uniform float u_dashPeriodMeters;  // 一节「划+空」总长(m),<=0 = 实线
+uniform float u_dashOnFraction;    // 划段占比
 out vec4 fragColor;
 
 void main() {
-    fragColor = u_color;
+    float a = u_color.a;
+    if (u_dashPeriodMeters > 0.0) {
+        // 空隙输出 alpha=0 而非 discard:色 pass 的 stencil op ZERO 清零
+        // 必须照常执行,discard 会留下残留计数污染后续分类组。
+        float phase = fract(v_lengthSoFar / u_dashPeriodMeters);
+        if (phase >= u_dashOnFraction) a = 0.0;
+    }
+    fragColor = vec4(u_color.rgb, a);
 }
 )glsl";
 
@@ -1839,10 +1868,12 @@ using namespace metal;
 struct VectorLineStencilVertexIn {
     float3 position [[attribute(0)]];
     float3 extrude [[attribute(1)]];
+    float lengthSoFar [[attribute(2)]];
 };
 
 struct VectorLineStencilVertexOut {
     float4 position [[position]];
+    float lengthSoFar;
 };
 
 vertex VectorLineStencilVertexOut vectorLineStencilVertex(
@@ -1854,6 +1885,7 @@ vertex VectorLineStencilVertexOut vectorLineStencilVertex(
     float4 ec = u_modelView * float4(in.position, 1.0);
     float halfW = u_halfWidthPerEyeZ * abs(ec.z);
     float3 world = in.position + in.extrude * halfW;
+    out.lengthSoFar = in.lengthSoFar;
     out.position = u_modelViewProjection * float4(world, 1.0);
     return out;
 }
@@ -1863,9 +1895,22 @@ static const char* kVectorLineStencilFragmentMSL = R"msl(
 #include <metal_stdlib>
 using namespace metal;
 
+struct VectorLineStencilFragmentIn {
+    float lengthSoFar;
+};
+
 fragment float4 vectorLineStencilFragment(
-        constant float4& u_color [[buffer(0)]]) {
-    return u_color;
+        VectorLineStencilFragmentIn in [[stage_in]],
+        constant float4& u_color [[buffer(0)]],
+        constant float& u_dashPeriodMeters [[buffer(1)]],
+        constant float& u_dashOnFraction [[buffer(2)]]) {
+    float a = u_color.a;
+    if (u_dashPeriodMeters > 0.0) {
+        // 空隙 alpha=0 不 discard(stencil 清零契约,与 GLSL 版对齐)。
+        float phase = fract(in.lengthSoFar / u_dashPeriodMeters);
+        if (phase >= u_dashOnFraction) a = 0.0;
+    }
+    return float4(u_color.rgb, a);
 }
 )msl";
 

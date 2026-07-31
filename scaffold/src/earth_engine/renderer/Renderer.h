@@ -46,8 +46,9 @@ public:
 
     /// 矢量线 ribbon shader（矢量 P1,§6.2 屏幕空间线宽,P6b 顶点色）
     ShaderProgram* vectorLineShader() const;
-    /// P6d stencil 贴地线 shader(墙带体 24B pos+extrude;VS 按眼深挤出
-    /// 世界半宽;ClassifyVolume/ClassifyColor 两 pass 共用)
+    /// P6d stencil 贴地线 shader(墙带体 28B pos+extrude+lengthSoFar;
+    /// VS 按眼深挤出世界半宽;dash 空隙输出 alpha=0 不 discard,保
+    /// stencil 清零;ClassifyVolume/ClassifyColor 两 pass 共用)
     ShaderProgram* vectorLineStencilShader() const;
     /// 矢量 fill shader(P6b:pos+顶点色 16B;colorShader 保持 pos-only
     /// 服务 stencil 分类等 uniform 色路径)

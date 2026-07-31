@@ -10,6 +10,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "../../helpers/MockRenderDevice.h"
 
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -732,25 +733,43 @@ TEST_F(FeatureRenderLayerTest, AbsoluteModePolygonHasNoStencilVolume) {
 namespace {
 
 /// 流形断言:体积网格任意无向边必须恰被 2 个三角形引用(水密;z-fail
-/// 计数正确性的机器可检查前提)。
+/// 计数正确性的机器可检查前提)。顶点按**位置+extrude 量化**(mm)判等
+/// 而非索引:CPU 侧墙带零宽,±两侧顶点仅 extrude 符号可分;闭环 dash 的
+/// seam 复制截面与首截面 pos/extrude 逐位相同、仅 lengthSoFar 不同 →
+/// 正确合并——挤出后几何水密即光栅水密。
 void expectWatertight(const RenderCommand& vol) {
     const auto* ib =
         dynamic_cast<const DummyBuffer*>(vol.indexBuffer);
+    const auto* vb =
+        dynamic_cast<const DummyBuffer*>(vol.vertexBuffer);
     ASSERT_NE(nullptr, ib);
+    ASSERT_NE(nullptr, vb);
     const auto* idx = reinterpret_cast<const uint32_t*>(ib->bytes().data());
     const size_t idxCount = ib->bytes().size() / sizeof(uint32_t);
     ASSERT_EQ(static_cast<size_t>(vol.indexCount), idxCount);
-    std::map<std::pair<uint32_t, uint32_t>, int> edges;
+    const auto* verts = reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t strideFloats =
+        static_cast<size_t>(vol.vertexStride) / sizeof(float);
+    auto posKey = [&](uint32_t v) -> std::array<int64_t, 6> {
+        const float* p = verts + v * strideFloats;
+        std::array<int64_t, 6> k{};
+        for (int i = 0; i < 6; ++i) {
+            k[i] = static_cast<int64_t>(std::llround(p[i] * 1000.0));
+        }
+        return k;
+    };
+    using EdgeKey = std::pair<std::array<int64_t, 6>, std::array<int64_t, 6>>;
+    std::map<EdgeKey, int> edges;
     for (size_t t = 0; t + 2 < idxCount; t += 3) {
         for (int e = 0; e < 3; ++e) {
-            const uint32_t a = idx[t + e];
-            const uint32_t b = idx[t + (e + 1) % 3];
-            ++edges[{std::min(a, b), std::max(a, b)}];
+            auto a = posKey(idx[t + e]);
+            auto b = posKey(idx[t + (e + 1) % 3]);
+            if (b < a) std::swap(a, b);
+            ++edges[{a, b}];
         }
     }
     for (const auto& [edge, count] : edges) {
-        EXPECT_EQ(2, count) << "edge " << edge.first << "-" << edge.second
-                            << " referenced " << count << "x";
+        EXPECT_EQ(2, count) << "position-edge referenced " << count << "x";
     }
 }
 
@@ -778,7 +797,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
     ASSERT_EQ(RenderCommandKind::VectorStencil, col->kind);
     EXPECT_EQ(StencilPhase::ClassifyVolume, vol->stencilPhase);
     EXPECT_EQ(StencilPhase::ClassifyColor, col->stencilPhase);
-    EXPECT_EQ(24, vol->vertexStride);  // pos(12)+extrude(12)
+    EXPECT_EQ(28, vol->vertexStride);  // pos(12)+extrude(12)+lengthSoFar(4)
     EXPECT_EQ(vol->vertexBuffer, col->vertexBuffer);
     // 宽度挤出 uniform 齐备(mvp + modelView + 每米眼深半宽)。
     ASSERT_EQ(1u, vol->uniforms.count("u_modelViewProjection"));
@@ -791,7 +810,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
     // 开放墙带:n 横截面 → 8(n-1) 墙三角 + 4 端 cap 三角。
     const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (4 * 24);
+    const size_t sections = vb->bytes().size() / (4 * 28);
     ASSERT_GE(sections, 2u);
     EXPECT_EQ(static_cast<int>(8 * (sections - 1) + 4) * 3, vol->indexCount);
     expectWatertight(*vol);
@@ -818,17 +837,19 @@ TEST_F(FeatureRenderLayerTest, ClampedPolygonOutlineBecomesClosedLineVolume) {
         ++stencilCount;
         if (cmd.stencilPhase != StencilPhase::ClassifyVolume) continue;
         if (cmd.vertexStride == 12) fillVol = &cmd;
-        if (cmd.vertexStride == 24) lineVol = &cmd;
+        if (cmd.vertexStride == 28) lineVol = &cmd;
     }
     EXPECT_EQ(4, stencilCount);
     ASSERT_NE(nullptr, fillVol);
     ASSERT_NE(nullptr, lineVol);
-    // 闭合墙带:n 横截面 wrap → 8n 三角,无端 cap。
+    // 闭合墙带:n+1 横截面(seam 复制截面,dash 里程不倒灌)
+    // → 8·(sections-1) 三角,无端 cap。
     const auto* vb = dynamic_cast<const DummyBuffer*>(lineVol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (4 * 24);
+    const size_t sections = vb->bytes().size() / (4 * 28);
     ASSERT_GE(sections, 3u);
-    EXPECT_EQ(static_cast<int>(8 * sections) * 3, lineVol->indexCount);
+    EXPECT_EQ(static_cast<int>(8 * (sections - 1)) * 3,
+              lineVol->indexCount);
     expectWatertight(*lineVol);
 
     const auto validation = validateMvpRenderCommands(commands, frame_.frameId);
@@ -859,10 +880,58 @@ TEST_F(FeatureRenderLayerTest, StencilLineDensifyDecoupledFromSchemeA) {
     ASSERT_NE(nullptr, vol);
     const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (4 * 24);
+    const size_t sections = vb->bytes().size() / (4 * 28);
     EXPECT_GE(sections, 100u);
     EXPECT_LE(sections, 200u);
     expectWatertight(*vol);
+}
+
+TEST_F(FeatureRenderLayerTest, StencilLineDashUniformsAndArcLength) {
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.lineDashPeriodMeters = 30.0f;
+    style.lineDashOnFraction = 0.5f;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
+
+    RenderCommandList commands = build();
+    const RenderCommand* lineCol = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorStencil &&
+            cmd.stencilPhase == StencilPhase::ClassifyColor &&
+            cmd.vertexStride == 28) {
+            lineCol = &cmd;
+        }
+    }
+    ASSERT_NE(nullptr, lineCol);
+    ASSERT_EQ(1u, lineCol->uniforms.count("u_dashPeriodMeters"));
+    EXPECT_FLOAT_EQ(30.0f, lineCol->uniforms.at("u_dashPeriodMeters")[0]);
+    ASSERT_EQ(1u, lineCol->uniforms.count("u_dashOnFraction"));
+    EXPECT_FLOAT_EQ(0.5f, lineCol->uniforms.at("u_dashOnFraction")[0]);
+
+    // 顶点里程:同截面 4 顶点同值、沿截面单调不减;闭环 seam 复制截面 =
+    // 首截面几何逐位相同 + 里程 = 周长(≈ 0.01°×4 边 ≈ 4.45km)。
+    const auto* vb =
+        dynamic_cast<const DummyBuffer*>(lineCol->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t sections = vb->bytes().size() / (4 * 28);
+    ASSERT_GE(sections, 4u);
+    float prev = -1.0f;
+    for (size_t si = 0; si < sections; ++si) {
+        const float s0 = f[(si * 4 + 0) * 7 + 6];
+        for (int c = 1; c < 4; ++c) {
+            EXPECT_FLOAT_EQ(s0, f[(si * 4 + c) * 7 + 6]);
+        }
+        EXPECT_GE(s0, prev);
+        prev = s0;
+    }
+    for (int k = 0; k < 3; ++k) {  // seam 截面与首截面几何逐位相同
+        EXPECT_EQ(f[k], f[((sections - 1) * 4) * 7 + k]);
+    }
+    EXPECT_NEAR(4450.0f, prev, 100.0f);
+    expectWatertight(*lineCol);
 }
 
 TEST_F(FeatureRenderLayerTest, StencilLineFallsBackToRibbonWithoutSupport) {

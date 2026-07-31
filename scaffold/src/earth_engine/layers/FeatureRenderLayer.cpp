@@ -915,15 +915,31 @@ void FeatureRenderLayer::appendLineVolume(
         extrudes[i] = lateral * scale;
     }
 
+    // ---- 沿线累计弧长(m,chord 累加;dash 花纹的世界米制参数) ----
+    std::vector<double> lengthSoFar(n, 0.0);
+    for (size_t i = 1; i < n; ++i) {
+        lengthSoFar[i] =
+            lengthSoFar[i - 1] + (centers[i] - centers[i - 1]).length();
+    }
+    const double totalLength =
+        lengthSoFar[n - 1] +
+        (closed ? (centers[0] - centers[n - 1]).length() : 0.0);
+
     VolumeCpuGroup& group = lineVolumeGroups[packColorU32(lineColor)];
     group.color = lineColor;
     std::vector<float>& verts = group.verts;
     std::vector<uint32_t>& indices = group.indices;
 
-    // ---- 横截面 4 顶点(CPU 零宽,24B = pos 3f + extrude 3f):
-    // corner 0 = 底左(-) 1 = 底右(+) 2 = 顶左(-) 3 = 顶右(+)。 ----
-    const uint32_t base = static_cast<uint32_t>(verts.size() / 6);
-    for (size_t i = 0; i < n; ++i) {
+    // ---- 横截面 4 顶点(CPU 零宽,28B = pos 3f + extrude 3f +
+    // lengthSoFar 1f):corner 0 = 底左(-) 1 = 底右(+) 2 = 顶左(-)
+    // 3 = 顶右(+)。闭环为 dash 复制 seam 截面(几何/extrude 与首截面
+    // 逐位相同 → 光栅水密;仅 lengthSoFar 取总长而非 0,避免 wrap quad
+    // 里程插值倒灌撕裂花纹)。 ----
+    const size_t sectionCount = closed ? n + 1 : n;
+    const uint32_t base = static_cast<uint32_t>(verts.size() / 7);
+    for (size_t si = 0; si < sectionCount; ++si) {
+        const size_t i = si % n;
+        const double s = (closed && si == n) ? totalLength : lengthSoFar[i];
         const Cartographic& c = points[i];
         const Vec3 bottom = ellipsoid_.cartographicToCartesian(Cartographic(
             c.longitude(), c.latitude(), c.height() - kVolumeMarginMeters));
@@ -942,6 +958,7 @@ void FeatureRenderLayer::appendLineVolume(
             verts.push_back(static_cast<float>(ext.x()));
             verts.push_back(static_cast<float>(ext.y()));
             verts.push_back(static_cast<float>(ext.z()));
+            verts.push_back(static_cast<float>(s));
         };
         pushVert(bottom, -1.0);
         pushVert(bottom, 1.0);
@@ -950,7 +967,12 @@ void FeatureRenderLayer::appendLineVolume(
     }
 
     // ---- 相邻横截面间四面墙(底/顶/左/右各 1 quad = 2 tri);顶点全共享
-    // → 任意边恰被 2 三角引用(水密,测试锁流形)。开放线补首尾端 cap。
+    // → 任意边恰被 2 三角引用(水密,测试按位置量化锁流形)。开放线补
+    // 首尾端 cap。
+    // **底面 quad 全部先发射**:色 pass 里首个通过 stencil 的 fragment
+    // 定色并清零(NOTEQUAL + op ZERO),dash 的沿线里程于是恒取自底面这
+    // 一张单一曲面;若按段交错发射,沿线低角度视线会先命中前方段的侧墙,
+    // 里程混取自不同面 → 花纹撕裂。 ----
     auto vi = [&](size_t section, int corner) -> uint32_t {
         return base + static_cast<uint32_t>(section) * 4 +
                static_cast<uint32_t>(corner);
@@ -963,14 +985,14 @@ void FeatureRenderLayer::appendLineVolume(
         indices.push_back(c);
         indices.push_back(d);
     };
-    const size_t segCount = closed ? n : n - 1;
+    const size_t segCount = sectionCount - 1;
     for (size_t s = 0; s < segCount; ++s) {
-        const size_t a = s;
-        const size_t b = (s + 1) % n;
-        pushQuad(vi(a, 0), vi(a, 1), vi(b, 1), vi(b, 0));  // 底(外向下)
-        pushQuad(vi(a, 3), vi(a, 2), vi(b, 2), vi(b, 3));  // 顶(外向上)
-        pushQuad(vi(a, 0), vi(b, 0), vi(b, 2), vi(a, 2));  // 左墙
-        pushQuad(vi(a, 1), vi(a, 3), vi(b, 3), vi(b, 1));  // 右墙
+        pushQuad(vi(s, 0), vi(s, 1), vi(s + 1, 1), vi(s + 1, 0));  // 底
+    }
+    for (size_t s = 0; s < segCount; ++s) {
+        pushQuad(vi(s, 3), vi(s, 2), vi(s + 1, 2), vi(s + 1, 3));  // 顶
+        pushQuad(vi(s, 0), vi(s + 1, 0), vi(s + 1, 2), vi(s, 2));  // 左墙
+        pushQuad(vi(s, 1), vi(s, 3), vi(s + 1, 3), vi(s + 1, 1));  // 右墙
     }
     if (!closed) {
         pushQuad(vi(0, 0), vi(0, 2), vi(0, 3), vi(0, 1));          // 首 cap
@@ -1504,7 +1526,7 @@ void FeatureRenderLayer::appendBucketCommands(
                 vol.indexBuffer = group.indexBuffer.get();
                 vol.indexCount = group.indexCount;
                 vol.indexType = RenderCommand::IndexType::UInt32;
-                vol.vertexStride = 24;  // pos(12)+extrude(12)
+                vol.vertexStride = 28;  // pos(12)+extrude(12)+lengthSoFar(4)
                 vol.primitive = RenderCommand::PrimitiveType::Triangles;
                 vol.depthTest = true;   // z-fail 计数依赖地形深度
                 vol.depthWrite = false;
@@ -1513,6 +1535,12 @@ void FeatureRenderLayer::appendBucketCommands(
                 vol.uniforms["u_modelViewProjection"] = mvpUniform;
                 vol.uniforms["u_modelView"] = modelViewUniform;
                 vol.uniforms["u_halfWidthPerEyeZ"] = {halfWidthPerEyeZ};
+                // dash:空隙 alpha=0 而非 discard(stencil ZERO 清零必须
+                // 照常执行,否则残留计数污染后续组)。
+                vol.uniforms["u_dashPeriodMeters"] = {
+                    style_.lineDashPeriodMeters};
+                vol.uniforms["u_dashOnFraction"] = {
+                    style_.lineDashOnFraction};
                 vol.uniforms["u_color"] = {0.0f, 0.0f, 0.0f, 0.0f};
 
                 RenderCommand col = vol;
@@ -1569,6 +1597,10 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
                                           static_cast<float>(vpH)};
             cmd.uniforms["u_lineWidthPx"] = {lineWidthPx};
+            // dash(与 stencil 路径同语义,回落观感一致)。
+            cmd.uniforms["u_dashPeriodMeters"] = {
+                style_.lineDashPeriodMeters};
+            cmd.uniforms["u_dashOnFraction"] = {style_.lineDashOnFraction};
             commands.push_back(std::move(cmd));
         }
 

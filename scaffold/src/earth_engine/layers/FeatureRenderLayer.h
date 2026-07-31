@@ -56,6 +56,11 @@ struct FeatureRenderStyle {
     std::array<float, 4> fillColor{0.25f, 0.55f, 0.95f, 0.35f};
     std::array<float, 4> lineColor{1.00f, 0.80f, 0.10f, 0.90f};
     float lineWidthPx = 4.0f;
+    /// dash(P6d 收尾):period = 一节「划+空」总长(m,贴地世界米制,
+    /// 随透视近大远小),0 = 实线;onFraction = 划段占比 ∈ (0,1]。
+    /// stencil 线与方案 A ribbon 两路径同语义。
+    float lineDashPeriodMeters = 0.0f;
+    float lineDashOnFraction = 0.6f;
     /// 点符号(P5a):billboard 颜色与基准尺寸(px)。尺寸语义随形状:
     /// 内置形状 = 外接方边长/圆直径;位图图标 = 图标**高度**(宽按源图
     /// 宽高比推,不拉伸)。
@@ -257,7 +262,8 @@ private:
             int indexCount = 0;
         };
         std::vector<VolumeGroupGpu> volumeGroups;
-        /// P6d stencil 贴地线:连续横截面墙带(pos 3f + extrude 3f = 24B,
+        /// P6d stencil 贴地线:连续横截面墙带(pos 3f + extrude 3f +
+        /// lengthSoFar 1f = 28B,
         /// 相对桶原点;宽度 VS 按眼深挤出)。按解析线色分组,与 fill 的
         /// volumeGroups 分开存(同色 fill/line 不得并组)。非空 → 该桶
         /// clamp 线走 stencil 双 pass,不再产出方案 A 的线 ribbon。

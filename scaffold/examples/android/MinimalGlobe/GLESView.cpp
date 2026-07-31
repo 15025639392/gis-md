@@ -276,6 +276,10 @@ static bool createEngine() {
             style.fillColor = {0.20f, 0.55f, 0.95f, 0.35f};
             style.lineColor = {1.00f, 0.72f, 0.05f, 0.95f};
             style.lineWidthPx = 6.0f;
+            // P6d dash 真机验证:60m 一节、划段 60%(贴地世界米制,拉远
+            // 变密拉近变疏是透视语义;设 0 恢复实线)。
+            style.lineDashPeriodMeters = 60.0f;
+            style.lineDashOnFraction = 0.6f;
             // 贴地:fill 走 stencil 像素贴合(P6a),线/outline 同走 stencil
             // 墙带体(P6d 终态,免疫陡变地形断线与抬升视差)。下面两个参数
             // 只服务后端不支持 stencil 时的方案 A 回落(细分 + 抬升过渡档,
