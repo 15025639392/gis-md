@@ -966,13 +966,40 @@ void FeatureRenderLayer::appendLineVolume(
         pushVert(top, 1.0);
     }
 
-    // ---- 相邻横截面间四面墙(底/顶/左/右各 1 quad = 2 tri);顶点全共享
-    // → 任意边恰被 2 三角引用(水密,测试按位置量化锁流形)。开放线补
-    // 首尾端 cap。
-    // **底面 quad 全部先发射**:色 pass 里首个通过 stencil 的 fragment
-    // 定色并清零(NOTEQUAL + op ZERO),dash 的沿线里程于是恒取自底面这
-    // 一张单一曲面;若按段交错发射,沿线低角度视线会先命中前方段的侧墙,
-    // 里程混取自不同面 → 花纹撕裂。 ----
+    // ---- 中心 ribbon 顶点(每截面 2 个,采样高程处 ±侧;色 pass 的
+    // dash 里程主源,见下方索引发射注释)。 ----
+    const uint32_t ribbonBase =
+        base + static_cast<uint32_t>(sectionCount) * 4;
+    for (size_t si = 0; si < sectionCount; ++si) {
+        const size_t i = si % n;
+        const double s = (closed && si == n) ? totalLength : lengthSoFar[i];
+        const Vec3 center = centers[i];
+        auto pushRibbonVert = [&](double side) {
+            const Vec3 rel = center - origin;
+            const Vec3 ext = extrudes[i] * side;
+            verts.push_back(static_cast<float>(rel.x()));
+            verts.push_back(static_cast<float>(rel.y()));
+            verts.push_back(static_cast<float>(rel.z()));
+            verts.push_back(static_cast<float>(ext.x()));
+            verts.push_back(static_cast<float>(ext.y()));
+            verts.push_back(static_cast<float>(ext.z()));
+            verts.push_back(static_cast<float>(s));
+        };
+        pushRibbonVert(-1.0);
+        pushRibbonVert(1.0);
+    }
+
+    // ---- 索引发射。hull(体 pass + 色 pass 共用):相邻横截面间四面墙
+    // (底/顶/左/右各 1 quad = 2 tri),顶点全共享 → 任意边恰被 2 三角
+    // 引用(水密,测试按 pos+extrude 量化锁流形);开放线补首尾端 cap。
+    // 色 pass 另有**中心 ribbon 前置**(ribbonIndices,上传时拼在 hull
+    // 之前):色 pass 里首个通过 stencil 的 fragment 定色并清零
+    // (NOTEQUAL + op ZERO),dash 里程于是优先取自紧贴地形的 ribbon,
+    // 视差 = DEM-渲染网格高度差(米级);若直接用 hull 面取里程,侧视
+    // 低角度视线先命中 ±120m 外的底面/前方段侧墙,视差达百米级、且
+    // 相邻像素混取不同面 → 花纹撕裂(真机复现过)。hull 在 ribbon 后
+    // 补画:覆盖 ribbon 投影不及的残余像素并完成 stencil 清零;组内
+    // hull 仍底面先行(次级里程源,取更贴地形的那侧)。 ----
     auto vi = [&](size_t section, int corner) -> uint32_t {
         return base + static_cast<uint32_t>(section) * 4 +
                static_cast<uint32_t>(corner);
@@ -998,6 +1025,21 @@ void FeatureRenderLayer::appendLineVolume(
         pushQuad(vi(0, 0), vi(0, 2), vi(0, 3), vi(0, 1));          // 首 cap
         pushQuad(vi(n - 1, 0), vi(n - 1, 1), vi(n - 1, 3),
                  vi(n - 1, 2));                                    // 尾 cap
+    }
+
+    // 中心 ribbon 索引(仅色 pass;开放面禁入体 pass 的 z-fail 计数)。
+    std::vector<uint32_t>& ribbon = group.ribbonIndices;
+    auto ri = [&](size_t section, int side) -> uint32_t {
+        return ribbonBase + static_cast<uint32_t>(section) * 2 +
+               static_cast<uint32_t>(side);
+    };
+    for (size_t s = 0; s < segCount; ++s) {
+        ribbon.push_back(ri(s, 0));
+        ribbon.push_back(ri(s, 1));
+        ribbon.push_back(ri(s + 1, 1));
+        ribbon.push_back(ri(s, 0));
+        ribbon.push_back(ri(s + 1, 1));
+        ribbon.push_back(ri(s + 1, 0));
     }
 }
 
@@ -1034,10 +1076,31 @@ bool FeatureRenderLayer::uploadBucketGpu(
                                              group.indices.size() *
                                                  sizeof(uint32_t),
                                              BufferDesc::Type::Index);
-                if (gpu.vertexBuffer && gpu.indexBuffer) {
-                    gpu.indexCount = static_cast<int>(group.indices.size());
-                    gpuOut.push_back(std::move(gpu));
+                if (!gpu.vertexBuffer || !gpu.indexBuffer) continue;
+                gpu.indexCount = static_cast<int>(group.indices.size());
+                if (!group.ribbonIndices.empty()) {
+                    // 色 pass 索引 = ribbon 前置 + hull(语义见
+                    // VolumeGroupGpu::colorIndexBuffer)。拼接失败回落
+                    // hull(colorIndexBuffer 留空),dash 侧视退化但不丢线。
+                    std::vector<uint32_t> colorIndices;
+                    colorIndices.reserve(group.ribbonIndices.size() +
+                                         group.indices.size());
+                    colorIndices.insert(colorIndices.end(),
+                                        group.ribbonIndices.begin(),
+                                        group.ribbonIndices.end());
+                    colorIndices.insert(colorIndices.end(),
+                                        group.indices.begin(),
+                                        group.indices.end());
+                    gpu.colorIndexBuffer = makeBuffer(
+                        renderDevice_, colorIndices.data(),
+                        colorIndices.size() * sizeof(uint32_t),
+                        BufferDesc::Type::Index);
+                    if (gpu.colorIndexBuffer) {
+                        gpu.colorIndexCount =
+                            static_cast<int>(colorIndices.size());
+                    }
                 }
+                gpuOut.push_back(std::move(gpu));
             }
         };
     uploadGroups(volumeGroups, out.volumeGroups);
@@ -1547,6 +1610,12 @@ void FeatureRenderLayer::appendBucketCommands(
                 col.stencilPhase = StencilPhase::ClassifyColor;
                 col.depthTest = false;
                 col.blend = true;
+                // 色 pass 用 ribbon 前置索引(dash 里程主源贴地形;体
+                // pass 恒 hull——开放 ribbon 会破坏 z-fail 计数)。
+                if (group.colorIndexBuffer && group.colorIndexCount > 0) {
+                    col.indexBuffer = group.colorIndexBuffer.get();
+                    col.indexCount = group.colorIndexCount;
+                }
                 col.uniforms["u_color"] = {group.color[0], group.color[1],
                                            group.color[2], group.color[3]};
                 commands.push_back(std::move(vol));

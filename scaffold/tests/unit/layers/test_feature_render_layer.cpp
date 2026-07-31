@@ -810,7 +810,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
     // 开放墙带:n 横截面 → 8(n-1) 墙三角 + 4 端 cap 三角。
     const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (4 * 28);
+    const size_t sections = vb->bytes().size() / (6 * 28);
     ASSERT_GE(sections, 2u);
     EXPECT_EQ(static_cast<int>(8 * (sections - 1) + 4) * 3, vol->indexCount);
     expectWatertight(*vol);
@@ -846,7 +846,7 @@ TEST_F(FeatureRenderLayerTest, ClampedPolygonOutlineBecomesClosedLineVolume) {
     // → 8·(sections-1) 三角,无端 cap。
     const auto* vb = dynamic_cast<const DummyBuffer*>(lineVol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (4 * 28);
+    const size_t sections = vb->bytes().size() / (6 * 28);
     ASSERT_GE(sections, 3u);
     EXPECT_EQ(static_cast<int>(8 * (sections - 1)) * 3,
               lineVol->indexCount);
@@ -880,7 +880,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineDensifyDecoupledFromSchemeA) {
     ASSERT_NE(nullptr, vol);
     const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    const size_t sections = vb->bytes().size() / (4 * 28);
+    const size_t sections = vb->bytes().size() / (6 * 28);
     EXPECT_GE(sections, 100u);
     EXPECT_LE(sections, 200u);
     expectWatertight(*vol);
@@ -896,14 +896,17 @@ TEST_F(FeatureRenderLayerTest, StencilLineDashUniformsAndArcLength) {
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
 
     RenderCommandList commands = build();
+    const RenderCommand* lineVol = nullptr;
     const RenderCommand* lineCol = nullptr;
     for (const auto& cmd : commands) {
-        if (cmd.kind == RenderCommandKind::VectorStencil &&
-            cmd.stencilPhase == StencilPhase::ClassifyColor &&
-            cmd.vertexStride == 28) {
-            lineCol = &cmd;
+        if (cmd.kind != RenderCommandKind::VectorStencil ||
+            cmd.vertexStride != 28) {
+            continue;
         }
+        if (cmd.stencilPhase == StencilPhase::ClassifyVolume) lineVol = &cmd;
+        if (cmd.stencilPhase == StencilPhase::ClassifyColor) lineCol = &cmd;
     }
+    ASSERT_NE(nullptr, lineVol);
     ASSERT_NE(nullptr, lineCol);
     ASSERT_EQ(1u, lineCol->uniforms.count("u_dashPeriodMeters"));
     EXPECT_FLOAT_EQ(30.0f, lineCol->uniforms.at("u_dashPeriodMeters")[0]);
@@ -916,7 +919,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineDashUniformsAndArcLength) {
         dynamic_cast<const DummyBuffer*>(lineCol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
     const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
-    const size_t sections = vb->bytes().size() / (4 * 28);
+    const size_t sections = vb->bytes().size() / (6 * 28);
     ASSERT_GE(sections, 4u);
     float prev = -1.0f;
     for (size_t si = 0; si < sections; ++si) {
@@ -931,7 +934,12 @@ TEST_F(FeatureRenderLayerTest, StencilLineDashUniformsAndArcLength) {
         EXPECT_EQ(f[k], f[((sections - 1) * 4) * 7 + k]);
     }
     EXPECT_NEAR(4450.0f, prev, 100.0f);
-    expectWatertight(*lineCol);
+    // 水密只约束体 pass 的 hull;色 pass 前置开放中心 ribbon(dash 里程
+    // 贴地形,侧视防花纹撕裂),索引 = ribbon(6·段数)+ hull。
+    expectWatertight(*lineVol);
+    EXPECT_NE(lineVol->indexBuffer, lineCol->indexBuffer);
+    EXPECT_EQ(lineVol->indexCount + static_cast<int>(6 * (sections - 1)),
+              lineCol->indexCount);
 }
 
 TEST_F(FeatureRenderLayerTest, StencilLineFallsBackToRibbonWithoutSupport) {
