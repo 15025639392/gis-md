@@ -6,6 +6,7 @@
 #include "../content/GltfContentProvider.h"
 #include "../content/HeightmapTerrainContentProvider.h"
 #include "../core/geodesy/Cartographic.h"
+#include "../debug/PlatformLog.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
@@ -602,9 +603,17 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     }
 
     engine_.setTime(config_.fixedSimulationJulianDate);
-    engine_.setOffscreenPassthroughEnabled(config_.debugOffscreenPassthrough);
-    engine_.setFxaaEnabled(config_.fxaa);
-    engine_.setAerialFogEnabled(config_.aerialFog);
+    // 效果 setter 在后端不支持时拒绝并返回 false;这里把"配置了但没生效"
+    // 汇总成一条显式告警,避免 iOS 上开关静默无效被误判为视觉不明显。
+    const bool passthroughOk =
+        engine_.setOffscreenPassthroughEnabled(config_.debugOffscreenPassthrough);
+    const bool fxaaOk = engine_.setFxaaEnabled(config_.fxaa);
+    const bool fogOk = engine_.setAerialFogEnabled(config_.aerialFog);
+    if (!passthroughOk || !fxaaOk || !fogOk) {
+        platformLog(LogLevel::Warning, "SdkFacade",
+                    "offscreen post-process effects requested by scene config "
+                    "were rejected by the render backend (see Engine errors)");
+    }
     engine_.setAerialFogParams(config_.aerialFogDensity,
                                config_.aerialFogStartDistance);
     engine_.setVirtualTexturePocEnabled(config_.virtualTexturePoc);
@@ -675,28 +684,10 @@ void EarthEngineSdkFacade::resetCamera() {
 
     // CameraController 以 orbit 模式每帧从自身 rotation_/distance_ 重建相机
     // （看向地心=nadir），否则上面的 lookAt 会在第 1 帧被覆盖、初始相机 config
-    // 不生效。这里把 orbit 状态同步为"目标点正上方 heightMeters 高、正北朝上"：
-    //   orbit 约定：eye = -（rotation_·+Z）·distance_·R，看向地心，up=rotation_·+Y。
-    //   令 rotation_ 把 +Z→-targetDir、+Y→north ⇒ eye 落在 targetDir·(R_t+h)。
-    constexpr double kEarthRadiusMeters = 6378137.0;
-    const glm::dvec3 upG = normal.raw();
-    glm::dvec3 eastG = glm::cross(glm::dvec3(0.0, 0.0, 1.0), upG);
-    if (glm::length(eastG) < 1e-9) {
-        eastG = glm::dvec3(1.0, 0.0, 0.0);
-    }
-    eastG = glm::normalize(eastG);
-    const glm::dvec3 northG = glm::normalize(glm::cross(upG, eastG));
-    // 列向量 [Rx, Ry, Rz] = [-east, north, -up]（推导见上）。
-    const glm::dmat3 basis(-eastG, northG, -upG);
-    const glm::dquat orbitRotation = glm::quat_cast(basis);
-    const double targetRadius =
-        std::sqrt(targetEcef.dot(targetEcef));
-    const double distanceEarthRadii =
-        (targetRadius + config_.initialCamera.heightMeters) /
-        kEarthRadiusMeters;
-    engine_.cameraController().setRotation(orbitRotation);
-    engine_.cameraController().setDistance(
-        static_cast<float>(distanceEarthRadii));
+    // 不生效。orbit 约定是 CameraController 的私有实现细节,这里只声明意图
+    // "目标点正上方 heightMeters 高、正北朝上",推导收在控制器内。
+    engine_.cameraController().setNadirOrbitView(
+        targetEcef, normal, config_.initialCamera.heightMeters);
     // 位姿设定后再冻结（测量台专用）；nadir 冻结时 update() 跳过 orbit 重建，
     // 相机停在上面显式 lookAt 的正上方位姿。
     engine_.cameraController().setMeasurementFreeze(

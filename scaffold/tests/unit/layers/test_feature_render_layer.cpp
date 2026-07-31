@@ -867,6 +867,23 @@ TEST(IconAtlasTest, PacksNamedImagesAndRejectsBadInput) {
     EXPECT_EQ(2u, atlas.revision());
 }
 
+TEST(IconAtlasTest, PageFullRejectIsCountedNotSilent) {
+    // 溢出可观测:页满拒绝必须留下计数(此前只是静默 return false,产品上
+    // 表现为"图标莫名回落圆点")。512²+2px padding = 514 格:一行只放下
+    // 1 张,第 2 张换行后 514+514 超页高被拒 → 计数 1;非法输入拒绝不计入。
+    earth_engine::testing::MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    IconAtlas atlas(&device);
+    EXPECT_EQ(0, atlas.pageFullRejectCount());
+
+    ASSERT_TRUE(atlas.addImage("p1", 512, 512, solidRgba(512, 512, 1)));
+    EXPECT_FALSE(atlas.addImage("p2", 512, 512, solidRgba(512, 512, 2)));
+    EXPECT_EQ(1, atlas.pageFullRejectCount());
+
+    EXPECT_FALSE(atlas.addImage("", 4, 4, solidRgba(4, 4, 0)));  // 非法输入
+    EXPECT_EQ(1, atlas.pageFullRejectCount());
+}
+
 TEST_F(FeatureRenderLayerTest, BuiltinShapeBakedIntoVertexShape) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "star";

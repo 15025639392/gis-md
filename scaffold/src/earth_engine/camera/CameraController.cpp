@@ -518,6 +518,27 @@ void CameraController::setRotation(const glm::dquat& q) {
     inertiaAngularVelocity_ = 0.0;
 }
 
+void CameraController::setNadirOrbitView(const Vec3& targetEcef,
+                                         const Vec3& surfaceUpNormal,
+                                         double heightMeters) {
+    // 目标点局部 ENU:east = z × up(极点退化时回退 ECEF X 轴),north = up × east。
+    const glm::dvec3 upG = glm::normalize(surfaceUpNormal.raw());
+    glm::dvec3 eastG = glm::cross(glm::dvec3(0.0, 0.0, 1.0), upG);
+    if (glm::length(eastG) < 1e-9) {
+        eastG = glm::dvec3(1.0, 0.0, 0.0);
+    }
+    eastG = glm::normalize(eastG);
+    const glm::dvec3 northG = glm::normalize(glm::cross(upG, eastG));
+    // orbit 约定:eye = -(rotation_·+Z)·distance_·R,up = rotation_·+Y。
+    // 令 rotation_ 把 +Z→-up、+Y→north ⇒ eye 落在 up·(R_t+h),正北朝上。
+    // 列向量 [Rx, Ry, Rz] = [-east, north, -up]。
+    const glm::dmat3 basis(-eastG, northG, -upG);
+    setRotation(glm::quat_cast(basis));
+    const double targetRadius = std::sqrt(targetEcef.dot(targetEcef));
+    setDistance(static_cast<float>(
+        (targetRadius + heightMeters) / kEarthRadiusMeters));
+}
+
 void CameraController::viewDistance(const Vec3& targetWorld, double distanceMeters) {
     const double maxDistanceMeters = kMaxDistanceEarthRadii * kEarthRadiusMeters;
     const double clampedDistance = std::clamp(

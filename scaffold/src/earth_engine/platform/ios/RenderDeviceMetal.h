@@ -18,6 +18,8 @@ public:
     int maxDrawBuffers() const override;
     bool supportsFloatTextures() const override;
     bool supportsInstancing() const override;
+    // 全屏后处理 shader 仅有 GLSL,MSL 接线待补(见 OffscreenPostProcess.h)。
+    bool supportsOffscreenPostProcess() const override { return false; }
     std::string rendererString() const override;
 
     // ---- 资源创建 ----

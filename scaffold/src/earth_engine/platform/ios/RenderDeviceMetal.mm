@@ -1,5 +1,6 @@
 #import "RenderDeviceMetal.h"
 
+#include "../../renderer/BackendWindingContract.h"
 #include "../../renderer/RenderCommand.h"
 
 #import <Metal/Metal.h>
@@ -793,14 +794,14 @@ bool RenderDeviceMetal::beginPass(Framebuffer* target) {
     [impl_->currentEncoder
         setViewport:(MTLViewport){0.0, 0.0, viewportW, viewportH, 0.0, 1.0}];
 
-    // Front-face winding is Metal's default MTLWindingClockwise. This MUST stay
-    // opposite to the GLES backend's GL_CCW. Both backends draw the same geometry
-    // with the same (non-y-flipped) projection matrix; Metal's top-left / y-down
-    // framebuffer origin reverses on-screen triangle winding relative to GL's
-    // bottom-left / y-up origin, and the opposite front-face conventions cancel
-    // that out so both backends cull the same geometric face. Do NOT "unify" the
-    // two backends onto the same winding — that would invert culling on one side.
-    [impl_->currentEncoder setFrontFacingWinding:MTLWindingClockwise];
+    // 绕序从后端契约头取值(GLES/Metal 必须相反,static_assert 锁死),
+    // 论证见 renderer/BackendWindingContract.h。
+    [impl_->currentEncoder
+        setFrontFacingWinding:backend_contract::kMetalFrontFace ==
+                                      backend_contract::FrontFaceWinding::
+                                          Clockwise
+                                  ? MTLWindingClockwise
+                                  : MTLWindingCounterClockwise];
     return true;
 }
 

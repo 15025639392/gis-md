@@ -209,11 +209,12 @@ bool OffscreenPostProcess::initialize(RenderDevice* device, Effect effect) {
     if (!device) return false;
     effect_ = effect;
     const char* tag = diagTag(effect);
-    if (device->backendType() == RenderDevice::Backend::Metal) {
-        // TODO: Metal 全屏 shader 需 MSL 入口 + submit 侧纹理/uniform 接线;
-        // pass API(beginPass 离屏 attachment)本身 Metal 已就绪。
+    if (!device->supportsOffscreenPostProcess()) {
+        // 能力由后端声明(RenderDevice::supportsOffscreenPostProcess),不再
+        // 在这里硬编码 backend 判断;Metal 缺 MSL 入口 + submit 侧接线,
+        // pass API(beginPass 离屏 attachment)本身两后端就绪。
         platformLog(LogLevel::Warning, tag,
-                    "offscreen post-process: Metal shader not wired yet");
+                    "offscreen post-process: backend reports unsupported");
         return false;
     }
     device_ = device;

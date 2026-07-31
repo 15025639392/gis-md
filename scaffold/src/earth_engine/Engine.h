@@ -173,15 +173,23 @@ public:
     /// 复位到正北朝上（保持俯仰与相机位置）。
     void resetNorthUp();
 
+    /// 离屏后处理能力(passthrough/FXAA/aerial fog 共用):由后端声明
+    /// (RenderDevice::supportsOffscreenPostProcess)。下面三个 setter 在
+    /// 开启不受支持的效果时**拒绝并返回 false**(打 error 日志),不再
+    /// 静默置 initFailed——调用方可据此感知配置未生效。
+    bool offscreenPostProcessSupported() const;
     /// 离屏 passthrough(RTT 冒烟通路,默认关):场景画进离屏 FBO 再全屏
     /// blit 上屏,像素应与直绘一致。守住 createFramebuffer+beginPass 通路。
-    void setOffscreenPassthroughEnabled(bool enabled);
+    /// @return 请求是否生效(见 offscreenPostProcessSupported)。
+    bool setOffscreenPassthroughEnabled(bool enabled);
     /// FXAA 抗锯齿(默认关):场景画进离屏 FBO,全屏 FXAA 采样上屏消除锯齿。
-    /// 与 passthrough 同走离屏后处理通路;两者都开时 FXAA 优先。当前仅 GLES。
-    void setFxaaEnabled(bool enabled);
+    /// 与 passthrough 同走离屏后处理通路;两者都开时 FXAA 优先。
+    /// @return 请求是否生效(见 offscreenPostProcessSupported)。
+    bool setFxaaEnabled(bool enabled);
     /// Aerial fog 距离雾(默认关):场景经离屏 FBO,全屏采样深度重建视距,
-    /// 远处地形指数雾混向天空色。同走离屏后处理通路;当前仅 GLES。
-    void setAerialFogEnabled(bool enabled);
+    /// 远处地形指数雾混向天空色。同走离屏后处理通路。
+    /// @return 请求是否生效(见 offscreenPostProcessSupported)。
+    bool setAerialFogEnabled(bool enabled);
     /// Aerial fog 调参:密度(1/米,基础强度)、起雾距离(米)。雾色由
     /// shader 每像素从大气模型算(随视线/高度/太阳),不再是常数,故不在此设。
     /// near/far/相机基/太阳由引擎每帧取。

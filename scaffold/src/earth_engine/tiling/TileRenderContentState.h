@@ -462,22 +462,32 @@ public:
     // ── per-tile 常驻 draw command 缓存(cesium per-tile DrawCommand 语义)──
     // GltfDrawCommandBuilder 把内容不变式命令(几何/材质/水面掩码/stableKey)
     // 一次性构建进这里;后续帧仅把缓存命令拷入帧列表并盖章每帧字段(frameId/
-    // opacity/clip/overlay 绑定,MVP 由 Scene 统一重算)。缓存命令持有本状态内
-    // GPU 资源的裸指针,因此凡是改变命令读取集(gltfPrimitiveResources、
-    // gltfResourcesReady_、terrainRenderContent_、surface_.localOrigin)的
-    // mutator 都必须调用 invalidateCachedDrawCommands()。
-    bool hasCachedDrawCommands() const { return cachedDrawCommandsValid_; }
+    // opacity/clip/overlay 绑定,MVP 由 Scene 统一重算)。
+    //
+    // 失效是**代次校验、机器可查**的:缓存命令持有本状态内 GPU 资源的裸指针,
+    // 有效性 = 构建时记录的 drawCommandReadSetRevision_ 与当前值一致。凡走
+    // markRetainedResourcesChanged()(所有 GPU 资源生命周期 mutator 为了字节
+    // 记账本来就必须调)或 invalidateCachedDrawCommands() 的路径都会 bump 该
+    // 代次 → 新增资源 mutator 即使忘调 invalidate,缓存也会在下次消费时自动
+    // 判stale 重建,不再依赖"人工记得失效"。仅改读取集标志(readiness/
+    // localOrigin 等)不动资源的 mutator 仍显式调 invalidate(同样 bump 代次)。
+    bool hasCachedDrawCommands() const {
+        return cachedDrawCommandsValid_ &&
+               cachedDrawCommandsBuiltRevision_ == drawCommandReadSetRevision_;
+    }
     const RenderCommandList& cachedDrawCommands() const {
         return cachedDrawCommands_;
     }
     RenderCommandList& restartCachedDrawCommands() {
         cachedDrawCommands_.clear();
         cachedDrawCommandsValid_ = true;
+        cachedDrawCommandsBuiltRevision_ = drawCommandReadSetRevision_;
         return cachedDrawCommands_;
     }
     void invalidateCachedDrawCommands() {
         cachedDrawCommands_.clear();
         cachedDrawCommandsValid_ = false;
+        ++drawCommandReadSetRevision_;
     }
 
     void setSurfaceLocalOrigin(const Vec3& origin) {
@@ -908,6 +918,10 @@ private:
 
     void markRetainedResourcesChanged() {
         ++retainedResourcesRevision_;
+        // 资源生命周期变化必然可能动到缓存命令引用的裸指针:同步 bump 命令
+        // 读取集代次,让缓存自动判 stale(见 hasCachedDrawCommands 注释)。
+        // 保守失效(如仅 fill 资源变化)代价只是一次命令重建,换来指针安全。
+        ++drawCommandReadSetRevision_;
     }
 
     bool isGltfOwnedContentState() const {
@@ -919,6 +933,10 @@ private:
     TileSurfaceContentState surface_;
     RenderCommandList cachedDrawCommands_;
     bool cachedDrawCommandsValid_ = false;
+    // 命令读取集代次:资源/读取集 mutator bump,缓存构建时记录快照,消费时
+    // 比对——代次失配 = 缓存 stale(见 hasCachedDrawCommands)。
+    uint64_t drawCommandReadSetRevision_ = 1;
+    uint64_t cachedDrawCommandsBuiltRevision_ = 0;
     std::unique_ptr<Texture> surfaceWaterMaskTexture_;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 gltfContentTransform = Mat4::identity();

@@ -90,6 +90,19 @@ public:
     /// 直接设置旋转
     void setRotation(const glm::dquat& q);
 
+    /// 把 orbit 状态设为"目标点正上方 heightMeters、正北朝上、看向地心
+    /// (nadir)"。orbit 约定(eye = -(rotation_·+Z)·distance_·R,
+    /// up = rotation_·+Y)是本类的私有实现细节:外部调用方(如
+    /// EarthEngineSdkFacade::resetCamera)一律走本接口,不得在类外复刻
+    /// 四元数推导——约定变更只需要改本类。
+    /// @param targetEcef      目标地表点(ECEF)
+    /// @param surfaceUpNormal 目标点的大地法线(调用方从椭球取,本类不依赖
+    ///                        Ellipsoid;传入无需归一化)
+    /// @param heightMeters    相机在目标点上方的高度(米)
+    void setNadirOrbitView(const Vec3& targetEcef,
+                           const Vec3& surfaceUpNormal,
+                           double heightMeters);
+
     /// 保持当前 target→eye 方位，把相机放到 target 外指定距离并看向 target。
     void viewDistance(const Vec3& targetWorld, double distanceMeters);
 

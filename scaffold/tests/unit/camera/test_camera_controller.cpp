@@ -493,6 +493,26 @@ TEST_F(CameraControllerTest, LowAltitudeZoomOutDoesNotRecenter) {
     EXPECT_NEAR(1.0, viewLineMissDistance(*camera_) / miss0, 1e-6);
 }
 
+TEST_F(CameraControllerTest, SetNadirOrbitViewRebuildsExpectedPose) {
+    // orbit 约定收归 CameraController:设"赤道 0°E 正上方 1000km、正北朝上"
+    // 后,update() 的 orbit 重建应给出 eye 在 +X 轴上、看向地心、屏幕上北。
+    const Vec3 target(kEarthRadiusMeters, 0.0, 0.0);
+    const Vec3 up(1.0, 0.0, 0.0);
+    constexpr double kHeight = 1.0e6;
+    controller_->setNadirOrbitView(target, up, kHeight);
+    controller_->update(0.016);
+
+    const glm::dvec3 eye = camera_->position().raw();
+    EXPECT_NEAR(kEarthRadiusMeters + kHeight, eye.x, 1.0);
+    EXPECT_NEAR(0.0, eye.y, 1.0);
+    EXPECT_NEAR(0.0, eye.z, 1.0);
+    const glm::dvec3 dir = glm::normalize(camera_->direction().raw());
+    EXPECT_NEAR(-1.0, dir.x, 1e-9);
+    // 屏幕上方 = 局部正北 = +Z(赤道处)。
+    const glm::dvec3 camUp = glm::normalize(camera_->up().raw());
+    EXPECT_NEAR(1.0, camUp.z, 1e-9);
+}
+
 TEST_F(CameraControllerTest, PinchZoomFlickGlidesThenSettles) {
     // A2：捏合缩放松手后应沿视线朝锚点继续滑一小段（惯性），最终停住。
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));

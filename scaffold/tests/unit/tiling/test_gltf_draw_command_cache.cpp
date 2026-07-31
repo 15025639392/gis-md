@@ -129,6 +129,30 @@ TEST(GltfDrawCommandCacheTest, ResourceMutationInvalidatesCache) {
     EXPECT_EQ("Geographic-TMS/2/1/1#1", commands[1].stableKey);
 }
 
+TEST(GltfDrawCommandCacheTest, RetainedResourceChangeAutoInvalidatesCache) {
+    // 代次校验闭环:资源生命周期 mutator 走 markRetainedResourcesChanged
+    // (字节记账本来就必须调)即自动令缓存判 stale——即使该 mutator 忘了显式
+    // invalidateCachedDrawCommands,裸指针命令也不会被继续消费。这里用
+    // addGltfTextureResource 代表"只记账、历史上未显式失效"的一类 mutator。
+    CacheHarness harness;
+    GltfDrawCommandBuildContext context;
+    context.frameNumber = 1;
+    harness.buildFrame(context);
+    ASSERT_TRUE(harness.tile.content.renderContent.hasCachedDrawCommands());
+
+    TextureDesc texDesc;
+    texDesc.width = 2;
+    texDesc.height = 2;
+    harness.tile.content.renderContent.addGltfTextureResource(
+        harness.device.createTexture(texDesc));
+    EXPECT_FALSE(harness.tile.content.renderContent.hasCachedDrawCommands());
+
+    // 重建后缓存回到有效态,可继续跨帧复用。
+    context.frameNumber = 2;
+    harness.buildFrame(context);
+    EXPECT_TRUE(harness.tile.content.renderContent.hasCachedDrawCommands());
+}
+
 TEST(GltfDrawCommandCacheTest, BlendStateRederivedEachFrame) {
     CacheHarness harness;
 

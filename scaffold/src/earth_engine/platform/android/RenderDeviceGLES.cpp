@@ -1,4 +1,5 @@
 #include "RenderDeviceGLES.h"
+#include "../../renderer/BackendWindingContract.h"
 #include "../../renderer/RenderCommand.h"
 #include "../../debug/PerfTimer.h"
 
@@ -713,14 +714,12 @@ bool RenderDeviceGLES::beginPass(Framebuffer* target) {
     glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    // Front-face winding is GL's default GL_CCW. This MUST stay opposite to the
-    // Metal backend's MTLWindingClockwise. Both backends draw the same geometry
-    // with the same (non-y-flipped) projection matrix; Metal's top-left / y-down
-    // framebuffer origin reverses on-screen triangle winding relative to GL's
-    // bottom-left / y-up origin, and the opposite front-face conventions cancel
-    // that out so both backends cull the same geometric face. Do NOT "unify" the
-    // two backends onto the same winding — that would invert culling on one side.
-    glFrontFace(GL_CCW);
+    // 绕序从后端契约头取值(GLES/Metal 必须相反,static_assert 锁死),
+    // 论证见 renderer/BackendWindingContract.h。
+    glFrontFace(backend_contract::kGlesFrontFace ==
+                        backend_contract::FrontFaceWinding::CounterClockwise
+                    ? GL_CCW
+                    : GL_CW);
     return true;
 }
 

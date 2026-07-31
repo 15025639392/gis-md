@@ -1,5 +1,6 @@
 #include "GlyphAtlas.h"
 
+#include "../debug/PlatformLog.h"
 #include "RenderDevice.h"
 
 #if __has_include(<stb_truetype.h>)
@@ -32,6 +33,8 @@ struct GlyphAtlas::Impl {
     int rowHeight = 0;
 
     std::unordered_map<uint32_t, Glyph> glyphs;
+    // 页满丢字计数(见 GlyphAtlas::atlasFullDropCount)。
+    int atlasFullDrops = 0;
 };
 
 GlyphAtlas::GlyphAtlas(RenderDevice* device)
@@ -87,6 +90,7 @@ bool GlyphAtlas::setFontData(std::vector<uint8_t> fontData) {
 }
 
 bool GlyphAtlas::ready() const { return impl_->fontReady; }
+int GlyphAtlas::atlasFullDropCount() const { return impl_->atlasFullDrops; }
 float GlyphAtlas::ascent() const { return impl_->ascentPx; }
 float GlyphAtlas::descent() const { return impl_->descentPx; }
 Texture* GlyphAtlas::texture() const { return impl_->texture.get(); }
@@ -126,7 +130,13 @@ const GlyphAtlas::Glyph* GlyphAtlas::ensureGlyph(uint32_t codepoint) {
     }
     if (impl_->cursorY + h > kAtlasSize) {
         stbtt_FreeSDF(sdf, nullptr);
-        return nullptr;  // 图集满(多页/LRU 后置)
+        // 图集满(多页/LRU 后置):计数 + 首次告警,不允许静默丢字。
+        if (impl_->atlasFullDrops++ == 0) {
+            platformLog(LogLevel::Warning, "GlyphAtlas",
+                        "atlas page full — further glyphs will not render "
+                        "(check atlasFullDropCount)");
+        }
+        return nullptr;
     }
     const int px = impl_->cursorX;
     const int py = impl_->cursorY;

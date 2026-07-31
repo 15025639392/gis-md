@@ -54,6 +54,11 @@ public:
     /// 查 frame(未注入返回 nullptr)。
     const Frame* frame(const std::string& name) const;
 
+    /// 图集页满导致的注入拒绝计数(addImage 因页满返回 false 的次数)。
+    /// >0 = 有图标注入失败、对应要素将回落 circle。静默丢图标不可接受:
+    /// 首次页满打 Warning 日志,消费方据此报警。多页/LRU 落地前的可观测兜底。
+    int pageFullRejectCount() const;
+
     bool empty() const;
 
     /// 图集纹理(尚无图标时为 nullptr)。

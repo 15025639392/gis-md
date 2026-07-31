@@ -40,6 +40,11 @@ public:
     /// 方案 A(CPU 高程采样钳制)。默认 false,GLES 覆写 true;Metal 矢量
     /// 路径不出货保持 false。
     virtual bool supportsStencilClassification() const { return false; }
+    /// 离屏后处理效果链(passthrough/FXAA/aerial fog)可用性:后端有全屏
+    /// shader 接线。默认 true(GL 系 GLSL 已就绪、mock 走空 pass);Metal
+    /// 覆写 false(MSL 入口 + submit 侧纹理/uniform 接线待补)。调用方
+    /// (Engine 的效果 setter)据此显式拒绝并回报,不再静默 initFailed。
+    virtual bool supportsOffscreenPostProcess() const { return true; }
     virtual std::string rendererString() const = 0;
 
     // ---- 资源创建 ----

@@ -103,19 +103,47 @@ void Engine::onSurfaceDestroyed() {
     surfaceCreated_ = false;
 }
 
-void Engine::setOffscreenPassthroughEnabled(bool enabled) {
+bool Engine::offscreenPostProcessSupported() const {
+    return device_ && device_->supportsOffscreenPostProcess();
+}
+
+bool Engine::setOffscreenPassthroughEnabled(bool enabled) {
+    if (enabled && !offscreenPostProcessSupported()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "offscreen passthrough requested but backend does not "
+                    "support offscreen post-process; request ignored");
+        offscreenPassthroughEnabled_ = false;
+        return false;
+    }
     offscreenPassthroughEnabled_ = enabled;
     offscreenPostProcessInitFailed_ = false;
+    return true;
 }
 
-void Engine::setFxaaEnabled(bool enabled) {
+bool Engine::setFxaaEnabled(bool enabled) {
+    if (enabled && !offscreenPostProcessSupported()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "FXAA requested but backend does not support offscreen "
+                    "post-process; request ignored");
+        fxaaEnabled_ = false;
+        return false;
+    }
     fxaaEnabled_ = enabled;
     offscreenPostProcessInitFailed_ = false;
+    return true;
 }
 
-void Engine::setAerialFogEnabled(bool enabled) {
+bool Engine::setAerialFogEnabled(bool enabled) {
+    if (enabled && !offscreenPostProcessSupported()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "aerial fog requested but backend does not support "
+                    "offscreen post-process; request ignored");
+        aerialFogEnabled_ = false;
+        return false;
+    }
     aerialFogEnabled_ = enabled;
     offscreenPostProcessInitFailed_ = false;
+    return true;
 }
 
 void Engine::setAerialFogParams(float density, float startDistance) {

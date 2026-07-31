@@ -1,5 +1,6 @@
 #include "IconAtlas.h"
 
+#include "../debug/PlatformLog.h"
 #include "RenderDevice.h"
 
 #include <unordered_map>
@@ -15,6 +16,8 @@ struct IconAtlas::Impl {
     int rowHeight = 0;
     uint64_t revision = 0;
     std::unordered_map<std::string, Frame> frames;
+    // 页满拒绝计数(见 IconAtlas::pageFullRejectCount)。
+    int pageFullRejects = 0;
 };
 
 IconAtlas::IconAtlas(RenderDevice* device) : impl_(std::make_unique<Impl>()) {
@@ -55,7 +58,15 @@ bool IconAtlas::addImage(const std::string& name,
         impl_->cursorY += impl_->rowHeight;
         impl_->rowHeight = 0;
     }
-    if (impl_->cursorY + cellH > kAtlasSize) return false;  // 页满(无淘汰)
+    if (impl_->cursorY + cellH > kAtlasSize) {
+        // 页满(无淘汰):计数 + 首次告警,不允许静默丢图标。
+        if (impl_->pageFullRejects++ == 0) {
+            platformLog(LogLevel::Warning, "IconAtlas",
+                        "atlas page full — further icons rejected "
+                        "(check pageFullRejectCount)");
+        }
+        return false;
+    }
 
     const int px = impl_->cursorX;
     const int py = impl_->cursorY;
@@ -87,6 +98,8 @@ const IconAtlas::Frame* IconAtlas::frame(const std::string& name) const {
 }
 
 bool IconAtlas::empty() const { return impl_->frames.empty(); }
+
+int IconAtlas::pageFullRejectCount() const { return impl_->pageFullRejects; }
 
 Texture* IconAtlas::texture() const { return impl_->texture.get(); }
 
