@@ -320,7 +320,14 @@ private:
 
     /// P5c:每帧跑 placement(collect 全桶 LabelEntry → place/commit),
     /// opacity 有变的桶改写 CPU 副本 opacity 分量并 updateBuffer 重传。
-    void updateLabelPlacement(const FrameState& frameState);
+    /// 视口桶裁剪:保守地平线圆——相机星下点为中心,角半径 = 相机地平线角
+    /// + 要素最大海拔的地平线延伸。圆外的地表点从相机位置纯几何不可见
+    /// (与视锥朝向无关),圆内保守纳入不做视锥细判;oversized 桶恒纳入,
+    /// 反经线跨界拆两段查询。返回按 key 排序去重。
+    std::vector<BucketKey> visibleBucketKeys(
+        const FrameState& frameState) const;
+    void updateLabelPlacement(const FrameState& frameState,
+                              const std::vector<BucketKey>& visibleKeys);
 
     /// 生成一对 fill/line 命令追加进 commands(常驻桶与预览路径共用)。
     void appendBucketCommands(const BucketGpu& gpu,

@@ -83,7 +83,7 @@ protected:
 // ============================================================
 
 TEST_F(FeatureRenderLayerTest, PolygonEmitsFillAndOutlineCommands) {
-    layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
 
     RenderCommandList commands = build();
     ASSERT_EQ(2u, commands.size());
@@ -123,7 +123,7 @@ TEST_F(FeatureRenderLayerTest, PolygonEmitsFillAndOutlineCommands) {
 }
 
 TEST_F(FeatureRenderLayerTest, LineStringEmitsOnlyLineCommand) {
-    layer_->store().addFeature(makeLine(106.0, 29.0, 0.05));
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
 
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
@@ -136,7 +136,7 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     // P5a/P6c:Point 要素 = billboard quad(4 顶点 6 索引,36B 顶点)。
     Feature p;
     p.type = GeometryType::Point;
-    p.rings = {{Cartographic(106.0 * kDeg, 29.0 * kDeg)}};
+    p.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
     layer_->store().addFeature(std::move(p));
 
     RenderCommandList commands = build();
@@ -175,7 +175,7 @@ TEST_F(FeatureRenderLayerTest, MultiplePointsShareOneCommand) {
     for (int i = 0; i < 3; ++i) {
         Feature p;
         p.type = GeometryType::Point;
-        p.rings = {{Cartographic((106.0 + i * 0.001) * kDeg, 29.0 * kDeg)}};
+        p.rings = {{Cartographic((6.0 + i * 0.001) * kDeg, 29.0 * kDeg)}};
         layer_->store().addFeature(std::move(p));
     }
     RenderCommandList commands = build();
@@ -184,8 +184,31 @@ TEST_F(FeatureRenderLayerTest, MultiplePointsShareOneCommand) {
     EXPECT_EQ(18, commands[0].indexCount);  // 3 quad × 6
 }
 
+TEST_F(FeatureRenderLayerTest, OutOfHorizonBucketEmitsNoCommands) {
+    // 视口桶裁剪:相机(星下点 0°E/0°N,高 ~8.6e6m,地平线角 ~65°)看不到
+    // 的桶不出命令。视野内 polygon 出 fill+outline 两条;150°E 的桶被裁。
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
+    layer_->store().addFeature(makePolygon(150.0, 0.0, 0.1));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    for (const auto& cmd : commands) {
+        EXPECT_TRUE(cmd.kind == RenderCommandKind::VectorFill ||
+                    cmd.kind == RenderCommandKind::VectorLine);
+    }
+}
+
+TEST_F(FeatureRenderLayerTest, OversizedFeatureDrawnRegardlessOfView) {
+    // 超大要素(bounds 跨 cell)归 oversized 桶,视口查询恒纳入——即便
+    // 其中心在地平线外,也保守出命令(不可漏画)。
+    layer_->store().addFeature(makePolygon(150.0, 0.0, 5.0));
+
+    RenderCommandList commands = build();
+    EXPECT_EQ(2u, commands.size());  // fill + outline
+}
+
 TEST_F(FeatureRenderLayerTest, InvisibleLayerEmitsNothing) {
-    layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     layer_->setVisible(false);
     EXPECT_TRUE(build().empty());
 }
@@ -197,7 +220,7 @@ TEST_F(FeatureRenderLayerTest, InvisibleLayerEmitsNothing) {
 TEST_F(FeatureRenderLayerTest, VerticesAreBucketOriginRelative) {
     // 0.1° ≈ 11km 要素:相对桶原点的顶点幅值必须在 ~10^5 m 以内,
     // 而 ECEF 绝对坐标是 ~6.4e6 m —— 判据区分两者(RTE 是否生效)。
-    layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     RenderCommandList commands = build();
     ASSERT_FALSE(commands.empty());
 
@@ -235,8 +258,8 @@ TEST_F(FeatureRenderLayerTest, VerticesAreBucketOriginRelative) {
 TEST_F(FeatureRenderLayerTest, DirtyBucketRebuildIsIncremental) {
     // 两个远隔要素 → 两个桶(cell 0.02rad,隔 >2° 必不同桶)
     const FeatureId idA =
-        layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
-    layer_->store().addFeature(makePolygon(110.0, 33.0, 0.1));
+        layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
+    layer_->store().addFeature(makePolygon(10.0, 33.0, 0.1));
 
     EXPECT_EQ(2, layer_->syncDirtyBuckets());
     EXPECT_EQ(2u, layer_->gpuBucketCount());
@@ -262,7 +285,7 @@ TEST_F(FeatureRenderLayerTest, DirtyBucketRebuildIsIncremental) {
 
 TEST_F(FeatureRenderLayerTest, RemovingLastFeatureDropsBucket) {
     const FeatureId id =
-        layer_->store().addFeature(makePolygon(106.0, 29.0, 0.1));
+        layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     layer_->syncDirtyBuckets();
     ASSERT_EQ(1u, layer_->gpuBucketCount());
 
@@ -274,8 +297,8 @@ TEST_F(FeatureRenderLayerTest, RemovingLastFeatureDropsBucket) {
 
 TEST_F(FeatureRenderLayerTest, SameBucketFeaturesShareOneCommandPair) {
     // 两个近邻小要素落同桶 → 仍是一对 fill/line 命令(合桶绘制)
-    layer_->store().addFeature(makePolygon(106.000, 29.000, 0.002));
-    layer_->store().addFeature(makePolygon(106.003, 29.003, 0.002));
+    layer_->store().addFeature(makePolygon(6.000, 29.000, 0.002));
+    layer_->store().addFeature(makePolygon(6.003, 29.003, 0.002));
 
     RenderCommandList commands = build();
     EXPECT_EQ(1u, layer_->gpuBucketCount());
@@ -366,7 +389,7 @@ TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
 
     Feature p;
     p.type = GeometryType::Point;
-    p.rings = {{Cartographic(106.0 * kDeg, 29.0 * kDeg)}};
+    p.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
     p.properties["name"] = "AB";
     layer_->store().addFeature(std::move(p));
 
@@ -477,13 +500,16 @@ TEST_F(FeatureLabelPlacementTest, PriorityFeatureWinsCollision) {
     EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(b));
 }
 
-TEST_F(FeatureLabelPlacementTest, BackSideLabelHorizonCulled) {
-    // 球背面要素(lon 180°,相机在 lon 0 上空):椭球地平线遮挡剔除。
+TEST_F(FeatureLabelPlacementTest, BackSideLabelBucketCulledBeforePlacement) {
+    // 球背面要素(lon 180°,相机在 lon 0 上空):桶级视口裁剪先于逐标签
+    // 地平线剔除——背面桶不进候选(candidates=0),标签不显示。逐标签
+    // 地平线剔除路径(地平线圆内、近缘的候选)由 test_label_placement
+    // 单元级覆盖。
     const FeatureId back =
         layer_->store().addFeature(makeNamedPoint(180.0, 0.0, "BACK"));
 
     advanceFrames(6);
-    EXPECT_GE(layer_->labelPlacementStats().culledHorizon, 1);
+    EXPECT_EQ(0, layer_->labelPlacementStats().candidates);
     EXPECT_FLOAT_EQ(0.0f, layer_->labelOpacityForFeature(back));
 }
 
@@ -697,8 +723,8 @@ TEST_F(FeatureRenderLayerTest, DataDrivenPointColorBakedPerFeature) {
         {{"tower", StyleExpression::literal({1.0f, 0.0f, 0.0f, 1.0f})}},
         StyleExpression::literal({0.0f, 0.0f, 1.0f, 1.0f}));
     layer_->setStyle(style);
-    layer_->store().addFeature(makeKindPoint(106.0, "tower"));
-    layer_->store().addFeature(makeKindPoint(106.001, "gate"));
+    layer_->store().addFeature(makeKindPoint(6.0, "tower"));
+    layer_->store().addFeature(makeKindPoint(6.001, "gate"));
 
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
@@ -723,7 +749,7 @@ TEST_F(FeatureRenderLayerTest, ZoomDrivenLineWidthUniform) {
         {{0.0, StyleExpression::literal(2.0)},
          {24.0, StyleExpression::literal(26.0)}});
     layer_->setStyle(style);
-    layer_->store().addFeature(makeLine(106.0, 29.0, 0.05));
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
 
     // 相机高 ~8.6e6m → zoom = log2(4e7/高) ≈ 2.2 → 宽度 ≈ 2 + 2.2 ≈ 4.2
     RenderCommandList commands = build();
@@ -787,7 +813,7 @@ TEST_F(FeatureRenderLayerTest, OutOfScopeExpressionsFallBackToLiterals) {
     EXPECT_EQ(nullptr, layer_->style().pointColorExpr);
     EXPECT_EQ(nullptr, layer_->style().lineWidthExpr);
 
-    layer_->store().addFeature(makeKindPoint(106.0, "tower"));
+    layer_->store().addFeature(makeKindPoint(6.0, "tower"));
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
@@ -802,7 +828,7 @@ TEST_F(FeatureRenderLayerTest, NoLabelWithoutFontOrName) {
     // 字体未注入:有 name 也不出标注
     Feature p;
     p.type = GeometryType::Point;
-    p.rings = {{Cartographic(106.0 * kDeg, 29.0 * kDeg)}};
+    p.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
     p.properties["name"] = "X";
     layer_->store().addFeature(std::move(p));
     for (const auto& cmd : build()) {
@@ -888,7 +914,7 @@ TEST_F(FeatureRenderLayerTest, BuiltinShapeBakedIntoVertexShape) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "star";
     layer_->setStyle(style);
-    layer_->store().addFeature(makePointAt(106.0));
+    layer_->store().addFeature(makePointAt(6.0));
 
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
@@ -907,7 +933,7 @@ TEST_F(FeatureRenderLayerTest, PinShapeIsBottomAnchored) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "pin";
     layer_->setStyle(style);
-    layer_->store().addFeature(makePointAt(106.0));
+    layer_->store().addFeature(makePointAt(6.0));
 
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
         build()[0].vertexBuffer);
@@ -924,7 +950,7 @@ TEST_F(FeatureRenderLayerTest, UnknownImageNameFallsBackToCircle) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "no-such-icon";
     layer_->setStyle(style);
-    layer_->store().addFeature(makePointAt(106.0));
+    layer_->store().addFeature(makePointAt(6.0));
 
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
         build()[0].vertexBuffer);
@@ -941,7 +967,7 @@ TEST_F(FeatureRenderLayerTest, AtlasIconBakesUvAspectAndBindsTexture) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "marker";
     layer_->setStyle(style);
-    layer_->store().addFeature(makePointAt(106.0));
+    layer_->store().addFeature(makePointAt(6.0));
 
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
@@ -969,7 +995,7 @@ TEST_F(FeatureRenderLayerTest, IconInjectedAfterBucketBuildTriggersRebuild) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "late";
     layer_->setStyle(style);
-    layer_->store().addFeature(makePointAt(106.0));
+    layer_->store().addFeature(makePointAt(6.0));
     {
         const auto* vb =
             dynamic_cast<const earth_engine::testing::DummyBuffer*>(
@@ -997,8 +1023,8 @@ TEST_F(FeatureRenderLayerTest, DataDrivenImageExpressionPerFeature) {
         "kind", {{"tower", StyleExpression::literalString("triangle")}},
         StyleExpression::literalString("square"));
     layer_->setStyle(style);
-    layer_->store().addFeature(makeKindPoint(106.0, "tower"));
-    layer_->store().addFeature(makeKindPoint(106.001, "gate"));
+    layer_->store().addFeature(makeKindPoint(6.0, "tower"));
+    layer_->store().addFeature(makeKindPoint(6.001, "gate"));
 
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
         build()[0].vertexBuffer);
@@ -1021,7 +1047,7 @@ TEST_F(FeatureRenderLayerTest, ZoomDrivenImageExpressionStripped) {
     layer_->setStyle(style);
     EXPECT_EQ(nullptr, layer_->style().pointImageExpr);
 
-    layer_->store().addFeature(makePointAt(106.0));
+    layer_->store().addFeature(makePointAt(6.0));
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
         build()[0].vertexBuffer);
     ASSERT_NE(nullptr, vb);

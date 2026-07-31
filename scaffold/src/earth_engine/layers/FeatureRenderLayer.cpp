@@ -1035,21 +1035,102 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         }
     }
 
+    // 视口桶裁剪:命令生成与标签避让只覆盖地平线圆内的桶(见
+    // visibleBucketKeys)。视野外桶保留 GPU 资源、跳过每帧成本——帧成本
+    // 从"总桶数"收敛到"可见桶数"。
+    const std::vector<BucketKey> visibleKeys = visibleBucketKeys(frameState);
+
     // P5c:逐帧标签避让 placement + fade 回写(在命令生成前,顶点流为准)。
-    updateLabelPlacement(frameState);
+    updateLabelPlacement(frameState, visibleKeys);
 
     if (buckets_.empty() && !previewGpuValid_) return;
 
-    for (const auto& [key, gpu] : buckets_) {
-        appendBucketCommands(gpu, frameState, renderer, commands);
+    for (BucketKey key : visibleKeys) {
+        auto it = buckets_.find(key);
+        if (it == buckets_.end()) continue;
+        appendBucketCommands(it->second, frameState, renderer, commands);
     }
     if (previewFeatureId_ != kInvalidFeatureId && previewGpuValid_) {
         appendBucketCommands(previewGpu_, frameState, renderer, commands);
     }
 }
 
-void FeatureRenderLayer::updateLabelPlacement(const FrameState& frameState) {
-    // collect:全桶 + 预览的 LabelEntry → 候选。
+std::vector<BucketKey> FeatureRenderLayer::visibleBucketKeys(
+    const FrameState& frameState) const {
+    constexpr double kPi = 3.14159265358979323846;
+    constexpr double kHalfPi = 0.5 * kPi;
+    if (!frameState.camera) {
+        // 防御:无相机退化为全桶(与接线前行为一致)。
+        std::vector<BucketKey> all;
+        all.reserve(buckets_.size());
+        for (const auto& [key, gpu] : buckets_) all.push_back(key);
+        std::sort(all.begin(), all.end());
+        return all;
+    }
+
+    const Cartographic camCarto =
+        ellipsoid_.cartesianToCartographic(frameState.camera->position());
+    const Vec3& radii = ellipsoid_.radii();
+    const double minRadius =
+        std::min(radii.x(), std::min(radii.y(), radii.z()));
+    const double camAltitude = std::max(0.0, camCarto.height());
+    // 要素侧地平线延伸:贴地要素含地形起伏 + heightOffset,上界取 10km
+    // (珠峰 8.8km + 余量)。两侧地平线角相加 = "相机与要素互见"的经典条件。
+    constexpr double kMaxFeatureAltitudeMeters = 10000.0;
+    const double theta =
+        std::acos(std::clamp(minRadius / (minRadius + camAltitude), 0.0, 1.0)) +
+        std::acos(std::clamp(
+            minRadius / (minRadius + kMaxFeatureAltitudeMeters), 0.0, 1.0));
+
+    double south = camCarto.latitude() - theta;
+    double north = camCarto.latitude() + theta;
+    double west, east;
+    if (south <= -kHalfPi || north >= kHalfPi) {
+        // 圆覆盖极点:该侧纬度到极,经度必须全量。
+        west = -kPi;
+        east = kPi;
+    } else {
+        // 球冠经度包围界:Δλ = asin(sinθ / cos(lat₀))。本分支保证
+        // |lat₀|+θ < π/2(否则走上面极点分支),asin 入参必 < 1。
+        const double halfLngSpan = std::asin(std::clamp(
+            std::sin(theta) / std::cos(camCarto.latitude()), 0.0, 1.0));
+        west = camCarto.longitude() - halfLngSpan;
+        east = camCarto.longitude() + halfLngSpan;
+    }
+    south = std::max(south, -kHalfPi);
+    north = std::min(north, kHalfPi);
+
+    std::vector<BucketKey> keys;
+    auto queryRect = [&](double w, double e) {
+        for (BucketKey key :
+             store_.bucketsInView(Rectangle(w, south, e, north))) {
+            keys.push_back(key);
+        }
+    };
+    if (east - west >= 2.0 * kPi) {
+        queryRect(-kPi, kPi);
+    } else if (west < -kPi) {
+        // 反经线跨界:拆两段(桶网格是裸平面 AABB,不懂 wrap)。
+        queryRect(-kPi, east);
+        queryRect(west + 2.0 * kPi, kPi);
+    } else if (east > kPi) {
+        queryRect(west, kPi);
+        queryRect(-kPi, east - 2.0 * kPi);
+    } else {
+        queryRect(west, east);
+    }
+    // 去重(oversized 桶在拆段查询时两段都会返回)。
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    return keys;
+}
+
+void FeatureRenderLayer::updateLabelPlacement(
+    const FrameState& frameState,
+    const std::vector<BucketKey>& visibleKeys) {
+    // collect:可见桶 + 预览的 LabelEntry → 候选。视野外桶不进候选:
+    // 它们的 fade 状态由 placement 状态机按"消失要素"清扫,重入视野按
+    // 新候选淡入;其顶点 opacity 停留旧值无妨——桶本身不出命令。
     std::vector<LabelCandidate> candidates;
     auto collect = [&](const BucketGpu& gpu) {
         for (const LabelEntry& e : gpu.labelEntries) {
@@ -1063,7 +1144,10 @@ void FeatureRenderLayer::updateLabelPlacement(const FrameState& frameState) {
             candidates.push_back(c);
         }
     };
-    for (const auto& [key, gpu] : buckets_) collect(gpu);
+    for (BucketKey key : visibleKeys) {
+        auto it = buckets_.find(key);
+        if (it != buckets_.end()) collect(it->second);
+    }
     if (previewGpuValid_) collect(previewGpu_);
 
     const Camera& cam = *frameState.camera;
@@ -1109,7 +1193,10 @@ void FeatureRenderLayer::updateLabelPlacement(const FrameState& frameState) {
             }
         }
     };
-    for (auto& [key, gpu] : buckets_) apply(gpu);
+    for (BucketKey key : visibleKeys) {
+        auto it = buckets_.find(key);
+        if (it != buckets_.end()) apply(it->second);
+    }
     if (previewGpuValid_) apply(previewGpu_);
 }
 
