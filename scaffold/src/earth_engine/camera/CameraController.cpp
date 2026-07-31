@@ -811,9 +811,19 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
                                        double timestamp) {
     glm::dquat delta;
 
+    // move 期锚定在抓取球面（半径=抓取点半径），不重 pick 地形：from/to 同
+    // 球面才能一次旋转把锚点精确放回指下。重 pick 地形时，指下地形高≠抓取
+    // 点高，法线对齐后锚点投影偏离手指（起伏越大/视角越斜越明显）＝不跟手。
     Vec3 targetPoint;
-    const bool anchorValid =
-        hasGrabbedPoint_ && pickSurfacePoint(xPixels, yPixels, targetPoint);
+    bool anchorValid = false;
+    if (hasGrabbedPoint_) {
+        const Ray ray = camera_->getPickRay(
+            static_cast<double>(xPixels),
+            static_cast<double>(yPixels),
+            static_cast<double>(viewportWidth_),
+            static_cast<double>(viewportHeight_));
+        anchorValid = intersectGrabSphere(ray, targetPoint);
+    }
 
     if (anchorValid) {
         // Anchor pan：旋转让被抓地表点跟随手指（起点/当前都命中球面）。

@@ -225,7 +225,8 @@ TEST_F(CameraControllerTest, DragUsesInjectedSurfacePicker) {
     controller_->onDragMove(430.0f, 300.0f);
     controller_->onDragEnd();
 
-    EXPECT_GE(pickCount, 2);
+    // move 期锚定抓取球面不重 pick 地形（跟手性），picker 只在 dragStart 调用。
+    EXPECT_EQ(pickCount, 1);
     EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 0.0);
 }
 

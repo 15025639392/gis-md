@@ -13805,13 +13805,16 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
           "TileRenderPlanFinalizer: interaction fallback renders clipped drawable ancestor without sync prep");
     // Clip V is NW-based (terrain texcoord0 keeps V=0 at the projected
     // north edge), so the north-east child quadrant starts at v=0.
-    check(std::abs(plan.renderEntries.front().surfaceClipUv[0] - 0.5f) <
+    // 子象限 (0.5,0,0.5,0.5) 再按封缝带外扩 3% 跨度(0.015)并 clamp 到
+    // [0,1](见 TileSurfaceClip::kClipSeamSealMarginFraction):
+    // u∈[0.485,1.0] v∈[0,0.515]。
+    check(std::abs(plan.renderEntries.front().surfaceClipUv[0] - 0.485f) <
                   1e-6f &&
               std::abs(plan.renderEntries.front().surfaceClipUv[1] - 0.0f) <
                   1e-6f &&
-              std::abs(plan.renderEntries.front().surfaceClipUv[2] - 0.5f) <
+              std::abs(plan.renderEntries.front().surfaceClipUv[2] - 0.515f) <
                   1e-6f &&
-              std::abs(plan.renderEntries.front().surfaceClipUv[3] - 0.5f) <
+              std::abs(plan.renderEntries.front().surfaceClipUv[3] - 0.515f) <
                   1e-6f,
           "TileRenderPlanFinalizer: ancestor fallback clip UVs cover the selected child quadrant");
 }
@@ -21699,12 +21702,16 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
     firstSurface.kind = RenderCommandKind::GltfPrimitive;
     firstSurface.terrainRenderContent = true;
     firstSurface.textures = {sharedTexture};
+    // exact 口径现按 imageryAncestorLevelDelta==0 分档(「糊几级」直方图),
+    // 不再是「有任意纹理」。
+    firstSurface.imageryAncestorLevelDelta = 0;
     firstSurface.surfaceGeometryZoom = 3;
     firstSurface.surfaceTextureZoom = 4;
     RenderCommand secondSurface;
     secondSurface.kind = RenderCommandKind::GltfPrimitive;
     secondSurface.terrainRenderContent = true;
     secondSurface.textures = {sharedTexture, secondTexture};
+    secondSurface.imageryAncestorLevelDelta = 0;
     secondSurface.surfaceGeometryZoom = 7;
     secondSurface.surfaceTextureZoom = 6;
     RenderCommand missingImagerySurface;
@@ -23603,6 +23610,9 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
         res.indexCount = 6;
         res.vertexCount = 4;
         tile->content.renderContent.addGltfPrimitiveResource(std::move(res));
+        // 高度查询采 retainedHeightmap(P3 迁移后 glTF 网格不再是采样源)。
+        tile->content.renderContent.setRetainedHeightmap(
+            makeFlatHeightmap(123.0f));
         tile->markRenderContentDone();
     };
     setupTerrainTile(westTerrain);
@@ -23725,7 +23735,15 @@ void testSceneTerrainContentCountsAsTerrainRenderContent() {
         }));
     check(terrainGltfCommands > 0,
           "Scene: glTF terrain contributes terrain render commands");
-    check(scene.diagnostics().renderGltfPrimitives == terrainGltfCommands &&
+    // renderGltfPrimitives 是全量 glTF 命令口径:极帽(PolarCapRenderer)复用
+    // glTF primitive 但无 terrainRenderContent,不能拿地形子集去对齐全量数。
+    const int allGltfCommands = static_cast<int>(std::count_if(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive;
+        }));
+    check(scene.diagnostics().renderGltfPrimitives == allGltfCommands &&
               scene.diagnostics().terrainGltfPrimitiveCommands ==
                   terrainGltfCommands &&
               scene.diagnostics().terrainRenderContentCommands ==
@@ -24145,8 +24163,19 @@ void testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers() {
     newPlan.renderEntries.push_back(newRootEntry);
     check(!newRaw->shouldHoldPresentationFrame(),
           "Scene: terrain takeover fixture replacement root passes base imagery hold");
+    // 接管闸不再拿渲染项条数当覆盖度代理(条数下降可能只是 dedup/LOD 收敛,
+    // 且该代理会自持死锁),改用 finalizer 的丢弃计数=真实缺口信号:
+    // 替换树 1 条 entry 且零丢弃 → 覆盖完整,放行;有被选中却拿不到几何的
+    // 瓦片(丢弃计数>0)才 hold。
+    check(!scene.shouldHoldPresentationFrame(),
+          "Scene: terrain takeover releases a same-camera replacement with full coverage despite fewer entries");
+    newPlan.renderEntryDropNotBuildableCount = 1;
     check(scene.shouldHoldPresentationFrame(),
           "Scene: terrain takeover holds a same-camera replacement that would reduce visible coverage");
+    newPlan.renderEntryDropNotBuildableCount = 0;
+    newPlan.renderEntryDropClipUvCount = 1;
+    check(scene.shouldHoldPresentationFrame(),
+          "Scene: terrain takeover holds a same-camera replacement with clip-uv dropped coverage");
 }
 
 void testScenePresentationHoldsWhenPlannedTerrainLacksBaseImageryCommand() {
@@ -24890,11 +24919,14 @@ void testTilesetSampleHeightUsesBestLoadedTerrainTile() {
         makeFlatGeographicTerrainGltfModel(rootBounds, 10.0),
         Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
+    // 高度查询采 retainedHeightmap(P3 迁移后 glTF 网格不再是采样源)。
+    root->content.renderContent.setRetainedHeightmap(makeFlatHeightmap(10.0f));
     root->markRenderContentDone();
     child->content.renderContent.prepareGltfContent(
         makeFlatGeographicTerrainGltfModel(childBounds, 42.0),
         Mat4::identity());
     child->content.renderContent.setTerrainRenderContent(true);
+    child->content.renderContent.setRetainedHeightmap(makeFlatHeightmap(42.0f));
     child->markRenderContentDone();
     const double lng = (childBounds.west() + childBounds.east()) * 0.5;
     const double lat = (childBounds.south() + childBounds.north()) * 0.5;
@@ -24925,6 +24957,8 @@ void testTilesetSampleHeightFallsBackToLoadedAncestorTerrain() {
         makeFlatGeographicTerrainGltfModel(rootBounds, 123.0),
         Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
+    // 高度查询采 retainedHeightmap(P3 迁移后 glTF 网格不再是采样源)。
+    root->content.renderContent.setRetainedHeightmap(makeFlatHeightmap(123.0f));
     root->markRenderContentDone();
     const double lng = (childBounds.west() + childBounds.east()) * 0.5;
     const double lat = (childBounds.south() + childBounds.north()) * 0.5;
@@ -25151,10 +25185,13 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
           "Tileset: clipped fallback enables surface UV clipping");
     // Clip V is NW-based (terrain texcoord0 keeps V=0 at the projected
     // north edge), so the south-west child quadrant starts at v=0.5.
+    // 子象限 (0,0.5,0.5,0.5) 再按封缝带外扩 3% 跨度(0.015)并 clamp 到
+    // [0,1](见 TileSurfaceClip::kClipSeamSealMarginFraction):
+    // u∈[0,0.515] v∈[0.485,1.0]。
     check(std::abs(command.surfaceClipUv[0] - 0.0f) < 1e-6f &&
-              std::abs(command.surfaceClipUv[1] - 0.5f) < 1e-6f &&
-              std::abs(command.surfaceClipUv[2] - 0.5f) < 1e-6f &&
-              std::abs(command.surfaceClipUv[3] - 0.5f) < 1e-6f,
+              std::abs(command.surfaceClipUv[1] - 0.485f) < 1e-6f &&
+              std::abs(command.surfaceClipUv[2] - 0.515f) < 1e-6f &&
+              std::abs(command.surfaceClipUv[3] - 0.515f) < 1e-6f,
           "Tileset: clipped fallback only fills the selected child quadrant");
 }
 void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {

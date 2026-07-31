@@ -82,6 +82,22 @@ struct TileSurfaceClip {
             (texcoordRect.north() - descendantProjected.south()) /
             ancestorHeight;
 
+        // 裁剪封缝带:clip 是片元级 discard,切缝处没有裙墙可用 —— 与相邻
+        // 面(fill 代理 / 不同层级祖先)高度不一致时,边界会张开一条透天细缝
+        // (运动/缩放期可见,数据就绪 clip 退场后自愈)。把裁剪矩形按子瓦片
+        // 自身跨度外扩一小圈,让 clip 面横向盖过邻居边界,起裙墙同等的封缝
+        // 作用。同祖先兄弟 clip 互相重叠时几何逐位相同,深度一致无伪影。
+        // 真机 A/B(冷缓存山地掠视暂态):0 → 边界天色细缝;0.03 → 同型边界
+        // 无缝。矩形贴着祖先 texcoordRect 边缘时会被下方 clamp 截断,该处
+        // 由祖先自身的外缘裙墙接管。
+        constexpr double kClipSeamSealMarginFraction = 0.03;
+        const double uSpan = uMax - uMin;
+        const double vSpan = vMax - vMin;
+        uMin -= uSpan * kClipSeamSealMarginFraction;
+        uMax += uSpan * kClipSeamSealMarginFraction;
+        vMin -= vSpan * kClipSeamSealMarginFraction;
+        vMax += vSpan * kClipSeamSealMarginFraction;
+
         uMin = std::clamp(uMin, 0.0, 1.0);
         uMax = std::clamp(uMax, 0.0, 1.0);
         vMin = std::clamp(vMin, 0.0, 1.0);

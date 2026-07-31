@@ -297,10 +297,12 @@ TEST(
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
     // Clip V is NW-based (terrain texcoord0 keeps V=0 at the projected
     // north edge), so the north-east child quadrant starts at v=0.
-    EXPECT_NEAR(entry.surfaceClipUv[0], 0.5f, 1e-6f);
+    // 子象限 (0.5,0,0.5,0.5) 按封缝带外扩 3% 跨度并 clamp(见
+    // TileSurfaceClip::kClipSeamSealMarginFraction)。
+    EXPECT_NEAR(entry.surfaceClipUv[0], 0.485f, 1e-6f);
     EXPECT_NEAR(entry.surfaceClipUv[1], 0.0f, 1e-6f);
-    EXPECT_NEAR(entry.surfaceClipUv[2], 0.5f, 1e-6f);
-    EXPECT_NEAR(entry.surfaceClipUv[3], 0.5f, 1e-6f);
+    EXPECT_NEAR(entry.surfaceClipUv[2], 0.515f, 1e-6f);
+    EXPECT_NEAR(entry.surfaceClipUv[3], 0.515f, 1e-6f);
 }
 
 TEST(
@@ -683,10 +685,11 @@ TEST(
     EXPECT_EQ(&parent, entry.renderTile);
     EXPECT_TRUE(entry.usesAncestorFallback);
     EXPECT_TRUE(entry.surfaceClipEnabled);
-    EXPECT_NEAR(0.5f, entry.surfaceClipUv[0], 1e-6f);
+    // 子象限外扩封缝带(见 TileSurfaceClip::kClipSeamSealMarginFraction)。
+    EXPECT_NEAR(0.485f, entry.surfaceClipUv[0], 1e-6f);
     EXPECT_NEAR(0.0f, entry.surfaceClipUv[1], 1e-6f);
-    EXPECT_NEAR(0.5f, entry.surfaceClipUv[2], 1e-6f);
-    EXPECT_NEAR(0.5f, entry.surfaceClipUv[3], 1e-6f);
+    EXPECT_NEAR(0.515f, entry.surfaceClipUv[2], 1e-6f);
+    EXPECT_NEAR(0.515f, entry.surfaceClipUv[3], 1e-6f);
 }
 
 TEST(
@@ -736,10 +739,12 @@ TEST(
     EXPECT_EQ(&parent, entry.renderTile);
     EXPECT_TRUE(entry.usesAncestorFallback);
     EXPECT_TRUE(entry.surfaceClipEnabled);
-    EXPECT_NEAR(0.5f, entry.surfaceClipUv[0], 1e-6f);
+    // 子象限外扩封缝带:v 起点 0 处 clamp,高度 = 1.03×投影跨度(见
+    // TileSurfaceClip::kClipSeamSealMarginFraction)。
+    EXPECT_NEAR(0.485f, entry.surfaceClipUv[0], 1e-6f);
     EXPECT_NEAR(0.0f, entry.surfaceClipUv[1], 1e-6f);
-    EXPECT_NEAR(0.5f, entry.surfaceClipUv[2], 1e-6f);
-    EXPECT_NEAR(expectedVScale, entry.surfaceClipUv[3], 1e-6f);
+    EXPECT_NEAR(0.515f, entry.surfaceClipUv[2], 1e-6f);
+    EXPECT_NEAR(expectedVScale * 1.03f, entry.surfaceClipUv[3], 1e-5f);
     EXPECT_GT(std::abs(entry.surfaceClipUv[3] - 0.5f), 1e-3f);
 }
 

@@ -545,9 +545,11 @@ void SceneRenderPipeline::aggregateDiagnostics(
     // 逐瓦片数 load 状态),掠视宽视野(百级可见瓦片/千级 registry)下 ~3-5ms/帧,
     // 且字段纯诊断消费(调试面板/EarthPerf 日志,无功能逻辑读取)。节流到每 15
     // 帧聚合一次,其余帧保留上次值(最多 15 帧陈旧;EarthPerf 120 帧心跳是 15
-    // 的倍数,心跳行永远拿到当帧新值)。
+    // 的倍数,心跳行永远拿到当帧新值)。首帧总是聚合,单帧消费者(启动即读的
+    // 调试面板/单帧渲染的测试)不吃 15 帧空窗。
     constexpr uint64_t kAggregateIntervalFrames = 15;
-    if (context.frameState.frameId % kAggregateIntervalFrames != 0u) {
+    if (context.frameState.frameId > 1u &&
+        context.frameState.frameId % kAggregateIntervalFrames != 0u) {
         diagnosticsMs = perf::nowMs() - startMs;
         return;
     }
