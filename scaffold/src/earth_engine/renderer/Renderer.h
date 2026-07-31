@@ -10,6 +10,7 @@ namespace earth_engine {
 
 struct FrameState;
 class GlyphAtlas;
+class IconAtlas;
 class RasterOverlayTile;
 struct TileKey;
 class TerrainPageStore;
@@ -49,8 +50,12 @@ public:
     /// 服务 stencil 分类等 uniform 色路径)
     ShaderProgram* vectorFillShader() const;
 
-    /// 矢量点符号 billboard shader（矢量 P5a,SDF 圆;编辑手柄/Point 要素）
+    /// 矢量点符号/图标 billboard shader（矢量 P5a 解析 SDF 形状 + P6c 位图
+    /// 图集通道;编辑手柄/Point 要素/marker 共用）
     ShaderProgram* vectorPointShader() const;
+
+    /// 位图图标图集（矢量 P6c;图标位图由应用层经 Engine 注入）
+    IconAtlas* iconAtlas() const;
 
     /// 矢量文字标注 shader（矢量 P5b,SDF 字形 + halo）
     ShaderProgram* vectorLabelShader() const;

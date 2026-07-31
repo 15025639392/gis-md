@@ -12,6 +12,7 @@ std::optional<StyleValue> lerpValues(const StyleValue& a,
                                      const StyleValue& b,
                                      double t) {
     if (a.kind() != b.kind()) return std::nullopt;
+    if (a.kind() == StyleValue::Kind::String) return std::nullopt;  // 不可插值
     if (a.kind() == StyleValue::Kind::Number) {
         return StyleValue(a.number() + (b.number() - a.number()) * t);
     }
@@ -37,6 +38,13 @@ StyleExpression::Ptr StyleExpression::literal(
     auto e = std::shared_ptr<StyleExpression>(new StyleExpression());
     e->op_ = Op::Literal;
     e->literal_ = StyleValue(color);
+    return e;
+}
+
+StyleExpression::Ptr StyleExpression::literalString(std::string s) {
+    auto e = std::shared_ptr<StyleExpression>(new StyleExpression());
+    e->op_ = Op::Literal;
+    e->literal_ = StyleValue(std::move(s));
     return e;
 }
 

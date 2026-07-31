@@ -289,11 +289,29 @@ static bool createEngine() {
                   StyleExpression::literal({1.00f, 0.35f, 0.25f, 0.95f})},
                  {"gate",
                   StyleExpression::literal({1.00f, 0.85f, 0.20f, 0.95f})}},
-                StyleExpression::literal({0.35f, 0.95f, 0.45f, 0.95f}));
+                // 兜底分支给中性白:这一支走 P6c 位图图标(beacon),顶点色
+                // 对位图是 tint 乘子,染色会盖掉图本身的三段色,验不了 uv。
+                StyleExpression::literal({1.00f, 1.00f, 1.00f, 1.00f}));
             style.lineWidthExpr = StyleExpression::interpolateLinear(
                 StyleExpression::zoom(),
                 {{10.0, StyleExpression::literal(2.0)},
                  {15.0, StyleExpression::literal(10.0)}});
+            // P6c 数据驱动选图:tower → 内置水滴 pin(底尖压在锚点上),
+            // gate → 内置五角星,缺省 → 位图图标 beacon(下面注入;图集
+            // 代次变化会自动触发重镶,注入晚于建桶也能补上)。
+            // 一屏同时覆盖「解析 SDF 形状」与「位图图集」两条通道。
+            style.pointImageExpr = StyleExpression::match(
+                "kind",
+                {{"tower", StyleExpression::literalString("pin")},
+                 {"gate", StyleExpression::literalString("star")}},
+                StyleExpression::literalString("beacon"));
+            style.pointSizePx = 26.0f;
+            // marker 语义:图形整个立在锚点上方(而非以锚点为中心)。斜视
+            // 下居中锚定会让下半个符号被前方地面按深度遮掉——billboard 用
+            // 的是锚点深度,身下的地更近。
+            style.pointAnchor = SymbolAnchor::Bottom;
+            // 底部锚定后符号整体上移,标注基线要让开符号高度,否则字压图。
+            style.labelOffsetPx = style.pointSizePx + 6.0f;
             vectorLayer->setStyle(style);
 
             // 尺寸压到 RESET 预设视角(106.508,29.617,1.5km,-45°)一屏内:
@@ -351,6 +369,40 @@ static bool createEngine() {
                 vectorLayer->store().addFeature(std::move(obs));
             }
 
+            // P6c 图标:注入一张程序生成的位图图标(应用层供 RGBA 像素,
+            // 引擎不做图片解码)。竖向三段色(上橙/中白/下青)是故意的——
+            // 屏幕上若上下颠倒即说明图集 uv 的 v 方向接反了。
+            {
+                constexpr int kIconW = 24;
+                constexpr int kIconH = 32;
+                std::vector<uint8_t> icon(
+                    static_cast<size_t>(kIconW) * kIconH * 4, 0);
+                for (int y = 0; y < kIconH; ++y) {
+                    for (int x = 0; x < kIconW; ++x) {
+                        uint8_t* px =
+                            &icon[(static_cast<size_t>(y) * kIconW + x) * 4];
+                        const bool border = x < 2 || y < 2 ||
+                                            x >= kIconW - 2 || y >= kIconH - 2;
+                        if (border) {
+                            px[0] = px[1] = px[2] = 20;
+                            px[3] = 255;
+                        } else if (y < kIconH / 3) {
+                            px[0] = 250; px[1] = 140; px[2] = 30; px[3] = 255;
+                        } else if (y < kIconH * 2 / 3) {
+                            px[0] = px[1] = px[2] = 245;
+                            px[3] = 255;
+                        } else {
+                            px[0] = 20; px[1] = 190; px[2] = 200; px[3] = 255;
+                        }
+                    }
+                }
+                if (gEngine->addIconImage("beacon", kIconW, kIconH, icon)) {
+                    LOGI("VectorP6c icon injected: beacon %dx%d",
+                         kIconW, kIconH);
+                } else {
+                    LOGI("VectorP6c icon injection FAILED");
+                }
+            }
             // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。候选序:
             // Oplus-Serif=本机中文 TrueType;NotoSansCJK.ttc 是 CFF 会被
             // stbtt 拒(留在表里做健壮性验证);Roboto 兜底拉丁。

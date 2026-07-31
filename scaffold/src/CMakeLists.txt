@@ -144,6 +144,9 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/Renderer.cpp
     earth_engine/renderer/GlyphAtlas.h
     earth_engine/renderer/GlyphAtlas.cpp
+    earth_engine/renderer/IconAtlas.h
+    earth_engine/renderer/IconAtlas.cpp
+    earth_engine/renderer/SymbolShape.h
     earth_engine/renderer/OffscreenPostProcess.h
     earth_engine/renderer/OffscreenPostProcess.cpp
     earth_engine/renderer/VirtualTexturePage.h

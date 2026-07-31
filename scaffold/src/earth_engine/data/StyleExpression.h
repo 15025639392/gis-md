@@ -10,25 +10,33 @@
 
 namespace earth_engine {
 
-/// 样式表达式的值:数值 或 RGBA 颜色(分量 [0,1])。字符串只作 match 的
-/// 分支标签与 get 的属性原文,不作为值在树里流动(避免弱类型泥潭)。
+/// 样式表达式的值:数值 / RGBA 颜色(分量 [0,1])/ 字符串。
+///
+/// 字符串是 P6c 为「图形名」开的**只读枚举位**:只由 literal 产出、由
+/// match 选分支、由图形解析消费,不参与任何算术(interpolate 遇字符串
+/// 直接求值失败)。get 仍只做数值化——属性原文不自动变字符串值,避免
+/// 弱类型在树里流动。
 class StyleValue {
 public:
-    enum class Kind { Number, Color };
+    enum class Kind { Number, Color, String };
 
     StyleValue() : kind_(Kind::Number), number_(0.0) {}
     explicit StyleValue(double n) : kind_(Kind::Number), number_(n) {}
     explicit StyleValue(const std::array<float, 4>& c)
         : kind_(Kind::Color), color_(c) {}
+    explicit StyleValue(std::string s)
+        : kind_(Kind::String), string_(std::move(s)) {}
 
     Kind kind() const { return kind_; }
     double number() const { return number_; }
     const std::array<float, 4>& color() const { return color_; }
+    const std::string& string() const { return string_; }
 
 private:
     Kind kind_;
     double number_ = 0.0;
     std::array<float, 4> color_{0, 0, 0, 1};
+    std::string string_;
 };
 
 /// 数据驱动样式表达式(矢量 P6b,设计 §12 MapLibre style-spec 子集)。
@@ -55,6 +63,9 @@ public:
 
     static Ptr literal(double n);
     static Ptr literal(const std::array<float, 4>& color);
+    /// 字符串字面量(P6c 图形名;只配 match 分支/兜底用)。独立命名而非
+    /// literal 重载:{...} 花括号初始化会与颜色重载歧义。
+    static Ptr literalString(std::string s);
     static Ptr get(std::string property);
     static Ptr zoom();
     static Ptr match(std::string property,

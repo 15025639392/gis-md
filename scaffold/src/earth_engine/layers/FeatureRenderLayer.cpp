@@ -3,6 +3,7 @@
 #include "../data/PolygonTessellator.h"
 #include "../data/LineTessellator.h"
 #include "../renderer/GlyphAtlas.h"
+#include "../renderer/IconAtlas.h"
 #include "../renderer/RenderDevice.h"
 #include "../renderer/Renderer.h"
 #include "../scene/FrameState.h"
@@ -29,6 +30,10 @@ namespace {
 /// line ribbon 顶点的 GPU 打包(48B,对齐 GLES VectorLine48 布局与
 /// §6.2 shader attribute 0-5)。CPU 侧 LineVertex 是 double,不能直传。
 constexpr int kLineVertexFloats = 12;
+
+/// 点/图标符号顶点的 GPU 打包(36B,对齐 GLES VectorPoint36 布局:
+/// anchor(3f)+offsetUnit(2f)+uv(2f)+color(RGBA8 占 1f)+shape(1f))。
+constexpr int kPointVertexFloats = 9;
 
 /// RGBA [0,1] → RGBA8 打包(小端布局 R 在低字节)。
 uint32_t packColorU32(const std::array<float, 4>& c) {
@@ -94,6 +99,58 @@ std::array<float, 4> resolveColor(
     return v->color();
 }
 
+/// 字符串表达式求值(P6c 图形名,镶嵌期上下文 = 属性,无 zoom)。
+/// 求值失败/非字符串 → 回落字面量。
+std::string resolveString(
+    const StyleExpression::Ptr& expr,
+    const std::unordered_map<std::string, std::string>& properties,
+    const std::string& fallback) {
+    if (!expr) return fallback;
+    const auto v = expr->evaluate(&properties, std::nan(""));
+    if (!v || v->kind() != StyleValue::Kind::String) return fallback;
+    return v->string();
+}
+
+/// 单个符号 quad 的几何/采样解析(P6c)。尺寸单位 = pointSizePx 的倍数:
+/// 内置形状是边长 1 的正方 quad;位图图标高 1、宽按源图宽高比。
+struct ResolvedSymbol {
+    float shape = 0.0f;          ///< >=0 内置形状 id;<0 = 图集哨兵
+    float halfWidthUnits = 0.5f; ///< quad 半宽(尺寸倍数)
+    bool bottomAnchored = false; ///< true = quad 画在锚点上方
+    /// 图集 uv 矩形(内置形状不用,fragment 走局部坐标)。
+    float u0 = 0.0f, v0 = 0.0f, u1 = 0.0f, v1 = 0.0f;
+};
+
+ResolvedSymbol resolveSymbol(const std::string& name,
+                             SymbolAnchor anchor,
+                             const IconAtlas* atlas) {
+    ResolvedSymbol out;
+    SymbolShape builtin = SymbolShape::Circle;
+    const IconAtlas::Frame* frame = nullptr;
+    if (!symbolShapeFromName(name, &builtin)) {
+        // 非内置名 → 查位图图集;查不到(未注入/名字写错)回落 circle,
+        // 让点仍然可见——图标缺失不该让要素凭空消失。
+        frame = atlas ? atlas->frame(name) : nullptr;
+    }
+    if (frame) {
+        out.shape = kSymbolShapeAtlas;
+        const float aspect =
+            frame->heightPx > 0.0f ? frame->widthPx / frame->heightPx : 1.0f;
+        out.halfWidthUnits = 0.5f * aspect;
+        out.u0 = frame->u0;
+        out.v0 = frame->v0;
+        out.u1 = frame->u1;
+        out.v1 = frame->v1;
+        out.bottomAnchored = anchor == SymbolAnchor::Bottom;
+    } else {
+        out.shape = static_cast<float>(static_cast<int>(builtin));
+        out.bottomAnchored = anchor == SymbolAnchor::Bottom ||
+                             (anchor == SymbolAnchor::Auto &&
+                              symbolShapeIsBottomAnchored(builtin));
+    }
+    return out;
+}
+
 std::unique_ptr<Buffer> makeBuffer(RenderDevice* device,
                                    const void* data,
                                    size_t size,
@@ -141,6 +198,7 @@ void FeatureRenderLayer::setStyle(const FeatureRenderStyle& s) {
     sanitize(style_.pointColorExpr, true, false, "pointColor");
     sanitize(style_.lineWidthExpr, false, true, "lineWidth");
     sanitize(style_.pointSizeExpr, false, true, "pointSize");
+    sanitize(style_.pointImageExpr, true, false, "pointImage");
     // 高度/细分/模式都影响几何:已建桶按新样式全部重镶。
     std::vector<BucketKey> keys;
     keys.reserve(buckets_.size());
@@ -412,9 +470,10 @@ void FeatureRenderLayer::tessellateFeatureInto(
             break;
         }
         case GeometryType::Point: {
-            // P5a 点符号:每点 billboard quad(anchor 3f + corner 2f +
-            // color 4B = 24B,corner 展开在顶点着色器)。Point 几何 =
-            // rings[0][0];贴地时 geometry 已由预变换写好(采样 + offset)。
+            // P5a/P6c 符号:每点 billboard quad(anchor 3f + offsetUnit 2f
+            // + uv 2f + color 4B + shape 1f = 36B,quad 在顶点着色器按
+            // u_pointSizePx 展开)。Point 几何 = rings[0][0];贴地时
+            // geometry 已由预变换写好(采样 + offset)。
             if (geometry->rings.empty() || geometry->rings[0].empty()) break;
             const Cartographic& c = geometry->rings[0][0];
             const Vec3 anchor = ellipsoid_.cartographicToCartesian(
@@ -422,17 +481,37 @@ void FeatureRenderLayer::tessellateFeatureInto(
                              c.height() + tessHeightOffset));
             ensureOrigin(anchor);
             const Vec3 rel = anchor - origin;
+            const ResolvedSymbol sym = resolveSymbol(
+                resolveString(style_.pointImageExpr, feature.properties,
+                              style_.pointImage),
+                style_.pointAnchor, iconAtlas_);
             const uint32_t base =
-                static_cast<uint32_t>(pointVerts.size() / 6);
+                static_cast<uint32_t>(pointVerts.size() / kPointVertexFloats);
+            // corner ∈ {±1}²(x 右为正,y 上为正)。
             static constexpr float kCorners[4][2] = {
                 {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f}};
             for (const auto& corner : kCorners) {
+                // 竖直对齐:居中 y∈[-0.5,0.5];底部锚定 y∈[0,1]。
+                const float offsetY = sym.bottomAnchored
+                                          ? (corner[1] + 1.0f) * 0.5f
+                                          : corner[1] * 0.5f;
+                // 图集通道 uv 取 frame 矩形(纹理 v 向下,屏幕 y 向上 →
+                // 上边角取 v0);内置形状 uv 即 [-1,1]² 局部坐标。
+                const float u = sym.shape < 0.0f
+                                    ? (corner[0] < 0.0f ? sym.u0 : sym.u1)
+                                    : corner[0];
+                const float v = sym.shape < 0.0f
+                                    ? (corner[1] > 0.0f ? sym.v0 : sym.v1)
+                                    : corner[1];
                 pointVerts.push_back(static_cast<float>(rel.x()));
                 pointVerts.push_back(static_cast<float>(rel.y()));
                 pointVerts.push_back(static_cast<float>(rel.z()));
-                pointVerts.push_back(corner[0]);
-                pointVerts.push_back(corner[1]);
+                pointVerts.push_back(corner[0] * sym.halfWidthUnits);
+                pointVerts.push_back(offsetY);
+                pointVerts.push_back(u);
+                pointVerts.push_back(v);
                 pointVerts.push_back(pointColorPacked);
+                pointVerts.push_back(sym.shape);
             }
             const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
             for (uint32_t idx : quad) pointIndices.push_back(base + idx);
@@ -824,7 +903,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     std::vector<uint32_t> fillIndices;
     std::vector<float> lineVerts;      // 11 float/顶点(VectorLine44)
     std::vector<uint32_t> lineIndices;
-    std::vector<float> pointVerts;     // 5 float/顶点(anchor+corner)
+    std::vector<float> pointVerts;     // kPointVertexFloats/顶点
     std::vector<uint32_t> pointIndices;
     std::vector<float> labelVerts;     // 8 float/顶点(anchor+offsetPx+uv+opacity)
     std::vector<uint32_t> labelIndices;
@@ -882,10 +961,15 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
 
     // 文字标注(P5b):缓存图集指针(重镶/预览路径无 Renderer 引用);字体
     // 就绪状态翻转 → 全部桶重镶补标注(字体注入通常晚于要素导入)。
+    // 图标图集(P6c)同构:图标注入通常也晚于要素导入,代次变化 → 重镶
+    // 补 uv(顶点里烘的是 frame 的 uv 与宽高比,新图标不重镶就画不出)。
+    iconAtlas_ = renderer.iconAtlas();
+    const uint64_t iconRevision = iconAtlas_ ? iconAtlas_->revision() : 0;
     glyphAtlas_ = renderer.glyphAtlas();
     const bool atlasReady = glyphAtlas_ && glyphAtlas_->ready();
-    if (atlasReady != lastAtlasReady_) {
+    if (atlasReady != lastAtlasReady_ || iconRevision != lastIconRevision_) {
         lastAtlasReady_ = atlasReady;
+        lastIconRevision_ = iconRevision;
         std::vector<BucketKey> keys;
         keys.reserve(buckets_.size());
         for (const auto& entry : buckets_) keys.push_back(entry.first);
@@ -1168,7 +1252,8 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.indexBuffer = gpu.pointIndexBuffer.get();
             cmd.indexCount = gpu.pointIndexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
-            cmd.vertexStride = 24;  // anchor(12)+corner(8)+color(4,RGBA8)
+            // anchor(12)+offsetUnit(8)+uv(8)+color(4,RGBA8)+shape(4)
+            cmd.vertexStride = 36;
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
             cmd.depthTest = true;
             cmd.depthWrite = false;
@@ -1178,6 +1263,11 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
                                           static_cast<float>(vpH)};
             cmd.uniforms["u_pointSizePx"] = {pointSizePx};
+            // P6c:图集通道的顶点(shape<0)要采位图。纹理常挂(有图标才
+            // 存在),无图集时桶里也不会有图集顶点,shader 分支不触达。
+            if (iconAtlas_ && iconAtlas_->texture()) {
+                cmd.textures.push_back(iconAtlas_->texture());
+            }
             commands.push_back(std::move(cmd));
         }
 

@@ -102,7 +102,8 @@ public:
 
     bool updateTextureRegion(Texture*, int, int, int, int,
                              const uint8_t*, size_t, int = 0) override {
-        return false;
+        ++textureRegionUpdateCount;
+        return textureRegionUploadSucceeds;
     }
 
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
@@ -219,6 +220,10 @@ public:
     RenderCommandList submittedCommands;
     TextureDesc lastTextureDesc;
     int createdTextureCount = 0;
+    int textureRegionUpdateCount = 0;
+    /// region 上传结果。默认 false 是历史行为(多数用例只关心是否发起
+    /// 上传);把上传成败当契约的用例(如 IconAtlas 注册 frame)置 true。
+    bool textureRegionUploadSucceeds = false;
     int createdBufferCount = 0;
     int updatedBufferCount = 0;
     int bufferCreationAttempts = 0;

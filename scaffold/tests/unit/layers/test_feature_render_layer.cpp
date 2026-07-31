@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/layers/FeatureRenderLayer.h"
+#include "earth_engine/renderer/IconAtlas.h"
 #include "earth_engine/renderer/Renderer.h"
+#include "earth_engine/renderer/SymbolShape.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
@@ -46,6 +48,8 @@ Feature makeLine(double lonDeg, double latDeg, double spanDeg) {
 class FeatureRenderLayerTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // P6c 图标图集把 region 上传成败当契约(失败 = 不登记 frame)。
+        device_.textureRegionUploadSucceeds = true;
         renderer_ = std::make_unique<Renderer>(&device_);
         ASSERT_TRUE(renderer_->initialize());
         layer_ = std::make_unique<FeatureRenderLayer>(
@@ -129,7 +133,7 @@ TEST_F(FeatureRenderLayerTest, LineStringEmitsOnlyLineCommand) {
 }
 
 TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
-    // P5a:Point 要素 = billboard quad(4 顶点 6 索引,20B 顶点)。
+    // P5a/P6c:Point 要素 = billboard quad(4 顶点 6 索引,36B 顶点)。
     Feature p;
     p.type = GeometryType::Point;
     p.rings = {{Cartographic(106.0 * kDeg, 29.0 * kDeg)}};
@@ -139,7 +143,7 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     ASSERT_EQ(1u, commands.size());
     const RenderCommand& cmd = commands[0];
     EXPECT_EQ(RenderCommandKind::VectorPoint, cmd.kind);
-    EXPECT_EQ(24, cmd.vertexStride);  // P6b:+color(RGBA8)
+    EXPECT_EQ(36, cmd.vertexStride);  // P6b:+color;P6c:+uv/shape
     EXPECT_EQ(6, cmd.indexCount);
     EXPECT_EQ("color", cmd.pass);
     EXPECT_TRUE(cmd.depthTest);
@@ -148,19 +152,23 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     ASSERT_EQ(1u, cmd.uniforms.count("u_pointSizePx"));
     ASSERT_EQ(1u, cmd.uniforms.count("u_viewport"));
 
-    // 顶点打包:4 × (anchor rel 3f + corner 2f + color 4B);首顶点
-    // anchor = 桶原点 → rel(0,0,0),corner=(-1,-1)。
+    // 顶点打包:4 × (anchor rel 3f + offsetUnit 2f + uv 2f + color 4B +
+    // shape 1f);首顶点 anchor = 桶原点 → rel(0,0,0),corner=(-1,-1) →
+    // 默认 circle 居中锚定 → offsetUnit(-0.5,-0.5),uv 局部(-1,-1)。
     const auto* vb =
         dynamic_cast<const earth_engine::testing::DummyBuffer*>(
             cmd.vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    ASSERT_EQ(4u * 24u, vb->bytes().size());
+    ASSERT_EQ(4u * 36u, vb->bytes().size());
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
     EXPECT_FLOAT_EQ(0.0f, floats[0]);
     EXPECT_FLOAT_EQ(0.0f, floats[1]);
     EXPECT_FLOAT_EQ(0.0f, floats[2]);
-    EXPECT_FLOAT_EQ(-1.0f, floats[3]);
-    EXPECT_FLOAT_EQ(-1.0f, floats[4]);
+    EXPECT_FLOAT_EQ(-0.5f, floats[3]);
+    EXPECT_FLOAT_EQ(-0.5f, floats[4]);
+    EXPECT_FLOAT_EQ(-1.0f, floats[5]);
+    EXPECT_FLOAT_EQ(-1.0f, floats[6]);
+    EXPECT_FLOAT_EQ(0.0f, floats[8]);  // shape = circle
 }
 
 TEST_F(FeatureRenderLayerTest, MultiplePointsShareOneCommand) {
@@ -697,11 +705,11 @@ TEST_F(FeatureRenderLayerTest, DataDrivenPointColorBakedPerFeature) {
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
         commands[0].vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    // 2 要素 × 4 顶点 × 6 float(24B):颜色在每顶点第 6 位(下标 5)。
-    ASSERT_EQ(2u * 4u * 24u, vb->bytes().size());
+    // 2 要素 × 4 顶点 × 9 float(36B):颜色在每顶点下标 7。
+    ASSERT_EQ(2u * 4u * 36u, vb->bytes().size());
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
-    const auto c0 = unpackVertexColor(floats[5]);           // 要素1 tower
-    const auto c1 = unpackVertexColor(floats[4 * 6 + 5]);   // 要素2 gate
+    const auto c0 = unpackVertexColor(floats[7]);           // 要素1 tower
+    const auto c1 = unpackVertexColor(floats[4 * 9 + 7]);   // 要素2 gate
     EXPECT_EQ((std::array<int, 4>{255, 0, 0, 255}), c0);
     EXPECT_EQ((std::array<int, 4>{0, 0, 255, 255}), c1);
     // u_color 已退役(顶点色接管)。
@@ -787,7 +795,7 @@ TEST_F(FeatureRenderLayerTest, OutOfScopeExpressionsFallBackToLiterals) {
     ASSERT_NE(nullptr, vb);
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
     EXPECT_EQ((std::array<int, 4>{0, 255, 0, 255}),
-              unpackVertexColor(floats[5]));  // 字面量绿
+              unpackVertexColor(floats[7]));  // 字面量绿
 }
 
 TEST_F(FeatureRenderLayerTest, NoLabelWithoutFontOrName) {
@@ -800,4 +808,207 @@ TEST_F(FeatureRenderLayerTest, NoLabelWithoutFontOrName) {
     for (const auto& cmd : build()) {
         EXPECT_NE(RenderCommandKind::VectorLabel, cmd.kind);
     }
+}
+
+// ============================================================
+// P6c 图标/Marker(内置解析 SDF 形状 + 位图图集通道)
+// ============================================================
+
+namespace {
+
+/// 纯色 RGBA8 位图(w*h*4)。
+std::vector<uint8_t> solidRgba(int w, int h, uint8_t r) {
+    std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4, 255);
+    for (size_t i = 0; i < px.size(); i += 4) px[i] = r;
+    return px;
+}
+
+Feature makePointAt(double lonDeg) {
+    Feature p;
+    p.type = GeometryType::Point;
+    p.rings = {{Cartographic(lonDeg * kDeg, 29.0 * kDeg)}};
+    return p;
+}
+
+} // namespace
+
+TEST(IconAtlasTest, PacksNamedImagesAndRejectsBadInput) {
+    earth_engine::testing::MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    IconAtlas atlas(&device);
+    EXPECT_TRUE(atlas.empty());
+    EXPECT_EQ(nullptr, atlas.texture());
+
+    ASSERT_TRUE(atlas.addImage("a", 16, 8, solidRgba(16, 8, 200)));
+    EXPECT_FALSE(atlas.empty());
+    EXPECT_NE(nullptr, atlas.texture());
+    EXPECT_EQ(1u, atlas.revision());
+
+    const IconAtlas::Frame* a = atlas.frame("a");
+    ASSERT_NE(nullptr, a);
+    EXPECT_FLOAT_EQ(16.0f, a->widthPx);
+    EXPECT_FLOAT_EQ(8.0f, a->heightPx);
+    EXPECT_LT(a->u0, a->u1);
+    EXPECT_LT(a->v0, a->v1);
+
+    // 第二张 shelf 右排,不与第一张重叠。
+    ASSERT_TRUE(atlas.addImage("b", 16, 8, solidRgba(16, 8, 10)));
+    const IconAtlas::Frame* b = atlas.frame("b");
+    ASSERT_NE(nullptr, b);
+    EXPECT_GE(b->u0, a->u1);
+    EXPECT_EQ(2u, atlas.revision());
+
+    // 非法输入不改状态。
+    EXPECT_FALSE(atlas.addImage("c", 4, 4, solidRgba(2, 2, 0)));  // 字节数不符
+    EXPECT_FALSE(atlas.addImage("", 4, 4, solidRgba(4, 4, 0)));   // 空名
+    EXPECT_FALSE(atlas.addImage("d", 0, 4, {}));                  // 尺寸非法
+    EXPECT_FALSE(atlas.addImage("e", 4096, 4, solidRgba(4, 4, 0)));  // 超页
+    EXPECT_EQ(nullptr, atlas.frame("c"));
+    EXPECT_EQ(2u, atlas.revision());
+}
+
+TEST_F(FeatureRenderLayerTest, BuiltinShapeBakedIntoVertexShape) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointImage = "star";
+    layer_->setStyle(style);
+    layer_->store().addFeature(makePointAt(106.0));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        commands[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_FLOAT_EQ(static_cast<float>(static_cast<int>(SymbolShape::Star)),
+                    f[8]);
+    // 居中锚定:四角 offsetUnit.y 覆盖 [-0.5, 0.5]。
+    EXPECT_FLOAT_EQ(-0.5f, f[4]);
+    EXPECT_FLOAT_EQ(0.5f, f[2 * 9 + 4]);
+}
+
+TEST_F(FeatureRenderLayerTest, PinShapeIsBottomAnchored) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointImage = "pin";
+    layer_->setStyle(style);
+    layer_->store().addFeature(makePointAt(106.0));
+
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        build()[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_FLOAT_EQ(static_cast<float>(static_cast<int>(SymbolShape::Pin)),
+                    f[8]);
+    // 底部锚定:quad 整个画在锚点上方 → offsetUnit.y ∈ [0, 1]。
+    EXPECT_FLOAT_EQ(0.0f, f[4]);
+    EXPECT_FLOAT_EQ(1.0f, f[2 * 9 + 4]);
+}
+
+TEST_F(FeatureRenderLayerTest, UnknownImageNameFallsBackToCircle) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointImage = "no-such-icon";
+    layer_->setStyle(style);
+    layer_->store().addFeature(makePointAt(106.0));
+
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        build()[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    // 图标缺失不该让要素消失:回落 circle 仍可见。
+    EXPECT_FLOAT_EQ(0.0f, f[8]);
+}
+
+TEST_F(FeatureRenderLayerTest, AtlasIconBakesUvAspectAndBindsTexture) {
+    // 图集图标:宽高比 2:1 → 半宽 1.0(高恒 1);shape 为负走采样分支。
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage("marker", 32, 16,
+                                                 solidRgba(32, 16, 128)));
+    FeatureRenderStyle style = layer_->style();
+    style.pointImage = "marker";
+    layer_->setStyle(style);
+    layer_->store().addFeature(makePointAt(106.0));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    const RenderCommand& cmd = commands[0];
+    ASSERT_EQ(1u, cmd.textures.size());
+    EXPECT_EQ(renderer_->iconAtlas()->texture(), cmd.textures[0]);
+
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        cmd.vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    const IconAtlas::Frame* frame = renderer_->iconAtlas()->frame("marker");
+    ASSERT_NE(nullptr, frame);
+    EXPECT_LT(f[8], 0.0f);                 // 图集哨兵
+    EXPECT_FLOAT_EQ(-1.0f, f[3]);          // 半宽 = 0.5 * (32/16)
+    EXPECT_FLOAT_EQ(-0.5f, f[4]);          // 默认居中
+    EXPECT_FLOAT_EQ(frame->u0, f[5]);      // 左下角 → u0
+    EXPECT_FLOAT_EQ(frame->v1, f[6]);      // 屏幕下边 → 纹理 v1
+    EXPECT_FLOAT_EQ(frame->v0, f[2 * 9 + 6]);  // 屏幕上边 → 纹理 v0
+}
+
+TEST_F(FeatureRenderLayerTest, IconInjectedAfterBucketBuildTriggersRebuild) {
+    // 图标常晚于要素导入:先建桶(此时名字查不到 → circle),再注入图标,
+    // 下一帧应重镶成图集通道。
+    FeatureRenderStyle style = layer_->style();
+    style.pointImage = "late";
+    layer_->setStyle(style);
+    layer_->store().addFeature(makePointAt(106.0));
+    {
+        const auto* vb =
+            dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+                build()[0].vertexBuffer);
+        ASSERT_NE(nullptr, vb);
+        const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+        EXPECT_FLOAT_EQ(0.0f, f[8]);  // 尚无图标 → circle
+    }
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage("late", 8, 8,
+                                                 solidRgba(8, 8, 7)));
+    {
+        const auto* vb =
+            dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+                build()[0].vertexBuffer);
+        ASSERT_NE(nullptr, vb);
+        const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+        EXPECT_LT(f[8], 0.0f);  // 重镶后走图集
+    }
+}
+
+TEST_F(FeatureRenderLayerTest, DataDrivenImageExpressionPerFeature) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointImage = "circle";
+    style.pointImageExpr = StyleExpression::match(
+        "kind", {{"tower", StyleExpression::literalString("triangle")}},
+        StyleExpression::literalString("square"));
+    layer_->setStyle(style);
+    layer_->store().addFeature(makeKindPoint(106.0, "tower"));
+    layer_->store().addFeature(makeKindPoint(106.001, "gate"));
+
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        build()[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_FLOAT_EQ(static_cast<float>(static_cast<int>(SymbolShape::Triangle)),
+                    f[8]);
+    EXPECT_FLOAT_EQ(static_cast<float>(static_cast<int>(SymbolShape::Square)),
+                    f[4 * 9 + 8]);
+}
+
+TEST_F(FeatureRenderLayerTest, ZoomDrivenImageExpressionStripped) {
+    // 图形名 = 数据驱动语义:引用 zoom 越界 → 剥离降级字面量。
+    FeatureRenderStyle style = layer_->style();
+    style.pointImage = "square";
+    style.pointImageExpr = StyleExpression::interpolateLinear(
+        StyleExpression::zoom(),
+        {{0.0, StyleExpression::literalString("star")},
+         {24.0, StyleExpression::literalString("pin")}});
+    layer_->setStyle(style);
+    EXPECT_EQ(nullptr, layer_->style().pointImageExpr);
+
+    layer_->store().addFeature(makePointAt(106.0));
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        build()[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_FLOAT_EQ(static_cast<float>(static_cast<int>(SymbolShape::Square)),
+                    f[8]);
 }

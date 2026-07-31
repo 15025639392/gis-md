@@ -99,6 +99,15 @@ public:
     /// TrueType/ttc 首字体;CFF/OTF 不支持返回 false。渲染线程调用。
     bool setLabelFontData(std::vector<uint8_t> fontData);
 
+    /// 矢量图标位图注入(P6c):应用层解码好 RGBA8 像素供字节(引擎不碰
+    /// 文件系统、不做图片解码)。rgba 长度须 = width*height*4;之后样式
+    /// 里用 name 作 pointImage 即可画该图标。尺寸非法/图集满返回 false。
+    /// 渲染线程调用。
+    bool addIconImage(const std::string& name,
+                      int width,
+                      int height,
+                      const std::vector<uint8_t>& rgba);
+
     /// cesium-native 对齐：设置统一 Tileset。
     void setTileset(std::unique_ptr<Tileset> tileset);
     /// 保持当前地表可交互渲染，直到替代 Tileset 达到接管门槛。

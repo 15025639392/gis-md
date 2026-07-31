@@ -88,6 +88,12 @@ public:
     /// 矢量标注字体注入(P5b;TrueType 字节,渲染线程调用)。
     bool setLabelFontData(std::vector<uint8_t> fontData);
 
+    /// 矢量图标位图注入(P6c;RGBA8 紧排字节,渲染线程调用)。
+    bool addIconImage(const std::string& name,
+                      int width,
+                      int height,
+                      const std::vector<uint8_t>& rgba);
+
     // ---- 统一 Tileset（cesium-native 对齐） ----
     void setTileset(std::unique_ptr<Tileset> tileset);
     void stageTilesetReplacement(std::unique_ptr<Tileset> tileset);

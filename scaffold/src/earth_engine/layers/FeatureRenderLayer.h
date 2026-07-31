@@ -3,6 +3,7 @@
 #include "../data/FeatureStore.h"
 #include "../data/StyleExpression.h"
 #include "../renderer/RenderCommand.h"
+#include "../renderer/SymbolShape.h"
 #include "../core/math/Vec3.h"
 #include "LabelPlacement.h"
 
@@ -18,6 +19,7 @@ namespace earth_engine {
 
 class Ellipsoid;
 class GlyphAtlas;
+class IconAtlas;
 class RenderDevice;
 class Renderer;
 struct FrameState;
@@ -54,9 +56,18 @@ struct FeatureRenderStyle {
     std::array<float, 4> fillColor{0.25f, 0.55f, 0.95f, 0.35f};
     std::array<float, 4> lineColor{1.00f, 0.80f, 0.10f, 0.90f};
     float lineWidthPx = 4.0f;
-    /// 点符号(P5a):SDF 圆 billboard 颜色与直径(px)。
+    /// 点符号(P5a):billboard 颜色与基准尺寸(px)。尺寸语义随形状:
+    /// 内置形状 = 外接方边长/圆直径;位图图标 = 图标**高度**(宽按源图
+    /// 宽高比推,不拉伸)。
     std::array<float, 4> pointColor{1.00f, 1.00f, 1.00f, 0.95f};
     float pointSizePx = 14.0f;
+    /// 符号图形(P6c,设计 §11):内置形状名(circle/square/triangle/
+    /// diamond/star/pin,见 SymbolShape.h)或经 Engine::addIconImage 注入
+    /// 的位图图标名。名字两处都不命中 → 回落 circle(不断链)。
+    std::string pointImage = "circle";
+    /// 图形相对锚点的对齐(Auto = pin 底部对齐、其余居中,对齐 MapLibre
+    /// 的 icon-anchor 默认 center 语义 + 图钉的直觉)。
+    SymbolAnchor pointAnchor = SymbolAnchor::Auto;
     /// 文字标注(P5b,先无避让全画):取 properties[labelProperty] 为文本,
     /// 锚点=Point 本体/LineString 中点顶点/Polygon 环心;字体经
     /// Engine::setLabelFontData 注入,未注入则不出标注。
@@ -77,6 +88,10 @@ struct FeatureRenderStyle {
     StyleExpression::Ptr pointColorExpr;
     StyleExpression::Ptr lineWidthExpr;
     StyleExpression::Ptr pointSizeExpr;
+    /// 符号图形表达式(P6c):**数据驱动**(逐要素求值定形状/图标名,禁
+    /// zoom —— zoom 驱动换图需逐帧重镶,与颜色同理后置)。求值结果按
+    /// 字符串取名;非字符串值/求值失败 → 回落 pointImage 字面量。
+    StyleExpression::Ptr pointImageExpr;
     FeatureAltitudeMode altitudeMode = FeatureAltitudeMode::Absolute;
     /// 高程偏移(m),语义见 FeatureAltitudeMode。Clamp 模式下兼作防
     /// z-fight 抬升(地形网格是 65 格下采样,面与网格间存在格内起伏差)。
@@ -339,6 +354,11 @@ private:
     // 字体就绪状态翻转 → 全部桶重镶补标注。
     GlyphAtlas* glyphAtlas_ = nullptr;
     bool lastAtlasReady_ = false;
+
+    // ---- 位图图标(P6c) ----
+    // 与字体同构:图标可在建桶之后才注入,图集代次变化 → 全桶重镶补 uv。
+    IconAtlas* iconAtlas_ = nullptr;
+    uint64_t lastIconRevision_ = 0;
 
     // ---- 标签避让 placement(P5c) ----
     LabelPlacement labelPlacement_;

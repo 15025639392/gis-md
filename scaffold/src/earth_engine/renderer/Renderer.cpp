@@ -1,5 +1,6 @@
 #include "Renderer.h"
 #include "GlyphAtlas.h"
+#include "IconAtlas.h"
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
 #include "../core/math/Vec3.h"
@@ -1792,53 +1793,145 @@ fragment float4 vectorLineFragment(VectorLineFragmentIn in [[stage_in]]) {
 )msl";
 
 // ============================================================
-// Vector Point Shader (矢量 P5a 点符号/编辑手柄 + P6b 顶点色)
-// billboard quad 屏幕空间展开 + fragment SDF 圆软边(无纹理)。
-// 顶点 24B:anchor(12)+corner(8)+color(4,RGBA8),GLES VectorPoint24。
+// Vector Point/Symbol Shader
+//   (矢量 P5a 点符号/编辑手柄 + P6b 顶点色 + P6c 图标)
+// billboard quad 屏幕空间展开;fragment 双通道:
+//   shape >= 0 → 内置解析 SDF 形状(任意尺寸锐利,零外部资源)
+//   shape <  0 → IconAtlas 位图采样 × 顶点色 tint(美术图标)
+// 顶点 36B:anchor(12)+offsetUnit(8)+uv(8)+color(4,RGBA8)+shape(4),
+// GLES VectorPoint36。offsetUnit = 相对锚点的「符号尺寸倍数」偏移
+// (中心锚定 ±0.5;pin/图集底尖锚定由 CPU 烘进 offsetUnit,shader 不分支),
+// uv = 解析形状的局部坐标 [-1,1]² 或图集 uv。
+// **契约**:下面 fragment 的 shape 分支值必须与 SymbolShape.h 枚举一致。
 // ============================================================
 
 static const char* kVectorPointVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_anchor;
-layout(location = 2) in vec2 a_corner;   // ±1 quad 角
-layout(location = 3) in vec4 a_color;    // P6b 数据驱动色(RGBA8 归一化)
+layout(location = 1) in vec2 a_offsetUnit;  // 相对锚点偏移(符号尺寸倍数)
+layout(location = 2) in vec2 a_uv;          // 局部坐标 或 图集 uv
+layout(location = 3) in vec4 a_color;       // P6b 数据驱动色(RGBA8 归一化)
+layout(location = 4) in float a_shape;      // >=0 内置形状;<0 图集
 
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;       // 视口像素
-uniform float u_pointSizePx;   // 圆直径(px)
+uniform float u_pointSizePx;   // 符号基准尺寸(px:圆直径/方边长/图标高)
 
-out vec2 v_corner;
+out vec2 v_uv;
 out vec4 v_color;
+out float v_shape;
 
 void main() {
     vec4 cp = u_modelViewProjection * vec4(a_anchor, 1.0);
-    v_corner = a_corner;
+    v_uv = a_uv;
     v_color = a_color;
+    v_shape = a_shape;
     if (cp.w <= 0.0) {
         gl_Position = cp;      // 相机后方:不展开
         return;
     }
-    // 半径 px → NDC:corner ±1 展开半个直径。x/y 各自按视口尺寸换算。
-    vec2 offset = a_corner * u_pointSizePx / u_viewport;
-    gl_Position = cp + vec4(offset * cp.w, 0.0, 0.0);
+    // 像素偏移 → NDC:视口跨 2 个 NDC 单位。
+    vec2 offsetNdc = a_offsetUnit * u_pointSizePx * 2.0 / u_viewport;
+    gl_Position = cp + vec4(offsetNdc * cp.w, 0.0, 0.0);
 }
 )glsl";
 
-static const char* kVectorPointFragmentGLSL = R"glsl(
-#version 300 es
+// 内置形状的解析 SDF(GLSL/MSL **同一份文本**,MSL 侧靠 vec2/vec4 别名
+// 兼容 —— 形状数学是纯计算,双份维护是错位风险,不套用本文件的双份约定)。
+// 约定:d < 0 = 形状内部;局部坐标 quad 半宽 = 1.0;形状留 ~0.05 边距防
+// fwidth 软边被 quad 裁掉。
+static const char* kSymbolSdfBody = R"glsl(
+float sdCircle(vec2 p) { return length(p) - 0.9; }
+
+float sdSquare(vec2 p) {
+    vec2 d = abs(p) - vec2(0.82);
+    return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+}
+
+// 菱形:|x|+|y|-r 是 L1 距离,乘 1/√2 换成欧氏尺度(让 fwidth 软边宽度
+// 与其它形状一致)。
+float sdDiamond(vec2 p) { return (abs(p.x) + abs(p.y) - 0.95) * 0.70710678; }
+
+// 正三角(尖朝上):y 翻转成尖朝下的标准式后镜像折叠。
+float sdTriangle(vec2 p) {
+    float k = 1.7320508;
+    float r = 0.95;
+    p.y = -p.y;
+    p.x = abs(p.x) - r;
+    p.y = p.y + r / k;
+    if (p.x + k * p.y > 0.0) {
+        p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
+    }
+    p.x -= clamp(p.x, -2.0 * r, 0.0);
+    return -length(p) * sign(p.y);
+}
+
+// 五角星:两次镜像折叠把 5 个扇区收敛到一条边,再算点到边段距离。
+float sdStar(vec2 p) {
+    float r = 0.95;
+    float rf = 0.45;   // 内外半径比
+    vec2 k1 = vec2(0.809016994, -0.587785252);
+    vec2 k2 = vec2(-k1.x, k1.y);
+    p.y = -p.y;
+    p.x = abs(p.x);
+    p -= 2.0 * max(dot(k1, p), 0.0) * k1;
+    p -= 2.0 * max(dot(k2, p), 0.0) * k2;
+    p.x = abs(p.x);
+    p.y -= r;
+    vec2 ba = rf * vec2(-k1.y, k1.x) - vec2(0.0, 1.0);
+    float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, r);
+    return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
+}
+
+// 水滴图钉:头部圆 ∪ 从底尖线性收窄的尾锥(局部 y≈-1 处即锚点位置)。
+float sdPin(vec2 p) {
+    float head = length(p - vec2(0.0, 0.42)) - 0.55;
+    vec2 a = vec2(0.0, -0.98);
+    vec2 b = vec2(0.0, 0.42);
+    vec2 pa = p - a;
+    vec2 ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    float tail = length(pa - ba * h) - h * 0.55;
+    return min(head, tail);
+}
+
+// 分支值 = SymbolShape.h 枚举,改一处必须改另一处。
+float symbolSdf(float shape, vec2 p) {
+    if (shape < 0.5) return sdCircle(p);
+    if (shape < 1.5) return sdSquare(p);
+    if (shape < 2.5) return sdTriangle(p);
+    if (shape < 3.5) return sdDiamond(p);
+    if (shape < 4.5) return sdStar(p);
+    return sdPin(p);
+}
+)glsl";
+
+static const std::string kVectorPointFragmentGLSL =
+    std::string(R"glsl(#version 300 es
 precision mediump float;
 
-in vec2 v_corner;
-in vec4 v_color;
-out vec4 fragColor;
+uniform sampler2D u_iconAtlas;
 
+in vec2 v_uv;
+in vec4 v_color;
+in float v_shape;
+out vec4 fragColor;
+)glsl") + kSymbolSdfBody + R"glsl(
 void main() {
-    // SDF 圆:quad 内 corner 插值即单位圆坐标;软边 ~1.5px 由
-    // smoothstep 固定比例近似(尺寸 10-30px 时观感平滑)。
-    float dist = length(v_corner);
-    float alpha = 1.0 - smoothstep(0.82, 0.98, dist);
+    if (v_shape < 0.0) {
+        // 图集通道:位图 × 顶点色 tint(tint 全白 = 原图)。
+        vec4 tex = texture(u_iconAtlas, v_uv);
+        float alpha = tex.a * v_color.a;
+        if (alpha <= 0.004) discard;
+        fragColor = vec4(tex.rgb * v_color.rgb, alpha);
+        return;
+    }
+    // 解析 SDF:fwidth 自适应软边(尺寸无关,任意缩放都是 ~1px)。
+    float d = symbolSdf(v_shape, v_uv);
+    float w = max(fwidth(d), 1e-5);
+    float alpha = (1.0 - smoothstep(-w, w, d)) * v_color.a;
     if (alpha <= 0.004) discard;
-    fragColor = vec4(v_color.rgb, v_color.a * alpha);
+    fragColor = vec4(v_color.rgb, alpha);
 }
 )glsl";
 
@@ -1849,14 +1942,17 @@ using namespace metal;
 
 struct VectorPointVertexIn {
     float3 anchor [[attribute(0)]];
-    float2 corner [[attribute(2)]];
+    float2 offsetUnit [[attribute(1)]];
+    float2 uv [[attribute(2)]];
     float4 color [[attribute(3)]];   // P6b 数据驱动色
+    float shape [[attribute(4)]];    // P6c:>=0 内置形状;<0 图集
 };
 
 struct VectorPointVertexOut {
     float4 position [[position]];
-    float2 corner;
+    float2 uv;
     float4 color;
+    float shape;
 };
 
 vertex VectorPointVertexOut vectorPointVertex(
@@ -1866,31 +1962,45 @@ vertex VectorPointVertexOut vectorPointVertex(
         constant float& u_pointSizePx [[buffer(3)]]) {
     VectorPointVertexOut out;
     float4 cp = u_modelViewProjection * float4(in.anchor, 1.0);
-    out.corner = in.corner;
+    out.uv = in.uv;
     out.color = in.color;
+    out.shape = in.shape;
     out.position = cp;
     if (cp.w <= 0.0) return out;
-    float2 offset = in.corner * u_pointSizePx / u_viewport;
-    out.position = cp + float4(offset * cp.w, 0.0, 0.0);
+    float2 offsetNdc = in.offsetUnit * u_pointSizePx * 2.0 / u_viewport;
+    out.position = cp + float4(offsetNdc * cp.w, 0.0, 0.0);
     return out;
 }
 )msl";
 
-static const char* kVectorPointFragmentMSL = R"msl(
-#include <metal_stdlib>
+static const std::string kVectorPointFragmentMSL =
+    std::string(R"msl(#include <metal_stdlib>
 using namespace metal;
+// 形状 SDF 与 GLSL 共用同一份文本(见 kSymbolSdfBody),别名补齐类型名。
+#define vec2 float2
+#define vec4 float4
 
 struct VectorPointFragmentIn {
-    float2 corner;
+    float2 uv;
     float4 color;
+    float shape;
 };
-
+)msl") + kSymbolSdfBody + R"msl(
 fragment float4 vectorPointFragment(
-        VectorPointFragmentIn in [[stage_in]]) {
-    float dist = length(in.corner);
-    float alpha = 1.0 - smoothstep(0.82, 0.98, dist);
+        VectorPointFragmentIn in [[stage_in]],
+        texture2d<float> u_iconAtlas [[texture(0)]],
+        sampler u_sampler [[sampler(0)]]) {
+    if (in.shape < 0.0) {
+        float4 tex = u_iconAtlas.sample(u_sampler, in.uv);
+        float alpha = tex.a * in.color.a;
+        if (alpha <= 0.004) discard_fragment();
+        return float4(tex.rgb * in.color.rgb, alpha);
+    }
+    float d = symbolSdf(in.shape, in.uv);
+    float w = max(fwidth(d), 1e-5);
+    float alpha = (1.0 - smoothstep(-w, w, d)) * in.color.a;
     if (alpha <= 0.004) discard_fragment();
-    return float4(in.color.rgb, in.color.a * alpha);
+    return float4(in.color.rgb, alpha);
 }
 )msl";
 
@@ -3478,8 +3588,9 @@ struct Renderer::Impl {
     // 顶点色);colorShader 留给 stencil 分类等 uniform 色路径。
     std::unique_ptr<ShaderProgram> vectorLineShader;
     std::unique_ptr<ShaderProgram> vectorFillShader;
-    // 矢量点符号 billboard(P5a,SDF 圆)。
+    // 矢量点符号/图标 billboard(P5a 解析 SDF 形状 + P6c 位图图集)。
     std::unique_ptr<ShaderProgram> vectorPointShader;
+    std::unique_ptr<IconAtlas> iconAtlas;
     // 矢量文字标注(P5b):SDF 字形图集 + 文字 shader。
     std::unique_ptr<GlyphAtlas> glyphAtlas;
     std::unique_ptr<ShaderProgram> vectorLabelShader;
@@ -3632,7 +3743,7 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] vectorLineShader failed — vector lines unavailable\n");
     }
 
-    // ---- Vector point shader (矢量 P5a 点符号) ----
+    // ---- Vector point/symbol shader (矢量 P5a 点符号 + P6c 图标) ----
     ShaderDesc vectorPointSd;
     vectorPointSd.vertexSource =
         isMetal ? kVectorPointVertexMSL : kVectorPointVertexGLSL;
@@ -3656,6 +3767,8 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] vectorLabelShader failed — vector labels unavailable\n");
     }
     impl_->glyphAtlas = std::make_unique<GlyphAtlas>(dev);
+    // 图标图集(矢量 P6c):纹理延迟到首次 addImage 才建,无图标零开销。
+    impl_->iconAtlas = std::make_unique<IconAtlas>(dev);
 
     impl_->initialized = true;
     return true;
@@ -3679,6 +3792,7 @@ void Renderer::dispose() {
     impl_->vectorPointShader.reset();
     impl_->vectorLabelShader.reset();
     impl_->glyphAtlas.reset();
+    impl_->iconAtlas.reset();
     impl_->tileIndexCount = 0;
     impl_->initialized = false;
 }
@@ -3699,6 +3813,8 @@ ShaderProgram* Renderer::vectorLabelShader() const {
     return impl_->vectorLabelShader.get();
 }
 GlyphAtlas* Renderer::glyphAtlas() const { return impl_->glyphAtlas.get(); }
+
+IconAtlas* Renderer::iconAtlas() const { return impl_->iconAtlas.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
 Texture* Renderer::surfacePlaceholderTexture() const {

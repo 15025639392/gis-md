@@ -571,6 +571,13 @@ bool Engine::setLabelFontData(std::vector<uint8_t> fontData) {
     return scene_->setLabelFontData(std::move(fontData));
 }
 
+bool Engine::addIconImage(const std::string& name,
+                          int width,
+                          int height,
+                          const std::vector<uint8_t>& rgba) {
+    return scene_->addIconImage(name, width, height, rgba);
+}
+
 size_t Engine::vectorLayerCount() const {
     return scene_->vectorLayerCount();
 }

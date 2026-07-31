@@ -15,6 +15,7 @@
 #include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/GlyphAtlas.h"
+#include "../renderer/IconAtlas.h"
 #include "../renderer/Renderer.h"
 #include "../tiling/Tileset.h"
 
@@ -330,6 +331,14 @@ std::unique_ptr<FeatureRenderLayer> Scene::removeFeatureRenderLayer(
 bool Scene::setLabelFontData(std::vector<uint8_t> fontData) {
     if (!renderer_ || !renderer_->glyphAtlas()) return false;
     return renderer_->glyphAtlas()->setFontData(std::move(fontData));
+}
+
+bool Scene::addIconImage(const std::string& name,
+                         int width,
+                         int height,
+                         const std::vector<uint8_t>& rgba) {
+    if (!renderer_ || !renderer_->iconAtlas()) return false;
+    return renderer_->iconAtlas()->addImage(name, width, height, rgba);
 }
 
 size_t Scene::vectorLayerCount() const {
