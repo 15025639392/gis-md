@@ -637,11 +637,13 @@ FeatureTerrainSampling makeFlatSampling(float height) {
 
 namespace {
 
-/// 流形断言:体积网格任意无向边必须恰被 2 个三角形引用(水密;z-fail
-/// 计数正确性的机器可检查前提)。顶点按**位置+extrude 量化**(mm)判等
-/// 而非索引:CPU 侧墙带零宽,±两侧顶点仅 extrude 符号可分;闭环 dash 的
-/// seam 复制截面与首截面 pos/extrude 逐位相同、仅 lengthSoFar 不同 →
-/// 正确合并——挤出后几何水密即光栅水密。
+/// 闭合性断言:体积网格的每条**有向**边,其反向边引用次数必须相等
+/// (即曲面闭合、法向一致)。这比"每条无向边恰 2 次"更准确——自交面
+/// 预分裂后会在交点处形成非流形的竖直接触边(4 个面共享),那是两个
+/// 闭合体块在一条边上相接,z-fail 计数依然正确,不该被判失败;而悬边
+/// (只被引用一次)会被抓出。顶点按 stride 取键:pos-only 体(fill,
+/// stride 12)只比位置,墙带(line,stride 24)连 extrude 一起比——
+/// CPU 侧零宽,±两侧顶点仅 extrude 符号可分。
 void expectWatertight(const RenderCommand& vol) {
     const auto* ib =
         dynamic_cast<const DummyBuffer*>(vol.indexBuffer);
@@ -655,29 +657,28 @@ void expectWatertight(const RenderCommand& vol) {
     const auto* verts = reinterpret_cast<const float*>(vb->bytes().data());
     const size_t strideFloats =
         static_cast<size_t>(vol.vertexStride) / sizeof(float);
-    // pos-only 体(fill,stride 12)只比位置;墙带(line,stride 24)连
-    // extrude 一起比——CPU 侧零宽,±两侧顶点仅 extrude 符号可分。
     const size_t keyFloats = std::min<size_t>(strideFloats, 6);
-    auto posKey = [&](uint32_t v) -> std::array<int64_t, 6> {
+    using VertKey = std::array<int64_t, 6>;
+    auto posKey = [&](uint32_t v) -> VertKey {
         const float* p = verts + v * strideFloats;
-        std::array<int64_t, 6> k{};
+        VertKey k{};
         for (size_t i = 0; i < keyFloats; ++i) {
             k[i] = static_cast<int64_t>(std::llround(p[i] * 1000.0));
         }
         return k;
     };
-    using EdgeKey = std::pair<std::array<int64_t, 6>, std::array<int64_t, 6>>;
-    std::map<EdgeKey, int> edges;
+    std::map<std::pair<VertKey, VertKey>, int> directed;
     for (size_t t = 0; t + 2 < idxCount; t += 3) {
         for (int e = 0; e < 3; ++e) {
-            auto a = posKey(idx[t + e]);
-            auto b = posKey(idx[t + (e + 1) % 3]);
-            if (b < a) std::swap(a, b);
-            ++edges[{a, b}];
+            directed[{posKey(idx[t + e]), posKey(idx[t + (e + 1) % 3])}]++;
         }
     }
-    for (const auto& [edge, count] : edges) {
-        EXPECT_EQ(2, count) << "position-edge referenced " << count << "x";
+    for (const auto& [edge, count] : directed) {
+        const auto reverse = directed.find({edge.second, edge.first});
+        const int back = reverse == directed.end() ? 0 : reverse->second;
+        EXPECT_EQ(count, back)
+            << "directed edge used " << count << "x but reverse " << back
+            << "x (open surface)";
     }
 }
 
@@ -722,7 +723,9 @@ TEST_F(FeatureRenderLayerTest, StencilVolumePairForClampedPolygon) {
     // 索引 = 2 cap×2 三角×3 + 4 墙×6 = 36。
     const auto* vb = dynamic_cast<const DummyBuffer*>(vol->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    EXPECT_EQ(24u * 12u, vb->bytes().size());
+    // 墙复用 cap 顶点(边界边成墙):底/顶 cap 各 4 顶点 = 8;
+    // 索引 = 2 cap×2 三角×3 + 4 条边界边×6 = 36。
+    EXPECT_EQ(8u * 12u, vb->bytes().size());
     EXPECT_EQ(36, vol->indexCount);
 
     // stencil 模式下不再产出方案 A 的采样钳制 fill。
@@ -747,6 +750,35 @@ TEST_F(FeatureRenderLayerTest, StencilVolumePairForClampedPolygon) {
     const auto validation = validateMvpRenderCommands(commands, frame_.frameId);
     EXPECT_FALSE(validation.has_value())
         << (validation ? validation->message : "");
+}
+
+TEST_F(FeatureRenderLayerTest, SelfIntersectingFillVolumeIsWatertight) {
+    // 编辑可以把面拖成自交(bowtie)。cap 走 PolygonTessellator(含自交
+    // 预分裂),墙若仍按原始 ring 走,两者轮廓不一致 → 体不水密 →
+    // z-fail 计数错乱 → fill 破碎/泄漏(真机复现)。
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+
+    Feature f;
+    f.type = GeometryType::Polygon;
+    const double w = 0.0, s = 0.0, e = 0.01 * kDeg, n = 0.01 * kDeg;
+    // 对角顺序 → 边 (w,s)->(e,n) 与 (e,s)->(w,n) 在中心相交。
+    f.rings = {{Cartographic(w, s), Cartographic(e, n), Cartographic(e, s),
+                Cartographic(w, n), Cartographic(w, s)}};
+    layer_->store().addFeature(std::move(f));
+
+    const RenderCommand* vol = nullptr;
+    for (const auto& cmd : build()) {
+        if (cmd.kind == RenderCommandKind::VectorStencil &&
+            cmd.stencilPhase == StencilPhase::ClassifyVolume &&
+            cmd.vertexStride == 12) {
+            vol = &cmd;
+        }
+    }
+    ASSERT_NE(nullptr, vol);
+    expectWatertight(*vol);
 }
 
 TEST_F(FeatureRenderLayerTest, FillVolumeIsWatertight) {

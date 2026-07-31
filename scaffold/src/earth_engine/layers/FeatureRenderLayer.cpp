@@ -822,30 +822,40 @@ void FeatureRenderLayer::appendFillVolume(
         volumeIndices.push_back(base + topOffset + tris[i + 2]);
     }
 
-    // ---- 环边墙:直接按环顶点(闭合重复末点跳过)接底/顶两层。墙顶点与
-    // cap 顶点数值同源(同 lng/lat/height 过同一投影)→ 缝水密。 ----
-    for (const auto& ring : feature.rings) {
-        size_t n = ring.size();
-        if (n >= 2 && ring.front().longitude() == ring.back().longitude() &&
-            ring.front().latitude() == ring.back().latitude()) {
-            --n;  // 闭合环:末点=首点,墙按 wrap 生成
+    // ---- 侧墙:从 cap 三角化提取**边界边**(无向计数恰为 1 的边),用
+    // cap 自身顶点成墙。不能按原始 ring 走——编辑可以把面拖成自交,
+    // PolygonTessellator 会做自交预分裂,预分裂后的真实轮廓与原始 ring
+    // 路径不再一致,墙与 cap 对不上 → 体出悬边 → z-fail 计数错乱 →
+    // fill 破碎/泄漏(真机复现,SelfIntersectingFillVolumeIsWatertight
+    // 锁死)。走边界边还顺带正确处理孔环,并让墙与 cap 共享顶点(索引级
+    // 水密,不再依赖"数值同源"的隐式约定)。 ----
+    std::map<uint64_t, int> edgeUse;
+    auto edgeKey = [](uint32_t a, uint32_t b) -> uint64_t {
+        const uint32_t lo = std::min(a, b);
+        const uint32_t hi = std::max(a, b);
+        return (static_cast<uint64_t>(lo) << 32) | hi;
+    };
+    for (size_t i = 0; i + 2 < tris.size(); i += 3) {
+        for (int e = 0; e < 3; ++e) {
+            ++edgeUse[edgeKey(tris[i + e], tris[i + (e + 1) % 3])];
         }
-        if (n < 3) continue;
-        for (size_t i = 0; i < n; ++i) {
-            const Cartographic& a = ring[i];
-            const Cartographic& b = ring[(i + 1) % n];
-            const uint32_t wallBase =
-                static_cast<uint32_t>(volumeVerts.size() / 3);
-            pushPos(ellipsoid_.cartographicToCartesian(
-                Cartographic(a.longitude(), a.latitude(), bottom)));
-            pushPos(ellipsoid_.cartographicToCartesian(
-                Cartographic(b.longitude(), b.latitude(), bottom)));
-            pushPos(ellipsoid_.cartographicToCartesian(
-                Cartographic(b.longitude(), b.latitude(), top)));
-            pushPos(ellipsoid_.cartographicToCartesian(
-                Cartographic(a.longitude(), a.latitude(), top)));
-            const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
-            for (uint32_t q : quad) volumeIndices.push_back(wallBase + q);
+    }
+    for (size_t i = 0; i + 2 < tris.size(); i += 3) {
+        for (int e = 0; e < 3; ++e) {
+            const uint32_t a = tris[i + e];
+            const uint32_t b = tris[i + (e + 1) % 3];
+            if (edgeUse[edgeKey(a, b)] != 1) continue;  // 内部边跳过
+            // 有向边 a→b 取自 cap 三角形绕向 → 墙面朝外。
+            const uint32_t ba = base + a;
+            const uint32_t bb = base + b;
+            const uint32_t ta = base + topOffset + a;
+            const uint32_t tb = base + topOffset + b;
+            volumeIndices.push_back(ba);
+            volumeIndices.push_back(bb);
+            volumeIndices.push_back(tb);
+            volumeIndices.push_back(ba);
+            volumeIndices.push_back(tb);
+            volumeIndices.push_back(ta);
         }
     }
 }
