@@ -269,7 +269,11 @@ static bool createEngine() {
             // = fill 三角形横跨网格折痕(山脊)的线性切角项,随细分间距二次
             // 收缩;offset 10m 覆盖之(像素级贴合属 stencil 方案 B 终态)。
             style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-            style.heightOffset = 10.0;
+            // P6b 后 fill 走 stencil 像素级贴地(不吃 offset),outline/点仍
+            // 方案 A 抬升 —— 抬得越高斜视视差偏移越大(10m ≈ 几 px),越低
+            // 埋线断线风险越大(2m 真机实测东缘断线)。5m = 实测两者兼顾;
+            // 根治 = 线 stencil 化(P6a TODO)或 depth-bias 方向修正后压 1m。
+            style.heightOffset = 5.0;
             style.clampDensifyMeters = 40.0;
             // P6b 数据驱动样式:fill 色按 zone 属性(stencil 按色分组)、
             // 点色按 kind 三色、线宽随 zoom 插值(拉远变细凑近变粗)。
