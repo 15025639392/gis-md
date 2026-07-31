@@ -292,6 +292,19 @@ static bool createEngine() {
             route.properties["name"] = "巡线 Route-1";
             vectorLayer->store().addFeature(std::move(route));
 
+            // P5c 避让验证簇:~60m 间距 5 个标注点,RESET 视角下标签屏幕
+            // 盒相互重叠 → 避让隐藏一部分(fade),凑近才逐个显出。
+            for (int i = 0; i < 5; ++i) {
+                Feature obs;
+                obs.type = GeometryType::Point;
+                obs.rings = {{Cartographic(
+                    (106.5040 + 0.0006 * (i % 3)) * kDeg,
+                    (29.6260 + 0.0005 * (i / 3)) * kDeg)}};
+                obs.properties["name"] =
+                    std::string("观测点-") + std::to_string(i + 1);
+                vectorLayer->store().addFeature(std::move(obs));
+            }
+
             // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。候选序:
             // Oplus-Serif=本机中文 TrueType;NotoSansCJK.ttc 是 CFF 会被
             // stbtt 拒(留在表里做健壮性验证);Roboto 兜底拉丁。
@@ -407,6 +420,8 @@ static void editTouchDown(float x, float y) {
         gDemoFeatureLayer->store().getFeature(hit.featureId);
     if (!feature) return;
     if (!gDemoFeatureLayer->beginEditPreview(hit.featureId)) return;
+    // P5c 编辑联动:选中(抓取)要素标签提权,避让时优先显示。
+    gDemoFeatureLayer->setLabelPriorityFeature(hit.featureId);
     gEditUndoStack.push_back(*feature);
     gEditDrag.active = true;
     gEditDrag.featureId = hit.featureId;
@@ -564,6 +579,18 @@ static void renderFrame() {
     // 等 vsync 的空转,算进去会让系统以为我们每帧都刚好用满预算,反而不提速。
     gRenderThreadPlacement.reportActualWorkDurationMs(engineMs + postEngineMs);
     const uint64_t frameId = gEngine->presentationTrace().camera.frameId;
+    // P5c 标签避让诊断(节流):cand=候选 placed=显示 col=碰撞落选
+    // horiz=地平线剔除 proj=视锥外/相机背后。
+    if (gDemoFeatureLayer && frameId % 120 == 0) {
+        const auto& ls = gDemoFeatureLayer->labelPlacementStats();
+        if (ls.candidates > 0) {
+            LOGI("LabelPlace frame=%llu cand=%d placed=%d col=%d horiz=%d "
+                 "proj=%d",
+                 static_cast<unsigned long long>(frameId), ls.candidates,
+                 ls.placed, ls.collided, ls.culledHorizon,
+                 ls.culledProjection);
+        }
+    }
     if (frameId <= 3 || frameId % 120 == 0 ||
         frameTotalMs >= 25.0 || swapMs >= 8.0) {
         LOGI(
@@ -1529,6 +1556,10 @@ Java_com_earthengine_sdk_GLESView_nativeSetEditMode(
             gEditDrag = EditDragState{};
             clearEditHandles();
             if (!gEditUndoStack.empty()) gEditUndoStack.pop_back();
+        }
+        // 退出编辑模式 = 取消选中,标签提权一并清除。
+        if (!on && gDemoFeatureLayer) {
+            gDemoFeatureLayer->setLabelPriorityFeature(kInvalidFeatureId);
         }
         LOGI("EditFlow: edit mode %s", on ? "ON" : "OFF");
     });

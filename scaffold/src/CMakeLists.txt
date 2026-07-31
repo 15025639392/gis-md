@@ -566,6 +566,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/layers/VectorLayer.cpp
     earth_engine/layers/FeatureRenderLayer.h
     earth_engine/layers/FeatureRenderLayer.cpp
+    earth_engine/layers/LabelPlacement.h
+    earth_engine/layers/LabelPlacement.cpp
     earth_engine/layers/RasterOverlay.h
     earth_engine/layers/RasterOverlay.cpp
     earth_engine/layers/ActivatedRasterOverlay.h

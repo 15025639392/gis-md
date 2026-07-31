@@ -1809,31 +1809,37 @@ fragment float4 vectorPointFragment(
 )msl";
 
 // ============================================================
-// Vector Label Shader (矢量 P5b SDF 文字标注)
-// 顶点 28B:anchor(12)+offsetPx(8)+uv(8),对应 GLES VectorLabel28。
-// 锚点投影后按像素偏移屏幕展开(billboard);fragment 采 SDF 图集
-// smoothstep 出字 + halo 描边(单 pass 双阈值)。
+// Vector Label Shader (矢量 P5b SDF 文字标注 + P5c placement opacity)
+// 顶点 32B:anchor(12)+offsetPx(8)+uv(8)+opacity(4),对应 GLES
+// VectorLabel32。锚点投影后按像素偏移屏幕展开(billboard);opacity 由
+// CPU placement fade 回写(0 = 避让隐藏,顶点直接折叠裁掉不进光栅);
+// fragment 采 SDF 图集 smoothstep 出字 + halo 描边(单 pass 双阈值)。
 // ============================================================
 
 static const char* kVectorLabelVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_anchor;
-layout(location = 1) in vec2 a_offsetPx;   // 相对锚点屏幕像素偏移(y 向上)
+// xy = 相对锚点屏幕像素偏移(y 向上);z = placement fade opacity(0 = 隐藏)。
+// opacity 并进 offset 而非独立 attribute:三属性布局(0/1/2)。
+layout(location = 1) in vec3 a_offsetPx;
 layout(location = 2) in vec2 a_uv;
 
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;
 
 out vec2 v_uv;
+out float v_opacity;
 
 void main() {
     vec4 cp = u_modelViewProjection * vec4(a_anchor, 1.0);
     v_uv = a_uv;
-    if (cp.w <= 0.0) {
-        gl_Position = cp;
+    v_opacity = a_offsetPx.z;
+    if (cp.w <= 0.0 || a_offsetPx.z <= 0.0) {
+        // 折叠到裁剪空间外,整字形不进光栅。
+        gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
         return;
     }
-    vec2 offsetNdc = a_offsetPx * 2.0 / u_viewport;
+    vec2 offsetNdc = a_offsetPx.xy * 2.0 / u_viewport;
     gl_Position = cp + vec4(offsetNdc * cp.w, 0.0, 0.0);
 }
 )glsl";
@@ -1849,6 +1855,7 @@ uniform float u_sdfEdge;       // 轮廓阈值(kSdfOnEdge/255)
 uniform float u_sdfHaloDelta;  // halo 宽换算的 SDF 值差
 
 in vec2 v_uv;
+in float v_opacity;
 out vec4 fragColor;
 
 void main() {
@@ -1857,7 +1864,7 @@ void main() {
     float fill = smoothstep(u_sdfEdge - w, u_sdfEdge + w, d);
     float halo = smoothstep(u_sdfEdge - u_sdfHaloDelta - w,
                             u_sdfEdge - u_sdfHaloDelta + w, d);
-    float alpha = max(fill * u_color.a, halo * u_haloColor.a);
+    float alpha = max(fill * u_color.a, halo * u_haloColor.a) * v_opacity;
     if (alpha <= 0.004) discard;
     vec3 rgb = mix(u_haloColor.rgb, u_color.rgb, fill);
     fragColor = vec4(rgb, alpha);
@@ -1871,13 +1878,14 @@ using namespace metal;
 
 struct VectorLabelVertexIn {
     float3 anchor [[attribute(0)]];
-    float2 offsetPx [[attribute(1)]];
+    float3 offsetPx [[attribute(1)]];  // z = placement opacity
     float2 uv [[attribute(2)]];
 };
 
 struct VectorLabelVertexOut {
     float4 position [[position]];
     float2 uv;
+    float opacity;
 };
 
 vertex VectorLabelVertexOut vectorLabelVertex(
@@ -1887,9 +1895,12 @@ vertex VectorLabelVertexOut vectorLabelVertex(
     VectorLabelVertexOut out;
     float4 cp = u_modelViewProjection * float4(in.anchor, 1.0);
     out.uv = in.uv;
-    out.position = cp;
-    if (cp.w <= 0.0) return out;
-    float2 offsetNdc = in.offsetPx * 2.0 / u_viewport;
+    out.opacity = in.offsetPx.z;
+    if (cp.w <= 0.0 || in.offsetPx.z <= 0.0) {
+        out.position = float4(0.0, 0.0, 2.0, 1.0);
+        return out;
+    }
+    float2 offsetNdc = in.offsetPx.xy * 2.0 / u_viewport;
     out.position = cp + float4(offsetNdc * cp.w, 0.0, 0.0);
     return out;
 }
@@ -1901,6 +1912,7 @@ using namespace metal;
 
 struct VectorLabelFragmentIn {
     float2 uv;
+    float opacity;
 };
 
 fragment float4 vectorLabelFragment(
@@ -1916,7 +1928,7 @@ fragment float4 vectorLabelFragment(
     float fill = smoothstep(u_sdfEdge - w, u_sdfEdge + w, d);
     float halo = smoothstep(u_sdfEdge - u_sdfHaloDelta - w,
                             u_sdfEdge - u_sdfHaloDelta + w, d);
-    float alpha = max(fill * u_color.a, halo * u_haloColor.a);
+    float alpha = max(fill * u_color.a, halo * u_haloColor.a) * in.opacity;
     if (alpha <= 0.004) discard_fragment();
     float3 rgb = mix(u_haloColor.rgb, u_color.rgb, fill);
     return float4(rgb, alpha);

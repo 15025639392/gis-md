@@ -142,6 +142,12 @@ add_executable(test_feature_render_layer
 target_link_libraries(test_feature_render_layer PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_feature_render_layer COMMAND test_feature_render_layer)
 
+add_executable(test_label_placement
+    unit/layers/test_label_placement.cpp
+)
+target_link_libraries(test_label_placement PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_label_placement COMMAND test_label_placement)
+
 add_executable(test_feature_edit_queries
     unit/layers/test_feature_edit_queries.cpp
 )

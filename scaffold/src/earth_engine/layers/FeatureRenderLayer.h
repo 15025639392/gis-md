@@ -3,6 +3,7 @@
 #include "../data/FeatureStore.h"
 #include "../renderer/RenderCommand.h"
 #include "../core/math/Vec3.h"
+#include "LabelPlacement.h"
 
 #include <array>
 #include <functional>
@@ -159,7 +160,39 @@ public:
     /// 常驻 GPU 桶数(测试/诊断)。
     size_t gpuBucketCount() const { return buckets_.size(); }
 
+    // ---- 标签避让 placement(P5c,设计 §8.2) ----
+
+    /// 编辑联动:选中要素标签提权(避让最先入格,几乎总能显示)。
+    /// kInvalidFeatureId = 清除。应用层选中态变化时调用。
+    void setLabelPriorityFeature(FeatureId id) {
+        labelPlacement_.setPriorityFeature(id);
+    }
+
+    /// 该要素标签当前渐变后透明度(0 = 避让隐藏/无标签;测试/诊断)。
+    float labelOpacityForFeature(FeatureId id) const {
+        return labelPlacement_.opacity(id);
+    }
+
+    /// 上一帧 placement 计数(测试/诊断)。
+    const LabelPlacementStats& labelPlacementStats() const {
+        return labelPlacement_.stats();
+    }
+
 private:
+    /// 单要素标签在桶标签顶点流中的登记(P5c placement 的 collect 源 +
+    /// opacity 回写区间)。碰撞盒 px 相对锚点投影位置(y 向上,含 halo)。
+    struct LabelEntry {
+        FeatureId featureId = kInvalidFeatureId;
+        Vec3 anchorEcef;               ///< 绝对 ECEF(double,不减桶原点)
+        float boxMinXPx = 0.0f;
+        float boxMinYPx = 0.0f;
+        float boxMaxXPx = 0.0f;
+        float boxMaxYPx = 0.0f;
+        size_t vertexFloatStart = 0;   ///< labelVerts 起始 float 下标
+        size_t vertexFloatCount = 0;
+        float appliedOpacity = 0.0f;   ///< 已写入顶点流的值(判重传)
+    };
+
     /// 单桶常驻 GPU 几何。fill/line/point 任一可空(indexCount=0)。
     struct BucketGpu {
         Vec3 origin = Vec3::zero();        ///< ECEF double 原点
@@ -175,6 +208,9 @@ private:
         std::unique_ptr<Buffer> labelVertexBuffer;
         std::unique_ptr<Buffer> labelIndexBuffer;
         int labelIndexCount = 0;
+        /// 标签 CPU 侧:顶点流副本(opacity 分量可改写重传)+ 登记表。
+        std::vector<float> labelVertsCpu;
+        std::vector<LabelEntry> labelEntries;
     };
 
     /// 重镶单桶:镶嵌桶内全部要素 → 减原点转 float → 建 buffer。
@@ -207,7 +243,8 @@ private:
                                std::vector<float>& pointVerts,
                                std::vector<uint32_t>& pointIndices,
                                std::vector<float>& labelVerts,
-                               std::vector<uint32_t>& labelIndices) const;
+                               std::vector<uint32_t>& labelIndices,
+                               std::vector<LabelEntry>& labelEntries) const;
 
     /// CPU 数组 → BucketGpu(buffer 创建;全空返回 false)。
     bool uploadBucketGpu(const Vec3& origin,
@@ -217,9 +254,14 @@ private:
                          const std::vector<uint32_t>& lineIndices,
                          const std::vector<float>& pointVerts,
                          const std::vector<uint32_t>& pointIndices,
-                         const std::vector<float>& labelVerts,
+                         std::vector<float>&& labelVerts,
                          const std::vector<uint32_t>& labelIndices,
+                         std::vector<LabelEntry>&& labelEntries,
                          BucketGpu& out) const;
+
+    /// P5c:每帧跑 placement(collect 全桶 LabelEntry → place/commit),
+    /// opacity 有变的桶改写 CPU 副本 opacity 分量并 updateBuffer 重传。
+    void updateLabelPlacement(const FrameState& frameState);
 
     /// 生成一对 fill/line 命令追加进 commands(常驻桶与预览路径共用)。
     void appendBucketCommands(const BucketGpu& gpu,
@@ -253,6 +295,9 @@ private:
     // 字体就绪状态翻转 → 全部桶重镶补标注。
     GlyphAtlas* glyphAtlas_ = nullptr;
     bool lastAtlasReady_ = false;
+
+    // ---- 标签避让 placement(P5c) ----
+    LabelPlacement labelPlacement_;
 };
 
 } // namespace earth_engine

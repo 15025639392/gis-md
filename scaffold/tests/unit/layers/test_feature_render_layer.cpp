@@ -368,7 +368,7 @@ TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
         if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
     }
     ASSERT_NE(nullptr, label);
-    EXPECT_EQ(28, label->vertexStride);
+    EXPECT_EQ(32, label->vertexStride);  // P5c:+opacity(4)
     EXPECT_EQ(12, label->indexCount);  // 2 字形 × 6
     ASSERT_EQ(1u, label->textures.size());
     EXPECT_NE(nullptr, label->textures[0]);
@@ -377,13 +377,172 @@ TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
     EXPECT_EQ("color", label->pass);
     EXPECT_TRUE(label->blend);
 
-    // 顶点打包:2 字形 × 4 顶点 × 28B;offsetPx 水平居中(首字形 x < 0)
+    // 顶点打包:2 字形 × 4 顶点 × 32B;offsetPx 水平居中(首字形 x < 0)
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
         label->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    ASSERT_EQ(2u * 4u * 28u, vb->bytes().size());
+    ASSERT_EQ(2u * 4u * 32u, vb->bytes().size());
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
     EXPECT_LT(floats[3], 0.0f);  // 首顶点 offsetPx.x 在锚点左侧
+}
+
+// ============================================================
+// P5c 标签避让 placement(集成:镶嵌登记 → 逐帧避让 → opacity 重传)
+// ============================================================
+
+namespace {
+
+/// 相机正对的地表点(相机在 +x 轴 1.5e7,lon=0/lat=0 即正面)。
+Feature makeNamedPoint(double lonDeg, double latDeg, const char* name) {
+    Feature p;
+    p.type = GeometryType::Point;
+    p.rings = {{Cartographic(lonDeg * kDeg, latDeg * kDeg)}};
+    p.properties["name"] = name;
+    return p;
+}
+
+} // namespace
+
+/// 夹具扩展:注入字体 + 多帧推进(fade 收敛)。
+class FeatureLabelPlacementTest : public FeatureRenderLayerTest {
+protected:
+    void SetUp() override {
+        FeatureRenderLayerTest::SetUp();
+        std::vector<uint8_t> font = loadHostFont();
+        if (font.empty()) GTEST_SKIP() << "no host font available";
+        if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+            GTEST_SKIP() << "host font not stbtt-parsable";
+        }
+        frame_.deltaSeconds = 0.1;
+    }
+
+    /// 推进 n 帧(每帧 0.1s;fade 0.3s,4 帧内必收敛)。
+    void advanceFrames(int n) {
+        for (int i = 0; i < n; ++i) {
+            RenderCommandList commands;
+            layer_->buildRenderCommands(frame_, *renderer_, commands);
+            ++frame_.frameId;
+        }
+    }
+};
+
+TEST_F(FeatureLabelPlacementTest, OverlappingLabelsKeepOnlyOne) {
+    // 两个几乎同点的标注要素:placement 只留一个,另一个 opacity 0。
+    const FeatureId a =
+        layer_->store().addFeature(makeNamedPoint(0.0, 0.0, "AAAA"));
+    const FeatureId b =
+        layer_->store().addFeature(makeNamedPoint(0.0001, 0.0, "BBBB"));
+
+    advanceFrames(6);
+    const auto& stats = layer_->labelPlacementStats();
+    EXPECT_EQ(2, stats.candidates);
+    EXPECT_EQ(1, stats.placed);
+    EXPECT_EQ(1, stats.collided);
+    // 距离几乎同,tie-break featureId 小者赢,且收敛到全显/全隐。
+    EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(a));
+    EXPECT_FLOAT_EQ(0.0f, layer_->labelOpacityForFeature(b));
+}
+
+TEST_F(FeatureLabelPlacementTest, SeparatedLabelsBothPlaced) {
+    // 拉开的两点(球面 5°≈550km,屏幕上远离):都显示。
+    const FeatureId a =
+        layer_->store().addFeature(makeNamedPoint(0.0, 5.0, "AAAA"));
+    const FeatureId b =
+        layer_->store().addFeature(makeNamedPoint(0.0, -5.0, "BBBB"));
+
+    advanceFrames(6);
+    EXPECT_EQ(2, layer_->labelPlacementStats().placed);
+    EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(a));
+    EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(b));
+}
+
+TEST_F(FeatureLabelPlacementTest, PriorityFeatureWinsCollision) {
+    // 编辑联动:选中要素提权,重叠时后加入的选中者赢。
+    const FeatureId a =
+        layer_->store().addFeature(makeNamedPoint(0.0, 0.0, "AAAA"));
+    const FeatureId b =
+        layer_->store().addFeature(makeNamedPoint(0.0001, 0.0, "BBBB"));
+    layer_->setLabelPriorityFeature(b);
+
+    advanceFrames(6);
+    EXPECT_FLOAT_EQ(0.0f, layer_->labelOpacityForFeature(a));
+    EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(b));
+}
+
+TEST_F(FeatureLabelPlacementTest, BackSideLabelHorizonCulled) {
+    // 球背面要素(lon 180°,相机在 lon 0 上空):椭球地平线遮挡剔除。
+    const FeatureId back =
+        layer_->store().addFeature(makeNamedPoint(180.0, 0.0, "BACK"));
+
+    advanceFrames(6);
+    EXPECT_GE(layer_->labelPlacementStats().culledHorizon, 1);
+    EXPECT_FLOAT_EQ(0.0f, layer_->labelOpacityForFeature(back));
+}
+
+TEST_F(FeatureLabelPlacementTest, FadeIsGradualAndUploadsStopWhenSettled) {
+    const FeatureId a =
+        layer_->store().addFeature(makeNamedPoint(0.0, 0.0, "AAAA"));
+
+    // 首帧后 opacity 应在 (0,1) 之间(0.1s / 0.3s fade)。
+    advanceFrames(1);
+    const float first = layer_->labelOpacityForFeature(a);
+    EXPECT_GT(first, 0.0f);
+    EXPECT_LT(first, 1.0f);
+
+    advanceFrames(5);
+    EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(a));
+
+    // 收敛后不再重传顶点流。
+    const int settled = device_.updatedBufferCount;
+    advanceFrames(3);
+    EXPECT_EQ(settled, device_.updatedBufferCount);
+
+    // 顶点流里 opacity 分量(offset.z,每 8 float 下标 5)已写 1。
+    RenderCommandList commands;
+    layer_->buildRenderCommands(frame_, *renderer_, commands);
+    const RenderCommand* label = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
+    }
+    ASSERT_NE(nullptr, label);
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        label->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t count = vb->bytes().size() / sizeof(float);
+    for (size_t i = 5; i < count; i += 8) {
+        EXPECT_FLOAT_EQ(1.0f, floats[i]);
+    }
+}
+
+TEST_F(FeatureLabelPlacementTest, BucketRebuildResyncsSettledOpacity) {
+    // 回归锁死(真机踩坑):桶重镶(setStyle/贴地 revision)把顶点流 opacity
+    // 重置 0,而 placement fade 已收敛"无变化"——若同步依赖变化位早退,
+    // 重镶后标签集体隐形。正确行为 = 按 appliedOpacity 偏差回写。
+    const FeatureId a =
+        layer_->store().addFeature(makeNamedPoint(0.0, 0.0, "AAAA"));
+    advanceFrames(6);
+    EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(a));
+
+    // setStyle 触发全桶重镶(顶点流 opacity 归 0)。
+    layer_->setStyle(layer_->style());
+    advanceFrames(1);
+
+    RenderCommandList commands;
+    layer_->buildRenderCommands(frame_, *renderer_, commands);
+    const RenderCommand* label = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
+    }
+    ASSERT_NE(nullptr, label);
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        label->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t count = vb->bytes().size() / sizeof(float);
+    for (size_t i = 5; i < count; i += 8) {
+        EXPECT_FLOAT_EQ(1.0f, floats[i]);
+    }
 }
 
 TEST_F(FeatureRenderLayerTest, NoLabelWithoutFontOrName) {

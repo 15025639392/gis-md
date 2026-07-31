@@ -251,7 +251,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<float>& pointVerts,
     std::vector<uint32_t>& pointIndices,
     std::vector<float>& labelVerts,
-    std::vector<uint32_t>& labelIndices) const {
+    std::vector<uint32_t>& labelIndices,
+    std::vector<LabelEntry>& labelEntries) const {
     // 贴地:预变换出细分+采样高度的副本(高度已含 offset),镶嵌时
     // heightOffset 传 0 防二次叠加;Absolute 走原几何 + offset。
     const bool clamp =
@@ -350,10 +351,11 @@ void FeatureRenderLayer::tessellateFeatureInto(
         }
     }
 
-    // ---- P5b 文字标注(先无避让全画) ----
+    // ---- P5b/P5c 文字标注 ----
     // properties[labelProperty] 非空且字体就绪 → 锚点处 glyph quads
-    // (28B:anchor+offsetPx+uv)。锚点:Point 本体/LineString 中点顶点/
-    // Polygon 环 bbox 中心;贴地时中心点单独采样。
+    // (32B:anchor+offsetPx+uv+opacity)。锚点:Point 本体/LineString 弧长
+    // 中点/Polygon 环 bbox 中心;贴地时中心点单独采样。顶点 opacity 初始
+    // 0(placement fade-in 起点),同时登记 LabelEntry 供逐帧避让。
     if (glyphAtlas_ && glyphAtlas_->ready() &&
         !geometry->rings.empty() && !geometry->rings[0].empty()) {
         const auto propIt = feature.properties.find(style_.labelProperty);
@@ -364,8 +366,34 @@ void FeatureRenderLayer::tessellateFeatureInto(
         // 点走 sample+offset;absolute 时统一 + tessHeightOffset)。
         Cartographic anchorCarto = geometry->rings[0][0];
         if (geometry->type == GeometryType::LineString) {
+            // 弧长中点(§8.2:线锚点按测地弧长):累计相邻顶点 ECEF 弦长,
+            // 取半程所在段线性插值。细分后段短,弦长≈弧长;插值跨反经线
+            // 的段会走短端错侧,与既有镶嵌同限(demo 尺度不触及)。
             const auto& ring = geometry->rings[0];
+            std::vector<double> cumulative(ring.size(), 0.0);
+            for (size_t i = 1; i < ring.size(); ++i) {
+                const Vec3 a = ellipsoid_.cartographicToCartesian(ring[i - 1]);
+                const Vec3 b = ellipsoid_.cartographicToCartesian(ring[i]);
+                cumulative[i] = cumulative[i - 1] + (b - a).length();
+            }
+            const double half = cumulative.back() * 0.5;
             anchorCarto = ring[ring.size() / 2];
+            for (size_t i = 1; i < ring.size(); ++i) {
+                if (cumulative[i] >= half) {
+                    const double segLen = cumulative[i] - cumulative[i - 1];
+                    const double t = segLen > 0.0
+                        ? (half - cumulative[i - 1]) / segLen
+                        : 0.0;
+                    const Cartographic& p0 = ring[i - 1];
+                    const Cartographic& p1 = ring[i];
+                    anchorCarto = Cartographic(
+                        p0.longitude() +
+                            (p1.longitude() - p0.longitude()) * t,
+                        p0.latitude() + (p1.latitude() - p0.latitude()) * t,
+                        p0.height() + (p1.height() - p0.height()) * t);
+                    break;
+                }
+            }
         } else if (geometry->type == GeometryType::Polygon) {
             double west = std::numeric_limits<double>::max();
             double east = std::numeric_limits<double>::lowest();
@@ -413,6 +441,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
         }
         float penX = -totalAdvance * 0.5f;
         const float baseY = style_.labelOffsetPx;
+        const size_t entryVertexStart = labelVerts.size();
         for (uint32_t cp : codepoints) {
             const GlyphAtlas::Glyph* g = glyphAtlas_->ensureGlyph(cp);
             if (!g) continue;
@@ -422,7 +451,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 const float yTop = baseY + g->offsetY * s;
                 const float yBot = yTop - g->height * s;
                 const uint32_t base =
-                    static_cast<uint32_t>(labelVerts.size() / 7);
+                    static_cast<uint32_t>(labelVerts.size() / 8);
                 const float corners[4][4] = {
                     {x0, yBot, g->u0, g->v1},
                     {x1, yBot, g->u1, g->v1},
@@ -434,6 +463,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
                     labelVerts.push_back(az);
                     labelVerts.push_back(c[0]);
                     labelVerts.push_back(c[1]);
+                    labelVerts.push_back(0.0f);  // offset.z=opacity(placement 回写)
                     labelVerts.push_back(c[2]);
                     labelVerts.push_back(c[3]);
                 }
@@ -441,6 +471,23 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 for (uint32_t idx : quad) labelIndices.push_back(base + idx);
             }
             penX += g->advance * s;
+        }
+        // 登记 placement 候选:碰撞盒 = 整行文字盒(行度量 ascent/descent
+        // 换算标注字号)+ halo 外扩。空文本/字形全缺 → 无顶点不登记。
+        if (labelVerts.size() > entryVertexStart) {
+            LabelEntry entry;
+            entry.featureId = feature.id;
+            entry.anchorEcef = anchor;
+            entry.boxMinXPx = -totalAdvance * 0.5f - style_.labelHaloPx;
+            entry.boxMaxXPx = totalAdvance * 0.5f + style_.labelHaloPx;
+            // descent() 已取正(基线下距离),下缘 = 基线减。
+            entry.boxMinYPx =
+                baseY - glyphAtlas_->descent() * s - style_.labelHaloPx;
+            entry.boxMaxYPx =
+                baseY + glyphAtlas_->ascent() * s + style_.labelHaloPx;
+            entry.vertexFloatStart = entryVertexStart;
+            entry.vertexFloatCount = labelVerts.size() - entryVertexStart;
+            labelEntries.push_back(entry);
         }
     }
 }
@@ -453,8 +500,9 @@ bool FeatureRenderLayer::uploadBucketGpu(
     const std::vector<uint32_t>& lineIndices,
     const std::vector<float>& pointVerts,
     const std::vector<uint32_t>& pointIndices,
-    const std::vector<float>& labelVerts,
+    std::vector<float>&& labelVerts,
     const std::vector<uint32_t>& labelIndices,
+    std::vector<LabelEntry>&& labelEntries,
     BucketGpu& out) const {
     out = BucketGpu{};
     out.origin = origin;
@@ -467,6 +515,9 @@ bool FeatureRenderLayer::uploadBucketGpu(
             labelIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
         if (out.labelVertexBuffer && out.labelIndexBuffer) {
             out.labelIndexCount = static_cast<int>(labelIndices.size());
+            // CPU 副本随桶常驻:placement 改 opacity 分量后整桶重传。
+            out.labelVertsCpu = std::move(labelVerts);
+            out.labelEntries = std::move(labelEntries);
         }
     }
     if (!pointIndices.empty()) {
@@ -523,8 +574,9 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     std::vector<uint32_t> lineIndices;
     std::vector<float> pointVerts;     // 5 float/顶点(anchor+corner)
     std::vector<uint32_t> pointIndices;
-    std::vector<float> labelVerts;     // 7 float/顶点(anchor+offsetPx+uv)
+    std::vector<float> labelVerts;     // 8 float/顶点(anchor+offsetPx+uv+opacity)
     std::vector<uint32_t> labelIndices;
+    std::vector<LabelEntry> labelEntries;
     Vec3 origin = Vec3::zero();
     bool hasOrigin = false;
 
@@ -545,7 +597,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         tessellateFeatureInto(*feature, sample, origin, hasOrigin,
                               fillVerts, fillIndices, lineVerts, lineIndices,
                               pointVerts, pointIndices,
-                              labelVerts, labelIndices);
+                              labelVerts, labelIndices, labelEntries);
     }
 
     if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty() &&
@@ -558,7 +610,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     if (!uploadBucketGpu(origin, fillVerts, fillIndices,
                          lineVerts, lineIndices,
                          pointVerts, pointIndices,
-                         labelVerts, labelIndices, gpu)) {
+                         std::move(labelVerts), labelIndices,
+                         std::move(labelEntries), gpu)) {
         // buffer 创建失败:丢弃本桶,脏区已消费 → 下次编辑该桶时重试。
         buckets_.erase(key);
         return;
@@ -622,6 +675,7 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         std::vector<uint32_t> pointIndices;
         std::vector<float> labelVerts;
         std::vector<uint32_t> labelIndices;
+        std::vector<LabelEntry> labelEntries;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
         tessellateFeatureInto(previewFeature,
@@ -630,14 +684,17 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                               fillVerts, fillIndices,
                               lineVerts, lineIndices,
                               pointVerts, pointIndices,
-                              labelVerts, labelIndices);
+                              labelVerts, labelIndices, labelEntries);
         if (hasOrigin) {
             previewGpuValid_ = uploadBucketGpu(
                 origin, fillVerts, fillIndices, lineVerts, lineIndices,
-                pointVerts, pointIndices, labelVerts, labelIndices,
-                previewGpu_);
+                pointVerts, pointIndices, std::move(labelVerts),
+                labelIndices, std::move(labelEntries), previewGpu_);
         }
     }
+
+    // P5c:逐帧标签避让 placement + fade 回写(在命令生成前,顶点流为准)。
+    updateLabelPlacement(frameState);
 
     if (buckets_.empty() && !previewGpuValid_) return;
 
@@ -647,6 +704,71 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     if (previewFeatureId_ != kInvalidFeatureId && previewGpuValid_) {
         appendBucketCommands(previewGpu_, frameState, renderer, commands);
     }
+}
+
+void FeatureRenderLayer::updateLabelPlacement(const FrameState& frameState) {
+    // collect:全桶 + 预览的 LabelEntry → 候选。
+    std::vector<LabelCandidate> candidates;
+    auto collect = [&](const BucketGpu& gpu) {
+        for (const LabelEntry& e : gpu.labelEntries) {
+            LabelCandidate c;
+            c.featureId = e.featureId;
+            c.anchorEcef = e.anchorEcef;
+            c.boxMinXPx = e.boxMinXPx;
+            c.boxMinYPx = e.boxMinYPx;
+            c.boxMaxXPx = e.boxMaxXPx;
+            c.boxMaxYPx = e.boxMaxYPx;
+            candidates.push_back(c);
+        }
+    };
+    for (const auto& [key, gpu] : buckets_) collect(gpu);
+    if (previewGpuValid_) collect(previewGpu_);
+
+    const Camera& cam = *frameState.camera;
+    LabelPlacement::FrameInput in;
+    in.viewProj = cam.viewProjectionMatrix(
+        static_cast<double>(frameState.viewportWidthPixels),
+        static_cast<double>(frameState.viewportHeightPixels));
+    in.cameraEcef = cam.position();
+    in.ellipsoidRadii = ellipsoid_.radii();
+    in.viewportWidthPx = frameState.viewportWidthPixels;
+    in.viewportHeightPx = frameState.viewportHeightPixels;
+    in.deltaSeconds = frameState.deltaSeconds;
+    // 候选为空也要跑:fade 状态机清扫已消失要素。
+    labelPlacement_.update(in, candidates);
+
+    // commit 回写:每帧按 appliedOpacity vs 当前值的偏差同步,**不依赖
+    // update() 的变化位** —— 桶重镶(贴地 revision/字体翻转/编辑)会把顶点
+    // 流 opacity 重置 0,而 fade 状态可能早已收敛"无变化",若以变化位做
+    // 早退,重镶后的桶永远不再回写(真机曾表现为标签 10s 后集体隐形)。
+    // 稳态下逐 entry 比较即免写,成本 O(标签数) 浮点比较。
+    auto apply = [&](BucketGpu& gpu) {
+        bool dirty = false;
+        for (LabelEntry& e : gpu.labelEntries) {
+            const float op = labelPlacement_.opacity(e.featureId);
+            if (op == e.appliedOpacity) continue;
+            // 顶点 8 float,opacity 在 offset.z(下标 5)。
+            for (size_t i = e.vertexFloatStart + 5;
+                 i < e.vertexFloatStart + e.vertexFloatCount; i += 8) {
+                gpu.labelVertsCpu[i] = op;
+            }
+            e.appliedOpacity = op;
+            dirty = true;
+        }
+        if (dirty && gpu.labelVertexBuffer) {
+            const bool ok = renderDevice_->updateBuffer(
+                gpu.labelVertexBuffer.get(), 0, gpu.labelVertsCpu.data(),
+                gpu.labelVertsCpu.size() * sizeof(float));
+            if (!ok) {
+                // 上传断链 = 标签隐形(顶点 opacity 停 0),必须可见。
+                platformLog(LogLevel::Warning, "FeatureRenderLayer",
+                            "label opacity updateBuffer FAILED size=%zu",
+                            gpu.labelVertsCpu.size() * sizeof(float));
+            }
+        }
+    };
+    for (auto& [key, gpu] : buckets_) apply(gpu);
+    if (previewGpuValid_) apply(previewGpu_);
 }
 
 void FeatureRenderLayer::appendBucketCommands(
@@ -766,7 +888,7 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.indexBuffer = gpu.labelIndexBuffer.get();
             cmd.indexCount = gpu.labelIndexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
-            cmd.vertexStride = 28;  // anchor(12)+offsetPx(8)+uv(8)
+            cmd.vertexStride = 32;  // anchor(12)+offsetPx(8)+uv(8)+opacity(4)
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
             cmd.depthTest = true;
             cmd.depthWrite = false;
