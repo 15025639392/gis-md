@@ -163,8 +163,8 @@ TerrainDisplacementTemplatePool::ensureHeightArray(int gridSize) {
 
 const TerrainDisplacementTemplatePool::HeightTexture*
 TerrainDisplacementTemplatePool::acquireHeightTexture(
-    const TileKey& key, const DecodedHeightmap& heightmap, int gridSize,
-    uint64_t frameId) {
+    const TileKey& key, const DecodedHeightmap& heightmap,
+    const Rectangle& bounds, int gridSize, uint64_t frameId) {
     if (!device_ || gridSize < 1 || !heightmap.valid()) {
         return nullptr;
     }
@@ -206,18 +206,59 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     const int n = gridSize + 1;
     const float minH = heightmap.minHeight;
     const float range = std::max(1e-3f, heightmap.maxHeight - heightmap.minHeight);
-    std::vector<uint8_t> bytes(static_cast<size_t>(n) * n * 4, 0);
+    // 先把节点高度采成 scratch:法线要在其上做中心差分,逐节点现采 4 个邻居会
+    // 把双线性采样次数翻 4 倍(邻居彼此复用)。
+    std::vector<float> nodeH(static_cast<size_t>(n) * n);
     for (int j = 0; j < n; ++j) {
         const float v = static_cast<float>(j) / static_cast<float>(gridSize);
         for (int i = 0; i < n; ++i) {
             const float u = static_cast<float>(i) / static_cast<float>(gridSize);
-            const float hMeters = heightmap.sampleBilinear(u, v);
+            nodeH[static_cast<size_t>(j) * n + i] = heightmap.sampleBilinear(u, v);
+        }
+    }
+    // ---- B/A 通道 = 切空间法线(解"竖条"= 逐三角面平法线)----
+    // R/G 是 16bit 高度,B/A 空着 → 法线搭车进同一张纹理:不需要新 array、新
+    // 纹理槽、第二套 LRU/epoch/staleness,零额外显存。分辨率随高度纹理走,即
+    // dense 瓦片 257²(= 目标 256 边长),远处 coarse 65²(那里本就看不出)。
+    // 只存 nx,ny —— nz>0 恒成立(高度场是 u,v 的函数,无悬垂),shader 重建。
+    constexpr double kEarthRadiusMeters = 6378137.0;
+    const double centerLat = 0.5 * (bounds.north() + bounds.south());
+    const double widthMeters = std::max(
+        1.0, bounds.width() * std::cos(centerLat) * kEarthRadiusMeters);
+    const double heightSpanMeters =
+        std::max(1.0, bounds.height() * kEarthRadiusMeters);
+    const double stepU = widthMeters / gridSize;
+    const double stepV = heightSpanMeters / gridSize;
+
+    std::vector<uint8_t> bytes(static_cast<size_t>(n) * n * 4, 0);
+    for (int j = 0; j < n; ++j) {
+        for (int i = 0; i < n; ++i) {
+            const size_t idx = (static_cast<size_t>(j) * n + i) * 4;
+            const float hMeters = nodeH[static_cast<size_t>(j) * n + i];
             const float t = std::clamp((hMeters - minH) / range, 0.0f, 1.0f);
             const uint32_t v16 =
                 static_cast<uint32_t>(std::lround(t * 65535.0f));
-            const size_t idx = (static_cast<size_t>(j) * n + i) * 4;
             bytes[idx + 0] = static_cast<uint8_t>((v16 >> 8) & 0xFF);
             bytes[idx + 1] = static_cast<uint8_t>(v16 & 0xFF);
+
+            // 内部中心差分;边界退化单边(分母同步用真实跨度,边界法线不被放大)。
+            const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1);
+            const int j0 = std::max(0, j - 1), j1 = std::min(n - 1, j + 1);
+            const auto at = [&](int gi, int gj) {
+                return static_cast<double>(nodeH[static_cast<size_t>(gj) * n + gi]);
+            };
+            const double gradU =
+                (at(i1, j) - at(i0, j)) / (static_cast<double>(i1 - i0) * stepU);
+            const double gradV =
+                (at(i, j1) - at(i, j0)) / (static_cast<double>(j1 - j0) * stepV);
+            const double inv =
+                1.0 / std::sqrt(gradU * gradU + gradV * gradV + 1.0);
+            const auto enc = [](double c) {
+                return static_cast<uint8_t>(
+                    std::lround(std::clamp(c * 0.5 + 0.5, 0.0, 1.0) * 255.0));
+            };
+            bytes[idx + 2] = enc(-gradU * inv);
+            bytes[idx + 3] = enc(-gradV * inv);
         }
     }
     if (!device_->updateTextureRegion(arr->texture.get(), 0, 0, n, n,

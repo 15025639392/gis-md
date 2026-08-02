@@ -928,6 +928,9 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层号
 out vec3 v_normal;
 out vec3 v_position;
 out vec4 v_texcoord01;
+// 裙墙标志(1=裙顶点)。片元据此跳过法线场——裙墙是竖直墙面,其朝向不由高度场
+// 决定,套用高度场法线会把墙照成"平地"。
+out float v_skirt;
 
 // Phase 2c P2 morph:反量化 RG 16bit 高度纹素→米(mr = (minHeight, heightRange))。
 float eeSampleTerrainHeight(
@@ -980,6 +983,7 @@ void main() {
     v_normal = normalize(a_normal);
     v_position = morphPos;
     v_texcoord01 = a_texcoord01;
+    v_skirt = skirt;
     gl_PointSize = 1.0;
     gl_Position = u_modelViewProjection * vec4(morphPos, 1.0);
 }
@@ -992,6 +996,14 @@ precision highp float;
 in vec3 v_normal;
 in vec3 v_position;
 in vec4 v_texcoord01;
+// 裙墙标志:裙墙是竖直墙面,其朝向不由高度场决定,必须跳过法线贴图。
+in float v_skirt;
+
+// 高度纹理在片元里也要读:B/A 通道存切空间法线(见 acquireHeightTexture)。
+// 与顶点级同一 uniform、同一纹理单元(GL 按 program 绑定,不占新槽)。
+uniform highp sampler2DArray u_heightTexture;
+// z=位移是否启用(=法线场是否可用) w=栅格边长 gridN。与顶点级同一 uniform。
+uniform vec4 u_heightDisplace;
 
 uniform vec3 u_lightDir;
 uniform vec4 u_ambient;
@@ -1035,6 +1047,52 @@ uniform highp sampler2DArray u_pageStoreIndir;
 uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
 
 out vec4 fragColor;
+
+// ============================================================
+// 连续法线场:替代逐三角面 dFdx 叉积(那是"竖条"刻面的来源)
+// ============================================================
+// 位移面 S(u,v) = B(u,v) + up·h(u,v)(瓦片内 up≈常量,即位移方向)。取瓦片切
+// 平面正交基 (e_u,e_v),则 ∂S/∂u × ∂S/∂v ∝ up − (h_u/L_u)·e_u − (h_v/L_v)·e_v,
+// 括号内即高度纹理 B/A 存的切空间坡度 → N = nx·e_u + ny·e_v + nz·up。
+//
+// 切基不用新 uniform 传:由屏幕导数 2×2 反解 ∂P/∂u、∂P/∂v 再投掉 up 分量即得。
+// uv 的地理朝向约定(v 朝北还是朝南、瓦片东西向米数)因此全不需要在 shader 里
+// 假设——反解出的 e_u 天然就是"u 增大的世界方向",与烘焙时的 uv 同源。
+//
+// B/A 必须**手动**双线性:高度纹理是 NEAREST(R/G 打包 16bit,硬件插值会破坏
+// 打包),直接 texelFetch 取法线会退化成逐纹素常量 = 方块刻面,不比三角刻面好。
+bool eeTerrainNormalFromHeightTex(
+    highp sampler2DArray tex, int layer, float gridN,
+    vec2 uv, vec3 position, vec3 up, out vec3 outNormal) {
+    vec2 duvdx = dFdx(uv);
+    vec2 duvdy = dFdy(uv);
+    float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
+    if (abs(det) < 1e-12) return false;
+    vec3 dpdx = dFdx(position);
+    vec3 dpdy = dFdy(position);
+    float invDet = 1.0 / det;
+    vec3 su = ( duvdy.y * dpdx - duvdx.y * dpdy) * invDet;
+    vec3 sv = (-duvdy.x * dpdx + duvdx.x * dpdy) * invDet;
+    vec3 tu = su - up * dot(up, su);
+    vec3 tv = sv - up * dot(up, sv);
+    float lu = length(tu);
+    float lv = length(tv);
+    if (lu < 1e-6 || lv < 1e-6) return false;
+
+    vec2 g = clamp(uv, 0.0, 1.0) * gridN;
+    vec2 f = fract(g);
+    ivec2 i0 = max(ivec2(floor(g)), ivec2(0));
+    ivec2 i1 = min(i0 + ivec2(1), ivec2(int(gridN)));
+    vec2 n00 = texelFetch(tex, ivec3(i0.x, i0.y, layer), 0).ba;
+    vec2 n10 = texelFetch(tex, ivec3(i1.x, i0.y, layer), 0).ba;
+    vec2 n01 = texelFetch(tex, ivec3(i0.x, i1.y, layer), 0).ba;
+    vec2 n11 = texelFetch(tex, ivec3(i1.x, i1.y, layer), 0).ba;
+    vec2 nxy = mix(mix(n00, n10, f.x), mix(n01, n11, f.x), f.y) * 2.0 - 1.0;
+    float nz = sqrt(max(0.0, 1.0 - dot(nxy, nxy)));
+    outNormal = normalize(nxy.x * (tu / lu) + nxy.y * (tv / lv) + nz * up);
+    return true;
+}
+
 
 vec2 uvFromSet(float texCoordSet) {
     int setIndex = int(floor(texCoordSet + 0.5));
@@ -1090,18 +1148,25 @@ void main() {
         discard;
     }
     float faceSign = gl_FrontFacing ? 1.0 : -1.0;
-    // Phase 2c P4 浮雕法线:模板着色法线是光滑椭球法线(v_normal),位移出的地形若
-    // 用它则每瓦片近乎平光照——无坡面明暗。改用位移面的真实几何法线:局部位置的屏幕
-    // 空间导数叉积 = 面法线(v_position 已是位移后局部米坐标,u_lightDir 同 ENU 帧)。
-    // 平坦(reliefFade→0 / skirt 底)时导数≈椭球 up,自然退化,无需 gate。叉积符号随
-    // 屏幕朝向/winding 不定,用 v_normal 定向保证朝外。
-    vec3 dpx = dFdx(v_position);
-    vec3 dpy = dFdy(v_position);
-    vec3 reliefN = cross(dpx, dpy);
-    vec3 geomN = normalize(v_normal);
-    if (dot(reliefN, reliefN) > 1e-12) {
-        geomN = normalize(reliefN);
-        if (dot(geomN, v_normal) < 0.0) { geomN = -geomN; }
+    vec3 up = normalize(v_normal);
+    vec3 geomN;
+    // 首选连续法线场(高度纹理 B/A);它逐像素平滑,消除逐三角面刻面("竖条")。
+    if (!(u_heightDisplace.z > 0.5 && v_skirt < 0.5 &&
+          eeTerrainNormalFromHeightTex(
+              u_heightTexture, int(u_terrainLayers.x + 0.5),
+              u_heightDisplace.w, terrainUv, v_position, up, geomN))) {
+        // 回落:位移面的逐三角面几何法线(局部位置屏幕导数叉积)。这是法线场不
+        // 可用时的原路径(无位移的椭球回落/fill 代理/裙墙/反解退化)——它逐三角面
+        // 恒定,在规则网格上表现为对角刻面。平坦时导数≈椭球 up,自然退化。叉积
+        // 符号随屏幕朝向/winding 不定,用 v_normal 定向保证朝外。
+        vec3 dpx = dFdx(v_position);
+        vec3 dpy = dFdy(v_position);
+        vec3 reliefN = cross(dpx, dpy);
+        geomN = up;
+        if (dot(reliefN, reliefN) > 1e-12) {
+            geomN = normalize(reliefN);
+            if (dot(geomN, v_normal) < 0.0) { geomN = -geomN; }
+        }
     }
     vec3 N = geomN * faceSign;
     vec3 L = normalize(u_lightDir);
@@ -1229,7 +1294,9 @@ uniform highp sampler2DArray u_heightTexture;
 out vec3 v_normal;
 out vec3 v_position;
 out vec4 v_texcoord01;
-flat out vec4 v_pageParams;  // x=gridN y=indirLayer z=clipEnabled w=_
+out float v_skirt;            // 1=裙顶点(片元据此跳过法线场,见 terrainShader 注释)
+flat out float v_heightLayer; // 高度纹理层号(片元读 B/A 法线要用)
+flat out vec4 v_pageParams;   // x=pageGridN y=indirLayer z=clipEnabled w=模板 gridN
 flat out vec4 v_clipUv;
 
 // 模板栅格边长逐实例给(i_layers.w):自适应密度后不再是常量,coarse=64、
@@ -1278,7 +1345,9 @@ void main() {
     v_normal = worldN;
     v_position = world;
     v_texcoord01 = a_texcoord01;
-    v_pageParams = vec4(i_dispMorph.w, i_layers.y, i_layers.z, 0.0);
+    v_skirt = skirt;
+    v_heightLayer = i_layers.x;
+    v_pageParams = vec4(i_dispMorph.w, i_layers.y, i_layers.z, kGridSize);
     v_clipUv = i_clipUv;
     gl_Position = u_modelViewProjection * vec4(world, 1.0);
 }
@@ -1291,7 +1360,9 @@ precision highp float;
 in vec3 v_normal;
 in vec3 v_position;
 in vec4 v_texcoord01;
-flat in vec4 v_pageParams;  // x=gridN y=indirLayer z=clipEnabled w=_
+in float v_skirt;
+flat in float v_heightLayer;
+flat in vec4 v_pageParams;  // x=pageGridN y=indirLayer z=clipEnabled w=模板 gridN
 flat in vec4 v_clipUv;
 
 uniform vec3 u_lightDir;
@@ -1299,8 +1370,42 @@ uniform vec4 u_ambient;
 uniform vec4 u_baseColor;
 uniform highp sampler2DArray u_pageStore;
 uniform highp sampler2DArray u_pageStoreIndir;
+uniform highp sampler2DArray u_heightTexture;
 
 out vec4 fragColor;
+
+// 推导、回落条件、以及 B/A 为何必须手动双线性,见 kTerrainFragmentGLSL 同名
+// 函数的注释(两处 shader 源独立,故各存一份;改一处必须同步另一处)。
+bool eeTerrainNormalFromHeightTex(
+    highp sampler2DArray tex, int layer, float gridN,
+    vec2 uv, vec3 position, vec3 up, out vec3 outNormal) {
+    vec2 duvdx = dFdx(uv);
+    vec2 duvdy = dFdy(uv);
+    float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
+    if (abs(det) < 1e-12) return false;
+    vec3 dpdx = dFdx(position);
+    vec3 dpdy = dFdy(position);
+    float invDet = 1.0 / det;
+    vec3 su = ( duvdy.y * dpdx - duvdx.y * dpdy) * invDet;
+    vec3 sv = (-duvdy.x * dpdx + duvdx.x * dpdy) * invDet;
+    vec3 tu = su - up * dot(up, su);
+    vec3 tv = sv - up * dot(up, sv);
+    float lu = length(tu);
+    float lv = length(tv);
+    if (lu < 1e-6 || lv < 1e-6) return false;
+    vec2 g = clamp(uv, 0.0, 1.0) * gridN;
+    vec2 f = fract(g);
+    ivec2 i0 = max(ivec2(floor(g)), ivec2(0));
+    ivec2 i1 = min(i0 + ivec2(1), ivec2(int(gridN)));
+    vec2 n00 = texelFetch(tex, ivec3(i0.x, i0.y, layer), 0).ba;
+    vec2 n10 = texelFetch(tex, ivec3(i1.x, i0.y, layer), 0).ba;
+    vec2 n01 = texelFetch(tex, ivec3(i0.x, i1.y, layer), 0).ba;
+    vec2 n11 = texelFetch(tex, ivec3(i1.x, i1.y, layer), 0).ba;
+    vec2 nxy = mix(mix(n00, n10, f.x), mix(n01, n11, f.x), f.y) * 2.0 - 1.0;
+    float nz = sqrt(max(0.0, 1.0 - dot(nxy, nxy)));
+    outNormal = normalize(nxy.x * (tu / lu) + nxy.y * (tv / lv) + nz * up);
+    return true;
+}
 
 vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
     overlay.a *= clamp(opacity, 0.0, 1.0);
@@ -1316,14 +1421,21 @@ void main() {
          terrainUv.y < v_clipUv.y || terrainUv.y > v_clipUv.y + v_clipUv.w)) {
         discard;
     }
-    // 位移面真实几何法线(屏幕空间导数叉积),与 terrainShader 一致。
-    vec3 dpx = dFdx(v_position);
-    vec3 dpy = dFdy(v_position);
-    vec3 reliefN = cross(dpx, dpy);
-    vec3 geomN = normalize(v_normal);
-    if (dot(reliefN, reliefN) > 1e-12) {
-        geomN = normalize(reliefN);
-        if (dot(geomN, v_normal) < 0.0) { geomN = -geomN; }
+    // 连续法线场优先,失败回落逐三角面几何法线(与 terrainShader 一致)。
+    vec3 up = normalize(v_normal);
+    vec3 geomN;
+    if (!(v_pageParams.w > 0.5 && v_skirt < 0.5 &&
+          eeTerrainNormalFromHeightTex(
+              u_heightTexture, int(v_heightLayer + 0.5), v_pageParams.w,
+              terrainUv, v_position, up, geomN))) {
+        vec3 dpx = dFdx(v_position);
+        vec3 dpy = dFdy(v_position);
+        vec3 reliefN = cross(dpx, dpy);
+        geomN = up;
+        if (dot(reliefN, reliefN) > 1e-12) {
+            geomN = normalize(reliefN);
+            if (dot(geomN, v_normal) < 0.0) { geomN = -geomN; }
+        }
     }
     vec3 N = gl_FrontFacing ? geomN : -geomN;
     vec3 L = normalize(u_lightDir);

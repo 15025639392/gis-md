@@ -153,8 +153,11 @@ public:
                                                  : kHeightArrayLayers;
     }
 
+    // bounds:瓦片地理范围(弧度),仅法线烘焙用 —— 把 uv 方向的高度差换算成
+    // 米/米坡度需要瓦片东西/南北向的真实地面尺寸。高度本身不需要它。
     const HeightTexture* acquireHeightTexture(const TileKey& key,
                                               const DecodedHeightmap& heightmap,
+                                              const Rectangle& bounds,
                                               int gridSize,
                                               uint64_t frameId);
 

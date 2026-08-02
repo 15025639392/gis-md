@@ -381,15 +381,15 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                 int gridSize = terrainGridSizeForSse(
                     tile.selectionFrameState.screenSpaceError);
                 const TerrainDisplacementTemplatePool::HeightTexture* ht =
-                    hm ? pool->acquireHeightTexture(tile.key, *hm, gridSize,
-                                                    frameNumber)
+                    hm ? pool->acquireHeightTexture(tile.key, *hm, tile.bounds,
+                                                    gridSize, frameNumber)
                        : nullptr;
                 // dense 档层池容量小(近景瓦片才用),触顶时 acquire 返回 nullptr。
                 // 此时降级回 coarse 档重试,而不是让本帧丢掉这块瓦片。
                 if (!ht && hm && gridSize != kTerrainDisplacementGridSize) {
                     gridSize = kTerrainDisplacementGridSize;
-                    ht = pool->acquireHeightTexture(tile.key, *hm, gridSize,
-                                                    frameNumber);
+                    ht = pool->acquireHeightTexture(tile.key, *hm, tile.bounds,
+                                                    gridSize, frameNumber);
                 }
                 const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
                     (ht && ht->texture)
