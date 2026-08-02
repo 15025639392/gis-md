@@ -139,8 +139,19 @@ constexpr bool kMeasureVtIndirectionSamplePoC = false;
 // (见 MinimalGlobeDemoConfig.cpp 中 config.terrainPageStore = true 及 §15.3⑤),
 // 不再由灰度常量门控;A/B 测时直接改那行为 false。
 
-// 2026-06-10 14:00 UTC+8 = 06:00 UTC.
-constexpr double kFixedSimulationJulianDate = 2461188.75;
+// 2026-06-10 14:00 UTC+8 = 06:00 UTC, +2.88h → 16:53 UTC+8。
+//
+// 偏移 +0.12 是**地形质感验收的前提**,不是随手调的:原值在重庆
+// (106.508E, 29.617N)对应太阳高度角 **71.4°**(近天顶),NdotL≈0.948 →
+// 方向项 clamp(NdotL·0.9+0.3) 恒饱和到 1.000。饱和态下任何法线来源、任何光照
+// 曲线都产出同一个值,relief 改动一律测出"画面没变"——实测连续三次踩中
+// (法线贴图 0.16%、光照曲线 8.37% 像素变化)。
+// 详见 docs/issues/terrain-visual-maturity-gap-2026-08-02.md §4b.4。
+//
+// +0.12 日 → 太阳高度角 **34.3°**,NdotL=0.564,方向项 0.808(未饱和,且处于
+// 线性响应区)。这也是地球引擎出图的惯例角度:斜射光才读得出地形起伏。
+// 上界参考:高度角 ≥51°(NdotL≥0.778)即重新进入饱和,勿再调回。
+constexpr double kFixedSimulationJulianDate = 2461188.75 + 0.12;
 
 earth_engine::EarthSceneConfig makeDefaultDemoSceneConfig();
 

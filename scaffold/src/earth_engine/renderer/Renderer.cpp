@@ -1176,13 +1176,27 @@ void main() {
     // 受光面≈base(不过曝、不蓝 cast);阴影侧被抬 + 天空蓝染,而非洗白或
     // 死黑。directional:0=背光→1=受光。旧模型把 ambient 加在满 shade 之
     // 上导致受光面 base*1.24 过曝偏蓝(非 GE),此处改为 hemisphere 分配。
-    float directional = smoothstep(0.0, 1.0, NdotL);
+    // 方向项 = 线性 lambert × 增益 + 阴影底,clamp 收尾。系数取自 CesiumJS
+    // Globe.js 默认(lambertDiffuseMultiplier=0.9 / vertexShadowDarkness=0.3),
+    // 对应 GlobeFS.glsl 的 ENABLE_VERTEX_LIGHTING 路径。范围 0.3→1.0(3.3×)。
+    //
+    // **不用 smoothstep**:它在 NdotL→1(高太阳角,最常见)处导数恰为 0,会把地形
+    // 法线的全部贡献吃掉。实测本 demo 钉死场景 directional 中位 0.992,导致法线
+    // 改动前后画面只有 0.16% 像素有差(见 docs/issues/
+    // terrain-visual-maturity-gap-2026-08-02.md §4.4)。osgEarth(PhongLighting.glsl)
+    // 同样用线性 max(dot(N,L),0) —— 两个参考实现在"线性"上一致。
+    const float kLambertGain = 0.9;      // = Cesium lambertDiffuseMultiplier
+    const float kShadowFloor = 0.3;      // = Cesium vertexShadowDarkness
+    float directional = clamp(NdotL * kLambertGain + kShadowFloor, 0.0, 1.0);
     // 暖阳/冷阴影(GE/摄影级):受光面乘微暖太阳色(红+蓝−),背光面由
     // 天空蓝 ambient 补光——冷暖分离让 relief 更立体、更像真实日照。
+    // 冷暖/ambient 的分配仍按纯 NdotL(端点语义与改动前一致,中间由 smoothstep
+    // 改为线性),与上面的亮度增益解耦。
+    float sunlit = clamp(NdotL, 0.0, 1.0);
     vec3 sunTint = vec3(1.05, 1.0, 0.91);
-    vec3 color = base.rgb * (0.72 + 0.28 * directional)
-                          * mix(vec3(1.0), sunTint, directional)
-               + base.rgb * u_ambient.rgb * (1.0 - directional);
+    vec3 color = base.rgb * directional
+                          * mix(vec3(1.0), sunTint, sunlit)
+               + base.rgb * u_ambient.rgb * (1.0 - sunlit);
     fragColor = vec4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
 }
 )glsl";
@@ -1327,12 +1341,16 @@ void main() {
     vec2 sampleUv = (g - origin) / span;
     base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
 
-    // GE 式半球光照(与 terrainShader 一致)。
-    float directional = smoothstep(0.0, 1.0, NdotL);
+    // GE 式半球光照(与 terrainShader 一致;系数来源与不用 smoothstep 的理由
+    // 见 kTerrainFragmentGLSL 同处注释)。
+    const float kLambertGain = 0.9;
+    const float kShadowFloor = 0.3;
+    float directional = clamp(NdotL * kLambertGain + kShadowFloor, 0.0, 1.0);
+    float sunlit = clamp(NdotL, 0.0, 1.0);
     vec3 sunTint = vec3(1.05, 1.0, 0.91);
-    vec3 color = base.rgb * (0.72 + 0.28 * directional)
-                          * mix(vec3(1.0), sunTint, directional)
-               + base.rgb * u_ambient.rgb * (1.0 - directional);
+    vec3 color = base.rgb * directional
+                          * mix(vec3(1.0), sunTint, sunlit)
+               + base.rgb * u_ambient.rgb * (1.0 - sunlit);
     fragColor = vec4(color, 1.0);
 }
 )glsl";
@@ -3364,12 +3382,16 @@ fragment float4 terrainFragment(
 
     // GE 式半球光照(与 kTerrainFragmentGLSL 一致):蓝天 ambient 补阴影、
     // 太阳做方向 relief、受光面≈base 不过曝。
-    float directional = smoothstep(0.0, 1.0, NdotL);
+    // 系数来源与不用 smoothstep 的理由见 kTerrainFragmentGLSL 同处注释。
+    const float kLambertGain = 0.9;
+    const float kShadowFloor = 0.3;
+    float directional = clamp(NdotL * kLambertGain + kShadowFloor, 0.0, 1.0);
+    float sunlit = clamp(NdotL, 0.0, 1.0);
     // 暖阳/冷阴影(与 kTerrainFragmentGLSL 一致)。
     float3 sunTint = float3(1.05, 1.0, 0.91);
-    float3 color = base.rgb * (0.72 + 0.28 * directional)
-                            * mix(float3(1.0), sunTint, directional)
-                 + base.rgb * float4(u.ambient).rgb * (1.0 - directional);
+    float3 color = base.rgb * directional
+                            * mix(float3(1.0), sunTint, sunlit)
+                 + base.rgb * float4(u.ambient).rgb * (1.0 - sunlit);
     return float4(color, alpha * clamp(u.renderOpacity, 0.0, 1.0));
 }
 )msl";
@@ -3590,11 +3612,15 @@ fragment float4 terrainInstancedFragment(
     base = tiAlphaOver(
         base, u_pageStore.sample(u_pageSampler, sampleUv, uint(layer)), e.a);
 
-    float directional = smoothstep(0.0, 1.0, NdotL);
+    // 系数来源与不用 smoothstep 的理由见 kTerrainFragmentGLSL 同处注释。
+    const float kLambertGain = 0.9;
+    const float kShadowFloor = 0.3;
+    float directional = clamp(NdotL * kLambertGain + kShadowFloor, 0.0, 1.0);
+    float sunlit = clamp(NdotL, 0.0, 1.0);
     float3 sunTint = float3(1.05, 1.0, 0.91);
-    float3 color = base.rgb * (0.72 + 0.28 * directional)
-                            * mix(float3(1.0), sunTint, directional)
-                 + base.rgb * float3(u.ambient.rgb) * (1.0 - directional);
+    float3 color = base.rgb * directional
+                            * mix(float3(1.0), sunTint, sunlit)
+                 + base.rgb * float3(u.ambient.rgb) * (1.0 - sunlit);
     return float4(color, 1.0);
 }
 )msl";
