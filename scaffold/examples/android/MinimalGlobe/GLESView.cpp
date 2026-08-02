@@ -861,6 +861,37 @@ static void renderFrame() {
              q.minVisibleZoom, q.maxVisibleZoom,
              q.quadtreeFadingNodes,
              loadDirty ? 1 : 0);
+        // LoadQual 回答"屏幕上糊不糊",回答不了"为什么还没好"。这条补上收敛
+        // 速率的那一半:**每帧闸门是否打满**。判据(见诊断文档§二)——
+        //   fin/rasUp/ms 逐帧顶到上限 → 瓶颈在每帧提交闸门(候选 2 成立);
+        //   长期不满而 pend/net 有积压 → 瓶颈在网络或 mapping,方向完全不同。
+        //   fin    = 主线程地形 finalize 次数/上限
+        //   rasUp  = 影像上传单元数/上限
+        //   ms     = 主线程加载耗时/预算(demo 配 4.0ms)
+        //   pend   = 地形 请求/上传/终态 待处理
+        //   net    = 地形 起/完 · 影像 起/完(累计计数,看斜率)
+        //   inflt  = 地形/影像 worker 在途 · 传输层上限
+        //   prog   = frameLoadProgressPercentage
+        LOGI("LoadGate frame=%llu fin=%d/%d rasUp=%d/%d ms=%.2f/%.2f "
+             "pend=%d/%d/%d net=%d/%d·%d/%d inflt=%d/%d·%d/%d prog=%.1f "
+             "mode=%c%c",
+             static_cast<unsigned long long>(frameId),
+             q.budgetMainThreadFinalizesUsed, q.budgetMainThreadFinalizesLimit,
+             q.budgetRasterUploadsUsed, q.budgetRasterUploadsLimit,
+             q.budgetMainThreadElapsedMs, q.budgetMainThreadTimeLimitMs,
+             q.pendingTerrainRequests, q.pendingGltfTerrainUploads,
+             q.pendingGltfTerrainTerminalResults,
+             q.terrainProviderRequestsStarted,
+             q.terrainProviderRequestsCompleted,
+             q.rasterProviderRequestsStarted,
+             q.rasterProviderRequestsCompleted,
+             q.terrainProviderActiveWorkerBlockingRequests,
+             q.terrainTransportActiveRequestLimit,
+             q.rasterProviderActiveWorkerBlockingRequests,
+             q.rasterTransportActiveRequestLimit,
+             q.frameLoadProgressPercentage,
+             q.budgetInteractionActive ? 'I' : '-',
+             q.budgetSmoothingActive ? 'S' : '-');
     }
     sLoadDirtyPrev = loadDirty;
 

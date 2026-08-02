@@ -74,7 +74,7 @@ vec3 reliefN = cross(dFdx(v_position), dFdy(v_position));
 
 ---
 
-## 二、加载期不体面：候选，未证实
+## 二、加载期不体面：候选 → **已实测定案**（结论见 §2.1）
 
 已开的机制不少（`MinimalGlobeDemoConfig.cpp`）：fill 代理、`cullRequestsWhileMoving`、
 geomorph、祖先影像 scale-bias 复用、`preloadAncestors/Siblings` 均为开。
@@ -90,7 +90,7 @@ geomorph、祖先影像 scale-bias 复用、`preloadAncestors/Siblings` 均为�
 3. **fill 代理只有 16×16 椭球格**。地形未到时是全平滑球面贴影像，山区真实地形到达时
    "隆起"幅度很大，产生一次显著形变。
 
-### 判据（未执行）
+### 判据（已执行，见 §2.1）
 
 钉死相机（`freezeCamera` / `scriptedPan` 已有现成设施），清缓存冷启动，抓 `EarthPerf`
 头行 `rasterUploadsUsed / maxRasterUploadsPerFrame` 与 finalize 计数的**逐帧序列**：
@@ -99,6 +99,84 @@ geomorph、祖先影像 scale-bias 复用、`preloadAncestors/Siblings` 均为�
 - 未打满 → 瓶颈在网络或 mapping，方向完全不同
 
 **候选 2 和 3 不靠猜排序。**
+
+> 实测发现这条判据本身**漏了一个分支**：还存在"既不打满、也不是网络瓶颈"的第三种
+> 情况 —— 预算根本没被消费（更上游的硬闸早退）。见 §2.1。
+
+### 2.1 实测（2026-08-03，release，真机 7e045e39，冷缓存）
+
+**仪器**：新增 `LoadGate` 逐帧行（`GLESView.cpp`，与 `LoadQual` 同一采样门 ——
+暂态逐帧、稳态 120 帧心跳），打 `fin=用/上限 rasUp=用/上限 ms=用/上限
+pend=请求/上传/终态 net=… prog=… mode=交互态/平滑态`。
+
+**方法**：每轮 `adb uninstall` + `install`（清 HttpCache）→ 启动 → 静置 ~20s 让
+初始视图收敛 → 施加运动 → 静置测排空。全程 logcat 流式落盘。
+
+⚠️ **第一轮作废并重做**：原打算"钉死相机静置冷启动"，但 CamPose 显示 pitch
+−45°→−22°、camH 1500→6234m，且 logcat 里有系统 `GestureLog` 与 `GESTDIAG
+dragStart` —— 手机被真人碰了。**判据必须自带污染检测**：先看 CamPose 是否漂、
+再看有无 GESTDIAG。第二轮改用**确定性输入**
+`adb shell input keyevent 25`（音量下 = `nativeDebugZoom(0.84)`）×14
+—— 触摸注入不可用（`adb shell input swipe` 引擎侧收不到，GESTDIAG 为 0）。
+
+#### 结果（Run C，确定性，交互 3.82s）
+
+| t | mode | fin | rasUp | pendUp |
+|---|---|---|---|---|
+| 26.1s | `--` | 0/20 | 0/20 | 0 |
+| 28.2s | `IS` | **0/2** | 0/7 | 5 |
+| 30.2s | `IS` | **0/2** | 0/7 | **49** |
+| 32.2s | `-S` | **2/2** | 0/7 | 45 |
+| 34.2s | `--` | 0/20 | 0/20 | **0** |
+
+- 交互期 **136 帧里 finalize 被使用 0 次**（不是"打满"，是**根本没走到预算**）
+- 积压 `pendingGltfTerrainUploads` 随交互时长线性涨：0 → 49（≈13/s）
+- 交互一结束立刻 `fin=2/2` 打满 → 49 条 **0.71s 排空**
+
+Run A（真人手势，连续交互 29.6s）同一签名、量级放大：交互期 **0/538 帧**使用
+finalize，积压峰值 **386**（≈24/s），停手后 **2.01s** 排空，排空期
+57/200 帧打满、`ms` 一度到 **4.10/4.00**（主线程时间预算超支）。
+
+#### 根因
+
+`TilePendingLoadQueue.cpp:149`：
+
+```cpp
+if (context.interactionActive &&
+    bestIt->first.group != TileLoadPriorityGroup::Urgent) {
+    return std::nullopt;   // ← 早退发生在 tryFinalize 之前
+}
+```
+
+交互期**只放行 Urgent（当帧选中渲染的近景瓦片）**，Preload/Normal 的上传被硬冻结，
+预算对象连碰都没碰到。积压在停手瞬间一次性泄出，由平滑期 2 次/帧的闸门排空 ——
+这才是"停手后暂态"的成因链。
+
+**对照：影像侧早就不这么干了。** `RasterOverlayTileProvider.cpp:88-108`
+`uploadAllowedDuringInteraction` 的注释写明它**已经**从"mapped-raster 前缀无条件排除"
+改成了"只按单次上传成本过滤，节奏交给 budget lane 涓流"，理由正是"长交互把影像上传
+全量积压，交互期影像完全停更"。**地形侧从未做同样的改造** —— 这是一处架构不对称，
+不是参数没调好。
+
+> 与已有记录的关系：`ge-loading-experience-gap-2026-07-17` 早就把"拖动期 Urgent-only
+> 上传冻结"列为根因之一。本轮**不是新发现，是把它量化并锁死**（积压速率、峰值、
+> 排空时长、闸门消费率），并定位到具体早退语句与影像侧的对照修法。
+
+#### 候选结论
+
+| # | 候选 | 判定 |
+|---|---|---|
+| 1 | LOD 硬 pop | 本轮未测，仍是设计债 |
+| 2 | 每帧提交闸门偏紧 | **部分成立，但根因不是它**。交互期预算完全没被消费（冻结在更上游）；只有**排空期**闸门才是限速器（`fin=2/2` 饱和、`ms` 超 4ms） |
+| 2b | 影像上传闸门 | **证伪**。`rasUp` 在三轮运行中**从未打满**（非交互期仅 10–14 帧有非零使用）。影像不是瓶颈 |
+| 3 | fill 代理 16×16 | **本轮不成立**。稳态残留的 2 个 fill 命令是 `geoZ=2-12` 里 z2–z5 的瓦片 —— 地形源 z6-12，低于 `minimumZoom` 走椭球回退是**正确行为**。`LoadQual` 的 `dirty` 启发式把它算成脏，是误报 |
+
+#### 顺带确认：默认钉死视角测不出加载问题
+
+初始视图（重庆 1500m / pitch −45°）稳态只有 **vis=3** 张 z12 瓦片，冷启动几秒内
+`sharp=3 miss=0 dirty=0` 全干净、`pendUp` 恒为 0。**这个场景结构上无法暴露任何加载
+暂态**，必须主动制造运动才有信号 —— 与 §4b.4"钉死场景无法验收 relief 着色"是同一类
+教训：**验收场景本身要先证明它能显示待测现象。**
 
 ---
 
@@ -109,8 +187,9 @@ geomorph、祖先影像 scale-bias 复用、`preloadAncestors/Siblings` 均为�
 | 1 | **法线与几何解耦**（本次实施，已落地） | 见 §四。基础设施就位，收益被 #2 闸住 |
 | 2 | **光照动态范围**（§4.5 实测新增，**已提到几何之前**） | 方向项振幅 0.28 + smoothstep 高太阳角饱和 → relief 着色仅 ~1% 亮度。不解决这条，几何抬到 16.6m 也照不出来。**观感取向决策，待用户拍板** |
 | 3 | **解开 65×65 几何钉死** | `kTerrainDisplacementGridSize` 与高度纹理边长改按源分辨率/相机距离分档。抬到 256 拿回全部 16.6 m。代价：顶点数 16×、高度纹理层 16× 显存，需实测取舍 |
-| 4 | **量加载期** | 跑 §二 判据，再决定动哪 |
-| 5 | **让 fade 与"不卡"正交** | 重做 fade discovery 路径使其不膨胀工作集。**排在几何之后** —— 几何还是低模时磨平 pop 收益有限 |
+| 4 | **量加载期**（已完成，见 §2.1） | 结论：根因是交互期地形上传硬冻结，不是闸门参数 |
+| 5 | **地形上传交互期改涓流**（§2.1 实测新增） | 删 `TilePendingLoadQueue.cpp:149` 的 Urgent-only 早退，改成让 budget lane 限速涓流 —— 与影像侧 `uploadAllowedDuringInteraction` 已落地的修法同构。**风险明确**：交互期主线程多做 finalize，会把拖动帧时长推高，需按帧时 A/B 定涓流额度（影像侧当年也付了同样的代价） |
+| 6 | **让 fade 与"不卡"正交** | 重做 fade discovery 路径使其不膨胀工作集。**排在几何之后** —— 几何还是低模时磨平 pop 收益有限 |
 
 ---
 
