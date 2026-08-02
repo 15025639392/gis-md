@@ -146,7 +146,7 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
 
         EXPECT_TRUE(manager.loadLifecycle()
                         .pendingLoads()
-                        .takeHighestPriorityUpload(false, budget)
+                        .takeHighestPriorityUpload(budget)
                         .has_value());
     }
 
@@ -179,7 +179,7 @@ TEST(TileContentLifecycleManagerTest, ShutdownClearsClaimedUploadWork) {
 
         EXPECT_TRUE(manager.loadLifecycle()
                         .pendingLoads()
-                        .takeHighestPriorityUpload(false, budget)
+                        .takeHighestPriorityUpload(budget)
                         .has_value());
     }
 

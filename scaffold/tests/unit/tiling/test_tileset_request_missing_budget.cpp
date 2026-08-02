@@ -262,7 +262,7 @@ struct TilesetTestAccess {
         return tileset.contentLifecycle_
             .loadLifecycle()
             .pendingLoads()
-            .takeHighestPriorityUpload(false, budget)
+            .takeHighestPriorityUpload(budget)
             .has_value();
     }
 

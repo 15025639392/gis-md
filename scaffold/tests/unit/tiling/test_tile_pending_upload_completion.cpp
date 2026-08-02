@@ -24,7 +24,7 @@ TEST(TilePendingUploadCompletionTest, ClaimedUploadCountsAsWork) {
             1.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         std::optional<PendingTileLoad> upload =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
 
         ASSERT_TRUE(upload.has_value());
         EXPECT_EQ(TileLoadDomain::TerrainContent, upload->domain);
@@ -62,9 +62,9 @@ TEST(TilePendingUploadCompletionTest, ErasesUploadKeys) {
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
         std::optional<PendingTileLoad> first =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
         std::optional<PendingTileLoad> second =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
 
         ASSERT_TRUE(first.has_value());
         ASSERT_TRUE(second.has_value());
@@ -107,9 +107,9 @@ TEST(TilePendingUploadCompletionTest, RejectsDuplicateUploadKeyAcrossKinds) {
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
         std::optional<PendingTileLoad> first =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
         std::optional<PendingTileLoad> second =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
 
         ASSERT_TRUE(first.has_value());
         EXPECT_FALSE(second.has_value());

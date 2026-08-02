@@ -292,7 +292,7 @@ struct TilesetTestAccess {
         return tileset.contentLifecycle_
             .loadLifecycle()
             .pendingLoads()
-            .takeHighestPriorityUpload(false, budget)
+            .takeHighestPriorityUpload(budget)
             .has_value();
     }
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
@@ -11592,7 +11592,7 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
         budget.beginFrame(1, config);
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         check(lifecycle.pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileIndexState: claimed upload test dequeues erased payload");
     }
@@ -11719,7 +11719,7 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.loadLifecycle()
                   .pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileContentCacheManager: erase-index claimed upload test dequeues payload");
     }
@@ -11850,7 +11850,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.loadLifecycle()
                   .pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileContentCacheManager: claimed external subtree upload test dequeues payload");
     }
@@ -11905,7 +11905,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.loadLifecycle()
                   .pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileContentCacheManager: claimed completion retry test dequeues payload");
     }
@@ -13562,7 +13562,7 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
             upload.priority,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TilePendingLoadCommitCoordinator: test claims missing content upload before commit");
     }
@@ -16520,7 +16520,7 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileSubtreeWorkTracker: claimed upload test dequeues payload");
     }
@@ -18567,7 +18567,7 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
         100.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     std::optional<PendingTileLoad> first =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     check(first && first->domain == TileLoadDomain::Content,
           "TilePendingLoadQueue: content and terrain uploads share priority order");
     check(queue.contentUploadCount() == 0 && queue.gltfTerrainUploadCount() == 1,
@@ -18594,14 +18594,14 @@ void testTilePendingLoadQueueTricklesNonUrgentDuringInteraction() {
         100.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
     std::optional<PendingTileLoad> first =
-        queue.takeHighestPriorityUpload(true, budget);
+        queue.takeHighestPriorityUpload(budget);
     check(first && first->domain == TileLoadDomain::TerrainContent,
           "TilePendingLoadQueue: interaction still allows urgent terrain upload");
     check(first &&
               first->cacheKey == "urgent",
           "TilePendingLoadQueue: interaction still serves urgent first");
     std::optional<PendingTileLoad> second =
-        queue.takeHighestPriorityUpload(true, budget);
+        queue.takeHighestPriorityUpload(budget);
     check(second && second->cacheKey == "normal",
           "TilePendingLoadQueue: interaction trickles non-urgent upload after urgent");
     check(queue.gltfTerrainUploadCount() == 0,
@@ -18621,7 +18621,7 @@ void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
         0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     std::optional<PendingTileLoad> blocked =
-        queue.takeHighestPriorityUpload(false, blockedBudget);
+        queue.takeHighestPriorityUpload(blockedBudget);
     check(!blocked && queue.contentUploadCount() == 1 &&
               queue.containsCacheKey("content"),
           "TilePendingLoadQueue: finalize budget block keeps upload pending");
@@ -18630,7 +18630,7 @@ void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
     FrameResourceBudget retryBudget;
     retryBudget.beginFrame(2, retryConfig);
     std::optional<PendingTileLoad> retry =
-        queue.takeHighestPriorityUpload(false, retryBudget);
+        queue.takeHighestPriorityUpload(retryBudget);
     check(retry && retry->domain == TileLoadDomain::Content &&
                             retry->cacheKey == "content",
           "TilePendingLoadQueue: upload blocked by previous frame budget remains retryable");
@@ -18671,11 +18671,11 @@ void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
               queue.contentUploadCount() == 1,
           "TilePendingLoadQueue: duplicate upload cache keys are not queued twice per kind");
     std::optional<PendingTileLoad> first =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     std::optional<PendingTileLoad> second =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     std::optional<PendingTileLoad> third =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     check(first && second && !third,
           "TilePendingLoadQueue: duplicate uploads leave only one finalize per kind");
 }
@@ -18803,11 +18803,11 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
               queue.contentTerminalResultCount() == 1,
           "TilePendingLoadQueue: same-kind upload and terminal result are mutually exclusive");
     std::optional<PendingTileLoad> upload =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     std::optional<PendingTileLoad> terminal =
         queue.takeHighestPriorityTerminalResult(budget);
     std::optional<PendingTileLoad> extraUpload =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     std::optional<PendingTileLoad> extraTerminal =
         queue.takeHighestPriorityTerminalResult(budget);
     check(upload && terminal && !extraUpload && !extraTerminal,
@@ -19280,9 +19280,9 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
             2.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         std::optional<PendingTileLoad> first =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
         std::optional<PendingTileLoad> second =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
         check(first && second,
               "TilePendingUploadCompletion: test dequeues pending upload payloads before completion cleanup");
     }
@@ -19318,9 +19318,9 @@ void testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds() {
             2.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         std::optional<PendingTileLoad> first =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
         std::optional<PendingTileLoad> second =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
         check(first && !second,
               "TilePendingUploadCompletion: shared-key test keeps one claimed upload per cache key");
     }
@@ -19345,7 +19345,7 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
             1.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         std::optional<PendingTileLoad> upload =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
         check(upload && upload->domain == TileLoadDomain::TerrainContent,
               "TilePendingUploadCompletion: claimed-upload test dequeues upload payload");
     }
@@ -19665,11 +19665,11 @@ void testTileLoadLifecycleCancelErasesClaimedUploads() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileLoadLifecycle: claimed cancel test dequeues first upload");
         check(lifecycle.pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileLoadLifecycle: claimed cancel test dequeues second upload");
     }
@@ -19860,7 +19860,7 @@ void testTileLoadLifecycleDestroyClearsClaimedUploadKeys() {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         std::optional<PendingTileLoad> upload =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
         check(upload && upload->domain == TileLoadDomain::Content,
               "TileLoadLifecycle: destroy claimed upload test dequeues payload");
     }
@@ -19923,7 +19923,7 @@ void testTileContentLifecycleManagerExposesClaimedUploadWork() {
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(manager.loadLifecycle()
                   .pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileContentLifecycleManager: claimed upload test dequeues payload");
     }
@@ -19953,7 +19953,7 @@ void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         check(manager.loadLifecycle()
                   .pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileContentLifecycleManager: shutdown claimed upload test dequeues payload");
     }
@@ -20848,7 +20848,7 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
             0.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         check(lifecycle.pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
+                  .takeHighestPriorityUpload(budget)
                   .has_value(),
               "TileLoadScheduler: claimed upload test dequeues upload payload");
     }

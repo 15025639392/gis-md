@@ -144,7 +144,7 @@ TEST(TileSubtreeWorkTracker, FindsPendingAndClaimedContentUploadWork) {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         ASSERT_TRUE(lifecycle.pendingLoads()
-                        .takeHighestPriorityUpload(false, budget)
+                        .takeHighestPriorityUpload(budget)
                         .has_value());
     }
     EXPECT_TRUE(TileSubtreeWorkTracker::hasActiveContentWork(

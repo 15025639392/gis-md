@@ -140,7 +140,7 @@ TilePendingLoadQueue::takeHighestPriorityTerminalResult(
 
 std::optional<PendingTileLoad>
 TilePendingLoadQueue::takeHighestPriorityUpload(
-    PendingLoadFinalizeContext context) {
+    FrameResourceBudget& budget) {
     if (uploads_.ordered.empty()) {
         return std::nullopt;
     }
@@ -154,20 +154,12 @@ TilePendingLoadQueue::takeHighestPriorityUpload(
     // Urgent 仍排在最前 → 近景可见瓦片依旧优先拿到额度,只是不再独占。
     // 判据与 A/B 台见 tools/load_ab/。
     auto bestIt = uploads_.ordered.begin();
-    if (!context.budget.tryFinalize(
+    if (!budget.tryFinalize(
             uploadLaneForDomain(bestIt->second.domain),
             TileLoadPriorityPolicy::toFramePriority(bestIt->first.group))) {
         return std::nullopt;
     }
     return take(uploads_, bestIt);
-}
-
-std::optional<PendingTileLoad>
-TilePendingLoadQueue::takeHighestPriorityUpload(
-    bool interactionActive,
-    FrameResourceBudget& budget) {
-    return takeHighestPriorityUpload(
-        PendingLoadFinalizeContext{interactionActive, budget});
 }
 
 size_t TilePendingLoadQueue::countDomain(

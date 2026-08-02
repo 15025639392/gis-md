@@ -768,7 +768,7 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(0u, pendingLoads.contentUploadCount());
 
     std::optional<PendingTileLoad> upload =
-        pendingLoads.takeHighestPriorityUpload(false, budget);
+        pendingLoads.takeHighestPriorityUpload(budget);
     ASSERT_TRUE(upload.has_value());
     EXPECT_EQ(TileLoadDomain::TerrainContent, upload->domain);
     EXPECT_TRUE(upload->content().hasGltfTerrainPayload());

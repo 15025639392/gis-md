@@ -1406,13 +1406,12 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 1u);
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
 
-    PendingLoadFinalizeContext finalizeContext{false, budget};
     std::optional<PendingTileLoad> pending;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         pending =
             lifecycle.pendingLoads().takeHighestPriorityUpload(
-                finalizeContext);
+                budget);
     }
     ASSERT_TRUE(pending.has_value());
     EXPECT_EQ(pending->domain, TileLoadDomain::TerrainContent);
@@ -1644,13 +1643,12 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(lifecycle.counts().gltfTerrainUploads, 1u);
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
 
-    PendingLoadFinalizeContext finalizeContext{false, budget};
     std::optional<PendingTileLoad> pending;
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         pending =
             lifecycle.pendingLoads().takeHighestPriorityUpload(
-                finalizeContext);
+                budget);
     }
     ASSERT_TRUE(pending.has_value());
     EXPECT_EQ(pending->domain, TileLoadDomain::TerrainContent);
@@ -2411,7 +2409,7 @@ TEST(TileLoadSchedulerTest, SkipsClaimedUploadBeforeSnapshot) {
             0.0,
             TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         ASSERT_TRUE(lifecycle.pendingLoads()
-                        .takeHighestPriorityUpload(false, budget)
+                        .takeHighestPriorityUpload(budget)
                         .has_value());
     }
 

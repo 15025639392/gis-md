@@ -130,10 +130,10 @@ TEST(TileLoadLifecycleTest, CancelErasesClaimedUploads) {
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
         EXPECT_TRUE(lifecycle.pendingLoads()
-                        .takeHighestPriorityUpload(false, budget)
+                        .takeHighestPriorityUpload(budget)
                         .has_value());
         EXPECT_TRUE(lifecycle.pendingLoads()
-                        .takeHighestPriorityUpload(false, budget)
+                        .takeHighestPriorityUpload(budget)
                         .has_value());
     }
 
@@ -296,7 +296,7 @@ TEST(TileLoadLifecycleTest, DestroyClearsClaimedUploadKeys) {
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         std::optional<PendingTileLoad> upload =
-            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+            lifecycle.pendingLoads().takeHighestPriorityUpload(budget);
 
         ASSERT_TRUE(upload.has_value());
         EXPECT_EQ(TileLoadDomain::Content, upload->domain);

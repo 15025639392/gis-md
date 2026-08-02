@@ -12,11 +12,6 @@
 
 namespace earth_engine {
 
-struct PendingLoadFinalizeContext {
-    bool interactionActive = false;
-    FrameResourceBudget& budget;
-};
-
 /// P2-7:主线程每帧在 lifecycle 锁内按预算逐个取最高优先级项。旧实现每次
 /// 全队列线性扫描(积压数百时每帧数万次比较,持锁期间阻塞工作线程投递),
 /// 现改为按优先级排序的 multimap(取头 O(1)、增删 O(log N))+ cacheKey
@@ -44,9 +39,6 @@ public:
     std::optional<PendingTileLoad> takeHighestPriorityTerminalResult(
         FrameResourceBudget& budget);
     std::optional<PendingTileLoad> takeHighestPriorityUpload(
-        PendingLoadFinalizeContext context);
-    std::optional<PendingTileLoad> takeHighestPriorityUpload(
-        bool interactionActive,
         FrameResourceBudget& budget);
 
 private:

@@ -28,7 +28,7 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
     budget.beginFrame(1, config);
 
     std::optional<PendingTileLoad> first =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
 
     ASSERT_TRUE(first.has_value());
     EXPECT_EQ(TileLoadDomain::Content, first->domain);
@@ -64,14 +64,14 @@ TEST(TilePendingLoadQueueTest, UrgentFirstThenTricklesNonUrgentDuringInteraction
     budget.beginFrame(2, config);
 
     std::optional<PendingTileLoad> first =
-        queue.takeHighestPriorityUpload(true, budget);
+        queue.takeHighestPriorityUpload(budget);
 
     ASSERT_TRUE(first.has_value());
     EXPECT_EQ(TileLoadDomain::TerrainContent, first->domain);
     EXPECT_EQ("urgent", first->cacheKey);
 
     std::optional<PendingTileLoad> second =
-        queue.takeHighestPriorityUpload(true, budget);
+        queue.takeHighestPriorityUpload(budget);
 
     ASSERT_TRUE(second.has_value());
     EXPECT_EQ("normal", second->cacheKey);
@@ -97,7 +97,7 @@ TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {
     blockedBudget.beginFrame(1, blockedConfig);
 
     std::optional<PendingTileLoad> blocked =
-        queue.takeHighestPriorityUpload(false, blockedBudget);
+        queue.takeHighestPriorityUpload(blockedBudget);
 
     EXPECT_FALSE(blocked.has_value());
     EXPECT_EQ(1u, queue.contentUploadCount());
@@ -109,7 +109,7 @@ TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {
     retryBudget.beginFrame(2, retryConfig);
 
     std::optional<PendingTileLoad> retry =
-        queue.takeHighestPriorityUpload(false, retryBudget);
+        queue.takeHighestPriorityUpload(retryBudget);
 
     ASSERT_TRUE(retry.has_value());
     EXPECT_EQ(TileLoadDomain::Content, retry->domain);
@@ -156,11 +156,11 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
     budget.beginFrame(1, config);
 
     std::optional<PendingTileLoad> first =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     std::optional<PendingTileLoad> second =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     std::optional<PendingTileLoad> third =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
 
     EXPECT_TRUE(first.has_value());
     EXPECT_TRUE(second.has_value());
@@ -306,11 +306,11 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
     budget.beginFrame(1, config);
 
     std::optional<PendingTileLoad> upload =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     std::optional<PendingTileLoad> terminal =
         queue.takeHighestPriorityTerminalResult(budget);
     std::optional<PendingTileLoad> extraUpload =
-        queue.takeHighestPriorityUpload(false, budget);
+        queue.takeHighestPriorityUpload(budget);
     std::optional<PendingTileLoad> extraTerminal =
         queue.takeHighestPriorityTerminalResult(budget);
 

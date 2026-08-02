@@ -136,7 +136,7 @@ TEST(GpuUploadQueueTest, InvalidPayloadReleasesLifecycleUploadClaim) {
                 std::make_unique<GltfModel>())});
         ASSERT_TRUE(
             lifecycle.pendingLoads()
-                .takeHighestPriorityUpload(false, budget)
+                .takeHighestPriorityUpload(budget)
                 .has_value());
     }
     ASSERT_TRUE(lifecycle.containsWorkForCacheKey(cacheKey));
@@ -277,7 +277,7 @@ TEST(GpuUploadQueueTest, ExpiredInteractionBudgetMakesBoundedProgress) {
                     std::make_unique<GltfModel>())});
             ASSERT_TRUE(
                 lifecycle.pendingLoads()
-                    .takeHighestPriorityUpload(false, setupBudget)
+                    .takeHighestPriorityUpload(setupBudget)
                     .has_value());
         }
         queue.push(PendingGpuUpload{key, cacheKey, GpuReadyData{}});
@@ -348,7 +348,7 @@ TEST(GpuUploadQueueTest, ExpiredInteractionBudgetMakesBoundedProgress) {
                     std::make_unique<GltfModel>())});
             ASSERT_TRUE(
                 lifecycle.pendingLoads()
-                    .takeHighestPriorityUpload(false, setupBudget)
+                    .takeHighestPriorityUpload(setupBudget)
                     .has_value());
         }
         queue.push(PendingGpuUpload{key, cacheKey, GpuReadyData{}});

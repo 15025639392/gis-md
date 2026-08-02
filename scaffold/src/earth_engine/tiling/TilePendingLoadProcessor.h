@@ -68,9 +68,7 @@ public:
                 std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                 finalize =
                     input.lifecycle.pendingLoads().takeHighestPriorityUpload(
-                        PendingLoadFinalizeContext{
-                            input.interactionActive,
-                            input.budget});
+                        input.budget);
             }
             if (!finalize) {
                 break;

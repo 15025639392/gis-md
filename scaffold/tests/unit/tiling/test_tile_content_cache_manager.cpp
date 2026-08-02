@@ -95,7 +95,7 @@ struct ExternalSubtreeFixture {
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         ASSERT_TRUE(lifecycle.loadLifecycle()
                         .pendingLoads()
-                        .takeHighestPriorityUpload(false, budget)
+                        .takeHighestPriorityUpload(budget)
                         .has_value());
     }
 
@@ -339,7 +339,7 @@ TEST(
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         ASSERT_TRUE(lifecycle.loadLifecycle()
                         .pendingLoads()
-                        .takeHighestPriorityUpload(false, budget)
+                        .takeHighestPriorityUpload(budget)
                         .has_value());
     }
 
