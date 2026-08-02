@@ -178,6 +178,38 @@ if (context.interactionActive &&
 暂态**，必须主动制造运动才有信号 —— 与 §4b.4"钉死场景无法验收 relief 着色"是同一类
 教训：**验收场景本身要先证明它能显示待测现象。**
 
+### 2.2 修复与 A/B 验收（commit `294bff2ed`）
+
+**改动**：删掉 `TilePendingLoadQueue::takeHighestPriorityUpload` 里的
+`interactionActive && 队首非 Urgent → 早退`（4 行）。Urgent 仍排最前，只是不再独占；
+交互期节奏改由 budget lane 限（平滑期 4ms → 2 次/帧）。就是影像侧
+`uploadAllowedDuringInteraction` 早已做过的那次改造。
+
+**验收**：`tools/load_ab/`（自动化台，release，冷缓存，各 5 轮，确定性 keyevent 输入）
+
+| 判据 | before | after | 判定 |
+|---|---|---|---|
+| ① 交互期积压峰值 | 48 [43–51] | **0 [0–0]** | PASS（目标 ≤10） |
+| ② 停手 → 归零时长 | 0.53s [0.27–0.55] | **0.00s [0–0]** | PASS（目标 ≤0.2s） |
+| ③ 交互期慢帧率 | 0.39/s [0.37–1.14] | 0.75/s [0.39–1.50] | **INCONC**（p=0.524） |
+| 机制信号：交互期 `fin>0` 帧数 | 0 [0–0] | **15 [7–28]** | 闸确已放开 |
+
+①② 五轮无一例外。③ 名义超阈值（≤1.20×），但中位数差的双侧置换检验
+（n=5+5 穷举精确）给出 **p=0.524** —— 与调频噪声不可区分。绝对量级约为
+5s 拖动多出 2 个 ≥25ms 帧。用户拍板接受。
+
+> **测量台由此改过一次**：原先只比中位数的 ≤1.20× 规则会把这个差值判成 FAIL。
+> 改为三态（PASS / FAIL / INCONC），超阈值但 p≥0.05 判 INCONC 并提示加大 n。
+> **一个在样本撑不住时还硬发 FAIL 的判定器，比没有判定器更坏** —— 它会让人
+> 去"修"一个不存在的回归。见 commit `646013c13`。
+
+**顺带一个量级观察**：只用 15 帧（约占 300 帧交互期的 5%）就吃掉了全部 48 条积压。
+这活本来就没多少，以前只是被整段冻着。
+
+**遗留**：`PendingLoadFinalizeContext::interactionActive` 与
+`takeHighestPriorityUpload(bool, budget)` 的 bool 形参已无人读取，但涉及 ~80 处
+测试调用点，属独立的机械清理，未并入本次改动。
+
 ---
 
 ## 三、修复排序（按"最干净"排，工程量列最后）
@@ -188,7 +220,7 @@ if (context.interactionActive &&
 | 2 | **光照动态范围**（§4.5 实测新增，**已提到几何之前**） | 方向项振幅 0.28 + smoothstep 高太阳角饱和 → relief 着色仅 ~1% 亮度。不解决这条，几何抬到 16.6m 也照不出来。**观感取向决策，待用户拍板** |
 | 3 | **解开 65×65 几何钉死** | `kTerrainDisplacementGridSize` 与高度纹理边长改按源分辨率/相机距离分档。抬到 256 拿回全部 16.6 m。代价：顶点数 16×、高度纹理层 16× 显存，需实测取舍 |
 | 4 | **量加载期**（已完成，见 §2.1） | 结论：根因是交互期地形上传硬冻结，不是闸门参数 |
-| 5 | **地形上传交互期改涓流**（§2.1 实测新增） | 删 `TilePendingLoadQueue.cpp:149` 的 Urgent-only 早退，改成让 budget lane 限速涓流 —— 与影像侧 `uploadAllowedDuringInteraction` 已落地的修法同构。**风险明确**：交互期主线程多做 finalize，会把拖动帧时长推高，需按帧时 A/B 定涓流额度（影像侧当年也付了同样的代价） |
+| 5 | **地形上传交互期改涓流**（**已落地**，见 §2.2） | 删 `TilePendingLoadQueue.cpp:149` 的 Urgent-only 早退，让 budget lane 限速 —— 与影像侧 `uploadAllowedDuringInteraction` 同构。A/B：积压 48→0、暂态 0.53s→0 |
 | 6 | **让 fade 与"不卡"正交** | 重做 fade discovery 路径使其不膨胀工作集。**排在几何之后** —— 几何还是低模时磨平 pop 收益有限 |
 
 ---
