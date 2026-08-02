@@ -2,6 +2,7 @@
 
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/tiling/DecodedHeightmapSampler.h"
+#include "earth_engine/tiling/TerrainDisplacementTemplatePool.h"
 #include "earth_engine/tiling/TileScheme.h"
 
 using namespace earth_engine;
@@ -150,7 +151,7 @@ TEST(DecodedHeightmapSamplerTest, RenderGridIgnoresIntraCellSpike) {
     EXPECT_NEAR(500.0f, fullRes, 1.0f);  // 全分辨率:尖峰可见
 
     const float renderGrid = DecodedHeightmapSampler::sampleHeightRenderGrid(
-        heightmap, bounds, lon, lat);
+        heightmap, bounds, lon, lat, kTerrainDisplacementGridSize);
     EXPECT_NEAR(0.0f, renderGrid, 1e-3f);  // 渲染网格:节点全 0 → 面为 0
 }
 
@@ -168,7 +169,7 @@ TEST(DecodedHeightmapSamplerTest, RenderGridMatchesFullResAtGridNodes) {
     const float fullRes =
         DecodedHeightmapSampler::sampleHeight(heightmap, bounds, lon, lat);
     const float renderGrid = DecodedHeightmapSampler::sampleHeightRenderGrid(
-        heightmap, bounds, lon, lat);
+        heightmap, bounds, lon, lat, kTerrainDisplacementGridSize);
     EXPECT_NEAR(fullRes, renderGrid, 1e-3f);
     EXPECT_NEAR(300.0f, renderGrid, 1.0f);
 }
@@ -186,8 +187,53 @@ TEST(DecodedHeightmapSamplerTest, RenderGridSmallSourceEqualsFullRes) {
         const double lat = bounds.south() + bounds.height() * f;
         EXPECT_NEAR(
             DecodedHeightmapSampler::sampleHeight(heightmap, bounds, lon, lat),
-            DecodedHeightmapSampler::sampleHeightRenderGrid(heightmap, bounds,
-                                                            lon, lat),
+            DecodedHeightmapSampler::sampleHeightRenderGrid(
+                heightmap, bounds, lon, lat, kTerrainDisplacementGridSize),
             1e-3f) << "f=" << f;
     }
+}
+
+// ============================================================
+// 自适应几何密度(解 65×65 钉死)
+// ============================================================
+
+TEST(TerrainGridSizeForSseTest, UpgradesOnlyAboveThresholdAndHasHysteresis) {
+    // 未定档(0):用升档阈值 64px。
+    EXPECT_EQ(kTerrainDisplacementGridSize, terrainGridSizeForSse(63.9, 0));
+    EXPECT_EQ(kTerrainDenseGridSize, terrainGridSizeForSse(64.0, 0));
+
+    // 已在 dense 档:用更低的降档阈值 48px = 迟滞带。缺了它,SSE 在阈值附近
+    // 抖动的瓦片会逐帧换档,而换档要重建常驻命令 + 重烘 257² 高度纹理。
+    EXPECT_EQ(kTerrainDenseGridSize,
+              terrainGridSizeForSse(50.0, kTerrainDenseGridSize));
+    EXPECT_EQ(kTerrainDisplacementGridSize,
+              terrainGridSizeForSse(47.9, kTerrainDenseGridSize));
+
+    // 同一个 SSE(50)在两个档下给出不同结果 —— 这正是迟滞的定义。
+    EXPECT_NE(terrainGridSizeForSse(50.0, kTerrainDisplacementGridSize),
+              terrainGridSizeForSse(50.0, kTerrainDenseGridSize));
+}
+
+TEST(DecodedHeightmapSamplerTest, DenseGridResolvesDetailCoarseGridMisses) {
+    // 这条锁死本次改动的**目的**:coarse 档(64 格)在 129 源上每 2 个源像素才
+    // 取一个节点,落在奇数源像素上的尖峰整个丢失;dense 档(256,被 min 收敛到
+    // 源上限 128)则能取到。即"8 倍高程细节留在 CPU 从未上 GPU"的可测形式。
+    DecodedHeightmap heightmap;
+    heightmap.tileSize = 129;
+    heightmap.heights.assign(129 * 129, 0.0f);
+    // 奇数格点(65,65):coarse 的节点在偶数格,取不到;dense 的节点覆盖每个源像素。
+    heightmap.heights[static_cast<size_t>(65) * 129 + 65] = 400.0f;
+    const Rectangle bounds = rootBounds();
+
+    const double lon = bounds.west() + bounds.width() * (65.0 / 128.0);
+    const double lat = bounds.north() - bounds.height() * (65.0 / 128.0);
+
+    const float coarse = DecodedHeightmapSampler::sampleHeightRenderGrid(
+        heightmap, bounds, lon, lat, kTerrainDisplacementGridSize);
+    const float dense = DecodedHeightmapSampler::sampleHeightRenderGrid(
+        heightmap, bounds, lon, lat, kTerrainDenseGridSize);
+
+    EXPECT_NEAR(400.0f, dense, 1.0f);        // dense:尖峰还原
+    EXPECT_LT(coarse, 250.0f);               // coarse:被节点间线性插值抹掉大半
+    EXPECT_GT(dense, coarse + 100.0f);
 }

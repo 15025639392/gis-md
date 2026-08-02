@@ -374,15 +374,26 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                     renderer.terrainDisplacementPool()) {
                 const DecodedHeightmap* hm =
                     tile.content.renderContent.retainedHeightmap();
+                // 自适应几何密度(单一事实源 terrainGridSizeForSse):几何 cap 在
+                // DEM native max LOD 的近景瓦片 SSE 远超阈值 → 升 dense 档,拿回
+                // 源数据里那 8 倍高程细节;正常细化的远瓦片留 coarse 档,故总三角
+                // 数由屏幕面积封顶而非随可见瓦片数增长(见头文件推导)。
+                int gridSize = terrainGridSizeForSse(
+                    tile.selectionFrameState.screenSpaceError);
                 const TerrainDisplacementTemplatePool::HeightTexture* ht =
-                    hm ? pool->acquireHeightTexture(
-                             tile.key, *hm, kTerrainDisplacementGridSize,
-                             frameNumber)
+                    hm ? pool->acquireHeightTexture(tile.key, *hm, gridSize,
+                                                    frameNumber)
                        : nullptr;
+                // dense 档层池容量小(近景瓦片才用),触顶时 acquire 返回 nullptr。
+                // 此时降级回 coarse 档重试,而不是让本帧丢掉这块瓦片。
+                if (!ht && hm && gridSize != kTerrainDisplacementGridSize) {
+                    gridSize = kTerrainDisplacementGridSize;
+                    ht = pool->acquireHeightTexture(tile.key, *hm, gridSize,
+                                                    frameNumber);
+                }
                 const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
                     (ht && ht->texture)
-                        ? pool->acquire(tile.key, tile.bounds,
-                                        kTerrainDisplacementGridSize)
+                        ? pool->acquire(tile.key, tile.bounds, gridSize)
                         : nullptr;
                 if (tb && ht && ht->texture) {
                     cmd.vertexBuffer = tb->vertexBuffer;
@@ -417,12 +428,15 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                     // 顶点 shader h = minH·f + t·range·f = f·h_orig,过渡带瓦片压平。
                     u.heightDisplace = {
                         ht->minHeight * reliefFade, ht->heightRange * reliefFade,
-                        1.0f, static_cast<float>(kTerrainDisplacementGridSize)};
+                        1.0f, static_cast<float>(gridSize)};
                     // 合批 Step 1:高度数据在共享 array 的层号进 uniform;
                     // (layer, epoch) 记在命令上供 build 侧 staleness 校验。
                     u.terrainLayers[0] = static_cast<float>(ht->layer);
                     cmd.terrainHeightLayer = ht->layer;
                     cmd.terrainHeightLayerEpoch = ht->epoch;
+                    // 档位记在命令上:staleness 校验要按档查对应 array,且
+                    // 保活 touch 也必须落到同一档的 LRU(见 heightLayerCurrent)。
+                    cmd.terrainHeightGridSize = gridSize;
                 }
             }
         }
@@ -644,14 +658,26 @@ void GltfDrawCommandBuilder::build(
                 if (cached.terrainHeightLayer < 0) {
                     continue;
                 }
+                // 换档也要失效重建:常驻命令只在资源变化时重建,不查这一条的话
+                // 瓦片会永远停在建命令那一帧的密度档(相机推近也不加密)。
+                if (cached.terrainHeightGridSize !=
+                    terrainGridSizeForSse(
+                        tile.selectionFrameState.screenSpaceError,
+                        cached.terrainHeightGridSize)) {
+                    renderContent.invalidateCachedDrawCommands();
+                    break;
+                }
                 if (!pool->heightLayerCurrent(
+                        cached.terrainHeightGridSize,
                         cached.terrainHeightLayer,
                         cached.terrainHeightLayerEpoch)) {
                     renderContent.invalidateCachedDrawCommands();
                     break;
                 }
                 if (!touched) {
-                    pool->touchHeightTexture(tile.key, context.frameNumber);
+                    pool->touchHeightTexture(tile.key,
+                                             cached.terrainHeightGridSize,
+                                             context.frameNumber);
                     touched = true;
                 }
             }

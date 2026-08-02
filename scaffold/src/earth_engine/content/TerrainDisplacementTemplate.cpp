@@ -46,7 +46,7 @@ Mat4 terrainTemplateTileFrame(const Rectangle& tileBounds) {
 }
 
 TerrainDisplacementTemplate buildTerrainDisplacementTemplate(
-    const Rectangle& tileBounds, int gridSize) {
+    const Rectangle& tileBounds, int gridSize, bool generateIndices) {
     const int safeGrid = std::max(1, gridSize);
     const int n = safeGrid + 1;
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
@@ -59,21 +59,52 @@ TerrainDisplacementTemplate buildTerrainDisplacementTemplate(
     TerrainDisplacementTemplate tmpl;
     tmpl.gridSize = safeGrid;
     tmpl.vertices.reserve(static_cast<size_t>(n) * n);
-    tmpl.indices.reserve(static_cast<size_t>(safeGrid) * safeGrid * 6);
+    // 不生成索引时连 reserve 也免掉 —— dense 档这一下就是 1.57MB 的 malloc。
+    if (generateIndices) {
+        tmpl.indices.reserve(static_cast<size_t>(safeGrid) * safeGrid * 6);
+    }
+
+    // 规则经纬网格上 sin/cos(lng) 只随列变、sin/cos(lat) 只随行变 —— 外提成
+    // O(n) 而非每顶点重算。dense 档(257²=66k 顶点)下原写法每顶点 ~4 次三角函数
+    // = 26 万次,实测占 244ms(debug),是换档 336ms 卡顿的主项。
+    // 另:原写法调 cartographicToCartesian 再单独调 geodeticSurfaceNormal,而前者
+    // 内部本就算了一次法线(见 Ellipsoid.cpp:47)——等于每顶点白算一遍。这里改成
+    // 算一次法线、复用给面点,算术与 Ellipsoid 内部逐步一致,结果不变。
+    std::vector<double> cosLng(static_cast<size_t>(n));
+    std::vector<double> sinLng(static_cast<size_t>(n));
+    std::vector<double> uByColumn(static_cast<size_t>(n));
+    for (int x = 0; x < n; ++x) {
+        const double u = std::clamp(
+            static_cast<double>(x) / static_cast<double>(safeGrid), 0.0, 1.0);
+        const double lng = longitudeAt(tileBounds, u);
+        uByColumn[static_cast<size_t>(x)] = u;
+        cosLng[static_cast<size_t>(x)] = std::cos(lng);
+        sinLng[static_cast<size_t>(x)] = std::sin(lng);
+    }
+    // radiiSquared_ 非公开;由公开的 radii() 逐分量平方得到(与 Ellipsoid 构造时
+    // 的 radiiSquared_ 同值)。
+    const Vec3& r = ellipsoid.radii();
+    const Vec3 radiiSquared(r.x() * r.x(), r.y() * r.y(), r.z() * r.z());
 
     for (int y = 0; y < n; ++y) {
         const double v = std::clamp(
             static_cast<double>(y) / static_cast<double>(safeGrid), 0.0, 1.0);
         const double lat = mixValue(tileBounds.north(), tileBounds.south(), v);
+        const double cosLat = std::cos(lat);
+        const double sinLat = std::sin(lat);
         for (int x = 0; x < n; ++x) {
-            const double u = std::clamp(
-                static_cast<double>(x) / static_cast<double>(safeGrid), 0.0,
-                1.0);
-            const double lng = longitudeAt(tileBounds, u);
+            const double u = uByColumn[static_cast<size_t>(x)];
 
-            const Cartographic surface = Cartographic::fromRadians(lng, lat, 0.0);
-            const Vec3 surfaceEcef = ellipsoid.cartographicToCartesian(surface);
-            const Vec3 normalEcef = ellipsoid.geodeticSurfaceNormal(surface);
+            // = Ellipsoid::geodeticSurfaceNormal(Cartographic) 同式。
+            const Vec3 normalEcef =
+                Vec3(cosLat * cosLng[static_cast<size_t>(x)],
+                     cosLat * sinLng[static_cast<size_t>(x)],
+                     sinLat).normalized();
+            // = Ellipsoid::cartographicToCartesian(height=0) 同式(复用上面的法线)。
+            Vec3 k(radiiSquared.x() * normalEcef.x(),
+                   radiiSquared.y() * normalEcef.y(),
+                   radiiSquared.z() * normalEcef.z());
+            const Vec3 surfaceEcef = k / std::sqrt(normalEcef.dot(k));
 
             TerrainDisplacementTemplateVertex vertex;
             // 面点 = 点变换（含平移，原点=中心面点）；法线 = 方向变换（仅旋转）。
@@ -86,7 +117,7 @@ TerrainDisplacementTemplate buildTerrainDisplacementTemplate(
     }
 
     // 索引缠绕与 EllipsoidTerrainMeshBuilder 一致 (a,c,b,b,c,d)。
-    for (int y = 0; y < safeGrid; ++y) {
+    for (int y = 0; generateIndices && y < safeGrid; ++y) {
         for (int x = 0; x < safeGrid; ++x) {
             const uint32_t a = static_cast<uint32_t>(y * n + x);
             const uint32_t b = static_cast<uint32_t>(y * n + x + 1);
@@ -133,7 +164,9 @@ TerrainDisplacementTemplate buildTerrainDisplacementTemplate(
             const TerrainDisplacementTemplateVertex sv = tmpl.vertices[src];
             tmpl.vertices.push_back(sv);
         }
-        for (size_t i = 0; i + 1 < edge.size(); ++i) {
+        // 裙**顶点**必须照常追加(顶点缓冲与 skirtVerticesBegin 都要它);
+        // 只有索引可跳过(见 generateIndices 注释)。
+        for (size_t i = 0; generateIndices && i + 1 < edge.size(); ++i) {
             const uint32_t topA = edge[i];
             const uint32_t topB = edge[i + 1];
             const uint32_t skirtA = firstSkirt + static_cast<uint32_t>(i);

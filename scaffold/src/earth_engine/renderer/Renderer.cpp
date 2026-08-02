@@ -1221,7 +1221,7 @@ layout(location = 5) in vec4 i_relRow1;
 layout(location = 6) in vec4 i_relRow2;
 layout(location = 7) in vec4 i_dispMorph;  // minH·fade, range·fade, morph, gridN
 layout(location = 8) in vec4 i_clipUv;
-layout(location = 9) in vec4 i_layers;     // heightLayer, indirLayer, clipEn, _
+layout(location = 9) in vec4 i_layers;     // heightLayer, indirLayer, clipEn, gridN
 
 uniform mat4 u_modelViewProjection;  // = viewProj · frame0
 uniform highp sampler2DArray u_heightTexture;
@@ -1232,7 +1232,8 @@ out vec4 v_texcoord01;
 flat out vec4 v_pageParams;  // x=gridN y=indirLayer z=clipEnabled w=_
 flat out vec4 v_clipUv;
 
-const float kGridSize = 64.0;  // = kTerrainDisplacementGridSize(模板常量)
+// 模板栅格边长逐实例给(i_layers.w):自适应密度后不再是常量,coarse=64、
+// dense=256(见 TerrainDisplacementTemplatePool.h terrainGridSizeForSse)。
 
 float eeSampleTerrainHeight(
     highp sampler2DArray tex, ivec2 texel, int layer, vec2 mr) {
@@ -1252,6 +1253,7 @@ void main() {
     // geomorph 方向 = 模板局部 +Z(共享模板恒在 ENU 帧,与 terrainShader 一致)。
     vec3 morphPos = a_position + vec3(0.0, 0.0, 1.0) * heightDelta * (1.0 - morph);
     // 双分辨率高度采样(fine=本栅格纹素,coarse=偶数格点双线性),morph 混合。
+    float kGridSize = max(i_layers.w, 1.0);
     vec2 gf = a_texcoord01.xy * kGridSize;
     float hFine = eeSampleTerrainHeight(u_heightTexture, ivec2(gf + 0.5), hLayer, mr);
     vec2 g0 = floor(gf * 0.5) * 2.0;

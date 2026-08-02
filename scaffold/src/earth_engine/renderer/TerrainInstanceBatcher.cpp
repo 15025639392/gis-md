@@ -134,7 +134,10 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
             rec.layers[0] = m.gltfUniforms.terrainLayers[0];  // heightLayer
             rec.layers[1] = m.gltfUniforms.terrainLayers[1];  // indirLayer
             rec.layers[2] = m.gltfUniforms.clipEnabled;
-            rec.layers[3] = 0.0f;
+            // 位移模板栅格边长(自适应密度后不再恒 64)。分组按模板 VBO 指针,
+            // 而模板按 {schemeId,z,row,gridSize} 缓存 → 同批必然同档,但仍逐实例
+            // 携带以免"同批同档"这个隐式前提日后被分组规则改动悄悄破坏。
+            rec.layers[3] = m.gltfUniforms.heightDisplace[3];
             recordScratch_.push_back(rec);
         }
         const int packed = static_cast<int>(recordScratch_.size());

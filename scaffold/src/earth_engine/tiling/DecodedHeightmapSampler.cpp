@@ -41,7 +41,8 @@ float DecodedHeightmapSampler::sampleHeightRenderGrid(
     const DecodedHeightmap& heightmap,
     const Rectangle& sourceBounds,
     double longitudeRadians,
-    double latitudeRadians) {
+    double latitudeRadians,
+    int renderGridSize) {
     if (!heightmap.valid()) return 0.0f;
 
     double u = (longitudeRadians - sourceBounds.west()) / sourceBounds.width();
@@ -59,10 +60,13 @@ float DecodedHeightmapSampler::sampleHeightRenderGrid(
         return 0.0f;
     }
 
-    // 渲染网格密度与 HeightmapTerrainContentProvider / 位移模板一致:
-    // min(tileSize-1, kTerrainDisplacementGridSize)。
-    const int cells = std::min(std::max(1, heightmap.tileSize - 1),
-                               kTerrainDisplacementGridSize);
+    // 渲染网格密度必须与该瓦片**本帧实际使用的位移模板档位**一致 —— 自适应
+    // 密度后它不再恒为 64,由调用方从瓦片的常驻 draw 命令读出真值传入
+    // (见 LoadedTerrainHeightSampler)。传 0 = 未知,退回 coarse 档。
+    // 两侧不一致会让贴地矢量浮起或陷进地面。
+    const int gridSize = renderGridSize > 0 ? renderGridSize
+                                            : kTerrainDisplacementGridSize;
+    const int cells = std::min(std::max(1, heightmap.tileSize - 1), gridSize);
     const double gx = u * cells;
     const double gy = v * cells;
     int i0 = std::min(static_cast<int>(gx), cells - 1);

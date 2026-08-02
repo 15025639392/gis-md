@@ -43,9 +43,13 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
     }
 
     // 首次见到该 {LOD,row}：生成共享模板（列无关，用本瓦片 bounds 代表）。
+    // 索引按档共享,已建过就不再生成(dense 档每次 393k 次 push_back 的纯浪费)。
+    SharedIndexBuffer& shared = sharedIndexBuffers_[gridSize];
+    const bool needIndices = !shared.buffer;
     const TerrainDisplacementTemplate tmpl =
-        buildTerrainDisplacementTemplate(bounds, gridSize);
-    if (tmpl.vertices.empty() || tmpl.indices.empty()) {
+        buildTerrainDisplacementTemplate(bounds, gridSize, needIndices);
+    if (tmpl.vertices.empty() || (needIndices && tmpl.indices.empty())) {
+        if (needIndices) sharedIndexBuffers_.erase(gridSize);
         return nullptr;
     }
 
@@ -78,21 +82,31 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
     vboDesc.usage = BufferDesc::Usage::Static;
     vboDesc.type = BufferDesc::Type::Vertex;
 
-    BufferDesc iboDesc;
-    iboDesc.size = tmpl.indices.size() * sizeof(uint32_t);
-    iboDesc.data = tmpl.indices.data();
-    iboDesc.usage = BufferDesc::Usage::Static;
-    iboDesc.type = BufferDesc::Type::Index;
+    // 索引**只取决于 gridSize**:规则网格三角化 + 裙边缠绕都是纯拓扑,与瓦片
+    // bounds 无关 → 同档所有 {z,row} 模板逐字节相同。原来每个模板各建各的,
+    // dense 档每份 393k×4B = 1.57MB,白白重复分配 + 上传。改为按档共享一份。
+    if (needIndices) {
+        BufferDesc iboDesc;
+        iboDesc.size = tmpl.indices.size() * sizeof(uint32_t);
+        iboDesc.data = tmpl.indices.data();
+        iboDesc.usage = BufferDesc::Usage::Static;
+        iboDesc.type = BufferDesc::Type::Index;
+        shared.buffer = device_->createBuffer(iboDesc);
+        shared.indexCount = static_cast<int>(tmpl.indices.size());
+        if (!shared.buffer) {
+            sharedIndexBuffers_.erase(gridSize);
+            return nullptr;
+        }
+    }
 
     Entry entry;
     entry.vertexBuffer = device_->createBuffer(vboDesc);
-    entry.indexBuffer = device_->createBuffer(iboDesc);
-    if (!entry.vertexBuffer || !entry.indexBuffer) {
+    if (!entry.vertexBuffer) {
         return nullptr;
     }
     entry.view.vertexBuffer = entry.vertexBuffer.get();
-    entry.view.indexBuffer = entry.indexBuffer.get();
-    entry.view.indexCount = static_cast<int>(tmpl.indices.size());
+    entry.view.indexBuffer = shared.buffer.get();
+    entry.view.indexCount = shared.indexCount;
     entry.view.vertexCount = static_cast<int>(packed.size());
     totalVertexBytes_ += vboDesc.size;
 
@@ -112,58 +126,77 @@ uint64_t TerrainDisplacementTemplatePool::heightCacheKey(const TileKey& key) {
     return h;
 }
 
-bool TerrainDisplacementTemplatePool::ensureHeightArray(int gridSize) {
-    if (heightArray_) {
-        // 全部调用方恒传 kTerrainDisplacementGridSize;防御:层边长不匹配拒绝
-        // (array 层等尺寸是硬约束)。
-        return heightArrayGridSize_ == gridSize;
+const TerrainDisplacementTemplatePool::HeightArray*
+TerrainDisplacementTemplatePool::findHeightArray(int gridSize) const {
+    auto it = heightArrays_.find(gridSize);
+    return it == heightArrays_.end() ? nullptr : &it->second;
+}
+
+TerrainDisplacementTemplatePool::HeightArray*
+TerrainDisplacementTemplatePool::ensureHeightArray(int gridSize) {
+    auto it = heightArrays_.find(gridSize);
+    if (it != heightArrays_.end()) {
+        return it->second.texture ? &it->second : nullptr;
     }
+    const int layers = layersForGridSize(gridSize);
     TextureDesc desc;
     desc.width = gridSize + 1;
     desc.height = gridSize + 1;
-    desc.arrayLayers = kHeightArrayLayers;
+    desc.arrayLayers = layers;
     desc.format = TextureDesc::Format::RGBA8;
     desc.mipmap = false;
     desc.minFilter = TextureDesc::Filter::Nearest;
     desc.magFilter = TextureDesc::Filter::Nearest;
     desc.wrapS = TextureDesc::Wrap::Clamp;
     desc.wrapT = TextureDesc::Wrap::Clamp;
-    heightArray_ = device_->createTexture(desc);
-    if (!heightArray_) {
-        return false;
+    std::unique_ptr<Texture> tex = device_->createTexture(desc);
+    if (!tex) {
+        return nullptr;
     }
-    heightArrayGridSize_ = gridSize;
-    heightLayerPool_.configure(kHeightArrayLayers, 1);
-    heightLayerEpochs_.assign(static_cast<size_t>(kHeightArrayLayers), 0u);
-    return true;
+    HeightArray& a = heightArrays_[gridSize];
+    a.texture = std::move(tex);
+    a.gridSize = gridSize;
+    a.layerPool.configure(layers, 1);
+    a.layerEpochs.assign(static_cast<size_t>(layers), 0u);
+    return &a;
 }
 
 const TerrainDisplacementTemplatePool::HeightTexture*
 TerrainDisplacementTemplatePool::acquireHeightTexture(
     const TileKey& key, const DecodedHeightmap& heightmap, int gridSize,
     uint64_t frameId) {
-    if (!device_ || gridSize < 1 || !heightmap.valid() ||
-        !ensureHeightArray(gridSize)) {
+    if (!device_ || gridSize < 1 || !heightmap.valid()) {
+        return nullptr;
+    }
+    HeightArray* arr = ensureHeightArray(gridSize);
+    if (!arr) {
         return nullptr;
     }
     const uint64_t k = heightCacheKey(key);
-    auto it = heightIndex_.find(k);
-    if (it != heightIndex_.end()) {
-        heightLayerPool_.touch(k, frameId);
+    auto it = arr->index.find(k);
+    if (it != arr->index.end()) {
+        arr->layerPool.touch(k, frameId);
         return &it->second;
+    }
+
+    // 走到这里 = 该瓦片在本档未驻留,必须现烘 + 现传。dense 档单片最坏 23.6ms
+    // (release 实测),故按帧限流;超额者本帧回落 coarse,下一帧再升。
+    // 只拦"新建",缓存命中已在上面早退,不受限流影响。
+    if (gridSize >= kTerrainDenseGridSize && !tryConsumeDenseBudget(frameId)) {
+        return nullptr;
     }
 
     // 认领一层(LRU;当帧被 touch 的层不淘汰,全满 → 返回 -1 = 本帧放弃,
     // draw 侧回落 P5b 兜底重试)。被淘汰瓦片的旧视图删除 + 层 epoch 自增,
     // 使仍引用旧层的常驻命令在 heightLayerCurrent() 校验时失效自愈。
     uint64_t evicted = 0;
-    const int layer = heightLayerPool_.acquire(k, frameId, &evicted);
+    const int layer = arr->layerPool.acquire(k, frameId, &evicted);
     if (layer < 0) {
         return nullptr;
     }
     if (evicted != 0) {
-        heightIndex_.erase(evicted);
-        ++heightLayerEpochs_[static_cast<size_t>(layer)];
+        arr->index.erase(evicted);
+        ++arr->layerEpochs[static_cast<size_t>(layer)];
     }
 
     // gridN+1 方栅格:texel(i,j) = 顶点(i,j)高度(shader 按栅格下标 texelFetch)。
@@ -187,27 +220,30 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
             bytes[idx + 1] = static_cast<uint8_t>(v16 & 0xFF);
         }
     }
-    if (!device_->updateTextureRegion(heightArray_.get(), 0, 0, n, n,
+    if (!device_->updateTextureRegion(arr->texture.get(), 0, 0, n, n,
                                       bytes.data(),
                                       static_cast<size_t>(n) * 4, layer)) {
-        heightLayerPool_.release(k);
+        arr->layerPool.release(k);
         return nullptr;
     }
 
     HeightTexture view;
-    view.texture = heightArray_.get();
+    view.texture = arr->texture.get();
     view.minHeight = minH;
     view.heightRange = range;
     view.gridSize = gridSize;
     view.layer = layer;
-    view.epoch = heightLayerEpochs_[static_cast<size_t>(layer)];
-    auto inserted = heightIndex_.emplace(k, view);
+    view.epoch = arr->layerEpochs[static_cast<size_t>(layer)];
+    auto inserted = arr->index.emplace(k, view);
     return &inserted.first->second;
 }
 
 void TerrainDisplacementTemplatePool::touchHeightTexture(const TileKey& key,
+                                                         int gridSize,
                                                          uint64_t frameId) {
-    heightLayerPool_.touch(heightCacheKey(key), frameId);
+    auto it = heightArrays_.find(gridSize);
+    if (it == heightArrays_.end()) return;
+    it->second.layerPool.touch(heightCacheKey(key), frameId);
 }
 
 }  // namespace earth_engine

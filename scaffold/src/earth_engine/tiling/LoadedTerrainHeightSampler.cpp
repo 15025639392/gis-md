@@ -63,11 +63,20 @@ std::optional<float> sampleFromSortedCandidates(
         if (!heightmap || !heightmap->valid()) {
             continue;
         }
+        // 自适应几何密度:该瓦片本帧实际渲染档位是常驻 draw 命令上的真值,
+        // 不能按 SSE 重算(迟滞使"当前 SSE 推出的档"未必等于"正在渲染的档")。
+        int renderGridSize = 0;
+        for (const RenderCommand& cmd : renderContent.cachedDrawCommands()) {
+            if (cmd.terrainHeightGridSize > 0) {
+                renderGridSize = cmd.terrainHeightGridSize;
+                break;
+            }
+        }
         const float height =
             renderGridConsistent
                 ? DecodedHeightmapSampler::sampleHeightRenderGrid(
                       *heightmap, tile->bounds,
-                      longitudeRadians, latitudeRadians)
+                      longitudeRadians, latitudeRadians, renderGridSize)
                 : DecodedHeightmapSampler::sampleHeight(
                       *heightmap, tile->bounds,
                       longitudeRadians, latitudeRadians);

@@ -212,6 +212,9 @@ struct RenderCommand {
     // 层被 LRU 重分配后 epoch 失配 → build 侧 invalidate 命令缓存自愈重建。
     int terrainHeightLayer = -1;
     uint32_t terrainHeightLayerEpoch = 0;
+    // 该命令高度纹理所在的密度档(层边长-1)。自适应密度下 coarse/dense 各有独立
+    // array + LRU + epoch,故校验/保活都必须带上档位。
+    int terrainHeightGridSize = 0;
     // 合批 Step 3(CPU-only):pageStore 本瓦片全 cell 高清页驻留 → mappedRaster
     // fallback 必不被采样 → 该命令可进实例化批(批 shader 丢 mappedRaster)。
     // 由 TerrainPageStore::applyToTerrainCommand 设,TerrainInstanceBatcher 读。

@@ -47,8 +47,11 @@ struct TerrainDisplacementTemplate {
 
 // 为一块瓦片（其纬度范围 + 经度宽度决定形状）生成共享位移模板。
 // 同 {LOD, mercator-row} 的瓦片得到逐值相等的 vertices（列无关）。
+// generateIndices=false 时跳过索引生成(vertices/skirtVerticesBegin 照常产出)。
+// 索引只取决于 gridSize(纯拓扑),池按档共享一份,故除首次外都不必再生成 ——
+// dense 档每次是 393k 次 push_back 的纯浪费。
 TerrainDisplacementTemplate buildTerrainDisplacementTemplate(
-    const Rectangle& tileBounds, int gridSize);
+    const Rectangle& tileBounds, int gridSize, bool generateIndices = true);
 
 // 瓦片的 ENU→ECEF 刚体帧（= enuToEcef(瓦片中心)）。调用方折进模型矩阵（双精度
 // compose 后降 f32），承担该瓦片的经纬度落位。模板 localPos 就是相对此帧的坐标。
