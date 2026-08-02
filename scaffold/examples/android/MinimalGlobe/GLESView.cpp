@@ -268,7 +268,7 @@ static bool createEngine() {
         // 矢量数据系统 P1 真机验证:demo 相机(重庆)附近挂一面一线。
         // heightOffset 抬离地表(该区地形 ~200-800m)防 depthTest 埋没;
         // 贴地钳制属 P3。
-        {
+        if (minimal_globe_demo::kEnableVectorDemoLayers) {
             constexpr double kDeg = M_PI / 180.0;
             auto vectorLayer = std::make_unique<FeatureRenderLayer>(
                 "demo-vector-p1", gRenderDevice.get(), Ellipsoid::WGS84());
@@ -725,7 +725,9 @@ static void renderFrame() {
 
     // 环境系统：时间步进，render 中 update() 计算当前帧天空色
     gEngine->advanceTime(dt);
-    refreshClusterDisplay();
+    if (minimal_globe_demo::kEnableVectorDemoLayers) {
+        refreshClusterDisplay();
+    }
     const auto engineStart = std::chrono::steady_clock::now();
     const bool presented =
         gEngine->render(0.0);  // auto-delta（内部 update；必要时 beginFrame→render→endFrame）

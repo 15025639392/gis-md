@@ -41,6 +41,13 @@ constexpr const char* kTreeI3dmUrl =
     "https://raw.githubusercontent.com/CesiumGS/3d-tiles-samples/main/"
     "1.0/TilesetWithTreeBillboards/tree.i3dm";
 
+// 矢量 demo 图层(P1 面/线 + P5b 标注 + P5a 编辑手柄 + P6c 300 点聚合)。
+// 排查**地形本身**的加载/接缝观感时置 false —— 这些图层是贴地钳制的
+// (ClampToGround),地形一重钳它们也跟着动,屏幕上的"接缝/跳变"未必是地形;
+// 且 refreshClusterDisplay() 每帧跑一次聚合与标注避让,占主线程。
+// 排除干扰是判因的前提,不是洁癖。
+constexpr bool kEnableVectorDemoLayers = true;
+
 constexpr bool kEnableTerrainForDemo = true;
 constexpr bool kUseGaodeSatelliteForDemo = true;
 constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
