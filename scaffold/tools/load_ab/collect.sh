@@ -40,9 +40,19 @@ mkdir -p "$OUT"
 echo "== 采集档位 '$LABEL'：$RUNS 轮，输出 $OUT =="
 echo "   APK $(ls -lh "$APK" | awk '{print $5}')  md5=$(md5 -q "$APK" 2>/dev/null || md5sum "$APK" | cut -d' ' -f1)"
 
-for i in $(seq 1 "$RUNS"); do
+# 续号：目录里已有 runN.log 时从 N+1 接着采，方便 ③ 判 INCONC 后补样本。
+BASE=0
+for existing in "$OUT"/run*.log; do
+    [ -e "$existing" ] || continue
+    n="$(basename "$existing" .log)"; n="${n#run}"
+    [ "$n" -gt "$BASE" ] 2>/dev/null && BASE="$n"
+done
+[ "$BASE" -gt 0 ] && echo "   已有 $BASE 轮，本次从 run$((BASE + 1)) 续号"
+
+for k in $(seq 1 "$RUNS"); do
+    i=$((BASE + k))
     LOG="$OUT/run$i.log"
-    echo "-- run $i/$RUNS"
+    echo "-- run $k/$RUNS (run$i)"
 
     # 冷缓存：pm clear 在本机被 SecurityException 拒，只能卸载重装。
     adb uninstall "$PKG" >/dev/null 2>&1 || true

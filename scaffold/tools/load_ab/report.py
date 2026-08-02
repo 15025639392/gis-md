@@ -121,7 +121,43 @@ def agg(runs, attr):
     vals = [getattr(m, attr) for _, m, _ in runs if m is not None]
     if not vals:
         return None
-    return dict(median=statistics.median(vals), lo=min(vals), hi=max(vals), n=len(vals))
+    return dict(median=statistics.median(vals), lo=min(vals), hi=max(vals),
+                n=len(vals), vals=vals)
+
+
+def perm_p(xs, ys, iters=20000):
+    """中位数差的双侧置换检验。
+
+    为什么需要它：③ 的两档分布在真机上高度重叠（DVFS 调频噪声），
+    只比中位数会把"噪声"判成"劣化"。置换检验不假设分布形状，
+    小样本下可直接给出"这个差值有多可能纯属分组偶然"。
+    """
+    import itertools
+    import random
+    obs = abs(statistics.median(ys) - statistics.median(xs))
+    pool = list(xs) + list(ys)
+    n = len(xs)
+    combos = None
+    total = 1
+    for i in range(n):
+        total = total * (len(pool) - i) // (i + 1)
+    if total <= iters:                      # 小样本直接穷举 → 精确 p
+        combos = itertools.combinations(range(len(pool)), n)
+    hits = tot = 0
+    if combos is not None:
+        for idx in combos:
+            s = set(idx)
+            a = [pool[i] for i in s]
+            b = [pool[i] for i in range(len(pool)) if i not in s]
+            hits += abs(statistics.median(b) - statistics.median(a)) >= obs - 1e-12
+            tot += 1
+        return hits / tot, True
+    rng = random.Random(20260803)           # 固定种子 → 报告可复现
+    for _ in range(iters):
+        rng.shuffle(pool)
+        a, b = pool[:n], pool[n:]
+        hits += abs(statistics.median(b) - statistics.median(a)) >= obs - 1e-12
+    return hits / iters, False
 
 
 def fmt(a, unit='', prec=2):
@@ -166,26 +202,44 @@ def verdict(a, b):
     s_a, s_b = a['settle_s']['median'], b['settle_s']['median']
     rows.append(('② 排空时长', f'{s_a:.2f}s → {s_b:.2f}s',
                  s_b <= TH_SETTLE_S, f'目标 ≤{TH_SETTLE_S}s'))
+    # ③ 是代价闸，两档在真机上分布高度重叠（DVFS 调频噪声）→ 只比中位数会把噪声
+    # 判成劣化。所以先看"超没超阈值"，再看"这个差值是否可与噪声区分"（置换检验）。
+    # 超阈值但 p≥0.05 → 判 INCONC（加大 n 再说），**不判 FAIL** —— 一个在样本
+    # 撑不住时还硬给 FAIL 的测量台，比没有测量台更坏。
     f_a, f_b = a['slow_rate']['median'], b['slow_rate']['median']
-    if f_a <= 1e-9:
-        ok3 = f_b <= 1e-9
-        note = '基线慢帧率为 0，任何新增慢帧都算劣化'
+    p3, exact = perm_p(a['slow_rate']['vals'], b['slow_rate']['vals'])
+    over = f_b > (f_a * TH_SLOW_REL if f_a > 1e-9 else 1e-9)
+    if not over:
+        st3, note3 = 'PASS', f'≤{TH_SLOW_REL:.2f}× 基线 ({f_a * TH_SLOW_REL:.2f}/s)'
+    elif p3 < 0.05:
+        st3, note3 = 'FAIL', f'超阈值且可与噪声区分 (p={p3:.3f}{"精确" if exact else "近似"})'
     else:
-        ok3 = f_b <= f_a * TH_SLOW_REL
-        note = f'目标 ≤{TH_SLOW_REL:.2f}× 基线 ({f_a * TH_SLOW_REL:.2f}/s)'
-    rows.append(('③ 慢帧率', f'{f_a:.2f}/s → {f_b:.2f}/s', ok3, note))
+        st3, note3 = 'INCONC', f'超阈值但样本撑不住 (p={p3:.3f}{"精确" if exact else "近似"})'
+    rows.append(('③ 慢帧率', f'{f_a:.2f}/s → {f_b:.2f}/s', st3, note3))
 
-    for name, delta, ok, note in rows:
-        print(f'  {"PASS" if ok else "FAIL"}  {name:10s} {delta:24s} {note}')
+    for name, delta, st, note in rows:
+        st = {True: 'PASS', False: 'FAIL'}.get(st, st)
+        print(f'  {st:6s} {name:10s} {delta:24s} {note}')
 
-    allok = all(r[2] for r in rows)
-    print(f'\n  总判定：{"通过 —— 收益拿到且未付超额帧时代价" if allok else "不通过"}')
-    if not allok and rows[2][2] is False:
-        print('  → ③ 挂了 = 涓流额度给太宽，收紧后重跑（不要直接放弃修法）')
-    if not allok and not rows[0][2]:
+    states = [{True: 'PASS', False: 'FAIL'}.get(r[2], r[2]) for r in rows]
+    if all(s == 'PASS' for s in states):
+        print('\n  总判定：通过 —— 收益拿到且未付超额帧时代价')
+    elif 'FAIL' in states:
+        print('\n  总判定：不通过')
+    else:
+        print('\n  总判定：未定 —— 收益成立，代价项分辨不出来')
+
+    if states[0] == 'FAIL':
         print('  → ① 挂了 = 闸没真放开，先看"交互期 fin>0 帧数"是否仍为 0')
+    if states[2] == 'FAIL':
+        print('  → ③ 挂了 = 涓流额度给太宽，收紧后重跑（不要直接放弃修法）')
+    if states[2] == 'INCONC':
+        n = a['slow_rate']['n'] + b['slow_rate']['n']
+        print(f'  → ③ 未定：两档慢帧样本重叠，当前 n={n} 分不出真劣化还是调频噪声。')
+        print('     要么加大 n（collect.sh 会从已有 runN 续号，直接再跑几轮即可），')
+        print('     要么按物理预期承认有小幅代价并自行决定是否可接受。')
     print('\n  剩下唯一留给人的：三条全过后自己拖一下，若手感明显变粘 = ③ 阈值定松了。')
-    return allok
+    return all(s == 'PASS' for s in states)
 
 
 def main():
