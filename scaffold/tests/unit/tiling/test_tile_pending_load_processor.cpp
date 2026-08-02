@@ -323,7 +323,9 @@ TEST(TilePendingLoadProcessorTest, ReportsUnchangedWhenBudgetBlocksAllWork) {
     EXPECT_EQ(1u, counts.contentUploads);
 }
 
-TEST(TilePendingLoadProcessorTest, InteractionFiltersNonUrgentUploads) {
+// 交互期非 Urgent 不再被冻结,只由 budget lane 限速:本帧额度 4 次 → 两条都过,
+// 且 Urgent 仍先出。旧契约见 TilePendingLoadQueue.cpp 的说明与 tools/load_ab/。
+TEST(TilePendingLoadProcessorTest, InteractionTricklesNonUrgentAfterUrgent) {
     TileLoadLifecycle lifecycle;
     const TileKey urgentKey{"test", 1, 0, 0};
     const TileKey normalKey{"test", 1, 1, 0};
@@ -359,8 +361,8 @@ TEST(TilePendingLoadProcessorTest, InteractionFiltersNonUrgentUploads) {
             });
 
     ASSERT_TRUE(changed);
-    ASSERT_EQ(1u, events.size());
+    ASSERT_EQ(2u, events.size());
     EXPECT_EQ("urgent", events[0]);
-    EXPECT_EQ(1u, lifecycle.counts().gltfTerrainUploads);
-    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("normal"));
+    EXPECT_EQ("normal", events[1]);
+    EXPECT_EQ(0u, lifecycle.counts().gltfTerrainUploads);
 }

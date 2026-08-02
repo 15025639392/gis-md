@@ -36,7 +36,11 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
     EXPECT_EQ(1u, queue.gltfTerrainUploadCount());
 }
 
-TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
+// 交互期不再按优先级组硬冻结:Urgent 仍排最前,但拿完之后非 Urgent 照常涓流,
+// 节奏只由 budget lane 限。旧契约("交互期非 Urgent 一律不放")导致 Preload/
+// Normal 上传全量积压、停手瞬间一次性泄出 —— 见 tools/load_ab/ 与
+// docs/issues/terrain-visual-maturity-gap-2026-08-02.md §2.1。
+TEST(TilePendingLoadQueueTest, UrgentFirstThenTricklesNonUrgentDuringInteraction) {
     TilePendingLoadQueue queue;
     const TileKey normalKey{"test", 1, 0, 0};
     const TileKey urgentKey{"test", 1, 1, 0};
@@ -69,9 +73,11 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
     std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityUpload(true, budget);
 
-    EXPECT_FALSE(second.has_value());
-    EXPECT_EQ(1u, queue.gltfTerrainUploadCount());
-    EXPECT_TRUE(queue.containsCacheKey("normal"));
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ("normal", second->cacheKey);
+    // 队列已排空。不断言 containsCacheKey —— uploadKeys_ 是"在飞去重集",
+    // take 之后仍保留该键(直到上传完成时 eraseUpload 清),这是既有契约。
+    EXPECT_EQ(0u, queue.gltfTerrainUploadCount());
 }
 
 TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {

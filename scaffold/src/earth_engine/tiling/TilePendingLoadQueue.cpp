@@ -144,12 +144,16 @@ TilePendingLoadQueue::takeHighestPriorityUpload(
     if (uploads_.ordered.empty()) {
         return std::nullopt;
     }
-    // Urgent 组排序在最前:交互期若队首都不是 Urgent,则全队列皆非。
+    // 交互期节奏**只由 budget lane 限速**(平滑期 4ms → 2 次/帧),不再按优先级
+    // 组硬冻结。此前这里有一条 "interactionActive && 队首非 Urgent → 早退";
+    // 早退发生在 tryFinalize **之前**,所以交互期预算使用次数恒为 0,
+    // Preload/Normal 的上传全量积压(实测积压随交互时长线性涨到 48,停手瞬间
+    // 一次性泄出、追赶 0.53s = "停手后暂态"的成因)。
+    // 影像侧同样的硬冻结早已改成"只按单次上传成本过滤 + lane 涓流"
+    // (RasterOverlayTileProvider.cpp:88 注释记录了这次改造),地形侧此前未跟进。
+    // Urgent 仍排在最前 → 近景可见瓦片依旧优先拿到额度,只是不再独占。
+    // 判据与 A/B 台见 tools/load_ab/。
     auto bestIt = uploads_.ordered.begin();
-    if (context.interactionActive &&
-        bestIt->first.group != TileLoadPriorityGroup::Urgent) {
-        return std::nullopt;
-    }
     if (!context.budget.tryFinalize(
             uploadLaneForDomain(bestIt->second.domain),
             TileLoadPriorityPolicy::toFramePriority(bestIt->first.group))) {

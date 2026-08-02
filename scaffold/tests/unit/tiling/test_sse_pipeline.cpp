@@ -18573,7 +18573,7 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
     check(queue.contentUploadCount() == 0 && queue.gltfTerrainUploadCount() == 1,
           "TilePendingLoadQueue: taking content upload removes only that upload");
 }
-void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
+void testTilePendingLoadQueueTricklesNonUrgentDuringInteraction() {
     TilePendingLoadQueue queue;
     const TileKey normalKey{"test", 1, 0, 0};
     const TileKey urgentKey{"test", 1, 1, 0};
@@ -18599,13 +18599,13 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
           "TilePendingLoadQueue: interaction still allows urgent terrain upload");
     check(first &&
               first->cacheKey == "urgent",
-          "TilePendingLoadQueue: interaction skips non-urgent uploads");
+          "TilePendingLoadQueue: interaction still serves urgent first");
     std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityUpload(true, budget);
-    check(!second,
-          "TilePendingLoadQueue: interaction leaves non-urgent upload pending");
-    check(queue.gltfTerrainUploadCount() == 1,
-          "TilePendingLoadQueue: skipped non-urgent upload remains queued");
+    check(second && second->cacheKey == "normal",
+          "TilePendingLoadQueue: interaction trickles non-urgent upload after urgent");
+    check(queue.gltfTerrainUploadCount() == 0,
+          "TilePendingLoadQueue: interaction drains queue within budget");
 }
 void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
     TilePendingLoadQueue queue;
@@ -19211,12 +19211,12 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
             [&events](PendingTileLoad& upload) {
                 events.push_back(upload.cacheKey);
             });
-    check(changed && events.size() == 1 && events[0] == "terminal",
-          "TilePendingLoadProcessor: interaction still drains terminal results");
+    check(changed && events.size() == 2 && events[0] == "terminal" &&
+              events[1] == "upload",
+          "TilePendingLoadProcessor: interaction drains terminal results then trickles uploads");
     check(lifecycle.counts().gltfTerrainTerminalResults == 0 &&
-              lifecycle.counts().gltfTerrainUploads == 1 &&
-              lifecycle.containsWorkForCacheKey("upload"),
-          "TilePendingLoadProcessor: interaction leaves non-urgent uploads pending after terminal drain");
+              lifecycle.counts().gltfTerrainUploads == 0,
+          "TilePendingLoadProcessor: interaction drains both queues within budget");
 }
 void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
     TileLoadLifecycle lifecycle;
@@ -19253,12 +19253,11 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
             [&events](PendingTileLoad& upload) {
                 events.push_back(upload.cacheKey);
             });
-    check(changed && events.size() == 1 && events[0] == "urgent",
-          "TilePendingLoadProcessor: interaction still processes urgent uploads");
-    check(lifecycle.counts().gltfTerrainUploads == 1 &&
-              lifecycle.containsWorkForCacheKey("normal") &&
-              lifecycle.containsWorkForCacheKey("urgent"),
-          "TilePendingLoadProcessor: interaction leaves non-urgent upload queued and urgent upload claimed");
+    check(changed && events.size() == 2 && events[0] == "urgent" &&
+              events[1] == "normal",
+          "TilePendingLoadProcessor: interaction serves urgent first then non-urgent");
+    check(lifecycle.counts().gltfTerrainUploads == 0,
+          "TilePendingLoadProcessor: interaction drains upload queue within budget");
 }
 void testTilePendingUploadCompletionErasesUploadKeys() {
     TileLoadLifecycle lifecycle;
@@ -27810,7 +27809,7 @@ int main() {
     testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload();
     testTileFrameWorkCoordinatorReselectsDuringActiveInteraction();
     testTilePendingLoadQueueUsesSharedPriorityOrder();
-    testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();
+    testTilePendingLoadQueueTricklesNonUrgentDuringInteraction();
     testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks();
     testTilePendingLoadQueueDeduplicatesUploadsByKind();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();
