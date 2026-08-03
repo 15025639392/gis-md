@@ -943,6 +943,12 @@ add_executable(test_feature_bucket_grid
 target_link_libraries(test_feature_bucket_grid PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_feature_bucket_grid COMMAND test_feature_bucket_grid)
 
+add_executable(test_mvt_decoder
+    unit/data/test_mvt_decoder.cpp
+)
+target_link_libraries(test_mvt_decoder PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_mvt_decoder COMMAND test_mvt_decoder)
+
 add_executable(test_constrained_delaunay
     unit/data/test_constrained_delaunay.cpp
 )

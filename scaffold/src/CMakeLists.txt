@@ -729,6 +729,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/StyleExpression.cpp
     earth_engine/data/GeoJsonImporter.h
     earth_engine/data/GeoJsonImporter.cpp
+    earth_engine/data/MvtDecoder.h
+    earth_engine/data/MvtDecoder.cpp
 )
 
 # ============================================================
@@ -908,6 +910,11 @@ else()
     endif()
 endif()
 target_link_libraries(earth_engine_core PUBLIC CURL::libcurl)
+
+# MvtDecoder 的 gzip/zlib 瓦片解压。Android 走上方 vcpkg ZLIB_ROOT 提示,
+# host 用系统 zlib(macOS 自带)。
+find_package(ZLIB REQUIRED)
+target_link_libraries(earth_engine_core PUBLIC ZLIB::ZLIB)
 
 unset(_EARTH_ENGINE_VCPKG_PACKAGE)
 unset(_EARTH_ENGINE_VCPKG_PACKAGE_ROOT)
