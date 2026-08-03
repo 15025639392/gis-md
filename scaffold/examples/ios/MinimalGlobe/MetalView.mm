@@ -48,9 +48,13 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
     BOOL _engineReady;
     int _frameCount;
 
-    // Touch state
-    BOOL _touching;
-    CGFloat _lastPinchScale;
+    // Touch state（裸 touches 接管：单指 Pointer*，双指 Pinch*+pointer pair。
+    // 旧 UIPinchGestureRecognizer 只给累积 scale，rotation/质心位移全丢——
+    // twist/pitch 在 iOS 上曾是死代码；换裸 touches 后与 Android 同一条
+    // InputManager latch + 新契约路径。）
+    NSMutableArray<UITouch *> *_activeTouches;
+    BOOL _pinchActive;
+    BOOL _suppressSingleUntilAllUp;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -61,6 +65,8 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
         self.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
         self.clearColor = MTLClearColorMake(0.0, 0.0, 0.1, 1.0);
         self.enableSetNeedsDisplay = NO;
+        self.multipleTouchEnabled = YES;  // MTKView 默认关，双指事件必需
+        _activeTouches = [NSMutableArray array];
 
         // 创建引擎
         [self createEngine];
@@ -71,8 +77,6 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
         [_displayLink addToRunLoop:NSRunLoop.mainRunLoop
                            forMode:NSRunLoopCommonModes];
 
-        // 手势
-        [self setupGestures];
     }
     return self;
 }
@@ -150,134 +154,117 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
     }
 }
 
-- (void)setupGestures {
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handlePan:)];
-    [self addGestureRecognizer:pan];
+// ---- 裸 touches 手势输入 ----
+// 单指：PointerDown/Move/Up（drag/click 由 InputManager 识别）。
+// 双指：PinchStart + 带 pointer pair 的 PinchMove（派生量与 Manipulate/Pitch
+// latch 由 InputManager 统一计算）+ PinchEnd。
+// 双指结束后剩余单指抑制到全部抬起（避免尾巴误产生 click/drag）。
 
-    UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handlePinch:)];
-    [self addGestureRecognizer:pinch];
+- (earth_engine::InputEvent)baseEventAt:(CGPoint)location {
+    CGFloat scale = self.contentScaleFactor;
+    earth_engine::InputEvent event;
+    event.screenX = static_cast<float>(location.x * scale);
+    event.screenY = static_cast<float>(location.y * scale);
+    event.devicePixelRatio = static_cast<float>(scale);
+    event.pointerType = earth_engine::InputEvent::PointerType::Touch;
+    // CACurrentMediaTime 返回单调递增秒数（与 InputEvent.timestamp 约定一致）
+    event.timestamp = CACurrentMediaTime();
+    return event;
 }
 
-- (void)handlePan:(UIPanGestureRecognizer *)gesture {
-    if (!_engineReady) return;
-
-    CGPoint location = [gesture locationInView:self];
+- (void)sendPinchMoveFromActiveTouches {
     CGFloat scale = self.contentScaleFactor;
-    // CACurrentMediaTime 返回单调递增秒数（与 InputEvent.timestamp 约定一致）
-    double timestamp = CACurrentMediaTime();
+    CGPoint p0 = [_activeTouches[0] locationInView:self];
+    CGPoint p1 = [_activeTouches[1] locationInView:self];
+    CGPoint center = CGPointMake((p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5);
 
-    switch (gesture.state) {
-        case UIGestureRecognizerStateBegan: {
-            _touching = YES;
-            earth_engine::InputEvent event;
-            event.type = earth_engine::InputEvent::Type::PointerDown;
-            event.screenX = static_cast<float>(location.x * scale);
-            event.screenY = static_cast<float>(location.y * scale);
-            event.devicePixelRatio = static_cast<float>(scale);
-            event.pointerType = earth_engine::InputEvent::PointerType::Touch;
-            event.timestamp = timestamp;
-            _engine->onInputEvent(event);
-            break;
+    earth_engine::InputEvent event = [self baseEventAt:center];
+    event.type = earth_engine::InputEvent::Type::PinchMove;
+    event.pointerCount = 2;
+    event.hasPointerPair = true;
+    event.pointer0X = static_cast<float>(p0.x * scale);
+    event.pointer0Y = static_cast<float>(p0.y * scale);
+    event.pointer1X = static_cast<float>(p1.x * scale);
+    event.pointer1Y = static_cast<float>(p1.y * scale);
+    _engine->onInputEvent(event);
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesBegan:touches withEvent:event];
+    if (!_engineReady) return;
+    for (UITouch *touch in touches) {
+        if (![_activeTouches containsObject:touch]) {
+            [_activeTouches addObject:touch];
         }
-        case UIGestureRecognizerStateChanged: {
-            earth_engine::InputEvent event;
-            event.type = earth_engine::InputEvent::Type::PointerMove;
-            event.screenX = static_cast<float>(location.x * scale);
-            event.screenY = static_cast<float>(location.y * scale);
-            event.devicePixelRatio = static_cast<float>(scale);
-            event.pointerType = earth_engine::InputEvent::PointerType::Touch;
-            event.timestamp = timestamp;
-            _engine->onInputEvent(event);
-            break;
-        }
-        case UIGestureRecognizerStateEnded:
-        case UIGestureRecognizerStateCancelled: {
-            _touching = NO;
-            earth_engine::InputEvent event;
-            event.type = gesture.state == UIGestureRecognizerStateCancelled
+    }
+    if (_activeTouches.count == 1 && !_suppressSingleUntilAllUp) {
+        earth_engine::InputEvent down = [self
+            baseEventAt:[_activeTouches[0] locationInView:self]];
+        down.type = earth_engine::InputEvent::Type::PointerDown;
+        _engine->onInputEvent(down);
+    } else if (_activeTouches.count >= 2 && !_pinchActive) {
+        _pinchActive = YES;
+        CGPoint p0 = [_activeTouches[0] locationInView:self];
+        CGPoint p1 = [_activeTouches[1] locationInView:self];
+        earth_engine::InputEvent start = [self baseEventAt:
+            CGPointMake((p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5)];
+        start.type = earth_engine::InputEvent::Type::PinchStart;
+        start.pointerCount = 2;
+        _engine->onInputEvent(start);
+    }
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesMoved:touches withEvent:event];
+    if (!_engineReady) return;
+    if (_pinchActive && _activeTouches.count >= 2) {
+        [self sendPinchMoveFromActiveTouches];
+    } else if (_activeTouches.count == 1 && !_suppressSingleUntilAllUp) {
+        earth_engine::InputEvent move = [self
+            baseEventAt:[_activeTouches[0] locationInView:self]];
+        move.type = earth_engine::InputEvent::Type::PointerMove;
+        _engine->onInputEvent(move);
+    }
+}
+
+- (void)finishTouches:(NSSet<UITouch *> *)touches cancelled:(BOOL)cancelled {
+    if (!_engineReady) return;
+    CGPoint last = _activeTouches.count > 0
+        ? [_activeTouches[0] locationInView:self]
+        : CGPointZero;
+    for (UITouch *touch in touches) {
+        [_activeTouches removeObject:touch];
+    }
+    if (_pinchActive && _activeTouches.count < 2) {
+        _pinchActive = NO;
+        _suppressSingleUntilAllUp = YES;
+        earth_engine::InputEvent end = [self baseEventAt:last];
+        end.type = earth_engine::InputEvent::Type::PinchEnd;
+        end.pointerCount = 2;
+        _engine->onInputEvent(end);
+    }
+    if (_activeTouches.count == 0) {
+        if (!_suppressSingleUntilAllUp) {
+            UITouch *lifted = touches.anyObject;
+            earth_engine::InputEvent up = [self
+                baseEventAt:[lifted locationInView:self]];
+            up.type = cancelled
                 ? earth_engine::InputEvent::Type::Cancel
                 : earth_engine::InputEvent::Type::PointerUp;
-            event.screenX = static_cast<float>(location.x * scale);
-            event.screenY = static_cast<float>(location.y * scale);
-            event.devicePixelRatio = static_cast<float>(scale);
-            event.pointerType = earth_engine::InputEvent::PointerType::Touch;
-            event.timestamp = timestamp;
-            _engine->onInputEvent(event);
-            break;
+            _engine->onInputEvent(up);
         }
-        default:
-            break;
+        _suppressSingleUntilAllUp = NO;
     }
 }
 
-- (void)handlePinch:(UIPinchGestureRecognizer *)gesture {
-    if (!_engineReady) return;
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesEnded:touches withEvent:event];
+    [self finishTouches:touches cancelled:NO];
+}
 
-    // UIPinchGestureRecognizer 的 locationInView 返回双指中心
-    CGPoint center = [gesture locationInView:self];
-    CGFloat scale = self.contentScaleFactor;
-    // UIPinchGestureRecognizer.scale 是累积值（相对手势起点），
-    // CameraController::onPinchGesture 期望逐帧 scale（与 OpenGlobus
-    // zoomCur.length / zoomPrev.length 一致）。
-    float perFrameScale = 1.0f;
-    float cumulativeScale = static_cast<float>(gesture.scale);
-
-    switch (gesture.state) {
-        case UIGestureRecognizerStateBegan: {
-            _lastPinchScale = 1.0f;
-            earth_engine::InputEvent event;
-            event.type = earth_engine::InputEvent::Type::PinchStart;
-            event.screenX = static_cast<float>(center.x * scale);
-            event.screenY = static_cast<float>(center.y * scale);
-            event.devicePixelRatio = static_cast<float>(scale);
-            event.pinchScale = 1.0f;
-            event.pointerType = earth_engine::InputEvent::PointerType::Touch;
-            event.pointerCount = 2;
-            event.timestamp = CACurrentMediaTime();
-            _engine->onInputEvent(event);
-            break;
-        }
-        case UIGestureRecognizerStateChanged: {
-            // 逐帧 scale = 当前累积 / 上一帧累积
-            perFrameScale = (_lastPinchScale > 0.001f)
-                ? cumulativeScale / _lastPinchScale
-                : 1.0f;
-            _lastPinchScale = cumulativeScale;
-
-            earth_engine::InputEvent event;
-            event.type = earth_engine::InputEvent::Type::PinchMove;
-            event.screenX = static_cast<float>(center.x * scale);
-            event.screenY = static_cast<float>(center.y * scale);
-            event.devicePixelRatio = static_cast<float>(scale);
-            event.pinchScale = perFrameScale;
-            event.pointerType = earth_engine::InputEvent::PointerType::Touch;
-            event.pointerCount = 2;
-            event.timestamp = CACurrentMediaTime();
-            _engine->onInputEvent(event);
-            break;
-        }
-        case UIGestureRecognizerStateEnded:
-        case UIGestureRecognizerStateCancelled: {
-            _lastPinchScale = 1.0f;
-            earth_engine::InputEvent event;
-            event.type = gesture.state == UIGestureRecognizerStateCancelled
-                ? earth_engine::InputEvent::Type::Cancel
-                : earth_engine::InputEvent::Type::PinchEnd;
-            event.screenX = static_cast<float>(center.x * scale);
-            event.screenY = static_cast<float>(center.y * scale);
-            event.devicePixelRatio = static_cast<float>(scale);
-            event.pinchScale = 1.0f;
-            event.pointerType = earth_engine::InputEvent::PointerType::Touch;
-            event.pointerCount = 2;
-            event.timestamp = CACurrentMediaTime();
-            _engine->onInputEvent(event);
-            break;
-        }
-        default:
-            break;
-    }
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesCancelled:touches withEvent:event];
+    [self finishTouches:touches cancelled:YES];
 }
 
 - (void)renderFrame {
