@@ -18,6 +18,8 @@
 #include <thread>
 
 #include "earth_engine/content/GltfModel.h"
+#include "earth_engine/core/cache/HttpCache.h"
+#include "earth_engine/providers/ImageTileBodyCheck.h"
 #include "earth_engine/content/HeightmapTerrainContentProvider.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -50,12 +52,18 @@ public:
     void onEnterBackground() override {}
     void onEnterForeground() override {}
 
+    // 网络响应可配置(默认 200 + PNG 魔数体:响应体魔数校验上线后,假体
+    // 必须过白名单才能走到 decodeImage)。
+    int httpStatus = 200;
+    std::vector<uint8_t> httpBody{
+        0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0};
+
     std::unique_ptr<HttpRequest> get(
         const std::string&,
         std::function<void(int, std::vector<uint8_t>)> callback,
         HttpRequestOptions = {}) override {
         if (callback) {
-            callback(200, std::vector<uint8_t>{0u});
+            callback(httpStatus, httpBody);
         }
         return nullptr;
     }
@@ -438,6 +446,100 @@ TEST(HeightmapTerrainContent, HeightSamplerReadsBakedTerrainHeight) {
     EXPECT_FALSE(LoadedTerrainHeightSampler::sampleHeightOptional(
                      tiles, bounds.east() + 0.05, lat)
                      .has_value());
+}
+
+// ---- 响应体魔数校验(HTTP 200 + CDN NoSuchKey XML 硬化) ---------------------
+
+// 实测取证的 CDN 错误体形态:HTTP 200 + OSS NoSuchKey XML(边缘过期负缓存)。
+std::vector<uint8_t> noSuchKeyXmlBody() {
+    const std::string xml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<Error><Code>NoSuchKey</Code>"
+        "<Message>The specified key does not exist.</Message></Error>";
+    return std::vector<uint8_t>(xml.begin(), xml.end());
+}
+
+TEST(ImageTileBodyCheck, WhitelistsImageMagicsAndRejectsErrorBodies) {
+    const std::vector<uint8_t> png{
+        0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0};
+    const std::vector<uint8_t> jpeg{
+        0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0};
+    const std::vector<uint8_t> webp{
+        'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P'};
+    EXPECT_TRUE(looksLikeImageTileBody(png));
+    EXPECT_TRUE(looksLikeImageTileBody(jpeg));
+    EXPECT_TRUE(looksLikeImageTileBody(webp));
+
+    EXPECT_FALSE(looksLikeImageTileBody(noSuchKeyXmlBody()));
+    EXPECT_FALSE(looksLikeImageTileBody(std::vector<uint8_t>{}));
+    // 12 字节下限:比最短魔数还短的体一律非法。
+    EXPECT_FALSE(looksLikeImageTileBody(
+        std::vector<uint8_t>{0x89, 'P', 'N', 'G'}));
+}
+
+// 200 + XML 错误体 → 不入 HttpCache,状态为 RetryLater(瞬时,非永久 Failed)。
+TEST(HeightmapTerrainFetch, XmlErrorBodyIsRetryLaterAndNotCached) {
+    SyntheticHeightBridge bridge;
+    bridge.httpBody = noSuchKeyXmlBody();
+
+    HeightmapTerrainProvider provider(
+        "http://cdn.test/magic-a/{z}/{x}/{y}.png", "");
+    provider.setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"XYZ-WebMercator", 5, 11, 13};
+    const std::string url = provider.buildUrl(key);
+    HttpCache::shared().remove(url);
+
+    std::atomic<bool> called{false};
+    TileLoadStatus status = TileLoadStatus::Failed;
+    provider.requestTile(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            status = result.status;
+            called = true;
+        });
+    waitForContentCallback(called);
+    ASSERT_TRUE(called);
+    EXPECT_EQ(status, TileLoadStatus::RetryLater);
+    EXPECT_FALSE(HttpCache::shared().contains(url));
+}
+
+// 缓存里的历史坏体(校验上线前毒入的 XML)自愈:命中即清除,当次转网络
+// 重取并成功解码,缓存回填为合法图像体。
+TEST(HeightmapTerrainFetch, PoisonedCacheEntryIsEvictedAndRefetched) {
+    SyntheticHeightBridge bridge;
+    bridge.heightAt = [](int, int) { return 120.0f; };
+
+    HeightmapTerrainProvider provider(
+        "http://cdn.test/magic-b/{z}/{x}/{y}.png", "");
+    provider.setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"XYZ-WebMercator", 5, 21, 9};
+    const std::string url = provider.buildUrl(key);
+    HttpCache::shared().put(url, noSuchKeyXmlBody());
+    ASSERT_TRUE(HttpCache::shared().contains(url));
+
+    std::atomic<bool> called{false};
+    TileLoadStatus status = TileLoadStatus::Failed;
+    bool gotHeightmap = false;
+    provider.requestTile(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            status = result.status;
+            gotHeightmap = result.heightmap != nullptr;
+            called = true;
+        });
+    waitForContentCallback(called);
+    ASSERT_TRUE(called);
+    EXPECT_EQ(status, TileLoadStatus::Renderable);
+    EXPECT_TRUE(gotHeightmap);
+    // 坏体已被替换为网络重取的合法体。
+    EXPECT_EQ(HttpCache::shared().get(url), bridge.httpBody);
+    HttpCache::shared().remove(url);
 }
 
 }  // namespace

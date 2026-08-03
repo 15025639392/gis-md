@@ -1964,7 +1964,10 @@ void testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline() {
         });
     check(bridge.waitUntilEntered(),
           "XYZImageryProvider: bridge decode test observes HTTP entry");
-    check(bridge.complete(200, {1, 2, 3}),
+    // 假体需过响应体魔数白名单(PNG)才能走到 mock 解码。
+    check(bridge.complete(200,
+                          {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A,
+                           0, 0, 0, 0}),
           "XYZImageryProvider: bridge completion returns without waiting for decode");
     check(provider.waitUntilDecodeEntered() &&
               provider.decodeCalls.load(std::memory_order_relaxed) == 1,

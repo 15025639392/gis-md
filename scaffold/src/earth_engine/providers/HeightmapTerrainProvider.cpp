@@ -1,4 +1,5 @@
 #include "HeightmapTerrainProvider.h"
+#include "ImageTileBodyCheck.h"
 #include "../core/async/AsyncSystem.h"
 #include "../core/cache/HttpCache.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
@@ -91,6 +92,12 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
         }
 
         auto cached = HttpCache::shared().get(url);
+        if (!cached.empty() && !looksLikeImageTileBody(cached)) {
+            // 历史坏体自愈(魔数校验上线前入缓存的 CDN XML 错误体):清掉
+            // 后按缓存未命中走网络重取。
+            HttpCache::shared().remove(url);
+            cached.clear();
+        }
         if (!cached.empty()) {
             // cache 命中也必须下沉 worker(与下方无 bridge 分支同模式):此处
             // 曾在主线程同步 decode+callback(callback 内含整块网格构建),
@@ -132,7 +139,9 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                     callback(key, TerrainTileLoadResult::cancelled());
                     return;
                 }
-                if (statusCode != 200 || body.empty()) {
+                // 200 + 非图像体(CDN 边缘负缓存的 NoSuchKey XML)与非 200
+                // 同路:不入缓存、RetryLater(瞬时故障,非永久 Failed)。
+                if (statusCode != 200 || !looksLikeImageTileBody(body)) {
                     callback(key, TerrainTileLoadResult::retryLater());
                     return;
                 }
@@ -145,6 +154,11 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
     }
 
     auto cached = HttpCache::shared().get(url);
+    if (!cached.empty() && !looksLikeImageTileBody(cached)) {
+        // 同 bridge 分支:历史坏体自愈,清掉后走网络重取。
+        HttpCache::shared().remove(url);
+        cached.clear();
+    }
     if (!cached.empty()) {
         AsyncSystem::pool().enqueue(
             [this,
@@ -224,7 +238,9 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                             TerrainTileLoadResult::cancelled());
                         return;
                     }
-                    if (statusCode != 200 || bodyPtr->empty()) {
+                    // 同 bridge 分支:200 + 非图像体不入缓存,RetryLater。
+                    if (statusCode != 200 ||
+                        !looksLikeImageTileBody(*bodyPtr)) {
                         (*callbackPtr)(
                             key,
                             TerrainTileLoadResult::retryLater());

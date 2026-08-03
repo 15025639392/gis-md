@@ -1,4 +1,5 @@
 #include "XYZImageryProvider.h"
+#include "ImageTileBodyCheck.h"
 #include "../core/async/AsyncSystem.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -417,6 +418,18 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                             (*callbackPtr)(key, nullptr);
                             return;
                         }
+                        // 200 + 非图像体(CDN 边缘负缓存的 NoSuchKey XML):
+                        // 独立日志阶段,与真解码故障区分。
+                        if (!looksLikeImageTileBody(*bodyPtr)) {
+                            logAndroidXyzFailure(
+                                "body-magic",
+                                key,
+                                statusCode,
+                                bodyPtr->size(),
+                                url);
+                            (*callbackPtr)(key, nullptr);
+                            return;
+                        }
                         auto image =
                             decodeTile(bodyPtr->data(), bodyPtr->size());
                         if (!image) {
@@ -478,6 +491,17 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                                 bodyPtr->size(),
                                 url);
                         }
+                        (*callbackPtr)(key, nullptr);
+                        return;
+                    }
+                    // 同 bridge 分支:非图像体独立日志阶段。
+                    if (!looksLikeImageTileBody(*bodyPtr)) {
+                        logAndroidXyzFailure(
+                            "body-magic",
+                            key,
+                            statusCode,
+                            bodyPtr->size(),
+                            url);
                         (*callbackPtr)(key, nullptr);
                         return;
                     }
