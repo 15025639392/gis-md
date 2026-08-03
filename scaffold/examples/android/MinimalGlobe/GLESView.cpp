@@ -1458,6 +1458,96 @@ Java_com_earthengine_sdk_GLESView_nativeDebugPinchEnd(
         static_cast<float>(height) * 0.5f);
 }
 
+// [GESTDIAG] 确定性双指路径回放：adb 无法产生多点触控，这里合成固定的两指
+// 像素序列（含 pointer pair → 走 InputManager latch + 新契约），配 GESTDIAG
+// anchorErr 形成可脚本化的真机判据。数字键 1-4 触发（见 Java onKeyDown）。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeDebugPinchPath(
+    JNIEnv* /* env */, jobject /* this */,
+    jint scenario, jint width, jint height) {
+    const float cx = static_cast<float>(width) * 0.5f;
+    const float cy = static_cast<float>(height) * 0.5f;
+    const float halfSpread = 300.0f;
+    const double t0 = androidUptimeSeconds();
+
+    auto postMove = [&](int step, float p0x, float p0y, float p1x, float p1y) {
+        InputEvent move;
+        move.type = InputEvent::Type::PinchMove;
+        move.screenX = (p0x + p1x) * 0.5f;
+        move.screenY = (p0y + p1y) * 0.5f;
+        move.pinchScale = 1.0f;  // 新契约不消费；派生量由 InputManager 计算
+        move.pointerType = InputEvent::PointerType::Touch;
+        move.pointerCount = 2;
+        move.hasPointerPair = true;
+        move.pointer0X = p0x;
+        move.pointer0Y = p0y;
+        move.pointer1X = p1x;
+        move.pointer1Y = p1y;
+        move.timestamp = t0 + 0.016 * static_cast<double>(step);
+        postInputEvent(move);
+    };
+
+    {
+        InputEvent start;
+        start.type = InputEvent::Type::PinchStart;
+        start.screenX = cx;
+        start.screenY = cy;
+        start.pinchScale = 1.0f;
+        start.pointerType = InputEvent::PointerType::Touch;
+        start.pointerCount = 2;
+        start.timestamp = t0;
+        postInputEvent(start);
+    }
+
+    constexpr int kSteps = 45;
+    for (int i = 0; i <= kSteps; ++i) {
+        const float f = static_cast<float>(i) / static_cast<float>(kSteps);
+        switch (scenario) {
+            case 0: {  // 纯刚性 pan：质心横移 300px
+                const float dx = 300.0f * f;
+                postMove(i, cx - halfSpread + dx, cy,
+                            cx + halfSpread + dx, cy);
+                break;
+            }
+            case 1: {  // Pitch：双指平行上推 240px
+                const float dy = -240.0f * f;
+                postMove(i, cx - halfSpread, cy + dy,
+                            cx + halfSpread, cy + dy);
+                break;
+            }
+            case 2: {  // 组合：缩放 1.5×+拧 0.5rad+质心斜移
+                const float r = halfSpread * (1.0f + 0.5f * f);
+                const float a = 0.5f * f;
+                const float mx = cx + 150.0f * f;
+                const float my = cy - 100.0f * f;
+                postMove(i, mx - r * std::cos(a), my - r * std::sin(a),
+                            mx + r * std::cos(a), my + r * std::sin(a));
+                break;
+            }
+            default: {  // 3: 慢拧+微缩放（阈值附近，验 latch 后无模式翻转）
+                const float a = 0.3f * f;
+                const float wobble = 1.0f + 0.02f * ((i % 2 == 0) ? 1.0f : -1.0f);
+                const float r = halfSpread * wobble;
+                postMove(i, cx - r * std::cos(a), cy - r * std::sin(a),
+                            cx + r * std::cos(a), cy + r * std::sin(a));
+                break;
+            }
+        }
+    }
+
+    {
+        InputEvent end;
+        end.type = InputEvent::Type::PinchEnd;
+        end.screenX = cx;
+        end.screenY = cy;
+        end.pinchScale = 1.0f;
+        end.pointerType = InputEvent::PointerType::Touch;
+        end.pointerCount = 2;
+        end.timestamp = t0 + 0.016 * static_cast<double>(kSteps + 1);
+        postInputEvent(end);
+    }
+}
+
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
     JNIEnv* /* env */, jobject /* this */,

@@ -82,6 +82,11 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
             nativeDebugPinchEnd(getWidth(), getHeight());
             return true;
         }
+        // [GESTDIAG] 数字键 1-4：确定性双指路径回放（pan/pitch/组合/慢拧）。
+        if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_4) {
+            nativeDebugPinchPath(keyCode - KeyEvent.KEYCODE_1, getWidth(), getHeight());
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
     }
 
@@ -244,6 +249,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     private static native void nativeDebugZoom(float scale, int width, int height);
     private static native void nativeDebugTilt(float centerDy, int width, int height);
     private static native void nativeDebugPinchEnd(int width, int height);
+    private static native void nativeDebugPinchPath(int scenario, int width, int height);
     private static native void nativePause();
     private static native void nativeResume();
 

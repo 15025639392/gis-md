@@ -904,10 +904,11 @@ void CameraController::logGestureDiag(const char* label, float screenX, float sc
 
     platformLog(LogLevel::Info, "GESTDIAG",
         "%s eye=(%.5f,%.5f,%.0fm) dEye=%.1fm finger=(%.0f,%.0f) "
-        "anchorErr=(%.1f,%.1f)px hasAnchor=%d",
+        "anchorErr=(%.1f,%.1f)px hasAnchor=%d mode=%d",
         label,
         cart.longitudeDegrees(), cart.latitudeDegrees(), cart.height(),
-        dEye, screenX, screenY, anchorErrX, anchorErrY, hasAnchor ? 1 : 0);
+        dEye, screenX, screenY, anchorErrX, anchorErrY, hasAnchor ? 1 : 0,
+        pinching_ ? static_cast<int>(pinchActiveMode_) : -1);
 }
 
 CameraController::AnchorSolveResult CameraController::solveAnchorRotation(
