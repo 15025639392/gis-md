@@ -64,6 +64,25 @@ private:
 
     void finishPointerGesture(const InputEvent& event);
     void cancelActiveGesture();
+    /// 双指会话：从 pointer0/1 计算派生量（spread 比、twist unwrap 累计），
+    /// 并在起手窗口内做一次 mode latch。event 为可写副本，填充后回调转发。
+    void processPinchWithPointerPair(InputEvent& event);
+
+    /// 双指会话状态（首个携带 pointer pair 的事件初始化，PinchEnd/Cancel 清空）
+    struct PinchSession {
+        bool baselineValid = false;
+        float spread0 = 1.0f;
+        float angle0 = 0.0f;         // 起手两指连线角
+        float centroid0X = 0.0f;
+        float centroid0Y = 0.0f;
+        float p0StartX = 0.0f, p0StartY = 0.0f;
+        float p1StartX = 0.0f, p1StartY = 0.0f;
+        double t0 = 0.0;
+        float prevAngleRaw = 0.0f;   // unwrap 用
+        float angleUnwrapped = 0.0f; // 累计连线角（连续，无 ±π 跳变）
+        InputEvent::PinchMode mode = InputEvent::PinchMode::Undecided;
+    };
+    PinchSession pinchSession_;
 
     Callback callback_;
 

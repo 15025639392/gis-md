@@ -27,6 +27,25 @@ InputEvent pinch(InputEvent::Type type, float scale, double timestamp) {
     return event;
 }
 
+InputEvent pinchPair(InputEvent::Type type,
+                     float p0x, float p0y,
+                     float p1x, float p1y,
+                     double timestamp) {
+    InputEvent event;
+    event.type = type;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.timestamp = timestamp;
+    event.hasPointerPair = true;
+    event.pointer0X = p0x;
+    event.pointer0Y = p0y;
+    event.pointer1X = p1x;
+    event.pointer1Y = p1y;
+    event.screenX = (p0x + p1x) * 0.5f;
+    event.screenY = (p0y + p1y) * 0.5f;
+    event.pointerCount = 2;
+    return event;
+}
+
 } // namespace
 
 TEST(InputManagerTest, DragThresholdSeparatesClickFromDrag) {
@@ -137,4 +156,152 @@ TEST(InputManagerTest, CancelClearsPinchWithoutClick) {
     EXPECT_EQ(InputManager::Gesture::PinchStart, gestures[0]);
     EXPECT_EQ(InputManager::Gesture::PinchMove, gestures[1]);
     EXPECT_EQ(InputManager::Gesture::PinchEnd, gestures[2]);
+}
+
+// ---- 双指会话 mode latch（起手快照 + 单次判定，整段手势不再改）----
+
+namespace {
+
+// 收集每个 PinchMove 转发事件的完整副本，便于断言派生量与 mode。
+struct PinchEventLog {
+    InputManager manager;
+    std::vector<InputEvent> moves;
+    PinchEventLog() {
+        manager.setCallback([this](InputManager::Gesture gesture,
+                                   const InputEvent& event) {
+            if (gesture == InputManager::Gesture::PinchMove) {
+                moves.push_back(event);
+            }
+        });
+    }
+};
+
+} // namespace
+
+TEST(InputManagerTest, PinchLatchPitchOnParallelVerticalMove) {
+    PinchEventLog log;
+    // 首个 pair 事件建立基准；两指平行同向竖移 → Pitch，且横向漂移后保持。
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 300.0f, 500.0f, 300.0f, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 330.0f, 500.0f, 330.0f, 1.02));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  340.0f, 360.0f, 540.0f, 360.0f, 1.04));
+
+    ASSERT_EQ(3u, log.moves.size());
+    EXPECT_EQ(InputEvent::PinchMode::Undecided, log.moves[0].pinchMode);
+    EXPECT_EQ(InputEvent::PinchMode::Pitch, log.moves[1].pinchMode);
+    // 已 latch：第三个事件质心横移 40px（>8dp 阈值）也不得翻成 Manipulate。
+    EXPECT_EQ(InputEvent::PinchMode::Pitch, log.moves[2].pinchMode);
+}
+
+TEST(InputManagerTest, PinchLatchManipulateOnSpreadChange) {
+    PinchEventLog log;
+    // 两指张开（spread 变化超过 5% 对数阈值）→ Manipulate，竖移后保持。
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 300.0f, 500.0f, 300.0f, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  280.0f, 300.0f, 520.0f, 300.0f, 1.02));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  280.0f, 340.0f, 520.0f, 340.0f, 1.04));
+
+    ASSERT_EQ(3u, log.moves.size());
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves[1].pinchMode);
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves[2].pinchMode);
+    EXPECT_NEAR(1.2f, log.moves[1].pinchScaleFromStart, 1e-4f);
+}
+
+TEST(InputManagerTest, PinchLatchManipulateOnHorizontalCentroidMove) {
+    PinchEventLog log;
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 300.0f, 500.0f, 300.0f, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  330.0f, 300.0f, 530.0f, 300.0f, 1.02));
+
+    ASSERT_EQ(2u, log.moves.size());
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves[1].pinchMode);
+}
+
+TEST(InputManagerTest, PinchLatchManipulateOnOppositeVerticalMove) {
+    PinchEventLog log;
+    // 两指竖向反向（拧动）→ 连线角变化触发 Manipulate，绝不误判 Pitch。
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 300.0f, 500.0f, 300.0f, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 330.0f, 500.0f, 270.0f, 1.02));
+
+    ASSERT_EQ(2u, log.moves.size());
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves[1].pinchMode);
+}
+
+TEST(InputManagerTest, PinchLatchStableUnderThresholdNoise) {
+    PinchEventLog log;
+    // N5：Pitch latch 后，围绕阈值抖动的事件流（spread 抖动 ±8%、质心横移）
+    // 不得引起任何一次模式翻转——旧实现每事件重判会在这里疯狂抖动。
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 300.0f, 500.0f, 300.0f, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 330.0f, 500.0f, 330.0f, 1.02));
+    ASSERT_EQ(InputEvent::PinchMode::Pitch, log.moves.back().pinchMode);
+
+    float y = 330.0f;
+    for (int i = 0; i < 20; ++i) {
+        const float wobble = (i % 2 == 0) ? 16.0f : -16.0f;  // spread ±8%
+        const float driftX = static_cast<float>(i) * 3.0f;
+        y += 4.0f;
+        log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                      300.0f - wobble + driftX, y,
+                                      500.0f + wobble + driftX, y,
+                                      1.04 + 0.02 * i));
+    }
+    for (const InputEvent& e : log.moves) {
+        if (&e == &log.moves.front()) continue;  // 基准帧 Undecided
+        EXPECT_EQ(InputEvent::PinchMode::Pitch, e.pinchMode);
+    }
+}
+
+TEST(InputManagerTest, PinchLatchTimeoutFallsBackToManipulate) {
+    PinchEventLog log;
+    // 两指几乎不动超过 150ms → 兜底 Manipulate（错判偏向"能平移"侧）。
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 300.0f, 500.0f, 300.0f, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.5f, 300.5f, 500.5f, 300.5f, 1.05));
+    EXPECT_EQ(InputEvent::PinchMode::Undecided, log.moves.back().pinchMode);
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.5f, 300.5f, 500.5f, 300.5f, 1.20));
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves.back().pinchMode);
+}
+
+TEST(InputManagerTest, PinchWithoutPointerPairDefaultsToManipulate) {
+    PinchEventLog log;
+    // 平台没给两指坐标（如 iOS 迁移前）：安全默认 Manipulate + 派生量恒 1/0。
+    log.manager.process(pinch(InputEvent::Type::PinchStart, 1.0f, 1.0));
+    log.manager.process(pinch(InputEvent::Type::PinchMove, 1.3f, 1.1));
+
+    ASSERT_EQ(1u, log.moves.size());
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves[0].pinchMode);
+    EXPECT_FLOAT_EQ(1.0f, log.moves[0].pinchScaleFromStart);
+    EXPECT_FLOAT_EQ(0.0f, log.moves[0].twistFromStartRadians);
+    EXPECT_FLOAT_EQ(1.3f, log.moves[0].pinchScale);  // 旧派生量原样透传
+}
+
+TEST(InputManagerTest, PinchDerivedTwistAccumulatesFromStart) {
+    PinchEventLog log;
+    // 两指绕质心逐步拧动：twistFromStartRadians 应为相对起手的累计角。
+    const float cx = 400.0f, cy = 300.0f, r = 100.0f;
+    double t = 1.0;
+    float lastTwist = 0.0f;
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  cx - r, cy, cx + r, cy, t));
+    for (int i = 1; i <= 6; ++i) {
+        const float a = 0.1f * static_cast<float>(i);
+        t += 0.02;
+        log.manager.process(pinchPair(
+            InputEvent::Type::PinchMove,
+            cx - r * std::cos(a), cy - r * std::sin(a),
+            cx + r * std::cos(a), cy + r * std::sin(a), t));
+        lastTwist = log.moves.back().twistFromStartRadians;
+    }
+    EXPECT_NEAR(0.6f, std::abs(lastTwist), 1e-3f);
 }

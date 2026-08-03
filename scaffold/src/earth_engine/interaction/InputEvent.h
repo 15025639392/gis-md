@@ -83,6 +83,24 @@ struct InputEvent {
     float pointer1X = 0.0f;
     float pointer1Y = 0.0f;
 
+    /// 双指手势模式：InputManager 在起手窗口内做一次判定后整段 latch，
+    /// 消除"每事件重分类→阈值附近模式翻转"。双指平移与双指俯仰在输入端
+    /// 严格同形（同向平移、间距/连线角不变），分类不可消除，只能一次定死。
+    /// 平台无法提供两指原始坐标时恒为 Manipulate（安全默认，等价旧行为）。
+    enum class PinchMode : uint8_t {
+        Undecided,   ///< latch 窗口内：施加 zoom/twist，锚点钉起手质心
+        Manipulate,  ///< zoom+twist+刚性 pan（锚点钉当前质心）
+        Pitch        ///< 双指平行竖移倾斜（锚点钉 latch 质心）
+    };
+    PinchMode pinchMode = PinchMode::Manipulate;
+
+    /// 双指派生量（InputManager 从 pointer0/1 计算，绝对量表述——事件被
+    /// 合并/丢弃时不累积漂移）：
+    /// 当前 spread / 起手 spread。
+    float pinchScaleFromStart = 1.0f;
+    /// 两指连线角相对起手的累计旋转（radian，跨帧 unwrap 防 ±π 跳变）。
+    float twistFromStartRadians = 0.0f;
+
     /// 便捷查询
     bool isPointerEvent() const {
         return type == Type::PointerDown ||
