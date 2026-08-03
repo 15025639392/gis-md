@@ -237,3 +237,110 @@ TEST(DecodedHeightmapSamplerTest, DenseGridResolvesDetailCoarseGridMisses) {
     EXPECT_LT(coarse, 250.0f);               // coarse:被节点间线性插值抹掉大半
     EXPECT_GT(dense, coarse + 100.0f);
 }
+
+// ============================================================
+// 无缝北极星 P4:同级邻接边一致性(机制 B「边吸附」的地基假设)
+// docs/issues/terrain-seamless-northstar-2026-08-03.md §4-P4
+// ============================================================
+
+namespace {
+
+// 确定性伪随机世界高度场:纯世界坐标函数 → 邻接瓦片重叠环自动一致,
+// 正如真实源数据(同一 DEM 切出来的相邻瓦片)。振幅 ~±1200m 模拟山地。
+float worldHeight(double wx, double wy) {
+    const double a = std::sin(wx * 0.0173) * 700.0 +
+                     std::sin(wy * 0.0311 + 1.7) * 400.0 +
+                     std::sin((wx + wy) * 0.0059) * 900.0 +
+                     std::sin(wx * 0.131) * std::sin(wy * 0.097) * 180.0;
+    return static_cast<float>(a);
+}
+
+// Mapbox 514 cell-registered + 1px 重叠环瓦片:瓦片 (tx,ty) 拥有 512 格,
+// 像素 p∈[1,512] = 世界格 t*512+p-1 的中心;像素 0/513 = 邻居重叠 backfill。
+// 统一公式 worldCoord(p) = t*512 + (p-1) + 0.5 对 p∈[0,513] 同时给出两者。
+DecodedHeightmap makeOverlapTile514(int tx, int ty) {
+    DecodedHeightmap hm;
+    hm.tileSize = 514;
+    hm.borderInset = 0.5f;
+    hm.heights.resize(514 * 514);
+    float mn = 1e9f, mx = -1e9f;
+    for (int py = 0; py < 514; ++py) {
+        const double wy = ty * 512.0 + (py - 1) + 0.5;
+        for (int px = 0; px < 514; ++px) {
+            const double wx = tx * 512.0 + (px - 1) + 0.5;
+            const float h = worldHeight(wx, wy);
+            hm.heights[static_cast<size_t>(py) * 514 + px] = h;
+            mn = std::min(mn, h);
+            mx = std::max(mx, h);
+        }
+    }
+    hm.minHeight = mn;
+    hm.maxHeight = mx;
+    return hm;
+}
+
+} // namespace
+
+// 同级东西邻接:西片 u=1 整条边与东片 u=0 整条边在渲染栅格全部节点上
+// **逐位相等**(EXPECT_EQ,不是 NEAR)。这是边吸附能不做任何邻居采样、
+// 直接信任"同级边天然一致"的前提;此前只有一次性真机对拍(maxdiff=0),
+// 没有锁进测试。coarse(65 节点)与 dense(257 节点)两档都锁。
+TEST(SeamNorthstarP4Test, SameLevelEastWestEdgeBitwiseEqual) {
+    const DecodedHeightmap west = makeOverlapTile514(0, 0);
+    const DecodedHeightmap east = makeOverlapTile514(1, 0);
+    for (int gridSize : {kTerrainDisplacementGridSize, kTerrainDenseGridSize}) {
+        const int n = gridSize + 1;
+        for (int j = 0; j < n; ++j) {
+            const float v = static_cast<float>(j) / static_cast<float>(gridSize);
+            const float hw = west.sampleBilinear(1.0f, v);
+            const float he = east.sampleBilinear(0.0f, v);
+            ASSERT_EQ(hw, he) << "grid=" << gridSize << " j=" << j;
+        }
+    }
+}
+
+// 同级南北邻接:对称锁另一个方向(采样代码 x/y 路径独立,东西过不代表南北过)。
+TEST(SeamNorthstarP4Test, SameLevelNorthSouthEdgeBitwiseEqual) {
+    const DecodedHeightmap north = makeOverlapTile514(0, 0);
+    const DecodedHeightmap south = makeOverlapTile514(0, 1);
+    for (int gridSize : {kTerrainDisplacementGridSize, kTerrainDenseGridSize}) {
+        const int n = gridSize + 1;
+        for (int i = 0; i < n; ++i) {
+            const float u = static_cast<float>(i) / static_cast<float>(gridSize);
+            const float hn = north.sampleBilinear(u, 1.0f);  // 北片南边界
+            const float hs = south.sampleBilinear(u, 0.0f);  // 南片北边界
+            ASSERT_EQ(hn, hs) << "grid=" << gridSize << " i=" << i;
+        }
+    }
+}
+
+// 量化基分歧上界:GPU 高度纹理是 16bit 归一化,minH/range **逐瓦片**
+// (TerrainDisplacementTemplatePool::acquireHeightTexture)。相邻瓦片量化基不同,
+// 同一物理高度往返 encode/decode 后有分歧 —— 这是源一致性锁不住的最后一段。
+// 锁两条:①分歧 ≤ 双方量化步长之和的一半(理论界);②山地量级 range 下
+// 绝对值 ≤ 0.1m(不可见,边吸附无需为它做任何补偿)。
+TEST(SeamNorthstarP4Test, PerTileQuantizationDivergenceBounded) {
+    const DecodedHeightmap west = makeOverlapTile514(0, 0);
+    const DecodedHeightmap east = makeOverlapTile514(1, 0);
+    const auto quantRoundTrip = [](const DecodedHeightmap& hm, float h) {
+        const float range = std::max(1e-3f, hm.maxHeight - hm.minHeight);
+        const float t = std::clamp((h - hm.minHeight) / range, 0.0f, 1.0f);
+        const uint32_t v16 = static_cast<uint32_t>(std::lround(t * 65535.0f));
+        // shader 解码:(R*256+G)/65535 * range + minH(见 eeSampleTerrainHeight)
+        return hm.minHeight + (static_cast<float>(v16) / 65535.0f) * range;
+    };
+    const float stepW = (west.maxHeight - west.minHeight) / 65535.0f;
+    const float stepE = (east.maxHeight - east.minHeight) / 65535.0f;
+    const float bound = 0.5f * (stepW + stepE) + 1e-4f;
+    float worst = 0.0f;
+    const int n = kTerrainDenseGridSize + 1;
+    for (int j = 0; j < n; ++j) {
+        const float v = static_cast<float>(j) / kTerrainDenseGridSize;
+        const float h = west.sampleBilinear(1.0f, v);  // 已证与东片逐位相等
+        const float dw = quantRoundTrip(west, h);
+        const float de = quantRoundTrip(east, h);
+        worst = std::max(worst, std::abs(dw - de));
+    }
+    EXPECT_LE(worst, bound);
+    EXPECT_LE(worst, 0.1f);  // 山地量级下绝对不可见
+}
