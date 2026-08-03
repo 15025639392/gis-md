@@ -147,9 +147,18 @@ discard、fine 采样升手工双线性(常规模式逐位零回归)、remap 纹
 覆盖不了它(细瓦片自数据 2^k 降采样 ≠ 祖先层在同位置的插值)。出路二选一:
 ①边顶点采样**邻居的**纹理层(实例数据 +4 边 × layer/minH/range,重且有跨档
 采样问题);②数据侧把金字塔生成改成严格嵌套(父 = 子的精确 2× 降采样,
-rasterio 输出器改造,ε 变 0 后自吸附即精确)。**倾向 ②**:一次数据管线改造,
-引擎零新机制;且用户拥有数据管线。另:暂态测量需先把 seam_metric 采集脚本化
-(多轮冷缓存,如 load_ab),当前暂态数字都是单轮采样,不可判 A/B。
+rasterio 输出器改造,ε 变 0 后自吸附即精确)。**倾向 ②,且已备好全部工具(2026-08-03 晚)**:
+
+- ε 实测(`tools/seam_metric/pyramid_eps.py`,线上源重庆山区):
+  **边界 p95 = 5-13m,峰 25-50m** —— 暂态残缝量级与其吻合;
+- 嵌套重建器已落地(`dem_test/scripts/build_nested_pyramid.py`,65e16dd):
+  线上 z10-12 子树验证,重建后层间 ε → **mean 0.02m / max 0.05m**
+  (0.1m 编码步长舍入上界,理论极限);
+- 采集已脚本化(`tools/seam_metric/collect.sh` + `report.py`,a0a3674df):
+  冷缓存 × N 轮,steady 一票否决 + transSum 置换检验三态;
+- **剩余一步(需 hosting 侧)**:对 mapoverlay.xinzhi.space 全球树跑
+  `build_nested_pyramid.py --max-zoom 12 --min-zoom 6` 并重新发布,然后
+  `collect.sh after 3` + `report.py` 验收暂态。
 
 ## 5. 验收
 
