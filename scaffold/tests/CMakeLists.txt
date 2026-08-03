@@ -955,6 +955,18 @@ add_executable(test_vector_tile_tree
 target_link_libraries(test_vector_tile_tree PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_vector_tile_tree COMMAND test_vector_tile_tree)
 
+add_executable(test_mvt_feature_converter
+    unit/data/test_mvt_feature_converter.cpp
+)
+target_link_libraries(test_mvt_feature_converter PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_mvt_feature_converter COMMAND test_mvt_feature_converter)
+
+add_executable(test_mvt_vector_source
+    unit/data/test_mvt_vector_source.cpp
+)
+target_link_libraries(test_mvt_vector_source PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_mvt_vector_source COMMAND test_mvt_vector_source)
+
 add_executable(test_constrained_delaunay
     unit/data/test_constrained_delaunay.cpp
 )

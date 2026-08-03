@@ -733,6 +733,10 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/MvtDecoder.cpp
     earth_engine/data/VectorTileTree.h
     earth_engine/data/VectorTileTree.cpp
+    earth_engine/data/MvtFeatureConverter.h
+    earth_engine/data/MvtFeatureConverter.cpp
+    earth_engine/data/MvtVectorSource.h
+    earth_engine/data/MvtVectorSource.cpp
 )
 
 # ============================================================
