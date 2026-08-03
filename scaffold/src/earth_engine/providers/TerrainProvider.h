@@ -54,6 +54,16 @@ struct DecodedHeightmap {
     /// @param u 列归一化坐标 [0,1]（西→东）
     /// @param v 行归一化坐标 [0,1]（北→南）
     float sampleBilinear(float u, float v) const;
+
+    /// 同上但**不钳 u/v 到 [0,1]**，只钳像素下标。u/v 超出 [0,1] 但仍在
+    /// ±overscanReach() 内时读到的是重叠环像素 = 真实邻瓦数据。
+    /// 边界法线差分靠它跨过瓦片边界取到邻居侧的样本；超出余量后退化为钳边。
+    float sampleBilinearUnclamped(float u, float v) const;
+
+    /// 可越界采样的余量（归一化 u/v 单位）= borderInset / span。
+    /// 0.5 内缩的 514 源 → 0.5/512（一圈重叠像素）；顶点栅格源（inset=0）→ 0，
+    /// 即无邻居数据可取，边界差分只能退化单边。
+    float overscanReach() const;
 };
 
 struct TerrainTileLoadResult {

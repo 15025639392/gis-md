@@ -19,6 +19,15 @@ class Buffer;
 class Texture;
 struct DecodedHeightmap;
 
+// 把 (gridSize+1)² 栅格节点烘成 RGBA8 texel:R/G = 16bit 归一化高度
+// (t = (h-minHeight)/heightRange),B/A = 切空间法线 xy(nz>0 恒成立,
+// shader 重建)。纯数据变换,不碰 device —— 抽成自由函数以便 host 直测
+// 边界法线的跨瓦一致性(见 test_terrain_edge_normal_seam)。
+// bounds 只用于把 uv 方向的高度差换算成米/米坡度。
+std::vector<uint8_t> bakeTerrainHeightNormalTexels(
+    const DecodedHeightmap& heightmap, const Rectangle& bounds, int gridSize,
+    float minHeight, float heightRange);
+
 // 共享模板固定栅格单元数（n=65=2^6+1，GE 嵌套栅格约定；与 grid64 一致）。
 // 模板独立于瓦片原始网格密度——所有地形瓦片用同一密度共享模板，UV 均匀。
 inline constexpr int kTerrainDisplacementGridSize = 64;

@@ -14,12 +14,21 @@ bool DecodedHeightmap::isNoData(float height) const {
     return false;
 }
 
-float DecodedHeightmap::sampleBilinear(float u, float v) const {
-    if (!valid()) return 0.0f;
+float DecodedHeightmap::overscanReach() const {
+    if (!valid() || borderInset <= 0.0f) return 0.0f;
+    const float span = static_cast<float>(tileSize - 1) - 2.0f * borderInset;
+    if (span <= 0.0f) return 0.0f;
+    return borderInset / span;
+}
 
+float DecodedHeightmap::sampleBilinear(float u, float v) const {
     // Clamp to [0, 1]
-    u = std::max(0.0f, std::min(1.0f, u));
-    v = std::max(0.0f, std::min(1.0f, v));
+    return sampleBilinearUnclamped(std::max(0.0f, std::min(1.0f, u)),
+                                   std::max(0.0f, std::min(1.0f, v)));
+}
+
+float DecodedHeightmap::sampleBilinearUnclamped(float u, float v) const {
+    if (!valid()) return 0.0f;
 
     // 边界内缩:u/v∈[0,1] 映射到 [inset, tileSize-1-inset]。inset=0 时退化为
     // 原顶点栅格映射 [0, tileSize-1](自产 grid65);inset=0.5 时映射到瓦片真实
@@ -29,13 +38,19 @@ float DecodedHeightmap::sampleBilinear(float u, float v) const {
     float fx = inset + u * span;
     float fy = inset + v * span;
 
-    int x0 = static_cast<int>(fx);
-    int y0 = static_cast<int>(fy);
+    // 只钳像素下标,不钳 u/v —— u/v 越界 ±overscanReach() 时落在重叠环上,
+    // 读到的是**真实邻瓦数据**(法线边界差分靠这个,见 overscanReach 注释)。
+    // floor 而非截断:fx 可为负(inset=0 的源越界时),截断会朝零取整。
+    int x0 = static_cast<int>(std::floor(fx));
+    int y0 = static_cast<int>(std::floor(fy));
+    const float wx = fx - static_cast<float>(x0);
+    const float wy = fy - static_cast<float>(y0);
     int x1 = std::min(x0 + 1, tileSize - 1);
     int y1 = std::min(y0 + 1, tileSize - 1);
-
-    float wx = fx - static_cast<float>(x0);
-    float wy = fy - static_cast<float>(y0);
+    x0 = std::max(0, std::min(x0, tileSize - 1));
+    y0 = std::max(0, std::min(y0, tileSize - 1));
+    x1 = std::max(0, x1);
+    y1 = std::max(0, y1);
 
     const float h00 = heights[static_cast<size_t>(y0 * tileSize + x0)];
     const float h10 = heights[static_cast<size_t>(y0 * tileSize + x1)];
