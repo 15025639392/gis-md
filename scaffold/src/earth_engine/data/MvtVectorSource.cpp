@@ -27,9 +27,17 @@ Rectangle MvtVectorSource::horizonViewRectangle(
     constexpr double kMaxFeatureAltitudeMeters = 10000.0;
     const double r = ellipsoidMinRadiusMeters;
     const double camAltitude = std::max(0.0, cameraCarto.height());
-    const double theta =
+    double theta =
         std::acos(std::clamp(r / (r + camAltitude), 0.0, 1.0)) +
         std::acos(std::clamp(r / (r + kMaxFeatureAltitudeMeters), 0.0, 1.0));
+    // 近场覆盖上限:地平线角里的"要素侧 10km"项在低空恒占 ~3.2°,
+    // 不加盖低空视口矩形仍是数百 km → 防爆闸把 zoom 压回粗档,细档
+    // (z14)永远进不来。上限取 ~4×视高的地面距离(斜视 45° 屏幕内
+    // 主要地面范围),高空时该上限大于地平线角、自然失效;远场粗档
+    // 环带覆盖属后续(v1 远景无底图可接受——细档下远处道路本就不可辨)。
+    constexpr double kMinCoverageMeters = 2000.0;
+    theta = std::min(
+        theta, std::max(4.0 * camAltitude, kMinCoverageMeters) / r);
 
     double south = std::max(cameraCarto.latitude() - theta, -kHalfPi);
     double north = std::min(cameraCarto.latitude() + theta, kHalfPi);
@@ -87,7 +95,9 @@ void MvtVectorSource::update(const Rectangle& viewRect,
         });
     }
 
-    // 渲染集差分:进集激活,出集移除
+    // 渲染集差分:进集激活,出集移除。激活按每帧要素预算摊销
+    // (至少一整瓦片),未激活完的下帧继续——renderTiles 稳定时
+    // 差分是幂等的,天然构成跨帧队列。
     std::unordered_set<TileKey> renderSet(result.renderTiles.begin(),
                                           result.renderTiles.end());
     std::vector<TileKey> toDeactivate;
@@ -99,10 +109,16 @@ void MvtVectorSource::update(const Rectangle& viewRect,
     for (const TileKey& key : toDeactivate) {
         deactivateTile(key);
     }
+    size_t activatedFeatures = 0;
     for (const TileKey& key : result.renderTiles) {
-        if (!activeTiles_.count(key)) {
-            activateTile(key);
+        if (activeTiles_.count(key)) {
+            continue;
         }
+        if (options_.maxActivationFeaturesPerUpdate != 0 &&
+            activatedFeatures >= options_.maxActivationFeaturesPerUpdate) {
+            break;
+        }
+        activatedFeatures += activateTile(key);
     }
 }
 
@@ -122,10 +138,10 @@ void MvtVectorSource::ingestInbox() {
     }
 }
 
-void MvtVectorSource::activateTile(const TileKey& key) {
+size_t MvtVectorSource::activateTile(const TileKey& key) {
     const MvtTile* tile = tree_.loadedTile(key);
     if (tile == nullptr) {
-        return;
+        return 0;
     }
     std::vector<FeatureId>& ids = activeTiles_[key];
     for (const MvtLayer& layer : tile->layers) {
@@ -139,6 +155,7 @@ void MvtVectorSource::activateTile(const TileKey& key) {
             ids.push_back(store_.addFeature(std::move(f)));
         }
     }
+    return ids.size();
 }
 
 void MvtVectorSource::deactivateTile(const TileKey& key) {

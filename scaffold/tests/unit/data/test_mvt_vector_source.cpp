@@ -166,6 +166,36 @@ TEST(MvtVectorSource, ZoomChangeSwapsActiveTilesNoLeftovers) {
     EXPECT_LE(source.store().size(), std::max(storeAtZ2, activeAtZ2) * 2);
 }
 
+TEST(MvtVectorSource, ActivationBudgetSpreadsAcrossUpdates) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    MvtVectorSource::Options opt = optionsForTest();
+    opt.maxActivationFeaturesPerUpdate = 2;  // 每瓦片 1 要素 → 每帧至多 2 瓦
+    FeatureStore store;
+    MvtVectorSource source(opt, store, fetch.fn());
+
+    Rectangle view = rectDeg(-80, -40, 80, 40);  // z2 多瓦片视口
+    source.update(view, heightForZoom(2));       // 发请求(假网络即回)
+    source.update(view, heightForZoom(2));       // 第一批激活(预算 2)
+    size_t after1 = source.activeTileCount();
+    EXPECT_GT(after1, 0u);
+    EXPECT_LE(after1, 2u);
+
+    // 反复 update 直到激活完;每帧增量 ≤ 预算,最终全量激活
+    size_t prev = after1;
+    for (int i = 0; i < 32 && source.tree().pendingCount() == 0; ++i) {
+        source.update(view, heightForZoom(2));
+        size_t now = source.activeTileCount();
+        EXPECT_LE(now - prev, 2u);
+        if (now == prev && now == source.store().size()) {
+            break;
+        }
+        prev = now;
+    }
+    EXPECT_GE(source.activeTileCount(), 4u);  // 视口至少 2×2 瓦全部激活
+    EXPECT_EQ(source.store().size(), source.activeTileCount());
+}
+
 TEST(MvtVectorSource, IncludeLayersFilters) {
     FakeFetch fetch;
     fetch.body = makePointTile("water");

@@ -146,6 +146,12 @@ public:
     FeatureRenderLayer(std::string layerId,
                        RenderDevice* renderDevice,
                        const Ellipsoid& ellipsoid);
+    /// 指定 store 分桶 cell 尺寸(radian)。桶=重镶单元,高密度小范围
+    /// 数据(MVT 底图)需细桶,默认档位见 FeatureStore 注释。
+    FeatureRenderLayer(std::string layerId,
+                       RenderDevice* renderDevice,
+                       const Ellipsoid& ellipsoid,
+                       double bucketCellSizeRadians);
     ~FeatureRenderLayer();
 
     FeatureRenderLayer(const FeatureRenderLayer&) = delete;

@@ -288,11 +288,18 @@ static bool createEngine() {
 
         // ---- P4 MVT 只读底图:先于编辑演示层挂(先挂先画,垫底)。----
         if (minimal_globe_demo::kEnableMvtBasemap) {
+            // 细桶 0.0005rad(~3.2km):MVT 底图是高密度小范围数据,默认
+            // 0.02rad 桶会把全城要素挤进 1-2 桶 → 增量激活退化成整桶反复
+            // 全量重镶(真机渲染线程分钟级卡死的根因之一)。
             auto basemapLayer = std::make_unique<FeatureRenderLayer>(
-                "mvt-basemap", gRenderDevice.get(), Ellipsoid::WGS84());
+                "mvt-basemap", gRenderDevice.get(), Ellipsoid::WGS84(),
+                0.0005);
             FeatureRenderStyle bs;
-            bs.altitudeMode = FeatureAltitudeMode::ClampToGround;
-            bs.heightOffset = 2.0;
+            // A/B 诊断 2026-08-03:ClampToGround 下单帧 235s(疑贴地体
+            // 逐顶点地形采样 O(瓦片×三角形) 爆炸),先 Absolute 抬升验证
+            // 管线,贴地回归待采样加速后恢复。
+            bs.altitudeMode = FeatureAltitudeMode::Absolute;
+            bs.heightOffset = 500.0;
             // 按源图层分流的最小样式(tippecanoe 输出层名,数据侧对齐):
             // water 蓝面、building 灰面、缺省面淡绿;线统一浅白,宽随 zoom。
             bs.fillColorExpr = StyleExpression::match(
@@ -829,6 +836,15 @@ static void renderFrame() {
         gMvtSource->update(
             MvtVectorSource::horizonViewRectangle(camCarto, minRadius),
             std::max(1.0, camCarto.height()));
+        static uint64_t mvtLogCounter = 0;
+        if (++mvtLogCounter % 120 == 1) {
+            LOGI("VectorP4 mvt: active=%zu store=%zu loaded=%zu pending=%zu "
+                 "failed=%zu",
+                 gMvtSource->activeTileCount(), gMvtSource->store().size(),
+                 gMvtSource->tree().loadedCount(),
+                 gMvtSource->tree().pendingCount(),
+                 gMvtSource->tree().failedCount());
+        }
     }
     const auto engineStart = std::chrono::steady_clock::now();
     const bool presented =

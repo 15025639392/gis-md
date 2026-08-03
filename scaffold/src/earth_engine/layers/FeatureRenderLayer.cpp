@@ -172,6 +172,15 @@ FeatureRenderLayer::FeatureRenderLayer(std::string layerId,
       renderDevice_(renderDevice),
       ellipsoid_(ellipsoid) {}
 
+FeatureRenderLayer::FeatureRenderLayer(std::string layerId,
+                                       RenderDevice* renderDevice,
+                                       const Ellipsoid& ellipsoid,
+                                       double bucketCellSizeRadians)
+    : layerId_(std::move(layerId)),
+      renderDevice_(renderDevice),
+      ellipsoid_(ellipsoid),
+      store_(bucketCellSizeRadians) {}
+
 FeatureRenderLayer::~FeatureRenderLayer() = default;
 
 void FeatureRenderLayer::setStyle(const FeatureRenderStyle& s) {

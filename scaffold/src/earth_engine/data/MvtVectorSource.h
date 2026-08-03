@@ -45,6 +45,12 @@ public:
         VectorTileTree::Options tree;
         /// 只导入这些源图层;空 = 全部。
         std::vector<std::string> includeLayers;
+        /// 单次 update 的激活要素预算(0 = 不限)。store 写入会触发
+        /// FeatureRenderLayer 同步重镶(镶嵌 worker 化未做),整视口
+        /// 瓦片同帧激活会把渲染线程钉死分钟级(真机实测)——分帧摊销
+        /// 是结构必需不是调优。每帧至少激活一整瓦片(瓦片是激活原子,
+        /// 部分激活会让"渲染集=store 内容"契约碎掉)。
+        size_t maxActivationFeaturesPerUpdate = 800;
     };
 
     /// decodePool 为空则在 fetch 回调线程就地解码(仍不占渲染线程)。
@@ -77,7 +83,8 @@ private:
     };
 
     void ingestInbox();
-    void activateTile(const TileKey& key);
+    /// 返回该瓦片实际灌入的要素数(计入激活预算)。
+    size_t activateTile(const TileKey& key);
     void deactivateTile(const TileKey& key);
 
     Options options_;

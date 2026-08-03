@@ -23,6 +23,12 @@ namespace earth_engine {
 class FeatureStore {
 public:
     FeatureStore() = default;
+    /// 指定分桶 cell 尺寸(radian)。桶是镶嵌/重镶单元:默认 0.02rad
+    /// 面向万级稀疏可编辑数据;高密度小范围数据(如 MVT 底图,全城要素
+    /// 会挤进 1-2 个默认桶,增量写入退化成整桶反复全量重镶)应给更细的
+    /// cell。
+    explicit FeatureStore(double bucketCellSizeRadians)
+        : buckets_(bucketCellSizeRadians) {}
 
     FeatureStore(const FeatureStore&) = delete;
     FeatureStore& operator=(const FeatureStore&) = delete;
