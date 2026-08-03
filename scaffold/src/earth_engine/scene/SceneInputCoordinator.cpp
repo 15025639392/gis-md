@@ -26,6 +26,18 @@ void selectFromClick(const SceneInputCoordinatorContext& context,
     }
 }
 
+CameraController::PinchMode toCameraPinchMode(InputEvent::PinchMode mode) {
+    switch (mode) {
+        case InputEvent::PinchMode::Undecided:
+            return CameraController::PinchMode::Undecided;
+        case InputEvent::PinchMode::Pitch:
+            return CameraController::PinchMode::Pitch;
+        case InputEvent::PinchMode::Manipulate:
+            break;
+    }
+    return CameraController::PinchMode::Manipulate;
+}
+
 bool shouldUpdateInteractionFocus(InputEvent::Type type) {
     switch (type) {
         case InputEvent::Type::PointerDown:
@@ -69,14 +81,27 @@ void SceneInputCoordinator::handleGesture(
             break;
         case InputManager::Gesture::PinchStart:
         case InputManager::Gesture::PinchMove:
-            cameraController->onPinchGesture(
-                event.pinchScale,
-                event.screenX,
-                event.screenY,
-                event.rotationRadians,
-                event.centerDeltaX,
-                event.centerDeltaY,
-                event.timestamp);
+            if (event.hasPointerPair) {
+                // 新契约：InputManager 已算好绝对派生量与 latch 模式。
+                CameraController::PinchInput input;
+                input.scaleFromStart = event.pinchScaleFromStart;
+                input.twistFromStartRadians = event.twistFromStartRadians;
+                input.centroidX = (event.pointer0X + event.pointer1X) * 0.5f;
+                input.centroidY = (event.pointer0Y + event.pointer1Y) * 0.5f;
+                input.mode = toCameraPinchMode(event.pinchMode);
+                input.timestamp = event.timestamp;
+                cameraController->onPinchGesture(input);
+            } else {
+                // 旧契约（无 pointer pair 的平台/合成路径）：走适配器。
+                cameraController->onPinchGesture(
+                    event.pinchScale,
+                    event.screenX,
+                    event.screenY,
+                    event.rotationRadians,
+                    event.centerDeltaX,
+                    event.centerDeltaY,
+                    event.timestamp);
+            }
             break;
         case InputManager::Gesture::PinchEnd:
             cameraController->onPinchEnd();

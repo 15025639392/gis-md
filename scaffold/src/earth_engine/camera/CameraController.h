@@ -47,6 +47,30 @@ public:
     /// drag 结束（手指抬起，启动惯性）
     void onDragEnd();
 
+    /// 双指手势模式（与 InputEvent::PinchMode 同构；相机层不依赖 interaction
+    /// 头，由 SceneInputCoordinator 显式映射）。
+    enum class PinchMode : uint8_t {
+        Undecided,   ///< latch 窗口内：施加 zoom/twist，锚点钉起手质心
+        Manipulate,  ///< zoom+twist+刚性 pan（锚点钉当前质心）
+        Pitch        ///< 双指平行竖移倾斜（锚点钉 latch 质心，质心Y驱动 pitch）
+    };
+
+    /// 双指手势输入（绝对量表述：事件被合并/丢弃不产生累积漂移）。
+    /// 核心不变量：一个事件内只有锚点钉合(pin)产生横向世界运动，dolly/twist/
+    /// pitch 在数学上全部严格保锚，与 pan 正交——没有意图分类。
+    struct PinchInput {
+        float scaleFromStart = 1.0f;      ///< 当前 spread / 起手 spread
+        float twistFromStartRadians = 0.0f;  ///< 连线角累计（unwrap）
+        float centroidX = 0.0f;           ///< 双指质心（物理像素）
+        float centroidY = 0.0f;
+        PinchMode mode = PinchMode::Manipulate;
+        double timestamp = 0.0;
+    };
+    void onPinchGesture(const PinchInput& input);
+
+    /// 旧契约薄适配器（音量键合成捏合 / 无 pointer pair 的平台）：把每事件
+    /// 增量累积成绝对量后转发新接口，mode 恒 Manipulate。centerDeltaX/Y 不再
+    /// 消费（倾斜走 Pitch 模式，由 InputManager latch 判定）。迁移完成后删除。
     void onPinchGesture(float scale,
                         float centerX,
                         float centerY,
@@ -120,7 +144,7 @@ public:
 private:
     /// 锚点钉合求解：求把"像素 (x,y) 射线与抓取球的交点方向"转到 anchorNormal
     /// 的绕地心旋转。单指拖拽与双指钉合共用同一份数学（同构，见 applyAnchorDrag
-    /// 与 keepAnchorAtScreenPoint），任何一侧的修正必须同时作用于另一侧。
+    /// 与 applyPinchPin），任何一侧的修正必须同时作用于另一侧。
     struct AnchorSolveResult {
         glm::dquat delta{1.0, 0.0, 0.0, 0.0};
         /// 入射余弦 |dot(rayDir, 求解点法线)|：1=正对，→0=掠射；最近接近点
@@ -136,7 +160,9 @@ private:
     /// 抓取球上"该射线之下"的点：真交点，或 miss 时的最近接近点（相切处
     /// 与真交点重合 → 跨球缘连续）。球心在射线后方等极端退化时返回 false。
     bool pointOnGrabSphere(const Ray& ray, Vec3& outPoint, bool& outTrueHit) const;
-    /// 转台式旋转增量：屏幕像素位移按 fov/height 转角度（相对 dragLast）。
+    /// 转台式旋转增量：屏幕像素位移按 fov/height 转角度。
+    glm::dquat turntableDeltaFromPixels(double dx, double dy) const;
+    /// 单指转台（相对 dragLast）。
     glm::dquat spinTurntableDelta(float xPixels, float yPixels) const;
     /// 按当前模式施加旋转增量（orbit 模式转 rotation_，自由模式转相机整体）。
     void applyRotationDelta(const glm::dquat& delta);
@@ -144,18 +170,21 @@ private:
     bool intersectGrabSphere(const Ray& ray, Vec3& outPoint) const;
     static bool intersectSphere(const Ray& ray, double radiusMeters,
                                 Vec3& outPoint);
-    /// 把拾取点重投影到该像素的射线上（半径不变，只换方向）。掠射角下同半径
-    /// 球可能被错过，此时返回 false 且不改动 point。
-    bool snapPickOntoRay(float xPixels, float yPixels, Vec3& point) const;
     bool pickSurfacePoint(float xPixels, float yPixels, Vec3& outPoint) const;
     bool grabSurfacePoint(float xPixels, float yPixels);
+    /// pinch 锚点获取：pick 地表点 → 半径钳到 eye 以下（防抓取球包住相机、
+    /// 射线命中球背面疯转）→ 方向换成射线∩钳位球（防起手跳变）。
+    bool tryAcquirePinchAnchor(float xPixels, float yPixels);
+    /// pinch 钉合：把锚点钉到目标像素，病态区连续混入质心转台并整点重取
+    /// 锚点（与单指 applyAnchorDrag 同一套连续化策略），末尾做高度钳位。
+    void applyPinchPin(float targetX, float targetY);
     void applyAnchorDrag(float xPixels, float yPixels, double timestamp);
     void applyRotationAroundAxis(const glm::dvec3& axis, double angle);
-    void keepAnchorAtScreenPoint(const Vec3& anchorNormal, float xPixels, float yPixels);
     void rotateCameraAroundPoint(const glm::dvec3& center,
                                  const glm::dvec3& axis,
                                  double angle);
-    void rotateCameraVerticalAroundPoint(const glm::dvec3& center,
+    /// @return 是否实际施加（被守卫拒绝时返回 false，供 Pitch 反 wind-up）
+    bool rotateCameraVerticalAroundPoint(const glm::dvec3& center,
                                          double angle,
                                          double minSlope);
     /// 高空 zoom-out 回中：按本步拉远的对数距离步长，把视线向地心方向收敛，
@@ -214,13 +243,27 @@ private:
     bool pinching_ = false;
     bool hasPinchAnchor_ = false;
     Vec3 pinchAnchorNormal_{0.0, 0.0, 1.0};
-    Vec3 pinchEarthUpNormal_{0.0, 0.0, 1.0};
-    float pinchAnchorScreenX_ = 0.0f;
+    float pinchAnchorScreenX_ = 0.0f;   // 起手质心（Undecided 期 pin 目标）
     float pinchAnchorScreenY_ = 0.0f;
     double lastPinchTimestamp_ = 0.0;
-    // 单事件 jerk 限幅削掉的缩放量（对数空间），由后续事件在限幅余量内补回，
-    // 使一段捏合的总缩放倍数与手指分开倍数一致。手势起止清零。
-    double pinchScaleResidualLog_ = 0.0;
+    PinchMode pinchActiveMode_ = PinchMode::Undecided;
+    // 已施加的累计缩放/拧动（绝对量状态；与输入的差 = 本事件增量）。
+    // jerk 限幅 = 单事件增量夹到 ±ln(1.3)，落后量夹到 ±kMaxPinchScaleResidualLog
+    // （防长时间饱和攒出松手仍在补的欠账），语义等价旧残差机制。
+    double pinchAppliedScaleLog_ = 0.0;
+    double pinchAppliedTwistRadians_ = 0.0;
+    // Pitch 模式：质心 Y 相对基线绝对映射 pitch；被守卫拒绝时重取基线
+    // （零死区离合，防 wind-up），锚点钉 latch 时刻的质心像素。
+    float pitchBaselineY_ = 0.0f;
+    double pitchAppliedRadians_ = 0.0;
+    float pitchPinX_ = 0.0f;
+    float pitchPinY_ = 0.0f;
+    // 上一事件质心（pin 病态区转台回退的位移基准）。
+    float lastPinchCentroidX_ = 0.0f;
+    float lastPinchCentroidY_ = 0.0f;
+    // 旧契约适配器的每事件增量累计（新契约不使用）。
+    double adapterScaleLog_ = 0.0;
+    double adapterTwistRadians_ = 0.0;
 
     // zoom 惯性状态（对数距离空间，见 .cpp 常量说明）
     bool hasZoomInertia_ = false;
