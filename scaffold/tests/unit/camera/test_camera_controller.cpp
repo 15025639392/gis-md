@@ -1070,6 +1070,67 @@ TEST_F(CameraControllerTest, TerrainClampHoldsLastKnownHeightWhenSampleMissing) 
     EXPECT_GE(altitudeNoData, 3000.0);
 }
 
+TEST_F(CameraControllerTest, FrameEndSentinelClampsExternalBareLookAt) {
+    // Facade/JNI 可绕过控制器直接写 Camera（resetCamera/nativeGrazingView）。
+    // 帧末哨兵必须在下一次 update() 把非法位姿收编钳出地面——调用方无需
+    // 自带钳位。
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 target = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    controller_->viewDistance(target, 5000.0);  // 进自由模式
+
+    const Vec3 undergroundEye = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, -5000.0));
+    camera_->lookAt(undergroundEye, Vec3::zero(), Vec3::unitZ());
+    EXPECT_LT(e.cartesianToCartographic(camera_->position()).height(), 0.0);
+
+    controller_->update(0.016);
+    EXPECT_GE(e.cartesianToCartographic(camera_->position()).height(), 49.0);
+}
+
+TEST_F(CameraControllerTest, OrbitRebuildDoesNotOscillateAgainstClamp) {
+    // orbit 位姿每帧由 rotation_/distance_ 重建：约束必须表达在 distance_ 上，
+    // 直接抬 eye 会被下一帧重建抹掉 → 逐帧 dip→pop 振荡。高地形上连续跑
+    // 60 帧，位姿必须收敛后逐帧稳定。
+    controller_->setTerrainHeightFunc(
+        [](const Vec3&) -> std::optional<double> { return 5000.0; });
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 target =
+        e.cartographicToCartesian(Cartographic::fromDegrees(0.0, 0.0, 0.0));
+    controller_->setNadirOrbitView(
+        target, e.geodeticSurfaceNormal(target), 100.0);
+
+    Vec3 prevEye;
+    for (int i = 0; i < 60; ++i) {
+        controller_->update(0.016);
+        const Vec3 eye = camera_->position();
+        if (i >= 2) {
+            // 首两帧允许收敛位移，其后必须逐帧稳定（无钳位↔重建拉锯）。
+            EXPECT_LT((eye - prevEye).length(), 1e-3) << "frame " << i;
+        }
+        prevEye = eye;
+    }
+    EXPECT_GE(e.cartesianToCartographic(camera_->position()).height(), 5049.0);
+}
+
+TEST_F(CameraControllerTest, MeasurementFreezeSentinelIsObserveOnly) {
+    // 冻结契约：update() 不碰相机、位姿逐帧字节稳定——帧末哨兵在冻结期
+    // 必须 observeOnly，即使位姿非法（地下）也不修。
+    const auto& e = Ellipsoid::WGS84();
+    controller_->setMeasurementFreeze(true);
+    const Vec3 undergroundEye = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, -5000.0));
+    camera_->lookAt(undergroundEye, Vec3::zero(), Vec3::unitZ());
+
+    const Vec3 posBefore = camera_->position();
+    const Vec3 dirBefore = camera_->direction();
+    for (int i = 0; i < 10; ++i) {
+        controller_->update(0.016);
+    }
+    EXPECT_EQ(posBefore, camera_->position());
+    EXPECT_EQ(dirBefore, camera_->direction());
+}
+
 TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);

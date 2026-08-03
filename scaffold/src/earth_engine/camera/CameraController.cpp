@@ -327,12 +327,17 @@ void CameraController::onPinchGesture(const PinchInput& input) {
         glm::dvec3 nextEye = distanceToAnchor > 1e-6
             ? eye + (toAnchor / distanceToAnchor) * moveMeters
             : eye;
-        nextEye = clampEyeAltitude(nextEye);
         if ((glm::length(nextEye) / kEarthRadiusMeters) <=
             kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(),
                              camera_->up());
             syncDistanceFromCamera();
+        }
+        {
+            ConstraintContext cctx;
+            cctx.source = ConstraintContext::Source::Gesture;
+            cctx.pinnedAnchorWorld = &anchorWorld;
+            resolveConstraints(cctx);
         }
 
         // 累积 zoom 惯性速率（对数距离空间，EMA 平滑）。stepScale≈1 的纯
@@ -433,10 +438,14 @@ void CameraController::onPinchGesture(const PinchInput& input) {
         glm::dvec3 nextEye =
             camera_->position().raw() +
             camera_->direction().raw() * moveMeters;
-        nextEye = clampEyeAltitude(nextEye);
         if ((glm::length(nextEye) / kEarthRadiusMeters) <= kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
             syncDistanceFromCamera();
+        }
+        {
+            ConstraintContext cctx;
+            cctx.source = ConstraintContext::Source::Gesture;
+            resolveConstraints(cctx);
         }
         if (stepScale < 1.0) {
             accrueRecenterBudget(-std::log(stepScale));
@@ -471,6 +480,17 @@ void CameraController::onPinchEnd() {
 }
 
 void CameraController::update(double deltaSeconds) {
+    updateInternal(deltaSeconds);
+    // 帧末哨兵：兜底收编所有未显式路由到 resolveConstraints 的位姿写入
+    // （orbit 重建、viewDistance/setNadirOrbitView、回中、scriptedPan、
+    // Facade/JNI 绕过控制器的 Camera 裸写）。冻结时 observeOnly——冻结契约
+    // 要求位姿逐帧字节稳定，哨兵绝不触碰。
+    ConstraintContext ctx;
+    ctx.observeOnly = measurementFreeze_;
+    resolveConstraints(ctx);
+}
+
+void CameraController::updateInternal(double deltaSeconds) {
     // 测量台冻结：完全空转，让相机停在最近一次显式位姿上，逐帧字节稳定。
     // 惯性/zoom 惯性/orbit 重建全部跳过 → far 位姿在重载耦合态下也可复现。
     if (measurementFreeze_) {
@@ -504,12 +524,9 @@ void CameraController::update(double deltaSeconds) {
             rotation_ = glm::normalize(delta * rotation_);
         } else {
             applyCameraRotation(delta);
-            glm::dvec3 clampedEye = clampEyeAltitude(
-                camera_->position().raw());
-            if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
-                camera_->setView(Vec3(clampedEye), camera_->direction(),
-                                 camera_->up());
-            }
+            ConstraintContext cctx;
+            cctx.source = ConstraintContext::Source::Inertia;
+            resolveConstraints(cctx);
         }
         inertiaAngularVelocity_ *= std::exp(-kInertiaDampingPerSecond * deltaSeconds);
     }
@@ -524,12 +541,17 @@ void CameraController::update(double deltaSeconds) {
             const double sFrame =
                 std::exp(zoomInertiaLogRate_ * deltaSeconds);  // >1 拉近
             glm::dvec3 nextEye = zoomInertiaAnchor_ + toEye / sFrame;
-            nextEye = clampEyeAltitude(nextEye);
             if ((glm::length(nextEye) / kEarthRadiusMeters) <=
                 kMaxDistanceEarthRadii) {
                 camera_->setView(Vec3(nextEye), camera_->direction(),
                                  camera_->up());
                 syncDistanceFromCamera();
+            }
+            {
+                ConstraintContext cctx;
+                cctx.source = ConstraintContext::Source::Inertia;
+                cctx.pinnedAnchorWorld = &zoomInertiaAnchor_;
+                resolveConstraints(cctx);
             }
             // 拉远方向的惯性滑行（rate<0 = 距离增大）继续充值回中预算。
             if (zoomInertiaLogRate_ < 0.0) {
@@ -555,6 +577,10 @@ void CameraController::update(double deltaSeconds) {
         return;
     }
 
+    rebuildOrbitPose();
+}
+
+void CameraController::rebuildOrbitPose() {
     // 计算相机在 ECEF 空间中的位置
     // 旋转四元数作用于相机方向：相机沿 -Z 看地球，旋转改变朝向
     const double cameraDist = static_cast<double>(distance_) * kEarthRadiusMeters;
@@ -576,6 +602,46 @@ void CameraController::update(double deltaSeconds) {
         Vec3::zero(),                            // target (earth center)
         Vec3(rotatedUp.x, rotatedUp.y, rotatedUp.z)  // up
     );
+}
+
+bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
+    if (ctx.observeOnly) {
+        return false;
+    }
+    bool changed = false;
+    if (orbitMode_) {
+        // orbit 位姿由 rotation_/distance_ 每帧重建——约束必须表达在
+        // distance_ 上再重跑重建；直接抬 eye 会被下一帧重建抹掉（振荡）。
+        // 钳位方向（大地法线）与 orbit 径向（地心方向）偏差 ≤ ~11'，重建后
+        // 可能残留米级亏空，再解一次即收敛（第二次几乎恒为 no-op）。
+        for (int i = 0; i < 2; ++i) {
+            const glm::dvec3 eye = camera_->position().raw();
+            const glm::dvec3 clamped = clampEyeAltitude(eye);
+            if (glm::length(clamped - eye) <= 1e-6) {
+                break;
+            }
+            distance_ = std::max(
+                distance_,
+                static_cast<float>(glm::length(clamped) / kEarthRadiusMeters));
+            rebuildOrbitPose();
+            changed = true;
+        }
+    } else {
+        const glm::dvec3 eye = camera_->position().raw();
+        const glm::dvec3 clamped = clampEyeAltitude(eye);
+        if (glm::length(clamped - eye) > 1e-6) {
+            camera_->setView(Vec3(clamped), camera_->direction(),
+                             camera_->up());
+            syncDistanceFromCamera();
+            changed = true;
+        }
+    }
+    // 位姿指纹：下一次帧末解算与之比对，不等 ⇒ 期间有绕过控制器的裸写
+    // （user-driven，突变滤波步骤据此立即钳、不走数据驱动滤波）。
+    lastResolvedEye_ = camera_->position().raw();
+    lastResolvedDir_ = camera_->direction().raw();
+    hasLastResolvedPose_ = true;
+    return changed;
 }
 
 void CameraController::setMeasurementFreeze(bool frozen) {
@@ -1037,15 +1103,14 @@ glm::dquat CameraController::applyPinchPin(float targetX, float targetY) {
     applyCameraRotation(delta);
 
     // pin 是唯一的横向运动通道，山区双指横移可能把 eye 转进地形——钉合后
-    // 必须做高度钳位（dolly 分支已各自钳过）。
+    // 必须做碰撞解算（dolly 分支已各自解过）。
     {
-        const glm::dvec3 clampedEye =
-            clampEyeAltitude(camera_->position().raw());
-        if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
-            camera_->setView(Vec3(clampedEye), camera_->direction(),
-                             camera_->up());
-            syncDistanceFromCamera();
-        }
+        const glm::dvec3 anchorWorld =
+            pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
+        ConstraintContext cctx;
+        cctx.source = ConstraintContext::Source::Gesture;
+        cctx.pinnedAnchorWorld = &anchorWorld;
+        resolveConstraints(cctx);
     }
 
     if (regrab) {
@@ -1183,13 +1248,13 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
 
     applyCameraRotation(delta);
     {
-        glm::dvec3 clampedEye = clampEyeAltitude(
-            camera_->position().raw());
-        if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
-            camera_->setView(Vec3(clampedEye), camera_->direction(),
-                             camera_->up());
-            syncDistanceFromCamera();
+        const glm::dvec3 anchorWorld = grabbedPoint_.raw();
+        ConstraintContext cctx;
+        cctx.source = ConstraintContext::Source::Gesture;
+        if (hasGrabbedPoint_) {
+            cctx.pinnedAnchorWorld = &anchorWorld;
         }
+        resolveConstraints(cctx);
     }
 
     // 退化区不变量：锚点良态区整段不可变；仅退化区（w<1）在应用旋转后被

@@ -198,12 +198,39 @@ private:
     /// Clamps eye to at least the configured visual floor above terrain/ellipsoid.
     glm::dvec3 clampEyeAltitude(const glm::dvec3& eye) const;
 
+    /// 相机位姿合法性的唯一出口（choke point）。手势/惯性路径在事件内调用；
+    /// update() 帧末哨兵兜底收编所有未显式路由的位姿写入（orbit 重建、
+    /// viewDistance/setNadirOrbitView、回中、scriptedPan、外部绕过控制器
+    /// 的 Camera 裸写）。约束实现只允许改这里，禁止在调用点各自补钳位。
+    struct ConstraintContext {
+        enum class Source { Gesture, Inertia, FrameEnd };
+        Source source = Source::FrameEnd;
+        /// 非空 → 碰撞解算沿 eye→anchor 直线退出（严格保锚；径向抬升会
+        /// 泄漏 anchorErr）。指针仅在调用栈内有效。
+        const glm::dvec3* pinnedAnchorWorld = nullptr;
+        /// true = 绝不修改位姿（measurementFreeze 的帧末哨兵：位姿必须
+        /// 逐帧字节稳定，但地面状态仍可刷新供渲染层读取）。
+        bool observeOnly = false;
+    };
+    /// @return 位姿是否被修改
+    bool resolveConstraints(const ConstraintContext& ctx);
+    /// update() 的原函数体（惯性/回中/orbit 重建）；帧末哨兵在 update() 包装层。
+    void updateInternal(double deltaSeconds);
+    /// orbit 参数 (rotation_/distance_) → 相机位姿。update() 尾部与 orbit
+    /// 模式的约束解算（钳 distance_ 后重跑）共用。
+    void rebuildOrbitPose();
+
     Camera* camera_;
     SurfacePicker surfacePicker_;
     TerrainHeightFunc terrainHeightFunc_;
     // 最近一次有效地形高度样本(米),供地形无数据时的 clamp 保守回退。
     // mutable:clampEyeAltitude 是 const 查询但需更新此缓存。
     mutable double lastKnownTerrainHeight_ = 0.0;
+    // 上次 resolveConstraints 通过后的位姿指纹：帧末不等 ⇒ 有人绕过控制器
+    // 写了 Camera（Facade/JNI 裸写）,按 user-driven 处理（突变滤波消费）。
+    bool hasLastResolvedPose_ = false;
+    glm::dvec3 lastResolvedEye_{0.0};
+    glm::dvec3 lastResolvedDir_{0.0};
     int viewportWidth_ = 1;
     int viewportHeight_ = 1;
 
