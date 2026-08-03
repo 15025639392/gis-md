@@ -949,6 +949,12 @@ add_executable(test_mvt_decoder
 target_link_libraries(test_mvt_decoder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_mvt_decoder COMMAND test_mvt_decoder)
 
+add_executable(test_vector_tile_tree
+    unit/data/test_vector_tile_tree.cpp
+)
+target_link_libraries(test_vector_tile_tree PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_vector_tile_tree COMMAND test_vector_tile_tree)
+
 add_executable(test_constrained_delaunay
     unit/data/test_constrained_delaunay.cpp
 )
