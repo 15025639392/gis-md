@@ -158,14 +158,30 @@ public:
     /// 相机相对地形的一次解算快照，resolveConstraints 每次刷新。纯读，
     /// 供渲染层（动态 near）、测试与诊断消费，不含策略。
     struct CameraGroundState {
+        /// 是否已至少解算过一次（false ⇒ 消费方退回各自的旧公式）。
+        bool valid = false;
         /// 滤波后的近场地形高（椭球高，米）。高空快速路径不采样时保持上值。
         double terrainHeightMeters = 0.0;
         /// AGL = 相机椭球高 − terrainHeightMeters。
         double heightAboveTerrain = 0.0;
+        /// eye 到近场地形几何的保守最小三维距离（米）：探针采样最小距离与
+        /// "盘外墙"下界（盘外地形水平偏移 ≥ R_probe、高度 ≤ 9000m ⇒ 距离
+        /// ≥ √(R²+max(0,H−9000)²)）取 min；高空快速路径 = 椭球高 − 9000；
+        /// 无探针时退化为竖直 AGL。动态 near 消费。
+        double nearestGeometryMeters = 0.0;
         /// 本次解算是否拿到了有效地形样本（false = 快速路径/无覆盖）。
         bool hasTerrainData = false;
     };
     const CameraGroundState& groundState() const { return groundState_; }
+
+    /// 碰撞净空 ↔ 动态 near 的耦合契约（禁止单独改动其一）：净空保证
+    /// "最近地形几何 ≥ kMinClearanceMeters"，near = Ratio×最近几何 ≥ Floor
+    /// 才能既压住 z_ndc 病态区又不切脚下地面。
+    static constexpr double kMinClearanceMeters = 50.0;
+    static constexpr double kNearFloorMeters = 5.0;
+    static constexpr double kNearSafetyRatio = 0.5;
+    static_assert(kNearSafetyRatio * kMinClearanceMeters >= kNearFloorMeters,
+                  "near 下限超过净空×安全比:近平面会切进脚下地面");
 
     /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
     double headingRadians() const;

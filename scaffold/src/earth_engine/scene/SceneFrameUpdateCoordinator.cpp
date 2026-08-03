@@ -40,15 +40,30 @@ void SceneFrameUpdateCoordinator::update(
     // clip-space z computed in the vertex shader can't separate ~1 m depth
     // differences when z_ndc lives at 2e-5 — so a bigger depth buffer does NOT
     // help; only tightening the near plane (moving z_ndc into a well-conditioned
-    // range ~0.5) does. The closest possible visible geometry is the nadir at
-    // (distToCenter - maxRadius); keep near a safe 0.5× of it so it never clips
-    // even under tilt, while pulling z_ndc off the pathological 2e-5 floor. Far
-    // stays as configured (1e12). Cost: two scalar uniforms per frame — zero.
+    // range ~0.5) does. Far stays as configured (1e12).
+    //
+    // 距离源 = CameraController::groundState().nearestGeometryMeters(近场探针
+    // 采样最小距离 ∧ 盘外墙下界):高空构造性退化为 椭球高−9000(与旧椭球
+    // nadir 公式相对差 <1%,z-fighting 零回归);低空/掠视按真实最近坡体收紧
+    // ——旧公式按椭球 nadir 不扣地形高,高原上空 500m 时 near=2750m,前方坡体
+    // 全被近平面切掉("看到山内部"的根因)。下限/比例常量与碰撞净空的耦合
+    // 契约见 CameraController 头(static_assert 锁定)。groundState 未解算过
+    // (headless/无控制器)退回旧公式与旧下限。
     if (input.camera) {
-        const double distToCenter = input.camera->position().length();
-        const double nadirDistance =
-            distToCenter - Ellipsoid::WGS84().maximumRadius();
-        const double nearPlane = std::max(150.0, nadirDistance * 0.5);
+        double nearPlane;
+        if (input.cameraController &&
+            input.cameraController->groundState().valid) {
+            nearPlane = std::max(
+                CameraController::kNearFloorMeters,
+                CameraController::kNearSafetyRatio *
+                    input.cameraController->groundState()
+                        .nearestGeometryMeters);
+        } else {
+            const double nadirDistance =
+                input.camera->position().length() -
+                Ellipsoid::WGS84().maximumRadius();
+            nearPlane = std::max(150.0, nadirDistance * 0.5);
+        }
         input.camera->setPerspective(
             input.camera->verticalFovRadians(),
             nearPlane,

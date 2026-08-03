@@ -1985,6 +1985,37 @@ Java_com_earthengine_sdk_GLESView_nativeGrazingView(
     });
 }
 
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeTerrainGrazingView(
+    JNIEnv* /* env */, jobject /* this */) {
+    gRenderThread.post([]() {
+        if (!gEngine) return;
+        // 低 AGL 贴地掠视(动态 near 换源的复现位姿):相机在缙云山东南麓
+        // 低空(~700m 椭球高,当地谷底 ~250m → AGL ~450m),视线朝西北山脊
+        // 下俯 3°。旧 near 公式(椭球高×0.5≈350m 起步,但注意旧公式下限
+        // 150m、按 nadir 不扣地形,在高原/山地会拉到千米级)会把前景坡体
+        // 切出"看到山内部"的截面;新公式按近场最近几何收紧。若起手位姿低
+        // 于地形+50m,帧末哨兵会自动抬升——位姿仍可复现。
+        const auto& ellipsoid = Ellipsoid::WGS84();
+        const double lng = 106.44, lat = 29.70;
+        const double camAlt = 700.0;
+        const double pitchDeg = 3.0;
+        const double headingDeg = 315.0;  // 朝西北(缙云山脊方向)
+        auto camEcef = ellipsoid.cartographicToCartesian(
+            Cartographic::fromDegrees(lng, lat, camAlt));
+        Vec3 up = ellipsoid.geodeticSurfaceNormal(camEcef);
+        Vec3 north = (Vec3::unitZ() - up * up.dot(Vec3::unitZ())).normalized();
+        Vec3 east = north.cross(up).normalized();  // ENU: north × up = east
+        const double h = headingDeg * 3.14159265358979323846 / 180.0;
+        Vec3 horiz = (north * std::cos(h) + east * std::sin(h)).normalized();
+        const double p = pitchDeg * 3.14159265358979323846 / 180.0;
+        Vec3 dir = (horiz * std::cos(p) - up * std::sin(p)).normalized();
+        gEngine->camera().setView(camEcef, dir, up);
+        LOGI("Terrain grazing view set (%.2f,%.2f alt=%.0fm heading=%.0f pitch=-%.0f)",
+             lng, lat, camAlt, headingDeg, pitchDeg);
+    });
+}
+
 // 北极星 Phase 2c 地形 GPU 位移 A/B 运行时开关(设备侧前后对比用)。
 // on=启用共享位移模板路径(Stage A 贴椭球);off=回现 per-tile baked VBO。
 JNIEXPORT void JNICALL

@@ -797,6 +797,12 @@ add_executable(test_camera
 target_link_libraries(test_camera PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_camera COMMAND test_camera)
 
+add_executable(test_dynamic_near_plane
+    unit/scene/test_dynamic_near_plane.cpp
+)
+target_link_libraries(test_dynamic_near_plane PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_dynamic_near_plane COMMAND test_dynamic_near_plane)
+
 add_executable(test_frustum
     unit/scene/test_frustum.cpp
 )

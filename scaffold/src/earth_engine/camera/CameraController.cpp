@@ -21,8 +21,9 @@ constexpr double kMaxInertiaAngularVelocityRadPerSec = 5.0;
 constexpr double kInertiaDampingPerSecond = 3.0;
 constexpr double kVelocitySmoothing = 0.35;
 constexpr double kEarthRadiusMeters = 6378137.0;
-// Keep a small visual floor to avoid clipping the ellipsoid surface near ground.
-constexpr double kMinAltitudeMeters = 50.0;
+// Keep a small visual floor to avoid clipping the ellipsoid surface near
+// ground. 数值由头文件的净空↔near 耦合契约持有(static_assert 锁定)。
+constexpr double kMinAltitudeMeters = CameraController::kMinClearanceMeters;
 // Real-world terrain never exceeds ~8849 m (Everest); use a margin above it.
 // When the eye is already higher than this plus the altitude floor, the terrain
 // clamp can never trigger, so the (expensive, per-frame) terrain height query is
@@ -922,9 +923,13 @@ glm::dvec3 CameraController::constrainEyeAgainstTerrain(
     // Fast path: already above the tallest possible terrain + floor, so the
     // clamp below can never change the eye. Skip the costly terrain query.
     if (cart.height() >= kMaxTerrainHeightMeters + kMinAltitudeMeters) {
+        groundState_.valid = true;
         groundState_.hasTerrainData = false;
         groundState_.terrainHeightMeters = filteredTerrainHeight_;
         groundState_.heightAboveTerrain = cart.height() - filteredTerrainHeight_;
+        // 全球地形不超过 9000m ⇒ 最近几何至少在这个竖直距离之外。
+        groundState_.nearestGeometryMeters =
+            cart.height() - kMaxTerrainHeightMeters;
         return eye;
     }
 
@@ -953,9 +958,30 @@ glm::dvec3 CameraController::constrainEyeAgainstTerrain(
     if (sampledThisCall) {
         updateFilteredTerrainHeight(rawHeight, userDriven, deltaSeconds);
     }
+    groundState_.valid = true;
     groundState_.hasTerrainData = sampledThisCall;
     groundState_.terrainHeightMeters = filteredTerrainHeight_;
     groundState_.heightAboveTerrain = cart.height() - filteredTerrainHeight_;
+    // 最近几何距离(动态 near 口径):探针采样点三维最小距离 ∧ 盘外墙下界。
+    // 无探针(单点回退/无数据)时退化为竖直 AGL——无侧向信息,与旧公式同构
+    // 但扣掉了地形高(旧公式按椭球 nadir 算,高原上空 near 被拉大 5-10 倍,
+    // 是"看到山内部"的根因)。
+    if (terrainAreaSampleFunc_ && terrainProbe_.valid &&
+        !terrainProbe_.samplePointsEcef.empty()) {
+        double dMin = std::numeric_limits<double>::infinity();
+        for (const glm::dvec3& p : terrainProbe_.samplePointsEcef) {
+            dMin = std::min(dMin, glm::length(eye - p));
+        }
+        const double wall = std::sqrt(
+            terrainProbe_.radiusMeters * terrainProbe_.radiusMeters +
+            std::pow(std::max(0.0, cart.height() - kMaxTerrainHeightMeters),
+                     2.0));
+        groundState_.nearestGeometryMeters = std::min(dMin, wall);
+    } else {
+        groundState_.nearestGeometryMeters =
+            std::max(cart.height() - std::max(filteredTerrainHeight_, 0.0),
+                     1.0);
+    }
 
     const double minHeight = std::max(filteredTerrainHeight_, 0.0) +
                              kMinAltitudeMeters;

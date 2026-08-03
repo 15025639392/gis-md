@@ -89,6 +89,11 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
             nativeDebugPinchPath(keyCode - KeyEvent.KEYCODE_1, getWidth(), getHeight());
             return true;
         }
+        // 数字键 5：低 AGL 贴地掠视复现位姿（动态 near/近平面切坡验收用）。
+        if (keyCode == KeyEvent.KEYCODE_5) {
+            nativeTerrainGrazingView();
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
     }
 
@@ -265,6 +270,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     public native void nativeAddDemoVectorLayer();
     public native void nativeResetCamera();
     public native void nativeGrazingView();
+    // 低 AGL 贴地掠视（缙云山方向，动态 near 验收位姿）。
+    public native void nativeTerrainGrazingView();
     public native void nativeSetGpuTerrain(boolean enabled);
 
     // 矢量 P2 demo 编辑流(应用层最小实现:引擎只出 pick/snap/预览接口)。
