@@ -187,9 +187,10 @@ private:
     bool rotateCameraVerticalAroundPoint(const glm::dvec3& center,
                                          double angle,
                                          double minSlope);
-    /// 高空 zoom-out 回中：按本步拉远的对数距离步长，把视线向地心方向收敛，
-    /// 让球心随缩放进度逐步回到屏幕中心（低空不介入，见 .cpp 常量说明）。
-    void applyHighAltitudeRecenter(double zoomOutLogStep);
+    /// 高空 zoom-out 回中（预算松弛，见 .cpp 常量说明）：手势/滑行期只充值
+    /// 预算（不动相机，与锚点钉合严格正交），松手后 update() 指数消费。
+    void accrueRecenterBudget(double zoomOutLogStep);
+    void consumeRecenterBudget(double deltaSeconds);
     void applyCameraRotation(const glm::dquat& delta);
     void syncDistanceFromCamera();
 
@@ -264,6 +265,9 @@ private:
     // 旧契约适配器的每事件增量累计（新契约不使用）。
     double adapterScaleLog_ = 0.0;
     double adapterTwistRadians_ = 0.0;
+
+    // 高空回中欠账（弧度）。手势/滑行期充值，无手势时 update() 消费。
+    double recenterBudgetRadians_ = 0.0;
 
     // zoom 惯性状态（对数距离空间，见 .cpp 常量说明）
     bool hasZoomInertia_ = false;

@@ -593,7 +593,12 @@ TEST_F(CameraControllerTest, HighAltitudeZoomOutRecentersGlobeToScreenCenter) {
     for (int i = 0; i < 40; ++i) {
         controller_->onPinchGesture(0.93f, ax, ay, 0.0f, 0.0f, 0.0f);
     }
+    // 手势期严格正交：回中只充值预算不动相机，θ 在手势内不因回中收敛。
     controller_->onPinchEnd();
+    // 松手后沉降：update() 按指数节奏消费预算（~0.3-0.5s 收敛）。
+    for (int i = 0; i < 120; ++i) {
+        controller_->update(1.0 / 60.0);
+    }
 
     const double thetaFinal = offCenterAngle(*camera_);
     EXPECT_LT(thetaFinal, 0.1 * theta0);
@@ -603,6 +608,44 @@ TEST_F(CameraControllerTest, HighAltitudeZoomOutRecentersGlobeToScreenCenter) {
     const glm::dvec2 centerPx = projectToScreen(*camera_, Vec3::zero());
     EXPECT_NEAR(400.0, centerPx.x, 30.0);
     EXPECT_NEAR(300.0, centerPx.y, 30.0);
+}
+
+TEST_F(CameraControllerTest, PinchRecenterDoesNotFightAnchorDuringGesture) {
+    // N8：手势期回中与钉锚严格正交——zoom-out 手势事件内 viewLineMissDistance
+    // 是精确不变量（dolly 沿视线/绕地心 pin 都保持它，旧实现回中每事件转视线
+    // 与 pin 互相拉扯）。松手后 update() 沉降 θ；低空同序列松手后 θ 不动。
+    setTiltedPose(*camera_, 3.0e6, 15.0);
+    const double theta0 = offCenterAngle(*camera_);
+    const double miss0 = viewLineMissDistance(*camera_);
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 20; ++i) {
+        controller_->onPinchGesture(0.93f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+        // 手势期每个事件后 miss 距离都精确不变（相对 1e-9）。
+        EXPECT_NEAR(1.0, viewLineMissDistance(*camera_) / miss0, 1e-9)
+            << "event " << i;
+    }
+    controller_->onPinchEnd();
+    for (int i = 0; i < 120; ++i) {
+        controller_->update(1.0 / 60.0);
+    }
+    EXPECT_LT(offCenterAngle(*camera_), 0.1 * theta0);
+
+    // 低空：同样的手势+松手 update 序列，miss 距离不得变化（miss 是 dolly
+    // 与 pin 的严格不变量，只有回中会缩小它；θ=asin(miss/r) 会随拉远自然
+    // 减小，不是判据）。
+    setTiltedPose(*camera_, 3.0e5, 15.0);
+    controller_->onPinchEnd();  // 重置手势状态（上一段的 pinching_ 已结束）
+    const double missLow0 = viewLineMissDistance(*camera_);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 5; ++i) {
+        controller_->onPinchGesture(0.95f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->onPinchEnd();
+    for (int i = 0; i < 120; ++i) {
+        controller_->update(1.0 / 60.0);
+    }
+    EXPECT_NEAR(1.0, viewLineMissDistance(*camera_) / missLow0, 1e-9);
 }
 
 TEST_F(CameraControllerTest, LowAltitudeZoomOutDoesNotRecenter) {

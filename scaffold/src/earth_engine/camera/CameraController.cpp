@@ -69,13 +69,16 @@ constexpr double kZoomInertiaDampingPerSecond = 6.0;
 constexpr double kMaxZoomInertiaLogRate = 6.0;   // |d(ln dist)/dt| 上限，滤抖动尖峰
 constexpr double kMinZoomInertiaLogRate = 0.08;  // 低于此停止滑行
 
-// 高空缩放回中：拉远到高空时把"视线偏离地心"的夹角 θ 逐步收敛到 0，让球心
-// 随缩放进度回到屏幕中心。收敛量 ∝ 本步 zoom-out 的对数距离步长（手势驱动、
-// 停手即停，zoom 惯性滑行期继续收尾），权重随海拔在 [start, full] 间平滑爬升，
-// 低空(城市/地形视角)完全不介入。绕地心的锚点跟手旋转不改变 θ，故与跟手正交。
+// 高空缩放回中：拉远到高空时把"视线偏离地心"的夹角 θ 收敛到 0，让球心回到
+// 屏幕中心。硬约束事件原子、软约束时间松弛：手势/滑行期只按 zoom-out 对数
+// 步长"充值"预算（不动相机——回中旋转会推开刚钉好的锚点，与 pin 互相拉扯），
+// 松手后 update() 按指数节奏消费预算，球心在 ~0.3-0.5s 内自然沉降回中。
+// 由此手势期 viewLineMissDistance 成为全海拔精确不变量。权重随海拔在
+// [start, full] 间平滑爬升，低空(城市/地形视角)完全不介入。
 constexpr double kRecenterStartAltitudeMeters = 1.5e6;  // 低于此海拔不回中
 constexpr double kRecenterFullAltitudeMeters = 8.0e6;   // 高于此海拔全权重
-constexpr double kRecenterGainPerLogStep = 2.5;  // θ 收敛速率 / 单位 ln(距离)
+constexpr double kRecenterGainPerLogStep = 2.5;  // 预算充值速率 / 单位 ln(距离)
+constexpr double kRecenterSettleRatePerSecond = 6.0;  // 松手后 θ 指数收敛速率
 
 glm::dvec3 cartographicNormal(double lngDeg, double latDeg) {
     const double lng = glm::radians(lngDeg);
@@ -182,6 +185,8 @@ void CameraController::onDragStart(float xPixels, float yPixels, double timestam
     inertiaAngularVelocity_ = 0.0;
     hasZoomInertia_ = false;   // 拖拽打断 zoom 惯性滑行
     zoomInertiaLogRate_ = 0.0;
+    // 拖拽=用户显式抓世界重定位，残留的回中欠账此后再沉降会像无因漂移。
+    recenterBudgetRadians_ = 0.0;
     lastDragTimestamp_ = timestamp;
     logGestureDiag("dragStart", xPixels, yPixels);
 }
@@ -394,7 +399,7 @@ void CameraController::onPinchGesture(const PinchInput& input) {
         applyPinchPin(pinTargetX, pinTargetY);
 
         if (stepScale < 1.0) {
-            applyHighAltitudeRecenter(-std::log(stepScale));
+            accrueRecenterBudget(-std::log(stepScale));
         }
     } else {
         // 无有效 pinch anchor 时，沿视线方向缩放相机（无锚点可钉，只能以
@@ -412,7 +417,7 @@ void CameraController::onPinchGesture(const PinchInput& input) {
             syncDistanceFromCamera();
         }
         if (stepScale < 1.0) {
-            applyHighAltitudeRecenter(-std::log(stepScale));
+            accrueRecenterBudget(-std::log(stepScale));
         }
     }
 
@@ -503,10 +508,9 @@ void CameraController::update(double deltaSeconds) {
                                  camera_->up());
                 syncDistanceFromCamera();
             }
-            // 拉远方向的惯性滑行（rate<0 = 距离增大）延续回中收尾。
+            // 拉远方向的惯性滑行（rate<0 = 距离增大）继续充值回中预算。
             if (zoomInertiaLogRate_ < 0.0) {
-                applyHighAltitudeRecenter(
-                    -zoomInertiaLogRate_ * deltaSeconds);
+                accrueRecenterBudget(-zoomInertiaLogRate_ * deltaSeconds);
             }
         }
         zoomInertiaLogRate_ *=
@@ -515,6 +519,12 @@ void CameraController::update(double deltaSeconds) {
             hasZoomInertia_ = false;
             zoomInertiaLogRate_ = 0.0;
         }
+    }
+
+    // 高空回中预算消费：仅在无活动手势时沉降（手势期严格正交——回中旋转
+    // 会推开刚钉好的锚点）。必须位于 measurementFreeze/scriptedPan 早退之后。
+    if (!dragging_ && !pinching_) {
+        consumeRecenterBudget(deltaSeconds);
     }
 
     if (!orbitMode_) {
@@ -552,6 +562,7 @@ void CameraController::setMeasurementFreeze(bool frozen) {
         inertiaAngularVelocity_ = 0.0;
         hasZoomInertia_ = false;
         zoomInertiaLogRate_ = 0.0;
+        recenterBudgetRadians_ = 0.0;
     }
 }
 
@@ -567,6 +578,7 @@ void CameraController::setScriptedPan(bool active, int startFrame, int frames,
         inertiaAngularVelocity_ = 0.0;
         hasZoomInertia_ = false;
         zoomInertiaLogRate_ = 0.0;
+        recenterBudgetRadians_ = 0.0;
     }
 }
 
@@ -710,7 +722,7 @@ bool CameraController::rotateCameraVerticalAroundPoint(const glm::dvec3& center,
     return true;
 }
 
-void CameraController::applyHighAltitudeRecenter(double zoomOutLogStep) {
+void CameraController::accrueRecenterBudget(double zoomOutLogStep) {
     if (zoomOutLogStep <= 0.0) return;
 
     const glm::dvec3 eye = camera_->position().raw();
@@ -724,20 +736,51 @@ void CameraController::applyHighAltitudeRecenter(double zoomOutLogStep) {
     const double theta = std::acos(cosTheta);
     if (theta < 1e-6) return;
 
-    glm::dvec3 axis = glm::cross(dir, toCenter);
-    const double axisLength = glm::length(axis);
-    if (axisLength < 1e-12) return;
-    axis /= axisLength;
-
     double w = (altitude - kRecenterStartAltitudeMeters) /
                (kRecenterFullAltitudeMeters - kRecenterStartAltitudeMeters);
     w = std::clamp(w, 0.0, 1.0);
     w = w * w * (3.0 - 2.0 * w);  // smoothstep：介入边界无手感突变
 
-    const double fraction =
-        std::min(1.0, w * kRecenterGainPerLogStep * zoomOutLogStep);
+    recenterBudgetRadians_ +=
+        w * kRecenterGainPerLogStep * zoomOutLogStep * theta;
+    // 预算封顶到当前 θ：θ 收敛到 0 后多余欠账没有意义。
+    recenterBudgetRadians_ = std::min(recenterBudgetRadians_, theta);
+}
+
+void CameraController::consumeRecenterBudget(double deltaSeconds) {
+    if (recenterBudgetRadians_ <= 1e-9 || deltaSeconds <= 0.0) {
+        return;
+    }
+
+    const glm::dvec3 eye = camera_->position().raw();
+    const double eyeRadius = glm::length(eye);
+    if (eyeRadius < 1e-6) return;
+    const glm::dvec3 toCenter = -eye / eyeRadius;
+    const glm::dvec3 dir = glm::normalize(camera_->direction().raw());
+    const double cosTheta = std::clamp(glm::dot(dir, toCenter), -1.0, 1.0);
+    const double theta = std::acos(cosTheta);
+    if (theta < 1e-6) {
+        recenterBudgetRadians_ = 0.0;
+        return;
+    }
+
+    glm::dvec3 axis = glm::cross(dir, toCenter);
+    const double axisLength = glm::length(axis);
+    if (axisLength < 1e-12) {
+        recenterBudgetRadians_ = 0.0;
+        return;
+    }
+    axis /= axisLength;
+
+    const double step = std::min(
+        recenterBudgetRadians_,
+        theta * (1.0 - std::exp(-kRecenterSettleRatePerSecond * deltaSeconds)));
     // 绕相机自身位置旋转：eye 不动，仅视线向地心方向收敛 → 球心向屏幕中心靠。
-    rotateCameraAroundPoint(eye, axis, theta * fraction);
+    rotateCameraAroundPoint(eye, axis, step);
+    recenterBudgetRadians_ -= step;
+    if (recenterBudgetRadians_ < 1e-9) {
+        recenterBudgetRadians_ = 0.0;
+    }
 }
 
 void CameraController::syncDistanceFromCamera() {
