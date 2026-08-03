@@ -22,11 +22,14 @@ class ThreadPool;
 /// ("两种源一条下游",设计 §4——fill/line/point/label/stencil/样式
 /// 表达式/snap 全部复用,MVT 侧零渲染代码)。
 ///
-/// store 语义:只保存**当前渲染瓦片集**的要素。瓦片进入 renderTiles
-/// 时转换激活入 store,退出时整瓦片移除——多 zoom 的 LRU 缓存瓦片若
-/// 常驻 store 会永久叠画(z8 路网压 z12 路网)。解码后的 MvtTile 缓存
-/// 归树的 LRU,重新激活只重转换、零重拉取/重解码。祖先回退期的粗细
-/// 并存是加载暂态,与 maplibre 行为一致。
+/// store 语义:目标 store 由外部注入(FeatureRenderLayer 自有其
+/// store,直接灌它,渲染零接线),本类只保证其中**当前渲染瓦片集**
+/// 的要素。瓦片进入 renderTiles 时转换激活入 store,退出时整瓦片
+/// 移除——多 zoom 的 LRU 缓存瓦片若常驻 store 会永久叠画(z8 路网
+/// 压 z12 路网)。解码后的 MvtTile 缓存归树的 LRU,重新激活只重
+/// 转换、零重拉取/重解码。祖先回退期的粗细并存是加载暂态,与
+/// maplibre 行为一致。注入的 store 应专用于本源(update 只移除自己
+/// 灌入的 ID,但混入他源要素会破坏"只存渲染集"的叠画契约)。
 ///
 /// 线程契约:update() 必须在渲染线程调用(store 写入约定同
 /// FeatureRenderLayer);fetch 回调/解码任意线程,结果经收件箱在
@@ -45,14 +48,21 @@ public:
     };
 
     /// decodePool 为空则在 fetch 回调线程就地解码(仍不占渲染线程)。
-    MvtVectorSource(Options options, FetchFn fetch,
+    /// store 生命周期须覆盖本对象(典型:FeatureRenderLayer::store())。
+    MvtVectorSource(Options options, FeatureStore& store, FetchFn fetch,
                     ThreadPool* decodePool = nullptr);
 
     /// 渲染线程每帧调用:驱动树、发缺瓦片请求、消化解码结果、
     /// 按渲染集差分激活/移除 store 要素。
     void update(const Rectangle& viewRect, double cameraHeightMeters);
 
-    /// 渲染/拾取/snap 挂这个 store(外部只读;写入归本类)。
+    /// 相机地平线圆的经纬包围矩形(视口 viewRect 的标准来源;数学与
+    /// FeatureRenderLayer::visibleBucketKeys 同源:两侧地平线角相加 +
+    /// 球冠经度包围界)。跨反经线时返回 west > east 的跨界矩形,
+    /// update/VectorTileTree 原生消化。
+    static Rectangle horizonViewRectangle(const Cartographic& cameraCarto,
+                                          double ellipsoidMinRadiusMeters);
+
     FeatureStore& store() { return store_; }
     const FeatureStore& store() const { return store_; }
 
@@ -75,7 +85,7 @@ private:
     ThreadPool* decodePool_ = nullptr;
 
     VectorTileTree tree_;
-    FeatureStore store_;
+    FeatureStore& store_;
     /// 激活瓦片 → 灌入 store 的要素 ID(退出渲染集时整批移除)。
     std::unordered_map<TileKey, std::vector<FeatureId>> activeTiles_;
 

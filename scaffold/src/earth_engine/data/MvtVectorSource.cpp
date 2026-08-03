@@ -4,17 +4,51 @@
 #include "../core/async/AsyncSystem.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 namespace earth_engine {
 
-MvtVectorSource::MvtVectorSource(Options options, FetchFn fetch,
-                                 ThreadPool* decodePool)
+MvtVectorSource::MvtVectorSource(Options options, FeatureStore& store,
+                                 FetchFn fetch, ThreadPool* decodePool)
     : options_(std::move(options)),
       fetch_(std::move(fetch)),
       decodePool_(decodePool),
       tree_(options_.tree),
+      store_(store),
       inbox_(std::make_shared<Inbox>()) {}
+
+Rectangle MvtVectorSource::horizonViewRectangle(
+    const Cartographic& cameraCarto, double ellipsoidMinRadiusMeters) {
+    constexpr double kPi = 3.14159265358979323846;
+    constexpr double kHalfPi = 0.5 * kPi;
+    // 两侧地平线角相加 = 相机与要素互见(要素侧上界 10km,同
+    // FeatureRenderLayer::visibleBucketKeys)
+    constexpr double kMaxFeatureAltitudeMeters = 10000.0;
+    const double r = ellipsoidMinRadiusMeters;
+    const double camAltitude = std::max(0.0, cameraCarto.height());
+    const double theta =
+        std::acos(std::clamp(r / (r + camAltitude), 0.0, 1.0)) +
+        std::acos(std::clamp(r / (r + kMaxFeatureAltitudeMeters), 0.0, 1.0));
+
+    double south = std::max(cameraCarto.latitude() - theta, -kHalfPi);
+    double north = std::min(cameraCarto.latitude() + theta, kHalfPi);
+    if (cameraCarto.latitude() - theta <= -kHalfPi ||
+        cameraCarto.latitude() + theta >= kHalfPi) {
+        // 圆覆盖极点:经度全量
+        return Rectangle(-kPi, south, kPi, north);
+    }
+    // 球冠经度包围界:Δλ = asin(sinθ / cos(lat₀))
+    const double halfLngSpan = std::asin(std::clamp(
+        std::sin(theta) / std::cos(cameraCarto.latitude()), 0.0, 1.0));
+    if (halfLngSpan * 2.0 >= 2.0 * kPi) {
+        return Rectangle(-kPi, south, kPi, north);
+    }
+    // 折回 [-π, π];跨反经线时 west > east(树侧拆段消化)
+    double west = std::remainder(cameraCarto.longitude() - halfLngSpan, 2.0 * kPi);
+    double east = std::remainder(cameraCarto.longitude() + halfLngSpan, 2.0 * kPi);
+    return Rectangle(west, south, east, north);
+}
 
 void MvtVectorSource::update(const Rectangle& viewRect,
                              double cameraHeightMeters) {

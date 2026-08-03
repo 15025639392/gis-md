@@ -99,7 +99,8 @@ MvtVectorSource::Options optionsForTest() {
 TEST(MvtVectorSource, FetchDecodeActivatePipeline) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
-    MvtVectorSource source(optionsForTest(), fetch.fn());
+    FeatureStore store;
+    MvtVectorSource source(optionsForTest(), store, fetch.fn());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     source.update(view, heightForZoom(2));
@@ -124,7 +125,8 @@ TEST(MvtVectorSource, FetchDecodeActivatePipeline) {
 TEST(MvtVectorSource, FailedFetchMarksFailedNoRerequest) {
     FakeFetch fetch;
     fetch.statusCode = 404;
-    MvtVectorSource source(optionsForTest(), fetch.fn());
+    FeatureStore store;
+    MvtVectorSource source(optionsForTest(), store, fetch.fn());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     source.update(view, heightForZoom(2));
@@ -140,7 +142,8 @@ TEST(MvtVectorSource, FailedFetchMarksFailedNoRerequest) {
 TEST(MvtVectorSource, ZoomChangeSwapsActiveTilesNoLeftovers) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
-    MvtVectorSource source(optionsForTest(), fetch.fn());
+    FeatureStore store;
+    MvtVectorSource source(optionsForTest(), store, fetch.fn());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     source.update(view, heightForZoom(2));
@@ -168,7 +171,8 @@ TEST(MvtVectorSource, IncludeLayersFilters) {
     fetch.body = makePointTile("water");
     MvtVectorSource::Options opt = optionsForTest();
     opt.includeLayers = {"roads"};  // 瓦片只有 water 层 → 全被滤掉
-    MvtVectorSource source(opt, fetch.fn());
+    FeatureStore store;
+    MvtVectorSource source(opt, store, fetch.fn());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     source.update(view, heightForZoom(2));

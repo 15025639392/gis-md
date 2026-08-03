@@ -48,6 +48,15 @@ constexpr const char* kTreeI3dmUrl =
 // 排除干扰是判因的前提,不是洁癖。
 constexpr bool kEnableVectorDemoLayers = true;
 
+// 矢量 P4 MVT 只读底图。本地 tippecanoe 自制重庆 OSM mbtiles,
+// serve_mvt_tiles.py 起 8092 + adb reverse tcp:8092(与地形 8091 同模式)。
+// 服务器不在时请求失败仅 markFailed(静默),不影响其余渲染。
+constexpr bool kEnableMvtBasemap = true;
+constexpr const char* kMvtBasemapUrlTemplate =
+    "http://127.0.0.1:8092/{z}/{x}/{y}.pbf";
+constexpr int kMvtBasemapMinZoom = 0;
+constexpr int kMvtBasemapMaxZoom = 14;
+
 constexpr bool kEnableTerrainForDemo = true;
 constexpr bool kUseGaodeSatelliteForDemo = true;
 constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;

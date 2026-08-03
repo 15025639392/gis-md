@@ -20,6 +20,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 #include "earth_engine/Engine.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -27,6 +28,8 @@
 #include "earth_engine/data/FeatureClusterIndex.h"
 #include "earth_engine/layers/FeatureRenderLayer.h"
 #include "earth_engine/data/FeatureSnapQuery.h"
+#include "earth_engine/data/MvtVectorSource.h"
+#include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
@@ -122,6 +125,21 @@ static FeatureRenderLayer* gClusterLayer = nullptr;  // Engine 持有所有权
 static int gClusterShownLevel = -9999;               // 上次刷新用的 zoom 档
 static std::vector<FeatureId> gEditHandleIds;
 
+// ---- P4 MVT 只读底图(应用层接线)。引擎侧 MvtVectorSource 只出
+// 选择/解码/灌注,网络与样式在这里:fetch 走 CurlScheduler,渲染挂
+// 一个普通 FeatureRenderLayer(store 即 source 的灌注目标)。 ----
+static FeatureRenderLayer* gMvtBasemapLayer = nullptr;  // Engine 持有所有权
+static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
+// HttpRequest 是取消句柄(析构即取消),须持有到完成;完成 id 攒起来
+// 由下一次发请求时(渲染线程)剪除,避免在 curl 回调线程里析构句柄。
+struct MvtFetchInflight {
+    std::mutex mutex;
+    uint64_t nextId = 0;
+    std::unordered_map<uint64_t, std::unique_ptr<HttpRequest>> requests;
+    std::vector<uint64_t> completed;
+};
+static MvtFetchInflight gMvtFetch;
+
 static double androidUptimeSeconds();
 static void postInputEvent(const InputEvent& event);
 
@@ -139,6 +157,15 @@ static void cancelInputIfNeeded() {
 }
 
 static void clearDemoEngineObjects() {
+    // MVT 源先停:它持有 basemap 层 store 的引用(层归 Engine 所有),
+    // 且在飞的 HttpRequest 句柄析构即取消。
+    gMvtSource.reset();
+    {
+        std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
+        gMvtFetch.requests.clear();
+        gMvtFetch.completed.clear();
+    }
+    gMvtBasemapLayer = nullptr;   // Engine 持有,随 gEngine 一起销毁
     gDemoFeatureLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
     gEditHandleLayer = nullptr;
     gClusterLayer = nullptr;
@@ -258,6 +285,75 @@ static bool createEngine() {
                 *gPlatformBridge);
         gSdkFacade->installScene(
             minimal_globe_demo::makeDefaultDemoSceneConfig());
+
+        // ---- P4 MVT 只读底图:先于编辑演示层挂(先挂先画,垫底)。----
+        if (minimal_globe_demo::kEnableMvtBasemap) {
+            auto basemapLayer = std::make_unique<FeatureRenderLayer>(
+                "mvt-basemap", gRenderDevice.get(), Ellipsoid::WGS84());
+            FeatureRenderStyle bs;
+            bs.altitudeMode = FeatureAltitudeMode::ClampToGround;
+            bs.heightOffset = 2.0;
+            // 按源图层分流的最小样式(tippecanoe 输出层名,数据侧对齐):
+            // water 蓝面、building 灰面、缺省面淡绿;线统一浅白,宽随 zoom。
+            bs.fillColorExpr = StyleExpression::match(
+                "mvt_layer",
+                {{"water",
+                  StyleExpression::literal({0.25f, 0.50f, 0.85f, 0.55f})},
+                 {"building",
+                  StyleExpression::literal({0.60f, 0.60f, 0.62f, 0.55f})}},
+                StyleExpression::literal({0.45f, 0.65f, 0.45f, 0.30f}));
+            bs.lineColor = {0.95f, 0.95f, 0.90f, 0.85f};
+            bs.lineWidthExpr = StyleExpression::interpolateLinear(
+                StyleExpression::zoom(),
+                {{8.0, StyleExpression::literal(1.0)},
+                 {15.0, StyleExpression::literal(5.0)}});
+            basemapLayer->setStyle(bs);
+            gMvtBasemapLayer = basemapLayer.get();
+
+            MvtVectorSource::Options mvtOpts;
+            mvtOpts.tree.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
+            mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
+            auto fetchFn = [](const TileKey& key,
+                              MvtVectorSource::FetchCallback cb) {
+                std::string url = minimal_globe_demo::kMvtBasemapUrlTemplate;
+                auto replace = [&url](const char* token, int value) {
+                    size_t pos = url.find(token);
+                    if (pos != std::string::npos) {
+                        url.replace(pos, 3, std::to_string(value));
+                    }
+                };
+                replace("{z}", key.z);
+                replace("{x}", key.x);
+                replace("{y}", key.y);
+                uint64_t id;
+                {
+                    std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
+                    for (uint64_t done : gMvtFetch.completed) {
+                        gMvtFetch.requests.erase(done);
+                    }
+                    gMvtFetch.completed.clear();
+                    id = gMvtFetch.nextId++;
+                }
+                auto handle = CurlMultiRequestScheduler::shared().get(
+                    url,
+                    [cb = std::move(cb), id](int statusCode,
+                                             std::vector<uint8_t> body) {
+                        cb(statusCode, std::move(body));
+                        std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
+                        gMvtFetch.completed.push_back(id);
+                    },
+                    HttpRequestOptions(HttpRequestPriority::Low));
+                std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
+                gMvtFetch.requests[id] = std::move(handle);
+            };
+            gMvtSource = std::make_unique<MvtVectorSource>(
+                mvtOpts, basemapLayer->store(), std::move(fetchFn));
+            gEngine->addFeatureRenderLayer(std::move(basemapLayer));
+            LOGI("VectorP4 MVT basemap installed: %s (z%d-%d)",
+                 minimal_globe_demo::kMvtBasemapUrlTemplate,
+                 minimal_globe_demo::kMvtBasemapMinZoom,
+                 minimal_globe_demo::kMvtBasemapMaxZoom);
+        }
 
         // 矢量数据系统 P1 真机验证:demo 相机(重庆)附近挂一面一线。
         // heightOffset 抬离地表(该区地形 ~200-800m)防 depthTest 埋没;
@@ -721,6 +817,18 @@ static void renderFrame() {
     gEngine->advanceTime(dt);
     if (minimal_globe_demo::kEnableVectorDemoLayers) {
         refreshClusterDisplay();
+    }
+    if (gMvtSource) {
+        // P4 MVT 底图驱动(渲染线程契约):地平线视口 + 相机高定 zoom。
+        const Ellipsoid& wgs84 = Ellipsoid::WGS84();
+        const Cartographic camCarto =
+            wgs84.cartesianToCartographic(gEngine->camera().position());
+        const Vec3& radii = wgs84.radii();
+        const double minRadius =
+            std::min(radii.x(), std::min(radii.y(), radii.z()));
+        gMvtSource->update(
+            MvtVectorSource::horizonViewRectangle(camCarto, minRadius),
+            std::max(1.0, camCarto.height()));
     }
     const auto engineStart = std::chrono::steady_clock::now();
     const bool presented =
