@@ -496,10 +496,89 @@ void applyPerFrameCommandState(
         u.renderOpacity = 1.0f;
     }
     if (cmd.terrainRenderContent && context.surfaceClipUv) {
-        cmd.surfaceClipUv = *context.surfaceClipUv;
-        cmd.surfaceClipEnabled = 1.0f;
-        u.clipUv = *context.surfaceClipUv;
-        u.clipEnabled = 1.0f;
+        // 机制 A(无缝北极星 P1):祖先回退不再"画祖先几何+片元 discard 裁剪"
+        // (切边是像素级的,无裙墙 → 掠视透天细缝,cesium-native#269 列为最差
+        // 方案),改为"**后代自己的模板几何** + 采样祖先高度纹理子矩形":
+        //   几何 = 后代 {z,row} 共享模板(真边 + 真裙墙,零 discard);
+        //   高度 = 祖先层 + clipUv 作 scale-bias(顶点级 remap,mode=2);
+        //   影像 = 命令原有祖先绑定,v_texcoord01 输出祖先 UV → 全部原样工作。
+        // 任一资源未就绪(祖先无 retainedHeightmap / 高度层申请失败 / 模板
+        // 失败)回落旧 discard 路径 —— 视觉与改前逐帧等价,零风险闸。
+        // 全部盖在帧副本上,常驻缓存不变式不动(clip 本就是每帧盖章)。
+        bool remapped = false;
+        if (context.surfaceClipDescendant &&
+            cmd.terrainSurfaceSource ==
+                TerrainSurfaceCommandSource::RealTerrain) {
+            TerrainDisplacementTemplatePool* pool =
+                renderer.terrainDisplacementPool();
+            const DecodedHeightmap* hm =
+                tile.content.renderContent.retainedHeightmap();
+            if (pool && hm) {
+                // 高度纹理**恒取 coarse 档**,不沿用常驻命令的档。原因是批
+                // 一致性:TerrainInstanceBatcher 按模板 VBO 指针分组、绑首
+                // 实例的纹理,"模板档=纹理档"是隐含不变量(coarse/dense 是
+                // 不同 texture2DArray 对象)。remap 的模板恒 coarse,纹理跟着
+                // coarse → 与同行常规 coarse 实例同批同表,层号不会查错表。
+                // 显示内容是祖先纹理子矩形,dense 档也不带来新信息。
+                const int texGrid = kTerrainDisplacementGridSize;
+                const TerrainDisplacementTemplatePool::HeightTexture* ht =
+                    pool->acquireHeightTexture(tile.key, *hm, tile.bounds,
+                                               texGrid, context.frameNumber);
+                // 后代模板恒用 coarse 档:显示内容是祖先纹理的子矩形,顶点
+                // 密度超过 64 不会带来任何新信息。
+                const TilesetTile& desc = *context.surfaceClipDescendant;
+                const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
+                    (ht && ht->texture)
+                        ? pool->acquire(desc.key, desc.bounds,
+                                        kTerrainDisplacementGridSize)
+                        : nullptr;
+                if (tb && ht && ht->texture) {
+                    cmd.vertexBuffer = tb->vertexBuffer;
+                    cmd.indexBuffer = tb->indexBuffer;
+                    cmd.indexCount = tb->indexCount;
+                    cmd.vertexCount = tb->vertexCount;
+                    cmd.indexType = RenderCommand::IndexType::UInt32;
+                    cmd.vertexStride = 32;
+                    cmd.shader = renderer.terrainShader();
+                    cmd.hasTerrainDisplacementFrame = true;
+                    const Mat4 frame = terrainTemplateTileFrame(desc.bounds);
+                    const double* r = frame.data();
+                    for (int m = 0; m < 16; ++m) {
+                        cmd.terrainDisplacementModelMatrix[m] = r[m];
+                    }
+                    if (cmd.textures.size() <=
+                        static_cast<size_t>(kGltfHeightTextureSlot)) {
+                        cmd.textures.resize(
+                            static_cast<size_t>(kGltfHeightTextureSlot) + 1);
+                    }
+                    cmd.textures[kGltfHeightTextureSlot] = ht->texture;
+                    // 位移幅度按**后代** z 取 fade(深 z≈1=真实高度)。祖先自身
+                    // 可能 fade≈0 走平滑 CPU 网格,但两者高度同源(同一 DEM),
+                    // 边界差被后代自己的裙墙覆盖。
+                    const float fade = terrainReliefFade(desc.key.z);
+                    u.heightDisplace = {ht->minHeight * fade,
+                                        ht->heightRange * fade, 1.0f,
+                                        static_cast<float>(texGrid)};
+                    u.terrainLayers[0] = static_cast<float>(ht->layer);
+                    // remap 不做 geomorph(fine/coarse 同源同值),morph 钉 1。
+                    u.geomorphUpFactor = {0.0f, 0.0f, 1.0f, 1.0f};
+                    cmd.terrainHeightLayer = ht->layer;
+                    cmd.terrainHeightLayerEpoch = ht->epoch;
+                    cmd.terrainHeightGridSize = texGrid;
+                    cmd.surfaceClipUv = *context.surfaceClipUv;
+                    cmd.surfaceClipEnabled = 2.0f;
+                    u.clipUv = *context.surfaceClipUv;
+                    u.clipEnabled = 2.0f;
+                    remapped = true;
+                }
+            }
+        }
+        if (!remapped) {
+            cmd.surfaceClipUv = *context.surfaceClipUv;
+            cmd.surfaceClipEnabled = 1.0f;
+            u.clipUv = *context.surfaceClipUv;
+            u.clipEnabled = 1.0f;
+        }
     }
 
     const double rasterBindingStartMs =

@@ -27,13 +27,15 @@ void TileRenderFrameContext::buildTileDrawCommand(
     RenderCommandList& commands,
     float transitionOpacity,
     bool allowSynchronousMeshPrep,
-    const std::optional<std::array<float, 4>>& surfaceClipUv) const {
+    const std::optional<std::array<float, 4>>& surfaceClipUv,
+    const TilesetTile* surfaceClipDescendant) const {
     renderCommands.buildTileDrawCommand(renderer,
                                         tile,
                                         commands,
                                         transitionOpacity,
                                         allowSynchronousMeshPrep,
-                                        surfaceClipUv);
+                                        surfaceClipUv,
+                                        surfaceClipDescendant);
 }
 
 const TileRenderCommandPerformanceTimings&

@@ -101,7 +101,7 @@ vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
 }
 
 void main() {
-    if (u_clipEnabled > 0.5 &&
+    if (u_clipEnabled > 0.5 && u_clipEnabled < 1.5 &&
         (v_gridUv.x < u_clipUV.x || v_gridUv.x > u_clipUV.x + u_clipUV.z ||
          v_gridUv.y < u_clipUV.y || v_gridUv.y > u_clipUV.y + u_clipUV.w)) {
         discard;
@@ -520,7 +520,7 @@ float anisotropicSpecular(
 
 void main() {
     vec2 terrainUv = uvFromSet(0.0);
-    if (u_clipEnabled > 0.5 &&
+    if (u_clipEnabled > 0.5 && u_clipEnabled < 1.5 &&
         (terrainUv.x < u_clipUV.x ||
          terrainUv.x > u_clipUV.x + u_clipUV.z ||
          terrainUv.y < u_clipUV.y ||
@@ -924,6 +924,14 @@ uniform vec4 u_heightDisplace;
 // 16bit 归一化高度),层号由 u_terrainLayers.x 给出。
 uniform highp sampler2DArray u_heightTexture;
 uniform vec4 u_terrainLayers;  // x=高度纹理层号
+// 祖先高度重映射(无缝北极星机制 A):clipEnabled 语义分档 —— 0=关;1=旧
+// 片元 discard 裁剪(遗留路径);2=**顶点级 UV 重映射**:本瓦片模板几何采样
+// **祖先**的高度纹理子矩形(clipUv=子瓦片在祖先 UV 里的 scale-bias)。几何是
+// 子瓦片自己的边+裙墙(真几何,无 discard 切缝),这是替掉"裁剪祖先"缝源的
+// 核心。v_texcoord01 输出重映射后的祖先 UV → 片元所有以瓦片 UV 为基的消费
+// 者(影像 scale-bias/法线场/页表)原样工作。
+uniform vec4 u_clipUV;
+uniform float u_clipEnabled;
 
 out vec3 v_normal;
 out vec3 v_position;
@@ -958,13 +966,31 @@ void main() {
     // 双线性(osgEarth 邻居平均:偶点=self→delta0,奇点=相邻偶点均值)。按 SSE 驱动
     // morphFactor(=u_geomorphUpFactor.w:0=粗起点≈父面,1=细真实)mix→跨 LOD 无 pop、
     // 相邻瓦片共享偶点高度一致→无接缝。enabled=0 的瓦片跳过(零回归)。
+    // remap 模式:模板 UV → 祖先 UV(高度采样与下游 varying 都用它)。
+    vec2 tileUv = a_texcoord01.xy;
+    if (u_clipEnabled > 1.5) {
+        tileUv = u_clipUV.xy + tileUv * u_clipUV.zw;
+    }
     if (u_heightDisplace.z > 0.5) {
         float gridN = u_heightDisplace.w;
         int hLayer = int(u_terrainLayers.x + 0.5);
-        vec2 gf = a_texcoord01.xy * gridN;                 // 栅格坐标 [0,gridN]
+        vec2 gf = tileUv * gridN;                          // 栅格坐标 [0,gridN]
         vec2 mr = u_heightDisplace.xy;                      // (minHeight, heightRange)
-        float hFine = eeSampleTerrainHeight(
-            u_heightTexture, ivec2(gf + 0.5), hLayer, mr);
+        // fine = 1× 手工双线性。常规模式下模板节点与纹素重合(gf 整),权重
+        // 退化为 0 → 逐位等于原 texelFetch 最近邻;remap 模式下 gf 落在祖先
+        // 纹素之间,最近邻会出祖先纹素尺寸的台阶,双线性给出与祖先自身网格
+        // 一致的线性插值面。
+        vec2 fb = floor(gf);
+        vec2 ff = gf - fb;
+        float f00 = eeSampleTerrainHeight(u_heightTexture, ivec2(fb), hLayer, mr);
+        float f10 = eeSampleTerrainHeight(
+            u_heightTexture, ivec2(min(fb.x + 1.0, gridN), fb.y), hLayer, mr);
+        float f01 = eeSampleTerrainHeight(
+            u_heightTexture, ivec2(fb.x, min(fb.y + 1.0, gridN)), hLayer, mr);
+        float f11 = eeSampleTerrainHeight(
+            u_heightTexture,
+            ivec2(min(fb.x + 1.0, gridN), min(fb.y + 1.0, gridN)), hLayer, mr);
+        float hFine = mix(mix(f00, f10, ff.x), mix(f01, f11, ff.x), ff.y);
         vec2 g0 = floor(gf * 0.5) * 2.0;                    // 左下偶数格点
         vec2 fr = (gf - g0) * 0.5;                          // 2× 格内插值系数 [0,1]
         float e00 = eeSampleTerrainHeight(u_heightTexture, ivec2(g0), hLayer, mr);
@@ -982,7 +1008,7 @@ void main() {
     }
     v_normal = normalize(a_normal);
     v_position = morphPos;
-    v_texcoord01 = a_texcoord01;
+    v_texcoord01 = vec4(tileUv, a_texcoord01.zw);
     v_skirt = skirt;
     gl_PointSize = 1.0;
     gl_Position = u_modelViewProjection * vec4(morphPos, 1.0);
@@ -1140,7 +1166,7 @@ vec4 applyGltfWaterMask(vec4 base, vec3 N, vec3 L, vec3 V) {
 
 void main() {
     vec2 terrainUv = uvFromSet(0.0);
-    if (u_clipEnabled > 0.5 &&
+    if (u_clipEnabled > 0.5 && u_clipEnabled < 1.5 &&
         (terrainUv.x < u_clipUV.x ||
          terrainUv.x > u_clipUV.x + u_clipUV.z ||
          terrainUv.y < u_clipUV.y ||
@@ -1319,10 +1345,28 @@ void main() {
     heightDelta = mix(heightDelta, 0.0, skirt);
     // geomorph 方向 = 模板局部 +Z(共享模板恒在 ENU 帧,与 terrainShader 一致)。
     vec3 morphPos = a_position + vec3(0.0, 0.0, 1.0) * heightDelta * (1.0 - morph);
-    // 双分辨率高度采样(fine=本栅格纹素,coarse=偶数格点双线性),morph 混合。
+    // remap(i_layers.z==2,机制 A):模板 UV → 祖先 UV。语义见 kTerrainVertexGLSL。
+    vec2 tileUv = a_texcoord01.xy;
+    if (i_layers.z > 1.5) {
+        tileUv = i_clipUv.xy + tileUv * i_clipUv.zw;
+    }
+    // 双分辨率高度采样(fine=1× 手工双线性:常规模式 gf 整、权重退化逐位同
+    // 最近邻;remap 模式 gf 落纹素间,双线性免祖先纹素台阶。coarse=偶数格点
+    // 双线性),morph 混合。注意 i_layers.w 是**高度纹理**的 gridN(remap 时=
+    // 祖先的),与本模板顶点栅格密度解耦。
     float kGridSize = max(i_layers.w, 1.0);
-    vec2 gf = a_texcoord01.xy * kGridSize;
-    float hFine = eeSampleTerrainHeight(u_heightTexture, ivec2(gf + 0.5), hLayer, mr);
+    vec2 gf = tileUv * kGridSize;
+    vec2 fb = floor(gf);
+    vec2 ff = gf - fb;
+    float f00 = eeSampleTerrainHeight(u_heightTexture, ivec2(fb), hLayer, mr);
+    float f10 = eeSampleTerrainHeight(
+        u_heightTexture, ivec2(min(fb.x + 1.0, kGridSize), fb.y), hLayer, mr);
+    float f01 = eeSampleTerrainHeight(
+        u_heightTexture, ivec2(fb.x, min(fb.y + 1.0, kGridSize)), hLayer, mr);
+    float f11 = eeSampleTerrainHeight(
+        u_heightTexture,
+        ivec2(min(fb.x + 1.0, kGridSize), min(fb.y + 1.0, kGridSize)), hLayer, mr);
+    float hFine = mix(mix(f00, f10, ff.x), mix(f01, f11, ff.x), ff.y);
     vec2 g0 = floor(gf * 0.5) * 2.0;
     vec2 fr = (gf - g0) * 0.5;
     float e00 = eeSampleTerrainHeight(u_heightTexture, ivec2(g0), hLayer, mr);
@@ -1344,7 +1388,7 @@ void main() {
         dot(i_relRow0.xyz, nrm), dot(i_relRow1.xyz, nrm), dot(i_relRow2.xyz, nrm)));
     v_normal = worldN;
     v_position = world;
-    v_texcoord01 = a_texcoord01;
+    v_texcoord01 = vec4(tileUv, a_texcoord01.zw);
     v_skirt = skirt;
     v_heightLayer = i_layers.x;
     v_pageParams = vec4(i_dispMorph.w, i_layers.y, i_layers.z, kGridSize);
@@ -1416,7 +1460,8 @@ vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
 
 void main() {
     vec2 terrainUv = v_texcoord01.xy;
-    if (v_pageParams.z > 0.5 &&
+    // mode==1 才 discard;mode==2(remap)几何即子瓦片自身,无需裁剪。
+    if (v_pageParams.z > 0.5 && v_pageParams.z < 1.5 &&
         (terrainUv.x < v_clipUv.x || terrainUv.x > v_clipUv.x + v_clipUv.z ||
          terrainUv.y < v_clipUv.y || terrainUv.y > v_clipUv.y + v_clipUv.w)) {
         discard;

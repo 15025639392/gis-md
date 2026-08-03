@@ -33,7 +33,8 @@ void TileRenderCommandManager::buildTileDrawCommand(
     RenderCommandList& commands,
     float transitionOpacity,
     bool allowSynchronousMeshPrep,
-    const std::optional<std::array<float, 4>>& surfaceClipUv) {
+    const std::optional<std::array<float, 4>>& surfaceClipUv,
+    const TilesetTile* surfaceClipDescendant) {
     const bool resourcesChanged = TileRenderCommandPreparer::build(
         renderer,
         tile,
@@ -46,7 +47,8 @@ void TileRenderCommandManager::buildTileDrawCommand(
             currentFrameTimeSeconds_,
             transitionOpacity,
             allowSynchronousMeshPrep,
-            surfaceClipUv},
+            surfaceClipUv,
+            surfaceClipDescendant},
         [this, &renderer](TilesetTile& meshTile) {
             meshPreparation_.prepareRenderableTile(meshTile, &renderer);
         },

@@ -115,7 +115,8 @@ TEST(
             RenderCommandList& outCommands,
             float opacity,
             bool,
-            const std::optional<std::array<float, 4>>&) {
+            const std::optional<std::array<float, 4>>&,
+            const TilesetTile*) {
             submittedOpacities.push_back(opacity);
             RenderCommand command;
             command.kind = RenderCommandKind::SurfaceTile;
@@ -234,7 +235,8 @@ TEST(
            RenderCommandList&,
            float,
            bool,
-           const std::optional<std::array<float, 4>>&) {},
+           const std::optional<std::array<float, 4>>&,
+           const TilesetTile*) {},
         [](bool) {},
         []() {
             return true;

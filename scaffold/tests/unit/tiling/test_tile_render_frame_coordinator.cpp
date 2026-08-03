@@ -91,7 +91,8 @@ TEST(
             RenderCommandList& outCommands,
             float transitionOpacity,
             bool allowSynchronousMeshPrep,
-            const std::optional<std::array<float, 4>>& surfaceClipUv) {
+            const std::optional<std::array<float, 4>>& surfaceClipUv,
+            const TilesetTile*) {
             buildCommandCalled = true;
             EXPECT_EQ(tile.key, parentKey);
             forwardedOpacity = transitionOpacity;

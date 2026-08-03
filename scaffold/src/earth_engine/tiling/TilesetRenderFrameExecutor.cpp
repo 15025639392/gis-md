@@ -33,14 +33,16 @@ void TilesetRenderFrameExecutor::buildRenderCommands(
                    RenderCommandList& commands,
                    float transitionOpacity,
                    bool allowSynchronousMeshPrep,
-                   const std::optional<std::array<float, 4>>& surfaceClipUv) {
+                   const std::optional<std::array<float, 4>>& surfaceClipUv,
+                   const TilesetTile* surfaceClipDescendant) {
             context.buildTileDrawCommand(
                 renderer,
                 tile,
                 commands,
                 transitionOpacity,
                 allowSynchronousMeshPrep,
-                surfaceClipUv);
+                surfaceClipUv,
+                surfaceClipDescendant);
         },
         [&context](bool cachePressure) {
             context.trimRasterCaches(cachePressure);

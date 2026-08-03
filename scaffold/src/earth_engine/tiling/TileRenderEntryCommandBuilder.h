@@ -100,7 +100,10 @@ public:
                     commands,
                     entry.opacity,
                     entry.allowSynchronousMeshPrep,
-                    surfaceClipUv);
+                    surfaceClipUv,
+                    // 机制 A:clip 上下文携带后代瓦片,盖章期换成后代模板
+                    // 几何 + 祖先高度子矩形采样(资源未就绪回落 discard)。
+                    surfaceClipUv ? entry.selectedTile : nullptr);
             } else {
                 ++stats.deferredEntries;
             }

@@ -36,7 +36,8 @@ public:
         float transitionOpacity,
         bool allowSynchronousMeshPrep = true,
         const std::optional<std::array<float, 4>>& surfaceClipUv =
-            std::nullopt);
+            std::nullopt,
+        const TilesetTile* surfaceClipDescendant = nullptr);
 
     const TileRenderCommandPerformanceTimings& frameTimings() const {
         return frameTimings_;

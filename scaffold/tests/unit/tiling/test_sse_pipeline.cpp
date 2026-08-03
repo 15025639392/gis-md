@@ -14231,7 +14231,8 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
                         RenderCommandList& outCommands,
                         float,
                         bool,
-                        const std::optional<std::array<float, 4>>&) {
+                        const std::optional<std::array<float, 4>>&,
+            const TilesetTile*) {
                 if (tile.key == drawnKey) {
                     RenderCommand command;
                     command.kind = RenderCommandKind::GltfPrimitive;
@@ -14292,7 +14293,8 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
                          RenderCommandList& outCommands,
                          float,
                          bool,
-                         const std::optional<std::array<float, 4>>& clipUv) {
+                         const std::optional<std::array<float, 4>>& clipUv,
+                         const TilesetTile*) {
                 if (tile.key == renderKey && clipUv) {
                     RenderCommand command;
                     command.kind = RenderCommandKind::GltfPrimitive;
@@ -14364,7 +14366,8 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
                                             float opacity,
                                             bool,
                                             const std::optional<
-                                                std::array<float, 4>>&) {
+                                                std::array<float, 4>>&,
+                                            const TilesetTile*) {
         submittedOpacity = opacity;
         RenderCommand command;
         command.kind = RenderCommandKind::GltfPrimitive;
