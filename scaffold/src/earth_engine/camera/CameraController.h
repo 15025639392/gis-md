@@ -118,6 +118,29 @@ public:
     void resetNorthUp();
 
 private:
+    /// 锚点钉合求解：求把"像素 (x,y) 射线与抓取球的交点方向"转到 anchorNormal
+    /// 的绕地心旋转。单指拖拽与双指钉合共用同一份数学（同构，见 applyAnchorDrag
+    /// 与 keepAnchorAtScreenPoint），任何一侧的修正必须同时作用于另一侧。
+    struct AnchorSolveResult {
+        glm::dquat delta{1.0, 0.0, 0.0, 0.0};
+        /// 入射余弦 |dot(rayDir, 求解点法线)|：1=正对，→0=掠射；最近接近点
+        /// 恒为 0（射线在该点与球面相切向正交）。病态区权重的输入。
+        double conditioning = 0.0;
+        bool valid = false;       ///< 求出了球面点（真命中或最近接近点）
+        bool hit = false;         ///< 射线真正命中抓取球
+        bool degenerate = false;  ///< from≈to，无需旋转
+    };
+    AnchorSolveResult solveAnchorRotation(const Vec3& anchorNormal,
+                                          float xPixels,
+                                          float yPixels) const;
+    /// 抓取球上"该射线之下"的点：真交点，或 miss 时的最近接近点（相切处
+    /// 与真交点重合 → 跨球缘连续）。球心在射线后方等极端退化时返回 false。
+    bool pointOnGrabSphere(const Ray& ray, Vec3& outPoint, bool& outTrueHit) const;
+    /// 转台式旋转增量：屏幕像素位移按 fov/height 转角度（相对 dragLast）。
+    glm::dquat spinTurntableDelta(float xPixels, float yPixels) const;
+    /// 按当前模式施加旋转增量（orbit 模式转 rotation_，自由模式转相机整体）。
+    void applyRotationDelta(const glm::dquat& delta);
+
     bool intersectGrabSphere(const Ray& ray, Vec3& outPoint) const;
     static bool intersectSphere(const Ray& ray, double radiusMeters,
                                 Vec3& outPoint);

@@ -291,6 +291,55 @@ TEST_F(CameraControllerTest, DragSpinFlickOverEmptySpaceSeedsInertia) {
     EXPECT_GT(diff, 1e-9);
 }
 
+TEST_F(CameraControllerTest, DragAcrossLimbHasNoScreenSpaceJump) {
+    // N9（问题3 根治的连续性判据）：手指从球心划到球缘外，锚定→转台的
+    // 过渡必须连续。判据用屏幕空间：每个 20px 步长里，屏幕中心地表参照点
+    // 的位移不得超过 3.5×步长（旧 latch 实现重入球面时会把过期锚点猛拉回
+    // 指下，单事件位移可达数百 px）。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(7.0f);
+    controller_->update(0.0);
+
+    controller_->onDragStart(400.0f, 300.0f);
+    float x = 400.0f;
+    const float step = 20.0f;
+    for (int i = 0; i < 18; ++i) {
+        const Vec3 ref = intersectEarthSphere(
+            camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+        x += step;
+        controller_->onDragMove(x, 300.0f);
+        const glm::dvec2 p = projectToScreen(*camera_, ref);
+        const double moved = std::hypot(p.x - 400.0, p.y - 300.0);
+        EXPECT_LT(moved, 3.5 * step) << "step " << i << " x=" << x;
+    }
+    controller_->onDragEnd();
+}
+
+TEST_F(CameraControllerTest, DragReentersGlobeRestoresAnchorFollow) {
+    // N10（问题3 回归）：拖出球缘再拖回来，锚定必须恢复——旧实现一旦 miss
+    // 即 latch 到转台直到抬手，重入球面后整段退化为非锚定旋转。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(7.0f);
+    controller_->update(0.0);
+
+    controller_->onDragStart(400.0f, 300.0f);
+    controller_->onDragMove(500.0f, 300.0f);  // 出球缘（球屏半径 ~75px）
+    controller_->onDragMove(600.0f, 300.0f);
+    controller_->onDragMove(700.0f, 300.0f);
+    controller_->onDragMove(600.0f, 300.0f);  // 折返
+    controller_->onDragMove(500.0f, 300.0f);
+    controller_->onDragMove(430.0f, 300.0f);  // 回到球内
+
+    // 锚定已恢复：此时指下地表点在后续移动中应精确跟随手指。
+    const Vec3 under = intersectEarthSphere(
+        camera_->getPickRay(430.0, 300.0, 800.0, 600.0));
+    controller_->onDragMove(460.0f, 300.0f);
+    const glm::dvec2 p = projectToScreen(*camera_, under);
+    EXPECT_NEAR(460.0, p.x, 2.0);
+    EXPECT_NEAR(300.0, p.y, 2.0);
+    controller_->onDragEnd();
+}
+
 TEST_F(CameraControllerTest, PinchChangesDistance) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->setDistance(5.0f);

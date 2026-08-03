@@ -47,6 +47,23 @@ constexpr double kPinchAnchorFollow = 0.12;
 // 几个事件上，不该让长时间单向饱和攒出松手后仍在补的欠账。
 constexpr double kMaxPinchScaleResidualLog = 1.0;
 
+// 锚点求解病态区（掠射/球缘）的连续退化带：入射余弦 c=|dot(rayDir,法线)|
+// 低于 hi 起把精确钉合旋转与转台旋转做 slerp 混合，低于 lo 完全转台。
+// 精确解的像素→角度增益 ∝ 1/c，掠射时爆炸；而"命中就精确锚定、miss 就
+// latch 转台"的硬切换（旧问题3）必然在切换点跳变或死锁。连续混合 + 退化区
+// 整点重取锚点是唯一同时消掉两者的做法。
+constexpr double kAnchorConditioningLo = 0.10;
+constexpr double kAnchorConditioningHi = 0.35;
+
+// 病态区混合权重：c ≥ hi 全精确（w=1），c ≤ lo 全转台（w=0），中间 smoothstep。
+double anchorExactWeight(double conditioning) {
+    const double t = std::clamp(
+        (conditioning - kAnchorConditioningLo) /
+            (kAnchorConditioningHi - kAnchorConditioningLo),
+        0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
 // Zoom 惯性：捏合松手后沿视线朝锚点继续滑一小段。刻意建模在"对数距离"空间
 // （每秒的 ln(距离) 变化率），有三个好处：① 与高度无关，海拔 10km 和 100m
 // 手感一致；② 指数逼近锚点、永不越过（distance*=exp(-r·dt)>0），从数学上排除
@@ -594,7 +611,10 @@ void CameraController::applyRotationAroundAxis(const glm::dvec3& axis, double an
     if (glm::length(axis) < 1e-10 || std::abs(angle) < 1e-12) {
         return;
     }
-    const glm::dquat delta = glm::angleAxis(angle, glm::normalize(axis));
+    applyRotationDelta(glm::angleAxis(angle, glm::normalize(axis)));
+}
+
+void CameraController::applyRotationDelta(const glm::dquat& delta) {
     if (orbitMode_) {
         rotation_ = glm::normalize(delta * rotation_);
     } else {
@@ -828,28 +848,44 @@ void CameraController::logGestureDiag(const char* label, float screenX, float sc
 void CameraController::keepAnchorAtScreenPoint(const Vec3& anchorNormal,
                                                float xPixels,
                                                float yPixels) {
-    Vec3 screenPointOnSphere;
+    const AnchorSolveResult solve =
+        solveAnchorRotation(anchorNormal, xPixels, yPixels);
+    if (!solve.hit || solve.degenerate) {
+        return;
+    }
+    applyRotationDelta(solve.delta);
+}
+
+CameraController::AnchorSolveResult CameraController::solveAnchorRotation(
+    const Vec3& anchorNormal, float xPixels, float yPixels) const {
+    AnchorSolveResult result;
+
     const Ray ray = camera_->getPickRay(
         static_cast<double>(xPixels),
         static_cast<double>(yPixels),
         static_cast<double>(viewportWidth_),
         static_cast<double>(viewportHeight_));
-    if (!intersectGrabSphere(ray, screenPointOnSphere)) {
-        return;
+    Vec3 pointOnSphere;
+    if (!pointOnGrabSphere(ray, pointOnSphere, result.hit)) {
+        return result;
     }
+    result.valid = true;
 
-    const glm::dvec3 from = screenPointOnSphere.normalized().raw();
+    const glm::dvec3 from = pointOnSphere.normalized().raw();
     const glm::dvec3 to = anchorNormal.raw();
+    result.conditioning = std::abs(glm::dot(ray.direction().raw(), from));
+
     glm::dvec3 axis = glm::cross(from, to);
     const double axisLength = glm::length(axis);
     if (axisLength < 1e-10) {
-        return;
+        result.degenerate = true;
+        return result;
     }
 
     const double dot = std::clamp(glm::dot(from, to), -1.0, 1.0);
     const double angle = std::atan2(axisLength, dot);
-    axis /= axisLength;
-    applyRotationAroundAxis(axis, angle);
+    result.delta = glm::angleAxis(angle, axis / axisLength);
+    return result;
 }
 
 // ============================================================
@@ -858,6 +894,49 @@ void CameraController::keepAnchorAtScreenPoint(const Vec3& anchorNormal,
 
 bool CameraController::intersectGrabSphere(const Ray& ray, Vec3& outPoint) const {
     return intersectSphere(ray, grabbedRadiusMeters_, outPoint);
+}
+
+bool CameraController::pointOnGrabSphere(const Ray& ray,
+                                         Vec3& outPoint,
+                                         bool& outTrueHit) const {
+    if (intersectGrabSphere(ray, outPoint)) {
+        outTrueHit = true;
+        return true;
+    }
+    outTrueHit = false;
+    // 最近接近点：球面上离射线最近的点。t* 处射线与"球心→该点"方向正交，
+    // 相切时与真交点重合 → 解在跨球缘时 C0 连续。
+    const glm::dvec3 o = ray.origin().raw();
+    const glm::dvec3 d = ray.direction().raw();
+    const double tStar = -glm::dot(o, d);
+    if (tStar <= 0.0) {
+        return false;  // 球心在射线后方（背对地球看天）
+    }
+    const glm::dvec3 q = o + d * tStar;
+    const double qLen = glm::length(q);
+    if (qLen < 1e-6) {
+        return false;  // 射线（数值上）穿过地心，方向无定义
+    }
+    outPoint = Vec3(q * (grabbedRadiusMeters_ / qLen));
+    return true;
+}
+
+glm::dquat CameraController::spinTurntableDelta(float xPixels,
+                                                float yPixels) const {
+    const double dx = static_cast<double>(xPixels) - dragLastX_;
+    const double dy = static_cast<double>(yPixels) - dragLastY_;
+    // 屏幕中心处每像素约对应的角度，给出接近 1:1 的转台手感。
+    // 水平/垂直每像素角度相同（aspect 抵消），故统一用 fov/height。
+    const double radPerPixel =
+        camera_->verticalFovRadians() /
+        static_cast<double>(std::max(1, viewportHeight_));
+    // 手指右移 → 世界右转（绕屏幕竖轴=camera up）；
+    // 手指下移 → 世界下转（绕屏幕横轴=camera right）。
+    const glm::dquat yaw =
+        glm::angleAxis(-dx * radPerPixel, camera_->up().raw());
+    const glm::dquat pitch =
+        glm::angleAxis(-dy * radPerPixel, camera_->right().raw());
+    return glm::normalize(yaw * pitch);
 }
 
 bool CameraController::intersectSphere(const Ray& ray,
@@ -921,8 +1000,19 @@ bool CameraController::grabSurfacePoint(float xPixels, float yPixels) {
 
     Vec3 grabbedPoint;
     if (!pickSurfacePoint(xPixels, yPixels, grabbedPoint)) {
-        hasGrabbedPoint_ = false;
-        return false;
+        // 起手在球外：取标准球面最近接近点当锚。整段拖拽由条件数混合连续
+        // 处理——球外 w≈0 纯转台（旧 spin 手感不变），扫回球面时 w 连续升回
+        // 1、锚定平滑恢复（旧实现 miss 即永久 latch 到抬手 = 问题3）。
+        const Ray ray = camera_->getPickRay(
+            static_cast<double>(xPixels),
+            static_cast<double>(yPixels),
+            static_cast<double>(viewportWidth_),
+            static_cast<double>(viewportHeight_));
+        bool trueHit = false;
+        if (!pointOnGrabSphere(ray, grabbedPoint, trueHit)) {
+            hasGrabbedPoint_ = false;
+            return false;
+        }
     }
 
     // 锚点必须落在拾取射线上。PickingService::pickTerrain 是"先与椭球求交、
@@ -941,58 +1031,44 @@ bool CameraController::grabSurfacePoint(float xPixels, float yPixels) {
 
 void CameraController::applyAnchorDrag(float xPixels, float yPixels,
                                        double timestamp) {
-    glm::dquat delta;
+    glm::dquat delta{1.0, 0.0, 0.0, 0.0};
+    bool haveDelta = false;
+    bool regrabAfterApply = false;
 
     // move 期锚定在抓取球面（半径=抓取点半径），不重 pick 地形：from/to 同
     // 球面才能一次旋转把锚点精确放回指下。重 pick 地形时，指下地形高≠抓取
     // 点高，法线对齐后锚点投影偏离手指（起伏越大/视角越斜越明显）＝不跟手。
-    Vec3 targetPoint;
-    bool anchorValid = false;
     if (hasGrabbedPoint_) {
-        const Ray ray = camera_->getPickRay(
-            static_cast<double>(xPixels),
-            static_cast<double>(yPixels),
-            static_cast<double>(viewportWidth_),
-            static_cast<double>(viewportHeight_));
-        anchorValid = intersectGrabSphere(ray, targetPoint);
+        const AnchorSolveResult solve =
+            solveAnchorRotation(grabbedNormal_, xPixels, yPixels);
+        if (solve.valid) {
+            const double w = anchorExactWeight(solve.conditioning);
+            if (w >= 1.0) {
+                if (solve.degenerate) {
+                    return;  // 良态区对齐：无事发生（不更新惯性/时间戳）
+                }
+                delta = solve.delta;
+            } else {
+                // 病态区（掠射/球缘外）：精确解增益 ∝1/c 爆炸，连续混入
+                // 转台旋转；w→0 时退化为纯转台（球外拖拽=旧 spin 手感）。
+                // 应用后整点重取锚点（见下），欠账不累积，条件数恢复时
+                // 没有补偿跳变——这替代了旧的"miss 即 latch 到抬手"。
+                delta = glm::slerp(spinTurntableDelta(xPixels, yPixels),
+                                   solve.delta, w);
+                regrabAfterApply = true;
+            }
+            haveDelta = true;
+        }
     }
 
-    if (anchorValid) {
-        // Anchor pan：旋转让被抓地表点跟随手指（起点/当前都命中球面）。
-        const glm::dvec3 from = targetPoint.normalized().raw();
-        const glm::dvec3 to = grabbedNormal_.raw();
-        const glm::dvec3 axis = glm::cross(from, to);
-        const double axisLength = glm::length(axis);
-        if (axisLength < 1e-10) {
-            return;
-        }
-        const double dot = std::clamp(glm::dot(from, to), -1.0, 1.0);
-        const double angle = std::atan2(axisLength, dot);
-        delta = glm::angleAxis(angle, axis / axisLength);
-    } else {
-        // Spin 回退（等价 cesium _spin3D）：手指在地平线外/空白处，没有
-        // 地表点可锚定，改用屏幕像素位移按"转台"方式绕地心转相机。一旦
-        // miss 就 latch 到 spin 直到抬手——避免近球缘 pan<->spin 每帧抖动，
-        // 以及重入球面时把过期锚点猛拉回指下的跳变。
-        hasGrabbedPoint_ = false;
-
+    if (!haveDelta) {
+        // 极端退化（球心在射线后方/射线穿地心）或起手就没抓到点：纯转台。
         const double dx = static_cast<double>(xPixels) - dragLastX_;
         const double dy = static_cast<double>(yPixels) - dragLastY_;
         if (std::abs(dx) < 1e-6 && std::abs(dy) < 1e-6) {
             return;
         }
-        // 屏幕中心处每像素约对应的角度，给出接近 1:1 的转台手感。
-        // 水平/垂直每像素角度相同（aspect 抵消），故统一用 fov/height。
-        const double radPerPixel =
-            camera_->verticalFovRadians() /
-            static_cast<double>(std::max(1, viewportHeight_));
-        // 手指右移 → 世界右转（绕屏幕竖轴=camera up）；
-        // 手指下移 → 世界下转（绕屏幕横轴=camera right）。
-        const glm::dquat yaw =
-            glm::angleAxis(-dx * radPerPixel, camera_->up().raw());
-        const glm::dquat pitch =
-            glm::angleAxis(-dy * radPerPixel, camera_->right().raw());
-        delta = glm::normalize(yaw * pitch);
+        delta = spinTurntableDelta(xPixels, yPixels);
     }
 
     applyCameraRotation(delta);
@@ -1003,6 +1079,23 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
             camera_->setView(Vec3(clampedEye), camera_->direction(),
                              camera_->up());
             syncDistanceFromCamera();
+        }
+    }
+
+    // 退化区不变量：锚点良态区整段不可变；仅退化区（w<1）在应用旋转后被
+    // 整点重取为"当前手指下抓取球上的点"（半径不变，绝不重 pick 地形）。
+    // 永不渐近混合——混合出的锚点不属于任何真实几何，会积欠账。
+    if (regrabAfterApply && hasGrabbedPoint_) {
+        const Ray ray = camera_->getPickRay(
+            static_cast<double>(xPixels),
+            static_cast<double>(yPixels),
+            static_cast<double>(viewportWidth_),
+            static_cast<double>(viewportHeight_));
+        Vec3 regrabbed;
+        bool trueHit = false;
+        if (pointOnGrabSphere(ray, regrabbed, trueHit)) {
+            grabbedPoint_ = regrabbed;
+            grabbedNormal_ = regrabbed.normalized();
         }
     }
 
