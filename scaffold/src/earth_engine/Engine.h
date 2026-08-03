@@ -164,10 +164,6 @@ public:
     CameraController& cameraController();
     bool isReady() const;
 
-    /// [GESTDIAG] 当前手势锚点世界坐标(ECEF)；无活动手势返回 false。
-    /// 供真机可视化缩放/旋转锚点稳定性用。
-    bool debugAnchorWorld(Vec3& outWorld) const;
-
     /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
     double cameraHeadingRadians() const;
     /// 复位到正北朝上（保持俯仰与相机位置）。

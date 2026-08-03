@@ -191,7 +191,6 @@ void CameraController::onDragStart(float xPixels, float yPixels, double timestam
     // 拖拽=用户显式抓世界重定位，残留的回中欠账此后再沉降会像无因漂移。
     recenterBudgetRadians_ = 0.0;
     lastDragTimestamp_ = timestamp;
-    logGestureDiag("dragStart", xPixels, yPixels);
 }
 
 void CameraController::onDragMove(float xPixels, float yPixels, double timestamp) {
@@ -201,12 +200,10 @@ void CameraController::onDragMove(float xPixels, float yPixels, double timestamp
 
     dragLastX_ = xPixels;
     dragLastY_ = yPixels;
-    logGestureDiag("dragMove", xPixels, yPixels);
 }
 
 void CameraController::onDragEnd() {
     if (!dragging_) return;
-    logGestureDiag("dragEnd", dragLastX_, dragLastY_);
     dragging_ = false;
     hasGrabbedPoint_ = false;
     // 惯性参数由 orbit() 中的最后一次调用设置
@@ -450,12 +447,9 @@ void CameraController::onPinchGesture(const PinchInput& input) {
     lastPinchCentroidY_ = input.centroidY;
     lastPinchTimestamp_ = input.timestamp;
 
-    logGestureDiag(isPinchStartFrame ? "pinchStart" : "pinchMove",
-                   input.centroidX, input.centroidY);
 }
 
 void CameraController::onPinchEnd() {
-    logGestureDiag("pinchEnd", lastPinchCentroidX_, lastPinchCentroidY_);
     pinching_ = false;
     adapterScaleLog_ = 0.0;
     adapterTwistRadians_ = 0.0;
@@ -891,53 +885,6 @@ bool CameraController::debugAnchorWorld(Vec3& outWorld) const {
         return true;
     }
     return false;
-}
-
-void CameraController::logGestureDiag(const char* label, float screenX, float screenY) {
-    // [GESTDIAG] 临时插桩：定位"双指触摸瞬间偏移"。dEye 是本事件相机位移，
-    // anchorErr 是锚点当前投影与手指的像素差；某帧 dEye 或 anchorErr 突然
-    // 变大，即为跳变帧。定位后整体移除。
-    const glm::dvec3 eye = camera_->position().raw();
-    const double dEye = hasLastDiagEye_ ? glm::length(eye - lastDiagEye_) : 0.0;
-    lastDiagEye_ = eye;
-    hasLastDiagEye_ = true;
-
-    const Cartographic cart =
-        Ellipsoid::WGS84().cartesianToCartographic(Vec3(eye));
-
-    bool hasAnchor = false;
-    glm::dvec3 anchorWorld(0.0);
-    if (pinching_ && hasPinchAnchor_) {
-        anchorWorld = pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
-        hasAnchor = true;
-    } else if (hasGrabbedPoint_) {
-        anchorWorld = grabbedPoint_.raw();
-        hasAnchor = true;
-    }
-
-    double anchorErrX = 0.0;
-    double anchorErrY = 0.0;
-    if (hasAnchor) {
-        const glm::dmat4 vp = camera_->viewProjectionMatrix(
-            static_cast<double>(viewportWidth_),
-            static_cast<double>(viewportHeight_)).raw();
-        glm::dvec4 clip = vp * glm::dvec4(anchorWorld, 1.0);
-        if (std::abs(clip.w) > 1e-9) {
-            clip /= clip.w;
-            const double sx = (clip.x + 1.0) * 0.5 * viewportWidth_;
-            const double sy = (1.0 - clip.y) * 0.5 * viewportHeight_;
-            anchorErrX = sx - static_cast<double>(screenX);
-            anchorErrY = sy - static_cast<double>(screenY);
-        }
-    }
-
-    platformLog(LogLevel::Info, "GESTDIAG",
-        "%s eye=(%.5f,%.5f,%.0fm) dEye=%.1fm finger=(%.0f,%.0f) "
-        "anchorErr=(%.1f,%.1f)px hasAnchor=%d mode=%d",
-        label,
-        cart.longitudeDegrees(), cart.latitudeDegrees(), cart.height(),
-        dEye, screenX, screenY, anchorErrX, anchorErrY, hasAnchor ? 1 : 0,
-        pinching_ ? static_cast<int>(pinchActiveMode_) : -1);
 }
 
 CameraController::AnchorSolveResult CameraController::solveAnchorRotation(

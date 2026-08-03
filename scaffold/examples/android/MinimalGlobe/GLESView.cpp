@@ -64,12 +64,6 @@ static ANativeWindow* gWindow = nullptr;
 // 宽高被 UI 线程（触摸事件整形）与渲染线程（EGL/引擎）两侧读写，用原子避免撕裂
 static std::atomic<int> gWidth{0}, gHeight{0};
 
-// [GESTDIAG] 每帧由渲染线程发布当前手势锚点的屏幕投影(物理像素)，UI 线程
-// 无锁读取用于绘制锚点标记。定位"双指瞬间偏移"用，定位后整体移除。
-static std::atomic<bool> gAnchorActive{false};
-static std::atomic<float> gAnchorScreenX{0.0f};
-static std::atomic<float> gAnchorScreenY{0.0f};
-
 // 每帧发布相机方位角(弧度),UI 指北针无锁读取。
 static std::atomic<float> gHeadingRadians{0.0f};
 
@@ -734,29 +728,7 @@ static void renderFrame() {
     const double engineMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - engineStart).count();
 
-    // [GESTDIAG] 发布当前手势锚点屏幕投影（用当前帧相机，故标记随相机每帧跟随）。
     const auto postEngineStart = std::chrono::steady_clock::now();
-    {
-        Vec3 anchorWorld;
-        bool published = false;
-        if (gEngine->debugAnchorWorld(anchorWorld)) {
-            const int w = gWidth.load();
-            const int h = gHeight.load();
-            const glm::dmat4 vp = gEngine->camera()
-                .viewProjectionMatrix(static_cast<double>(w),
-                                      static_cast<double>(h)).raw();
-            glm::dvec4 clip = vp * glm::dvec4(anchorWorld.raw(), 1.0);
-            if (clip.w > 1e-9) {  // w>0 → 锚点在相机前方
-                clip /= clip.w;
-                gAnchorScreenX = static_cast<float>((clip.x + 1.0) * 0.5 * w);
-                gAnchorScreenY = static_cast<float>((1.0 - clip.y) * 0.5 * h);
-                gAnchorActive = true;
-                published = true;
-            }
-        }
-        if (!published) gAnchorActive = false;
-    }
-
     gHeadingRadians = static_cast<float>(gEngine->cameraHeadingRadians());
     const double postEngineMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - postEngineStart).count();
@@ -1471,9 +1443,9 @@ Java_com_earthengine_sdk_GLESView_nativeDebugPinchEnd(
         static_cast<float>(height) * 0.5f);
 }
 
-// [GESTDIAG] 确定性双指路径回放：adb 无法产生多点触控，这里合成固定的两指
-// 像素序列（含 pointer pair → 走 InputManager latch + 新契约），配 GESTDIAG
-// anchorErr 形成可脚本化的真机判据。数字键 1-4 触发（见 Java onKeyDown）。
+// 确定性双指路径回放：adb 无法产生多点触控，这里合成固定的两指像素序列
+// （含 pointer pair → 走 InputManager latch + 新契约完整链路），供手势回归
+// 复测与将来重新插桩时复用。数字键 1-4 触发（见 Java onKeyDown）。
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeDebugPinchPath(
     JNIEnv* /* env */, jobject /* this */,
@@ -1828,18 +1800,6 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         },
         std::chrono::milliseconds(100));
     return env->NewStringUTF(ok ? text->c_str() : "Engine not ready");
-}
-
-// [GESTDIAG] 无锁读取渲染线程发布的锚点屏幕投影。out[0]=x, out[1]=y(物理像素)。
-// 返回 true 表示当前有活动手势锚点。
-JNIEXPORT jboolean JNICALL
-Java_com_earthengine_sdk_GLESView_nativeGetAnchorScreen(
-    JNIEnv* env, jobject /* this */, jfloatArray out) {
-    if (out != nullptr && env->GetArrayLength(out) >= 2) {
-        jfloat vals[2] = { gAnchorScreenX.load(), gAnchorScreenY.load() };
-        env->SetFloatArrayRegion(out, 0, 2, vals);
-    }
-    return gAnchorActive.load() ? JNI_TRUE : JNI_FALSE;
 }
 
 // 指北针：读取每帧发布的相机方位角(弧度,0=正北,顺时针+)。

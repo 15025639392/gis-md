@@ -130,8 +130,8 @@ public:
     /// 保持当前 target→eye 方位，把相机放到 target 外指定距离并看向 target。
     void viewDistance(const Vec3& targetWorld, double distanceMeters);
 
-    /// [GESTDIAG] 当前手势锚点世界坐标(ECEF)。有活动 drag/pinch 锚点时返回
-    /// true 并写出 outWorld；否则返回 false。用于真机可视化锚点稳定性。
+    /// 当前手势锚点世界坐标(ECEF)。有活动 drag/pinch 锚点时返回 true 并
+    /// 写出 outWorld；否则返回 false。测试用查询（锚点获取/重试行为断言）。
     bool debugAnchorWorld(Vec3& outWorld) const;
 
     /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
@@ -197,10 +197,6 @@ private:
 
     /// Clamps eye to at least the configured visual floor above terrain/ellipsoid.
     glm::dvec3 clampEyeAltitude(const glm::dvec3& eye) const;
-
-    /// [GESTDIAG] 临时插桩：每个手势事件后打印相机位移量与锚点投影误差，
-    /// 用于真机定位"双指触摸瞬间偏移"。定位后连同 lastDiagEye_ 一并移除。
-    void logGestureDiag(const char* label, float screenX, float screenY);
 
     Camera* camera_;
     SurfacePicker surfacePicker_;
@@ -281,9 +277,6 @@ private:
     double zoomInertiaLogRate_ = 0.0;         // d(ln dist)/dt，>0 = 继续拉近
     glm::dvec3 zoomInertiaAnchor_{0.0, 0.0, 0.0};
 
-    // [GESTDIAG] 临时：上一次手势事件时的相机 eye（算 dEye 用）。
-    glm::dvec3 lastDiagEye_{0.0, 0.0, 0.0};
-    bool hasLastDiagEye_ = false;
 };
 
 } // namespace earth_engine

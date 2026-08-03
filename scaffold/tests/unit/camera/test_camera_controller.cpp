@@ -1537,7 +1537,7 @@ TEST_F(CameraControllerTest, DragStartDoesNotJumpWhenPickIsOffRay) {
     // 起手不跳：抓取之后手指原地不动的 move 必须不产生任何相机运动。
     // 锚点跟手的数学假定抓取点在起始射线上，而 pickTerrain 返回的点是沿局部
     // 垂直抬起的、不在射线上；旧实现把这段落差当作手指位移，在第一个 move
-    // 一次性补掉——真机 GESTDIAG 实测起手 anchorErr 达 227~471px。
+    // 一次性补掉——2026-08-01 真机实测起手锚点投影偏差达 227~471px。
     setTiltedPose(*camera_, 2.0e4, 45.0);
     controller_->setSurfacePicker(makeOffRayTerrainPicker(*camera_, 3000.0));
 

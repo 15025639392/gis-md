@@ -84,7 +84,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
             nativeDebugPinchEnd(getWidth(), getHeight());
             return true;
         }
-        // [GESTDIAG] 数字键 1-4：确定性双指路径回放（pan/pitch/组合/慢拧）。
+        // 数字键 1-4：确定性双指路径回放（pan/pitch/组合/慢拧），手势回归用。
         if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_4) {
             nativeDebugPinchPath(keyCode - KeyEvent.KEYCODE_1, getWidth(), getHeight());
             return true;
@@ -255,10 +255,6 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     private static native void nativeDebugPinchPath(int scenario, int width, int height);
     private static native void nativePause();
     private static native void nativeResume();
-
-    // [GESTDIAG] 读取当前手势锚点屏幕投影(物理像素)；out[0]=x,out[1]=y，
-    // 返回 true 表示有活动锚点。用于可视化缩放/旋转锚点稳定性。
-    public static native boolean nativeGetAnchorScreen(float[] out);
 
     // 指北针：相机方位角(弧度,0=正北,顺时针+) / 复位正北朝上。
     public static native float nativeGetHeadingRadians();

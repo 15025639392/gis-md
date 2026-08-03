@@ -679,11 +679,6 @@ Vec3 Engine::sunDirection() const {
     return scene_->sunDirection();
 }
 
-bool Engine::debugAnchorWorld(Vec3& outWorld) const {
-    if (!scene_) return false;
-    return scene_->cameraController().debugAnchorWorld(outWorld);
-}
-
 double Engine::cameraHeadingRadians() const {
     return scene_ ? scene_->cameraController().headingRadians() : 0.0;
 }
