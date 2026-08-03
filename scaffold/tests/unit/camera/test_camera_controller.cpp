@@ -1221,6 +1221,35 @@ TEST_F(CameraControllerTest, PinchPitchModeIgnoresHorizontalCentroidDrift) {
     EXPECT_LT(cameraSlope(*camera_), slopeBefore - 5e-4);
 }
 
+TEST_F(CameraControllerTest, PinchTiltGainIsViewportIndependent) {
+    // N11：pitch 增益按视口高度归一——同一"占屏比例"的竖移在不同分辨率下
+    // 产生相同俯仰变化（旧的每物理像素定义在 3.5x 屏上比 1.5x 快 2.3 倍）。
+    auto runTilt = [](int width, int height) {
+        Camera camera;
+        camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+        CameraController controller(&camera);
+        controller.setViewport(width, height);
+        controller.setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+        controller.setDistance(4.0f);
+        controller.update(0.0);
+        const float cx = static_cast<float>(width) * 0.5f;
+        const float cy = static_cast<float>(height) * 0.5f;
+        controller.onPinchGesture(pinchIn(
+            1.0f, 0.0f, cx, cy, CameraController::PinchMode::Undecided));
+        controller.onPinchGesture(pinchIn(
+            1.0f, 0.0f, cx, cy, CameraController::PinchMode::Pitch));
+        const float dy = static_cast<float>(height) * 0.25f;
+        for (int i = 1; i <= 5; ++i) {
+            controller.onPinchGesture(pinchIn(
+                1.0f, 0.0f, cx,
+                cy - dy * static_cast<float>(i) / 5.0f,
+                CameraController::PinchMode::Pitch));
+        }
+        return camera.direction().dot(-camera.position().normalized());
+    };
+    EXPECT_NEAR(runTilt(800, 600), runTilt(1600, 1200), 1e-6);
+}
+
 TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->setDistance(7.0f);

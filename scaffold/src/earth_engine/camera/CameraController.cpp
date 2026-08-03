@@ -35,7 +35,10 @@ constexpr float kMinDistanceEarthRadii =
 constexpr float kMaxDistanceEarthRadii = 30.0f;
 constexpr double kTouchJerkLimit = 0.3;
 constexpr double kTouchMinSlope = 0.1;
-constexpr double kPinchTiltRadiansPerPixel = 0.0015;
+// Pitch 增益按视口高度归一：满屏竖移 = 0.9 rad（等价旧 0.0015 rad/px 在
+// 600px 视口下的标定），设备/分辨率无关——旧的每物理像素定义在 3.5x 手机
+// 上比 1.5x 平板快 2.3 倍。
+constexpr double kPinchTiltFullHeightRadians = 0.9;
 constexpr double kPinchTiltMaxStepRadians = 0.08;
 // 抓取球半径对 eye 半径的安全余量：锚点半径钳到 |eye|−margin 以下，防止
 // 抓取球包住相机（见 tryAcquirePinchAnchor/grabSurfacePoint）。
@@ -367,7 +370,9 @@ void CameraController::onPinchGesture(const PinchInput& input) {
         // pitchAppliedRadians_，被守卫拒绝时重取基线——到达俯仰界后反向
         // 立即响应，零死区离合。
         if (pinchActiveMode_ == PinchMode::Pitch) {
-            const double desired = -kPinchTiltRadiansPerPixel *
+            const double radPerPixel = kPinchTiltFullHeightRadians /
+                static_cast<double>(std::max(1, viewportHeight_));
+            const double desired = -radPerPixel *
                 static_cast<double>(input.centroidY - pitchBaselineY_);
             const double tiltStep = std::clamp(
                 desired - pitchAppliedRadians_,
@@ -379,8 +384,7 @@ void CameraController::onPinchGesture(const PinchInput& input) {
                 } else {
                     // 重基线：让 desired(当前质心) == 已施加量。
                     pitchBaselineY_ = input.centroidY +
-                        static_cast<float>(pitchAppliedRadians_ /
-                                           kPinchTiltRadiansPerPixel);
+                        static_cast<float>(pitchAppliedRadians_ / radPerPixel);
                 }
             }
         }

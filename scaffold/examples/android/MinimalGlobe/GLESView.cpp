@@ -1137,10 +1137,17 @@ private:
 static RenderThread gRenderThread;
 
 // UI 线程整形好的输入事件统一从这里投递到渲染线程。
+// 屏幕密度（Java surfaceChanged 时设置）。手势阈值以 dp 定义，InputManager
+// 用 event.devicePixelRatio 把 dp 换算成物理像素——不填则恒 1，latch 阈值
+// 在高密度屏上会偏敏感 density 倍。
+static float gDisplayDensity = 1.0f;
+
 static void postInputEvent(const InputEvent& event) {
-    gRenderThread.post([event]() {
+    InputEvent stamped = event;
+    stamped.devicePixelRatio = gDisplayDensity;
+    gRenderThread.post([stamped]() {
         if (gEngine) {
-            gEngine->onInputEvent(event);
+            gEngine->onInputEvent(stamped);
         }
     });
 }
@@ -1181,6 +1188,12 @@ Java_com_earthengine_sdk_GLESView_nativeSurfaceCreated(
     }
     // EGL / Engine 全部在渲染线程内创建
     gRenderThread.start(gWindow);
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeSetDisplayDensity(
+    JNIEnv* /* env */, jobject /* this */, jfloat density) {
+    gDisplayDensity = density > 0.1f ? density : 1.0f;
 }
 
 JNIEXPORT void JNICALL

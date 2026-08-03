@@ -44,6 +44,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        // 输入手势阈值以 dp 定义，native 侧用 density 把物理像素换算回 dp。
+        nativeSetDisplayDensity(getResources().getDisplayMetrics().density);
         nativeSurfaceChanged(width, height);
     }
 
@@ -237,6 +239,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     private static native void nativeInit(Context appContext);
     private static native void nativeSurfaceCreated(Surface surface);
     private static native void nativeSurfaceChanged(int width, int height);
+    private static native void nativeSetDisplayDensity(float density);
     private static native void nativeSurfaceDestroyed();
     private static native void nativeTouchDown(float x, float y);
     // 双指抬起一指后续接单指拖拽；不产生 click/double-click。
