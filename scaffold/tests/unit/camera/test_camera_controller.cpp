@@ -1070,6 +1070,72 @@ TEST_F(CameraControllerTest, TerrainClampHoldsLastKnownHeightWhenSampleMissing) 
     EXPECT_GE(altitudeNoData, 3000.0);
 }
 
+TEST_F(CameraControllerTest, DataDrivenTerrainRiseClampsImmediately) {
+    // 刚体优先：新瓦片加载证明脚下是山（数据驱动的地形上升）必须单帧生效，
+    // 不许像 Cesium 对称 10% 滤波那样延迟 ~0.5s（那 0.5s 里相机在山体内）。
+    std::optional<double> sampled = 0.0;
+    controller_->setTerrainHeightFunc(
+        [&](const Vec3&) -> std::optional<double> { return sampled; });
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 target = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    controller_->viewDistance(target, 500.0);  // 自由模式，低空
+    controller_->update(0.016);
+
+    sampled = 3000.0;  // 瓦片加载：脚下其实是 3000 m 山体
+    controller_->update(0.016);  // 无用户输入 → 数据驱动路径
+
+    EXPECT_GE(e.cartesianToCartographic(camera_->position()).height(), 3049.0);
+    EXPECT_NEAR(3000.0, controller_->groundState().terrainHeightMeters, 1e-9);
+}
+
+TEST_F(CameraControllerTest, DataDrivenTerrainDropDecaysExponentially) {
+    // 数据驱动的大幅下降走 τ=0.5s 指数逼近：钳位只抬不压，相机不受影响，
+    // 平滑的是下游（动态 near）消费的地面高度——防 LOD 粗细瓦片交替时
+    // near 逐帧跳。
+    std::optional<double> sampled = 3000.0;
+    controller_->setTerrainHeightFunc(
+        [&](const Vec3&) -> std::optional<double> { return sampled; });
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 target = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    controller_->viewDistance(target, 500.0);
+    controller_->update(0.016);  // 建立滤波基线 3000
+    ASSERT_NEAR(3000.0, controller_->groundState().terrainHeightMeters, 1e-9);
+
+    sampled = 0.0;  // 粗瓦片替换：样本骤降 3000 → 0（数据驱动）
+    controller_->update(0.016);
+    const double afterOneFrame = controller_->groundState().terrainHeightMeters;
+    EXPECT_GT(afterOneFrame, 2700.0);   // 单帧下降 < 300 m
+    EXPECT_LT(afterOneFrame, 3000.0);   // 但确实在收敛
+
+    for (int i = 0; i < 120; ++i) {     // ~1.9 s ≈ 4τ 后应基本收敛
+        controller_->update(0.016);
+    }
+    EXPECT_LT(controller_->groundState().terrainHeightMeters, 100.0);
+}
+
+TEST_F(CameraControllerTest, UserDrivenTerrainChangeBypassesFilter) {
+    // 用户驱动（手势事件）一律立即取用原始样本——滤波只作用于相机静止时
+    // 的数据变化。
+    std::optional<double> sampled = 3000.0;
+    controller_->setTerrainHeightFunc(
+        [&](const Vec3&) -> std::optional<double> { return sampled; });
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 target = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    controller_->viewDistance(target, 500.0);
+    controller_->update(0.016);
+    ASSERT_NEAR(3000.0, controller_->groundState().terrainHeightMeters, 1e-9);
+
+    sampled = 0.0;
+    // 双指缩放事件（user-driven）：滤波必须被旁路，样本立即生效。
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.05f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchEnd();
+    EXPECT_NEAR(0.0, controller_->groundState().terrainHeightMeters, 1e-9);
+}
+
 TEST_F(CameraControllerTest, FrameEndSentinelClampsExternalBareLookAt) {
     // Facade/JNI 可绕过控制器直接写 Camera（resetCamera/nativeGrazingView）。
     // 帧末哨兵必须在下一次 update() 把非法位姿收编钳出地面——调用方无需

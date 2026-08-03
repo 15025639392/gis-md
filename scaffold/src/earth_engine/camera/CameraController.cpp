@@ -29,6 +29,13 @@ constexpr double kMinAltitudeMeters = 50.0;
 // the query scans every loaded tile's mesh triangles (each with ECEF→geodetic
 // round-trips) and otherwise costs >150 ms/frame.
 constexpr double kMaxTerrainHeightMeters = 9000.0;
+// 非对称地形突变滤波(仅数据驱动的样本变化走滤波,用户驱动一律立即):
+// 上升立即(刚体优先——新瓦片证明脚下是山,延迟=穿模 Cesium 对称 10% 规则的
+// 缺陷);|Δ| ≤ max(Abs, Rel·h) 的小变动立即(LOD 抖动,绝对项防海面 h≈0 时
+// 相对判据退化);大幅下降按 τ 指数逼近(dt 感知,掉帧时收敛速率不变)。
+constexpr double kTerrainFilterAbsStepMeters = 10.0;
+constexpr double kTerrainFilterRelStep = 0.1;
+constexpr double kTerrainFilterDecayTauSeconds = 0.5;
 constexpr float kMinDistanceEarthRadii =
     static_cast<float>((kEarthRadiusMeters + kMinAltitudeMeters) /
                        kEarthRadiusMeters);
@@ -106,44 +113,6 @@ glm::dquat defaultViewRotation() {
     const glm::dvec3 axis = glm::normalize(glm::cross(baseViewDir, desiredViewDir));
     const double angle = std::acos(dot);
     return glm::angleAxis(angle, axis);
-}
-
-glm::dvec3 clampEyeToMinAltitude(const glm::dvec3& eye,
-                                 const CameraController::TerrainHeightFunc& terrainFunc,
-                                 double& lastKnownTerrainHeight) {
-    if (glm::length(eye) < 1e-6) return eye;
-
-    const auto& ellipsoid = Ellipsoid::WGS84();
-    const Vec3 eyeVec(eye);
-    const Cartographic cart = ellipsoid.cartesianToCartographic(eyeVec);
-
-    // Fast path: already above the tallest possible terrain + floor, so the
-    // clamp below can never change the eye. Skip the costly terrain query.
-    if (cart.height() >= kMaxTerrainHeightMeters + kMinAltitudeMeters) {
-        return eye;
-    }
-
-    const Vec3 surface = ellipsoid.projectToSurface(eyeVec);
-    const Vec3 normal = ellipsoid.geodeticSurfaceNormal(surface);
-
-    // 无地形数据(未加载 / 无覆盖瓦片)时 terrainFunc 返回 nullopt——不能当海平面
-    // 0 处理,否则相机会被允许下沉到未加载山体表面之下,瓦片加载后又被顶回(dip→
-    // pop)。保守回退到上一次有效样本(初值 0),让下限稳定、消除突跳。有数据时更新
-    // 缓存。无 terrainFunc(未接地形)时缓存恒 0 → 行为等价于旧的 bare-ellipsoid+50m。
-    double terrainHeight = lastKnownTerrainHeight;
-    if (terrainFunc) {
-        const std::optional<double> sampled = terrainFunc(surface);
-        if (sampled) {
-            terrainHeight = *sampled;
-            lastKnownTerrainHeight = *sampled;
-        }
-    }
-
-    const double minHeight = std::max(terrainHeight, 0.0) +
-                             kMinAltitudeMeters;
-
-    if (cart.height() >= minHeight) return eye;
-    return (surface + normal * minHeight).raw();
 }
 
 } // namespace
@@ -487,6 +456,7 @@ void CameraController::update(double deltaSeconds) {
     // 要求位姿逐帧字节稳定，哨兵绝不触碰。
     ConstraintContext ctx;
     ctx.observeOnly = measurementFreeze_;
+    ctx.deltaSeconds = deltaSeconds;
     resolveConstraints(ctx);
 }
 
@@ -608,6 +578,18 @@ bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
     if (ctx.observeOnly) {
         return false;
     }
+    // 位姿指纹比对：帧末发现位姿与上次解算结果不同 ⇒ 期间有未路由的写入
+    // （orbit 重建/回中/scriptedPan/外部裸写）——都是用户或调用方主动为之，
+    // 按 user-driven 处理（滤波立即）。数据驱动 = 位姿没动、只有地形样本变。
+    const bool poseChangedExternally =
+        ctx.source == ConstraintContext::Source::FrameEnd &&
+        hasLastResolvedPose_ &&
+        (glm::length(camera_->position().raw() - lastResolvedEye_) > 1e-6 ||
+         glm::length(camera_->direction().raw() - lastResolvedDir_) > 1e-9);
+    const bool userDriven =
+        ctx.source != ConstraintContext::Source::FrameEnd ||
+        poseChangedExternally;
+
     bool changed = false;
     if (orbitMode_) {
         // orbit 位姿由 rotation_/distance_ 每帧重建——约束必须表达在
@@ -616,7 +598,8 @@ bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
         // 可能残留米级亏空，再解一次即收敛（第二次几乎恒为 no-op）。
         for (int i = 0; i < 2; ++i) {
             const glm::dvec3 eye = camera_->position().raw();
-            const glm::dvec3 clamped = clampEyeAltitude(eye);
+            const glm::dvec3 clamped = constrainEyeAgainstTerrain(
+                eye, userDriven, i == 0 ? ctx.deltaSeconds : 0.0);
             if (glm::length(clamped - eye) <= 1e-6) {
                 break;
             }
@@ -628,7 +611,8 @@ bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
         }
     } else {
         const glm::dvec3 eye = camera_->position().raw();
-        const glm::dvec3 clamped = clampEyeAltitude(eye);
+        const glm::dvec3 clamped =
+            constrainEyeAgainstTerrain(eye, userDriven, ctx.deltaSeconds);
         if (glm::length(clamped - eye) > 1e-6) {
             camera_->setView(Vec3(clamped), camera_->direction(),
                              camera_->up());
@@ -876,9 +860,69 @@ void CameraController::syncDistanceFromCamera() {
     distance_ = static_cast<float>(camera_->position().length() / kEarthRadiusMeters);
 }
 
-glm::dvec3 CameraController::clampEyeAltitude(const glm::dvec3& eye) const {
-    return clampEyeToMinAltitude(
-        eye, terrainHeightFunc_, lastKnownTerrainHeight_);
+glm::dvec3 CameraController::constrainEyeAgainstTerrain(const glm::dvec3& eye,
+                                                        bool userDriven,
+                                                        double deltaSeconds) {
+    if (glm::length(eye) < 1e-6) return eye;
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 eyeVec(eye);
+    const Cartographic cart = ellipsoid.cartesianToCartographic(eyeVec);
+
+    // Fast path: already above the tallest possible terrain + floor, so the
+    // clamp below can never change the eye. Skip the costly terrain query.
+    if (cart.height() >= kMaxTerrainHeightMeters + kMinAltitudeMeters) {
+        groundState_.hasTerrainData = false;
+        groundState_.terrainHeightMeters = filteredTerrainHeight_;
+        groundState_.heightAboveTerrain = cart.height() - filteredTerrainHeight_;
+        return eye;
+    }
+
+    const Vec3 surface = ellipsoid.projectToSurface(eyeVec);
+    const Vec3 normal = ellipsoid.geodeticSurfaceNormal(surface);
+
+    // 无地形数据(未加载 / 无覆盖瓦片)时 terrainFunc 返回 nullopt——不能当海平面
+    // 0 处理,否则相机会被允许下沉到未加载山体表面之下,瓦片加载后又被顶回(dip→
+    // pop)。保守回退到滤波现值(初值 0)。有数据时经非对称突变滤波更新。
+    // 无 terrainFunc(未接地形)时恒 0 → 行为等价于 bare-ellipsoid+50m。
+    bool sampledThisCall = false;
+    if (terrainHeightFunc_) {
+        const std::optional<double> sampled = terrainHeightFunc_(surface);
+        if (sampled) {
+            updateFilteredTerrainHeight(*sampled, userDriven, deltaSeconds);
+            sampledThisCall = true;
+        }
+    }
+    groundState_.hasTerrainData = sampledThisCall;
+    groundState_.terrainHeightMeters = filteredTerrainHeight_;
+    groundState_.heightAboveTerrain = cart.height() - filteredTerrainHeight_;
+
+    const double minHeight = std::max(filteredTerrainHeight_, 0.0) +
+                             kMinAltitudeMeters;
+
+    if (cart.height() >= minHeight) return eye;
+    groundState_.heightAboveTerrain = minHeight - filteredTerrainHeight_;
+    return (surface + normal * minHeight).raw();
+}
+
+void CameraController::updateFilteredTerrainHeight(double rawHeightMeters,
+                                                   bool userDriven,
+                                                   double deltaSeconds) {
+    const double delta = rawHeightMeters - filteredTerrainHeight_;
+    // 非对称：用户驱动一律立即；数据驱动的上升立即（刚体优先——新瓦片证明
+    // 脚下是山，延迟生效 = 穿模）；小变动立即（吸收 LOD 抖动本身没有意义，
+    // 绝对项防 h≈0 海面时相对判据退化）；只有大幅下降才指数逼近——它不影响
+    // 相机（钳位只抬不压），平滑的是下游消费者（动态 near）看到的地面。
+    if (userDriven || delta > 0.0 ||
+        std::abs(delta) <=
+            std::max(kTerrainFilterAbsStepMeters,
+                     kTerrainFilterRelStep * std::abs(filteredTerrainHeight_))) {
+        filteredTerrainHeight_ = rawHeightMeters;
+    } else {
+        filteredTerrainHeight_ +=
+            delta * (1.0 - std::exp(-deltaSeconds /
+                                    kTerrainFilterDecayTauSeconds));
+    }
 }
 
 namespace {

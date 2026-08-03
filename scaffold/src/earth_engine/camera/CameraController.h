@@ -134,6 +134,18 @@ public:
     /// 写出 outWorld；否则返回 false。测试用查询（锚点获取/重试行为断言）。
     bool debugAnchorWorld(Vec3& outWorld) const;
 
+    /// 相机相对地形的一次解算快照，resolveConstraints 每次刷新。纯读，
+    /// 供渲染层（动态 near）、测试与诊断消费，不含策略。
+    struct CameraGroundState {
+        /// 滤波后的近场地形高（椭球高，米）。高空快速路径不采样时保持上值。
+        double terrainHeightMeters = 0.0;
+        /// AGL = 相机椭球高 − terrainHeightMeters。
+        double heightAboveTerrain = 0.0;
+        /// 本次解算是否拿到了有效地形样本（false = 快速路径/无覆盖）。
+        bool hasTerrainData = false;
+    };
+    const CameraGroundState& groundState() const { return groundState_; }
+
     /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
     double headingRadians() const;
     /// 相机俯仰角（弧度，0 = 水平，-π/2 = 正俯视）。
@@ -195,8 +207,16 @@ private:
     void applyCameraRotation(const glm::dquat& delta);
     void syncDistanceFromCamera();
 
-    /// Clamps eye to at least the configured visual floor above terrain/ellipsoid.
-    glm::dvec3 clampEyeAltitude(const glm::dvec3& eye) const;
+    /// 地形碰撞解算：把 eye 钳到滤波后地形高 + 视觉下限之上（仅抬升，不下压），
+    /// 途中刷新滤波与 groundState_。仅允许 resolveConstraints 调用。
+    glm::dvec3 constrainEyeAgainstTerrain(const glm::dvec3& eye,
+                                          bool userDriven,
+                                          double deltaSeconds);
+    /// 非对称地形突变滤波：用户驱动/上升/小变动立即，数据驱动大幅下降
+    /// 按 τ 指数逼近（见 .cpp 常量说明）。
+    void updateFilteredTerrainHeight(double rawHeightMeters,
+                                     bool userDriven,
+                                     double deltaSeconds);
 
     /// 相机位姿合法性的唯一出口（choke point）。手势/惯性路径在事件内调用；
     /// update() 帧末哨兵兜底收编所有未显式路由的位姿写入（orbit 重建、
@@ -211,6 +231,9 @@ private:
         /// true = 绝不修改位姿（measurementFreeze 的帧末哨兵：位姿必须
         /// 逐帧字节稳定，但地面状态仍可刷新供渲染层读取）。
         bool observeOnly = false;
+        /// 帧间隔（秒）。仅数据驱动的滤波衰减消费；手势/惯性事件传 0 即可
+        /// （它们是 user-driven，滤波恒立即）。
+        double deltaSeconds = 0.0;
     };
     /// @return 位姿是否被修改
     bool resolveConstraints(const ConstraintContext& ctx);
@@ -223,9 +246,10 @@ private:
     Camera* camera_;
     SurfacePicker surfacePicker_;
     TerrainHeightFunc terrainHeightFunc_;
-    // 最近一次有效地形高度样本(米),供地形无数据时的 clamp 保守回退。
-    // mutable:clampEyeAltitude 是 const 查询但需更新此缓存。
-    mutable double lastKnownTerrainHeight_ = 0.0;
+    // 滤波后的近场地形高(米)。无数据时保持现值(保守回退,防 dip→pop)；
+    // 数据驱动的突变经非对称滤波(updateFilteredTerrainHeight)。
+    double filteredTerrainHeight_ = 0.0;
+    CameraGroundState groundState_;
     // 上次 resolveConstraints 通过后的位姿指纹：帧末不等 ⇒ 有人绕过控制器
     // 写了 Camera（Facade/JNI 裸写）,按 user-driven 处理（突变滤波消费）。
     bool hasLastResolvedPose_ = false;
