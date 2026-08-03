@@ -365,6 +365,8 @@ int FeatureRenderLayer::syncDirtyBuckets() {
 void FeatureRenderLayer::tessellateFeatureInto(
     const Feature& feature,
     const AreaSampleFn& sample,
+    GlyphAtlas* glyphAtlas,
+    IconAtlas* iconAtlas,
     Vec3& origin,
     bool& hasOrigin,
     std::vector<float>& fillVerts,
@@ -523,7 +525,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
             const ResolvedSymbol sym = resolveSymbol(
                 resolveString(style_.pointImageExpr, feature.properties,
                               style_.pointImage),
-                style_.pointAnchor, iconAtlas_);
+                style_.pointAnchor, iconAtlas);
             const uint32_t base =
                 static_cast<uint32_t>(pointVerts.size() / kPointVertexFloats);
             // corner ∈ {±1}²(x 右为正,y 上为正)。
@@ -563,7 +565,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
     // (32B:anchor+offsetPx+uv+opacity)。锚点:Point 本体/LineString 弧长
     // 中点/Polygon 环 bbox 中心;贴地时中心点单独采样。顶点 opacity 初始
     // 0(placement fade-in 起点),同时登记 LabelEntry 供逐帧避让。
-    if (glyphAtlas_ && glyphAtlas_->ready() &&
+    if (glyphAtlas && glyphAtlas->ready() &&
         !geometry->rings.empty() && !geometry->rings[0].empty()) {
         const auto propIt = feature.properties.find(style_.labelProperty);
         if (propIt == feature.properties.end() || propIt->second.empty()) {
@@ -642,7 +644,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
             GlyphAtlas::decodeUtf8(propIt->second);
         float totalAdvance = 0.0f;
         for (uint32_t cp : codepoints) {
-            if (const GlyphAtlas::Glyph* g = glyphAtlas_->ensureGlyph(cp)) {
+            if (const GlyphAtlas::Glyph* g = glyphAtlas->ensureGlyph(cp)) {
                 totalAdvance += g->advance * s;
             }
         }
@@ -650,7 +652,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
         const float baseY = style_.labelOffsetPx;
         const size_t entryVertexStart = labelVerts.size();
         for (uint32_t cp : codepoints) {
-            const GlyphAtlas::Glyph* g = glyphAtlas_->ensureGlyph(cp);
+            const GlyphAtlas::Glyph* g = glyphAtlas->ensureGlyph(cp);
             if (!g) continue;
             if (g->hasBitmap) {
                 const float x0 = penX + g->offsetX * s;
@@ -689,9 +691,9 @@ void FeatureRenderLayer::tessellateFeatureInto(
             entry.boxMaxXPx = totalAdvance * 0.5f + style_.labelHaloPx;
             // descent() 已取正(基线下距离),下缘 = 基线减。
             entry.boxMinYPx =
-                baseY - glyphAtlas_->descent() * s - style_.labelHaloPx;
+                baseY - glyphAtlas->descent() * s - style_.labelHaloPx;
             entry.boxMaxYPx =
-                baseY + glyphAtlas_->ascent() * s + style_.labelHaloPx;
+                baseY + glyphAtlas->ascent() * s + style_.labelHaloPx;
             entry.vertexFloatStart = entryVertexStart;
             entry.vertexFloatCount = labelVerts.size() - entryVertexStart;
             labelEntries.push_back(entry);
@@ -1240,7 +1242,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         if (fid == previewFeatureId_) continue;  // 预览摘除中,走瞬态路径
         const Feature* feature = store_.getFeature(fid);
         if (!feature) continue;
-        tessellateFeatureInto(*feature, sample, origin, hasOrigin,
+        tessellateFeatureInto(*feature, sample, glyphAtlas_, iconAtlas_,
+                              origin, hasOrigin,
                               fillVerts, fillIndices, lineVerts, lineIndices,
                               pointVerts, pointIndices,
                               labelVerts, labelIndices, labelEntries,
@@ -1336,6 +1339,7 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         bool hasOrigin = false;
         tessellateFeatureInto(previewFeature,
                               makeClampSampler(previewRings_),
+                              glyphAtlas_, iconAtlas_,
                               origin, hasOrigin,
                               fillVerts, fillIndices,
                               lineVerts, lineIndices,

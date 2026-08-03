@@ -306,8 +306,17 @@ private:
 
     /// 镶嵌单要素几何并追加进 CPU 侧数组(rebuildBucket 与预览路径共用)。
     /// sample 非空 → 先做贴地预变换。
+    ///
+    /// **线程契约(E1)**:本方法只读 style_/ellipsoid_ 这类不可变状态,唯一
+    /// 的线程隐患是两个图集 —— GlyphAtlas::ensureGlyph 会现场栅格化字形并
+    /// 传纹理,IconAtlas 同理,都必须在渲染线程。故图集**走参数而非成员**:
+    /// worker 侧(MVT 瓦片桶路径)传 nullptr,若将来有人在 Polygon/LineString
+    /// 分支里用上图集,会立刻空指针炸掉,而不是静默数据竞争。
+    /// 现状:图集只在 Point(图标)与 label 发射处用到,fill/line 全程不碰。
     void tessellateFeatureInto(const Feature& feature,
                                const AreaSampleFn& sample,
+                               GlyphAtlas* glyphAtlas,
+                               IconAtlas* iconAtlas,
                                Vec3& origin,
                                bool& hasOrigin,
                                std::vector<float>& fillVerts,
