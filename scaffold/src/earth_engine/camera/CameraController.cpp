@@ -259,6 +259,7 @@ void CameraController::onPinchGesture(const PinchInput& input) {
         lastPinchTimestamp_ = input.timestamp;
         pinchAppliedScaleLog_ = 0.0;
         pinchAppliedTwistRadians_ = 0.0;
+        pinchPanAngularVelocity_ = 0.0;
         pinchActiveMode_ = PinchMode::Undecided;
         pitchAppliedRadians_ = 0.0;
         pitchBaselineY_ = input.centroidY;
@@ -400,7 +401,27 @@ void CameraController::onPinchGesture(const PinchInput& input) {
             pinTargetX = pitchPinX_;
             pinTargetY = pitchPinY_;
         }
-        applyPinchPin(pinTargetX, pinTargetY);
+        const glm::dquat pinDelta = applyPinchPin(pinTargetX, pinTargetY);
+
+        // 双指 pan 惯性累积（EMA，与 zoom 惯性同构：静止/纯缩放帧采样 0，
+        // 速率自然衰减向 0，只有真正在平移才留下动量）。Pitch/Undecided 的
+        // pin 目标静止 → delta≈identity → 自动不积。松手时种进与单指共用
+        // 的惯性通道（onPinchEnd）。
+        {
+            const double dt = input.timestamp - lastPinchTimestamp_;
+            if (dt > 0.0 && dt < 0.25) {
+                const double angle = glm::angle(pinDelta);
+                const double instVelocity = angle > 1e-9
+                    ? std::min(angle / dt, kMaxInertiaAngularVelocityRadPerSec)
+                    : 0.0;
+                if (angle > 1e-9) {
+                    pinchPanAxis_ = glm::axis(pinDelta);
+                }
+                pinchPanAngularVelocity_ =
+                    pinchPanAngularVelocity_ * (1.0 - kVelocitySmoothing) +
+                    instVelocity * kVelocitySmoothing;
+            }
+        }
 
         if (stepScale < 1.0) {
             accrueRecenterBudget(-std::log(stepScale));
@@ -436,9 +457,13 @@ void CameraController::onPinchGesture(const PinchInput& input) {
 void CameraController::onPinchEnd() {
     logGestureDiag("pinchEnd", lastPinchCentroidX_, lastPinchCentroidY_);
     pinching_ = false;
-    inertiaAngularVelocity_ = 0.0;
     adapterScaleLog_ = 0.0;
     adapterTwistRadians_ = 0.0;
+    // 双指 pan 惯性：把手势期累积的 pin 角速度种进与单指拖拽共用的惯性
+    // 通道（update() 统一衰减；量太小会立即跌破 1e-4 地板自然停）。
+    inertiaAngularVelocity_ = pinchPanAngularVelocity_;
+    inertiaAxis_ = pinchPanAxis_;
+    pinchPanAngularVelocity_ = 0.0;
     // 松手时若刚才在缩放且留有足够动量，启动 zoom 惯性滑行（锚点仍需保留以
     // 沿视线朝它 dolly）。否则清零。
     if (hasPinchAnchor_ &&
@@ -1033,16 +1058,17 @@ bool CameraController::tryAcquirePinchAnchor(float xPixels, float yPixels) {
     return true;
 }
 
-void CameraController::applyPinchPin(float targetX, float targetY) {
+glm::dquat CameraController::applyPinchPin(float targetX, float targetY) {
+    const glm::dquat kIdentity{1.0, 0.0, 0.0, 0.0};
     const AnchorSolveResult solve =
         solveAnchorRotation(pinchAnchorNormal_, targetX, targetY);
     bool regrab = false;
-    glm::dquat delta{1.0, 0.0, 0.0, 0.0};
+    glm::dquat delta = kIdentity;
     if (solve.valid) {
         const double w = anchorExactWeight(solve.conditioning);
         if (w >= 1.0) {
             if (solve.degenerate) {
-                return;  // 锚点已在目标像素下（纯缩放/拧动帧），无事发生
+                return kIdentity;  // 锚点已在目标像素下（纯缩放/拧动帧）
             }
             delta = solve.delta;
         } else {
@@ -1087,6 +1113,7 @@ void CameraController::applyPinchPin(float targetX, float targetY) {
             pinchAnchorNormal_ = regrabbed.normalized();
         }
     }
+    return delta;
 }
 
 bool CameraController::intersectSphere(const Ray& ray,

@@ -766,6 +766,115 @@ TEST_F(CameraControllerTest, ZoomInertiaKeepsAnchorPinnedDuringGlide) {
     }
 }
 
+TEST_F(CameraControllerTest, PinchPanFlickGlidesThenDecays) {
+    // 步骤6：双指刚性 pan 甩动松手后沿运动方向继续滑行（与单指拖拽共用
+    // 惯性通道），随后指数衰减停住。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(3.0f);
+    controller_->update(0.0);
+
+    double t = 1.0;
+    controller_->onPinchGesture(pinchIn(
+        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate, t));
+    float x = 400.0f;
+    for (int i = 0; i < 6; ++i) {
+        t += 0.016;
+        x += 12.0f;
+        controller_->onPinchGesture(pinchIn(
+            1.0f, 0.0f, x, 300.0f, CameraController::PinchMode::Manipulate, t));
+    }
+    controller_->onPinchEnd();
+
+    const auto qEnd = controller_->rotation();
+    controller_->update(1.0 / 60.0);
+    const auto qGlide = controller_->rotation();
+    const double glideDiff =
+        std::abs(qEnd.w - qGlide.w) + std::abs(qEnd.x - qGlide.x) +
+        std::abs(qEnd.y - qGlide.y) + std::abs(qEnd.z - qGlide.z);
+    EXPECT_GT(glideDiff, 1e-9);  // 松手后仍在转
+
+    for (int i = 0; i < 240; ++i) controller_->update(1.0 / 60.0);
+    const auto qBefore = controller_->rotation();
+    controller_->update(1.0 / 60.0);
+    const auto qAfter = controller_->rotation();
+    const double settledDiff =
+        std::abs(qBefore.w - qAfter.w) + std::abs(qBefore.x - qAfter.x) +
+        std::abs(qBefore.y - qAfter.y) + std::abs(qBefore.z - qAfter.z);
+    EXPECT_LT(settledDiff, 1e-6);  // 已衰减停住
+}
+
+TEST_F(CameraControllerTest, PinchPanAndZoomDoubleInertiaConvergesToWorldAnchor) {
+    // 步骤6：pan+zoom 双惯性并行。zoomInertiaAnchor_ 是固定世界点，pan 惯性
+    // 转的是相机（世界点不动），滑行期 dolly 持续朝原世界锚点收敛——距离
+    // 单调减、旋转持续、全程有界不发散。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(4.0f);
+    controller_->update(0.0);
+    const Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+
+    double t = 1.0;
+    controller_->onPinchGesture(pinchIn(
+        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate, t));
+    for (int i = 1; i <= 6; ++i) {
+        t += 0.016;
+        controller_->onPinchGesture(pinchIn(
+            1.0f + 0.04f * static_cast<float>(i), 0.0f,
+            400.0f + 12.0f * static_cast<float>(i), 300.0f,
+            CameraController::PinchMode::Manipulate, t));
+    }
+    controller_->onPinchEnd();
+
+    double prevDist = camera_->position().distanceTo(anchor);
+    const auto q0 = controller_->rotation();
+    for (int i = 0; i < 8; ++i) {
+        controller_->update(1.0 / 60.0);
+        const double dist = camera_->position().distanceTo(anchor);
+        EXPECT_LT(dist, prevDist) << "frame " << i;  // zoom 持续朝世界锚点
+        prevDist = dist;
+    }
+    const auto q1 = controller_->rotation();
+    const double rotDiff = std::abs(q0.w - q1.w) + std::abs(q0.x - q1.x) +
+                           std::abs(q0.y - q1.y) + std::abs(q0.z - q1.z);
+    EXPECT_GT(rotDiff, 1e-9);  // pan 同时在滑
+
+    for (int i = 0; i < 1000; ++i) controller_->update(1.0 / 60.0);
+    const double alt =
+        Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
+    EXPECT_GE(alt, 49.0);
+    EXPECT_LT(alt, 6.5 * kEarthRadiusMeters);  // 不发散
+}
+
+TEST_F(CameraControllerTest, PinchPitchReleaseDoesNotSeedPanInertia) {
+    // Pitch 模式锚点钉 latch 像素，pin 增量恒为 identity → 松手不得产生
+    // pan 滑行（旧架构里竖向质心移动会被当 pan 积速度）。
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(4.0f);
+    controller_->update(0.0);
+
+    double t = 1.0;
+    controller_->onPinchGesture(pinchIn(
+        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Undecided, t));
+    t += 0.016;
+    controller_->onPinchGesture(pinchIn(
+        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Pitch, t));
+    for (int i = 1; i <= 6; ++i) {
+        t += 0.016;
+        controller_->onPinchGesture(pinchIn(
+            1.0f, 0.0f, 400.0f, 300.0f - 25.0f * static_cast<float>(i),
+            CameraController::PinchMode::Pitch, t));
+    }
+    controller_->onPinchEnd();
+
+    const auto qEnd = controller_->rotation();
+    for (int i = 0; i < 5; ++i) controller_->update(1.0 / 60.0);
+    const auto qAfter = controller_->rotation();
+    const double diff =
+        std::abs(qEnd.w - qAfter.w) + std::abs(qEnd.x - qAfter.x) +
+        std::abs(qEnd.y - qAfter.y) + std::abs(qEnd.z - qAfter.z);
+    EXPECT_LT(diff, 1e-9);
+}
+
 TEST_F(CameraControllerTest, DragInterruptsZoomInertia) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->setDistance(6.0f);

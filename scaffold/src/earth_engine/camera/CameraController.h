@@ -177,7 +177,8 @@ private:
     bool tryAcquirePinchAnchor(float xPixels, float yPixels);
     /// pinch 钉合：把锚点钉到目标像素，病态区连续混入质心转台并整点重取
     /// 锚点（与单指 applyAnchorDrag 同一套连续化策略），末尾做高度钳位。
-    void applyPinchPin(float targetX, float targetY);
+    /// @return 实际施加的旋转增量（未施加时为单位四元数），供 pan 惯性累积。
+    glm::dquat applyPinchPin(float targetX, float targetY);
     void applyAnchorDrag(float xPixels, float yPixels, double timestamp);
     void applyRotationAroundAxis(const glm::dvec3& axis, double angle);
     void rotateCameraAroundPoint(const glm::dvec3& center,
@@ -265,6 +266,12 @@ private:
     // 旧契约适配器的每事件增量累计（新契约不使用）。
     double adapterScaleLog_ = 0.0;
     double adapterTwistRadians_ = 0.0;
+    // 双指 pan 惯性累积（EMA，静止帧自然衰减向 0）：松手时种进与单指拖拽
+    // 共用的 inertiaAxis_/inertiaAngularVelocity_ 通道。zoomInertiaAnchor_
+    // 是固定世界点，pan 惯性转的是相机（applyCameraRotation），世界点不动，
+    // 双惯性并行无需同转锚点——dolly 朝固定世界点在任意相机旋转下都正确。
+    glm::dvec3 pinchPanAxis_{0.0, 1.0, 0.0};
+    double pinchPanAngularVelocity_ = 0.0;
 
     // 高空回中欠账（弧度）。手势/滑行期充值，无手势时 update() 消费。
     double recenterBudgetRadians_ = 0.0;
