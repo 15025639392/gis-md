@@ -44,3 +44,32 @@ tools/seam_metric/seam_leak.py <截图目录> [更多目录...]
 ⚠️ 跨**构建变体**比较要小心：关掉卫星影像改走 Debug 棋盘时，细分深度由 debug
 图层驱动（实测到 z16+），可见瓦片数与 LOD 跨度都变了，与卫星档不可直接比。
 同一档内比才有效。
+
+## 采集脚本化(2026-08-03)
+
+暂态接缝峰值随缓存温度/加载节奏剧烈波动(同构建实测 1260 vs 6699),单轮
+采样不可判 A/B。`collect.sh` 固化协议:冷缓存(卸载重装)× N 轮 × 同段确定
+性运动(掠视 + 缩放往返),含真人触摸污染检测;`report.py` 三指标判定:
+
+| 指标 | 判据 |
+|---|---|
+| ① steady(尾段 40% 最大漏天) | **必须全轮 = 0**,回归一票否决(机制 B 已达成) |
+| ② transSum(全序列合计) | ≤1.2× 基线;超且 p<0.05 FAIL;超但 p≥0.05 INCONC |
+
+```bash
+tools/seam_metric/collect.sh before 3
+# 改代码 → 重建 release
+tools/seam_metric/collect.sh after 3
+tools/seam_metric/report.py tools/seam_metric/out/before tools/seam_metric/out/after
+```
+
+## 金字塔层间 ε 实测(`pyramid_eps.py`)
+
+机制 B 后暂态残缝 = 金字塔层间重采样差 ε(自吸附只能精确到"自数据降采样",
+父层 ≠ 子层降采样时残缝即 ε)。线上源(重庆山区)实测:**边界 p95 = 5-13m,
+峰 25-50m** —— 掠视下数像素,与观测吻合。
+
+数据侧解:`dem_test/scripts/build_nested_pyramid.py` 把粗层重建为细层的
+2×2 均值聚合。线上子树验证:重建后 ε → **mean 0.02m / max 0.05m**(0.1m
+编码步长的舍入上界,理论极限)。待 hosting 侧全量重建后,用上面的 A/B 协议
+验收暂态归零。
