@@ -27,7 +27,10 @@ ACTIVITY="$PKG/.MainActivity"
 APK="$SCAFFOLD_DIR/examples/android/app/build/outputs/apk/release/app-release.apk"
 
 SETTLE_S=22      # 初始视图收敛
-TILT_STEPS=5     # DPAD_DOWN ×5 → 掠视(接缝最易暴露的姿态)
+TILT_STEPS=5     # DPAD_UP(19)×5 → 掠视(接缝最易暴露的姿态)。
+                 # ⚠️ 方向:demo GLESView 里 DPAD_UP=tilt -80(压向掠视),
+                 # DPAD_DOWN=tilt +80(抬回俯视)。写反 = 全程正俯视,
+                 # 无地平线,检测器整段误报(踩过:steady 39 万全是假)。
 ZOOM_STEPS=25    # 音量键缩放往返幅度
 SHOTS=40         # 运动期截图数(与缩放并行采,覆盖整个暂态窗)
 
@@ -88,7 +91,7 @@ for k in $(seq 1 "$RUNS"); do
     adb shell am start -n "$ACTIVITY" >/dev/null
     sleep "$SETTLE_S"
 
-    for _ in $(seq 1 "$TILT_STEPS"); do adb shell input keyevent 20; done
+    for _ in $(seq 1 "$TILT_STEPS"); do adb shell input keyevent 19; done
     sleep 3
     shot "$RUNDIR/pre.png"
 
