@@ -213,7 +213,12 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
         const float v = static_cast<float>(j) / static_cast<float>(gridSize);
         for (int i = 0; i < n; ++i) {
             const float u = static_cast<float>(i) / static_cast<float>(gridSize);
-            nodeH[static_cast<size_t>(j) * n + i] = heightmap.sampleBilinear(u, v);
+            const float sampled = heightmap.sampleBilinear(u, v);
+            // 四角全 nodata 时 sampleBilinear 原样回传哨兵(保留"此处无数据"
+            // 信号);烘焙侧落 0(海平面,Mapbox 缺数据语义),不能让哨兵进高度
+            // 量化与法线差分。
+            nodeH[static_cast<size_t>(j) * n + i] =
+                heightmap.isNoData(sampled) ? 0.0f : sampled;
         }
     }
     // ---- B/A 通道 = 切空间法线(解"竖条"= 逐三角面平法线)----

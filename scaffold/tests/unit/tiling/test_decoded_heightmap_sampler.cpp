@@ -344,3 +344,31 @@ TEST(SeamNorthstarP4Test, PerTileQuantizationDivergenceBounded) {
     EXPECT_LE(worst, bound);
     EXPECT_LE(worst, 0.1f);  // 山地量级下绝对不可见
 }
+
+// === 无缝北极星根修回归:nodata 重叠环(全球金字塔缺邻居时环列整条 -10000,
+// 实测 6/51/25 西环形态)。哨兵未注册时 -10000 被当合法高度混进边缘双线性 →
+// 边缘一格宽 km 级假深沟(顶点被紧 near/far 裁掉 = 黑裂缝)+假悬崖法线
+// (瓦片边界光照条带)。锁两条:①注册哨兵后环 nodata 被 renormalize 剔除,
+// 边缘采样不含哨兵渗漏;②四角全 nodata 原样回传哨兵,isNoData(result) 可判
+// (烘焙侧据此落 0)。
+TEST(SeamNorthstarNoDataTest, NoDataRingExcludedFromEdgeBilinear) {
+    DecodedHeightmap hm = makeOverlapTile514(0, 0);
+    hm.noDataValues.push_back(-10000.0f);
+    for (int py = 0; py < 514; ++py) {
+        hm.heights[static_cast<size_t>(py) * 514 + 0] = -10000.0f;
+    }
+    for (int j = 0; j <= 64; ++j) {
+        const float v = static_cast<float>(j) / 64.0f;
+        const float h = hm.sampleBilinear(0.0f, v);
+        EXPECT_FALSE(hm.isNoData(h));
+        EXPECT_GT(h, -1000.0f);
+    }
+}
+
+TEST(SeamNorthstarNoDataTest, AllNoDataCornersPropagateSentinel) {
+    DecodedHeightmap hm;
+    hm.tileSize = 2;
+    hm.heights = {-10000.0f, -10000.0f, -10000.0f, -10000.0f};
+    hm.noDataValues.push_back(-10000.0f);
+    EXPECT_TRUE(hm.isNoData(hm.sampleBilinear(0.5f, 0.5f)));
+}

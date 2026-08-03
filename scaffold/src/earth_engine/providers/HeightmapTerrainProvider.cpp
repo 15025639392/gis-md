@@ -291,6 +291,13 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
         hm->heightFactor = heightFactor_;
         hm->borderInset = borderInset_;
         hm->noDataValues = noDataValues_;
+        if (encoding_ == Encoding::MapboxTerrainRgb) {
+            // Terrain-RGB 的 RGB(0,0,0) 解码恰为 -10000m = 数据源 nodata 底值
+            // (缺邻居的重叠环/数据空洞都编成它)。不注册则 -10000 被当合法高度
+            // 混进边缘双线性,造出 km 级假深沟(顶点被紧 near/far 裁掉 → 黑裂缝)
+            // 与假悬崖法线(瓦片边界光照条带)。
+            hm->noDataValues.push_back(-10000.0f * heightFactor_);
+        }
 
         size_t count = static_cast<size_t>(img->width * img->height);
         hm->heights.reserve(count);
@@ -309,11 +316,15 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
             }
             h *= heightFactor_;  // OpenGlobus _heightFactor
             hm->heights.push_back(h);
-            if (h < minH) minH = h;
-            if (h > maxH) maxH = h;
+            // min/max 只统计有效高度:nodata 混入会把量化区间拉到 -10000,
+            // 16bit 高度精度被吃掉 2/3。
+            if (!hm->isNoData(h)) {
+                if (h < minH) minH = h;
+                if (h > maxH) maxH = h;
+            }
         }
-        hm->minHeight = minH;
-        hm->maxHeight = maxH;
+        hm->minHeight = minH <= maxH ? minH : 0.0f;
+        hm->maxHeight = minH <= maxH ? maxH : 0.0f;
         return hm;
     }
 
@@ -328,6 +339,10 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
     hm->heightFactor = heightFactor_;
     hm->borderInset = borderInset_;
     hm->noDataValues = noDataValues_;
+    if (encoding_ == Encoding::MapboxTerrainRgb) {
+        // 与 platformBridge 分支同义:注册 Terrain-RGB nodata 底值,见上方注释。
+        hm->noDataValues.push_back(-10000.0f * heightFactor_);
+    }
 
     size_t count = static_cast<size_t>(w * h);
     hm->heights.reserve(count);
@@ -346,11 +361,13 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
         }
         elev *= heightFactor_;  // OpenGlobus _heightFactor
         hm->heights.push_back(elev);
-        if (elev < minH) minH = elev;
-        if (elev > maxH) maxH = elev;
+        if (!hm->isNoData(elev)) {
+            if (elev < minH) minH = elev;
+            if (elev > maxH) maxH = elev;
+        }
     }
-    hm->minHeight = minH;
-    hm->maxHeight = maxH;
+    hm->minHeight = minH <= maxH ? minH : 0.0f;
+    hm->maxHeight = minH <= maxH ? maxH : 0.0f;
     stbi_image_free(pixels);
     return hm;
 #else
