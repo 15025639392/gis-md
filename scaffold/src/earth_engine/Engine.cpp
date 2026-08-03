@@ -416,6 +416,11 @@ bool Engine::render(double deltaSeconds) {
         if (!offscreenPassActive_) {
             device_->beginPass(nullptr);
         }
+        // T2:把场景 pass 的目标交给 Scene —— 地形深度 prepass 会临时切走
+        // pass,跑完必须切回这里(离屏失败时是 nullptr = 直绘主 pass)。
+        scene_->setSceneRenderTarget(
+            offscreenPassActive_ ? offscreenTarget : nullptr,
+            surfaceWidthPixels_, surfaceHeightPixels_);
         scene_->recordEngineTiming(
             Scene::EngineTimingScope::BeginFrame,
             perf::nowMs() - startMs);

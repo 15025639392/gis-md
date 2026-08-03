@@ -222,7 +222,10 @@ bool Scene::render() {
         layers_->vectorLayers(),
         layers_->featureRenderLayers(),
         [this]() { updatePresentationTrace(); },
-        renderDevice_});
+        renderDevice_,
+        sceneRenderTarget_,
+        sceneSurfaceWidthPixels_,
+        sceneSurfaceHeightPixels_});
     telemetry_->replaceRenderDiagnostics(renderResult.diagnostics);
     return renderResult.presentable;
 }

@@ -369,6 +369,11 @@ private:
     void updateLabelPlacement(const FrameState& frameState,
                               const std::vector<BucketKey>& visibleKeys);
 
+    /// T2:给符号命令(点/标注)挂地形深度纹理 + 遮挡参数。纹理恒占
+    /// textures[1],通路不可用时挂 nullptr 并把 enabled 置 0。
+    void appendTerrainOcclusion(const Renderer& renderer,
+                                RenderCommand& cmd) const;
+
     /// 生成一对 fill/line 命令追加进 commands(常驻桶与预览路径共用)。
     void appendBucketCommands(const BucketGpu& gpu,
                               const FrameState& frameState,

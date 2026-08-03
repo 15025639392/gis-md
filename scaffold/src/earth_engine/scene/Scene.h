@@ -16,6 +16,7 @@ struct Diagnostics;
 struct InputEvent;
 struct PickResult;
 struct PresentationTrace;
+class Framebuffer;
 class RenderDevice;
 class Renderer;
 class SceneEnvironmentCoordinator;
@@ -59,6 +60,15 @@ public:
     void setViewport(int widthPixels, int heightPixels, float dpr = 1.0f);
     void update(double deltaSeconds);
     bool render();
+
+    /// T2:Engine 在 beginPass 之后、render() 之前推入场景 pass 的目标与像素
+    /// 尺寸。地形深度 prepass 会临时切走 pass,靠这个切回来。
+    void setSceneRenderTarget(Framebuffer* target, int widthPixels,
+                              int heightPixels) {
+        sceneRenderTarget_ = target;
+        sceneSurfaceWidthPixels_ = widthPixels;
+        sceneSurfaceHeightPixels_ = heightPixels;
+    }
     // 非 const:内部要累计"已连续扣住多少帧"以保证活性(见 .cpp 实现注释)。
     bool shouldHoldPresentationFrame();
     void setSelectorViewOverride(
@@ -130,6 +140,12 @@ private:
     std::unique_ptr<SceneRenderPipeline> renderPipeline_;
     SceneFrameRuntime frameRuntime_;
     RenderDevice* renderDevice_ = nullptr;
+    // T2:场景 pass 的目标(离屏 FBO;直绘为 nullptr)与其像素尺寸,由
+    // Engine 在 beginPass 后、render() 前推入。地形深度 prepass 跑完要靠
+    // 它把场景 pass 重新 begin 回来。
+    Framebuffer* sceneRenderTarget_ = nullptr;
+    int sceneSurfaceWidthPixels_ = 0;
+    int sceneSurfaceHeightPixels_ = 0;
 
     // 矢量图层
     std::unique_ptr<SceneLayerCoordinator> layers_;

@@ -867,6 +867,12 @@ add_executable(test_renderer_commands
 target_link_libraries(test_renderer_commands PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_renderer_commands COMMAND test_renderer_commands)
 
+add_executable(test_terrain_depth_prepass
+    unit/renderer/test_terrain_depth_prepass.cpp
+)
+target_link_libraries(test_terrain_depth_prepass PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_depth_prepass COMMAND test_terrain_depth_prepass)
+
 add_executable(test_terrain_shader_command
     unit/renderer/test_terrain_shader_command.cpp
 )

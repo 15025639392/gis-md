@@ -1516,6 +1516,23 @@ void FeatureRenderLayer::updateLabelPlacement(
     if (previewGpuValid_) apply(previewGpu_);
 }
 
+// T2:把地形深度纹理与遮挡参数挂到符号命令上。
+//
+// 纹理**恒占 textures[1]**(后端按下标 1:1 绑纹理单元;标注的字形图集、点的
+// 图标图集各自占 [0])。通路不可用时挂 nullptr 并把 enabled 置 0 —— shader
+// 里整条判定早退,符号回到原 u_depthPushNdc 行为,零回归。
+void FeatureRenderLayer::appendTerrainOcclusion(const Renderer& renderer,
+                                                RenderCommand& cmd) const {
+    const Renderer::TerrainOcclusionParams& occ = renderer.terrainOcclusion();
+    const bool enabled = occ.depthTexture != nullptr;
+    cmd.textures.push_back(occ.depthTexture);
+    cmd.uniforms["u_terrainOcclusion"] = {
+        enabled ? 1.0f : 0.0f,
+        occ.nearPlaneMeters,
+        occ.farPlaneMeters,
+        occ.biasMeters};
+}
+
 void FeatureRenderLayer::appendBucketCommands(
     const BucketGpu& gpu,
     const FrameState& frameState,
@@ -1736,9 +1753,13 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.uniforms["u_depthPushNdc"] = {symbolDepthPush};
             // P6c:图集通道的顶点(shape<0)要采位图。纹理常挂(有图标才
             // 存在),无图集时桶里也不会有图集顶点,shader 分支不触达。
-            if (iconAtlas_ && iconAtlas_->texture()) {
-                cmd.textures.push_back(iconAtlas_->texture());
-            }
+            // ⚠️ 无图集时也必须占位 nullptr:T2 的地形深度纹理恒取
+            // textures[1](后端按下标 1:1 绑 unit),下标浮动会把深度绑到
+            // 图集的采样器上。后端对 nullptr 项直接跳过,占位无副作用。
+            cmd.textures.push_back(
+                (iconAtlas_ && iconAtlas_->texture()) ? iconAtlas_->texture()
+                                                      : nullptr);
+            appendTerrainOcclusion(renderer, cmd);
             commands.push_back(std::move(cmd));
         }
 
@@ -1761,6 +1782,7 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.blend = true;
             cmd.cullFace = false;
             cmd.textures.push_back(glyphAtlas_->texture());
+            appendTerrainOcclusion(renderer, cmd);
             cmd.uniforms["u_modelViewProjection"] = mvpUniform;
             cmd.uniforms["u_color"] = {style_.labelColor[0],
                                        style_.labelColor[1],

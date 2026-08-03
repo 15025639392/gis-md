@@ -201,6 +201,10 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     double validateMs = 0.0;
     double diagnosticsMs = 0.0;
 
+    // T2:命令构建**之前**把地形深度纹理推给 Renderer —— 符号命令要在
+    // buildLayerCommands 里绑它。纹理对象跨帧稳定,内容由随后的
+    // runTerrainDepthPrepass 写入当帧深度,故符号采到的不是陈旧数据。
+    prepareTerrainOcclusion(context);
     buildSkyCommands(context, skyMs);
     buildAtmosphereCommands(context, atmosphereMs);
     buildLayerCommands(context, layerCommandsMs, vectorCommandsMs);
@@ -228,6 +232,7 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
     if (presentable) {
         const double submitStartMs = perf::nowMs();
+        runTerrainDepthPrepass(context);
         context.renderer.submit(context.commands);
         context.diagnostics.renderSubmitMs =
             perf::nowMs() - submitStartMs;
@@ -535,6 +540,72 @@ void SceneRenderPipeline::sortAndValidate(
             "': " + error->message);
     }
     validateMs = perf::nowMs() - validateStartMs;
+}
+
+void SceneRenderPipeline::prepareTerrainOcclusion(Context& context) const {
+    Renderer::TerrainOcclusionParams params;
+    if (context.renderDevice) {
+        if (!terrainDepthPrepassInitAttempted_) {
+            terrainDepthPrepassInitAttempted_ = true;
+            terrainDepthPrepass_.initialize(context.renderDevice,
+                                            &context.renderer);
+        }
+        if (terrainDepthPrepass_.ready() &&
+            terrainDepthPrepass_.ensureFramebuffer(
+                context.surfaceWidthPixels, context.surfaceHeightPixels)) {
+            params.depthTexture = terrainDepthPrepass_.depthTexture();
+        }
+    }
+    if (const Camera* cam = context.frameState.camera) {
+        params.nearPlaneMeters = static_cast<float>(cam->nearPlaneMeters());
+        params.farPlaneMeters = static_cast<float>(cam->farPlaneMeters());
+    }
+    context.renderer.setTerrainOcclusion(params);
+}
+
+void SceneRenderPipeline::runTerrainDepthPrepass(Context& context) const {
+    if (!context.renderDevice) {
+        return;
+    }
+    if (!terrainDepthPrepassInitAttempted_) {
+        terrainDepthPrepassInitAttempted_ = true;
+        terrainDepthPrepass_.initialize(context.renderDevice, &context.renderer);
+    }
+    if (!terrainDepthPrepass_.ready()) {
+        return;
+    }
+    RenderCommandList depthCommands =
+        terrainDepthPrepass_.extractTerrainCommands(context.commands);
+    if (depthCommands.empty()) {
+        // 本帧没有真实地形(纯椭球/加载期 fill 代理)→ 不跑 prepass。此时
+        // 深度纹理保持上一帧内容,但符号侧靠 u_terrainDepthEnabled 关掉判定,
+        // 不会读到陈旧深度(见 FeatureRenderLayer 绑定处)。
+        return;
+    }
+    Framebuffer* depthTarget = terrainDepthPrepass_.ensureFramebuffer(
+        context.surfaceWidthPixels, context.surfaceHeightPixels);
+    if (!depthTarget) {
+        return;
+    }
+    // prepass → 再把场景 pass begin 回来。此刻场景 FBO 还没画过任何东西,
+    // beginPass 的二次 clear 无害(GLES beginPass = 绑 FBO + 复位状态 + clear)。
+    if (!context.renderDevice->beginPass(depthTarget)) {
+        context.renderDevice->beginPass(context.sceneTarget);
+        return;
+    }
+    context.renderer.submit(depthCommands);
+    context.renderDevice->beginPass(context.sceneTarget);
+
+    // 机制信号:通路是否真的在跑。观感 A/B 出现"零变化"时,必须能区分
+    // 「场景里没有被遮挡的符号」与「prepass 静默失效」—— 没有这行就只能靠猜。
+    static int sPrepassLogCount = 0;
+    if ((sPrepassLogCount++ % 120) == 0) {
+        platformLog(LogLevel::Info, "EarthPerf",
+                    "TerrainDepthPrepass cmds=%zu fbo=%dx%d depthTex=%d",
+                    depthCommands.size(), depthTarget->width(),
+                    depthTarget->height(),
+                    terrainDepthPrepass_.depthTexture() != nullptr ? 1 : 0);
+    }
 }
 
 void SceneRenderPipeline::aggregateDiagnostics(

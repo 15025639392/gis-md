@@ -1076,6 +1076,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 离屏后处理 aerial fog:depth 采样器绑 unit 1(其它 program
             // 未声明此名 → loc=-1 无副作用)。
             setSampler("u_depthTexture", 1);
+            // T2 符号地形遮挡:地形深度纹理恒绑 unit 1(点/标注命令的
+            // textures[1];点命令无图集时 textures[0] 占位 nullptr,保证下标
+            // 稳定)。与上面的 u_depthTexture 同 unit 不冲突 —— 分属不同
+            // program,未声明该名的 program loc=-1 无副作用。
+            setSampler("u_terrainDepth", 1);
             setSampler("u_baseColorTexture", 0);
             setSampler("u_metallicRoughnessTexture", 1);
             setSampler("u_normalTexture", 2);

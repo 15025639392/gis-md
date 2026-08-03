@@ -154,6 +154,14 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     EXPECT_TRUE(cmd.blend);
     ASSERT_EQ(1u, cmd.uniforms.count("u_pointSizePx"));
     ASSERT_EQ(1u, cmd.uniforms.count("u_viewport"));
+    // T2 不变量:**没有图标图集时也要占位**,深度纹理恒落 textures[1]。
+    // 后端按下标 1:1 绑纹理单元,下标随图集有无浮动会把深度绑到图集的
+    // 采样器上 —— 表现为图标被一张深度图替换,极难从现象反推。
+    ASSERT_EQ(2u, cmd.textures.size());
+    EXPECT_EQ(nullptr, cmd.textures[0]);  // 本例无图集
+    EXPECT_EQ(nullptr, cmd.textures[1]);  // host 无深度通路
+    ASSERT_EQ(1u, cmd.uniforms.count("u_terrainOcclusion"));
+    EXPECT_FLOAT_EQ(0.0f, cmd.uniforms.at("u_terrainOcclusion")[0]);
 
     // 顶点打包:4 × (anchor rel 3f + offsetUnit 2f + uv 2f + color 4B +
     // shape 1f);首顶点 anchor = 桶原点 → rel(0,0,0),corner=(-1,-1) →
@@ -437,8 +445,13 @@ TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
     ASSERT_NE(nullptr, label);
     EXPECT_EQ(32, label->vertexStride);  // P5c:+opacity(4)
     EXPECT_EQ(12, label->indexCount);  // 2 字形 × 6
-    ASSERT_EQ(1u, label->textures.size());
+    // [0]=字形图集,[1]=T2 地形深度槽(host 无深度通路 → nullptr 占位)。
+    // 下标必须稳定:后端按下标 1:1 绑纹理单元,浮动会把深度绑错采样器。
+    ASSERT_EQ(2u, label->textures.size());
     EXPECT_NE(nullptr, label->textures[0]);
+    EXPECT_EQ(nullptr, label->textures[1]);
+    ASSERT_EQ(1u, label->uniforms.count("u_terrainOcclusion"));
+    EXPECT_FLOAT_EQ(0.0f, label->uniforms.at("u_terrainOcclusion")[0]);
     ASSERT_EQ(1u, label->uniforms.count("u_sdfEdge"));
     ASSERT_EQ(1u, label->uniforms.count("u_sdfHaloDelta"));
     EXPECT_EQ("color", label->pass);
@@ -1396,8 +1409,10 @@ TEST_F(FeatureRenderLayerTest, AtlasIconBakesUvAspectAndBindsTexture) {
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
     const RenderCommand& cmd = commands[0];
-    ASSERT_EQ(1u, cmd.textures.size());
+    // [0]=图标图集,[1]=T2 地形深度槽(见 LabelCommandForNamedFeature 注释)。
+    ASSERT_EQ(2u, cmd.textures.size());
     EXPECT_EQ(renderer_->iconAtlas()->texture(), cmd.textures[0]);
+    EXPECT_EQ(nullptr, cmd.textures[1]);
 
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
         cmd.vertexBuffer);

@@ -43,6 +43,24 @@ public:
 
     /// 简单颜色 shader（矢量图层线/面渲染）
     ShaderProgram* colorShader() const;
+    /// T2 地形深度 prepass 用的 depth-only shader(顶点段与主地形 shader 同
+    /// 一份源,只换空片元)。Metal 侧未接线返回 nullptr —— 调用方据此整条
+    /// 降级,符号回到原 u_depthPushNdc 行为。
+    ShaderProgram* terrainDepthShader() const;
+    ShaderProgram* terrainDepthInstancedShader() const;
+
+    /// T2:本帧地形深度纹理与遮挡判定参数,由 SceneRenderPipeline 在命令
+    /// 构建**之前**推入(纹理对象跨帧稳定,内容由随后的 prepass 写入,故
+    /// 符号采到的是当帧深度)。texture=nullptr 表示通路不可用,符号侧据此
+    /// 关闭判定、保持原 u_depthPushNdc 行为。
+    struct TerrainOcclusionParams {
+        Texture* depthTexture = nullptr;
+        float nearPlaneMeters = 1.0f;
+        float farPlaneMeters = 1.0e7f;
+        float biasMeters = 60.0f;  // 同时是淡出带宽,见 shader 注释
+    };
+    void setTerrainOcclusion(const TerrainOcclusionParams& params);
+    const TerrainOcclusionParams& terrainOcclusion() const;
 
     /// 矢量线 ribbon shader（矢量 P1,§6.2 屏幕空间线宽,P6b 顶点色）
     ShaderProgram* vectorLineShader() const;

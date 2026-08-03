@@ -1460,6 +1460,22 @@ void main() {
 }
 )glsl";
 
+// T2 地形深度 prepass 的片元着色器:只写深度,不产颜色。
+//
+// **顶点段不另写一份**——prepass 命令直接复用 kTerrainVertexGLSL /
+// kTerrainInstancedVertexGLSL(见 TerrainDepthPrepass::extractTerrainCommands
+// 只换 shader 不换顶点布局)。位移/geomorph/边界吸附是一大段会持续演进的
+// 逻辑,复制一份必然漂移,而漂移的表现是「符号莫名被遮挡」——极难归因。
+//
+// 写 vec4(0) 而非 discard:discard 会关掉早期深度测试。这里唯一的产出就是
+// 深度,必须让它走快路径。
+static const char* kTerrainDepthOnlyFragmentGLSL = R"glsl(
+#version 300 es
+precision highp float;
+out vec4 fragColor;
+void main() { fragColor = vec4(0.0); }
+)glsl";
+
 static const char* kTerrainInstancedFragmentGLSL = R"glsl(
 #version 300 es
 precision highp float;
@@ -2140,7 +2156,47 @@ fragment float4 vectorLineStencilFragment(
 // **契约**:下面 fragment 的 shape 分支值必须与 SymbolShape.h 枚举一致。
 // ============================================================
 
-static const char* kVectorPointVertexGLSL = R"glsl(
+// T2:符号 × 地形遮挡判定(GLSL/MSL 共用一份文本,同 kSymbolSdfBody 的约定)。
+//
+// **为什么在顶点级、按锚点判、整符号一次**:符号 quad 是屏幕空间展开的,而
+// 深度只有锚点一个值。交给硬件逐像素深度测试的话,山坡会把 quad 横切成半个
+// (真机上就是"billboard 斜视被削半")。maplibre 同样是拿锚点采地形深度纹理
+// 决定整个符号的可见性,而不是逐像素测。
+//
+// **为什么比线性视距而不是比 NDC 深度**:NDC 深度是非线性的,一个能同时适配
+// 近景与远景的 NDC bias 不存在。换成米制 bias 后语义是直白的"地形比锚点近这
+// 么多米才算挡住",贴地符号不会自遮挡。反算式与 OffscreenPostProcess 的
+// aerial fog 同一条(reverse-Z),两处必须一致。
+//
+// 淡出而非硬切:硬切会让符号在相机微动时闪烁。淡出带宽 = bias,共用一个量。
+static const char* kSymbolTerrainOcclusionBody = R"glsl(
+uniform sampler2D u_terrainDepth;
+// x: 1=深度纹理可用(否则整条判定跳过);y: near(米);z: far(米);
+// w: bias(米,同时是淡出带宽)
+uniform vec4 u_terrainOcclusion;
+
+float eeSymbolTerrainVisibility(vec4 clipPos) {
+    if (u_terrainOcclusion.x < 0.5 || clipPos.w <= 0.0) return 1.0;
+    vec3 ndc = clipPos.xyz / clipPos.w;
+    // 屏幕外的锚点无深度可采(采到会 clamp 到边缘像素 = 错的地形)。
+    if (any(lessThan(ndc.xy, vec2(-1.0))) ||
+        any(greaterThan(ndc.xy, vec2(1.0)))) return 1.0;
+    float terrainZWin = texture(u_terrainDepth, ndc.xy * 0.5 + 0.5).r;
+    // reverse-Z 清除值为 0 = 该像素没画到地形(天空/地平线外)→ 不遮挡。
+    if (terrainZWin <= 0.0) return 1.0;
+    float near = u_terrainOcclusion.y;
+    float far = u_terrainOcclusion.z;
+    float bias = max(u_terrainOcclusion.w, 1.0);
+    float terrainDist =
+        near * far / ((2.0 * terrainZWin - 1.0) * (far - near) + near);
+    float anchorDist = near * far / (ndc.z * (far - near) + near);
+    // 地形比"锚点再往前 bias 米"还近 → 判遮挡;差在 bias 带内线性淡出。
+    return clamp((terrainDist - (anchorDist - bias)) / bias, 0.0, 1.0);
+}
+)glsl";
+
+static const std::string kVectorPointVertexGLSL =
+    std::string(R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_anchor;
 layout(location = 1) in vec2 a_offsetUnit;  // 相对锚点偏移(符号尺寸倍数)
@@ -2160,7 +2216,7 @@ uniform float u_depthPushNdc;
 out vec2 v_uv;
 out vec4 v_color;
 out float v_shape;
-
+)glsl") + kSymbolTerrainOcclusionBody + R"glsl(
 void main() {
     vec4 cp = u_modelViewProjection * vec4(a_anchor, 1.0);
     v_uv = a_uv;
@@ -2170,6 +2226,9 @@ void main() {
         gl_Position = cp;      // 相机后方:不展开
         return;
     }
+    // T2:整符号遮挡淡出。折进顶点色 alpha —— 片元侧无需改动,SDF 软边、
+    // 图集 tint 都自然跟着淡。
+    v_color.a *= eeSymbolTerrainVisibility(cp);
     // 像素偏移 → NDC:视口跨 2 个 NDC 单位。
     vec2 offsetNdc = a_offsetUnit * u_pointSizePx * 2.0 / u_viewport;
     gl_Position = cp + vec4(offsetNdc * cp.w, 0.0, 0.0);
@@ -2360,7 +2419,8 @@ fragment float4 vectorPointFragment(
 // fragment 采 SDF 图集 smoothstep 出字 + halo 描边(单 pass 双阈值)。
 // ============================================================
 
-static const char* kVectorLabelVertexGLSL = R"glsl(
+static const std::string kVectorLabelVertexGLSL =
+    std::string(R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_anchor;
 // xy = 相对锚点屏幕像素偏移(y 向上);z = placement fade opacity(0 = 隐藏)。
@@ -2375,11 +2435,13 @@ uniform float u_depthPushNdc;
 
 out vec2 v_uv;
 out float v_opacity;
-
+)glsl") + kSymbolTerrainOcclusionBody + R"glsl(
 void main() {
     vec4 cp = u_modelViewProjection * vec4(a_anchor, 1.0);
     v_uv = a_uv;
-    v_opacity = a_offsetPx.z;
+    // T2:遮挡淡出乘进 placement fade —— 两者都是"这个标注该显示多少",
+    // 相乘即可,不需要新的 varying。
+    v_opacity = a_offsetPx.z * eeSymbolTerrainVisibility(cp);
     if (cp.w <= 0.0 || a_offsetPx.z <= 0.0) {
         // 折叠到裁剪空间外,整字形不进光栅。
         gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
@@ -3947,6 +4009,10 @@ struct Renderer::Impl {
     std::unique_ptr<ShaderProgram> terrainShader;
     // Terrain instanced shader (合批 Step 3:32B 模板 + 96B per-instance 流)
     std::unique_ptr<ShaderProgram> terrainInstancedShader;
+    // T2 深度 prepass:同顶点段 + 空片元(见 kTerrainDepthOnlyFragmentGLSL)
+    std::unique_ptr<ShaderProgram> terrainDepthShader;
+    std::unique_ptr<ShaderProgram> terrainDepthInstancedShader;
+    Renderer::TerrainOcclusionParams terrainOcclusion;
 
     // Color (vector)
     std::unique_ptr<ShaderProgram> colorShader;
@@ -4036,6 +4102,20 @@ bool Renderer::initialize() {
         return false;
     }
 
+    // T2 深度 prepass shader:顶点段与主地形 shader **同一份源**,只换空片元。
+    // GLES 侧接线;Metal 侧不建(→ TerrainDepthPrepass::initialize 返回 false
+    // → 符号保持原 u_depthPushNdc 行为,零回归)。创建失败非致命。
+    if (!isMetal) {
+        ShaderDesc terrainDepthSd;
+        terrainDepthSd.vertexSource = kTerrainVertexGLSL;
+        terrainDepthSd.fragmentSource = kTerrainDepthOnlyFragmentGLSL;
+        impl_->terrainDepthShader = dev->createShader(terrainDepthSd);
+        if (!impl_->terrainDepthShader) {
+            fprintf(stderr,
+                    "[Renderer] terrainDepthShader failed — 符号地形遮挡不可用\n");
+        }
+    }
+
     ShaderDesc gltfInstancedSd;
     gltfInstancedSd.vertexSource =
         isMetal ? kGltfInstancedVertexMSL : kGltfInstancedVertexGLSL;
@@ -4061,6 +4141,18 @@ bool Renderer::initialize() {
             fprintf(stderr,
                     "[Renderer] terrainInstancedShader failed — terrain "
                     "batching disabled, per-draw fallback\n");
+        }
+        // 合批地形的 depth-only 对应件。缺席时 prepass 整帧放弃(半张深度图
+        // 比没有更糟,见 TerrainDepthPrepass::extractTerrainCommands)。
+        ShaderDesc terrainDepthInstancedSd;
+        terrainDepthInstancedSd.vertexSource = kTerrainInstancedVertexGLSL;
+        terrainDepthInstancedSd.fragmentSource = kTerrainDepthOnlyFragmentGLSL;
+        impl_->terrainDepthInstancedShader =
+            dev->createShader(terrainDepthInstancedSd);
+        if (!impl_->terrainDepthInstancedShader) {
+            fprintf(stderr,
+                    "[Renderer] terrainDepthInstancedShader failed — 符号"
+                    "地形遮挡不可用\n");
         }
     } else {
         (void)kTerrainInstancedVertexMSL;
@@ -4169,6 +4261,8 @@ void Renderer::dispose() {
     impl_->gltfShader.reset();
     impl_->gltfInstancedShader.reset();
     impl_->terrainShader.reset();
+    impl_->terrainDepthShader.reset();
+    impl_->terrainDepthInstancedShader.reset();
     impl_->terrainInstancedShader.reset();
     impl_->colorShader.reset();
     impl_->vectorLineShader.reset();
@@ -4183,6 +4277,18 @@ void Renderer::dispose() {
 
 // ---- 共享资源访问 ----
 
+void Renderer::setTerrainOcclusion(const TerrainOcclusionParams& params) {
+    impl_->terrainOcclusion = params;
+}
+const Renderer::TerrainOcclusionParams& Renderer::terrainOcclusion() const {
+    return impl_->terrainOcclusion;
+}
+ShaderProgram* Renderer::terrainDepthShader() const {
+    return impl_->terrainDepthShader.get();
+}
+ShaderProgram* Renderer::terrainDepthInstancedShader() const {
+    return impl_->terrainDepthInstancedShader.get();
+}
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 ShaderProgram* Renderer::vectorLineShader() const {
     return impl_->vectorLineShader.get();
