@@ -5,6 +5,7 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TileRenderPlanFinalizer.h"
+#include "TileEdgeSnapResolver.h"
 #include "TilesetTile.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/ImageryProvider.h"
@@ -203,6 +204,8 @@ void TileRenderPlanFrameRefresher::refresh(
                            tile,
                            rasterOverlays);
         });
+    // 机制 B:渲染集定稿后解析每瓦片 4 边邻居八度差(边吸附输入)。
+    TileEdgeSnapResolver::resolve(tilePlan);
     refreshFrameCredits(tilePlan, rasterOverlays);
     refreshFrameProgress(tilePlan);
 }

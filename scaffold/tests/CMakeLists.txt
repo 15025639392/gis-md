@@ -347,6 +347,12 @@ add_executable(test_tileset_sample_height
 target_link_libraries(test_tileset_sample_height PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_sample_height COMMAND test_tileset_sample_height)
 
+add_executable(test_tile_edge_snap_resolver
+    unit/tiling/test_tile_edge_snap_resolver.cpp
+)
+target_link_libraries(test_tile_edge_snap_resolver PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_edge_snap_resolver COMMAND test_tile_edge_snap_resolver)
+
 add_executable(test_tile_pending_load_queue
     unit/tiling/test_tile_pending_load_queue.cpp
 )

@@ -133,7 +133,11 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
             rec.clipUv[3] = m.gltfUniforms.clipUv[3];
             rec.layers[0] = m.gltfUniforms.terrainLayers[0];  // heightLayer
             rec.layers[1] = m.gltfUniforms.terrainLayers[1];  // indirLayer
-            rec.layers[2] = m.gltfUniforms.clipEnabled;
+            // clipMode(0/1/2)与边吸附打包共存:z = clipMode + 4·snapPacked
+            // (snapPacked ≤ 4095 → 组合 ≤ 16382,float 精确)。shader 端
+            // mod(z,4)=clipMode、floor(z/4)=snapPacked。实例流零增长。
+            rec.layers[2] = m.gltfUniforms.clipEnabled +
+                            4.0f * m.gltfUniforms.terrainLayers[2];
             // 位移模板栅格边长(自适应密度后不再恒 64)。分组按模板 VBO 指针,
             // 而模板按 {schemeId,z,row,gridSize} 缓存 → 同批必然同档,但仍逐实例
             // 携带以免"同批同档"这个隐式前提日后被分组规则改动悄悄破坏。

@@ -494,6 +494,9 @@ void applyPerFrameCommandState(
     if (cmd.terrainRenderContent) {
         u.geomorphUpFactor[3] = tile.selectionFrameState.terrainMorphFactor;
         u.renderOpacity = 1.0f;
+        // 机制 B 边吸附:TileEdgeSnapResolver 每帧算好的 4 边打包步长。
+        // terrainLayers.z 原为保留位,uniform 契约零改动。
+        u.terrainLayers[2] = tile.selectionFrameState.edgeSnapPacked;
     }
     if (cmd.terrainRenderContent && context.surfaceClipUv) {
         // 机制 A(无缝北极星 P1):祖先回退不再"画祖先几何+片元 discard 裁剪"
@@ -562,6 +565,8 @@ void applyPerFrameCommandState(
                     u.terrainLayers[0] = static_cast<float>(ht->layer);
                     // remap 不做 geomorph(fine/coarse 同源同值),morph 钉 1。
                     u.geomorphUpFactor = {0.0f, 0.0f, 1.0f, 1.0f};
+                    // remap 自身不吸附(数据即祖先平滑场,邻居向它吸)。
+                    u.terrainLayers[2] = 0.0f;
                     cmd.terrainHeightLayer = ht->layer;
                     cmd.terrainHeightLayerEpoch = ht->epoch;
                     cmd.terrainHeightGridSize = texGrid;

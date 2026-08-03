@@ -1002,8 +1002,41 @@ void main() {
             u_heightTexture,
             ivec2(min(g0.x + 2.0, gridN), min(g0.y + 2.0, gridN)), hLayer, mr);
         float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
+        // 机制 B 边吸附(TileEdgeSnapResolver 供数,打包序 W+8E+64N+512S,
+        // N=v0 边):邻居更粗 k 八度时,该边顶点高度改为自纹理 2^k 间距的
+        // 线性插值 → 与邻居边几何共线,T-junction 在几何上不存在(残余=
+        // 金字塔层间重采样差,裙墙覆盖)。仅常规模式参与(remap 由 CPU 清零)。
+        float hOut = mix(hCoarse, hFine, u_geomorphUpFactor.w);
+        float snapPacked = u_terrainLayers.z;
+        if (snapPacked > 0.5) {
+            float eps = 0.5 / gridN;
+            float sel = -1.0;
+            if (tileUv.x < eps) sel = 0.0;
+            else if (tileUv.x > 1.0 - eps) sel = 1.0;
+            else if (tileUv.y < eps) sel = 2.0;
+            else if (tileUv.y > 1.0 - eps) sel = 3.0;
+            if (sel >= 0.0) {
+                float lg = floor(mod(snapPacked / exp2(sel * 3.0), 8.0));
+                if (lg > 0.5) {
+                    float snapStep = exp2(min(lg, 6.0));
+                    bool vertEdge = sel < 1.5;      // W/E:边沿 y 方向延伸
+                    float a = vertEdge ? gf.y : gf.x;
+                    float c = vertEdge ? gf.x : gf.y;
+                    float a0 = floor(a / snapStep) * snapStep;
+                    float a1 = min(a0 + snapStep, gridN);
+                    float t = clamp((a - a0) / max(a1 - a0, 1e-6), 0.0, 1.0);
+                    float hA = eeSampleTerrainHeight(u_heightTexture,
+                        ivec2(vertEdge ? vec2(c, a0) : vec2(a0, c)),
+                        hLayer, mr);
+                    float hB = eeSampleTerrainHeight(u_heightTexture,
+                        ivec2(vertEdge ? vec2(c, a1) : vec2(a1, c)),
+                        hLayer, mr);
+                    hOut = mix(hA, hB, t);          // 吸附:覆盖 morph 混合
+                }
+            }
+        }
         // 裙顶点(skirt=1)h 归零 → 停在椭球面,撑起自适应裙墙。
-        float h = mix(hCoarse, hFine, u_geomorphUpFactor.w) * (1.0 - skirt);
+        float h = hOut * (1.0 - skirt);
         morphPos += normalize(a_normal) * h;
     }
     v_normal = normalize(a_normal);
@@ -1345,9 +1378,12 @@ void main() {
     heightDelta = mix(heightDelta, 0.0, skirt);
     // geomorph 方向 = 模板局部 +Z(共享模板恒在 ENU 帧,与 terrainShader 一致)。
     vec3 morphPos = a_position + vec3(0.0, 0.0, 1.0) * heightDelta * (1.0 - morph);
-    // remap(i_layers.z==2,机制 A):模板 UV → 祖先 UV。语义见 kTerrainVertexGLSL。
+    // i_layers.z 打包:clipMode(0/1/2) + 4·snapPacked(见 batcher 注释)。
+    float clipMode = mod(i_layers.z, 4.0);
+    float snapPacked = floor(i_layers.z * 0.25);
+    // remap(clipMode==2,机制 A):模板 UV → 祖先 UV。语义见 kTerrainVertexGLSL。
     vec2 tileUv = a_texcoord01.xy;
-    if (i_layers.z > 1.5) {
+    if (clipMode > 1.5) {
         tileUv = i_clipUv.xy + tileUv * i_clipUv.zw;
     }
     // 双分辨率高度采样(fine=1× 手工双线性:常规模式 gf 整、权重退化逐位同
@@ -1378,7 +1414,34 @@ void main() {
         u_heightTexture,
         ivec2(min(g0.x + 2.0, kGridSize), min(g0.y + 2.0, kGridSize)), hLayer, mr);
     float hCoarse = mix(mix(e00, e10, fr.x), mix(e01, e11, fr.x), fr.y);
-    float h = mix(hCoarse, hFine, morph) * (1.0 - skirt);
+    // 机制 B 边吸附(同 kTerrainVertexGLSL,变量名对齐实例化路径)。
+    float hOut = mix(hCoarse, hFine, morph);
+    if (snapPacked > 0.5) {
+        float eps = 0.5 / kGridSize;
+        float sel = -1.0;
+        if (tileUv.x < eps) sel = 0.0;
+        else if (tileUv.x > 1.0 - eps) sel = 1.0;
+        else if (tileUv.y < eps) sel = 2.0;
+        else if (tileUv.y > 1.0 - eps) sel = 3.0;
+        if (sel >= 0.0) {
+            float lg = floor(mod(snapPacked / exp2(sel * 3.0), 8.0));
+            if (lg > 0.5) {
+                float snapStep = exp2(min(lg, 6.0));
+                bool vertEdge = sel < 1.5;
+                float a = vertEdge ? gf.y : gf.x;
+                float c = vertEdge ? gf.x : gf.y;
+                float a0 = floor(a / snapStep) * snapStep;
+                float a1 = min(a0 + snapStep, kGridSize);
+                float t = clamp((a - a0) / max(a1 - a0, 1e-6), 0.0, 1.0);
+                float hA = eeSampleTerrainHeight(u_heightTexture,
+                    ivec2(vertEdge ? vec2(c, a0) : vec2(a0, c)), hLayer, mr);
+                float hB = eeSampleTerrainHeight(u_heightTexture,
+                    ivec2(vertEdge ? vec2(c, a1) : vec2(a1, c)), hLayer, mr);
+                hOut = mix(hA, hB, t);
+            }
+        }
+    }
+    float h = hOut * (1.0 - skirt);
     morphPos += normalize(a_normal) * h;
     // 相对批参考帧的刚体变换(rel 三行,行主序;第 4 行恒 0001)。
     vec4 mp = vec4(morphPos, 1.0);
@@ -1391,7 +1454,7 @@ void main() {
     v_texcoord01 = vec4(tileUv, a_texcoord01.zw);
     v_skirt = skirt;
     v_heightLayer = i_layers.x;
-    v_pageParams = vec4(i_dispMorph.w, i_layers.y, i_layers.z, kGridSize);
+    v_pageParams = vec4(i_dispMorph.w, i_layers.y, clipMode, kGridSize);
     v_clipUv = i_clipUv;
     gl_Position = u_modelViewProjection * vec4(world, 1.0);
 }
