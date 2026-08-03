@@ -30,7 +30,8 @@ TH_TRANS_REL = 1.20   # 暂态总量相对基线的劣化上限
 
 
 def run_metrics(rundir):
-    shots = sorted(Path(rundir).glob('s*.png'))
+    shots = [p for p in sorted(Path(rundir).glob('s*.png'))
+             if p.stat().st_size > 0]  # 0 字节 = screencap 悬挂被超时,跳过
     if not shots:
         return None
     leaks = [analyze(p)['leak'] for p in shots]

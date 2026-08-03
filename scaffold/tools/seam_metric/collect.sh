@@ -31,6 +31,30 @@ TILT_STEPS=5     # DPAD_DOWN ×5 → 掠视(接缝最易暴露的姿态)
 ZOOM_STEPS=25    # 音量键缩放往返幅度
 SHOTS=40         # 运动期截图数(与缩放并行采,覆盖整个暂态窗)
 
+# screencap 偶发悬挂(实测一次悬死 10+ 分钟拖垮整轮)——所有截图走 10s 超时
+# + 一次重试;两次都挂记 0 字节文件,report 侧按坏帧跳过。
+shot() {
+    local out="$1"
+    for _try in 1 2; do
+        ( adb exec-out screencap -p > "$out" ) &
+        local pid=$!
+        local waited=0
+        while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 100 ]; do
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+            [ -s "$out" ] && return 0
+        else
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+    : > "$out"
+    return 0
+}
+
 if [ ! -f "$APK" ]; then
     echo "ERROR: 找不到 release APK:$APK" >&2
     exit 1
@@ -66,10 +90,10 @@ for k in $(seq 1 "$RUNS"); do
 
     for _ in $(seq 1 "$TILT_STEPS"); do adb shell input keyevent 20; done
     sleep 3
-    adb exec-out screencap -p > "$RUNDIR/pre.png"
+    shot "$RUNDIR/pre.png"
 
     ( for s in $(seq 1 "$SHOTS"); do
-          adb exec-out screencap -p > "$RUNDIR/$(printf 's%02d.png' "$s")"
+          shot "$RUNDIR/$(printf 's%02d.png' "$s")"
       done ) &
     CAPPID=$!
     for _ in $(seq 1 "$ZOOM_STEPS"); do adb shell input keyevent 25; done
@@ -77,7 +101,7 @@ for k in $(seq 1 "$RUNS"); do
     for _ in $(seq 1 "$ZOOM_STEPS"); do adb shell input keyevent 24; done
     wait "$CAPPID" 2>/dev/null || true
     sleep 6
-    adb exec-out screencap -p > "$RUNDIR/post.png"
+    shot "$RUNDIR/post.png"
 
     kill "$LOGPID" 2>/dev/null || true
     wait "$LOGPID" 2>/dev/null || true
