@@ -163,7 +163,23 @@ void Camera::setOrientation(const Vec3& direction, const Vec3& up) {
     }
 
     direction_ = direction.normalized();
-    right_ = direction_.cross(up).normalized();
+    // dir ∥ up 时 cross≈0，normalized() 会除零产出 NaN 基（下游把地形涂成竖直
+    // 拖影）。退化时不抛也不接受 NaN：换用与 direction 夹角最大的坐标轴重建
+    // 正交基，保证输出恒为正交归一。
+    Vec3 crossDirUp = direction_.cross(up);
+    if (crossDirUp.lengthSquared() < 1e-18) {
+        const double ax = std::abs(direction_.x());
+        const double ay = std::abs(direction_.y());
+        const double az = std::abs(direction_.z());
+        Vec3 axis = Vec3::unitZ();
+        if (ax <= ay && ax <= az) {
+            axis = Vec3::unitX();
+        } else if (ay <= az) {
+            axis = Vec3::unitY();
+        }
+        crossDirUp = direction_.cross(axis);
+    }
+    right_ = crossDirUp.normalized();
     up_ = right_.cross(direction_).normalized();
 }
 
