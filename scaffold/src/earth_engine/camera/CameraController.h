@@ -3,8 +3,10 @@
 #include "../core/math/Vec3.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace earth_engine {
 
@@ -36,6 +38,25 @@ public:
     using TerrainHeightFunc =
         std::function<std::optional<double>(const Vec3& ecefPosition)>;
     void setTerrainHeightFunc(TerrainHeightFunc func);
+
+    /// 近场区域批量地形采样注入口（碰撞探针/动态 near 数据源）。以
+    /// groundEcef 为中心，对本地 ENU 偏移（米，x=东 y=北）逐点采样，out 与
+    /// offsets 等长，无覆盖点 valid=false。实现方保证渲染网格一致采样——
+    /// 相机不能穿的是上屏的那张面，不是全分辨率理论面。注入后碰撞钳位
+    /// 改用探针（内环+扫掠走廊最大高），TerrainHeightFunc 退为无探针回退。
+    struct TerrainSample {
+        bool valid = false;
+        Vec3 surfaceEcef;      ///< 地形点（含高度）ECEF
+        double heightMeters = 0.0;  ///< 椭球高
+    };
+    using TerrainAreaSampleFunc = std::function<void(
+        const Vec3& groundEcef,
+        double radiusMeters,
+        const std::vector<glm::dvec2>& localOffsetsMeters,
+        std::vector<TerrainSample>& out)>;
+    void setTerrainAreaSampleFunc(TerrainAreaSampleFunc func);
+    /// 地形数据代次（瓦片集变更计数的代理）。变化 ⇒ 探针缓存失效。
+    void setTerrainRevisionFunc(std::function<uint64_t()> func);
 
     /// drag 开始（手指按下）
     /// @param timestamp 单调时钟时间戳（秒），用于惯性角速度计算
@@ -208,10 +229,17 @@ private:
     void syncDistanceFromCamera();
 
     /// 地形碰撞解算：把 eye 钳到滤波后地形高 + 视觉下限之上（仅抬升，不下压），
-    /// 途中刷新滤波与 groundState_。仅允许 resolveConstraints 调用。
+    /// 途中刷新探针/滤波与 groundState_。仅允许 resolveConstraints 调用。
+    /// @param pinnedAnchorWorld 非空时退出方向沿 eye→anchor 直线（方向与
+    ///        dir/up 全不变 ⇒ 锚点像素严格不动）；该直线近水平（后退换不来
+    ///        高度）时退回大地法线径向抬升。
     glm::dvec3 constrainEyeAgainstTerrain(const glm::dvec3& eye,
                                           bool userDriven,
-                                          double deltaSeconds);
+                                          double deltaSeconds,
+                                          const glm::dvec3* pinnedAnchorWorld);
+    /// 近场探针按需重建（中心漂移/半径变化/代次变化；每帧至多 1 次）。
+    void refreshTerrainProbeIfNeeded(const glm::dvec3& eye,
+                                     const Vec3& surface);
     /// 非对称地形突变滤波：用户驱动/上升/小变动立即，数据驱动大幅下降
     /// 按 τ 指数逼近（见 .cpp 常量说明）。
     void updateFilteredTerrainHeight(double rawHeightMeters,
@@ -250,6 +278,26 @@ private:
     // 数据驱动的突变经非对称滤波(updateFilteredTerrainHeight)。
     double filteredTerrainHeight_ = 0.0;
     CameraGroundState groundState_;
+
+    // 近场地形探针(区域批量采样缓存):同心环(旋转对称,near 口径=全部采样点
+    // 三维最小距离)+扫掠走廊(单帧大位移跨越的山脊,碰撞口径)。每帧至多重建
+    // 1 次,手势期高频事件共享同帧探针。
+    TerrainAreaSampleFunc terrainAreaSampleFunc_;
+    std::function<uint64_t()> terrainRevisionFunc_;
+    struct TerrainProbe {
+        bool valid = false;
+        bool hasData = false;
+        glm::dvec3 centerSurfaceEcef{0.0};
+        double radiusMeters = 0.0;
+        uint64_t revision = 0;
+        /// 碰撞口径:内环(r≤0.15R)+扫掠走廊采样的最大地形高。
+        double collisionMaxHeight = 0.0;
+        /// near 口径:全部有效采样的三维地形点(动态 near 消费)。
+        std::vector<glm::dvec3> samplePointsEcef;
+    };
+    TerrainProbe terrainProbe_;
+    uint64_t frameIndex_ = 0;
+    uint64_t lastProbeRebuildFrame_ = ~0ull;
     // 上次 resolveConstraints 通过后的位姿指纹：帧末不等 ⇒ 有人绕过控制器
     // 写了 Camera（Facade/JNI 裸写）,按 user-driven 处理（突变滤波消费）。
     bool hasLastResolvedPose_ = false;

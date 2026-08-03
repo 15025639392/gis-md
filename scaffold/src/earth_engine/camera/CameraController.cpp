@@ -10,6 +10,7 @@
 #include <glm/gtc/constants.hpp>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace earth_engine {
@@ -36,6 +37,24 @@ constexpr double kMaxTerrainHeightMeters = 9000.0;
 constexpr double kTerrainFilterAbsStepMeters = 10.0;
 constexpr double kTerrainFilterRelStep = 0.1;
 constexpr double kTerrainFilterDecayTauSeconds = 0.5;
+// 近场探针几何:中心点 + 同心三环×8 方位(旋转对称——故意不做视线前向偏置:
+// 偏置只能放宽 near 不增安全,还让原地旋转时 near 抖动)。碰撞口径=内环
+// (r≤0.15R)+扫掠走廊最大高;near 口径=全部有效采样点的三维最小距离。
+// R = clamp(max(2·AGL, 0.6·单帧水平位移), 200m, 20km)——位移项把静态点检
+// 升级成廉价扫掠检测,单帧跨山脊不再隧穿;超出 20km 的远场由"盘外墙"下界
+// 项接管(见动态 near 公式)。
+constexpr double kProbeRingFractions[] = {0.15, 0.40, 1.0};
+constexpr int kProbeRingAzimuths = 8;
+constexpr double kProbeMinRadiusMeters = 200.0;
+constexpr double kProbeMaxRadiusMeters = 20000.0;
+constexpr double kProbeAglFactor = 2.0;
+constexpr double kProbeSweptFactor = 0.6;
+constexpr double kProbeCollisionFraction = 0.15;
+// 中心漂移超过内环半径的 1/4 (=0.25×0.15×R) 即重建(每帧至多 1 次)。
+constexpr double kProbeDriftRebuildFraction = 0.0375;
+// 锚点退出方向的最小竖直增益:|dot(unit(eye−anchor), n̂)| 低于此值时后退
+// 换不来高度,退回径向抬升(该位姿下锚点已在掠射病态区,保锚判据不适用)。
+constexpr double kAnchorExitMinVerticalGain = 0.2;
 constexpr float kMinDistanceEarthRadii =
     static_cast<float>((kEarthRadiusMeters + kMinAltitudeMeters) /
                        kEarthRadiusMeters);
@@ -141,6 +160,15 @@ void CameraController::setSurfacePicker(SurfacePicker picker) {
 
 void CameraController::setTerrainHeightFunc(TerrainHeightFunc func) {
     terrainHeightFunc_ = std::move(func);
+}
+
+void CameraController::setTerrainAreaSampleFunc(TerrainAreaSampleFunc func) {
+    terrainAreaSampleFunc_ = std::move(func);
+    terrainProbe_.valid = false;
+}
+
+void CameraController::setTerrainRevisionFunc(std::function<uint64_t()> func) {
+    terrainRevisionFunc_ = std::move(func);
 }
 
 void CameraController::onDragStart(float xPixels, float yPixels, double timestamp) {
@@ -449,6 +477,7 @@ void CameraController::onPinchEnd() {
 }
 
 void CameraController::update(double deltaSeconds) {
+    ++frameIndex_;  // 探针"每帧至多重建一次"的帧时钟
     updateInternal(deltaSeconds);
     // 帧末哨兵：兜底收编所有未显式路由到 resolveConstraints 的位姿写入
     // （orbit 重建、viewDistance/setNadirOrbitView、回中、scriptedPan、
@@ -599,7 +628,7 @@ bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
         for (int i = 0; i < 2; ++i) {
             const glm::dvec3 eye = camera_->position().raw();
             const glm::dvec3 clamped = constrainEyeAgainstTerrain(
-                eye, userDriven, i == 0 ? ctx.deltaSeconds : 0.0);
+                eye, userDriven, i == 0 ? ctx.deltaSeconds : 0.0, nullptr);
             if (glm::length(clamped - eye) <= 1e-6) {
                 break;
             }
@@ -611,8 +640,8 @@ bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
         }
     } else {
         const glm::dvec3 eye = camera_->position().raw();
-        const glm::dvec3 clamped =
-            constrainEyeAgainstTerrain(eye, userDriven, ctx.deltaSeconds);
+        const glm::dvec3 clamped = constrainEyeAgainstTerrain(
+            eye, userDriven, ctx.deltaSeconds, ctx.pinnedAnchorWorld);
         if (glm::length(clamped - eye) > 1e-6) {
             camera_->setView(Vec3(clamped), camera_->direction(),
                              camera_->up());
@@ -774,6 +803,25 @@ bool CameraController::rotateCameraVerticalAroundPoint(const glm::dvec3& center,
         return false;
     }
 
+    // 地形净空守卫(与 minSlope 守卫同构:只拒绝"让净空更差"的方向,反向立即
+    // 响应——调用方按被拒处理重基线,零死区离合)。用滤波地形高做廉价预判,
+    // 不重采样。拒绝而非事后顶起:顶起要么破坏 Pitch 的锚点像素不变量,
+    // 要么(Cesium 式旋转补偿)偷偷改 direction,都不如"停住"。
+    {
+        const auto& ell = Ellipsoid::WGS84();
+        const double hNext =
+            ell.cartesianToCartographic(Vec3(nextEye)).height();
+        if (hNext < kMaxTerrainHeightMeters + kMinAltitudeMeters) {
+            const double minHeight =
+                std::max(filteredTerrainHeight_, 0.0) + kMinAltitudeMeters;
+            const double hCur =
+                ell.cartesianToCartographic(camera_->position()).height();
+            if (hNext < minHeight && hNext < hCur) {
+                return false;
+            }
+        }
+    }
+
     if (minSlope > 0.0) {
         const double dSlope = nextSlope - currentSlope;
         if (nextSlope < minSlope && dSlope < 0.0) {
@@ -860,9 +908,11 @@ void CameraController::syncDistanceFromCamera() {
     distance_ = static_cast<float>(camera_->position().length() / kEarthRadiusMeters);
 }
 
-glm::dvec3 CameraController::constrainEyeAgainstTerrain(const glm::dvec3& eye,
-                                                        bool userDriven,
-                                                        double deltaSeconds) {
+glm::dvec3 CameraController::constrainEyeAgainstTerrain(
+    const glm::dvec3& eye,
+    bool userDriven,
+    double deltaSeconds,
+    const glm::dvec3* pinnedAnchorWorld) {
     if (glm::length(eye) < 1e-6) return eye;
 
     const auto& ellipsoid = Ellipsoid::WGS84();
@@ -881,17 +931,27 @@ glm::dvec3 CameraController::constrainEyeAgainstTerrain(const glm::dvec3& eye,
     const Vec3 surface = ellipsoid.projectToSurface(eyeVec);
     const Vec3 normal = ellipsoid.geodeticSurfaceNormal(surface);
 
-    // 无地形数据(未加载 / 无覆盖瓦片)时 terrainFunc 返回 nullopt——不能当海平面
-    // 0 处理,否则相机会被允许下沉到未加载山体表面之下,瓦片加载后又被顶回(dip→
-    // pop)。保守回退到滤波现值(初值 0)。有数据时经非对称突变滤波更新。
-    // 无 terrainFunc(未接地形)时恒 0 → 行为等价于 bare-ellipsoid+50m。
+    // 无地形数据(未加载 / 无覆盖瓦片)时——不能当海平面 0 处理,否则相机会被
+    // 允许下沉到未加载山体表面之下,瓦片加载后又被顶回(dip→pop)。保守回退
+    // 到滤波现值(初值 0)。有数据时经非对称突变滤波更新。探针注入后单点
+    // TerrainHeightFunc 退为回退路径(既有测试/未接探针的宿主继续可用)。
     bool sampledThisCall = false;
-    if (terrainHeightFunc_) {
-        const std::optional<double> sampled = terrainHeightFunc_(surface);
-        if (sampled) {
-            updateFilteredTerrainHeight(*sampled, userDriven, deltaSeconds);
+    double rawHeight = 0.0;
+    if (terrainAreaSampleFunc_) {
+        refreshTerrainProbeIfNeeded(eye, surface);
+        if (terrainProbe_.valid && terrainProbe_.hasData) {
+            rawHeight = terrainProbe_.collisionMaxHeight;
             sampledThisCall = true;
         }
+    } else if (terrainHeightFunc_) {
+        const std::optional<double> sampled = terrainHeightFunc_(surface);
+        if (sampled) {
+            rawHeight = *sampled;
+            sampledThisCall = true;
+        }
+    }
+    if (sampledThisCall) {
+        updateFilteredTerrainHeight(rawHeight, userDriven, deltaSeconds);
     }
     groundState_.hasTerrainData = sampledThisCall;
     groundState_.terrainHeightMeters = filteredTerrainHeight_;
@@ -902,7 +962,133 @@ glm::dvec3 CameraController::constrainEyeAgainstTerrain(const glm::dvec3& eye,
 
     if (cart.height() >= minHeight) return eye;
     groundState_.heightAboveTerrain = minHeight - filteredTerrainHeight_;
+
+    // 退出方向:有锚点时沿 eye→anchor 直线反向 dolly——eye→anchor 方向与
+    // dir/up 全不变 ⇒ 锚点像素严格不动(径向抬升会泄漏 anchorErr,是旧实现
+    // 唯一的保锚漏洞)。大地高沿该直线非线性,牛顿式迭代三轮收敛到厘米级。
+    // 直线近水平(后退换不来高度)时退回径向抬升——该位姿下锚点已在掠射
+    // 病态区,pin 走转台混合,保锚判据本就不适用。
+    if (pinnedAnchorWorld) {
+        const glm::dvec3 away = eye - *pinnedAnchorWorld;
+        const double awayLen = glm::length(away);
+        if (awayLen > 1e-6) {
+            const glm::dvec3 u = away / awayLen;
+            double gain = glm::dot(u, normal.raw());
+            if (gain >= kAnchorExitMinVerticalGain) {
+                glm::dvec3 candidate = eye;
+                for (int i = 0; i < 3; ++i) {
+                    const Cartographic c =
+                        ellipsoid.cartesianToCartographic(Vec3(candidate));
+                    const double deficit = minHeight - c.height();
+                    if (deficit <= 1e-3) break;
+                    const glm::dvec3 n =
+                        ellipsoid.geodeticSurfaceNormal(
+                            ellipsoid.projectToSurface(Vec3(candidate))).raw();
+                    gain = glm::dot(u, n);
+                    if (gain < kAnchorExitMinVerticalGain) break;
+                    candidate += u * (deficit / gain);
+                }
+                if (ellipsoid.cartesianToCartographic(Vec3(candidate))
+                        .height() >= minHeight - 1e-2) {
+                    return candidate;
+                }
+            }
+        }
+    }
     return (surface + normal * minHeight).raw();
+}
+
+void CameraController::refreshTerrainProbeIfNeeded(const glm::dvec3& eye,
+                                                   const Vec3& surface) {
+    const uint64_t revision =
+        terrainRevisionFunc_ ? terrainRevisionFunc_() : 0;
+    const double aglPrev = std::max(0.0, groundState_.heightAboveTerrain);
+    // 单帧水平位移(扫掠项):与上次解算位置的水平分量差。
+    glm::dvec3 sweepVec(0.0);
+    if (hasLastResolvedPose_) {
+        const glm::dvec3 up = glm::normalize(eye);
+        const glm::dvec3 d = eye - lastResolvedEye_;
+        sweepVec = d - up * glm::dot(d, up);
+    }
+    const double sweep = glm::length(sweepVec);
+    const double radius = std::clamp(
+        std::max(kProbeAglFactor * aglPrev, kProbeSweptFactor * sweep),
+        kProbeMinRadiusMeters, kProbeMaxRadiusMeters);
+
+    const bool invalidated =
+        !terrainProbe_.valid || revision != terrainProbe_.revision ||
+        std::abs(radius - terrainProbe_.radiusMeters) >
+            0.25 * terrainProbe_.radiusMeters ||
+        glm::length(surface.raw() - terrainProbe_.centerSurfaceEcef) >
+            kProbeDriftRebuildFraction * terrainProbe_.radiusMeters;
+    if (!invalidated || lastProbeRebuildFrame_ == frameIndex_) {
+        return;
+    }
+    lastProbeRebuildFrame_ = frameIndex_;
+
+    // 本地 ENU 基(极点退化回退 ECEF X 轴,与 headingFromFrame 同法)。
+    const glm::dvec3 up =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(surface).raw();
+    glm::dvec3 east = glm::cross(glm::dvec3(0.0, 0.0, 1.0), up);
+    const double eastLen = glm::length(east);
+    east = eastLen > 1e-9 ? east / eastLen : glm::dvec3(1.0, 0.0, 0.0);
+    const glm::dvec3 north = glm::cross(up, east);
+
+    std::vector<glm::dvec2> offsets;
+    std::vector<char> collisionScope;
+    offsets.reserve(2 + kProbeRingAzimuths * 3 + 4);
+    offsets.push_back(glm::dvec2(0.0, 0.0));
+    collisionScope.push_back(1);
+    constexpr int kRingCount =
+        static_cast<int>(sizeof(kProbeRingFractions) /
+                         sizeof(kProbeRingFractions[0]));
+    for (int ri = 0; ri < kRingCount; ++ri) {
+        const double r = kProbeRingFractions[ri] * radius;
+        for (int a = 0; a < kProbeRingAzimuths; ++a) {
+            // 环间错开半个方位步长,方位覆盖更均匀。
+            const double phi = (static_cast<double>(a) + 0.5 * ri) *
+                (2.0 * glm::pi<double>() / kProbeRingAzimuths);
+            offsets.push_back(
+                glm::dvec2(r * std::cos(phi), r * std::sin(phi)));
+            collisionScope.push_back(ri == 0 ? 1 : 0);
+        }
+    }
+    // 扫掠走廊:朝上次位置方向补采样,盖住单帧跨越的山脊(环是离散圆,
+    // 山脊落在环间会被漏掉;走廊沿位移线段密采)。
+    if (sweep > kProbeCollisionFraction * radius) {
+        const glm::dvec2 back(-glm::dot(sweepVec, east),
+                              -glm::dot(sweepVec, north));
+        for (double f : {0.25, 0.5, 0.75, 1.0}) {
+            offsets.push_back(back * f);
+            collisionScope.push_back(1);
+        }
+    }
+
+    std::vector<TerrainSample> samples;
+    terrainAreaSampleFunc_(surface, radius, offsets, samples);
+
+    terrainProbe_.valid = true;
+    terrainProbe_.revision = revision;
+    terrainProbe_.centerSurfaceEcef = surface.raw();
+    terrainProbe_.radiusMeters = radius;
+    terrainProbe_.hasData = false;
+    terrainProbe_.samplePointsEcef.clear();
+    double collisionMax = -std::numeric_limits<double>::infinity();
+    double anyMax = -std::numeric_limits<double>::infinity();
+    const size_t n = std::min(samples.size(), offsets.size());
+    for (size_t i = 0; i < n; ++i) {
+        if (!samples[i].valid) continue;
+        terrainProbe_.hasData = true;
+        terrainProbe_.samplePointsEcef.push_back(samples[i].surfaceEcef.raw());
+        anyMax = std::max(anyMax, samples[i].heightMeters);
+        if (collisionScope[i]) {
+            collisionMax = std::max(collisionMax, samples[i].heightMeters);
+        }
+    }
+    // 碰撞口径内无有效样本而外环有(局部数据洞):保守取全部样本最大高。
+    terrainProbe_.collisionMaxHeight =
+        std::isfinite(collisionMax) ? collisionMax
+        : (std::isfinite(anyMax) ? anyMax : 0.0);
 }
 
 void CameraController::updateFilteredTerrainHeight(double rawHeightMeters,

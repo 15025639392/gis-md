@@ -2,6 +2,7 @@
 
 #include "SceneTerrainQuery.h"
 #include "../camera/CameraController.h"
+#include "../tiling/Tileset.h"
 
 namespace earth_engine {
 
@@ -35,6 +36,29 @@ void SceneInteractionCoordinator::configureCameraSurfacePicker(
             return SceneTerrainQuery::sampleHeight(
                 contextProvider().terrainTileset,
                 ecefPosition);
+        });
+
+    // 近场探针:区域批量采样(碰撞钳位主路径,单点 TerrainHeightFunc 退为
+    // 无探针回退)+ 数据代次(contentBytesUsed 作变更计数代理,与矢量贴地
+    // SceneRenderPipeline 同一惯用法)。
+    cameraController.setTerrainAreaSampleFunc(
+        [contextProvider](const Vec3& groundEcef,
+                          double radiusMeters,
+                          const std::vector<glm::dvec2>& offsets,
+                          std::vector<CameraController::TerrainSample>& out) {
+            SceneTerrainQuery::sampleAreaHeights(
+                contextProvider().terrainTileset,
+                groundEcef,
+                radiusMeters,
+                offsets,
+                out);
+        });
+    cameraController.setTerrainRevisionFunc(
+        [contextProvider]() -> uint64_t {
+            const Tileset* tileset = contextProvider().terrainTileset;
+            return tileset
+                ? static_cast<uint64_t>(tileset->contentBytesUsed())
+                : 0;
         });
 }
 

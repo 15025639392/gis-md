@@ -59,6 +59,34 @@ CameraController::PinchInput pinchIn(
     return input;
 }
 
+// 解析式地形假体:把探针的 ENU 偏移换算回经纬(与生产 sampleAreaHeights 同法),
+// 高度由 heightFn(lonRad, latRad) 给出,全点有效。
+CameraController::TerrainAreaSampleFunc makeAnalyticAreaSampler(
+    std::function<double(double, double)> heightFn,
+    int* callCounter = nullptr) {
+    return [heightFn, callCounter](
+               const Vec3& groundEcef, double /*radiusMeters*/,
+               const std::vector<glm::dvec2>& offsets,
+               std::vector<CameraController::TerrainSample>& out) {
+        if (callCounter) ++(*callCounter);
+        const auto& e = Ellipsoid::WGS84();
+        const Cartographic c = e.cartesianToCartographic(groundEcef);
+        const double cosLat =
+            std::max(std::abs(std::cos(c.latitude())), 0.01);
+        out.assign(offsets.size(), {});
+        for (size_t i = 0; i < offsets.size(); ++i) {
+            const double lat = c.latitude() + offsets[i].y / kEarthRadiusMeters;
+            const double lon =
+                c.longitude() + offsets[i].x / (kEarthRadiusMeters * cosLat);
+            const double h = heightFn(lon, lat);
+            out[i].valid = true;
+            out[i].heightMeters = h;
+            out[i].surfaceEcef =
+                e.cartographicToCartesian(Cartographic(lon, lat, h));
+        }
+    };
+}
+
 double matrixAbsDiff(const Mat4& a, const Mat4& b) {
     double diff = 0.0;
     for (int i = 0; i < 4; ++i) {
@@ -1134,6 +1162,118 @@ TEST_F(CameraControllerTest, UserDrivenTerrainChangeBypassesFilter) {
     controller_->onPinchGesture(1.05f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
     controller_->onPinchEnd();
     EXPECT_NEAR(0.0, controller_->groundState().terrainHeightMeters, 1e-9);
+}
+
+TEST_F(CameraControllerTest, SweptClampCatchesRidgeCrossedInOneFrame) {
+    // 扫掠碰撞:单帧大位移跨过山脊时,静态单点钳位两端都在低地、直接隧穿;
+    // 探针的扫掠走廊沿位移线段补采样,必须把山脊计入碰撞口径,把相机抬到
+    // 脊高之上。
+    const auto& e = Ellipsoid::WGS84();
+    const double lon0 = glm::radians(106.5);
+    const double lat0 = glm::radians(29.6);
+    // 山脊:南北走向,位于起点以西 1000m,半宽 300m,高 3000m。
+    const double lonRidge = lon0 - 1000.0 / (kEarthRadiusMeters *
+                                             std::cos(lat0));
+    controller_->setTerrainAreaSampleFunc(makeAnalyticAreaSampler(
+        [&](double lon, double lat) {
+            const double d = (lon - lonRidge) * kEarthRadiusMeters *
+                std::cos(lat);
+            return std::abs(d) < 300.0 ? 3000.0 : 0.0;
+        }));
+
+    const Vec3 target = e.cartographicToCartesian(
+        Cartographic(lon0, lat0, 0.0));
+    controller_->viewDistance(target, 500.0);  // 自由模式,AGL~500 平地
+    controller_->update(0.016);
+    ASSERT_LT(e.cartesianToCartographic(camera_->position()).height(),
+              1500.0);
+
+    // 单帧 2km 位移跨过山脊(外部裸写,如惯性合并/快速平移的极端事件)。
+    const Cartographic startCart =
+        e.cartesianToCartographic(camera_->position());
+    const Vec3 landedEye = e.cartographicToCartesian(Cartographic(
+        startCart.longitude() - 2000.0 / (kEarthRadiusMeters *
+                                          std::cos(startCart.latitude())),
+        startCart.latitude(),
+        startCart.height()));
+    camera_->lookAt(landedEye, target, camera_->up());
+
+    controller_->update(0.016);
+    EXPECT_GE(e.cartesianToCartographic(camera_->position()).height(),
+              3049.0);
+}
+
+TEST_F(CameraControllerTest, AreaProbeRebuildsAtMostOncePerFrame) {
+    // 成本约束:手势期高频事件(120/s)共享同帧探针,区域采样每帧至多 1 次。
+    int callCount = 0;
+    controller_->setTerrainAreaSampleFunc(makeAnalyticAreaSampler(
+        [](double, double) { return 0.0; }, &callCount));
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 target = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    controller_->viewDistance(target, 500.0);
+    controller_->update(0.016);
+
+    callCount = 0;
+    controller_->onPinchGesture(pinchIn(
+        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+    for (int i = 1; i <= 60; ++i) {
+        controller_->onPinchGesture(pinchIn(
+            1.0f + 0.001f * i, 0.0f, 400.0f + i, 300.0f,
+            CameraController::PinchMode::Manipulate,
+            0.008 * i));
+    }
+    controller_->onPinchEnd();
+    EXPECT_LE(callCount, 1);
+}
+
+TEST_F(CameraControllerTest, PinchPanIntoMountainKeepsAnchorPinned) {
+    // §保锚论证的机器化判据:双指刚性平移把相机推进高地形区,碰撞解算沿
+    // eye→anchor 直线退出——锚点像素必须每一步严格钉在质心下,同时 AGL
+    // 不低于地形+50m。径向抬升(旧实现)在这里会泄漏 anchorErr。
+    const auto& e = Ellipsoid::WGS84();
+    const double lon0 = glm::radians(106.5);
+    const double lat0 = glm::radians(29.6);
+    // 高原:起点 1.2km 以外全部 4000m(平移足够远必然进入)。
+    controller_->setTerrainAreaSampleFunc(makeAnalyticAreaSampler(
+        [&](double lon, double lat) {
+            const double dx = (lon - lon0) * kEarthRadiusMeters *
+                std::cos(lat0);
+            const double dy = (lat - lat0) * kEarthRadiusMeters;
+            return std::sqrt(dx * dx + dy * dy) > 1200.0 ? 4000.0 : 0.0;
+        }));
+    const Vec3 target = e.cartographicToCartesian(
+        Cartographic(lon0, lat0, 0.0));
+    controller_->viewDistance(target, 2500.0);
+    controller_->update(0.016);
+
+    controller_->onPinchGesture(pinchIn(
+        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+    Vec3 anchorWorld;
+    ASSERT_TRUE(controller_->debugAnchorWorld(anchorWorld));
+
+    double maxAnchorErr = 0.0;
+    for (int i = 1; i <= 120; ++i) {
+        const float cx = 400.0f + 3.0f * i;  // 长路径横向平移
+        controller_->onPinchGesture(pinchIn(
+            1.0f, 0.0f, cx, 300.0f,
+            CameraController::PinchMode::Manipulate, 0.008 * i));
+        ASSERT_TRUE(controller_->debugAnchorWorld(anchorWorld));
+        const glm::dvec2 px = projectToScreen(*camera_, anchorWorld);
+        maxAnchorErr = std::max(maxAnchorErr,
+                                std::abs(px.x - static_cast<double>(cx)));
+        maxAnchorErr = std::max(maxAnchorErr, std::abs(px.y - 300.0));
+        // 全程不穿地:AGL ≥ 地形+50(容差 1m)。
+        const double h =
+            e.cartesianToCartographic(camera_->position()).height();
+        EXPECT_GE(h, std::max(controller_->groundState().terrainHeightMeters,
+                              0.0) + 49.0)
+            << "step " << i;
+    }
+    controller_->onPinchEnd();
+    EXPECT_LT(maxAnchorErr, 1e-6);
+    // 确认确实驶入了高地形区(测试非空转)。
+    EXPECT_NEAR(4000.0, controller_->groundState().terrainHeightMeters, 1e-9);
 }
 
 TEST_F(CameraControllerTest, FrameEndSentinelClampsExternalBareLookAt) {
