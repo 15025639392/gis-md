@@ -997,6 +997,12 @@ add_executable(test_vector_tile_mesh_builder
 target_link_libraries(test_vector_tile_mesh_builder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_vector_tile_mesh_builder COMMAND test_vector_tile_mesh_builder)
 
+add_executable(test_vector_page_drawer
+    unit/renderer/test_vector_page_drawer.cpp
+)
+target_link_libraries(test_vector_page_drawer PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_vector_page_drawer COMMAND test_vector_page_drawer)
+
 add_executable(test_style_filter
     unit/data/test_style_filter.cpp
 )

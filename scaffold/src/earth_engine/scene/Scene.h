@@ -47,6 +47,8 @@ public:
 
     bool setRenderDevice(RenderDevice* device);
     bool isReady() const { return renderer_ != nullptr; }
+    /// C-2c:页存储叠画方要用它拿着色器(渲染线程,场景就绪后非空)。
+    Renderer* renderer() const { return renderer_.get(); }
 
     /// 门③ Step3:把 Engine 拥有的页存储挂到内部 Renderer(可空=未启用)。
     void setTerrainPageStore(TerrainPageStore* store);

@@ -135,6 +135,9 @@ public:
     /// @return true = 已画(或确认本页无内容可画);false = 未就绪,下帧再叫
     virtual bool decoratePage(const TileKey& pageKey, Texture* target,
                               int layer) = 0;
+    /// 每帧一次(渲染线程,drainInbox 之前)。实现方在此把 worker 产出的 CPU
+    /// 数据传上 GPU —— 页存储保证它先于本帧的任何 decoratePage 调用。
+    virtual void tickDecorator() {}
 };
 
 /// 北极星合成方案「稀疏页存储」(门③ Step B2b + §14.1)。

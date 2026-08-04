@@ -831,6 +831,9 @@ void TerrainPageStore::tick() {
         return;
     }
     ++frameId_;  // 推进帧号(下帧 determination 的 LRU touch/淘汰基准)
+    if (decorator_) {
+        decorator_->tickDecorator();  // 先让叠画方把网格传上 GPU
+    }
     drainInbox();  // fetch 已在 determination 页首次命中时 kick
     retryPendingDecorations();
 }

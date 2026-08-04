@@ -1030,6 +1030,16 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 : (useInstanceAttribs ? VertexLayoutKind::Surface32Instanced
                                       : VertexLayoutKind::Surface32);
             vaoKey.vertexStride = static_cast<unsigned int>(cmd.vertexStride);
+        } else if (cmd.kind == RenderCommandKind::VectorFill &&
+                   cmd.vertexStride == 20) {
+            // C-2c 页存储矢量:pos(8)+extrude(8)+color(4)。
+            // ⚠️ **必须排在下面那条裸 stride==20 之前** —— 那条没有 kind 守卫,
+            // 会把任何 20B 命令都判成地形瓦片布局。真机踩过:几何位置正确
+            // (attr0 前两个分量恰好重合)、线成粗黑块(attr1 读到偏移 12 的垃圾)、
+            // 颜色全黑(attr2 从未启用 → GL 默认 (0,0,0,1))—— 三个症状看着像
+            // 三个 bug,其实是同一条分派。
+            vaoKey.layout = VertexLayoutKind::VectorPageMesh20;
+            vaoKey.vertexStride = 20;
         } else if (cmd.vertexStride == 20) {
             // Terrain tile: pos(12) + uv(8), normal computed in shader
             vaoKey.layout = VertexLayoutKind::Terrain20;
@@ -1045,11 +1055,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // fill 挤出体继续走下方 SimpleStride pos-only 分支)
             vaoKey.layout = VertexLayoutKind::VectorStencilLine24;
             vaoKey.vertexStride = 24;
-        } else if (cmd.kind == RenderCommandKind::VectorFill &&
-                   cmd.vertexStride == 20) {
-            // C-2c 页存储矢量:同 kind 靠 stride 20 与 16B fill 区分
-            vaoKey.layout = VertexLayoutKind::VectorPageMesh20;
-            vaoKey.vertexStride = 20;
         } else if (cmd.kind == RenderCommandKind::VectorFill &&
                    cmd.vertexStride == 16) {
             // 矢量 fill(P6b 顶点色):按 kind 分派
