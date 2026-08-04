@@ -1855,6 +1855,90 @@ fragment float4 vectorFillFragment(VectorFillFragmentIn in [[stage_in]]) {
 }
 )msl";
 
+// ============================================================
+// Vector Page Mesh Shader (C-2c:矢量画进页存储 array 层)
+// 顶点 20B:pos(2×f32,瓦片本地归一化)+ extrude(2×f32,单位法线×半线宽/页像素)
+// + color(4,RGBA8),对应 GLES VectorPageMesh20。
+//
+// **线宽在这里展开而不是在网格里**:a_extrude 的单位是页像素,u_extrudeScale 是
+// 「一个页像素等于多少瓦片归一化单位」= 页覆盖的瓦片跨度 / 页边长。同一份网格
+// 因此能画进任意 zoom 的页 —— 这是 C-2 干掉 8 倍放大糊的整个机制。
+//
+// **后端 y 方向差异全部烘在 u_modelViewProjection 里**(CPU 侧算),shader 两边
+// 逐字符相同:GL 的 FBO 原点在左下、Metal 的 render target 原点在左上,把这个差异
+// 塞进矩阵比在 shader 里分叉安全 —— 分叉过的地方后来都出过「只改一半」的事故。
+// ============================================================
+
+static const char* kVectorPageMeshVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec2 a_position;
+layout(location = 1) in vec2 a_extrude;
+layout(location = 2) in vec4 a_color;   // RGBA8 归一化
+
+uniform mat4 u_modelViewProjection;
+uniform vec2 u_extrudeScale;            // 页像素 → 瓦片归一化
+
+out vec4 v_color;
+
+void main() {
+    v_color = a_color;
+    vec2 p = a_position + a_extrude * u_extrudeScale;
+    gl_Position = u_modelViewProjection * vec4(p, 0.0, 1.0);
+}
+)glsl";
+
+static const char* kVectorPageMeshFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+
+in vec4 v_color;
+out vec4 fragColor;
+
+void main() {
+    fragColor = v_color;
+}
+)glsl";
+
+static const char* kVectorPageMeshVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorPageMeshVertexIn {
+    float2 position [[attribute(0)]];
+    float2 extrude [[attribute(1)]];
+    float4 color [[attribute(2)]];
+};
+
+struct VectorPageMeshVertexOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex VectorPageMeshVertexOut vectorPageMeshVertex(
+        VectorPageMeshVertexIn in [[stage_in]],
+        constant float4x4& u_modelViewProjection [[buffer(1)]],
+        constant float2& u_extrudeScale [[buffer(2)]]) {
+    VectorPageMeshVertexOut out;
+    out.color = in.color;
+    float2 p = in.position + in.extrude * u_extrudeScale;
+    out.position = u_modelViewProjection * float4(p, 0.0, 1.0);
+    return out;
+}
+)msl";
+
+static const char* kVectorPageMeshFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VectorPageMeshFragmentIn {
+    float4 color;
+};
+
+fragment float4 vectorPageMeshFragment(VectorPageMeshFragmentIn in [[stage_in]]) {
+    return in.color;
+}
+)msl";
+
 static const char* kVectorLineVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_position;
@@ -4015,6 +4099,7 @@ struct Renderer::Impl {
     // P6d stencil 贴地线(墙带体,两 stencil pass 共用)。
     std::unique_ptr<ShaderProgram> vectorLineStencilShader;
     std::unique_ptr<ShaderProgram> vectorFillShader;
+    std::unique_ptr<ShaderProgram> vectorPageMeshShader;  // C-2c
     // 矢量点符号/图标 billboard(P5a 解析 SDF 形状 + P6c 位图图集)。
     std::unique_ptr<ShaderProgram> vectorPointShader;
     std::unique_ptr<IconAtlas> iconAtlas;
@@ -4184,6 +4269,20 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] vectorFillShader failed — vector fills unavailable\n");
     }
 
+    // ---- Vector page mesh shader (C-2c 矢量画进页存储 array 层) ----
+    ShaderDesc vectorPageMeshSd;
+    vectorPageMeshSd.vertexSource =
+        isMetal ? kVectorPageMeshVertexMSL : kVectorPageMeshVertexGLSL;
+    vectorPageMeshSd.fragmentSource =
+        isMetal ? kVectorPageMeshFragmentMSL : kVectorPageMeshFragmentGLSL;
+    impl_->vectorPageMeshShader = dev->createShader(vectorPageMeshSd);
+    if (!impl_->vectorPageMeshShader) {
+        // 非致命:矢量不进页存储,cell 回落 mappedRaster 的栅格版(糊但有)。
+        fprintf(stderr,
+                "[Renderer] vectorPageMeshShader failed — vector draping falls "
+                "back to rasterized overlay\n");
+    }
+
     // ---- Vector line shader (矢量 P1 线 ribbon) ----
     ShaderDesc vectorLineSd;
     vectorLineSd.vertexSource =
@@ -4289,6 +4388,10 @@ ShaderProgram* Renderer::vectorLineShader() const {
 ShaderProgram* Renderer::vectorLineStencilShader() const {
     return impl_->vectorLineStencilShader.get();
 }
+ShaderProgram* Renderer::vectorPageMeshShader() const {
+    return impl_->vectorPageMeshShader.get();
+}
+
 ShaderProgram* Renderer::vectorFillShader() const {
     return impl_->vectorFillShader.get();
 }

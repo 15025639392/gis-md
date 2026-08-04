@@ -118,6 +118,7 @@ private:
         VectorLine48,       ///< 48B 矢量线 ribbon：pos(12)+prev(12)+next(12)+side(4)+lengthSoFar(4)+color(4,RGBA8)
         VectorStencilLine24,///< 24B P6d stencil 贴地线墙带：pos(12)+extrude(12)
         VectorFill16,       ///< 16B 矢量 fill：pos(12)+color(4,RGBA8)
+        VectorPageMesh20,   ///< 20B C-2c 页存储矢量：pos(2f)+extrude(2f)+color(4,RGBA8)
         VectorPoint36,      ///< 36B 矢量点/图标：anchor(12)+offsetUnit(8)+uv(8)+color(4,RGBA8)+shape(4)
         VectorLabel32,      ///< 32B 矢量标注：anchor(12)+offsetPx(8)+uv(8)+opacity(4)
         SimpleStride,       ///< 单属性显式 stride（8=vec2、12=vec3，其余按 vec3）

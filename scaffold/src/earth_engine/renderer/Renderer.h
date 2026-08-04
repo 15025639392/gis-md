@@ -71,6 +71,9 @@ public:
     /// 矢量 fill shader(P6b:pos+顶点色 16B;colorShader 保持 pos-only
     /// 服务 stencil 分类等 uniform 色路径)
     ShaderProgram* vectorFillShader() const;
+    /// C-2c:矢量画进页存储 array 层的 20B 顶点着色器(空 = 该路径不可用,
+    /// 调用方回落 mappedRaster 上的栅格版)。
+    ShaderProgram* vectorPageMeshShader() const;
 
     /// 矢量点符号/图标 billboard shader（矢量 P5a 解析 SDF 形状 + P6c 位图
     /// 图集通道;编辑手柄/Point 要素/marker 共用）

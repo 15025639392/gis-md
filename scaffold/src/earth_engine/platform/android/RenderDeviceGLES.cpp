@@ -1046,6 +1046,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             vaoKey.layout = VertexLayoutKind::VectorStencilLine24;
             vaoKey.vertexStride = 24;
         } else if (cmd.kind == RenderCommandKind::VectorFill &&
+                   cmd.vertexStride == 20) {
+            // C-2c 页存储矢量:同 kind 靠 stride 20 与 16B fill 区分
+            vaoKey.layout = VertexLayoutKind::VectorPageMesh20;
+            vaoKey.vertexStride = 20;
+        } else if (cmd.kind == RenderCommandKind::VectorFill &&
                    cmd.vertexStride == 16) {
             // 矢量 fill(P6b 顶点色):按 kind 分派
             vaoKey.layout = VertexLayoutKind::VectorFill16;
@@ -1634,6 +1639,19 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glEnableVertexAttribArray(1);
             glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
                                   reinterpret_cast<void*>(12));
+            break;
+        case VertexLayoutKind::VectorPageMesh20:
+            // C-2c 页存储矢量:pos(2f)+extrude(2f)+color(4,RGBA8 归一化)。
+            // attr 位与 kVectorPageMeshVertexGLSL 对齐:0=pos,1=extrude,2=color。
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(8));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+                                  reinterpret_cast<void*>(16));
             break;
         case VertexLayoutKind::VectorPoint36:
             // 矢量点/图标:anchor(12)+offsetUnit(8)+uv(8)+color(4,RGBA8
