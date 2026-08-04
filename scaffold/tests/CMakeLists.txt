@@ -991,6 +991,12 @@ add_executable(test_vector_tile_rasterizer
 target_link_libraries(test_vector_tile_rasterizer PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_vector_tile_rasterizer COMMAND test_vector_tile_rasterizer)
 
+add_executable(test_vector_tile_mesh_builder
+    unit/data/test_vector_tile_mesh_builder.cpp
+)
+target_link_libraries(test_vector_tile_mesh_builder PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_vector_tile_mesh_builder COMMAND test_vector_tile_mesh_builder)
+
 add_executable(test_style_filter
     unit/data/test_style_filter.cpp
 )
