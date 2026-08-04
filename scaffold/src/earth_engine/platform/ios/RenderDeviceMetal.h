@@ -39,11 +39,13 @@ public:
                       size_t size) override;
     std::unique_ptr<ShaderProgram> createShader(const ShaderDesc& desc) override;
     std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) override;
+    bool setFramebufferColorLayer(Framebuffer* framebuffer, Texture* target,
+                                  int layer) override;
 
     // ---- 帧操作 ----
     void setClearColor(float r, float g, float b, float a) override;
     void beginFrame() override;
-    bool beginPass(Framebuffer* target) override;
+    bool beginPass(Framebuffer* target, bool clearTarget = true) override;
     void endPass() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;

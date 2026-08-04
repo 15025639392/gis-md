@@ -68,11 +68,13 @@ public:
                       size_t size) override;
     std::unique_ptr<ShaderProgram> createShader(const ShaderDesc& desc) override;
     std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) override;
+    bool setFramebufferColorLayer(Framebuffer* framebuffer, Texture* target,
+                                  int layer) override;
 
     // ---- 帧操作 ----
     void setClearColor(float r, float g, float b, float a) override;
     void beginFrame() override;
-    bool beginPass(Framebuffer* target) override;
+    bool beginPass(Framebuffer* target, bool clearTarget = true) override;
     void endPass() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;
@@ -223,13 +225,19 @@ public:
     ~GLFramebuffer() override;
     int width() const override { return width_; }
     int height() const override { return height_; }
-    Texture* colorTexture() const override { return color_.get(); }
+    /// C-2a:外部 array 层作附件时 color_ 为空,返回那张外部纹理(不持有)。
+    Texture* colorTexture() const override {
+        return color_ ? static_cast<Texture*>(color_.get()) : externalColor_;
+    }
     Texture* depthTexture() const override { return depthTexture_.get(); }
     unsigned int glId() const { return fboId_; }
+    void setExternalColor(Texture* target) { externalColor_ = target; }
+    bool hasExternalColor() const { return color_ == nullptr; }
 
 private:
     unsigned int fboId_;
     std::unique_ptr<GLTexture> color_;
+    Texture* externalColor_ = nullptr;  // C-2a:非持有,仅当 color_ 为空时有效
     unsigned int depthRenderbufferId_;      // 0 = 无 renderbuffer depth
     std::unique_ptr<GLTexture> depthTexture_; // 非空 = 可采样 depth
     int width_, height_;

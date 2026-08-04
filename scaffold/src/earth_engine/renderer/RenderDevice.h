@@ -68,6 +68,18 @@ public:
                               size_t size) = 0;
     virtual std::unique_ptr<ShaderProgram> createShader(const ShaderDesc& desc) = 0;
     virtual std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) = 0;
+    /// C-2a:把 framebuffer 的颜色附件改绑到 `target` 的第 `layer` 层
+    /// (framebuffer 须以 externalColorTarget 创建)。一个 FBO 逐 draw 改绑即可
+    /// 服务全部页,不必每页一个 FBO。
+    /// 返回 false = 本后端不支持 / 参数不合法 —— 调用方必须据此短路,**不要**
+    /// 当成成功继续画(否则会画到上一次绑定的层上,现象是「内容出现在错误的瓦片」)。
+    virtual bool setFramebufferColorLayer(Framebuffer* framebuffer,
+                                          Texture* target, int layer) {
+        (void)framebuffer;
+        (void)target;
+        (void)layer;
+        return false;
+    }
 
     // ---- 帧操作 ----
     /// 设置后续 beginFrame() 清除颜色缓冲所用的 RGBA（分量 0..1）。
@@ -85,8 +97,13 @@ public:
     /// 返回 false 表示本 pass 不可用(如 Metal 跳帧),调用方跳过其 submit。
     /// 默认实现 no-op 返回 true——离屏/测试设备无 pass 概念,单 pass 后端
     /// 可继续把 pass-open 逻辑留在 beginFrame(避免破坏 mock)。
-    virtual bool beginPass(Framebuffer* target) {
+    ///
+    /// C-2a:`clearTarget=false` 保留目标已有内容(load 而非 clear)。页存储要在
+    /// 已灌了底图影像的 array 层上叠画矢量 —— 清掉就把底图抹了。深度/模板同样
+    /// 不清(该 pass 是 2D 叠画,不需要它们)。
+    virtual bool beginPass(Framebuffer* target, bool clearTarget = true) {
         (void)target;
+        (void)clearTarget;
         return true;
     }
     virtual void endPass() {}
@@ -209,6 +226,14 @@ struct FramebufferDesc {
     // 分类静默失效(真机踩过:离屏场景 pass 没 stencil,整个体积侧影
     // 被染色)。场景主 pass 的离屏目标必须开。
     bool hasStencil = false;
+    // C-2a:把**已有 texture2DArray 的某一层**当作颜色附件,而不是自建颜色纹理。
+    // 页存储要在自己的 array 层上直接画矢量(RTT draping)——不这么做就只能画进
+    // scratch FBO 再拷一次(GLES glCopyTexSubImage3D / Metal blit),白搭一次带宽。
+    // 非空时 hasColor 的自建路径被跳过,colorTexture() 返回该外部纹理(不持有)。
+    // 层可经 RenderDevice::setFramebufferColorLayer 逐 draw 改绑 —— 一个 FBO 服务
+    // 全部页,不必每页一个 FBO。
+    Texture* externalColorTarget = nullptr;
+    int externalColorLayer = 0;
 };
 
 // ============================================================

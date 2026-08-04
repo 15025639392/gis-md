@@ -581,23 +581,27 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
             "createFramebuffer: samples=%d unsupported, using 1", desc.samples);
     }
 
-    GLuint colorTex = 0;
-    glGenTextures(1, &colorTex);
-    glBindTexture(GL_TEXTURE_2D, colorTex);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, desc.width, desc.height);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    // C-2a:外部 array 层作颜色附件 —— 不自建颜色纹理,直接挂 layer。
+    const bool useExternalColor = desc.externalColorTarget != nullptr;
     const size_t attachmentBytes =
         static_cast<size_t>(desc.width) *
         static_cast<size_t>(desc.height) * 4u;
-    auto color = std::make_unique<GLTexture>(
-        colorTex,
-        desc.width,
-        desc.height,
-        attachmentBytes);
+    GLuint colorTex = 0;
+    std::unique_ptr<GLTexture> color;
+    if (useExternalColor) {
+        colorTex = static_cast<GLTexture*>(desc.externalColorTarget)->glId();
+    } else {
+        glGenTextures(1, &colorTex);
+        glBindTexture(GL_TEXTURE_2D, colorTex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, desc.width, desc.height);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        color = std::make_unique<GLTexture>(colorTex, desc.width, desc.height,
+                                            attachmentBytes);
+    }
 
     // depth:renderbuffer(默认,不可采样)或纹理(depthSampleable)。两者
     // 都用 32F 匹配主 pass reverse-Z 精度。深度纹理必须 NEAREST 过滤
@@ -639,8 +643,13 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     GLuint fbo = 0;
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, colorTex, 0);
+    if (useExternalColor) {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                  colorTex, 0, desc.externalColorLayer);
+    } else {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, colorTex, 0);
+    }
     if (depthTex) {
         glFramebufferTexture2D(GL_FRAMEBUFFER, depthAttachment,
                                GL_TEXTURE_2D, depthTex->glId(), 0);
@@ -660,9 +669,35 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
         }
         return nullptr;  // color/depth 纹理由 GLTexture 析构回收
     }
-    return std::make_unique<GLFramebuffer>(
+    auto framebuffer = std::make_unique<GLFramebuffer>(
         fbo, std::move(color), depthRb, std::move(depthTex),
         desc.width, desc.height);
+    if (useExternalColor) {
+        framebuffer->setExternalColor(desc.externalColorTarget);
+    }
+    return framebuffer;
+}
+
+bool RenderDeviceGLES::setFramebufferColorLayer(Framebuffer* framebuffer,
+                                                Texture* target, int layer) {
+    auto* fbo = static_cast<GLFramebuffer*>(framebuffer);
+    if (!fbo || !target || layer < 0 || !fbo->hasExternalColor()) {
+        return false;  // 调用方必须短路,别继续画到上一次绑定的层上
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo->glId());
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                              static_cast<GLTexture*>(target)->glId(), 0,
+                              layer);
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        __android_log_print(ANDROID_LOG_ERROR, "GLES",
+            "setFramebufferColorLayer: incomplete (status=0x%x) layer=%d",
+            status, layer);
+        return false;
+    }
+    fbo->setExternalColor(target);
+    return true;
 }
 
 // ============================================================
@@ -681,7 +716,7 @@ void RenderDeviceGLES::beginFrame() {
     // clear + 状态设置在 beginPass() 里逐 pass 执行。
 }
 
-bool RenderDeviceGLES::beginPass(Framebuffer* target) {
+bool RenderDeviceGLES::beginPass(Framebuffer* target, bool clearTarget) {
     if (target) {
         auto* fbo = static_cast<GLFramebuffer*>(target);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo->glId());
@@ -708,8 +743,10 @@ bool RenderDeviceGLES::beginPass(Framebuffer* target) {
     // this on the globe; it shows through at the horizon and empty sky.
     glClearColor(clearR_, clearG_, clearB_, clearA_);
     glClearDepthf(0.0f);   // Reverse-Z: clear to 0 (farthest)
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
-            GL_STENCIL_BUFFER_BIT);
+    if (clearTarget) {
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+                GL_STENCIL_BUFFER_BIT);
+    }
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
     glEnable(GL_CULL_FACE);

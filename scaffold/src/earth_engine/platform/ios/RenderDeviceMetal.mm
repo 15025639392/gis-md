@@ -84,13 +84,29 @@ public:
           width_(width), height_(height) {}
     int width() const override { return width_; }
     int height() const override { return height_; }
-    Texture* colorTexture() const override { return color_.get(); }
+    /// C-2a:外部 array 层作附件时 color_ 为空,返回那张外部纹理(不持有)。
+    Texture* colorTexture() const override {
+        return color_ ? static_cast<Texture*>(color_.get()) : externalColor_;
+    }
     // 仅当 depthSampleable 时非空(否则 depth 仅作 render target)。
     Texture* depthTexture() const override { return depthSampleable_.get(); }
-    id<MTLTexture> colorMtl() const { return color_->mtl(); }
+    id<MTLTexture> colorMtl() const {
+        if (color_) return color_->mtl();
+        return externalColor_ ? static_cast<MetalTexture*>(externalColor_)->mtl()
+                              : nil;
+    }
     id<MTLTexture> depthMtl() const { return depth_; }
+    /// C-2a:改绑外部 array 层(slice 进 render pass descriptor)。
+    void setExternalColor(Texture* target, int slice) {
+        externalColor_ = target;
+        slice_ = slice;
+    }
+    bool hasExternalColor() const { return color_ == nullptr; }
+    int slice() const { return slice_; }
 private:
     std::unique_ptr<MetalTexture> color_;
+    Texture* externalColor_ = nullptr;  // C-2a:非持有,仅当 color_ 为空时有效
+    int slice_ = 0;
     id<MTLTexture> depth_;  // nil = 无 depth attachment;render-pass depth 句柄
     std::unique_ptr<MetalTexture> depthSampleable_;  // 非空 = 可采样 depth 包装
     int width_, height_;
@@ -658,18 +674,23 @@ std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const Framebuf
 
     // color 格式必须与既有 PSO 的 colorAttachments[0](BGRA8Unorm)一致,
     // 否则场景 PSO 在离屏 pass 里全部失效。
-    MTLTextureDescriptor* colorDesc = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-                                     width:desc.width
-                                    height:desc.height
-                                 mipmapped:NO];
-    colorDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-    colorDesc.storageMode = MTLStorageModePrivate;
-    id<MTLTexture> colorTex = [impl_->device newTextureWithDescriptor:colorDesc];
-    if (!colorTex) {
-        NSLog(@"createFramebuffer: color texture alloc failed %dx%d",
-              desc.width, desc.height);
-        return nullptr;
+    // C-2a:外部 array 层作颜色附件 —— 不自建颜色纹理,slice 在 beginPass 里选层。
+    const bool useExternalColor = desc.externalColorTarget != nullptr;
+    id<MTLTexture> colorTex = nil;
+    if (!useExternalColor) {
+        MTLTextureDescriptor* colorDesc = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                         width:desc.width
+                                        height:desc.height
+                                     mipmapped:NO];
+        colorDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        colorDesc.storageMode = MTLStorageModePrivate;
+        colorTex = [impl_->device newTextureWithDescriptor:colorDesc];
+        if (!colorTex) {
+            NSLog(@"createFramebuffer: color texture alloc failed %dx%d",
+                  desc.width, desc.height);
+            return nullptr;
+        }
     }
 
     id<MTLTexture> depthTex = nil;
@@ -692,17 +713,36 @@ std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const Framebuf
         }
     }
 
-    auto color = std::make_unique<MetalTexture>(colorTex,
-                                                impl_->linearClampSampler);
+    std::unique_ptr<MetalTexture> color;
+    if (!useExternalColor) {
+        color = std::make_unique<MetalTexture>(colorTex,
+                                               impl_->linearClampSampler);
+    }
     // 可采样深度包装成 MetalTexture,经 depthTexture() 进 textures[] 绑定路径。
     std::unique_ptr<MetalTexture> depthSampleable;
     if (depthTex && desc.depthSampleable) {
         depthSampleable = std::make_unique<MetalTexture>(
             depthTex, impl_->linearClampSampler);
     }
-    return std::make_unique<MetalFramebuffer>(
+    auto framebuffer = std::make_unique<MetalFramebuffer>(
         std::move(color), depthTex, std::move(depthSampleable),
         desc.width, desc.height);
+    if (useExternalColor) {
+        framebuffer->setExternalColor(desc.externalColorTarget,
+                                      desc.externalColorLayer);
+    }
+    return framebuffer;
+}
+
+bool RenderDeviceMetal::setFramebufferColorLayer(Framebuffer* framebuffer,
+                                                 Texture* target, int layer) {
+    auto* fbo = static_cast<MetalFramebuffer*>(framebuffer);
+    if (!fbo || !target || layer < 0 || !fbo->hasExternalColor()) {
+        return false;  // 调用方必须短路,别继续画到上一次绑定的层上
+    }
+    // Metal 无需重建附件:slice 是 render pass descriptor 的字段,beginPass 现取。
+    fbo->setExternalColor(target, layer);
+    return true;
 }
 
 // ============================================================
@@ -749,7 +789,7 @@ void RenderDeviceMetal::beginFrame() {
     impl_->currentDrawable = drawable;
 }
 
-bool RenderDeviceMetal::beginPass(Framebuffer* target) {
+bool RenderDeviceMetal::beginPass(Framebuffer* target, bool clearTarget) {
     // beginFrame 跳帧(信号量超时 / drawable 为 nil)时本帧无 pass 可开。
     if (!impl_->currentCommandBuffer) return false;
     if (impl_->currentEncoder) {
@@ -762,6 +802,8 @@ bool RenderDeviceMetal::beginPass(Framebuffer* target) {
     if (target) {
         auto* fbo = static_cast<MetalFramebuffer*>(target);
         passDesc.colorAttachments[0].texture = fbo->colorMtl();
+        // C-2a:外部 array 层作附件时用 slice 选层(自建 2D 附件恒 0)。
+        passDesc.colorAttachments[0].slice = fbo->slice();
         // 离屏 color 会被后续 pass 采样,必须 Store。
         passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
         passDesc.depthAttachment.texture = fbo->depthMtl();
@@ -775,14 +817,16 @@ bool RenderDeviceMetal::beginPass(Framebuffer* target) {
         viewportW = impl_->viewportWidth;
         viewportH = impl_->viewportHeight;
     }
-    passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
+    passDesc.colorAttachments[0].loadAction =
+        clearTarget ? MTLLoadActionClear : MTLLoadActionLoad;
     // Clear color: sky color for this frame, pushed by Engine via setClearColor()
     // from FrameState before beginFrame(). The fullscreen atmosphere pass covers
     // this on the globe; it shows through at the horizon and empty sky.
     passDesc.colorAttachments[0].clearColor =
         MTLClearColorMake(impl_->clearR, impl_->clearG, impl_->clearB, impl_->clearA);
     if (passDesc.depthAttachment.texture) {
-        passDesc.depthAttachment.loadAction = MTLLoadActionClear;
+        passDesc.depthAttachment.loadAction =
+            clearTarget ? MTLLoadActionClear : MTLLoadActionLoad;
         passDesc.depthAttachment.clearDepth = 0.0;  // Reverse-Z: clear to 0 (farthest)
         passDesc.depthAttachment.storeAction = MTLStoreActionDontCare;
     }

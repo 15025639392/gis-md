@@ -201,7 +201,7 @@ public:
     }
 
     void beginFrame() override { ++frameCount; }
-    bool beginPass(Framebuffer* target) override {
+    bool beginPass(Framebuffer* target, bool clearTarget = true) override {
         ++beginPassCount;
         lastPassTarget = target;
         return true;
