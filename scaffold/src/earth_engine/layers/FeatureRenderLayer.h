@@ -5,6 +5,7 @@
 #include "../renderer/RenderCommand.h"
 #include "../renderer/SymbolShape.h"
 #include "../core/math/Vec3.h"
+#include "../tiling/TileKey.h"
 #include "LabelPlacement.h"
 
 #include <array>
@@ -224,6 +225,30 @@ public:
         return labelPlacement_.stats();
     }
 
+    /// 镶嵌所需的全部外部状态。**镶嵌不再读任何成员**,故可在 worker 线程
+    /// 跑(E1 瓦片桶路径)。
+    ///
+    /// 线程契约:
+    /// - style 是**值拷贝**:setStyle 在渲染线程写 style_,worker 直接读成员
+    ///   就是数据竞争。worker 任务持有自己的快照,任务期内不变。
+    /// - glyphAtlas/iconAtlas 必须为 nullptr(worker 侧)—— GlyphAtlas::
+    ///   ensureGlyph 会现场栅格化字形并传纹理,IconAtlas 同理,都只能在渲染
+    ///   线程。将来若有人在 Polygon/LineString 分支用上图集,worker 路径会
+    ///   立刻空指针炸掉,而不是静默竞争。现状:图集只在 Point(图标)与
+    ///   label 发射处用到,fill/line 全程不碰。
+    /// - ellipsoid 是进程级常量(Ellipsoid::WGS84),引用安全。
+    struct TessellationContext {
+        FeatureRenderStyle style;
+        const Ellipsoid& ellipsoid;
+        GlyphAtlas* glyphAtlas = nullptr;
+        IconAtlas* iconAtlas = nullptr;
+        /// 后端能否做 stencil 分类贴地(P6 方案 B)。原先直接问
+        /// renderDevice_->supportsStencilClassification(),但那是**静态能力
+        /// 位**,不是真要用设备 —— 快照进来,镶嵌器就彻底不持设备指针。
+        bool supportsStencilClassification = false;
+    };
+
+
 private:
     /// 单要素标签在桶标签顶点流中的登记(P5c placement 的 collect 源 +
     /// opacity 回写区间)。碰撞盒 px 相对锚点投影位置(y 向上,含 halo)。
@@ -295,28 +320,86 @@ private:
     AreaSampleFn makeClampSampler(
         const std::vector<std::vector<Cartographic>>& rings) const;
 
+    /// 渲染线程自用的上下文(图集齐全,样式取当前成员)。
+    TessellationContext tessellationContext() const {
+        return TessellationContext{style_, ellipsoid_, glyphAtlas_, iconAtlas_,
+                                   renderDevice_ &&
+                                       renderDevice_->supportsStencilClassification()};
+    }
+
+public:
+    // ================= E1:MVT 瓦片桶(worker 全链镶嵌) =================
+    //
+    // 与可编辑的 FeatureStore 路径**并行的第二条上游**,汇于同一命令层
+    // (appendBucketCommands)。区别在于:
+    //   store 路径 = 空间分桶 + 脏桶差分重镶(编辑友好,但整视口灌入时
+    //               退化成反复全量重镶,P4 实测 debug 下 16s/帧);
+    //   瓦片桶     = 瓦片即桶,worker 直出顶点/索引,渲染线程只上传 +
+    //               **整瓦原子替换**。无 store、无差分、无激活预算。
+    //
+    // v1 边界(刻意):只做 fill/line。point/label 留在 store 路径 ——
+    // 它们要图集(必须渲染线程),且底图里量少;而 16s 尖刺的主体正是
+    // 两万级 fill/line 要素的镶嵌。贴地同样留在 v1 之外(worker 拿不到
+    // 地形采样器;底图现为 Absolute)。
+
+    /// worker 产物:一块瓦片镶嵌后的 CPU 顶点/索引。可跨线程移动。
+    struct TileMeshCpu {
+        Vec3 origin = Vec3::zero();
+        bool hasOrigin = false;
+        std::vector<float> fillVerts;
+        std::vector<uint32_t> fillIndices;
+        std::vector<float> lineVerts;
+        std::vector<uint32_t> lineIndices;
+
+        bool empty() const {
+            return fillIndices.empty() && lineIndices.empty();
+        }
+    };
+
+    /// 取一份镶嵌上下文供 worker 使用:样式已快照、图集置空(线程契约见
+    /// TessellationContext)。**必须在渲染线程调用**,产出可交给 worker。
+    TessellationContext workerTessellationContext() const {
+        // stencil 能力位传 false:v1 瓦片桶走 Absolute,clamp 恒 false,该位
+        // 用不到;真要接贴地时再从渲染线程快照进来。
+        return TessellationContext{style_, ellipsoid_, nullptr, nullptr, false};
+    }
+
+    /// 在 **worker 线程**把一批要素镶嵌成瓦片网格。不触任何成员,全部外部
+    /// 状态经 ctx 传入。fill/line 之外的产物(point/label/stencil 体)被
+    /// 丢弃 —— v1 边界,见上方说明。
+    static TileMeshCpu tessellateTileMesh(const TessellationContext& ctx,
+                                          const std::vector<Feature>& features);
+
+    /// **渲染线程**:上传并整瓦原子替换。mesh 为空 → 等价 dropTileMesh。
+    /// 上传失败 → 丢弃该瓦(下次 provide 重试),不留半张。
+    void commitTileMesh(const TileKey& key, TileMeshCpu&& mesh);
+
+    /// **渲染线程**:移除一块瓦片的 GPU 资源。
+    void dropTileMesh(const TileKey& key);
+
+    /// 当前驻留的瓦片桶数(诊断)。
+    size_t tileMeshCount() const { return tileBuckets_.size(); }
+
+private:
+
     /// 贴地预变换:边按 densifyMeters 细分 + 逐顶点高度 = 采样 + offset;
     /// polygon 另产出内部网格 Steiner 点(CDT 散点,面披盖地形)。
     /// densifyMeters 由调用方定:方案 A 传 style_.clampDensifyMeters(细分
     /// 兼防露头);stencil 线路径放宽(细分只服务线形曲率 + 高度采样)。
-    Feature prepareClampedFeature(const Feature& feature,
+    static Feature prepareClampedFeature(const TessellationContext& ctx,
+                                  const Feature& feature,
                                   const AreaSampleFn& sample,
                                   std::vector<Cartographic>* outSteiner,
-                                  double densifyMeters) const;
+                                  double densifyMeters);
 
     /// 镶嵌单要素几何并追加进 CPU 侧数组(rebuildBucket 与预览路径共用)。
     /// sample 非空 → 先做贴地预变换。
-    ///
-    /// **线程契约(E1)**:本方法只读 style_/ellipsoid_ 这类不可变状态,唯一
-    /// 的线程隐患是两个图集 —— GlyphAtlas::ensureGlyph 会现场栅格化字形并
-    /// 传纹理,IconAtlas 同理,都必须在渲染线程。故图集**走参数而非成员**:
-    /// worker 侧(MVT 瓦片桶路径)传 nullptr,若将来有人在 Polygon/LineString
-    /// 分支里用上图集,会立刻空指针炸掉,而不是静默数据竞争。
-    /// 现状:图集只在 Point(图标)与 label 发射处用到,fill/line 全程不碰。
-    void tessellateFeatureInto(const Feature& feature,
+    /// static:它已不读任何成员(全部外部状态经 ctx 传入),用 static 让
+    /// 「不碰成员」由编译器保证,而不是靠注释自觉——这是 worker 侧安全的
+    /// 根据。
+    static void tessellateFeatureInto(const TessellationContext& ctx,
+                               const Feature& feature,
                                const AreaSampleFn& sample,
-                               GlyphAtlas* glyphAtlas,
-                               IconAtlas* iconAtlas,
                                Vec3& origin,
                                bool& hasOrigin,
                                std::vector<float>& fillVerts,
@@ -329,28 +412,30 @@ private:
                                std::vector<uint32_t>& labelIndices,
                                std::vector<LabelEntry>& labelEntries,
                                VolumeCpuGroups& volumeGroups,
-                               VolumeCpuGroups& lineVolumeGroups) const;
+                               VolumeCpuGroups& lineVolumeGroups);
 
     /// P6 stencil 贴地:polygon footprint 挤成水密体(底/顶两层同拓扑
     /// CDT cap + 环边墙),按解析 fill 色归组。高度范围 = 环顶点+粗内部
     /// 网格采样 min/max ± margin;无采样器回落 ±kVolumeMarginMeters。
-    void appendFillVolume(const Feature& feature,
+    static void appendFillVolume(const TessellationContext& ctx,
+                          const Feature& feature,
                           const AreaSampleFn& sample,
                           const std::array<float, 4>& fillColor,
                           Vec3& origin,
                           bool& hasOrigin,
-                          VolumeCpuGroups& volumeGroups) const;
+                          VolumeCpuGroups& volumeGroups);
 
     /// P6d stencil 贴地线:细分折线挤成连续横截面墙带(每细分点一个
     /// 4 顶点横截面:高度 = 点采样高 ± margin,CPU 侧零宽;VS 沿烘入的
     /// miter 挤出向量按眼深换算世界半宽)。横截面共享 → 水密免段间缝。
     /// closed = 闭合环(polygon outline,首尾 wrap 无端 cap)。
-    void appendLineVolume(const std::vector<Cartographic>& points,
+    static void appendLineVolume(const TessellationContext& ctx,
+                          const std::vector<Cartographic>& points,
                           bool closed,
                           const std::array<float, 4>& lineColor,
                           Vec3& origin,
                           bool& hasOrigin,
-                          VolumeCpuGroups& lineVolumeGroups) const;
+                          VolumeCpuGroups& lineVolumeGroups);
 
     /// CPU 数组 → BucketGpu(buffer 创建;全空返回 false)。
     bool uploadBucketGpu(const Vec3& origin,
@@ -396,6 +481,8 @@ private:
     FeatureRenderStyle style_;
     FeatureStore store_;
     std::unordered_map<BucketKey, BucketGpu> buckets_;
+    /// E1:MVT 瓦片桶(瓦片即桶)。与 buckets_ 平行,同一命令层消费。
+    std::unordered_map<TileKey, BucketGpu> tileBuckets_;
 
     // ---- 编辑预览态 ----
     FeatureId previewFeatureId_ = kInvalidFeatureId;

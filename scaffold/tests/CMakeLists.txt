@@ -136,6 +136,12 @@ add_executable(test_credit_system
 target_link_libraries(test_credit_system PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_credit_system COMMAND test_credit_system)
 
+add_executable(test_feature_tile_mesh
+    unit/layers/test_feature_tile_mesh.cpp
+)
+target_link_libraries(test_feature_tile_mesh PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_feature_tile_mesh COMMAND test_feature_tile_mesh)
+
 add_executable(test_feature_render_layer
     unit/layers/test_feature_render_layer.cpp
 )

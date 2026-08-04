@@ -281,17 +281,18 @@ FeatureRenderLayer::AreaSampleFn FeatureRenderLayer::makeClampSampler(
 }
 
 Feature FeatureRenderLayer::prepareClampedFeature(
+    const TessellationContext& ctx,
     const Feature& feature,
     const AreaSampleFn& sample,
     std::vector<Cartographic>* outSteiner,
-    double densifyMeters) const {
+    double densifyMeters) {
     const double spacing = std::max(1.0, densifyMeters);
     auto clampHeight = [&](double lng, double lat) {
         // 无数据回落椭球面(对齐 no-fine-data-ellipsoid-fallback 约定)。
         const double ground =
             sample ? static_cast<double>(sample(lng, lat).value_or(0.0f))
                    : 0.0;
-        return ground + style_.heightOffset;
+        return ground + ctx.style.heightOffset;
     };
 
     Feature clamped;
@@ -363,10 +364,9 @@ int FeatureRenderLayer::syncDirtyBuckets() {
 }
 
 void FeatureRenderLayer::tessellateFeatureInto(
+    const TessellationContext& ctx,
     const Feature& feature,
     const AreaSampleFn& sample,
-    GlyphAtlas* glyphAtlas,
-    IconAtlas* iconAtlas,
     Vec3& origin,
     bool& hasOrigin,
     std::vector<float>& fillVerts,
@@ -379,18 +379,18 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<uint32_t>& labelIndices,
     std::vector<LabelEntry>& labelEntries,
     VolumeCpuGroups& volumeGroups,
-    VolumeCpuGroups& lineVolumeGroups) const {
+    VolumeCpuGroups& lineVolumeGroups) {
     // P6b 数据驱动色:镶嵌期逐要素求值(上下文 = 属性,无 zoom),失败
     // 回落图层字面量;打包 RGBA8 烘进顶点流。
     const std::array<float, 4> fillColor =
-        resolveColor(style_.fillColorExpr, feature.properties,
-                     style_.fillColor);
+        resolveColor(ctx.style.fillColorExpr, feature.properties,
+                     ctx.style.fillColor);
     const std::array<float, 4> lineColor =
-        resolveColor(style_.lineColorExpr, feature.properties,
-                     style_.lineColor);
+        resolveColor(ctx.style.lineColorExpr, feature.properties,
+                     ctx.style.lineColor);
     const std::array<float, 4> pointColor =
-        resolveColor(style_.pointColorExpr, feature.properties,
-                     style_.pointColor);
+        resolveColor(ctx.style.pointColorExpr, feature.properties,
+                     ctx.style.pointColor);
     const float fillColorPacked = packColorFloat(fillColor);
     const float lineColorPacked = packColorFloat(lineColor);
     const float pointColorPacked = packColorFloat(pointColor);
@@ -398,21 +398,20 @@ void FeatureRenderLayer::tessellateFeatureInto(
     // 贴地:预变换出细分+采样高度的副本(高度已含 offset),镶嵌时
     // heightOffset 传 0 防二次叠加;Absolute 走原几何 + offset。
     const bool clamp =
-        style_.altitudeMode == FeatureAltitudeMode::ClampToGround;
+        ctx.style.altitudeMode == FeatureAltitudeMode::ClampToGround;
     // P6 方案 B:后端支持 stencil 分类 → clamp 面 fill 走挤出体双 pass
     // (像素级贴合,LOD 切换免重钳);不支持回落方案 A。
     const bool stencilFill =
-        clamp && feature.type == GeometryType::Polygon && renderDevice_ &&
-        renderDevice_->supportsStencilClassification();
+        clamp && feature.type == GeometryType::Polygon &&
+        ctx.supportsStencilClassification;
     // P6d:clamp 线(LineString + polygon outline)同走 stencil 双 pass
     // (墙带体,像素级贴地,宽度 VS 按眼深挤出);不支持回落方案 A ribbon。
     const bool stencilLine =
-        clamp && renderDevice_ &&
-        renderDevice_->supportsStencilClassification();
+        clamp && ctx.supportsStencilClassification;
     std::vector<Cartographic> steinerPoints;
     Feature clampedStorage;
     const Feature* geometry = &feature;
-    double tessHeightOffset = style_.heightOffset;
+    double tessHeightOffset = ctx.style.heightOffset;
     if (clamp) {
         // stencil fill 不需要内部 Steiner 撒点(fill 不再按网格采高)。
         // 细分密度解耦:stencil 线不靠细分防露头(贴地是像素级分类),
@@ -421,10 +420,11 @@ void FeatureRenderLayer::tessellateFeatureInto(
         // 用户显式设得更粗时尊重更粗值。
         constexpr double kStencilLineDensifyMeters = 100.0;
         const double densify =
-            stencilLine ? std::max(style_.clampDensifyMeters,
+            stencilLine ? std::max(ctx.style.clampDensifyMeters,
                                    kStencilLineDensifyMeters)
-                        : style_.clampDensifyMeters;
+                        : ctx.style.clampDensifyMeters;
         clampedStorage = prepareClampedFeature(
+            ctx,
             feature, sample, stencilFill ? nullptr : &steinerPoints, densify);
         geometry = &clampedStorage;
         tessHeightOffset = 0.0;
@@ -444,11 +444,11 @@ void FeatureRenderLayer::tessellateFeatureInto(
             if (stencilFill) {
                 // 体积从原始 footprint 出(2D 拓扑,高度由采样范围决定),
                 // 按解析色归组(每组独立命令对,不同色互不污染)。
-                appendFillVolume(feature, sample, fillColor, origin,
+                appendFillVolume(ctx, feature, sample, fillColor, origin,
                                  hasOrigin, volumeGroups);
             } else {
                 TessellatedFill fill = PolygonTessellator::tessellate(
-                    *geometry, ellipsoid_, tessHeightOffset,
+                    *geometry, ctx.ellipsoid, tessHeightOffset,
                     steinerPoints.empty() ? nullptr : &steinerPoints);
                 if (!fill.positions.empty() && !fill.fillIndices.empty()) {
                     ensureOrigin(fill.positions.front());
@@ -471,7 +471,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
             // 外环 outline。孔环 outline 留后续。
             if (stencilLine) {
                 // P6d:闭合墙带体(首尾 wrap)。
-                appendLineVolume(geometry->rings.front(), /*closed=*/true,
+                appendLineVolume(ctx, geometry->rings.front(), /*closed=*/true,
                                  lineColor, origin, hasOrigin,
                                  lineVolumeGroups);
                 break;
@@ -482,7 +482,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
             outlineFeature.type = GeometryType::LineString;
             outlineFeature.rings = {geometry->rings.front()};
             TessellatedLine outline = LineTessellator::tessellate(
-                outlineFeature, ellipsoid_, tessHeightOffset,
+                outlineFeature, ctx.ellipsoid, tessHeightOffset,
                 /*closed=*/true);
             if (!outline.vertices.empty()) {
                 ensureOrigin(outline.vertices.front().pos);
@@ -495,13 +495,13 @@ void FeatureRenderLayer::tessellateFeatureInto(
             if (stencilLine) {
                 // P6d:每条 ring 一条开放墙带体。
                 for (const auto& ring : geometry->rings) {
-                    appendLineVolume(ring, /*closed=*/false, lineColor,
+                    appendLineVolume(ctx, ring, /*closed=*/false, lineColor,
                                      origin, hasOrigin, lineVolumeGroups);
                 }
                 break;
             }
             TessellatedLine line = LineTessellator::tessellate(
-                *geometry, ellipsoid_, tessHeightOffset,
+                *geometry, ctx.ellipsoid, tessHeightOffset,
                 /*closed=*/false);
             if (!line.vertices.empty()) {
                 ensureOrigin(line.vertices.front().pos);
@@ -517,15 +517,15 @@ void FeatureRenderLayer::tessellateFeatureInto(
             // geometry 已由预变换写好(采样 + offset)。
             if (geometry->rings.empty() || geometry->rings[0].empty()) break;
             const Cartographic& c = geometry->rings[0][0];
-            const Vec3 anchor = ellipsoid_.cartographicToCartesian(
+            const Vec3 anchor = ctx.ellipsoid.cartographicToCartesian(
                 Cartographic(c.longitude(), c.latitude(),
                              c.height() + tessHeightOffset));
             ensureOrigin(anchor);
             const Vec3 rel = anchor - origin;
             const ResolvedSymbol sym = resolveSymbol(
-                resolveString(style_.pointImageExpr, feature.properties,
-                              style_.pointImage),
-                style_.pointAnchor, iconAtlas);
+                resolveString(ctx.style.pointImageExpr, feature.properties,
+                              ctx.style.pointImage),
+                ctx.style.pointAnchor, ctx.iconAtlas);
             const uint32_t base =
                 static_cast<uint32_t>(pointVerts.size() / kPointVertexFloats);
             // corner ∈ {±1}²(x 右为正,y 上为正)。
@@ -565,9 +565,9 @@ void FeatureRenderLayer::tessellateFeatureInto(
     // (32B:anchor+offsetPx+uv+opacity)。锚点:Point 本体/LineString 弧长
     // 中点/Polygon 环 bbox 中心;贴地时中心点单独采样。顶点 opacity 初始
     // 0(placement fade-in 起点),同时登记 LabelEntry 供逐帧避让。
-    if (glyphAtlas && glyphAtlas->ready() &&
+    if (ctx.glyphAtlas && ctx.glyphAtlas->ready() &&
         !geometry->rings.empty() && !geometry->rings[0].empty()) {
-        const auto propIt = feature.properties.find(style_.labelProperty);
+        const auto propIt = feature.properties.find(ctx.style.labelProperty);
         if (propIt == feature.properties.end() || propIt->second.empty()) {
             return;
         }
@@ -581,8 +581,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
             const auto& ring = geometry->rings[0];
             std::vector<double> cumulative(ring.size(), 0.0);
             for (size_t i = 1; i < ring.size(); ++i) {
-                const Vec3 a = ellipsoid_.cartographicToCartesian(ring[i - 1]);
-                const Vec3 b = ellipsoid_.cartographicToCartesian(ring[i]);
+                const Vec3 a = ctx.ellipsoid.cartographicToCartesian(ring[i - 1]);
+                const Vec3 b = ctx.ellipsoid.cartographicToCartesian(ring[i]);
                 cumulative[i] = cumulative[i - 1] + (b - a).length();
             }
             const double half = cumulative.back() * 0.5;
@@ -617,17 +617,17 @@ void FeatureRenderLayer::tessellateFeatureInto(
             const double lng = (west + east) * 0.5;
             const double lat = (south + north) * 0.5;
             const bool clampMode =
-                style_.altitudeMode == FeatureAltitudeMode::ClampToGround;
+                ctx.style.altitudeMode == FeatureAltitudeMode::ClampToGround;
             const double h =
                 clampMode
                     ? (sample ? static_cast<double>(
                                     sample(lng, lat).value_or(0.0f))
                               : 0.0) +
-                          style_.heightOffset
+                          ctx.style.heightOffset
                     : geometry->rings[0][0].height();
             anchorCarto = Cartographic(lng, lat, h);
         }
-        const Vec3 anchor = ellipsoid_.cartographicToCartesian(Cartographic(
+        const Vec3 anchor = ctx.ellipsoid.cartographicToCartesian(Cartographic(
             anchorCarto.longitude(), anchorCarto.latitude(),
             anchorCarto.height() + tessHeightOffset));
         ensureOrigin(anchor);
@@ -638,21 +638,21 @@ void FeatureRenderLayer::tessellateFeatureInto(
 
         // 布局:单行 LTR advance,水平居中,基线抬 labelOffsetPx。
         const float s =
-            style_.labelSizePx /
+            ctx.style.labelSizePx /
             static_cast<float>(GlyphAtlas::kGlyphPixelHeight);
         const std::vector<uint32_t> codepoints =
             GlyphAtlas::decodeUtf8(propIt->second);
         float totalAdvance = 0.0f;
         for (uint32_t cp : codepoints) {
-            if (const GlyphAtlas::Glyph* g = glyphAtlas->ensureGlyph(cp)) {
+            if (const GlyphAtlas::Glyph* g = ctx.glyphAtlas->ensureGlyph(cp)) {
                 totalAdvance += g->advance * s;
             }
         }
         float penX = -totalAdvance * 0.5f;
-        const float baseY = style_.labelOffsetPx;
+        const float baseY = ctx.style.labelOffsetPx;
         const size_t entryVertexStart = labelVerts.size();
         for (uint32_t cp : codepoints) {
-            const GlyphAtlas::Glyph* g = glyphAtlas->ensureGlyph(cp);
+            const GlyphAtlas::Glyph* g = ctx.glyphAtlas->ensureGlyph(cp);
             if (!g) continue;
             if (g->hasBitmap) {
                 const float x0 = penX + g->offsetX * s;
@@ -687,13 +687,13 @@ void FeatureRenderLayer::tessellateFeatureInto(
             LabelEntry entry;
             entry.featureId = feature.id;
             entry.anchorEcef = anchor;
-            entry.boxMinXPx = -totalAdvance * 0.5f - style_.labelHaloPx;
-            entry.boxMaxXPx = totalAdvance * 0.5f + style_.labelHaloPx;
+            entry.boxMinXPx = -totalAdvance * 0.5f - ctx.style.labelHaloPx;
+            entry.boxMaxXPx = totalAdvance * 0.5f + ctx.style.labelHaloPx;
             // descent() 已取正(基线下距离),下缘 = 基线减。
             entry.boxMinYPx =
-                baseY - glyphAtlas->descent() * s - style_.labelHaloPx;
+                baseY - ctx.glyphAtlas->descent() * s - ctx.style.labelHaloPx;
             entry.boxMaxYPx =
-                baseY + glyphAtlas->ascent() * s + style_.labelHaloPx;
+                baseY + ctx.glyphAtlas->ascent() * s + ctx.style.labelHaloPx;
             entry.vertexFloatStart = entryVertexStart;
             entry.vertexFloatCount = labelVerts.size() - entryVertexStart;
             labelEntries.push_back(entry);
@@ -714,12 +714,13 @@ constexpr double kVolumeMarginMeters = 120.0;
 } // namespace
 
 void FeatureRenderLayer::appendFillVolume(
+    const TessellationContext& ctx,
     const Feature& feature,
     const AreaSampleFn& sample,
     const std::array<float, 4>& fillColor,
     Vec3& origin,
     bool& hasOrigin,
-    VolumeCpuGroups& volumeGroups) const {
+    VolumeCpuGroups& volumeGroups) {
     if (feature.rings.empty() || feature.rings.front().size() < 3) return;
 
     // P6b:按解析色归组(同色体积并集计数,组间独立命令对)。
@@ -758,7 +759,7 @@ void FeatureRenderLayer::appendFillVolume(
     // 不会漏;更尖的特征仍靠 ±kVolumeMarginMeters 兜底(纯采样无法根治,
     // 根治需地形侧的区域 min/max 元数据)。
     const int kMaxGrid = 64;
-    const double spacing = std::max(1.0, style_.clampDensifyMeters);
+    const double spacing = std::max(1.0, ctx.style.clampDensifyMeters);
     const double midLat = (south + north) * 0.5;
     const double lngSpanMeters =
         (east - west) * kEarthRadiusMeters * std::max(0.01, std::cos(midLat));
@@ -794,9 +795,9 @@ void FeatureRenderLayer::appendFillVolume(
         flat.rings.push_back(std::move(flatRing));
     }
     const TessellatedFill capBottom =
-        PolygonTessellator::tessellate(flat, ellipsoid_, bottom);
+        PolygonTessellator::tessellate(flat, ctx.ellipsoid, bottom);
     const TessellatedFill capTop =
-        PolygonTessellator::tessellate(flat, ellipsoid_, top);
+        PolygonTessellator::tessellate(flat, ctx.ellipsoid, top);
     if (capBottom.positions.empty() || capBottom.fillIndices.empty() ||
         capTop.positions.size() != capBottom.positions.size()) {
         return;  // 退化/拓扑不一致(不应发生):放弃体积,宁缺勿错
@@ -872,12 +873,13 @@ void FeatureRenderLayer::appendFillVolume(
 }
 
 void FeatureRenderLayer::appendLineVolume(
+    const TessellationContext& ctx,
     const std::vector<Cartographic>& points,
     bool closed,
     const std::array<float, 4>& lineColor,
     Vec3& origin,
     bool& hasOrigin,
-    VolumeCpuGroups& lineVolumeGroups) const {
+    VolumeCpuGroups& lineVolumeGroups) {
     // 闭合环:末点 = 首点时去重,横截面靠 wrap 共享。
     size_t n = points.size();
     if (closed && n >= 2 &&
@@ -893,8 +895,8 @@ void FeatureRenderLayer::appendLineVolume(
     std::vector<Vec3> centers(n);
     std::vector<Vec3> ups(n);
     for (size_t i = 0; i < n; ++i) {
-        centers[i] = ellipsoid_.cartographicToCartesian(points[i]);
-        ups[i] = ellipsoid_.geodeticSurfaceNormal(points[i]);
+        centers[i] = ctx.ellipsoid.cartographicToCartesian(points[i]);
+        ups[i] = ctx.ellipsoid.geodeticSurfaceNormal(points[i]);
     }
 
     // 切平面内单位方向(对齐 cesium computeVertexMiterNormal 的正交化,
@@ -1064,9 +1066,9 @@ void FeatureRenderLayer::appendLineVolume(
     // (对照:cesium PolylineDashMaterial.glsl:22-25 用 gl_FragCoord 旋转
     // 取相位规避视差,但花纹锚在屏幕上、相机一动就在地面游动;maplibre
     // line_sdf 的精确里程来自「光栅化的就是线本身」,我们给不了。) ----
-    const double period = static_cast<double>(style_.lineDashPeriodMeters);
+    const double period = static_cast<double>(ctx.style.lineDashPeriodMeters);
     const double onFraction = std::clamp(
-        static_cast<double>(style_.lineDashOnFraction), 0.0, 1.0);
+        static_cast<double>(ctx.style.lineDashOnFraction), 0.0, 1.0);
     /// 划段短于此长度直接跳过(避免退化体与顶点爆炸)。
     constexpr double kMinDashMeters = 0.5;
     /// 单条线的划数上限(period 远小于线长时的护栏,超限退化实线)。
@@ -1242,7 +1244,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         if (fid == previewFeatureId_) continue;  // 预览摘除中,走瞬态路径
         const Feature* feature = store_.getFeature(fid);
         if (!feature) continue;
-        tessellateFeatureInto(*feature, sample, glyphAtlas_, iconAtlas_,
+        tessellateFeatureInto(tessellationContext(), *feature, sample,
                               origin, hasOrigin,
                               fillVerts, fillIndices, lineVerts, lineIndices,
                               pointVerts, pointIndices,
@@ -1269,6 +1271,60 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         return;
     }
     buckets_[key] = std::move(gpu);
+}
+
+// ================= E1:MVT 瓦片桶(worker 全链镶嵌) =================
+
+FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
+    const TessellationContext& ctx, const std::vector<Feature>& features) {
+    TileMeshCpu mesh;
+    // v1 只收 fill/line;point/label/stencil 体的产物接在这些临时容器里,
+    // 出了本函数即丢弃(见头文件 v1 边界说明)。**不能**图省事传同一组
+    // 容器 —— point 顶点混进 fill 流会让 stride 对不上,画出乱码三角。
+    std::vector<float> pointVerts;
+    std::vector<uint32_t> pointIndices;
+    std::vector<float> labelVerts;
+    std::vector<uint32_t> labelIndices;
+    std::vector<LabelEntry> labelEntries;
+    VolumeCpuGroups volumeGroups;
+    VolumeCpuGroups lineVolumeGroups;
+
+    // 贴地采样器留空:worker 拿不到地形瓦片注册表(那是渲染线程状态),
+    // v1 底图走 Absolute。传空 = 走原几何 + heightOffset。
+    const AreaSampleFn noSample;
+
+    for (const Feature& feature : features) {
+        tessellateFeatureInto(ctx, feature, noSample, mesh.origin,
+                              mesh.hasOrigin, mesh.fillVerts, mesh.fillIndices,
+                              mesh.lineVerts, mesh.lineIndices, pointVerts,
+                              pointIndices, labelVerts, labelIndices,
+                              labelEntries, volumeGroups, lineVolumeGroups);
+    }
+    return mesh;
+}
+
+void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) {
+    if (mesh.empty() || !mesh.hasOrigin) {
+        dropTileMesh(key);
+        return;
+    }
+    // 整瓦原子替换:先建好新 GPU 资源,成功了才换掉旧的。中途失败保留旧瓦
+    // 而不是留半张 —— 半张瓦片在画面上是缺口,比旧数据糟。
+    BucketGpu gpu;
+    static const std::vector<float> kNoVerts;
+    static const std::vector<uint32_t> kNoIndices;
+    VolumeCpuGroups noVolumes;
+    if (!uploadBucketGpu(mesh.origin, mesh.fillVerts, mesh.fillIndices,
+                         mesh.lineVerts, mesh.lineIndices, kNoVerts, kNoIndices,
+                         std::vector<float>(), kNoIndices,
+                         std::vector<LabelEntry>(), noVolumes, noVolumes, gpu)) {
+        return;
+    }
+    tileBuckets_[key] = std::move(gpu);
+}
+
+void FeatureRenderLayer::dropTileMesh(const TileKey& key) {
+    tileBuckets_.erase(key);
 }
 
 void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
@@ -1337,9 +1393,8 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         VolumeCpuGroups lineVolumeGroups;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
-        tessellateFeatureInto(previewFeature,
+        tessellateFeatureInto(tessellationContext(), previewFeature,
                               makeClampSampler(previewRings_),
-                              glyphAtlas_, iconAtlas_,
                               origin, hasOrigin,
                               fillVerts, fillIndices,
                               lineVerts, lineIndices,
@@ -1363,7 +1418,14 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     // P5c:逐帧标签避让 placement + fade 回写(在命令生成前,顶点流为准)。
     updateLabelPlacement(frameState, visibleKeys);
 
-    if (buckets_.empty() && !previewGpuValid_) return;
+    if (buckets_.empty() && tileBuckets_.empty() && !previewGpuValid_) return;
+
+    // E1:MVT 瓦片桶先发(垫底,与 store 路径同一命令层)。可见性由上游
+    // (VectorTileTree 的视口选择)负责 —— 驻留的瓦片桶本就是「本帧该画的」,
+    // 这里再套一遍空间桶可见性判定是重复且会误杀(瓦片矩形与桶网格不对齐)。
+    for (const auto& entry : tileBuckets_) {
+        appendBucketCommands(entry.second, frameState, renderer, commands);
+    }
 
     for (BucketKey key : visibleKeys) {
         auto it = buckets_.find(key);
