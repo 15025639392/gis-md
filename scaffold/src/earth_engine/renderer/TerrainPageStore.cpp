@@ -324,6 +324,14 @@ int TerrainPageStore::decodeDepthRGBA8(const uint8_t in[4]) {
     return static_cast<int>(in[2]);  // 镜像片元 floor(b*255+0.5)
 }
 
+TileKey TerrainPageStore::unpackKey(uint64_t packed) {
+    TileKey key;
+    key.z = static_cast<int>(packed >> 44);
+    key.x = static_cast<int>((packed >> 22) & 0x3FFFFFull);
+    key.y = static_cast<int>(packed & 0x3FFFFFull);
+    return key;  // schemeId 不入 key(见 packKey),保持缺省
+}
+
 uint64_t TerrainPageStore::packKey(const TileKey& key) {
     // B2b:页 = 影像瓦片,z ≤ 17,x/y < 2^17 < 2^22 → 无损打包进 64 位。schemeId 不入
     // key(单一影像 provider,z/x/y 唯一定位页)。也复用于 capped 瓦片 tileKey。
@@ -824,6 +832,27 @@ void TerrainPageStore::tick() {
     }
     ++frameId_;  // 推进帧号(下帧 determination 的 LRU touch/淘汰基准)
     drainInbox();  // fetch 已在 determination 页首次命中时 kick
+    retryPendingDecorations();
+}
+
+void TerrainPageStore::retryPendingDecorations() {
+    if (!decorator_ || !arrayTexture_) {
+        return;
+    }
+    // 每帧有上限:叠画是真 draw,不能跟主 pass 抢预算。未轮到的页下帧继续
+    // (页存储自己迭代 → 被 LRU 换租的页自然不在表里,不会画进别人的层)。
+    int budget = config_.maxUploadsPerFrame;
+    for (auto& [pageKey, pe] : pages_) {
+        if (budget <= 0) {
+            break;
+        }
+        if (pe.decorated || !pe.assembler.hasTexels() || pe.layer < 0) {
+            continue;
+        }
+        --budget;
+        pe.decorated = decorator_->decoratePage(unpackKey(pageKey),
+                                                arrayTexture_.get(), pe.layer);
+    }
 }
 
 void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
@@ -918,6 +947,14 @@ void TerrainPageStore::drainInbox() {
         // hasTexels 已为真 → 下帧 determination 重建 indir 时该 cell 变 resident。
         if (pe.assembler.complete()) {
             pe.assembler.releaseBuffers();  // 全源到齐:稳态零额外内存
+        }
+        // C-2c:本次上传覆盖了此前的 GPU 叠画 → 标记未叠画并立刻试一次。
+        // 未就绪(源瓦片在路上)时由 retryPendingDecorations 后续帧接着试。
+        pe.decorated = false;
+        if (decorator_) {
+            pe.decorated = decorator_->decoratePage(unpackKey(item.key),
+                                                    arrayTexture_.get(),
+                                                    item.layer);
         }
         ++uploadedLayerTotal_;
         ++uploaded;

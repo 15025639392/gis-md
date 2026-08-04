@@ -444,6 +444,20 @@ TEST(TerrainPageStore, InitializeCreatesSharedArrayTexture) {
     EXPECT_EQ(store.uploadedLayerTotal(), 0);
 }
 
+// packKey/unpackKey 必须 round-trip:叠画钩子拿到的 z/x/y 错了就会去取错误的
+// 源瓦片,画面表现是「路网整体错位」而不是报错。覆盖到 z17 与各位段边界。
+TEST(TerrainPageStore, PackUnpackKeyRoundTrip) {
+    for (const TileKey& key : {TileKey{"", 0, 0, 0}, TileKey{"", 17, 0, 0},
+                               TileKey{"", 17, 131071, 131071},
+                               TileKey{"", 12, 3260, 1695}}) {
+        const TileKey back =
+            TerrainPageStore::unpackKey(TerrainPageStore::packKeyForTest(key));
+        EXPECT_EQ(back.z, key.z);
+        EXPECT_EQ(back.x, key.x);
+        EXPECT_EQ(back.y, key.y);
+    }
+}
+
 // ---------------- SVT 间接纹理 RGBA8 层编解码(Step B1)----------------
 
 // 编 layer → RGBA8 → 解码回 layer,逐位镜像片元 shader(R+G*256)。decode 只看 RG,

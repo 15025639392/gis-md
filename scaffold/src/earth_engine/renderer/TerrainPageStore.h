@@ -114,6 +114,29 @@ private:
     std::vector<std::vector<uint8_t>> stash_;  // 乱序早到的源(按源号索引)
 };
 
+/// 页上传后的 GPU 叠画钩子(C-2c:矢量在页原生分辨率上直接画进 array 层)。
+///
+/// 为什么是「上传后叠画」而不是「当成一个源进 PageSourceAssembler」:assembler 走
+/// CPU 合成,而矢量的整个价值就在于**不经过任何固定分辨率的中间位图** —— 一进
+/// assembler 就又得先栅格化。叠画排在影像上传之后,天然就是正确的合成次序。
+///
+/// 次序与失效由页存储驱动,实现方不必自己管:
+///  - 每次页上传后都会被调一次 → 底图重传(LRU 换租 / 祖先升级)会抹掉叠画,
+///    但紧接着的这次调用又画回来,不需要额外的脏标记。
+///  - 返回 false = 本页内容尚未就绪(如源瓦片还在路上)。页存储记下「未叠画」,
+///    后续帧继续叫,直到成功。**别在实现里自己攒待画队列** —— 页随时可能被
+///    LRU 换租,攒下来的 (页,层) 对会过期,画进别人的层里。
+class TerrainPageDecorator {
+public:
+    virtual ~TerrainPageDecorator() = default;
+    /// @param pageKey 页的 z/x/y(schemeId 不参与页 key 打包,故为缺省值)
+    /// @param target  页存储的共享 array 纹理
+    /// @param layer   本页占用的层
+    /// @return true = 已画(或确认本页无内容可画);false = 未就绪,下帧再叫
+    virtual bool decoratePage(const TileKey& pageKey, Texture* target,
+                              int layer) = 0;
+};
+
 /// 北极星合成方案「稀疏页存储」(门③ Step B2b + §14.1)。
 ///
 /// 拥有一张共享 `texture2DArray`(§13,每层一页,天然消灭页缝),**按页粒度** LRU
@@ -151,6 +174,10 @@ public:
     bool initialize(RenderDevice* device, const Config& config);
 
     bool isReady() const { return arrayTexture_ != nullptr; }
+
+    /// C-2c:设置页上传后的 GPU 叠画钩子(nullptr = 不叠画,逐字节走现状)。
+    /// 生命周期归调用方,须比页存储活得久。
+    void setDecorator(TerrainPageDecorator* decorator) { decorator_ = decorator; }
 
     /// 每帧(渲染线程,determination 之后、render 之前):推进帧号、排空已到达影像
     /// (限 maxUploadsPerFrame)灌对应页 layer 并置 uploaded。fetch 由 determination
@@ -217,6 +244,13 @@ public:
     /// B 通道深度解码(镜像片元 floor(b*255+0.5))。供 host round-trip 单测。
     static int decodeDepthRGBA8(const uint8_t in[4]);
 
+    /// packKey 的逆(schemeId 不入 key,还原为缺省)。供叠画钩子拿页的 z/x/y。
+    /// 与 packKey 必须 round-trip —— 还原错了会去取错误的源瓦片,画面表现是
+    /// 「路网整体错位」而不是报错。
+    static TileKey unpackKey(uint64_t packed);
+    /// packKey 的单测入口(打包本身是私有实现细节,但 round-trip 必须可测)。
+    static uint64_t packKeyForTest(const TileKey& key) { return packKey(key); }
+
     /// C-1b:把某源到达的影像重采样成本页的 side²×4 RGBA8。
     ///
     /// 页 zoom 由屏幕(与底图上限)驱动,常深于标注/矢量类源自己的 maxZoom;那些源
@@ -248,6 +282,9 @@ private:
         int layer = -1;
         PageSourceAssembler assembler;
         std::vector<CancellationToken> fetchTokens;  // 每源一个
+        // C-2c:本页的 GPU 叠画是否已完成。每次上传置 false(上传覆盖了叠画结果),
+        // decoratePage 成功后置 true;tick 每帧重试未完成的页。
+        bool decorated = false;
     };
 
     /// 每个屏幕可见 capped 瓦片的稀疏间接纹理(gridN×gridN RGBA8)。
@@ -268,6 +305,9 @@ private:
     };
 
     static uint64_t packKey(const TileKey& key);
+
+    /// 对已上传但未叠画的页重试 decoratePage(每帧有上限,勿抢 draw 预算)。
+    void retryPendingDecorations();
     /// kick 单页的**全部源** fetch(worker 回调把解码影像投进 inbox,带
     /// pageKey+layer+源号)。每源一个 token,存进 entry.fetchTokens 供淘汰时 cancel。
     void kickPageFetches(const TileKey& pageTileKey, uint64_t pageKey, int layer,
@@ -292,6 +332,7 @@ private:
     std::vector<RasterOverlayTileProvider*> providers_;
     std::vector<RasterOverlayTileProvider*> detProvidersScratch_;  // 剔 null 复用
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
+    TerrainPageDecorator* decorator_ = nullptr;      // C-2c:页上传后叠画(不持有)
 
     // 门② determination:子瓦片相对 capped 瓦片的最大细分深度上限
     // (屏幕驱动一般 ≤5;cap 防远景/病态 zoom 枚举爆量,gridN ≤ 1<<cap)。
