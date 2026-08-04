@@ -45,7 +45,13 @@ VectorRasterStyle makeMvtRasterStyle() {
     // 的「屏幕恒定宽」语义不同 —— 这是 draping 的固有性质(maplibre 的 line
     // 进 RTT 后同样如此),不是 bug。
     roads.lineColor = {245, 245, 245, 220};
-    roads.lineWidthPixels = 2.5;
+    // 线宽单位是**设备像素**(引擎全程按设备像素工作 —— demo 给
+    // onSurfaceChanged 传的 dpr 就是 1.0),不是 CSS 像素。页存储按屏幕误差选页
+    // zoom,一个页纹素 ≈ 一个设备像素,所以这个值直接就是屏幕上的粗细,已经是
+    // 「跟着屏幕走」的 —— 早先看着像发丝是因为按 CSS 像素的直觉取了 2.5,
+    // 落到 DPR 3.5 的机器上只有 0.7 CSS 像素。
+    // TODO: 该乘数应取自 Android density(wm density / 160),现按测试机 3.5 固定。
+    roads.lineWidthPixels = 2.5 * 3.5;
 
     // 顺序 = 绘制顺序:水面在下,建筑其次,路网压顶。
     style.layers = {water, building, roads};
