@@ -93,40 +93,97 @@ struct FakeFetch {
 MvtVectorSource::Options optionsForTest() {
     MvtVectorSource::Options opt;
     opt.tree.maxTilesPerView = 64;
+    opt.maxTileCommitsPerUpdate = 0;  // 默认不限流,限流单独一条测
     return opt;
 }
 
-TEST(MvtVectorSource, FetchDecodeActivatePipeline) {
+/// 假 sink:记录 worker 镶嵌调用与渲染线程 commit/drop。
+/// 镶嵌返回一个恒定的非空网格 —— 本文件测的是**通路**(拉取/解码/派单/
+/// commit/drop/重入),真镶嵌产物的正确性归 test_feature_tile_mesh。
+struct FakeSinks {
+    int tessellateCalls = 0;
+    size_t lastFeatureCount = 0;
+    std::vector<TileKey> committed;
+    std::vector<TileKey> dropped;
+
+    MvtVectorSource::Sinks fn() {
+        MvtVectorSource::Sinks s;
+        s.tessellate = [this](std::vector<Feature>&& features) {
+            ++tessellateCalls;
+            lastFeatureCount = features.size();
+            FeatureTileMesh mesh;
+            mesh.hasOrigin = true;
+            mesh.fillVerts = {0.f, 0.f, 0.f};
+            mesh.fillIndices = {0, 0, 0};
+            return mesh;
+        };
+        s.commit = [this](const TileKey& k, FeatureTileMesh&&) {
+            committed.push_back(k);
+        };
+        s.drop = [this](const TileKey& k) { dropped.push_back(k); };
+        return s;
+    }
+};
+
+TEST(MvtVectorSource, FetchDecodeTessellateCommitPipeline) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
-    FeatureStore store;
-    MvtVectorSource source(optionsForTest(), store, fetch.fn());
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.fn());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     source.update(view, heightForZoom(2));
     ASSERT_FALSE(fetch.requested.empty());
-    EXPECT_EQ(source.store().size(), 0u);  // 解码在收件箱,尚未激活
+    EXPECT_EQ(sinks.tessellateCalls, 0);  // 解码结果还在收件箱
 
-    source.update(view, heightForZoom(2));
+    source.update(view, heightForZoom(2));  // 消化解码 → 派镶嵌单
+    EXPECT_GT(sinks.tessellateCalls, 0);
+    EXPECT_TRUE(sinks.committed.empty());   // 镶嵌结果还在收件箱
+
+    source.update(view, heightForZoom(2));  // 消化网格 → commit
+    EXPECT_FALSE(sinks.committed.empty());
     EXPECT_GT(source.activeTileCount(), 0u);
-    ASSERT_GT(source.store().size(), 0u);
+    EXPECT_EQ(sinks.committed.size(), source.activeTileCount());
+}
 
-    // 要素带属性 + mvt_layer 注入(点在瓦片中心,可能落在视口外,
-    // 查询窗用全球)
-    auto ids = source.store().queryVisible(rectDeg(-179, -85, 179, 85));
-    ASSERT_FALSE(ids.empty());
-    const Feature* f = source.store().getFeature(ids[0]);
-    ASSERT_NE(f, nullptr);
-    EXPECT_EQ(f->properties.at("kind"), "poi");
-    EXPECT_EQ(f->properties.at("mvt_layer"), "pois");
-    EXPECT_EQ(f->sourceId, "42");
+// E1 必须守住的性质:瓦片离开视口后网格被 drop,但解码结果留在树的 LRU,
+// 重入时**只重镶嵌、不重拉取**。这条曾在改造中差点丢掉 —— 若图省事让
+// worker 一步吐网格、树里只塞空占位,重入时树认为"已加载"不再请求,而
+// 网格已丢,该瓦片将永远不再出现。
+TEST(MvtVectorSource, ReentryRetessellatesWithoutRefetch) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.fn());
+
+    Rectangle near = rectDeg(1, 1, 10, 10);
+    for (int i = 0; i < 3; ++i) source.update(near, heightForZoom(2));
+    const size_t fetchesAfterFirst = fetch.requested.size();
+    const int tessAfterFirst = sinks.tessellateCalls;
+    ASSERT_GT(source.activeTileCount(), 0u);
+
+    // 换到别处再回来
+    Rectangle far = rectDeg(-170, -40, -160, -30);
+    for (int i = 0; i < 3; ++i) source.update(far, heightForZoom(2));
+    EXPECT_FALSE(sinks.dropped.empty()) << "离开视口的瓦片应被 drop";
+
+    for (int i = 0; i < 3; ++i) source.update(near, heightForZoom(2));
+    EXPECT_GT(sinks.tessellateCalls, tessAfterFirst) << "重入应重镶嵌";
+    // 回到原视口不该再对同一批瓦片发网络请求。
+    size_t refetchOfOriginals = 0;
+    for (size_t i = fetchesAfterFirst; i < fetch.requested.size(); ++i) {
+        for (size_t j = 0; j < fetchesAfterFirst; ++j) {
+            if (fetch.requested[i] == fetch.requested[j]) ++refetchOfOriginals;
+        }
+    }
+    EXPECT_EQ(refetchOfOriginals, 0u) << "重入零重拉取";
 }
 
 TEST(MvtVectorSource, FailedFetchMarksFailedNoRerequest) {
     FakeFetch fetch;
     fetch.statusCode = 404;
-    FeatureStore store;
-    MvtVectorSource source(optionsForTest(), store, fetch.fn());
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.fn());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     source.update(view, heightForZoom(2));
@@ -136,64 +193,49 @@ TEST(MvtVectorSource, FailedFetchMarksFailedNoRerequest) {
     source.update(view, heightForZoom(2));
     EXPECT_EQ(fetch.requested.size(), firstBatch);  // 不重复请求
     EXPECT_GT(source.tree().failedCount(), 0u);
-    EXPECT_EQ(source.store().size(), 0u);
+    EXPECT_EQ(sinks.tessellateCalls, 0);
+    EXPECT_TRUE(sinks.committed.empty());
 }
 
-TEST(MvtVectorSource, ZoomChangeSwapsActiveTilesNoLeftovers) {
+TEST(MvtVectorSource, ZoomChangeSwapsTilesNoLeftovers) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
-    FeatureStore store;
-    MvtVectorSource source(optionsForTest(), store, fetch.fn());
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.fn());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
-    source.update(view, heightForZoom(2));
-    source.update(view, heightForZoom(2));
-    size_t activeAtZ2 = source.activeTileCount();
+    for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));
+    const size_t activeAtZ2 = source.activeTileCount();
     ASSERT_GT(activeAtZ2, 0u);
-    size_t storeAtZ2 = source.store().size();
 
-    // 拉近两档:旧 zoom 激活集必须整体换成新 zoom
-    source.update(view, heightForZoom(4));
-    source.update(view, heightForZoom(4));
-    // 所有激活瓦片都在新 zoom(祖先回退已被新瓦片替换,因为假网络即时返回)
+    for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(4));
     EXPECT_GT(source.activeTileCount(), 0u);
-    // store 数与激活瓦片一致:每瓦片 1 要素
-    EXPECT_EQ(source.store().size(), source.activeTileCount());
-    // 防泄漏:回到 z2 视角再看,store 不应累积
-    source.update(view, heightForZoom(2));
-    source.update(view, heightForZoom(2));
-    EXPECT_EQ(source.store().size(), source.activeTileCount());
-    EXPECT_LE(source.store().size(), std::max(storeAtZ2, activeAtZ2) * 2);
+    EXPECT_FALSE(sinks.dropped.empty()) << "旧 zoom 的瓦片必须被 drop";
+    // commit 与 drop 的差 = 当前驻留数,不该有泄漏。
+    EXPECT_EQ(sinks.committed.size() - sinks.dropped.size(),
+              source.activeTileCount());
 }
 
-TEST(MvtVectorSource, ActivationBudgetSpreadsAcrossUpdates) {
+// commit 限流拦的是**上传**成本(镶嵌已在 worker),与旧的激活预算语义
+// 不同 —— 那个拦的是渲染线程上的镶嵌,是结构性补丁。
+TEST(MvtVectorSource, CommitBudgetSpreadsAcrossUpdates) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
     MvtVectorSource::Options opt = optionsForTest();
-    opt.maxActivationFeaturesPerUpdate = 2;  // 每瓦片 1 要素 → 每帧至多 2 瓦
-    FeatureStore store;
-    MvtVectorSource source(opt, store, fetch.fn());
+    opt.maxTileCommitsPerUpdate = 2;
+    FakeSinks sinks;
+    MvtVectorSource source(opt, sinks.fn(), fetch.fn());
 
     Rectangle view = rectDeg(-80, -40, 80, 40);  // z2 多瓦片视口
-    source.update(view, heightForZoom(2));       // 发请求(假网络即回)
-    source.update(view, heightForZoom(2));       // 第一批激活(预算 2)
-    size_t after1 = source.activeTileCount();
-    EXPECT_GT(after1, 0u);
-    EXPECT_LE(after1, 2u);
-
-    // 反复 update 直到激活完;每帧增量 ≤ 预算,最终全量激活
-    size_t prev = after1;
-    for (int i = 0; i < 32 && source.tree().pendingCount() == 0; ++i) {
+    size_t prev = 0;
+    for (int i = 0; i < 40; ++i) {
         source.update(view, heightForZoom(2));
-        size_t now = source.activeTileCount();
-        EXPECT_LE(now - prev, 2u);
-        if (now == prev && now == source.store().size()) {
-            break;
-        }
+        const size_t now = source.activeTileCount();
+        EXPECT_LE(now - prev, 2u) << "单帧 commit 不得超预算";
         prev = now;
     }
-    EXPECT_GE(source.activeTileCount(), 4u);  // 视口至少 2×2 瓦全部激活
-    EXPECT_EQ(source.store().size(), source.activeTileCount());
+    EXPECT_GE(source.activeTileCount(), 4u) << "最终全部 commit 完";
+    EXPECT_EQ(source.pendingCommitCount(), 0u);
 }
 
 TEST(MvtVectorSource, IncludeLayersFilters) {
@@ -201,14 +243,13 @@ TEST(MvtVectorSource, IncludeLayersFilters) {
     fetch.body = makePointTile("water");
     MvtVectorSource::Options opt = optionsForTest();
     opt.includeLayers = {"roads"};  // 瓦片只有 water 层 → 全被滤掉
-    FeatureStore store;
-    MvtVectorSource source(opt, store, fetch.fn());
+    FakeSinks sinks;
+    MvtVectorSource source(opt, sinks.fn(), fetch.fn());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
-    source.update(view, heightForZoom(2));
-    source.update(view, heightForZoom(2));
-    EXPECT_GT(source.activeTileCount(), 0u);  // 瓦片激活了
-    EXPECT_EQ(source.store().size(), 0u);     // 但没有要素通过过滤
+    for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));
+    EXPECT_GT(sinks.tessellateCalls, 0) << "瓦片仍派了镶嵌单";
+    EXPECT_EQ(sinks.lastFeatureCount, 0u) << "但没有要素通过过滤";
 }
 
 } // namespace

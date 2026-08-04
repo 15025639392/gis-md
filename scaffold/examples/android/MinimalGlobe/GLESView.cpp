@@ -28,6 +28,7 @@
 #include "earth_engine/data/FeatureClusterIndex.h"
 #include "earth_engine/layers/FeatureRenderLayer.h"
 #include "earth_engine/data/FeatureSnapQuery.h"
+#include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/data/MvtVectorSource.h"
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
 #include "earth_engine/scene/Camera.h"
@@ -130,6 +131,10 @@ static std::vector<FeatureId> gEditHandleIds;
 // 一个普通 FeatureRenderLayer(store 即 source 的灌注目标)。 ----
 static FeatureRenderLayer* gMvtBasemapLayer = nullptr;  // Engine 持有所有权
 static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
+// E1:MVT 解码 + 镶嵌的 worker 池。独立于引擎的瓦片加载池 —— 底图镶嵌是
+// 突发型重负载(换 zoom 时整视口一起来),混进地形/影像池会挤掉它们的
+// 加载额度。2 线程:再多也只是把内存峰值抬高,commit 侧本就有帧预算。
+static std::unique_ptr<ThreadPool> gMvtWorkerPool;
 // HttpRequest 是取消句柄(析构即取消),须持有到完成;完成 id 攒起来
 // 由下一次发请求时(渲染线程)剪除,避免在 curl 回调线程里析构句柄。
 struct MvtFetchInflight {
@@ -160,6 +165,7 @@ static void clearDemoEngineObjects() {
     // MVT 源先停:它持有 basemap 层 store 的引用(层归 Engine 所有),
     // 且在飞的 HttpRequest 句柄析构即取消。
     gMvtSource.reset();
+    gMvtWorkerPool.reset();
     {
         std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
         gMvtFetch.requests.clear();
@@ -288,12 +294,12 @@ static bool createEngine() {
 
         // ---- P4 MVT 只读底图:先于编辑演示层挂(先挂先画,垫底)。----
         if (minimal_globe_demo::kEnableMvtBasemap) {
-            // 细桶 0.0005rad(~3.2km):MVT 底图是高密度小范围数据,默认
-            // 0.02rad 桶会把全城要素挤进 1-2 桶 → 增量激活退化成整桶反复
-            // 全量重镶(真机渲染线程分钟级卡死的根因之一)。
+            // E1:底图走**瓦片桶**(worker 全链镶嵌),不再灌 store,故
+            // 细桶那个 workaround 已无意义 —— 它当初是为了让「整城要素塞进
+            // 空间分桶 store」时增量激活不退化成整桶全量重镶。桶尺寸留默认,
+            // 该层的 store 现在只承载 demo 自己的编辑要素。
             auto basemapLayer = std::make_unique<FeatureRenderLayer>(
-                "mvt-basemap", gRenderDevice.get(), Ellipsoid::WGS84(),
-                0.0005);
+                "mvt-basemap", gRenderDevice.get(), Ellipsoid::WGS84());
             FeatureRenderStyle bs;
             // A/B 诊断 2026-08-03:ClampToGround 下单帧 235s(疑贴地体
             // 逐顶点地形采样 O(瓦片×三角形) 爆炸),先 Absolute 抬升验证
@@ -317,6 +323,7 @@ static bool createEngine() {
             basemapLayer->setStyle(bs);
             gMvtBasemapLayer = basemapLayer.get();
 
+            gMvtWorkerPool = std::make_unique<ThreadPool>(2);
             MvtVectorSource::Options mvtOpts;
             mvtOpts.tree.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
             mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
@@ -353,8 +360,26 @@ static bool createEngine() {
                 std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
                 gMvtFetch.requests[id] = std::move(handle);
             };
+            // E1 接线:镶嵌钩子在 worker 上跑,持一份样式快照(图集置空,
+            // 见 FeatureRenderLayer::workerTessellationContext 的线程契约);
+            // commit/drop 在渲染线程由 update() 调。裸指针安全:两者生命
+            // 周期都由 gMvtSource.reset() 先于图层销毁保证。
+            FeatureRenderLayer* layerPtr = basemapLayer.get();
+            MvtVectorSource::Sinks sinks;
+            sinks.tessellate = [layerPtr](std::vector<Feature>&& features) {
+                return FeatureRenderLayer::tessellateTileMesh(
+                    layerPtr->workerTessellationContext(), features);
+            };
+            sinks.commit = [layerPtr](const TileKey& key,
+                                      FeatureTileMesh&& mesh) {
+                layerPtr->commitTileMesh(key, std::move(mesh));
+            };
+            sinks.drop = [layerPtr](const TileKey& key) {
+                layerPtr->dropTileMesh(key);
+            };
             gMvtSource = std::make_unique<MvtVectorSource>(
-                mvtOpts, basemapLayer->store(), std::move(fetchFn));
+                mvtOpts, std::move(sinks), std::move(fetchFn),
+                gMvtWorkerPool.get());
             gEngine->addFeatureRenderLayer(std::move(basemapLayer));
             LOGI("VectorP4 MVT basemap installed: %s (z%d-%d)",
                  minimal_globe_demo::kMvtBasemapUrlTemplate,
@@ -838,9 +863,10 @@ static void renderFrame() {
             std::max(1.0, camCarto.height()));
         static uint64_t mvtLogCounter = 0;
         if (++mvtLogCounter % 120 == 1) {
-            LOGI("VectorP4 mvt: active=%zu store=%zu loaded=%zu pending=%zu "
+            LOGI("VectorE1 mvt: active=%zu meshes=%zu loaded=%zu pending=%zu "
                  "failed=%zu",
-                 gMvtSource->activeTileCount(), gMvtSource->store().size(),
+                 gMvtSource->activeTileCount(),
+                 gMvtBasemapLayer ? gMvtBasemapLayer->tileMeshCount() : 0,
                  gMvtSource->tree().loadedCount(),
                  gMvtSource->tree().pendingCount(),
                  gMvtSource->tree().failedCount());

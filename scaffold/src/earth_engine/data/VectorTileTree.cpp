@@ -150,7 +150,7 @@ void VectorTileTree::provide(const TileKey& key, MvtTile tile) {
     pending_.erase(key);
     failed_.erase(key);
     CachedTile& entry = loaded_[key];
-    entry.tile = std::move(tile);
+    entry.tile = std::make_shared<const MvtTile>(std::move(tile));
     entry.lastUsedFrame = frame_;
 }
 
@@ -161,9 +161,15 @@ void VectorTileTree::markFailed(const TileKey& key) {
 
 void VectorTileTree::clearFailed() { failed_.clear(); }
 
+std::shared_ptr<const MvtTile> VectorTileTree::loadedTileShared(
+    const TileKey& key) const {
+    auto it = loaded_.find(key);
+    return it == loaded_.end() ? nullptr : it->second.tile;
+}
+
 const MvtTile* VectorTileTree::loadedTile(const TileKey& key) const {
     auto it = loaded_.find(key);
-    return it == loaded_.end() ? nullptr : &it->second.tile;
+    return it == loaded_.end() ? nullptr : it->second.tile.get();
 }
 
 void VectorTileTree::touch(const TileKey& key) {

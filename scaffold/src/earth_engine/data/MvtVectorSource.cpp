@@ -9,13 +9,13 @@
 
 namespace earth_engine {
 
-MvtVectorSource::MvtVectorSource(Options options, FeatureStore& store,
-                                 FetchFn fetch, ThreadPool* decodePool)
+MvtVectorSource::MvtVectorSource(Options options, Sinks sinks, FetchFn fetch,
+                                 ThreadPool* decodePool)
     : options_(std::move(options)),
+      sinks_(std::move(sinks)),
       fetch_(std::move(fetch)),
       decodePool_(decodePool),
       tree_(options_.tree),
-      store_(store),
       inbox_(std::make_shared<Inbox>()) {}
 
 Rectangle MvtVectorSource::horizonViewRectangle(
@@ -66,20 +66,21 @@ void MvtVectorSource::update(const Rectangle& viewRect,
         tree_.update(viewRect, cameraHeightMeters);
 
     // 发缺瓦片请求。回调持 shared_ptr 收件箱,本对象析构后迟到安全。
+    // 这一段**只解码**:解码产物 MvtTile 是样式无关的,归树的 LRU 缓存,
+    // 瓦片重入视口时零重拉取。镶嵌是样式相关的派生物,拆成下面独立一段
+    // 按需重做 —— 把两者揉进一个任务会让「重入」要么重拉网络、要么缓存
+    // 一份样式一变就失效的网格。
     for (const TileKey& key : result.requestTiles) {
         std::weak_ptr<Inbox> weakInbox = inbox_;
         ThreadPool* pool = decodePool_;
         fetch_(key, [key, weakInbox, pool](int statusCode,
                                            std::vector<uint8_t> body) {
-            auto decodeAndDeliver = [key, weakInbox,
-                                     body = std::move(body), statusCode]() {
+            auto work = [key, weakInbox, body = std::move(body), statusCode]() {
                 auto inbox = weakInbox.lock();
-                if (!inbox) {
-                    return;
-                }
+                if (!inbox) return;
                 MvtTile tile;
-                bool ok = statusCode == 200 && !body.empty() &&
-                          decodeMvtTile(body.data(), body.size(), tile);
+                const bool ok = statusCode == 200 && !body.empty() &&
+                                decodeMvtTile(body.data(), body.size(), tile);
                 std::lock_guard<std::mutex> lock(inbox->mutex);
                 if (ok) {
                     inbox->decoded.emplace_back(key, std::move(tile));
@@ -87,86 +88,102 @@ void MvtVectorSource::update(const Rectangle& viewRect,
                     inbox->failed.push_back(key);
                 }
             };
-            if (pool) {
-                pool->enqueue(std::move(decodeAndDeliver));
-            } else {
-                decodeAndDeliver();
-            }
+            if (pool) pool->enqueue(std::move(work));
+            else work();
         });
     }
 
-    // 渲染集差分:进集激活,出集移除。激活按每帧要素预算摊销
-    // (至少一整瓦片),未激活完的下帧继续——renderTiles 稳定时
-    // 差分是幂等的,天然构成跨帧队列。
-    std::unordered_set<TileKey> renderSet(result.renderTiles.begin(),
-                                          result.renderTiles.end());
-    std::vector<TileKey> toDeactivate;
-    for (const auto& [key, ids] : activeTiles_) {
-        if (!renderSet.count(key)) {
-            toDeactivate.push_back(key);
-        }
-    }
-    for (const TileKey& key : toDeactivate) {
-        deactivateTile(key);
-    }
-    size_t activatedFeatures = 0;
+    // 已解码但还没网格的渲染瓦片 → 派 worker 镶嵌。持共享所有权,树的 LRU
+    // 淘汰不会把 worker 脚下的数据抽走。
     for (const TileKey& key : result.renderTiles) {
-        if (activeTiles_.count(key)) {
+        if (activeTiles_.count(key) || readyMeshes_.count(key) ||
+            tessellating_.count(key)) {
             continue;
         }
-        if (options_.maxActivationFeaturesPerUpdate != 0 &&
-            activatedFeatures >= options_.maxActivationFeaturesPerUpdate) {
-            break;
+        std::shared_ptr<const MvtTile> tile = tree_.loadedTileShared(key);
+        if (!tile || !sinks_.tessellate) continue;
+        tessellating_.insert(key);
+        std::weak_ptr<Inbox> weakInbox = inbox_;
+        TessellateFn tessellate = sinks_.tessellate;
+        std::vector<std::string> includeLayers = options_.includeLayers;
+        auto work = [key, weakInbox, tile, tessellate, includeLayers]() {
+            auto inbox = weakInbox.lock();
+            if (!inbox) return;
+            std::vector<Feature> features;
+            for (const MvtLayer& layer : tile->layers) {
+                if (!includeLayers.empty() &&
+                    std::find(includeLayers.begin(), includeLayers.end(),
+                              layer.name) == includeLayers.end()) {
+                    continue;
+                }
+                for (Feature& f : mvtLayerToFeatures(layer, key)) {
+                    features.push_back(std::move(f));
+                }
+            }
+            FeatureTileMesh mesh = tessellate(std::move(features));
+            std::lock_guard<std::mutex> lock(inbox->mutex);
+            inbox->meshes.emplace_back(key, std::move(mesh));
+        };
+        if (decodePool_) decodePool_->enqueue(std::move(work));
+        else work();
+    }
+
+    // 渲染集差分:进集 commit,出集 drop。镶嵌已在 worker 做完,这里只剩
+    // 上传;闸拦的是上传成本,不再是镶嵌(见 Options 注释)。
+    std::unordered_set<TileKey> renderSet(result.renderTiles.begin(),
+                                          result.renderTiles.end());
+    std::vector<TileKey> toDrop;
+    for (const TileKey& key : activeTiles_) {
+        if (!renderSet.count(key)) {
+            toDrop.push_back(key);
         }
-        activatedFeatures += activateTile(key);
+    }
+    for (const TileKey& key : toDrop) {
+        if (sinks_.drop) sinks_.drop(key);
+        activeTiles_.erase(key);
+    }
+    // 已镶好但已不在渲染集的网格直接丢弃,别占内存等一个不会来的 commit。
+    for (auto it = readyMeshes_.begin(); it != readyMeshes_.end();) {
+        it = renderSet.count(it->first) ? std::next(it)
+                                        : readyMeshes_.erase(it);
+    }
+
+    size_t commits = 0;
+    for (const TileKey& key : result.renderTiles) {
+        if (activeTiles_.count(key)) continue;
+        auto it = readyMeshes_.find(key);
+        if (it == readyMeshes_.end()) continue;  // 还没镶好
+        if (options_.maxTileCommitsPerUpdate != 0 &&
+            commits >= options_.maxTileCommitsPerUpdate) {
+            break;  // 余下的留到下帧,renderTiles 稳定时差分是幂等的
+        }
+        if (sinks_.commit) sinks_.commit(key, std::move(it->second));
+        readyMeshes_.erase(it);
+        activeTiles_.insert(key);
+        ++commits;
     }
 }
 
 void MvtVectorSource::ingestInbox() {
     std::vector<std::pair<TileKey, MvtTile>> decoded;
+    std::vector<std::pair<TileKey, FeatureTileMesh>> meshes;
     std::vector<TileKey> failed;
     {
         std::lock_guard<std::mutex> lock(inbox_->mutex);
         decoded.swap(inbox_->decoded);
+        meshes.swap(inbox_->meshes);
         failed.swap(inbox_->failed);
     }
     for (auto& [key, tile] : decoded) {
         tree_.provide(key, std::move(tile));
     }
+    for (auto& [key, mesh] : meshes) {
+        tessellating_.erase(key);
+        readyMeshes_[key] = std::move(mesh);
+    }
     for (const TileKey& key : failed) {
         tree_.markFailed(key);
     }
-}
-
-size_t MvtVectorSource::activateTile(const TileKey& key) {
-    const MvtTile* tile = tree_.loadedTile(key);
-    if (tile == nullptr) {
-        return 0;
-    }
-    std::vector<FeatureId>& ids = activeTiles_[key];
-    for (const MvtLayer& layer : tile->layers) {
-        if (!options_.includeLayers.empty() &&
-            std::find(options_.includeLayers.begin(),
-                      options_.includeLayers.end(),
-                      layer.name) == options_.includeLayers.end()) {
-            continue;
-        }
-        for (Feature& f : mvtLayerToFeatures(layer, key)) {
-            ids.push_back(store_.addFeature(std::move(f)));
-        }
-    }
-    return ids.size();
-}
-
-void MvtVectorSource::deactivateTile(const TileKey& key) {
-    auto it = activeTiles_.find(key);
-    if (it == activeTiles_.end()) {
-        return;
-    }
-    for (FeatureId id : it->second) {
-        store_.removeFeature(id);
-    }
-    activeTiles_.erase(it);
 }
 
 } // namespace earth_engine

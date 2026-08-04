@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FeatureStore.h"
+#include "FeatureTileMesh.h"
 #include "MvtDecoder.h"
 #include "VectorTileTree.h"
 #include "../tiling/TileKey.h"
@@ -11,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace earth_engine {
@@ -22,18 +24,20 @@ class ThreadPool;
 /// ("两种源一条下游",设计 §4——fill/line/point/label/stencil/样式
 /// 表达式/snap 全部复用,MVT 侧零渲染代码)。
 ///
-/// store 语义:目标 store 由外部注入(FeatureRenderLayer 自有其
-/// store,直接灌它,渲染零接线),本类只保证其中**当前渲染瓦片集**
-/// 的要素。瓦片进入 renderTiles 时转换激活入 store,退出时整瓦片
-/// 移除——多 zoom 的 LRU 缓存瓦片若常驻 store 会永久叠画(z8 路网
-/// 压 z12 路网)。解码后的 MvtTile 缓存归树的 LRU,重新激活只重
-/// 转换、零重拉取/重解码。祖先回退期的粗细并存是加载暂态,与
-/// maplibre 行为一致。注入的 store 应专用于本源(update 只移除自己
-/// 灌入的 ID,但混入他源要素会破坏"只存渲染集"的叠画契约)。
+/// **E1:瓦片即桶,worker 全链镶嵌。** 拉取 → 解码 → **镶嵌**全在 worker
+/// 完成,渲染线程只做「上传 + 整瓦原子替换」。相比原先灌 FeatureStore 的
+/// 做法,这条通路没有 store、没有脏桶差分、没有激活预算 —— 那三样都是为了
+/// 让「整视口要素一次性写进空间分桶 store」不把渲染线程钉死而生的补丁
+/// (P4 真机实测 debug 下 16s/帧),根因是拿编辑用的差分结构承载只读底图。
 ///
-/// 线程契约:update() 必须在渲染线程调用(store 写入约定同
-/// FeatureRenderLayer);fetch 回调/解码任意线程,结果经收件箱在
-/// update() 内消化。析构后迟到的回调安全(shared_ptr 收件箱)。
+/// 渲染集语义不变:瓦片进入 renderTiles 时 commit 网格,退出时 drop ——
+/// 多 zoom 的 LRU 缓存瓦片若常驻会永久叠画(z8 路网压 z12 路网)。解码后
+/// 的 MvtTile 缓存归树的 LRU,重新激活只重镶嵌、零重拉取/重解码。祖先回退
+/// 期的粗细并存是加载暂态,与 maplibre 行为一致。
+///
+/// 线程契约:update() 必须在渲染线程调用(commit/drop 要 GL 上下文);
+/// fetch 回调/解码/镶嵌任意线程,结果经收件箱在 update() 内消化。析构后
+/// 迟到的回调安全(shared_ptr 收件箱)。
 class MvtVectorSource {
 public:
     /// (statusCode, body):statusCode==200 且 body 非空视为成功。
@@ -45,21 +49,36 @@ public:
         VectorTileTree::Options tree;
         /// 只导入这些源图层;空 = 全部。
         std::vector<std::string> includeLayers;
-        /// 单次 update 的激活要素预算(0 = 不限)。store 写入会触发
-        /// FeatureRenderLayer 同步重镶(镶嵌 worker 化未做),整视口
-        /// 瓦片同帧激活会把渲染线程钉死分钟级(真机实测)——分帧摊销
-        /// 是结构必需不是调优。每帧至少激活一整瓦片(瓦片是激活原子,
-        /// 部分激活会让"渲染集=store 内容"契约碎掉)。
-        size_t maxActivationFeaturesPerUpdate = 800;
+        /// 单帧最多 commit 几块瓦片(0 = 不限)。这不是「镶嵌预算」——
+        /// 镶嵌已在 worker,渲染线程只剩上传。留这个闸是因为**上传本身**
+        /// 有成本(buffer 创建 + 传输),整视口瓦片同帧上传仍会顶出尖刺。
+        /// 与旧的 maxActivationFeaturesPerUpdate 不同:那个拦的是镶嵌,
+        /// 是结构性补丁;这个拦的是上传,是正常的帧预算。
+        size_t maxTileCommitsPerUpdate = 4;
     };
 
-    /// decodePool 为空则在 fetch 回调线程就地解码(仍不占渲染线程)。
-    /// store 生命周期须覆盖本对象(典型:FeatureRenderLayer::store())。
-    MvtVectorSource(Options options, FeatureStore& store, FetchFn fetch,
+    /// worker 侧镶嵌钩子:把一块瓦片的要素镶成网格。由调用方绑定
+    /// (典型:FeatureRenderLayer::tessellateTileMesh + 一份样式快照)。
+    /// **必须线程安全且不碰渲染线程状态** —— 它在解码线程上跑。
+    using TessellateFn =
+        std::function<FeatureTileMesh(std::vector<Feature>&&)>;
+    /// 渲染线程侧网格落地钩子(典型:FeatureRenderLayer::commitTileMesh)。
+    using CommitFn = std::function<void(const TileKey&, FeatureTileMesh&&)>;
+    /// 渲染线程侧移除钩子(典型:FeatureRenderLayer::dropTileMesh)。
+    using DropFn = std::function<void(const TileKey&)>;
+
+    struct Sinks {
+        TessellateFn tessellate;
+        CommitFn commit;
+        DropFn drop;
+    };
+
+    /// decodePool 为空则在 fetch 回调线程就地解码+镶嵌(仍不占渲染线程)。
+    MvtVectorSource(Options options, Sinks sinks, FetchFn fetch,
                     ThreadPool* decodePool = nullptr);
 
-    /// 渲染线程每帧调用:驱动树、发缺瓦片请求、消化解码结果、
-    /// 按渲染集差分激活/移除 store 要素。
+    /// 渲染线程每帧调用:驱动树、发缺瓦片请求、消化 worker 产物、
+    /// 按渲染集差分 commit/drop 瓦片网格。
     void update(const Rectangle& viewRect, double cameraHeightMeters);
 
     /// 相机地平线圆的经纬包围矩形(视口 viewRect 的标准来源;数学与
@@ -69,32 +88,37 @@ public:
     static Rectangle horizonViewRectangle(const Cartographic& cameraCarto,
                                           double ellipsoidMinRadiusMeters);
 
-    FeatureStore& store() { return store_; }
-    const FeatureStore& store() const { return store_; }
-
     VectorTileTree& tree() { return tree_; }
+    /// 已 commit 的瓦片数(诊断)。
     size_t activeTileCount() const { return activeTiles_.size(); }
+    /// 已镶好、等待 commit 的瓦片数(诊断:持续 >0 说明上传闸偏紧)。
+    size_t pendingCommitCount() const { return readyMeshes_.size(); }
 
 private:
     struct Inbox {
         std::mutex mutex;
+        /// worker 解码产物(样式无关,进树的 LRU 缓存)。
         std::vector<std::pair<TileKey, MvtTile>> decoded;
+        /// worker 镶嵌产物(样式相关的派生物,进 readyMeshes_ 等 commit)。
+        std::vector<std::pair<TileKey, FeatureTileMesh>> meshes;
         std::vector<TileKey> failed;
     };
 
     void ingestInbox();
-    /// 返回该瓦片实际灌入的要素数(计入激活预算)。
-    size_t activateTile(const TileKey& key);
-    void deactivateTile(const TileKey& key);
 
     Options options_;
+    Sinks sinks_;
     FetchFn fetch_;
     ThreadPool* decodePool_ = nullptr;
 
     VectorTileTree tree_;
-    FeatureStore& store_;
-    /// 激活瓦片 → 灌入 store 的要素 ID(退出渲染集时整批移除)。
-    std::unordered_map<TileKey, std::vector<FeatureId>> activeTiles_;
+    /// 已 commit 到渲染层的瓦片(退出渲染集时 drop)。
+    std::unordered_set<TileKey> activeTiles_;
+    /// 已镶好但本帧未 commit 的网格(受 maxTileCommitsPerUpdate 限流)。
+    /// 键在 renderTiles 里就留着等下一帧,不在就直接丢。
+    std::unordered_map<TileKey, FeatureTileMesh> readyMeshes_;
+    /// 已派出去、尚未回来的镶嵌任务(去重,防同一瓦片被反复派单)。
+    std::unordered_set<TileKey> tessellating_;
 
     std::shared_ptr<Inbox> inbox_;
 };

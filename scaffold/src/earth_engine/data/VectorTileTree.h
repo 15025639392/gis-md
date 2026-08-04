@@ -65,6 +65,10 @@ public:
     void clearFailed();
 
     const MvtTile* loadedTile(const TileKey& key) const;
+
+    /// 共享持有已解码瓦片。E1:镶嵌在 worker 上跑,而树的 LRU 随时可能
+    /// 淘汰该瓦片 —— worker 必须持共享所有权,不能拿裸指针。
+    std::shared_ptr<const MvtTile> loadedTileShared(const TileKey& key) const;
     size_t loadedCount() const { return loaded_.size(); }
     size_t pendingCount() const { return pending_.size(); }
     size_t failedCount() const { return failed_.size(); }
@@ -79,7 +83,7 @@ public:
 
 private:
     struct CachedTile {
-        MvtTile tile;
+        std::shared_ptr<const MvtTile> tile;
         uint64_t lastUsedFrame = 0;
     };
 

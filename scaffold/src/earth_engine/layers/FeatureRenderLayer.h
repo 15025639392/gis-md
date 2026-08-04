@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../data/FeatureStore.h"
+#include "../data/FeatureTileMesh.h"
 #include "../data/StyleExpression.h"
 #include "../renderer/RenderCommand.h"
 #include "../renderer/SymbolShape.h"
@@ -342,19 +343,10 @@ public:
     // 两万级 fill/line 要素的镶嵌。贴地同样留在 v1 之外(worker 拿不到
     // 地形采样器;底图现为 Absolute)。
 
-    /// worker 产物:一块瓦片镶嵌后的 CPU 顶点/索引。可跨线程移动。
-    struct TileMeshCpu {
-        Vec3 origin = Vec3::zero();
-        bool hasOrigin = false;
-        std::vector<float> fillVerts;
-        std::vector<uint32_t> fillIndices;
-        std::vector<float> lineVerts;
-        std::vector<uint32_t> lineIndices;
-
-        bool empty() const {
-            return fillIndices.empty() && lineIndices.empty();
-        }
-    };
+    /// worker 产物类型见 data/FeatureTileMesh.h(放在下层避免 data → layers
+    /// 反向依赖)。这里保留别名,调用方写 FeatureRenderLayer::TileMeshCpu 与
+    /// 写 FeatureTileMesh 等价。
+    using TileMeshCpu = FeatureTileMesh;
 
     /// 取一份镶嵌上下文供 worker 使用:样式已快照、图集置空(线程契约见
     /// TessellationContext)。**必须在渲染线程调用**,产出可交给 worker。
