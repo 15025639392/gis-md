@@ -728,6 +728,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/FeatureClusterIndex.cpp
     earth_engine/data/StyleExpression.h
     earth_engine/data/StyleExpression.cpp
+    earth_engine/data/StyleFilter.cpp
     earth_engine/data/GeoJsonImporter.h
     earth_engine/data/GeoJsonImporter.cpp
     earth_engine/data/MvtDecoder.h

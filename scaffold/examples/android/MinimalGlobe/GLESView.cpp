@@ -30,6 +30,7 @@
 #include "earth_engine/data/FeatureSnapQuery.h"
 #include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/data/MvtVectorSource.h"
+#include "earth_engine/data/StyleFilter.h"
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
@@ -325,6 +326,40 @@ static bool createEngine() {
 
             gMvtWorkerPool = std::make_unique<ThreadPool>(2);
             MvtVectorSource::Options mvtOpts;
+            // E2:道路分级过滤从数据侧(tippecanoe -j)搬回样式侧。改分级
+            // 策略不再需要重切整套瓦片,同一份数据也能给不同样式复用 ——
+            // 数据只管密度,样式管取舍(对齐 maplibre)。
+            {
+                using C = StyleFilter::Compare;
+                // 分级表:粗档只留干线,细档逐步放开。瓦片 z 固定 → 每块
+                // 瓦片按自己的 z 求值一次,**相机缩放不触发任何重镶**。
+                SourceLayerRule roads;
+                roads.layer = "roads";
+                roads.filter = StyleFilter::any({
+                    StyleFilter::all({
+                        StyleFilter::zoomCompare(C::Less, 9),
+                        StyleFilter::in("highway", {"motorway", "trunk",
+                                                    "primary"})}),
+                    StyleFilter::all({
+                        StyleFilter::zoomCompare(C::GreaterEqual, 9),
+                        StyleFilter::zoomCompare(C::Less, 10),
+                        StyleFilter::in("highway", {"motorway", "trunk",
+                                                    "primary", "secondary"})}),
+                    StyleFilter::all({
+                        StyleFilter::zoomCompare(C::GreaterEqual, 10),
+                        StyleFilter::zoomCompare(C::Less, 12),
+                        StyleFilter::in("highway", {"motorway", "trunk",
+                                                    "primary", "secondary",
+                                                    "tertiary"})}),
+                    StyleFilter::zoomCompare(C::GreaterEqual, 12),
+                });
+                SourceLayerRule building;
+                building.layer = "building";
+                building.minZoom = 13;  // 建筑只在近景可辨,粗档整层跳过
+                SourceLayerRule water;
+                water.layer = "water";
+                mvtOpts.layerRules = {roads, building, water};
+            }
             mvtOpts.tree.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
             mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
             auto fetchFn = [](const TileKey& key,

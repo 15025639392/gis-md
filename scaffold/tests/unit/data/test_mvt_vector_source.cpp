@@ -238,6 +238,55 @@ TEST(MvtVectorSource, CommitBudgetSpreadsAcrossUpdates) {
     EXPECT_EQ(source.pendingCommitCount(), 0u);
 }
 
+// E2:层级 zoom 区间在**转换之前**判 —— 整层跳过时连 MVT→Feature 的转换
+// 都省了(P4 实测巨瓦转换 81ms),这正是 maplibre 把 layer minzoom/maxzoom
+// 放在建桶前的理由。
+TEST(MvtVectorSource, LayerRuleZoomRangeSkipsWholeLayer) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    MvtVectorSource::Options opt = optionsForTest();
+    SourceLayerRule rule;
+    rule.layer = "pois";
+    rule.minZoom = 10;   // 视口在 z2 → 整层跳过
+    rule.maxZoom = 14;
+    opt.layerRules = {rule};
+    FakeSinks sinks;
+    MvtVectorSource source(opt, sinks.fn(), fetch.fn());
+
+    Rectangle view = rectDeg(1, 1, 40, 40);
+    for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));
+    EXPECT_GT(sinks.tessellateCalls, 0) << "瓦片仍派了镶嵌单";
+    EXPECT_EQ(sinks.lastFeatureCount, 0u) << "z2 不在 [10,14],整层跳过";
+}
+
+// 逐要素 filter 在 worker 上求值(StyleFilter 不可变纯函数)。
+TEST(MvtVectorSource, LayerRuleFeatureFilterApplies) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");  // 要素带 kind=poi
+    MvtVectorSource::Options opt = optionsForTest();
+    SourceLayerRule keep;
+    keep.layer = "pois";
+    keep.filter = StyleFilter::compare("kind", StyleFilter::Compare::Equal,
+                                       std::string("poi"));
+    opt.layerRules = {keep};
+    FakeSinks sinks;
+    MvtVectorSource source(opt, sinks.fn(), fetch.fn());
+    Rectangle view = rectDeg(1, 1, 40, 40);
+    for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));
+    EXPECT_GT(sinks.lastFeatureCount, 0u) << "匹配的要素应留下";
+
+    // 换成不匹配的谓词 → 同一批瓦片重镶后要素全被滤掉。
+    SourceLayerRule drop = keep;
+    drop.filter = StyleFilter::compare("kind", StyleFilter::Compare::Equal,
+                                       std::string("nope"));
+    const size_t fetchesBefore = fetch.requested.size();
+    source.setLayerRules({drop});
+    for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));
+    EXPECT_EQ(sinks.lastFeatureCount, 0u) << "新谓词下要素应被滤光";
+    // 规则变更只该重镶,不该重拉网络(解码结果在树的 LRU 里)。
+    EXPECT_EQ(fetch.requested.size(), fetchesBefore) << "改规则零重拉取";
+}
+
 TEST(MvtVectorSource, IncludeLayersFilters) {
     FakeFetch fetch;
     fetch.body = makePointTile("water");

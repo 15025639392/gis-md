@@ -3,6 +3,7 @@
 #include "FeatureStore.h"
 #include "FeatureTileMesh.h"
 #include "MvtDecoder.h"
+#include "StyleFilter.h"
 #include "VectorTileTree.h"
 #include "../tiling/TileKey.h"
 
@@ -10,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <tuple>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -47,8 +49,20 @@ public:
 
     struct Options {
         VectorTileTree::Options tree;
-        /// 只导入这些源图层;空 = 全部。
+        /// 只导入这些源图层;空 = 全部。与 layerRules 的关系:includeLayers
+        /// 是粗筛(层名白名单),layerRules 是细则(zoom 区间 + 逐要素过滤)。
+        /// 两者都设时先过白名单再过细则。
         std::vector<std::string> includeLayers;
+        /// E2 样式层 runtime filter:把「哪些层在哪些 zoom 画、层内画哪些
+        /// 要素」从数据侧搬回样式侧。空 = 不过滤(该层全收)。
+        ///
+        /// 背景:P4 是用 tippecanoe 的 -j 把道路分级烘死在瓦片里,换一次
+        /// 分级策略就得重切整套瓦片,同一份数据也没法给不同样式复用。
+        /// 对齐 maplibre:数据只管密度,样式管取舍。
+        ///
+        /// 规则在 **worker 线程**求值(StyleFilter 是不可变纯函数);改规则
+        /// 需调用 setLayerRules,它会把已 commit 的瓦片全部标脏重镶。
+        std::vector<SourceLayerRule> layerRules;
         /// 单帧最多 commit 几块瓦片(0 = 不限)。这不是「镶嵌预算」——
         /// 镶嵌已在 worker,渲染线程只剩上传。留这个闸是因为**上传本身**
         /// 有成本(buffer 创建 + 传输),整视口瓦片同帧上传仍会顶出尖刺。
@@ -88,6 +102,11 @@ public:
     static Rectangle horizonViewRectangle(const Cartographic& cameraCarto,
                                           double ellipsoidMinRadiusMeters);
 
+    /// 改样式层规则(渲染线程)。已 commit 的瓦片全部丢弃重镶 —— 网格是
+    /// 样式相关的派生物,规则变了就不再有效;解码结果留在树的 LRU,故重镶
+    /// 零重拉取。
+    void setLayerRules(std::vector<SourceLayerRule> rules);
+
     VectorTileTree& tree() { return tree_; }
     /// 已 commit 的瓦片数(诊断)。
     size_t activeTileCount() const { return activeTiles_.size(); }
@@ -100,7 +119,9 @@ private:
         /// worker 解码产物(样式无关,进树的 LRU 缓存)。
         std::vector<std::pair<TileKey, MvtTile>> decoded;
         /// worker 镶嵌产物(样式相关的派生物,进 readyMeshes_ 等 commit)。
-        std::vector<std::pair<TileKey, FeatureTileMesh>> meshes;
+        /// 带规则代次:setLayerRules 之后在途的任务用的是旧规则,回来时按
+        /// 代次丢弃 —— 否则旧规则的网格会盖掉新规则刚镶好的。
+        std::vector<std::tuple<TileKey, FeatureTileMesh, uint64_t>> meshes;
         std::vector<TileKey> failed;
     };
 
@@ -119,6 +140,8 @@ private:
     std::unordered_map<TileKey, FeatureTileMesh> readyMeshes_;
     /// 已派出去、尚未回来的镶嵌任务(去重,防同一瓦片被反复派单)。
     std::unordered_set<TileKey> tessellating_;
+    /// 样式层规则代次(setLayerRules 自增),用于丢弃在途的旧规则产物。
+    uint64_t rulesEpoch_ = 0;
 
     std::shared_ptr<Inbox> inbox_;
 };

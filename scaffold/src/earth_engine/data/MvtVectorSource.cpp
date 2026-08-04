@@ -106,7 +106,10 @@ void MvtVectorSource::update(const Rectangle& viewRect,
         std::weak_ptr<Inbox> weakInbox = inbox_;
         TessellateFn tessellate = sinks_.tessellate;
         std::vector<std::string> includeLayers = options_.includeLayers;
-        auto work = [key, weakInbox, tile, tessellate, includeLayers]() {
+        std::vector<SourceLayerRule> rules = options_.layerRules;
+        const uint64_t epoch = rulesEpoch_;
+        auto work = [key, weakInbox, tile, tessellate, includeLayers,
+                     rules, epoch]() {
             auto inbox = weakInbox.lock();
             if (!inbox) return;
             std::vector<Feature> features;
@@ -116,13 +119,28 @@ void MvtVectorSource::update(const Rectangle& viewRect,
                               layer.name) == includeLayers.end()) {
                     continue;
                 }
+                // E2:层级规则。zoom 区间在**转换之前**判 —— 整层跳过时连
+                // MVT→Feature 的转换都省了(P4 实测该转换 81ms/巨瓦),这正是
+                // maplibre 把 layer minzoom/maxzoom 放在建桶前的理由。
+                const SourceLayerRule* rule = nullptr;
+                for (const SourceLayerRule& r : rules) {
+                    if (r.layer == layer.name) { rule = &r; break; }
+                }
+                if (rule && (key.z < rule->minZoom || key.z > rule->maxZoom)) {
+                    continue;
+                }
                 for (Feature& f : mvtLayerToFeatures(layer, key)) {
+                    // 逐要素过滤在 worker 上跑(StyleFilter 不可变纯函数)。
+                    if (rule && rule->filter &&
+                        !rule->filter->matches(&f.properties, static_cast<double>(key.z))) {
+                        continue;
+                    }
                     features.push_back(std::move(f));
                 }
             }
             FeatureTileMesh mesh = tessellate(std::move(features));
             std::lock_guard<std::mutex> lock(inbox->mutex);
-            inbox->meshes.emplace_back(key, std::move(mesh));
+            inbox->meshes.emplace_back(key, std::move(mesh), epoch);
         };
         if (decodePool_) decodePool_->enqueue(std::move(work));
         else work();
@@ -164,9 +182,25 @@ void MvtVectorSource::update(const Rectangle& viewRect,
     }
 }
 
+void MvtVectorSource::setLayerRules(std::vector<SourceLayerRule> rules) {
+    options_.layerRules = std::move(rules);
+    // 网格是样式相关的派生物 —— 规则变了旧网格就不再有效。全部丢弃,下一次
+    // update 会按新规则重镶。解码结果留在树的 LRU,故重镶零重拉取。
+    for (const TileKey& key : activeTiles_) {
+        if (sinks_.drop) sinks_.drop(key);
+    }
+    activeTiles_.clear();
+    readyMeshes_.clear();
+    // 已在途的镶嵌任务用的是旧规则,回来时直接丢:tessellating_ 清空后,
+    // ingestInbox 认不出它们,readyMeshes_ 会收下 —— 故这里不能只清
+    // tessellating_,得让 ingest 侧也识别。用代次戳最省事。
+    ++rulesEpoch_;
+    tessellating_.clear();
+}
+
 void MvtVectorSource::ingestInbox() {
     std::vector<std::pair<TileKey, MvtTile>> decoded;
-    std::vector<std::pair<TileKey, FeatureTileMesh>> meshes;
+    std::vector<std::tuple<TileKey, FeatureTileMesh, uint64_t>> meshes;
     std::vector<TileKey> failed;
     {
         std::lock_guard<std::mutex> lock(inbox_->mutex);
@@ -177,8 +211,10 @@ void MvtVectorSource::ingestInbox() {
     for (auto& [key, tile] : decoded) {
         tree_.provide(key, std::move(tile));
     }
-    for (auto& [key, mesh] : meshes) {
+    for (auto& [key, mesh, epoch] : meshes) {
         tessellating_.erase(key);
+        // 规则已变 → 这块是旧规则的产物,丢掉;下一次 update 会按新规则重派。
+        if (epoch != rulesEpoch_) continue;
         readyMeshes_[key] = std::move(mesh);
     }
     for (const TileKey& key : failed) {

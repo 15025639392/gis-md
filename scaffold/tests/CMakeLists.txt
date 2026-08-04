@@ -985,6 +985,12 @@ add_executable(test_mvt_feature_converter
 target_link_libraries(test_mvt_feature_converter PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_mvt_feature_converter COMMAND test_mvt_feature_converter)
 
+add_executable(test_style_filter
+    unit/data/test_style_filter.cpp
+)
+target_link_libraries(test_style_filter PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_style_filter COMMAND test_style_filter)
+
 add_executable(test_mvt_vector_source
     unit/data/test_mvt_vector_source.cpp
 )
