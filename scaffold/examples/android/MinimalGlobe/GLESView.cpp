@@ -354,6 +354,9 @@ static bool createEngine() {
             oopts.maximumZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
             // 矢量底图缺瓦时不该阻塞「整帧可呈现」判定 —— 卫星影像才是底。
             oopts.blocksCompleteRenderable = false;
+            // E4:矢量底图是**叠加层**不是底图影像 —— 底图影像走页存储,
+            // 叠加层在页存储之后合成(见地形片元着色器 annotationMask)。
+            oopts.role = RasterOverlayRole::AnnotationOverlay;
             gSdkFacade->addCustomImageryOverlay(
                 std::move(provider), TileScheme::createXYZWebMercator(),
                 oopts);

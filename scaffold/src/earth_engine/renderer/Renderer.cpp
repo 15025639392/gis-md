@@ -296,6 +296,7 @@ uniform vec4 u_mappedRasterTileUV0;
 uniform vec4 u_mappedRasterTileUV1;
 uniform vec4 u_mappedRasterTileUV2;
 uniform vec4 u_mappedRasterTileUV3;
+uniform float u_mappedRasterAnnotationMask;
 uniform float u_mappedRasterOpacity0;
 uniform float u_mappedRasterOpacity1;
 uniform float u_mappedRasterOpacity2;
@@ -1083,6 +1084,7 @@ uniform vec4 u_mappedRasterTileUV0;
 uniform vec4 u_mappedRasterTileUV1;
 uniform vec4 u_mappedRasterTileUV2;
 uniform vec4 u_mappedRasterTileUV3;
+uniform float u_mappedRasterAnnotationMask;
 uniform float u_mappedRasterOpacity0;
 uniform float u_mappedRasterOpacity1;
 uniform float u_mappedRasterOpacity2;
@@ -1235,37 +1237,33 @@ void main() {
     if (u_hasBaseColorTexture > 0.5) {
         base *= texture(u_baseColorTexture, terrainUv);
     }
-    if (u_mappedRasterTextureCount > 0.5) {
+    // E4:base 影像层在页存储之前合成(页存储会覆盖它们 —— 那是刻意的:
+    // 页存储拿的是真实高清页,mappedRaster 那份是上采样祖先);annotation/
+    // data 层留到页存储**之后**,否则会被页存储盖掉(E4-3 真机踩过)。
+    float aMask = u_mappedRasterAnnotationMask;
+    bool isAnno0 = mod(floor(aMask / 1.0), 2.0) > 0.5;
+    bool isAnno1 = mod(floor(aMask / 2.0), 2.0) > 0.5;
+    bool isAnno2 = mod(floor(aMask / 4.0), 2.0) > 0.5;
+    bool isAnno3 = mod(floor(aMask / 8.0), 2.0) > 0.5;
+    if (u_mappedRasterTextureCount > 0.5 && !isAnno0) {
         base = applyMappedRaster(
-            base,
-            u_mappedRasterTexture0,
-            u_mappedRasterTexCoordSet0,
-            u_mappedRasterTileUV0,
-            u_mappedRasterOpacity0);
+            base, u_mappedRasterTexture0, u_mappedRasterTexCoordSet0,
+            u_mappedRasterTileUV0, u_mappedRasterOpacity0);
     }
-    if (u_mappedRasterTextureCount > 1.5) {
+    if (u_mappedRasterTextureCount > 1.5 && !isAnno1) {
         base = applyMappedRaster(
-            base,
-            u_mappedRasterTexture1,
-            u_mappedRasterTexCoordSet1,
-            u_mappedRasterTileUV1,
-            u_mappedRasterOpacity1);
+            base, u_mappedRasterTexture1, u_mappedRasterTexCoordSet1,
+            u_mappedRasterTileUV1, u_mappedRasterOpacity1);
     }
-    if (u_mappedRasterTextureCount > 2.5) {
+    if (u_mappedRasterTextureCount > 2.5 && !isAnno2) {
         base = applyMappedRaster(
-            base,
-            u_mappedRasterTexture2,
-            u_mappedRasterTexCoordSet2,
-            u_mappedRasterTileUV2,
-            u_mappedRasterOpacity2);
+            base, u_mappedRasterTexture2, u_mappedRasterTexCoordSet2,
+            u_mappedRasterTileUV2, u_mappedRasterOpacity2);
     }
-    if (u_mappedRasterTextureCount > 3.5) {
+    if (u_mappedRasterTextureCount > 3.5 && !isAnno3) {
         base = applyMappedRaster(
-            base,
-            u_mappedRasterTexture3,
-            u_mappedRasterTexCoordSet3,
-            u_mappedRasterTileUV3,
-            u_mappedRasterOpacity3);
+            base, u_mappedRasterTexture3, u_mappedRasterTexCoordSet3,
+            u_mappedRasterTileUV3, u_mappedRasterOpacity3);
     }
     // 合成方案页存储(Step 3):目标 capped 瓦片改采 sampler2DArray 页存储
     // (enabled=1),覆盖上采样 mappedRaster → 显示真实高清影像。瓦片规则切
@@ -1289,6 +1287,27 @@ void main() {
         vec2 sampleUv = (g - origin) / span;
         base = alphaOver(
             base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
+    }
+    // E4:叠加层(annotation/data)在页存储之后合成 —— 矢量底图走这条。
+    if (u_mappedRasterTextureCount > 0.5 && isAnno0) {
+        base = applyMappedRaster(
+            base, u_mappedRasterTexture0, u_mappedRasterTexCoordSet0,
+            u_mappedRasterTileUV0, u_mappedRasterOpacity0);
+    }
+    if (u_mappedRasterTextureCount > 1.5 && isAnno1) {
+        base = applyMappedRaster(
+            base, u_mappedRasterTexture1, u_mappedRasterTexCoordSet1,
+            u_mappedRasterTileUV1, u_mappedRasterOpacity1);
+    }
+    if (u_mappedRasterTextureCount > 2.5 && isAnno2) {
+        base = applyMappedRaster(
+            base, u_mappedRasterTexture2, u_mappedRasterTexCoordSet2,
+            u_mappedRasterTileUV2, u_mappedRasterOpacity2);
+    }
+    if (u_mappedRasterTextureCount > 3.5 && isAnno3) {
+        base = applyMappedRaster(
+            base, u_mappedRasterTexture3, u_mappedRasterTexCoordSet3,
+            u_mappedRasterTileUV3, u_mappedRasterOpacity3);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {

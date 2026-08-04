@@ -589,6 +589,7 @@ void applyPerFrameCommandState(
     const double rasterBindingStartMs =
         timings ? perf::nowMs() : 0.0;
     int rasterOverlayTextureCount = 0;
+    uint32_t annotationMask = 0;
     cmd.surfaceBaseRasterState = 0;
     cmd.surfaceBaseIsMappedRasterTile = 0;
     for (size_t i = 0;
@@ -635,6 +636,11 @@ void applyPerFrameCommandState(
             binding.scaleV};
         cmd.gltfRasterOverlayOpacities[rasterOverlayTextureCount] =
             activeOverlay ? activeOverlay->opacity() : 1.0f;
+        // E4:非 base 层记进掩码,着色器把它们放到页存储之后合成。
+        if (activeOverlay && activeOverlay->getOverlay().role() !=
+                                 RasterOverlayRole::BaseImagery) {
+            annotationMask |= (1u << rasterOverlayTextureCount);
+        }
         cmd.gltfRasterOverlayTexCoordSets[rasterOverlayTextureCount] =
             static_cast<float>(textureCoordinateID);
         if (activeOverlay &&
@@ -664,6 +670,7 @@ void applyPerFrameCommandState(
     }
     u.mappedRasterTextureCount =
         static_cast<float>(rasterOverlayTextureCount);
+    u.mappedRasterAnnotationMask = static_cast<float>(annotationMask);
     for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
         u.mappedRasterTileUv[i] = cmd.gltfRasterOverlayTileUvs[i];
         u.mappedRasterOpacity[i] = cmd.gltfRasterOverlayOpacities[i];
