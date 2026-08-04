@@ -343,16 +343,24 @@ bool Engine::render(double deltaSeconds) {
             const FrameState& frameState = scene_->frameState();
             Tileset* tileset = scene_->tileset();
             if (!frameState.selectorViews.empty() && tileset != nullptr) {
+                // C-1:把**整个有序** overlay 列表交给页存储(与 mappedRaster 同序
+                // 合成)。此前只传 overlays.front(),靠后的 overlay 在页存储路径上
+                // 被静默丢弃 —— 两条合成路径语义不一致正是矢量层贴地失效的根。
                 const std::vector<ActivatedRasterOverlay*>& overlays =
                     tileset->rasterOverlays();
-                RasterOverlayTileProvider* pageProvider =
-                    overlays.empty() ? nullptr
-                                     : overlays.front()->getTileProvider();
-                if (pageProvider != nullptr) {
+                pageProvidersScratch_.clear();
+                pageProvidersScratch_.reserve(overlays.size());
+                for (ActivatedRasterOverlay* overlay : overlays) {
+                    if (overlay == nullptr) continue;
+                    if (RasterOverlayTileProvider* p = overlay->getTileProvider()) {
+                        pageProvidersScratch_.push_back(p);
+                    }
+                }
+                if (!pageProvidersScratch_.empty()) {
                     terrainPageStore_->updateVisiblePages(
                         frameState.selectorViews.front(),
                         tileset->tilePlan().tilesToRenderThisFrame,
-                        pageProvider,
+                        pageProvidersScratch_,
                         tileset->maximumScreenSpaceError());
                 }
             }

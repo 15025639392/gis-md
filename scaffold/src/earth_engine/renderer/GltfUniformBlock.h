@@ -126,11 +126,6 @@ struct alignas(16) GltfUniformBlock {
         {0.0f, 0.0f, 1.0f, 1.0f},
         {0.0f, 0.0f, 1.0f, 1.0f}}};
     std::array<float, 4> mappedRasterOpacity{1.0f, 1.0f, 1.0f, 1.0f};
-    /// E4:非 base(annotation/data)overlay 的位掩码,bit i = 第 i 层是叠加层。
-    /// 地形着色器据此把它们**放到页存储之后**合成 —— 页存储是底图影像的
-    /// 生产路径且会覆盖逐 draw 的 mappedRaster,叠加层若混在前面会被它盖掉
-    /// (E4-3 真机踩过:overlay 绑上了、无拒绝日志、屏幕全无)。
-    float mappedRasterAnnotationMask = 0.0f;
     std::array<float, 4> mappedRasterTexCoordSet{0.0f, 0.0f, 0.0f, 0.0f};
 
     float hasWaterMask = 0.0f;
@@ -209,7 +204,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 92> table = {{
+    static const std::array<GltfUniformTableEntry, 91> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -275,7 +270,6 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY_AT("u_mappedRasterTileUV1", mappedRasterTileUv, 1, 4),
         EE_GLTF_ENTRY_AT("u_mappedRasterTileUV2", mappedRasterTileUv, 2, 4),
         EE_GLTF_ENTRY_AT("u_mappedRasterTileUV3", mappedRasterTileUv, 3, 4),
-        EE_GLTF_ENTRY("u_mappedRasterAnnotationMask", mappedRasterAnnotationMask, 1),
         EE_GLTF_ENTRY_AT("u_mappedRasterOpacity0", mappedRasterOpacity, 0, 1),
         EE_GLTF_ENTRY_AT("u_mappedRasterOpacity1", mappedRasterOpacity, 1, 1),
         EE_GLTF_ENTRY_AT("u_mappedRasterOpacity2", mappedRasterOpacity, 2, 1),

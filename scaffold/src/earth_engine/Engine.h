@@ -20,6 +20,7 @@ class VirtualTexturePoc;
 class TileCompositeBakePoc;
 class VtIndirectionSamplePoc;
 class TerrainPageStore;
+class RasterOverlayTileProvider;
 class TerrainDisplacementTemplatePool;
 class Tileset;
 class FeatureRenderLayer;
@@ -245,6 +246,8 @@ private:
     // 北极星 合成方案 门③ Step3 页存储原型开关 + 短路。
     bool terrainPageStoreEnabled_ = false;
     bool terrainPageStoreInitFailed_ = false;
+    // C-1:每帧交给页存储的有序源列表(剔 null 后复用,免逐帧分配)。
+    std::vector<RasterOverlayTileProvider*> pageProvidersScratch_;
     // 北极星 Phase 2c 地形 GPU 位移开关(P5 默认开;仍保留 flag 供运行时 A/B 关闭)。
     bool terrainGpuDisplacementEnabled_ = true;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。

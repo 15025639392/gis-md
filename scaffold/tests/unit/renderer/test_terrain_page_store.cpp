@@ -17,7 +17,139 @@ TerrainPageLayerPool makePool(int blockCount = 3, int blockLayers = 16) {
     return pool;
 }
 
+// side²×4 的单色 RGBA8 页。
+std::vector<uint8_t> solidPage(int side, uint8_t r, uint8_t g, uint8_t b,
+                               uint8_t a) {
+    std::vector<uint8_t> px(static_cast<size_t>(side) * side * 4u);
+    for (size_t i = 0; i < px.size(); i += 4) {
+        px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = a;
+    }
+    return px;
+}
+
 }  // namespace
+
+// ---------------- PageSourceAssembler(C-1 多源按序合成)----------------
+
+// 单源时必须逐字节等价于 C-1 之前(首源直接拷贝,不走 alphaOver 的浮点往返)。
+// 这是「页存储改成多源」这次改造的零回归闸:底图独占时画面不能有任何变化。
+TEST(PageSourceAssembler, SingleSourceIsByteIdenticalCopy) {
+    PageSourceAssembler asmb;
+    asmb.configure(1, 2);
+    const std::vector<uint8_t> src = solidPage(2, 13, 200, 77, 255);
+    EXPECT_TRUE(asmb.accept(0, src.data()));
+    EXPECT_TRUE(asmb.hasTexels());
+    EXPECT_TRUE(asmb.complete());
+    EXPECT_EQ(asmb.texels(), src);
+}
+
+// 有序合成:源 1 半透明叠在源 0 上。直通 alpha 的 source-over。
+TEST(PageSourceAssembler, CompositesInSourceOrder) {
+    PageSourceAssembler asmb;
+    asmb.configure(2, 1);
+    const std::vector<uint8_t> base = solidPage(1, 0, 0, 0, 255);
+    const std::vector<uint8_t> top = solidPage(1, 255, 255, 255, 128);
+    ASSERT_TRUE(asmb.accept(0, base.data()));
+    ASSERT_TRUE(asmb.accept(1, top.data()));
+    ASSERT_TRUE(asmb.complete());
+    // sa=128/255≈0.502 → rgb = 255*0.502 + 0*0.498 ≈ 128;a 仍满。
+    EXPECT_NEAR(asmb.texels()[0], 128, 1);
+    EXPECT_EQ(asmb.texels()[3], 255);
+}
+
+// **顺序不可交换**:反序合成必须得到不同结果 —— 这正是「必须按 overlay 序」的理由,
+// 也是防止有人日后把 accept 改成「谁先到谁先合成」的钉子。
+TEST(PageSourceAssembler, OrderMattersOpaqueTopWins) {
+    const std::vector<uint8_t> black = solidPage(1, 0, 0, 0, 255);
+    const std::vector<uint8_t> white = solidPage(1, 255, 255, 255, 255);
+    PageSourceAssembler a, b;
+    a.configure(2, 1);
+    a.accept(0, black.data());
+    a.accept(1, white.data());
+    b.configure(2, 1);
+    b.accept(0, white.data());
+    b.accept(1, black.data());
+    EXPECT_EQ(a.texels()[0], 255);
+    EXPECT_EQ(b.texels()[0], 0);
+}
+
+// 乱序早到的源必须暂存、不上传;前序补齐后一次性连着消化。
+// (否则矢量层比底图先到就会把底图叠在自己上面 → 矢量被盖掉。)
+TEST(PageSourceAssembler, OutOfOrderArrivalIsStashedThenDrained) {
+    PageSourceAssembler asmb;
+    asmb.configure(2, 1);
+    const std::vector<uint8_t> base = solidPage(1, 0, 0, 0, 255);
+    const std::vector<uint8_t> top = solidPage(1, 255, 255, 255, 255);
+    EXPECT_FALSE(asmb.accept(1, top.data())) << "源1先到 → 暂存,不该上传";
+    EXPECT_FALSE(asmb.hasTexels());
+    EXPECT_TRUE(asmb.accept(0, base.data())) << "源0到齐 → 连带消化源1";
+    EXPECT_TRUE(asmb.complete());
+    EXPECT_EQ(asmb.texels()[0], 255) << "最终结果与顺序到达一致";
+}
+
+// 部分到达先点亮:源 0 到了就该上传(hasTexels),不等最慢的源。
+TEST(PageSourceAssembler, PartialArrivalUploadsEarly) {
+    PageSourceAssembler asmb;
+    asmb.configure(3, 1);
+    const std::vector<uint8_t> base = solidPage(1, 10, 20, 30, 255);
+    EXPECT_TRUE(asmb.accept(0, base.data()));
+    EXPECT_TRUE(asmb.hasTexels());
+    EXPECT_FALSE(asmb.complete());
+    EXPECT_EQ(asmb.compositedCount(), 1);
+}
+
+// 重复到达幂等:同一源第二次必须被丢弃(否则重复 fetch 会把同一层叠两遍,
+// 半透明源越叠越浓),且不浪费本帧上传预算。
+TEST(PageSourceAssembler, DuplicateArrivalIsIdempotent) {
+    PageSourceAssembler asmb;
+    asmb.configure(2, 1);
+    const std::vector<uint8_t> base = solidPage(1, 0, 0, 0, 255);
+    const std::vector<uint8_t> top = solidPage(1, 255, 255, 255, 128);
+    ASSERT_TRUE(asmb.accept(0, base.data()));
+    ASSERT_TRUE(asmb.accept(1, top.data()));
+    const uint8_t after = asmb.texels()[0];
+    EXPECT_FALSE(asmb.accept(1, top.data()));
+    EXPECT_FALSE(asmb.accept(0, base.data()));
+    EXPECT_EQ(asmb.texels()[0], after);
+}
+
+// 全源到齐后释放缓冲 → 稳态零额外内存;但已合成的事实不能丢
+// (determination 靠 hasTexels 判 cell resident,释放后判错就整片回落 mappedRaster)。
+TEST(PageSourceAssembler, ReleaseBuffersKeepsProgressFlags) {
+    PageSourceAssembler asmb;
+    asmb.configure(1, 4);
+    const std::vector<uint8_t> src = solidPage(4, 1, 2, 3, 4);
+    ASSERT_TRUE(asmb.accept(0, src.data()));
+    asmb.releaseBuffers();
+    EXPECT_TRUE(asmb.texels().empty());
+    EXPECT_TRUE(asmb.hasTexels());
+    EXPECT_TRUE(asmb.complete());
+}
+
+// 越界 / 空指针 / 未 configure 一律安全 no-op。
+TEST(PageSourceAssembler, RejectsInvalidInput) {
+    const std::vector<uint8_t> src = solidPage(1, 9, 9, 9, 255);
+    PageSourceAssembler unconfigured;
+    EXPECT_FALSE(unconfigured.accept(0, src.data()));
+
+    PageSourceAssembler asmb;
+    asmb.configure(2, 1);
+    EXPECT_FALSE(asmb.accept(-1, src.data()));
+    EXPECT_FALSE(asmb.accept(2, src.data()));
+    EXPECT_FALSE(asmb.accept(0, nullptr));
+    EXPECT_FALSE(asmb.hasTexels());
+}
+
+// 全透明源叠在全透明上 → 仍全透明,且 rgb 确定(不能因除零出 NaN/垃圾)。
+TEST(PageSourceAssembler, TransparentOverTransparentStaysZero) {
+    PageSourceAssembler asmb;
+    asmb.configure(2, 1);
+    const std::vector<uint8_t> empty = solidPage(1, 200, 200, 200, 0);
+    ASSERT_TRUE(asmb.accept(0, empty.data()));
+    ASSERT_TRUE(asmb.accept(1, empty.data()));
+    EXPECT_EQ(asmb.texels()[3], 0);
+    EXPECT_EQ(asmb.texels()[0], 0);
+}
 
 // ---------------- TerrainPageLayerPool(纯 CPU 分配器)----------------
 

@@ -25,6 +25,101 @@
 namespace earth_engine {
 
 // ============================================================
+// PageSourceAssembler — 单页多源按序 alphaOver 合成(纯 CPU,C-1)
+// ============================================================
+
+void PageSourceAssembler::configure(int sourceCount, int sideTexels) {
+    sourceCount_ = std::max(0, sourceCount);
+    side_ = std::max(0, sideTexels);
+    composited_ = 0;
+    accum_.clear();
+    accum_.shrink_to_fit();
+    stash_.assign(static_cast<size_t>(sourceCount_), std::vector<uint8_t>{});
+}
+
+void PageSourceAssembler::releaseBuffers() {
+    accum_.clear();
+    accum_.shrink_to_fit();
+    stash_.assign(static_cast<size_t>(sourceCount_), std::vector<uint8_t>{});
+}
+
+namespace {
+
+/// 直通(非预乘)alpha 的 source-over:src 叠在 dst 上,就地写 dst。
+/// out.a = sa + da(1-sa);out.rgb = (src·sa + dst·da·(1-sa)) / out.a。
+/// out.a==0 时 rgb 无意义,置 0 保证确定性(否则除零)。
+void alphaOverStraightInPlace(uint8_t* dst, const uint8_t* src, size_t texels) {
+    for (size_t i = 0; i < texels; ++i) {
+        const float sa = src[3] * (1.0f / 255.0f);
+        const float da = dst[3] * (1.0f / 255.0f);
+        const float inv = 1.0f - sa;
+        const float oa = sa + da * inv;
+        if (oa <= 0.0f) {
+            dst[0] = dst[1] = dst[2] = dst[3] = 0;
+        } else {
+            const float dw = da * inv;
+            for (int c = 0; c < 3; ++c) {
+                const float v = (src[c] * sa + dst[c] * dw) / oa;
+                dst[c] = static_cast<uint8_t>(
+                    std::min(255.0f, std::max(0.0f, v + 0.5f)));
+            }
+            dst[3] = static_cast<uint8_t>(
+                std::min(255.0f, std::max(0.0f, oa * 255.0f + 0.5f)));
+        }
+        dst += 4;
+        src += 4;
+    }
+}
+
+}  // namespace
+
+bool PageSourceAssembler::accept(int sourceIndex, const uint8_t* rgba) {
+    if (sourceCount_ <= 0 || side_ <= 0 || rgba == nullptr) {
+        return false;
+    }
+    if (sourceIndex < 0 || sourceIndex >= sourceCount_) {
+        return false;
+    }
+    if (sourceIndex < composited_) {
+        return false;  // 该源已合成(重复到达)→ 幂等丢弃,勿写两遍
+    }
+    const size_t bytes =
+        static_cast<size_t>(side_) * static_cast<size_t>(side_) * 4u;
+    if (sourceIndex > composited_) {
+        // 乱序早到:暂存,等前序源补齐再按序合成(alphaOver 不可交换)。
+        std::vector<uint8_t>& slot = stash_[static_cast<size_t>(sourceIndex)];
+        if (slot.empty()) {
+            slot.assign(rgba, rgba + bytes);
+        }
+        return false;
+    }
+    // sourceIndex == composited_:按序合成,随后把 stash 里已连上的后续源一起消化。
+    const uint8_t* next = rgba;
+    std::vector<uint8_t> pending;
+    while (next != nullptr) {
+        if (composited_ == 0) {
+            accum_.assign(next, next + bytes);  // 首源直接拷贝(单源逐字节等价)
+        } else {
+            alphaOverStraightInPlace(
+                accum_.data(), next,
+                static_cast<size_t>(side_) * static_cast<size_t>(side_));
+        }
+        ++composited_;
+        next = nullptr;
+        if (composited_ < sourceCount_) {
+            std::vector<uint8_t>& slot = stash_[static_cast<size_t>(composited_)];
+            if (!slot.empty()) {
+                pending.swap(slot);
+                slot.clear();
+                slot.shrink_to_fit();
+                next = pending.data();
+            }
+        }
+    }
+    return true;
+}
+
+// ============================================================
 // TerrainPageLayerPool — 等尺寸块 LRU 分配器(纯 CPU)
 // ============================================================
 
@@ -125,6 +220,7 @@ struct TerrainPageStore::PendingInbox {
     struct Item {
         uint64_t key = 0;  // pageKey(packKey of 影像页 z/x/y)
         int layer = 0;     // 目标 array 层(kick 时 pool 分配的 layer)
+        int source = 0;    // C-1:有序 provider 列表中的源号(决定合成次序)
         std::unique_ptr<DecodedImage> image;
     };
     std::mutex mutex;
@@ -196,15 +292,32 @@ void TerrainPageStore::enumerateSubtileKeys(const TileKey& tileKey,
 void TerrainPageStore::updateVisiblePages(
     const SelectorView& view,
     const std::vector<TilesetTile*>& visibleTiles,
-    RasterOverlayTileProvider* provider,
+    const std::vector<RasterOverlayTileProvider*>& providers,
     double terrainMaxScreenSpaceError) {
     ++pageDetFrameCounter_;
-    if (!arrayTexture_ || !provider || visibleTiles.empty()) {
+    if (!arrayTexture_ || providers.empty() || providers.front() == nullptr ||
+        visibleTiles.empty()) {
         return;
     }
-    if (!provider_) {
-        provider_ = provider;  // determination 也可首次捕获(供 kickPageFetch 用)
+    // C-1:源列表变了(增删/换序)→ 已合成的页少一层或多一层都是错的,全部作废重来。
+    // 逐指针精确比对(与 det 签名同样的「宁可多跑不可用错」取向)。
+    // null 源必须剔除:它永远不会到达,会把 assembler 的按序游标永久卡住。
+    detProvidersScratch_.clear();
+    for (RasterOverlayTileProvider* p : providers) {
+        if (p != nullptr) detProvidersScratch_.push_back(p);
     }
+    if (providers_ != detProvidersScratch_) {
+        providers_ = detProvidersScratch_;
+        for (auto& [key, entry] : pages_) {
+            for (CancellationToken& token : entry.fetchTokens) {
+                token.cancel();
+            }
+        }
+        pages_.clear();
+        // pool_ 的槽位不清:key 仍驻留 → 下次 acquire 返回同一 layer、try_emplace 报
+        // inserted → 按新源列表重新 kick。槽位有界不泄漏,且省一轮 LRU 抖动。
+    }
+    RasterOverlayTileProvider* provider = providers.front();
     const TileScheme& scheme = provider->getTileScheme();
     const int providerMaxLevel = provider->getMaximumLevel();
 
@@ -382,10 +495,12 @@ void TerrainPageStore::updateVisiblePages(
                 PageEntry& pe = it->second;
                 if (inserted) {
                     pe.layer = layer;
-                    pe.uploaded = false;
-                    kickPageFetch(kc.fetchKey, kc.pageKey, layer, pe.fetchToken);
+                    pe.assembler.configure(static_cast<int>(providers_.size()),
+                                           config_.pageSizeTexels);
+                    kickPageFetches(kc.fetchKey, kc.pageKey, layer, pe);
                 }
-                if (pe.uploaded) {
+                // C-1:首源合成上传即算 resident(底图先亮),不等最慢的源。
+                if (pe.assembler.hasTexels()) {
                     // 目标页就绪 = 理想 LOD(settled 逐字节=现状精/粗页)。
                     encodeLayerRGBA8(pe.layer, true, kc.d, texel);
                     ++residentCells;
@@ -410,7 +525,7 @@ void TerrainPageStore::updateVisiblePages(
                 aKey.y = subY >> ad;
                 const uint64_t aPageKey = packKey(aKey);
                 const auto ait = pages_.find(aPageKey);
-                if (ait != pages_.end() && ait->second.uploaded) {
+                if (ait != pages_.end() && ait->second.assembler.hasTexels()) {
                     foundLayer = ait->second.layer;
                     foundD = ad;
                     pool_.touch(aPageKey, frameId_);  // 显示中的祖先页不该被淘汰
@@ -511,7 +626,9 @@ void TerrainPageStore::updateVisiblePages(
 
 TerrainPageStore::~TerrainPageStore() {
     for (auto& [pageKey, pe] : pages_) {
-        pe.fetchToken.cancel();  // 尽力取消在途 fetch(回调仍安全:只写 shared inbox)
+        for (CancellationToken& token : pe.fetchTokens) {
+            token.cancel();  // 尽力取消在途(回调仍安全:只写 shared inbox)
+        }
     }
 }
 
@@ -571,13 +688,14 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
     if (it == pages_.end()) {
         return;
     }
-    it->second.fetchToken.cancel();  // 在途 fetch 作废(到达也会被 drain 校验丢弃)
+    for (CancellationToken& token : it->second.fetchTokens) {
+        token.cancel();  // 在途 fetch 全部作废(到达也会被 drain 校验丢弃)
+    }
     pages_.erase(it);
 }
 
-void TerrainPageStore::applyToTerrainCommand(
-    RenderCommand& cmd, const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& overlays) {
+void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
+                                             const TilesetTile& tile) {
     if (!arrayTexture_ || !cmd.terrainRenderContent) {
         return;
     }
@@ -585,10 +703,8 @@ void TerrainPageStore::applyToTerrainCommand(
     if (cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain) {
         return;
     }
-    // 首帧捕获影像 provider(拉真实高清影像的数据源;determination 通常已捕获)。
-    if (!provider_ && !overlays.empty()) {
-        provider_ = overlays.front()->getTileProvider();
-    }
+    // C-1:源列表由 determination 每帧刷新(它是唯一事实源,与 mappedRaster 同序),
+    // 此处不再兜底捕获 —— 两处各自捕获正是「靠后 overlay 被静默丢弃」的温床。
 
     // B2b:无相机,只 bind determination 本帧建好的稀疏间接纹理。无 TileIndir
     // (未 determined / 无可见页 / 层被夺)→ 不动 → mappedRaster(决策② 共存,
@@ -623,22 +739,26 @@ void TerrainPageStore::tick() {
     drainInbox();  // fetch 已在 determination 页首次命中时 kick
 }
 
-void TerrainPageStore::kickPageFetch(const TileKey& pageTileKey,
-                                     uint64_t pageKey, int layer,
-                                     CancellationToken& token) {
-    if (!provider_) {
-        return;
-    }
-    ImageryProvider& imagery = provider_->getImageryProvider();
+void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
+                                       uint64_t pageKey, int layer,
+                                       PageEntry& entry) {
+    entry.fetchTokens.assign(providers_.size(), CancellationToken{});
     std::shared_ptr<PendingInbox> inbox = inbox_;
-    imagery.requestTile(
-        pageTileKey, token,
-        [inbox, pageKey, layer](const TileKey&,
-                                std::unique_ptr<DecodedImage> image) {
-            if (!image) return;
-            std::lock_guard<std::mutex> lock(inbox->mutex);
-            inbox->pages.push_back({pageKey, layer, std::move(image)});
-        });
+    for (size_t s = 0; s < providers_.size(); ++s) {
+        if (providers_[s] == nullptr) {
+            continue;
+        }
+        const int source = static_cast<int>(s);
+        ImageryProvider& imagery = providers_[s]->getImageryProvider();
+        imagery.requestTile(
+            pageTileKey, entry.fetchTokens[s],
+            [inbox, pageKey, layer, source](const TileKey&,
+                                            std::unique_ptr<DecodedImage> image) {
+                if (!image) return;
+                std::lock_guard<std::mutex> lock(inbox->mutex);
+                inbox->pages.push_back({pageKey, layer, source, std::move(image)});
+            });
+    }
 }
 
 void TerrainPageStore::drainInbox() {
@@ -676,9 +796,6 @@ void TerrainPageStore::drainInbox() {
         if (pe.layer != item.layer) {
             continue;  // 该 layer 已换租给别的页
         }
-        if (pe.uploaded) {
-            continue;  // 已灌过(重复 fetch 到达)→ 跳过
-        }
         const int ch = image->channels;
         const uint8_t* src = image->pixels.data();
         for (int row = 0; row < side; ++row) {
@@ -699,11 +816,19 @@ void TerrainPageStore::drainInbox() {
                 d += 4;
             }
         }
+        // C-1:按源序合成进 assembler;只有真的推进了合成才上传(乱序早到的源
+        // 先暂存不上传,重复到达幂等丢弃 → 不浪费本帧上传预算)。
+        if (!pe.assembler.accept(item.source, rgba.data())) {
+            continue;
+        }
         device_->updateTextureRegion(arrayTexture_.get(), 0, 0, side, side,
-                                     rgba.data(),
+                                     pe.assembler.texels().data(),
                                      static_cast<size_t>(side) * 4u,
                                      item.layer);
-        pe.uploaded = true;  // 下帧 determination 重建 indir 时该 cell 变 resident
+        // hasTexels 已为真 → 下帧 determination 重建 indir 时该 cell 变 resident。
+        if (pe.assembler.complete()) {
+            pe.assembler.releaseBuffers();  // 全源到齐:稳态零额外内存
+        }
         ++uploadedLayerTotal_;
         ++uploaded;
     }

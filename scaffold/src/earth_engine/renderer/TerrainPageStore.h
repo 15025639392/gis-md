@@ -69,6 +69,50 @@ private:
     std::unordered_map<uint64_t, int> keyToSlot_;  // key → slot index
 };
 
+/// 单页的多源合成状态机(C-1,纯 CPU、可 host 单测,与 RenderDevice/provider 解耦)。
+///
+/// 页存储的一层承载「**有序** overlay 列表按序 alphaOver 后的合成结果」——与
+/// mappedRaster 那条路径的多 overlay 语义对齐。C-1 之前页存储只认 `overlays.front()`,
+/// 靠后的 overlay 被静默丢弃,这正是「注册成功 + 瓦片 200 + 绑进 draw + 屏幕全无」
+/// 那类问题的根(两条合成路径语义不一致)。
+///
+/// **严格按源序合成**:alphaOver 不可交换,源 i 必须等 0..i-1 全部合成后才能进 accum,
+/// 乱序早到的源暂存 stash。每推进一步允许上传一次 → 部分到达先点亮(底图先亮,不必
+/// 等最慢的源),避免「页到达时间 = 最慢那个源」。
+///
+/// 未完成页的常驻内存上界 = (1 + 乱序源数) × side²×4;`releaseBuffers()` 在全部到齐
+/// 并上传后释放 —— 故稳态零额外内存。单源(sourceCount==1)时逐字节等价于 C-1 之前
+/// (首源直接拷贝,不走 alphaOver)。
+class PageSourceAssembler {
+public:
+    /// sourceCount ≤ 0 或 side ≤ 0 → 停用(accept 恒 false)。重配清空已有进度。
+    void configure(int sourceCount, int sideTexels);
+
+    /// 收下第 sourceIndex 源的 side²×4 RGBA8(非预乘直通 alpha)。
+    /// 返回 true = accum 有新内容需上传。重复源 / 越界 / 空指针 → false(幂等,
+    /// 防重复 fetch 到达把同一源写两遍)。
+    bool accept(int sourceIndex, const uint8_t* rgba);
+
+    bool hasTexels() const { return composited_ > 0; }
+    bool complete() const {
+        return sourceCount_ > 0 && composited_ >= sourceCount_;
+    }
+    int compositedCount() const { return composited_; }
+
+    /// 合成缓冲(releaseBuffers 后为空;hasTexels/complete 不受影响)。
+    const std::vector<uint8_t>& texels() const { return accum_; }
+
+    /// 释放 accum/stash(调用方上传完 complete 页后调)。进度计数保留。
+    void releaseBuffers();
+
+private:
+    int sourceCount_ = 0;
+    int side_ = 0;
+    int composited_ = 0;  // 已按序合成的源数 = 下一个待合成的源号
+    std::vector<uint8_t> accum_;
+    std::vector<std::vector<uint8_t>> stash_;  // 乱序早到的源(按源号索引)
+};
+
 /// 北极星合成方案「稀疏页存储」(门③ Step B2b + §14.1)。
 ///
 /// 拥有一张共享 `texture2DArray`(§13,每层一页,天然消灭页缝),**按页粒度** LRU
@@ -130,9 +174,13 @@ public:
 
     /// 对本帧可见瓦片跑门② determination + 插桩(见类顶注释)。overlay 为空 /
     /// provider 为空 / 无可见瓦片 → no-op。在 Engine tick() 之前、每帧调一次。
+    ///
+    /// C-1:`providers` 是**有序** overlay 列表的 provider(与 mappedRaster 同序),
+    /// 每页按该序 alphaOver 合成成一层。分块/zoom/最大级由 providers[0](底图)决定
+    /// —— 它是与几何对齐的那一个,靠后的源只是往同一 key 的页上叠。空表 → no-op。
     void updateVisiblePages(const SelectorView& view,
                             const std::vector<TilesetTile*>& visibleTiles,
-                            RasterOverlayTileProvider* provider,
+                            const std::vector<RasterOverlayTileProvider*>& providers,
                             double terrainMaxScreenSpaceError);
 
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
@@ -142,10 +190,8 @@ public:
     /// 若该瓦片本帧 determination 建了间接纹理(TileIndir)→ 绑 array slot20 + 间接纹理
     /// slot21 + 写 pageStoreParams(enabled=1,gridN);否则不动(mappedRaster fallback)。
     /// determination 已按 cell 粒度编好 resident/miss,此处仅 bind。
-    /// overlays 用于首次捕获影像 provider。
-    void applyToTerrainCommand(
-        RenderCommand& cmd, const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& overlays);
+    /// C-1:源列表只由 determination 刷新(单一事实源),此处不再兜底捕获 provider。
+    void applyToTerrainCommand(RenderCommand& cmd, const TilesetTile& tile);
 
     Texture* arrayTexture() const { return arrayTexture_.get(); }
 
@@ -178,12 +224,15 @@ private:
     struct PendingInbox;  // 定义在 .cpp:worker 回调安全投递解码影像
 
     /// 页粒度账本(B2b):每个屏幕可见影像页 (z,x,y) 一层 + 异步 fetch 状态。
-    /// pool.acquire 得 layer → 建 PageEntry → kick fetch → 到达置 uploaded。
-    /// 淘汰/换租时 cancel fetch(在途到达经 drain 校验丢弃)。
+    /// pool.acquire 得 layer → 建 PageEntry → **逐源** kick fetch → 到达按源序合成上传。
+    /// 淘汰/换租时 cancel 全部在途 fetch(到达经 drain 校验丢弃)。
+    ///
+    /// C-1:`uploaded` 拆成 assembler 的两个状态 —— `hasTexels()`(至少一源已合成上传,
+    /// determination 据此判 cell resident)与 `complete()`(全源到齐,可释放缓冲)。
     struct PageEntry {
         int layer = -1;
-        bool uploaded = false;
-        CancellationToken fetchToken;
+        PageSourceAssembler assembler;
+        std::vector<CancellationToken> fetchTokens;  // 每源一个
     };
 
     /// 每个屏幕可见 capped 瓦片的稀疏间接纹理(gridN×gridN RGBA8)。
@@ -204,9 +253,10 @@ private:
     };
 
     static uint64_t packKey(const TileKey& key);
-    /// kick 单页影像 fetch(worker 回调把解码影像投进 inbox,带 pageKey+layer)。
-    void kickPageFetch(const TileKey& pageTileKey, uint64_t pageKey, int layer,
-                       CancellationToken& token);
+    /// kick 单页的**全部源** fetch(worker 回调把解码影像投进 inbox,带
+    /// pageKey+layer+源号)。每源一个 token,存进 entry.fetchTokens 供淘汰时 cancel。
+    void kickPageFetches(const TileKey& pageTileKey, uint64_t pageKey, int layer,
+                         PageEntry& entry);
     void drainInbox();
     void erasePageEntry(uint64_t pageKey);
 
@@ -222,7 +272,10 @@ private:
     uint64_t frameId_ = 0;
     int uploadedLayerTotal_ = 0;
 
-    RasterOverlayTileProvider* provider_ = nullptr;  // determination/render 首次捕获
+    // C-1:有序源列表(providers_[0] = 底图,定分块/zoom/最大级)。每帧由
+    // determination 刷新;变化时作废全部已合成页(旧页少一层或多一层都是错的)。
+    std::vector<RasterOverlayTileProvider*> providers_;
+    std::vector<RasterOverlayTileProvider*> detProvidersScratch_;  // 剔 null 复用
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
 
     // 门② determination:子瓦片相对 capped 瓦片的最大细分深度上限
