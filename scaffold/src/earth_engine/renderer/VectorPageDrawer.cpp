@@ -82,6 +82,7 @@ void VectorPageDrawer::kickFetch(const TileKey& srcKey, uint64_t srcPacked) {
         tiles_[srcPacked].state = TileState::Failed;
         return;
     }
+    ++fetchesKicked_;
     std::shared_ptr<Inbox> inbox = inbox_;
     ThreadPool* pool = pool_;
     VectorRasterStyle style = options_.style;  // 按值:worker 可能活过样式变更
@@ -111,6 +112,18 @@ void VectorPageDrawer::kickFetch(const TileKey& srcKey, uint64_t srcPacked) {
 }
 
 void VectorPageDrawer::tickDecorator() {
+    // 节流插桩(~每 60 帧)。**看的是增量**:稳态下 drawn/fetch 每段都应趋近 0;
+    // fetch 增量持续 > 0 = LRU thrash(缓存装不下当前可见页对应的源瓦片数);
+    // fetch≈0 而 drawn 持续高 = pass 数本身是成本,得从合批/降频下手。
+    if (++tickCounter_ % 60u == 0u) {
+        platformLog(LogLevel::Warning, "VecPage",
+                    "cachedTiles=%d ready=%d drawn+=%d fetch+=%d evict=%d",
+                    static_cast<int>(tiles_.size()), readyTiles_,
+                    drawnPages_ - lastDrawn_, fetchesKicked_ - lastFetches_,
+                    evictions_);
+        lastDrawn_ = drawnPages_;
+        lastFetches_ = fetchesKicked_;
+    }
     std::vector<Inbox::Item> ready;
     {
         std::lock_guard<std::mutex> lock(inbox_->mutex);
@@ -175,6 +188,7 @@ void VectorPageDrawer::touchAndTrim(uint64_t srcPacked) {
         lru_.pop_back();
         lruPos_.erase(victim);
         tiles_.erase(victim);  // GPU buffer 随 unique_ptr 释放
+        ++evictions_;
     }
 }
 

@@ -106,6 +106,13 @@ private:
 
     int readyTiles_ = 0;
     int drawnPages_ = 0;
+    // 判因计数器:区分「LRU thrash(反复重拉同一批源瓦片)」与「291 个 pass
+    // 本身就贵」—— 两者修法完全不同,靠猜会修错。
+    int fetchesKicked_ = 0;
+    int evictions_ = 0;
+    uint64_t tickCounter_ = 0;
+    int lastDrawn_ = 0;
+    int lastFetches_ = 0;
 };
 
 }  // namespace earth_engine
