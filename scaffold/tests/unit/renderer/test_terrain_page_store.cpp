@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <functional>
 
+#include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/renderer/TerrainPageStore.h"
 #include "../../helpers/MockRenderDevice.h"
 
@@ -149,6 +151,132 @@ TEST(PageSourceAssembler, TransparentOverTransparentStaysZero) {
     ASSERT_TRUE(asmb.accept(1, empty.data()));
     EXPECT_EQ(asmb.texels()[3], 0);
     EXPECT_EQ(asmb.texels()[0], 0);
+}
+
+// ---------------- resamplePageSource(C-1b per-source 祖先 scale-bias)-------
+
+namespace {
+
+DecodedImage makeImage(int side, int channels,
+                       const std::function<void(int, int, uint8_t*)>& fill) {
+    DecodedImage img;
+    img.width = side;
+    img.height = side;
+    img.channels = channels;
+    img.bytesPerChannel = 1;
+    img.pixels.assign(static_cast<size_t>(side) * side * channels, 0);
+    for (int y = 0; y < side; ++y) {
+        for (int x = 0; x < side; ++x) {
+            fill(x, y, img.pixels.data() +
+                           (static_cast<size_t>(y) * side + x) * channels);
+        }
+    }
+    return img;
+}
+
+}  // namespace
+
+// depth=0 且尺寸相同 → 必须逐字节直拷。这是 C-1b 对已有(与页同级)源的零回归闸:
+// 0.5 偏移相消让双线性权重恰好为 0,不该引入任何浮点往返误差。
+TEST(ResamplePageSource, DepthZeroIsByteIdenticalCopy) {
+    const int side = 8;
+    DecodedImage img = makeImage(side, 4, [](int x, int y, uint8_t* p) {
+        p[0] = static_cast<uint8_t>(x * 31);
+        p[1] = static_cast<uint8_t>(y * 17);
+        p[2] = static_cast<uint8_t>(x + y);
+        p[3] = 255;
+    });
+    std::vector<uint8_t> out;
+    TerrainPageStore::resamplePageSource(img, 0, 0, 0, side, out);
+    EXPECT_EQ(out, img.pixels);
+}
+
+// depth=1 的四个格位必须各取自己那一象限 —— 取错象限的话真机表现是「路网整体偏移
+// 半个瓦片」,肉眼极难反推。用四象限纯色图逐格位钉死。
+TEST(ResamplePageSource, PicksCorrectSubQuadrant) {
+    const int side = 4;
+    // 左上=10 右上=20 左下=30 右下=40(R 通道编号)。
+    DecodedImage img = makeImage(side, 4, [side](int x, int y, uint8_t* p) {
+        const bool right = x >= side / 2;
+        const bool bottom = y >= side / 2;
+        p[0] = static_cast<uint8_t>(bottom ? (right ? 40 : 30)
+                                           : (right ? 20 : 10));
+        p[3] = 255;
+    });
+    struct Case { int subX, subY, expect; };
+    // TileKey y 与影像 row 同向(NW 约定,row0=北)→ subY=0 取上半。
+    for (const Case& c : {Case{0, 0, 10}, Case{1, 0, 20},
+                          Case{0, 1, 30}, Case{1, 1, 40}}) {
+        std::vector<uint8_t> out;
+        TerrainPageStore::resamplePageSource(img, 1, c.subX, c.subY, side, out);
+        // 取象限中心避开双线性在象限边界的过渡带。
+        const size_t mid =
+            (static_cast<size_t>(side / 2) * side + side / 2) * 4u;
+        EXPECT_EQ(out[mid], c.expect)
+            << "sub=(" << c.subX << "," << c.subY << ")";
+    }
+}
+
+// 纯色祖先放大后仍是同一纯色(不因边界 clamp 或权重归一化跑偏)。
+TEST(ResamplePageSource, SolidAncestorUpsamplesFlat) {
+    const int side = 8;
+    DecodedImage img = makeImage(side, 4, [](int, int, uint8_t* p) {
+        p[0] = 90; p[1] = 140; p[2] = 200; p[3] = 255;
+    });
+    std::vector<uint8_t> out;
+    TerrainPageStore::resamplePageSource(img, 3, 5, 2, side, out);
+    for (size_t i = 0; i < out.size(); i += 4) {
+        ASSERT_EQ(out[i], 90) << "i=" << i;
+        ASSERT_EQ(out[i + 1], 140);
+        ASSERT_EQ(out[i + 2], 200);
+        ASSERT_EQ(out[i + 3], 255);
+    }
+}
+
+// 3 通道源补满 alpha=255,单通道源铺灰度 —— 否则矢量/标注类源会因 alpha=0 被
+// alphaOver 当成「什么都没有」而整层失效。
+TEST(ResamplePageSource, FillsAlphaForThreeAndOneChannel) {
+    const int side = 2;
+    DecodedImage rgb = makeImage(side, 3, [](int, int, uint8_t* p) {
+        p[0] = 7; p[1] = 8; p[2] = 9;
+    });
+    std::vector<uint8_t> out;
+    TerrainPageStore::resamplePageSource(rgb, 0, 0, 0, side, out);
+    EXPECT_EQ(out[0], 7);
+    EXPECT_EQ(out[3], 255);
+
+    DecodedImage gray = makeImage(side, 1, [](int, int, uint8_t* p) {
+        p[0] = 123;
+    });
+    TerrainPageStore::resamplePageSource(gray, 0, 0, 0, side, out);
+    EXPECT_EQ(out[0], 123);
+    EXPECT_EQ(out[1], 123);
+    EXPECT_EQ(out[2], 123);
+    EXPECT_EQ(out[3], 255);
+}
+
+// 源尺寸与页边长不等时必须重采样而不是被丢弃。真机踩过:矢量源 tileSize=512、
+// 页边长 256,旧护栏「非 256² 跳过」静默丢弃了它 —— 图非空所以连错误日志都没有。
+TEST(ResamplePageSource, SourceLargerThanPageIsDownsampledNotDropped) {
+    const int srcSide = 8;
+    const int pageSide = 4;
+    DecodedImage img = makeImage(srcSide, 4, [](int, int, uint8_t* p) {
+        p[0] = 200; p[1] = 100; p[2] = 50; p[3] = 255;
+    });
+    std::vector<uint8_t> out;
+    TerrainPageStore::resamplePageSource(img, 0, 0, 0, pageSide, out);
+    ASSERT_EQ(out.size(), static_cast<size_t>(pageSide) * pageSide * 4u);
+    EXPECT_EQ(out[0], 200);
+    EXPECT_EQ(out[3], 255);
+}
+
+// 空图/非法尺寸 → 全零输出(不越界、不留脏数据)。
+TEST(ResamplePageSource, EmptyImageYieldsZeroedOutput) {
+    DecodedImage empty;
+    std::vector<uint8_t> out;
+    TerrainPageStore::resamplePageSource(empty, 0, 0, 0, 4, out);
+    ASSERT_EQ(out.size(), 4u * 4u * 4u);
+    for (uint8_t v : out) EXPECT_EQ(v, 0);
 }
 
 // ---------------- TerrainPageLayerPool(纯 CPU 分配器)----------------

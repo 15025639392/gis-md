@@ -221,11 +221,85 @@ struct TerrainPageStore::PendingInbox {
         uint64_t key = 0;  // pageKey(packKey of 影像页 z/x/y)
         int layer = 0;     // 目标 array 层(kick 时 pool 分配的 layer)
         int source = 0;    // C-1:有序 provider 列表中的源号(决定合成次序)
+        // C-1b:该源被钳到自己 maxZoom 后的祖先深度与页在祖先内的格位。
+        // depth=0 = 拉到了本页本级(现状);>0 = 拿的是祖先页,合成时取
+        // (subX,subY)/2^depth 那块子矩形放大。
+        int ancestorDepth = 0;
+        int subX = 0;
+        int subY = 0;
         std::unique_ptr<DecodedImage> image;
     };
     std::mutex mutex;
     std::vector<Item> pages;
 };
+
+void TerrainPageStore::resamplePageSource(const DecodedImage& image, int depth,
+                                          int subX, int subY, int side,
+                                          std::vector<uint8_t>& out) {
+    out.assign(static_cast<size_t>(side) * static_cast<size_t>(side) * 4u, 0);
+    if (image.width <= 0 || image.height <= 0 || image.pixels.empty() ||
+        side <= 0) {
+        return;
+    }
+    const int ch = std::max(1, image.channels);
+    const int iw = image.width;
+    const int ih = image.height;
+    const uint8_t* src = image.pixels.data();
+    // 页在祖先内的归一化子矩形:origin = sub/2^depth,边长 = 1/2^depth。
+    const float span = 1.0f / static_cast<float>(1 << std::max(0, depth));
+    const float u0 = static_cast<float>(subX) * span;
+    const float v0 = static_cast<float>(subY) * span;
+    // depth=0 且 image 尺寸 == side 时,下面的 0.5 偏移相消 → 逐像素恰好落在
+    // 源像素中心 → 双线性权重为 0 = 逐字节直拷(与 C-1b 之前等价)。
+    auto sample = [&](float fx, float fy, uint8_t* d) {
+        const int x0 = static_cast<int>(std::floor(fx));
+        const int y0 = static_cast<int>(std::floor(fy));
+        const float tx = fx - static_cast<float>(x0);
+        const float ty = fy - static_cast<float>(y0);
+        const int xs[2] = {std::min(std::max(x0, 0), iw - 1),
+                           std::min(std::max(x0 + 1, 0), iw - 1)};
+        const int ys[2] = {std::min(std::max(y0, 0), ih - 1),
+                           std::min(std::max(y0 + 1, 0), ih - 1)};
+        float acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        for (int j = 0; j < 2; ++j) {
+            const float wy = j == 0 ? (1.0f - ty) : ty;
+            for (int i = 0; i < 2; ++i) {
+                const float w = (i == 0 ? (1.0f - tx) : tx) * wy;
+                if (w <= 0.0f) continue;
+                const uint8_t* s =
+                    src + (static_cast<size_t>(ys[j]) * iw + xs[i]) * ch;
+                if (ch >= 3) {
+                    acc[0] += w * s[0];
+                    acc[1] += w * s[1];
+                    acc[2] += w * s[2];
+                    acc[3] += w * (ch >= 4 ? s[3] : 255);
+                } else {  // 单通道:灰度铺三通道
+                    acc[0] += w * s[0];
+                    acc[1] += w * s[0];
+                    acc[2] += w * s[0];
+                    acc[3] += w * 255.0f;
+                }
+            }
+        }
+        for (int c = 0; c < 4; ++c) {
+            d[c] = static_cast<uint8_t>(
+                std::min(255.0f, std::max(0.0f, acc[c] + 0.5f)));
+        }
+    };
+    for (int row = 0; row < side; ++row) {
+        const int outRow = kFlipRowsOnUpload ? (side - 1 - row) : row;
+        const float v = v0 + (static_cast<float>(row) + 0.5f) /
+                                 static_cast<float>(side) * span;
+        const float fy = v * static_cast<float>(ih) - 0.5f;
+        uint8_t* d = out.data() + static_cast<size_t>(outRow) * side * 4;
+        for (int col = 0; col < side; ++col) {
+            const float u = u0 + (static_cast<float>(col) + 0.5f) /
+                                     static_cast<float>(side) * span;
+            sample(u * static_cast<float>(iw) - 0.5f, fy, d);
+            d += 4;
+        }
+    }
+}
 
 void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident, int depth,
                                         uint8_t out[4]) {
@@ -614,13 +688,26 @@ void TerrainPageStore::updateVisiblePages(
     if (pageDetFrameCounter_ % 30u == 0u) {
         const int logZMin = visiblePagesScratch_.empty() ? 0 : zMin;
         const int logZMax = visiblePagesScratch_.empty() ? 0 : zMax;
+        // C-1 机制信号:sources=有序源数;complete=全源到齐的页;partial=只到了
+        // 前几源的页。partial 长期不降 = 某个源恒不到达(而非「没东西可测」)。
+        int completePages = 0;
+        int partialPages = 0;
+        for (const auto& [pageKey, pe] : pages_) {
+            if (pe.assembler.complete()) {
+                ++completePages;
+            } else if (pe.assembler.hasTexels()) {
+                ++partialPages;
+            }
+        }
         platformLog(LogLevel::Warning, "PageDet",
                     "uniquePages=%d residentPages=%d uploadedTotal=%d "
                     "visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f "
-                    "culledBySse=%d",
+                    "culledBySse=%d sources=%d complete=%d partial=%d",
                     lastVisiblePageCount_, pool_.residentCount(),
                     uploadedLayerTotal_, visibleCappedTiles, logZMin, logZMax,
-                    maxTileSse, culledBySse);
+                    maxTileSse, culledBySse,
+                    static_cast<int>(providers_.size()), completePages,
+                    partialPages);
     }
 }
 
@@ -749,14 +836,31 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
             continue;
         }
         const int source = static_cast<int>(s);
+        // C-1b:**每个源各自钳到自己的 maxZoom**。页 zoom 由屏幕(与底图上限)驱动,
+        // 常深于标注/矢量类源的上限;不钳则那些源恒 404 → 永不到达 → assembler 卡在
+        // 前序、该源在页内彻底消失(真机踩过:矢量路网整片没了)。钳到祖先后按
+        // scale-bias 取子矩形放大 —— 与 mappedRaster 那条路逐瓦片挑祖先同语义。
+        TileKey fetchKey = pageTileKey;
+        int depth = pageTileKey.z - providers_[s]->getMaximumLevel();
+        depth = std::max(0, std::min(depth, pageTileKey.z));
+        int subX = 0;
+        int subY = 0;
+        if (depth > 0) {
+            subX = pageTileKey.x & ((1 << depth) - 1);
+            subY = pageTileKey.y & ((1 << depth) - 1);
+            fetchKey.z = pageTileKey.z - depth;
+            fetchKey.x = pageTileKey.x >> depth;
+            fetchKey.y = pageTileKey.y >> depth;
+        }
         ImageryProvider& imagery = providers_[s]->getImageryProvider();
         imagery.requestTile(
-            pageTileKey, entry.fetchTokens[s],
-            [inbox, pageKey, layer, source](const TileKey&,
-                                            std::unique_ptr<DecodedImage> image) {
+            fetchKey, entry.fetchTokens[s],
+            [inbox, pageKey, layer, source, depth, subX, subY](
+                const TileKey&, std::unique_ptr<DecodedImage> image) {
                 if (!image) return;
                 std::lock_guard<std::mutex> lock(inbox->mutex);
-                inbox->pages.push_back({pageKey, layer, source, std::move(image)});
+                inbox->pages.push_back(
+                    {pageKey, layer, source, depth, subX, subY, std::move(image)});
             });
     }
 }
@@ -783,9 +887,13 @@ void TerrainPageStore::drainInbox() {
         auto& item = ready[idx];
         requeueFrom = idx + 1;
         DecodedImage* image = item.image.get();
-        if (!image || image->width != side || image->height != side ||
+        // C-1b:**不再要求源尺寸等于页边长**。resamplePageSource 按 image 自身
+        // 尺寸重采样,任意 tileSize 的 provider 都能进页。旧护栏「非 256² 跳过」
+        // 是静默丢弃 —— 真机踩过:矢量源 tileSize=512,图非空(故不打 NULL 日志)
+        // 却恒被丢,表现为该源在页内完全不存在,且没有任何一条错误日志。
+        if (!image || image->width <= 0 || image->height <= 0 ||
             image->pixels.empty()) {
-            continue;  // 尺寸不符(非 256²)跳过,保留占位
+            continue;
         }
         // 校验页仍驻留且 layer 匹配(淘汰/换租后 layer 变或页消失 → 丢弃,防写错层)。
         const auto it = pages_.find(item.key);
@@ -796,26 +904,8 @@ void TerrainPageStore::drainInbox() {
         if (pe.layer != item.layer) {
             continue;  // 该 layer 已换租给别的页
         }
-        const int ch = image->channels;
-        const uint8_t* src = image->pixels.data();
-        for (int row = 0; row < side; ++row) {
-            const int srcRow = kFlipRowsOnUpload ? (side - 1 - row) : row;
-            const uint8_t* s = src + static_cast<size_t>(srcRow) * side * ch;
-            uint8_t* d = rgba.data() + static_cast<size_t>(row) * side * 4;
-            for (int col = 0; col < side; ++col) {
-                if (ch >= 3) {
-                    d[0] = s[0];
-                    d[1] = s[1];
-                    d[2] = s[2];
-                    d[3] = ch >= 4 ? s[3] : 255;
-                } else {  // 单通道:灰度铺三通道
-                    d[0] = d[1] = d[2] = s[0];
-                    d[3] = 255;
-                }
-                s += ch;
-                d += 4;
-            }
-        }
+        resamplePageSource(*image, item.ancestorDepth, item.subX, item.subY,
+                           side, rgba);
         // C-1:按源序合成进 assembler;只有真的推进了合成才上传(乱序早到的源
         // 先暂存不上传,重复到达幂等丢弃 → 不浪费本帧上传预算)。
         if (!pe.assembler.accept(item.source, rgba.data())) {

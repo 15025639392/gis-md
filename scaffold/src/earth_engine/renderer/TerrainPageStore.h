@@ -16,6 +16,7 @@ class RenderDevice;
 class Texture;
 class ActivatedRasterOverlay;
 class RasterOverlayTileProvider;
+struct DecodedImage;
 struct RenderCommand;
 struct SelectorView;
 struct TilesetTile;
@@ -215,6 +216,20 @@ public:
     static int decodeLayerRGBA8(const uint8_t in[4]);
     /// B 通道深度解码(镜像片元 floor(b*255+0.5))。供 host round-trip 单测。
     static int decodeDepthRGBA8(const uint8_t in[4]);
+
+    /// C-1b:把某源到达的影像重采样成本页的 side²×4 RGBA8。
+    ///
+    /// 页 zoom 由屏幕(与底图上限)驱动,常深于标注/矢量类源自己的 maxZoom;那些源
+    /// 的 fetch key 被钳到各自上限的祖先页,`depth`/`subX`/`subY` 记下页在祖先内
+    /// 的格位,此处按 scale-bias 取该子矩形双线性放大 —— 与 mappedRaster 那条路
+    /// 逐瓦片挑祖先同语义。**不钳会让这些源恒 404 → 永不到达 → 卡住 assembler 的
+    /// 按序游标 → 该源在页内彻底消失**(真机踩过:矢量路网整片没了)。
+    ///
+    /// depth=0 且 image 尺寸 == side 时逐字节等价于直拷(0.5 偏移相消,双线性权重 0)。
+    /// 通道数 1/3/4 都收(单通道铺灰度);空图/非法尺寸 → out 全零。纯函数,可 host 单测。
+    static void resamplePageSource(const DecodedImage& image, int depth,
+                                   int subX, int subY, int side,
+                                   std::vector<uint8_t>& out);
 
     // --- 诊断(单测/日志用)---
     int residentPageCount() const { return pool_.residentCount(); }
