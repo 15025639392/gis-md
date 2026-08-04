@@ -1,6 +1,56 @@
 #include "MinimalGlobeDemoConfig.h"
 
+#include "earth_engine/data/StyleFilter.h"
+
 namespace earth_engine::minimal_globe_demo {
+
+VectorRasterStyle makeMvtRasterStyle() {
+    using C = StyleFilter::Compare;
+    // 道路分级表:与几何通路 GLESView 里那份同源(zoom 固定于瓦片 z,
+    // 相机缩放不触发重烘)。
+    StyleFilter::Ptr roadGrading = StyleFilter::any({
+        StyleFilter::all({
+            StyleFilter::zoomCompare(C::Less, 9),
+            StyleFilter::in("highway", {"motorway", "trunk", "primary"})}),
+        StyleFilter::all({
+            StyleFilter::zoomCompare(C::GreaterEqual, 9),
+            StyleFilter::zoomCompare(C::Less, 10),
+            StyleFilter::in("highway", {"motorway", "trunk", "primary",
+                                        "secondary"})}),
+        StyleFilter::all({
+            StyleFilter::zoomCompare(C::GreaterEqual, 10),
+            StyleFilter::zoomCompare(C::Less, 12),
+            StyleFilter::in("highway", {"motorway", "trunk", "primary",
+                                        "secondary", "tertiary"})}),
+        StyleFilter::zoomCompare(C::GreaterEqual, 12),
+    });
+
+    VectorRasterStyle style;
+    // 背景全透明:底图矢量叠在卫星影像之上,不该盖住影像。
+    style.background = {0, 0, 0, 0};
+
+    VectorRasterLayerPaint water;
+    water.layer = "water";
+    water.fillColor = {70, 120, 190, 170};
+
+    VectorRasterLayerPaint building;
+    building.layer = "building";
+    building.minZoom = 13;
+    building.fillColor = {150, 150, 155, 140};
+
+    VectorRasterLayerPaint roads;
+    roads.layer = "roads";
+    roads.filter = roadGrading;
+    // 线宽单位是**输出纹理像素**:烘进纹理后随地形贴合被拉伸,与几何通路
+    // 的「屏幕恒定宽」语义不同 —— 这是 draping 的固有性质(maplibre 的 line
+    // 进 RTT 后同样如此),不是 bug。
+    roads.lineColor = {245, 245, 245, 220};
+    roads.lineWidthPixels = 2.5;
+
+    // 顺序 = 绘制顺序:水面在下,建筑其次,路网压顶。
+    style.layers = {water, building, roads};
+    return style;
+}
 
 EarthSceneConfig makeDefaultDemoSceneConfig() {
     EarthSceneConfig config;

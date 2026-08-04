@@ -558,6 +558,14 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             makeRasterOverlayOptions(overlayConfig));
     }
 
+    // 应用自建 overlay 排在配置 overlay 之后 = 叠在卫星影像之上。
+    for (PendingCustomOverlay& pending : pendingCustomOverlays_) {
+        if (!pending.provider || !pending.scheme) continue;
+        addActivatedRasterOverlay(rasterOverlays, std::move(pending.provider),
+                                  std::move(pending.scheme), pending.options);
+    }
+    pendingCustomOverlays_.clear();
+
     const TilesetOptions tilesetOptions =
         makeSceneTilesetOptions(config_.tileset);
     SceneTerrainRuntimeSources terrainSources =
@@ -697,6 +705,15 @@ void EarthEngineSdkFacade::resetCamera() {
         config_.initialCamera.scriptedPanStartFrame,
         config_.initialCamera.scriptedPanFrames,
         config_.initialCamera.scriptedPanYawPerFrameRad);
+}
+
+void EarthEngineSdkFacade::addCustomImageryOverlay(
+    std::unique_ptr<ImageryProvider> provider,
+    std::unique_ptr<TileScheme> scheme,
+    RasterOverlay::Options options) {
+    pendingCustomOverlays_.push_back(
+        PendingCustomOverlay{std::move(provider), std::move(scheme),
+                             std::move(options)});
 }
 
 void EarthEngineSdkFacade::addActivatedRasterOverlay(

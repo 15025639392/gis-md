@@ -31,6 +31,8 @@
 #include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/data/MvtVectorSource.h"
 #include "earth_engine/data/StyleFilter.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/providers/VectorImageryProvider.h"
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
@@ -145,6 +147,43 @@ struct MvtFetchInflight {
     std::vector<uint64_t> completed;
 };
 static MvtFetchInflight gMvtFetch;
+
+// MVT 瓦片拉取(E1 几何通路与 E4 影像通路共用)。⚠️ HttpRequest 取消句柄
+// 必须持有至完成,且**不能在 curl 回调线程析构** —— 完成 id 攒批,下次发
+// 请求时在调用线程剪除。
+static void mvtFetchTile(const TileKey& key,
+                         std::function<void(int, std::vector<uint8_t>)> cb) {
+    std::string url = minimal_globe_demo::kMvtBasemapUrlTemplate;
+    auto replace = [&url](const char* token, int value) {
+        size_t pos = url.find(token);
+        if (pos != std::string::npos) {
+            url.replace(pos, 3, std::to_string(value));
+        }
+    };
+    replace("{z}", key.z);
+    replace("{x}", key.x);
+    replace("{y}", key.y);
+    uint64_t id;
+    {
+        std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
+        for (uint64_t done : gMvtFetch.completed) {
+            gMvtFetch.requests.erase(done);
+        }
+        gMvtFetch.completed.clear();
+        id = gMvtFetch.nextId++;
+    }
+    auto handle = CurlMultiRequestScheduler::shared().get(
+        url,
+        [cb = std::move(cb), id](int statusCode, std::vector<uint8_t> body) {
+            cb(statusCode, std::move(body));
+            std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
+            gMvtFetch.completed.push_back(id);
+        },
+        HttpRequestOptions(HttpRequestPriority::Low));
+    std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
+    gMvtFetch.requests[id] = std::move(handle);
+}
+
 
 static double androidUptimeSeconds();
 static void postInputEvent(const InputEvent& event);
@@ -290,11 +329,43 @@ static bool createEngine() {
                 *gEngine,
                 *gRenderDevice,
                 *gPlatformBridge);
+        // E4:矢量底图走影像通道。**必须在 installScene 之前**注册 ——
+        // overlay 是 Tileset 构造时一次性交进去的。
+        if (minimal_globe_demo::kEnableMvtBasemap &&
+            minimal_globe_demo::kMvtBasemapAsOverlay) {
+            gMvtWorkerPool = std::make_unique<ThreadPool>(2);
+            VectorImageryProvider::Options vopt;
+            vopt.id = "mvt-basemap";
+            vopt.schemeId = "XYZ-WebMercator";
+            vopt.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
+            vopt.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
+            vopt.tileSize = 512;
+            vopt.style = minimal_globe_demo::makeMvtRasterStyle();
+            auto provider = std::make_unique<VectorImageryProvider>(
+                std::move(vopt),
+                [](const TileKey& key,
+                   VectorImageryProvider::FetchCallback cb) {
+                    mvtFetchTile(key, std::move(cb));
+                },
+                gMvtWorkerPool.get());
+            RasterOverlay::Options oopts;
+            oopts.maximumScreenSpaceError = 2.0;
+            oopts.minimumZoom = minimal_globe_demo::kMvtBasemapMinZoom;
+            oopts.maximumZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
+            // 矢量底图缺瓦时不该阻塞「整帧可呈现」判定 —— 卫星影像才是底。
+            oopts.blocksCompleteRenderable = false;
+            gSdkFacade->addCustomImageryOverlay(
+                std::move(provider), TileScheme::createXYZWebMercator(),
+                oopts);
+            LOGI("VectorE4 MVT basemap as raster overlay (draped)");
+        }
+
         gSdkFacade->installScene(
             minimal_globe_demo::makeDefaultDemoSceneConfig());
 
         // ---- P4 MVT 只读底图:先于编辑演示层挂(先挂先画,垫底)。----
-        if (minimal_globe_demo::kEnableMvtBasemap) {
+        if (minimal_globe_demo::kEnableMvtBasemap &&
+            !minimal_globe_demo::kMvtBasemapAsOverlay) {
             // E1:底图走**瓦片桶**(worker 全链镶嵌),不再灌 store,故
             // 细桶那个 workaround 已无意义 —— 它当初是为了让「整城要素塞进
             // 空间分桶 store」时增量激活不退化成整桶全量重镶。桶尺寸留默认,
@@ -364,36 +435,7 @@ static bool createEngine() {
             mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
             auto fetchFn = [](const TileKey& key,
                               MvtVectorSource::FetchCallback cb) {
-                std::string url = minimal_globe_demo::kMvtBasemapUrlTemplate;
-                auto replace = [&url](const char* token, int value) {
-                    size_t pos = url.find(token);
-                    if (pos != std::string::npos) {
-                        url.replace(pos, 3, std::to_string(value));
-                    }
-                };
-                replace("{z}", key.z);
-                replace("{x}", key.x);
-                replace("{y}", key.y);
-                uint64_t id;
-                {
-                    std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
-                    for (uint64_t done : gMvtFetch.completed) {
-                        gMvtFetch.requests.erase(done);
-                    }
-                    gMvtFetch.completed.clear();
-                    id = gMvtFetch.nextId++;
-                }
-                auto handle = CurlMultiRequestScheduler::shared().get(
-                    url,
-                    [cb = std::move(cb), id](int statusCode,
-                                             std::vector<uint8_t> body) {
-                        cb(statusCode, std::move(body));
-                        std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
-                        gMvtFetch.completed.push_back(id);
-                    },
-                    HttpRequestOptions(HttpRequestPriority::Low));
-                std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
-                gMvtFetch.requests[id] = std::move(handle);
+                mvtFetchTile(key, std::move(cb));
             };
             // E1 接线:镶嵌钩子在 worker 上跑,持一份样式快照(图集置空,
             // 见 FeatureRenderLayer::workerTessellationContext 的线程契约);

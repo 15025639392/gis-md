@@ -1,5 +1,7 @@
 #pragma once
 
+#include "earth_engine/data/VectorTileRasterizer.h"
+
 #include "earth_engine/sdk/EarthSceneConfig.h"
 
 namespace earth_engine::minimal_globe_demo {
@@ -52,6 +54,19 @@ constexpr bool kEnableVectorDemoLayers = true;
 // serve_mvt_tiles.py 起 8092 + adb reverse tcp:8092(与地形 8091 同模式)。
 // 服务器不在时请求失败仅 markFailed(静默),不影响其余渲染。
 constexpr bool kEnableMvtBasemap = true;
+
+// E4 贴地双轨制:矢量底图走**影像通道**(栅格化成纹理 → raster overlay →
+// 地形合成),而不是几何通路。
+//   true  = 底图贴着地形起伏(复用整套 overlay→地形管线,零新增渲染代码);
+//   false = 原几何通路(FeatureRenderLayer + 瓦片桶),现为 Absolute 抬 500m
+//           浮在地形之上(贴地回归待 E4 收编)。
+// 两条通路互斥,留着 false 是为了 A/B 对拍(判据见 E4-4)。
+constexpr bool kMvtBasemapAsOverlay = true;
+
+/// E4 影像通路的栅格样式(颜色 + 分级表)。与几何通路的 SourceLayerRule
+/// 同源:同一套 StyleFilter 谓词、同一张道路分级表 —— 两条通路的取舍语义
+/// 必须一致,否则 A/B 对拍比的就不是「贴地与否」而是「画了不同的东西」。
+VectorRasterStyle makeMvtRasterStyle();
 constexpr const char* kMvtBasemapUrlTemplate =
     "http://127.0.0.1:8092/{z}/{x}/{y}.pbf";
 constexpr int kMvtBasemapMinZoom = 0;

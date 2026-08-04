@@ -37,6 +37,15 @@ public:
     /// Install terrain, raster overlays, optional glTF content, initial camera,
     /// and fixed simulation time from a complete scene config.
     void installScene(EarthSceneConfig config);
+
+    /// 注册应用自建的影像 overlay(E4:矢量瓦片经 VectorImageryProvider
+    /// 冒充影像走地形合成)。**必须在 installScene 之前调用** —— overlay 是
+    /// 在 Tileset 构造时一次性交进去的,事后追加需要重建整个 tileset。
+    /// 注册的 overlay 排在配置 overlay **之后**,即叠在卫星影像之上。
+    /// installScene 会消费本列表(每次 installScene 重新注册)。
+    void addCustomImageryOverlay(std::unique_ptr<ImageryProvider> provider,
+                                 std::unique_ptr<TileScheme> scheme,
+                                 RasterOverlay::Options options);
     /// Advance deferred scene setup on the owning render thread.
     void update();
     /// Restore the configured initial camera without rebuilding scene sources.
@@ -56,6 +65,14 @@ private:
     RenderDevice& renderDevice_;
     PlatformBridge& platformBridge_;
     EarthSceneConfig config_;
+    /// 应用自建 overlay 的待挂列表(installScene 消费,见
+    /// addCustomImageryOverlay)。
+    struct PendingCustomOverlay {
+        std::unique_ptr<ImageryProvider> provider;
+        std::unique_ptr<TileScheme> scheme;
+        RasterOverlay::Options options;
+    };
+    std::vector<PendingCustomOverlay> pendingCustomOverlays_;
     std::vector<std::unique_ptr<RasterOverlay>> rasterOverlays_;
     std::vector<std::unique_ptr<ActivatedRasterOverlay>>
         activatedRasterOverlays_;
