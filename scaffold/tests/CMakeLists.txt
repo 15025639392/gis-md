@@ -1065,6 +1065,12 @@ add_executable(test_heightmap_terrain
 target_link_libraries(test_heightmap_terrain PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_heightmap_terrain COMMAND test_heightmap_terrain)
 
+add_executable(test_vector_imagery_provider
+    unit/providers/test_vector_imagery_provider.cpp
+)
+target_link_libraries(test_vector_imagery_provider PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_vector_imagery_provider COMMAND test_vector_imagery_provider)
+
 add_executable(test_raster_overlay_lifecycle
     unit/providers/test_raster_overlay_lifecycle.cpp
 )

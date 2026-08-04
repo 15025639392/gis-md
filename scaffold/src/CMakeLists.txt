@@ -538,6 +538,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/GoogleMapTilesImageryProvider.h
     earth_engine/providers/GoogleMapTilesImageryProvider.cpp
     earth_engine/providers/XYZImageryProvider.h
+    earth_engine/providers/VectorImageryProvider.cpp
     earth_engine/providers/XYZImageryProvider.cpp
     earth_engine/providers/WebMapServiceImageryProvider.h
     earth_engine/providers/WebMapServiceImageryProvider.cpp
