@@ -32,15 +32,45 @@ const char* const kNames[kCount] = {
     "PageDecorateOrdering",
 };
 
-// 名字表与枚举同长 —— 漏一个会让日志报 "?",恰好在出问题时最不该发生。
+// 每条边的两端。producer 是**通常该改的人**,consumer 只是发现的人。
+// 串是逐条 grep 核过的实际写入点/判定点,不是凭印象填的;改动判定点位置时
+// 必须同步改这里,否则日志会把人送去错的文件 —— 那比没有归属更糟。
+const Owners kOwners[kCount] = {
+    // 哨兵在解码时注册(两处 encoding 分支),消费者只是第一个按它采样的人。
+    {"HeightmapTerrainProvider::decodeTile",
+     "HeightmapTerrainContentProvider::buildContent"},
+    // 地形网格的 texcoord 由网格构建器按 NW 公式发;上采样器按同一约定切子窗。
+    // (glTF 解析路径 GltfModel.cpp 也产 texcoord,但不喂地形上采样,故不列。)
+    {"EllipsoidTerrainMeshBuilder::makeModel",
+     "GltfTerrainUpsampler::upsampleForRasterOverlay"},
+    // gridN 由 draw 命令构建器写进 heightDisplace[3](两处:位移分支 + remap 分支)。
+    {"GltfDrawCommandBuilder::build",
+     "TerrainInstanceBatcher::assemble"},
+    // ⚠️ 这条两端同属一个模块 —— 它其实不是层间的边,是**模块内的时序不变量**:
+    // TerrainPageDecorator 头文件里"页存储保证 tickDecorator 先于本帧任何
+    // decoratePage"这句承诺是页存储自己给的,所以违约时该改的也是它。如实登记,
+    // 不为了凑成跨模块的样子编一个假的生产方。
+    {"TerrainPageStore::tick (时序承诺方)",
+     "TerrainPageStore::decoratePage 调用点"},
+};
+
+// 三张表与枚举同长 —— 漏一个会让日志报 "?" 或指向错的模块,恰好在出问题时最不该
+// 发生。新增 Id 时编译器会在这里点名,不靠 review 记得。
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == kCount,
               "contracts::Id 与 kNames 必须逐项对应:新增枚举时补名字。");
+static_assert(sizeof(kOwners) / sizeof(kOwners[0]) == kCount,
+              "contracts::Id 与 kOwners 必须逐项对应:新增枚举时补两端归属。");
 
 }  // namespace
 
 const char* name(Id id) {
     const size_t index = static_cast<size_t>(id);
     return index < kCount ? kNames[index] : "?";
+}
+
+Owners owners(Id id) {
+    const size_t index = static_cast<size_t>(id);
+    return index < kCount ? kOwners[index] : Owners{"?", "?"};
 }
 
 void recordEvaluation(Id id) {
@@ -66,8 +96,12 @@ void recordViolation(Id id, const char* fmt, ...) {
     va_start(args, fmt);
     std::vsnprintf(detail, sizeof(detail), fmt, args);
     va_end(args);
+    // producer 排在 consumer 之前:先看到的应该是**该改的人**,而不是恰好发现的
+    // 那个模块。只报判定点会把人送去翻错的文件。
+    const Owners who = owners(id);
     platformLog(LogLevel::Warning, "Contract",
-                "VIOLATED %s — %s", name(id), detail);
+                "VIOLATED %s producer=%s consumer=%s | %s",
+                name(id), who.producer, who.consumer, detail);
 }
 
 void logFrameSummary(uint64_t frameId) {
@@ -117,6 +151,14 @@ void logCoverage(uint64_t frameId) {
     platformLog(deadEdges > 0 ? LogLevel::Warning : LogLevel::Info,
                 "Contract", "coverage f=%llu dead=%d %s",
                 static_cast<unsigned long long>(frameId), deadEdges, line);
+    // 死边单独点名到判定点所在:dead=2 只说"两条边是黑的",不说黑在谁那儿。
+    // 每条一行,因为这行是要被拿去派活的。
+    for (size_t i = 0; i < kCount; ++i) {
+        if (evalCounts_[i].load(std::memory_order_relaxed) != 0) continue;
+        platformLog(LogLevel::Warning, "Contract",
+                    "  DEAD %s — 判定点未执行 consumer=%s (该边此刻等于不存在)",
+                    kNames[i], kOwners[i].consumer);
+    }
 }
 
 uint32_t totalEvaluations(Id id) {

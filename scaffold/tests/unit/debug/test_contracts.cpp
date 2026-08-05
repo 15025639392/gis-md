@@ -234,6 +234,33 @@ TEST(ContractBatchTemplateGrid, DegenerateInputsAreNotJudged) {
         -1.0f, TerrainInstanceBatcher::firstMismatchedTemplateGrid(nullptr, 0));
 }
 
+// ---- 归属表:每条边都要说得出「谁该改」 ----
+
+TEST(ContractOwners, EveryEdgeNamesBothEnds) {
+    // 归属表与枚举同长由 Contracts.cpp 的 static_assert 保证;这里查内容不是占位
+    // 符。一条报 "?" 的边等于没有归属,出事时会把人送去翻错的文件。
+    for (uint8_t i = 0; i < static_cast<uint8_t>(contracts::Id::Count); ++i) {
+        const auto id = static_cast<contracts::Id>(i);
+        const contracts::Owners who = contracts::owners(id);
+        ASSERT_NE(nullptr, who.producer);
+        ASSERT_NE(nullptr, who.consumer);
+        EXPECT_STRNE("?", who.producer) << contracts::name(id);
+        EXPECT_STRNE("?", who.consumer) << contracts::name(id);
+        EXPECT_GT(std::string(who.producer).size(), 3u) << contracts::name(id);
+        EXPECT_GT(std::string(who.consumer).size(), 3u) << contracts::name(id);
+    }
+}
+
+TEST(ContractOwners, OutOfRangeIdIsNotSilentlyAttributed) {
+    // 越界 id 必须报 "?" 而不是撞上某条真边的归属 —— 把违约算到无辜模块头上
+    // 比没有归属更糟。
+    const auto bogus = static_cast<contracts::Id>(
+        static_cast<uint8_t>(contracts::Id::Count));
+    EXPECT_STREQ("?", contracts::owners(bogus).producer);
+    EXPECT_STREQ("?", contracts::owners(bogus).consumer);
+    EXPECT_STREQ("?", contracts::name(bogus));
+}
+
 // ---- 名字表完整性(边增加时最容易漏的一步) ----
 
 TEST(Contracts, NameTableCoversEveryId) {
