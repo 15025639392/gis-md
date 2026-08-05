@@ -5,6 +5,7 @@
 #include "SceneRenderCommandUniformUpdater.h"
 #include "SceneRenderDiagnostics.h"
 #include "../debug/Contracts.h"
+#include "../debug/Policies.h"
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
 #include "../environment/AtmosphereBackgroundPass.h"
@@ -482,6 +483,11 @@ void SceneRenderPipeline::assembleTerrainBatches(
     context.diagnostics.batchedTerrainCommands = stats.batchedCommands;
     context.diagnostics.terrainBatches = stats.batches;
     batchMs = perf::nowMs() - startMs;
+
+    // 策略生效率:有资格的命令按定义就是"能合的",看多少真的进了批。
+    // 分母为 0(本帧没有可合批的命令)不计 —— 没机会生效不等于没生效。
+    policy::observe(policy::Id::BatchFormation,
+                    stats.batchedCommands, stats.eligibleCommands);
 
     // 判因行:batches 长期为 0 时,这一行直接说出卡在三步链路的哪一步 ——
     // shaderReady=0 / eligible=0(看 rejects 谁最大)/ groups>0 但全是单例。

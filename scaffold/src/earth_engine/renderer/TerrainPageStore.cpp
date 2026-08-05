@@ -8,6 +8,7 @@
 
 #include "../core/math/OrientedBoundingBox.h"
 #include "../debug/Contracts.h"
+#include "../debug/Policies.h"
 #include "../debug/PlatformLog.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../platform/bridge/PlatformBridge.h"  // DecodedImage
@@ -725,6 +726,11 @@ void TerrainPageStore::updateVisiblePages(
     }
     detTilesPrev_ = detTilesScratch_;
     lastCulledBySse_ = culledBySse;
+
+    // 策略生效率:可见瓦片里有多少达到了合批资格(= 所有产片元的 cell 都有页)。
+    // 这个比率恒 0 正是"资格闸事实上不可达"那次的表征,当时无人察觉。
+    policy::observe(policy::Id::PageResidency,
+                    fullyResidentTiles_, residencyCheckedTiles_);
 
     lastVisiblePageCount_ = static_cast<int>(visiblePagesScratch_.size());
     // 插桩:每 ~30 帧一次(节流,勿刷屏)。zMin/zMax 无页时归零。

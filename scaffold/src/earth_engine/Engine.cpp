@@ -15,6 +15,7 @@
 #include "layers/ActivatedRasterOverlay.h"  // B2a 门②:overlays.front()->getTileProvider()
 #include "core/cache/HttpCache.h"
 #include "debug/Contracts.h"
+#include "debug/Policies.h"
 #include "debug/PlatformLog.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
@@ -595,6 +596,9 @@ bool Engine::render(double deltaSeconds) {
     if (const uint64_t contractFrameId = scene_->frameState().frameId;
         contractFrameId > 0 && contractFrameId % 600 == 0) {
         contracts::logCoverage(contractFrameId);
+        // 策略生效率报表:与契约 coverage 同周期。契约答"单点是否成立",策略答
+        // "整体比率是否落在预期区间" —— 合批空转那次错的是后者,前者全绿。
+        policy::logReport(contractFrameId);
     }
     return scenePresented;
 }
