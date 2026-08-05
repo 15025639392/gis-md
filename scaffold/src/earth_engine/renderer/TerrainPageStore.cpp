@@ -378,6 +378,11 @@ void TerrainPageStore::updateVisiblePages(
     const std::vector<RasterOverlayTileProvider*>& providers,
     double terrainMaxScreenSpaceError) {
     ++pageDetFrameCounter_;
+    // 逐帧重置合批资格判因:不重置的话 worstResidentRatio_ 会单调下降成历史最差值,
+    // 报的就不再是"此刻",而 A/B 里最怕的正是把陈旧值当当前值读。
+    residencyCheckedTiles_ = 0;
+    fullyResidentTiles_ = 0;
+    worstResidentRatio_ = 1.0f;
     if (!arrayTexture_ || providers.empty() || providers.front() == nullptr ||
         visibleTiles.empty()) {
         return;
@@ -652,6 +657,17 @@ void TerrainPageStore::updateVisiblePages(
         // gridN²,该瓦片留逐 draw = 保守但安全,决不丢影像)= 合批资格。
         ind.fullyResident =
             ind.layer >= 0 && residentCells == p.gridN * p.gridN;
+        // 合批资格的**唯一**卡点在这里,但此前只有布尔结果、没有距离达标多远的量:
+        // 于是"合批为什么一个批都不成形"完全不可查(BatchDet 只能报到
+        // notFullyResident 为止)。记下最差覆盖率,把"差一点"与"根本达不到"分开。
+        const int cellsNeeded = p.gridN * p.gridN;
+        if (cellsNeeded > 0) {
+            const float ratio = static_cast<float>(residentCells) /
+                                static_cast<float>(cellsNeeded);
+            if (ratio < worstResidentRatio_) worstResidentRatio_ = ratio;
+            ++residencyCheckedTiles_;
+            if (ind.fullyResident) ++fullyResidentTiles_;
+        }
         ind.lastFrame = frameId_;
         cache.lastFrame = frameId_;
     }
@@ -711,12 +727,15 @@ void TerrainPageStore::updateVisiblePages(
         platformLog(LogLevel::Warning, "PageDet",
                     "uniquePages=%d residentPages=%d uploadedTotal=%d "
                     "visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f "
-                    "culledBySse=%d sources=%d complete=%d partial=%d",
+                    "culledBySse=%d sources=%d complete=%d partial=%d "
+                    "fullyResident=%d/%d worstCellRatio=%.2f",
                     lastVisiblePageCount_, pool_.residentCount(),
                     uploadedLayerTotal_, visibleCappedTiles, logZMin, logZMax,
                     maxTileSse, culledBySse,
                     static_cast<int>(providers_.size()), completePages,
-                    partialPages);
+                    partialPages,
+                    fullyResidentTiles_, residencyCheckedTiles_,
+                    static_cast<double>(worstResidentRatio_));
     }
 }
 

@@ -86,6 +86,8 @@ private:
     mutable int lastPrimaryPendingEntryCount_ = -1;
     PolarCapRenderer polarCap_;
     mutable TerrainInstanceBatcher terrainBatcher_;
+    // BatchDet 判因行的节流计数(独立于帧号,与 PageDet 同模式)。
+    mutable uint32_t batchDetFrameCounter_ = 0;
     // T2:地形深度 prepass。首帧惰性 initialize;不可用时全程 no-op。
     mutable TerrainDepthPrepass terrainDepthPrepass_;
     mutable bool terrainDepthPrepassInitAttempted_ = false;

@@ -347,6 +347,11 @@ private:
     static constexpr int kMaxDetDepthLevels = 6;
     std::unordered_set<uint64_t> visiblePagesScratch_;  // 每次 determination 复用(dedup/计数)
     std::vector<uint8_t> indirTexelsScratch_;           // 间接纹理上传复用缓冲
+    // 合批资格判因:全 cell 驻留是唯一卡点,只有布尔结果时"差一点"与"根本达不到"
+    // 分不开。每次 determination 重置,随 PageDet 一起输出。
+    int residencyCheckedTiles_ = 0;
+    int fullyResidentTiles_ = 0;
+    float worstResidentRatio_ = 1.0f;
     uint64_t pageDetFrameCounter_ = 0;                  // 节流 log 用(独立于 frameId_)
     int lastVisiblePageCount_ = 0;
 

@@ -480,6 +480,41 @@ void SceneRenderPipeline::assembleTerrainBatches(
     context.diagnostics.batchedTerrainCommands = stats.batchedCommands;
     context.diagnostics.terrainBatches = stats.batches;
     batchMs = perf::nowMs() - startMs;
+
+    // 判因行:batches 长期为 0 时,这一行直接说出卡在三步链路的哪一步 ——
+    // shaderReady=0 / eligible=0(看 rejects 谁最大)/ groups>0 但全是单例。
+    // 此前 batchedTerrainCommands 与 terrainBatches 是**只写字段**(记了从不
+    // 输出),于是"合批到底有没有在工作"完全不可观测。节流 120 帧。
+    if (++batchDetFrameCounter_ % 120u == 1u) {
+        char rejects[256];
+        int offset = 0;
+        for (size_t i = 0;
+             i < static_cast<size_t>(
+                     TerrainInstanceBatcher::RejectReason::Count);
+             ++i) {
+            if (stats.rejects[i] == 0) continue;  // 只报非零项,免得刷屏
+            const int written = std::snprintf(
+                rejects + offset, sizeof(rejects) - static_cast<size_t>(offset),
+                " %s=%d",
+                TerrainInstanceBatcher::rejectReasonName(
+                    static_cast<TerrainInstanceBatcher::RejectReason>(i)),
+                stats.rejects[i]);
+            if (written <= 0 ||
+                static_cast<size_t>(offset + written) >= sizeof(rejects)) {
+                break;
+            }
+            offset += written;
+        }
+        rejects[offset] = '\0';
+        platformLog(LogLevel::Info, "BatchDet",
+                    "cmds=%d shaderReady=%d eligible=%d groups=%d "
+                    "singleton=%d oversize=%d batches=%d batched=%d |%s",
+                    stats.totalCommands, stats.shaderReady ? 1 : 0,
+                    stats.eligibleCommands, stats.groups,
+                    stats.singletonGroups, stats.oversizeGroups,
+                    stats.batches, stats.batchedCommands,
+                    offset > 0 ? rejects : " (无拒绝项)");
+    }
 }
 
 void SceneRenderPipeline::applyMvpUniforms(

@@ -15,20 +15,35 @@ namespace {
 
 // 资格闸:该逐瓦片命令能否进实例化批(见头注释)。真实地形 + 共享位移模板
 // + pageStore 全 cell 驻留 + 无 water mask/baseColor 纹理/blend。
-bool isEligible(const RenderCommand& cmd) {
-    if (cmd.kind != RenderCommandKind::GltfPrimitive) return false;
-    if (!cmd.terrainRenderContent) return false;
-    if (cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain) {
-        return false;
+using RejectReason = TerrainInstanceBatcher::RejectReason;
+
+// 返回**首个**不满足的资格条件;全通过返回 Count(= 合批资格)。
+// 改成返回原因而非 bool,是为了让"批为什么不成形"可以一次运行全部投票,而不是
+// 逐条注释掉条件试 —— 后者正是退化成 A/B 的典型入口。
+RejectReason rejectReasonFor(const RenderCommand& cmd) {
+    if (cmd.kind != RenderCommandKind::GltfPrimitive) {
+        return RejectReason::NotGltfPrimitive;
     }
-    if (!cmd.hasTerrainDisplacementFrame) return false;   // 用共享模板
-    if (cmd.vertexStride != 32) return false;
-    if (cmd.gltfUniforms.pageStoreParams[0] <= 0.5f) return false;  // 页存储开
-    if (!cmd.terrainPageStoreFullyResident) return false; // → 丢 mappedRaster
-    if (cmd.gltfUniforms.hasWaterMask > 0.5f) return false;
-    if (cmd.gltfUniforms.hasBaseColorTexture > 0.5f) return false;
-    if (cmd.blend) return false;
-    return true;
+    if (!cmd.terrainRenderContent) return RejectReason::NotTerrainContent;
+    if (cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain) {
+        return RejectReason::NotRealTerrain;
+    }
+    if (!cmd.hasTerrainDisplacementFrame) {               // 用共享模板
+        return RejectReason::NoDisplacementFrame;
+    }
+    if (cmd.vertexStride != 32) return RejectReason::WrongVertexStride;
+    if (cmd.gltfUniforms.pageStoreParams[0] <= 0.5f) {    // 页存储开
+        return RejectReason::PageStoreOff;
+    }
+    if (!cmd.terrainPageStoreFullyResident) {             // → 丢 mappedRaster
+        return RejectReason::NotFullyResident;
+    }
+    if (cmd.gltfUniforms.hasWaterMask > 0.5f) return RejectReason::HasWaterMask;
+    if (cmd.gltfUniforms.hasBaseColorTexture > 0.5f) {
+        return RejectReason::HasBaseColorTexture;
+    }
+    if (cmd.blend) return RejectReason::Blended;
+    return RejectReason::Count;  // 全通过
 }
 
 // 从 double 列主序 4x4(rel = inv(frame0)·frame_i)取第 r 行,降 float。
@@ -67,6 +82,23 @@ Buffer* TerrainInstanceBatcher::acquireInstanceBuffer(
     return slotBuf.get();
 }
 
+const char* TerrainInstanceBatcher::rejectReasonName(RejectReason reason) {
+    switch (reason) {
+        case RejectReason::NotGltfPrimitive:    return "notGltf";
+        case RejectReason::NotTerrainContent:   return "notTerrain";
+        case RejectReason::NotRealTerrain:      return "notRealTerrain";
+        case RejectReason::NoDisplacementFrame: return "noDispFrame";
+        case RejectReason::WrongVertexStride:   return "stride!=32";
+        case RejectReason::PageStoreOff:        return "pageStoreOff";
+        case RejectReason::NotFullyResident:    return "notFullyResident";
+        case RejectReason::HasWaterMask:        return "waterMask";
+        case RejectReason::HasBaseColorTexture: return "baseColorTex";
+        case RejectReason::Blended:             return "blend";
+        case RejectReason::Count:               break;
+    }
+    return "?";
+}
+
 bool TerrainInstanceBatcher::batchTemplateGridIsUniform(
     const InstanceRecord* records, size_t count) {
     if (records == nullptr || count < 2) return true;  // 退化输入不判
@@ -90,10 +122,12 @@ float TerrainInstanceBatcher::firstMismatchedTemplateGrid(
 TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
     RenderCommandList& commands, RenderDevice* device, Renderer& renderer) {
     Stats stats;
+    stats.totalCommands = static_cast<int>(commands.size());
     if (!device || commands.empty()) return stats;
     // 实例化 shader 未就绪(Metal 顶点描述表留 Step 4 / 创建失败)→ 不合批,
     // 逐瓦片命令原样保留(零回归)。批命令绝不能带 null shader(→ 瓦片消失)。
-    if (!renderer.terrainInstancedShader()) return stats;
+    stats.shaderReady = renderer.terrainInstancedShader() != nullptr;
+    if (!stats.shaderReady) return stats;
 
     // 分组:资格命令按模板 VBO 身份聚合(P5b 后同 {schemeId,z,row} 共享同一
     // VBO,指针相等即同模板)。保留首见顺序,便于稳定输出。
@@ -101,7 +135,11 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
     std::vector<const Buffer*> groupOrder;
     groups.reserve(32);
     for (size_t i = 0; i < commands.size(); ++i) {
-        if (!isEligible(commands[i])) continue;
+        const RejectReason reason = rejectReasonFor(commands[i]);
+        if (reason != RejectReason::Count) {
+            ++stats.rejects[static_cast<size_t>(reason)];
+            continue;
+        }
         ++stats.eligibleCommands;
         const Buffer* vb = commands[i].vertexBuffer;
         auto it = groups.find(vb);
@@ -119,7 +157,11 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
 
     for (const Buffer* vb : groupOrder) {
         const std::vector<size_t>& members = groups[vb];
-        if (members.size() < 2) continue;  // 单例不值得实例化,留逐 draw
+        ++stats.groups;
+        if (members.size() < 2) {
+            ++stats.singletonGroups;  // 单例不值得实例化,留逐 draw
+            continue;
+        }
 
         const RenderCommand& first = commands[members[0]];
         // 批参考帧 = 首实例的 ENU→ECEF 刚体帧(double)。
@@ -130,7 +172,8 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
         // 先打包实例流,成功建批后才标 consumed(失败/不足则全组留逐 draw,
         // 绝不丢命令)。溢出(> 容量)截断并回退整组逐 draw(不静默丢瓦片)。
         if (members.size() > static_cast<size_t>(kInstanceBufferCapacity)) {
-            continue;  // 极端:单 {z,row} 组超 256 实例,保守留逐 draw
+            ++stats.oversizeGroups;  // 极端:单 {z,row} 组超 256 实例,留逐 draw
+            continue;
         }
         recordScratch_.clear();
         recordScratch_.reserve(members.size());

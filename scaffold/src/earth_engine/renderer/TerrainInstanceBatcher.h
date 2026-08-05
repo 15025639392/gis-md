@@ -64,10 +64,40 @@ public:
     static float firstMismatchedTemplateGrid(const InstanceRecord* records,
                                              size_t count);
 
+    /// 逐瓦片命令**没能进批**的原因。互斥且穷举 —— 一次运行就能给全部假设投票,
+    /// 不必逐条改代码试(契约 BatchTemplateGridParity 的 coverage=0 就是靠这组
+    /// 计数从"批为什么不成形"里分出真因的)。
+    enum class RejectReason : uint8_t {
+        NotGltfPrimitive = 0,   // 非 glTF 图元命令
+        NotTerrainContent,      // 不是地形内容
+        NotRealTerrain,         // fill 代理 / 椭球,不是真地形
+        NoDisplacementFrame,    // 未走共享位移模板
+        WrongVertexStride,      // 顶点步长非 32(未走紧凑地形格式)
+        PageStoreOff,           // 页存储未对该命令生效
+        NotFullyResident,       // 页未全 cell 驻留(会采 mappedRaster 回落)
+        HasWaterMask,           // 带水面掩码,走别的着色路径
+        HasBaseColorTexture,    // 带基色纹理
+        Blended,                // 混合(淡入淡出期)
+        Count
+    };
+    static const char* rejectReasonName(RejectReason reason);
+
     struct Stats {
         int eligibleCommands = 0;   // 通过资格闸的逐瓦片命令数
         int batchedCommands = 0;    // 被合并进批的命令数(= 省掉的 draw 数近似)
         int batches = 0;            // 生成的 instanced 命令数
+
+        // ---- 判因:batches=0 时用来分辨"卡在哪一步" ----
+        // 三步链路各有独立信号,不必猜:
+        //   shaderReady=0        → 实例化 shader 未就绪,assemble 整个早退
+        //   eligibleCommands=0   → 没有命令通过资格闸,看 rejects 哪一项最大
+        //   groups>0 但 batches=0 → 有资格命令但每组不足 2 个(分组太碎)
+        bool shaderReady = false;
+        int totalCommands = 0;
+        int groups = 0;             // 资格命令按模板 VBO 聚出的组数
+        int singletonGroups = 0;    // 只有 1 个成员、因此放弃合批的组数
+        int oversizeGroups = 0;     // 超实例容量、整组回退逐 draw 的组数
+        int rejects[static_cast<size_t>(RejectReason::Count)] = {};
     };
 
     /// 就地改写 commands:资格瓦片按模板分组,≥2 组合成 instanced 命令,
