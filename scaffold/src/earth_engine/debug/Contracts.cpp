@@ -21,6 +21,9 @@ constexpr size_t kCount = static_cast<size_t>(Id::Count);
 std::atomic<uint32_t> frameCounts_[kCount];
 std::atomic<uint32_t> totalCounts_[kCount];
 std::atomic<bool> reported_[kCount];
+// 求值次数(通过 + 违约)。0 = 判定点从未执行 = 这条契约此刻等于不存在,而只看
+// 违约数是看不出这件事的(死契约与永远成立的契约都报 0 违约)。
+std::atomic<uint32_t> evalCounts_[kCount];
 
 const char* const kNames[kCount] = {
     "DemNodataSentinel",
@@ -38,6 +41,12 @@ static_assert(sizeof(kNames) / sizeof(kNames[0]) == kCount,
 const char* name(Id id) {
     const size_t index = static_cast<size_t>(id);
     return index < kCount ? kNames[index] : "?";
+}
+
+void recordEvaluation(Id id) {
+    const size_t index = static_cast<size_t>(id);
+    if (index >= kCount) return;
+    evalCounts_[index].fetch_add(1, std::memory_order_relaxed);
 }
 
 void recordViolation(Id id, const char* fmt, ...) {
@@ -85,6 +94,36 @@ void logFrameSummary(uint64_t frameId) {
     if (!any) return;
     platformLog(LogLevel::Warning, "Contract", "f=%llu %s",
                 static_cast<unsigned long long>(frameId), line);
+}
+
+void logCoverage(uint64_t frameId) {
+    char line[512];
+    int offset = 0;
+    int deadEdges = 0;
+    for (size_t i = 0; i < kCount; ++i) {
+        const uint32_t evals = evalCounts_[i].load(std::memory_order_relaxed);
+        if (evals == 0) ++deadEdges;
+        const int written = std::snprintf(
+            line + offset, sizeof(line) - static_cast<size_t>(offset),
+            "%s%s=%u", offset > 0 ? " " : "", kNames[i], evals);
+        if (written <= 0 ||
+            static_cast<size_t>(offset + written) >= sizeof(line)) {
+            break;
+        }
+        offset += written;
+    }
+    // 有 coverage=0 的边就升 Warning:那条契约的判定点没跑到,它此刻等于不存在
+    // ——这是需要处理的信号,不是背景噪声。
+    platformLog(deadEdges > 0 ? LogLevel::Warning : LogLevel::Info,
+                "Contract", "coverage f=%llu dead=%d %s",
+                static_cast<unsigned long long>(frameId), deadEdges, line);
+}
+
+uint32_t totalEvaluations(Id id) {
+    const size_t index = static_cast<size_t>(id);
+    return index < kCount
+        ? evalCounts_[index].load(std::memory_order_relaxed)
+        : 0u;
 }
 
 uint32_t totalViolations(Id id) {

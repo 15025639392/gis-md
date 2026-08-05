@@ -9,6 +9,7 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/debug/Contracts.h"
+#include "earth_engine/renderer/TerrainInstanceBatcher.h"
 
 #include <algorithm>
 #include <string>
@@ -156,6 +157,81 @@ TEST(ContractTexcoordNwOrigin, DegenerateVSpreadIsNotJudged) {
     GltfTerrainUpsampler::upsampleForRasterOverlay(
         parent, childNode(), 0, /*hasInvertedVCoordinate=*/false);
     EXPECT_EQ(0u, delta(contracts::Id::TexcoordNwOrigin, before));
+}
+
+// ---- 覆盖计数:区分「边成立」与「判定点没跑到」 ----
+
+TEST(ContractCoverage, PassingCheckStillCountsAsEvaluation) {
+    // 这是覆盖计数存在的全部理由:只看违约数,一条死契约和一条永远成立的契约
+    // 完全一样(都是 0)。求值计数让"这条边还活着"变成可读事实。
+    const uint32_t before =
+        contracts::totalEvaluations(contracts::Id::DemNodataSentinel);
+    GE_CONTRACT(contracts::Id::DemNodataSentinel, true, "passing");
+    EXPECT_EQ(1u, contracts::totalEvaluations(contracts::Id::DemNodataSentinel) -
+                      before);
+}
+
+TEST(ContractCoverage, ViolationAlsoCountsAsEvaluation) {
+    const uint32_t evalBefore =
+        contracts::totalEvaluations(contracts::Id::DemNodataSentinel);
+    const uint32_t violBefore =
+        contracts::totalViolations(contracts::Id::DemNodataSentinel);
+    GE_CONTRACT(contracts::Id::DemNodataSentinel, false, "failing");
+    EXPECT_EQ(1u, contracts::totalEvaluations(contracts::Id::DemNodataSentinel) -
+                      evalBefore);
+    EXPECT_EQ(1u, contracts::totalViolations(contracts::Id::DemNodataSentinel) -
+                      violBefore);
+}
+
+TEST(ContractCoverage, NeverExecutedEdgeStaysAtZero) {
+    // 反过来的控制组:没有任何判定点跑过的边,求值数必须停在 0 —— 否则覆盖数
+    // 就成了摆设,分不出死边。PageDecorateOrdering 在 host 测试里没有驱动路径,
+    // 正好当这个反例(它在真机上由 coverage 行证明活性)。
+    EXPECT_EQ(0u,
+              contracts::totalEvaluations(contracts::Id::PageDecorateOrdering))
+        << "若此断言失败,说明有 host 路径开始驱动这条边了 —— 那是好事,"
+           "把这个测试改成正例即可。";
+}
+
+// ---- 边 2:BatchTemplateGridParity 的判据(脱离 GL 上下文单测) ----
+
+TerrainInstanceBatcher::InstanceRecord recordWithGrid(float gridN) {
+    TerrainInstanceBatcher::InstanceRecord rec{};
+    rec.layers[3] = gridN;
+    return rec;
+}
+
+TEST(ContractBatchTemplateGrid, UniformBatchPasses) {
+    const auto records = std::vector<TerrainInstanceBatcher::InstanceRecord>{
+        recordWithGrid(64.0f), recordWithGrid(64.0f), recordWithGrid(64.0f)};
+    EXPECT_TRUE(TerrainInstanceBatcher::batchTemplateGridIsUniform(
+        records.data(), records.size()));
+}
+
+TEST(ContractBatchTemplateGrid, MixedBatchFails) {
+    // 分组规则一旦改成把不同 gridSize 的模板并进一批,就是这个形态:shader 会按
+    // 错误的栅格边长解算格点位置,整批地形几何错位且没有任何报错。
+    const auto records = std::vector<TerrainInstanceBatcher::InstanceRecord>{
+        recordWithGrid(64.0f), recordWithGrid(64.0f), recordWithGrid(32.0f)};
+    EXPECT_FALSE(TerrainInstanceBatcher::batchTemplateGridIsUniform(
+        records.data(), records.size()));
+    // 违约现场要能指出**是哪个档位**混进来了,否则首违约日志没有诊断价值。
+    EXPECT_FLOAT_EQ(32.0f,
+                    TerrainInstanceBatcher::firstMismatchedTemplateGrid(
+                        records.data(), records.size()));
+}
+
+TEST(ContractBatchTemplateGrid, DegenerateInputsAreNotJudged) {
+    // 空批/单实例批没有可比对象。在退化输入上报警只会训练出"这条警告可以忽略"
+    // 的习惯,那会一并废掉旁边真正有效的契约。
+    const auto single = std::vector<TerrainInstanceBatcher::InstanceRecord>{
+        recordWithGrid(64.0f)};
+    EXPECT_TRUE(TerrainInstanceBatcher::batchTemplateGridIsUniform(
+        single.data(), single.size()));
+    EXPECT_TRUE(
+        TerrainInstanceBatcher::batchTemplateGridIsUniform(nullptr, 0));
+    EXPECT_FLOAT_EQ(
+        -1.0f, TerrainInstanceBatcher::firstMismatchedTemplateGrid(nullptr, 0));
 }
 
 // ---- 名字表完整性(边增加时最容易漏的一步) ----

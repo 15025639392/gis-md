@@ -62,6 +62,17 @@ enum class Id : uint8_t {
 /// 供日志用的稳定短名(= 枚举名)。
 const char* name(Id id);
 
+/// 记一次**求值**(无论通过与否)。GE_CONTRACT 每次执行都调用。
+///
+/// 为什么要单独数通过的次数:一条**永远不会触发**的契约,和一条**每次都通过**的
+/// 契约,只看违约数是完全一样的(都是 0)。没有求值计数,就无法区分"这条边确实
+/// 成立"与"这条边的判定点根本没跑到"——而后者正是契约悄悄变成死代码的方式。
+/// coverage=0 是一个**需要处理的信号**:要么路径已死,要么当前场景没覆盖到它。
+///
+/// 这也是外部驱动困难的边(需要 GL 上下文/完整设备夹具才能构造反例的那些)唯一
+/// 现实的活性证据:真机上 coverage 持续增长 = 判定点确实在执行。
+void recordEvaluation(Id id);
+
 /// 记一次违约。首次(进程内,按 id)额外打一条带上下文的 Warning。
 ///
 /// 线程安全:计数走 relaxed 原子 —— 解码/镶嵌都在 worker 池上,违约可能来自任意
@@ -78,8 +89,17 @@ void recordViolation(Id id, const char* fmt, ...)
 /// 每 id 报"本帧计数(累计计数)":逐帧清零的那个数区分暂态与稳态违约。
 void logFrameSummary(uint64_t frameId);
 
+/// 覆盖行:报每条边被求值了多少次(tag="Contract")。与违约汇总分开,因为它**总是**
+/// 要打 —— 全绿时它正是唯一能证明契约还活着的东西。
+///
+/// coverage=0 的边要当异常看:判定点没跑到,这条契约此刻等于不存在。
+void logCoverage(uint64_t frameId);
+
 /// 累计违约数(测试/自检用;0 = 该契约自进程启动从未被违反)。
 uint32_t totalViolations(Id id);
+
+/// 累计求值数(测试/自检用;0 = 该契约的判定点从未执行过 = 它是死的)。
+uint32_t totalEvaluations(Id id);
 
 }  // namespace contracts
 }  // namespace earth_engine
@@ -96,8 +116,13 @@ uint32_t totalViolations(Id id);
 /// 这样至少有一个变参(格式串本身),两边都不用妥协。
 ///
 /// `cond` 只求值一次 —— 带副作用的条件重复求值会静默改变被诊断的行为。
+///
+/// 每次执行都记一次求值(见 recordEvaluation:没有它就分不清"边成立"与"判定点
+/// 没跑到")。代价是通过路径上多一次 relaxed 原子加,因此判定点不要放进逐像素/
+/// 逐顶点级别的循环 —— 契约是层间的边,那个粒度上本来也不该有边。
 #define GE_CONTRACT(id, cond, ...)                                         \
     do {                                                                   \
+        ::earth_engine::contracts::recordEvaluation((id));                 \
         if (!(cond)) {                                                     \
             ::earth_engine::contracts::recordViolation((id), __VA_ARGS__); \
         }                                                                  \

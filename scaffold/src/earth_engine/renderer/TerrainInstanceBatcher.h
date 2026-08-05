@@ -47,6 +47,23 @@ public:
     };
     static_assert(sizeof(InstanceRecord) == 96, "matches kTerrainInstanceStride");
 
+    /// 批内位移模板栅格边长(layers[3])是否全部一致。
+    ///
+    /// 提成公开纯函数是为了**可被单独证伪**:分组走 VBO 指针、判据走每实例携带的
+    /// gridN,两条独立数据流;但驱动整个 assemble 需要真 GL 上下文(实例化 shader
+    /// 未就绪时它直接早退),所以判据本身必须能脱离设备被测。契约的活性另由
+    /// contracts 的 coverage 计数在真机上证明。
+    ///
+    /// 空批与单实例批恒真(没有可比对象),这是刻意的:在退化输入上报警只会训练出
+    /// "这条警告可以忽略"的习惯。
+    static bool batchTemplateGridIsUniform(const InstanceRecord* records,
+                                           size_t count);
+
+    /// 首个与批首档位不一致的 gridN;全一致时返回批首档位(空批返回 -1)。
+    /// 只用于把违约现场写进日志 —— 首违约那一条是唯一能拿到的现场。
+    static float firstMismatchedTemplateGrid(const InstanceRecord* records,
+                                             size_t count);
+
     struct Stats {
         int eligibleCommands = 0;   // 通过资格闸的逐瓦片命令数
         int batchedCommands = 0;    // 被合并进批的命令数(= 省掉的 draw 数近似)

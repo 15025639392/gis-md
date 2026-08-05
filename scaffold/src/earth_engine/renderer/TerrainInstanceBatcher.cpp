@@ -67,6 +67,26 @@ Buffer* TerrainInstanceBatcher::acquireInstanceBuffer(
     return slotBuf.get();
 }
 
+bool TerrainInstanceBatcher::batchTemplateGridIsUniform(
+    const InstanceRecord* records, size_t count) {
+    if (records == nullptr || count < 2) return true;  // 退化输入不判
+    const float grid0 = records[0].layers[3];
+    for (size_t i = 1; i < count; ++i) {
+        if (records[i].layers[3] != grid0) return false;
+    }
+    return true;
+}
+
+float TerrainInstanceBatcher::firstMismatchedTemplateGrid(
+    const InstanceRecord* records, size_t count) {
+    if (records == nullptr || count == 0) return -1.0f;
+    const float grid0 = records[0].layers[3];
+    for (size_t i = 1; i < count; ++i) {
+        if (records[i].layers[3] != grid0) return records[i].layers[3];
+    }
+    return grid0;
+}
+
 TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
     RenderCommandList& commands, RenderDevice* device, Renderer& renderer) {
     Stats stats;
@@ -143,22 +163,25 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
             // 而模板按 {schemeId,z,row,gridSize} 缓存 → 同批必然同档,但仍逐实例
             // 携带以免"同批同档"这个隐式前提日后被分组规则改动悄悄破坏。
             rec.layers[3] = m.gltfUniforms.heightDisplace[3];
-            // 上面那句注释以前就是全部的保障。现在把它变成可数信号:分组用的是
-            // VBO 指针,这里查的是每实例携带的栅格边长 —— 两条独立数据流。分组
-            // 规则改动导致批内混档时当场记一笔,而不是等几何错位被肉眼发现。
-            GE_CONTRACT(contracts::Id::BatchTemplateGridParity,
-                        recordScratch_.empty() ||
-                            rec.layers[3] == recordScratch_.front().layers[3],
-                        "batchSize=%zu firstGridN=%.1f thisGridN=%.1f "
-                        "memberIndex=%zu",
-                        members.size(),
-                        static_cast<double>(recordScratch_.empty()
-                            ? rec.layers[3]
-                            : recordScratch_.front().layers[3]),
-                        static_cast<double>(rec.layers[3]),
-                        mi);
             recordScratch_.push_back(rec);
         }
+        // 上面那句注释以前就是全部的保障。现在把它变成可数信号:分组用的是
+        // VBO 指针,判据查的是每实例携带的栅格边长 —— 两条独立数据流。分组规则
+        // 改动导致批内混档时当场记一笔,而不是等几何错位被肉眼发现。
+        //
+        // 每批一次(不是每实例一次):判据本身是集合谓词,且求值计数落在批粒度上
+        // 更有意义 —— coverage 直接读作"这一帧合了多少批"。
+        GE_CONTRACT(contracts::Id::BatchTemplateGridParity,
+                    batchTemplateGridIsUniform(recordScratch_.data(),
+                                               recordScratch_.size()),
+                    "batchSize=%zu firstGridN=%.1f oddGridN=%.1f",
+                    recordScratch_.size(),
+                    recordScratch_.empty()
+                        ? -1.0
+                        : static_cast<double>(recordScratch_.front().layers[3]),
+                    static_cast<double>(
+                        firstMismatchedTemplateGrid(recordScratch_.data(),
+                                                    recordScratch_.size())));
         const int packed = static_cast<int>(recordScratch_.size());
 
         Buffer* instBuf = acquireInstanceBuffer(

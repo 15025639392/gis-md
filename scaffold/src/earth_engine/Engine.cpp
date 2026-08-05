@@ -590,6 +590,12 @@ bool Engine::render(double deltaSeconds) {
     }
     // 层间契约帧末汇总:全绿不打(稳态零日志量),出现即定位到具体的那条边。
     contracts::logFrameSummary(scene_->frameState().frameId);
+    // 覆盖行与 EnvSnap 同周期。这条**总是**打:全绿时它是唯一能证明契约还活着
+    // 的东西。某条边 coverage 长期为 0 = 判定点没跑到 = 那条契约等于不存在。
+    if (const uint64_t contractFrameId = scene_->frameState().frameId;
+        contractFrameId > 0 && contractFrameId % 600 == 0) {
+        contracts::logCoverage(contractFrameId);
+    }
     return scenePresented;
 }
 
