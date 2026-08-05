@@ -382,6 +382,15 @@ private:
         int gridN = 1;
         uint64_t lastFrame = 0;  // 访问帧;sweep 清非本帧可见瓦片(同 tileIndirs_)
         std::vector<DetKeptCell> kept;
+        // 本瓦片被 SSE 地板剔掉的 cell 数(合批资格用,见 fullyResident)。
+        //
+        // 必须与 kept 同寿命:几何 walk 只在 det 缓存 miss 时跑,算在缓存外就会在
+        // hit 帧丢失,让资格闸看到假的 0。
+        //
+        // 语义关键:被地板剔掉的 cell **通过了视锥测试** —— 它在屏幕上、会产生
+        // 片元,只是被判定"屏幕贡献太小,不值得给页"。视锥外的 cell 不产生片元,
+        // 两者对合批的安全性含义完全相反,不能混在一个计数里。
+        int sseFloorCulled = 0;
     };
     struct DetTileParam {  // 本帧 per-tile 参数(签名阶段算,walk/encode 复用)
         TilesetTile* tile = nullptr;

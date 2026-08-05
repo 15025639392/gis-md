@@ -502,6 +502,7 @@ void TerrainPageStore::updateVisiblePages(
         if (!hit || cache.gridN != p.gridN) {
             cache.gridN = p.gridN;
             cache.kept.clear();
+            cache.sseFloorCulled = 0;
             for (int dy = 0; dy < p.gridN; ++dy) {
                 for (int dx = 0; dx < p.gridN; ++dx) {
                     TileKey sub;
@@ -531,6 +532,7 @@ void TerrainPageStore::updateVisiblePages(
                     // 假阳性,不给页(回落 mappedRaster),防 near-nadir 枚举爆量。
                     if (cellSse < threshold * kCellSseMissFloorFraction) {
                         ++culledBySse;
+                        ++cache.sseFloorCulled;  // per-tile:合批资格要用
                         continue;
                     }
                     int za = p.tile->key.z;
@@ -655,8 +657,24 @@ void TerrainPageStore::updateVisiblePages(
         ind.gridN = p.gridN;
         // 全 cell 驻留(含被 frustum/SSE 剔除的 cell 未 kept → 不计 → 达不到
         // gridN²,该瓦片留逐 draw = 保守但安全,决不丢影像)= 合批资格。
-        ind.fullyResident =
-            ind.layer >= 0 && residentCells == p.gridN * p.gridN;
+        // 合批资格 = 「**所有会产生片元的 cell 都有页**」。
+        //
+        // 批命令共享首实例的纹理(batch.textures = first.textures),而实例化片元
+        // shader 里根本没有 mappedRaster 采样器 —— A=0 的 cell 不会回落祖先影像,
+        // 而是停在 u_baseColor,渲染成被光照打亮的纯色面(真机实测:半屏纯白,
+        // 地形起伏还在,像雪山,比出洞更难在截图里被认出来)。
+        //
+        // 所以三类 cell 要分开看:
+        //   视锥外剔除   → 不产生片元 → 无所谓 → 可放行
+        //   SSE 地板剔除 → **产生片元**(它过了视锥测试)→ 必须挡住
+        //   kept 但页未到 → 产生片元 → 必须挡住(residentCells 覆盖)
+        //
+        // 旧条件 residentCells == gridN² 把三类一起挡了,安全但在 gridN 稍大时
+        // **事实上不可达**(真机 gridN=32 要 1024 cell 全驻留,而全局只有 ~52 页),
+        // 合批因此长期空转。现条件保留全部安全性,同时让闸真的可达。
+        ind.fullyResident = ind.layer >= 0 &&
+                            cache.sseFloorCulled == 0 &&
+                            residentCells == static_cast<int>(cache.kept.size());
         // 合批资格的**唯一**卡点在这里,但此前只有布尔结果、没有距离达标多远的量:
         // 于是"合批为什么一个批都不成形"完全不可查(BatchDet 只能报到
         // notFullyResident 为止)。记下最差覆盖率,把"差一点"与"根本达不到"分开。
