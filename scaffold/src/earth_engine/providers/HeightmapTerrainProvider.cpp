@@ -312,7 +312,7 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
             // (缺邻居的重叠环/数据空洞都编成它)。不注册则 -10000 被当合法高度
             // 混进边缘双线性,造出 km 级假深沟(顶点被紧 near/far 裁掉 → 黑裂缝)
             // 与假悬崖法线(瓦片边界光照条带)。
-            hm->noDataValues.push_back(-10000.0f * heightFactor_);
+            hm->noDataValues.push_back(kTerrainRgbNoDataFloorMeters * heightFactor_);
         }
 
         size_t count = static_cast<size_t>(img->width * img->height);
@@ -357,7 +357,7 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
     hm->noDataValues = noDataValues_;
     if (hasImplicitNoDataSentinel(encoding_)) {
         // 与 platformBridge 分支同义:注册 Terrain-RGB nodata 底值,见上方注释。
-        hm->noDataValues.push_back(-10000.0f * heightFactor_);
+        hm->noDataValues.push_back(kTerrainRgbNoDataFloorMeters * heightFactor_);
     }
 
     size_t count = static_cast<size_t>(w * h);

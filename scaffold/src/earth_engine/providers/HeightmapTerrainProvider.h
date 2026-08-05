@@ -59,6 +59,11 @@ public:
     void setBorderInset(float insetPixels) { borderInset_ = insetPixels; }
     void setNoDataValues(std::vector<float> values) { noDataValues_ = std::move(values); }
 
+    /// Terrain-RGB 的 nodata 底值(米,未乘 heightFactor):RGB(0,0,0) 的解码结果。
+    /// 缺邻居的重叠环与数据空洞都编成它。这是**哨兵值**的单一来源 —— 注册点与
+    /// 下游的契约检查(contracts::Id::DemNodataSentinel)共用,勿各自写字面量。
+    static constexpr float kTerrainRgbNoDataFloorMeters = -10000.0f;
+
     /// 该编码是否在解码时**隐式**追加一个 nodata 哨兵。
     ///
     /// Terrain-RGB 的 RGB(0,0,0) 解码恰为 -10000m = 数据源 nodata 底值,解码器

@@ -24,6 +24,7 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/math/Mat4.h"
+#include "earth_engine/debug/Contracts.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
@@ -540,6 +541,87 @@ TEST(HeightmapTerrainFetch, PoisonedCacheEntryIsEvictedAndRefetched) {
     // 坏体已被替换为网络重取的合法体。
     EXPECT_EQ(HttpCache::shared().get(url), bridge.httpBody);
     HttpCache::shared().remove(url);
+}
+
+// ---- 契约 DemNodataSentinel 的一对控制组 -----------------------------------
+//
+// 一条永远不会触发的契约,和一条每次都通过的契约,在日志里长得一模一样。所以
+// 正例(不响)与反例(响)都要有,否则契约本身成了新的不可观测物。
+//
+// 反例的构造方式同时把头文件里记的那个理论假阳性钉死:Terrarium 编码不注册隐式
+// 哨兵,若源里真出现 -10000m,契约就会报警。这既证明通路是活的,也说明这条警告
+// 在 Terrarium 源上要先核对编码再动手。
+
+// 契约计数是进程级单调量,断言一律比增量,与测试顺序无关。
+uint32_t noDataViolations() {
+    return contracts::totalViolations(contracts::Id::DemNodataSentinel);
+}
+
+TileContentLoadResult buildTileWith(
+    SyntheticHeightBridge& bridge,
+    HeightmapTerrainProvider::Encoding encoding) {
+    bridge.encoding = encoding;
+    auto provider = std::make_unique<HeightmapTerrainProvider>(
+        "file:///{z}/{x}/{y}.png", "");
+    provider->setEncoding(encoding);
+    provider->setZoomRange(0, 12);
+    provider->setPlatformBridge(&bridge);
+    HeightmapTerrainContentProvider content(std::move(provider), 12);
+
+    std::atomic<bool> called{false};
+    TileContentLoadResult captured;
+    content.requestTileContent(
+        TileKey{"XYZ-WebMercator", 12, 3400, 1500},
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            captured = std::move(result);
+            called = true;
+        });
+    waitForContentCallback(called);
+    EXPECT_TRUE(called);
+    return captured;
+}
+
+TEST(ContractDemNodataSentinel, RegisteredSentinelDoesNotViolate) {
+    // Terrain-RGB:解码器隐式注册 -10000 哨兵,底值样本被排除在 minHeight 之外。
+    SyntheticHeightBridge bridge;
+    bridge.width = 5;
+    bridge.height = 5;
+    // 一半是真实高程、一半是 nodata 底值 —— 正是"数据空洞"的形态。
+    bridge.heightAt = [](int col, int /*row*/) {
+        return col < 2 ? -10000.0f : 100.0f * static_cast<float>(col);
+    };
+    const uint32_t before = noDataViolations();
+    buildTileWith(bridge, HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+    EXPECT_EQ(0u, noDataViolations() - before);
+}
+
+TEST(ContractDemNodataSentinel, UnregisteredSentinelViolates) {
+    // Terrarium:不注册隐式哨兵。同样的 -10000 样本会被当合法高度统计进
+    // minHeight —— 契约必须响。
+    SyntheticHeightBridge bridge;
+    bridge.width = 5;
+    bridge.height = 5;
+    bridge.heightAt = [](int col, int /*row*/) {
+        return col < 2 ? -10000.0f : 100.0f * static_cast<float>(col);
+    };
+    const uint32_t before = noDataViolations();
+    buildTileWith(bridge, HeightmapTerrainProvider::Encoding::Terrarium);
+    EXPECT_EQ(1u, noDataViolations() - before);
+}
+
+TEST(ContractDemNodataSentinel, CleanDataDoesNotViolate) {
+    // 完全没有 nodata 的源:两种编码都不该报警(排除"这条契约见谁咬谁")。
+    SyntheticHeightBridge bridge;
+    bridge.width = 5;
+    bridge.height = 5;
+    bridge.heightAt = [](int col, int /*row*/) {
+        return 100.0f * static_cast<float>(col);
+    };
+    const uint32_t before = noDataViolations();
+    buildTileWith(bridge, HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+    buildTileWith(bridge, HeightmapTerrainProvider::Encoding::Terrarium);
+    EXPECT_EQ(0u, noDataViolations() - before);
 }
 
 }  // namespace

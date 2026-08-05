@@ -14,6 +14,7 @@
 #include "layers/VectorLayer.h"
 #include "layers/ActivatedRasterOverlay.h"  // B2a 门②:overlays.front()->getTileProvider()
 #include "core/cache/HttpCache.h"
+#include "debug/Contracts.h"
 #include "debug/PlatformLog.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
@@ -587,6 +588,8 @@ bool Engine::render(double deltaSeconds) {
                              diag.engineFrameCpuMs,
                              env);
     }
+    // 层间契约帧末汇总:全绿不打(稳态零日志量),出现即定位到具体的那条边。
+    contracts::logFrameSummary(scene_->frameState().frameId);
     return scenePresented;
 }
 

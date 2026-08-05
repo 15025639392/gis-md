@@ -1,0 +1,160 @@
+// 层间契约(debug/Contracts.h)的机制自检 + 边样板的判别力测试。
+//
+// 为什么这些测试必须存在:一条**永远不会触发**的契约,和一条**每次都通过**的契约,
+// 在日志里长得一模一样(都是没有输出)。所以每条边都要配一对控制组——正例不响、
+// 反例响——否则契约本身成了新的不可观测物,把 A/B 的问题原样搬了个家。
+#include <gtest/gtest.h>
+
+#include "earth_engine/content/GltfTerrainUpsampler.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/debug/Contracts.h"
+
+#include <vector>
+
+namespace earth_engine {
+namespace {
+
+// 计数器是进程级单调量,没有(也不该有)测试专用的清零接口——生产代码不该为测试
+// 开后门。所有断言一律比**增量**,因此与测试执行顺序无关。
+uint32_t delta(contracts::Id id, uint32_t before) {
+    return contracts::totalViolations(id) - before;
+}
+
+// ---- 机制自检 ----
+
+TEST(Contracts, PassingConditionRecordsNothing) {
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::DemNodataSentinel);
+    GE_CONTRACT(contracts::Id::DemNodataSentinel, 1 == 1, "should not fire");
+    EXPECT_EQ(0u, delta(contracts::Id::DemNodataSentinel, before));
+}
+
+TEST(Contracts, FailingConditionIncrementsTotal) {
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::DemNodataSentinel);
+    GE_CONTRACT(contracts::Id::DemNodataSentinel, 1 == 2, "x=%d", 42);
+    EXPECT_EQ(1u, delta(contracts::Id::DemNodataSentinel, before));
+}
+
+TEST(Contracts, RepeatedViolationsAllCount) {
+    // 首违约之后只计数不打日志,但**计数不能停** —— 否则"违了 3 次"和"违了
+    // 30000 次"无法区分,而这正是判暂态/稳态的唯一依据。
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::DemNodataSentinel);
+    for (int i = 0; i < 5; ++i) {
+        GE_CONTRACT(contracts::Id::DemNodataSentinel, false, "i=%d", i);
+    }
+    EXPECT_EQ(5u, delta(contracts::Id::DemNodataSentinel, before));
+}
+
+TEST(Contracts, ConditionIsEvaluatedExactlyOnce) {
+    // 宏把 cond 展开进 if,带副作用的表达式重复求值会静默改变被诊断的行为。
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::TexcoordNwOrigin);
+    int evaluations = 0;
+    GE_CONTRACT(contracts::Id::TexcoordNwOrigin,
+                (++evaluations, false), "eval=%d", evaluations);
+    EXPECT_EQ(1, evaluations);
+    EXPECT_EQ(1u, delta(contracts::Id::TexcoordNwOrigin, before));
+}
+
+TEST(Contracts, FrameSummaryClearsPerFrameButKeepsTotal) {
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::TexcoordNwOrigin);
+    GE_CONTRACT(contracts::Id::TexcoordNwOrigin, false, "before summary");
+    contracts::logFrameSummary(1);          // 清零逐帧计数
+    contracts::logFrameSummary(2);          // 已清零 → 全绿,不打
+    EXPECT_EQ(1u, delta(contracts::Id::TexcoordNwOrigin, before));
+}
+
+TEST(Contracts, EveryIdHasAName) {
+    // 名字表与枚举必须等长:漏一个会让日志报 "?" ——出问题时最不该发生的事。
+    for (uint8_t i = 0; i < static_cast<uint8_t>(contracts::Id::Count); ++i) {
+        const char* n = contracts::name(static_cast<contracts::Id>(i));
+        ASSERT_NE(nullptr, n);
+        EXPECT_STRNE("?", n) << "contracts::Id 序号 " << int(i) << " 没有名字";
+    }
+}
+
+// ---- 边 3:TexcoordNwOrigin ----
+
+SurfaceVertex surfaceVertexAt(double lonDeg, double latDeg, float u, float v) {
+    SurfaceVertex out;
+    out.positionEcef = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromDegrees(lonDeg, latDeg, 0.0));
+    out.normalEcef =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(out.positionEcef);
+    out.uv = {u, v};
+    return out;
+}
+
+// 一个四顶点的父网格。northV / southV 决定北缘、南缘各自拿到的 v 值,
+// 从而可以按需构造出 NW(北=0)或翻转(北=1)两种父网格。
+GltfModel makeParent(float northV, float southV) {
+    GltfModel model;
+    GltfPrimitive primitive;
+    primitive.vertices = {
+        surfaceVertexAt(10.0, 40.0, 0.0f, northV),   // 北西
+        surfaceVertexAt(11.0, 40.0, 1.0f, northV),   // 北东
+        surfaceVertexAt(10.0, 39.0, 0.0f, southV),   // 南西
+        surfaceVertexAt(11.0, 39.0, 1.0f, southV)};  // 南东
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.vertexTexCoords[0] = {
+        {0.0f, northV}, {1.0f, northV}, {0.0f, southV}, {1.0f, southV}};
+    primitive.runtime.baseVertices = primitive.vertices;
+    primitive.runtime.hasNormals = true;
+    model.primitives.push_back(std::move(primitive));
+    return model;
+}
+
+UpsampledQuadtreeNode childNode() {
+    UpsampledQuadtreeNode child;
+    child.tileID = TileKey{"XYZ-WebMercator", 5, 8, 6};
+    return child;
+}
+
+TEST(ContractTexcoordNwOrigin, NwParentDoesNotViolate) {
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::TexcoordNwOrigin);
+    // NW:北缘 v=0、南缘 v=1。
+    const GltfModel parent = makeParent(/*northV=*/0.0f, /*southV=*/1.0f);
+    GltfTerrainUpsampler::upsampleForRasterOverlay(
+        parent, childNode(), 0, /*hasInvertedVCoordinate=*/false);
+    EXPECT_EQ(0u, delta(contracts::Id::TexcoordNwOrigin, before));
+}
+
+TEST(ContractTexcoordNwOrigin, FlippedParentViolates) {
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::TexcoordNwOrigin);
+    // 父网格按相反约定发 UV(北缘 v=1),但调用方仍声明 invertedV=false。
+    // 这正是 6 处独立注释各自声明约定时,改一处漏一处的形态。
+    const GltfModel parent = makeParent(/*northV=*/1.0f, /*southV=*/0.0f);
+    GltfTerrainUpsampler::upsampleForRasterOverlay(
+        parent, childNode(), 0, /*hasInvertedVCoordinate=*/false);
+    EXPECT_EQ(1u, delta(contracts::Id::TexcoordNwOrigin, before));
+}
+
+TEST(ContractTexcoordNwOrigin, InvertedFlagAcceptsFlippedParent) {
+    // 声明与数据一致时不该报警:契约管的是"两者是否一致",不是"必须 NW"。
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::TexcoordNwOrigin);
+    const GltfModel parent = makeParent(/*northV=*/1.0f, /*southV=*/0.0f);
+    GltfTerrainUpsampler::upsampleForRasterOverlay(
+        parent, childNode(), 0, /*hasInvertedVCoordinate=*/true);
+    EXPECT_EQ(0u, delta(contracts::Id::TexcoordNwOrigin, before));
+}
+
+TEST(ContractTexcoordNwOrigin, DegenerateVSpreadIsNotJudged) {
+    // v 展布过小时方向没有信息量。与其在退化数据上给假阳性,不如沉默 ——
+    // 假阳性会训练出"这条警告可以忽略"的习惯,那比没有警告更糟。
+    const uint32_t before =
+        contracts::totalViolations(contracts::Id::TexcoordNwOrigin);
+    const GltfModel parent = makeParent(/*northV=*/0.50f, /*southV=*/0.51f);
+    GltfTerrainUpsampler::upsampleForRasterOverlay(
+        parent, childNode(), 0, /*hasInvertedVCoordinate=*/false);
+    EXPECT_EQ(0u, delta(contracts::Id::TexcoordNwOrigin, before));
+}
+
+}  // namespace
+}  // namespace earth_engine

@@ -7,6 +7,8 @@
 #include "../core/geodesy/Projection.h"
 #include "../core/geodesy/QuadtreeGeometricError.h"
 #include "../core/geodesy/WebMercatorProjection.h"
+#include "../debug/Contracts.h"
+#include "../providers/HeightmapTerrainProvider.h"
 #include "../providers/TerrainProvider.h"
 #include "../tiling/TerrainDisplacementTemplatePool.h"
 #include "../tiling/TileBoundingVolume.h"
@@ -225,6 +227,30 @@ TileContentLoadResult HeightmapTerrainContentProvider::buildContent(
     const DecodedHeightmap& heightmap,
     const TileContentRequestOptions& options) const {
     const Rectangle bounds = createScheme(schemeId_)->tileToRectangle(key);
+
+    // 契约(消费侧):我们即将按这张高度图采样建网格,前提是它的 nodata 哨兵表
+    // 拦得住本源的 nodata 底值。
+    //
+    // 谓词与注册逻辑数据独立:minHeight 是解码时**排除 nodata 之后**统计的
+    // (见 HeightmapTerrainProvider 解码循环的 `if (!hm->isNoData(elev))`),所以
+    // 哨兵就位时它不可能停在底值上;恰好落在底值 = 哨兵没拦住,-10000 正作为
+    // 合法高度参与双线性 → km 级假深沟(顶点被紧 near/far 裁掉 = 俯视黑裂缝)。
+    // 全瓦 nodata 的情形解码器写 0.0f,不会误触发。
+    //
+    // 已知理论假阳性:Terrarium 编码下 RGB(88,240,0) 也解码成 -10000m。真实地表
+    // 高程不会是这个值,但若本契约在 Terrarium 源上报警,先核对源编码再动手。
+    const float noDataFloor =
+        HeightmapTerrainProvider::kTerrainRgbNoDataFloorMeters *
+        heightmap.heightFactor;
+    GE_CONTRACT(contracts::Id::DemNodataSentinel,
+                heightmap.minHeight != noDataFloor,
+                "tile=%d/%d/%d minHeight=%.1f floor=%.1f sentinels=%zu "
+                "heightFactor=%.3f",
+                key.z, key.x, key.y,
+                static_cast<double>(heightmap.minHeight),
+                static_cast<double>(noDataFloor),
+                heightmap.noDataValues.size(),
+                static_cast<double>(heightmap.heightFactor));
 
     const RasterOverlayProjection terrainProjection =
         TerrainRasterOverlayProjectionResolver::forSchemeId(schemeId_);

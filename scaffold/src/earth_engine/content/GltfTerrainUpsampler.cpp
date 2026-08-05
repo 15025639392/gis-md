@@ -1,6 +1,8 @@
 #include "GltfTerrainUpsampler.h"
 
+#include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../debug/Contracts.h"
 
 #include <algorithm>
 #include <array>
@@ -883,6 +885,60 @@ void rebuildRuntimeBaseVerticesForNode(GltfPrimitive& primitive,
     }
 }
 
+/// 校验父网格纹理坐标的 V 轴约定(contracts::Id::TexcoordNwOrigin)。
+///
+/// 做法:在给定纹理坐标集里找出 v 最小与 v 最大的两个顶点,把它们的 ECEF 位置转成
+/// 纬度比一下。NW 约定下 v 最小的那个必须更靠北。只转两个顶点,扫描是 O(n) 浮点
+/// 比较,每次上采样一次(非逐帧逐顶点),开销可忽略。
+///
+/// 跳过条件:v 展布过小(< kMinSpread)时方向本身没有信息量,不判 —— 与其在退化
+/// 数据上给假阳性,不如沉默。裙墙顶点挂在边缘下方但沿用边缘 UV,不破坏该关系。
+void verifyParentTexcoordConvention(const GltfModel& parentModel,
+                                    int textureCoordinateIndex,
+                                    bool hasInvertedVCoordinate,
+                                    const UpsampledQuadtreeNode& childID) {
+    constexpr float kMinSpread = 0.1f;
+    const size_t setIndex = static_cast<size_t>(textureCoordinateIndex);
+
+    for (const GltfPrimitive& primitive : parentModel.primitives) {
+        const std::vector<std::array<float, 2>>& uvs =
+            primitive.vertexTexCoords[setIndex];
+        if (uvs.size() != primitive.vertices.size() || uvs.size() < 2) {
+            continue;
+        }
+        size_t minIndex = 0;
+        size_t maxIndex = 0;
+        for (size_t i = 1; i < uvs.size(); ++i) {
+            if (uvs[i][1] < uvs[minIndex][1]) minIndex = i;
+            if (uvs[i][1] > uvs[maxIndex][1]) maxIndex = i;
+        }
+        const float spread = uvs[maxIndex][1] - uvs[minIndex][1];
+        if (spread < kMinSpread) continue;
+
+        const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+        const double latAtMinV = ellipsoid
+            .cartesianToCartographic(primitive.vertices[minIndex].positionEcef)
+            .latitude();
+        const double latAtMaxV = ellipsoid
+            .cartesianToCartographic(primitive.vertices[maxIndex].positionEcef)
+            .latitude();
+        // NW:v 小 = 北 = 纬度大。inverted:反之。
+        const bool holds = hasInvertedVCoordinate ? (latAtMinV <= latAtMaxV)
+                                                  : (latAtMinV >= latAtMaxV);
+        GE_CONTRACT(contracts::Id::TexcoordNwOrigin,
+                    holds,
+                    "child=%d/%d/%d set=%d invertedV=%d "
+                    "latAtMinV=%.6f latAtMaxV=%.6f vSpread=%.3f verts=%zu",
+                    childID.tileID.z, childID.tileID.x, childID.tileID.y,
+                    textureCoordinateIndex,
+                    hasInvertedVCoordinate ? 1 : 0,
+                    latAtMinV, latAtMaxV,
+                    static_cast<double>(spread),
+                    uvs.size());
+        return;  // 一个有效图元足以判定整个父网格的约定
+    }
+}
+
 } // namespace
 
 GltfUpsampleUvWindow GltfTerrainUpsampler::quadrantUvWindow(
@@ -910,6 +966,18 @@ std::unique_ptr<GltfModel> GltfTerrainUpsampler::upsampleForRasterOverlay(
         textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets)) {
         return nullptr;
     }
+
+    // 契约(消费侧):下面按 v 轴方向把父网格切成子窗,前提是父网格的纹理坐标
+    // 遵循声明的 V 约定(NW = v0 在北;hasInvertedVCoordinate 时相反)。父网格若
+    // 来自另一条按相反约定发 UV 的路径,切窗会上下翻,影像整片贴反。
+    //
+    // 谓词与切窗逻辑数据独立:拿**顶点纬度**和**顶点 v** 两条独立数据流互相印证,
+    // 而不是重算一遍 quadrantUvWindow 刚算过的量 —— 两边一起改错时也能拦住。
+    // 该约定目前散在 6 处独立注释里各自声明,形态与 winding 收归前完全一致。
+    verifyParentTexcoordConvention(parentModel,
+                                   textureCoordinateIndex,
+                                   hasInvertedVCoordinate,
+                                   childID);
 
     GltfUpsampleWindows effectiveWindows;
     if (windows) {

@@ -1045,6 +1045,12 @@ add_executable(test_overlay_style
 target_link_libraries(test_overlay_style PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_overlay_style COMMAND test_overlay_style)
 
+add_executable(test_contracts
+    unit/debug/test_contracts.cpp
+)
+target_link_libraries(test_contracts PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_contracts COMMAND test_contracts)
+
 add_executable(test_minimal_globe_diagnostics
     unit/debug/test_minimal_globe_diagnostics.cpp
     ../examples/android/MinimalGlobe/MinimalGlobeDiagnostics.cpp

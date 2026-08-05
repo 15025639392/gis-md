@@ -588,6 +588,8 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/debug/PerfTimer.h
     earth_engine/debug/EnvSnapshot.h
+    earth_engine/debug/Contracts.h
+    earth_engine/debug/Contracts.cpp
 )
 
 # ============================================================
