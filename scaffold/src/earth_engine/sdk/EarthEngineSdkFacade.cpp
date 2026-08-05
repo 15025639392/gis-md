@@ -6,6 +6,7 @@
 #include "../content/GltfContentProvider.h"
 #include "../content/HeightmapTerrainContentProvider.h"
 #include "../core/geodesy/Cartographic.h"
+#include "../debug/Contracts.h"
 #include "../debug/EnvSnapshot.h"
 #include "../debug/PlatformLog.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -672,6 +673,14 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
         env.fxaa = fxaaOk && config_.fxaa;
         env.aerialFog = fogOk && config_.aerialFog;
         envsnap::logBoot(env);
+
+        // 登记契约闸的实际状态。影像驱动的几何上采样(TexcoordNwOrigin 的判定点
+        // 所在)只在 decoupleImageryFromGeometry=false 时存在;不登记的话它会永远
+        // 报 dead,而常亮警告会训练出「这条可以忽略」的习惯。真机实测:decouple
+        // =true → coverage 0;=false → 152 次求值零违约。
+        contracts::setGateActive(
+            contracts::Gate::ImageryDrivenUpsample,
+            !config_.tileset.decoupleImageryFromGeometry);
     }
 }
 

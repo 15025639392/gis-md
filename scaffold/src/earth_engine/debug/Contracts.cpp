@@ -54,18 +54,68 @@ const Owners kOwners[kCount] = {
      "TerrainPageStore::decoratePage 调用点"},
 };
 
-// 三张表与枚举同长 —— 漏一个会让日志报 "?" 或指向错的模块,恰好在出问题时最不该
+// 每条边的存在条件。Always = 无条件该跑;其余由配置装载处登记实际状态。
+const Gate kGates[kCount] = {
+    Gate::Always,                  // DemNodataSentinel:任何地形源都要解码
+    Gate::ImageryDrivenUpsample,   // TexcoordNwOrigin:判定点在影像驱动上采样里
+    Gate::Always,                  // BatchTemplateGridParity:合批每帧都跑
+    Gate::Always,                  // PageDecorateOrdering:页存储每帧都跑
+};
+
+// 闸的当前状态,**存的是「被关掉」而非「成立」**。
+//
+// 两个理由,方向一致:① 语义上默认值必须是 active —— 宁可多报一条 dead,也不要
+// 因为没人登记而静默吞掉「该跑却没跑」;② std::atomic 数组在 C++17 不能用
+// `= {true, true}` 初始化(拷贝构造被删除)。存反过来,静态零初始化(false =
+// 未被关掉 = active)天然就是想要的默认,不需要任何初始化代码。
+std::atomic<bool> gateDisabled_[static_cast<size_t>(Gate::Count)];
+
+const char* const kGateNames[static_cast<size_t>(Gate::Count)] = {
+    "always",
+    "decoupleImageryFromGeometry=false",
+};
+
+// 四张表与枚举同长 —— 漏一个会让日志报 "?" 或指向错的模块,恰好在出问题时最不该
 // 发生。新增 Id 时编译器会在这里点名,不靠 review 记得。
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == kCount,
               "contracts::Id 与 kNames 必须逐项对应:新增枚举时补名字。");
 static_assert(sizeof(kOwners) / sizeof(kOwners[0]) == kCount,
               "contracts::Id 与 kOwners 必须逐项对应:新增枚举时补两端归属。");
+static_assert(sizeof(kGates) / sizeof(kGates[0]) == kCount,
+              "contracts::Id 与 kGates 必须逐项对应:新增枚举时声明存在条件。");
+static_assert(sizeof(kGateNames) / sizeof(kGateNames[0]) ==
+                  static_cast<size_t>(Gate::Count),
+              "contracts::Gate 与 kGateNames 必须逐项对应。");
 
 }  // namespace
 
 const char* name(Id id) {
     const size_t index = static_cast<size_t>(id);
     return index < kCount ? kNames[index] : "?";
+}
+
+Gate gate(Id id) {
+    const size_t index = static_cast<size_t>(id);
+    return index < kCount ? kGates[index] : Gate::Always;
+}
+
+const char* gateName(Gate g) {
+    const size_t index = static_cast<size_t>(g);
+    return index < static_cast<size_t>(Gate::Count) ? kGateNames[index] : "?";
+}
+
+void setGateActive(Gate g, bool active) {
+    const size_t index = static_cast<size_t>(g);
+    if (index >= static_cast<size_t>(Gate::Count)) return;
+    if (g == Gate::Always) return;  // Always 恒成立,不可关
+    gateDisabled_[index].store(!active, std::memory_order_relaxed);
+}
+
+bool gateActive(Gate g) {
+    const size_t index = static_cast<size_t>(g);
+    if (index >= static_cast<size_t>(Gate::Count)) return true;
+    if (g == Gate::Always) return true;
+    return !gateDisabled_[index].load(std::memory_order_relaxed);
 }
 
 Owners owners(Id id) {
@@ -134,27 +184,40 @@ void logCoverage(uint64_t frameId) {
     char line[512];
     int offset = 0;
     int deadEdges = 0;
+    int disabledEdges = 0;
     for (size_t i = 0; i < kCount; ++i) {
         const uint32_t evals = evalCounts_[i].load(std::memory_order_relaxed);
-        if (evals == 0) ++deadEdges;
+        // coverage=0 分两种,只有前一种需要处理:
+        //   闸成立 → dead      判定点该跑却没跑到,这条契约此刻等于不存在
+        //   闸不成立 → disabled 这条路被配置关了,没跑是预期之内
+        if (evals == 0) {
+            if (gateActive(kGates[i])) {
+                ++deadEdges;
+            } else {
+                ++disabledEdges;
+            }
+        }
         const int written = std::snprintf(
             line + offset, sizeof(line) - static_cast<size_t>(offset),
-            "%s%s=%u", offset > 0 ? " " : "", kNames[i], evals);
+            "%s%s=%u%s", offset > 0 ? " " : "", kNames[i], evals,
+            (evals == 0 && !gateActive(kGates[i])) ? "(off)" : "");
         if (written <= 0 ||
             static_cast<size_t>(offset + written) >= sizeof(line)) {
             break;
         }
         offset += written;
     }
-    // 有 coverage=0 的边就升 Warning:那条契约的判定点没跑到,它此刻等于不存在
-    // ——这是需要处理的信号,不是背景噪声。
+    // 只有 dead 升 Warning。disabled 不升 —— 一条永远亮着的警告会训练出「这条
+    // 可以忽略」的习惯,进而一并废掉旁边真正有效的契约(见头文件准入标准)。
     platformLog(deadEdges > 0 ? LogLevel::Warning : LogLevel::Info,
-                "Contract", "coverage f=%llu dead=%d %s",
-                static_cast<unsigned long long>(frameId), deadEdges, line);
+                "Contract", "coverage f=%llu dead=%d disabled=%d %s",
+                static_cast<unsigned long long>(frameId), deadEdges,
+                disabledEdges, line);
     // 死边单独点名到判定点所在:dead=2 只说"两条边是黑的",不说黑在谁那儿。
-    // 每条一行,因为这行是要被拿去派活的。
+    // 每条一行,因为这行是要被拿去派活的。disabled 的边不点名(不是待办)。
     for (size_t i = 0; i < kCount; ++i) {
         if (evalCounts_[i].load(std::memory_order_relaxed) != 0) continue;
+        if (!gateActive(kGates[i])) continue;
         platformLog(LogLevel::Warning, "Contract",
                     "  DEAD %s — 判定点未执行 consumer=%s (该边此刻等于不存在)",
                     kNames[i], kOwners[i].consumer);

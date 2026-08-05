@@ -70,6 +70,34 @@ enum class Id : uint8_t {
 /// 供日志用的稳定短名(= 枚举名)。
 const char* name(Id id);
 
+/// 一条边的存在条件。
+///
+/// 为什么需要:coverage=0 有两种完全不同的含义 —— 「该跑却没跑到」(判定点失效/
+/// 路径已死,**需要处理**)与「这条路被配置关掉了」(预期之内,**不需要处理**)。
+/// 混成一个 dead 计数,就会出现一条永远亮着的警告;而按本文件自己的准入标准,
+/// 常亮警告会训练出「这条可以忽略」的习惯,进而一并废掉旁边真正有效的契约。
+///
+/// 实例:TexcoordNwOrigin 的判定点在 GltfTerrainUpsampler::upsampleForRasterOverlay,
+/// 而 decoupleImageryFromGeometry=true(生产默认)下影像不再驱动几何细化,该函数
+/// 根本不被调用。真机实测:decouple=true → coverage 0;decouple=false → 152 次
+/// 求值、零违约。判定点是好的,只是那条路被关了。
+enum class Gate : uint8_t {
+    /// 无条件应当执行 —— coverage=0 一律算 dead。
+    Always = 0,
+    /// 影像驱动的几何上采样路径,仅 decoupleImageryFromGeometry=false 时存在。
+    ImageryDrivenUpsample,
+    Count
+};
+
+Gate gate(Id id);
+const char* gateName(Gate g);
+
+/// 由配置装载处告知某条闸此刻是否成立(见 EarthEngineSdkFacade::installScene)。
+/// **默认全部为 active** —— 宁可多报一条 dead,也不要因为没人登记而静默吞掉
+/// 「该跑却没跑」。
+void setGateActive(Gate g, bool active);
+bool gateActive(Gate g);
+
 /// 一条边的两端。
 ///
 /// 为什么必须两端都记:层间契约的定义就是**消费侧检测、生产侧制造**。判定点写在
@@ -116,7 +144,9 @@ void logFrameSummary(uint64_t frameId);
 /// 覆盖行:报每条边被求值了多少次(tag="Contract")。与违约汇总分开,因为它**总是**
 /// 要打 —— 全绿时它正是唯一能证明契约还活着的东西。
 ///
-/// coverage=0 的边要当异常看:判定点没跑到,这条契约此刻等于不存在。
+/// coverage=0 且**闸成立**的边才算 dead(升 Warning + 单独点名到判定点所在):
+/// 判定点没跑到,这条契约此刻等于不存在。闸不成立的边报 disabled,不升级 ——
+/// 它没跑是预期之内,不该占用"需要处理"这个信号。
 void logCoverage(uint64_t frameId);
 
 /// 累计违约数(测试/自检用;0 = 该契约自进程启动从未被违反)。

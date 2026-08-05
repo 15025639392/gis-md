@@ -234,6 +234,46 @@ TEST(ContractBatchTemplateGrid, DegenerateInputsAreNotJudged) {
         -1.0f, TerrainInstanceBatcher::firstMismatchedTemplateGrid(nullptr, 0));
 }
 
+// ---- 存在条件(闸):区分「该跑却没跑」与「被配置关掉」 ----
+
+TEST(ContractGate, AlwaysGateCannotBeTurnedOff) {
+    // Always 是「无条件该跑」的断言。若能被关掉,任何人都可以用一行 setGateActive
+    // 让一条真死边不再报警 —— 那正是本文件准入标准里点名禁止的「静默放宽」。
+    contracts::setGateActive(contracts::Gate::Always, false);
+    EXPECT_TRUE(contracts::gateActive(contracts::Gate::Always));
+}
+
+TEST(ContractGate, DefaultsToActiveSoNothingIsSilentlySwallowed) {
+    // 没人登记过的闸必须算成立:宁可多报一条 dead,也不要因为配置装载处漏了一行
+    // 就把「该跑却没跑」静默吞掉。
+    EXPECT_TRUE(contracts::gateActive(contracts::Gate::ImageryDrivenUpsample));
+}
+
+TEST(ContractGate, ToggleRoundTrips) {
+    contracts::setGateActive(contracts::Gate::ImageryDrivenUpsample, false);
+    EXPECT_FALSE(contracts::gateActive(contracts::Gate::ImageryDrivenUpsample));
+    contracts::setGateActive(contracts::Gate::ImageryDrivenUpsample, true);
+    EXPECT_TRUE(contracts::gateActive(contracts::Gate::ImageryDrivenUpsample));
+}
+
+TEST(ContractGate, EveryEdgeDeclaresItsGateAndEveryGateHasAName) {
+    for (uint8_t i = 0; i < static_cast<uint8_t>(contracts::Id::Count); ++i) {
+        const contracts::Gate g =
+            contracts::gate(static_cast<contracts::Id>(i));
+        EXPECT_LT(static_cast<uint8_t>(g),
+                  static_cast<uint8_t>(contracts::Gate::Count));
+        EXPECT_STRNE("?", contracts::gateName(g));
+    }
+}
+
+TEST(ContractGate, OutOfRangeGateIsTreatedAsActive) {
+    // 未知闸按成立处理 —— 失败方向要偏向「多报警」而不是「少报警」。
+    const auto bogus = static_cast<contracts::Gate>(
+        static_cast<uint8_t>(contracts::Gate::Count));
+    EXPECT_TRUE(contracts::gateActive(bogus));
+    EXPECT_STREQ("?", contracts::gateName(bogus));
+}
+
 // ---- 归属表:每条边都要说得出「谁该改」 ----
 
 TEST(ContractOwners, EveryEdgeNamesBothEnds) {
