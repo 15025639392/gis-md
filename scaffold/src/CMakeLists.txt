@@ -590,6 +590,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/debug/EnvSnapshot.h
     earth_engine/debug/Contracts.h
     earth_engine/debug/Contracts.cpp
+    earth_engine/renderer/DepthConvention.h
 )
 
 # ============================================================

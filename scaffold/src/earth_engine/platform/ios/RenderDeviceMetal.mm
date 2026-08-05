@@ -1,6 +1,7 @@
 #import "RenderDeviceMetal.h"
 
 #include "../../renderer/BackendWindingContract.h"
+#include "../../renderer/DepthConvention.h"
 #include "../../renderer/RenderCommand.h"
 
 #import <Metal/Metal.h>
@@ -150,8 +151,13 @@ static id<MTLDepthStencilState> makeDepthState(id<MTLDevice> device,
                                                bool enabled,
                                                bool write) {
     MTLDepthStencilDescriptor* desc = [MTLDepthStencilDescriptor new];
-    // Reverse-Z: greater depth = closer. Matches OpenGlobus reverseDepth:true.
-    desc.depthCompareFunction = enabled ? MTLCompareFunctionGreaterEqual : MTLCompareFunctionAlways;
+    // 比较方向由深度约定派生,见 DepthConvention.h(与 GLES 侧同源)。
+    constexpr MTLCompareFunction kCloserWins =
+        depth_convention::kDepthCompare ==
+                depth_convention::DepthCompare::GreaterEqual
+            ? MTLCompareFunctionGreaterEqual
+            : MTLCompareFunctionLessEqual;
+    desc.depthCompareFunction = enabled ? kCloserWins : MTLCompareFunctionAlways;
     desc.depthWriteEnabled = enabled && write;
     return [device newDepthStencilStateWithDescriptor:desc];
 }
@@ -827,7 +833,8 @@ bool RenderDeviceMetal::beginPass(Framebuffer* target, bool clearTarget) {
     if (passDesc.depthAttachment.texture) {
         passDesc.depthAttachment.loadAction =
             clearTarget ? MTLLoadActionClear : MTLLoadActionLoad;
-        passDesc.depthAttachment.clearDepth = 0.0;  // Reverse-Z: clear to 0 (farthest)
+        passDesc.depthAttachment.clearDepth =
+            depth_convention::kClearDepth;  // 见 DepthConvention.h
         passDesc.depthAttachment.storeAction = MTLStoreActionDontCare;
     }
 

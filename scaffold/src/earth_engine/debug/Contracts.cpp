@@ -25,7 +25,13 @@ std::atomic<bool> reported_[kCount];
 const char* const kNames[kCount] = {
     "DemNodataSentinel",
     "TexcoordNwOrigin",
+    "BatchTemplateGridParity",
+    "PageDecorateOrdering",
 };
+
+// 名字表与枚举同长 —— 漏一个会让日志报 "?",恰好在出问题时最不该发生。
+static_assert(sizeof(kNames) / sizeof(kNames[0]) == kCount,
+              "contracts::Id 与 kNames 必须逐项对应:新增枚举时补名字。");
 
 }  // namespace
 

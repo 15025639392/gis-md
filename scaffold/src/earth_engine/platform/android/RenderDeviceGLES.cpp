@@ -1,5 +1,6 @@
 #include "RenderDeviceGLES.h"
 #include "../../renderer/BackendWindingContract.h"
+#include "../../renderer/DepthConvention.h"
 #include "../../renderer/RenderCommand.h"
 #include "../../debug/PerfTimer.h"
 
@@ -13,6 +14,14 @@
 
 namespace earth_engine {
 namespace {
+
+// 深度约定的 GL 侧翻译。方向本身在 DepthConvention.h 定,这里只把它映到 GL
+// 枚举 —— 改约定不需要碰本文件。
+constexpr GLenum kGlDepthFunc =
+    depth_convention::kDepthCompare ==
+            depth_convention::DepthCompare::GreaterEqual
+        ? GL_GEQUAL
+        : GL_LEQUAL;
 
 #ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
 #define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
@@ -742,13 +751,13 @@ bool RenderDeviceGLES::beginPass(Framebuffer* target, bool clearTarget) {
     // from FrameState before beginFrame(). The fullscreen atmosphere pass covers
     // this on the globe; it shows through at the horizon and empty sky.
     glClearColor(clearR_, clearG_, clearB_, clearA_);
-    glClearDepthf(0.0f);   // Reverse-Z: clear to 0 (farthest)
+    glClearDepthf(depth_convention::kClearDepth);  // 见 DepthConvention.h
     if (clearTarget) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
                 GL_STENCIL_BUFFER_BIT);
     }
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
+    glDepthFunc(kGlDepthFunc);  // 见 DepthConvention.h
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     // 绕序从后端契约头取值(GLES/Metal 必须相反,static_assert 锁死),
@@ -1350,9 +1359,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         if (polygonOffsetEnabled != cmd.blend) {
             if (cmd.blend) {
                 glEnable(GL_POLYGON_OFFSET_FILL);
-                // Reverse-Z(GEQUAL,depth 大=近):拉向观察者需增大深度 → 正 offset。
-                // 负号是 pre-reverse-Z(传统 LEQUAL)时代遗留,方向恰好相反。
-                glPolygonOffset(1.0f, 1.0f);
+                // 把描边/贴地面拉向观察者。符号由深度约定派生,不在此处写死 ——
+                // 曾经这里是 (-1,-1)(pre-reverse-Z 遗留),切约定后方向恰好反了,
+                // 把本该上浮的线推得更远、被地形埋掉,靠真机 A/B 才翻出来。
+                glPolygonOffset(depth_convention::kTowardViewerOffsetSign,
+                                depth_convention::kTowardViewerOffsetSign);
             } else {
                 glDisable(GL_POLYGON_OFFSET_FILL);
             }
@@ -1792,7 +1803,7 @@ void RenderDeviceGLES::onSurfaceCreated() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
+    glDepthFunc(kGlDepthFunc);  // 见 DepthConvention.h
 
     // Fragment texture-unit caps gate how many sampler2D a fragment shader may
     // declare. The GLES glTF shader is compacted to ≤16 samplers so it links at

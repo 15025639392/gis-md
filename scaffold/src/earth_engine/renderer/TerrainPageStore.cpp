@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../core/math/OrientedBoundingBox.h"
+#include "../debug/Contracts.h"
 #include "../debug/PlatformLog.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../platform/bridge/PlatformBridge.h"  // DecodedImage
@@ -833,6 +834,7 @@ void TerrainPageStore::tick() {
     ++frameId_;  // 推进帧号(下帧 determination 的 LRU touch/淘汰基准)
     if (decorator_) {
         decorator_->tickDecorator();  // 先让叠画方把网格传上 GPU
+        decoratorTickedFrame_ = frameId_;
     }
     drainInbox();  // fetch 已在 determination 页首次命中时 kick
     retryPendingDecorations();
@@ -853,6 +855,12 @@ void TerrainPageStore::retryPendingDecorations() {
             continue;
         }
         --budget;
+        GE_CONTRACT(contracts::Id::PageDecorateOrdering,
+                    decoratorTickedFrame_ == frameId_,
+                    "path=retryPending frame=%llu tickedFrame=%llu layer=%d",
+                    (unsigned long long)frameId_,
+                    (unsigned long long)decoratorTickedFrame_,
+                    pe.layer);
         pe.decorated = decorator_->decoratePage(unpackKey(pageKey),
                                                 arrayTexture_.get(), pe.layer);
     }
@@ -955,6 +963,12 @@ void TerrainPageStore::drainInbox() {
         // 未就绪(源瓦片在路上)时由 retryPendingDecorations 后续帧接着试。
         pe.decorated = false;
         if (decorator_) {
+            GE_CONTRACT(contracts::Id::PageDecorateOrdering,
+                        decoratorTickedFrame_ == frameId_,
+                        "path=drainInbox frame=%llu tickedFrame=%llu layer=%d",
+                        (unsigned long long)frameId_,
+                        (unsigned long long)decoratorTickedFrame_,
+                        item.layer);
             pe.decorated = decorator_->decoratePage(unpackKey(item.key),
                                                     arrayTexture_.get(),
                                                     item.layer);

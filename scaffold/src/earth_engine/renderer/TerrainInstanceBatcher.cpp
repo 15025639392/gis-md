@@ -5,6 +5,7 @@
 
 #include <unordered_map>
 
+#include "../debug/Contracts.h"
 #include "RenderDevice.h"
 #include "Renderer.h"
 
@@ -142,6 +143,20 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
             // 而模板按 {schemeId,z,row,gridSize} 缓存 → 同批必然同档,但仍逐实例
             // 携带以免"同批同档"这个隐式前提日后被分组规则改动悄悄破坏。
             rec.layers[3] = m.gltfUniforms.heightDisplace[3];
+            // 上面那句注释以前就是全部的保障。现在把它变成可数信号:分组用的是
+            // VBO 指针,这里查的是每实例携带的栅格边长 —— 两条独立数据流。分组
+            // 规则改动导致批内混档时当场记一笔,而不是等几何错位被肉眼发现。
+            GE_CONTRACT(contracts::Id::BatchTemplateGridParity,
+                        recordScratch_.empty() ||
+                            rec.layers[3] == recordScratch_.front().layers[3],
+                        "batchSize=%zu firstGridN=%.1f thisGridN=%.1f "
+                        "memberIndex=%zu",
+                        members.size(),
+                        static_cast<double>(recordScratch_.empty()
+                            ? rec.layers[3]
+                            : recordScratch_.front().layers[3]),
+                        static_cast<double>(rec.layers[3]),
+                        mi);
             recordScratch_.push_back(rec);
         }
         const int packed = static_cast<int>(recordScratch_.size());

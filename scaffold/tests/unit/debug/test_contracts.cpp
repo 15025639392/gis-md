@@ -10,6 +10,8 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/debug/Contracts.h"
 
+#include <algorithm>
+#include <string>
 #include <vector>
 
 namespace earth_engine {
@@ -154,6 +156,21 @@ TEST(ContractTexcoordNwOrigin, DegenerateVSpreadIsNotJudged) {
     GltfTerrainUpsampler::upsampleForRasterOverlay(
         parent, childNode(), 0, /*hasInvertedVCoordinate=*/false);
     EXPECT_EQ(0u, delta(contracts::Id::TexcoordNwOrigin, before));
+}
+
+// ---- 名字表完整性(边增加时最容易漏的一步) ----
+
+TEST(Contracts, NameTableCoversEveryId) {
+    // kNames 与枚举等长由 Contracts.cpp 的 static_assert 保证;这里再查内容不为
+    // 空且互不相同 —— 复制粘贴新增枚举时最常见的是名字忘了改。
+    std::vector<std::string> seen;
+    for (uint8_t i = 0; i < static_cast<uint8_t>(contracts::Id::Count); ++i) {
+        const std::string n = contracts::name(static_cast<contracts::Id>(i));
+        EXPECT_FALSE(n.empty());
+        EXPECT_EQ(seen.end(), std::find(seen.begin(), seen.end(), n))
+            << "契约名重复: " << n;
+        seen.push_back(n);
+    }
 }
 
 }  // namespace

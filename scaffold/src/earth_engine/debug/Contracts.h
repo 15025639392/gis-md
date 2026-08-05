@@ -43,6 +43,19 @@ enum class Id : uint8_t {
     /// 该约定目前由 6 处独立注释各自声明,形态与 winding 收归前完全一致。
     TexcoordNwOrigin,
 
+    /// 分组 → 实例流:同一实例化批内的全部实例携带同一位移模板栅格边长。
+    /// 批按位移模板 VBO 指针分组,而模板按 {schemeId,z,row,gridSize} 缓存 ——
+    /// "同批必然同档"是**分组规则的副产物**,不是被谁强制的。分组规则一旦改动
+    /// (例如按别的键合并),批内混档会让 shader 按错误的栅格边长解算格点位置,
+    /// 地形几何整批错位,且没有任何报错。
+    BatchTemplateGridParity,
+
+    /// 叠画方 → 页存储:decoratePage 之前,本帧的 tickDecorator 必须已经跑过。
+    /// 叠画方在 tickDecorator 里把网格传上 GPU,decoratePage 才是真 draw。次序
+    /// 反了会画到上一帧的(或空的)网格上。E4 那次的根因同源:叠加层写入必须晚于
+    /// 页存储合成,否则被覆盖 —— 时序契约在渲染管线里格外容易被重排悄悄破坏。
+    PageDecorateOrdering,
+
     Count
 };
 

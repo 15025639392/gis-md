@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -328,6 +329,10 @@ private:
     std::unique_ptr<Texture> indirArrayTexture_;  // 合批 Step 2:间接纹理共享 array
     TerrainPageLayerPool indirPool_;              // 间接纹理层 LRU(blockLayers=1)
     uint64_t frameId_ = 0;
+    // 本帧 tickDecorator 已跑过的帧号。decoratePage 是真 draw,必须画在叠画方
+    // 本帧刚传上 GPU 的网格上;两者次序反了会画到上一帧的(或空的)网格,且没有
+    // 任何报错。契约 contracts::Id::PageDecorateOrdering 就查这个。
+    uint64_t decoratorTickedFrame_ = std::numeric_limits<uint64_t>::max();
     int uploadedLayerTotal_ = 0;
 
     // C-1:有序源列表(providers_[0] = 底图,定分块/zoom/最大级)。每帧由
