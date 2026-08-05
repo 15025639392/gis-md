@@ -64,6 +64,30 @@ enum class Id : uint8_t {
     /// 页存储合成,否则被覆盖 —— 时序契约在渲染管线里格外容易被重排悄悄破坏。
     PageDecorateOrdering,
 
+    // ---- 以下三条来自 AI_INDEX.md §20「Cross-Subsystem Contracts」----
+    // 那一节的小标题自己写着 "enforced by call order, not by types" —— 架构文档
+    // **声明了**这些契约,但它们只靠调用顺序维持。上面四条边是从事故史挑的
+    // (幸存者偏差:只覆盖已经炸过的地方),这三条来自**设计意图**,两个来源都要有
+    // 覆盖,否则"架构是否被忠实执行"这个问题根本没有可查的答案。
+
+    /// 渲染 → 资源释放:releaseRenderReferences 必须晚于本帧的 submit。
+    /// 渲染命令持有**裸** Buffer*/Texture* 加 resourceKeepAlive shared_ptr,
+    /// 先释放会在 draw 中途释放 GPU 资源。文档 §20「submit BEFORE
+    /// releaseRenderReferences」。
+    SubmitBeforeReleaseRefs,
+
+    /// 加载 → 上传:drainGpuUploadQueue 必须晚于本帧的 processPendingLoads。
+    /// worker 解码由前者派发、推进 GpuUploadQueue,同帧的 drain 才取得到;
+    /// 反过来上传恒滞后一帧。文档 §20「processPendingLoads BEFORE
+    /// drainGpuUploadQueue」。
+    LoadsBeforeGpuDrain,
+
+    /// worker → 主线程:GpuUploadQueue 严格 FIFO。
+    /// 谓词拿**独立维护的出队序号**与入队时打上的序号比对 —— 与队列实现无关,
+    /// 换 push_front / 加优先级重排都会当场被抓。文档 §20「Worker → main
+    /// GpuUploadQueue FIFO」。
+    GpuUploadQueueFifo,
+
     Count
 };
 

@@ -3,6 +3,8 @@
 #include "GpuReadyData.h"
 #include "TileKey.h"
 
+#include "../debug/Contracts.h"
+
 #include <deque>
 #include <algorithm>
 #include <cstdint>
@@ -17,6 +19,8 @@ struct PendingGpuUpload {
     TileKey tileKey;
     std::string cacheKey;  // lifecycle cache key, for eraseUpload
     GpuReadyData data;
+    /// 入队序号(由 GpuUploadQueue::push 打)。仅供 FIFO 契约比对,业务逻辑不读。
+    uint64_t enqueueSeq = 0;
 };
 
 /// Thread-safe queue for passing CPU-prepared data from worker threads
@@ -27,6 +31,7 @@ public:
     void push(PendingGpuUpload&& upload) {
         std::lock_guard<std::mutex> lock(mutex_);
         pendingBytes_ += std::max<int64_t>(0, upload.data.byteSize());
+        upload.enqueueSeq = ++enqueueSeq_;
         queue_.push_back(std::move(upload));
     }
 
@@ -39,6 +44,22 @@ public:
             pendingBytes_ - queue_.front().data.byteSize());
         PendingGpuUpload upload = std::move(queue_.front());
         queue_.pop_front();
+        // 契约(消费侧):严格 FIFO —— 取出的入队序号必须正好是下一个。
+        //
+        // 谓词与队列实现**数据独立**:这里比的是独立维护的出队计数与 push 时打上
+        // 的序号,不是"再检查一遍 push_back/pop_front 写对了没有"。换成
+        // push_front、加优先级重排、或者哪天把 deque 换成堆,都会当场被抓。
+        //
+        // AI_INDEX §20 把 FIFO 列为跨子系统契约,但那一节自己写着 "enforced by
+        // call order, not by types" —— 在此之前它只是一句文档。
+        ++dequeueSeq_;
+        GE_CONTRACT(contracts::Id::GpuUploadQueueFifo,
+                    upload.enqueueSeq == dequeueSeq_,
+                    "expectedSeq=%llu gotSeq=%llu queueSize=%zu tile=%d/%d/%d",
+                    (unsigned long long)dequeueSeq_,
+                    (unsigned long long)upload.enqueueSeq,
+                    queue_.size(),
+                    upload.tileKey.z, upload.tileKey.x, upload.tileKey.y);
         return upload;
     }
 
@@ -88,6 +109,10 @@ private:
     mutable std::mutex mutex_;
     std::deque<PendingGpuUpload> queue_;
     int64_t pendingBytes_ = 0;
+    // FIFO 契约用的两个独立计数(都在 mutex_ 保护下)。业务逻辑不读它们 ——
+    // 它们的全部作用就是让"严格 FIFO"这句话可判真假。
+    uint64_t enqueueSeq_ = 0;
+    uint64_t dequeueSeq_ = 0;
 };
 
 } // namespace earth_engine

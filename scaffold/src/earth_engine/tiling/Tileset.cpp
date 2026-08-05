@@ -1,4 +1,6 @@
 #include "Tileset.h"
+
+#include "../debug/Contracts.h"
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
 #include "../renderer/Renderer.h"
@@ -254,6 +256,7 @@ bool Tileset::processPendingLoads(
     bool resourceSmoothingActive,
     IPrepareRendererResources* pPrepRenderer,
     FrameResourceBudget* budget) {
+    processPendingLoadsFrameId_ = frameResourceBudget_.frameNumber();
     return contentRuntime_.processPendingUploads(
         makeContentRuntimeUploadFrame(pPrepRenderer),
         interactionActive,
@@ -264,6 +267,21 @@ bool Tileset::processPendingLoads(
 bool Tileset::drainGpuUploadQueue(
     IPrepareRendererResources* pPrepRenderer,
     uint32_t maxUploadsPerFrame) {
+    // 契约(消费侧):drain 必须晚于本帧的 processPendingLoads。
+    //
+    // worker 解码由 processPendingLoads 派发并推进 GpuUploadQueue,同帧的 drain
+    // 才取得到;次序反了不会报错,只会让每次上传恒滞后一帧 —— 表现为"加载总是
+    // 慢半拍",而这种钝化的症状最容易被归因成网络或设备。
+    // AI_INDEX §20 列了这条,小标题写明 "enforced by call order, not by types"。
+    //
+    // ⚠️ 与 SubmitBeforeReleaseRefs 同类:内部状态 vs 内部状态,挡的是未来重排,
+    // 活性由 coverage 证明,无反例控制组。
+    GE_CONTRACT(contracts::Id::LoadsBeforeGpuDrain,
+                processPendingLoadsFrameId_ == frameResourceBudget_.frameNumber(),
+                "frame=%llu loadsFrame=%llu maxUploads=%u",
+                (unsigned long long)frameResourceBudget_.frameNumber(),
+                (unsigned long long)processPendingLoadsFrameId_,
+                maxUploadsPerFrame);
     return contentRuntime_.drainGpuUploadQueue(
         makeContentRuntimeUploadFrame(pPrepRenderer),
         &frameResourceBudget_,

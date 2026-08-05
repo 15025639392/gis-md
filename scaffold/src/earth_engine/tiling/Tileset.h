@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include "TilesetTile.h"
 #include "TileScheme.h"
 #include "TilePlan.h"
@@ -350,6 +352,8 @@ private:
     bool interactionActiveForFrame_ = false;
     bool resourceSmoothingActiveForFrame_ = false;
     FrameResourceBudget frameResourceBudget_;
+    // 本帧 processPendingLoads 已跑过的帧号,供 LoadsBeforeGpuDrain 契约比对。
+    uint64_t processPendingLoadsFrameId_ = std::numeric_limits<uint64_t>::max();
     double lastInteractionActiveTimeSeconds_ = -1.0;
     Vec3 lastCameraPosition_ = Vec3::zero();
     Vec3 lastCameraDirection_ = Vec3::zero();  // for view-weighted priority

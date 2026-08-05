@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include "Diagnostics.h"
 #include "FrameState.h"
 #include "PolarCapRenderer.h"
@@ -80,7 +82,8 @@ private:
     void runTerrainDepthPrepass(Context& context) const;
     void aggregateDiagnostics(Context& context, double& diagnosticsMs) const;
     bool shouldHoldPresentationAfterCommandBuild(const Context& context) const;
-    void releaseRenderReferences(Context& context) const;
+    // presentable 透传给契约判定(hold/跳帧没有需要保活的提交,不参与判定)。
+    void releaseRenderReferences(Context& context, bool presentable) const;
 
     mutable int lastPrimaryCurrentEntryCount_ = -1;
     mutable int lastPrimaryPendingEntryCount_ = -1;
@@ -88,6 +91,8 @@ private:
     mutable TerrainInstanceBatcher terrainBatcher_;
     // BatchDet 判因行的节流计数(独立于帧号,与 PageDet 同模式)。
     mutable uint32_t batchDetFrameCounter_ = 0;
+    // 本帧 submit 已完成的帧号,供 SubmitBeforeReleaseRefs 契约比对。
+    mutable uint64_t submitDoneFrameId_ = std::numeric_limits<uint64_t>::max();
     // T2:地形深度 prepass。首帧惰性 initialize;不可用时全程 no-op。
     mutable TerrainDepthPrepass terrainDepthPrepass_;
     mutable bool terrainDepthPrepassInitAttempted_ = false;

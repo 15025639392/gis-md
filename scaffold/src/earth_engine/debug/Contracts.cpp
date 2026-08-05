@@ -30,6 +30,9 @@ const char* const kNames[kCount] = {
     "TexcoordNwOrigin",
     "BatchTemplateGridParity",
     "PageDecorateOrdering",
+    "SubmitBeforeReleaseRefs",
+    "LoadsBeforeGpuDrain",
+    "GpuUploadQueueFifo",
 };
 
 // 每条边的两端。producer 是**通常该改的人**,consumer 只是发现的人。
@@ -52,6 +55,14 @@ const Owners kOwners[kCount] = {
     // 不为了凑成跨模块的样子编一个假的生产方。
     {"TerrainPageStore::tick (时序承诺方)",
      "TerrainPageStore::decoratePage 调用点"},
+    // 以下三条的两端取自 AI_INDEX §20 的契约陈述本身(文档写明了谁保证谁)。
+    {"SceneRenderPipeline::render (时序承诺方)",
+     "SceneRenderPipeline::releaseRenderReferences"},
+    {"TilesetUpdateFrameRuntime (时序承诺方)",
+     "Tileset::drainGpuUploadQueue"},
+    // FIFO 是队列自己的承诺,消费方是取走的人。
+    {"GpuUploadQueue::push (worker)",
+     "GpuUploadQueue::tryPop (主线程)"},
 };
 
 // 每条边的存在条件。Always = 无条件该跑;其余由配置装载处登记实际状态。
@@ -60,6 +71,9 @@ const Gate kGates[kCount] = {
     Gate::ImageryDrivenUpsample,   // TexcoordNwOrigin:判定点在影像驱动上采样里
     Gate::Always,                  // BatchTemplateGridParity:合批每帧都跑
     Gate::Always,                  // PageDecorateOrdering:页存储每帧都跑
+    Gate::Always,                  // SubmitBeforeReleaseRefs:每帧渲染都走
+    Gate::Always,                  // LoadsBeforeGpuDrain:每帧 update 都走
+    Gate::Always,                  // GpuUploadQueueFifo:有上传就走
 };
 
 // 闸的当前状态,**存的是「被关掉」而非「成立」**。

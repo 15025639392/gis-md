@@ -4,6 +4,7 @@
 #include "ScenePrimaryTilesetRenderComposer.h"
 #include "SceneRenderCommandUniformUpdater.h"
 #include "SceneRenderDiagnostics.h"
+#include "../debug/Contracts.h"
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
 #include "../environment/AtmosphereBackgroundPass.h"
@@ -234,13 +235,14 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
         const double submitStartMs = perf::nowMs();
         runTerrainDepthPrepass(context);
         context.renderer.submit(context.commands);
+        submitDoneFrameId_ = context.frameState.frameId;
         context.diagnostics.renderSubmitMs =
             perf::nowMs() - submitStartMs;
     } else {
         context.diagnostics.renderSubmitMs = 0.0;
     }
 
-    releaseRenderReferences(context);
+    releaseRenderReferences(context, presentable);
 
     char buildDetail[448];
     std::snprintf(buildDetail, sizeof(buildDetail),
@@ -730,7 +732,29 @@ bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
     return hold;
 }
 
-void SceneRenderPipeline::releaseRenderReferences(Context& context) const {
+void SceneRenderPipeline::releaseRenderReferences(Context& context,
+                                                 bool presentable) const {
+    // 契约(消费侧):本帧若提交过命令,释放必须发生在那次 submit **之后**。
+    //
+    // 渲染命令持有裸 Buffer*/Texture* 加 resourceKeepAlive shared_ptr;先释放会
+    // 在 draw 中途放掉 GPU 资源。AI_INDEX §20 把这条列为跨子系统契约,并在小标题
+    // 里写明 "enforced by call order, not by types" —— 在此之前它只是一句文档。
+    //
+    // 未提交帧(presentable=false,hold/跳帧)不参与判定:那种帧没有需要保活的
+    // 提交,释放本来就是安全的。硬要求"每帧都必须先 submit"会在 hold 帧误报,
+    // 而误报会训练出忽略这条警告的习惯。
+    //
+    // ⚠️ 弱点如实记:谓词是「内部状态 vs 内部状态」,不满足数据独立那条准入标准
+    // (与 PageDecorateOrdering 同类)。它挡的是**未来的重排**,不是当下的错误;
+    // 活性由 coverage 计数证明,判别力没有反例控制组。
+    const bool submittedThisFrame =
+        submitDoneFrameId_ == context.frameState.frameId;
+    GE_CONTRACT(contracts::Id::SubmitBeforeReleaseRefs,
+                !presentable || submittedThisFrame,
+                "frame=%llu submitDoneFrame=%llu commands=%zu",
+                (unsigned long long)context.frameState.frameId,
+                (unsigned long long)submitDoneFrameId_,
+                context.commands.size());
     if (context.terrainTileset) {
         context.terrainTileset->releaseRenderReferences();
     }
