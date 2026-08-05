@@ -33,4 +33,11 @@ RenderThreadPlacement::Status RenderThreadPlacement::status() const {
     return Status{};
 }
 
+// glibc/musl 也有 sched_getcpu,但本引擎在非 Android 平台上只跑 host 测试与
+// macOS/iOS 示例(Apple 无此调用),没有"线程被扔进小核"这个问题要诊断。返回
+// -1 让日志显式呈现"本平台不提供"而不是一个假的核号。
+int RenderThreadPlacement::currentCpu() {
+    return -1;
+}
+
 }  // namespace earth_engine

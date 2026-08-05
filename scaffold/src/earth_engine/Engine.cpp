@@ -13,10 +13,13 @@
 #include "layers/FeatureRenderLayer.h"
 #include "layers/VectorLayer.h"
 #include "layers/ActivatedRasterOverlay.h"  // B2a 门②:overlays.front()->getTileProvider()
+#include "core/cache/HttpCache.h"
 #include "debug/PlatformLog.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
+#include "debug/EnvSnapshot.h"
 #include "debug/PerfTimer.h"
+#include "threading/RenderThreadPlacement.h"
 
 #include <chrono>
 #include <cstdio>
@@ -566,6 +569,24 @@ bool Engine::render(double deltaSeconds) {
                     "Engine.render.total",
                     diag.engineFrameCpuMs,
                     detail);
+
+    // 环境快照 runtime 段:每帧喂帧耗时,内部满周期(600 帧)才打一行。
+    // 报的是**执行条件**而非性能数字本身——落在哪个核、缓存冷热、这一窗口的
+    // 工作量(tiles/draw)。跨运行比较前先看这行是否可比,详见 EnvSnapshot.h。
+    {
+        envsnap::RuntimeFields env;
+        env.cpu = RenderThreadPlacement::currentCpu();
+        env.visibleTiles = diag.visibleTiles;
+        env.drawCalls = diag.drawCalls;
+        const HttpCache::Stats http = HttpCache::shared().stats();
+        env.httpLookups = http.lookups;
+        env.httpHitPercent = http.lookups > 0
+            ? static_cast<int>((http.hits * 100) / http.lookups)
+            : 0;
+        envsnap::tickRuntime(scene_->frameState().frameId,
+                             diag.engineFrameCpuMs,
+                             env);
+    }
     return scenePresented;
 }
 

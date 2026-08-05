@@ -6,6 +6,7 @@
 #include "../content/GltfContentProvider.h"
 #include "../content/HeightmapTerrainContentProvider.h"
 #include "../core/geodesy/Cartographic.h"
+#include "../debug/EnvSnapshot.h"
 #include "../debug/PlatformLog.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../layers/ActivatedRasterOverlay.h"
@@ -628,6 +629,50 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     engine_.setTileCompositeBakePocEnabled(config_.tileCompositeBakePoc);
     engine_.setVtIndirectionSamplePocEnabled(config_.vtIndirectionSamplePoc);
     engine_.setTerrainPageStoreEnabled(config_.terrainPageStore);
+
+    // 环境快照 boot 段:场景装好、开关最终值已定(效果 setter 可能被后端拒绝)
+    // 之后打一次。放这里而不是 installScene 开头,是为了让 fxaa/fog 报的是
+    // **生效值**而非请求值。字段各自杀掉过哪次误判见 EnvSnapshot.h。
+    {
+        envsnap::BootFields env;
+        switch (renderDevice_.backendType()) {
+            case RenderDevice::Backend::Metal:    env.backend = "Metal"; break;
+            case RenderDevice::Backend::OpenGLES: env.backend = "GLES";  break;
+            case RenderDevice::Backend::Vulkan:   env.backend = "Vulkan"; break;
+        }
+        const TerrainSourceConfig& terrain = config_.terrain;
+        if (terrain.kind != TerrainSourceKind::None) {
+            env.demUrl = terrain.urlTemplate.c_str();
+            env.demMinZoom = terrain.minimumZoom;
+            env.demMaxZoom = terrain.maximumZoom;
+            env.demBorderInset = terrain.heightmapBorderInset;
+            // 报**解码时实际生效**的哨兵数,不是配置列表长度:Terrain-RGB 的
+            // -10000 由解码器隐式注册,直接报配置长度会在哨兵已就位时显示 0
+            // ——恰好在这个字段唯一该报警的场景里给出假绿灯。判据单一来源见
+            // HeightmapTerrainProvider::hasImplicitNoDataSentinel。
+            env.nodataRegisteredCount =
+                HeightmapTerrainProvider::effectiveNoDataCount(
+                    terrain.heightmapEncoding == TerrainHeightmapEncoding::Terrarium
+                        ? HeightmapTerrainProvider::Encoding::Terrarium
+                        : HeightmapTerrainProvider::Encoding::MapboxTerrainRgb,
+                    terrain.heightmapNoDataValues.size());
+        }
+        env.overlayCount = static_cast<int>(config_.rasterOverlays.size());
+        if (!config_.rasterOverlays.empty()) {
+            const RasterOverlaySourceConfig& first = config_.rasterOverlays.front();
+            env.overlayUrl = first.urlTemplate.c_str();
+            env.overlayMinZoom = first.minimumZoom;
+            env.overlayMaxZoom = first.maximumZoom;
+        }
+        env.terrainGpuDisplacement = engine_.terrainGpuDisplacementEnabled();
+        env.terrainPageStore = config_.terrainPageStore;
+        env.decoupleImageryFromGeometry =
+            config_.tileset.decoupleImageryFromGeometry;
+        env.terrainFillProxy = config_.tileset.enableTerrainFillProxy;
+        env.fxaa = fxaaOk && config_.fxaa;
+        env.aerialFog = fogOk && config_.aerialFog;
+        envsnap::logBoot(env);
+    }
 }
 
 void EarthEngineSdkFacade::resetCamera() {

@@ -220,6 +220,11 @@ public:
     /// 共享位移模板 VBO/IBO(同 {LOD,row} 复用,§5 有界)+ per-tile 刚体帧。Stage A
     /// 零起伏(贴椭球);起伏由后续高度纹理在 shader 位移。关闭走现 per-tile baked VBO。
     void setTerrainGpuDisplacementEnabled(bool enabled);
+    /// 当前档位。环境快照要报它:这是地形几何路径的分岔开关,A/B 两侧不同就
+    /// 不是同一个系统,耗时/观感差异无从比较。
+    bool terrainGpuDisplacementEnabled() const {
+        return terrainGpuDisplacementEnabled_;
+    }
 
 private:
     RenderDevice* device_;

@@ -238,4 +238,10 @@ RenderThreadPlacement::Status RenderThreadPlacement::status() const {
     return impl_->status;
 }
 
+// bionic 提供 sched_getcpu();失败(理论上不会)按"不可用"报 -1,不猜。
+int RenderThreadPlacement::currentCpu() {
+    const int cpu = sched_getcpu();
+    return cpu >= 0 ? cpu : -1;
+}
+
 }  // namespace earth_engine

@@ -72,6 +72,7 @@ public:
     /// The returned pointer shares storage with the cache entry — no copy.
     std::shared_ptr<const CachedResponse> getResponse(const std::string& url) {
         std::lock_guard<std::mutex> lock(mutex_);
+        ++lookups_;
         auto it = map_.find(url);
         if (it == map_.end()) return nullptr;
         if (it->second.response->isExpired()) {
@@ -79,6 +80,7 @@ public:
             return nullptr;
         }
         touch(url);
+        ++hits_;
         return it->second.response;
     }
 
@@ -173,6 +175,23 @@ public:
     /// Total cached body bytes (approximate, headers excluded).
     size_t bodyBytes() const { return currentBodyBytes_; }
 
+    /// 累计查表次数与命中次数(进程生命期内单调递增,不随 clear/prune 归零)。
+    ///
+    /// 为什么要:跨运行比较加载耗时时,**缓存温度不同会直接把结论比反**——冷
+    /// 启动与热缓存的同一段相机轨迹不是同一件工作。这两个数让"这次是冷还是
+    /// 热"成为可读事实,而不是靠回忆上一次跑过什么。
+    ///
+    /// 只计 getResponse(get() 亦经由它);contains() 是存在性探询不是取用,不计。
+    /// 与 HttpCache 的只读契约不冲突:这里不碰响应体,只数自己被问了几次。
+    struct Stats {
+        uint64_t lookups = 0;
+        uint64_t hits = 0;
+    };
+    Stats stats() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return Stats{lookups_, hits_};
+    }
+
     /// Singleton for global use.
     static HttpCache& shared() {
         static HttpCache instance(2000);
@@ -232,6 +251,9 @@ private:
     size_t maxEntries_;
     size_t maxBodyBytes_;
     size_t currentBodyBytes_ = 0;
+    // 命中率统计,全程在 mutex_ 保护下读写(与 map_ 同一把锁,无额外同步成本)。
+    uint64_t lookups_ = 0;
+    uint64_t hits_ = 0;
     std::mutex mutex_;
     std::list<std::string> lru_;
     std::unordered_map<std::string, std::list<std::string>::iterator> lruMap_;

@@ -59,6 +59,22 @@ public:
     void setBorderInset(float insetPixels) { borderInset_ = insetPixels; }
     void setNoDataValues(std::vector<float> values) { noDataValues_ = std::move(values); }
 
+    /// 该编码是否在解码时**隐式**追加一个 nodata 哨兵。
+    ///
+    /// Terrain-RGB 的 RGB(0,0,0) 解码恰为 -10000m = 数据源 nodata 底值,解码器
+    /// 无条件注册它(见 decodeHeightmap)。所以「实际生效的哨兵表」≠「配置里写
+    /// 的那几个值」——环境快照曾因直接报配置列表长度而在哨兵已注册时显示 0。
+    /// 判据收在这里,注册点与观测点共用,勿各自写 `== MapboxTerrainRgb`。
+    static bool hasImplicitNoDataSentinel(Encoding encoding) {
+        return encoding == Encoding::MapboxTerrainRgb;
+    }
+
+    /// 解码时实际生效的哨兵个数 = 显式配置值个数 + 隐式哨兵。
+    static int effectiveNoDataCount(Encoding encoding, size_t configuredCount) {
+        return static_cast<int>(configuredCount) +
+               (hasImplicitNoDataSentinel(encoding) ? 1 : 0);
+    }
+
     std::string buildUrl(const TileKey& key) const override;
 
     void requestTile(const TileKey& key,

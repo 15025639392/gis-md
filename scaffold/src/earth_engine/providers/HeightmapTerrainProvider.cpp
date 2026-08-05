@@ -307,7 +307,7 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
         hm->heightFactor = heightFactor_;
         hm->borderInset = borderInset_;
         hm->noDataValues = noDataValues_;
-        if (encoding_ == Encoding::MapboxTerrainRgb) {
+        if (hasImplicitNoDataSentinel(encoding_)) {
             // Terrain-RGB 的 RGB(0,0,0) 解码恰为 -10000m = 数据源 nodata 底值
             // (缺邻居的重叠环/数据空洞都编成它)。不注册则 -10000 被当合法高度
             // 混进边缘双线性,造出 km 级假深沟(顶点被紧 near/far 裁掉 → 黑裂缝)
@@ -355,7 +355,7 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
     hm->heightFactor = heightFactor_;
     hm->borderInset = borderInset_;
     hm->noDataValues = noDataValues_;
-    if (encoding_ == Encoding::MapboxTerrainRgb) {
+    if (hasImplicitNoDataSentinel(encoding_)) {
         // 与 platformBridge 分支同义:注册 Terrain-RGB nodata 底值,见上方注释。
         hm->noDataValues.push_back(-10000.0f * heightFactor_);
     }
