@@ -118,16 +118,21 @@ def parse_doc(doc_path, file_map, skips):
         doc_lines = fh.readlines()
 
     for n, raw in enumerate(doc_lines, 1):
-        m = _SECTION_RE.match(raw)
-        if m:
-            stem, ext_a, ext_b = m.group(1), m.group(2), m.group(3)
+        # ⚠️ 任何标题都先清空绑定,再尝试重新绑定。曾经只在"标题能解析出文件名"
+        # 时才重置,于是 `### FrameState / render-pass wiring` 这种非文件标题会让
+        # **上一节**的绑定继续生效,把裸 `.cpp:204` 算到毫不相干的文件头上,报出
+        # 一堆假的越界。少查一节,好过把引用挂到错的文件上。
+        if raw.startswith('#'):
             section_files = {}
-            for ext in (ext_a, ext_b):
-                if not ext:
-                    continue
-                cands = file_map.get('%s.%s' % (stem, ext), [])
-                if len(cands) == 1:
-                    section_files[ext] = cands[0]
+            m = _SECTION_RE.match(raw)
+            if m:
+                stem, ext_a, ext_b = m.group(1), m.group(2), m.group(3)
+                for ext in (ext_a, ext_b):
+                    if not ext:
+                        continue
+                    cands = file_map.get('%s.%s' % (stem, ext), [])
+                    if len(cands) == 1:
+                        section_files[ext] = cands[0]
             continue
 
         found = list(_REF_RE.finditer(raw))
