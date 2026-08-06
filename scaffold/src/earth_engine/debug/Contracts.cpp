@@ -25,7 +25,7 @@ std::atomic<bool> reported_[kCount];
 // 违约数是看不出这件事的(死契约与永远成立的契约都报 0 违约)。
 std::atomic<uint32_t> evalCounts_[kCount];
 
-const char* const kNames[kCount] = {
+const char* const kNames[] = {
     "DemNodataSentinel",
     "TexcoordNwOrigin",
     "BatchTemplateGridParity",
@@ -38,7 +38,7 @@ const char* const kNames[kCount] = {
 // 每条边的两端。producer 是**通常该改的人**,consumer 只是发现的人。
 // 串是逐条 grep 核过的实际写入点/判定点,不是凭印象填的;改动判定点位置时
 // 必须同步改这里,否则日志会把人送去错的文件 —— 那比没有归属更糟。
-const Owners kOwners[kCount] = {
+const Owners kOwners[] = {
     // 哨兵在解码时注册(两处 encoding 分支),消费者只是第一个按它采样的人。
     {"HeightmapTerrainProvider::decodeTile",
      "HeightmapTerrainContentProvider::buildContent"},
@@ -66,7 +66,7 @@ const Owners kOwners[kCount] = {
 };
 
 // 每条边的存在条件。Always = 无条件该跑;其余由配置装载处登记实际状态。
-const Gate kGates[kCount] = {
+const Gate kGates[] = {
     Gate::Always,                  // DemNodataSentinel:任何地形源都要解码
     Gate::ImageryDrivenUpsample,   // TexcoordNwOrigin:判定点在影像驱动上采样里
     Gate::Always,                  // BatchTemplateGridParity:合批每帧都跑
@@ -89,13 +89,15 @@ const Gate kGates[kCount] = {
 // 未被关掉 = active)天然就是想要的默认,不需要任何初始化代码。
 std::atomic<bool> gateDisabled_[static_cast<size_t>(Gate::Count)];
 
-const char* const kGateNames[static_cast<size_t>(Gate::Count)] = {
+const char* const kGateNames[] = {
     "always",
     "decoupleImageryFromGeometry=false",
 };
 
-// 四张表与枚举同长 —— 漏一个会让日志报 "?" 或指向错的模块,恰好在出问题时最不该
-// 发生。新增 Id 时编译器会在这里点名,不靠 review 记得。
+// 四张表与枚举同长。⚠️ 数组**不写显式尺寸**是这几条 assert 能真正生效的前提:
+// 写成 kNames[kCount] 的话 sizeof 恒等于 kCount,assert 变成同义反复、一个都拦
+// 不住(Policies.cpp 曾因此漏掉一条 expectation 直到真机报 (null))。
+// 现在初始化项数决定长度,新增 Id 时编译器会在这里真的点名。
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == kCount,
               "contracts::Id 与 kNames 必须逐项对应:新增枚举时补名字。");
 static_assert(sizeof(kOwners) / sizeof(kOwners[0]) == kCount,

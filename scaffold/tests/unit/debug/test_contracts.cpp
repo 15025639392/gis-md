@@ -9,6 +9,7 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/debug/Contracts.h"
+#include "earth_engine/debug/Policies.h"
 #include "earth_engine/renderer/TerrainInstanceBatcher.h"
 
 #include <algorithm>
@@ -314,6 +315,43 @@ TEST(Contracts, NameTableCoversEveryId) {
             << "契约名重复: " << n;
         seen.push_back(n);
     }
+}
+
+// ---- 策略层:每条都要说得出区间、依据和归属 ----
+//
+// 为什么要有这个:kExpectations 的 static_assert 曾写成 `kExpectations[kCount]`,
+// sizeof 恒等于 kCount,于是漏掉一条条目在编译期一声不吭,一路漏到真机才以
+// owner=(null)、区间 [0.00-0.00] 的形式暴露。数组尺寸已改为由初始化项数推导
+// (assert 因此真起作用),这里再补一层运行时体检:占位值同样是不合格的。
+
+TEST(Policies, EveryPolicyHasNameRangeRationaleAndOwner) {
+    for (uint8_t i = 0; i < static_cast<uint8_t>(policy::Id::Count); ++i) {
+        const auto id = static_cast<policy::Id>(i);
+        const char* n = policy::name(id);
+        ASSERT_NE(nullptr, n);
+        EXPECT_STRNE("?", n) << "policy 序号 " << int(i) << " 没有名字";
+
+        const policy::Expectation e = policy::expectation(id);
+        ASSERT_NE(nullptr, e.rationale) << n;
+        ASSERT_NE(nullptr, e.owner) << n;
+        // 依据和归属不能是占位:看到越界告警的人要能判断是系统坏了还是区间定错了。
+        EXPECT_GT(std::string(e.rationale).size(), 10u) << n << " 缺依据";
+        EXPECT_GT(std::string(e.owner).size(), 3u) << n << " 缺归属";
+        // 区间必须是有意义的非退化闭区间。[0,0] 正是漏配条目的读数。
+        EXPECT_LE(e.lo, e.hi) << n;
+        EXPECT_LT(e.lo, e.hi) << n << " 区间退化(疑似漏配)";
+        EXPECT_GE(e.lo, 0.0) << n;
+        EXPECT_LE(e.hi, 1.0) << n;
+    }
+}
+
+TEST(Policies, ZeroDenominatorIsNotCounted) {
+    // 「没机会生效」不等于「生效了但不达标」——分母 0 必须完全不入账,否则报表在
+    // 冷启动/空场景下会疯狂误报。
+    const uint64_t before = policy::windowDenominator(policy::Id::BatchFormation);
+    policy::observe(policy::Id::BatchFormation, 0, 0);
+    EXPECT_EQ(before,
+              policy::windowDenominator(policy::Id::BatchFormation));
 }
 
 }  // namespace

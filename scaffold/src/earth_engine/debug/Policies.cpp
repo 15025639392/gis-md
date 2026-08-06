@@ -16,14 +16,15 @@ constexpr size_t kCount = static_cast<size_t>(Id::Count);
 std::atomic<uint64_t> windowNum_[kCount];
 std::atomic<uint64_t> windowDen_[kCount];
 
-const char* const kNames[kCount] = {
+const char* const kNames[] = {
     "BatchFormation",
     "PageResidency",
     "CellPageCoverage",
     "IndirLayerAllocNoEvict",
+    "FinalizeProgress",
 };
 
-const Expectation kExpectations[kCount] = {
+const Expectation kExpectations[] = {
     // 合批率。有资格的命令**按定义**就是"能合的",资格闸已经把不能合的挡在外面
     // 了,所以剩下的应当绝大多数进批;掉下来只可能是分组太碎(每组不足 2 个)。
     // 下界取 0.5 而非 0.9:单例组是正常现象(孤立瓦片、边缘 {z,row}),留出余量。
@@ -56,8 +57,19 @@ const Expectation kExpectations[kCount] = {
      "(thrash),表现为闪烁/重传。相机大幅移动时短暂下探属正常,窗口聚合已摊薄",
      "TerrainPageStore 层池容量 Config::maxPages"},
 
+    // finalize 推进率。只在"有活可做"的帧上记账,故健康态应≈1:有活就该推进至少
+    // 一个。下界 0.8 留给时间预算耗尽的偶发帧;持续趋 0 = 通路冻结。
+    {0.8, 1.0,
+     "只在进 finalize 循环时本来就有活的帧上记账,故健康态应≈1(有活就该推进"
+     "至少一个)。下界 0.8 留给时间预算耗尽的偶发帧。持续趋 0 = 通路冻结 —— "
+     "历史事故:交互期 Urgent-only 硬冻结,早退发生在 tryFinalize 之前",
+     "TilePendingLoadProcessor::processPendingLoads / 预算配置"},
 };
 
+// ⚠️ 数组**不写显式尺寸**,让初始化项数决定长度 —— 否则 `kNames[kCount]` 的
+// sizeof 恒等于 kCount,下面这条 static_assert 就是同义反复、一个都拦不住。
+// 曾因此漏掉一条 expectation:真机报 owner=(null) 依据=(null),区间读成 [0,0],
+// 而编译期一声不吭。守卫本身也需要被验证,这条就是代价。
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == kCount,
               "policy::Id 与 kNames 必须逐项对应。");
 static_assert(sizeof(kExpectations) / sizeof(kExpectations[0]) == kCount,

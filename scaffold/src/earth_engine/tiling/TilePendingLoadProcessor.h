@@ -2,6 +2,7 @@
 
 #include "TileLoadLifecycle.h"
 #include "TilePendingLoadQueue.h"
+#include "../debug/Policies.h"
 
 #include "../debug/PerfTimer.h"
 
@@ -61,6 +62,14 @@ public:
                 overrideElapsed.value_or(terminalElapsedMs));
         }
 
+        // 策略生效率的分母:进 finalize 循环前**本来就有多少活**。
+        size_t pendingUploadsAtEntry = 0;
+        {
+            std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
+            pendingUploadsAtEntry = input.lifecycle.pendingLoads().uploadCount();
+        }
+        int finalizesDone = 0;
+
         while (true) {
             std::optional<PendingTileLoad> finalize;
 
@@ -73,6 +82,7 @@ public:
             if (!finalize) {
                 break;
             }
+            ++finalizesDone;
 
             const double finalizeStartMs = perf::nowMs();
             processUpload(*finalize);
@@ -96,6 +106,22 @@ public:
             input.budget.recordElapsed(
                 finalizeLane,
                 overrideElapsed.value_or(finalizeElapsedMs));
+        }
+
+        // 策略生效率:**有活的帧里,有多少帧真的推进了至少一个 finalize**。
+        //
+        // 这是撤下 MainThreadFinalizeBudgetUse(已用/上限)后重新定义的版本。旧
+        // 定义健康时也恒 0 —— 分母是预算上限,而空闲帧无事可做本来就是 0,与"有事
+        // 却没做"读数相同。改成只在 pendingUploadsAtEntry>0 的帧上记,分母就变成
+        // 「本可以推进的帧数」,冻结与空闲从此分得开。
+        //
+        // 逐帧二值而非比例:时间预算耗尽导致本帧只做了一部分是**正常**的,不该扣
+        // 分;要抓的是"有活却一个都没做"并且**持续**如此(历史事故:交互期
+        // Urgent-only 硬冻结,早退发生在 tryFinalize 之前)。窗口聚合后,
+        // 偶发的 0 会被摊掉,持续冻结才会把比率压到 0。
+        if (pendingUploadsAtEntry > 0) {
+            policy::observe(policy::Id::FinalizeProgress,
+                            finalizesDone > 0 ? 1 : 0, 1);
         }
 
         return changed;
