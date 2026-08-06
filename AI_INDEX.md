@@ -1936,20 +1936,23 @@ Static; fills `frameState.selectorViews`. Input `SceneSelectorViewBuildInput` (.
 
 ### SceneRenderPipeline.h / .cpp
 
-Turns FrameState into ordered RenderCommands, sorts/validates, aggregates diagnostics, submits. Context struct `SceneRenderPipeline::Context` (.h:32-44). Owns `tileCommandSet_` (RenderCommandStreamingSet) + `tileCommandCandidates_` for stable-key streaming.
+Turns FrameState into ordered RenderCommands, sorts/validates, aggregates diagnostics, submits. Context struct `SceneRenderPipeline::Context` (.h:34-58)。⚠️ 2026-08-06 复核:此处原写「Owns `tileCommandSet_` (RenderCommandStreamingSet) + `tileCommandCandidates_` for stable-key streaming」—— 这两个成员**全仓库都不存在**,stable-key streaming 那套已撤。类现在持有的是 `polarCap_` (PolarCapRenderer) 与 `terrainBatcher_` (TerrainInstanceBatcher,mutable)。
 
 Render flow in `render()` (.cpp:190-283):
 
 | Order | Method | Lines | Builds |
 |---|---|---|---|
 | 0 | `reserveCommands` | .cpp:285-303 | Reserve = **4 + vectorLayers*4 + Σ tileset renderEntries** |
-| 1 | `buildStableLayerCommands` | .cpp:260-297 | Terrain + content tileset `buildRenderCommands`; prefixes stableKey (`terrain:` / `content:N:`); streams through `tileCommandSet_.update` → `layerCommandsMs` |
+| 1 | ~~`buildStableLayerCommands`~~ | — | ⚠️ **已撤销,函数不存在**。此行原描述 stable-key streaming(prefixes `terrain:` / `content:N:`,经 `tileCommandSet_.update`)—— 该机制连同两个成员一起已从代码里移除;瓦片命令现由第 4 步 `buildLayerCommands` 直接插入。(2026-08-06 复核) |
 | 2 | `buildSkyCommands` | .cpp:305-343 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
 | 3 | `buildAtmosphereCommands` | .cpp:345-372 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
 | 4 | `buildLayerCommands` | .cpp:374-475 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist |
 | 5 | `applyMvpUniforms` | .cpp:528-535 | `SceneRenderCommandUniformUpdater::apply` |
 | 6 | `sortAndValidate` | .cpp:537-586 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:477-526 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:588-607 / :609-652 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
 | 7 | `aggregateDiagnostics` | .cpp:654-681 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
+| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:683-739 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
 | — | beforeSubmit → submit | .cpp:132-141 | `beforeSubmit()` (presentation trace) then `renderer.submit(commands)`; `releaseRenderReferences` on all tilesets (.cpp:741-775) |
 
 Terrain surface = `GltfPrimitive` cmds carrying `terrainRenderContent` (`isTerrainSurfaceCommand`, .cpp:31-34). QM terrain now draws via the 32-byte `TerrainGpuVertex` path (`makeTerrainPrimitiveCommand`, stride 32, `terrainShader`; 2026-07-01); ellipsoid-fallback terrain still uses the 120-byte `GltfGpuVertex` glTF path. `Renderer::terrainShader()` is defined (`kTerrainVertex/FragmentGLSL` + MSL).
