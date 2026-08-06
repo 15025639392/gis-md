@@ -1133,10 +1133,13 @@ add_test(NAME test_atmosphere_scattering COMMAND test_atmosphere_scattering)
 # 文档一致性(非 C++ 测试)
 # ============================================================
 
-# AI_INDEX.md 的 `File.cpp:1234` 引用与源码的一致性。
-# 只查落点是否命中声称的符号,**不查文字描述是否属实** —— 后者只能靠人读源码,
-# 详见脚本头注释。已知陈旧引用记在 tools/ai_index_refs_baseline.txt,命中基线的
-# 不判失败但每次都打印条数;新增漂移才 FAIL。
+# AI_INDEX.md 与源码的一致性,两类检查(性质不同,见脚本头注释):
+#   A 行号引用:`File.cpp:1234` 是否命中它声称的符号。已知例外记在
+#     tools/ai_index_refs_baseline.txt(每条带理由),新增漂移才 FAIL。
+#   B 索引覆盖:>300 行的 .cpp/.mm 必须有专属 ### 小节。A 对这类失效免疫 ——
+#     它只校验写下的引用,查不出整个文件从未被收录。
+# ⚠️ 两者都**不查文字描述是否属实**:条目在、行号对,但描述的东西已被重构走,
+#   只能靠人读源码。测试通过 ≠ AI_INDEX 是对的。
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI_INDEX.md 的行号引用校验。
+"""AI_INDEX.md 的一致性校验(两类,性质不同)。
 
 ## 为什么存在
 
@@ -31,8 +31,21 @@ AI_INDEX.md 里成百上千个 `File.cpp:1234` 引用没有任何东西盯着它
 SKIP 数会打出来并按原因归类。**这是刻意的**:只报 FAIL 的话,"全绿"既可能是
 "都对",也可能是"什么都没查到" —— 这两种状态读数相同的检查比没有更糟。
 
+## 两类检查
+
+  A 行号引用校验 —— 「**写下的引用**对不对」。上面讲的全是这一类。
+  B 索引覆盖检查 —— 「**该写的**写了没」。>N 行(默认 300)的 .cpp/.mm 必须有专属
+    `###` 小节。A 对这类失效**完全免疫**:它只校验已经存在的引用,查不出整个文件
+    从未被收录。2026-08-06 实测 13 个 >300 行的文件零条目,其中 FeatureRenderLayer
+    (2192 行)与 TerrainPageStore(1041 行)全文 0 次提及 —— 而当时正有人在
+    TerrainPageStore 上改代码。B 的判据干净二元,没有启发式也就没有假阳性。
+
+还有**第三类查不出来的**:内容失真 —— 行号对、条目在,但描述的东西已经被重构走了
+(实例:某节描述一个 127 行的 update(),实际该文件已成 33 行纯委托)。只能人读源码。
+
 用法:
-    python3 tools/check_ai_index_refs.py [--doc AI_INDEX.md] [--src src] [-v]
+    python3 tools/check_ai_index_refs.py [--doc AI_INDEX.md] [--src src]
+                                         [--coverage-min-lines 300] [-v]
 退出码 0 = 无 FAIL。
 """
 
@@ -197,6 +210,47 @@ def parse_doc(doc_path, file_map, skips):
     return refs
 
 
+# ------------------------------------------------------- 覆盖检查(第二类失效)
+
+# 允许"大文件没有专属小节"的例外。**键 = 文件名,值 = 理由,理由不可省**。
+# 当前为空:2026-08-06 把 >300 行的缺口从 13 个补到了 0。
+#
+# 什么时候该往这里加:生成代码、第三方内嵌实现(stb_*)、明确要删的 POC。
+# 什么时候不该:"这个文件太难写文档了" —— 那说明它更需要文档。
+_COVERAGE_EXEMPT = {}
+
+
+def check_coverage(doc_path, src_root, min_lines):
+    """大文件是否在 AI_INDEX 里有专属 `###` 小节。
+
+    ⚠️ 这是行号守卫**查不出**的一类失效:它只校验已经写下的引用,对"整个文件从未
+    被收录"完全免疫。2026-08-06 实测有 13 个 >300 行的文件零条目,其中
+    FeatureRenderLayer(2192 行)与 TerrainPageStore(1041 行)全文 **0 次提及** ——
+    而当时正有人在 TerrainPageStore 上改代码。
+
+    判据干净且二元:文件行数 > min_lines 且文档里没有 `### …<stem>…` 标题即失败。
+    没有启发式,因此也没有假阳性 —— 与"符号搜不搜得到"那个 100% 噪声的思路相反。
+    """
+    doc = open(doc_path, encoding='utf-8').read()
+    missing = []
+    for dirpath, _dirnames, filenames in os.walk(src_root):
+        for fn in filenames:
+            if not fn.endswith(('.cpp', '.mm')):
+                continue
+            stem = fn.rsplit('.', 1)[0]
+            if stem in _COVERAGE_EXEMPT:
+                continue
+            path = os.path.join(dirpath, fn)
+            with open(path, encoding='utf-8', errors='replace') as fh:
+                count = sum(1 for _ in fh)
+            if count <= min_lines:
+                continue
+            if not re.search(r'^###[^\n]*\b%s\b' % re.escape(stem), doc, re.M):
+                missing.append((count, stem, os.path.relpath(path, src_root)))
+    missing.sort(reverse=True)
+    return missing
+
+
 # ---------------------------------------------------------------- 判定
 
 def baseline_key(path, line, symbol):
@@ -293,6 +347,8 @@ def main():
     ap.add_argument('--update-baseline', action='store_true',
                     help='把当前全部失败写回基线。⚠️ 这是**认账**不是修复:'
                          '只在确认这些引用无法当场订正时用,并在 commit 里说明。')
+    ap.add_argument('--coverage-min-lines', type=int, default=300,
+                    help='超过这么多行的 .cpp/.mm 必须有专属 ### 小节(默认 300)')
     ap.add_argument('-v', '--verbose', action='store_true')
     args = ap.parse_args()
 
@@ -362,10 +418,23 @@ def main():
     for _key, msg in fresh:
         print('FAIL ' + msg)
 
-    if fresh:
+    # 覆盖检查 —— 与行号检查性质不同:那个查"写下的引用对不对",这个查"该写的写了没"。
+    uncovered = check_coverage(doc, src, args.coverage_min_lines)
+    print('索引覆盖:>%d 行的 .cpp/.mm 中,无专属小节的 %d 个%s'
+          % (args.coverage_min_lines, len(uncovered),
+             (';例外 %d 条' % len(_COVERAGE_EXEMPT)) if _COVERAGE_EXEMPT else ''))
+    for count, stem, rel in uncovered:
+        print('FAIL 索引缺口:%s(%d 行)在 AI_INDEX.md 中没有专属 ### 小节 — %s'
+              % (stem, count, rel))
+
+    if fresh or uncovered:
         print('\n%d 处行号引用与源码脱节。修法:grep 出符号的真实位置后改文档,'
               '并逐个回读校验(sed -n "Np")。\n'
               '确实无法当场订正才用 --update-baseline 认账。' % len(fresh))
+    if uncovered:
+        print('\n%d 个大文件没有索引条目。写一节比加例外便宜得多;确需豁免请在'
+              '脚本的 _COVERAGE_EXEMPT 里登记并**写明理由**。' % len(uncovered))
+    if fresh or uncovered:
         return 1
     return 0
 
