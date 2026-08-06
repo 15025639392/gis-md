@@ -5,45 +5,37 @@
 # 的语句、GLSL 字符串常量、`// Step 2:` 这类分段注释 —— 它们都不构成"符号的
 # 定义范围"。标了「已回读,正确」的都逐条读过源码确认无误。
 #
-# 真欠账用「真欠账」标出。本文件应当只减不增:
-#   改对一条引用 → 它自然通过检查,从这里删掉
-#   增强校验器让它锚得住 → 同样从这里删掉
+# ⚠️ 每条都必须带行尾 `# 理由`。一条没有理由的例外,下一个人无法判断它是真欠账
+# 还是工具局限,这份清单很快就退化成无人敢碰的黑名单 ——
+# --update-baseline 会把缺理由的条目单独列出来催你补。
 #
+# 本文件只该减不该增:改对一条引用、或增强校验器让它锚得住,都从这里删掉。
 # 每行 = 源文件:引用行号:符号位(`-` = 本判据不按单符号归属)
-AndroidPlatformBridge.cpp:32:-
-AndroidPlatformBridge.cpp:60:-
-AtmosphereBackgroundPass.cpp:20:-
+AndroidPlatformBridge.cpp:32:-  # JNI 辅助块起点,32 行是空行、真正的定义在 42(detachJniAtThreadExit)—— 文档给的是块起点,可接受
+AndroidPlatformBridge.cpp:60:-  # 函数体内语句 gJvm->AttachCurrentThread —— 已回读,正确
+AtmosphereBackgroundPass.cpp:20:-  # GLSL 字符串内的 layout 声明行 —— 已回读,正确
 BoundingCylinderRegion.cpp:79:-  # 构造函数,索引不建范围 —— 已回读,79 行确是 ctor 首行
 Camera.cpp:18:-  # Camera::Camera() 构造函数 —— 已回读,正确
 Camera.cpp:67:-  # Camera::projectionMatrix 定义首行 —— 已回读,正确
-CameraController.cpp:146:-
-CameraController.cpp:27:-
-CurlMultiRequestScheduler.cpp:117:-
-EarthEngineSdkFacade.cpp:402:-
-EllipsoidTerrainContentProvider.cpp:202:-
-EllipsoidTerrainContentProvider.cpp:261:-
-Engine.cpp:210:-
-GltfContentProvider.cpp:3312:-
-GltfContentProvider.cpp:3312:-
-RasterMappedToTilesetTile.cpp:204:-  # 指向 `// Step 2:` 分段注释,不是函数定义 —— 已回读,正确
+CameraController.cpp:146:-  # 函数体内语句 Cartographic::fromDegrees —— 已回读,正确
+CameraController.cpp:27:-  # 常量块内的说明注释(Everest 8849m)—— 已回读,正确
+CurlMultiRequestScheduler.cpp:117:-  # 函数体内语句 const size_t total —— 已回读,正确
+EarthEngineSdkFacade.cpp:402:-  # 函数体内语句 bingOptions.subdomains —— 已回读,正确
+Engine.cpp:210:-  # 函数体内 if (enabled) 分支 —— 已回读,正确
+RasterMappedToTilesetTile.cpp:204:-  # 指向 `// Step 2:` 分段注释,非函数定义 —— 已回读,正确
 RasterMappedToTilesetTile.cpp:346:-  # 同上,指向分段注释 —— 已回读,正确
-RenderContentRasterOverlayStateUpdater.cpp:105:-
-RenderContentRasterOverlayStateUpdater.cpp:121:-  # ⚠️真欠账:文件已重构成 33 行纯委托,该行号无对应内容(正文已加订正说明)
-RenderContentRasterOverlayStateUpdater.cpp:67:-
-RenderContentRasterOverlayStateUpdater.cpp:92:-
-Renderer.cpp:1061:-
+Renderer.cpp:1061:-  # shader 字符串内的中文注释行 —— 已回读,正确
 Renderer.cpp:3998:-  # makeTileGeometry 定义首行(静态自由函数)—— 已回读,正确
 Renderer.cpp:4126:-  # Renderer::initialize 定义首行 —— 已回读,正确
 Renderer.cpp:4436:-  # 函数体内语句 cmd.vertexStride=32,本行无函数名可锚 —— 已回读,正确
 Renderer.cpp:4464:-  # 同上,vertexStride=120 —— 已回读,正确
 Renderer.cpp:4523:-  # 同上,instanceStride —— 已回读,正确
-SceneRenderPipeline.cpp:132:-
+SceneRenderPipeline.cpp:132:-  # 函数体内语句 diagnostics.terrainRenderEntriesFadingDeferred —— 已回读,正确
 SkyBox.cpp:45:-  # kSkyBoxStarfieldVert GLSL 字符串常量首行 —— 已回读,正确
-SkyGradient.cpp:125:-
-SkyGradient.cpp:164:-
+SkyGradient.cpp:125:-  # `// ====` 分节分隔注释 —— 已回读,正确
+SkyGradient.cpp:164:-  # 同上,分节分隔注释 —— 已回读,正确
 SkyGradient.cpp:181:-  # 函数体内 horizMassFactor=38.0 —— 已回读,正确
 SkyGradient.cpp:201:-  # 函数体内 secondaryScattering —— 已回读,正确
-SunDirection.cpp:23:-
-TileKey.cpp:34:-
+SunDirection.cpp:23:-  # 匿名命名空间常量块,23 行是空行、常量在 20-22 —— 文档给的是块范围,可接受
 TileSelectionTraversalExecutor.cpp:213:-  # 函数体内语句,本行是散文步骤号,无符号可锚
 XYZImageryProvider.cpp:42:-  # logAndroidXyzFailure 定义首行,该名未在文档行里反引号 —— 已回读,正确

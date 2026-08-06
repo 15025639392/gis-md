@@ -156,6 +156,12 @@ def parse_doc(doc_path, file_map, skips):
         if raw.startswith('#'):
             section_files = {}
             m = _SECTION_RE.match(raw)
+            # 多文件小节(`### TileKey.h / .cpp / TileCacheKey.h / TileID.h / .cpp`)
+            # 里的裸 `.cpp:34` 到底指哪个文件,标题本身不足以判断 —— 绑到第一个
+            # 会把 TileID.cpp 的引用算到 TileKey.cpp 头上,报出假越界。宁可整节
+            # 不查。与上面 section 泄漏是同一类错:**猜文件比不查更糟**。
+            if len(set(re.findall(r'\b(\w+)\.(?:cpp|h|mm|hpp)\b', raw))) > 1:
+                m = None
             if m:
                 stem, ext_a, ext_b = m.group(1), m.group(2), m.group(3)
                 for ext in (ext_a, ext_b):
@@ -305,13 +311,34 @@ def main():
     failures, anchored = check(refs, skips, args.verbose)
 
     if args.update_baseline:
+        # 保留既有条目的行尾理由与文件头注释。曾经这里是无脑覆写,一次
+        # --update-baseline 就把逐条读源码得出的判断全洗掉了 —— 而一条没有理由的
+        # 例外,下一个人无法判断它是真欠账还是工具局限,基线就退化成黑名单。
+        header, reasons = [], {}
+        if os.path.isfile(args.baseline):
+            for line in open(args.baseline, encoding='utf-8'):
+                line = line.rstrip('\n')
+                if line.startswith('#'):
+                    header.append(line)
+                elif '#' in line:
+                    key, why = line.split('#', 1)
+                    reasons[key.strip()] = '  # ' + why.strip()
+        if not header:
+            header = ['# AI_INDEX.md 行号引用校验的例外清单。',
+                      '# 每条都应带行尾 `# 理由`:是真欠账,还是校验器锚不住。',
+                      '# 本文件只该减不该增。']
+        keys = sorted(set(k for k, _ in failures))
         with open(args.baseline, 'w', encoding='utf-8') as fh:
-            fh.write('# AI_INDEX.md 已知陈旧行号引用(认账清单,非豁免许可)。\n'
-                     '# 每行 = 源文件:引用行号:点名符号。命中者不判失败。\n'
-                     '# 把某条改对后,请从本文件删掉它 —— 这个数字只该向下走。\n')
-            for key in sorted(k for k, _ in failures):
-                fh.write(key + '\n')
-        print('已写入基线 %s:%d 条' % (args.baseline, len(failures)))
+            fh.write('\n'.join(header) + '\n')
+            for key in keys:
+                fh.write(key + reasons.get(key, '') + '\n')
+        missing = [k for k in keys if k not in reasons]
+        print('已写入基线 %s:%d 条' % (args.baseline, len(keys)))
+        if missing:
+            print('  ⚠️ 其中 %d 条**没有理由**,请逐条读源码判明后补上行尾注释:'
+                  % len(missing))
+            for k in missing:
+                print('     ' + k)
         return 0
 
     baseline = load_baseline(args.baseline)

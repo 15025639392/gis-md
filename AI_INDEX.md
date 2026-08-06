@@ -1240,9 +1240,10 @@ Command-build-phase counterpart to the prefetcher: updates mappings WITH rendere
 | `struct RenderContentRasterOverlayUpdateAction` | .h:14-17 | `unloadTileContent`, `createRasterOverlayUpsampledChildren` |
 | `update()` | .cpp:12-31 | ⚠️ 已重构成**纯委托**:整体转发给 `TileRasterOverlayPrefetcher::prefetch`,只多传一个 `&renderer` 让 Step-6 attach 生效。文件全长仅 33 行。 |
 
-⚠️ 本节此前列有 `— attach path` (.cpp:92-104)、`— missing projection` (.cpp:105-108)、
-`— upsample decision` (.cpp:121-125) 三行,描述的是一个 127 行的 `update()` —— 那份
-逻辑早已搬进 `TileRasterOverlayPrefetcher::prefetch` (.cpp:67-306),此处只剩转发。
+⚠️ 本节此前列有 `— attach path`、`— missing projection`、`— upsample decision` 三行
+(旧行号 92-104 / 105-108 / 121-125,此处刻意不写成引用形式,否则会被行号校验器当成
+仍然有效的引用),描述的是一个 127 行的 `update()` —— 那份
+逻辑早已搬进 `TileRasterOverlayPrefetcher::prefetch` (TileRasterOverlayPrefetcher.cpp:67-306),此处只剩转发。
 现址:`loadThrottled` 在 TileRasterOverlayPrefetcher.cpp:248、:302,
 `unloadTileContent` 置位在 :224,`createRasterOverlayUpsampledChildren` 在 :251。
 (2026-08-06 复核订正)
@@ -1405,25 +1406,43 @@ Content providers producing `TileContentLoadResult` (glTF models, not meshes). `
 | `TilesetContentTileMetadata` | .h:28-41 | Per-tile: keys, bounds/bounding volumes, `transform`, `geometricError`, `refine`, `unconditionallyRefine`. |
 | `TileContentLoadResult` | .h:43-113 | Result: `status`, `gltfModel`, `contentTransform`, `metadata`, `terrainRenderContent`, availability updates. Factories: `render`, `renderTerrain` (.h:63; sets `terrainRenderContent=true`, wires rasterOverlayDetails), `empty`/`retryLater`/`failed`/`cancelled`/`external`. |
 | `TilesetContentProvider` (interface) | .h:119-174 | Virtual: `supportsTile`, `rootTiles`, `tileMetadata`, `childTiles`, `providesTerrainQuadtree`, `availabilityState`, `requestTileContent`, `decodeContent`, diagnostics. cesium-native `TilesetContentLoader`. |
-| `SingleGltfContentProvider` | .h:179-231; .cpp:3312-3419 | Single glTF/GLB/B3DM tile. `decodeContent` (.cpp:3312) → `GltfParser::parse`; `setEastNorthUpPlacementDegrees` (.cpp:3737) places model via ENU frame. |
+| `SingleGltfContentProvider` | .h:179-231; .cpp:3580-3760 | Single glTF/GLB/B3DM tile. `decodeContent` (.cpp:3722) → `GltfParser::parse`; `setEastNorthUpPlacementDegrees` (.cpp:3737) places model via ENU frame. |
 | `TilesetJsonContentProvider` | .h:237-312; .cpp:3754-3778 | 3D Tiles `tileset.json`: `parseTilesetJson` (.cpp:4010) parses transforms/refine/GE/bounding volumes/URIs incl. external tilesets; `decodeRenderableContent` (.cpp:3992) parses glTF w/ up-axis transform. cesium-native `TilesetJsonLoader`. |
 | `GltfParser::parse` sites | .cpp:2366, 2386, 3173 | glTF decode entry points inside decode helpers. |
 
 ### content/EllipsoidTerrainContentProvider.h / .cpp
 
-Fallback terrain provider: synthesizes a smooth-ellipsoid glTF grid mesh per tile (no real heights). Now **self-contained** — inlines grid generation via a local `buildEllipsoidGrid` (no `TileSurface` call). cesium-native `EllipsoidTilesetLoader`.
+Fallback terrain provider:每瓦片合成一张平滑椭球 glTF 网格(无真实高程)。
+⚠️ **网格生成已全部搬走** —— 见下一节 `EllipsoidTerrainMeshBuilder`;本文件现在
+只剩 provider 契约(分片方案 / 可用性 / 请求 / 解码),473 行的网格逻辑不在这里。
+(2026-08-06 复核:此节此前列有 `splitHighLow` / `rewriteProjectionTexCoords` /
+`makeRasterOverlayDetails` / `buildEllipsoidGrid` / `makeEllipsoidTerrainModel`
+五行,全部指向本文件里**已不存在**的符号,行号也早已越界。)
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| ctor | .h:13-16; .cpp:261-267 | `schemeId="XYZ-WebMercator"`, `maximumLevel=14`, `gridSize=16`. |
-| `providesTerrainQuadtree` | .h:24 | Returns true. |
-| `splitHighLow` / `setLocalPosition` | .cpp:57-76 | ECEF high/low split (`kSplit`=65536.0) into `SurfaceVertex.positionHigh/LowEcef`. |
-| `rewriteProjectionTexCoords` | .cpp:88-122 | Reprojects UV0 into WebMercator/Geographic raster space from `runtime.baseVertices`. |
-| `makeRasterOverlayDetails` | .cpp:124-137 | Projection/rectangle/inverted-V + bounding region (min/max height = 0). |
-| **`buildEllipsoidGrid`** | .cpp:148-200 | **Inlined** ellipsoid-grid generator (ported from former `TileSurface::buildEllipsoidMesh`): `(gridSize+1)²` vertices, **linear latitude** (north at v=0, south at v=1), geodetic ECEF + high/low split + surface normal + unit-UV; winding `(a,c,b,b,c,d)`. |
-| `makeEllipsoidTerrainModel` | .cpp:202-257 | Builds grid → one `GltfPrimitive` (Triangles, metallic 0 / roughness 1), root node at `localOrigin`, reprojects UVs, relativizes positions, `rebuildRuntime()`. Does NOT set `hasTerrainWaterMaskMetadata` ⇒ renders through the **120 B glTF** vertex path, and does NOT pre-build `terrainGpuVertexBytes`. |
-| `tileMetadata` / `childTiles` / `rootTiles` / `availabilityState` | .cpp:80-108 | Quadtree navigation + availability; virtual-terrain-root handling. |
-| `requestTileContent` / `decodeContent` | .cpp:195-199 | Returns `renderTerrain` result (with terrain height range + rasterOverlayDetails); `decodeContent` always fails (content synthesized in `requestTileContent`). |
+| `createScheme` / `rootRectangleForScheme` / `quadtreeChildrenForKey` (anon) | .cpp:26-31 / :33-37 / :39-48 | 匿名命名空间的分片方案辅助。 |
+| ctor | .cpp:53-59 | `schemeId="XYZ-WebMercator"`, `maximumLevel=14`, `gridSize=16`。 |
+| `id` / `supportsTile` / `rootTiles` | .cpp:61-63 / :65-73 / :75-77 | Provider 身份与覆盖判定。 |
+| `tileMetadata` / `childTiles` | .cpp:80-108 / :111-122 | 四叉树导航。 |
+| `availabilityState` | .cpp:124-128 | 只看 `key.z`(**非空间性** —— 这正是 `GltfTerrainUpsampler` 的 TerrainAvailability 触发路运行时不可达的原因,见该文件头注释)。 |
+| `requestTileContent` (2 个重载) | .cpp:130-141 / :143-193 | 合成内容,无网络。 |
+| `decodeContent` | .cpp:195-199 | 返回 `renderTerrain` 结果(含高程范围与 rasterOverlayDetails)。 |
+
+### content/EllipsoidTerrainMeshBuilder.h / .cpp
+
+椭球网格生成器(473 行)。从 `EllipsoidTerrainContentProvider` 拆出,现在是椭球
+回落地形网格的唯一产地。
+
+| Item | Lines | Description |
+| --- | --- | --- |
+| `splitHighLow` / `setLocalPosition` (anon) | .cpp:24-36 / :38-43 | ECEF 高低位拆分(`kSplit`=65536.0)写入 `SurfaceVertex.position`。 |
+| `projectRasterRectangle` (anon) | .cpp:45-53 | 地理矩形 → 目标投影矩形。 |
+| `rewriteProjectionTexCoords` (anon) | .cpp:55-102 | 把 UV0 重投影进 WebMercator/Geographic 栅格空间。 |
+| `buildEllipsoidGrid` (anon) | .cpp:123-251 | 规则栅格生成器(由原 `TileSurface::buildEllipsoidGrid` 内联而来)。 |
+| `appendRegularGridSkirt` (anon) | .cpp:260-342 | 规则栅格裙边。 |
+| `makeRasterOverlayDetails` (2 个重载) | .h:79 / :82,.cpp:346-352 / :354-372 | 投影/矩形/inverted-V + 包围区域(min/max height = 0)。 |
+| `makeModel` (2 个重载) | .h:60 / :68,.cpp:374-390 / :392-471 | 建栅格 → 单个 `GltfPrimitive`(Triangles,metallic 0 / roughness 1),根节点置于 `localOrigin`。 |
 
 ### content/GltfTerrainUpsampler.h / .cpp
 
