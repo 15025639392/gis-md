@@ -23,6 +23,13 @@ namespace policy {
 /// 然后就永远不会再报了 —— 比不设更糟,因为它看起来还在工作。所以 Expectation
 /// 强制带 rationale,写不出依据的策略就先别加。
 ///
+/// ⚠️ 撤下过一条:MainThreadFinalizeBudgetUse(已用/上限)。它要抓的是"交互期
+/// finalize 通路被冻结、预算使用恒 0"那类事故,但真机上**健康时也恒 0** ——
+/// 分母 maxMainThreadFinalizesPerFrame 恒 ≥1,于是空闲帧(无事可 finalize)与
+/// 冻结帧(有事却没做)读数完全一样,而空闲帧占绝大多数。要修得有「待 finalize
+/// 工作量」作分母,当前引擎没有这个信号。**一个健康态与故障态读数相同的指标,
+/// 比没有更糟** —— 它会给出虚假的安心。修不了就先不放,别为了凑数留着。
+///
 /// 分母为 0 = 本窗口没有机会(没有可合批的命令 / 没有可见瓦片),**不参与判定**。
 /// 与契约 coverage 的 disabled 同理:「没机会生效」和「生效了但不达标」是两回事,
 /// 混在一起会让报表在冷启动/空场景下疯狂误报。
@@ -31,6 +38,11 @@ enum class Id : uint8_t {
     BatchFormation,
     /// 页驻留率 = 全 cell 驻留(=有合批资格)的瓦片数 / 参与判定的瓦片数。
     PageResidency,
+    /// cell 页覆盖率 = 拿到高清页的 cell / 会产生片元的 cell(含被 SSE 地板剔的)。
+    /// 差额全部回落 mappedRaster 祖先影像 = 观感上的"糊"。
+    CellPageCoverage,
+    /// 间接层无换租获取率 = 未触发淘汰的 acquire / 全部 acquire。
+    IndirLayerAllocNoEvict,
     Count
 };
 

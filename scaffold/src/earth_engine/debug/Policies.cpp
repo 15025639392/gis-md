@@ -19,6 +19,8 @@ std::atomic<uint64_t> windowDen_[kCount];
 const char* const kNames[kCount] = {
     "BatchFormation",
     "PageResidency",
+    "CellPageCoverage",
+    "IndirLayerAllocNoEvict",
 };
 
 const Expectation kExpectations[kCount] = {
@@ -38,6 +40,22 @@ const Expectation kExpectations[kCount] = {
      "稳态下可见瓦片应基本都达到全 cell 驻留;偏低 = 页 fetch 跟不上,或资格闸"
      "定义再次变得不可达(旧闸要 gridN²=1024 全驻留而全局仅 ~52 页,恒为 0)",
      "TerrainPageStore::updateVisiblePages"},
+
+    // cell 页覆盖率。差额全部回落 mappedRaster(祖先影像)= 糊。下界 0.6 而非更高:
+    // SSE 地板本来就会**故意**剔掉远景/掠射 cell,那部分回落是设计意图不是故障;
+    // 真正要抓的是它整体塌下去(页 fetch 跟不上、层池不够、源不可达)。
+    {0.6, 1.0,
+     "会产生片元的 cell 应多数拿到高清页;差额回落 mappedRaster 即观感变糊。"
+     "SSE 地板故意剔远景 cell,故下界留到 0.6 —— 抓的是整体塌陷不是正常剔除",
+     "TerrainPageStore::updateVisiblePages(页 fetch / 层池容量)"},
+
+    // 间接层无换租获取率。稳态应接近 1:可见集稳定时不该反复互相踢。
+    // 持续偏低 = 层池容量装不下当前可见集(thrash),表现为闪烁与重复上传。
+    {0.9, 1.0,
+     "稳态可见集不该反复互相淘汰;持续偏低 = 层池容量不足以承载当前可见集"
+     "(thrash),表现为闪烁/重传。相机大幅移动时短暂下探属正常,窗口聚合已摊薄",
+     "TerrainPageStore 层池容量 Config::maxPages"},
+
 };
 
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == kCount,

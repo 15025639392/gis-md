@@ -640,6 +640,10 @@ void TerrainPageStore::updateVisiblePages(
             indirPool_.layerBaseFor(p.tileKeyPacked) != ind.layer) {
             uint64_t evicted = 0;
             ind.layer = indirPool_.acquire(p.tileKeyPacked, frameId_, &evicted);
+            // 策略生效率:间接纹理层的**无换租获取率**。稳态应接近 1;持续偏低 =
+            // 层池容量不足以承载当前可见集,每帧互相踢(thrash),表现为闪烁/重传。
+            policy::observe(policy::Id::IndirLayerAllocNoEvict,
+                            evicted == 0 ? 1 : 0, 1);
             if (evicted != 0) {
                 auto eit = tileIndirs_.find(evicted);
                 if (eit != tileIndirs_.end()) {
@@ -679,6 +683,12 @@ void TerrainPageStore::updateVisiblePages(
         // 合批资格的**唯一**卡点在这里,但此前只有布尔结果、没有距离达标多远的量:
         // 于是"合批为什么一个批都不成形"完全不可查(BatchDet 只能报到
         // notFullyResident 为止)。记下最差覆盖率,把"差一点"与"根本达不到"分开。
+        // 策略生效率:会产生片元的 cell 里有多少真拿到了高清页。
+        // 分母 = kept(过视锥且过 SSE 地板)+ 被地板剔掉的(它们也在屏幕上,只是
+        // 判定为贡献太小不给页)。差额全部回落 mappedRaster = 糊。
+        policy::observe(policy::Id::CellPageCoverage, residentCells,
+                        static_cast<int>(cache.kept.size()) +
+                            cache.sseFloorCulled);
         const int cellsNeeded = p.gridN * p.gridN;
         if (cellsNeeded > 0) {
             const float ratio = static_cast<float>(residentCells) /
