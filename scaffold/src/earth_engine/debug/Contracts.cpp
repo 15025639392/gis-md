@@ -73,7 +73,12 @@ const Gate kGates[kCount] = {
     Gate::Always,                  // PageDecorateOrdering:页存储每帧都跑
     Gate::Always,                  // SubmitBeforeReleaseRefs:每帧渲染都走
     Gate::Always,                  // LoadsBeforeGpuDrain:每帧 update 都走
-    Gate::Always,                  // GpuUploadQueueFifo:有上传就走
+    // GpuUploadQueueFifo 与 TexcoordNwOrigin **同因**:异步上传的两个必需字段
+    // (terrainGpuVertexBytes / hasTerrainWaterMaskMetadata)唯一的生产者都在上
+    // 采样器路径里,上采样不跑 → payload 永不完整 → 队列恒空 → tryPop 永不调用。
+    // 真机对照:decouple=true 两者皆 0;decouple=false 两者**同为 152**
+    // (一次上采样 = 一次 texcoord 判定 + 一次 push/pop),同生共死。
+    Gate::ImageryDrivenUpsample,   // GpuUploadQueueFifo
 };
 
 // 闸的当前状态,**存的是「被关掉」而非「成立」**。
