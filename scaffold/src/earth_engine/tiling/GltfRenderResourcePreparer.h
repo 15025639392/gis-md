@@ -57,9 +57,12 @@ struct GltfRenderResourcePreparer {
                         double currentFrameTimeSeconds,
                         bool sharedTemplateGeometryActive = false);
 
-    /// Phase 1 (Worker Thread): CPU-intensive work.
-    /// Converts SurfaceVertex → GPU-ready bytes, decodes textures.
-    /// Returns nullopt if the model has no primitives.
+    /// Phase 1:CPU 侧工作 —— SurfaceVertex → GPU 字节,解纹理。
+    /// 无 primitive 时返回 nullopt。
+    /// ⚠️ 取 `const TilesetTile&`,生命周期绑在瓦片上,**只能在主线程调**;当前两个
+    /// 调用点(prepare 与 TilesetContentLifecycleCoordinator 的异步分支)也都在主
+    /// 线程。旧注释标的 "Worker Thread" 是设计意图,从未成立 —— 要挪到 worker 得
+    /// 走下面那个取 model 拷贝的重载。
     static std::optional<GpuReadyData> prepareCpuWork(
         const TilesetTile& tile,
         double currentFrameTimeSeconds,

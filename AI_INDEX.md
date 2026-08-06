@@ -513,7 +513,7 @@ Type-safe strided view over glTF binary buffers. cesium-native `CesiumGltf::Acce
 | `AccessorTypes` | .h:84-94 | `#pragma pack(1)` SCALAR/VEC2-4/MAT2-4 element shapes matching glTF binary layout. |
 | `CesiumImpl::createAccessorView` | .h:98-114 | Dispatches type code 0-6 (SCALAR..MAT4) to a callback-constructed `AccessorView<AccessorTypes::*<TElement>>`; default → `InvalidType`. Type codes are the local 0-6 enum, not glTF spec strings. |
 
-Note: none of these modules touch the current-branch async-terrain GPU-upload WIP (`TerrainGpuVertex`/`Renderer::terrainShader`/`GltfDrawCommandBuilder`); `AccessorView` is the glTF read path feeding geometry builders upstream of that draw refactor.
+Note: none of these modules touch the async-terrain GPU-upload path (`TerrainGpuVertex`/`Renderer::terrainShader`/`GltfDrawCommandBuilder`); `AccessorView` is the glTF read path feeding geometry builders upstream of that draw refactor.
 
 ---
 
@@ -733,7 +733,9 @@ Post-fan-out decision combining kick + preload. `evaluate` (.cpp:7-43): runs `Ti
 
 ---
 
-**Branch WIP note:** the async terrain GPU-upload path (32-byte `TerrainGpuVertex`) is mid-refactor. In this section, `Tileset::drainGpuUploadQueue` / `gpuUploadQueue_` and `TilesetUpdateFrameRuntime`'s post-selection drain are the produce/upload side (done). The DRAW side is now wired (2026-07-01): `GltfDrawCommandBuilder` branches on `useTerrainVertexFormat` → `makeTerrainPrimitiveCommand` (stride 32) using the new `terrainShader` (defined for GLES + Metal), so terrain `TilePlan.renderEntries` render through the lightweight terrain path (compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server).
+**Async GPU-upload note (2026-08-06 复核):** the 32-byte `TerrainGpuVertex` async upload path is **complete, not WIP** — produce + upload + draw all wired. It is **config-gated, and off in the shipped demo**: the entry gate needs `hasTerrainWaterMaskMetadata` + complete `terrainGpuVertexBytes`, whose only producer is the upsampler path, which `decoupleImageryFromGeometry=true` disables (`TilesetOptions` struct default is `false`, so an embedder that does not override it **does** run this path). Machine-checked by `contracts::Id::GpuUploadQueueFifo` under `Gate::ImageryDrivenUpsample` — device-verified coverage 0 with `decouple=true`, 152 with `decouple=false`. See `GpuUploadQueue.h` and `content/GltfTerrainUpsampler.h` for the survival conditions.
+
+⚠️ Thread attribution: both `push` and `tryPop` run **on the main thread, in the same frame** (push in `processPendingUploads`, pop in the later `drainGpuUploadQueue`). Worker threads do the earlier vertex conversion, not the enqueue. The one real benefit of the split is the drain-side per-frame upload cap (`maxUploadsPerFrame`=4, interaction floor 2 / idle floor 4) with spillover to the next frame.
 
 ---
 
@@ -746,11 +748,11 @@ Thin façade forwarding frame work to `TileContentLifecycleManager`, binding `co
 | Item | Lines | Description |
 |---|---|---|
 | `TileContentRuntimeRequestFrame` | .h:26-38 | Per-frame inputs for load-request pass (tiles map, provider, device, `pPrepRenderer`, budgets/limits). |
-| `TileContentRuntimeUploadFrame` | .h:40-51 | Per-frame inputs for upload/drain pass; carries `GpuUploadQueue* gpuUploadQueue` = async CPU→GPU pipeline (.h:45, WIP). |
+| `TileContentRuntimeUploadFrame` | .h:40-51 | Per-frame inputs for upload/drain pass; carries `GpuUploadQueue* gpuUploadQueue` = async CPU→GPU pipeline (.h:45; config-gated, see §5 note). |
 | ctor(lifecycle, contentAccess, meshPreparation, resourceInvalidator) | .h:55-59 / .cpp:11-19 | Holds four refs, no ownership. |
 | `requestMissingTiles` | .cpp:21-46 | Forwards to `lifecycle_.requestMissingTiles`; binds `prepareUpsampleSourceTile`→`meshPreparation_.prepareUpsampleSourceTile` and `ensureTile`→`contentAccess_.ensureTile`. |
 | `processPendingUploads(interactionActive, resourceSmoothingActive)` | .cpp:48-76 | Forwards to `lifecycle_.processPendingUploads`; binds `ensureTile`, `ensureTileChildren`, `markResourcesDirty`. |
-| `drainGpuUploadQueue(maxUploadsPerFrame)` | .cpp:78-101 | **WIP**: forwards to `lifecycle_.drainGpuUploadQueue`; consumes async-prepared GPU data. Called once/frame after `processPendingUploads`. |
+| `drainGpuUploadQueue(maxUploadsPerFrame)` | .cpp:78-101 | Forwards to `lifecycle_.drainGpuUploadQueue`; consumes async-prepared GPU data. Called once/frame after `processPendingUploads`. |
 | `markResourcesDirty` | .cpp:103-105 | Delegates to `resourceInvalidator_`. |
 
 ### TileContentLifecycleManager.h / .cpp
@@ -760,7 +762,7 @@ Owns the two long-lived pieces of load state — `TileLoadLifecycle loadLifecycl
 | Item | Lines | Description |
 |---|---|---|
 | `loadLifecycle()` / `emptyContentRegistry()` accessors | .h:24-32 | Expose the two owned members. |
-| `drainGpuUploadQueue<...>` (template) | .h:38-70 | **WIP**. Builds upload context, forwards to coordinator. |
+| `drainGpuUploadQueue<...>` (template) | .h:38-70 | Builds upload context, forwards to coordinator. |
 | `requestMissingTiles<...>` (template) | .h:72-104 | Builds `TilesetContentLifecycleContext`, forwards to coordinator. |
 | `processPendingUploads<...>` (template) | .h:106-144 | Builds `TilesetContentUploadContext`, forwards to coordinator. |
 | `makeContext` | .h:147-170 | Packs load-request context; `maximumSimultaneousTileLoads` default 20. |
@@ -775,12 +777,12 @@ Static, header-only orchestrator. Three entry points mirroring cesium-native `Ti
 | Item | Lines | Description |
 |---|---|---|
 | `TilesetContentLifecycleContext` | .h:34-46 | Load-request context. `maximumSimultaneousTileLoads`=20, `smoothedMainThreadUploadLimit`=1 defaults. |
-| `TilesetContentUploadContext` | .h:48-61 | Upload context; `gpuUploadQueue` = async CPU→GPU pipeline (.h:55, WIP). |
+| `TilesetContentUploadContext` | .h:48-61 | Upload context; `gpuUploadQueue` = async CPU→GPU pipeline (.h:55; config-gated, see §5 note). |
 | `requestMissingTiles<...>` | .h:65-94 | Fallback budget via `TileFrameBudgetFallback::requestConfig`; delegates to `TileMissingRequestScheduler::request` with `TileCacheKey::forTile` keyer. |
 | `processPendingUploads<...>` | .h:99-193 | Fallback budget via `uploadConfig`; delegates to `TilePendingUploadFrameProcessor::process`. The `ensureGltfResources` lambda (.h:132-191) chooses async vs sync upload per tile. |
-| — async terrain branch | .h:143-184 | **WIP**: if terrain render content with non-empty `terrainGpuVertexBytes` + water-mask metadata + queue+device present, sets `asyncGpuUploadPending=true`, extracts pre-built 32-byte vertex bytes into `GpuReadyPrimitive` (stride `sizeof(TerrainGpuVertex)`=32, .h:168), sets `meta.useTerrainVertexFormat=true`, pushes `PendingGpuUpload` to queue. No CPU rebuild — bytes produced during decode. |
+| — async terrain branch | .h:143-184 | If terrain render content with non-empty `terrainGpuVertexBytes` + water-mask metadata + queue+device present, sets `asyncGpuUploadPending=true`, extracts pre-built 32-byte vertex bytes into `GpuReadyPrimitive` (stride `sizeof(TerrainGpuVertex)`=32, .h:168), sets `meta.useTerrainVertexFormat=true`, pushes `PendingGpuUpload` to queue. No CPU rebuild — bytes produced during decode. |
 | — sync fallback | .h:185-190 | Non-terrain: `GltfRenderResourcePreparer::prepare` (synchronous). |
-| `drainGpuUploadQueue<...>` | .h:199-261 | **WIP**: pops uploads (up to `maxUploadsPerFrame`); guards on tile still present + `asyncGpuUploadPending` still set (.h:216-228); calls `GltfRenderResourcePreparer::uploadToGpu` (.h:240) then `TileContentUploadCommitter::finishRenderResourcePreparation` (.h:246); erases the lifecycle upload key via `TilePendingUploadCompletion::eraseUpload`. |
+| `drainGpuUploadQueue<...>` | .h:199-261 | Pops uploads (up to `maxUploadsPerFrame`); guards on tile still present + `asyncGpuUploadPending` still set (.h:216-228); calls `GltfRenderResourcePreparer::uploadToGpu` (.h:240) then `TileContentUploadCommitter::finishRenderResourcePreparation` (.h:246); erases the lifecycle upload key via `TilePendingUploadCompletion::eraseUpload`. |
 
 ### TileLoadLifecycle.h / .cpp
 
@@ -799,7 +801,7 @@ The shared load-state hub, guarding **the lifecycle mutex** (`mutex_`) + `condit
 
 ### GpuUploadQueue.h
 
-**WIP**. Thread-safe FIFO carrying CPU-prepared data from worker threads to the main thread — the **second mutex** in the pipeline (independent of the lifecycle mutex).
+Thread-safe FIFO carrying CPU-prepared bytes across one main-thread frame hop — the **second mutex** in the pipeline (independent of the lifecycle mutex); it guards against the unload path's `eraseCacheKey`/`clear`, not against worker producers. Complete but config-gated off in the demo; see the §5 note and §20.
 
 | Item | Lines | Description |
 |---|---|---|
@@ -857,7 +859,7 @@ Cross-frame per-tile lifecycle aggregate embedded in `TilesetTile`.
 
 ### TileLoadState.h loadState machine — pipeline overview
 
-Flow: **request** (`TileLoadScheduler`→`TileLoadRequestDispatcher`, async network) → completion callback enqueues into `TilePendingLoadQueue` (upload vs terminal) → **commit** (`TilePendingUploadFrameProcessor`→`TilePendingLoadCommitCoordinator`, main thread) → sync GPU upload OR **async**: dispatch to `GpuUploadQueue`, drained by `drainGpuUploadQueue` (WIP) → **cache/unload** (`TileContentCacheManager` byte-budget eviction).
+Flow: **request** (`TileLoadScheduler`→`TileLoadRequestDispatcher`, async network) → completion callback enqueues into `TilePendingLoadQueue` (upload vs terminal) → **commit** (`TilePendingUploadFrameProcessor`→`TilePendingLoadCommitCoordinator`, main thread) → sync GPU upload OR **async**: dispatch to `GpuUploadQueue`, drained by `drainGpuUploadQueue` (config-gated, off in demo) → **cache/unload** (`TileContentCacheManager` byte-budget eviction).
 
 ### TileLoadTypes.h
 
@@ -959,7 +961,7 @@ The commit stage: turns a `PendingTileLoad` into committed tile state, running r
 | `captureInitialBoundingVolumes` | .h:28-39 | Snapshots initial bounding volumes into metadata (for failure restore). |
 | `commitTerminalResult<...>` | .h:44-68 | Ensures tile, delegates to `TileTerminalLoadCommitter::commitTerminalResult`, applies `ensureChildren`/`markResourcesDirty`. |
 | `commitUpload<...>` | .h:74-153 | Ensures tile (erase upload claim if gone, .h:87-93); fail path via `shouldFailUploadForDomain` (.h:95-116); else applies availability updates + `TileContentUploadCommitter::prepareRenderContent` + `ensureGltfResources`. |
-| — async keep-alive | .h:135-138 | **WIP**: if `asyncGpuUploadPending`, returns WITHOUT erasing the upload key — the pending upload claim protects the tile from unload until `drainGpuUploadQueue` completes. |
+| — async keep-alive | .h:135-138 | If `asyncGpuUploadPending`, returns WITHOUT erasing the upload key — the pending upload claim protects the tile from unload until `drainGpuUploadQueue` completes. |
 | — sync finish | .h:140-152 | Else `finishRenderResourcePreparation` + `applyCommitAction` + erase upload. |
 | `applyCommitAction` | .h:159-170 | Fires `ensureChildren` / `markResourcesDirty` per action flags. |
 
@@ -998,7 +1000,7 @@ Tracks in-flight network requests and their cancellation tokens (guarded externa
 
 | Method | Lines | Description |
 |---|---|---|
-| `eraseUpload` | .cpp:7-12 | **WIP** helper: locks lifecycle mutex, calls `pendingLoads().eraseUploadKey(cacheKey)` — releases the async tile-protection claim after `drainGpuUploadQueue` finishes or aborts. |
+| `eraseUpload` | .cpp:7-12 | Locks lifecycle mutex, calls `pendingLoads().eraseUploadKey(cacheKey)` — releases the async tile-protection claim after `drainGpuUploadQueue` finishes or aborts. |
 
 ### TileContentCacheManager.h / .cpp
 
@@ -1044,19 +1046,19 @@ Prepares upsample-source ancestor tiles and content-terrain frame meshes; queues
 | `prepareUpsampleSourceTile` | .cpp:40-56 | `TileUpsampleSourcePreparer::prepareSourceTile`; binds ancestor-prepare + `queueTileLoad`. |
 | `queueTileLoad` | .cpp:62-67 | `loadQueue_.queue(key, group, priority)`. |
 
-### GltfRenderResourcePreparer.h — async CPU/GPU split (WIP)
+### GltfRenderResourcePreparer.h — async CPU/GPU split
 
 Declarations only here (impl elsewhere). Two-phase split for the async pipeline. cesium-native `prepareInLoadThread` / `prepareInMainThread` split.
 
 | Method | Lines | Description |
 |---|---|---|
 | `prepare` | .h:18-20 | Legacy synchronous path (still used for animation + non-terrain content). |
-| `prepareCpuWork` / `prepareCpuWorkFromModel` | .h:25-36 | Phase 1 (worker thread): SurfaceVertex→GPU bytes + texture decode → `GpuReadyData`. |
-| `uploadToGpu` | .h:41-44 | **WIP** Phase 2 (main thread): create GL/Metal buffers from `GpuReadyData`; called by `drainGpuUploadQueue`. |
+| `prepareCpuWork` / `prepareCpuWorkFromModel` | .h:25-36 | Phase 1: SurfaceVertex→GPU bytes + texture decode → `GpuReadyData`. ⚠️ Labelled "worker thread" but **both call sites are on the main thread**; only the `FromModel` overload (owned copy) is safe to move off it. |
+| `uploadToGpu` | .h:41-44 | Phase 2 (main thread): create GL/Metal buffers from `GpuReadyData`; called by `drainGpuUploadQueue`. |
 
-### Branch WIP — async terrain GPU-upload path (produce/upload done, DRAW not wired)
+### Async terrain GPU-upload path — complete, config-gated
 
-The 32-byte `TerrainGpuVertex` async upload path is end-to-end (2026-07-01): produce + upload + draw all wired (`terrainShader` + `makeTerrainPrimitiveCommand`).
+The 32-byte `TerrainGpuVertex` async upload path is end-to-end (2026-07-01): produce + upload + draw all wired (`terrainShader` + `makeTerrainPrimitiveCommand`). Not WIP. It simply **does not execute under the demo's `decoupleImageryFromGeometry=true`** — see the note at the end of §5 for the gate chain and the contract that proves liveness either way.
 
 | Fact | Location | Status |
 |---|---|---|
@@ -1069,7 +1071,7 @@ The 32-byte `TerrainGpuVertex` async upload path is end-to-end (2026-07-01): pro
 | DRAW side wired (2026-07-01) | `GltfDrawCommandBuilder.cpp:70` branches on `useTerrainVertexFormat` → `renderer.makeTerrainPrimitiveCommand` (stride 32, `kind=GltfPrimitive`, `shader=terrainShader`) | **done** (compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server) |
 | `Renderer::terrainShader()` defined + terrain shaders added | `kTerrainVertex/FragmentGLSL` (Renderer.cpp:855-...), `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23), `terrainShader()` getter + `makeTerrainPrimitiveCommand` | **done** |
 
-Files read and verified: all listed content-lifecycle files under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/`, plus `content/GltfModel.h` and `renderer/Renderer.h` for WIP verification. Line numbers above are current as read.
+Files read and verified: all listed content-lifecycle files under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/`, plus `content/GltfModel.h` and `renderer/Renderer.h`. Line numbers above are current as read.
 
 ---
 
@@ -2023,7 +2025,7 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 | `submit` | .cpp:2021-2024 | Forwards to `device->submit` if initialized. |
 | `dispose` | .cpp:2026-2035 | Resets surfaceTile/tileIndex/placeholder/gltf/gltfInstanced/color resources. |
 | Shared-resource getters | .cpp:2039-2049 | `colorShader`, `tileIndexBuffer`/`tileIndexCount`, `surfacePlaceholderTexture`, `gltfShader`, `gltfInstancedShader`. The `globeShader`/`globeVertexBuffer`/`globeIndexBuffer`/`globeIndexCount` getters are **removed**. |
-| `terrainShader()` | **.h:57 declared, NO definition** | WIP: part of the async terrain GPU-upload refactor (32-byte terrain vertex, no PBR extensions). Declared-but-undefined — linking against it would fail. The DRAW side is not wired: `makeSurfaceTileCommand`/glTF builders still drive the live path; the 32-byte terrain-vertex draw path is unbuilt. |
+| `terrainShader()` | .h:105 / **.cpp:4418 defined** | 32-byte terrain vertex, no PBR extensions. DRAW side wired: `GltfDrawCommandBuilder.cpp:133` calls `makeTerrainPrimitiveCommand` (.cpp:4477). ⚠️ This row previously read "declared, NO definition, linking would fail" — false since at least 2026-07-01; corrected 2026-08-06. |
 | `makeSurfaceTileCommand(tex,vb,ib,idxCount)` | .cpp:2053-2078 | `SurfaceTile`, **`vertexStride`=32** POSITION(12)+NORMAL(12)+TEXCOORD_0(8) (.cpp:2065), UInt32 indices, falls back to shared `tileIndexBuffer`/`tileIndexCount` when `ib`==null (.cpp:2063-2064), sets `hasSurfaceTileUniforms`. |
 | `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:2080-2209 | `GltfPrimitive`, **`vertexStride`=120** POSITION/NORMAL + TEXCOORD_0..7 + COLOR_0(16) + TANGENT(16) (.cpp:2093), seeds the full PBR uniform set (base/metallicRoughness/specular-glossiness/transmission/clearcoat/sheen/anisotropy factors, tex-transform offset/scale/rotation defaults .cpp:2157-2207, per-overlay raster UVs .cpp:2147-2156, water-mask, `u_clipUV`). |
 | `makeGltfPrimitiveInstancedCommand(...)` | .cpp:2211-2230 | Delegates to `makeGltfPrimitiveCommand`, then sets `GltfPrimitiveInstanced`, `gltfInstancedShader`, `instanceBuffer`/`instanceCount`, **`instanceStride`=`kGltfInstanceMatrixStride`=100** (mat4 relative model 64B + mat3 normal 36B) (.cpp:2228). Current-branch WIP: surface instancing GPU batch path. |
@@ -2642,12 +2644,14 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 | Contract | Where | Why |
 |---|---|---|
 | `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | SceneRenderPipeline.cpp:149 then :153 (`releaseRenderReferences` body .cpp:432-439 calls `tileset->releaseRenderReferences()`) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
-| `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :102 | Worker CPU decode dispatched by `processPendingLoads` pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the actual GPU upload (comment .cpp:100-101). |
-| Ref-count keep-alive until GPU consumption | GpuUploadQueue.h (deque of `PendingGpuUpload`); drain finalizes via `uploadToGpu` + `finishRenderResourcePreparation` (TilesetContentLifecycleCoordinator.h:240-250) | CPU-prepared vertex/index bytes and tile state must stay alive from worker push through main-thread upload. |
+| `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :143 | `processPendingLoads` is what pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the GPU upload. Reversing the order does not error — it just makes every upload lag one frame, which reads as "loading is always half a beat late" and gets misattributed to network or device. **Machine-checked**: `contracts::Id::LoadsBeforeGpuDrain` (Tileset.cpp:279). |
+| Ref-count keep-alive until GPU consumption | GpuUploadQueue.h (deque of `PendingGpuUpload`); drain finalizes via `uploadToGpu` + `finishRenderResourcePreparation` | CPU-prepared vertex/index bytes and tile state must stay alive from enqueue through upload. The claim is `asyncGpuUploadPending` + a retained lifecycle upload key; three sites must release it (`TilePendingUploadCompletion::eraseUpload`) or the tile is pinned forever. Not machine-checked. |
 
-### Worker → main GpuUploadQueue FIFO
+### GpuUploadQueue FIFO
 
-`GpuUploadQueue` (GpuUploadQueue.h) is a `std::mutex`-guarded `std::deque<PendingGpuUpload>` (`.h:58`): worker threads `push()` (`.h:26-29`, `push_back`), main thread `tryPop()` (`.h:31-38`, `front`/`pop_front`) — strict FIFO. `drainGpuUploadQueue` pops up to `maxUploadsPerFrame` per frame (TilesetContentLifecycleCoordinator.h:206-259), skipping uploads whose tile was unloaded (`asyncGpuUploadPending` cleared, .h:224-228). The async terrain path uses this same queue with 32-byte `TerrainGpuVertex` on the produce side (TilesetContentLifecycleCoordinator.h:134-168) — WIP; upload lands but the draw side stays stride-120 (see §19).
+`GpuUploadQueue` (GpuUploadQueue.h) is a `std::mutex`-guarded `std::deque<PendingGpuUpload>`: `push()` (`push_back`) then `tryPop()` (`front`/`pop_front`) — strict FIFO, now machine-checked by `contracts::Id::GpuUploadQueueFifo` via two independently-maintained sequence counters (a priority reorder or a container swap trips it on the spot). `drainGpuUploadQueue` pops up to `maxUploadsPerFrame` per frame, skipping uploads whose tile was unloaded (`asyncGpuUploadPending` cleared).
+
+⚠️ **Not worker→main.** Both `push` and `tryPop` run on the **main thread within one frame** — push inside `processPendingUploads`, pop inside the later `drainGpuUploadQueue`. Worker threads produce the vertex bytes earlier (during decode); they never touch this queue. The split buys exactly one thing: the drain-side per-frame upload cap with spillover to the next frame. The queue is also **config-gated off in the demo** — see the note at the end of §5.
 
 ### Handoff pipeline
 
@@ -2712,7 +2716,7 @@ Zero lane-specific limits fall back to the shared default; not a global sum cap 
 | **`TerrainGpuVertex`** | **32 B** (`static_assert`) | POS(12) + NRM(12) + TEXCOORD_0(8) | .h:31-39 |
 | `GltfGpuInstance` | 100 B (16 model + 9 normal floats) | matches `kGltfInstanceMatrixStride`=100 (RenderCommand.h:19) | .h:41-44 |
 
-Draw-side strides mirror these: SurfaceTile=**32** (Renderer.cpp:2241), glTF=**120** (Renderer.cpp:2269), instance=**100** (Renderer.cpp:2404). `GpuReadyData.vertexStride` documents `32 (TerrainGpuVertex) or 120 (GltfGpuVertex)` (GpuReadyData.h:17). WIP: `TerrainGpuVertex` is produced/uploaded (GltfRenderGeometryBuilder.cpp:225-229, GltfRenderResourcePreparer.cpp:492-501,622-624) but never drawn — the stride-32 draw path (`terrainShader`) is unwired.
+Draw-side strides mirror these: SurfaceTile=**32** (Renderer.cpp:2241), glTF=**120** (Renderer.cpp:2269), instance=**100** (Renderer.cpp:2404). `GpuReadyData.vertexStride` documents `32 (TerrainGpuVertex) or 120 (GltfGpuVertex)` (GpuReadyData.h:17). `TerrainGpuVertex` is produced/uploaded (GltfRenderGeometryBuilder.cpp:225-229, GltfRenderResourcePreparer.cpp:492-501,622-624) **and drawn** via `terrainShader` / `makeTerrainPrimitiveCommand`. ⚠️ The former "never drawn — stride-32 draw path unwired" claim here was false; corrected 2026-08-06.
 
 ### Upload / reverse-Z constants
 

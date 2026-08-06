@@ -23,11 +23,27 @@ struct PendingGpuUpload {
     uint64_t enqueueSeq = 0;
 };
 
-/// Thread-safe queue for passing CPU-prepared data from worker threads
-/// to the main thread for GPU upload.
+/// 线程安全队列,承载「CPU 侧已备好的字节」到「建 GPU buffer」之间的一跳。
+///
+/// ⚠️ 实际线程归属(2026-08-06 复核,与旧注释所写不同):push 与 tryPop **都在主
+/// 线程**,且在同一帧内 —— push 发生在 Tileset::update 的 processPendingUploads
+/// (经 TilePendingLoadCommitCoordinator),pop 发生在同帧稍后的
+/// drainGpuUploadQueue。真正在 worker 上完成的是更早的顶点转换(写
+/// GltfPrimitive::terrainGpuVertexBytes),队列只搬运那批已做好的字节。互斥锁保护
+/// 的是 eraseCacheKey/clear 这些来自卸载路径的并发访问,不是 worker 生产者。
+///
+/// 因此这一跳换来的**唯一实际收益**是 drain 侧那道每帧上传闸(maxUploadsPerFrame
+/// 默认 4,交互期地板 2 / 空闲地板 4):超出部分自然溢到下一帧。同步路没有这层。
+///
+/// 存在条件:入队闸要求 primitive 同时具备 hasTerrainWaterMaskMetadata 与完整的
+/// terrainGpuVertexBytes,这两个字段唯一的生产者在上采样器路径里(见
+/// GltfTerrainUpsampler.h 的存活条件与 contracts::Gate::ImageryDrivenUpsample)。
+/// 生产默认 decoupleImageryFromGeometry=true → 上采样不跑 → 本队列恒空;
+/// TilesetOptions 的结构体默认是 false,那种配置下本队列**是活的**(真机对照:
+/// decouple=false 时 FIFO 契约 coverage=152)。这是配置门控,不是待接线的半成品。
 class GpuUploadQueue {
 public:
-    /// Worker thread pushes CPU-prepared data.
+    /// 入队(当前调用点在主线程,见类注释)。
     void push(PendingGpuUpload&& upload) {
         std::lock_guard<std::mutex> lock(mutex_);
         pendingBytes_ += std::max<int64_t>(0, upload.data.byteSize());
@@ -35,7 +51,7 @@ public:
         queue_.push_back(std::move(upload));
     }
 
-    /// Main thread pops the highest-priority upload (FIFO).
+    /// 出队,严格 FIFO(无优先级重排)。
     std::optional<PendingGpuUpload> tryPop() {
         std::lock_guard<std::mutex> lock(mutex_);
         if (queue_.empty()) return std::nullopt;
