@@ -55,6 +55,12 @@ _DEF_RE = re.compile(
 )
 
 
+# 顶层常量:`constexpr uint32_t kMaxLevel = 30;` / `static const float kFoo = ...`
+_CONST_RE = re.compile(
+    r'^(?:static\s+|inline\s+|constexpr\s+|const\s+)+[\w:<>,\s*&]+?'
+    r'\b(?P<name>[A-Za-z_]\w*)\s*(?:=|\{|\[)')
+
+
 def index_definitions(lines):
     """返回 {符号名: [(起始行, 结束行), ...]},行号 1-based、闭区间。"""
     starts = []  # (line_no, name)
@@ -73,7 +79,14 @@ def index_definitions(lines):
             continue
         starts.append((i, name))
 
+    # 顶层常量 / 变量定义。文档大量引用 `kMaxLevel` (.cpp:17) 这类锚点,不索引
+    # 它们的话这些**完全正确**的引用会被判成漂移 —— 假阳性进了基线就永远躺在那。
+    # 常量没有"范围",按单行处理。
     table = collections.defaultdict(list)
+    for i, line in enumerate(lines, 1):
+        m = _CONST_RE.match(line)
+        if m:
+            table[m.group('name')].append((i, i))
     for idx, (line_no, name) in enumerate(starts):
         end = starts[idx + 1][0] - 1 if idx + 1 < len(starts) else len(lines)
         table[name].append((line_no, end))
@@ -99,16 +112,34 @@ _SECTION_RE = re.compile(r'^###\s+(?:[\w./]*/)?(\w+)\.(\w+)(?:\s*/\s*\.(\w+))?')
 # 引用:可带文件名前缀(`Renderer.cpp:4418`),也可裸写(`.cpp:4418`)
 _REF_RE = re.compile(r'(?:(?<![\w.])(?P<file>\w+)\.(?P<ext1>cpp|h|mm|hpp)|'
                      r'\.(?P<ext2>cpp|h|mm|hpp)):(?P<line>\d+)')
-# 表格行里被反引号包住的第一个像函数名的东西
-_SYMBOL_RE = re.compile(r'`~?(\w+)(?:\(|`|<)')
+# 反引号包住的标识符,用来给引用找归属符号
+_SYMBOL_RE = re.compile(r'`~?(\w+)(?:\(|`|<|/)')
+
+
+def symbols_in_row(line):
+    """本行所有反引号标识符 —— 引用的归属候选集。
+
+    ⚠️ 判据是「引用须落在本行**任一**具名符号的定义范围内」,不是"第一个符号"
+    也不是"最近的前一个符号"。两种更紧的配对都试过,都造假阳性:
+
+      首符号   `QuadtreeTilingScheme` equivalent ... (.cpp:16-22)
+               首符号是类名,引用指的是成员 tileCountX —— 完全正确却被判漂移
+      最近前   `longitudeDegrees` / `latitudeDegrees` | .cpp:14-20
+               `.cpp:14` 最近的前一个符号是 latitudeDegrees(18-),但 14 是
+               longitudeDegrees —— 一行列多个函数共用一个范围时必错
+
+    实测三种判据在现有文档上:首符号 锚 572,最近前 锚 602,本判据 锚 756 ——
+    覆盖最广而假阳性最少。整行没有任何符号能解析时跳过。
+    """
+    return {m.group(1) for m in _SYMBOL_RE.finditer(line)}
 
 
 class Ref:
-    __slots__ = ('doc_line', 'path', 'line', 'symbol', 'raw')
+    __slots__ = ('doc_line', 'path', 'line', 'symbols', 'raw')
 
-    def __init__(self, doc_line, path, line, symbol, raw):
+    def __init__(self, doc_line, path, line, symbols, raw):
         self.doc_line, self.path, self.line = doc_line, path, line
-        self.symbol, self.raw = symbol, raw
+        self.symbols, self.raw = symbols, raw
 
 
 def parse_doc(doc_path, file_map, skips):
@@ -138,10 +169,10 @@ def parse_doc(doc_path, file_map, skips):
         found = list(_REF_RE.finditer(raw))
         if not found:
             continue
-        sym_m = _SYMBOL_RE.search(raw)
-        symbol = sym_m.group(1) if sym_m else None
 
+        symbols = symbols_in_row(raw)
         for fm in found:
+            symbol = None  # 归属在 check() 里按整行候选集判定
             ext = fm.group('ext1') or fm.group('ext2')
             stem = fm.group('file')
             if stem:
@@ -155,7 +186,7 @@ def parse_doc(doc_path, file_map, skips):
                 if not path:
                     skips['裸引用但本节未绑定该扩展名的源文件'] += 1
                     continue
-            refs.append(Ref(n, path, int(fm.group('line')), symbol,
+            refs.append(Ref(n, path, int(fm.group('line')), symbols,
                             raw.rstrip()))
     return refs
 
@@ -177,8 +208,11 @@ def load_baseline(path):
     with open(path, encoding='utf-8') as fh:
         for line in fh:
             line = line.strip()
-            if line and not line.startswith('#'):
-                keys.add(line)
+            if not line or line.startswith('#'):
+                continue
+            # 行尾 `# 原因` 是写给人看的判断依据 —— 一条例外没有理由,下一个人就
+            # 只能猜它是真欠账还是校验器的局限,基线很快退化成无人敢碰的黑名单。
+            keys.add(line.split('#', 1)[0].strip())
     return keys
 
 
@@ -187,14 +221,11 @@ def check(refs, skips, verbose):
     failures = []
     anchored = 0
 
-    # 同一个 (文档行, 文件, 符号) 的多个引用只要**有一个**落在符号范围内就算过 ——
-    # 一行表格常同时给出函数范围与内部若干细节行,细节行本就该在范围内,但也可能
-    # 引用邻近的常量定义。取"至少一个命中"是保守判据。
-    groups = collections.OrderedDict()
+    rows = collections.OrderedDict()
     for r in refs:
-        groups.setdefault((r.doc_line, r.path, r.symbol), []).append(r)
+        rows.setdefault((r.doc_line, r.path), []).append(r)
 
-    for (doc_line, path, symbol), group in groups.items():
+    for (doc_line, path), group in rows.items():
         if path not in cache:
             with open(path, encoding='utf-8', errors='replace') as fh:
                 lines = fh.read().splitlines()
@@ -204,7 +235,7 @@ def check(refs, skips, verbose):
         for r in group:
             if r.line > len(lines):
                 failures.append(
-                    (baseline_key(r.path, r.line, symbol),
+                    (baseline_key(r.path, r.line, None),
                      'AI_INDEX.md:%d  %s:%d 超出文件末尾(共 %d 行)'
                      % (r.doc_line, os.path.basename(path), r.line,
                         len(lines))))
@@ -216,42 +247,31 @@ def check(refs, skips, verbose):
             skips['头文件:只做越界检查,不锚定符号'] += 1
             continue
 
-        if not symbol:
-            skips['表格行未点名符号'] += 1
-            continue
-
-        ranges = table.get(symbol)
-        if not ranges:
-            skips['符号在该文件中找不到'] += 1
-            if verbose:
-                print('  SKIP AI_INDEX.md:%d  `%s` 不在 %s 中'
-                      % (doc_line, symbol, os.path.basename(path)))
+        named = sorted(group[0].symbols)
+        resolved = [s for s in named if s in table]
+        if not resolved:
+            skips['本行没有能在该文件中解析的符号'] += 1
+            if verbose and named:
+                print('  SKIP AI_INDEX.md:%d 本行符号 %s 均不在 %s 中'
+                      % (doc_line, named, os.path.basename(path)))
             continue
 
         # 定义起点容差:C++ 返回类型常独占一行(`std::optional<X>\nCls::fn(...)`),
         # 索引锚在带函数名的那行,而文档写的是**签名首行**。放宽 3 行吸收这个偏差,
         # 以及紧贴定义的 doc 注释。位移类错误动辄几百上千行,不会被这点容差掩盖。
-        def hits(line_no):
-            return any(lo - _DEF_LEAD_IN <= line_no <= hi for lo, hi in ranges)
-
-        # 判据 = **本行第一个引用**必须命中。第一个引用按本文档惯例给的就是定义
-        # 范围,后面那些是内部细节行。
-        #
-        # ⚠️ 这条是被反例控制组逼出来的。原判据是"任一引用命中即放行" —— 注入
-        # 一条漂移引用去验它时,它**没有响**:同一行里还有两个正确的细节行引用把
-        # 它盖过去了。收紧后在现有文档上只多出 6 条(206→212),代价可以忽略。
-        # 残余盲区:第一个引用碰巧还对、后面的细节行漂了,仍然测不出。
-        ok = hits(group[0].line)
-        span = '定义于 %s' % ', '.join('%d-%d' % rg for rg in ranges)
-
-        anchored += 1
-        if not ok:
+        ranges = [rg for s in resolved for rg in table[s]]
+        for r in group:
+            if r.line > len(lines):
+                continue  # 已按越界报过
+            anchored += 1
+            if any(lo - _DEF_LEAD_IN <= r.line <= hi for lo, hi in ranges):
+                continue
             failures.append(
-                (baseline_key(path, group[0].line, symbol),
-                 'AI_INDEX.md:%d  `%s` %s,但本行引用的是 %s —— 行号已漂移'
-                 % (doc_line, symbol, span,
-                    ', '.join('%s:%d' % (os.path.basename(r.path), r.line)
-                              for r in group))))
+                (baseline_key(r.path, r.line, None),
+                 'AI_INDEX.md:%d  %s:%d 不在本行任一具名符号的定义范围内'
+                 '(候选 %s)'
+                 % (doc_line, os.path.basename(path), r.line,
+                    ', '.join('%s=%s' % (s, table[s][0]) for s in resolved[:3]))))
     return failures, anchored
 
 
