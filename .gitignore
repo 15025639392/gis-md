@@ -26,3 +26,11 @@ cmake-build-*/
 # 参考项目源码本地克隆(CLAUDE.md .ref/ 约定),不入库
 .ref/
 scaffold/.ref/
+
+# CTest 运行产物(每次 ctest 重新生成,无保留价值)
+Testing/
+
+# scaffold 本地中间产物:tmp/osm 等抽取数据 255MB,纯本地不入库。
+# ⚠️ 只忽略 scaffold/tmp,**不要**写成裸 tmp/ —— 仓库根的 tmp/ab-fps/*.log 是
+# 刻意入库的 A/B 基线(73 文件/38MB),一条裸规则会把它们连带藏掉。
+scaffold/tmp/
