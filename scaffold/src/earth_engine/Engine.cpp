@@ -341,6 +341,7 @@ bool Engine::render(double deltaSeconds) {
     // 北极星 合成方案 门③ Step3 页存储原型(默认关):建 texture2DArray 页存储
     // (Step3a 合成图案填充一次)并挂到内部 Renderer;GltfDrawCommandBuilder 对
     // 目标 capped 真实地形瓦片挂 array + 门控采样。挂上后持久生效(下帧起应用)。
+    double pageStoreMs = 0.0;
     if (terrainPageStoreEnabled_ && !terrainPageStoreInitFailed_) {
         if (!terrainPageStore_) {
             auto store = std::make_unique<TerrainPageStore>();
@@ -356,6 +357,7 @@ bool Engine::render(double deltaSeconds) {
         }
         // 渲染线程驱动:目标锁定后 kick 异步影像 fetch + 排空已到达影像灌 layer。
         if (terrainPageStore_) {
+            const double pageStoreStartMs = perf::nowMs();
             // 北极星 SVT B2a 门②:选择完成(FrameState + tilePlan 已填)后、tick 前,
             // 跑「屏幕可见影像页 determination」并插桩(纯读 + log,不碰池/fetch/render)。
             // 主相机视图 + 本帧可见瓦片 + 影像 provider 三者齐备才跑;否则跳过。
@@ -387,6 +389,10 @@ bool Engine::render(double deltaSeconds) {
                 }
             }
             terrainPageStore_->tick();
+            // 这段跑在 update 与 begin 之间,不属于头行任何既有分段 ——
+            // 不单独计时的话,页存储的合成/上传/叠画成本在慢帧归因里
+            // 表现为「总量减分段的无名差值」(z9-10 pan 实测差值 ~170ms)。
+            pageStoreMs = perf::nowMs() - pageStoreStartMs;
         }
     }
     if (scene_->shouldHoldPresentationFrame()) {
@@ -555,9 +561,10 @@ bool Engine::render(double deltaSeconds) {
     }
     char detail[800];
     std::snprintf(detail, sizeof(detail),
-        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s%s%s",
+        "begin=%.2f update=%.2f pageStore=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s%s%s",
         diag.engineBeginFrameMs,
         diag.sceneUpdateMs,
+        pageStoreMs,
         diag.sceneRenderMs,
         diag.renderSubmitMs,
         diag.engineEndFrameMs,

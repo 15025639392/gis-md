@@ -23,6 +23,10 @@ uint64_t packTile(const TileKey& key) {
 
 constexpr int kMaxUploadsPerTick = 4;  // 建 GPU buffer 涓流,勿在一帧里灌爆
 
+/// 未消费瓦片的淘汰保护时长(tick ≈ 帧)。到期兜底针对「页先被页存储换租、
+/// 瓦片永远等不到消费」的僵尸条目;正常收敛远快于此,不靠它。
+constexpr uint64_t kProtectionTicks = 600;
+
 }  // namespace
 
 struct VectorPageDrawer::Inbox {
@@ -117,12 +121,14 @@ void VectorPageDrawer::tickDecorator() {
     // fetch≈0 而 drawn 持续高 = pass 数本身是成本,得从合批/降频下手。
     if (++tickCounter_ % 60u == 0u) {
         platformLog(LogLevel::Warning, "VecPage",
-                    "cachedTiles=%d ready=%d drawn+=%d fetch+=%d evict=%d",
+                    "cachedTiles=%d ready=%d drawn+=%d fetch+=%d evict=%d "
+                    "defer+=%d",
                     static_cast<int>(tiles_.size()), readyTiles_,
                     drawnPages_ - lastDrawn_, fetchesKicked_ - lastFetches_,
-                    evictions_);
+                    evictions_, admissionDeferrals_ - lastDeferrals_);
         lastDrawn_ = drawnPages_;
         lastFetches_ = fetchesKicked_;
+        lastDeferrals_ = admissionDeferrals_;
     }
     std::vector<Inbox::Item> ready;
     {
@@ -176,20 +182,32 @@ void VectorPageDrawer::tickDecorator() {
     }
 }
 
-void VectorPageDrawer::touchAndTrim(uint64_t srcPacked) {
+void VectorPageDrawer::touch(uint64_t srcPacked) {
     auto posIt = lruPos_.find(srcPacked);
     if (posIt != lruPos_.end()) {
         lru_.erase(posIt->second);
     }
     lru_.push_front(srcPacked);
     lruPos_[srcPacked] = lru_.begin();
-    while (lru_.size() > options_.maxCachedTiles) {
-        const uint64_t victim = lru_.back();
-        lru_.pop_back();
+}
+
+bool VectorPageDrawer::tryEvictOne() {
+    for (auto it = lru_.rbegin(); it != lru_.rend(); ++it) {
+        const auto tileIt = tiles_.find(*it);
+        const bool evictable =
+            tileIt == tiles_.end() || tileIt->second.consumed ||
+            tickCounter_ - tileIt->second.admittedTick > kProtectionTicks;
+        if (!evictable) {
+            continue;
+        }
+        const uint64_t victim = *it;
+        lru_.erase(std::next(it).base());
         lruPos_.erase(victim);
         tiles_.erase(victim);  // GPU buffer 随 unique_ptr 释放
         ++evictions_;
+        return true;
     }
+    return false;
 }
 
 bool VectorPageDrawer::ensureFramebuffer(Texture* target) {
@@ -229,29 +247,41 @@ bool VectorPageDrawer::decoratePage(const TileKey& pageKey, Texture* target,
 
     auto it = tiles_.find(srcPacked);
     if (it == tiles_.end()) {
-        tiles_[srcPacked] = GpuTile{};
-        touchAndTrim(srcPacked);
+        // 准入控制(收敛不变量):满员且全员受保护(未消费)时拒绝准入。
+        // 硬挤会淘汰别人还没消费的瓦片 —— 可见页数超过容量时整个系统
+        // fetch→evict→重拉 永不收敛,矢量在宽视野档位一个页都画不上。
+        if (tiles_.size() >= std::max<size_t>(1, options_.maxCachedTiles) &&
+            !tryEvictOne()) {
+            ++admissionDeferrals_;
+            return false;  // 等槽位:先让已在途的瓦片被消费
+        }
+        GpuTile& admitted = tiles_[srcPacked];
+        admitted.admittedTick = tickCounter_;
+        touch(srcPacked);
         kickFetch(srcKey, srcPacked);
         return false;  // 源在路上,页存储后续帧再叫
     }
-    touchAndTrim(srcPacked);
+    touch(srcPacked);
     GpuTile& gpu = it->second;
     switch (gpu.state) {
         case TileState::Pending:
             return false;
         case TileState::Empty:
         case TileState::Failed:
+            gpu.consumed = true;
             return true;  // 没得画/画不了,都算「已处理」,别无限重试
         case TileState::Ready:
             break;
     }
 
     if (!ensureFramebuffer(target)) {
+        gpu.consumed = true;  // 页不会再来问,别让它占死保护槽位
         return true;
     }
     // ⚠️ 改绑失败必须短路:继续画会画到上一次绑定的层上 ——
     // 现象是「别处的路网出现在这块地面上」,极难反推。
     if (!device_->setFramebufferColorLayer(framebuffer_.get(), target, layer)) {
+        gpu.consumed = true;  // 同上:返回 true 后该页不再重试
         return true;
     }
 
@@ -293,6 +323,7 @@ bool VectorPageDrawer::decoratePage(const TileKey& pageKey, Texture* target,
     device_->submit(list);
     device_->endPass();
     ++drawnPages_;
+    gpu.consumed = true;  // 服务过至少一个页,自此可被正常 LRU 换出
     return true;
 }
 

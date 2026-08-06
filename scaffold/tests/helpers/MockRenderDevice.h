@@ -140,6 +140,12 @@ public:
         return std::make_unique<DummyFramebuffer>(desc.width, desc.height);
     }
 
+    bool setFramebufferColorLayer(Framebuffer*, Texture*, int layer) override {
+        ++colorLayerRebindCount;
+        lastColorLayerBound = layer;
+        return framebufferColorLayerRebindSucceeds;
+    }
+
     size_t readFramebufferPixels(Framebuffer*,
                                  int,
                                  int,
@@ -238,6 +244,11 @@ public:
     size_t lastEnqueueBytes = 0;
     int beginPassCount = 0;
     int endPassCount = 0;
+    int colorLayerRebindCount = 0;
+    int lastColorLayerBound = -1;
+    /// 层改绑结果。默认 true(生产 GLES/Metal 都支持);测「不支持后端的
+    /// 回落路径」的用例置 false。
+    bool framebufferColorLayerRebindSucceeds = true;
     Framebuffer* lastPassTarget = nullptr;
     // 测试预置的 feedback 像素(RGBA8),readFramebufferPixels 平铺回填之。
     std::vector<uint8_t> cannedFeedbackPixels;
