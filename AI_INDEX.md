@@ -2064,6 +2064,44 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 
 `makeTileGeometry(gridSize)` (.cpp:3998-4026) builds a UV-only grid VBO (`TileVertex{{u,v}}`) + `uint32_t` index buffer; `initialize()` keeps only the IBO. The `GlobeMesh`/`GlobeVertex` types and `globe/Globe.{h,cpp}` are **deleted** — there is no fallback ellipsoid background; before tiles load the screen shows clear color only. Terrain flows entirely through the Tileset + glTF-content path.
 
+### TerrainPageStore.h / .cpp
+
+**稀疏页存储** —— 地形表面影像的常驻纹理池。把地形瓦片切成 `gridN²` 个 cell,
+每个 cell 独立按 LRU 拿一层 `texture2DArray`,着色器通过一张间接纹理查层号。
+取代了"每瓦片一张合成影像"的旧路径,是纹理/几何解耦(北极星 Phase 2a)的落地物。
+
+| 类 | 行 | 职责 |
+|---|---|---|
+| `TerrainPageLayerPool` | .h:37-86 | 层池 LRU:`acquire`(可回报被淘汰者)/`touch`/`release`;`blockLayers` 支持一页占多层 |
+| `PageSourceAssembler` | .h:88-128 | 多源**按序**合成一页:`accept(sourceIndex, rgba)`,乱序早到的源进 `stash_` 暂存 |
+| `TerrainPageDecorator` | .h:130-159 | 页装饰回调接口(矢量叠加走这里,见 E4 影像通道) |
+| `TerrainPageStore` | .h:161- | 主体 |
+
+| 方法 | 行 | 说明 |
+|---|---|---|
+| `initialize(device, Config)` | .cpp:784-833 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
+| `updateVisiblePages(view, ...)` | .cpp:376-774 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:846-881 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:883-894 | 每帧驱动:`drainInbox` + `retryPendingDecorations` |
+| `drainInbox` / `kickPageFetches` | .cpp:961-1039 / :922-959 | 解码结果回收(上传预算在此生效) / 发起缺页请求 |
+| `retryPendingDecorations` | .cpp:896-920 | 装饰失败重试 |
+| `resamplePageSource` | .cpp:238-304 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
+| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:349-354 / :356-374 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
+| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:306-317 / :319-323 / :325-327 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
+| `packKey` / `unpackKey` (static) | .cpp:337-347 / :329-335 | TileKey ↔ uint64 页键 |
+
+**常量**:`kIndirSideTexels`=64、`kIndirArrayLayers`=256 (.h:72-73)。
+
+⚠️ **合批资格闸**(`DetTileCacheEntry::fullyResident`,updateVisiblePages 内):
+资格 = 「**所有会产生片元的 cell 都有页**」。视锥外剔除的 cell 不产生片元可放行;
+**SSE 地板剔除的 cell 仍然产生片元,必须挡住**。旧闸要求 `gridN²`(=1024)全驻留而
+全局仅 ~52 页 → 事实上不可达、合批长期空转且无人察觉(修复 1c913d68b)。
+`sseFloorCulled` 必须与 `kept` 同生命周期(几何遍历只在 det-cache miss 时跑)。
+
+**机器可查契约**:`contracts::Id::PageDecorateOrdering`(.cpp:911、:1019)——
+装饰必须晚于页内容就位。**策略指标**:`PageResidency` / `CellPageCoverage` /
+`IndirLayerAllocNoEvict`(见 `debug/Policies.h`,owner 均指向本文件)。
+
 ### IPrepareRendererResources.h
 
 | Item | Lines | Description |
@@ -2291,6 +2329,66 @@ cesium-native `ActivatedRasterOverlay` equivalent. Wraps a `RasterOverlay&` (mus
 | `syncProviderOptionsFromOverlay` (private) | .h:65 / .cpp:120-135 | re-derives throttle from overlay (`>0 ? : 20`), calls `applyOwnerOptions()` on both providers |
 
 Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
+
+### FeatureRenderLayer.h / .cpp
+
+矢量要素渲染层(2192 行,**本索引此前完全没有条目**)。以 `FeatureStore` 为数据源,
+镶嵌成 GPU 桶后出 RenderCommand;贴地、标签避让、拾取、编辑预览都在这里。
+矢量系统 P1-P6 的落点(总设计见 docs/issues 里的矢量系列)。
+
+| 类型 | 行 | 说明 |
+|---|---|---|
+| `FeaturePickResult` | .h:31-48 | 拾取结果(featureId + 命中位置/环号/顶点号) |
+| `FeatureAltitudeMode` | .h:50-55 | 高度模式:贴地 / 相对 / 绝对 |
+| `FeatureRenderStyle` | .h:57-118 | 样式(表达式驱动,见 `StyleExpression`) |
+| `FeatureTerrainSampling` | .h:120-144 | 贴地采样参数(细分间距 / Steiner 点) |
+| `FeatureRenderLayer` | .h:146- | 主体 |
+
+| 方法 | 行 | 说明 |
+|---|---|---|
+| `setStyle` | .cpp:186-217 | 换样式并标脏;越界表达式在此剥离降级 |
+| `makeClampSampler` / `prepareClampedFeature` | .cpp:256-281 / :283-355 | 贴地方案 A:边细分 + Steiner 采高,与渲染网格**同源采样**(顶破根修) |
+| `syncDirtyBuckets` | .cpp:357-364 | 每帧入口:重建脏桶,返回重建数 |
+| `tessellateFeatureInto` | .cpp:366-702 | 镶嵌总控(面/线/点/标签分派) |
+| `appendFillVolume` / `appendLineVolume` | .cpp:716-873 / :875-1113 | 面体 / 线体几何生成(线含 dash、闭环 seam 复制) |
+| `uploadBucketGpu` | .cpp:1116-1206 | 桶上传;⚠️ fade/opacity 变化也必须回写(曾因"无变化早退"导致 opacity 永不回写) |
+| `rebuildBucket` | .cpp:1208-1274 | 单桶重建 |
+| `tessellateTileMesh` / `commitTileMesh` / `dropTileMesh` | .cpp:1278-1304 / :1306-1324 / :1326-1328 | MVT 底图路径:瓦片即桶,镶嵌在 worker 完成(E1) |
+| `buildRenderCommands` | .cpp:1330-1438 | 出命令总入口 |
+| `visibleBucketKeys` | .cpp:1440-1508 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:1510-1583 | 标签避让 + fade + 地平线剔除(P5c) |
+| `appendTerrainOcclusion` | .cpp:1590-1600 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:1602-1876 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:1882-1896 / :1898-1903 / :1905-1917 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
+| `pick` | .cpp:1974-2190 | 要素拾取 |
+
+⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
+**0 次提及**。
+
+### 索引覆盖缺口(2026-08-06 实测)
+
+`scaffold/src` 下 **103 个 .cpp 没有专属小节**,其中 >300 行的 13 个。本轮补了
+`TerrainPageStore`(1041 行)与 `FeatureRenderLayer`(2192 行)两个最大的。**仍缺**:
+
+| 文件 | 行数 | 全文提及 |
+|---|---|---|
+| `TileBoundsMetrics` | 857 | 1 |
+| `SceneTilesetDiagnostics` | 802 | 1 |
+| `TileAvailability` | 740 | **0** |
+| `MvtDecoder` | 537 | **0** |
+| `TileScheme` | 385 | 6 |
+| `FeatureSpatialIndex` | 371 | **0** |
+| `TerrainDisplacementTemplatePool` | 347 | **0** |
+| `OffscreenPostProcess` | 332 | **0** |
+| `HeightmapTerrainContentProvider` | 332 | 1 |
+| `ConstrainedDelaunay` | 330 | **0** |
+| `SceneRenderDiagnostics` | 323 | 1 |
+| `VectorPageDrawer` | 299 | **0** |
+| `TileGeomorphHeightDelta` | 288 | **0** |
+
+这些大多是 2026-07-01 索引重生成**之后**才建的子系统(矢量数据系统、页存储、
+MVT 底图、地形实例化)。行号守卫对"整个文件没被收录"完全免疫 —— 它只校验
+已经写下的引用。
 
 ### CreditSystem.h / .cpp
 
