@@ -1075,6 +1075,60 @@ Files read and verified: all listed content-lifecycle files under `/Users/ldy/De
 
 ---
 
+### TileBoundsMetrics.h / .cpp
+
+瓦片包围体的几何度量与视锥相交判定(857 行)。选择/遍历阶段的纯函数集合。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `terrainHeightPadding` (2 个重载) | .cpp:18-20 / :22-31 | 由 min/max 高度给包围体加高度余量 |
+| `intersectRayPlane` | .cpp:42-65 | 射线-平面求交(匿名) |
+| `sphereIntersectsSelectionFrustum` | .cpp:67-76 | 球 vs 选择视锥 |
+| `obbIntersectsSelectionFrustum` | .cpp:78-87 | OBB vs 选择视锥 |
+| `s2CellIntersectsSelectionFrustum` | .cpp:89-98 | S2 cell 包围体 vs 选择视锥 |
+| `computeBoundingRegionPlanes` | .cpp:100-182 | 由地理矩形构造包围区域的平面集 |
+| `tileBoundsCenterFromRectangle` | .cpp:184-190 | 矩形 → ECEF 中心 |
+| `computeApproximateDistanceToTileBounds` | .cpp:192-214 | 近似距离(SSE 计算的输入) |
+| `computeTileBoundsRadius` | .cpp:216-231 | 包围半径 |
+| `projectPointToTangentPlane` / `tangentPlaneDistance` | .cpp:233-237 / :239-243 | 切平面投影与距离 |
+| `obbFromPlaneExtents` | .cpp:245-275 | 由平面范围构造 OBB |
+
+### TileScheme.h / .cpp
+
+分片方案工厂(385 行)。`TileScheme` 抽象出 zoom↔矩形↔TileKey 的映射,
+供 provider 与 selector 共用。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `kMaxWebMercatorLat` | .cpp:18 | `WebMercatorProjection::maximumLatitude()` |
+| `mercatorFractionToLongitude` / `longitudeToMercatorFraction` | .cpp:26-28 / :30-32 | 墨卡托 x 分数 ↔ 经度 |
+| `mercatorFractionToLatitude` / `latitudeToMercatorFraction` | .cpp:34-39 / :41-45 | 墨卡托 y 分数 ↔ 纬度 |
+| `groupBaseY` / `groupForY` | .cpp:47-49 / :51-55 | OpenGlobus 分组 y 基准 |
+| `quadtreeTileCount` | .cpp:57-60 | `rootTiles << zoom` |
+| `createXYZWebMercator` | .cpp:129-131 | **XYZ/WebMercator**(标准瓦片) |
+| `createTMS` | .cpp:206-208 | TMS(y 翻转) |
+| `createOpenGlobusEarth` | .cpp:319-321 | OpenGlobus 方案 |
+| `createGeographicTMS` | .cpp:381-383 | 地理坐标 TMS |
+
+### TileAvailability.h / .cpp
+
+3D Tiles **implicit tiling** 的可用性位图(740 行)。子树缓冲 + Morton 索引。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `TileAvailabilityFlags` / `ConstantTileAvailability` | .h:14-26 / :28-30 | 可用性标志 / 常量可用性 |
+| `TileSubtreeBufferView` / `TileAvailabilitySubtree` / `TileAvailabilityNode` | .h:32-39 / :41-46 / :48-54 | 子树缓冲视图与节点 |
+| `TileAvailabilityAccessor` | .h:56- | 位图访问器 |
+| `mortonIndex` (2D/3D) | .cpp:21-32 / :42-44 | 四叉树 / 八叉树 Morton 编码 |
+| `quadtreeCoordinatesInLevel` / `octreeCoordinatesInLevel` | .cpp:50-56 / :58-70 | 坐标合法性 |
+| `availabilityBitSet` | .cpp:80-95 | 查某瓦片的可用位 |
+| `childSubtreeIndex` | .cpp:97-132 | 子子树索引 |
+| `countOnesInBuffer` (2 个重载) | .cpp:164-170 / :172-176 | popcount(可用瓦片计数) |
+
+⚠️ 当前唯一的地形 provider(Heightmap)**不使用**这套空间性可用性 ——
+它的 `availabilityState` 只看 `key.z`,四兄弟恒同答案。这正是
+`GltfTerrainUpsampler` 的 TerrainAvailability 触发路运行时不可达的原因。
+
 ## 7. tiling — raster overlay mapping
 
 ### RasterMappedToTilesetTile.h / .cpp
@@ -1691,6 +1745,55 @@ Note: none of the raster-overlay path is affected by the (now-vestigial) async t
 
 ---
 
+### TileGeomorphHeightDelta.h / .cpp
+
+geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDelta 写成
+"到父级表面的差值",着色器按 morph 因子插值。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `triangleHeight` | .cpp:32-? | 三角形内插高度(匿名) |
+| `findParentSurface` | .cpp:204-225 | 沿父链找到有表面网格的祖先 + 其变换 |
+| `applyParentGeomorph` | .cpp:229-286 | 写回 `terrainGpuVertexBytes` 每顶点 offset 28 的 float32 |
+
+⚠️ **当前已停用**:变体 A 的父级采样起点采到粗祖先,山峰区表现为"从地壳浮上来",
+且父采样在主线程执行、是拖动卡顿来源。demo 同步关了 `enableLodTransitionPeriod`
+(shader w=1,无 morph),heightDelta 维持 worker 写入的 0。待地形连续 LOD 重设计
+整体换成规则栅格 + GPU 高度纹理 + 距离连续 morph。
+
+### TerrainDisplacementTemplatePool.h / .cpp
+
+**共享位移模板池**(347 行)。P5b:细节地形瓦片不再各自烘 VBO,改为共用一份
+32B 模板几何 + 每瓦片一张高度/法线纹理,由 shader 做位移。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `cacheKey` | .cpp:17-30 | TileKey + 参数 → 模板缓存键 |
+| `acquire` | .cpp:32-115 | 取(或建)一份模板几何 |
+| `heightCacheKey` | .cpp:117-128 | 高度纹理缓存键 |
+| `findHeightArray` / `ensureHeightArray` | .cpp:130-134 / :136-162 | 按 gridSize 取/建高度 texture array |
+| `bakeTerrainHeightNormalTexels` | .cpp:164-274 | 烘高度 + **切空间法线到 B/A 通道** |
+| `acquireHeightTexture` | .cpp:277-337 | 取高度纹理层 |
+| `touchHeightTexture` | .cpp:339- | LRU 触碰 |
+
+### HeightmapTerrainContentProvider.h / .cpp
+
+Terrain-RGB heightmap 地形 provider(332 行)。当前**唯一**的真实高程源。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `createScheme` / `rootRectangleForScheme` / `quadtreeChildrenForKey` (anon) | .cpp:32-37 / :39-43 / :45-58 | 分片方案辅助 |
+| `makeHeightSampler` | .cpp:60-89 | `EllipsoidProxyHeightSampler`(相机高度查询用) |
+| ctor | .cpp:93-102 | |
+| `id` / `supportsTile` / `rootTiles` | .cpp:100-102 / :104-112 / :114-117 | |
+| `tileMetadata` / `childTiles` | .cpp:119-148 / :150-161 | |
+| `availabilityState` | .cpp:163-167 | ⚠️ **只看 `key.z`** —— 非空间性(见 TileAvailability 一节的说明) |
+
+⚠️ **nodata 哨兵**:Terrain-RGB 的 `-10000` 由解码器**隐式注册**,不在配置清单里。
+`EnvSnapshot.nodataRegisteredCount` 报的是**实际生效**的哨兵数
+(`effectiveNoDataCount()`),不是配置项个数 —— 这个字段本身曾经报错过。
+机器可查契约:`contracts::Id::DemNodataSentinel`。
+
 ## 10. terrain — TerrainTile, DecodedHeightmap
 
 The quantized-mesh terrain path (`QuantizedMeshParser`, `QuantizedMeshAvailability`, `QuantizedMeshContentLoader`, `QuantizedMeshTerrainProvider`) and the Cesium ion terrain integration have been **fully removed**. Heightmap terrain (CPU-baked regular-grid, see `HeightmapTerrainProvider` in §9) is now the only terrain source; `EllipsoidTerrainContentProvider` remains as its ellipsoid fallback. This section now covers only the surviving terrain height-sampling type and the generic quadtree geometric-error helpers (§2, `QuadtreeGeometricError.h/.cpp`).
@@ -2142,6 +2245,36 @@ Concrete `RasterTextureUploader` backed by a `RenderDevice`.
 
 ---
 
+### SceneTilesetDiagnostics.h / .cpp
+
+tileset 侧诊断快照(802 行)。**快照 → 累加 → 落盘**三段式,避免逐帧直接写
+`Diagnostics` 造成读写竞争。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `SceneProviderRequestDiagnosticsSnapshot` | .h:11-28 | provider 请求计数快照 |
+| `SceneFrameResourceBudgetDiagnosticsSnapshot` | .h:30-58 | 帧预算快照 |
+| `SceneTilesetDiagnosticsSnapshot` | .h:60-144 | tileset 主快照 |
+| `SceneProviderRequestDiagnosticsSnapshot::fromProvider` / `::add` | .cpp:151-174 / :176-202 | 采集 / 累加 |
+| `SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget` / `::add` | .cpp:204-246 / :248-284 | 同上 |
+| `SceneTilesetDiagnosticsSnapshot::fromTileset` | .cpp:286-420 | 从 Tileset 采一帧 |
+| `SceneTilesetDiagnosticsSnapshot::add` | .cpp:422-585 | 多 tileset 累加 |
+| `SceneTilesetDiagnosticsSnapshot::applyTo` | .cpp:587-711 | 写进 `Diagnostics` |
+| `addSaturating` / `saturatingAddInt` | .cpp:19-25 / :27-30 | 饱和加(计数器不回绕) |
+
+### SceneRenderDiagnostics.h / .cpp
+
+渲染命令侧诊断(323 行),与上一节同构。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `SceneRenderCommandDiagnosticsSnapshot` | .h:10-38 | 命令计数快照 |
+| `SceneSurfaceCommandGenerationDiagnosticsSnapshot` | .h:40-49 | 表面命令代次快照 |
+| `...::fromCommands` | .cpp:68-180 / :183-214 | 从 RenderCommandList 采集 |
+| `resetRenderCommandFields` | .cpp:216-287 | |
+| `updateSurfaceCommandGeneration` | .cpp:289-302 | |
+| `addRenderCommands` / `finalizeRenderCommandFields` | .cpp:304-311 / :313-321 | |
+
 ## 14. platform — GLES, Metal, platform + curl bridges
 
 ### RenderDeviceGLES.h / .cpp
@@ -2288,6 +2421,41 @@ Single translation unit defining `STB_IMAGE_IMPLEMENTATION` (avoids multiple-def
 
 ---
 
+### OffscreenPostProcess.h / .cpp
+
+离屏后处理(332 行)。一个 framebuffer + 一个全屏三角形 + 按 `Effect` 选片元着色器。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| 内置 GLSL | — | `kFullscreenVertGLSL` (.cpp:14)、`kBlitFragGLSL` (.cpp:26)、`kFxaaFragGLSL` (.cpp:39,`luma` 辅助在 .cpp:52) |
+| `diagTag` / `fragForEffect` | .cpp:179-189 / :191-206 | Effect → 诊断名 / 片元源 |
+| `initialize` | .cpp:208-249 | 编 shader,建全屏几何 |
+| `ensureFramebuffer` | .cpp:251-276 | 按尺寸建/复用 FBO |
+| `buildCommand` | .cpp:278-323 | 出后处理 RenderCommand |
+| `dispose` | .cpp:325-330 | |
+
+⚠️ 离屏 FBO **必须带 stencil 附件**,否则贴地面的 stencil 测试恒通过、整侧影染色
+(P6a 根因)。判别法:改 stencil func 探针画面不变 = 先查附件。
+
+### VectorPageDrawer.h / .cpp
+
+矢量页装饰器(299 行)。E4:把矢量栅格化进地形页存储的页纹理,
+**冒充影像**复用整套地形合成 —— 实现 `TerrainPageDecorator` 接口。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `packTile` | .cpp:18-36 | TileKey → uint64 |
+| ctor / dtor | .cpp:38-46 / :48 | 持 device / renderer |
+| `makePageOrtho` | .cpp:50-78 | 页局部正交投影矩阵 |
+| `kickFetch` | .cpp:80-112 | 拉取该页覆盖的 MVT 源瓦片 |
+| `tickDecorator` | .cpp:114-177 | 每帧驱动:解码回收 + 触发装饰 |
+| `touchAndTrim` | .cpp:179-193 | 源瓦片 LRU |
+| `ensureFramebuffer` | .cpp:195-209 | 绑定到页纹理层的 FBO |
+| `decoratePage` | .cpp:211-297 | **把矢量画进页** |
+
+⚠️ E4 根因教训:地形着色器的**页存储采样覆盖了 mappedRaster**,叠加层必须挪到
+页存储之后;同名 uniform 在两个 FS 各有声明,改一半即黑屏。
+
 ## 15. layers — RasterOverlay, ActivatedRasterOverlay, VectorLayer, CreditSystem
 
 ### RasterOverlay.h / .cpp
@@ -2367,28 +2535,23 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 
 ### 索引覆盖缺口(2026-08-06 实测)
 
-`scaffold/src` 下 **103 个 .cpp 没有专属小节**,其中 >300 行的 13 个。本轮补了
-`TerrainPageStore`(1041 行)与 `FeatureRenderLayer`(2192 行)两个最大的。**仍缺**:
+按「`scaffold/src` 下的 .cpp 是否有专属 `###` 小节」清点。本轮从 13 个 >300 行的
+缺口补到 **0 个** —— 新建 15 节:`TerrainPageStore`、`FeatureRenderLayer`、
+`TileBoundsMetrics`、`TileScheme`、`TileAvailability`、`TileGeomorphHeightDelta`、
+`TerrainDisplacementTemplatePool`、`HeightmapTerrainContentProvider`、
+`SceneTilesetDiagnostics`、`SceneRenderDiagnostics`、`OffscreenPostProcess`、
+`VectorPageDrawer`、`data/MvtDecoder`、`data/FeatureSpatialIndex`、
+`data/ConstrainedDelaunay`。
 
-| 文件 | 行数 | 全文提及 |
-|---|---|---|
-| `TileBoundsMetrics` | 857 | 1 |
-| `SceneTilesetDiagnostics` | 802 | 1 |
-| `TileAvailability` | 740 | **0** |
-| `MvtDecoder` | 537 | **0** |
-| `TileScheme` | 385 | 6 |
-| `FeatureSpatialIndex` | 371 | **0** |
-| `TerrainDisplacementTemplatePool` | 347 | **0** |
-| `OffscreenPostProcess` | 332 | **0** |
-| `HeightmapTerrainContentProvider` | 332 | 1 |
-| `ConstrainedDelaunay` | 330 | **0** |
-| `SceneRenderDiagnostics` | 323 | 1 |
-| `VectorPageDrawer` | 299 | **0** |
-| `TileGeomorphHeightDelta` | 288 | **0** |
+仍有 **88 个 .cpp 无专属小节**,但全部 ≤300 行,最大的几个:
+`TerrainInstanceBatcher` 285 / `TileSoftwareOcclusionPolicy` 271 / `Rectangle` 271 /
+`VtIndirectionSamplePoc` 265 / `debug/Contracts` 263 / `TileContentAccess` 260 /
+`FeatureClusterIndex` 255。其中 `debug/Contracts`、`debug/Policies`、
+`debug/EnvSnapshot` 是三层诊断信号体系(见各自头注释,契约/策略的 owner 表就在里面)。
 
-这些大多是 2026-07-01 索引重生成**之后**才建的子系统(矢量数据系统、页存储、
-MVT 底图、地形实例化)。行号守卫对"整个文件没被收录"完全免疫 —— 它只校验
-已经写下的引用。
+⚠️ **行号守卫对这一类完全免疫** —— 它只校验已经写下的引用,查不出"整个文件没被
+收录"。这是继「内容失真」之后第二类工具查不到的失效;唯一的检测手段是像这样
+定期清点文件。
 
 ### CreditSystem.h / .cpp
 
@@ -2553,6 +2716,52 @@ Pass emission — `scene/SceneRenderPipeline.cpp`:
 - Command ordering (`renderer/RenderCommand.h:23-24`): `SkyBackground` order 0, `AtmosphereBackground` order 5 — skybox first, atmosphere over it, both before/behind terrain per depth rules noted above.
 
 ---
+
+### data/MvtDecoder.h / .cpp
+
+Mapbox Vector Tile 解码器(537 行)。P4 矢量底图的入口。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `MvtPoint` / `MvtGeomType` / `MvtFeature` / `MvtLayer` / `MvtTile` / `MvtPolygon` | .h:16-22 / :24-29 / :31-44 / :46-51 / :53-56 / :58- | 解码产物 |
+| `zigzagDecode` | .cpp:96-103 | PBF zigzag |
+| `doubleToShortestString` / `parseValueToString` | .cpp:105-115 / :117-174 | 属性值 → 字符串 |
+| `decodeGeometry` | .cpp:176-222 | 命令流 → 点/线/环 |
+| `readRepeatedUint32` | .cpp:226-258 | packed 字段 |
+| `parseFeature` / `parseLayer` | .cpp:260-293 / :298-383 | |
+| `looksCompressed` / `inflateBytes` | .cpp:389-402 / :404-443 | gzip 自动识别 + 解压 |
+| `decodeMvtTile` | .cpp:445-496 | **主入口** |
+| `mvtRingSignedArea2` / `classifyMvtRings` | .cpp:498-507 / :509-535 | 环定向 → 外环/内环分类 |
+
+⚠️ 水面"溢出"疑似 Absolute 视差,**不要**当成环分类 bug 去查。
+
+### data/FeatureSpatialIndex.h / .cpp
+
+要素空间索引(371 行)。**R 树**,支撑拾取与视口裁剪。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `area` / `enlargement` | .cpp:40-45 / :47-52 | R 树代价函数 |
+| `recomputeMbr` | .cpp:54-79 | 重算最小包围矩形 |
+| `insert` | .cpp:81-95 | |
+| `chooseSubtree` | .cpp:97-112 | 按 enlargement 选子树 |
+| `insertRec` / `splitNode` | .cpp:114-143 / :145-235 | 递归插入 + 节点分裂 |
+| `query` / `queryRec` | .cpp:241-247 / :249-265 | 矩形查询 |
+| `remove` | .cpp:267-314 | |
+
+### data/ConstrainedDelaunay.h / .cpp
+
+约束 Delaunay 三角剖分(330 行)。面要素镶嵌用。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `orient2d` / `inCircleDet` / `inCircleUnsigned` | .cpp:21-24 / :26-34 / :36-42 | 几何谓词 |
+| `segmentsProperlyCross` | .cpp:44-52 | 线段真相交 |
+| `edgeKey` | .cpp:54-56 | 无向边键 |
+| `triangulate` | .cpp:323-328 | **主入口** |
+
+⚠️ 破碎多边形三因之一是 **CDT 自交**,需在入口做预分裂(另两因:山体穿面 → P3
+贴地根治;pick 椭球抬高)。
 
 ## 17. interaction — InputManager, PickingService, SelectionManager
 
