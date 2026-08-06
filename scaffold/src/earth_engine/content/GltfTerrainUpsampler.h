@@ -8,6 +8,24 @@
 
 namespace earth_engine {
 
+// 存活条件(2026-08-05 复核,见 contracts::Gate::ImageryDrivenUpsample):
+// 本上采样器只有唯一消费者 TileGltfTerrainUpsampledChildMaterializer,后者只在
+// 瓦片被标为 upsample 时才跑,而标记只有两个来源:
+//   ① RasterDetail(TileChildMaterializer::materializeRasterUpsampledChildren)
+//      —— 影像 isMoreDetailAvailable 驱动几何细分。仅
+//      decoupleImageryFromGeometry=false 时存在(TileRasterUpsampledChild-
+//      Coordinator 在 true 时直接早退)。生产默认 true,故这条路默认关闭。
+//   ② TerrainAvailability(TileChildMaterializer::materializeTerrainChildren)
+//      —— 覆盖边缘上「兄弟中有人 Available、自己 NotAvailable」的洞瓦片,从已
+//      覆盖的父级裁剪出真地形而非拍平成椭球(见 CompositeTerrainProvider::
+//      isPureHoleQuad 与 test_composite_terrain_provider 的 CoverageEdge 用例)。
+//      这条与 decouple 无关,但要求内容 provider 的 availability 是**空间性**的
+//      (同层兄弟可以不同)。当前唯一的地形 provider(Heightmap[+Ellipsoid 兜底])
+//      的 availability 只看 key.z,四个兄弟恒同答案,故运行时不可达。
+// 结论:接一个带真实覆盖索引的 partial 数据源(layer.json availability /
+// 稀疏 DEM 覆盖掩码),或把 decoupleImageryFromGeometry 关回 false,本文件立刻
+// 复活。改动上述任一条件时请同步更新此注释与 contracts 的 Gate 登记。
+
 // Child window inside the parent's texcoord space ([0,1] x [0,1]). Values are
 // raw UV coordinates: for inverted-V texcoord sets the caller must flip the
 // projected window into UV space before passing it here (v0 < v1 always).
