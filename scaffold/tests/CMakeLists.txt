@@ -1128,3 +1128,25 @@ add_executable(test_atmosphere_scattering
 )
 target_link_libraries(test_atmosphere_scattering PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_atmosphere_scattering COMMAND test_atmosphere_scattering)
+
+# ============================================================
+# 文档一致性(非 C++ 测试)
+# ============================================================
+
+# AI_INDEX.md 的 `File.cpp:1234` 引用与源码的一致性。
+# 只查落点是否命中声称的符号,**不查文字描述是否属实** —— 后者只能靠人读源码,
+# 详见脚本头注释。已知陈旧引用记在 tools/ai_index_refs_baseline.txt,命中基线的
+# 不判失败但每次都打印条数;新增漂移才 FAIL。
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(
+        NAME test_ai_index_refs
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_ai_index_refs.py
+                --doc ${CMAKE_CURRENT_SOURCE_DIR}/../../AI_INDEX.md
+                --src ${CMAKE_CURRENT_SOURCE_DIR}/../src
+                --baseline
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/ai_index_refs_baseline.txt)
+else()
+    message(STATUS "未找到 Python3,跳过 test_ai_index_refs")
+endif()
