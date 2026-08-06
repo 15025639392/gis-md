@@ -517,6 +517,16 @@ Note: none of these modules touch the async-terrain GPU-upload path (`TerrainGpu
 
 ---
 
+### Rectangle.h / .cpp / Ray.h / .cpp / Plane.h / .cpp
+
+三个基础几何值类型。
+
+| 文件 | 关键项 | 说明 |
+|---|---|---|
+| `Rectangle` (271 行) | `fromDegrees` (Rectangle.cpp:19)、`westDegrees`/`southDegrees`/`eastDegrees`/`northDegrees` (Rectangle.cpp:27-30)、`width` (Rectangle.cpp:32)、`height` (Rectangle.cpp:39)、`center` (Rectangle.cpp:41) | 地理矩形(弧度存储,度数是转换出口)。`width` 单独实现是因为要处理跨反经线 |
+| `Ray` (40 行) | ctor (Ray.cpp:12)、`pointAt` (Ray.cpp:19)、`transform` (Ray.cpp:23) | 射线;拾取与相交测试的输入 |
+| `Plane` (29 行) | `ORIGIN_XY`/`ORIGIN_YZ`/`ORIGIN_ZX` (Plane.cpp:11-13)、两个 ctor (Plane.cpp:15 / :22)、`projectPointOntoPlane` (Plane.cpp:25) | 平面 |
+
 ## 5. tiling — Tileset: selection / traversal / LOD
 
 ### Tileset.h / .cpp
@@ -738,6 +748,101 @@ Post-fan-out decision combining kick + preload. `evaluate` (.cpp:7-43): runs `Ti
 ⚠️ Thread attribution: both `push` and `tryPop` run **on the main thread, in the same frame** (push in `processPendingUploads`, pop in the later `drainGpuUploadQueue`). Worker threads do the earlier vertex conversion, not the enqueue. The one real benefit of the split is the drain-side per-frame upload cap (`maxUploadsPerFrame`=4, interaction floor 2 / idle floor 4) with spillover to the next frame.
 
 ---
+
+### 选择策略族 — TileSelectionPreTraversalPolicy / TileSelectionRefineFlowPolicy / TileSelectionSummaryPolicy / TileSelectionResetPolicy / TileSelectionRenderEntryPolicy / TileSelectionTraversalCounterPolicy / TileSelectionStateResetter / TileSelectionPlanAppender
+
+遍历过程中的**纯决策**单元:输入状态、输出一个 plan,自己不改世界。
+这样切是为了让每条策略能单测,也让 `TileSelectionTraversalExecutor` 只剩编排。
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TileSelectionPreTraversalPolicy` (40) | `plan` (TileSelectionPreTraversalPolicy.cpp:5) | 进入瓦片前的裁决 |
+| `TileSelectionRefineFlowPolicy` (68) | `evaluate` (TileSelectionRefineFlowPolicy.cpp:7) | 细化 / 不细化 |
+| `TileSelectionSummaryPolicy` (70) | `planTile` (TileSelectionSummaryPolicy.cpp:5)、`planFrame` (TileSelectionSummaryPolicy.cpp:55) | 逐瓦片与逐帧汇总 |
+| `TileSelectionResetPolicy` (15) | `plan` (TileSelectionResetPolicy.cpp:5) | 重置裁决 |
+| `TileSelectionRenderEntryPolicy` (13) | `plan` (TileSelectionRenderEntryPolicy.cpp:5) | 是否产出 render entry |
+| `TileSelectionTraversalCounterPolicy` (42) | `planVisitAccepted` (TileSelectionTraversalCounterPolicy.cpp:6)、`planOutcome` (TileSelectionTraversalCounterPolicy.cpp:13)、`planRefineFlow` (TileSelectionTraversalCounterPolicy.cpp:29) | 计数器怎么加 |
+| `TileSelectionStateResetter` (33) | `resetOne` (TileSelectionStateResetter.cpp:10) | 执行重置 |
+| `TileSelectionPlanAppender` (55) | `queueTileLoad` (TileSelectionPlanAppender.cpp:11)、`addTileToCurrentPlan` (TileSelectionPlanAppender.cpp:19) | 写入 plan |
+
+⚠️ 移植自 cesium-native 时有 **3 处 raw 不对称是故意的**,不要"修"。
+
+### 选择遍历支撑 — TileSelectionVisitPreparation / TileSelectionVisibilitySampler / TileSelectionMetrics / TileSelectionHistory / TileSelectionTraversalDetailsBuilder / TileVisibleRangeFinalizer / TileSelectionFrameBuilder / TileSelectionFrameFinalizationRunner
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TileSelectionVisitPreparation` (129) | `prepare` (TileSelectionVisitPreparation.cpp:10)、`earlyExitPlan` (TileSelectionVisitPreparation.cpp:79)、`outcomePlan` (TileSelectionVisitPreparation.cpp:106) | 访问前置 |
+| `TileSelectionVisibilitySampler` (117) | `cameraInsideSelectionBounds` (TileSelectionVisibilitySampler.cpp:36)、`boundsVisible` (TileSelectionVisibilitySampler.cpp:49)、`sampleTileBounds` (TileSelectionVisibilitySampler.cpp:56)、`sampleChildBounds` (TileSelectionVisibilitySampler.cpp:63) | 可见性采样。⚠️ 曾因逐瓦片 OBB 重构造成拖动掉帧 |
+| `TileSelectionMetrics` (44) | `computeFogDensity` (TileSelectionMetrics.cpp:8)、`isVisibleInFog` (TileSelectionMetrics.cpp:37) | 雾剔除 |
+| `TileSelectionHistory` (41) | `wasRenderedLastFrame` (TileSelectionHistory.cpp:8)、`childWasRefinedLastFrame` (TileSelectionHistory.cpp:13)、`anyDescendantWasRenderedLastFrame` (TileSelectionHistory.cpp:26) | 上帧状态查询(kick 判据的输入) |
+| `TileSelectionTraversalDetailsBuilder` (51) | `forSingleTile` (TileSelectionTraversalDetailsBuilder.cpp:21)、`forCulledTile` (TileSelectionTraversalDetailsBuilder.cpp:33) | 遍历明细 |
+| `TileVisibleRangeFinalizer` (53) | `dedupeVisibleTiles` (TileVisibleRangeFinalizer.cpp:11)、`updateVisibleZoomRange` (TileVisibleRangeFinalizer.cpp:39) | 可见集去重 + zoom 区间 |
+| `TileSelectionFrameBuilder` (24) | `build` (TileSelectionFrameBuilder.cpp:7) | 造 `SelectorFrame` |
+| `TileSelectionFrameFinalizationRunner` (42) | `finalize` (TileSelectionFrameFinalizationRunner.cpp:10) | 帧末收尾 |
+
+### 异步选择 — TileSelectionWorker / TileSelectionShadowRunner / TileSelectionShadowTree
+
+选择跑在**影子树**上、离开渲染线程(实测 selector 2ms)。影子树是活注册表的
+只读镜像,避免遍历期与加载写入打架。
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TileSelectionWorker` (95) | ctor (TileSelectionWorker.cpp:10)、`buildShadow` (TileSelectionWorker.cpp:26)、`dispatch` (TileSelectionWorker.cpp:38)、`tryTakeResult` (TileSelectionWorker.cpp:56) | 派发与回收 |
+| `TileSelectionShadowRunner` (159) | `run` (TileSelectionShadowRunner.cpp:47)、`buildShadow` (TileSelectionShadowRunner.cpp:63)、`selectOnShadow` (TileSelectionShadowRunner.cpp:68);`shadowOnVisitTile` (TileSelectionShadowRunner.cpp:35)、`shadowNotOccluded` (TileSelectionShadowRunner.cpp:41) | 在影子树上跑一遍选择 |
+| `TileSelectionShadowTree` (110) | `mirrorReadSurface` (TileSelectionShadowTree.cpp:11)、`build` (TileSelectionShadowTree.cpp:63) | 镜像活注册表 |
+
+### 瓦片注册与访问 — TilesetTileRegistry / TileContentAccess / TileIndexState / TileEmptyContentRegistry / TilesetTerrainProviders / SchemeId
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TilesetTileRegistry` (136) | `ensureTile` (TilesetTileRegistry.cpp:42)、`findTile` (TilesetTileRegistry.cpp:120 / TilesetTileRegistry.cpp:128);`initializeVirtualTerrainRoot` (TilesetTileRegistry.cpp:21) | 瓦片表 |
+| `TileContentAccess` (260) | `forContentTerrain` (TileContentAccess.cpp:59)、`forNoTerrain` (TileContentAccess.cpp:72)、ctor (TileContentAccess.cpp:85);`linkChildIfMissing` (TileContentAccess.cpp:24)、`initializeTerrainChild` (TileContentAccess.cpp:28) | 内容访问外观(有无地形两种装配) |
+| `TileIndexState` (31) | `markEligibleForUnloading` (TileIndexState.cpp:13)、`markIneligibleForUnloading` (TileIndexState.cpp:25) | 卸载资格位 |
+| `TileEmptyContentRegistry` (36) | `contains` (TileEmptyContentRegistry.cpp:5)、`insert` (TileEmptyContentRegistry.cpp:13)、`erase` (TileEmptyContentRegistry.cpp:21)、`clear` (TileEmptyContentRegistry.cpp:26) | 空内容登记(避免反复请求已知空瓦片) |
+| `TilesetTerrainProviders` (17) | ctor (TilesetTerrainProviders.cpp:5)、`contentProviderOwnsTerrainQuadtree` (TilesetTerrainProviders.cpp:9)、`hasTerrainQuadtree` (TilesetTerrainProviders.cpp:13) | 地形 provider 归属 |
+| `SchemeId` (33) | `intern` (SchemeId.cpp:9)、`emptyString` (SchemeId.cpp:29) | 方案 id 字符串驻留 |
+
+### 加载/卸载策略 — TileTerminalLoadPolicy / TileTerminalLoadCommitter / TileLoadResultMetadataApplicator / TileUnloadPolicy / TileUnloadQueue / TileCacheMetrics / TileContentResourceInvalidator
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TileTerminalLoadPolicy` (116) | `markUnknownTemporaryFailure` (TileTerminalLoadPolicy.cpp:12)、`markUnknownPermanentFailure` (TileTerminalLoadPolicy.cpp:27)、`clearRenderResidueForTerminalNonRenderContent` (TileTerminalLoadPolicy.cpp:35)、`applyNativeEmptyContentRefinement` (TileTerminalLoadPolicy.cpp:42) | 终态处置。⚠️ **Failed 态也必须进保护集** —— 否则 fill 代理每帧重建成风暴(掠视 40ms) |
+| `TileTerminalLoadCommitter` (55) | `commitTerminalResult` (TileTerminalLoadCommitter.cpp:37);`commitTerminalResultImpl` (TileTerminalLoadCommitter.cpp:8) | 提交终态 |
+| `TileLoadResultMetadataApplicator` (127) | `apply` (TileLoadResultMetadataApplicator.cpp:47);`isDefaultLooseRegion` (TileLoadResultMetadataApplicator.cpp:17)、`hasLooseFittingHeights` (TileLoadResultMetadataApplicator.cpp:26)、`hasValidBoundingRegion` (TileLoadResultMetadataApplicator.cpp:33 / TileLoadResultMetadataApplicator.cpp:39) | 把加载结果的包围体/高度写回瓦片。⚠️ 上采样曾在此毒化真实 bounds(黑带根因) |
+| `TileUnloadPolicy` (96) | `isEligibleForContentUnloadQueue` (TileUnloadPolicy.cpp:9)、`hasReferencedDescendant` (TileUnloadPolicy.cpp:21)、`hasContentLoadingUpsampledDirectChild` (TileUnloadPolicy.cpp:32)、`shouldDeferForReferences` (TileUnloadPolicy.cpp:44) | 能不能卸 |
+| `TileUnloadQueue` (66) | `contains` (TileUnloadQueue.cpp:5)、`pushBackIfAbsent` (TileUnloadQueue.cpp:12)、`erase` (TileUnloadQueue.cpp:23)、`popFront` (TileUnloadQueue.cpp:32) | 卸载队列 |
+| `TileCacheMetrics` (87) | `estimateHeightmapBytes` (TileCacheMetrics.cpp:38)、`estimateTileBytes` (TileCacheMetrics.cpp:43);`estimateTextureBytes` (TileCacheMetrics.cpp:15)、`estimateRasterMappingBytes` (TileCacheMetrics.cpp:21) | 字节预算的计量口径 |
+| `TileContentResourceInvalidator` (39) | ctor (TileContentResourceInvalidator.cpp:11)、`markResourcesChanged` (TileContentResourceInvalidator.cpp:17)、`markTileResourcesChanged` (TileContentResourceInvalidator.cpp:21)、`reconcileTileResources` (TileContentResourceInvalidator.cpp:27) | 资源失效 |
+
+### 渲染帧执行 — TilesetUpdateFrameFacade / TilesetRenderFrameExecutor / TileRenderFrameContext / TileRenderCommandManager / TileRenderPlanFrameRefresher / TileFillProxyPreparer / TileRenderablePolicy
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TilesetUpdateFrameFacade` (42) | `update` (TilesetUpdateFrameFacade.cpp:13) | update 外观 |
+| `TilesetRenderFrameExecutor` (92) | `buildRenderCommands` (TilesetRenderFrameExecutor.cpp:12) | 出命令 |
+| `TileRenderFrameContext` (58) | `markIneligibleForUnloading` (TileRenderFrameContext.cpp:8)、`trackRenderReference` (TileRenderFrameContext.cpp:13)、`buildTileDrawCommand` (TileRenderFrameContext.cpp:24)、`renderCommandTimings` (TileRenderFrameContext.cpp:42) | 帧上下文 + **渲染引用跟踪**(submit 前不得释放,见 §20) |
+| `TileRenderCommandManager` (61) | ctor (TileRenderCommandManager.cpp:10)、`beginFrame` (TileRenderCommandManager.cpp:20)、`buildTileDrawCommand` (TileRenderCommandManager.cpp:30) | 常驻命令缓存。⚠️ **勿把逐帧字段写回常驻命令** |
+| `TileRenderPlanFrameRefresher` (213) | `refreshFrameCredits` (TileRenderPlanFrameRefresher.cpp:86);`collectReadyRasterTileCredits` (TileRenderPlanFrameRefresher.cpp:42)、`collectRenderContentCredits` (TileRenderPlanFrameRefresher.cpp:61)、`collectRasterOverlayProviderCredits` (TileRenderPlanFrameRefresher.cpp:68)、`collectMappedRasterProgress` (TileRenderPlanFrameRefresher.cpp:107) | 归属信息与栅格进度 |
+| `TileFillProxyPreparer` (203) | `ensureFillProxy` (TileFillProxyPreparer.cpp:89);`uploadFillPrimitive` (TileFillProxyPreparer.cpp:21) | **fill 代理**(加载期占位)。⚠️ 曾贴海平面导致破洞;fill 是堵洞的不是解缝的 |
+| `TileRenderablePolicy` (51) | `isCompleteRenderable` (TileRenderablePolicy.cpp:5)、`hasSurfaceDrawable` (TileRenderablePolicy.cpp:33) | 可渲染判定 |
+
+### 剔除与高度 — TileSoftwareOcclusionPolicy / TileTerrainHeightRangePolicy / TileViewerRequestVolumePolicy / LoadedTerrainHeightSampler / TileSurface
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TileSoftwareOcclusionPolicy` (271) | `sphereFullyOccluded` (TileSoftwareOcclusionPolicy.cpp:64)、`boxFullyOccluded` (TileSoftwareOcclusionPolicy.cpp:87);`isUsableHorizonOcclusionPoint` (TileSoftwareOcclusionPolicy.cpp:24)、`scaledPointOccludedByHorizon` (TileSoftwareOcclusionPolicy.cpp:29)、`pointOccludedByEllipsoid` (TileSoftwareOcclusionPolicy.cpp:44) | 地平线遮挡剔除。⚠️ QM 的 `(0,0,0)` 哨兵曾被当成遮挡坐标导致拼布 —— 退化 point 要跳快路径 |
+| `TileTerrainHeightRangePolicy` (52) | `setTerrainHeightRange` (TileTerrainHeightRangePolicy.cpp:9)、`setDefaultTerrainHeightRange` (TileTerrainHeightRangePolicy.cpp:22)、`inheritTerrainHeightRange` (TileTerrainHeightRangePolicy.cpp:30)、`inheritHeightRangeForUnreadyChildren` (TileTerrainHeightRangePolicy.cpp:43) | 高度区间继承 |
+| `TileViewerRequestVolumePolicy` (35) | `hasRequestVolume` (TileViewerRequestVolumePolicy.cpp:7)、`containsPosition` (TileViewerRequestVolumePolicy.cpp:12)、`allowsAnyView` (TileViewerRequestVolumePolicy.cpp:20) | viewer request volume |
+| `LoadedTerrainHeightSampler` (193) | `TerrainAncestorHeightSource` 的 `find` (LoadedTerrainHeightSampler.cpp:108) 与 `sample` (LoadedTerrainHeightSampler.cpp:119);`commitBestSample` (LoadedTerrainHeightSampler.cpp:21)、`sampleFromSortedCandidates` (LoadedTerrainHeightSampler.cpp:44)、`hasUsableHeightmap` (LoadedTerrainHeightSampler.cpp:97) | 从已加载地形采高(相机贴地、矢量贴地共用) |
+| `TileSurface` (39) | `computeTranslationAndScale` (TileSurface.cpp:10) | **已裁剪到只剩栅格 UV 辅助** —— 网格构建早已搬走 |
+
+### tiling 诊断 — TileLoadDiagnostics / TilesetProviderDiagnosticsCollector / TileFrameDebugLogFormatter
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TileLoadDiagnostics` (120) | `loadQueueTotal` (TileLoadDiagnostics.cpp:11)、`pendingTerrainTotal` (TileLoadDiagnostics.cpp:17)、`pendingContentTotal` (TileLoadDiagnostics.cpp:23)、`collect` (TileLoadDiagnostics.cpp:29) | 加载队列计数 |
+| `TilesetProviderDiagnosticsCollector` (103) | `maximumTransportActiveRequests` (TilesetProviderDiagnosticsCollector.cpp:11)、`applyTo` (TilesetProviderDiagnosticsCollector.cpp:20)、`collectContentAndRaster` (TilesetProviderDiagnosticsCollector.cpp:36)、`collect` (TilesetProviderDiagnosticsCollector.cpp:43) | provider 侧请求计数 |
+| `TileFrameDebugLogFormatter` (174) | `updateDetail` (TileFrameDebugLogFormatter.cpp:7)、`updateTailDetail` (TileFrameDebugLogFormatter.cpp:107)、`renderBuildDetail` (TileFrameDebugLogFormatter.cpp:135) | 帧日志格式化(**定容 `std::array`,热路径零堆分配**) |
 
 ## 6. tiling — content lifecycle / loading / caching / GPU upload
 
@@ -1815,6 +1920,38 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 ---
 
+### content/TerrainDisplacementTemplate.h / .cpp
+
+共享位移模板的**几何数据**(212 行);池化管理在 `TerrainDisplacementTemplatePool`。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `TerrainDisplacementTemplateVertex` / `TerrainDisplacementTemplate` | .h:28-32 / :34- | 32B 顶点与模板体 |
+| `tileCenterCartographic` / `terrainTemplateTileFrame` | .cpp:30 / :44 | 瓦片中心与 ENU 模板帧 |
+| `buildTerrainDisplacementTemplate` | .cpp:48 | **建模板**(规则栅格 + 裙边) |
+| `reconstructTemplateWorldPosition` | .cpp:201 | 由模板 + 高度重建世界位置(CPU 侧与 shader 对齐用) |
+
+### content/CompositeTerrainProvider.h / .cpp
+
+多地形源合成 provider(159 行)。主源不可用时回落次源。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `primaryAvailable` | .cpp:18 | 主源是否覆盖该瓦片 |
+| `isPureHoleQuad` | .cpp:23 | **纯洞四元组**判定 —— 兄弟中有人 Available、自己 NotAvailable 的覆盖边缘。这是 `GltfTerrainUpsampler` 的 TerrainAvailability 路唯一的真实触发场景(见 `test_composite_terrain_provider` 的 CoverageEdge 用例) |
+| `id` / `supportsTile` / `rootTiles` / `tileMetadata` / `childTiles` | .cpp:42 / :47 / :51 / :57 / :66 | provider 契约转发 |
+
+### providers/VectorImageryProvider.h / .cpp
+
+把矢量瓦片栅格化后**冒充影像**供给的 provider(95 行)。E4 贴地方案的供给侧。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `toDecodedImage` | .cpp:12 | `VectorRasterImage` → `DecodedImage` |
+| `VectorImageryProvider` ctor / `buildUrl` | .cpp:25 / :31 | |
+| `requestTile` | .cpp:36 | 取 MVT → 栅格化 |
+| `decodeTile` / `decodeTileAtZoom` | .cpp:80 / :85 | |
+
 ## 11. camera — Camera, CameraController
 
 ### CameraController.h / .cpp
@@ -2456,6 +2593,91 @@ Single translation unit defining `STB_IMAGE_IMPLEMENTATION` (avoids multiple-def
 ⚠️ E4 根因教训:地形着色器的**页存储采样覆盖了 mappedRaster**,叠加层必须挪到
 页存储之后;同名 uniform 在两个 FS 各有声明,改一半即黑屏。
 
+### PolarCapRenderer.h / .cpp
+
+极冠补面(182 行)。地形瓦片在两极留有缺口,用一圈扇形网格补上。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `buildCapMesh` | .cpp:23 | 建极冠网格(`poleSign` +1 北 / -1 南) |
+| `ensureBuilt` | .cpp:91 | 惰性建 VBO |
+| `appendCommands` | .cpp:131 | 追加渲染命令 |
+
+由 `SceneRenderPipeline::polarCap_` 持有。
+
+### ScenePresentationTraceBuilder.h / .cpp
+
+呈现追踪构建器(222 行)。把一帧的相机/选择器/tileset 状态打成结构化 trace,
+供离线比对与回归。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `ScenePresentationTraceInput` | .h:14-19 | 输入 |
+| `wrapPositiveRadians` | .cpp:31 | 角度归一 |
+| `populateCameraTrace` | .cpp:40 | 相机位姿 |
+| `populateSelectorViewTrace` | .cpp:83 | 选择器视图 |
+| `appendTilesetTrace` | .cpp:96 | 逐 tileset |
+
+### ScenePrimaryTilesetRenderComposer.h / .cpp / ScenePrimaryTilesetTakeoverPolicy.h / .cpp
+
+主 tileset 的**接管与合成**(186 + 119 行)。新旧 tileset 切换时决定谁出画、
+何时把覆盖权交出去,避免切换瞬间露天。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `ScenePrimaryTilesetRenderComposition` | Composer .h:11-19 | 合成结果 |
+| `isAncestorOrSame` / `entriesOverlap` | Composer .cpp:17 / :29 | 覆盖关系判定 |
+| `isStableRealTerrainEntry` | Composer .cpp:36 | 只有稳定的真实地形条目才算数(fill 代理不算) |
+| `keepsCurrentCoverageLevel` | Composer .cpp:51 | 覆盖层级不得倒退 |
+| `childrenOf` / `appendUncoveredRegions` | Composer .cpp:69 / :80 | 未覆盖区域补齐 |
+| `ScenePrimaryTilesetTakeoverState` | Takeover .h:7-9 | 接管状态 |
+| `stableSelectedEntryCount` / `selectedEntryCount` | Takeover .cpp:61 / :68 | 接管判据的两个计数 |
+
+⚠️ 相关事故:`presented=0` 死锁曾因**把条数当覆盖度**用;hold 类闸会憋死自己的诊断。
+
+### SceneTerrainQuery.h / .cpp
+
+地形高度查询(99 行)。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `makeLngLatHeightSampler` | .cpp:13 | 造采样器闭包 |
+| `sampleHeight` | .cpp:22 | 单点高度 |
+| `sampleAreaHeights` | .cpp:38 | 批量(矢量贴地用) |
+
+⚠️ 相机 inertia 期高频调用曾达 169ms,修法是高空早退;低空仍缺空间索引。
+
+### SceneFrameDiagnostics.h / .cpp / SceneFrameDiagnosticsAggregator.h / .cpp
+
+帧级诊断的重置与汇总(59 + 37 行)。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `resetPerFrame` | Diagnostics .cpp:10 | 每帧清零 |
+| `updateFrameRate` | Diagnostics .cpp:20 | 帧率 |
+| `recordEngineTiming` / `finishEngineFrame` | Diagnostics .cpp:33 / :53 | 引擎耗时 |
+| `aggregateRenderFrame` | Aggregator .cpp:9 | 汇总(由 `SceneRenderPipeline::aggregateDiagnostics` 调用) |
+
+### ios/IosPlatformBridge.h / .mm
+
+iOS 平台桥(225 行)。`PlatformBridge` 的 Apple 实现,网络走 `NSURLSession`。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `IosPlatformBridgeImpl` | .h:5 | pImpl |
+| ctor | .mm:38 | |
+| `onMemoryPressure` / `onEnterBackground` / `onEnterForeground` | .mm:51 / :52 / :53 | **均为空实现** —— 与 Android 侧会取消排队 curl 请求不同 |
+| `get` | .mm:55 | HTTP GET |
+| `cacheDirectory` | .mm:111 | |
+
+平台层是 ports-and-adapters:中间层零平台宏,日志一律走 `platformLog()`。
+
+### stb_image_impl.cpp / stb_truetype_impl.cpp
+
+第三方单头库的实现单元(5 行级)。只做 `#define STB_*_IMPLEMENTATION` + `#include`,
+把实现塞进一个 TU。⚠️ stb 头曾不在 include 路径里,已补;字体须为 TTF,
+CJK `.ttc`(CFF 轮廓)会被 stb_truetype 拒收。
+
 ## 15. layers — RasterOverlay, ActivatedRasterOverlay, VectorLayer, CreditSystem
 
 ### RasterOverlay.h / .cpp
@@ -2533,25 +2755,20 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
 
-### 索引覆盖缺口(2026-08-06 实测)
+### 索引覆盖(2026-08-06 清零并接闸)
 
-按「`scaffold/src` 下的 .cpp 是否有专属 `###` 小节」清点。本轮从 13 个 >300 行的
-缺口补到 **0 个** —— 新建 15 节:`TerrainPageStore`、`FeatureRenderLayer`、
-`TileBoundsMetrics`、`TileScheme`、`TileAvailability`、`TileGeomorphHeightDelta`、
-`TerrainDisplacementTemplatePool`、`HeightmapTerrainContentProvider`、
-`SceneTilesetDiagnostics`、`SceneRenderDiagnostics`、`OffscreenPostProcess`、
-`VectorPageDrawer`、`data/MvtDecoder`、`data/FeatureSpatialIndex`、
-`data/ConstrainedDelaunay`。
+按「`scaffold/src` 下每个 .cpp/.mm 是否有专属 `###` 小节」清点。
 
-仍有 **88 个 .cpp 无专属小节**,但全部 ≤300 行,最大的几个:
-`TerrainInstanceBatcher` 285 / `TileSoftwareOcclusionPolicy` 271 / `Rectangle` 271 /
-`VtIndirectionSamplePoc` 265 / `debug/Contracts` 263 / `TileContentAccess` 260 /
-`FeatureClusterIndex` 255。其中 `debug/Contracts`、`debug/Policies`、
-`debug/EnvSnapshot` 是三层诊断信号体系(见各自头注释,契约/策略的 owner 表就在里面)。
+**缺口已清零** —— 从 13 个 >300 行的空白一路补到全部 **89 个文件**都有条目;
+`test_ai_index_refs` 的覆盖阈值随之收到 **0**,即**每一个** .cpp/.mm 都必须有小节,
+新增文件不写条目就红。例外表 `_COVERAGE_EXEMPT` 目前为空,加条目必须写理由。
+
+小文件按族合并到一个 `###` 标题下(标题里逐个点名,校验器认的就是标题里的文件名),
+例如「选择策略族」「data/ — 矢量数据管线」;大文件各自成节。
 
 ⚠️ **行号守卫对这一类完全免疫** —— 它只校验已经写下的引用,查不出"整个文件没被
-收录"。这是继「内容失真」之后第二类工具查不到的失效;唯一的检测手段是像这样
-定期清点文件。
+收录"。这是继「内容失真」之后第二类工具查不到的失效,现在由覆盖检查兜住;
+**内容失真仍然只能靠人读源码**。
 
 ### CreditSystem.h / .cpp
 
@@ -2599,6 +2816,99 @@ GeoJSON vector layer: owns `GeoFeature` set + `OverlayStyle`, tessellates each f
 Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian` (.cpp:29-31); `subdivideArc` slerp + `scaleToGeodeticSurface`, default 16 segs (.cpp:37-50); ear-clipping `isEar`/`signedArea2D`/`projectToLocalTangentPlane`/`triangulatePolygon` with fan-triangulation fallback (.cpp:56-173); `kQuadIndices` = {0,1,2,0,2,3} (.cpp:125). Point path emits a camera-facing billboard quad in world space at draw time (`vertexStride`=12, .cpp:125-173); Line/Polygon upload `tess.vertices` directly (.cpp:125-173). `u_modelViewProjection` = camera view-projection (`vpUniform`, .cpp:125-173).
 
 ---
+
+### TerrainInstanceBatcher.h / .cpp
+
+地形实例化**合批器**(285 行)。把多条同模板的地形 draw 合成一条实例化命令。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `rejectReasonFor` | .cpp:23 | **返回首个不合批的理由**(10 个互斥原因),不是 bool —— 一个 bool 说不清"为什么没合上" |
+| `extractRow` | .cpp:51 | 相对矩阵取行(96B 实例流的 rel×3) |
+| `acquireInstanceBuffer` | .cpp:60 | 实例 buffer 池 |
+| `rejectReasonName` | .cpp:85 | 理由名(诊断打印) |
+| `batchTemplateGridIsUniform` / `firstMismatchedTemplateGrid` | .cpp:102 / :112 | **纯谓词、public** —— 故意暴露出来让单测不需要 GL 上下文就能验判据 |
+
+契约 `contracts::Id::BatchTemplateGridParity` 的判定点在此。
+⚠️ 资格闸本身在 `TerrainPageStore`(见该节);闸曾长期不可达导致合批空转。
+
+### TerrainDepthPrepass.h / .cpp
+
+半分辨率地形深度 prepass(112 行)。给符号(billboard/标签)做地形遮挡(T2)。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `initialize` / `dispose` | .cpp:10 / :26 | |
+| `ensureFramebuffer` | .cpp:35 | 半分辨率深度 FBO |
+| `extractTerrainCommands` | .cpp:68 | 从主命令表抽地形命令(复用地形 VS + 空片元) |
+| `depthTexture` | .cpp:108 | 供符号 shader 采样 |
+
+### GlyphAtlas.h / .cpp / IconAtlas.h / .cpp
+
+字形图集(227 行)与图标图集(108 行)。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `GlyphAtlas` ctor / `setFontData` | Glyph .cpp:40 / :47 | stb_truetype 装载 |
+| `ready` / `atlasFullDropCount` | Glyph .cpp:92 / :93 | 就绪与**图集满丢弃计数**(诊断) |
+| `ascent` / `descent` | Glyph .cpp:94 / :95 | 基线度量 |
+| `IconAtlas` ctor / `addImage` | Icon .cpp:23 / :29 | |
+| `frame` / `empty` / `pageFullRejectCount` / `texture` | Icon .cpp:95 / :100 / :102 / :104 | |
+
+⚠️ 真机字体须用 `Oplus-Serif.ttf` 之类的 **TTF**;CJK `.ttc` 是 CFF 轮廓,stb 拒收。
+
+### 虚拟纹理 POC 三件套 — VirtualTexturePage.h / .cpp / VirtualTexturePoc.h / .cpp / VtIndirectionSamplePoc.h / .cpp / TileCompositeBakePoc.h / .cpp
+
+**POC(概念验证)代码**,不在生产路径上。页存储(`TerrainPageStore`)是它们探索
+之后的产物;保留是为了保住实验结论与对照实现。
+
+| 文件 | 关键项 | 说明 |
+|---|---|---|
+| `VirtualTexturePage` (135) | `VtPageId` (.h:25)、`decodeFeedbackPixels` (VirtualTexturePage.cpp:7)、`VtPageTable` 的 `registerVisible` (VirtualTexturePage.cpp:63) 与 `slotOf` (VirtualTexturePage.cpp:54) | 页表 + GPU 反馈解码 |
+| `VirtualTexturePoc` (238) | `initialize` (VirtualTexturePoc.cpp:22)、`ensureResources` (VirtualTexturePoc.cpp:73)、`tick` (VirtualTexturePoc.cpp:108)、`writeIndirection` (VirtualTexturePoc.cpp:192)、`atlasBytes` (VirtualTexturePoc.cpp:217) | 完整 VT 回路 POC |
+| `VtIndirectionSamplePoc` (265) | `makeFragGLSL` (VtIndirectionSamplePoc.cpp:34)、`buildShader` (VtIndirectionSamplePoc.cpp:63)、`initialize` (VtIndirectionSamplePoc.cpp:72)、`ensureResources` (VtIndirectionSamplePoc.cpp:161) | 间接采样的着色器实验(`descentLevels` 参数化) |
+| `TileCompositeBakePoc` (169) | `initialize` (TileCompositeBakePoc.cpp:36)、`ensureResources` (TileCompositeBakePoc.cpp:81)、`tick` (TileCompositeBakePoc.cpp:102)、`dispose` (TileCompositeBakePoc.cpp:161) | 瓦片合成烘焙 POC |
+
+### layers/LabelPlacement.h / .cpp
+
+标签避让(219 行)。P5c:屏幕空间碰撞 + fade + 优先级。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `LabelCandidate` / `LabelPlacementStats` | .h:15-23 / :25-50 | 候选与统计 |
+| `update` | .cpp:77 | **主入口**:碰撞消解 → 每个 id 的目标 opacity |
+| `opacity` | .cpp:214 | 查询当前 opacity(供桶回写) |
+
+⚠️ 根因教训:桶重镶后 **opacity 永不回写** —— fade 收敛的"变化位"早退把它吞了,
+`subdata` 是无辜的。地平线 fade 用缩放空间 margin 公式。
+
+### style/OverlayStyle.h / .cpp
+
+叠加层样式值类型(12 行)。`Color` (.h:16)、`AltitudeMode` (.h:47)、
+`PointStyle` (.h:58)、`LineStyle` (.h:71);`InteractionStyle::find` (.cpp:5)
+按状态名查交互态覆盖。
+
+### data/ — 矢量数据管线 — FeatureStore / FeatureBucketGrid / FeatureClusterIndex / FeatureSnapQuery / PolygonTessellator / LineTessellator / StyleExpression / StyleFilter / GeoJsonParser / GeoJsonImporter / MvtVectorSource / VectorTileTree / MvtFeatureConverter / VectorTileMeshBuilder / VectorTileRasterizer
+
+`FeatureStore` 为中心的要素数据层 + MVT 底图管线。总设计见矢量系统系列记录。
+
+| 文件 | 关键项 | 说明 |
+|---|---|---|
+| `FeatureStore` (90) | `computeBoundsFromRings` (FeatureStore.cpp:8)、`addFeature` (FeatureStore.cpp:27)、`removeFeature` (FeatureStore.cpp:45)、`updateFeature` (FeatureStore.cpp:54)、`getFeature` (FeatureStore.cpp:74)、`queryVisible` (FeatureStore.cpp:79) | **要素数据源**,矢量系统的中心 |
+| `FeatureBucketGrid` (105) | `packCell` (FeatureBucketGrid.cpp:20)、`cellX`/`cellY` (FeatureBucketGrid.cpp:25/:29)、`bucketFor` (FeatureBucketGrid.cpp:33) | 按格分桶(桶 = GPU 上传粒度) |
+| `FeatureClusterIndex` (255) | `build` (FeatureClusterIndex.cpp:36)、`levelIndexForZoom` (FeatureClusterIndex.cpp:157)、`toCluster` (FeatureClusterIndex.cpp:169)、`query` (FeatureClusterIndex.cpp:183) | 点聚合。**只出索引,渲染归应用层**(269 个点 → 12 个簇) |
+| `FeatureSnapQuery` (121) | `closestPointOnSegment` (FeatureSnapQuery.cpp:16)、`nearest` (FeatureSnapQuery.cpp:32) | 编辑吸附 |
+| `PolygonTessellator` (234) | `quantize`/`coordKey` (PolygonTessellator.cpp:20/:24)、`tessellate` (PolygonTessellator.cpp:33) | 面镶嵌(内部走 CDT) |
+| `LineTessellator` (94) | `dist3` (LineTessellator.cpp:12)、`tessellate` (LineTessellator.cpp:19) | 线镶嵌 |
+| `StyleExpression` (207) | `literal` (StyleExpression.cpp:29/:36)、`literalString` (StyleExpression.cpp:44)、`get` (StyleExpression.cpp:51)、`zoom` (StyleExpression.cpp:58)、`match` (StyleExpression.cpp:64)、`lerpValues` (StyleExpression.cpp:11) | 样式表达式树。⚠️ `String` 必须用**独立命名**的 `literalString`,重载会歧义 |
+| `StyleFilter` (169) | `compare` (StyleFilter.cpp:31/:41)、`in` (StyleFilter.cpp:54)、`zoomCompare` (StyleFilter.cpp:63)、`SourceLayerRule` (.h:80) | 运行期过滤 —— 分级取舍搬回样式侧,瓦片不再靠切图时 `-j` 预筛 |
+| `GeoJsonParser` (230) | `parseRing` (GeoJsonParser.cpp:44)、`parseGeometry` (GeoJsonParser.cpp:61)、`parseFeature` (GeoJsonParser.cpp:167)、`parseFeatureCollection` (GeoJsonParser.cpp:195)、`parse` (GeoJsonParser.cpp:219) | GeoJSON 解析 |
+| `GeoJsonImporter` (39) | `mapType` (GeoJsonImporter.cpp:9)、`importInto` (GeoJsonImporter.cpp:20) | 解析结果 → `FeatureStore` |
+| `MvtVectorSource` (225) | `horizonViewRectangle` (MvtVectorSource.cpp:21)、`update` (MvtVectorSource.cpp:61)、`setLayerRules` (MvtVectorSource.cpp:185)、`ingestInbox` (MvtVectorSource.cpp:201) | MVT 源:按视口拉瓦片 |
+| `VectorTileTree` (209) | `splitAntimeridian` (VectorTileTree.cpp:11)、`zoomForCameraHeight` (VectorTileTree.cpp:31)、`update` (VectorTileTree.cpp:39)、`provide` (VectorTileTree.cpp:149)、`markFailed` (VectorTileTree.cpp:157) | 瓦片树。⚠️ 必须缓存 `MvtTile` 而非网格,否则"重入零重拉取"会丢 |
+| `MvtFeatureConverter` (89) | `mvtToCartographic` (MvtFeatureConverter.cpp:13)、`mvtLayerToFeatures` (MvtFeatureConverter.cpp:25) | MVT → `Feature` |
+| `VectorTileMeshBuilder` (207) | `pushVertex` (VectorTileMeshBuilder.cpp:23)、`pushQuad` (VectorTileMeshBuilder.cpp:37)、`appendPolygonFill` (VectorTileMeshBuilder.cpp:50)、`appendStrokedPath` (VectorTileMeshBuilder.cpp:101)、`buildVectorTileMesh` (VectorTileMeshBuilder.cpp:139) | 瓦片网格镶嵌(**在 worker 上跑**,E1) |
+| `VectorTileRasterizer` (233) | `addEdge` (VectorTileRasterizer.cpp:29)、`fillEdges` (VectorTileRasterizer.cpp:40)、`strokePathEdges` (VectorTileRasterizer.cpp:78)、`blendLayer` (VectorTileRasterizer.cpp:108)、`rasterizeMvtTile` (VectorTileRasterizer.cpp:127) | CPU 栅格化(E4 冒充影像那条路) |
 
 ## 16. environment — Atmosphere, SkyBox, SkyGradient, Sun, Time
 
@@ -3004,6 +3314,29 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 ### Two-phase update/render FrameState contract
 
 FrameState is mutated during update (tile selection, GPU upload, command build) and read-only during render/submit. `SurfaceTile`/`GltfPrimitive` commands carry `frameId`/`generation` (RenderCommand.h:41-42); `validateMvpRenderCommands(commands, expectedFrameId)` rejects any command whose `frameId != expectedFrameId` or `generation == 0` (RenderCommand.cpp:182-215, :251-258), enforcing that render only reads state produced for the current frame.
+
+### debug/Contracts.h / .cpp / debug/Policies.h / .cpp
+
+**执行层与策略层的信号**。三层诊断信号体系的两层(另一层是
+`debug/EnvSnapshot.h`,纯头文件)。设计理由写在各自头注释里,值得读。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `contracts::Id` | Contracts.h:43- | 7 条边的枚举 |
+| `contracts::Gate` | Contracts.h:108- | 存在条件(`Always` / `ImageryDrivenUpsample`) |
+| `contracts::Owners` | Contracts.h:133- | **生产方 / 消费方**归属表 —— 层间契约天然"消费侧检测、生产侧制造",只报判定点会把人送去翻没做错事的模块 |
+| `name` / `gate` / `gateName` | Contracts.cpp:113 / :118 / :123 | |
+| `setGateActive` / `gateActive` | Contracts.cpp:128 / :135 | 由配置装载处登记 |
+| `owners` | Contracts.cpp:142 | |
+| `policy::Id` / `policy::Expectation` | Policies.h:40- / :60- | 5 条比率;区间**必须带 rationale + owner** |
+| `observe` | Policies.cpp:92 | 记一次观测(**分母 ≤ 0 不计**) |
+| `windowNumerator` / `windowDenominator` | Policies.cpp:102 / :108 | |
+| `logReport` | Policies.cpp:114 | 每窗打印;**越界才升 Warning 并逐条点名** |
+
+⚠️ 两条硬教训写在代码里:① 平行表必须写 `T arr[]` 不写 `T arr[kCount]`,
+否则 `static_assert` 是同义反复(曾漏一条 expectation 直到真机报 `owner=(null)`);
+② **放宽一条契约和收紧它同等重大** —— 放宽是静默的,coverage 照涨、违约归零,
+看起来比修好还干净。
 
 ## 21. Key Constants Table
 
