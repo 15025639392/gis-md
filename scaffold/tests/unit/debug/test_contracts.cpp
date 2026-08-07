@@ -337,9 +337,12 @@ TEST(Policies, EveryPolicyHasNameRangeRationaleAndOwner) {
         // 依据和归属不能是占位:看到越界告警的人要能判断是系统坏了还是区间定错了。
         EXPECT_GT(std::string(e.rationale).size(), 10u) << n << " 缺依据";
         EXPECT_GT(std::string(e.owner).size(), 3u) << n << " 缺归属";
-        // 区间必须是有意义的非退化闭区间。[0,0] 正是漏配条目的读数。
+        // 区间必须有意义。漏配条目的特征读数是 [0,0](聚合初始化的默认零)
+        // ——精确点区间(如 HeightIndexRegularity 的 [1,1]:不变量恒成立,
+        // 任何偏离都是故障)是合法的,只挡零点退化,不挡刻意的非零点区间。
         EXPECT_LE(e.lo, e.hi) << n;
-        EXPECT_LT(e.lo, e.hi) << n << " 区间退化(疑似漏配)";
+        EXPECT_FALSE(e.lo == 0.0 && e.hi == 0.0)
+            << n << " 区间退化为 [0,0](疑似漏配)";
         EXPECT_GE(e.lo, 0.0) << n;
         EXPECT_LE(e.hi, 1.0) << n;
     }

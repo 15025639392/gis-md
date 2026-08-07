@@ -6,6 +6,7 @@
 #include "TilesetTile.h"
 #include "TilesetTileRegistry.h"
 
+#include "../debug/Policies.h"
 #include "../providers/TerrainProvider.h"
 
 #include <algorithm>
@@ -144,6 +145,17 @@ void TerrainHeightService::rebuild() const {
         levels_[static_cast<std::size_t>(z)]
             .cells[packCell(tile->key.x, tile->key.y)] = tile.get();
     }
+
+    // 策略层记账:正规率应精确 1.0(区间依据见 Policies.cpp),溢出瓦把点查询
+    // 悄悄退化回线性扫——正确性无损所以契约层抓不到,只有比率层能看见。
+    std::size_t regular = 0;
+    for (const ZoomLevel& level : levels_) {
+        regular += level.cells.size();
+    }
+    const std::size_t indexed = regular + irregularCount();
+    policy::observe(policy::Id::HeightIndexRegularity,
+                    static_cast<int>(regular),
+                    static_cast<int>(indexed));
 
     for (int z = static_cast<int>(levels_.size()) - 1; z >= 0; --z) {
         if (!levels_[static_cast<std::size_t>(z)].cells.empty() ||

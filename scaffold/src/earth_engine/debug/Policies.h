@@ -51,6 +51,10 @@ enum class Id : uint8_t {
     /// 逐帧二值:时间预算耗尽只做了一部分是正常的,要抓的是"有活却一个都没做"
     /// 且持续如此(通路冻结)。
     FinalizeProgress,
+    /// 高度索引正规率 = 进 cell 索引的地形瓦 / 参与索引的地形瓦(每次
+    /// TerrainHeightService 重建时记账)。差额进 irregular 溢出列表线性扫
+    /// ——正确性无损,但每个溢出瓦把点查询悄悄退化回旧全表扫描的方向。
+    HeightIndexRegularity,
     Count
 };
 

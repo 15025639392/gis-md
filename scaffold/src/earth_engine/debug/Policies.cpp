@@ -22,6 +22,7 @@ const char* const kNames[] = {
     "CellPageCoverage",
     "IndirLayerAllocNoEvict",
     "FinalizeProgress",
+    "HeightIndexRegularity",
 };
 
 const Expectation kExpectations[] = {
@@ -64,6 +65,18 @@ const Expectation kExpectations[] = {
      "至少一个)。下界 0.8 留给时间预算耗尽的偶发帧。持续趋 0 = 通路冻结 —— "
      "历史事故:交互期 Urgent-only 硬冻结,早退发生在 tryFinalize 之前",
      "TilePendingLoadProcessor::processPendingLoads / 预算配置"},
+
+    // 高度索引正规率。生产不变量:地形瓦 bounds 恒等于 scheme 矩形
+    // (HeightmapTerrainContentProvider 的"显式 bounds"就是 tileToRectangle
+    // 本身;虚拟根 MAXIMUM bounds 不携带 heightmap)——故应精确 1.0。
+    // <1 说明 bounds 毒化复发或新 provider 破坏不变量:正确性由溢出列表兜住,
+    // 但每个溢出瓦都在把 TerrainHeightService 点查询悄悄退化回线性扫,
+    // 正是"单点全对、整体退化"型静默故障。
+    {1.0, 1.0,
+     "地形瓦 bounds==scheme矩形是已根修的生产不变量(上采样 bounds 毒化那轮),"
+     "provider 显式 bounds 即 tileToRectangle 本身,故恒 1.0;<1 = 不变量被"
+     "破坏,点查询按溢出瓦数量退化向旧全表扫描",
+     "TerrainHeightService::rebuild(boundsMatchScheme)/ 各地形 provider"},
 };
 
 // ⚠️ 数组**不写显式尺寸**,让初始化项数决定长度 —— 否则 `kNames[kCount]` 的

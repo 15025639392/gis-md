@@ -3326,10 +3326,10 @@ FrameState is mutated during update (tile selection, GPU upload, command build) 
 | `name` / `gate` / `gateName` | Contracts.cpp:113 / :118 / :123 | |
 | `setGateActive` / `gateActive` | Contracts.cpp:128 / :135 | 由配置装载处登记 |
 | `owners` | Contracts.cpp:142 | |
-| `policy::Id` / `policy::Expectation` | Policies.h:40- / :60- | 5 条比率;区间**必须带 rationale + owner** |
-| `observe` | Policies.cpp:92 | 记一次观测(**分母 ≤ 0 不计**) |
-| `windowNumerator` / `windowDenominator` | Policies.cpp:102 / :108 | |
-| `logReport` | Policies.cpp:114 | 每窗打印;**越界才升 Warning 并逐条点名** |
+| `policy::Id` / `policy::Expectation` | Policies.h:40- / :64- | 6 条比率(含 HeightIndexRegularity 精确 [1,1] 点区间);区间**必须带 rationale + owner**,元守卫只挡 [0,0] 零点退化 |
+| `observe` | Policies.cpp:105 | 记一次观测(**分母 ≤ 0 不计**) |
+| `windowNumerator` / `windowDenominator` | Policies.cpp:115 / :121 | |
+| `logReport` | Policies.cpp:127 | 每窗打印;**越界才升 Warning 并逐条点名** |
 
 ⚠️ 两条硬教训写在代码里:① 平行表必须写 `T arr[]` 不写 `T arr[kCount]`,
 否则 `static_assert` 是同义反复(曾漏一条 expectation 直到真机报 `owner=(null)`);
