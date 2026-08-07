@@ -55,6 +55,10 @@ enum class Id : uint8_t {
     /// TerrainHeightService 重建时记账)。差额进 irregular 溢出列表线性扫
     /// ——正确性无损,但每个溢出瓦把点查询悄悄退化回旧全表扫描的方向。
     HeightIndexRegularity,
+    /// 高度采样命中率 = 有答案的查询 / 全部查询(E6,按报表窗口从
+    /// TerrainHeightService 统计聚合)。miss = 该点上方整条祖先链都没有
+    /// 可用 heightmap → fill 贴海平面/矢量贴 0 一类可见瑕疵的源头。
+    HeightSampleCoverage,
     Count
 };
 

@@ -24,6 +24,7 @@
 #include "threading/RenderThreadPlacement.h"
 
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <utility>
 
@@ -603,6 +604,38 @@ bool Engine::render(double deltaSeconds) {
     if (const uint64_t contractFrameId = scene_->frameState().frameId;
         contractFrameId > 0 && contractFrameId % 600 == 0) {
         contracts::logCoverage(contractFrameId);
+        // E6:高度采样统计并入本窗口。命中率进 Policy;命中档位直方图只出
+        // Info 行(引擎内无可辩护的"目标档",原始分布留给分析期对照场景),
+        // 无查询窗口(高空早退)静默——与"分母 0 不参与判定"同理。
+        if (Tileset* heightTileset = scene_->tileset()) {
+            const TerrainHeightService::SampleStats stats =
+                heightTileset->heightService().takeSampleStats();
+            if (stats.total() > 0) {
+                policy::observe(
+                    policy::Id::HeightSampleCoverage,
+                    static_cast<int>(
+                        std::min<std::uint64_t>(stats.hits, INT_MAX)),
+                    static_cast<int>(
+                        std::min<std::uint64_t>(stats.total(), INT_MAX)));
+                char hist[192];
+                int off = std::snprintf(
+                    hist, sizeof(hist),
+                    "f=%llu hit=%llu miss=%llu z:",
+                    static_cast<unsigned long long>(contractFrameId),
+                    static_cast<unsigned long long>(stats.hits),
+                    static_cast<unsigned long long>(stats.misses));
+                for (std::size_t z = 0; z < stats.zoomHits.size(); ++z) {
+                    if (stats.zoomHits[z] == 0 ||
+                        off >= static_cast<int>(sizeof(hist)) - 16) {
+                        continue;
+                    }
+                    off += std::snprintf(
+                        hist + off, sizeof(hist) - static_cast<size_t>(off),
+                        " %zu=%u", z, stats.zoomHits[z]);
+                }
+                platformLog(LogLevel::Info, "HeightSamp", "%s", hist);
+            }
+        }
         // 策略生效率报表:与契约 coverage 同周期。契约答"单点是否成立",策略答
         // "整体比率是否落在预期区间" —— 合批空转那次错的是后者,前者全绿。
         policy::logReport(contractFrameId);

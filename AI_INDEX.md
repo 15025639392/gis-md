@@ -3160,18 +3160,18 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:66-71 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:73-109 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
 | `render(deltaSeconds=0)` | .h:57, .cpp:243-611 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:244). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:248-248). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:260-260). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:289-289). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:613-615 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:617-624 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:646-648 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:650-657 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:684-686 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:692-694 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:717-719 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:725-727 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:713-715 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:746-748 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:192-206 | Picking + selection forwards. |
-| `setTime / time / advanceTime / sunDirection / getClearColor` | .h:113-121, .cpp:210-232 | Environment system. `getClearColor` reads `frameState().clearR/G/B/A` (.cpp:761-767). |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:769-771 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:642-644, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
+| `setTime / time / advanceTime / sunDirection / getClearColor` | .h:113-121, .cpp:210-232 | Environment system. `getClearColor` reads `frameState().clearR/G/B/A` (.cpp:794-800). |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:802-804 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:675-677, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
 Post-refactor: the fallback-globe path is gone. `Renderer::initialize()` no longer builds globe buffers/shader, `SceneRenderPipeline` no longer inserts a fallback-globe command, and `Globe`/`GlobeMesh`/`GlobeVertex` were deleted — before tiles load the frame is clear-color only. The `Diagnostics` globe-fallback counter fields were deleted along with the fallback path.
@@ -3327,9 +3327,9 @@ FrameState is mutated during update (tile selection, GPU upload, command build) 
 | `setGateActive` / `gateActive` | Contracts.cpp:128 / :135 | 由配置装载处登记 |
 | `owners` | Contracts.cpp:142 | |
 | `policy::Id` / `policy::Expectation` | Policies.h:40- / :64- | 6 条比率(含 HeightIndexRegularity 精确 [1,1] 点区间);区间**必须带 rationale + owner**,元守卫只挡 [0,0] 零点退化 |
-| `observe` | Policies.cpp:105 | 记一次观测(**分母 ≤ 0 不计**) |
-| `windowNumerator` / `windowDenominator` | Policies.cpp:115 / :121 | |
-| `logReport` | Policies.cpp:127 | 每窗打印;**越界才升 Warning 并逐条点名** |
+| `observe` | Policies.cpp:117 | 记一次观测(**分母 ≤ 0 不计**) |
+| `windowNumerator` / `windowDenominator` | Policies.cpp:127 / :133 | |
+| `logReport` | Policies.cpp:139 | 每窗打印;**越界才升 Warning 并逐条点名** |
 
 ⚠️ 两条硬教训写在代码里:① 平行表必须写 `T arr[]` 不写 `T arr[kCount]`,
 否则 `static_assert` 是同义反复(曾漏一条 expectation 直到真机报 `owner=(null)`);

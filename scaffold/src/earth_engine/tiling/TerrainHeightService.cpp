@@ -95,6 +95,13 @@ std::uint64_t TerrainHeightService::heightmapGeneration() {
     return TileRenderContentState::heightmapGeneration();
 }
 
+TerrainHeightService::SampleStats TerrainHeightService::takeSampleStats()
+    const {
+    SampleStats out = sampleStats_;
+    sampleStats_ = {};
+    return out;
+}
+
 std::size_t TerrainHeightService::irregularCount() const {
     std::size_t count = 0;
     for (const auto& [zoom, tiles] : irregularByZoom_) {
@@ -269,6 +276,16 @@ std::optional<TerrainHeightService::Sample> TerrainHeightService::sample(
                            z});
             }
         }
+    }
+
+    if (best) {
+        ++sampleStats_.hits;
+        const std::size_t bucket = std::min<std::size_t>(
+            static_cast<std::size_t>(best->zoom < 0 ? 0 : best->zoom),
+            sampleStats_.zoomHits.size() - 1);
+        ++sampleStats_.zoomHits[bucket];
+    } else {
+        ++sampleStats_.misses;
     }
 
     return best;

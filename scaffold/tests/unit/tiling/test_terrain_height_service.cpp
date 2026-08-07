@@ -176,6 +176,36 @@ TEST(TerrainHeightServiceTest, RebuildIsLazyAndGenerationDriven) {
     EXPECT_EQ(builds0 + 1, service.rebuildCount());
 }
 
+TEST(TerrainHeightServiceTest, SampleStatsCountHitsMissesAndZoomBuckets) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TerrainHeightService service(registry, *scheme);
+
+    const TileKey rootKey{kScheme, 0, 0, 0};
+    putTerrainTile(registry, *scheme, rootKey, 10.0f);
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const auto interp = TerrainHeightService::Interp::FullResBilinear;
+
+    // 2 次命中(z0) + 1 次 miss(另一半球无瓦)。
+    (void)service.sample((bounds.west() + bounds.east()) * 0.5,
+                         (bounds.south() + bounds.north()) * 0.5, interp);
+    (void)service.sample(bounds.west() + bounds.width() * 0.25,
+                         bounds.south() + bounds.height() * 0.25, interp);
+    const Rectangle other =
+        scheme->tileToRectangle(TileKey{kScheme, 0, 1, 0});
+    (void)service.sample((other.west() + other.east()) * 0.5,
+                         (other.south() + other.north()) * 0.5, interp);
+
+    const auto stats = service.takeSampleStats();
+    EXPECT_EQ(2u, stats.hits);
+    EXPECT_EQ(1u, stats.misses);
+    EXPECT_EQ(2u, stats.zoomHits[0]);
+
+    // take 即清零:下一窗口从零起算。
+    const auto empty = service.takeSampleStats();
+    EXPECT_EQ(0u, empty.total());
+}
+
 // === E3 对拍守卫:与旧全表扫描逐点等价 ===
 
 namespace {

@@ -23,6 +23,7 @@ const char* const kNames[] = {
     "IndirLayerAllocNoEvict",
     "FinalizeProgress",
     "HeightIndexRegularity",
+    "HeightSampleCoverage",
 };
 
 const Expectation kExpectations[] = {
@@ -77,6 +78,17 @@ const Expectation kExpectations[] = {
      "provider 显式 bounds 即 tileToRectangle 本身,故恒 1.0;<1 = 不变量被"
      "破坏,点查询按溢出瓦数量退化向旧全表扫描",
      "TerrainHeightService::rebuild(boundsMatchScheme)/ 各地形 provider"},
+
+    // 高度采样命中率。全球地形源全覆盖 + 在视祖先受选择遍历的淘汰豁免
+    // (active set 逐帧 markIneligibleForUnloading),miss 只应来自"补货侧"
+    // 暂态:kicked 深降跳过中间档加载、冷启动首窗、离视归来。下界 0.8 与
+    // FinalizeProgress 同理留给加载窗口;**持续**偏低 = 回退链断
+    // (祖先 heightmap 长期缺位),是"加载期破洞/矢量贴海平面"类可见瑕疵
+    // 的前兆。分母 0(高空早退无查询)不参与判定。
+    {0.8, 1.0,
+     "全球源全覆盖+在视祖先淘汰豁免下 miss 只应来自深跳/冷启动补货暂态,"
+     "窗口聚合已摊薄;持续偏低=祖先回退链断,fill 贴海平面/矢量贴 0 的前兆",
+     "TerrainHeightService 消费方加载时序 / TileSelection kicked 深降路径"},
 };
 
 // ⚠️ 数组**不写显式尺寸**,让初始化项数决定长度 —— 否则 `kNames[kCount]` 的

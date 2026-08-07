@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
@@ -71,6 +72,21 @@ public:
     /// 这一个信号源;替代 contentBytesUsed 弱代理。
     static std::uint64_t heightmapGeneration();
 
+    /// E6 查询统计:miss(完全无覆盖)与命中档位分布。miss 率进 Policy
+    /// (HeightSampleCoverage);档位分布只出 Info 诊断行——引擎内没有可
+    /// 辩护的"目标档"概念(渲染档因迟滞/上采样与数据档合法地不一致),
+    /// 原始分布留给分析期对照场景解读,不发明没依据的比率。
+    struct SampleStats {
+        std::uint64_t hits = 0;
+        std::uint64_t misses = 0;
+        /// 命中答案的 zoom 直方图;超出末桶并入末桶。
+        std::array<std::uint32_t, 24> zoomHits{};
+        std::uint64_t total() const { return hits + misses; }
+    };
+
+    /// 取走并清零自上次调用以来的查询统计(与诊断报表同周期调用)。
+    SampleStats takeSampleStats() const;
+
     /// 诊断:bounds != scheme 矩形而进溢出列表的瓦片数(生产稳态应恒 0)。
     std::size_t irregularCount() const;
 
@@ -96,6 +112,7 @@ private:
         irregularByZoom_;                            // 不变量溢出(应恒空)
     mutable std::uint64_t builtGeneration_ = 0;      // 0 = 从未建过
     mutable std::uint64_t rebuildCount_ = 0;
+    mutable SampleStats sampleStats_;                // E6 窗口统计(渲染线程)
 };
 
 } // namespace earth_engine
