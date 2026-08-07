@@ -108,7 +108,6 @@
 #include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
-#include "earth_engine/tiling/RenderContentRasterOverlayStateUpdater.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 #include <atomic>
 #include <array>
@@ -14974,47 +14973,47 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
     budget.beginFrame(1, config);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer,
+    TileRasterOverlayPrefetcher::prefetch(
         tile,
         overlays,
         order,
         nullptr,
         16.0,
-        budget);
+        budget,
+        &renderer);
     RasterMappedToTilesetTile* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
-          "RenderContentRasterOverlayStateUpdater: visible overlay creates mapping");
+          "TileRasterOverlayPrefetcher: visible overlay creates mapping");
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer,
+    TileRasterOverlayPrefetcher::prefetch(
         tile,
         overlays,
         order,
         nullptr,
         16.0,
-        budget);
+        budget,
+        &renderer);
     mapped = tile.rasterOverlayState.mappingAt(0);
     check(mapped && mapped->getReadyTile() == loadingTile,
-          "RenderContentRasterOverlayStateUpdater: visible overlay promotes ready mapping");
+          "TileRasterOverlayPrefetcher: visible overlay promotes ready mapping");
     check(TileCacheMetrics::estimateTileBytes(tile) - baseBytes == 8 * 4 * 4,
-          "RenderContentRasterOverlayStateUpdater: visible mapping contributes retained bytes");
+          "TileRasterOverlayPrefetcher: visible mapping contributes retained bytes");
     overlay->setVisible(false);
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer,
+    TileRasterOverlayPrefetcher::prefetch(
         tile,
         overlays,
         order,
         nullptr,
         16.0,
-        budget);
+        budget,
+        &renderer);
     check(tile.rasterOverlayState.mappingAt(0) == nullptr,
-          "RenderContentRasterOverlayStateUpdater: invisible overlay releases stale mapping");
+          "TileRasterOverlayPrefetcher: invisible overlay releases stale mapping");
     check(TileCacheMetrics::estimateTileBytes(tile) == baseBytes,
-          "RenderContentRasterOverlayStateUpdater: invisible overlay releases raster tile references");
+          "TileRasterOverlayPrefetcher: invisible overlay releases raster tile references");
 }
 void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
     auto overlay = std::make_unique<RasterOverlay>(
@@ -15042,15 +15041,15 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
     budget.beginFrame(1, config);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    const RenderContentRasterOverlayUpdateAction action =
-        RenderContentRasterOverlayStateUpdater::update(
-        renderer,
-        tile,
-        overlays,
-        order,
-        nullptr,
-        16.0,
-        budget);
+    const TileRasterOverlayUpdateAction action =
+        TileRasterOverlayPrefetcher::prefetch(
+            tile,
+            overlays,
+            order,
+            nullptr,
+            16.0,
+            budget,
+            &renderer);
     RasterMappedToTilesetTile* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
@@ -15064,11 +15063,11 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
     check(loadingTile &&
               loadingTile->getRectangle() == expectedContentWebMercator &&
               loadingTile->getRectangle() != tileWebMercator,
-          "RenderContentRasterOverlayStateUpdater: fallback raster request uses effective content bounding volume like cesium-native");
+          "TileRasterOverlayPrefetcher: fallback raster request uses effective content bounding volume like cesium-native");
     check(!action.unloadTileContent,
-          "RenderContentRasterOverlayStateUpdater: bounding-volume fallback does not request content reload");
+          "TileRasterOverlayPrefetcher: bounding-volume fallback does not request content reload");
     check(tile.rasterOverlayState.missingProjections().empty(),
-          "RenderContentRasterOverlayStateUpdater: bounding-volume fallback does not report missing render-content projection");
+          "TileRasterOverlayPrefetcher: bounding-volume fallback does not report missing render-content projection");
 }
 void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     auto overlay = std::make_unique<RasterOverlay>(
@@ -15102,53 +15101,53 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     budget.beginFrame(1, config);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer,
+    TileRasterOverlayPrefetcher::prefetch(
         tile,
         overlays,
         order,
         nullptr,
         16.0,
-        budget);
+        budget,
+        &renderer);
     RasterMappedToTilesetTile* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
-          "RenderContentRasterOverlayStateUpdater: drawable-gated upsample maps loading raster");
+          "TileRasterOverlayPrefetcher: drawable-gated upsample maps loading raster");
     if (!mapped || !loadingTile) return;
     loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
-    const RenderContentRasterOverlayUpdateAction noTextureAction =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer,
+    const TileRasterOverlayUpdateAction noTextureAction =
+        TileRasterOverlayPrefetcher::prefetch(
             tile,
             overlays,
             order,
             nullptr,
             16.0,
-            budget);
+            budget,
+            &renderer);
     check(mapped->getReadyTile() == loadingTile,
-          "RenderContentRasterOverlayStateUpdater: no-texture more-detail raster is cover-ready");
+          "TileRasterOverlayPrefetcher: no-texture more-detail raster is cover-ready");
     check(!tile.rasterOverlayState.hasDrawableReadyMapping(0),
-          "RenderContentRasterOverlayStateUpdater: no-texture more-detail raster is not drawable");
+          "TileRasterOverlayPrefetcher: no-texture more-detail raster is not drawable");
     check(noTextureAction.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: ready more-detail raster requests upsample children before GPU texture");
+          "TileRasterOverlayPrefetcher: ready more-detail raster requests upsample children before GPU texture");
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
-    const RenderContentRasterOverlayUpdateAction drawableAction =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer,
+    const TileRasterOverlayUpdateAction drawableAction =
+        TileRasterOverlayPrefetcher::prefetch(
             tile,
             overlays,
             order,
             nullptr,
             16.0,
-            budget);
+            budget,
+            &renderer);
     check(tile.rasterOverlayState.hasDrawableReadyMapping(0),
-          "RenderContentRasterOverlayStateUpdater: textured more-detail raster is drawable");
+          "TileRasterOverlayPrefetcher: textured more-detail raster is drawable");
     check(drawableAction.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
+          "TileRasterOverlayPrefetcher: drawable more-detail raster requests upsample children");
 }
 void testSurfaceRasterUpdaterRunsOncePerTilePerFrame() {
     auto overlay = std::make_unique<RasterOverlay>(
@@ -15341,8 +15340,14 @@ void testSurfaceRasterUpdaterUpsampleUsesNaturalOverlayOrderNotPriority() {
           "S5-01 fixture: priority order visits overlay B (index 1) before A (index 0)");
 
     // First update: create loading mappings for both overlays.
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer, tile, overlays, order, nullptr, 16.0, budget);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget,
+        &renderer);
     RasterMappedToTilesetTile* mappedA = tile.rasterOverlayState.mappingAt(0);
     RasterMappedToTilesetTile* mappedB = tile.rasterOverlayState.mappingAt(1);
     RasterOverlayTile* loadingB = mappedB ? mappedB->getLoadingTile() : nullptr;
@@ -15358,14 +15363,20 @@ void testSurfaceRasterUpdaterUpsampleUsesNaturalOverlayOrderNotPriority() {
         RasterOverlayTile::MoreDetailAvailable::Yes);
     loadingB->setTexture(std::make_unique<DummyTexture>(8, 4));
 
-    const RenderContentRasterOverlayUpdateAction action =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer, tile, overlays, order, nullptr, 16.0, budget);
+    const TileRasterOverlayUpdateAction action =
+        TileRasterOverlayPrefetcher::prefetch(
+            tile,
+            overlays,
+            order,
+            nullptr,
+            16.0,
+            budget,
+            &renderer);
 
     check(tile.rasterOverlayState.hasReadyMapping(1),
           "S5-01 fixture: overlay B is ready with more detail");
     check(!action.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: an earlier-added overlay still Unknown blocks upsample (natural index order, not priority)");
+          "TileRasterOverlayPrefetcher: an earlier-added overlay still Unknown blocks upsample (natural index order, not priority)");
 }
 void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNative() {
     auto overlay = std::make_unique<RasterOverlay>(
@@ -15399,61 +15410,61 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
     tile.content.loadState = TileLoadState::Done;
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer,
+    TileRasterOverlayPrefetcher::prefetch(
         tile,
         overlays,
         order,
         nullptr,
         16.0,
-        budget);
+        budget,
+        &renderer);
     RasterMappedToTilesetTile* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
-          "RenderContentRasterOverlayStateUpdater: done-state gate fixture maps loading raster");
+          "TileRasterOverlayPrefetcher: done-state gate fixture maps loading raster");
     if (!mapped || !loadingTile) return;
     loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
     tile.content.loadState = TileLoadState::ContentLoaded;
-    const RenderContentRasterOverlayUpdateAction contentLoadedAction =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer,
+    const TileRasterOverlayUpdateAction contentLoadedAction =
+        TileRasterOverlayPrefetcher::prefetch(
             tile,
             overlays,
             order,
             nullptr,
             16.0,
-            budget);
+            budget,
+            &renderer);
     check(!contentLoadedAction.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: ContentLoaded tile does not create raster upsample children before Done like cesium-native");
+          "TileRasterOverlayPrefetcher: ContentLoaded tile does not create raster upsample children before Done like cesium-native");
     tile.content.loadState = TileLoadState::FailedTemporarily;
-    const RenderContentRasterOverlayUpdateAction retryLaterAction =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer,
+    const TileRasterOverlayUpdateAction retryLaterAction =
+        TileRasterOverlayPrefetcher::prefetch(
             tile,
             overlays,
             order,
             nullptr,
             16.0,
-            budget);
+            budget,
+            &renderer);
     check(!retryLaterAction.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: RetryLater-preserved render content does not create raster children while latent terrain may still resolve");
+          "TileRasterOverlayPrefetcher: RetryLater-preserved render content does not create raster children while latent terrain may still resolve");
     tile.content.loadState = TileLoadState::Done;
-    const RenderContentRasterOverlayUpdateAction doneAction =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer,
+    const TileRasterOverlayUpdateAction doneAction =
+        TileRasterOverlayPrefetcher::prefetch(
             tile,
             overlays,
             order,
             nullptr,
             16.0,
-            budget);
+            budget,
+            &renderer);
     check(doneAction.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: Done tile creates raster upsample children like cesium-native updateDoneState");
+          "TileRasterOverlayPrefetcher: Done tile creates raster upsample children like cesium-native updateDoneState");
 }
 void testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder() {
     auto firstOverlay = std::make_unique<RasterOverlay>(
@@ -15494,14 +15505,14 @@ void testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder() {
         &firstActivated,
         &secondActivated};
     const std::vector<size_t> naturalOrder{0, 1};
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer,
+    TileRasterOverlayPrefetcher::prefetch(
         tile,
         overlays,
         naturalOrder,
         nullptr,
         16.0,
-        budget);
+        budget,
+        &renderer);
     RasterMappedToTilesetTile* firstMapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterMappedToTilesetTile* secondMapped =
@@ -15511,7 +15522,7 @@ void testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder() {
     RasterOverlayTile* secondTile =
         secondMapped ? secondMapped->getLoadingTile() : nullptr;
     check(firstTile && secondTile,
-          "RenderContentRasterOverlayStateUpdater: processing-order fixture maps both overlays");
+          "TileRasterOverlayPrefetcher: processing-order fixture maps both overlays");
     if (!firstTile || !secondTile) return;
     firstTile->setState(RasterOverlayTile::LoadState::Loaded);
     firstTile->setMoreDetailAvailable(
@@ -15527,28 +15538,28 @@ void testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder() {
     // blocked upsampling because the priority-sorted position leaked into the
     // comparison.
     const std::vector<size_t> reversedOrder{1, 0};
-    const RenderContentRasterOverlayUpdateAction reversed =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer,
+    const TileRasterOverlayUpdateAction reversed =
+        TileRasterOverlayPrefetcher::prefetch(
             tile,
             overlays,
             reversedOrder,
             nullptr,
             16.0,
-            budget);
+            budget,
+            &renderer);
     check(reversed.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: more-detail at earlier add-order index creates upsample children regardless of processing order like cesium-native");
-    const RenderContentRasterOverlayUpdateAction natural =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer,
+          "TileRasterOverlayPrefetcher: more-detail at earlier add-order index creates upsample children regardless of processing order like cesium-native");
+    const TileRasterOverlayUpdateAction natural =
+        TileRasterOverlayPrefetcher::prefetch(
             tile,
             overlays,
             naturalOrder,
             nullptr,
             16.0,
-            budget);
+            budget,
+            &renderer);
     check(natural.createRasterOverlayUpsampledChildren,
-          "RenderContentRasterOverlayStateUpdater: more-detail at earlier add-order index creates upsample children in natural order like cesium-native");
+          "TileRasterOverlayPrefetcher: more-detail at earlier add-order index creates upsample children in natural order like cesium-native");
 }
 void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     auto overlay = std::make_unique<RasterOverlay>(
@@ -15589,14 +15600,14 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     budget.beginFrame(1, config);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer,
+    TileRasterOverlayPrefetcher::prefetch(
         *root,
         overlays,
         order,
         &device,
         16.0,
-        budget);
+        budget,
+        &renderer);
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
@@ -15608,15 +15619,15 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
-    const RenderContentRasterOverlayUpdateAction action =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer,
+    const TileRasterOverlayUpdateAction action =
+        TileRasterOverlayPrefetcher::prefetch(
             *root,
             overlays,
             order,
             &device,
             16.0,
-            budget);
+            budget,
+            &renderer);
     check(action.createRasterOverlayUpsampledChildren,
           "TileRasterUpsampledChildMaterializer: glTF more-detail raster requests children");
     TileRasterUpsampledChildMaterializer::materialize(
@@ -15681,8 +15692,14 @@ void testRasterUpsampledChildrenDecoupleGateSuppressesFabrication() {
     budget.beginFrame(1, config);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    RenderContentRasterOverlayStateUpdater::update(
-        renderer, *root, overlays, order, &device, 16.0, budget);
+    TileRasterOverlayPrefetcher::prefetch(
+        *root,
+        overlays,
+        order,
+        &device,
+        16.0,
+        budget,
+        &renderer);
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
@@ -15692,9 +15709,15 @@ void testRasterUpsampledChildrenDecoupleGateSuppressesFabrication() {
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
-    const RenderContentRasterOverlayUpdateAction action =
-        RenderContentRasterOverlayStateUpdater::update(
-            renderer, *root, overlays, order, &device, 16.0, budget);
+    const TileRasterOverlayUpdateAction action =
+        TileRasterOverlayPrefetcher::prefetch(
+            *root,
+            overlays,
+            order,
+            &device,
+            16.0,
+            budget,
+            &renderer);
     check(action.createRasterOverlayUpsampledChildren,
           "decouple gate: more-detail raster still requests children (decision unchanged)");
 

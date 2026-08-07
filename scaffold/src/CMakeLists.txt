@@ -268,8 +268,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TerrainHeightService.cpp
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.h
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.cpp
-    earth_engine/tiling/RenderContentRasterOverlayStateUpdater.h
-    earth_engine/tiling/RenderContentRasterOverlayStateUpdater.cpp
     earth_engine/tiling/TileRasterOverlayDetailsGenerator.h
     earth_engine/tiling/TileRasterOverlayDetailsGenerator.cpp
     earth_engine/tiling/TileKey.h

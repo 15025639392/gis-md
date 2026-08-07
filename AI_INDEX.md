@@ -1358,23 +1358,6 @@ Header-only FNV-style hashing of the active-overlay list for change detection (m
 | `hasPendingWork()` | .h:74-82 | Any overlay `hasPendingWork()` |
 | `mix()` | .h:88-91 | boost-style hash-combine (`0x9e3779b97f4a7c15`) |
 
-### RenderContentRasterOverlayStateUpdater.h / .cpp
-
-Command-build-phase counterpart to the prefetcher: updates mappings WITH renderer resources (`&renderer` as `IPrepareRendererResources`), so it actually attaches textures, and decides whether to spawn raster-overlay-upsampled children.
-
-| Item | Lines | Description |
-| --- | --- | --- |
-| `struct RenderContentRasterOverlayUpdateAction` | .h:14-17 | `unloadTileContent`, `createRasterOverlayUpsampledChildren` |
-| `update()` | .cpp:12-31 | ⚠️ 已重构成**纯委托**:整体转发给 `TileRasterOverlayPrefetcher::prefetch`,只多传一个 `&renderer` 让 Step-6 attach 生效。文件全长仅 33 行。 |
-
-⚠️ 本节此前列有 `— attach path`、`— missing projection`、`— upsample decision` 三行
-(旧行号 92-104 / 105-108 / 121-125,此处刻意不写成引用形式,否则会被行号校验器当成
-仍然有效的引用),描述的是一个 127 行的 `update()` —— 那份
-逻辑早已搬进 `TileRasterOverlayPrefetcher::prefetch` (TileRasterOverlayPrefetcher.cpp:67-306),此处只剩转发。
-现址:`loadThrottled` 在 TileRasterOverlayPrefetcher.cpp:248、:302,
-`unloadTileContent` 置位在 :224,`createRasterOverlayUpsampledChildren` 在 :251。
-(2026-08-06 复核订正)
-
 ### RasterOverlayScreenSpaceMetrics.h / .cpp
 
 Computes the target screen-pixel dimensions for a geometry rectangle, driving imagery zoom-level selection in the mapping step.
@@ -1412,7 +1395,7 @@ Materializes upsampled child geometry tiles when a raster overlay has more detai
 
 Notes:
 - UV convention: native overlay UV has V growing south→north; `computeTranslationAndScale` (TileSurface.cpp:10-30) is pure rectangle-ratio (`offsetU=(geoWest-imgWest)/imgWidth`, `scaleU=geoWidth/imgWidth`, analogous V). Non-inverted-V mappings flip V via `textureWindowForNorthWestUv` (TileSurface.cpp:32-37: `offsetV = 1 - offsetV - scaleV`) to the renderer's north=V0 convention. No tile-size/edge-bleed baked into UVs — handled at GL via CLAMP_TO_EDGE.
-- The async terrain GPU-upload path (32-byte `TerrainGpuVertex`) is now end-to-end: produce/upload done, and the DRAW side is wired (2026-07-01 — `GltfDrawCommandBuilder` branches on `useTerrainVertexFormat` to a stride-32 `terrainShader` command). None of the raster-overlay files above depend on the terrain draw path; `RenderContentRasterOverlayStateUpdater` takes `Renderer&` only for `IPrepareRendererResources` attach/detach.
+- The async terrain GPU-upload path (32-byte `TerrainGpuVertex`) is now end-to-end: produce/upload done, and the DRAW side is wired (2026-07-01 — `GltfDrawCommandBuilder` branches on `useTerrainVertexFormat` to a stride-32 `terrainShader` command). None of the raster-overlay files above depend on the terrain draw path; `TileRasterOverlayPrefetcher::prefetch` takes an `IPrepareRendererResources*` only for attach/detach. (The `RenderContentRasterOverlayStateUpdater` adapter that used to wrap it was deleted 2026-08-07 — it was a pure forwarder with zero production callers; its 20 test call sites now invoke `prefetch` directly, as every other caller already did.)
 - `TileSurface`/`TileSurface.h` is now trimmed to ONLY the raster-overlay UV helpers `computeTranslationAndScale`/`textureWindowForNorthWestUv` (returning `TileTextureWindow`), used here in the raster path; the former `SurfaceTileMesh`/`buildEllipsoidMesh`/`buildTerrainMesh` mesh builders were removed (2026-07-01).
 
 ---
