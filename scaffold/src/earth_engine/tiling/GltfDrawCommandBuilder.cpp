@@ -477,17 +477,35 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
 /// ⚠️ 档位取 `cmd.terrainHeightGridSize`(本帧实际 acquire 到的那档)而不是
 /// 由 SSE 再算一遍:层池 dense 预算触顶时 draw 侧会回落 coarse,再算一遍会
 /// 得到 dense,于是表按 256 格排、纹理按 64 格存 —— 整条边的节点全错位。
+/// ①-1 的**机制信号**。为什么必须有它:接边错位探针量的是「自纹素 vs 邻居」,
+/// 而 LUT 存的差值恰恰就是这个量 —— 探针不建模 LUT,于是它测的是修复的**输入**
+/// 而非输出,改前改后读数必然相同(实测确实相同)。让探针建模 LUT 又会变成同义
+/// 反复。所以「LUT 到底有没有到 GPU」只能靠这条二元信号回答:没有它,"生效了
+/// 但指标不动"与"这条路压根没走到"读数完全一样。
+struct EdgeLutStats {
+    int attempts = 0;      // 有吸附边、尝试上传的瓦片数(分母)
+    int ok = 0;            // 上传成功 → lutValid 置位
+    int noRecord = 0;      // 邻居记录缺失(resolver 未回填/瓦片非选中)
+    int noPool = 0;        // 模板池缺失或档位非法
+    int emptyLut = 0;      // 四条边一条也建不出(邻居 heightmap 取不到)
+    int uploadFail = 0;    // 层不在驻留 / 尺寸不符
+    void reset() { *this = EdgeLutStats{}; }
+};
+EdgeLutStats gEdgeLut;
+constexpr uint64_t kEdgeLutLogPeriod = 60;
+
 bool uploadTerrainEdgeLut(Renderer& renderer, const TilesetTile& tile,
                           const RenderCommand& cmd) {
+    ++gEdgeLut.attempts;
     const TileEdgeSnapRecord* rec = tile.selectionFrameState.edgeSnapRecord;
     TerrainDisplacementTemplatePool* pool = renderer.terrainDisplacementPool();
     const int gridSize = cmd.terrainHeightGridSize;
-    if (!rec || !pool || gridSize <= 0) {
-        return false;
-    }
+    if (!rec) { ++gEdgeLut.noRecord; return false; }
+    if (!pool || gridSize <= 0) { ++gEdgeLut.noPool; return false; }
     const TerrainEdgeHeightLut::Data lut =
         TerrainEdgeHeightLut::build(*rec, gridSize);
     if (!lut.hasAny()) {
+        ++gEdgeLut.emptyLut;
         return false;
     }
     const int width = gridSize + 1;
@@ -507,7 +525,37 @@ bool uploadTerrainEdgeLut(Renderer& renderer, const TilesetTile& tile,
             bytes[o + 1] = static_cast<uint8_t>(q & 0xFF);
         }
     }
-    return pool->updateEdgeLutRows(tile.key, gridSize, bytes.data());
+    const bool ok = pool->updateEdgeLutRows(tile.key, gridSize, bytes.data());
+    if (ok) { ++gEdgeLut.ok; } else { ++gEdgeLut.uploadFail; }
+    return ok;
+}
+
+/// 每 kEdgeLutLogPeriod 帧报一次并清窗。attempts=0 = 本窗口没有吸附边(俯视/
+/// 单档场景),**不打印** —— 打一行全零会和"试了但一次都没成"长得一样。
+///
+/// ⚠️ 本函数的调用点是**逐命令**的(applyPerFrameCommandState),不是逐帧。
+/// 用 `frame % period == 0` 当闸会在那一帧内被命中几十次:首次打印并清窗后,
+/// 同帧后续每条命令各自累积 1 条再打印一次 —— 真值只有第一行,其余全是
+/// attempts=1 的噪声(首版实测刷了 30+ 行)。故改为**跨帧沿触发**:只在帧号
+/// 变化、且距上次报告已满一个周期时结算,窗口天然覆盖整段。
+void logEdgeLutStats(uint64_t frameNumber) {
+    static uint64_t lastFrame = 0;
+    static uint64_t windowStart = 0;
+    if (frameNumber == lastFrame) return;
+    lastFrame = frameNumber;
+    if (frameNumber < windowStart + kEdgeLutLogPeriod) return;
+    windowStart = frameNumber;
+    if (gEdgeLut.attempts == 0) { gEdgeLut.reset(); return; }
+    platformLog(LogLevel::Info, "SeamDiag",
+                "edgeLut frame=%llu win=%llu attempts=%d ok=%d rate=%.3f "
+                "noRecord=%d noPool=%d emptyLut=%d uploadFail=%d",
+                static_cast<unsigned long long>(frameNumber),
+                static_cast<unsigned long long>(kEdgeLutLogPeriod),
+                gEdgeLut.attempts, gEdgeLut.ok,
+                static_cast<double>(gEdgeLut.ok) / gEdgeLut.attempts,
+                gEdgeLut.noRecord, gEdgeLut.noPool, gEdgeLut.emptyLut,
+                gEdgeLut.uploadFail);
+    gEdgeLut.reset();
 }
 
 /// 每帧盖章:frameId/generation、过渡透明度及其 blend 派生态、clip 窗口、
@@ -545,6 +593,7 @@ void applyPerFrameCommandState(
             snapPacked += 4096.0f;  // 有效位;组合后 ≤8191,实例流打包仍精确
         }
         u.terrainLayers[2] = snapPacked;
+        logEdgeLutStats(context.frameNumber);
     }
     if (cmd.terrainRenderContent && context.surfaceClipUv) {
         // 机制 A(无缝北极星 P1):祖先回退不再"画祖先几何+片元 discard 裁剪"
