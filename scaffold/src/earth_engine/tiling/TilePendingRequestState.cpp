@@ -15,11 +15,12 @@ namespace {
 void checkParity(const char* site,
                  size_t pending,
                  size_t content,
-                 size_t tokens) {
+                 size_t tokens,
+                 size_t needed) {
     GE_CONTRACT(contracts::Id::PendingRequestParity,
-                pending == tokens && content <= pending,
-                "site=%s pending=%zu tokens=%zu content=%zu",
-                site, pending, tokens, content);
+                pending == tokens && content <= pending && needed <= pending,
+                "site=%s pending=%zu tokens=%zu content=%zu needed=%zu",
+                site, pending, tokens, content, needed);
 }
 
 }  // namespace
@@ -67,9 +68,11 @@ bool TilePendingRequestState::beginTerrainRequest(
     }
     pendingRequests_.insert(cacheKey);
     pendingRequestTokens_[cacheKey] = token;
+    lastNeededSeq_[cacheKey] = neededFrameSeq_;  // begin 即首帧"仍需要"
     checkParity("beginTerrain", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
-                pendingRequestTokens_.size());
+                pendingRequestTokens_.size(),
+                lastNeededSeq_.size());
     return true;
 }
 
@@ -82,9 +85,11 @@ bool TilePendingRequestState::beginContentRequest(
     pendingRequests_.insert(cacheKey);
     pendingContentRequestKeys_.insert(cacheKey);
     pendingRequestTokens_[cacheKey] = token;
+    lastNeededSeq_[cacheKey] = neededFrameSeq_;  // begin 即首帧"仍需要"
     checkParity("beginContent", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
-                pendingRequestTokens_.size());
+                pendingRequestTokens_.size(),
+                lastNeededSeq_.size());
     return true;
 }
 
@@ -93,9 +98,11 @@ void TilePendingRequestState::completeTerrainRequest(
     pendingRequests_.erase(cacheKey);
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
+    lastNeededSeq_.erase(cacheKey);
     checkParity("complete", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
-                pendingRequestTokens_.size());
+                pendingRequestTokens_.size(),
+                lastNeededSeq_.size());
 }
 
 void TilePendingRequestState::completeContentRequest(
@@ -103,9 +110,11 @@ void TilePendingRequestState::completeContentRequest(
     pendingRequests_.erase(cacheKey);
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
+    lastNeededSeq_.erase(cacheKey);
     checkParity("complete", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
-                pendingRequestTokens_.size());
+                pendingRequestTokens_.size(),
+                lastNeededSeq_.size());
 }
 
 void TilePendingRequestState::completeTerrainRequest(
@@ -143,9 +152,35 @@ void TilePendingRequestState::cancelAndErase(const std::string& cacheKey) {
     pendingRequests_.erase(cacheKey);
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
+    lastNeededSeq_.erase(cacheKey);
     checkParity("cancelAndErase", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
-                pendingRequestTokens_.size());
+                pendingRequestTokens_.size(),
+                lastNeededSeq_.size());
+}
+
+void TilePendingRequestState::markNeeded(const std::string& cacheKey) {
+    if (cacheKey.empty() || pendingRequests_.count(cacheKey) == 0) {
+        return;  // 只标在飞 key,防 lastNeededSeq_ 长成孤儿表
+    }
+    lastNeededSeq_[cacheKey] = neededFrameSeq_;
+}
+
+std::vector<std::string> TilePendingRequestState::advanceFrameAndCollectStale(
+    uint64_t maxAgeFrames) {
+    ++neededFrameSeq_;
+    std::vector<std::string> stale;
+    for (const std::string& cacheKey : pendingRequests_) {
+        const auto it = lastNeededSeq_.find(cacheKey);
+        // 无记录按"本帧刚需要"处理 —— 失败方向偏向不取消(误杀比漏杀贵:
+        // 误杀 = 半途丢弃已花的带宽再重拉;漏杀 = 多占一个槽到自然完成)。
+        const uint64_t last =
+            it != lastNeededSeq_.end() ? it->second : neededFrameSeq_;
+        if (neededFrameSeq_ - last > maxAgeFrames) {
+            stale.push_back(cacheKey);
+        }
+    }
+    return stale;
 }
 
 void TilePendingRequestState::markDestroyingAndCancelRequests() {
@@ -163,6 +198,7 @@ void TilePendingRequestState::clearAfterCallbacksComplete() {
     pendingContentRequestKeys_.clear();
     pendingRequestTokens_.clear();
     retiredCallbackTokens_.clear();
+    lastNeededSeq_.clear();
     destroying_ = false;
 }
 

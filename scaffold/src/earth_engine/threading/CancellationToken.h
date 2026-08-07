@@ -29,6 +29,11 @@ public:
         return child;
     }
 
+    /// 供平台层桥接:暴露底层原子 flag(纯 std 类型,平台层不依赖本类)。
+    /// 用途:塞进 HttpRequestOptions.cancelFlag,让 token.cancel() 真正
+    /// 中止 curl 传输,而不是等数据下载完再丢弃结果。
+    std::shared_ptr<std::atomic<bool>> sharedFlag() const { return cancelled_; }
+
 private:
     std::shared_ptr<std::atomic<bool>> cancelled_;
 };

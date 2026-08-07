@@ -615,16 +615,19 @@ void GoogleMapTilesImageryProvider::requestTile(
                 priority);
         };
 
+    // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
+    HttpRequestOptions httpOptions{priority};
+    httpOptions.cancelFlag = tokenPtr->sharedFlag();
     if (platformBridge()) {
         *requestHandle = platformBridge()->get(
             viewportUrl,
             std::move(onViewport),
-            {priority});
+            httpOptions);
     } else {
         *requestHandle = CurlMultiRequestScheduler::shared().get(
             viewportUrl,
             std::move(onViewport),
-            {priority});
+            httpOptions);
     }
 }
 

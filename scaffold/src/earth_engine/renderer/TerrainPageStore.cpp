@@ -8,6 +8,7 @@
 
 #include "../core/math/OrientedBoundingBox.h"
 #include "../debug/Contracts.h"
+#include "../debug/PerfTimer.h"
 #include "../debug/Policies.h"
 #include "../debug/PlatformLog.h"
 #include "../layers/ActivatedRasterOverlay.h"
@@ -890,12 +891,36 @@ void TerrainPageStore::tick() {
         return;
     }
     ++frameId_;  // 推进帧号(下帧 determination 的 LRU touch/淘汰基准)
+    const double tickStartMs = perf::nowMs();
     if (decorator_) {
+        const double decorateStartMs = perf::nowMs();
         decorator_->tickDecorator();  // 先让叠画方把网格传上 GPU
+        winDecorateMs_ += perf::nowMs() - decorateStartMs;
         decoratorTickedFrame_ = frameId_;
     }
     drainInbox();  // fetch 已在 determination 页首次命中时 kick
-    retryPendingDecorations();
+    {
+        const double decorateStartMs = perf::nowMs();
+        retryPendingDecorations();
+        winDecorateMs_ += perf::nowMs() - decorateStartMs;
+    }
+    winMaxTickMs_ = std::max(winMaxTickMs_, perf::nowMs() - tickStartMs);
+    // 220ms 归属拆分:每 60 tick 报窗口累计与单帧峰值。**看的是归属比例**:
+    // compose 占大头 → 下 worker;upload 占大头 → 降 maxUploadsPerFrame/换
+    // 部分更新;decorate 占大头 → 叠画合批/降频。纯运动期 items 应趋 0,
+    // 持续 >0 = 在做无谓重合成(maplibre 式源集合指纹是下一步)。
+    if (frameId_ % 60u == 0u) {
+        platformLog(LogLevel::Info, "PageStore",
+                    "tick60 compose=%.1fms upload=%.1fms decorate=%.1fms "
+                    "maxTick=%.1fms items=%d",
+                    winComposeMs_, winUploadMs_, winDecorateMs_,
+                    winMaxTickMs_, winInboxItems_);
+        winComposeMs_ = 0.0;
+        winUploadMs_ = 0.0;
+        winDecorateMs_ = 0.0;
+        winMaxTickMs_ = 0.0;
+        winInboxItems_ = 0;
+    }
 }
 
 void TerrainPageStore::retryPendingDecorations() {
@@ -1009,17 +1034,23 @@ void TerrainPageStore::drainInbox() {
         if (pe.layer != item.layer) {
             continue;  // 该 layer 已换租给别的页
         }
+        ++winInboxItems_;
+        const double composeStartMs = perf::nowMs();
         resamplePageSource(*image, item.ancestorDepth, item.subX, item.subY,
                            side, rgba);
         // C-1:按源序合成进 assembler;只有真的推进了合成才上传(乱序早到的源
         // 先暂存不上传,重复到达幂等丢弃 → 不浪费本帧上传预算)。
-        if (!pe.assembler.accept(item.source, rgba.data())) {
+        const bool accepted = pe.assembler.accept(item.source, rgba.data());
+        winComposeMs_ += perf::nowMs() - composeStartMs;
+        if (!accepted) {
             continue;
         }
+        const double uploadStartMs = perf::nowMs();
         device_->updateTextureRegion(arrayTexture_.get(), 0, 0, side, side,
                                      pe.assembler.texels().data(),
                                      static_cast<size_t>(side) * 4u,
                                      item.layer);
+        winUploadMs_ += perf::nowMs() - uploadStartMs;
         // hasTexels 已为真 → 下帧 determination 重建 indir 时该 cell 变 resident。
         if (pe.assembler.complete()) {
             pe.assembler.releaseBuffers();  // 全源到齐:稳态零额外内存
@@ -1034,9 +1065,11 @@ void TerrainPageStore::drainInbox() {
                         (unsigned long long)frameId_,
                         (unsigned long long)decoratorTickedFrame_,
                         item.layer);
+            const double decorateStartMs = perf::nowMs();
             pe.decorated = decorator_->decoratePage(unpackKey(item.key),
                                                     arrayTexture_.get(),
                                                     item.layer);
+            winDecorateMs_ += perf::nowMs() - decorateStartMs;
         }
         ++uploadedLayerTotal_;
         ++uploaded;

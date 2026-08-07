@@ -83,6 +83,9 @@ public:
             }
             if (requestState.contains(cacheKey) ||
                 pendingLoads.containsCacheKey(cacheKey)) {
+                // 去重命中 = 这个在飞 key 本帧仍被要(上采样源等经由本口
+                // 逐帧重试的路径全靠这行续命,否则 30 帧后被差集回收误杀)。
+                requestState.markNeeded(cacheKey);
                 return TileLoadDispatchResult::Skipped;
             }
             if (!budget.tryIssue(
@@ -185,6 +188,9 @@ public:
             }
             if (requestState.contains(cacheKey) ||
                 pendingLoads.containsCacheKey(cacheKey)) {
+                // 去重命中 = 这个在飞 key 本帧仍被要(上采样源等经由本口
+                // 逐帧重试的路径全靠这行续命,否则 30 帧后被差集回收误杀)。
+                requestState.markNeeded(cacheKey);
                 return TileLoadDispatchResult::Skipped;
             }
             if (!tryAcquireUpsampleClipSlot()) {

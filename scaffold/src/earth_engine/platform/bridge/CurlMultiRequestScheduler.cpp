@@ -65,6 +65,15 @@ struct CurlMultiRequestScheduler::Impl {
         bool active = false;
         bool notifyCallbackOnShutdown = false;
         std::atomic<bool> cancelled{false};
+        /// 外部取消旗标(HttpRequestOptions.cancelFlag,常来自引擎侧
+        /// CancellationToken)。工作线程每轮 wake 传播成 cancelled,复用
+        /// 既有取消路径 —— 上层不必持有 RequestHandle 也能真取消。
+        std::shared_ptr<std::atomic<bool>> externalCancel;
+        /// 本次取消来自 externalCancel 传播 → active 摘除后必须补一发
+        /// callback(-1)(引擎侧 retired-token 清账依赖恰好一次回调)。
+        /// 句柄 cancel/shutdown 的旧路径保持不回调的既有契约。
+        /// 只在调度器 mutex 内写、active 摘除后读,无并发窗口。
+        bool notifyCancelCallback = false;
         std::chrono::steady_clock::time_point queuedAt;
         std::chrono::steady_clock::time_point startedAt;
     };
@@ -169,6 +178,7 @@ struct CurlMultiRequestScheduler::Impl {
         state->requestHeaders = std::move(options.headers);
         state->callback = std::move(callback);
         state->priority = options.priority;
+        state->externalCancel = std::move(options.cancelFlag);
         state->notifyCallbackOnShutdown = notifyCallbackOnShutdown;
         state->queuedAt = std::chrono::steady_clock::now();
 
@@ -359,6 +369,35 @@ private:
     }
 
     // 在 curl 工作线程上执行 cancelQueuedRequests 摘下的请求回调。
+    /// 把外部取消旗标传播成 cancelled,复用既有取消路径:排队项挪进
+    /// cancelledQueuedCallbacks(与 cancelQueuedRequests 同形态,回调恰好
+    /// 一次);在飞项置位后由本轮 cancelActiveRequests 摘除传输。
+    /// 传播时机 = 每轮 wake(空闲 poll 上限 50ms)——上层 token.cancel()
+    /// 不唤醒本线程,最坏延迟 50ms,远好于让废请求跑完整个传输。
+    void propagateExternalCancellations() {
+        std::lock_guard<std::mutex> lk(mutex);
+        for (auto& bucket : pending) {
+            for (auto it = bucket.begin(); it != bucket.end();) {
+                auto& request = *it;
+                if (request->externalCancel &&
+                    request->externalCancel->load(std::memory_order_acquire)) {
+                    request->cancelled.store(true, std::memory_order_release);
+                    cancelledQueuedCallbacks.push_back(std::move(request));
+                    it = bucket.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (auto& [easy, request] : active) {
+            if (request->externalCancel &&
+                request->externalCancel->load(std::memory_order_acquire)) {
+                request->notifyCancelCallback = true;
+                request->cancelled.store(true, std::memory_order_release);
+            }
+        }
+    }
+
     void drainCancelledQueuedCallbacks() {
         std::deque<std::shared_ptr<RequestState>> drained;
         {
@@ -374,6 +413,7 @@ private:
 
     void run() {
         while (true) {
+            propagateExternalCancellations();
             drainCancelledQueuedCallbacks();
             startPendingRequests();
             cancelActiveRequests();
@@ -569,6 +609,14 @@ private:
                 request->easy = nullptr;
             }
             request->active = false;
+            // 仅 externalCancel 桥接路径补回调(code=-1,恰好一次):从
+            // active 摘除后不会再有任何完成路径触发它,不补这一发,引擎侧
+            // retired-token 永不清账 → markDestroyingCancelAndWait 销毁时
+            // 死等。句柄 cancel/shutdown 的旧调用方(阻塞式 fetcher)自带
+            // 超时退出、依赖"取消不回调"的既有契约,保持原样。
+            if (request->notifyCancelCallback && request->callback) {
+                request->callback(-1, {});
+            }
         }
     }
 

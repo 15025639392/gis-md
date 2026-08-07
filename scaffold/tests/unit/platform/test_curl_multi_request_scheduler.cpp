@@ -723,3 +723,85 @@ TEST(CurlMultiRequestScheduler, SchedulersDoNotCleanupGlobalCurlForEachOther) {
     owner.shutdown();
     EXPECT_EQ(callbacks.load(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// externalCancel 桥接(HttpRequestOptions.cancelFlag):上层不持句柄也能真取
+// 消。两条契约:①传输被中止、槽位腾出;②回调恰好一次(code=-1)——引擎侧
+// retired-token 清账依赖它,丢了会在销毁时死等。
+// ---------------------------------------------------------------------------
+
+TEST(CurlMultiRequestScheduler, ExternalCancelFlagAbortsActiveFiresCallbackOnce) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler(1);
+
+    auto flag = std::make_shared<std::atomic<bool>>(false);
+    std::atomic<int> cancelledCallbacks{0};
+    std::atomic<int> lastCode{0};
+    HttpRequestOptions options{HttpRequestPriority::Normal};
+    options.cancelFlag = flag;
+    auto active = scheduler.get(
+        server.url("/hold/external-cancel"),
+        [&](int code, std::vector<uint8_t>) {
+            cancelledCallbacks.fetch_add(1);
+            lastCode.store(code);
+        },
+        options);
+    ASSERT_TRUE(server.waitForPath("/hold/external-cancel", 3s));
+
+    std::atomic<int> queuedCallbacks{0};
+    auto queued = scheduler.get(
+        server.url("/queued-after-external-cancel"),
+        [&](int, std::vector<uint8_t>) { queuedCallbacks.fetch_add(1); },
+        {HttpRequestPriority::Normal});
+
+    flag->store(true, std::memory_order_release);
+    // 无 wake 兜底:工作线程 poll 上限 50ms,3s 内必然传播。
+    ASSERT_TRUE(server.waitForPath("/queued-after-external-cancel", 3s))
+        << "外部旗标未腾出唯一并发槽";
+    for (int i = 0; i < 100 && cancelledCallbacks.load() == 0; ++i) {
+        std::this_thread::sleep_for(20ms);
+    }
+    EXPECT_EQ(1, cancelledCallbacks.load()) << "桥接取消必须回调恰好一次";
+    EXPECT_EQ(-1, lastCode.load());
+
+    server.releaseAll();
+    scheduler.shutdown();
+    EXPECT_EQ(1, cancelledCallbacks.load()) << "shutdown 不得二次回调";
+}
+
+TEST(CurlMultiRequestScheduler, ExternalCancelFlagDropsQueuedWithSingleCallback) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler;
+
+    std::vector<std::unique_ptr<HttpRequest>> blockers;
+    const int nonUrgentCapacity = scheduler.maximumActiveRequests() - 2;
+    for (int i = 0; i < nonUrgentCapacity; ++i) {
+        blockers.push_back(scheduler.get(
+            server.url("/hold/ext/" + std::to_string(i)),
+            [](int, std::vector<uint8_t>) {},
+            {HttpRequestPriority::Normal}));
+    }
+    ASSERT_TRUE(server.waitForSeenCount(
+        static_cast<size_t>(nonUrgentCapacity), 3s));
+
+    auto flag = std::make_shared<std::atomic<bool>>(false);
+    std::atomic<int> callbacks{0};
+    HttpRequestOptions options{HttpRequestPriority::Normal};
+    options.cancelFlag = flag;
+    auto queued = scheduler.get(
+        server.url("/queued-external-cancel"),
+        [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
+        options);
+    flag->store(true, std::memory_order_release);
+
+    for (int i = 0; i < 100 && callbacks.load() == 0; ++i) {
+        std::this_thread::sleep_for(20ms);
+    }
+    // 排队项被丢弃:回调一次(与 cancelQueuedRequests 同契约),且从未上网。
+    EXPECT_EQ(1, callbacks.load());
+    EXPECT_FALSE(server.hasSeen("/queued-external-cancel"));
+
+    server.releaseAll();
+    scheduler.shutdown();
+    EXPECT_EQ(1, callbacks.load());
+}

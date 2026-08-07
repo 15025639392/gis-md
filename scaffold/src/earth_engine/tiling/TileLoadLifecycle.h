@@ -37,6 +37,12 @@ public:
         const std::vector<std::string>& cacheKeys) const;
     void cancelAndEraseCacheKey(const std::string& cacheKey);
 
+    /// 帧级"仍被需要"标记(锁内转发 TilePendingRequestState::markNeeded)。
+    void markRequestNeeded(const std::string& cacheKey);
+    /// 推进帧序,真取消连续 maxAgeFrames 帧无人再要的在飞请求,返回其数量。
+    /// token.cancel 经 HttpRequestOptions.cancelFlag 桥接中止 curl 传输。
+    size_t sweepStaleRequests(uint64_t maxAgeFrames);
+
 private:
     TilePendingRequestState requestState_;
     TilePendingLoadQueue pendingLoads_;

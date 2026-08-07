@@ -29,6 +29,8 @@ struct TileLoadRequestOutcome {
     size_t issuedTerrainAvailabilityUpsample = 0;
     size_t issuedRasterDetailUpsample = 0;
     bool blockedByInflight = false;
+    /// 差集回收真取消的陈旧在飞请求数(连续 N 个处理帧无人再要)。
+    size_t cancelledStaleInflight = 0;
     // Per-reason drop counters for the request loop. A stalled load queue
     // (entries present, nothing issued) is diagnosed by which counter eats
     // the requests; surfaced on the debug overlay.

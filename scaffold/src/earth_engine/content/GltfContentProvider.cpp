@@ -2559,16 +2559,20 @@ void requestBodyAsync(
                 });
         };
 
+    // 桥接真取消:token.cancel() 置位本旗标 → curl 工作线程下一轮 wake
+    // 中止传输/丢弃排队项,不再把废数据下载完才丢结果。
+    HttpRequestOptions httpOptions{priority};
+    httpOptions.cancelFlag = tokenPtr->sharedFlag();
     if (bridge) {
         *requestHandle = bridge->get(
             url,
             std::move(completionCallback),
-            {priority});
+            httpOptions);
     } else {
         *requestHandle = CurlMultiRequestScheduler::shared().get(
             url,
             std::move(completionCallback),
-            {priority});
+            httpOptions);
     }
 
     if (!*requestHandle) {

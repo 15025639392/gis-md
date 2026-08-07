@@ -345,6 +345,16 @@ private:
     uint64_t decoratorTickedFrame_ = std::numeric_limits<uint64_t>::max();
     int uploadedLayerTotal_ = 0;
 
+    // 220ms 归属拆分:tick 内三段窗口计时。compose=重采样+按源序合成(纯 CPU),
+    // upload=updateTextureRegion,decorate=叠画(含 tickDecorator 与 retry 循环)。
+    // 每 60 tick 打一行窗口累计 + 单帧峰值后清零 —— 分不开归属就没法回答
+    // "220ms 花在哪",也没法查纯运动期是否在做无谓重合成(items 应趋 0)。
+    double winComposeMs_ = 0.0;
+    double winUploadMs_ = 0.0;
+    double winDecorateMs_ = 0.0;
+    double winMaxTickMs_ = 0.0;
+    int winInboxItems_ = 0;
+
     // C-1:有序源列表(providers_[0] = 底图,定分块/zoom/最大级)。每帧由
     // determination 刷新;变化时作废全部已合成页(旧页少一层或多一层都是错的)。
     std::vector<RasterOverlayTileProvider*> providers_;

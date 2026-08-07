@@ -223,3 +223,41 @@ TEST(TilePendingRequestStateTest, ParityContractStaysGreenAndAlive) {
                   evalsBefore,
               4u);
 }
+
+// ---------------------------------------------------------------------------
+// 帧级"仍被需要"标记与差集回收(请求侧降级/取消欠账)。
+// ---------------------------------------------------------------------------
+
+TEST(TilePendingRequestStateTest, StaleCollectionRespectsMarksAndHysteresis) {
+    TilePendingRequestState state;
+    CancellationToken keptToken;
+    CancellationToken staleToken;
+    ASSERT_TRUE(state.beginTerrainRequest("kept", keptToken));
+    ASSERT_TRUE(state.beginTerrainRequest("stale", staleToken));
+
+    // 30 个推进帧内只有 kept 被持续标记:滞回未过线时谁都不陈旧。
+    for (int i = 0; i < 30; ++i) {
+        state.markNeeded("kept");
+        EXPECT_TRUE(state.advanceFrameAndCollectStale(30).empty());
+    }
+    // 第 31 帧过线:stale 陈旧,kept 存活。
+    state.markNeeded("kept");
+    const std::vector<std::string> stale =
+        state.advanceFrameAndCollectStale(30);
+    ASSERT_EQ(1u, stale.size());
+    EXPECT_EQ("stale", stale[0]);
+}
+
+TEST(TilePendingRequestStateTest, MarkNeededIgnoresUnknownKeys) {
+    TilePendingRequestState state;
+    state.markNeeded("never-began");  // 不得长出孤儿记录(parity 契约看住)
+    EXPECT_TRUE(state.advanceFrameAndCollectStale(0).empty());
+}
+
+TEST(TilePendingRequestStateTest, BeginCountsAsFirstFrameMark) {
+    TilePendingRequestState state;
+    CancellationToken token;
+    ASSERT_TRUE(state.beginTerrainRequest("fresh", token));
+    // begin 后立刻推进一帧:age=1 未超过滞回(1),不该被误杀。
+    EXPECT_TRUE(state.advanceFrameAndCollectStale(1).empty());
+}

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -53,6 +54,11 @@ struct HttpRequestOptions {
 
     HttpRequestPriority priority = HttpRequestPriority::Normal;
     std::vector<Header> headers;
+    /// 外部取消旗标(通常来自 CancellationToken::sharedFlag)。置位后调度器
+    /// 工作线程在下一轮 wake(≤50ms)中止传输/丢弃排队项;回调仍恰好一次
+    /// (以 code=-1 触发)——上层的 retired-token 清账依赖这一点。
+    /// 为空 = 该请求不可被外部取消(行为与旧版完全一致)。
+    std::shared_ptr<std::atomic<bool>> cancelFlag;
 };
 
 /// 平台桥接抽象接口。

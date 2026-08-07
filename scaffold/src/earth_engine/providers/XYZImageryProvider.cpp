@@ -380,6 +380,9 @@ void XYZImageryProvider::requestTile(const TileKey& key,
 
         auto requestHandle =
             std::make_shared<std::unique_ptr<HttpRequest>>();
+        // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
+        HttpRequestOptions httpOptions{priority};
+        httpOptions.cancelFlag = token.sharedFlag();
         *requestHandle = platformBridge_->get(
             url,
             [this,
@@ -443,7 +446,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                         (*callbackPtr)(key, std::move(image));
                     });
             },
-            {priority});
+            httpOptions);
         return;
     }
 
@@ -456,6 +459,9 @@ void XYZImageryProvider::requestTile(const TileKey& key,
 
     auto requestHandle =
         std::make_shared<std::unique_ptr<HttpRequest>>();
+    // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
+    HttpRequestOptions httpOptions{priority};
+    httpOptions.cancelFlag = token.sharedFlag();
     *requestHandle = CurlMultiRequestScheduler::shared().get(
         url,
          [this,
@@ -517,7 +523,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                     (*callbackPtr)(key, std::move(image));
                 });
         },
-        {priority});
+        httpOptions);
 }
 
 ProviderRequestDiagnostics XYZImageryProvider::requestDiagnostics() const {

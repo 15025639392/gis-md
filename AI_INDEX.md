@@ -1102,10 +1102,10 @@ Tracks in-flight network requests and their cancellation tokens (guarded externa
 |---|---|---|
 | `PendingRequestCounts` | .h:12-16 | `{terrainRequests, contentRequests, totalRequests}`. |
 | `beginTerrainRequest` / `beginContentRequest` | .cpp:62-90 | Reject if destroying/empty/dup; insert key + store `CancellationToken`. |
-| `completeTerrainRequest` / `completeContentRequest` (各 2 个重载) | .cpp:91-110 / :111-136 | Erase from sets + token map. |
-| `cancelAndErase` | .cpp:137-150 | Cancels token, then erases. |
-| `markDestroyingAndCancelRequests` | .cpp:151-158 | Sets `destroying_`, cancels every token. |
-| `clearAfterCallbacksComplete` | .cpp:159-169 | Once `pendingRequests_` drained, clears content keys/tokens and unsets destroying. |
+| `completeTerrainRequest` / `completeContentRequest` (各 2 个重载) | .cpp:96-119 / :120-144 | Erase from sets + token map. |
+| `cancelAndErase` | .cpp:146-161 | Cancels token, then erases. |
+| `markDestroyingAndCancelRequests` | .cpp:186-193 | Sets `destroying_`, cancels every token. |
+| `clearAfterCallbacksComplete` | .cpp:194-205 | Once `pendingRequests_` drained, clears content keys/tokens and unsets destroying. |
 
 ### TilePendingUploadCompletion.h / .cpp
 
@@ -1571,8 +1571,8 @@ Content providers producing `TileContentLoadResult` (glTF models, not meshes). `
 | `TilesetContentTileMetadata` | .h:28-41 | Per-tile: keys, bounds/bounding volumes, `transform`, `geometricError`, `refine`, `unconditionallyRefine`. |
 | `TileContentLoadResult` | .h:43-113 | Result: `status`, `gltfModel`, `contentTransform`, `metadata`, `terrainRenderContent`, availability updates. Factories: `render`, `renderTerrain` (.h:63; sets `terrainRenderContent=true`, wires rasterOverlayDetails), `empty`/`retryLater`/`failed`/`cancelled`/`external`. |
 | `TilesetContentProvider` (interface) | .h:119-174 | Virtual: `supportsTile`, `rootTiles`, `tileMetadata`, `childTiles`, `providesTerrainQuadtree`, `availabilityState`, `requestTileContent`, `decodeContent`, diagnostics. cesium-native `TilesetContentLoader`. |
-| `SingleGltfContentProvider` | .h:179-231; .cpp:3580-3760 | Single glTF/GLB/B3DM tile. `decodeContent` (.cpp:3722) → `GltfParser::parse`; `setEastNorthUpPlacementDegrees` (.cpp:3737) places model via ENU frame. |
-| `TilesetJsonContentProvider` | .h:237-312; .cpp:3754-3778 | 3D Tiles `tileset.json`: `parseTilesetJson` (.cpp:4010) parses transforms/refine/GE/bounding volumes/URIs incl. external tilesets; `decodeRenderableContent` (.cpp:3992) parses glTF w/ up-axis transform. cesium-native `TilesetJsonLoader`. |
+| `SingleGltfContentProvider` | .h:179-231; .cpp:3584-3757 | Single glTF/GLB/B3DM tile. `decodeContent` (.cpp:3726) → `GltfParser::parse`; `setEastNorthUpPlacementDegrees` (.cpp:3741) places model via ENU frame. |
+| `TilesetJsonContentProvider` | .h:237-312; .cpp:3758-3783 | 3D Tiles `tileset.json`: `parseTilesetJson` (.cpp:4014) parses transforms/refine/GE/bounding volumes/URIs incl. external tilesets; `decodeRenderableContent` (.cpp:3996) parses glTF w/ up-axis transform. cesium-native `TilesetJsonLoader`. |
 | `GltfParser::parse` sites | .cpp:2366, 2386, 3173 | glTF decode entry points inside decode helpers. |
 
 ### content/EllipsoidTerrainContentProvider.h / .cpp
@@ -1652,8 +1652,8 @@ Standard XYZ/`{z}{x}{y}{s}` provider; base class for TMS/WMS/WMTS/Bing/Google. H
 | scheme tile counts | .cpp:74-85 | `Geographic-TMS` x = `2^(z+1)`; else `2^z`; y = `2^z` |
 | degrees/projected rects | .cpp:124-187 | Per-scheme (Geographic-TMS / TMS-WebMercator / default WebMercator) rectangle math; **`kWgs84MaximumRadius`** = 6378137.0 (.cpp:117,173) |
 | `requestTile` | .cpp:371-507 | Bridge path (.cpp:382-445) and CurlMulti path (.cpp:447-506); decode dispatched via `AsyncSystem::run` |
-| `decodeTile` | .cpp:538-563 | Prefers `PlatformBridge::decodeImage`, else `stbi_load_from_memory(...,4)` → RGBA |
-| `requestDiagnostics` | .cpp:523-536 | Atomics started/completed + transport max active |
+| `decodeTile` | .cpp:544-571 | Prefers `PlatformBridge::decodeImage`, else `stbi_load_from_memory(...,4)` → RGBA |
+| `requestDiagnostics` | .cpp:529-543 | Atomics started/completed + transport max active |
 | Android failure log cap | .cpp:42 | **`kMaxAndroidFailureLogs`** = 24 |
 
 ### TileMapServiceImageryProvider.h / .cpp
@@ -2319,7 +2319,7 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 | `applyToTerrainCommand(cmd, tile)` | .cpp:851-886 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
 | `tick()` | .cpp:888-899 | 每帧驱动:`drainInbox` + `retryPendingDecorations` |
 | `drainInbox` / `kickPageFetches` | .cpp:966-1044 / :927-964 | 解码结果回收(上传预算在此生效) / 发起缺页请求 |
-| `retryPendingDecorations` | .cpp:901-925 | 装饰失败重试 |
+| `retryPendingDecorations` | .cpp:926-958 | 装饰失败重试 |
 | `erasePageEntry` | .cpp:835-849 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:238-304 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:349-354 / :356-374 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
@@ -2515,7 +2515,7 @@ Cross-platform `PlatformBridge` on libcurl + stb_image (desktop dev + Android/iO
 
 ### bridge/CurlMultiRequestScheduler.h / .cpp
 
-Process-wide singleton (`shared()`, .cpp:720-723) owning one libcurl `multi` handle + dedicated worker thread. **`kDefaultMaximumActiveRequests`** = 20 (.h:15). Public: `get`/`post`/`getBlocking`/`cancelQueuedRequests`/`shutdown`/`maximumActiveRequests` (.h:26-44).
+Process-wide singleton (`shared()`, .cpp:768-771) owning one libcurl `multi` handle + dedicated worker thread. **`kDefaultMaximumActiveRequests`** = 20 (.h:15). Public: `get`/`post`/`getBlocking`/`cancelQueuedRequests`/`shutdown`/`maximumActiveRequests` (.h:26-44).
 
 | Item | Lines | Description |
 | --- | --- | --- |
@@ -2525,13 +2525,13 @@ Process-wide singleton (`shared()`, .cpp:720-723) owning one libcurl `multi` han
 | `RequestHandle` | .cpp:84-115 | `HttpRequest` impl; dtor cancels; `wake()` calls `curl_multi_wakeup` |
 | `Impl` ctor / dtor | .cpp:117-132 | `curl_multi_init`, spawns `run()` worker; dtor → `shutdown` |
 | `request` | .cpp:134-171 | Enqueues into `pending[priorityBucket]` (3 buckets 0-2); immediate `(-1,{})` if stopping |
-| `cancelQueuedRequests` | .cpp:801-803 | Swaps out pending buckets, fires `(-1,{})` callbacks |
-| `shutdown` | .cpp:805-807 | Idempotent; cancels pending+active, joins worker (guards self-join), fires deferred callbacks |
+| `cancelQueuedRequests` | .cpp:849-852 | Swaps out pending buckets, fires `(-1,{})` callbacks |
+| `shutdown` | .cpp:853-856 | Idempotent; cancels pending+active, joins worker (guards self-join), fires deferred callbacks |
 | priority scheduling | .cpp:297-308 | `popNextPendingLocked` drains highest bucket first (High=2→Low=0) |
 | `run` (worker loop) | .cpp:310-353 | start→cancel→start→`curl_multi_perform`→drain; `curl_multi_wait` 50ms timeout; cv-waits when idle |
 | `startRequest` | .cpp:385-443 | Configures easy handle: timeout 15s, connect 5s, follow redirects (max 3), UA `earth-md/0.1`, `NOSIGNAL`; POST fields + Content-Type header |
 | `drainCompletedRequests` | .cpp:470-536 | Reads `CURLMSG_DONE`; status = httpCode or `-1`; body moved to callback only if status==200; Android-only failure log |
-| `getBlocking` | .cpp:752-799 | Sync wrapper over async `get` (default 20s timeout); polls `shouldCancel` every 20ms; cancels on timeout/cancel |
+| `getBlocking` | .cpp:800-848 | Sync wrapper over async `get` (default 20s timeout); polls `shouldCancel` every 20ms; cancels on timeout/cancel |
 
 ### threading/RenderThreadPlacement.h + android/RenderThreadPlacementAndroid.cpp (+ threading/RenderThreadPlacementNoop.cpp)
 

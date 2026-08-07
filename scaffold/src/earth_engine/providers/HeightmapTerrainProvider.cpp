@@ -125,6 +125,9 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
 
         auto requestHandle =
             std::make_shared<std::unique_ptr<HttpRequest>>();
+        // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
+        HttpRequestOptions httpOptions{priority};
+        httpOptions.cancelFlag = token.sharedFlag();
         *requestHandle = platformBridge_->get(
             url,
             [this,
@@ -149,7 +152,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                 auto hm = decodeTile(body.data(), body.size());
                 callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(hm)));
             },
-            {priority});
+            httpOptions);
         return;
     }
 
@@ -208,6 +211,9 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
 
     auto requestHandle =
         std::make_shared<std::unique_ptr<HttpRequest>>();
+    // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
+    HttpRequestOptions httpOptions{priority};
+    httpOptions.cancelFlag = token.sharedFlag();
     *requestHandle = CurlMultiRequestScheduler::shared().get(
         url,
         [this,
@@ -253,7 +259,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                         TerrainTileLoadResult::successWithHeightmap(std::move(hm)));
                 });
         },
-        {priority});
+        httpOptions);
 }
 
 ProviderRequestDiagnostics HeightmapTerrainProvider::requestDiagnostics() const {

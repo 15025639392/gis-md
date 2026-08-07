@@ -8,6 +8,7 @@
 #include "TileRetryBackoffPolicy.h"
 #include "TilesetTile.h"
 #include "../debug/PerfTimer.h"
+#include "../debug/PlatformLog.h"
 #include "TileLoadTypes.h"
 #include "TileMotionCullPolicy.h"
 #include "TileGltfTerrainUpsampledChildMaterializer.h"
@@ -150,6 +151,9 @@ private:
             }
             if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
                 // The request/pending lifecycle is now the sole owner.
+                // 去重命中 = 本帧仍在要这个在飞 key → 刷新其"仍需要"帧标,
+                // 差集回收据此判陈旧(见 sweepStaleRequests)。
+                input.lifecycle.markRequestNeeded(cacheKey);
                 ++pass.outcome.skippedAlreadyPending;
                 pass.consumed.push_back(requestKey);
                 continue;
@@ -402,8 +406,31 @@ private:
             }
         }
 
+        // 帧级差集回收(请求侧欠账):连续 kStaleRequestFrameAge 个"处理帧"
+        // 里都没人再要的在飞 key → 真取消(token 经 cancelFlag 桥接中止 curl
+        // 传输,并发槽立即腾出)。空请求帧不推进帧序 —— reuse/静止相机下的
+        // 长传输不计龄,不会被误杀。滞回取 30 帧(~0.5s):运动剔除/暂态缺席
+        // 一两帧不构成陈旧,pan 离场的瓦片才会持续缺席到过线。
+        if (!requests.empty()) {
+            pass.outcome.cancelledStaleInflight =
+                input.lifecycle.sweepStaleRequests(kStaleRequestFrameAge);
+            // 机制信号:每次真取消都值得一行(取消需连续 30 个处理帧缺席,
+            // 频率天然有界)。pan 场景该行应出现且数量 ≤ 在飞上限;静止相机
+            // 恒无此行 —— 反了都说明差集回收在误杀或失灵。
+            if (pass.outcome.cancelledStaleInflight > 0) {
+                platformLog(LogLevel::Info, "TileLoad",
+                            "staleInflightCancelled=%zu age>%llu",
+                            pass.outcome.cancelledStaleInflight,
+                            static_cast<unsigned long long>(
+                                kStaleRequestFrameAge));
+            }
+        }
+
         return pass;
     }
+
+    /// 在飞请求陈旧判定的滞回帧数(连续处理帧计数,非墙钟)。
+    static constexpr uint64_t kStaleRequestFrameAge = 30;
 
     static void recordClassified(
         TileLoadRequestOutcome& outcome,

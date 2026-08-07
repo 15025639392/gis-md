@@ -89,4 +89,20 @@ void TileLoadLifecycle::cancelAndEraseCacheKey(
     pendingLoads_.eraseCacheKey(cacheKey);
 }
 
+void TileLoadLifecycle::markRequestNeeded(const std::string& cacheKey) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    requestState_.markNeeded(cacheKey);
+}
+
+size_t TileLoadLifecycle::sweepStaleRequests(uint64_t maxAgeFrames) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::vector<std::string> stale =
+        requestState_.advanceFrameAndCollectStale(maxAgeFrames);
+    for (const std::string& cacheKey : stale) {
+        requestState_.cancelAndErase(cacheKey);
+        pendingLoads_.eraseCacheKey(cacheKey);
+    }
+    return stale.size();
+}
+
 } // namespace earth_engine
