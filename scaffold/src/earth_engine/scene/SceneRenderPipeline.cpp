@@ -247,11 +247,15 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
     char buildDetail[448];
     std::snprintf(buildDetail, sizeof(buildDetail),
-        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
+        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f clampH=%.0f/%.0f batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
         skyMs,
         atmosphereMs,
         layerCommandsMs,
         vectorCommandsMs,
+        // 贴地体的高度范围(米)。**没有它就无法区分「贴地正常」与「范围恰好
+        // 蒙对」** —— 相机飞到别的地形该跟着变;恒为 0/0 = 一次都没汇总到。
+        lastClampMinHeight_,
+        lastClampMaxHeight_,
         batchMs,
         context.diagnostics.terrainBatches,
         context.diagnostics.batchedTerrainCommands,
@@ -447,6 +451,29 @@ void SceneRenderPipeline::buildLayerCommands(
     Tileset* terrainForClamp = context.terrainTileset
                                    ? context.terrainTileset
                                    : context.pendingTerrainTileset;
+    // worker 侧贴地(stencil 挤出体)要的**区域高度范围**:从本帧可见地形
+    // 瓦片的包围体汇总。O(可见瓦片数),不做任何地形采样 —— 这是 worker
+    // 能贴地的前提(它拿不到采样器,但拿得到一对标量)。
+    //
+    // 用可见瓦片而非固定值:平原上范围窄 → 体矮 → fill rate 低;山地自动
+    // 变高。looseFittingHeights 的瓦片范围偏宽,对我们是安全方向(体宁高
+    // 勿矮:矮了穿不透地形,该片区整片不显示)。
+    double clampMinHeight = std::numeric_limits<double>::max();
+    double clampMaxHeight = std::numeric_limits<double>::lowest();
+    if (terrainForClamp) {
+        for (TilesetTile* tile :
+             terrainForClamp->tilePlan().tilesToRenderThisFrame) {
+            if (tile == nullptr || !tile->boundingVolume.has_value()) continue;
+            const TileBoundingVolume& bv = *tile->boundingVolume;
+            // 只有 Region 的 min/maxHeight 有意义(球/盒的那两个字段是缺省值)。
+            if (bv.kind != TileBoundingVolumeKind::Region) continue;
+            clampMinHeight = std::min(clampMinHeight, bv.minimumHeight);
+            clampMaxHeight = std::max(clampMaxHeight, bv.maximumHeight);
+        }
+    }
+    lastClampRangeApplied_ = clampMaxHeight >= clampMinHeight;
+    lastClampMinHeight_ = lastClampRangeApplied_ ? clampMinHeight : 0.0;
+    lastClampMaxHeight_ = lastClampRangeApplied_ ? clampMaxHeight : 0.0;
     for (auto& fLayer : context.featureRenderLayers) {
         FeatureTerrainSampling sampling;
         if (terrainForClamp) {
@@ -466,6 +493,10 @@ void SceneRenderPipeline::buildLayerCommands(
             };
         }
         fLayer->setTerrainSampling(std::move(sampling));
+        // 汇总不到(无地形 / 本帧无可见瓦片 / 非 Region 包围体)时传
+        // min > max = 「未知」,图层据此退回不贴地,而不是拿一个瞎猜的范围
+        // 去建体 —— 后者会把线画在错误高度上,比不贴地更难查。
+        fLayer->setWorkerTerrainHeightRange(clampMinHeight, clampMaxHeight);
         if (fLayer->visible()) {
             fLayer->buildRenderCommands(
                 context.frameState, context.renderer, context.commands);

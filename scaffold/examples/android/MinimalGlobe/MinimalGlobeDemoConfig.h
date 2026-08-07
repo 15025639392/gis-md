@@ -67,13 +67,8 @@ constexpr bool kEnableMvtBasemap = true;
 // 几何通路不贴地 —— 那边仍需 true。
 constexpr bool kMvtBasemapAsOverlay = false;
 
-/// 几何通路贴地用的区域地形高度范围(米)。挤出体要**纵向穿透**这个范围,
-/// 取窄了该片区路网整片消失(不是变淡)。
-/// TODO: 现按 demo 场景(重庆)固定;通用解是渲染线程按视野从已加载地形瓦片
-///       的 heightmap min/max 汇总(LoadedTerrainAreaSampler 已持有候选瓦片,
-///       取范围是 O(瓦片数) 而非 O(采样点数)),再每帧喂给图层。
-constexpr double kBasemapTerrainMinHeight = -50.0;
-constexpr double kBasemapTerrainMaxHeight = 2200.0;
+// 贴地体的高度范围不在这里配:SceneRenderPipeline 每帧从**可见地形瓦片的
+// 包围体**汇总(O(可见瓦片数),零采样),相机飞到哪都对。
 
 /// E4 影像通路的栅格样式(颜色 + 分级表)。与几何通路的 SourceLayerRule
 /// 同源:同一套 StyleFilter 谓词、同一张道路分级表 —— 两条通路的取舍语义

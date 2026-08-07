@@ -2182,18 +2182,18 @@ Render flow in `render()` (.cpp:190-283):
 
 | Order | Method | Lines | Builds |
 |---|---|---|---|
-| 0 | `reserveCommands` | .cpp:285-303 | Reserve = **4 + vectorLayers*4 + Σ tileset renderEntries** |
+| 0 | `reserveCommands` | .cpp:289-308 | Reserve = **4 + vectorLayers*4 + Σ tileset renderEntries** |
 | 1 | ~~`buildStableLayerCommands`~~ | — | ⚠️ **已撤销,函数不存在**。此行原描述 stable-key streaming(prefixes `terrain:` / `content:N:`,经 `tileCommandSet_.update`)—— 该机制连同两个成员一起已从代码里移除;瓦片命令现由第 4 步 `buildLayerCommands` 直接插入。(2026-08-06 复核) |
-| 2 | `buildSkyCommands` | .cpp:305-343 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
-| 3 | `buildAtmosphereCommands` | .cpp:345-372 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
-| 4 | `buildLayerCommands` | .cpp:374-475 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist |
-| 5 | `applyMvpUniforms` | .cpp:528-535 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:537-586 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:477-526 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
-| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:588-607 / :609-652 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
-| 7 | `aggregateDiagnostics` | .cpp:654-681 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
-| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:683-739 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
-| — | beforeSubmit → submit | .cpp:132-141 | `beforeSubmit()` (presentation trace) then `renderer.submit(commands)`; `releaseRenderReferences` on all tilesets (.cpp:741-775) |
+| 2 | `buildSkyCommands` | .cpp:309-348 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
+| 3 | `buildAtmosphereCommands` | .cpp:349-377 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
+| 4 | `buildLayerCommands` | .cpp:378-507 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
+| 5 | `applyMvpUniforms` | .cpp:559-567 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:568-618 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:508-558 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:619-638 / :640-683 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
+| 7 | `aggregateDiagnostics` | .cpp:685-712 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
+| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:714-771 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
+| — | beforeSubmit → submit | .cpp:132-141 | `beforeSubmit()` (presentation trace) then `renderer.submit(commands)`; `releaseRenderReferences` on all tilesets (.cpp:772-808) |
 
 Terrain surface = `GltfPrimitive` cmds carrying `terrainRenderContent` (`isTerrainSurfaceCommand`, .cpp:31-34). QM terrain now draws via the 32-byte `TerrainGpuVertex` path (`makeTerrainPrimitiveCommand`, stride 32, `terrainShader`; 2026-07-01); ellipsoid-fallback terrain still uses the 120-byte `GltfGpuVertex` glTF path. `Renderer::terrainShader()` is defined (`kTerrainVertex/FragmentGLSL` + MSL).
 
@@ -3296,7 +3296,7 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 
 | Contract | Where | Why |
 |---|---|---|
-| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | SceneRenderPipeline.cpp:741 then :153 (`releaseRenderReferences` body .cpp:432-439 calls `tileset->releaseRenderReferences()`) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
+| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | SceneRenderPipeline.cpp:772 then :153 (`releaseRenderReferences` body .cpp:432-439 calls `tileset->releaseRenderReferences()`) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
 | `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :143 | `processPendingLoads` is what pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the GPU upload. Reversing the order does not error — it just makes every upload lag one frame, which reads as "loading is always half a beat late" and gets misattributed to network or device. **Machine-checked**: `contracts::Id::LoadsBeforeGpuDrain` (Tileset.cpp:254). |
 | Ref-count keep-alive until GPU consumption | GpuUploadQueue.h (deque of `PendingGpuUpload`); drain finalizes via `uploadToGpu` + `finishRenderResourcePreparation` | CPU-prepared vertex/index bytes and tile state must stay alive from enqueue through upload. The claim is `asyncGpuUploadPending` + a retained lifecycle upload key; three sites must release it (`TilePendingUploadCompletion::eraseUpload`) or the tile is pinned forever. Not machine-checked. |
 

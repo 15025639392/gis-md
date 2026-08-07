@@ -425,11 +425,8 @@ static bool createEngine() {
                 {{8.0, StyleExpression::literal(1.0)},
                  {15.0, StyleExpression::literal(5.0)}});
             basemapLayer->setStyle(bs);
-            // 贴地挤出体的纵向跨度来源(worker 侧读)。见配置项注释:取窄了
-            // 体穿不透地形,该片区路网整片消失。
-            basemapLayer->setWorkerTerrainHeightRange(
-                minimal_globe_demo::kBasemapTerrainMinHeight,
-                minimal_globe_demo::kBasemapTerrainMaxHeight);
+            // 贴地体的高度范围由 SceneRenderPipeline 每帧从可见地形瓦片汇总,
+            // demo 侧不再设 —— 两处真相会在相机飞离本区时打架。
             gMvtBasemapLayer = basemapLayer.get();
 
             gMvtWorkerPool = std::make_unique<ThreadPool>(2);

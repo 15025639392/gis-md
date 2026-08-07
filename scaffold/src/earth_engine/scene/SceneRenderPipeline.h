@@ -87,6 +87,10 @@ private:
 
     mutable int lastPrimaryCurrentEntryCount_ = -1;
     mutable int lastPrimaryPendingEntryCount_ = -1;
+    // 本帧喂给矢量层的贴地高度范围(米),仅供头行诊断读取。
+    mutable double lastClampMinHeight_ = 0.0;
+    mutable double lastClampMaxHeight_ = 0.0;
+    mutable bool lastClampRangeApplied_ = false;
     PolarCapRenderer polarCap_;
     mutable TerrainInstanceBatcher terrainBatcher_;
     // BatchDet 判因行的节流计数(独立于帧号,与 PageDet 同模式)。
