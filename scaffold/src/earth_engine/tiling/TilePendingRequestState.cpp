@@ -1,8 +1,28 @@
 #include "TilePendingRequestState.h"
 
+#include "../debug/Contracts.h"
+
 #include <algorithm>
 
 namespace earth_engine {
+
+namespace {
+
+/// 三张表的成对变异自检(PendingRequestParity 契约的判定点)。分歧的静默
+/// 后果:键残留 → 该 cacheKey 永判"在飞"、调度器永不重发、瓦片永久缺失;
+/// 令牌残留 → 令牌表泄漏、换代取消形同虚设。今天由同一组方法成对增删,
+/// 契约防的是未来某次改动只动其中一张。
+void checkParity(const char* site,
+                 size_t pending,
+                 size_t content,
+                 size_t tokens) {
+    GE_CONTRACT(contracts::Id::PendingRequestParity,
+                pending == tokens && content <= pending,
+                "site=%s pending=%zu tokens=%zu content=%zu",
+                site, pending, tokens, content);
+}
+
+}  // namespace
 
 bool TilePendingRequestState::destroying() const {
     return destroying_;
@@ -47,6 +67,9 @@ bool TilePendingRequestState::beginTerrainRequest(
     }
     pendingRequests_.insert(cacheKey);
     pendingRequestTokens_[cacheKey] = token;
+    checkParity("beginTerrain", pendingRequests_.size(),
+                pendingContentRequestKeys_.size(),
+                pendingRequestTokens_.size());
     return true;
 }
 
@@ -59,6 +82,9 @@ bool TilePendingRequestState::beginContentRequest(
     pendingRequests_.insert(cacheKey);
     pendingContentRequestKeys_.insert(cacheKey);
     pendingRequestTokens_[cacheKey] = token;
+    checkParity("beginContent", pendingRequests_.size(),
+                pendingContentRequestKeys_.size(),
+                pendingRequestTokens_.size());
     return true;
 }
 
@@ -67,6 +93,9 @@ void TilePendingRequestState::completeTerrainRequest(
     pendingRequests_.erase(cacheKey);
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
+    checkParity("complete", pendingRequests_.size(),
+                pendingContentRequestKeys_.size(),
+                pendingRequestTokens_.size());
 }
 
 void TilePendingRequestState::completeContentRequest(
@@ -74,6 +103,9 @@ void TilePendingRequestState::completeContentRequest(
     pendingRequests_.erase(cacheKey);
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
+    checkParity("complete", pendingRequests_.size(),
+                pendingContentRequestKeys_.size(),
+                pendingRequestTokens_.size());
 }
 
 void TilePendingRequestState::completeTerrainRequest(
@@ -111,6 +143,9 @@ void TilePendingRequestState::cancelAndErase(const std::string& cacheKey) {
     pendingRequests_.erase(cacheKey);
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
+    checkParity("cancelAndErase", pendingRequests_.size(),
+                pendingContentRequestKeys_.size(),
+                pendingRequestTokens_.size());
 }
 
 void TilePendingRequestState::markDestroyingAndCancelRequests() {

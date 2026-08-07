@@ -11,6 +11,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/debug/Policies.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/renderer/RenderCommand.h"
 #include "earth_engine/renderer/RenderDevice.h"
@@ -9874,4 +9875,48 @@ TEST(RasterOverlayLifecycleTest,
             << " 源像素（terrain north=" << terrainRect.north()
             << "）——blit 锚定丢相位？";
     }
+}
+
+// ---------------------------------------------------------------------------
+// RasterUploadProgress 守卫:正例推进、反例冻结、空闲不入账。这条 lane 正是
+// "交互期硬冻结改 budget 涓流"那次修复的现场,守卫钉住"有符合资格的积压
+// 却推进恒 0"不再复发。
+// ---------------------------------------------------------------------------
+
+TEST(RasterOverlayLifecycleTest, RasterUploadProgressPolicyObservesAdvanceFrozenIdle) {
+    using earth_engine::policy::Id;
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey key{scheme->id(), 2, 1, 1};
+    provider.setCoverageRectangle(scheme->tileToRectangle(key));
+    auto tile = provider.getTile(key);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(1, provider.getPendingUploadCount());
+
+    // 反例(冻结):有积压且非交互期(全部符合资格),预算把 lane 闸死 →
+    // 分母进账、分子不进。持续如此即把窗口比率压向 0,越过下界报警。
+    FrameResourceBudgetConfig frozenConfig;
+    frozenConfig.maxRasterUploadsPerFrame = 0;
+    FrameResourceBudget frozenBudget;
+    frozenBudget.beginFrame(1, frozenConfig);
+
+    const uint64_t num0 = policy::windowNumerator(Id::RasterUploadProgress);
+    const uint64_t den0 = policy::windowDenominator(Id::RasterUploadProgress);
+
+    provider.processPendingUploads(false, &frozenBudget);
+    EXPECT_EQ(1, provider.getPendingUploadCount());
+    EXPECT_EQ(0u, policy::windowNumerator(Id::RasterUploadProgress) - num0);
+    EXPECT_EQ(1u, policy::windowDenominator(Id::RasterUploadProgress) - den0);
+
+    // 正例(推进):默认预算放行 → 1/1。
+    ASSERT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(1u, policy::windowNumerator(Id::RasterUploadProgress) - num0);
+    EXPECT_EQ(2u, policy::windowDenominator(Id::RasterUploadProgress) - den0);
+
+    // 空闲(无积压)不入账。
+    provider.processPendingUploads(false);
+    EXPECT_EQ(2u, policy::windowDenominator(Id::RasterUploadProgress) - den0);
 }

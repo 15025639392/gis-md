@@ -2,6 +2,8 @@
 
 #include "earth_engine/tiling/TilePendingRequestState.h"
 
+#include "earth_engine/debug/Contracts.h"
+
 using namespace earth_engine;
 
 TEST(TilePendingRequestStateTest, CountsAndCompletesRequests) {
@@ -188,4 +190,36 @@ TEST(TilePendingRequestStateTest, CancelIgnoresUnknownKeys) {
     EXPECT_FALSE(state.callbacksDrained());
     state.completeTerrainRequest("terrain", replacementToken);
     EXPECT_TRUE(state.callbacksDrained());
+}
+
+// ---------------------------------------------------------------------------
+// PendingRequestParity 契约:正常成对增删全程零违约,且求值数确实在涨
+// (活性证明 —— 零违约的死判定点与零违约的健康路径读数相同)。
+// 反例无法从公共 API 构造(这正是契约的意义:它防的是未来改动破坏成对性),
+// 开发期已用「临时注释掉一处 erase」验证过判定点会响。
+// ---------------------------------------------------------------------------
+
+TEST(TilePendingRequestStateTest, ParityContractStaysGreenAndAlive) {
+    using earth_engine::contracts::Id;
+    const uint32_t violationsBefore =
+        earth_engine::contracts::totalViolations(Id::PendingRequestParity);
+    const uint32_t evalsBefore =
+        earth_engine::contracts::totalEvaluations(Id::PendingRequestParity);
+
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+    EXPECT_TRUE(state.beginTerrainRequest("terrain", terrainToken));
+    EXPECT_TRUE(state.beginContentRequest("content", contentToken));
+    state.completeContentRequest("content", contentToken);
+    state.cancelAndErase("terrain");
+    EXPECT_TRUE(state.empty());
+
+    EXPECT_EQ(0u,
+              earth_engine::contracts::totalViolations(Id::PendingRequestParity) -
+                  violationsBefore);
+    // begin×2 + complete(token 版委托无条件版)×1 + cancel×1 = 至少 4 次求值。
+    EXPECT_GE(earth_engine::contracts::totalEvaluations(Id::PendingRequestParity) -
+                  evalsBefore,
+              4u);
 }

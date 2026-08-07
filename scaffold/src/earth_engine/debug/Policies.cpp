@@ -24,6 +24,9 @@ const char* const kNames[] = {
     "FinalizeProgress",
     "HeightIndexRegularity",
     "HeightSampleCoverage",
+    "TerminalStateProgress",
+    "RasterUploadProgress",
+    "VectorDecorateProgress",
 };
 
 const Expectation kExpectations[] = {
@@ -89,6 +92,31 @@ const Expectation kExpectations[] = {
      "全球源全覆盖+在视祖先淘汰豁免下 miss 只应来自深跳/冷启动补货暂态,"
      "窗口聚合已摊薄;持续偏低=祖先回退链断,fill 贴海平面/矢量贴 0 的前兆",
      "TerrainHeightService 消费方加载时序 / TileSelection kicked 深降路径"},
+
+    // terminal 推进率。与 FinalizeProgress 同构同区间:只在有终态积压的帧上
+    // 记账,有活就该推进至少一个。下界 0.8 留给预算耗尽的偶发帧。
+    {0.8, 1.0,
+     "只在有终态积压的帧上记账,健康态应≈1。FinalizeProgress 的镜像:同一"
+     "冻结事故形态(早退/预算把 lane 闸死)对 terminal 循环同样成立,此前"
+     "只有下半段 finalize 有守卫",
+     "TilePendingLoadProcessor::processPendingLoads(terminal 循环)/ 预算配置"},
+
+    // 影像上传推进率。分母只数"存在符合交互期资格的积压"的帧 —— 交互期大图
+    // 被尺寸过滤推迟是设计意图,不入分母,冻结与设计内推迟从此分得开。
+    {0.8, 1.0,
+     "只在存在能过交互期尺寸过滤的待上传项的帧上记账,健康态应≈1。持续趋 0 "
+     "= RasterTextureUpload lane 冻结 —— 影像侧正是交互期硬冻结改 budget "
+     "涓流那次修复的先行现场,守卫防它复发",
+     "RasterOverlayTileProvider::processPendingUploads / RasterTextureUpload lane"},
+
+    // 叠画推进率。帧粒度二值:等 fetch 的帧只 defer 不 draw 属正常暂态,窗口
+    // 聚合摊掉;下界压得很低(0.05),抓的只是**持续恒 0**的自锁签名。若因
+    // 网络全死导致恒 0 也会报 —— 那同样是矢量图层卡死,值得被点名。
+    {0.05, 1.0,
+     "真机自锁签名 = defer 持续增长而 drawn 恒 0(预算被零成本早退吃光的"
+     "闭环);健康排队消化时 draw 帧与纯 defer 帧混杂,比率远高于 0.05。"
+     "恒 0 的另一可能是源 fetch 全死,同样是需要处理的卡死",
+     "TerrainPageStore::retryPendingDecorations 预算记账 / VectorPageDrawer 准入"},
 };
 
 // ⚠️ 数组**不写显式尺寸**,让初始化项数决定长度 —— 否则 `kNames[kCount]` 的

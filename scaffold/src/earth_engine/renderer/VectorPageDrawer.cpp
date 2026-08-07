@@ -6,6 +6,7 @@
 #include "../core/async/AsyncSystem.h"
 #include "../data/MvtDecoder.h"
 #include "../debug/PlatformLog.h"
+#include "../debug/Policies.h"
 #include "RenderCommand.h"
 #include "RenderDevice.h"
 #include "Renderer.h"
@@ -116,6 +117,15 @@ void VectorPageDrawer::kickFetch(const TileKey& srcKey, uint64_t srcPacked) {
 }
 
 void VectorPageDrawer::tickDecorator() {
+    // 叠画推进率(帧粒度二值):上一帧有叠画活动(真 draw 或准入拒绝)才入
+    // 分母,有真 draw 记 1。自锁签名 = defer 持续而 drawn 恒 0(预算被零成本
+    // 早退吃光的闭环),等 fetch 的纯 defer 帧属正常暂态,由窗口聚合摊掉。
+    if (frameHadDraw_ || frameHadDeferral_) {
+        policy::observe(policy::Id::VectorDecorateProgress,
+                        frameHadDraw_ ? 1 : 0, 1);
+    }
+    frameHadDraw_ = false;
+    frameHadDeferral_ = false;
     // 节流插桩(~每 60 帧)。**看的是增量**:稳态下 drawn/fetch 每段都应趋近 0;
     // fetch 增量持续 > 0 = LRU thrash(缓存装不下当前可见页对应的源瓦片数);
     // fetch≈0 而 drawn 持续高 = pass 数本身是成本,得从合批/降频下手。
@@ -317,6 +327,7 @@ bool VectorPageDrawer::decoratePage(const TileKey& pageKey, Texture* target,
         if (tiles_.size() >= std::max<size_t>(1, options_.maxCachedTiles) &&
             !tryEvictOne()) {
             ++admissionDeferrals_;
+            frameHadDeferral_ = true;
             return false;  // 等槽位:先让已在途的瓦片被消费
         }
         GpuTile& admitted = tiles_[srcPacked];
@@ -390,6 +401,7 @@ bool VectorPageDrawer::decoratePage(const TileKey& pageKey, Texture* target,
     device_->submit(list);
     device_->endPass();
     ++drawnPages_;
+    frameHadDraw_ = true;
     gpu.consumed = true;  // 服务过至少一个页,自此可被正常 LRU 换出
     if (outDidGpuWork) {
         *outDidGpuWork = true;  // 真发了 draw:计入页存储的每帧叠画预算

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "earth_engine/debug/Policies.h"
 #include "earth_engine/renderer/Renderer.h"
 #include "../../helpers/MockRenderDevice.h"
 
@@ -434,4 +435,52 @@ TEST(VectorPageDrawerCache, FailedTilesAreConsumedAndEvictable) {
     EXPECT_EQ(0, h.undecoratedCount());
     EXPECT_EQ(0, h.drawer->drawnPageCount()) << "404 不该画出东西";
     EXPECT_EQ(6, h.totalFetches);
+}
+
+// ---------------------------------------------------------------------------
+// VectorDecorateProgress 守卫:draw 帧计 1、纯 defer 帧计 0、空闲帧不入账。
+// 冲账发生在**下一次** tickDecorator(两 tick 之间即一帧),故每段后要多走
+// 一帧空转来落账。
+// ---------------------------------------------------------------------------
+
+TEST(VectorPageDrawerCache, DecorateProgressPolicyObservesDrawDeferAndIdle) {
+    using earth_engine::policy::Id;
+    ConvergenceHarness h(/*maxCachedTiles=*/2, /*pageCount=*/2);
+    const std::vector<uint8_t> body = makeLineTileBytes();
+
+    // 帧 1:全部准入进在途(无 draw 无 defer,容量够 → 不入账)。
+    const uint64_t num0 = policy::windowNumerator(Id::VectorDecorateProgress);
+    const uint64_t den0 = policy::windowDenominator(Id::VectorDecorateProgress);
+    h.frame(/*retryBudget=*/4);
+
+    // 帧 2:结果到达后真 draw → 该帧应计 1/1(帧 3 的 tick 落账)。
+    h.completeFetches(2, 200, body);
+    h.frame(/*retryBudget=*/4);
+    h.frame(/*retryBudget=*/4);  // 落账 + 本帧已无未叠画页(空闲,不入账)
+
+    EXPECT_EQ(0, h.undecoratedCount());
+    const uint64_t numAfterDraw =
+        policy::windowNumerator(Id::VectorDecorateProgress);
+    const uint64_t denAfterDraw =
+        policy::windowDenominator(Id::VectorDecorateProgress);
+    EXPECT_EQ(1u, numAfterDraw - num0) << "真 draw 帧应计入分子";
+    EXPECT_EQ(1u, denAfterDraw - den0) << "帧 1(纯准入)与空闲帧不该入账";
+}
+
+TEST(VectorPageDrawerCache, DecorateProgressPolicyCountsDeferOnlyFramesAsZero) {
+    using earth_engine::policy::Id;
+    // 容量 1 / 页 3:首帧 1 个准入 + 2 个被拒;不完成任何 fetch,后续每帧
+    // 全是准入拒绝 —— 自锁签名的读数形态(分母涨、分子不涨)。
+    ConvergenceHarness h(/*maxCachedTiles=*/1, /*pageCount=*/3);
+
+    const uint64_t num0 = policy::windowNumerator(Id::VectorDecorateProgress);
+    const uint64_t den0 = policy::windowDenominator(Id::VectorDecorateProgress);
+
+    for (int f = 0; f < 5; ++f) {
+        h.frame(/*retryBudget=*/4);
+    }
+
+    EXPECT_EQ(0u, policy::windowNumerator(Id::VectorDecorateProgress) - num0);
+    // 5 帧中前 4 帧的 defer 已由后续 tick 落账(第 5 帧的账要等下一 tick)。
+    EXPECT_EQ(4u, policy::windowDenominator(Id::VectorDecorateProgress) - den0);
 }

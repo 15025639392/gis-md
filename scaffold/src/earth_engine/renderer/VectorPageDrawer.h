@@ -146,6 +146,11 @@ private:
     /// 说明换租释放正在干活;若 zombie+ 恒 0 而 defer+ 持续高,说明通知没接上。
     int zombiesReclaimed_ = 0;
     uint64_t tickCounter_ = 0;
+    /// 上一 tick 以来的帧内活动标志(真 draw / 准入拒绝),tickDecorator 开头
+    /// 冲账进 VectorDecorateProgress 策略后清零 —— tickDecorator 恒先于本帧
+    /// 任何 decoratePage(PageDecorateOrdering 契约),两 tick 之间即一帧。
+    bool frameHadDraw_ = false;
+    bool frameHadDeferral_ = false;
     int lastDrawn_ = 0;
     int lastFetches_ = 0;
     int lastDeferrals_ = 0;

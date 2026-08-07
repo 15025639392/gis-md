@@ -13,6 +13,7 @@
 #include "../core/geodesy/Projection.h"
 #include "../core/math/MathUtils.h"
 #include "../debug/PlatformLog.h"
+#include "../debug/Policies.h"
 
 #include <algorithm>
 #include <cmath>
@@ -4263,9 +4264,24 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
         size_t originalIndex = 0;
     };
     std::deque<SelectedPendingUpload> selectedUploads;
+    // 策略生效率的分母:本帧是否存在**符合资格**的积压。交互期被尺寸过滤
+    // 推迟的大图是设计意图,不算"有活没做"—— 分母不含它们,冻结(有资格的
+    // 活也推进不了)与设计内推迟才分得开。
+    bool hadEligiblePendingUpload = false;
     const double batchSelectStartMs = perf::nowMs();
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        for (const auto& pending : asyncState_->pendingUploads) {
+            const DecodedImage* pendingImage = pending.image
+                ? pending.image.get()
+                : pending.sharedImage.get();
+            if (!interactionActive ||
+                uploadAllowedDuringInteraction(pending.cacheKey,
+                                               pendingImage)) {
+                hadEligiblePendingUpload = true;
+                break;
+            }
+        }
         size_t originalIndex = 0;
         for (auto selected = asyncState_->pendingUploads.begin();
              selected != asyncState_->pendingUploads.end() &&
@@ -4479,6 +4495,14 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
         const double requeueMs = perf::nowMs() - requeueStartMs;
         result.selectTaskMs += requeueMs;
         result.uploadQueueSelectMs += requeueMs;
+    }
+
+    // 影像上传推进率:有符合资格积压的帧里,有多少帧真的推进了至少一个上传。
+    // 语义同 TilePendingLoadProcessor 的 FinalizeProgress(帧粒度二值);这条
+    // lane 正是"交互期硬冻结改 budget 涓流"修复的先行现场,守卫防它复发。
+    if (hadEligiblePendingUpload) {
+        policy::observe(policy::Id::RasterUploadProgress,
+                        processedSelectedUploads > 0 ? 1 : 0, 1);
     }
 
     if (!completedUploads.empty()) {

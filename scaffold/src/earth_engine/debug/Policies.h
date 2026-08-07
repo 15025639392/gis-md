@@ -59,6 +59,23 @@ enum class Id : uint8_t {
     /// TerrainHeightService 统计聚合)。miss = 该点上方整条祖先链都没有
     /// 可用 heightmap → fill 贴海平面/矢量贴 0 一类可见瑕疵的源头。
     HeightSampleCoverage,
+    /// terminal 推进率 = 推进了至少一个终态结果的帧 / 有终态积压的帧。
+    /// FinalizeProgress 的镜像:同一函数里 terminal 循环在 finalize 循环
+    /// 之前,却一直没有同类守卫 —— 冻结形态完全一样(预算/早退把整条 lane
+    /// 闸死,积压有货而取出恒 0),历史事故(交互期 Urgent-only 冻结)对
+    /// 这条 lane 同样成立。
+    TerminalStateProgress,
+    /// 影像上传推进率 = 推进了至少一个上传的帧 / 有**符合资格**积压的帧。
+    /// 分母只数"至少存在一个能过交互期尺寸过滤的待上传项"的帧:交互期
+    /// 大图被成本过滤推迟是设计意图,不算"有活没做"——分母选错会重蹈
+    /// MainThreadFinalizeBudgetUse 健康态与故障态同读数的覆辙。
+    RasterUploadProgress,
+    /// 叠画推进率 = 有真 draw 的帧 / 有叠画活动(真 draw 或准入拒绝)的帧。
+    /// 自锁签名来自真机:defer 持续增长而 drawn 恒 0(预算被零成本早退
+    /// 吃光 → 已就绪页永不被画 → 不消费则不可淘汰 → 永远满员拒绝)。
+    /// 帧粒度二值:等待 fetch 的帧只有 defer 没有 draw 是正常暂态,
+    /// 窗口聚合摊掉;持续恒 0 才压穿下界。
+    VectorDecorateProgress,
     Count
 };
 

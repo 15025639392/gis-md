@@ -33,6 +33,7 @@ const char* const kNames[] = {
     "SubmitBeforeReleaseRefs",
     "LoadsBeforeGpuDrain",
     "GpuUploadQueueFifo",
+    "PendingRequestParity",
 };
 
 // 每条边的两端。producer 是**通常该改的人**,consumer 只是发现的人。
@@ -63,6 +64,10 @@ const Owners kOwners[] = {
     // FIFO 是队列自己的承诺,消费方是取走的人。
     {"GpuUploadQueue::push (worker)",
      "GpuUploadQueue::tryPop (主线程)"},
+    // 与 PageDecorateOrdering 同类的模块内不变量:三张表由同一组方法成对
+    // 增删,承诺方与判定点都是这些变异方法自身。
+    {"TilePendingRequestState 变异方法 (begin/complete/cancel)",
+     "TilePendingRequestState 变异方法末尾的自检"},
 };
 
 // 每条边的存在条件。Always = 无条件该跑;其余由配置装载处登记实际状态。
@@ -79,6 +84,7 @@ const Gate kGates[] = {
     // 真机对照:decouple=true 两者皆 0;decouple=false 两者**同为 152**
     // (一次上采样 = 一次 texcoord 判定 + 一次 push/pop),同生共死。
     Gate::ImageryDrivenUpsample,   // GpuUploadQueueFifo
+    Gate::Always,                  // PendingRequestParity:任何加载都要走请求追踪
 };
 
 // 闸的当前状态,**存的是「被关掉」而非「成立」**。

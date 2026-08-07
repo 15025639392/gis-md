@@ -88,6 +88,14 @@ enum class Id : uint8_t {
     /// GpuUploadQueue FIFO」。
     GpuUploadQueueFifo,
 
+    /// 在飞请求追踪的三张表(键集/内容键集/取消令牌表)同步变异。
+    /// 与 PageDecorateOrdering 同类:模块内不变量,如实登记不编假生产方。
+    /// 违约的静默后果分两个方向,都不报错:键残留而令牌先没 → 该 cacheKey
+    /// 永判"在飞"→ 调度器永不重发 → 瓦片永久缺失;令牌残留而键先没 →
+    /// 令牌表泄漏 + 换代取消形同虚设。三张表今天由同一组方法成对增删,
+    /// 契约防的是未来某次改动只动其中一张。
+    PendingRequestParity,
+
     Count
 };
 

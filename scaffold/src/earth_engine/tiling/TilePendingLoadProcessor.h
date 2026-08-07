@@ -29,6 +29,17 @@ public:
         ProcessUploadFn&& processUpload) {
         bool changed = false;
 
+        // 策略生效率的分母:进 terminal 循环前**本来就有多少活**(与下方
+        // finalize 循环的 pendingUploadsAtEntry 同构 —— 同一函数里两条 lane,
+        // 冻结形态相同,守卫也要对称,否则上半段冻结时下半段的守卫全绿)。
+        size_t pendingTerminalsAtEntry = 0;
+        {
+            std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
+            pendingTerminalsAtEntry =
+                input.lifecycle.pendingLoads().terminalResultCount();
+        }
+        int terminalsDone = 0;
+
         while (true) {
             std::optional<PendingTileLoad> terminalResult;
             {
@@ -41,6 +52,7 @@ public:
             if (!terminalResult) {
                 break;
             }
+            ++terminalsDone;
 
             const double terminalStartMs = perf::nowMs();
             processTerminalResult(*terminalResult);
@@ -60,6 +72,14 @@ public:
             input.budget.recordElapsed(
                 FrameResourceLane::TerminalState,
                 overrideElapsed.value_or(terminalElapsedMs));
+        }
+
+        // terminal 推进率:有活的帧里,有多少帧真的推进了至少一个终态结果。
+        // 语义与文件末尾的 FinalizeProgress 完全一致(帧粒度二值、预算耗尽
+        // 只做一部分不扣分、抓的是"有活却一个都没做"且持续如此)。
+        if (pendingTerminalsAtEntry > 0) {
+            policy::observe(policy::Id::TerminalStateProgress,
+                            terminalsDone > 0 ? 1 : 0, 1);
         }
 
         // 策略生效率的分母:进 finalize 循环前**本来就有多少活**。

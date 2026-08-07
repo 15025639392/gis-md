@@ -1101,11 +1101,11 @@ Tracks in-flight network requests and their cancellation tokens (guarded externa
 | Item | Lines | Description |
 |---|---|---|
 | `PendingRequestCounts` | .h:12-16 | `{terrainRequests, contentRequests, totalRequests}`. |
-| `beginTerrainRequest` / `beginContentRequest` | .cpp:42-51 | Reject if destroying/empty/dup; insert key + store `CancellationToken`. |
-| `completeTerrainRequest` / `completeContentRequest` (各 2 个重载) | .cpp:65-78 / :79-119 | Erase from sets + token map. |
-| `cancelAndErase` | .cpp:105-114 | Cancels token, then erases. |
-| `markDestroyingAndCancelRequests` | .cpp:116-122 | Sets `destroying_`, cancels every token. |
-| `clearAfterCallbacksComplete` | .cpp:124-132 | Once `pendingRequests_` drained, clears content keys/tokens and unsets destroying. |
+| `beginTerrainRequest` / `beginContentRequest` | .cpp:62-90 | Reject if destroying/empty/dup; insert key + store `CancellationToken`. |
+| `completeTerrainRequest` / `completeContentRequest` (各 2 个重载) | .cpp:91-110 / :111-136 | Erase from sets + token map. |
+| `cancelAndErase` | .cpp:137-150 | Cancels token, then erases. |
+| `markDestroyingAndCancelRequests` | .cpp:151-158 | Sets `destroying_`, cancels every token. |
+| `clearAfterCallbacksComplete` | .cpp:159-169 | Once `pendingRequests_` drained, clears content keys/tokens and unsets destroying. |
 
 ### TilePendingUploadCompletion.h / .cpp
 
@@ -1839,8 +1839,8 @@ cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, as
 | `composeQuadtreeSourceImagesWithDetails` | .cpp:2469-2503 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
 | `projectedVForLatitude` | .cpp:2505-2510 | Latitude → projected V within bounds |
 | `processPendingUploads` | .cpp:4236-4544 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
-| `hasPendingWork` | .cpp:4546-4559 | HTTP/source-fanout/upload outstanding |
-| `trimUnusedTiles` | .cpp:4605... | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
+| `hasPendingWork` | .cpp:4570-4584 | HTTP/source-fanout/upload outstanding |
+| `trimUnusedTiles` | .cpp:4629... | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
 | `refreshSourceAssetDepot` | .cpp:3040-3047 | Rebuild shared source-tile depot on option change |
 | `requestDiagnostics` | .cpp:3481... | Aggregates imagery-provider + raster-source request counters |
 
@@ -2582,10 +2582,10 @@ Single translation unit defining `STB_IMAGE_IMPLEMENTATION` (avoids multiple-def
 | `makePageOrtho` | .cpp:54-83 | 页局部正交投影矩阵 |
 | `kickFetch` | .cpp:84-117 | 拉取该页覆盖的 MVT 源瓦片 |
 | `tickDecorator` | .cpp:118-184 | 每帧驱动:解码回收 + 触发装饰 |
-| `touch` / `tryEvictOne` | .cpp:187-195 / :258-273 | 源瓦片 LRU touch;淘汰仅限已消费/保护到期(收敛不变量) |
-| `bindPage` / `eraseTile` / `releasePage` | .cpp:196-212 / :213-228 / :229-257 | 页↔源瓦片双向绑定(共享祖先时是集合不是计数);换租释放最后一个引用且未消费 → 立即回收 |
-| `ensureFramebuffer` | .cpp:274-289 | 绑定到页纹理层的 FBO |
-| `decoratePage` | .cpp:290-394 | **把矢量画进页** |
+| `touch` / `tryEvictOne` | .cpp:197-205 / :268-283 | 源瓦片 LRU touch;淘汰仅限已消费/保护到期(收敛不变量) |
+| `bindPage` / `eraseTile` / `releasePage` | .cpp:206-222 / :223-238 / :239-267 | 页↔源瓦片双向绑定(共享祖先时是集合不是计数);换租释放最后一个引用且未消费 → 立即回收 |
+| `ensureFramebuffer` | .cpp:284-299 | 绑定到页纹理层的 FBO |
+| `decoratePage` | .cpp:300-412 | **把矢量画进页** |
 
 ⚠️ E4 根因教训:地形着色器的**页存储采样覆盖了 mappedRaster**,叠加层必须挪到
 页存储之后;同名 uniform 在两个 FS 各有声明,改一半即黑屏。
@@ -3320,16 +3320,16 @@ FrameState is mutated during update (tile selection, GPU upload, command build) 
 
 | 项 | 行 | 说明 |
 |---|---|---|
-| `contracts::Id` | Contracts.h:43- | 7 条边的枚举 |
+| `contracts::Id` | Contracts.h:43- | 8 条边的枚举 |
 | `contracts::Gate` | Contracts.h:108- | 存在条件(`Always` / `ImageryDrivenUpsample`) |
 | `contracts::Owners` | Contracts.h:133- | **生产方 / 消费方**归属表 —— 层间契约天然"消费侧检测、生产侧制造",只报判定点会把人送去翻没做错事的模块 |
-| `name` / `gate` / `gateName` | Contracts.cpp:113 / :118 / :123 | |
-| `setGateActive` / `gateActive` | Contracts.cpp:128 / :135 | 由配置装载处登记 |
-| `owners` | Contracts.cpp:142 | |
-| `policy::Id` / `policy::Expectation` | Policies.h:40- / :64- | 6 条比率(含 HeightIndexRegularity 精确 [1,1] 点区间);区间**必须带 rationale + owner**,元守卫只挡 [0,0] 零点退化 |
-| `observe` | Policies.cpp:117 | 记一次观测(**分母 ≤ 0 不计**) |
-| `windowNumerator` / `windowDenominator` | Policies.cpp:127 / :133 | |
-| `logReport` | Policies.cpp:139 | 每窗打印;**越界才升 Warning 并逐条点名** |
+| `name` / `gate` / `gateName` | Contracts.cpp:119 / :124 / :129 | |
+| `setGateActive` / `gateActive` | Contracts.cpp:134 / :141 | 由配置装载处登记 |
+| `owners` | Contracts.cpp:148 | |
+| `policy::Id` / `policy::Expectation` | Policies.h:40- / :64- | 9 条比率(含 HeightIndexRegularity 精确 [1,1] 点区间);区间**必须带 rationale + owner**,元守卫只挡 [0,0] 零点退化 |
+| `observe` | Policies.cpp:145 | 记一次观测(**分母 ≤ 0 不计**) |
+| `windowNumerator` / `windowDenominator` | Policies.cpp:155 / :161 | |
+| `logReport` | Policies.cpp:167 | 每窗打印;**越界才升 Warning 并逐条点名** |
 
 ⚠️ 两条硬教训写在代码里:① 平行表必须写 `T arr[]` 不写 `T arr[kCount]`,
 否则 `static_assert` 是同义反复(曾漏一条 expectation 直到真机报 `owner=(null)`);

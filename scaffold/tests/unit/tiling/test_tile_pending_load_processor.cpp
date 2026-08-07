@@ -366,3 +366,82 @@ TEST(TilePendingLoadProcessorTest, InteractionTricklesNonUrgentAfterUrgent) {
     EXPECT_EQ("normal", events[1]);
     EXPECT_EQ(0u, lifecycle.counts().gltfTerrainUploads);
 }
+
+// ---------------------------------------------------------------------------
+// TerminalStateProgress 守卫:正例推进、反例冻结、空闲不入账。
+// 守卫本身也要被验证 —— 一条永不触发的策略与一条每次都过的策略,在报表里
+// 长得一模一样(参见 test_contracts.cpp 头注)。
+// ---------------------------------------------------------------------------
+
+TEST(TilePendingLoadProcessorTest, TerminalProgressPolicyCountsAdvancingFrame) {
+    TileLoadLifecycle lifecycle;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerminalResult(
+            terrainTerminal(TileKey{"test", 1, 0, 0}, "terminal-advance"));
+    }
+    FrameResourceBudget budget;
+    budget.beginFrame(1, FrameResourceBudgetConfig{});
+
+    const uint64_t numBefore =
+        policy::windowNumerator(policy::Id::TerminalStateProgress);
+    const uint64_t denBefore =
+        policy::windowDenominator(policy::Id::TerminalStateProgress);
+
+    TilePendingLoadProcessor::processPendingLoads(
+        TilePendingLoadProcessorInput{lifecycle, budget, false, {}},
+        [](PendingTileLoad&) {}, [](PendingTileLoad&) {});
+
+    EXPECT_EQ(1u, policy::windowNumerator(policy::Id::TerminalStateProgress) -
+                      numBefore);
+    EXPECT_EQ(1u, policy::windowDenominator(policy::Id::TerminalStateProgress) -
+                      denBefore);
+}
+
+TEST(TilePendingLoadProcessorTest, TerminalProgressPolicyCatchesFrozenLane) {
+    // 冻结形态:有终态积压,但预算把 lane 闸死(历史事故是早退发生在
+    // tryFinalize 之前 —— 对本守卫读数等价:有活而推进恒 0)。
+    TileLoadLifecycle lifecycle;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerminalResult(
+            terrainTerminal(TileKey{"test", 1, 0, 0}, "terminal-frozen"));
+    }
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const uint64_t numBefore =
+        policy::windowNumerator(policy::Id::TerminalStateProgress);
+    const uint64_t denBefore =
+        policy::windowDenominator(policy::Id::TerminalStateProgress);
+
+    TilePendingLoadProcessor::processPendingLoads(
+        TilePendingLoadProcessorInput{lifecycle, budget, false, {}},
+        [](PendingTileLoad&) {}, [](PendingTileLoad&) {});
+
+    // 分母进账而分子不进 —— 持续如此即把窗口比率压向 0,越过下界报警。
+    EXPECT_EQ(0u, policy::windowNumerator(policy::Id::TerminalStateProgress) -
+                      numBefore);
+    EXPECT_EQ(1u, policy::windowDenominator(policy::Id::TerminalStateProgress) -
+                      denBefore);
+}
+
+TEST(TilePendingLoadProcessorTest, TerminalProgressPolicySkipsIdleFrame) {
+    // 空闲(无积压)完全不入账 —— 「没机会」与「有机会没做到」是两回事,
+    // 混入分母就是 MainThreadFinalizeBudgetUse 被撤下的那个错误。
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, FrameResourceBudgetConfig{});
+
+    const uint64_t denBefore =
+        policy::windowDenominator(policy::Id::TerminalStateProgress);
+
+    TilePendingLoadProcessor::processPendingLoads(
+        TilePendingLoadProcessorInput{lifecycle, budget, false, {}},
+        [](PendingTileLoad&) {}, [](PendingTileLoad&) {});
+
+    EXPECT_EQ(0u, policy::windowDenominator(policy::Id::TerminalStateProgress) -
+                      denBefore);
+}
