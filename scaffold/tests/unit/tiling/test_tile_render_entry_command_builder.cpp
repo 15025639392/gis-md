@@ -197,7 +197,6 @@ TEST(TileRenderEntryCommandBuilderTest, BuildsFadingEntriesOnlyInFadePass) {
     entry.renderKey = fadingKey;
     entry.selectedTile = &fading;
     entry.renderTile = &fading;
-    entry.reason = TileRenderEntryReason::FadingOut;
     entry.selectedThisFrame = false;
     entry.opacity = 0.4f;
     plan.renderEntries.push_back(entry);

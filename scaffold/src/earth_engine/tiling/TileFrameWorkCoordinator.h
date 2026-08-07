@@ -145,8 +145,6 @@ public:
                 currentResourceRevision,
                 currentOverlaySignature,
                 allowStaleSelection,
-                !input.tilePlan.tilesFadingOut.empty() ||
-                    input.tilePlan.fadingNodeCount > 0,
                 hasTilesetPendingWork(),
                 TileRasterOverlaySignature::hasPendingWork(
                     input.rasterOverlays),

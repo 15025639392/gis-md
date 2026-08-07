@@ -19,12 +19,7 @@ struct TileSelectionKickPolicy {
         const TileTraversalDetails& traversalDetails,
         bool renderable,
         bool unconditionallyRefine,
-        uint32_t loadingDescendantLimit,
-        bool enableLodTransitionPeriod,
-        bool kickDescendantsWhileFadingIn,
-        TileSelectionState previousSelectionState,
-        bool hasLodTransitionRenderContent,
-        float lodTransitionFadePercentage);
+        uint32_t loadingDescendantLimit);
 
     static bool shouldRestoreChildLoadQueueAndLoadParent(
         const TileTraversalDetails& traversalDetails,

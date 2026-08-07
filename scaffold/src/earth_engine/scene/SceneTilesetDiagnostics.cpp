@@ -318,7 +318,6 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
             plan.culledTilesVisitedCount;
         snapshot.quadtreeSelectionAncestorMeetsSseNodes =
             plan.selectionAncestorMeetsSseCount;
-        snapshot.quadtreeFadingNodes = plan.fadingNodeCount;
         snapshot.quadtreeCameraInsideNodes = plan.cameraInsideNodeCount;
         snapshot.quadtreeInFrustumNodes = plan.inFrustumNodeCount;
         snapshot.mercatorTileCount = plan.mercatorTileCount;
@@ -482,9 +481,6 @@ void SceneTilesetDiagnosticsSnapshot::add(
         next.minVisibleZoom != 0 ? next.minVisibleZoom : minVisibleZoom;
     maxVisibleZoom =
         next.maxVisibleZoom != 0 ? next.maxVisibleZoom : maxVisibleZoom;
-    quadtreeFadingNodes =
-        next.quadtreeFadingNodes != 0 ? next.quadtreeFadingNodes
-                                      : quadtreeFadingNodes;
     quadtreeRenderingNodes =
         next.quadtreeRenderingNodes != 0 ? next.quadtreeRenderingNodes
                                          : quadtreeRenderingNodes;
@@ -642,7 +638,6 @@ void SceneTilesetDiagnosticsSnapshot::applyTo(Diagnostics& diag) const {
     diag.lodSizePixels = lodSizePixels;
     diag.minVisibleZoom = minVisibleZoom;
     diag.maxVisibleZoom = maxVisibleZoom;
-    diag.quadtreeFadingNodes = quadtreeFadingNodes;
     diag.quadtreeRenderingNodes = quadtreeRenderingNodes;
     diag.quadtreeWalkthroughNodes = quadtreeWalkthroughNodes;
     diag.quadtreeNotRenderingNodes = quadtreeNotRenderingNodes;
@@ -755,7 +750,6 @@ void SceneTilesetDiagnostics::reset(Diagnostics& diag) {
     diag.minVisibleZoom = 0;
     diag.maxVisibleZoom = 0;
     diag.quadtreeEqualZoomLayers = 0;
-    diag.quadtreeFadingNodes = 0;
     diag.quadtreeNeighborLinks = 0;
     diag.quadtreeNeighborBalancedTiles = 0;
     diag.quadtreeRenderingNodes = 0;

@@ -94,11 +94,6 @@ struct SceneTilesetConfig {
     double mainThreadLoadingTimeLimit = 8.0;
     double tileCacheUnloadTimeLimit = 0.0;
     int64_t maximumCachedBytes = 512LL * 1024 * 1024;
-    // LOD 过渡淡入淡出（cesium enableLodTransitionPeriod）。默认关，与
-    // TilesetOptions 默认一致（cesium 原生出厂即关）。开启后瓦片切换 LOD 时
-    // 新旧瓦片按 lodTransitionLength 秒 alpha 交叉淡入淡出，消除 pop。
-    bool enableLodTransitionPeriod = false;
-    float lodTransitionLength = 1.0f;
     // 运动期跳过快速划走的瓦片网络请求(cesium-js cullRequestsWhileMoving)。
     // 默认关 = 忠实 cesium-native。开启后拖动/缩放中减少瞬时加载洪泛,相机停下
     // 恢复正常加载。multiplier 越大剔除越激进(cesium 默认 60)。

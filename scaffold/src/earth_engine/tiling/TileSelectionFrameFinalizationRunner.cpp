@@ -13,18 +13,6 @@ TileSelectionFrameFinalizationRunner::finalize(
         input.tilePlan,
         input.activeTiles,
         input.selectionCounters,
-        input.deltaSeconds,
-        [&input](double deltaSeconds) {
-            TileLodTransitionFrameUpdater::update(
-                input.tilePlan,
-                input.tileRegistry,
-                input.activeTiles,
-                input.previousActiveTiles,
-                input.fadingKeys,
-                input.rasterOverlays,
-                deltaSeconds,
-                input.lodTransitionOptions);
-        },
         [&input]() {
             TileRenderPlanFrameRefresher::refresh(
                 input.tilePlan,

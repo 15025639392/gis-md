@@ -2,7 +2,6 @@
 
 #include "TileContentAccess.h"
 #include "TileLoadQueue.h"
-#include "TileLodTransitionFrameUpdater.h"
 #include "TileOcclusionState.h"
 #include "TileRenderPlanFrameRefresher.h"
 #include "TileScheme.h"
@@ -93,14 +92,8 @@ void TilesetSelectionFrameFacade::selectTiles(
                     tileset.selectionActiveTilesPrev_,
                     tileset.selectionCounters_,
                     tileset.contentAccess_,
-                    tileset.tilesFadingOut_,
                     tileset.rasterOverlays_,
-                    finalizeFrameState.deltaSeconds,
-                    TileLodTransitionFrameOptions{
-                        tileset.options_.enableLodTransitionPeriod,
-                        tileset.options_.lodTransitionLength},
                     TileRenderPlanFrameRefreshOptions{
-                        tileset.options_.enableLodTransitionPeriod,
                         tileset.interactionActiveForFrame_,
                         tileset.resourceSmoothingActiveForFrame_,
                         tileset.options_.maximumScreenSpaceError}});

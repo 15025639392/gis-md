@@ -12,12 +12,7 @@ TileSelectionPostTraversalResult TileSelectionPostTraversalPolicy::evaluate(
         input.traversalDetails,
         input.renderable,
         input.unconditionallyRefine,
-        options.loadingDescendantLimit,
-        options.enableLodTransitionPeriod,
-        options.kickDescendantsWhileFadingIn,
-        input.previousSelectionState,
-        input.hasLodTransitionRenderContent,
-        input.lodTransitionFadePercentage);
+        options.loadingDescendantLimit);
     result.wasReallyRenderedLastFrame =
         input.wasRenderedLastFrame && input.renderable;
 

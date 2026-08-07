@@ -59,19 +59,15 @@ void applyTerrainRenderEntryDiagnostics(
     Diagnostics& diagnostics) {
     diagnostics.terrainRenderEntriesPlanned = terrainRenderEntryCount(tileset);
     diagnostics.terrainRenderEntriesSelectedPlanned = 0;
-    diagnostics.terrainRenderEntriesFadingPlanned = 0;
     diagnostics.terrainRenderEntriesAncestorFallback = 0;
     diagnostics.terrainRenderEntriesSynchronousPrep = 0;
     diagnostics.terrainRenderEntriesDeferredPrep = 0;
     diagnostics.terrainRenderEntriesDrawn = 0;
     diagnostics.terrainRenderEntriesSelectedDrawn = 0;
-    diagnostics.terrainRenderEntriesFadingDrawn = 0;
     diagnostics.terrainRenderEntriesMissed = 0;
     diagnostics.terrainRenderEntriesSelectedMissed = 0;
-    diagnostics.terrainRenderEntriesFadingMissed = 0;
     diagnostics.terrainRenderEntriesDeferred = 0;
     diagnostics.terrainRenderEntriesSelectedDeferred = 0;
-    diagnostics.terrainRenderEntriesFadingDeferred = 0;
     diagnostics.terrainSelectedForRenderTiles = 0;
     diagnostics.terrainRenderEntryDropClipUv = 0;
     diagnostics.terrainRenderEntryDropNotBuildable = 0;
@@ -105,8 +101,6 @@ void applyTerrainRenderEntryDiagnostics(
     const TilePlan& plan = tileset->tilePlan();
     diagnostics.terrainRenderEntriesSelectedPlanned =
         plan.renderEntrySelectedPlannedCommandCount;
-    diagnostics.terrainRenderEntriesFadingPlanned =
-        plan.renderEntryFadingPlannedCommandCount;
     diagnostics.terrainRenderEntriesAncestorFallback =
         plan.renderEntryAncestorFallbackCount;
     diagnostics.terrainRenderEntriesSynchronousPrep =
@@ -117,20 +111,14 @@ void applyTerrainRenderEntryDiagnostics(
         plan.renderEntryCommandDrawCount;
     diagnostics.terrainRenderEntriesSelectedDrawn =
         plan.renderEntrySelectedCommandDrawCount;
-    diagnostics.terrainRenderEntriesFadingDrawn =
-        plan.renderEntryFadingCommandDrawCount;
     diagnostics.terrainRenderEntriesMissed =
         plan.renderEntryCommandMissedDrawCount;
     diagnostics.terrainRenderEntriesSelectedMissed =
         plan.renderEntrySelectedCommandMissedDrawCount;
-    diagnostics.terrainRenderEntriesFadingMissed =
-        plan.renderEntryFadingCommandMissedDrawCount;
     diagnostics.terrainRenderEntriesDeferred =
         plan.renderEntryCommandDeferredCount;
     diagnostics.terrainRenderEntriesSelectedDeferred =
         plan.renderEntrySelectedCommandDeferredCount;
-    diagnostics.terrainRenderEntriesFadingDeferred =
-        plan.renderEntryFadingCommandDeferredCount;
     diagnostics.terrainSelectedForRenderTiles =
         static_cast<int>(plan.tilesToRenderThisFrame.size());
     diagnostics.terrainRenderEntryDropClipUv =

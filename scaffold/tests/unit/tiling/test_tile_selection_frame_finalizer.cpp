@@ -30,8 +30,6 @@ TEST(
     counters.waitingForOcclusionResults = 7;
     counters.culledVisited = 11;
 
-    bool updateTransitionsCalled = false;
-    double updateDeltaSeconds = 0.0;
     bool refreshRenderEntriesCalled = false;
 
     const TileSelectionFrameFinalizeTimings timings =
@@ -39,11 +37,6 @@ TEST(
             plan,
             activeTiles,
             counters,
-            0.25,
-            [&](double deltaSeconds) {
-                updateTransitionsCalled = true;
-                updateDeltaSeconds = deltaSeconds;
-            },
             [&]() {
                 refreshRenderEntriesCalled = true;
                 plan.renderEntries.push_back(
@@ -53,11 +46,8 @@ TEST(
             },
             [](const TilesetTile&) { return false; });
 
-    EXPECT_TRUE(updateTransitionsCalled);
-    EXPECT_DOUBLE_EQ(updateDeltaSeconds, 0.25);
     EXPECT_TRUE(refreshRenderEntriesCalled);
     EXPECT_GE(timings.dedupeMs, 0.0);
-    EXPECT_GE(timings.transitionMs, 0.0);
     EXPECT_GE(timings.summaryMs, 0.0);
 
     ASSERT_EQ(plan.visibleTiles.size(), 2u);

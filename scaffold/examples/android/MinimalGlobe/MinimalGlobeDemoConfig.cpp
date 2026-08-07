@@ -165,14 +165,11 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // 到达后再替换,避免加载窗口只剩天空。
     config.tileset.enableTerrainFillProxy = true;
     // LOD geomorph:距离连续 geomorph 已启用(P2 引擎 + P3 skirt 之上)。morph 进度
-    // 纯由本瓦片 SSE 驱动(finalizer,gate 在 maxSSE>0),**与时序 fade 计时器解耦**:
-    // enableLodTransitionPeriod 保持 false=计时器关(否则每帧 fade discovery +
-    // kick-keeps-fading 使运动期工作集膨胀=卡顿),morph 不需要它。子瓦片从
-    // morph=0(coarse-self≈父面,worker 烘焙 heightDelta,规则栅格 in-tile 自降采样,
-    // 根治旧变体 A「浮上来」)平滑 morph 到 morph=1(真实细节),随相机连续移动推进,
-    // 消除硬 pop。相邻瓦片不同 morph 进度间的边缝由 skirt 遮盖。
-    config.tileset.enableLodTransitionPeriod = false;
-    config.tileset.lodTransitionLength = 1.0f;
+    // 纯由本瓦片 SSE 驱动(finalizer,gate 在 maxSSE>0)。子瓦片从 morph=0
+    // (coarse-self≈父面,worker 烘焙 heightDelta,规则栅格 in-tile 自降采样,根治旧
+    // 变体 A「浮上来」)平滑 morph 到 morph=1(真实细节),随相机连续移动推进,消除
+    // 硬 pop。相邻瓦片不同 morph 进度间的边缝由 skirt 遮盖。时序 cross-fade 通路
+    // 已于 2026-08-07 整链删除(被 geomorph 顶替)。
 
     if (kUseGaodeSatelliteForDemo) {
         RasterOverlaySourceConfig satellite;

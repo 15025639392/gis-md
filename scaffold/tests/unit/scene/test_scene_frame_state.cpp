@@ -110,7 +110,6 @@ struct TilesetTestAccess {
         TileSelectionPlanAppender::addTileToCurrentPlan(
             tileset.tilePlan_,
             tileset.loadQueue_,
-            tileset.options_.enableLodTransitionPeriod,
             tile,
             1.0,
             true,
@@ -120,7 +119,6 @@ struct TilesetTestAccess {
             tileset.contentAccess_,
             tileset.rasterOverlays_,
             TileRenderPlanFrameRefreshOptions{
-                tileset.options_.enableLodTransitionPeriod,
                 tileset.interactionActiveForFrame_,
                 tileset.resourceSmoothingActiveForFrame_});
     }
@@ -692,7 +690,6 @@ TEST(
     TileRenderEntry fadingEntry;
     fadingEntry.selectedKey = root;
     fadingEntry.renderKey = root;
-    fadingEntry.reason = TileRenderEntryReason::FadingOut;
     fadingEntry.opacity = 0.5f;
     fadingEntry.selectedThisFrame = false;
     fadingEntry.selectedTile = rootTile;
@@ -713,7 +710,7 @@ TEST(
             composition.currentEntries.begin(),
             composition.currentEntries.end(),
             [](const TileRenderEntry& entry) {
-                return entry.isFadingOut() &&
+                return !entry.selectedThisFrame &&
                        entry.surfaceClipEnabled;
             }));
     EXPECT_EQ(
@@ -1293,19 +1290,15 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     EXPECT_GT(scene.diagnostics().contentVisibleTiles, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderEntriesPlanned, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderEntriesSelectedPlanned, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingPlanned, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesAncestorFallback, 0);
     EXPECT_GE(scene.diagnostics().terrainRenderEntriesSynchronousPrep, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferredPrep, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderEntriesDrawn, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDrawn, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesMissed, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedMissed, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingMissed, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferred, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDeferred, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDeferred, 0);
     EXPECT_GT(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
     EXPECT_EQ(scene.tileset(), terrainRaw);
     EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
@@ -1376,10 +1369,8 @@ TEST(SceneFrameStateTest, PresentationTraceCopiesRenderEntryPassFailures) {
     TilePlan& plan = TilesetTestAccess::mutableTilePlan(tileset);
     plan.renderEntryCommandMissedDrawCount = 5;
     plan.renderEntrySelectedCommandMissedDrawCount = 2;
-    plan.renderEntryFadingCommandMissedDrawCount = 3;
     plan.renderEntryCommandDeferredCount = 7;
     plan.renderEntrySelectedCommandDeferredCount = 4;
-    plan.renderEntryFadingCommandDeferredCount = 3;
 
     FrameState frameState;
     frameState.frameId = 3;
@@ -1395,10 +1386,8 @@ TEST(SceneFrameStateTest, PresentationTraceCopiesRenderEntryPassFailures) {
     const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
     EXPECT_EQ(5, tilesetTrace.renderEntryCommandMissedDrawCount);
     EXPECT_EQ(2, tilesetTrace.renderEntrySelectedCommandMissedDrawCount);
-    EXPECT_EQ(3, tilesetTrace.renderEntryFadingCommandMissedDrawCount);
     EXPECT_EQ(7, tilesetTrace.renderEntryCommandDeferredCount);
     EXPECT_EQ(4, tilesetTrace.renderEntrySelectedCommandDeferredCount);
-    EXPECT_EQ(3, tilesetTrace.renderEntryFadingCommandDeferredCount);
 }
 
 TEST(SceneFrameStateTest, PresentationTraceExposesFadingRenderEntry) {
@@ -1412,16 +1401,13 @@ TEST(SceneFrameStateTest, PresentationTraceExposesFadingRenderEntry) {
     TileRenderEntry entry;
     entry.selectedKey = rootKey;
     entry.renderKey = rootKey;
-    entry.reason = TileRenderEntryReason::FadingOut;
     entry.opacity = 0.75f;
     entry.selectedThisFrame = false;
     plan.renderEntries.push_back(entry);
     plan.renderEntryPlannedCommandCount = 1;
     plan.renderEntrySelectedPlannedCommandCount = 0;
-    plan.renderEntryFadingPlannedCommandCount = 1;
     plan.renderEntryCommandDrawCount = 1;
     plan.renderEntrySelectedCommandDrawCount = 0;
-    plan.renderEntryFadingCommandDrawCount = 1;
 
     FrameState frameState;
     frameState.frameId = 7;
@@ -1439,14 +1425,11 @@ TEST(SceneFrameStateTest, PresentationTraceExposesFadingRenderEntry) {
     const PresentationRenderEntryTrace& entryTrace =
         tilesetTrace.renderEntries.front();
     EXPECT_FALSE(entryTrace.selectedThisFrame);
-    EXPECT_EQ(TileRenderEntryReason::FadingOut, entryTrace.reason);
     EXPECT_NEAR(0.75f, entryTrace.opacity, 1e-6f);
     EXPECT_EQ(1, tilesetTrace.renderEntryPlannedCommandCount);
     EXPECT_EQ(0, tilesetTrace.renderEntrySelectedPlannedCommandCount);
-    EXPECT_EQ(1, tilesetTrace.renderEntryFadingPlannedCommandCount);
     EXPECT_EQ(1, tilesetTrace.renderEntryCommandDrawCount);
     EXPECT_EQ(0, tilesetTrace.renderEntrySelectedCommandDrawCount);
-    EXPECT_EQ(1, tilesetTrace.renderEntryFadingCommandDrawCount);
 }
 
 TEST(SceneFrameStateTest, PresentationTraceExposesAdditiveSelectedEntries) {
@@ -1467,10 +1450,8 @@ TEST(SceneFrameStateTest, PresentationTraceExposesAdditiveSelectedEntries) {
     plan.renderEntries = {rootEntry, childEntry};
     plan.renderEntryPlannedCommandCount = 2;
     plan.renderEntrySelectedPlannedCommandCount = 2;
-    plan.renderEntryFadingPlannedCommandCount = 0;
     plan.renderEntryCommandDrawCount = 2;
     plan.renderEntrySelectedCommandDrawCount = 2;
-    plan.renderEntryFadingCommandDrawCount = 0;
 
     FrameState frameState;
     frameState.frameId = 11;
@@ -1491,10 +1472,8 @@ TEST(SceneFrameStateTest, PresentationTraceExposesAdditiveSelectedEntries) {
     EXPECT_TRUE(tilesetTrace.renderEntries[1].selectedThisFrame);
     EXPECT_EQ(2, tilesetTrace.renderEntryPlannedCommandCount);
     EXPECT_EQ(2, tilesetTrace.renderEntrySelectedPlannedCommandCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryFadingPlannedCommandCount);
     EXPECT_EQ(2, tilesetTrace.renderEntryCommandDrawCount);
     EXPECT_EQ(2, tilesetTrace.renderEntrySelectedCommandDrawCount);
-    EXPECT_EQ(0, tilesetTrace.renderEntryFadingCommandDrawCount);
     EXPECT_EQ(0, tilesetTrace.renderEntryAncestorFallbackCount);
 }
 
@@ -1632,7 +1611,6 @@ TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {
     EXPECT_GE(scene.diagnostics().terrainRenderEntriesMissed, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferred, 0);
     EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDeferred, 0);
-    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDeferred, 0);
     EXPECT_GE(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
 }
 

@@ -49,7 +49,6 @@ TileSelectionReuseInput makeInput(
         1e-4,
         true,
         allowStaleSelection,
-        false,
         true,
         true,
         true,
@@ -219,7 +218,6 @@ TEST(TileSelectionReuseStateTest, DefaultStaleWindowSpansThreeFrames) {
             7,
             9,
             true,
-            false,
             true,
             true),
         TileSelectionReuseMode::Stale);
@@ -231,7 +229,6 @@ TEST(TileSelectionReuseStateTest, DefaultStaleWindowSpansThreeFrames) {
             7,
             9,
             true,
-            false,
             true,
             true),
         TileSelectionReuseMode::None);

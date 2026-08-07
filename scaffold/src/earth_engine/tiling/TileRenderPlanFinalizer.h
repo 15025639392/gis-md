@@ -18,7 +18,6 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 
 struct TileRenderPlanFinalizeOptions {
-    bool enableLodTransitionPeriod = false;
     bool interactionActive = false;
     int activeInteractionRenderPrepBudget = 0;
     int recoveryRenderPrepBudget = 1;
@@ -60,11 +59,8 @@ struct TileRenderPlanFinalizer {
         (void)cacheKey;
         std::vector<TilesetTile*> selectedTileHandles =
             std::move(plan.tilesToRenderThisFrame);
-        std::vector<TilesetTile*> fadingTileHandles =
-            std::move(plan.tilesFadingOutThisFrame);
         plan.renderEntries.clear();
         plan.tilesToRenderThisFrame.clear();
-        plan.tilesFadingOutThisFrame.clear();
         plan.renderEntryAncestorFallbackCount = 0;
         plan.renderEntrySynchronousPrepCount = 0;
         plan.renderEntryDeferredPrepCount = 0;
@@ -98,15 +94,12 @@ struct TileRenderPlanFinalizer {
             ? options.activeInteractionRenderPrepBudget
             : options.recoveryRenderPrepBudget;
 
-        auto appendRenderEntry = [&](TilesetTile& selectedTile,
-                                     float opacity,
-                                     bool selectedThisFrame) {
+        auto appendRenderEntry = [&](TilesetTile& selectedTile) {
             TilesetTile* commandTile = &selectedTile;
             std::optional<std::array<float, 4>> surfaceClipUv;
             bool usesAncestorFallback = false;
 
-            if (selectedThisFrame &&
-                !canBuildRenderEntryDirectly(
+            if (!canBuildRenderEntryDirectly(
                     selectedTile,
                     rasterOverlays,
                     DirectRenderFallbackPolicy::
@@ -190,11 +183,7 @@ struct TileRenderPlanFinalizer {
             entry.renderKey = commandTile->key;
             entry.selectedTile = &selectedTile;
             entry.renderTile = commandTile;
-            entry.reason = selectedThisFrame
-                ? TileRenderEntryReason::Direct
-                : TileRenderEntryReason::FadingOut;
-            entry.opacity = commandTile == &selectedTile ? opacity : 1.0f;
-            entry.selectedThisFrame = selectedThisFrame;
+            entry.reason = TileRenderEntryReason::Direct;
             entry.usesAncestorFallback = usesAncestorFallback;
             entry.allowSynchronousMeshPrep = allowSynchronousMeshPrep;
             if (surfaceClipUv) {
@@ -212,34 +201,6 @@ struct TileRenderPlanFinalizer {
             plan.renderEntries.push_back(std::move(entry));
         };
 
-        // geomorph 取代 cross-fade(enableLodTransitionPeriod 开启时):地形改用
-        // 几何 morph 单层不透明过渡(incoming 子瓦片从平滑起点≈父形状 morph 到真实
-        // 高度),**不再渲染 fadingOut 父瓦片基底**。原因:incoming 是不透明(非 alpha
-        // 淡入),若同时画不透明的 fadingOut 父瓦片,子瓦片 morph 顶起来下探到父面
-        // 下方时会被父深度挡住/穿插→z-fighting 碎裂;而 GltfPrimitive 固定状态
-        // 不变量要求 depthTest=true(不能靠关深度绕过)。incoming 从 morph=0 起就
-        // 不透明覆盖同区域,父瓦片纯多余。代价:无 incoming 替代的瓦片离场(如地平线
-        // 滑出)退化为轻微 pop(可接受)。cross-fade fadingOut 基底仅 geomorph 关时才需。
-        if (!options.enableLodTransitionPeriod) {
-            for (size_t i = 0; i < plan.tilesFadingOut.size(); ++i) {
-                const TileTransition& transition = plan.tilesFadingOut[i];
-                if (transition.opacity <= 0.001f) {
-                    continue;
-                }
-                TilesetTile* tile =
-                    i < fadingTileHandles.size() &&
-                            fadingTileHandles[i] &&
-                            fadingTileHandles[i]->key == transition.key
-                        ? fadingTileHandles[i]
-                        : ensureTile(transition.key);
-                if (!tile) {
-                    continue;
-                }
-                plan.tilesFadingOutThisFrame.push_back(tile);
-                appendRenderEntry(*tile, transition.opacity, false);
-            }
-        }
-
         for (size_t i = 0; i < plan.visibleTiles.size(); ++i) {
             const TileKey& key = plan.visibleTiles[i];
             TilesetTile* tile =
@@ -252,10 +213,6 @@ struct TileRenderPlanFinalizer {
                 continue;
             }
             plan.tilesToRenderThisFrame.push_back(tile);
-            const float transitionOpacity =
-                options.enableLodTransitionPeriod
-                    ? tile->selectionFrameState.lodTransitionFadePercentage
-                    : 1.0f;
             // 距离连续 geomorph:地形瓦片的 morph 进度由其自身 SSE 在有效 LOD 频带
             // 内的位置决定(而非定时器),随相机连续移动平滑推进,消除硬 pop。halving
             // 四叉树中,父级在 sse=maxSSE/2 时接管(parent.sse≈2·sse≤maxSSE),本瓦片
@@ -263,9 +220,7 @@ struct TileRenderPlanFinalizer {
             //   t = clamp((sse/maxSSE − ½)/½, 0, 1) = clamp(2·sse/maxSSE − 1, 0, 1)
             //   sse→maxSSE(相机近/将下钻)→ 1 全细节;
             //   sse→maxSSE/2(刚从父级细化出)→ 0 粗起点≈父面。
-            // **与时序 fade(enableLodTransitionPeriod)解耦**:morph 纯由 SSE 驱动、
-            // 无需每帧 fade discovery/kick-keeps-fading(那会使运动期工作集膨胀=卡顿),
-            // 故仅 gate 在 maxSSE>0。非规则栅格内容 heightDelta=0 自动无位移(自门控),
+            // morph 纯由 SSE 驱动,故仅 gate 在 maxSSE>0。非规则栅格内容 heightDelta=0 自动无位移(自门控),
             // 非地形不读此值(见 applyPerFrameCommandState)。skirt 遮盖相邻瓦片不同
             // morph 进度间的边缝。
             constexpr double kMorphStartRatio = 0.5;  // parent-takeover 点(halving)
@@ -280,7 +235,7 @@ struct TileRenderPlanFinalizer {
                     1.0));
             }
             tile->selectionFrameState.terrainMorphFactor = terrainMorph;
-            appendRenderEntry(*tile, transitionOpacity, true);
+            appendRenderEntry(*tile);
         }
     }
 

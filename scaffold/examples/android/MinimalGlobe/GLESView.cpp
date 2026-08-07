@@ -1069,7 +1069,6 @@ static void renderFrame() {
     //                           a*+miss>0 即"屏幕上有糊块或空块"。
     //   src=real/fill/ell/unk = 地形几何来源 → fill/ell>0 即"露代理面或裸椭球"
     //   z / texZ              = 可见几何 LOD 跨度 / 实际贴上的影像层跨度
-    //   fade                  = cross-fade 正在过渡的瓦片数
     const auto& q = gEngine->diagnostics();
     const bool loadDirty = (q.imageryParentFallbackAttachments > 0 ||
                             q.imageryMissingTiles > 0 ||
@@ -1079,7 +1078,7 @@ static void renderFrame() {
     // 暂态期逐帧 + 刚回到干净的那一帧(记 settle 落点)+ 稳态心跳
     if (loadDirty || sLoadDirtyPrev || frameId % 120 == 0) {
         LOGI("LoadQual frame=%llu vis=%d sharp=%d a1=%d a2=%d a3+=%d miss=%d "
-             "src=%d/%d/%d/%d geoZ=%d-%d texZ=%d-%d z=%d-%d fade=%d dirty=%d",
+             "src=%d/%d/%d/%d geoZ=%d-%d texZ=%d-%d z=%d-%d dirty=%d",
              static_cast<unsigned long long>(frameId),
              q.visibleTiles,
              q.imageryExactAttachments,
@@ -1094,7 +1093,6 @@ static void renderFrame() {
              q.imageryMinTargetZoom, q.imageryMaxTargetZoom,
              q.imageryMinTextureZoom, q.imageryMaxTextureZoom,
              q.minVisibleZoom, q.maxVisibleZoom,
-             q.quadtreeFadingNodes,
              loadDirty ? 1 : 0);
         // LoadQual 回答"屏幕上糊不糊",回答不了"为什么还没好"。这条补上收敛
         // 速率的那一半:**每帧闸门是否打满**。判据(见诊断文档§二)——
@@ -1825,7 +1823,7 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
          "exact=%d parent=%d missing=%d unsupported=%d kicked=%d retained=%d "
-         "entry plan=%d/%d/%d draw=%d/%d/%d miss=%d/%d/%d defer=%d/%d/%d fallback=%d prep=%d/%d surface=%d src=%d/%d/%d/%d "
+         "entry plan=%d/%d draw=%d/%d miss=%d/%d defer=%d/%d fallback=%d prep=%d/%d surface=%d src=%d/%d/%d/%d "
          "z=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d qBal=%d "
          "qFrustum=%d qHz=%d qEq2=%d grp=%d/%d/%d "
          "center=%.6f,%.6f targetH=%.2f camH=%.2f pitch=%.6f heading=%.6f vp=%dx%d "
@@ -1842,16 +1840,12 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
          diag.imageryAncestorRetainedTiles,
          diag.terrainRenderEntriesPlanned,
          diag.terrainRenderEntriesSelectedPlanned,
-         diag.terrainRenderEntriesFadingPlanned,
          diag.terrainRenderEntriesDrawn,
          diag.terrainRenderEntriesSelectedDrawn,
-         diag.terrainRenderEntriesFadingDrawn,
          diag.terrainRenderEntriesMissed,
          diag.terrainRenderEntriesSelectedMissed,
-         diag.terrainRenderEntriesFadingMissed,
          diag.terrainRenderEntriesDeferred,
          diag.terrainRenderEntriesSelectedDeferred,
-         diag.terrainRenderEntriesFadingDeferred,
          diag.terrainRenderEntriesAncestorFallback,
          diag.terrainRenderEntriesSynchronousPrep,
          diag.terrainRenderEntriesDeferredPrep,
@@ -1918,7 +1912,7 @@ static std::string buildDiagnosticsText() {
         "Attachments: %d exact, %d parent, %d missing, %d unsup, %d kicked, %d retained\n"
         "Zoom: %d-%d  |  Img: %d-%d -> tex %d-%d\n"
         "LOD: %.0f px  |  EqZoom: %d\n"
-        "QuadTree: %d render, %d walk, %d frustum, %d fade, %d balanced\n"
+        "QuadTree: %d render, %d walk, %d frustum, %d balanced\n"
         "Occlusion: %d occ, %d wait, %d culled-vis\n"
         "Groups: %d merc, %d N, %d S\n"
         "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
@@ -1963,7 +1957,7 @@ static std::string buildDiagnosticsText() {
         diag.imageryMinTextureZoom, diag.imageryMaxTextureZoom,
         diag.lodSizePixels, diag.quadtreeEqualZoomLayers,
         diag.quadtreeRenderingNodes, diag.quadtreeWalkthroughNodes,
-        diag.quadtreeInFrustumNodes, diag.quadtreeFadingNodes,
+        diag.quadtreeInFrustumNodes,
         diag.quadtreeNeighborBalancedTiles,
         diag.quadtreeSelectionOccludedNodes,
         diag.quadtreeSelectionWaitingForOcclusionResultsNodes,

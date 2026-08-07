@@ -10,8 +10,6 @@ namespace earth_engine {
 
 struct TileSelectionPostTraversalOptions {
     uint32_t loadingDescendantLimit = 20;
-    bool enableLodTransitionPeriod = true;
-    bool kickDescendantsWhileFadingIn = true;
     bool preloadAncestors = true;
 };
 
@@ -19,9 +17,6 @@ struct TileSelectionPostTraversalInput {
     TileTraversalDetails traversalDetails;
     bool renderable = false;
     bool unconditionallyRefine = false;
-    TileSelectionState previousSelectionState = TileSelectionState::NotVisited;
-    bool hasLodTransitionRenderContent = false;
-    float lodTransitionFadePercentage = 1.0f;
     bool wasRenderedLastFrame = false;
     bool isExternalContent = false;
     TileRefine refineMode = TileRefine::Replace;

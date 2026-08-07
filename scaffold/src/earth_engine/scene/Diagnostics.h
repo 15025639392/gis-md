@@ -112,19 +112,15 @@ struct Diagnostics {
     int terrainRenderContentCommands = 0;
     int terrainRenderEntriesPlanned = 0;
     int terrainRenderEntriesSelectedPlanned = 0;
-    int terrainRenderEntriesFadingPlanned = 0;
     int terrainRenderEntriesAncestorFallback = 0;
     int terrainRenderEntriesSynchronousPrep = 0;
     int terrainRenderEntriesDeferredPrep = 0;
     int terrainRenderEntriesDrawn = 0;
     int terrainRenderEntriesSelectedDrawn = 0;
-    int terrainRenderEntriesFadingDrawn = 0;
     int terrainRenderEntriesMissed = 0;
     int terrainRenderEntriesSelectedMissed = 0;
-    int terrainRenderEntriesFadingMissed = 0;
     int terrainRenderEntriesDeferred = 0;
     int terrainRenderEntriesSelectedDeferred = 0;
-    int terrainRenderEntriesFadingDeferred = 0;
     // 破洞诊断(假设 A:选中却零绘制 = 屏幕上这块本帧彻底不出现)。
     //   selectedForRender      = 选择器本帧要渲染的瓦片数(分母)
     //   missingSelected/Render = render entry 的 tile 指针为空 → 无几何
@@ -194,7 +190,6 @@ struct Diagnostics {
     int minVisibleZoom = 0;
     int maxVisibleZoom = 0;
     int quadtreeEqualZoomLayers = 0;
-    int quadtreeFadingNodes = 0;
     int quadtreeNeighborLinks = 0;
     int quadtreeNeighborBalancedTiles = 0;
     int quadtreeRenderingNodes = 0;

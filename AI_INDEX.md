@@ -519,7 +519,7 @@ cesium-native `Tileset` equivalent. Owns a unified quadtree of terrain + raster-
 
 **Private frame plumbing:** `makeContentRuntimeRequestFrame` (.cpp:197-213), `makeContentRuntimeUploadFrame` (.cpp:215-230), `requestMissingContent` (.cpp:209-217), `processPendingLoads` (.cpp:219-229), `drainGpuUploadQueue` (.cpp:231-238 — async CPU→GPU pipeline, called after processPendingLoads each frame), `checkSingleTileOcclusion`/`checkOcclusion` (.cpp:244-258, callback else `TileSoftwareOcclusionPolicy::check`).
 
-**`TilesetOptions`** (.h:54-87), cesium-native `TilesetOptions` subset. Key defaults: **`maximumScreenSpaceError`** = 16.0, **`maximumSimultaneousTileLoads`** = 20, **`loadingDescendantLimit`** = 20, **`culledScreenSpaceError`** = 64.0, **`maximumCachedBytes`** = 512 MiB, `enableFrustumCulling`/`enableOcclusionCulling`/`delayRefinementForOcclusion`/`enableFogCulling`/`enforceCulledScreenSpaceError`/`preloadAncestors`/`preloadSiblings`/`renderTilesUnderCamera` = true, `enableLodTransitionPeriod` = false. Embeds a 21-entry `fogDensityTable` (.h:74-86). **`kMaximumCachedBytes`** = 512 MiB duplicated as static constexpr (.cpp/.h:180).
+**`TilesetOptions`** (.h:54-87), cesium-native `TilesetOptions` subset. Key defaults: **`maximumScreenSpaceError`** = 16.0, **`maximumSimultaneousTileLoads`** = 20, **`loadingDescendantLimit`** = 20, **`culledScreenSpaceError`** = 64.0, **`maximumCachedBytes`** = 512 MiB, `enableFrustumCulling`/`enableOcclusionCulling`/`delayRefinementForOcclusion`/`enableFogCulling`/`enforceCulledScreenSpaceError`/`preloadAncestors`/`preloadSiblings`/`renderTilesUnderCamera` = true. (`enableLodTransitionPeriod` and the whole cross-fade chain were deleted 2026-08-07 — geomorph superseded it.) Embeds a 21-entry `fogDensityTable` (.h:74-86). **`kMaximumCachedBytes`** = 512 MiB duplicated as static constexpr (.cpp/.h:180).
 
 Members of interest (.h:170-208): `tilePlan_`, `tileRegistry_`, `contentLifecycle_`, `gpuUploadQueue_` (async pipeline), `selectionReuseState_`, `loadQueue_`, `selectionCounters_`, `lastCameraPosition_`/`lastCameraDirection_` (view-weighted priority). Friends: `TilesetTestAccess`, `TilesetSelectionFrameFacade`, `TilesetUpdateFrameRuntime` (.h:135-137) — selection/update logic reaches into privates.
 
@@ -614,9 +614,9 @@ Frustum/fog culling + culled-SSE (cesium-native `_frustumCull`/`_fogCull`).
 
 | Method | Lines | Logic |
 | --- | --- | --- |
-| `shouldKickDescendants` | .cpp:5-29 | kick if (non-ready descendant && none rendered last frame) OR (fading-in) AND (`notYetRenderableCount > loadingDescendantLimit` OR renderable) |
-| `shouldRestoreChildLoadQueueAndLoadParent` | .cpp:31-41 | not-rendered-last-frame && over limit && !external && !unconditional |
-| `planAfterKick` | .cpp:43-68 | builds `TileSelectionKickPlan{restoreChildLoadQueueAndLoadParent, addRenderableReplacementToPlan(=non-Add && renderable), preloadParent}` |
+| `shouldKickDescendants` | .cpp:5-16 | kick if (non-ready descendant && none rendered last frame) AND (`notYetRenderableCount > loadingDescendantLimit` OR renderable). ⚠️ The cross-fade `kickDueToTileFadingIn` disjunct was deleted 2026-08-07 with the whole cross-fade chain. |
+| `shouldRestoreChildLoadQueueAndLoadParent` | .cpp:18-29 | not-rendered-last-frame && over limit && !external && !unconditional |
+| `planAfterKick` | .cpp:30-58 | builds `TileSelectionKickPlan{restoreChildLoadQueueAndLoadParent, addRenderableReplacementToPlan(=non-Add && renderable), preloadParent}` |
 
 ### TileSelectionReusePolicy.h / .cpp
 
@@ -649,11 +649,10 @@ Per-tile per-view metrics feeding traversal.
 
 cesium-native `ViewUpdateResult` equivalent (the removed `TileQuadTree`'s output). `struct TilePlan` (.h:126-183) is the per-frame selection result the renderer consumes without reselecting LOD.
 
-Key vectors: `visibleTiles` (`vector<TileKey>` — selected tiles), `tilesFadingOut` / `tileTransitions` (`vector<TileTransition>` — LOD fade), **`renderEntries`** (`vector<TileRenderEntry>` — resolved draw list), `selectionRecords` (`vector<TileSelectionRecord>`), `frameCredits`. Plus ~50 int diagnostic counters (rendering/refined/kicked/occluded, render-entry command draw/miss/deferred tallies).
+Key vectors: `visibleTiles` (`vector<TileKey>` — selected tiles), **`renderEntries`** (`vector<TileRenderEntry>` — resolved draw list), `selectionRecords` (`vector<TileSelectionRecord>`), `frameCredits`. Plus ~50 int diagnostic counters (rendering/refined/kicked/occluded, render-entry command draw/miss/deferred tallies).
 
-- `TileRenderEntry` (.h:49-76): `selectedKey` vs `renderKey` differ only for clipped ancestor fallback; `reason` (`TileRenderEntryReason {Direct, AncestorFallback, SynchronousPrep, FadingOut}`), `opacity`, `surfaceClipEnabled` + `surfaceClipUv[4]`; helpers `isAncestorFallback`/`isFadingOut`/`renderPass`.
+- `TileRenderEntry` (.h:49-76): `selectedKey` vs `renderKey` differ only for clipped ancestor fallback; `reason` (`TileRenderEntryReason {Direct, AncestorFallback, SynchronousPrep}`), `opacity`, `surfaceClipEnabled` + `surfaceClipUv[4]`; helpers `isAncestorFallback`/`renderPass`.
 - `TileSelectionState {NotVisited, Culled, Rendered, Refined, RenderedAndKicked, RefinedAndKicked}` (.h:78-85) with `selectionWasKicked` / `originalSelectionState` / `kickSelectionState` transition helpers (.h:87-114).
-- `TileTransition` (.h:13-17): `{key, opacity, fadingNodeCount}`.
 - `.cpp`: `TilePlanBuilder::parentKey` (.cpp:19-37) — parent-of-tile with a special `OpenGlobus-Earth` 3-group Y-remap; else `TileKey::parent()`.
 
 ### TileFrameState.h / .cpp
@@ -689,13 +688,6 @@ cesium-native `ImplicitTilingUtilities` equivalent (24 KB .cpp). Static-only cla
 ### CrsProfile.h / .cpp
 
 Coordinate-reference-system descriptor associated with a `TileScheme` (does NOT do coordinate transforms — those live in `Transforms`/`TileScheme`). Abstract `CrsProfile` (.h:12-49): `id`/`name`/`unit` (`{Degree, Meter}`)/`isGeographic`/`isProjected`/`xRange`/`yRange`/axis-direction. Two built-ins (.cpp): `webMercator()` (EPSG:3857, meters, ±20037508.342789244) and `wgs84Geographic()` (EPSG:4326, degrees, ±180/±90) as static singletons.
-
-### TileLodTransitionController.h / TileLodTransitionFrameUpdater.h
-
-LOD cross-fade (cesium-native `TilesetOptions::enableLodTransitionPeriod` machinery).
-
-- `TileLodTransitionController::updateTransitions` (.h:24-144, header-only template): clears fade lists; when `enableLodTransitionPeriod` is false, forces all visible tiles to `lodTransitionFadePercentage=1.0` and returns (.h:42-52). Otherwise steps fade by `transitionDelta = deltaSeconds / lodTransitionLength`, moving tiles no longer selected into `fadingKeys`, populating `tilesFadingOut`/`tileTransitions` with `renderOpacity = 1 − fade`, and fading-in newly visible tiles. `wasRenderedInPreviousSelection` gates fade-out (.h:159-165).
-- `TileLodTransitionFrameUpdater::update` (.h:18-27): frame-level façade over the controller given `TilesetTileRegistry` + overlays + options.
 
 ### TileOcclusionResolver.h / TileOcclusionCallback.h / TileOcclusionState.h
 
@@ -1835,9 +1827,8 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 | `applyParentGeomorph` | .cpp:229-286 | 写回 `terrainGpuVertexBytes` 每顶点 offset 28 的 float32 |
 
 ⚠️ **当前已停用**:变体 A 的父级采样起点采到粗祖先,山峰区表现为"从地壳浮上来",
-且父采样在主线程执行、是拖动卡顿来源。demo 同步关了 `enableLodTransitionPeriod`
-(shader w=1,无 morph),heightDelta 维持 worker 写入的 0。待地形连续 LOD 重设计
-整体换成规则栅格 + GPU 高度纹理 + 距离连续 morph。
+且父采样在主线程执行、是拖动卡顿来源。heightDelta 维持 worker 写入的 0。
+⚠️ 2026-08-07:`TileGeomorphHeightDelta` 与 cross-fade 整链均已删除,本节仅存史。
 
 ### TerrainDisplacementTemplatePool.h / .cpp
 
@@ -2149,9 +2140,9 @@ Render flow in `render()` (.cpp:190-283):
 | 2 | `buildSkyCommands` | .cpp:309-348 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
 | 3 | `buildAtmosphereCommands` | .cpp:349-377 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
 | 4 | `buildLayerCommands` | .cpp:378-507 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
-| 5 | `applyMvpUniforms` | .cpp:575-583 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:584-634 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:524-574 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 5 | `applyMvpUniforms` | .cpp:563-571 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:572-622 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:512-562 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
 | 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:635-654 / :656-699 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
 | 7 | `aggregateDiagnostics` | .cpp:701-728 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
 | 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:730-787 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |

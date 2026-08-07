@@ -110,6 +110,8 @@ struct OptionsSpec {
     bool enableFrustumCulling = true;
     bool enableFogCulling = true;
     bool enableOcclusionCulling = false;   // 遮挡不是对拍面（DESIGN 白名单 4）
+    // cesium 侧独有:我方 cross-fade 整链已于 2026-08-07 删除,此项只喂 golden
+    // 生成器里的 cesium-native TilesetOptions。所有场景保持 false=两侧等价。
     bool enableLodTransitionPeriod = false;
     bool forbidHoles = false;
     uint32_t loadingDescendantLimit = 20;

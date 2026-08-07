@@ -1051,7 +1051,7 @@ TEST(RendererCommandTest, MvpValidatorRejectsTranslucentGltfFrontToBack) {
 
 // ── Blend state tests ──
 
-TEST(RendererCommandTest, SurfaceTileBlendAllowedForLodTransitionOpacity) {
+TEST(RendererCommandTest, SurfaceTileBlendAllowedForPartialOpacity) {
     RenderCommand tile;
     tile.kind = RenderCommandKind::SurfaceTile;
     tile.owner = "surface_tile";
@@ -1086,7 +1086,7 @@ TEST(RendererCommandTest, SurfaceTileBlendRejectedWithoutOpacityReason) {
     EXPECT_EQ("surface_tile", error->owner);
 }
 
-TEST(RendererCommandTest, GltfPrimitiveBlendAllowedForLodTransitionOpacity) {
+TEST(RendererCommandTest, GltfPrimitiveBlendAllowedForPartialOpacity) {
     RenderCommand gltf;
     gltf.kind = RenderCommandKind::GltfPrimitive;
     gltf.owner = "gltf_primitive";

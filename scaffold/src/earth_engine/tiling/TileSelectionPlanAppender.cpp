@@ -19,25 +19,18 @@ void TileSelectionPlanAppender::queueTileLoad(
 void TileSelectionPlanAppender::addTileToCurrentPlan(
     TilePlan& tilePlan,
     TileLoadQueue& loadQueue,
-    bool enableLodTransitionPeriod,
     TilesetTile& tile,
     double tileSse,
     bool queueForLoad,
     double tilePriority) {
     const TileSelectionRenderEntryPlan renderEntry =
         TileSelectionRenderEntryPolicy::plan(
-            TileSelectionRenderEntryInput{
-                enableLodTransitionPeriod,
-                queueForLoad});
+            TileSelectionRenderEntryInput{queueForLoad});
     if (renderEntry.writeSelectionState) {
         tile.selectionFrameState.selectionState = renderEntry.selectionState;
     }
     if (renderEntry.writeScreenSpaceError) {
         tile.selectionFrameState.screenSpaceError = tileSse;
-    }
-    if (renderEntry.resetLodTransitionFade) {
-        tile.selectionFrameState.lodTransitionFadePercentage =
-            renderEntry.lodTransitionFadeValue;
     }
     if (renderEntry.appendVisibleTile) {
         tilePlan.visibleTiles.push_back(tile.key);

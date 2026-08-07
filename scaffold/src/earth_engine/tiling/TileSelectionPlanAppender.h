@@ -18,7 +18,6 @@ public:
 
     static void addTileToCurrentPlan(TilePlan& tilePlan,
                                      TileLoadQueue& loadQueue,
-                                     bool enableLodTransitionPeriod,
                                      TilesetTile& tile,
                                      double tileSse,
                                      bool queueForLoad,

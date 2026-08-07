@@ -16,12 +16,10 @@ TEST(TileSelectionPlanAppenderTest, AddsVisibleTileAndQueuesNormalLoad) {
         Rectangle{});
     tile.selectionFrameState.selectionState = TileSelectionState::NotVisited;
     tile.selectionFrameState.screenSpaceError = 0.0;
-    tile.selectionFrameState.lodTransitionFadePercentage = 0.25f;
 
     TileSelectionPlanAppender::addTileToCurrentPlan(
         tilePlan,
         loadQueue,
-        true,
         tile,
         12.5,
         true,
@@ -34,9 +32,6 @@ TEST(TileSelectionPlanAppenderTest, AddsVisibleTileAndQueuesNormalLoad) {
     EXPECT_EQ(tile.selectionFrameState.selectionState,
               TileSelectionState::Rendered);
     EXPECT_EQ(tile.selectionFrameState.screenSpaceError, 12.5);
-    EXPECT_FLOAT_EQ(
-        tile.selectionFrameState.lodTransitionFadePercentage,
-        0.25f);
     ASSERT_EQ(loadQueue.requests().size(), 1u);
     EXPECT_EQ(loadQueue.requests().front().key, tile.key);
     EXPECT_EQ(
@@ -55,7 +50,6 @@ TEST(TileSelectionPlanAppenderTest, SkipsNormalLoadWhenAlreadyQueued) {
     TileSelectionPlanAppender::addTileToCurrentPlan(
         tilePlan,
         loadQueue,
-        false,
         tile,
         4.0,
         false,
@@ -67,8 +61,5 @@ TEST(TileSelectionPlanAppenderTest, SkipsNormalLoadWhenAlreadyQueued) {
     EXPECT_EQ(tile.selectionFrameState.selectionState,
               TileSelectionState::Rendered);
     EXPECT_EQ(tile.selectionFrameState.screenSpaceError, 4.0);
-    EXPECT_FLOAT_EQ(
-        tile.selectionFrameState.lodTransitionFadePercentage,
-        1.0f);
     EXPECT_TRUE(loadQueue.empty());
 }

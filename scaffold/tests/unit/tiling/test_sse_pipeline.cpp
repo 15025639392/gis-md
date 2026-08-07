@@ -51,8 +51,6 @@
 #include "earth_engine/tiling/TileLoadRequestDispatcher.h"
 #include "earth_engine/tiling/TileLoadRequestPlanner.h"
 #include "earth_engine/tiling/TileLoadScheduler.h"
-#include "earth_engine/tiling/TileLodTransitionController.h"
-#include "earth_engine/tiling/TileLodTransitionFrameUpdater.h"
 #include "earth_engine/tiling/TileMissingRequestScheduler.h"
 #include "earth_engine/tiling/TileOcclusionResolver.h"
 #include "earth_engine/tiling/TilePendingLoadQueue.h"
@@ -310,7 +308,6 @@ struct TilesetTestAccess {
         TileSelectionPlanAppender::addTileToCurrentPlan(
             tileset.tilePlan_,
             tileset.loadQueue_,
-            tileset.options_.enableLodTransitionPeriod,
             tile,
             1.0,
             true,
@@ -768,39 +765,14 @@ struct TilesetTestAccess {
         const Tileset& tileset) {
         return tileset.selectionCounters_;
     }
-    static void updateLodTransitions(Tileset& tileset,
-                                     double deltaSeconds) {
-        std::vector<TilesetTile*> activeTiles;
-        for (auto& [ck, tile] : tileset.tileRegistry_.tiles()) {
-            (void)ck;
-            if (tile) activeTiles.push_back(tile.get());
-        }
-        const std::vector<TilesetTile*> previousActiveTiles;
-        TileLodTransitionFrameUpdater::update(
-            tileset.tilePlan_,
-            tileset.tileRegistry_,
-            activeTiles,
-            previousActiveTiles,
-            tileset.tilesFadingOut_,
-            tileset.rasterOverlays_,
-            deltaSeconds,
-            TileLodTransitionFrameOptions{
-                tileset.options_.enableLodTransitionPeriod,
-                tileset.options_.lodTransitionLength});
-        refreshTilePlanRenderEntries(tileset);
-    }
     static void refreshTilePlanRenderEntries(Tileset& tileset) {
         TileRenderPlanFrameRefresher::refresh(
             tileset.tilePlan_,
             tileset.contentAccess_,
             tileset.rasterOverlays_,
             TileRenderPlanFrameRefreshOptions{
-                tileset.options_.enableLodTransitionPeriod,
                 tileset.interactionActiveForFrame_,
                 tileset.resourceSmoothingActiveForFrame_});
-    }
-    static size_t fadingOutSetSize(const Tileset& tileset) {
-        return tileset.tilesFadingOut_.size();
     }
     static void setLastCamera(Tileset& tileset,
                               const Vec3& position,
@@ -12089,7 +12061,6 @@ void testTilesetTileSelectionFrameStateOwnsTraversalFields() {
     tile.selectionFrameState.inFrustum = true;
     tile.selectionFrameState.cameraInside = true;
     tile.selectionFrameState.ancestorMeetsSse = true;
-    tile.selectionFrameState.lodTransitionFadePercentage = 0.25f;
     check(tile.selectionFrameState.selectionState ==
               TileSelectionState::Rendered &&
               tile.selectionFrameState.previousSelectionState ==
@@ -12097,8 +12068,7 @@ void testTilesetTileSelectionFrameStateOwnsTraversalFields() {
               tile.selectionFrameState.screenSpaceError == 12.5 &&
               tile.selectionFrameState.inFrustum &&
               tile.selectionFrameState.cameraInside &&
-              tile.selectionFrameState.ancestorMeetsSse &&
-              tile.selectionFrameState.lodTransitionFadePercentage == 0.25f,
+              tile.selectionFrameState.ancestorMeetsSse,
           "TilesetTile: selection frame state owns traversal fields");
     tile.selectionFrameState.selectionState = TileSelectionState::Culled;
     tile.selectionFrameState.renderable = true;
@@ -12235,24 +12205,16 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
 void testTileSelectionRenderEntryPolicyPlansRenderedTileWrites() {
     TileSelectionRenderEntryPlan plan =
         TileSelectionRenderEntryPolicy::plan(
-            TileSelectionRenderEntryInput{
-                true,
-                false});
+            TileSelectionRenderEntryInput{false});
     check(plan.writeSelectionState &&
               plan.selectionState == TileSelectionState::Rendered &&
               plan.writeScreenSpaceError &&
               plan.appendVisibleTile,
           "TileSelectionRenderEntryPolicy: rendered entry writes state, SSE and visible tile");
-    check(!plan.resetLodTransitionFade &&
-              !plan.queueNormalLoad,
-          "TileSelectionRenderEntryPolicy: enabled LOD transition preserves fade and skips load");
+    check(!plan.queueNormalLoad,
+          "TileSelectionRenderEntryPolicy: rendered entry without queue-for-load skips load");
     plan = TileSelectionRenderEntryPolicy::plan(
-        TileSelectionRenderEntryInput{
-            false,
-            true});
-    check(plan.resetLodTransitionFade &&
-              std::abs(plan.lodTransitionFadeValue - 1.0f) < 1e-6f,
-          "TileSelectionRenderEntryPolicy: disabled LOD transition resets fade");
+        TileSelectionRenderEntryInput{true});
     check(plan.queueNormalLoad,
           "TileSelectionRenderEntryPolicy: queue-for-load plans normal load");
 }
@@ -14113,44 +14075,10 @@ void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: interaction fallback can defer ancestor mesh prep when base command binding is available");
 }
-void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
-    const TileKey rootKey{"test", 0, 0, 0};
-    TilesetTile root(rootKey, Rectangle{});
-    TilesetTestAccess::makeGltfRenderReady(root);
-    root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
-    TilePlan plan;
-    plan.visibleTiles.push_back(rootKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
-        plan,
-        TileRenderPlanFinalizeOptions{
-            true,
-            false,
-            0,
-            1},
-            [&root](const TileKey& key) -> TilesetTile* {
-                return key == root.key ? &root : nullptr;
-            },
-            [](const TileKey& key) {
-                return key.schemeId.str() + ":" +
-                    std::to_string(key.z) + ":" +
-                    std::to_string(key.x) + ":" +
-                    std::to_string(key.y);
-            },
-            [](const TilesetTile& tile) {
-                return tile.hasSurfaceDrawable();
-            });
-    // With glTF content the root is directly renderable.
-    check(plan.renderEntries.size() == 1 &&
-              plan.renderEntries.front().reason ==
-                  TileRenderEntryReason::Direct &&
-              std::abs(plan.renderEntries.front().opacity - 0.25f) < 1e-6f,
-          "TileRenderPlanFinalizer: visible tile opacity reads selection frame fade");
-}
 void testTileRenderEntryClassifiesFrontierRoles() {
     TileRenderEntry direct;
     direct.reason = TileRenderEntryReason::Direct;
     check(!direct.isAncestorFallback() &&
-              !direct.isFadingOut() &&
               !direct.hasSurfaceClip() &&
               direct.renderPass() == TileRenderEntryPass::Selected,
           "TileRenderEntry: direct entry has no fallback or fading role");
@@ -14159,18 +14087,15 @@ void testTileRenderEntryClassifiesFrontierRoles() {
     fallback.usesAncestorFallback = true;
     fallback.surfaceClipEnabled = true;
     check(fallback.isAncestorFallback() &&
-              !fallback.isFadingOut() &&
               fallback.hasSurfaceClip() &&
               fallback.renderPass() == TileRenderEntryPass::Selected,
           "TileRenderEntry: fallback entry exposes clipped ancestor role");
     TileRenderEntry fading;
-    fading.reason = TileRenderEntryReason::FadingOut;
     fading.selectedThisFrame = false;
     check(!fading.isAncestorFallback() &&
-              fading.isFadingOut() &&
               !fading.hasSurfaceClip() &&
               fading.renderPass() == TileRenderEntryPass::Fading,
-          "TileRenderEntry: fading entry exposes fade-out role");
+          "TileRenderEntry: non-selected entry routes to the fade pass");
 }
 void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
     const TileKey drawnKey{"test", 0, 0, 0};
@@ -14321,174 +14246,6 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
                   "clip:" + TileCacheKey::forTile(selectedKey)) !=
                   std::string::npos,
           "TileRenderEntryCommandBuilder: fallback command preserves selected patch identity");
-}
-void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
-    const TileKey fadingKey{"test", 0, 0, 0};
-    TilesetTile fading(fadingKey, Rectangle{});
-    fading.content.renderContent.prepareGltfContent(
-        makeQuadTerrainGltfModel(fading.bounds), Mat4::identity());
-    fading.content.renderContent.setTerrainRenderContent(true);
-    fading.content.renderContent.addGltfPrimitiveResource(
-        GltfPrimitiveRenderResources{});
-    fading.content.renderContent.markRenderContentReady();
-    fading.markRenderContentDone();
-    TilePlan plan;
-    plan.tilesFadingOut.push_back(TileTransition{fadingKey, 0.4f, 1});
-    TileRenderPlanFinalizer::refreshRenderEntries(
-        plan,
-        TileRenderPlanFinalizeOptions{
-            true,
-            false,
-            0,
-            1},
-        [&fading](const TileKey& key) -> TilesetTile* {
-            return key == fading.key ? &fading : nullptr;
-        },
-        [](const TileKey& key) {
-            return TileCacheKey::forTile(key);
-        },
-        [](const TilesetTile& tile) {
-            return tile.hasSurfaceDrawable();
-        });
-    // geomorph 契约:LOD 过渡期地形走几何 morph 单层不透明,fadingOut 父瓦片被
-    // 不透明 incoming 盖住且会 z-fighting 碎裂→不再产生渲染项(见 TileRenderPlanFinalizer)。
-    check(plan.renderEntries.empty(),
-          "TileRenderPlanFinalizer: geomorph skips fadingOut base (single-layer morph)");
-    Renderer renderer(nullptr);
-    RenderCommandList commands;
-    auto cacheKey = [](const TileKey& key) {
-        return TileCacheKey::forTile(key);
-    };
-    auto protectTile = [](TilesetTile* tile, uint64_t frameNumber) {
-        tile->markUsedForRenderFrame(frameNumber);
-    };
-    float submittedOpacity = 0.0f;
-    auto buildCommand = [&submittedOpacity](Renderer&,
-                                            TilesetTile&,
-                                            RenderCommandList& outCommands,
-                                            float opacity,
-                                            bool,
-                                            const std::optional<
-                                                std::array<float, 4>>&,
-                                            const TilesetTile*) {
-        submittedOpacity = opacity;
-        RenderCommand command;
-        command.kind = RenderCommandKind::GltfPrimitive;
-        outCommands.push_back(std::move(command));
-    };
-    TileRenderEntryCommandStats selectedStats =
-        TileRenderEntryCommandBuilder::build(
-            plan,
-            TileRenderEntryPass::Selected,
-            12,
-            renderer,
-            commands,
-            cacheKey,
-            protectTile,
-            buildCommand);
-    check(commands.empty() && selectedStats.plannedEntries == 0,
-          "TileRenderEntryCommandBuilder: selected pass skips fading render entries");
-    TileRenderEntryCommandStats fadeStats =
-        TileRenderEntryCommandBuilder::build(
-            plan,
-            TileRenderEntryPass::Fading,
-            12,
-            renderer,
-            commands,
-            cacheKey,
-            protectTile,
-            buildCommand);
-    check(commands.empty() && fadeStats.plannedEntries == 0,
-          "TileRenderEntryCommandBuilder: geomorph fade pass has no entries (fadingOut skipped)");
-}
-void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
-    const TileKey rootKey{"test", 0, 0, 0};
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    tiles.emplace(
-        "test:0:0:0",
-        std::make_unique<TilesetTile>(rootKey, Rectangle{}));
-    TilesetTile& root = *tiles["test:0:0:0"];
-    root.selectionFrameState.previousSelectionState =
-        TileSelectionState::Rendered;
-    root.content.contentKind = TileContentKind::Render;
-    root.content.loadState = TileLoadState::Done;
-    root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
-    TilePlan plan;
-    const std::vector<TilesetTile*> activeTiles{&root};
-    std::unordered_set<std::string> fadingKeys;
-    TileLodTransitionController::updateTransitions(
-        plan,
-        fadingKeys,
-        0.25,
-        TileLodTransitionOptions{
-            &tiles,
-            &activeTiles,
-            nullptr,
-            true,
-            1.0},
-        [](const TileKey& key) {
-            return key.schemeId.str() + ":" +
-                std::to_string(key.z) + ":" +
-                std::to_string(key.x) + ":" +
-                std::to_string(key.y);
-        },
-        [](const TilesetTile& tile) {
-            return tile.content.contentKind == TileContentKind::Render;
-        });
-    check(fadingKeys.count("test:0:0:0") == 1 &&
-              plan.tilesFadingOut.size() == 1 &&
-              std::abs(tiles["test:0:0:0"]
-                           ->selectionFrameState
-                           .lodTransitionFadePercentage -
-                       0.25f) < 1e-6f &&
-              std::abs(plan.tilesFadingOut.front().opacity - 1.0f) < 1e-6f &&
-              plan.fadingNodeCount == 1,
-          "TileLodTransitionController: previous render content fades out after leaving selection");
-}
-void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
-    const TileKey rootKey{"test", 0, 0, 0};
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    tiles.emplace(
-        "test:0:0:0",
-        std::make_unique<TilesetTile>(rootKey, Rectangle{}));
-    TilesetTile& root = *tiles["test:0:0:0"];
-    root.selectionFrameState.previousSelectionState =
-        TileSelectionState::Rendered;
-    root.content.contentKind = TileContentKind::Render;
-    root.content.loadState = TileLoadState::Done;
-    root.selectionFrameState.lodTransitionFadePercentage = 0.75f;
-    TilePlan plan;
-    plan.visibleTiles.push_back(rootKey);
-    const std::vector<TilesetTile*> activeTiles{&root};
-    std::unordered_set<std::string> fadingKeys{"test:0:0:0"};
-    TileLodTransitionController::updateTransitions(
-        plan,
-        fadingKeys,
-        0.25,
-        TileLodTransitionOptions{
-            &tiles,
-            &activeTiles,
-            nullptr,
-            true,
-            1.0},
-        [](const TileKey& key) {
-            return key.schemeId.str() + ":" +
-                std::to_string(key.z) + ":" +
-                std::to_string(key.x) + ":" +
-                std::to_string(key.y);
-        },
-        [](const TilesetTile& tile) {
-            return tile.content.contentKind == TileContentKind::Render;
-        });
-    check(fadingKeys.empty() &&
-              plan.tilesFadingOut.empty() &&
-              plan.tileTransitions.size() == 1 &&
-              std::abs(tiles["test:0:0:0"]
-                           ->selectionFrameState
-                           .lodTransitionFadePercentage -
-                       0.25f) < 1e-6f &&
-              plan.fadingNodeCount == 1,
-          "TileLodTransitionController: tile returning from fade-out restarts fade-in from zero");
 }
 void testTileEmptyContentRegistryOwnsEmptyCacheKeys() {
     TileEmptyContentRegistry registry;
@@ -16790,61 +16547,24 @@ void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
               missingDescendants,
               true,
               false,
-              20,
-              false,
-              false,
-              TileSelectionState::NotVisited,
-              false,
-              1.0f),
+              20),
           "TileSelectionKickPolicy: renderable ancestor kicks missing descendants");
     check(!TileSelectionKickPolicy::shouldKickDescendants(
               missingDescendants,
               false,
               false,
-              20,
-              false,
-              false,
-              TileSelectionState::NotVisited,
-              false,
-              1.0f),
+              20),
           "TileSelectionKickPolicy: non-renderable ancestor waits below descendant limit");
-    TileTraversalDetails fadingDescendants;
-    fadingDescendants.allAreRenderable = true;
-    fadingDescendants.anyWereRenderedLastFrame = true;
-    fadingDescendants.notYetRenderableCount = 0;
-    check(TileSelectionKickPolicy::shouldKickDescendants(
-              fadingDescendants,
-              true,
-              false,
-              20,
-              true,
-              true,
-              TileSelectionState::Rendered,
-              true,
-              0.5f),
-          "TileSelectionKickPolicy: fading-in tile can kick descendants");
+    TileTraversalDetails readyDescendants;
+    readyDescendants.allAreRenderable = true;
+    readyDescendants.anyWereRenderedLastFrame = true;
+    readyDescendants.notYetRenderableCount = 0;
     check(!TileSelectionKickPolicy::shouldKickDescendants(
-              fadingDescendants,
+              readyDescendants,
               true,
               false,
-              20,
-              true,
-              true,
-              TileSelectionState::Rendered,
-              true,
-              1.0f),
-          "TileSelectionKickPolicy: fully faded-in tile keeps descendants");
-    check(!TileSelectionKickPolicy::shouldKickDescendants(
-              fadingDescendants,
-              true,
-              false,
-              20,
-              true,
-              true,
-              TileSelectionState::RenderedAndKicked,
-              true,
-              0.5f),
-          "TileSelectionKickPolicy: kicked rendered state does not trigger fade-in kick like cesium-native");
+              20),
+          "TileSelectionKickPolicy: ready descendants are never kicked");
     TileTraversalDetails unconditionalMissing;
     unconditionalMissing.allAreRenderable = false;
     unconditionalMissing.anyWereRenderedLastFrame = true;
@@ -16853,12 +16573,7 @@ void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
               unconditionalMissing,
               false,
               true,
-              20,
-              false,
-              false,
-              TileSelectionState::NotVisited,
-              false,
-              1.0f),
+              20),
           "TileSelectionKickPolicy: unconditional refine still requires renderable ancestor or descendant limit like cesium-native");
 }
 void testTileSelectionKickPolicyRestoresChildQueueForParentLoad() {
@@ -16988,17 +16703,12 @@ void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
                 manyMissing,
                 true,
                 false,
-                TileSelectionState::NotVisited,
-                false,
-                1.0f,
                 false,
                 false,
                 TileRefine::Replace,
                 false},
             TileSelectionPostTraversalOptions{
                 2,
-                false,
-                false,
                 true});
     check(result.shouldKick &&
               !result.wasReallyRenderedLastFrame &&
@@ -17017,17 +16727,12 @@ void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
                 fewMissing,
                 true,
                 false,
-                TileSelectionState::NotVisited,
-                false,
-                1.0f,
                 false,
                 false,
                 TileRefine::Replace,
                 false},
             TileSelectionPostTraversalOptions{
                 2,
-                false,
-                false,
                 false});
     check(noPreloadResult.shouldKick &&
               !noPreloadResult.kickPlan.preloadParent,
@@ -17042,17 +16747,12 @@ void testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload() {
                 ready,
                 true,
                 false,
-                TileSelectionState::NotVisited,
-                false,
-                1.0f,
                 false,
                 false,
                 TileRefine::Replace,
                 false},
             TileSelectionPostTraversalOptions{
                 2,
-                false,
-                false,
                 true});
     check(!result.shouldKick &&
               result.preloadRefinedAncestor,
@@ -17062,49 +16762,16 @@ void testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload() {
             ready,
             true,
             false,
-            TileSelectionState::NotVisited,
-            false,
-            1.0f,
             false,
             false,
             TileRefine::Replace,
             true},
         TileSelectionPostTraversalOptions{
             2,
-            false,
-            false,
             true});
     check(!result.shouldKick &&
               !result.preloadRefinedAncestor,
           "TileSelectionPostTraversalPolicy: queued refined ancestor skips preload");
-}
-void testTileSelectionPostTraversalPolicyPlansFadingKickWithoutParentReload() {
-    const TileTraversalDetails ready =
-        TileTraversalDetailsPolicy::forSingleTile(true, true);
-    const TileSelectionPostTraversalResult result =
-        TileSelectionPostTraversalPolicy::evaluate(
-            TileSelectionPostTraversalInput{
-                ready,
-                true,
-                false,
-                TileSelectionState::Rendered,
-                true,
-                0.5f,
-                true,
-                false,
-                TileRefine::Add,
-                true},
-            TileSelectionPostTraversalOptions{
-                20,
-                true,
-                true,
-                true});
-    check(result.shouldKick &&
-              result.wasReallyRenderedLastFrame &&
-              !result.kickPlan.restoreChildLoadQueueAndLoadParent &&
-              !result.kickPlan.addReplacementToPlan &&
-              !result.kickPlan.preloadParent,
-          "TileSelectionPostTraversalPolicy: fading ADD tile kicks without duplicate parent load");
 }
 void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
     TileSelectionPostTraversalResult result;
@@ -18130,7 +17797,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
             1e-4,
             true,
             allowStaleSelection,
-            false,
             true,
             true,
             true,
@@ -18209,7 +17875,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               9,
               true,
               true,
-              true,
               true) == TileSelectionReuseMode::Stale,
           "TileSelectionReuseState: default moving stale window spans three frames despite pending work");
     FrameState fourthStaleFrame = movingFrame;
@@ -18218,7 +17883,6 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               fourthStaleFrame,
               7,
               9,
-              true,
               true,
               true,
               true) == TileSelectionReuseMode::None,
@@ -18278,10 +17942,6 @@ void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
     input.selectedRenderStats.drawAttempts = 1;
     input.selectedRenderStats.missedDrawEntries = 4;
     input.selectedRenderStats.deferredEntries = 6;
-    input.fadingRenderStats.plannedEntries = 3;
-    input.fadingRenderStats.drawAttempts = 2;
-    input.fadingRenderStats.missedDrawEntries = 5;
-    input.fadingRenderStats.deferredEntries = 7;
     input.renderStats.missedDrawEntries = 9;
     input.renderStats.deferredEntries = 13;
     const std::array<char, 1024> detail =
@@ -18289,16 +17949,12 @@ void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
     const std::string text(detail.data());
     check(text.find("entries=5") != std::string::npos &&
               text.find("selectedEntries=2") != std::string::npos &&
-              text.find("fadeEntries=3") != std::string::npos &&
               text.find("cmds=3") != std::string::npos &&
               text.find("selectedCmds=1") != std::string::npos &&
-              text.find("fadeCmds=2") != std::string::npos &&
               text.find("missed=9") != std::string::npos &&
               text.find("selectedMissed=4") != std::string::npos &&
-              text.find("fadeMissed=5") != std::string::npos &&
               text.find("deferred=13") != std::string::npos &&
-              text.find("selectedDeferred=6") != std::string::npos &&
-              text.find("fadeDeferred=7") != std::string::npos,
+              text.find("selectedDeferred=6") != std::string::npos,
           "TileFrameDebugLogFormatter: render detail reports render entry pass counts");
 }
 void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
@@ -23682,18 +23338,14 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
           "Scene: diagnostics expose additional content tileset visibility");
     check(scene.diagnostics().terrainRenderEntriesPlanned > 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned > 0 &&
-              scene.diagnostics().terrainRenderEntriesFadingPlanned == 0 &&
               scene.diagnostics().terrainRenderEntriesSynchronousPrep >= 0 &&
               scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
               scene.diagnostics().terrainRenderEntriesDrawn > 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedDrawn > 0 &&
-              scene.diagnostics().terrainRenderEntriesFadingDrawn == 0 &&
               scene.diagnostics().terrainRenderEntriesMissed == 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedMissed == 0 &&
-              scene.diagnostics().terrainRenderEntriesFadingMissed == 0 &&
               scene.diagnostics().terrainRenderEntriesDeferred == 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedDeferred == 0 &&
-              scene.diagnostics().terrainRenderEntriesFadingDeferred == 0 &&
               scene.diagnostics().terrainSurfaceCommandsSubmitted > 0,
           "Scene: no-base-imagery terrain still submits placeholder surface render entries");
     check(std::abs(scene.tileset()->sampleHeight(0.0, 0.0) - 123.0f) <
@@ -23808,13 +23460,11 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
     scene.render();
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
-              scene.diagnostics().terrainRenderEntriesFadingPlanned == 0 &&
               scene.diagnostics().terrainRenderEntriesAncestorFallback == 1 &&
               scene.diagnostics().terrainRenderEntriesSynchronousPrep == 0 &&
               scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
               scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
-              scene.diagnostics().terrainRenderEntriesFadingDrawn == 0 &&
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 1,
           "Scene: diagnostics expose nonzero terrain render-entry fallback reasons");
 }
@@ -24305,141 +23955,6 @@ void testSceneSortsTransparentGltfByCameraDepth() {
               std::abs(transparentGltf[1].translucentSortDepth - 100000.0) <
                   1.0,
           "Scene: transparent glTF sort depths are computed from camera direction");
-}
-void testTilesetLodTransitionsUseNativeDeltaState() {
-    TilesetOptions options;
-    options.enableLodTransitionPeriod = true;
-    options.lodTransitionLength = 1.0f;
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
-        std::move(scheme),
-        {},
-        nullptr,
-        options);
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    check(root != nullptr,
-          "Tileset: LOD transition root tile is created");
-    if (!root) return;
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    TilesetTestAccess::beginTilePlan(tileset);
-    root->selectionFrameState.previousSelectionState =
-        TileSelectionState::NotVisited;
-    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
-    check(std::abs(
-              root->selectionFrameState.lodTransitionFadePercentage - 0.25f) <
-              1e-6f,
-          "Tileset: selected tile fades in by delta / transition length");
-    check(TilesetTestAccess::tilePlan(tileset).fadingNodeCount == 1,
-          "Tileset: fade-in contributes to transition diagnostics");
-    TilesetTestAccess::beginTilePlan(tileset);
-    root->selectionFrameState.selectionState = TileSelectionState::NotVisited;
-    root->selectionFrameState.previousSelectionState =
-        TileSelectionState::Rendered;
-    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
-    const TilePlan& fadeOutPlan = TilesetTestAccess::tilePlan(tileset);
-    check(fadeOutPlan.visibleTiles.empty() &&
-              fadeOutPlan.tilesFadingOut.size() == 1,
-          "Tileset: previously rendered tile leaves selection through tilesFadingOut");
-    check(!fadeOutPlan.tilesFadingOut.empty() &&
-              std::abs(fadeOutPlan.tilesFadingOut.front().opacity - 1.0f) < 1e-6f,
-          "Tileset: fading-out render opacity stays opaque (cross-fade base layer)");
-    check(TilesetTestAccess::fadingOutSetSize(tileset) == 1,
-          "Tileset: fading-out tile stays tracked across frames");
-    TilesetTestAccess::beginTilePlan(tileset);
-    root->selectionFrameState.previousSelectionState =
-        TileSelectionState::NotVisited;
-    TilesetTestAccess::updateLodTransitions(tileset, 0.75);
-    check(TilesetTestAccess::fadingOutSetSize(tileset) == 1 &&
-              !TilesetTestAccess::tilePlan(tileset).tilesFadingOut.empty() &&
-              std::abs(TilesetTestAccess::tilePlan(tileset)
-                           .tilesFadingOut.front()
-                           .opacity -
-                       1.0f) < 1e-6f,
-          "Tileset: fading-out tile stays opaque base until removal");
-    TilesetTestAccess::beginTilePlan(tileset);
-    TilesetTestAccess::updateLodTransitions(tileset, 0.016);
-    check(TilesetTestAccess::fadingOutSetSize(tileset) == 0,
-          "Tileset: completed fading-out tile is removed like cesium-native");
-}
-void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
-    TilesetOptions options;
-    options.enableLodTransitionPeriod = true;
-    options.lodTransitionLength = 1.0f;
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(std::move(scheme), {}, nullptr, options);
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
-    check(root != nullptr && child != nullptr,
-          "Tileset: ADD refined fade-out parent and child are created");
-    if (!root || !child) return;
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    TilesetTestAccess::ensureTileMesh(tileset, *child);
-    child->refine = TileRefine::Add;
-    child->selectionFrameState.previousSelectionState =
-        TileSelectionState::Refined;
-    child->selectionFrameState.selectionState = TileSelectionState::NotVisited;
-    TilesetTestAccess::beginTilePlan(tileset);
-    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
-    const TilePlan& plan = TilesetTestAccess::tilePlan(tileset);
-    bool childFadingOut = false;
-    float childOpacity = 0.0f;
-    for (const TileTransition& transition : plan.tilesFadingOut) {
-        if (transition.key == childKey) {
-            childFadingOut = true;
-            childOpacity = transition.opacity;
-            break;
-        }
-    }
-    check(childFadingOut,
-          "Tileset: ADD refined previous tile enters tilesFadingOut like cesium-native");
-    check(std::abs(childOpacity - 1.0f) < 1e-6f,
-          "Tileset: ADD refined fade-out stays opaque base (cross-fade)");
-}
-void testTilesetLodTransitionsIgnoreEmptyContent() {
-    TilesetOptions options;
-    options.enableLodTransitionPeriod = true;
-    options.lodTransitionLength = 1.0f;
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = TilesetTestAccess::makeContentTerrainTileset(
-        std::move(scheme),
-        {},
-        nullptr,
-        options);
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    check(root != nullptr,
-          "Tileset: empty-content LOD transition root tile is created");
-    if (!root) return;
-    root->content.loadState = TileLoadState::Done;
-    root->content.contentKind = TileContentKind::Empty;
-    root->content.renderContent.setMeshReady(false);
-    TilesetTestAccess::beginTilePlan(tileset);
-    root->selectionFrameState.previousSelectionState =
-        TileSelectionState::NotVisited;
-    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
-    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
-    check(TilesetTestAccess::tilePlan(tileset).tileTransitions.empty() &&
-              TilesetTestAccess::tilePlan(tileset).fadingNodeCount == 0 &&
-              std::abs(
-                  root->selectionFrameState.lodTransitionFadePercentage -
-                  1.0f) < 1e-6f,
-          "Tileset: Empty content does not create fake fade-in render content");
-    TilesetTestAccess::beginTilePlan(tileset);
-    root->selectionFrameState.selectionState = TileSelectionState::NotVisited;
-    root->selectionFrameState.previousSelectionState =
-        TileSelectionState::Rendered;
-    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
-    check(TilesetTestAccess::tilePlan(tileset).tilesFadingOut.empty() &&
-              TilesetTestAccess::fadingOutSetSize(tileset) == 0,
-          "Tileset: Empty content does not create fake fade-out render content");
 }
 void testTilesetOcclusionStopsRefinementBeforeChildLoads() {
     auto provider = std::make_unique<SparseTerrainProvider>();
@@ -25540,18 +25055,14 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
               tilesetTrace.renderEntryDeferredPrepCount == 0 &&
               tilesetTrace.renderEntryPlannedCommandCount == 1 &&
               tilesetTrace.renderEntrySelectedPlannedCommandCount == 1 &&
-              tilesetTrace.renderEntryFadingPlannedCommandCount == 0 &&
               tilesetTrace.renderEntryCommandDrawCount == 1 &&
               tilesetTrace.renderEntrySelectedCommandDrawCount == 1 &&
-              tilesetTrace.renderEntryFadingCommandDrawCount == 0 &&
               tilesetTrace.renderEntryCommandMissedDrawCount == 0 &&
               tilesetTrace.renderEntrySelectedCommandMissedDrawCount == 0 &&
-              tilesetTrace.renderEntryFadingCommandMissedDrawCount == 0 &&
               tilesetTrace.renderEntryCommandMissingSelectedCount == 0 &&
               tilesetTrace.renderEntryCommandMissingRenderCount == 0 &&
               tilesetTrace.renderEntryCommandDeferredCount == 0 &&
-              tilesetTrace.renderEntrySelectedCommandDeferredCount == 0 &&
-              tilesetTrace.renderEntryFadingCommandDeferredCount == 0,
+              tilesetTrace.renderEntrySelectedCommandDeferredCount == 0,
           "Presentation trace: render-entry strategy and command stats expose the current frame draw funnel");
     check(!trace.commands.empty() &&
               trace.commands.front().stableKey.find(
@@ -25567,10 +25078,8 @@ void testPresentationTraceCopiesRenderEntryPassFailures() {
     TilePlan& plan = TilesetTestAccess::mutableTilePlan(tileset);
     plan.renderEntryCommandMissedDrawCount = 5;
     plan.renderEntrySelectedCommandMissedDrawCount = 2;
-    plan.renderEntryFadingCommandMissedDrawCount = 3;
     plan.renderEntryCommandDeferredCount = 7;
     plan.renderEntrySelectedCommandDeferredCount = 4;
-    plan.renderEntryFadingCommandDeferredCount = 3;
     FrameState frameState;
     frameState.frameId = 3;
     frameState.camera = nullptr;
@@ -25588,10 +25097,8 @@ void testPresentationTraceCopiesRenderEntryPassFailures() {
     const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
     check(tilesetTrace.renderEntryCommandMissedDrawCount == 5 &&
               tilesetTrace.renderEntrySelectedCommandMissedDrawCount == 2 &&
-              tilesetTrace.renderEntryFadingCommandMissedDrawCount == 3 &&
               tilesetTrace.renderEntryCommandDeferredCount == 7 &&
-              tilesetTrace.renderEntrySelectedCommandDeferredCount == 4 &&
-              tilesetTrace.renderEntryFadingCommandDeferredCount == 3,
+              tilesetTrace.renderEntrySelectedCommandDeferredCount == 4,
           "Presentation trace: render-entry missed and deferred counts preserve selected/fading pass attribution");
 }
 void testPresentationTraceCopiesFrameCreditsAndProgress() {
@@ -25633,100 +25140,6 @@ void testPresentationTraceCopiesFrameCreditsAndProgress() {
               std::abs(tilesetTrace.frameLoadProgressPercentage - 60.0) <
                   1e-8,
           "Presentation trace: mapped raster progress exposes cesium-native style frame load percentage");
-}
-void testPresentationTraceExposesFadingRenderEntry() {
-    InitializedRendererHarness harness;
-    auto baseOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay baseActivated(*baseOverlay);
-    TilesetOptions options;
-    options.enableLodTransitionPeriod = true;
-    options.lodTransitionLength = 1.0f;
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset = makeLegacySurfaceFixtureTileset(
-        std::move(scheme),
-        {&baseActivated},
-        &harness.device,
-        options);
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    check(root != nullptr,
-          "Presentation trace: fading render entry setup creates root tile");
-    if (!root) return;
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
-        root->rasterOverlayState.mappings().empty()
-            ? nullptr
-            : root->rasterOverlayState.mappings()[0].get();
-    RasterOverlayTile* rootRaster =
-        rootMapped ? rootMapped->getLoadingTile() : nullptr;
-    check(rootRaster != nullptr,
-          "Presentation trace: fading render entry maps base imagery");
-    if (!rootRaster) return;
-    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
-    rootRaster->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    TilesetTestAccess::beginTilePlan(tileset);
-    root->selectionFrameState.selectionState =
-        TileSelectionState::NotVisited;
-    root->selectionFrameState.previousSelectionState =
-        TileSelectionState::Rendered;
-    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
-    const TilePlan& plan = tileset.tilePlan();
-    // geomorph 契约:控制器仍把离场瓦片放进 tilesFadingOut(过渡跟踪),但 finalizer
-    // 在 geomorph(enableLodTransitionPeriod)下**不渲染 fadingOut 基底**(单层 morph,
-    // 见 TileRenderPlanFinalizer)→无渲染项。孤立离场(本例无 incoming 替代)退化为
-    // 轻微 pop(已知取舍)。
-    check(plan.visibleTiles.empty() &&
-              plan.tilesFadingOut.size() == 1 &&
-              plan.renderEntries.empty(),
-          "Presentation trace: geomorph skips fadingOut render entry (single-layer morph)");
-    RenderCommandList commands;
-    tileset.buildRenderCommands(harness.renderer, commands);
-    check(commands.empty(),
-          "Presentation trace: geomorph fadingOut emits no surface command");
-    if (commands.empty()) return;
-    FrameState frameState;
-    frameState.frameId = 7;
-    frameState.camera = nullptr;
-    PresentationTrace trace =
-        ScenePresentationTraceBuilder::build(
-            ScenePresentationTraceInput{
-                frameState,
-                &tileset,
-                emptyContentTilesets(),
-                commands});
-    check(trace.tilesets.size() == 1,
-          "Presentation trace: fading draw funnel includes one tileset");
-    if (trace.tilesets.empty()) return;
-    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
-    check(tilesetTrace.renderEntries.size() == 1,
-          "Presentation trace: fading draw funnel includes one render entry");
-    if (tilesetTrace.renderEntries.empty()) return;
-    const PresentationRenderEntryTrace& entryTrace =
-        tilesetTrace.renderEntries.front();
-    check(tilesetTrace.visibleTiles.empty() &&
-              !entryTrace.selectedThisFrame &&
-              entryTrace.reason ==
-                  TileRenderEntryReason::FadingOut &&
-              std::abs(entryTrace.opacity - 1.0f) < 1e-6f &&
-              tilesetTrace.renderEntryPlannedCommandCount == 1 &&
-              tilesetTrace.renderEntrySelectedPlannedCommandCount == 0 &&
-              tilesetTrace.renderEntryFadingPlannedCommandCount == 1 &&
-              tilesetTrace.renderEntryCommandDrawCount == 1 &&
-              tilesetTrace.renderEntrySelectedCommandDrawCount == 0 &&
-              tilesetTrace.renderEntryFadingCommandDrawCount == 1 &&
-              tilesetTrace.renderEntryCommandMissedDrawCount == 0 &&
-              tilesetTrace.renderEntrySelectedCommandMissedDrawCount == 0 &&
-              tilesetTrace.renderEntryFadingCommandMissedDrawCount == 0 &&
-              tilesetTrace.renderEntryCommandDeferredCount == 0 &&
-              tilesetTrace.renderEntrySelectedCommandDeferredCount == 0 &&
-              tilesetTrace.renderEntryFadingCommandDeferredCount == 0,
-          "Presentation trace: fading render entry remains visible in the draw funnel");
 }
 void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
     InitializedRendererHarness harness;
@@ -25804,17 +25217,13 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
     check(tilesetTrace.renderEntries.size() == 2 &&
               tilesetTrace.renderEntryPlannedCommandCount == 2 &&
               tilesetTrace.renderEntrySelectedPlannedCommandCount == 2 &&
-              tilesetTrace.renderEntryFadingPlannedCommandCount == 0 &&
               tilesetTrace.renderEntryCommandDrawCount == 2 &&
               tilesetTrace.renderEntrySelectedCommandDrawCount == 2 &&
-              tilesetTrace.renderEntryFadingCommandDrawCount == 0 &&
               tilesetTrace.renderEntryAncestorFallbackCount == 0 &&
               tilesetTrace.renderEntryCommandMissedDrawCount == 0 &&
               tilesetTrace.renderEntrySelectedCommandMissedDrawCount == 0 &&
-              tilesetTrace.renderEntryFadingCommandMissedDrawCount == 0 &&
               tilesetTrace.renderEntryCommandDeferredCount == 0 &&
-              tilesetTrace.renderEntrySelectedCommandDeferredCount == 0 &&
-              tilesetTrace.renderEntryFadingCommandDeferredCount == 0,
+              tilesetTrace.renderEntrySelectedCommandDeferredCount == 0,
           "Presentation trace: ADD selected render entries remain separate through the draw funnel");
 }
 void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
@@ -27728,13 +27137,9 @@ int main() {
     testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction();
-    testTileRenderPlanFinalizerReadsSelectionFrameFade();
     testTileRenderEntryClassifiesFrontierRoles();
     testTileRenderEntryCommandBuilderCountsSkippedEntries();
     testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive();
-    testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass();
-    testTileLodTransitionControllerFadesOutPreviousRenderContent();
-    testTileLodTransitionControllerRestartsReturnedFadeOutTile();
     testTileEmptyContentRegistryOwnsEmptyCacheKeys();
     testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey();
     testTileContentUnloadCoordinatorKeepsLoadingContent();
@@ -27784,7 +27189,6 @@ int main() {
     testTileSelectionKickPolicyPlansPostKickActions();
     testTileSelectionPostTraversalPolicyPlansKickOutcome();
     testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload();
-    testTileSelectionPostTraversalPolicyPlansFadingKickWithoutParentReload();
     testTileSelectionPostTraversalPolicyBuildsCommitPlan();
     testTileSelectionPostTraversalCommitterReturnsParentDetailsAfterKick();
     testTileViewerRequestVolumePolicyChecksOptionalVolume();
@@ -27930,9 +27334,6 @@ int main() {
     testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers();
     testScenePresentationHoldsWhenPlannedTerrainLacksBaseImageryCommand();
     testSceneSortsTransparentGltfByCameraDepth();
-    testTilesetLodTransitionsUseNativeDeltaState();
-    testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection();
-    testTilesetLodTransitionsIgnoreEmptyContent();
     testTilesetOcclusionStopsRefinementBeforeChildLoads();
     testTilesetOcclusionUnavailableDelaysNewRefinement();
     testTilesetOcclusionUnavailableDoesNotDelayPreviouslyRefinedTile();
@@ -27965,7 +27366,6 @@ int main() {
     testPresentationTraceLinksTilePlanToSurfaceCommand();
     testPresentationTraceCopiesRenderEntryPassFailures();
     testPresentationTraceCopiesFrameCreditsAndProgress();
-    testPresentationTraceExposesFadingRenderEntry();
     testPresentationTraceExposesAdditiveSelectedRenderEntries();
     testClippedFallbackCommandsHaveSelectedChildStableKeys();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();

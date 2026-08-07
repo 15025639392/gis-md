@@ -225,7 +225,6 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
         TileSelectionPlanAppender::addTileToCurrentPlan(
             context.tilePlan,
             context.loadQueue,
-            context.options.enableLodTransitionPeriod,
             tile,
             tileSse,
             preTraversal.singleTileShouldQueueLoad,
@@ -276,7 +275,6 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
         TileSelectionPlanAppender::addTileToCurrentPlan(
             context.tilePlan,
             context.loadQueue,
-            context.options.enableLodTransitionPeriod,
             tile,
             tileSse,
             preTraversal.additiveParentShouldQueueLoad,
@@ -316,20 +314,12 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                 traversalDetails,
                 renderable,
                 tile.unconditionallyRefine,
-                selection.previousSelectionState,
-                tile.content.contentKind == TileContentKind::Render &&
-                    TileSelectionRasterOverlayPreparer::isRenderable(
-                        tile,
-                        context.rasterOverlays),
-                selection.lodTransitionFadePercentage,
                 TileSelectionHistory::wasRenderedLastFrame(tile),
                 tile.content.contentKind == TileContentKind::External,
                 tile.refine,
                 queuedForLoad},
             TileSelectionPostTraversalOptions{
                 context.options.loadingDescendantLimit,
-                context.options.enableLodTransitionPeriod,
-                context.options.kickDescendantsWhileFadingIn,
                 context.options.preloadAncestors});
 
     const TileSelectionPostTraversalCommitPlan postCommit =
@@ -367,7 +357,6 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                 TileSelectionPlanAppender::addTileToCurrentPlan(
                     context.tilePlan,
                     context.loadQueue,
-                    context.options.enableLodTransitionPeriod,
                     selectedTile,
                     screenSpaceError,
                     queueForLoad,

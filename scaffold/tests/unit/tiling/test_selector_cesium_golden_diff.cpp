@@ -252,7 +252,6 @@ TilesetOptions makeTilesetOptions(const selector_diff::OptionsSpec& spec) {
     options.enableFrustumCulling = spec.enableFrustumCulling;
     options.enableFogCulling = spec.enableFogCulling;
     options.enableOcclusionCulling = spec.enableOcclusionCulling;
-    options.enableLodTransitionPeriod = spec.enableLodTransitionPeriod;
     options.forbidHoles = spec.forbidHoles;
     options.loadingDescendantLimit = spec.loadingDescendantLimit;
     options.maximumSimultaneousTileLoads = spec.maximumSimultaneousTileLoads;

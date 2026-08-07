@@ -12,17 +12,10 @@ struct TilesetTile;
 /// TilePlan is the frame-derived selection result for one tile scheme. The
 /// selector owns visible/fading tile decisions and resolves the render entries
 /// that the renderer consumes without reselecting LOD.
-struct TileTransition {
-    TileKey key;
-    float opacity = 1.0f;
-    int fadingNodeCount = 0;
-};
-
 enum class TileRenderEntryReason {
     Direct,
     AncestorFallback,
-    SynchronousPrep,
-    FadingOut
+    SynchronousPrep
 };
 
 enum class TileRenderEntryPass {
@@ -39,8 +32,6 @@ constexpr const char* tileRenderEntryReasonLabel(
             return "ancestor-fallback";
         case TileRenderEntryReason::SynchronousPrep:
             return "sync-prep";
-        case TileRenderEntryReason::FadingOut:
-            return "fading-out";
     }
     return "unknown";
 }
@@ -64,11 +55,6 @@ struct TileRenderEntry {
     bool isAncestorFallback() const {
         return reason == TileRenderEntryReason::AncestorFallback &&
                usesAncestorFallback;
-    }
-
-    bool isFadingOut() const {
-        return reason == TileRenderEntryReason::FadingOut &&
-               !selectedThisFrame;
     }
 
     bool hasSurfaceClip() const { return surfaceClipEnabled; }
@@ -143,14 +129,11 @@ struct TilePlan {
     double minLodSizePixels = 0.0;
     double maxLodSizePixels = 0.0;
     std::vector<TileKey> visibleTiles;
-    std::vector<TileTransition> tilesFadingOut;
     // Cesium Native ViewUpdateResult carries intrusive Tile pointers. The
     // selector appends these live handles with visibleTiles; traversal
     // references protect them through finalization, and render-frame
     // references protect them through command submission.
     std::vector<TilesetTile*> tilesToRenderThisFrame;
-    std::vector<TilesetTile*> tilesFadingOutThisFrame;
-    std::vector<TileTransition> tileTransitions;
     std::vector<TileRenderEntry> renderEntries;
     std::vector<std::string> frameCredits;
     int frameMappedRasterTileCount = 0;
@@ -173,7 +156,6 @@ struct TilePlan {
     int inFrustumNodeCount = 0;
     int horizonTangentPreservedCount = 0;
     int equalZoomSecondPassNodeCount = 0;
-    int fadingNodeCount = 0;
     int neighborLinkCount = 0;
     int neighborBalancedTileCount = 0;
     int mercatorTileCount = 0;
@@ -184,18 +166,14 @@ struct TilePlan {
     int renderEntryDeferredPrepCount = 0;
     int renderEntryPlannedCommandCount = 0;
     int renderEntrySelectedPlannedCommandCount = 0;
-    int renderEntryFadingPlannedCommandCount = 0;
     int renderEntryCommandDrawCount = 0;
     int renderEntrySelectedCommandDrawCount = 0;
-    int renderEntryFadingCommandDrawCount = 0;
     int renderEntryCommandMissedDrawCount = 0;
     int renderEntrySelectedCommandMissedDrawCount = 0;
-    int renderEntryFadingCommandMissedDrawCount = 0;
     int renderEntryCommandMissingSelectedCount = 0;
     int renderEntryCommandMissingRenderCount = 0;
     int renderEntryCommandDeferredCount = 0;
     int renderEntrySelectedCommandDeferredCount = 0;
-    int renderEntryFadingCommandDeferredCount = 0;
     // 破洞诊断:零命令的成因分桶(见 TileRenderCommandZeroDrawBreakdown)。
     // 三者之和 ≈ renderEntryCommandMissedDrawCount。
     // 破洞诊断:选中瓦片被 finalizer 丢弃、且不是"已被别的 entry 覆盖"的

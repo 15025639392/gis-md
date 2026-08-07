@@ -728,12 +728,6 @@ add_executable(test_tile_visible_range_finalizer
 target_link_libraries(test_tile_visible_range_finalizer PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_visible_range_finalizer COMMAND test_tile_visible_range_finalizer)
 
-add_executable(test_tile_lod_transitions
-    unit/tiling/test_tile_lod_transitions.cpp
-)
-target_link_libraries(test_tile_lod_transitions PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_tile_lod_transitions COMMAND test_tile_lod_transitions)
-
 add_executable(test_tile_occlusion_resolver
     unit/tiling/test_tile_occlusion_resolver.cpp
 )

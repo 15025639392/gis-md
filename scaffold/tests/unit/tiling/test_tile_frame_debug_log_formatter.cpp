@@ -162,10 +162,6 @@ TEST(
     input.selectedRenderStats.drawAttempts = 1;
     input.selectedRenderStats.missedDrawEntries = 4;
     input.selectedRenderStats.deferredEntries = 6;
-    input.fadingRenderStats.plannedEntries = 3;
-    input.fadingRenderStats.drawAttempts = 2;
-    input.fadingRenderStats.missedDrawEntries = 5;
-    input.fadingRenderStats.deferredEntries = 7;
     input.renderStats.missedDrawEntries = 9;
     input.renderStats.deferredEntries = 13;
 
@@ -175,14 +171,10 @@ TEST(
 
     EXPECT_NE(text.find("entries=5"), std::string::npos);
     EXPECT_NE(text.find("selectedEntries=2"), std::string::npos);
-    EXPECT_NE(text.find("fadeEntries=3"), std::string::npos);
     EXPECT_NE(text.find("cmds=3"), std::string::npos);
     EXPECT_NE(text.find("selectedCmds=1"), std::string::npos);
-    EXPECT_NE(text.find("fadeCmds=2"), std::string::npos);
     EXPECT_NE(text.find("missed=9"), std::string::npos);
     EXPECT_NE(text.find("selectedMissed=4"), std::string::npos);
-    EXPECT_NE(text.find("fadeMissed=5"), std::string::npos);
     EXPECT_NE(text.find("deferred=13"), std::string::npos);
     EXPECT_NE(text.find("selectedDeferred=6"), std::string::npos);
-    EXPECT_NE(text.find("fadeDeferred=7"), std::string::npos);
 }

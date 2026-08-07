@@ -144,11 +144,6 @@ TileSelectionReusePolicy::classifyReuseWithReason(
             TileSelectionReuseMode::None,
             TileSelectionReuseRejectReason::ResourceChanged};
     }
-    if (input.hasFadingTiles) {
-        return {
-            TileSelectionReuseMode::None,
-            TileSelectionReuseRejectReason::FadingTiles};
-    }
     // Equivalent views can keep drawing the committed selection while pending
     // network/upload work drains. Completed terrain/content resources still
     // invalidate reuse through the resource revision; raster uploads are

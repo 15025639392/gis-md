@@ -164,12 +164,7 @@ TEST(
         oneMissing,
         false,
         false,
-        1,
-        false,
-        false,
-        TileSelectionState::NotVisited,
-        false,
-        1.0f));
+        1));
 }
 
 TEST(
@@ -184,43 +179,7 @@ TEST(
         manyMissing,
         false,
         false,
-        1,
-        false,
-        false,
-        TileSelectionState::NotVisited,
-        false,
-        1.0f));
-}
-
-TEST(
-    TileSelectionKickPolicyTest,
-    FadingInRenderedTileCanKickDescendants) {
-    TileTraversalDetails fadingDescendants;
-    fadingDescendants.allAreRenderable = true;
-    fadingDescendants.anyWereRenderedLastFrame = true;
-    fadingDescendants.notYetRenderableCount = 0;
-
-    EXPECT_TRUE(TileSelectionKickPolicy::shouldKickDescendants(
-        fadingDescendants,
-        true,
-        false,
-        20,
-        true,
-        true,
-        TileSelectionState::Rendered,
-        true,
-        0.5f));
-
-    EXPECT_FALSE(TileSelectionKickPolicy::shouldKickDescendants(
-        fadingDescendants,
-        true,
-        false,
-        20,
-        true,
-        true,
-        TileSelectionState::Rendered,
-        true,
-        1.0f));
+        1));
 }
 
 TEST(
@@ -235,12 +194,7 @@ TEST(
         fadingDescendants,
         true,
         false,
-        20,
-        true,
-        true,
-        TileSelectionState::RenderedAndKicked,
-        true,
-        0.5f));
+        20));
 }
 
 TEST(
@@ -321,17 +275,12 @@ TEST(
                 manyMissing,
                 true,
                 false,
-                TileSelectionState::NotVisited,
-                false,
-                1.0f,
                 false,
                 false,
                 TileRefine::Replace,
                 false},
             TileSelectionPostTraversalOptions{
                 2,
-                false,
-                false,
                 true});
 
     EXPECT_TRUE(result.shouldKick);
@@ -379,17 +328,12 @@ TEST(
                 ready,
                 true,
                 false,
-                TileSelectionState::NotVisited,
-                false,
-                1.0f,
                 false,
                 false,
                 TileRefine::Replace,
                 false},
             TileSelectionPostTraversalOptions{
                 2,
-                false,
-                false,
                 true});
 
     EXPECT_FALSE(result.shouldKick);
@@ -415,53 +359,16 @@ TEST(
                 ready,
                 true,
                 false,
-                TileSelectionState::NotVisited,
-                false,
-                1.0f,
                 false,
                 false,
                 TileRefine::Replace,
                 true},
             TileSelectionPostTraversalOptions{
                 2,
-                false,
-                false,
                 true});
 
     EXPECT_FALSE(result.shouldKick);
     EXPECT_FALSE(result.preloadRefinedAncestor);
-}
-
-TEST(
-    TileSelectionPostTraversalPolicyTest,
-    FadingAddKickAvoidsDuplicateParentLoad) {
-    const TileTraversalDetails ready =
-        TileTraversalDetailsPolicy::forSingleTile(true, true);
-
-    const TileSelectionPostTraversalResult result =
-        TileSelectionPostTraversalPolicy::evaluate(
-            TileSelectionPostTraversalInput{
-                ready,
-                true,
-                false,
-                TileSelectionState::Rendered,
-                true,
-                0.5f,
-                true,
-                false,
-                TileRefine::Add,
-                true},
-            TileSelectionPostTraversalOptions{
-                20,
-                true,
-                true,
-                true});
-
-    EXPECT_TRUE(result.shouldKick);
-    EXPECT_TRUE(result.wasReallyRenderedLastFrame);
-    EXPECT_FALSE(result.kickPlan.restoreChildLoadQueueAndLoadParent);
-    EXPECT_FALSE(result.kickPlan.addReplacementToPlan);
-    EXPECT_FALSE(result.kickPlan.preloadParent);
 }
 
 TEST(

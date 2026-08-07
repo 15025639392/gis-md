@@ -21,7 +21,6 @@ enum class TileSelectionReuseRejectReason {
     SelectorMovedStaleDisabled,
     StaleAgeExceeded,
     StaleViewTooDifferent,
-    FadingTiles,
     PendingTilesetWork,
     PendingRasterOverlayWork,
     LastRequestIssuedWork,
@@ -51,7 +50,6 @@ struct TileSelectionReuseInput {
     double staleDirectionToleranceSquared = 1e-4;
     bool hasReusableSelection = false;
     bool allowStaleSelection = false;
-    bool hasFadingTiles = false;
     bool hasPendingTilesetWork = false;
     bool hasPendingRasterOverlayWork = false;
     bool lastRequestIssuedWork = false;

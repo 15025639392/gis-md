@@ -1,6 +1,5 @@
 #pragma once
 
-#include "TileLodTransitionFrameUpdater.h"
 #include "TileRenderPlanFrameRefresher.h"
 #include "TileSelectionFrameFinalizer.h"
 
@@ -24,10 +23,7 @@ struct TileSelectionFrameFinalizationInput {
     const std::vector<TilesetTile*>& previousActiveTiles;
     TileSelectionCounters& selectionCounters;
     TileContentAccess& contentAccess;
-    std::unordered_set<std::string>& fadingKeys;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
-    double deltaSeconds = 0.0;
-    TileLodTransitionFrameOptions lodTransitionOptions;
     TileRenderPlanFrameRefreshOptions renderPlanOptions;
 };
 

@@ -9,7 +9,6 @@ class ActivatedRasterOverlay;
 struct TilePlan;
 
 struct TileRenderPlanFrameRefreshOptions {
-    bool enableLodTransitionPeriod = false;
     bool interactionActive = false;
     bool resourceSmoothingActive = false;
     // Tileset SSE threshold, used to derive the per-tile distance-continuous

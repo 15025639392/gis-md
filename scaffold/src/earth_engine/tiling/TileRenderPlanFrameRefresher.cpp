@@ -129,8 +129,7 @@ int baseProgressTotalCount(const TilePlan& tilePlan) {
         return selectedTraversalCount;
     }
 
-    return static_cast<int>(
-        tilePlan.visibleTiles.size() + tilePlan.tilesFadingOut.size());
+    return static_cast<int>(tilePlan.visibleTiles.size());
 }
 
 void refreshFrameProgress(TilePlan& tilePlan) {
@@ -147,9 +146,6 @@ void refreshFrameProgress(TilePlan& tilePlan) {
     };
 
     for (TilesetTile* tile : tilePlan.tilesToRenderThisFrame) {
-        visitTile(tile);
-    }
-    for (TilesetTile* tile : tilePlan.tilesFadingOutThisFrame) {
         visitTile(tile);
     }
 
@@ -183,7 +179,6 @@ void TileRenderPlanFrameRefresher::refresh(
     TileRenderPlanFinalizer::refreshRenderEntries(
         tilePlan,
         TileRenderPlanFinalizeOptions{
-            options.enableLodTransitionPeriod,
             options.interactionActive,
             kActiveInteractionRenderPrepBudget,
             kRecoveryRenderPrepBudget,

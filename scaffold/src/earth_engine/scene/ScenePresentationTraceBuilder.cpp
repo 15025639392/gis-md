@@ -124,20 +124,14 @@ void appendTilesetTrace(PresentationTrace& trace, const Tileset* tileset) {
         plan.renderEntryPlannedCommandCount;
     tilesetTrace.renderEntrySelectedPlannedCommandCount =
         plan.renderEntrySelectedPlannedCommandCount;
-    tilesetTrace.renderEntryFadingPlannedCommandCount =
-        plan.renderEntryFadingPlannedCommandCount;
     tilesetTrace.renderEntryCommandDrawCount =
         plan.renderEntryCommandDrawCount;
     tilesetTrace.renderEntrySelectedCommandDrawCount =
         plan.renderEntrySelectedCommandDrawCount;
-    tilesetTrace.renderEntryFadingCommandDrawCount =
-        plan.renderEntryFadingCommandDrawCount;
     tilesetTrace.renderEntryCommandMissedDrawCount =
         plan.renderEntryCommandMissedDrawCount;
     tilesetTrace.renderEntrySelectedCommandMissedDrawCount =
         plan.renderEntrySelectedCommandMissedDrawCount;
-    tilesetTrace.renderEntryFadingCommandMissedDrawCount =
-        plan.renderEntryFadingCommandMissedDrawCount;
     tilesetTrace.renderEntryCommandMissingSelectedCount =
         plan.renderEntryCommandMissingSelectedCount;
     tilesetTrace.renderEntryCommandMissingRenderCount =
@@ -146,8 +140,6 @@ void appendTilesetTrace(PresentationTrace& trace, const Tileset* tileset) {
         plan.renderEntryCommandDeferredCount;
     tilesetTrace.renderEntrySelectedCommandDeferredCount =
         plan.renderEntrySelectedCommandDeferredCount;
-    tilesetTrace.renderEntryFadingCommandDeferredCount =
-        plan.renderEntryFadingCommandDeferredCount;
     tilesetTrace.renderEntries.reserve(plan.renderEntries.size());
     for (const TileRenderEntry& entry : plan.renderEntries) {
         PresentationRenderEntryTrace entryTrace;

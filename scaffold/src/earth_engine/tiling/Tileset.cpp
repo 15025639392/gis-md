@@ -464,7 +464,7 @@ void Tileset::buildRenderCommands(Renderer& renderer,
 
 bool Tileset::shouldHoldPresentationFrame() const {
     const bool hasSelectedSurfaceWork =
-        !tilePlan_.visibleTiles.empty() || !tilePlan_.tilesFadingOut.empty();
+        !tilePlan_.visibleTiles.empty();
     if (!hasSelectedSurfaceWork ||
         !requiresBaseImageryPresentationSurface()) {
         return false;
@@ -476,9 +476,8 @@ bool Tileset::shouldHoldPresentationFrame() const {
             platformLog(
                 LogLevel::Info,
                 "EarthPerf",
-                "HoldEntriesEmpty visible=%zu fading=%zu",
-                tilePlan_.visibleTiles.size(),
-                tilePlan_.tilesFadingOut.size());
+                "HoldEntriesEmpty visible=%zu",
+                tilePlan_.visibleTiles.size());
         }
         return true;
     }
@@ -488,7 +487,7 @@ bool Tileset::shouldHoldPresentationFrame() const {
 
 bool Tileset::requiresBaseImageryPresentationSurface() const {
     const bool hasSelectedSurfaceWork =
-        !tilePlan_.visibleTiles.empty() || !tilePlan_.tilesFadingOut.empty();
+        !tilePlan_.visibleTiles.empty();
     if (!hasSelectedSurfaceWork) {
         return false;
     }

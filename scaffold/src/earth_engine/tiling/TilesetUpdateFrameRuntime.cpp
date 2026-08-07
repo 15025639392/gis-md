@@ -83,7 +83,6 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
                 tileset.contentAccess_,
                 tileset.rasterOverlays_,
                 TileRenderPlanFrameRefreshOptions{
-                    tileset.options_.enableLodTransitionPeriod,
                     tileset.interactionActiveForFrame_,
                     tileset.resourceSmoothingActiveForFrame_,
                     tileset.options_.maximumScreenSpaceError});

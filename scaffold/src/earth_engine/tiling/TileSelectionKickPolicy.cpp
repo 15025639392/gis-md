@@ -6,24 +6,11 @@ bool TileSelectionKickPolicy::shouldKickDescendants(
     const TileTraversalDetails& traversalDetails,
     bool renderable,
     bool /*unconditionallyRefine*/,
-    uint32_t loadingDescendantLimit,
-    bool enableLodTransitionPeriod,
-    bool kickDescendantsWhileFadingIn,
-    TileSelectionState previousSelectionState,
-    bool hasLodTransitionRenderContent,
-    float lodTransitionFadePercentage) {
+    uint32_t loadingDescendantLimit) {
     const bool kickDueToNonReadyDescendant =
         !traversalDetails.allAreRenderable &&
         !traversalDetails.anyWereRenderedLastFrame;
-    const bool kickDueToTileFadingIn =
-        enableLodTransitionPeriod &&
-        kickDescendantsWhileFadingIn &&
-        previousSelectionState == TileSelectionState::Rendered &&
-        hasLodTransitionRenderContent &&
-        lodTransitionFadePercentage < 1.0f;
-
-    return (kickDueToNonReadyDescendant ||
-            kickDueToTileFadingIn) &&
+    return kickDueToNonReadyDescendant &&
            (traversalDetails.notYetRenderableCount > loadingDescendantLimit ||
             renderable);
 }

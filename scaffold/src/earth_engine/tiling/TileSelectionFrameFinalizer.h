@@ -14,21 +14,16 @@ struct TilesetTile;
 
 struct TileSelectionFrameFinalizeTimings {
     double dedupeMs = 0.0;
-    double transitionMs = 0.0;
     double summaryMs = 0.0;
 };
 
 class TileSelectionFrameFinalizer {
 public:
-    template <typename UpdateLodTransitionsFn,
-              typename RefreshRenderEntriesFn,
-              typename IsTileRenderableFn>
+    template <typename RefreshRenderEntriesFn, typename IsTileRenderableFn>
     static TileSelectionFrameFinalizeTimings finalize(
         TilePlan& tilePlan,
         const std::vector<TilesetTile*>& activeTiles,
         TileSelectionCounters& selectionCounters,
-        double deltaSeconds,
-        UpdateLodTransitionsFn&& updateLodTransitions,
         RefreshRenderEntriesFn&& refreshRenderEntries,
         IsTileRenderableFn&& isTileRenderable) {
         TileSelectionFrameFinalizeTimings timings;
@@ -36,10 +31,6 @@ public:
         const double dedupeStartMs = perf::nowMs();
         TileVisibleRangeFinalizer::dedupeVisibleTiles(tilePlan);
         timings.dedupeMs = perf::nowMs() - dedupeStartMs;
-
-        const double transitionStartMs = perf::nowMs();
-        updateLodTransitions(deltaSeconds);
-        timings.transitionMs = perf::nowMs() - transitionStartMs;
 
         const double summaryStartMs = perf::nowMs();
         refreshRenderEntries();

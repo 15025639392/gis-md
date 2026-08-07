@@ -6810,7 +6810,6 @@ TEST(
     plan.renderEntries.push_back(selectedEntry);
     TileRenderEntry fadingEntry = selectedEntry;
     fadingEntry.selectedThisFrame = false;
-    fadingEntry.reason = TileRenderEntryReason::FadingOut;
     plan.renderEntries.push_back(fadingEntry);
 
     budget.beginFrame(3, config);

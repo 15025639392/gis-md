@@ -51,8 +51,6 @@ TilesetOptions makeSceneTilesetOptions(const SceneTilesetConfig& config) {
     options.mainThreadLoadingTimeLimit = config.mainThreadLoadingTimeLimit;
     options.tileCacheUnloadTimeLimit = config.tileCacheUnloadTimeLimit;
     options.maximumCachedBytes = config.maximumCachedBytes;
-    options.enableLodTransitionPeriod = config.enableLodTransitionPeriod;
-    options.lodTransitionLength = config.lodTransitionLength;
     options.cullRequestsWhileMoving = config.cullRequestsWhileMoving;
     options.cullRequestsWhileMovingMultiplier =
         config.cullRequestsWhileMovingMultiplier;

@@ -268,7 +268,6 @@ TEST(
             11,
             false,
             false,
-            false,
             false),
         TileSelectionReuseMode::Strict);
 }

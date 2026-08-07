@@ -172,9 +172,8 @@ public:
                 // (docs/issues/terrain-continuous-lod-redesign-2026-07-17.md)整体
                 // 换成规则栅格 + GPU 高度纹理 + 距离连续 morph。停用原因:变体 A 的
                 // morph 起点采到粗祖先,山峰区表现为「从地壳浮上来」;且这里的父级
-                // 采样在主线程执行,是拖动卡顿来源。demo 已同步关
-                // enableLodTransitionPeriod(shader w=1,无 morph),此处再跳过父采样
-                // 彻底消除主线程开销,heightDelta 维持 worker 写入的 0。
+                // 采样在主线程执行,是拖动卡顿来源。此处跳过父采样彻底消除主线程
+                // 开销,heightDelta 维持 worker 写入的 0。
                 const GltfModel* model =
                     tile.content.renderContent.gltfModelForRead();
                 bool hasRenderablePrimitive = false;

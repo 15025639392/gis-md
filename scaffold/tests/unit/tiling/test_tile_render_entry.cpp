@@ -9,7 +9,6 @@ TEST(TileRenderEntryTest, DirectEntryHasSelectedPassOnly) {
     entry.reason = TileRenderEntryReason::Direct;
 
     EXPECT_FALSE(entry.isAncestorFallback());
-    EXPECT_FALSE(entry.isFadingOut());
     EXPECT_FALSE(entry.hasSurfaceClip());
     EXPECT_EQ(entry.renderPass(), TileRenderEntryPass::Selected);
 }
@@ -21,18 +20,6 @@ TEST(TileRenderEntryTest, FallbackEntryExposesClippedAncestorRole) {
     entry.surfaceClipEnabled = true;
 
     EXPECT_TRUE(entry.isAncestorFallback());
-    EXPECT_FALSE(entry.isFadingOut());
     EXPECT_TRUE(entry.hasSurfaceClip());
     EXPECT_EQ(entry.renderPass(), TileRenderEntryPass::Selected);
-}
-
-TEST(TileRenderEntryTest, FadingEntryUsesFadingPass) {
-    TileRenderEntry entry;
-    entry.reason = TileRenderEntryReason::FadingOut;
-    entry.selectedThisFrame = false;
-
-    EXPECT_FALSE(entry.isAncestorFallback());
-    EXPECT_TRUE(entry.isFadingOut());
-    EXPECT_FALSE(entry.hasSurfaceClip());
-    EXPECT_EQ(entry.renderPass(), TileRenderEntryPass::Fading);
 }

@@ -99,7 +99,6 @@ struct SceneTilesetDiagnosticsSnapshot {
     double lodSizePixels = 0.0;
     int minVisibleZoom = 0;
     int maxVisibleZoom = 0;
-    int quadtreeFadingNodes = 0;
     int quadtreeRenderingNodes = 0;
     int quadtreeWalkthroughNodes = 0;
     int quadtreeNotRenderingNodes = 0;

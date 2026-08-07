@@ -50,7 +50,6 @@ struct TileSelectionReuseState {
         uint64_t currentResourceRevision,
         uint64_t currentOverlaySignature,
         bool allowStaleSelection,
-        bool hasFadingTiles,
         bool hasPendingTilesetWork,
         bool hasPendingRasterOverlayWork,
         bool presentationHeld = false) const {
@@ -71,7 +70,6 @@ struct TileSelectionReuseState {
                 kDefaultStaleDirectionToleranceSquared,
                 reusable,
                 allowStaleSelection,
-                hasFadingTiles,
                 hasPendingTilesetWork,
                 hasPendingRasterOverlayWork,
                 lastRequestIssuedWork,
@@ -84,7 +82,6 @@ struct TileSelectionReuseState {
         uint64_t currentResourceRevision,
         uint64_t currentOverlaySignature,
         bool allowStaleSelection,
-        bool hasFadingTiles,
         bool hasPendingTilesetWork,
         bool hasPendingRasterOverlayWork,
         bool presentationHeld = false) const {
@@ -105,7 +102,6 @@ struct TileSelectionReuseState {
                 kDefaultStaleDirectionToleranceSquared,
                 reusable,
                 allowStaleSelection,
-                hasFadingTiles,
                 hasPendingTilesetWork,
                 hasPendingRasterOverlayWork,
                 lastRequestIssuedWork,
@@ -117,16 +113,14 @@ struct TileSelectionReuseState {
                   uint64_t currentResourceRevision,
                   uint64_t currentOverlaySignature,
                   bool allowStaleSelection,
-                  bool hasFadingTiles,
-                  bool hasPendingTilesetWork,
+                            bool hasPendingTilesetWork,
                   bool hasPendingRasterOverlayWork) const {
         return classifyReuse(
                    frameState,
                    currentResourceRevision,
                    currentOverlaySignature,
                    allowStaleSelection,
-                   hasFadingTiles,
-                   hasPendingTilesetWork,
+                      hasPendingTilesetWork,
                    hasPendingRasterOverlayWork) != TileSelectionReuseMode::None;
     }
 };

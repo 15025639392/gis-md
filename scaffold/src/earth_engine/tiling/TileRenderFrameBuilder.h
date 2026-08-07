@@ -59,18 +59,14 @@ public:
         const size_t commandsBeforeTileset = commands.size();
         input.tilePlan.renderEntryPlannedCommandCount = 0;
         input.tilePlan.renderEntrySelectedPlannedCommandCount = 0;
-        input.tilePlan.renderEntryFadingPlannedCommandCount = 0;
         input.tilePlan.renderEntryCommandDrawCount = 0;
         input.tilePlan.renderEntrySelectedCommandDrawCount = 0;
-        input.tilePlan.renderEntryFadingCommandDrawCount = 0;
         input.tilePlan.renderEntryCommandMissedDrawCount = 0;
         input.tilePlan.renderEntrySelectedCommandMissedDrawCount = 0;
-        input.tilePlan.renderEntryFadingCommandMissedDrawCount = 0;
         input.tilePlan.renderEntryCommandMissingSelectedCount = 0;
         input.tilePlan.renderEntryCommandMissingRenderCount = 0;
         input.tilePlan.renderEntryCommandDeferredCount = 0;
         input.tilePlan.renderEntrySelectedCommandDeferredCount = 0;
-        input.tilePlan.renderEntryFadingCommandDeferredCount = 0;
 
         // Raster providers stamp getTile() calls with the current frame.
         for (auto* overlay : input.rasterOverlays) {
@@ -87,9 +83,7 @@ public:
                 cameraHeight);
 
         std::unordered_set<TilesetTile*> activeTiles;
-        activeTiles.reserve(
-            input.tilePlan.visibleTiles.size() +
-            input.tilePlan.tilesFadingOut.size());
+        activeTiles.reserve(input.tilePlan.visibleTiles.size());
         auto protectTile = [&](TilesetTile* tile, uint64_t frameNumber) {
             if (!tile) {
                 return;
@@ -104,21 +98,16 @@ public:
             trackReference(tile, std::move(cacheKey), true);
         };
 
-        // Cesium Native keeps ViewUpdateResult::tilesToRenderThisFrame and
-        // tilesFadingOut as intrusive Tile pointers. Mirror that ownership
-        // before cache maintenance, including selected tiles whose raster is
-        // not drawable yet and therefore have no render entry.
+        // Cesium Native keeps ViewUpdateResult::tilesToRenderThisFrame as
+        // intrusive Tile pointers. Mirror that ownership before cache
+        // maintenance, including selected tiles whose raster is not drawable
+        // yet and therefore have no render entry.
         for (TilesetTile* tile : input.tilePlan.tilesToRenderThisFrame) {
-            protectTile(tile, input.frameNumber);
-        }
-        for (TilesetTile* tile :
-             input.tilePlan.tilesFadingOutThisFrame) {
             protectTile(tile, input.frameNumber);
         }
 
         TileRenderEntryCommandStats renderStats;
         double selectedBuildMs = 0.0;
-        double fadeBuildMs = 0.0;
         const int synchronousRenderPrepCount =
             input.tilePlan.renderEntrySynchronousPrepCount;
         const int deferredRenderPrepCount =
@@ -160,29 +149,18 @@ public:
             renderEntriesFor(TileRenderEntryPass::Selected);
         selectedBuildMs = perf::nowMs() - selectedBuildStartMs;
 
-        const double fadeBuildStartMs = perf::nowMs();
-        const TileRenderEntryCommandStats fadingStats =
-            renderEntriesFor(TileRenderEntryPass::Fading);
-        fadeBuildMs = perf::nowMs() - fadeBuildStartMs;
-
         input.tilePlan.renderEntryPlannedCommandCount =
             renderStats.plannedEntries;
         input.tilePlan.renderEntrySelectedPlannedCommandCount =
             selectedStats.plannedEntries;
-        input.tilePlan.renderEntryFadingPlannedCommandCount =
-            fadingStats.plannedEntries;
         input.tilePlan.renderEntryCommandDrawCount =
             renderStats.drawAttempts;
         input.tilePlan.renderEntrySelectedCommandDrawCount =
             selectedStats.drawAttempts;
-        input.tilePlan.renderEntryFadingCommandDrawCount =
-            fadingStats.drawAttempts;
         input.tilePlan.renderEntryCommandMissedDrawCount =
             renderStats.missedDrawEntries;
         input.tilePlan.renderEntrySelectedCommandMissedDrawCount =
             selectedStats.missedDrawEntries;
-        input.tilePlan.renderEntryFadingCommandMissedDrawCount =
-            fadingStats.missedDrawEntries;
         input.tilePlan.renderEntryCommandMissingSelectedCount =
             renderStats.missingSelectedTiles;
         input.tilePlan.renderEntryCommandMissingRenderCount =
@@ -191,8 +169,6 @@ public:
             renderStats.deferredEntries;
         input.tilePlan.renderEntrySelectedCommandDeferredCount =
             selectedStats.deferredEntries;
-        input.tilePlan.renderEntryFadingCommandDeferredCount =
-            fadingStats.deferredEntries;
 
         const TileRenderFrameMaintenanceTimings maintenanceTimings =
             TileRenderFrameMaintenance::run(
@@ -204,13 +180,10 @@ public:
             TileFrameDebugLogFormatter::renderBuildDetail(
                 TileRenderDebugLogInput{
                     selectedBuildMs,
-                    fadeBuildMs,
                     maintenanceTimings,
                     input.tilePlan.visibleTiles.size(),
-                    input.tilePlan.tilesFadingOut.size(),
                     renderStats,
                     selectedStats,
-                    fadingStats,
                     commands.size() - commandsBeforeTileset,
                     input.interactionActive,
                     input.resourceSmoothingActive,
