@@ -359,6 +359,18 @@ add_executable(test_tileset_sample_height
 target_link_libraries(test_tileset_sample_height PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_sample_height COMMAND test_tileset_sample_height)
 
+add_executable(test_terrain_heightmap_generation
+    unit/tiling/test_terrain_heightmap_generation.cpp
+)
+target_link_libraries(test_terrain_heightmap_generation PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_heightmap_generation COMMAND test_terrain_heightmap_generation)
+
+add_executable(test_terrain_height_service
+    unit/tiling/test_terrain_height_service.cpp
+)
+target_link_libraries(test_terrain_height_service PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_height_service COMMAND test_terrain_height_service)
+
 add_executable(test_tile_edge_snap_resolver
     unit/tiling/test_tile_edge_snap_resolver.cpp
 )

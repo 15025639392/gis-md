@@ -270,6 +270,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileGeomorphHeightDelta.cpp
     earth_engine/tiling/LoadedTerrainHeightSampler.h
     earth_engine/tiling/LoadedTerrainHeightSampler.cpp
+    earth_engine/tiling/TerrainHeightService.h
+    earth_engine/tiling/TerrainHeightService.cpp
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.h
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.cpp
     earth_engine/tiling/RenderContentRasterOverlayStateUpdater.h

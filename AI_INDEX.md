@@ -826,6 +826,12 @@ Post-fan-out decision combining kick + preload. `evaluate` (.cpp:7-43): runs `Ti
 | `TileFillProxyPreparer` (203) | `ensureFillProxy` (TileFillProxyPreparer.cpp:89);`uploadFillPrimitive` (TileFillProxyPreparer.cpp:21) | **fill 代理**(加载期占位)。⚠️ 曾贴海平面导致破洞;fill 是堵洞的不是解缝的 |
 | `TileRenderablePolicy` (51) | `isCompleteRenderable` (TileRenderablePolicy.cpp:5)、`hasSurfaceDrawable` (TileRenderablePolicy.cpp:33) | 可渲染判定 |
 
+### TerrainHeightService — CPU 统一高程采样服务
+
+| 文件 | 入口 | 说明 |
+|---|---|---|
+| `TerrainHeightService` (261) | `sample` (TerrainHeightService.cpp:162)、`refreshIfStale` (TerrainHeightService.cpp:102)、`rebuild` (TerrainHeightService.cpp:112);`boundsMatchScheme` (TerrainHeightService.cpp:26)、`usableTerrainTile` (TerrainHeightService.cpp:37)、`commitBestSample` (TerrainHeightService.cpp:77) | 每 Tileset 一个、仅渲染线程。retained heightmap 之上的按 zoom cell 索引 + 质量标签(zoom);`heightmapGeneration` 强代次驱动惰性重建(稳态零重建);"bounds==scheme矩形"不变量破例进 irregular 溢出列表按旧语义线性扫(生产应恒 0,`irregularCount` 供诊断)。与旧 LoadedTerrainHeightSampler 逐点对拍守卫见 test_terrain_height_service.cpp |
+
 ### 剔除与高度 — TileSoftwareOcclusionPolicy / TileTerrainHeightRangePolicy / TileViewerRequestVolumePolicy / LoadedTerrainHeightSampler / TileSurface
 
 | 文件 | 入口 | 说明 |

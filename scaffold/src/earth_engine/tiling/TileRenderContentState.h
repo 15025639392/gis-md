@@ -9,7 +9,9 @@
 #include "TileFillGeometrySignature.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -123,6 +125,21 @@ struct GltfPrimitiveRenderResources {
 
 class TileRenderContentState {
 public:
+    // ── 地形高度数据全局代次 ────────────────────────────────────────────────
+    // 进程级原子计数,任一瓦片的 retained heightmap 出现/消亡/替换时 +1。
+    // 消费方(TerrainHeightService 索引重建、相机探针失效、矢量贴地重钳节流)
+    // 用"读数变了 = 地形高度世界变了"做失效判断;方向上只会过度失效(多个
+    // tileset 共享一个计数),不会漏失效——替代 contentBytesUsed() 弱代理
+    // (字节数恰好不变时会漏)。稳态无瓦片变化时读数必须不动(诊断判据)。
+    //
+    // 收口契约:surface_.heightmap 的**每一个**赋值/reset 点都必须经
+    // bumpHeightmapGeneration() 记账(仅在真的有变化时 bump)。变异点全部
+    // 在本类内——新增变异点时必须同步加 bump,守卫见
+    // test_terrain_heightmap_generation.cpp。
+    static std::uint64_t heightmapGeneration() {
+        return heightmapGenerationCounter().load(std::memory_order_relaxed);
+    }
+
     bool asyncGpuUploadPending = false;  // true = CPU work dispatched to worker, GPU upload pending next frame
     // geomorph 变体 A:主线程用父瓦片表面高度重写本瓦片 heightDelta 的一次性
     // 门控。每次 prepareGltfContent 换新模型时复位,由 TileGeomorphHeightDelta
@@ -309,11 +326,13 @@ public:
             if (surface_.heightmap) {
                 surface_.heightmap.reset();
                 markRetainedResourcesChanged();
+                bumpHeightmapGeneration();
             }
             return;
         }
         if (surface_.heightmap || decoded) {
             markRetainedResourcesChanged();
+            bumpHeightmapGeneration();
         }
         surface_.heightmap = std::move(decoded);
     }
@@ -322,6 +341,7 @@ public:
         surface_.heightmap.reset();
         if (hadHeightmap) {
             markRetainedResourcesChanged();
+            bumpHeightmapGeneration();
         }
         if (!gltfModel) {
             clearTerrainHeightRange();
@@ -846,12 +866,18 @@ public:
         if (hadHeightmap || hadModel || hadTextures || hadPrimitives) {
             markRetainedResourcesChanged();
         }
+        if (hadHeightmap) {
+            bumpHeightmapGeneration();
+        }
         invalidateCachedDrawCommands();
     }
 
     void prepareGltfContent(std::unique_ptr<GltfModel> model,
                             const Mat4& contentTransform) {
         markRetainedResourcesChanged();
+        if (surface_.heightmap) {
+            bumpHeightmapGeneration();
+        }
         surface_.heightmap.reset();
         surfaceWaterMaskTexture_.reset();
         surface_.horizonOcclusionPoint.reset();
@@ -878,6 +904,16 @@ public:
     }
 
 private:
+    // 见 heightmapGeneration() 注释。仅类内变异点调用;guard 由调用处负责
+    // (只有 heightmap 真的从有到无/从无到有/被替换时才 bump,稳态零噪声)。
+    static void bumpHeightmapGeneration() {
+        heightmapGenerationCounter().fetch_add(1, std::memory_order_relaxed);
+    }
+    static std::atomic<std::uint64_t>& heightmapGenerationCounter() {
+        static std::atomic<std::uint64_t> counter{1};
+        return counter;
+    }
+
     void clearGltfContentState(bool clearFill) {
         const bool hadModel = gltfModel != nullptr;
         if (clearFill) {
@@ -897,6 +933,9 @@ private:
         terrainRenderContent_ = false;
         if (wasGltfOwnedContent) {
             clearSurfaceMeshResources();
+            if (surface_.heightmap) {
+                bumpHeightmapGeneration();
+            }
             surface_.heightmap.reset();
             surface_.surfaceDrawable = false;
             surface_.localOrigin = Vec3::zero();
