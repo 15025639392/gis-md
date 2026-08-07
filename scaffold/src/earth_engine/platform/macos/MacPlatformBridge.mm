@@ -50,7 +50,6 @@ MacPlatformBridge::~MacPlatformBridge() {
     }
 }
 
-void MacPlatformBridge::onMemoryPressure() {}
 void MacPlatformBridge::onEnterBackground() {}
 void MacPlatformBridge::onEnterForeground() {}
 

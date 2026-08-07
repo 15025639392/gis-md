@@ -75,7 +75,6 @@ public:
     virtual ~PlatformBridge() = default;
 
     // ---- 系统信号 ----
-    virtual void onMemoryPressure() = 0;
     virtual void onEnterBackground() = 0;
     virtual void onEnterForeground() = 0;
 

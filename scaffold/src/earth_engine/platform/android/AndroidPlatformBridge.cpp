@@ -268,7 +268,6 @@ AndroidPlatformBridge::AndroidPlatformBridge(void* jvm, void* appContext)
 
 AndroidPlatformBridge::~AndroidPlatformBridge() = default;
 
-void AndroidPlatformBridge::onMemoryPressure() {}
 void AndroidPlatformBridge::onEnterBackground() {
     impl_->networkBridge.onEnterBackground();
 }

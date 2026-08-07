@@ -191,7 +191,6 @@ TEST(EarthSceneConfig, StoresGoogleMapTilesImagerySourceDefinitions) {
     overlay.googleMapTilesApiBaseUrl = "https://tile.googleapis.com/";
     overlay.googleMapTilesKey = "google-key";
     overlay.googleMapTilesSession = "session-token";
-    overlay.googleMapTilesShowLogo = false;
     overlay.googleMapTilesMapType = "roadmap";
     overlay.googleMapTilesLanguage = "zh-CN";
     overlay.googleMapTilesRegion = "CN";
@@ -216,7 +215,6 @@ TEST(EarthSceneConfig, StoresGoogleMapTilesImagerySourceDefinitions) {
               copied.googleMapTilesApiBaseUrl);
     EXPECT_EQ("google-key", copied.googleMapTilesKey);
     EXPECT_EQ("session-token", copied.googleMapTilesSession);
-    EXPECT_FALSE(copied.googleMapTilesShowLogo);
     EXPECT_EQ("roadmap", copied.googleMapTilesMapType);
     EXPECT_EQ("zh-CN", copied.googleMapTilesLanguage);
     EXPECT_EQ("CN", copied.googleMapTilesRegion);

@@ -185,8 +185,6 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             uploadWork.rasterUploadTextureMs,
             uploadWork.rasterTileFinalizeMs,
             uploadWork.rasterBookkeepingMs,
-            static_cast<size_t>(
-                tileset.cachedHeightmapTerrainTilesForLegacySurfacePath()),
             tileset.contentLifecycle_.loadLifecycle()
                 .requestState()
                 .totalRequestCount(),

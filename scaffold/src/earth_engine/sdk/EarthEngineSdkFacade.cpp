@@ -221,25 +221,7 @@ EarthEngineSdkFacade::EarthEngineSdkFacade(Engine& engine,
 
 EarthEngineSdkFacade::~EarthEngineSdkFacade() = default;
 
-std::vector<ActivatedRasterOverlay*>
-EarthEngineSdkFacade::activeRasterOverlays() const {
-    std::vector<ActivatedRasterOverlay*> result;
-    result.reserve(activatedRasterOverlays_.size());
-    for (const auto& overlay : activatedRasterOverlays_) {
-        if (overlay) {
-            result.push_back(overlay.get());
-        }
-    }
-    return result;
-}
-
-void EarthEngineSdkFacade::update() {
-    // Deferred terrain negotiation has been retired; terrain sources are
-    // installed synchronously in installScene(). Kept as a per-frame hook.
-}
-
 void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
-    ++sceneGeneration_;
     config_ = std::move(config);
     resetCamera();
 
@@ -522,7 +504,6 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                     googleOptions.tileHeight = overlayConfig.imageryTileHeight;
                 }
             }
-            googleOptions.showLogo = overlayConfig.googleMapTilesShowLogo;
             googleOptions.maximumLevel =
                 overlayConfig.maximumZoom > 0 ? overlayConfig.maximumZoom : 28;
 

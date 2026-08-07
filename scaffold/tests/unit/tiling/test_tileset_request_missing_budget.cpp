@@ -128,7 +128,6 @@ public:
 };
 
 /// Content provider with availability boundary at level 0.
-/// Matches ContractTerrainProvider behavior.
 class BoundaryContentProvider final : public TilesetContentProvider {
 public:
     std::string id() const override { return "boundary-content"; }
@@ -528,7 +527,6 @@ public:
 
 class BlockingPlatformBridge final : public PlatformBridge {
 public:
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
 
@@ -808,43 +806,6 @@ public:
     }
 
     int requestCount = 0;
-};
-
-class ContractTerrainProvider final : public TerrainProvider {
-public:
-    std::string id() const override { return "contract-terrain"; }
-    std::string schemeId() const override { return "Geographic-TMS"; }
-    int minZoom() const override { return 0; }
-    int maxZoom() const override { return 2; }
-    int tileSize() const override { return 2; }
-
-    TileAvailabilityState availabilityState(const TileKey& key) const override {
-        return key.schemeId == schemeId()
-            ? TileAvailabilityState::Available
-            : TileAvailabilityState::NotAvailable;
-    }
-
-    bool isAvailabilityBoundaryLevel(int level) const override {
-        return level == 0;
-    }
-
-    std::string buildUrl(const TileKey&) const override {
-        return "memory://contract-terrain";
-    }
-
-    void requestTile(
-        const TileKey& key,
-        CancellationToken,
-        TerrainCallback callback,
-        HttpRequestPriority = HttpRequestPriority::Normal) override {
-        callback(key, TerrainTileLoadResult::retryLater());
-    }
-
-    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
-        override {
-        return nullptr;
-    }
-
 };
 
 class DummyBuffer final : public Buffer {

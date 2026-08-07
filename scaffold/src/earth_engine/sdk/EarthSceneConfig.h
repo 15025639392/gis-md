@@ -148,7 +148,6 @@ struct RasterOverlaySourceConfig {
     std::string googleMapTilesApiBaseUrl = "https://tile.googleapis.com/";
     std::string googleMapTilesKey;
     std::string googleMapTilesSession;
-    bool googleMapTilesShowLogo = true;
     std::string googleMapTilesMapType = "satellite";
     std::string googleMapTilesLanguage = "en-US";
     std::string googleMapTilesRegion = "US";

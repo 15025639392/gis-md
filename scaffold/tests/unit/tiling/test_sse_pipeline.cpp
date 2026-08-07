@@ -825,7 +825,6 @@ public:
 };
 class BlockingPlatformBridge final : public PlatformBridge {
 public:
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
     std::unique_ptr<HttpRequest> get(
@@ -882,7 +881,6 @@ public:
         std::string url;
         std::function<void(int, std::vector<uint8_t>)> callback;
     };
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
     std::unique_ptr<HttpRequest> get(

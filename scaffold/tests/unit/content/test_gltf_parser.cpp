@@ -1987,7 +1987,6 @@ public:
             const uint8_t*, size_t)> decoder)
         : decoder_(std::move(decoder)) {}
 
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
     std::unique_ptr<HttpRequest> get(
@@ -2015,7 +2014,6 @@ private:
 
 class QueuedContentPlatformBridge final : public PlatformBridge {
 public:
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
 
@@ -2089,7 +2087,6 @@ public:
         return requestedUrls_;
     }
 
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
     std::unique_ptr<HttpRequest> get(

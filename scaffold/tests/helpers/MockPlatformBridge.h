@@ -29,7 +29,6 @@ public:
     }
 
     // ---- 系统信号 ----
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
 

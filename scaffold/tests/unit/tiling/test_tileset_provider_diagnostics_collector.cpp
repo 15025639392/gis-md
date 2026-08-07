@@ -47,7 +47,6 @@ public:
 
 class BlockingPlatformBridge final : public PlatformBridge {
 public:
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
 

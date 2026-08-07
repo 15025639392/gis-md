@@ -49,7 +49,6 @@ public:
         HeightmapTerrainProvider::Encoding::MapboxTerrainRgb;
     std::function<float(int col, int row)> heightAt;
 
-    void onMemoryPressure() override {}
     void onEnterBackground() override {}
     void onEnterForeground() override {}
 

@@ -163,7 +163,6 @@ public:
     bool shouldHoldPresentationFrame() const;
     bool requiresBaseImageryPresentationSurface() const;
     const TileScheme& tileScheme() const { return *tileScheme_; }
-    int cachedHeightmapTerrainTilesForLegacySurfacePath() const;
     int pendingRequests() const;
     int64_t totalBytesUsed() const;
     // 北极星测量台:常驻资源字节按类拆分(内容缓存 vs 影像纹理),位姿无关。

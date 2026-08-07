@@ -240,7 +240,6 @@ GoogleMapTilesSessionParseResult parseGoogleMapTilesCreateSessionResponse(
     session.maximumLevel = 28;
     session.tileWidth = safeIntOrDefault(*tileWidthIt, 256);
     session.tileHeight = safeIntOrDefault(*tileHeightIt, 256);
-    session.showLogo = true;
 
     return GoogleMapTilesSessionParseResult{
         true,
@@ -649,6 +648,9 @@ void GoogleMapTilesImageryProvider::addCompleteAvailabilityRanges(
         ranges.end());
 }
 
+// TODO: Google Maps Tiles ToS 要求在地图上显示 Google 归属 logo。引擎从未
+// 实现该显示;曾经存在的 `showLogo` 配置位只是个占位(恒 true、无消费者),
+// 已于 2026-08-07 删除。真要合规,得在这里连同 credits 一起把 logo 取回来。
 void GoogleMapTilesImageryProvider::loadCredits(HttpRequestPriority priority) {
     if (options_.session.empty() || options_.key.empty() ||
         options_.maximumLevel < 0) {

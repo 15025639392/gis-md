@@ -115,7 +115,6 @@ struct SceneTilesetDiagnosticsSnapshot {
     int northPolarTileCount = 0;
     int southPolarTileCount = 0;
     int surfaceMeshBytes = 0;
-    int terrainCachedTiles = 0;
     int terrainLoadUnloadingTiles = 0;
     int terrainLoadFailedTemporarilyTiles = 0;
     int terrainLoadUnloadedTiles = 0;

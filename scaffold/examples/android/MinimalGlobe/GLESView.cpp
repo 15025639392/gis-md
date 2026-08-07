@@ -879,13 +879,6 @@ static void renderFrame() {
             frameStart - previousFrameStart).count();
     previousFrameStart = frameStart;
 
-    const auto sdkStart = std::chrono::steady_clock::now();
-    if (gSdkFacade) {
-        gSdkFacade->update();
-    }
-    const double sdkMs = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - sdkStart).count();
-
     // 时间步进（实时）
     static auto lastTime = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
@@ -963,11 +956,10 @@ static void renderFrame() {
     if (frameId <= 3 || frameId % 120 == 0 ||
         frameTotalMs >= 25.0 || swapMs >= 8.0) {
         LOGI(
-            "FrameLoop frame=%llu total=%.3f sdk=%.3f engine=%.3f "
+            "FrameLoop frame=%llu total=%.3f engine=%.3f "
             "post=%.3f swap=%.3f callback=%.3f cpu=%d hint=%d presented=%d swapOk=%d",
             static_cast<unsigned long long>(frameId),
             frameTotalMs,
-            sdkMs,
             engineMs,
             postEngineMs,
             swapMs,
@@ -1862,7 +1854,7 @@ static std::string buildDiagnosticsText() {
         "LoadState: unloading %d, retry %d, unloaded %d, loading %d, loaded %d, done %d, failed %d\n"
         "Content: unknown %d, empty %d, external %d, render %d  |  UnloadQ: %d\n"
         "Raster overlay: missing projections %d\n"
-        "Mesh: %d KB  |  Terrain tiles: %d (gen %llu)",
+        "Mesh: %d KB  (gen %llu)",
         diag.fps, diag.frameTimeMs,
         diag.engineFrameCpuMs,
         diag.engineBeginFrameMs,
@@ -1969,7 +1961,7 @@ static std::string buildDiagnosticsText() {
         diag.terrainContentRenderTiles,
         diag.terrainUnloadQueueTiles,
         diag.missingRasterOverlayProjections,
-        diag.surfaceMeshBytes / 1024, diag.terrainCachedTiles,
+        diag.surfaceMeshBytes / 1024,
         static_cast<unsigned long long>(diag.terrainGeneration));
     std::string text(buf);
     text += "\n";

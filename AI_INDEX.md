@@ -1723,7 +1723,7 @@ Abstract terrain interface + `DecodedHeightmap`. cesium-native terrain data-sour
 | `TerrainTileLoadResult` | .h:55-91 | status + heightmap; `successWithHeightmap`/`empty`/`retryLater`/`failed`/`cancelled` factories |
 | `TerrainProvider` iface | .h:95-166 | `id`, `schemeId`, zoom, `tileSize`, `buildUrl`, `requestTile` (`TerrainCallback`), `decodeTile` |
 | `availabilityState` (default) | .h:127-134 | cesium-native `tileIsAvailableInLayer` equivalent: Available/Unknown/NotAvailable |
-| `estimatedRequestFanout` / `isAvailabilityBoundaryLevel` | .h:142-147 | Fan-out estimate for frame budget; sparse-terrain subtree boundary hook |
+| `estimatedRequestFanout` | .h:156 | Fan-out estimate for frame budget. ⚠️ The sibling `isAvailabilityBoundaryLevel` hook was deleted 2026-08-07 (zero callers; the live one is `TilesetContentProvider::isTerrainAvailabilityBoundaryLevel`). |
 
 ### HeightmapTerrainProvider.h / .cpp
 
@@ -1778,7 +1778,7 @@ Resource-prep boundary: provider owns tile lifecycle + decoded CPU imagery; uplo
 
 | Item | Lines | Description |
 |---|---|---|
-| `RasterTextureUploadOptions` | .h:10-18 | `generateMipmaps`, `enableEdgeBleed` (1px edge-bleed border, cesium-native seam fix; UV inset handled by `RasterMappedToTilesetTile::computeTranslationAndScale`) |
+| `RasterTextureUploadOptions` | .h:10-12 | `generateMipmaps` only. |
 | `RasterTextureUploader` iface | .h:25-34 | `maxTextureSize`, `uploadRasterTexture(DecodedImage, options)` → `unique_ptr<Texture>` |
 
 ### RasterOverlayTileProvider.h / .cpp (~3700 lines)
@@ -2313,13 +2313,13 @@ Concrete `RasterTextureUploader` backed by a `RenderDevice`.
 | `RenderDeviceRasterTextureUploader` | .h:8-20 | `final` impl; holds non-owning `RenderDevice*`. |
 | `maxTextureSize` | .cpp:10-12 | Delegates to device (0 if null). |
 | `addOnePixelBorder` (file-static free fn) | .cpp:16-57 | cesium-native edge-bleed: pads decoded image to (w+2)×(h+2), replicating edge rows/cols/corners so `GL_LINEAR` at tile seams stays continuous. |
-| `uploadRasterTexture` | .cpp:59-102 | Requires `bytesPerChannel==1` (.cpp:62); applies 1px border only when `options.enableEdgeBleed` (.cpp:70,77-85); builds `TextureDesc` (RGBA8 if 4 channels else RGB8, Linear, `maxAnisotropy`=4.0, Clamp) and `device_->createTexture`. |
+| `uploadRasterTexture` | .cpp:14-41 | Requires `bytesPerChannel==1` (.cpp:17); builds `TextureDesc` (RGBA8 if 4 channels else RGB8, Linear, `maxAnisotropy`=4.0, Clamp) and `device_->createTexture`. ⚠️ The 1px edge-bleed path (`enableEdgeBleed` + `addOnePixelBorder`) was deleted 2026-08-07 — the flag was never set true. |
 
 ### providers/RasterTextureUploader.h
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `RasterTextureUploadOptions` | .h:10-18 | `generateMipmaps`=true; `enableEdgeBleed`=false (.h:17) — when set, texture gets a 1px repeated-edge border and UVs must be nudged 1px inward by `RasterMappedToTilesetTile::computeTranslationAndScale`. |
+| `RasterTextureUploadOptions` | .h:10-12 | `generateMipmaps`=true. ⚠️ `enableEdgeBleed` was deleted 2026-08-07 — never set true, and the UV-inset counterpart it claimed lived in `computeTranslationAndScale` never existed. |
 | `RasterTextureUploader` | .h:25-34 | Resource-prep boundary for raster imagery: `maxTextureSize()` + `uploadRasterTexture(DecodedImage&, options&)`. Provider owns tile lifecycle/CPU imagery; uploader owns decoded-pixels → GPU-texture step. |
 
 ---
@@ -2589,7 +2589,7 @@ iOS 平台桥(225 行)。`PlatformBridge` 的 Apple 实现,网络走 `NSURLSessi
 |---|---|---|
 | `IosPlatformBridgeImpl` | .h:5 | pImpl |
 | ctor | .mm:38 | |
-| `onMemoryPressure` / `onEnterBackground` / `onEnterForeground` | .mm:51 / :52 / :53 | **均为空实现** —— 与 Android 侧会取消排队 curl 请求不同 |
+| `onEnterBackground` / `onEnterForeground` | .mm:51 / :52 | **均为空实现** —— 与 Android 侧会取消排队 curl 请求不同。⚠️ `onMemoryPressure` 已于 2026-08-07 全平台删除(纯虚 + 4 个后端空实现,零调用点)。 |
 | `get` | .mm:55 | HTTP GET |
 | `cacheDirectory` | .mm:111 | |
 
@@ -3112,7 +3112,7 @@ Thin SDK entry point: `installScene(EarthSceneConfig)` builds providers/overlays
 | `installScene(EarthSceneConfig)` | .h:37, .cpp:243-685 | Move-stores config_, `resetCamera()`, clears overlay vectors, builds raster stack, creates unified Tileset, optional glTF Tileset, sets sim time. See per-kind rows below. |
 | `resetCamera()` | .h:39, .cpp:687-762 | Rebuilds camera from `initialCamera` via `Ellipsoid::WGS84().cartographicToCartesian` + `geodeticSurfaceNormal`; `camera().lookAt(camEcef, targetEcef, up)`. No source rebuild. |
 | `config()` | .h:41 | Const accessor for stored `EarthSceneConfig`. |
-| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:773-787 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
+| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:752-766 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
 
 Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:243-685):
 

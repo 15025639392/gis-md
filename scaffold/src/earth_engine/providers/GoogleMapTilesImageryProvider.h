@@ -22,7 +22,6 @@ struct GoogleMapTilesExistingSessionOptions {
     int maximumLevel = 28;
     int tileWidth = 256;
     int tileHeight = 256;
-    bool showLogo = true;
 };
 
 struct GoogleMapTilesNewSessionOptions {

@@ -48,7 +48,6 @@ IosPlatformBridge::~IosPlatformBridge() {
     }
 }
 
-void IosPlatformBridge::onMemoryPressure() {}
 void IosPlatformBridge::onEnterBackground() {}
 void IosPlatformBridge::onEnterForeground() {}
 

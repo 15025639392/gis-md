@@ -153,10 +153,6 @@ int Tileset::pendingRequests() const {
     return contentLifecycle_.pendingRequests();
 }
 
-int Tileset::cachedHeightmapTerrainTilesForLegacySurfacePath() const {
-    return 0;
-}
-
 int64_t Tileset::totalBytesUsed() const {
     return cacheOwnership_.totalBytesUsed();
 }

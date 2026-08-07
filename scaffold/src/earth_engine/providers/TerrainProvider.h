@@ -155,11 +155,6 @@ public:
     /// include those requests so frame budgets reflect real network pressure.
     virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 
-    /// cesium-native LayerJsonTerrainLoader availability subtree boundary.
-    /// Traversal waits for boundary tile content before materializing unknown
-    /// children so sparse terrain does not issue blind descendant requests.
-    virtual bool isAvailabilityBoundaryLevel(int) const { return false; }
-
     using TerrainCallback = std::function<void(
         const TileKey&, TerrainTileLoadResult)>;
 

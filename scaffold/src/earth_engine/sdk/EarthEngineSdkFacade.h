@@ -47,7 +47,6 @@ public:
                                  std::unique_ptr<TileScheme> scheme,
                                  RasterOverlay::Options options);
     /// Advance deferred scene setup on the owning render thread.
-    void update();
     /// Restore the configured initial camera without rebuilding scene sources.
     void resetCamera();
 
@@ -59,7 +58,6 @@ private:
         std::unique_ptr<ImageryProvider> provider,
         std::unique_ptr<TileScheme> scheme,
         RasterOverlay::Options options);
-    std::vector<ActivatedRasterOverlay*> activeRasterOverlays() const;
 
     Engine& engine_;
     RenderDevice& renderDevice_;
@@ -76,7 +74,6 @@ private:
     std::vector<std::unique_ptr<RasterOverlay>> rasterOverlays_;
     std::vector<std::unique_ptr<ActivatedRasterOverlay>>
         activatedRasterOverlays_;
-    uint64_t sceneGeneration_ = 0;
 };
 
 } // namespace earth_engine

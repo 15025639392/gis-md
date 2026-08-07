@@ -13,7 +13,6 @@ public:
     ~MacPlatformBridge() override;
 
     // ---- 系统 ----
-    void onMemoryPressure() override;
     void onEnterBackground() override;
     void onEnterForeground() override;
 

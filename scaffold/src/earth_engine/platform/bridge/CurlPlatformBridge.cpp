@@ -16,7 +16,6 @@ namespace earth_engine {
 CurlPlatformBridge::CurlPlatformBridge() = default;
 CurlPlatformBridge::~CurlPlatformBridge() = default;
 
-void CurlPlatformBridge::onMemoryPressure() {}
 
 void CurlPlatformBridge::onEnterBackground() {
     CurlMultiRequestScheduler::shared().cancelQueuedRequests();

@@ -292,8 +292,6 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
 
     if (terrain) {
         snapshot.visibleTiles = static_cast<int>(plan.visibleTiles.size());
-        snapshot.terrainCachedTiles =
-            tileset.cachedHeightmapTerrainTilesForLegacySurfacePath();
         snapshot.pendingTerrainRequests = loadDiag.pendingTerrainRequests;
         snapshot.pendingGltfTerrainUploads =
             loadDiag.pendingGltfTerrainUploads;
@@ -535,9 +533,6 @@ void SceneTilesetDiagnosticsSnapshot::add(
         next.southPolarTileCount != 0 ? next.southPolarTileCount
                                       : southPolarTileCount;
     surfaceMeshBytes += next.surfaceMeshBytes;
-    terrainCachedTiles =
-        next.terrainCachedTiles != 0 ? next.terrainCachedTiles
-                                     : terrainCachedTiles;
     terrainLoadUnloadingTiles =
         next.terrainLoadUnloadingTiles != 0
             ? next.terrainLoadUnloadingTiles
@@ -656,7 +651,6 @@ void SceneTilesetDiagnosticsSnapshot::applyTo(Diagnostics& diag) const {
     diag.northPolarTileCount = northPolarTileCount;
     diag.southPolarTileCount = southPolarTileCount;
     diag.surfaceMeshBytes += surfaceMeshBytes;
-    diag.terrainCachedTiles = terrainCachedTiles;
     diag.terrainLoadUnloadingTiles = terrainLoadUnloadingTiles;
     diag.terrainLoadFailedTemporarilyTiles =
         terrainLoadFailedTemporarilyTiles;
@@ -770,7 +764,6 @@ void SceneTilesetDiagnostics::reset(Diagnostics& diag) {
     diag.northPolarTileCount = 0;
     diag.southPolarTileCount = 0;
     diag.surfaceMeshBytes = 0;
-    diag.terrainCachedTiles = 0;
     diag.terrainLoadUnloadingTiles = 0;
     diag.terrainLoadFailedTemporarilyTiles = 0;
     diag.terrainLoadUnloadedTiles = 0;

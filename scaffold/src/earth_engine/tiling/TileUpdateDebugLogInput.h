@@ -30,7 +30,6 @@ struct TileUpdateDebugLogInput {
     double rasterUploadTextureMs = 0.0;
     double rasterTileFinalizeMs = 0.0;
     double rasterBookkeepingMs = 0.0;
-    size_t terrainCacheSize = 0;
     size_t pendingRequestCount = 0;
     int rasterSourceRequestsInFlight = 0;
     int rasterActiveMappedSourceSets = 0;
