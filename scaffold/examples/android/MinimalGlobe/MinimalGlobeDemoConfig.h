@@ -57,11 +57,23 @@ constexpr bool kEnableMvtBasemap = true;
 
 // E4 贴地双轨制:矢量底图走**影像通道**(栅格化成纹理 → raster overlay →
 // 地形合成),而不是几何通路。
-//   true  = 底图贴着地形起伏(复用整套 overlay→地形管线,零新增渲染代码);
-//   false = 原几何通路(FeatureRenderLayer + 瓦片桶),现为 Absolute 抬 500m
-//           浮在地形之上(贴地回归待 E4 收编)。
-// 两条通路互斥,留着 false 是为了 A/B 对拍(判据见 E4-4)。
-constexpr bool kMvtBasemapAsOverlay = true;
+//   true  = 影像通路:栅格化进地形页存储。贴地免费,但**分辨率被页纹素封顶**
+//           —— 页在近景/斜视下被放大 2-3 倍,线糊成栅格块(真机判据:同屏
+//           symbol 文字锐利而路网糊,排除屏幕/截图因素)。
+//   false = 几何通路(FeatureRenderLayer + 瓦片桶):屏幕空间渲染,无分辨率
+//           上限;贴地走 stencil 分类,挤出体由区域高度范围驱动(worker 拿
+//           不到地形采样器,但拿得到一对标量)。
+// 两条通路互斥。⚠️ Metal 的 supportsStencilClassification 恒 false,iOS 上
+// 几何通路不贴地 —— 那边仍需 true。
+constexpr bool kMvtBasemapAsOverlay = false;
+
+/// 几何通路贴地用的区域地形高度范围(米)。挤出体要**纵向穿透**这个范围,
+/// 取窄了该片区路网整片消失(不是变淡)。
+/// TODO: 现按 demo 场景(重庆)固定;通用解是渲染线程按视野从已加载地形瓦片
+///       的 heightmap min/max 汇总(LoadedTerrainAreaSampler 已持有候选瓦片,
+///       取范围是 O(瓦片数) 而非 O(采样点数)),再每帧喂给图层。
+constexpr double kBasemapTerrainMinHeight = -50.0;
+constexpr double kBasemapTerrainMaxHeight = 2200.0;
 
 /// E4 影像通路的栅格样式(颜色 + 分级表)。与几何通路的 SourceLayerRule
 /// 同源:同一套 StyleFilter 谓词、同一张道路分级表 —— 两条通路的取舍语义

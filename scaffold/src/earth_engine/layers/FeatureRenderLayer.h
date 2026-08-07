@@ -366,7 +366,19 @@ public:
     TessellationContext workerTessellationContext() const {
         TessellationContext ctx{style_, ellipsoid_, nullptr, nullptr,
                                 stencilClassificationSupported()};
+        ctx.hasTerrainHeightRange = hasWorkerTerrainRange_;
+        ctx.terrainMinHeight = workerTerrainMinHeight_;
+        ctx.terrainMaxHeight = workerTerrainMaxHeight_;
         return ctx;
+    }
+    /// **渲染线程**设定 worker 贴地用的区域高度范围(米)。worker 侧的
+    /// tessellate 钩子取 ctx 时读它 —— 值是一对标量,读到上一帧的版本无害
+    /// (范围本就是保守量),故不加锁。
+    /// 传 min > max 表示"未知" → 退回不贴地(与此前行为一致)。
+    void setWorkerTerrainHeightRange(double minHeight, double maxHeight) {
+        hasWorkerTerrainRange_ = maxHeight >= minHeight;
+        workerTerrainMinHeight_ = minHeight;
+        workerTerrainMaxHeight_ = maxHeight;
     }
     TessellationContext workerTessellationContext(double terrainMinHeight,
                                                   double terrainMaxHeight) const {
@@ -492,6 +504,11 @@ private:
     std::string layerId_;
     bool visible_ = true;
     RenderDevice* renderDevice_ = nullptr;
+    // worker 贴地用的区域高度范围(渲染线程写,worker 读;见
+    // setWorkerTerrainHeightRange 的无锁理由)。
+    bool hasWorkerTerrainRange_ = false;
+    double workerTerrainMinHeight_ = 0.0;
+    double workerTerrainMaxHeight_ = 0.0;
     const Ellipsoid& ellipsoid_;
     FeatureRenderStyle style_;
     FeatureStore store_;

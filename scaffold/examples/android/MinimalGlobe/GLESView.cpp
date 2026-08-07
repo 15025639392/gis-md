@@ -404,11 +404,12 @@ static bool createEngine() {
             auto basemapLayer = std::make_unique<FeatureRenderLayer>(
                 "mvt-basemap", gRenderDevice.get(), Ellipsoid::WGS84());
             FeatureRenderStyle bs;
-            // A/B 诊断 2026-08-03:ClampToGround 下单帧 235s(疑贴地体
-            // 逐顶点地形采样 O(瓦片×三角形) 爆炸),先 Absolute 抬升验证
-            // 管线,贴地回归待采样加速后恢复。
-            bs.altitudeMode = FeatureAltitudeMode::Absolute;
-            bs.heightOffset = 500.0;
+            // 贴地:stencil 分类 + 区域高度范围(零地形采样)。此前这里是
+            // Absolute 抬 500m,因为贴地体要逐顶点采地形高度、而 worker 拿不到
+            // 采样器(旧 store 路径能采,代价是单帧 235s)。改由 ctx 带一对
+            // 标量后该约束消失,见 FeatureRenderLayer::TessellationContext。
+            bs.altitudeMode = FeatureAltitudeMode::ClampToGround;
+            bs.heightOffset = 0.0;
             // 按源图层分流的最小样式(tippecanoe 输出层名,数据侧对齐):
             // water 蓝面、building 灰面、缺省面淡绿;线统一浅白,宽随 zoom。
             bs.fillColorExpr = StyleExpression::match(
@@ -424,6 +425,11 @@ static bool createEngine() {
                 {{8.0, StyleExpression::literal(1.0)},
                  {15.0, StyleExpression::literal(5.0)}});
             basemapLayer->setStyle(bs);
+            // 贴地挤出体的纵向跨度来源(worker 侧读)。见配置项注释:取窄了
+            // 体穿不透地形,该片区路网整片消失。
+            basemapLayer->setWorkerTerrainHeightRange(
+                minimal_globe_demo::kBasemapTerrainMinHeight,
+                minimal_globe_demo::kBasemapTerrainMaxHeight);
             gMvtBasemapLayer = basemapLayer.get();
 
             gMvtWorkerPool = std::make_unique<ThreadPool>(2);
