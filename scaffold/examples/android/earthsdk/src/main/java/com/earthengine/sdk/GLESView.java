@@ -94,6 +94,14 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
             nativeTerrainGrazingView();
             return true;
         }
+        // 数字键 6：6km 斜视地平线复现位姿（接缝 A/B 采集台用）。原先
+        // seam_metric 靠"DPAD_UP 累积 5 次"凑掠视姿态，那是路径依赖的——
+        // 相机约束收口(2026-08-03 晚)之后倾角会被钳住，同一串按键到不了
+        // 同一个姿态，采集台静默失效。位姿设定是一次性的，不受钳制影响。
+        if (keyCode == KeyEvent.KEYCODE_6) {
+            nativeGrazingView();
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
     }
 

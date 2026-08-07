@@ -27,17 +27,28 @@ sys.path.insert(0, str(Path(__file__).parent))
 from seam_leak import analyze  # noqa: E402
 
 TH_TRANS_REL = 1.20   # 暂态总量相对基线的劣化上限
+# 一轮里有效帧占比下限。低于此值 = 相机姿态没到掠视构图,该轮测的不是接缝
+# (见 seam_leak 的前置闸)。整轮剔除而不是拿剩下的帧凑数——姿态错时"剩下
+# 那几帧"恰恰是最不可比的离群帧。
+TH_VALID_FRAC = 0.80
 
 
 def run_metrics(rundir):
     shots = [p for p in sorted(Path(rundir).glob('s*.png'))
              if p.stat().st_size > 0]  # 0 字节 = screencap 悬挂被超时,跳过
     if not shots:
-        return None
-    leaks = [analyze(p)['leak'] for p in shots]
+        return None, '无截图'
+    rows = [analyze(p) for p in shots]
+    good = [r for r in rows if r['valid']]
+    frac = len(good) / len(rows)
+    if frac < TH_VALID_FRAC:
+        bad = next(r for r in rows if not r['valid'])
+        return None, (f'有效帧 {len(good)}/{len(rows)}={frac:.0%} '
+                      f'< {TH_VALID_FRAC:.0%} —— {bad["reason"]}')
+    leaks = [r['leak'] for r in good]
     tail = leaks[int(len(leaks) * 0.6):]
     return dict(steady=max(tail) if tail else 0,
-                trans_sum=sum(leaks), trans_peak=max(leaks), n=len(leaks))
+                trans_sum=sum(leaks), trans_peak=max(leaks), n=len(leaks)), None
 
 
 def load_variant(d):
@@ -48,8 +59,12 @@ def load_variant(d):
         if (rd / 'contaminated').exists():
             runs.append((rd.name, None, '真人触摸污染'))
             continue
-        m = run_metrics(rd)
-        runs.append((rd.name, m, None if m else '无截图'))
+        if (rd / 'pose-invalid').exists():
+            runs.append((rd.name, None,
+                         (rd / 'pose-invalid').read_text().strip() or '位姿校验未过'))
+            continue
+        m, err = run_metrics(rd)
+        runs.append((rd.name, m, err))
     return runs
 
 
