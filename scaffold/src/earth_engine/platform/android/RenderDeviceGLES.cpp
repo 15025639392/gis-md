@@ -904,7 +904,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     static int submitCount = 0;
     submitCount++;
     const double submitStartMs = perf::nowMs();
-    int surfaceCommands = 0;
     int gltfCommands = 0;
     int instancedCommands = 0;  // [I3DMDIAG] GltfPrimitiveInstanced 命令数
     int totalInstances = 0;     // [I3DMDIAG] 所有实例化命令的实例总数
@@ -948,9 +947,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     for (const auto& cmd : commands) {
         const double iterStartMs = perf::nowMs();
         switch (cmd.kind) {
-            case RenderCommandKind::SurfaceTile:
-                ++surfaceCommands;
-                break;
             case RenderCommandKind::GltfPrimitive:
                 ++gltfCommands;
                 break;
@@ -1028,8 +1024,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         } else if (cmd.vertexStride == 32 &&
             cmd.kind == RenderCommandKind::GltfPrimitive) {
             // Terrain compact 布局(geomorph 后 32B)。地形恒 GltfPrimitive kind,
-            // glTF 材质模型是 stride 120,死代码 Surface32 是 SurfaceTile kind →
-            // GltfPrimitive@32 唯一对应地形,不与 Surface32(SurfaceTile@32)相撞。
+            // glTF 材质模型是 stride 120,故 GltfPrimitive@32 唯一对应地形。
+            // (SurfaceTile kind 与其绘制路径已于 2026-08-07 整链删除。)
             vaoKey.layout = VertexLayoutKind::TerrainCompact32;
             vaoKey.vertexStride = 32;
         } else if (cmd.vertexStride == 32 || isGltfVertexLayout) {
@@ -1079,7 +1075,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             vaoKey.layout = VertexLayoutKind::SimpleStride;
             vaoKey.vertexStride = static_cast<unsigned int>(cmd.vertexStride);
         } else {
-            // SurfaceTile 未显式给 stride 的兜底：32B 布局
+            // 未显式给 stride 的兜底:32B 布局
             vaoKey.layout = VertexLayoutKind::Surface32;
             vaoKey.vertexStride = 32;
         }
@@ -1095,7 +1091,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         // ≤16-unit range (see glesGltfTextureUnit): raster overlays move from
         // shared slots 15-18 to units 5-8, the water mask from 19 to 9, and the
         // aliased extension slots 5-14 are skipped. Every other command kind
-        // (SurfaceTile, vector, environment) binds 1:1 at its vector index.
+        // (terrain, vector, environment) binds 1:1 at its vector index.
         const bool compactGltfUnits =
             cmd.kind == RenderCommandKind::GltfPrimitive ||
             cmd.kind == RenderCommandKind::GltfPrimitiveInstanced;
@@ -1178,50 +1174,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         // ---- Uniforms ----
         const double uniformStartMs = perf::nowMs();
         bindMs += uniformStartMs - iterStartMs;
-        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
-            auto set1 = [&](const char* name, float value) {
-                int loc = program->uniformLocation(name);
-                if (loc >= 0) glUniform1f(loc, value);
-            };
-            auto set3 = [&](const char* name, const std::array<float, 3>& value) {
-                int loc = program->uniformLocation(name);
-                if (loc >= 0) glUniform3fv(loc, 1, value.data());
-            };
-            auto set4 = [&](const char* name, const std::array<float, 4>& value) {
-                int loc = program->uniformLocation(name);
-                if (loc >= 0) glUniform4fv(loc, 1, value.data());
-            };
-            int mvpLoc = program->uniformLocation("u_modelViewProjection");
-            if (mvpLoc >= 0) {
-                glUniformMatrix4fv(
-                    mvpLoc, 1, GL_FALSE, cmd.surfaceModelViewProjection.data());
-            }
-            set4("u_tileUV", cmd.surfaceTileUv);
-            set4("u_clipUV", cmd.surfaceClipUv);
-            for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
-                std::string uvName = "u_overlayTileUV" + std::to_string(i);
-                std::string opacityName = "u_overlayOpacity" + std::to_string(i);
-                set4(uvName.c_str(), cmd.surfaceOverlayTileUvs[i]);
-                set1(opacityName.c_str(), cmd.surfaceOverlayOpacities[i]);
-            }
-            set3("u_lightDir", cmd.surfaceLightDir);
-            // u_tileOrigin removed — RTC is now baked into u_modelViewProjection
-            // via CPU double-precision matrix multiplication in Scene.cpp.
-            set3("u_fogColor", cmd.surfaceFogColor);
-            set1("u_fogDensity", cmd.surfaceFogDensity);
-            set1("u_tileOpacity", cmd.surfaceTileOpacity);
-            set1("u_transitionOpacity", cmd.surfaceTransitionOpacity);
-            set1("u_clipEnabled", cmd.surfaceClipEnabled);
-            int overlayCountLoc = program->uniformLocation("u_overlayTextureCount");
-            if (overlayCountLoc >= 0) {
-                glUniform1i(overlayCountLoc, cmd.surfaceOverlayTextureCount);
-            }
-            set1("u_surfaceGeneration", cmd.surfaceGeneration);
-            set1("u_hasWaterMask", cmd.surfaceHasWaterMask);
-            set4("u_waterMaskTranslationScale",
-                 cmd.surfaceWaterMaskTranslationScale);
-            set4("u_waterMaskState", cmd.surfaceWaterMaskState);
-        } else if (cmd.hasGltfUniforms) {
+        if (cmd.hasGltfUniforms) {
             // glTF/terrain 定长块直传：location 表在 program 首次使用时一次
             // 性解析（shader 未声明的名字为 -1 跳过），此后每 draw 零字符串
             // 哈希、零堆分配。
@@ -1438,7 +1391,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     }
 
     // Batch-level cleanup keeps RenderDevice ownership explicit without
-    // thrashing GL state between adjacent SurfaceTile commands.
+    // thrashing GL state between adjacent terrain commands.
     // 属性启用/divisor/element buffer 状态都封在各 VAO 内部：这里只需解绑
     // VAO，不再逐属性拆除（也绝不能在 VAO 绑定状态下去改全局属性状态，
     // 否则会破坏该 VAO 录制的布局）。
@@ -1446,7 +1399,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     // 此时作用于默认 VAO(0) 的 element 绑定，与旧行为一致。
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    // Unbind every unit the frame may have touched — SurfaceTile uses 0-4/5,
+    // Unbind every unit the frame may have touched — terrain uses 0-4/5,
     // compacted glTF/terrain uses 0-9 (kGlesGltfWaterUnit).
     for (int textureUnit = kGlesGltfWaterUnit; textureUnit >= 0; --textureUnit) {
         glActiveTexture(GL_TEXTURE0 + textureUnit);
@@ -1460,7 +1413,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     if (submitCount <= 1 || submitCount % 121 == 0 || submitMs >= 12.0) {
         GLenum err = glGetError();
         __android_log_print(ANDROID_LOG_INFO, "GLES",
-            "submit #%d: %zu commands, ms=%.3f bind=%.3f uniform=%.3f(%llu calls) draw=%.3f surface=%d gltf=%d inst=%d(%d) vector=%d env=%d glError=%d",
+            "submit #%d: %zu commands, ms=%.3f bind=%.3f uniform=%.3f(%llu calls) draw=%.3f gltf=%d inst=%d(%d) vector=%d env=%d glError=%d",
             submitCount,
             commands.size(),
             submitMs,
@@ -1468,7 +1421,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             uniformMs,
             static_cast<unsigned long long>(uniformCalls),
             drawMs,
-            surfaceCommands,
             gltfCommands,
             instancedCommands,
             totalInstances,

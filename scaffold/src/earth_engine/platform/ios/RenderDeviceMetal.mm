@@ -496,7 +496,7 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         return nullptr;
     }
 
-    // Vertex descriptor: SurfaceTile uses the position/normal/uv layout.
+    // Vertex descriptor: the stride-32 layout is position/normal/uv.
     MTLVertexDescriptor* vd = [MTLVertexDescriptor vertexDescriptor];
     if (layout == PipelineLayout::DebugLine) {
         vd.attributes[0].format = MTLVertexFormatFloat2;   // texcoord
@@ -957,17 +957,7 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
             }
         };
 
-        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
-            [impl_->currentEncoder setVertexBytes:cmd.surfaceModelViewProjection.data()
-                                           length:cmd.surfaceModelViewProjection.size() * sizeof(float)
-                                          atIndex:1];
-            [impl_->currentEncoder setVertexBytes:cmd.surfaceTileUv.data()
-                                           length:cmd.surfaceTileUv.size() * sizeof(float)
-                                          atIndex:3];
-            [impl_->currentEncoder setVertexBytes:cmd.surfaceCameraRelativeOrigin.data()
-                                           length:cmd.surfaceCameraRelativeOrigin.size() * sizeof(float)
-                                          atIndex:4];
-        } else if (cmd.hasGltfUniforms) {
+        if (cmd.hasGltfUniforms) {
             // glTF/terrain 定长块：vertex 绑 MVP（buffer(1)）+ geomorph up/factor
             // （buffer(2)，terrain 顶点 morph 用；glTF 顶点 shader 不声明该参则忽略）。
             [impl_->currentEncoder
@@ -1001,11 +991,7 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
 
         // Fragment uniforms
         auto fragIt = cmd.uniforms.find("u_lightDir");
-        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
-            [impl_->currentEncoder setFragmentBytes:cmd.surfaceLightDir.data()
-                                             length:cmd.surfaceLightDir.size() * sizeof(float)
-                                            atIndex:0];
-        } else if (fragIt != cmd.uniforms.end()) {
+        if (fragIt != cmd.uniforms.end()) {
             [impl_->currentEncoder setFragmentBytes:fragIt->second.data()
                                              length:fragIt->second.size() * sizeof(float)
                                             atIndex:0];
@@ -1023,21 +1009,13 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                                             atIndex:2];
         }
         auto tileOpacityIt = cmd.uniforms.find("u_tileOpacity");
-        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
-            [impl_->currentEncoder setFragmentBytes:&cmd.surfaceTileOpacity
-                                             length:sizeof(float)
-                                            atIndex:3];
-        } else if (tileOpacityIt != cmd.uniforms.end()) {
+        if (tileOpacityIt != cmd.uniforms.end()) {
             [impl_->currentEncoder setFragmentBytes:tileOpacityIt->second.data()
                                              length:tileOpacityIt->second.size() * sizeof(float)
                                             atIndex:3];
         }
         auto transitionOpacityIt = cmd.uniforms.find("u_transitionOpacity");
-        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
-            [impl_->currentEncoder setFragmentBytes:&cmd.surfaceTransitionOpacity
-                                             length:sizeof(float)
-                                            atIndex:4];
-        } else if (transitionOpacityIt != cmd.uniforms.end()) {
+        if (transitionOpacityIt != cmd.uniforms.end()) {
             [impl_->currentEncoder setFragmentBytes:transitionOpacityIt->second.data()
                                              length:transitionOpacityIt->second.size() * sizeof(float)
                                             atIndex:4];

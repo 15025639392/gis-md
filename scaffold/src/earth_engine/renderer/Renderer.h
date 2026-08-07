@@ -89,8 +89,6 @@ public:
     GlyphAtlas* glyphAtlas() const;
 
     /// Tile 共享索引 buffer（64×64 grid，所有 surface tile 共用）
-    Buffer* tileIndexBuffer() const;
-    int tileIndexCount() const;
 
     /// Neutral 1x1 texture used only while required base imagery is not ready.
     Texture* surfacePlaceholderTexture() const;
@@ -106,13 +104,6 @@ public:
 
     /// 地球模型矩阵（单位球 → ECEF meters）
     static std::array<float, 16> earthModelMatrix();
-
-    /// Build surface tile command (unified, cesium-native glTF vertex layout).
-    /// vertexStride=32: POSITION(12) + NORMAL(12) + TEXCOORD_0(8)
-    RenderCommand makeSurfaceTileCommand(Texture* texture,
-                                          Buffer* vertexBuffer,
-                                          Buffer* indexBuffer = nullptr,
-                                          int indexCount = 0) const;
 
     /// Build a glTF primitive command. The vertex layout matches
     /// POSITION(12) + NORMAL(12) + TEXCOORD_0..7 packed pairs (64)

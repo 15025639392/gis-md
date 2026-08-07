@@ -107,7 +107,7 @@ TEST(
             const TilesetTile*) {
             submittedOpacities.push_back(opacity);
             RenderCommand command;
-            command.kind = RenderCommandKind::SurfaceTile;
+            command.kind = RenderCommandKind::GltfPrimitive;
             outCommands.push_back(std::move(command));
         },
         [&trimRasterCachesCalled](bool cachePressure) {

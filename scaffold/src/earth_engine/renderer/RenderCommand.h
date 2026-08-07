@@ -94,7 +94,6 @@ enum class RenderCommandKind {
     Unknown,
     SkyBackground,        // order 0: skybox / starfield
     AtmosphereBackground,  // order 5: atmospheric scattering
-    SurfaceTile,           // order 10
     GltfPrimitive,         // order 15
     GltfPrimitiveInstanced, // order 15
     VectorOverlay,         // order 30
@@ -220,38 +219,14 @@ struct RenderCommand {
     // 由 TerrainPageStore::applyToTerrainCommand 设,TerrainInstanceBatcher 读。
     bool terrainPageStoreFullyResident = false;
 
-    // Render-chain step 10: SurfaceTile command organization lives here.
-    // These fields describe draw order inputs, depth/cull/blend state, base
-    // texture, overlay count, and UV windows before any GLES/Metal API call.
-    // Unit tests at this layer prove command intent, not final framebuffer
-    // pixels.
-    //
-    // Hot path for SurfaceTile commands. Keeping these uniforms in fixed
-    // storage avoids per-tile unordered_map/string/vector allocation.
-    bool hasSurfaceTileUniforms = false;
-    std::array<float, 16> surfaceModelViewProjection{};
-    std::array<float, 4> surfaceTileUv{0.0f, 0.0f, 1.0f, 1.0f};
+    // 地表(地形)命令的固定存储 uniform。放在定长字段里而不是 uniforms 字符串
+    // 表,是为了避免每瓦片一次 unordered_map/string/vector 分配。
+    // ⚠️ `surface*` 这个前缀是历史遗留:它们原属已删除的 SurfaceTile 绘制路径
+    // (2026-08-07 整链删除),现在由 GltfPrimitive 的地形命令继续使用。
     std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
-    std::array<std::array<float, 4>, kMaxSurfaceImageryOverlays> surfaceOverlayTileUvs{};
-    std::array<float, kMaxSurfaceImageryOverlays> surfaceOverlayOpacities{};
-    std::array<float, 3> surfaceLightDir{};
-    std::array<float, 3> surfaceCameraRelativeOrigin{};
-    std::array<float, 3> surfaceTileOrigin{};
-    std::array<float, 3> surfaceFogColor{0.62f, 0.82f, 0.94f};
-    float surfaceFogDensity = 2.4e-5f;
-    float surfaceTileOpacity = 1.0f;
     float surfaceTransitionOpacity = 1.0f;
-    int surfaceOverlayTextureCount = 0;
     float surfaceClipEnabled = 0.0f;
-    float surfaceGeneration = 0.0f;
-    float surfaceHasWaterMask = 0.0f;
-    std::array<float, 4> surfaceWaterMaskTranslationScale{
-        0.0f,
-        0.0f,
-        1.0f,
-        0.0f};
-    std::array<float, 4> surfaceWaterMaskState{1.0f, 0.0f, 0.0f, 0.0f};
-    // 加载质量诊断(CPU-only,不进 GPU)。SurfaceTile 路径删除后这两个字段一度
+    // 加载质量诊断(CPU-only,不进 GPU)。旧绘制路径删除后这两个字段一度
     // 无人赋值恒 -1(诊断层的 z/texZ 因此恒 0),现由 GltfDrawCommandBuilder 在
     // 绑定 BaseImagery 时填回真值。
     int surfaceGeometryZoom = -1;   // 本瓦片几何层级

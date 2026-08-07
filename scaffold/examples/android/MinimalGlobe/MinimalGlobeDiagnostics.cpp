@@ -23,7 +23,6 @@ const char* renderCommandKindLabel(RenderCommandKind kind) {
     switch (kind) {
         case RenderCommandKind::SkyBackground: return "sky";
         case RenderCommandKind::AtmosphereBackground: return "atmo";
-        case RenderCommandKind::SurfaceTile: return "surface";
         case RenderCommandKind::GltfPrimitive: return "gltf";
         case RenderCommandKind::GltfPrimitiveInstanced: return "gltf-i";
         case RenderCommandKind::VectorOverlay: return "vector";
@@ -96,8 +95,7 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
     size_t surfaceCount = 0;
     out << "Commands:";
     for (const PresentationCommandTrace& command : trace.commands) {
-        if (command.kind != RenderCommandKind::SurfaceTile &&
-            command.kind != RenderCommandKind::GltfPrimitive &&
+        if (command.kind != RenderCommandKind::GltfPrimitive &&
             command.kind != RenderCommandKind::GltfPrimitiveInstanced) {
             continue;
         }

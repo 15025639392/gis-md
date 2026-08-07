@@ -32,23 +32,6 @@ void SceneRenderCommandUniformUpdater::apply(
             continue;
         }
 
-        if (cmd.kind == RenderCommandKind::SurfaceTile &&
-            cmd.hasSurfaceTileUniforms) {
-            glm::dvec3 origin(cmd.surfaceTileOrigin[0],
-                              cmd.surfaceTileOrigin[1],
-                              cmd.surfaceTileOrigin[2]);
-            glm::dmat4 model = glm::translate(glm::dmat4(1.0), origin);
-            glm::dmat4 mvp = projD * viewD * model;
-            glm::mat4 mvpFloat = glm::mat4(mvp);
-            std::memcpy(cmd.surfaceModelViewProjection.data(),
-                        glm::value_ptr(mvpFloat),
-                        16 * sizeof(float));
-            cmd.surfaceLightDir = {frameState.lightDir.x,
-                                   frameState.lightDir.y,
-                                   frameState.lightDir.z};
-            continue;
-        }
-
         if (cmd.kind == RenderCommandKind::GltfPrimitive ||
             cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             // 北极星 Phase 2c 地形 GPU 位移：per-tile 全刚体 ENU→ECEF 帧承载

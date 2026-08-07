@@ -34,74 +34,7 @@ private:
 
 // ── Basic surface tile command creation ──
 
-TEST(RendererCommandTest, SurfaceTileCommandHasCorrectDefaults) {
-    Renderer renderer(nullptr);
-
-    // Current API: 4 parameters (texture, vertexBuffer, indexBuffer, indexCount)
-    // Surface vertex layout: POSITION(12) + NORMAL(12) + TEXCOORD_0(8) = 32
-    RenderCommand cmd = renderer.makeSurfaceTileCommand(
-        nullptr,   // texture
-        nullptr,   // vertexBuffer
-        nullptr,   // indexBuffer (null = use shared tile index buffer)
-        42);       // indexCount (ignored when indexBuffer is null)
-
-    // Kind and owner
-    EXPECT_EQ(RenderCommandKind::SurfaceTile, cmd.kind);
-    EXPECT_EQ("surface_tile", cmd.owner);
-    EXPECT_EQ("color", cmd.pass);
-
-    // Index count: when indexBuffer is null, the shared tileIndexCount is used
-    // (not the passed indexCount). But if Renderer is not initialized (device=nullptr),
-    // tileIndexCount defaults to 0 and tileIndexBuffer is null.
-    // We pass a non-null indexBuffer to test indexCount passthrough:
-    (void)42; // indexCount is only used when indexBuffer != null
-
-    // Vertex stride: 32 bytes (surface tile layout)
-    EXPECT_EQ(32, cmd.vertexStride);
-
-    // Render state
-    EXPECT_TRUE(cmd.depthTest);
-    EXPECT_TRUE(cmd.depthWrite);
-    EXPECT_TRUE(cmd.cullFace);
-    EXPECT_FALSE(cmd.blend);
-
-    // Primitive type
-    EXPECT_EQ(RenderCommand::PrimitiveType::Triangles, cmd.primitive);
-    EXPECT_EQ(RenderCommand::IndexType::UInt32, cmd.indexType);
-}
-
-TEST(RendererCommandTest, SurfaceTileCommandPreservesIndexCountWithCustomBuffer) {
-    Renderer renderer(nullptr);
-
-    // Create a dummy vertex buffer so we can pass a custom index buffer
-    // and verify indexCount is preserved.
-    // (We can't easily create real GPU buffers without a device, but we can
-    // test with nullptr and verify the API shape.)
-    RenderCommand cmd = renderer.makeSurfaceTileCommand(
-        nullptr, nullptr, nullptr, 0);
-
-    // With null indexBuffer, renderer uses shared tileIndexBuffer.
-    // Index count comes from the shared buffer, not from the parameter.
-    // This test just validates the API accepts 4 parameters.
-    EXPECT_EQ(RenderCommandKind::SurfaceTile, cmd.kind);
-}
-
 // ── Surface tile uniforms are set via hot-path fields ──
-
-TEST(RendererCommandTest, SurfaceTileHasUniformsFlagSet) {
-    Renderer renderer(nullptr);
-    DummyTexture tex(1);
-
-    RenderCommand cmd = renderer.makeSurfaceTileCommand(
-        &tex, nullptr, nullptr, 0);
-
-    // hasSurfaceTileUniforms is true (set when shader is assigned in makeSurfaceTileCommand)
-    EXPECT_TRUE(cmd.hasSurfaceTileUniforms);
-
-    // Texture is placed in the textures vector
-    ASSERT_GE(cmd.textures.size(), 1u);
-    EXPECT_EQ(&tex, cmd.textures[0]);
-}
 
 TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     Renderer renderer(nullptr);
@@ -689,22 +622,6 @@ TEST(RendererCommandTest, GltfPrimitiveInstancedCommandHasCorrectDefaults) {
 
 // ── MVP validation tests ──
 
-TEST(RendererCommandTest, MvpValidatorAcceptsSurfaceTileAsSurface) {
-    RenderCommand tile;
-    tile.kind = RenderCommandKind::SurfaceTile;
-    tile.owner = "surface_tile";
-    tile.pass = "color";
-    tile.depthTest = true;
-    tile.depthWrite = true;
-    tile.cullFace = true;
-    tile.blend = false;
-    tile.generation = 1;
-
-    RenderCommandList commands{tile};
-    auto error = validateMvpRenderCommands(commands);
-    EXPECT_FALSE(error.has_value());
-}
-
 TEST(RendererCommandTest, MvpValidatorAcceptsGltfPrimitive) {
     RenderCommand gltf;
     gltf.kind = RenderCommandKind::GltfPrimitive;
@@ -850,80 +767,10 @@ TEST(RendererCommandTest, MvpValidatorRejectsInstancedGltfWithoutBuffer) {
     EXPECT_EQ("gltf_primitive_instanced", error->owner);
 }
 
-TEST(RendererCommandTest, MvpValidatorRejectsMutableSurfaceTileDepthAndCullState) {
+TEST(RendererCommandTest, MvpSortPutsVectorLast) {
     RenderCommand tile;
-    tile.kind = RenderCommandKind::SurfaceTile;
-    tile.owner = "surface_tile";
-    tile.pass = "color";
-    tile.depthTest = false;
-    tile.depthWrite = false;
-    tile.cullFace = false;
-    tile.blend = true;
-    tile.generation = 1;
-
-    RenderCommandList commands{tile};
-    auto error = validateMvpRenderCommands(commands);
-    ASSERT_TRUE(error.has_value());
-    EXPECT_EQ("surface_tile", error->owner);
-}
-
-TEST(RendererCommandTest, MvpValidatorAcceptsTerrainPrimaryOverlayDepthState) {
-    RenderCommand tile;
-    tile.kind = RenderCommandKind::SurfaceTile;
-    tile.owner = "terrain_primary_surface";
-    tile.pass = "color";
-    tile.depthTest = false;
-    tile.depthWrite = false;
-    tile.cullFace = false;
-    tile.blend = false;
-    tile.frameId = 42;
-    tile.generation = 7;
-    tile.hasSurfaceTileUniforms = true;
-
-    RenderCommandList commands{tile};
-    auto error = validateMvpRenderCommands(commands, 42);
-    EXPECT_FALSE(error.has_value());
-}
-
-TEST(RendererCommandTest, MvpValidatorRejectsStaleSurfaceTileFrameId) {
-    RenderCommand tile;
-    tile.kind = RenderCommandKind::SurfaceTile;
-    tile.owner = "surface_tile";
-    tile.pass = "color";
-    tile.depthTest = true;
-    tile.depthWrite = true;
-    tile.cullFace = true;
-    tile.blend = false;
-    tile.frameId = 41;
-    tile.generation = 7;
-
-    RenderCommandList commands{tile};
-    auto error = validateMvpRenderCommands(commands, 42);
-    ASSERT_TRUE(error.has_value());
-    EXPECT_EQ("surface_tile", error->owner);
-}
-
-TEST(RendererCommandTest, MvpValidatorRejectsMissingSurfaceTileGeneration) {
-    RenderCommand tile;
-    tile.kind = RenderCommandKind::SurfaceTile;
-    tile.owner = "surface_tile";
-    tile.pass = "color";
-    tile.depthTest = true;
-    tile.depthWrite = true;
-    tile.cullFace = true;
-    tile.blend = false;
-    tile.frameId = 42;
-
-    RenderCommandList commands{tile};
-    auto error = validateMvpRenderCommands(commands, 42);
-    ASSERT_TRUE(error.has_value());
-    EXPECT_EQ("surface_tile", error->owner);
-}
-
-TEST(RendererCommandTest, MvpSortEnforcesSurfaceVectorOrder) {
-    RenderCommand tile;
-    tile.kind = RenderCommandKind::SurfaceTile;
-    tile.owner = "surface_tile";
+    tile.kind = RenderCommandKind::GltfPrimitive;
+    tile.owner = "terrain_primitive";
     tile.pass = "color";
     tile.depthTest = true;
     tile.depthWrite = true;
@@ -932,8 +779,8 @@ TEST(RendererCommandTest, MvpSortEnforcesSurfaceVectorOrder) {
     tile.generation = 1;
 
     RenderCommand tile2;
-    tile2.kind = RenderCommandKind::SurfaceTile;
-    tile2.owner = "surface_tile";
+    tile2.kind = RenderCommandKind::GltfPrimitive;
+    tile2.owner = "terrain_primitive";
     tile2.pass = "color";
     tile2.depthTest = true;
     tile2.depthWrite = true;
@@ -959,9 +806,11 @@ TEST(RendererCommandTest, MvpSortEnforcesSurfaceVectorOrder) {
     RenderCommandList commands{vector, gltf, tile, tile2};
     sortMvpRenderCommands(commands);
 
-    EXPECT_EQ(10, mvpRenderOrder(commands[0].kind));
-    EXPECT_EQ(10, mvpRenderOrder(commands[1].kind));
-    EXPECT_EQ(RenderCommandKind::GltfPrimitive, commands[2].kind);
+    // SurfaceTile(order 10)删除后地表与 glTF 同为 GltfPrimitive(order 15),
+    // 二者之间不再有次序区分;仍然成立且是本用例真正要钉的是「矢量恒在最后」。
+    EXPECT_EQ(15, mvpRenderOrder(commands[0].kind));
+    EXPECT_EQ(15, mvpRenderOrder(commands[1].kind));
+    EXPECT_EQ(15, mvpRenderOrder(commands[2].kind));
     EXPECT_EQ(RenderCommandKind::VectorOverlay, commands[3].kind);
     EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
 }
@@ -1050,41 +899,6 @@ TEST(RendererCommandTest, MvpValidatorRejectsTranslucentGltfFrontToBack) {
 }
 
 // ── Blend state tests ──
-
-TEST(RendererCommandTest, SurfaceTileBlendAllowedForPartialOpacity) {
-    RenderCommand tile;
-    tile.kind = RenderCommandKind::SurfaceTile;
-    tile.owner = "surface_tile";
-    tile.pass = "color";
-    tile.depthTest = true;
-    tile.depthWrite = true;
-    tile.cullFace = true;
-    tile.blend = true;
-    tile.generation = 1;
-    tile.hasSurfaceTileUniforms = true;
-    tile.surfaceTransitionOpacity = 0.5f;
-
-    RenderCommandList commands{tile};
-    auto error = validateMvpRenderCommands(commands);
-    EXPECT_FALSE(error.has_value());
-}
-
-TEST(RendererCommandTest, SurfaceTileBlendRejectedWithoutOpacityReason) {
-    RenderCommand tile;
-    tile.kind = RenderCommandKind::SurfaceTile;
-    tile.owner = "surface_tile";
-    tile.pass = "color";
-    tile.depthTest = true;
-    tile.depthWrite = true;
-    tile.cullFace = true;
-    tile.blend = true;
-    tile.generation = 1;
-
-    RenderCommandList commands{tile};
-    auto error = validateMvpRenderCommands(commands);
-    ASSERT_TRUE(error.has_value());
-    EXPECT_EQ("surface_tile", error->owner);
-}
 
 TEST(RendererCommandTest, GltfPrimitiveBlendAllowedForPartialOpacity) {
     RenderCommand gltf;

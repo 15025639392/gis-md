@@ -18,7 +18,7 @@
 namespace earth_engine {
 
 // ============================================================
-// Unified SurfaceTile Shader — cesium-native glTF vertex layout
+// Terrain / glTF shaders — cesium-native glTF vertex layout
 // POSITION(vec3) + NORMAL(vec3) + TEXCOORD_0(vec2) = 32 bytes
 //
 // Render-chain steps after core binding:
@@ -34,109 +34,6 @@ namespace earth_engine {
 // rejection, or final device pixels. Use backend spy tests or offscreen
 // framebuffer readback with small color fixtures for those failures.
 // ============================================================
-
-static const char* kSurfaceTileVertexGLSL = R"glsl(
-#version 300 es
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec2 a_texcoord;
-
-uniform mat4 u_modelViewProjection;
-uniform vec4 u_tileUV;
-uniform float u_tileOpacity;
-uniform float u_transitionOpacity;
-
-out vec2 v_texcoord;
-out vec2 v_gridUv;
-out vec3 v_normal;
-out float v_tileOpacity;
-out float v_transitionOpacity;
-
-void main() {
-    // cesium-native RTC: tile origin is baked into the MVP matrix
-    // (computed in CPU double precision). a_position is relative
-    // to the tile center — small values, good float precision.
-    v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
-    v_gridUv = a_texcoord;
-    v_normal = normalize(a_normal);
-    v_tileOpacity = u_tileOpacity;
-    v_transitionOpacity = u_transitionOpacity;
-    gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
-}
-)glsl";
-
-static const char* kSurfaceTileFragmentGLSL = R"glsl(
-#version 300 es
-precision mediump float;
-
-in vec2 v_texcoord;
-in vec2 v_gridUv;
-in vec3 v_normal;
-in float v_tileOpacity;
-in float v_transitionOpacity;
-uniform sampler2D u_tileTexture;
-uniform sampler2D u_overlayTexture0;
-uniform sampler2D u_overlayTexture1;
-uniform sampler2D u_overlayTexture2;
-uniform sampler2D u_overlayTexture3;
-uniform vec3 u_lightDir;
-uniform int u_overlayTextureCount;
-uniform vec4 u_overlayTileUV0;
-uniform vec4 u_overlayTileUV1;
-uniform vec4 u_overlayTileUV2;
-uniform vec4 u_overlayTileUV3;
-uniform vec4 u_clipUV;
-uniform float u_overlayOpacity0;
-uniform float u_overlayOpacity1;
-uniform float u_overlayOpacity2;
-uniform float u_overlayOpacity3;
-uniform float u_clipEnabled;
-out vec4 fragColor;
-
-vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
-    overlay.a *= clamp(opacity, 0.0, 1.0);
-    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
-    base.a = max(base.a, overlay.a);
-    return base;
-}
-
-void main() {
-    if (u_clipEnabled > 0.5 && u_clipEnabled < 1.5 &&
-        (v_gridUv.x < u_clipUV.x || v_gridUv.x > u_clipUV.x + u_clipUV.z ||
-         v_gridUv.y < u_clipUV.y || v_gridUv.y > u_clipUV.y + u_clipUV.w)) {
-        discard;
-    }
-
-    vec4 baseColor = texture(u_tileTexture, v_texcoord);
-    if (u_overlayTextureCount > 0) {
-        vec2 overlayUv = u_overlayTileUV0.xy + v_gridUv * u_overlayTileUV0.zw;
-        baseColor = alphaOver(baseColor, texture(u_overlayTexture0, overlayUv), u_overlayOpacity0);
-    }
-    if (u_overlayTextureCount > 1) {
-        vec2 overlayUv = u_overlayTileUV1.xy + v_gridUv * u_overlayTileUV1.zw;
-        baseColor = alphaOver(baseColor, texture(u_overlayTexture1, overlayUv), u_overlayOpacity1);
-    }
-    if (u_overlayTextureCount > 2) {
-        vec2 overlayUv = u_overlayTileUV2.xy + v_gridUv * u_overlayTileUV2.zw;
-        baseColor = alphaOver(baseColor, texture(u_overlayTexture2, overlayUv), u_overlayOpacity2);
-    }
-    if (u_overlayTextureCount > 3) {
-        vec2 overlayUv = u_overlayTileUV3.xy + v_gridUv * u_overlayTileUV3.zw;
-        baseColor = alphaOver(baseColor, texture(u_overlayTexture3, overlayUv), u_overlayOpacity3);
-    }
-    vec3 N = normalize(v_normal);
-    vec3 L = normalize(u_lightDir);
-    float NdotL = max(dot(N, L), 0.0);
-
-    // Imagery is the primary diagnostic surface in this demo. Keep it readable
-    // even when the light vector is behind the tile; directional light should
-    // hint at curvature, not turn missing-resource states into a black globe.
-    float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
-    baseColor.rgb *= shade;
-    baseColor.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
-    fragColor = baseColor;
-}
-)glsl";
 
 // ============================================================
 // glTF primitive shader — TileRenderContent render resources
@@ -3833,44 +3730,6 @@ fragment float4 terrainInstancedFragment(
 }
 )msl";
 
-// ============================================================
-// Shared SurfaceTile geometry: unit grid mesh
-// ============================================================
-
-struct TileVertex {
-    float texcoord[2];
-};
-
-static std::pair<std::vector<TileVertex>, std::vector<uint32_t>>
-makeTileGeometry(int gridSize) {
-    std::vector<TileVertex> verts;
-    std::vector<uint32_t> indices;
-
-    int n = gridSize + 1;
-    verts.reserve(static_cast<size_t>(n * n));
-
-    for (int y = 0; y < n; ++y) {
-        for (int x = 0; x < n; ++x) {
-            float u = static_cast<float>(x) / static_cast<float>(gridSize);
-            float v = static_cast<float>(y) / static_cast<float>(gridSize);
-            verts.push_back({{u, v}});
-        }
-    }
-
-    indices.reserve(static_cast<size_t>(gridSize * gridSize * 6));
-    for (int y = 0; y < gridSize; ++y) {
-        for (int x = 0; x < gridSize; ++x) {
-            uint32_t a = static_cast<uint32_t>(y * n + x);
-            uint32_t b = static_cast<uint32_t>(y * n + x + 1);
-            uint32_t c = static_cast<uint32_t>((y + 1) * n + x);
-            uint32_t d = static_cast<uint32_t>((y + 1) * n + x + 1);
-            indices.push_back(a); indices.push_back(c); indices.push_back(b);
-            indices.push_back(b); indices.push_back(c); indices.push_back(d);
-        }
-    }
-
-    return {verts, indices};
-}
 
 namespace renderer_testing {
 
@@ -3920,10 +3779,7 @@ struct Renderer::Impl {
     RenderDevice* device = nullptr;
 
     // Surface tile (unified, cesium-native glTF layout)
-    std::unique_ptr<ShaderProgram> surfaceTileShader;
-    std::unique_ptr<Buffer> tileIndexBuffer;  // shared 64×64 grid IBO
     std::unique_ptr<Texture> surfacePlaceholderTexture;
-    int tileIndexCount = 0;
 
     // glTF TileRenderContent
     std::unique_ptr<ShaderProgram> gltfShader;
@@ -3977,17 +3833,6 @@ bool Renderer::initialize() {
 
     bool isMetal = (dev->backendType() == RenderDevice::Backend::Metal);
 
-    // ---- Unified SurfaceTile shader (cesium-native glTF layout) ----
-    if (!isMetal) {
-        ShaderDesc surfaceTileSd;
-        surfaceTileSd.vertexSource = kSurfaceTileVertexGLSL;
-        surfaceTileSd.fragmentSource = kSurfaceTileFragmentGLSL;
-        impl_->surfaceTileShader = dev->createShader(surfaceTileSd);
-        if (!impl_->surfaceTileShader) {
-            fprintf(stderr, "[Renderer] surfaceTileShader failed\n");
-            return false;
-        }
-    }
     const uint8_t placeholderPixel[4] = {174, 184, 170, 255};
     TextureDesc placeholderDesc;
     placeholderDesc.width = 1;
@@ -4016,7 +3861,7 @@ bool Renderer::initialize() {
 
     // ---- Terrain lightweight shader (28-byte compact TerrainGpuVertex) ----
     // Unlike gltfShader, this is a small shader (<=31 Metal buffers) so it must
-    // compile on BOTH backends. Treat failure as fatal like surfaceTileShader.
+    // compile on BOTH backends. Treat link failure as fatal.
     ShaderDesc terrainSd;
     terrainSd.vertexSource = isMetal ? kTerrainVertexMSL : kTerrainVertexGLSL;
     terrainSd.fragmentSource =
@@ -4084,18 +3929,6 @@ bool Renderer::initialize() {
         (void)kTerrainInstancedFragmentMSL;
     }
 
-    // Shared index buffer for surface tiles (64×64 grid)
-    auto [tileVerts, tileIndices] = makeTileGeometry(64);
-    (void)tileVerts;  // VBOs are per-tile now
-
-    BufferDesc tibDesc;
-    tibDesc.size = tileIndices.size() * sizeof(uint32_t);
-    tibDesc.data = tileIndices.data();
-    tibDesc.usage = BufferDesc::Usage::Static;
-    tibDesc.type = BufferDesc::Type::Index;
-    impl_->tileIndexBuffer = dev->createBuffer(tibDesc);
-    if (!impl_->tileIndexBuffer) return false;
-    impl_->tileIndexCount = static_cast<int>(tileIndices.size());
 
     // ---- Color shader (vector layers) ----
     ShaderDesc colorSd;
@@ -4194,8 +4027,6 @@ void Renderer::submit(const RenderCommandList& commands) {
 }
 
 void Renderer::dispose() {
-    impl_->surfaceTileShader.reset();
-    impl_->tileIndexBuffer.reset();
     impl_->surfacePlaceholderTexture.reset();
     impl_->gltfShader.reset();
     impl_->gltfInstancedShader.reset();
@@ -4210,7 +4041,6 @@ void Renderer::dispose() {
     impl_->vectorLabelShader.reset();
     impl_->glyphAtlas.reset();
     impl_->iconAtlas.reset();
-    impl_->tileIndexCount = 0;
     impl_->initialized = false;
 }
 
@@ -4251,8 +4081,6 @@ ShaderProgram* Renderer::vectorLabelShader() const {
 GlyphAtlas* Renderer::glyphAtlas() const { return impl_->glyphAtlas.get(); }
 
 IconAtlas* Renderer::iconAtlas() const { return impl_->iconAtlas.get(); }
-Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
-int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
 Texture* Renderer::surfacePlaceholderTexture() const {
     return impl_->surfacePlaceholderTexture.get();
 }
@@ -4267,33 +4095,6 @@ ShaderProgram* Renderer::terrainShader() const {
 }
 
 // ---- Command builders ----
-
-RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
-                                                Buffer* vertexBuffer,
-                                                Buffer* indexBuffer,
-                                                int indexCount) const {
-    RenderCommand cmd;
-    cmd.kind = RenderCommandKind::SurfaceTile;
-    cmd.owner = "surface_tile";
-    cmd.pass = "color";
-    cmd.shader = impl_->surfaceTileShader.get();
-    cmd.vertexBuffer = vertexBuffer;
-    cmd.indexBuffer = indexBuffer ? indexBuffer : impl_->tileIndexBuffer.get();
-    cmd.indexCount = indexBuffer ? indexCount : impl_->tileIndexCount;
-    cmd.vertexStride = 32;  // POSITION(12) + NORMAL(12) + TEXCOORD_0(8)
-    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
-    cmd.indexType = RenderCommand::IndexType::UInt32;
-    cmd.depthTest = true;
-    cmd.depthWrite = true;
-    cmd.blend = false;
-    cmd.cullFace = true;
-    cmd.hasSurfaceTileUniforms = true;
-    cmd.surfaceHasWaterMask = 0.0f;
-    if (texture) {
-        cmd.textures.push_back(texture);
-    }
-    return cmd;
-}
 
 RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
                                                  Buffer* indexBuffer,

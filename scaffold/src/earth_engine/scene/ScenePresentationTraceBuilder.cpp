@@ -187,8 +187,6 @@ void populateCommandTrace(const RenderCommandList& renderCommands,
             command.surfaceBaseRasterState;
         commandTrace.surfaceBaseIsMappedRasterTile =
             command.surfaceBaseIsMappedRasterTile;
-        commandTrace.surfaceOverlayTextureCount =
-            command.surfaceOverlayTextureCount;
         commandTrace.surfaceClipEnabled = command.surfaceClipEnabled;
         commandTrace.surfaceClipUv = command.surfaceClipUv;
         commandTrace.surfaceTransitionOpacity =

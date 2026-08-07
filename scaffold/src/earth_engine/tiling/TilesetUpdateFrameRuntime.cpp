@@ -23,7 +23,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     const FrameState& frameState,
     IPrepareRendererResources* pPrepRenderer) {
     // cesium-native: increment generation each frame so that
-    // RenderCommand validator (non-zero check) accepts SurfaceTile commands.
+    // RenderCommand validator (non-zero check) accepts terrain commands.
     ++tileset.generation_;
 
     TileFrameWorkResult frameWork = TileFrameWorkCoordinator::run(

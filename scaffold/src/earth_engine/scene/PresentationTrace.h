@@ -88,7 +88,6 @@ struct PresentationCommandTrace {
     int surfaceSkirtIndexCount = 0;
     int surfaceBaseRasterState = 0;
     int surfaceBaseIsMappedRasterTile = 0;
-    int surfaceOverlayTextureCount = 0;
     float surfaceClipEnabled = 0.0f;
     std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
     float surfaceTransitionOpacity = 1.0f;

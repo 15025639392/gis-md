@@ -86,7 +86,7 @@ TEST(
                         const TilesetTile*) {
                 if (tile.key == drawnKey) {
                     RenderCommand command;
-                    command.kind = RenderCommandKind::SurfaceTile;
+                    command.kind = RenderCommandKind::GltfPrimitive;
                     outCommands.push_back(std::move(command));
                 }
             });
@@ -159,7 +159,7 @@ TEST(
                          const TilesetTile*) {
                 if (tile.key == renderKey && clipUv) {
                     RenderCommand command;
-                    command.kind = RenderCommandKind::SurfaceTile;
+                    command.kind = RenderCommandKind::GltfPrimitive;
                     command.surfaceClipEnabled = 1.0f;
                     command.surfaceClipUv = *clipUv;
                     outCommands.push_back(std::move(command));
@@ -220,7 +220,7 @@ TEST(TileRenderEntryCommandBuilderTest, BuildsFadingEntriesOnlyInFadePass) {
                             const TilesetTile*) {
         submittedOpacity = opacity;
         RenderCommand command;
-        command.kind = RenderCommandKind::SurfaceTile;
+        command.kind = RenderCommandKind::GltfPrimitive;
         outCommands.push_back(std::move(command));
     };
 
