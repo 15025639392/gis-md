@@ -49,7 +49,6 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/core/cache/HttpCache.h
     earth_engine/core/cache/PersistentCache.h
-    earth_engine/core/cache/SharedAssetDepot.h
 )
 
 # ============================================================
@@ -166,8 +165,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderDeviceRasterTextureUploader.h
     earth_engine/renderer/RenderDeviceRasterTextureUploader.cpp
     earth_engine/renderer/IPrepareRendererResources.h
-    earth_engine/renderer/TileTextureCache.h
-    earth_engine/renderer/TileTextureCache.cpp
 )
 
 # ============================================================
@@ -266,8 +263,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/GltfRenderResourcePreparer.cpp
     earth_engine/tiling/TileFillProxyPreparer.h
     earth_engine/tiling/TileFillProxyPreparer.cpp
-    earth_engine/tiling/TileGeomorphHeightDelta.h
-    earth_engine/tiling/TileGeomorphHeightDelta.cpp
     earth_engine/tiling/LoadedTerrainHeightSampler.h
     earth_engine/tiling/LoadedTerrainHeightSampler.cpp
     earth_engine/tiling/TerrainHeightService.h

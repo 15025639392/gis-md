@@ -118,12 +118,6 @@ add_executable(test_rectangle
 target_link_libraries(test_rectangle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_rectangle COMMAND test_rectangle)
 
-add_executable(test_accessor_view
-    unit/core/test_accessor_view.cpp
-)
-target_link_libraries(test_accessor_view PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_accessor_view COMMAND test_accessor_view)
-
 add_executable(test_uri
     unit/core/test_uri.cpp
 )
@@ -159,12 +153,6 @@ add_executable(test_feature_edit_queries
 )
 target_link_libraries(test_feature_edit_queries PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_feature_edit_queries COMMAND test_feature_edit_queries)
-
-add_executable(test_shared_asset_depot
-    unit/core/test_shared_asset_depot.cpp
-)
-target_link_libraries(test_shared_asset_depot PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_shared_asset_depot COMMAND test_shared_asset_depot)
 
 # ============================================================
 # test_platform_integration — macOS 平台层集成测试

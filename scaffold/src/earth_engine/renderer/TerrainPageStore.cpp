@@ -204,10 +204,6 @@ void TerrainPageLayerPool::release(uint64_t key) {
 
 namespace {
 
-// 影像行序:与生产 raster uploader 一致——DecodedImage row 0=北,行序原样上传,
-// terrain 采用 NW 约定(v=0 北,rewriteProjectionTexCoords)故不翻转即对齐。
-constexpr bool kFlipRowsOnUpload = false;
-
 // per-cell 渐变 LOD 的真 miss 地板(§16.3⑥,替代 §15.3① 的 0.5 硬剔)。
 // §15.3① 曾按 cell 屏幕误差硬剔到 0.5×阈值——但被剔的中距 cell 一步跌回 z12
 // mappedRaster(5 级悬崖)= 高倾斜「模糊带」根因。§16.3 改为:视锥内 cell 按距离取
@@ -315,12 +311,13 @@ void TerrainPageStore::resamplePageSource(const DecodedImage& image, int depth,
                 std::min(255.0f, std::max(0.0f, acc[c] + 0.5f)));
         }
     };
+    // 行序原样上传:DecodedImage row 0=北,terrain 用 NW 约定(v=0 北,
+    // rewriteProjectionTexCoords),两端一致故不翻转即对齐。
     for (int row = 0; row < side; ++row) {
-        const int outRow = kFlipRowsOnUpload ? (side - 1 - row) : row;
         const float v = v0 + (static_cast<float>(row) + 0.5f) /
                                  static_cast<float>(side) * span;
         const float fy = v * static_cast<float>(ih) - 0.5f;
-        uint8_t* d = out.data() + static_cast<size_t>(outRow) * side * 4;
+        uint8_t* d = out.data() + static_cast<size_t>(row) * side * 4;
         for (int col = 0; col < side; ++col) {
             const float u = u0 + (static_cast<float>(col) + 0.5f) /
                                      static_cast<float>(side) * span;
