@@ -70,12 +70,6 @@ enum class Id : uint8_t {
     /// 大图被成本过滤推迟是设计意图,不算"有活没做"——分母选错会重蹈
     /// MainThreadFinalizeBudgetUse 健康态与故障态同读数的覆辙。
     RasterUploadProgress,
-    /// 叠画推进率 = 有真 draw 的帧 / 有叠画活动(真 draw 或准入拒绝)的帧。
-    /// 自锁签名来自真机:defer 持续增长而 drawn 恒 0(预算被零成本早退
-    /// 吃光 → 已就绪页永不被画 → 不消费则不可淘汰 → 永远满员拒绝)。
-    /// 帧粒度二值:等待 fetch 的帧只有 defer 没有 draw 是正常暂态,
-    /// 窗口聚合摊掉;持续恒 0 才压穿下界。
-    VectorDecorateProgress,
     Count
 };
 

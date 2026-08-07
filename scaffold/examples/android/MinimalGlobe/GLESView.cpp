@@ -32,8 +32,6 @@
 #include "earth_engine/data/MvtVectorSource.h"
 #include "earth_engine/data/StyleFilter.h"
 #include "earth_engine/layers/RasterOverlay.h"
-#include "earth_engine/providers/VectorImageryProvider.h"
-#include "earth_engine/renderer/VectorPageDrawer.h"
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
@@ -139,7 +137,6 @@ static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
 // 突发型重负载(换 zoom 时整视口一起来),混进地形/影像池会挤掉它们的
 // 加载额度。2 线程:再多也只是把内存峰值抬高,commit 侧本就有帧预算。
 static std::unique_ptr<ThreadPool> gMvtWorkerPool;
-static std::unique_ptr<VectorPageDrawer> gMvtPageDrawer;  // C-2c
 // HttpRequest 是取消句柄(析构即取消),须持有到完成;完成 id 攒起来
 // 由下一次发请求时(渲染线程)剪除,避免在 curl 回调线程里析构句柄。
 struct MvtFetchInflight {
@@ -207,7 +204,6 @@ static void clearDemoEngineObjects() {
     // MVT 源先停:它持有 basemap 层 store 的引用(层归 Engine 所有),
     // 且在飞的 HttpRequest 句柄析构即取消。
     gMvtSource.reset();
-    gMvtPageDrawer.reset();  // 先于 pool/device 释放(持有 GPU buffer)
     gMvtWorkerPool.reset();
     {
         std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
@@ -332,71 +328,11 @@ static bool createEngine() {
                 *gEngine,
                 *gRenderDevice,
                 *gPlatformBridge);
-        // E4:矢量底图走影像通道。**必须在 installScene 之前**注册 ——
-        // overlay 是 Tileset 构造时一次性交进去的。
-        if (minimal_globe_demo::kEnableMvtBasemap &&
-            minimal_globe_demo::kMvtBasemapAsOverlay) {
-            gMvtWorkerPool = std::make_unique<ThreadPool>(2);
-            VectorImageryProvider::Options vopt;
-            vopt.id = "mvt-basemap";
-            vopt.schemeId = "XYZ-WebMercator";
-            vopt.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
-            vopt.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
-            vopt.tileSize = 512;
-            vopt.style = minimal_globe_demo::makeMvtRasterStyle();
-            auto provider = std::make_unique<VectorImageryProvider>(
-                std::move(vopt),
-                [](const TileKey& key,
-                   VectorImageryProvider::FetchCallback cb) {
-                    mvtFetchTile(key, std::move(cb));
-                },
-                gMvtWorkerPool.get());
-            RasterOverlay::Options oopts;
-            oopts.maximumScreenSpaceError = 2.0;
-            oopts.minimumZoom = minimal_globe_demo::kMvtBasemapMinZoom;
-            oopts.maximumZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
-            // 矢量底图缺瓦时不该阻塞「整帧可呈现」判定 —— 卫星影像才是底。
-            oopts.blocksCompleteRenderable = false;
-            // 矢量底图是**叠加层**不是底图影像:role 决定它不驱动 refine
-            // (细化由卫星底图与地形定)。C-1 之后合成次序不再看 role ——
-            // 页存储与 mappedRaster 都按 overlay 列表序合成同一批源。
-            oopts.role = RasterOverlayRole::AnnotationOverlay;
-            // C-2c:矢量由 VectorPageDrawer 在页上**直接 GPU 叠画**(页原生
-            // 分辨率),故不参与页存储的 CPU 合成 —— 否则页里同一份内容出现
-            // 两次:糊版垫在清晰版下面,清晰线周围挂一圈糊边。
-            // 这个 overlay 仍保留:它是页存储 miss cell 的降级路径。
-            oopts.compositeIntoPageStore = false;
-            gSdkFacade->addCustomImageryOverlay(
-                std::move(provider), TileScheme::createXYZWebMercator(),
-                oopts);
-            LOGI("VectorE4 MVT basemap as raster overlay (draped fallback)");
-        }
-
         gSdkFacade->installScene(
             minimal_globe_demo::makeDefaultDemoSceneConfig());
 
-        // C-2c:矢量在页原生分辨率上直接画进页存储 array 层(干掉 C-1b 那条
-        // 「z14 源放大 8 倍贴 z17 页」的糊)。必须在 installScene 之后 ——
-        // 页存储随场景建立。
-        if (minimal_globe_demo::kMvtBasemapAsOverlay && gEngine) {
-            VectorPageDrawer::Options dopts;
-            dopts.style = minimal_globe_demo::makeMvtRasterStyle();
-            dopts.maxSourceZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
-            dopts.pageSizeTexels = 256;  // 与 TerrainPageStore::Config 一致
-            gMvtPageDrawer = std::make_unique<VectorPageDrawer>(
-                gRenderDevice.get(), gEngine->renderer(),
-                gMvtWorkerPool.get(), std::move(dopts),
-                [](const TileKey& key,
-                   std::function<void(int, std::vector<uint8_t>)> cb) {
-                    mvtFetchTile(key, std::move(cb));
-                });
-            gEngine->setTerrainPageDecorator(gMvtPageDrawer.get());
-            LOGI("VectorC2 page drawer installed (GPU draping)");
-        }
-
         // ---- P4 MVT 只读底图:先于编辑演示层挂(先挂先画,垫底)。----
-        if (minimal_globe_demo::kEnableMvtBasemap &&
-            !minimal_globe_demo::kMvtBasemapAsOverlay) {
+        if (minimal_globe_demo::kEnableMvtBasemap) {
             // E1:底图走**瓦片桶**(worker 全链镶嵌),不再灌 store,故
             // 细桶那个 workaround 已无意义 —— 它当初是为了让「整城要素塞进
             // 空间分桶 store」时增量激活不退化成整桶全量重镶。桶尺寸留默认,

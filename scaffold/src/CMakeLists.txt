@@ -155,7 +155,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/VirtualTexturePoc.cpp
     earth_engine/renderer/TerrainPageStore.h
     earth_engine/renderer/TerrainPageStore.cpp
-    earth_engine/renderer/VectorPageDrawer.cpp
     earth_engine/renderer/TerrainInstanceBatcher.h
     earth_engine/renderer/TerrainInstanceBatcher.cpp
     earth_engine/renderer/TileCompositeBakePoc.h
@@ -527,7 +526,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/GoogleMapTilesImageryProvider.h
     earth_engine/providers/GoogleMapTilesImageryProvider.cpp
     earth_engine/providers/XYZImageryProvider.h
-    earth_engine/providers/VectorImageryProvider.cpp
     earth_engine/providers/XYZImageryProvider.cpp
     earth_engine/providers/WebMapServiceImageryProvider.h
     earth_engine/providers/WebMapServiceImageryProvider.cpp
@@ -725,7 +723,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/StyleExpression.h
     earth_engine/data/StyleExpression.cpp
     earth_engine/data/StyleFilter.cpp
-    earth_engine/data/VectorTileRasterizer.cpp
     earth_engine/data/VectorTileMeshBuilder.cpp
     earth_engine/data/GeoJsonImporter.h
     earth_engine/data/GeoJsonImporter.cpp

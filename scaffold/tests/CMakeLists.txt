@@ -940,23 +940,11 @@ add_executable(test_mvt_feature_converter
 target_link_libraries(test_mvt_feature_converter PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_mvt_feature_converter COMMAND test_mvt_feature_converter)
 
-add_executable(test_vector_tile_rasterizer
-    unit/data/test_vector_tile_rasterizer.cpp
-)
-target_link_libraries(test_vector_tile_rasterizer PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_vector_tile_rasterizer COMMAND test_vector_tile_rasterizer)
-
 add_executable(test_vector_tile_mesh_builder
     unit/data/test_vector_tile_mesh_builder.cpp
 )
 target_link_libraries(test_vector_tile_mesh_builder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_vector_tile_mesh_builder COMMAND test_vector_tile_mesh_builder)
-
-add_executable(test_vector_page_drawer
-    unit/renderer/test_vector_page_drawer.cpp
-)
-target_link_libraries(test_vector_page_drawer PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_vector_page_drawer COMMAND test_vector_page_drawer)
 
 add_executable(test_style_filter
     unit/data/test_style_filter.cpp
@@ -1037,12 +1025,6 @@ add_executable(test_heightmap_terrain
 )
 target_link_libraries(test_heightmap_terrain PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_heightmap_terrain COMMAND test_heightmap_terrain)
-
-add_executable(test_vector_imagery_provider
-    unit/providers/test_vector_imagery_provider.cpp
-)
-target_link_libraries(test_vector_imagery_provider PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_vector_imagery_provider COMMAND test_vector_imagery_provider)
 
 add_executable(test_raster_overlay_lifecycle
     unit/providers/test_raster_overlay_lifecycle.cpp

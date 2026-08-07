@@ -5,13 +5,13 @@
 #include <vector>
 
 #include "MvtDecoder.h"
-#include "VectorTileRasterizer.h"  // VectorRasterStyle(两条路径共用一套样式)
+#include "VectorRasterStyle.h"
 
 namespace earth_engine {
 
 /// 矢量瓦片 → 瓦片本地 2D 三角网(C-2b,页存储 GPU 贴地路径的几何来源)。
 ///
-/// **为什么不是继续栅格化**:E4-1 的 `rasterizeMvtTile` 把瓦片烘成固定分辨率的
+/// **为什么不是栅格化**:已删除的 E4-1 影像通路把瓦片烘成固定分辨率的
 /// 位图,页 zoom 深于源 zoom 时只能放大 —— 真机实测 z14 源贴到 z17 页要放大 8 倍,
 /// 路网糊成灰带。GPU 路径把镶嵌结果留在**瓦片本地归一化坐标**里,页只是换一个
 /// 正交矩阵的子矩形 → **一份网格服务所有页 zoom,overzoom 免费**。
@@ -21,7 +21,7 @@ namespace earth_engine {
 /// 展开。若把线宽烘进顶点位置,网格就绑死在某一个页 zoom 上,overzoom 红利立刻
 /// 消失 —— 这是本设计的支点,勿改。
 ///
-/// 线程契约:纯函数、无全局状态 → **可在 worker 并发调用**(同 rasterizeMvtTile)。
+/// 线程契约:纯函数、无全局状态 → **可在 worker 并发调用**。
 ///
 /// 已知取舍:线段四边形与接头方块**重叠**。不透明线色下不可见(GPU 混合下后画
 /// 的覆盖先画的);半透明线色会在接头处叠深。E4-1 的栅格路径靠 nonzero 覆盖 mask

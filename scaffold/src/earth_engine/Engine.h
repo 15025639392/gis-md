@@ -20,7 +20,6 @@ class VirtualTexturePoc;
 class TileCompositeBakePoc;
 class VtIndirectionSamplePoc;
 class TerrainPageStore;
-class TerrainPageDecorator;
 class Renderer;
 class RasterOverlayTileProvider;
 class TerrainDisplacementTemplatePool;
@@ -212,7 +211,6 @@ public:
     void setTerrainPageStoreEnabled(bool enabled);
     /// C-2c:页上传后的 GPU 叠画钩子(矢量走这条)。页存储可能因 surface 重建而
     /// 重新创建,故指针存在 Engine 上、每次建store时重新挂上。不持有。
-    void setTerrainPageDecorator(TerrainPageDecorator* decorator);
     /// C-2c:渲染器(叠画方拿着色器用)。场景未就绪时为 nullptr。
     Renderer* renderer() const;
 
@@ -260,7 +258,6 @@ private:
     bool terrainPageStoreInitFailed_ = false;
     // C-1:每帧交给页存储的有序源列表(剔 null 后复用,免逐帧分配)。
     std::vector<RasterOverlayTileProvider*> pageProvidersScratch_;
-    TerrainPageDecorator* terrainPageDecorator_ = nullptr;  // C-2c,不持有
     // 北极星 Phase 2c 地形 GPU 位移开关(P5 默认开;仍保留 flag 供运行时 A/B 关闭)。
     bool terrainGpuDisplacementEnabled_ = true;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。

@@ -876,11 +876,6 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
         it->second.compose->cancelled.store(true, std::memory_order_release);
     }
     pages_.erase(it);
-    if (decorator_) {
-        // 同步通知:换租与释放必须在同一调用路径内完成,不能推给下一帧的旁路
-        // 清理 —— 否则被换租页引用的源数据成为「等不到消费者」的僵尸。
-        decorator_->releasePage(unpackKey(pageKey));
-    }
 }
 
 void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
@@ -920,37 +915,18 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     cmd.terrainPageStoreFullyResident = ind.fullyResident;
 }
 
-void TerrainPageStore::setDecorator(TerrainPageDecorator* decorator) {
-    decorator_ = decorator;
-    // 登记契约闸的实际状态:PageDecorateOrdering 的判定点在 decoratePage 调用点,
-    // 只在 decorator_ 非空时执行。这里是唯一装配口(Engine 的两处挂载 —— 含
-    // surface 重建后的重挂 —— 都经此),故闸状态天然跟随真实配置,不登记的话
-    // 无 decorator 的 demo 会永远报 dead,常亮警告会训练出「这条可以忽略」的习惯。
-    contracts::setGateActive(contracts::Gate::VectorPageDecorator,
-                             decorator != nullptr);
-}
-
 void TerrainPageStore::tick() {
     if (!arrayTexture_) {
         return;
     }
     ++frameId_;  // 推进帧号(下帧 determination 的 LRU touch/淘汰基准)
     const double tickStartMs = perf::nowMs();
-    if (decorator_) {
-        const double decorateStartMs = perf::nowMs();
-        decorator_->tickDecorator();  // 先让叠画方把网格传上 GPU
-        winDecorateMs_ += perf::nowMs() - decorateStartMs;
-        decoratorTickedFrame_ = frameId_;
-    }
     drainInbox();        // 阶段 A:原始影像 → worker 合成任务(或就地跑)
     drainReadyUploads();  // 阶段 B:worker 快照 → 预算内上传 + 叠画
     {
-        const double decorateStartMs = perf::nowMs();
-        retryPendingDecorations();
-        winDecorateMs_ += perf::nowMs() - decorateStartMs;
     }
     // compose 列自异步化起计的是 **worker 侧**耗时(判归属用);maxTick 只含
-    // 渲染线程(dispatch+upload+decorate)—— 下放成功的判据就是它塌下来。
+    // 渲染线程(dispatch+upload)—— 下放成功的判据就是它塌下来。
     winComposeMs_ +=
         static_cast<double>(readyInbox_->composeMicros.exchange(
             0, std::memory_order_relaxed)) /
@@ -958,52 +934,18 @@ void TerrainPageStore::tick() {
     winMaxTickMs_ = std::max(winMaxTickMs_, perf::nowMs() - tickStartMs);
     // 220ms 归属拆分:每 60 tick 报窗口累计与单帧峰值。**看的是归属比例**:
     // compose 占大头 → 下 worker;upload 占大头 → 降 maxUploadsPerFrame/换
-    // 部分更新;decorate 占大头 → 叠画合批/降频。纯运动期 items 应趋 0,
+    // 部分更新。纯运动期 items 应趋 0,
     // 持续 >0 = 在做无谓重合成(maplibre 式源集合指纹是下一步)。
     if (frameId_ % 60u == 0u) {
         platformLog(LogLevel::Info, "PageStore",
-                    "tick60 compose=%.1fms upload=%.1fms decorate=%.1fms "
+                    "tick60 compose=%.1fms upload=%.1fms "
                     "maxTick=%.1fms items=%d",
-                    winComposeMs_, winUploadMs_, winDecorateMs_,
+                    winComposeMs_, winUploadMs_,
                     winMaxTickMs_, winInboxItems_);
         winComposeMs_ = 0.0;
         winUploadMs_ = 0.0;
-        winDecorateMs_ = 0.0;
         winMaxTickMs_ = 0.0;
         winInboxItems_ = 0;
-    }
-}
-
-void TerrainPageStore::retryPendingDecorations() {
-    if (!decorator_ || !arrayTexture_) {
-        return;
-    }
-    // 每帧有上限:叠画是真 draw,不能跟主 pass 抢预算。未轮到的页下帧继续
-    // (页存储自己迭代 → 被 LRU 换租的页自然不在表里,不会画进别人的层)。
-    //
-    // ⚠️ 预算只记**真的画了**的那些。在途等待与资源满被拒都是零成本的早退,
-    // 若也扣预算,遍历序靠前的那批未就绪页每帧吃光配额,已就绪的页永远轮不到
-    // (真机实测:defer 次数恰好 = 每帧预算 × 帧数,drawn 恒 0,系统自锁)。
-    int budget = config_.maxUploadsPerFrame;
-    for (auto& [pageKey, pe] : pages_) {
-        if (budget <= 0) {
-            break;
-        }
-        if (pe.decorated || !pe.uploadedTexels() || pe.layer < 0) {
-            continue;
-        }
-        GE_CONTRACT(contracts::Id::PageDecorateOrdering,
-                    decoratorTickedFrame_ == frameId_,
-                    "path=retryPending frame=%llu tickedFrame=%llu layer=%d",
-                    (unsigned long long)frameId_,
-                    (unsigned long long)decoratorTickedFrame_,
-                    pe.layer);
-        bool didGpuWork = false;
-        pe.decorated = decorator_->decoratePage(
-            unpackKey(pageKey), arrayTexture_.get(), pe.layer, &didGpuWork);
-        if (didGpuWork) {
-            --budget;
-        }
     }
 }
 
@@ -1172,22 +1114,6 @@ void TerrainPageStore::drainReadyUploads() {
                                      item.layer);
         winUploadMs_ += perf::nowMs() - uploadStartMs;
         pe.uploadedSources = item.composedSources;
-        // C-2c:本次上传覆盖了此前的 GPU 叠画 → 标记未叠画并立刻试一次。
-        // 未就绪(源瓦片在路上)时由 retryPendingDecorations 后续帧接着试。
-        pe.decorated = false;
-        if (decorator_) {
-            GE_CONTRACT(contracts::Id::PageDecorateOrdering,
-                        decoratorTickedFrame_ == frameId_,
-                        "path=drainReady frame=%llu tickedFrame=%llu layer=%d",
-                        (unsigned long long)frameId_,
-                        (unsigned long long)decoratorTickedFrame_,
-                        item.layer);
-            const double decorateStartMs = perf::nowMs();
-            pe.decorated = decorator_->decoratePage(unpackKey(item.key),
-                                                    arrayTexture_.get(),
-                                                    item.layer);
-            winDecorateMs_ += perf::nowMs() - decorateStartMs;
-        }
         ++uploadedLayerTotal_;
         ++uploaded;
     }

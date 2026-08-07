@@ -58,12 +58,6 @@ enum class Id : uint8_t {
     /// 地形几何整批错位,且没有任何报错。
     BatchTemplateGridParity,
 
-    /// 叠画方 → 页存储:decoratePage 之前,本帧的 tickDecorator 必须已经跑过。
-    /// 叠画方在 tickDecorator 里把网格传上 GPU,decoratePage 才是真 draw。次序
-    /// 反了会画到上一帧的(或空的)网格上。E4 那次的根因同源:叠加层写入必须晚于
-    /// 页存储合成,否则被覆盖 —— 时序契约在渲染管线里格外容易被重排悄悄破坏。
-    PageDecorateOrdering,
-
     // ---- 以下三条来自 AI_INDEX.md §20「Cross-Subsystem Contracts」----
     // 那一节的小标题自己写着 "enforced by call order, not by types" —— 架构文档
     // **声明了**这些契约,但它们只靠调用顺序维持。上面四条边是从事故史挑的
@@ -89,7 +83,7 @@ enum class Id : uint8_t {
     GpuUploadQueueFifo,
 
     /// 在飞请求追踪的三张表(键集/内容键集/取消令牌表)同步变异。
-    /// 与 PageDecorateOrdering 同类:模块内不变量,如实登记不编假生产方。
+    /// 模块内不变量:如实登记,不编假生产方。
     /// 违约的静默后果分两个方向,都不报错:键残留而令牌先没 → 该 cacheKey
     /// 永判"在飞"→ 调度器永不重发 → 瓦片永久缺失;令牌残留而键先没 →
     /// 令牌表泄漏 + 换代取消形同虚设。三张表今天由同一组方法成对增删,
@@ -118,10 +112,6 @@ enum class Gate : uint8_t {
     Always = 0,
     /// 影像驱动的几何上采样路径,仅 decoupleImageryFromGeometry=false 时存在。
     ImageryDrivenUpsample,
-    /// 页存储的矢量叠画路径,仅装配了 TerrainPageDecorator 时存在
-    /// (PageDecorateOrdering 的判定点在 decoratePage 调用点,decorator 为空时
-    /// 整条路不跑)。由 TerrainPageStore::setDecorator 登记。
-    VectorPageDecorator,
     Count
 };
 

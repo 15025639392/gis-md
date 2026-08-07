@@ -187,10 +187,10 @@ TEST(ContractCoverage, ViolationAlsoCountsAsEvaluation) {
 
 TEST(ContractCoverage, NeverExecutedEdgeStaysAtZero) {
     // 反过来的控制组:没有任何判定点跑过的边,求值数必须停在 0 —— 否则覆盖数
-    // 就成了摆设,分不出死边。PageDecorateOrdering 在 host 测试里没有驱动路径,
-    // 正好当这个反例(它在真机上由 coverage 行证明活性)。
+    // 就成了摆设,分不出死边。GpuUploadQueueFifo 在 host 测试里没有驱动路径
+    // (它挂在影像驱动上采样的 GPU 上传队列上),正好当这个反例。
     EXPECT_EQ(0u,
-              contracts::totalEvaluations(contracts::Id::PageDecorateOrdering))
+              contracts::totalEvaluations(contracts::Id::GpuUploadQueueFifo))
         << "若此断言失败,说明有 host 路径开始驱动这条边了 —— 那是好事,"
            "把这个测试改成正例即可。";
 }
@@ -266,37 +266,6 @@ TEST(ContractGate, EveryEdgeDeclaresItsGateAndEveryGateHasAName) {
                   static_cast<uint8_t>(contracts::Gate::Count));
         EXPECT_STRNE("?", contracts::gateName(g));
     }
-}
-
-TEST(ContractGate, PageDecorateOrderingIsGatedOnDecorator) {
-    // 这条边的判定点全在 decoratePage 调用点,decorator 为空时整条路不跑。
-    // 曾登记 Always,导致无 decorator 的 demo 真机 coverage 行每 10s 报一次
-    // DEAD 常亮 —— 正是头文件准入标准点名要防的形态。此断言钉住修正:
-    // 谁把它改回 Always,这里会先红。
-    EXPECT_EQ(contracts::Gate::VectorPageDecorator,
-              contracts::gate(contracts::Id::PageDecorateOrdering));
-}
-
-TEST(ContractGate, SetDecoratorRegistersVectorPageDecoratorGate) {
-    // 验的是装配口的接线,不只是闸机制本身:setDecorator 是 Engine 两处挂载
-    // (含 surface 重建后的重挂)唯一经过的口,它必须如实登记闸状态 ——
-    // 否则无 decorator 配置下 coverage 行会把这条边算 dead 而非 disabled。
-    struct NullDecorator : TerrainPageDecorator {
-        bool decoratePage(const TileKey&, Texture*, int,
-                          bool* outDidGpuWork) override {
-            if (outDidGpuWork != nullptr) *outDidGpuWork = false;
-            return true;
-        }
-    };
-    TerrainPageStore store;  // 闸登记不依赖 initialize(无需 GL 上下文)
-    NullDecorator decorator;
-    store.setDecorator(&decorator);
-    EXPECT_TRUE(contracts::gateActive(contracts::Gate::VectorPageDecorator));
-    // 无 decorator 配置(demo 现状):闸不成立 → logCoverage 走 disabled 分支。
-    store.setDecorator(nullptr);
-    EXPECT_FALSE(contracts::gateActive(contracts::Gate::VectorPageDecorator));
-    // 恢复默认 active,不让本测试的进程级状态泄漏给别的测试。
-    contracts::setGateActive(contracts::Gate::VectorPageDecorator, true);
 }
 
 TEST(ContractGate, OutOfRangeGateIsTreatedAsActive) {

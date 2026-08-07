@@ -26,7 +26,6 @@ const char* const kNames[] = {
     "HeightSampleCoverage",
     "TerminalStateProgress",
     "RasterUploadProgress",
-    "VectorDecorateProgress",
 };
 
 const Expectation kExpectations[] = {
@@ -108,15 +107,6 @@ const Expectation kExpectations[] = {
      "= RasterTextureUpload lane 冻结 —— 影像侧正是交互期硬冻结改 budget "
      "涓流那次修复的先行现场,守卫防它复发",
      "RasterOverlayTileProvider::processPendingUploads / RasterTextureUpload lane"},
-
-    // 叠画推进率。帧粒度二值:等 fetch 的帧只 defer 不 draw 属正常暂态,窗口
-    // 聚合摊掉;下界压得很低(0.05),抓的只是**持续恒 0**的自锁签名。若因
-    // 网络全死导致恒 0 也会报 —— 那同样是矢量图层卡死,值得被点名。
-    {0.05, 1.0,
-     "真机自锁签名 = defer 持续增长而 drawn 恒 0(预算被零成本早退吃光的"
-     "闭环);健康排队消化时 draw 帧与纯 defer 帧混杂,比率远高于 0.05。"
-     "恒 0 的另一可能是源 fetch 全死,同样是需要处理的卡死",
-     "TerrainPageStore::retryPendingDecorations 预算记账 / VectorPageDrawer 准入"},
 };
 
 // ⚠️ 数组**不写显式尺寸**,让初始化项数决定长度 —— 否则 `kNames[kCount]` 的

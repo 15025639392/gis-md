@@ -1894,19 +1894,6 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 | `isPureHoleQuad` | .cpp:23 | **纯洞四元组**判定 —— 兄弟中有人 Available、自己 NotAvailable 的覆盖边缘。这是 `GltfTerrainUpsampler` 的 TerrainAvailability 路唯一的真实触发场景(见 `test_composite_terrain_provider` 的 CoverageEdge 用例) |
 | `id` / `supportsTile` / `rootTiles` / `tileMetadata` / `childTiles` | .cpp:42 / :47 / :51 / :57 / :66 | provider 契约转发 |
 
-### providers/VectorImageryProvider.h / .cpp
-
-把矢量瓦片栅格化后**冒充影像**供给的 provider(95 行)。E4 贴地方案的供给侧。
-
-| 项 | 行 | 说明 |
-|---|---|---|
-| `toDecodedImage` | .cpp:12 | `VectorRasterImage` → `DecodedImage` |
-| `VectorImageryProvider` ctor / `buildUrl` | .cpp:25 / :31 | |
-| `requestTile` | .cpp:36 | 取 MVT → 栅格化 |
-| `decodeTile` / `decodeTileAtZoom` | .cpp:80 / :85 | |
-
-## 11. camera — Camera, CameraController
-
 ### CameraController.h / .cpp
 
 Anchor-based globe camera controller (openglobus-aligned). Single-finger drag grabs a surface point and keeps it under the finger; two-finger pinch zooms/rotates/tilts around a surface anchor below the pinch center. Two modes: `orbitMode_` (synthetic orbit around earth center from `rotation_`+`distance_`) and free ECEF camera (`orbitMode_=false`, default after construction).
@@ -2269,19 +2256,17 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 |---|---|---|
 | `TerrainPageLayerPool` | .h:37-86 | 层池 LRU:`acquire`(可回报被淘汰者)/`touch`/`release`;`blockLayers` 支持一页占多层 |
 | `PageSourceAssembler` | .h:88-128 | 多源**按序**合成一页:`accept(sourceIndex, rgba)`,乱序早到的源进 `stash_` 暂存 |
-| `TerrainPageDecorator` | .h:130-159 | 页装饰回调接口(矢量叠加走这里,见 E4 影像通道) |
 | `TerrainPageStore` | .h:161- | 主体 |
 
 | 方法 | 行 | 说明 |
 |---|---|---|
 | `initialize(device, Config)` | .cpp:817-868 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:403-805 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:889-925 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:936-979 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传)+ `retryPendingDecorations` |
-| `drainInbox` / `kickPageFetches` | .cpp:1052-1135 / :1013-1051 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1136-1213 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `retryPendingDecorations` | .cpp:980-1012 | 装饰失败重试 |
-| `erasePageEntry` | .cpp:869-888 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:881-916 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:918-950 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:994-1077 / :955-993 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1078-1139 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:869-883 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:265-332 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:376-382 / :383-402 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:333-345 / :346-351 / :352-355 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
@@ -2295,7 +2280,7 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 全局仅 ~52 页 → 事实上不可达、合批长期空转且无人察觉(修复 1c913d68b)。
 `sseFloorCulled` 必须与 `kept` 同生命周期(几何遍历只在 det-cache miss 时跑)。
 
-**机器可查契约**:`contracts::Id::PageDecorateOrdering`(.cpp:911、:1019)——
+**机器可查契约**:`contracts::Id::PageDecorateOrdering`(.cpp:906、:961)——
 装饰必须晚于页内容就位。**策略指标**:`PageResidency` / `CellPageCoverage` /
 `IndirLayerAllocNoEvict`(见 `debug/Policies.h`,owner 均指向本文件)。
 
@@ -2530,26 +2515,6 @@ Single translation unit defining `STB_IMAGE_IMPLEMENTATION` (avoids multiple-def
 
 ⚠️ 离屏 FBO **必须带 stencil 附件**,否则贴地面的 stencil 测试恒通过、整侧影染色
 (P6a 根因)。判别法:改 stencil func 探针画面不变 = 先查附件。
-
-### VectorPageDrawer.h / .cpp
-
-矢量页装饰器(299 行)。E4:把矢量栅格化进地形页存储的页纹理,
-**冒充影像**复用整套地形合成 —— 实现 `TerrainPageDecorator` 接口。
-
-| 项 | 行 | 说明 |
-|---|---|---|
-| `packTile` | .cpp:18-36 | TileKey → uint64 |
-| ctor / dtor | .cpp:38-46 / :48 | 持 device / renderer |
-| `makePageOrtho` | .cpp:54-83 | 页局部正交投影矩阵 |
-| `kickFetch` | .cpp:84-117 | 拉取该页覆盖的 MVT 源瓦片 |
-| `tickDecorator` | .cpp:118-184 | 每帧驱动:解码回收 + 触发装饰 |
-| `touch` / `tryEvictOne` | .cpp:197-205 / :268-283 | 源瓦片 LRU touch;淘汰仅限已消费/保护到期(收敛不变量) |
-| `bindPage` / `eraseTile` / `releasePage` | .cpp:206-222 / :223-238 / :239-267 | 页↔源瓦片双向绑定(共享祖先时是集合不是计数);换租释放最后一个引用且未消费 → 立即回收 |
-| `ensureFramebuffer` | .cpp:284-299 | 绑定到页纹理层的 FBO |
-| `decoratePage` | .cpp:300-412 | **把矢量画进页** |
-
-⚠️ E4 根因教训:地形着色器的**页存储采样覆盖了 mappedRaster**,叠加层必须挪到
-页存储之后;同名 uniform 在两个 FS 各有声明,改一半即黑屏。
 
 ### PolarCapRenderer.h / .cpp
 
@@ -2847,7 +2812,7 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 `PointStyle` (.h:58)、`LineStyle` (.h:71);`InteractionStyle::find` (.cpp:5)
 按状态名查交互态覆盖。
 
-### data/ — 矢量数据管线 — FeatureStore / FeatureBucketGrid / FeatureClusterIndex / FeatureSnapQuery / PolygonTessellator / LineTessellator / StyleExpression / StyleFilter / GeoJsonParser / GeoJsonImporter / MvtVectorSource / VectorTileTree / MvtFeatureConverter / VectorTileMeshBuilder / VectorTileRasterizer
+### data/ — 矢量数据管线 — FeatureStore / FeatureBucketGrid / FeatureClusterIndex / FeatureSnapQuery / PolygonTessellator / LineTessellator / StyleExpression / StyleFilter / GeoJsonParser / GeoJsonImporter / MvtVectorSource / VectorTileTree / MvtFeatureConverter / VectorTileMeshBuilder
 
 `FeatureStore` 为中心的要素数据层 + MVT 底图管线。总设计见矢量系统系列记录。
 
@@ -2867,7 +2832,6 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 | `VectorTileTree` (209) | `splitAntimeridian` (VectorTileTree.cpp:11)、`zoomForCameraHeight` (VectorTileTree.cpp:31)、`update` (VectorTileTree.cpp:39)、`provide` (VectorTileTree.cpp:149)、`markFailed` (VectorTileTree.cpp:157) | 瓦片树。⚠️ 必须缓存 `MvtTile` 而非网格,否则"重入零重拉取"会丢 |
 | `MvtFeatureConverter` (89) | `mvtToCartographic` (MvtFeatureConverter.cpp:13)、`mvtLayerToFeatures` (MvtFeatureConverter.cpp:25) | MVT → `Feature` |
 | `VectorTileMeshBuilder` (207) | `pushVertex` (VectorTileMeshBuilder.cpp:23)、`pushQuad` (VectorTileMeshBuilder.cpp:37)、`appendPolygonFill` (VectorTileMeshBuilder.cpp:50)、`appendStrokedPath` (VectorTileMeshBuilder.cpp:101)、`buildVectorTileMesh` (VectorTileMeshBuilder.cpp:139) | 瓦片网格镶嵌(**在 worker 上跑**,E1) |
-| `VectorTileRasterizer` (233) | `addEdge` (VectorTileRasterizer.cpp:29)、`fillEdges` (VectorTileRasterizer.cpp:40)、`strokePathEdges` (VectorTileRasterizer.cpp:78)、`blendLayer` (VectorTileRasterizer.cpp:108)、`rasterizeMvtTile` (VectorTileRasterizer.cpp:127) | CPU 栅格化(E4 冒充影像那条路) |
 
 ## 16. environment — Atmosphere, SkyBox, SkyGradient, Sun, Time
 
@@ -3120,19 +3084,20 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:55-64 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:66-71 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:73-109 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:243-611 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:244). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:248-248). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:260-260). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:289-289). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:646-648 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:650-657 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:236-600 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:237). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:241-241). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:253-253). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:282-282). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:635-637 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:639-646 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:717-719 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:725-727 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:706-708 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:714-716 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:746-748 | `scene_->hasTerrain()`. |
-| `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:192-206 | Picking + selection forwards. |
-| `setTime / time / advanceTime / sunDirection / getClearColor` | .h:113-121, .cpp:210-232 | Environment system. `getClearColor` reads `frameState().clearR/G/B/A` (.cpp:794-800). |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:802-804 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:675-677, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
+| `hasTerrain()` | .h:94, .cpp:735-737 | `scene_->hasTerrain()`. |
+| `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:744-760 | Picking + selection forwards. |
+| `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
+| `getClearColor` | .cpp:786-793 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:791-793 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:664-666, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
 Post-refactor: the fallback-globe path is gone. `Renderer::initialize()` no longer builds globe buffers/shader, `SceneRenderPipeline` no longer inserts a fallback-globe command, and `Globe`/`GlobeMesh`/`GlobeVertex` were deleted — before tiles load the frame is clear-color only. The `Diagnostics` globe-fallback counter fields were deleted along with the fallback path.
@@ -3284,13 +3249,13 @@ FrameState is mutated during update (tile selection, GPU upload, command build) 
 | `contracts::Id` | Contracts.h:43- | 8 条边的枚举 |
 | `contracts::Gate` | Contracts.h:116- | 存在条件(`Always` / `ImageryDrivenUpsample` / `VectorPageDecorator`) |
 | `contracts::Owners` | Contracts.h:133- | **生产方 / 消费方**归属表 —— 层间契约天然"消费侧检测、生产侧制造",只报判定点会把人送去翻没做错事的模块 |
-| `name` / `gate` / `gateName` | Contracts.cpp:123 / :128 / :133 | |
-| `setGateActive` / `gateActive` | Contracts.cpp:138 / :145 | 由配置装载处登记 |
-| `owners` | Contracts.cpp:152 | |
+| `name` / `gate` / `gateName` | Contracts.cpp:111 / :116 / :121 | |
+| `setGateActive` / `gateActive` | Contracts.cpp:126 / :133 | 由配置装载处登记 |
+| `owners` | Contracts.cpp:140 | |
 | `policy::Id` / `policy::Expectation` | Policies.h:40- / :64- | 9 条比率(含 HeightIndexRegularity 精确 [1,1] 点区间);区间**必须带 rationale + owner**,元守卫只挡 [0,0] 零点退化 |
-| `observe` | Policies.cpp:145 | 记一次观测(**分母 ≤ 0 不计**) |
-| `windowNumerator` / `windowDenominator` | Policies.cpp:155 / :161 | |
-| `logReport` | Policies.cpp:167 | 每窗打印;**越界才升 Warning 并逐条点名** |
+| `observe` | Policies.cpp:135 | 记一次观测(**分母 ≤ 0 不计**) |
+| `windowNumerator` / `windowDenominator` | Policies.cpp:145 / :151 | |
+| `logReport` | Policies.cpp:157 | 每窗打印;**越界才升 Warning 并逐条点名** |
 
 ⚠️ 两条硬教训写在代码里:① 平行表必须写 `T arr[]` 不写 `T arr[kCount]`,
 否则 `static_assert` 是同义反复(曾漏一条 expectation 直到真机报 `owner=(null)`);

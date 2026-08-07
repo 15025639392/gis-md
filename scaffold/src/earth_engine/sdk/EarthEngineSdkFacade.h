@@ -38,7 +38,7 @@ public:
     /// and fixed simulation time from a complete scene config.
     void installScene(EarthSceneConfig config);
 
-    /// 注册应用自建的影像 overlay(E4:矢量瓦片经 VectorImageryProvider
+    /// 注册应用自建的影像 overlay(应用实现 ImageryProvider
     /// 冒充影像走地形合成)。**必须在 installScene 之前调用** —— overlay 是
     /// 在 Tileset 构造时一次性交进去的,事后追加需要重建整个 tileset。
     /// 注册的 overlay 排在配置 overlay **之后**,即叠在卫星影像之上。

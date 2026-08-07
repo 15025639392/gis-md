@@ -198,13 +198,6 @@ Renderer* Engine::renderer() const {
     return scene_ ? scene_->renderer() : nullptr;
 }
 
-void Engine::setTerrainPageDecorator(TerrainPageDecorator* decorator) {
-    terrainPageDecorator_ = decorator;
-    if (terrainPageStore_) {
-        terrainPageStore_->setDecorator(decorator);
-    }
-}
-
 void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
     terrainGpuDisplacementEnabled_ = enabled;
     Tileset* tileset = scene_ ? scene_->tileset() : nullptr;
@@ -353,7 +346,6 @@ bool Engine::render(double deltaSeconds) {
                 terrainPageStore_ = std::move(store);
                 // surface 重建会重建页存储 → 叠画钩子必须重新挂上,否则矢量
                 // 在重建后静默消失(且无任何报错)。
-                terrainPageStore_->setDecorator(terrainPageDecorator_);
                 scene_->setTerrainPageStore(terrainPageStore_.get());
             } else {
                 terrainPageStoreInitFailed_ = true;
@@ -377,9 +369,6 @@ bool Engine::render(double deltaSeconds) {
                 pageProvidersScratch_.reserve(overlays.size());
                 for (ActivatedRasterOverlay* overlay : overlays) {
                     if (overlay == nullptr) continue;
-                    // C-2c:由 decorator 在页上直接 GPU 叠画的 overlay 不参与
-                    // CPU 合成 —— 否则页里同一份内容出现两次(糊版垫在清晰版下)。
-                    if (!overlay->getOverlay().compositeIntoPageStore()) continue;
                     if (RasterOverlayTileProvider* p = overlay->getTileProvider()) {
                         pageProvidersScratch_.push_back(p);
                     }

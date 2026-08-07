@@ -1,6 +1,6 @@
 #pragma once
 
-#include "earth_engine/data/VectorTileRasterizer.h"
+#include "earth_engine/data/VectorRasterStyle.h"
 
 #include "earth_engine/sdk/EarthSceneConfig.h"
 
@@ -55,17 +55,12 @@ constexpr bool kEnableVectorDemoLayers = true;
 // 服务器不在时请求失败仅 markFailed(静默),不影响其余渲染。
 constexpr bool kEnableMvtBasemap = true;
 
-// E4 贴地双轨制:矢量底图走**影像通道**(栅格化成纹理 → raster overlay →
-// 地形合成),而不是几何通路。
-//   true  = 影像通路:栅格化进地形页存储。贴地免费,但**分辨率被页纹素封顶**
-//           —— 页在近景/斜视下被放大 2-3 倍,线糊成栅格块(真机判据:同屏
-//           symbol 文字锐利而路网糊,排除屏幕/截图因素)。
-//   false = 几何通路(FeatureRenderLayer + 瓦片桶):屏幕空间渲染,无分辨率
-//           上限;贴地走 stencil 分类,挤出体由区域高度范围驱动(worker 拿
-//           不到地形采样器,但拿得到一对标量)。
-// 两条通路互斥。⚠️ Metal 的 supportsStencilClassification 恒 false,iOS 上
-// 几何通路不贴地 —— 那边仍需 true。
-constexpr bool kMvtBasemapAsOverlay = false;
+// 矢量底图走**几何通路**(FeatureRenderLayer + 瓦片桶):屏幕空间渲染,无分辨率
+// 上限;贴地走 stencil 分类,挤出体由区域高度范围驱动(worker 拿不到地形采样器,
+// 但拿得到一对标量)。
+// ⚠️ 对立的**影像通路**(栅格化进地形页存储)已于 2026-08-07 整链删除 —— 页纹素
+// 给分辨率封了顶,近景/斜视下线糊成栅格块。Metal 的 supportsStencilClassification
+// 恒 false,故 iOS 上几何通路暂不贴地,补 Metal stencil 分类是那边的解。
 
 // 贴地体的高度范围不在这里配:SceneRenderPipeline 每帧从**可见地形瓦片的
 // 包围体**汇总(O(可见瓦片数),零采样),相机飞到哪都对。

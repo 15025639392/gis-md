@@ -67,13 +67,6 @@ public:
             RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
         bool blocksCompleteRenderable = true;
 
-        /// C-2c:是否参与页存储的 CPU 合成(PageSourceAssembler)。
-        /// 该 overlay 的内容若由 TerrainPageDecorator 在页上**直接 GPU 叠画**
-        /// (矢量走这条),就必须置 false —— 否则同一份内容在页里出现两次:
-        /// 底下一层是 CPU 栅格化的糊版,上面一层是 GPU 画的清晰版,清晰线周围
-        /// 会挂一圈糊边。置 false 后它仍走 mappedRaster,作为页存储 miss cell
-        /// 的降级路径继续有效。
-        bool compositeIntoPageStore = true;
     };
 
     /// @param provider  The imagery data source (ownership transferred).
@@ -110,7 +103,6 @@ public:
     void setOpacity(float opacity);
 
     RasterOverlayRole role() const { return options_.role; }
-    bool compositeIntoPageStore() const { return options_.compositeIntoPageStore; }
     RasterOverlayPriority priority() const { return options_.priority; }
     RasterOverlayFallbackPolicy fallbackPolicy() const {
         return options_.fallbackPolicy;

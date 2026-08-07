@@ -786,7 +786,7 @@ void SceneRenderPipeline::releaseRenderReferences(Context& context,
     // 而误报会训练出忽略这条警告的习惯。
     //
     // ⚠️ 弱点如实记:谓词是「内部状态 vs 内部状态」,不满足数据独立那条准入标准
-    // (与 PageDecorateOrdering 同类)。它挡的是**未来的重排**,不是当下的错误;
+    // (模块内时序不变量)。它挡的是**未来的重排**,不是当下的错误;
     // 活性由 coverage 计数证明,判别力没有反例控制组。
     const bool submittedThisFrame =
         submitDoneFrameId_ == context.frameState.frameId;

@@ -115,41 +115,6 @@ private:
     std::vector<std::vector<uint8_t>> stash_;  // 乱序早到的源(按源号索引)
 };
 
-/// 页上传后的 GPU 叠画钩子(C-2c:矢量在页原生分辨率上直接画进 array 层)。
-///
-/// 为什么是「上传后叠画」而不是「当成一个源进 PageSourceAssembler」:assembler 走
-/// CPU 合成,而矢量的整个价值就在于**不经过任何固定分辨率的中间位图** —— 一进
-/// assembler 就又得先栅格化。叠画排在影像上传之后,天然就是正确的合成次序。
-///
-/// 次序与失效由页存储驱动,实现方不必自己管:
-///  - 每次页上传后都会被调一次 → 底图重传(LRU 换租 / 祖先升级)会抹掉叠画,
-///    但紧接着的这次调用又画回来,不需要额外的脏标记。
-///  - 返回 false = 本页内容尚未就绪(如源瓦片还在路上)。页存储记下「未叠画」,
-///    后续帧继续叫,直到成功。**别在实现里自己攒待画队列** —— 页随时可能被
-///    LRU 换租,攒下来的 (页,层) 对会过期,画进别人的层里。
-class TerrainPageDecorator {
-public:
-    virtual ~TerrainPageDecorator() = default;
-    /// @param pageKey 页的 z/x/y(schemeId 不参与页 key 打包,故为缺省值)
-    /// @param target  页存储的共享 array 纹理
-    /// @param layer   本页占用的层
-    /// @param outDidGpuWork 非空时置为「本次是否真的画了(消耗了 GPU 预算)」。
-    ///        **返回 false 有三种成本截然不同的情形**:真画了、在途等待(零成本)、
-    ///        资源满被拒(零成本)。页存储的每帧预算只该记前者 —— 否则零成本的
-    ///        重试会吃光预算,已就绪的页永远轮不到被画(饥饿死锁,真机实测
-    ///        defer 次数恰好等于每帧预算)。
-    /// @return true = 已画(或确认本页无内容可画);false = 未就绪,下帧再叫
-    virtual bool decoratePage(const TileKey& pageKey, Texture* target,
-                              int layer, bool* outDidGpuWork = nullptr) = 0;
-    /// 每帧一次(渲染线程,drainInbox 之前)。实现方在此把 worker 产出的 CPU
-    /// 数据传上 GPU —— 页存储保证它先于本帧的任何 decoratePage 调用。
-    virtual void tickDecorator() {}
-    /// 页被 LRU 换租/淘汰时**同步**调用(在页账本移除之后,同一调用路径内)。
-    /// 实现方据此放掉该页占用的资源 —— 没有这条通知,只被换租页引用过的源数据
-    /// 会一直等一个永远不会再来的 decoratePage,占死实现方的缓存槽位(真机实测
-    /// 宽视野 pan 下矢量空窗 ~30s,只能靠帧龄超时兜底回收)。
-    virtual void releasePage(const TileKey& pageKey) { (void)pageKey; }
-};
 
 /// 北极星合成方案「稀疏页存储」(门③ Step B2b + §14.1)。
 ///
@@ -195,12 +160,6 @@ public:
     bool initialize(RenderDevice* device, const Config& config);
 
     bool isReady() const { return arrayTexture_ != nullptr; }
-
-    /// C-2c:设置页上传后的 GPU 叠画钩子(nullptr = 不叠画,逐字节走现状)。
-    /// 生命周期归调用方,须比页存储活得久。
-    /// 定义在 .cpp:这里同时登记 contracts::Gate::VectorPageDecorator 的实际
-    /// 状态(PageDecorateOrdering 的判定点只在 decorator_ 非空时执行)。
-    void setDecorator(TerrainPageDecorator* decorator);
 
     /// 每帧(渲染线程,determination 之后、render 之前):推进帧号、排空已到达影像
     /// (限 maxUploadsPerFrame)灌对应页 layer 并置 uploaded。fetch 由 determination
@@ -309,9 +268,6 @@ private:
         /// 淘汰置 cancelled,迟到结果经 drain 校验丢弃)。
         std::shared_ptr<PageComposeState> compose;
         std::vector<CancellationToken> fetchTokens;  // 每源一个
-        // C-2c:本页的 GPU 叠画是否已完成。每次上传置 false(上传覆盖了叠画结果),
-        // decoratePage 成功后置 true;tick 每帧重试未完成的页。
-        bool decorated = false;
         /// **已上传**的合成进度镜像(渲染线程独占,drainReadyUploads 推进)。
         /// determination 判 resident 必须跟"已上传"走 —— 合成下 worker 后
         /// "已合成"与"已上传"分离,跟合成走会让间接纹理采到未写入的层。
@@ -342,8 +298,6 @@ private:
 
     static uint64_t packKey(const TileKey& key);
 
-    /// 对已上传但未叠画的页重试 decoratePage(每帧有上限,勿抢 draw 预算)。
-    void retryPendingDecorations();
     /// kick 单页的**全部源** fetch(worker 回调把解码影像投进 inbox,带
     /// pageKey+layer+源号)。每源一个 token,存进 entry.fetchTokens 供淘汰时 cancel。
     void kickPageFetches(const TileKey& pageTileKey, uint64_t pageKey, int layer,
@@ -363,19 +317,14 @@ private:
     std::unique_ptr<Texture> indirArrayTexture_;  // 合批 Step 2:间接纹理共享 array
     TerrainPageLayerPool indirPool_;              // 间接纹理层 LRU(blockLayers=1)
     uint64_t frameId_ = 0;
-    // 本帧 tickDecorator 已跑过的帧号。decoratePage 是真 draw,必须画在叠画方
-    // 本帧刚传上 GPU 的网格上;两者次序反了会画到上一帧的(或空的)网格,且没有
-    // 任何报错。契约 contracts::Id::PageDecorateOrdering 就查这个。
-    uint64_t decoratorTickedFrame_ = std::numeric_limits<uint64_t>::max();
     int uploadedLayerTotal_ = 0;
 
-    // 220ms 归属拆分:tick 内三段窗口计时。compose=重采样+按源序合成(纯 CPU),
-    // upload=updateTextureRegion,decorate=叠画(含 tickDecorator 与 retry 循环)。
+    // 220ms 归属拆分:tick 内两段窗口计时。compose=重采样+按源序合成(纯 CPU),
+    // upload=updateTextureRegion。
     // 每 60 tick 打一行窗口累计 + 单帧峰值后清零 —— 分不开归属就没法回答
     // "220ms 花在哪",也没法查纯运动期是否在做无谓重合成(items 应趋 0)。
     double winComposeMs_ = 0.0;
     double winUploadMs_ = 0.0;
-    double winDecorateMs_ = 0.0;
     double winMaxTickMs_ = 0.0;
     int winInboxItems_ = 0;
 
@@ -386,7 +335,6 @@ private:
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
     struct ReadyUploadInbox;  // 定义在 .cpp:worker 合成完毕的快照投递箱
     std::shared_ptr<ReadyUploadInbox> readyInbox_;   // 同上,存活于 worker 任务
-    TerrainPageDecorator* decorator_ = nullptr;      // C-2c:页上传后叠画(不持有)
 
     // 门② determination:子瓦片相对 capped 瓦片的最大细分深度上限
     // (屏幕驱动一般 ≤5;cap 防远景/病态 zoom 枚举爆量,gridN ≤ 1<<cap)。

@@ -29,7 +29,6 @@ const char* const kNames[] = {
     "DemNodataSentinel",
     "TexcoordNwOrigin",
     "BatchTemplateGridParity",
-    "PageDecorateOrdering",
     "SubmitBeforeReleaseRefs",
     "LoadsBeforeGpuDrain",
     "GpuUploadQueueFifo",
@@ -50,12 +49,6 @@ const Owners kOwners[] = {
     // gridN 由 draw 命令构建器写进 heightDisplace[3](两处:位移分支 + remap 分支)。
     {"GltfDrawCommandBuilder::build",
      "TerrainInstanceBatcher::assemble"},
-    // ⚠️ 这条两端同属一个模块 —— 它其实不是层间的边,是**模块内的时序不变量**:
-    // TerrainPageDecorator 头文件里"页存储保证 tickDecorator 先于本帧任何
-    // decoratePage"这句承诺是页存储自己给的,所以违约时该改的也是它。如实登记,
-    // 不为了凑成跨模块的样子编一个假的生产方。
-    {"TerrainPageStore::tick (时序承诺方)",
-     "TerrainPageStore::decoratePage 调用点"},
     // 以下三条的两端取自 AI_INDEX §20 的契约陈述本身(文档写明了谁保证谁)。
     {"SceneRenderPipeline::render (时序承诺方)",
      "SceneRenderPipeline::releaseRenderReferences"},
@@ -64,7 +57,7 @@ const Owners kOwners[] = {
     // FIFO 是队列自己的承诺,消费方是取走的人。
     {"GpuUploadQueue::push (worker)",
      "GpuUploadQueue::tryPop (主线程)"},
-    // 与 PageDecorateOrdering 同类的模块内不变量:三张表由同一组方法成对
+    // 模块内不变量(不编假生产方):三张表由同一组方法成对
     // 增删,承诺方与判定点都是这些变异方法自身。
     {"TilePendingRequestState 变异方法 (begin/complete/cancel)",
      "TilePendingRequestState 变异方法末尾的自检"},
@@ -75,10 +68,6 @@ const Gate kGates[] = {
     Gate::Always,                  // DemNodataSentinel:任何地形源都要解码
     Gate::ImageryDrivenUpsample,   // TexcoordNwOrigin:判定点在影像驱动上采样里
     Gate::Always,                  // BatchTemplateGridParity:合批每帧都跑
-    // PageDecorateOrdering 的判定点全在 decoratePage 调用点,decorator_ 为空时
-    // 整条路不跑 —— 页存储本身每帧 tick 不等于这条边每帧被求值。真机对照:
-    // demo 无 decorator → coverage 恒 0(此前登记 Always 导致 DEAD 常亮)。
-    Gate::VectorPageDecorator,     // PageDecorateOrdering
     Gate::Always,                  // SubmitBeforeReleaseRefs:每帧渲染都走
     Gate::Always,                  // LoadsBeforeGpuDrain:每帧 update 都走
     // GpuUploadQueueFifo 与 TexcoordNwOrigin **同因**:异步上传的两个必需字段
@@ -101,7 +90,6 @@ std::atomic<bool> gateDisabled_[static_cast<size_t>(Gate::Count)];
 const char* const kGateNames[] = {
     "always",
     "decoupleImageryFromGeometry=false",
-    "terrainPageDecorator!=nullptr",
 };
 
 // 四张表与枚举同长。⚠️ 数组**不写显式尺寸**是这几条 assert 能真正生效的前提:
