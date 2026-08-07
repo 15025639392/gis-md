@@ -1,10 +1,6 @@
 #pragma once
 
-#include "DecodedHeightmapSampler.h"
-#include "TerrainDisplacementTemplatePool.h"
-#include "TilePlan.h"
-#include "TilesetTile.h"
-#include "../core/math/Rectangle.h"
+#include "TerrainEdgeNeighborHeight.h"
 
 #include <algorithm>
 #include <cmath>
@@ -112,70 +108,6 @@ struct TileEdgeMismatchProbe {
         }
     };
 
-    /// 一个渲染条目在本帧**实际用于位移的**高度来源。remap 条目画的是祖先的
-    /// 数据(morph 钉 1,模板恒 coarse 档),常规条目画自己的。
-    struct HeightSource {
-        const DecodedHeightmap* heightmap = nullptr;
-        const Rectangle* bounds = nullptr;
-        int gridSize = 0;
-        float morph = 1.0f;
-        // 起伏淡入系数。高度纹理是按 {minH·fade, range·fade} 上传的,shader
-        // 解码出来的就是 fade×真高。⚠️ 不乘它,量出的既不是这一侧也不是那一侧
-        // 真正渲染的高度 —— 首版漏了,z6~8 段读出 max=428m 的假错位。
-        float fade = 1.0f;
-        bool valid() const { return heightmap && bounds && gridSize > 0; }
-    };
-
-    static HeightSource sourceOf(const TileRenderEntry& e) {
-        HeightSource s;
-        const TilesetTile* tile =
-            e.usesAncestorFallback ? e.renderTile : e.selectedTile;
-        if (!tile) return s;
-        s.heightmap = tile->content.renderContent.retainedHeightmap();
-        s.bounds = &tile->bounds;
-        // fade 恒按**占屏瓦片**(selectedKey)的 z 取:remap 时位移幅度跟后代走
-        // (见 GltfDrawCommandBuilder 的 `terrainReliefFade(desc.key.z)`)。
-        s.fade = terrainReliefFade(e.selectedKey.z);
-        if (e.usesAncestorFallback) {
-            // remap:模板恒 coarse 档,且 fine/coarse 同源同值 → morph 钉 1
-            // (见 GltfDrawCommandBuilder 的 remap 分支)。
-            s.gridSize = kTerrainDisplacementGridSize;
-            s.morph = 1.0f;
-        } else {
-            s.gridSize = terrainGridSizeForSse(
-                tile->selectionFrameState.screenSpaceError);
-            s.morph = tile->selectionFrameState.terrainMorphFactor;
-        }
-        return s;
-    }
-
-    /// 该来源在给定经纬处**渲染出来**的高度 = mix(coarse, fine, morph)。
-    /// coarse 档 = 偶数格点晶格,恰好等于半密度栅格上的同一采样(节点 i=2j 在
-    /// gridN 栅格上的 u = j/(gridN/2)),故复用同一个函数换档位传参即可。
-    static float renderedHeight(const HeightSource& s, double lonRad,
-                                double latRad) {
-        const float fine = DecodedHeightmapSampler::sampleHeightRenderGrid(
-            *s.heightmap, *s.bounds, lonRad, latRad, s.gridSize);
-        if (s.morph >= 0.999f) return fine * s.fade;
-        const float coarse = DecodedHeightmapSampler::sampleHeightRenderGrid(
-            *s.heightmap, *s.bounds, lonRad, latRad,
-            std::max(1, s.gridSize / 2));
-        return (coarse + (fine - coarse) * s.morph) * s.fade;
-    }
-
-    /// 边 index 与 shader 打包序一致:0=W 1=E 2=N 3=S;v=0 为北。
-    /// 返回该边第 t∈[0,1] 处的经纬(UV 在瓦片 Rectangle 内线性,与
-    /// sampleHeightRenderGrid 的 u/v 反算约定同一套)。
-    static void edgePoint(const Rectangle& b, int edge, double t,
-                          double& lonRad, double& latRad) {
-        switch (edge) {
-            case 0: lonRad = b.west();  latRad = b.north() - t * b.height(); break;
-            case 1: lonRad = b.east();  latRad = b.north() - t * b.height(); break;
-            case 2: latRad = b.north(); lonRad = b.west() + t * b.width();  break;
-            default: latRad = b.south(); lonRad = b.west() + t * b.width();  break;
-        }
-    }
-
     static Result measure(const TilePlan& plan) {
         Result out;
         for (const TileEdgeSnapRecord& rec : plan.edgeSnapRecords) {
@@ -189,7 +121,7 @@ struct TileEdgeMismatchProbe {
                 const int lg = rec.edgeLog2[edge];
                 const TileRenderEntry* nbr = rec.neighbor[edge];
                 if (lg <= 0 || !nbr) continue;
-                const HeightSource ns = sourceOf(*nbr);
+                const terrain_edge::HeightSource ns = terrain_edge::sourceOf(*nbr);
                 if (!ownHm || !ownHm->valid() || !ns.valid()) {
                     ++out.skippedEdges;
                     continue;
@@ -200,19 +132,19 @@ struct TileEdgeMismatchProbe {
                 ++st.edges;
                 // 吸附节点:自栅格上每 2^lg 一个 → 共 gridN/2^lg + 1 个。
                 const int step = 1 << lg;
-                const int nodes = std::max(1, ownGrid / step) + 1;
+                const int nodes = terrain_edge::edgeNodeCount(ownGrid, lg);
                 const int stride = std::max(1, (nodes - 1) / kMaxNodesPerEdge + 1);
                 for (int j = 0; j < nodes; j += stride) {
                     const double t =
                         static_cast<double>(j * step) / ownGrid;
                     double lon = 0.0, lat = 0.0;
-                    edgePoint(rec.tile->bounds, edge, std::min(t, 1.0), lon, lat);
+                    terrain_edge::edgePoint(rec.tile->bounds, edge, std::min(t, 1.0), lon, lat);
                     // 细侧:吸附覆盖 morph,节点处取的就是自纹理该纹素。
                     const float own =
                         DecodedHeightmapSampler::sampleHeightRenderGrid(
                             *ownHm, rec.tile->bounds, lon, lat, ownGrid) *
                         ownFade;
-                    const float other = renderedHeight(ns, lon, lat);
+                    const float other = terrain_edge::renderedHeight(ns, lon, lat);
                     st.add(std::fabs(own - other));
                 }
             }
