@@ -448,6 +448,12 @@ void SceneRenderPipeline::buildLayerCommands(
     }
     // 贴地(P3):把主地形的区域采样器/代次注入矢量层。每帧刷新以跟随
     // pending 地形接管等主 tileset 指针变化;闭包只在渲染线程当帧使用。
+    //
+    // E4 裁决(2026-08-07):primary 存活期矢量贴地与相机同用 primary,高度
+    // 基准一致;pending 回落只覆盖 primary==null 的空窗,而 coordinator 对
+    // 该情形立即提交接管(空窗 ≤1 帧),相机侧(SceneInteractionCoordinator
+    // 只看 terrainTileset)无需对称覆盖。⚠️未来接通 stageTilesetReplacement
+    // (当前全仓零生产调用者)若把接管改成非立即,须同步重估两侧基准一致性。
     Tileset* terrainForClamp = context.terrainTileset
                                    ? context.terrainTileset
                                    : context.pendingTerrainTileset;
