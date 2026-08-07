@@ -90,6 +90,10 @@ TerrainHeightService::TerrainHeightService(const TilesetTileRegistry& registry,
     : registry_(&registry),
       scheme_(&scheme) {}
 
+std::uint64_t TerrainHeightService::heightmapGeneration() {
+    return TileRenderContentState::heightmapGeneration();
+}
+
 std::size_t TerrainHeightService::irregularCount() const {
     std::size_t count = 0;
     for (const auto& [zoom, tiles] : irregularByZoom_) {

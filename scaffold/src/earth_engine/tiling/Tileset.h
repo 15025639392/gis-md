@@ -28,7 +28,7 @@
 #include "TileSelectionReuseState.h"
 #include "TilesetTerrainProviders.h"
 #include "TilesetTileRegistry.h"
-#include "LoadedTerrainHeightSampler.h"
+#include "TerrainHeightService.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../core/math/Vec3.h"
 #include "../content/GltfContentProvider.h"
@@ -211,11 +211,11 @@ public:
         return sampleHeightOptional(lngRad, latRad).value_or(0.0f);
     }
 
-    /// 区域批量高程采样器(矢量贴地 P3):候选瓦片按区域一次收集,之后的
-    /// 逐顶点查询只扫该候选集,免去 sampleHeightOptional 的逐次全注册表
-    /// 扫描。返回值持瓦片裸指针,仅限渲染线程当帧同步使用。
-    LoadedTerrainAreaSampler createAreaHeightSampler(
-        const Rectangle& area) const;
+    /// CPU 统一高程采样服务(索引化点查询/质量标签/渲染网格一致模式)。
+    /// 相机探针、矢量贴地、拾取的共同高度来源;仅渲染线程。
+    const TerrainHeightService& heightService() const {
+        return heightService_;
+    }
 
     /// cesium-native: release all render references after GPU submit.
     /// Called by Scene after renderer_->submit(commands) so that
@@ -335,6 +335,9 @@ private:
     std::vector<TilesetTile*> selectionActiveTilesPrev_;
 
     TilesetTileRegistry tileRegistry_;
+    // NSDMI:声明序在 tileScheme_/tileRegistry_ 之后,构造时二者已就绪;
+    // 服务与 Tileset 同生共死是其索引持瓦片裸指针的安全前提。
+    TerrainHeightService heightService_{tileRegistry_, *tileScheme_};
     TileContentLifecycleManager contentLifecycle_;
     TileContentCacheManager contentCache_;
     GpuUploadQueue gpuUploadQueue_;  // async CPU→GPU pipeline

@@ -66,6 +66,11 @@ public:
                                  double latitudeRadians,
                                  Interp interp) const;
 
+    /// 地形高度世界的全局强代次(TileRenderContentState::heightmapGeneration
+    /// 的轻头文件直通)。相机探针失效、矢量重钳节流与本服务的索引重建共用
+    /// 这一个信号源;替代 contentBytesUsed 弱代理。
+    static std::uint64_t heightmapGeneration();
+
     /// 诊断:bounds != scheme 矩形而进溢出列表的瓦片数(生产稳态应恒 0)。
     std::size_t irregularCount() const;
 

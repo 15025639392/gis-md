@@ -400,17 +400,12 @@ void Tileset::onSelectionVisitTile(TilesetTile& tile) {
 
 std::optional<float> Tileset::sampleHeightOptional(
     double lngRad, double latRad) const {
-    return LoadedTerrainHeightSampler::sampleHeightOptional(
-        tileRegistry_.tiles(),
-        lngRad,
-        latRad);
-}
-
-LoadedTerrainAreaSampler Tileset::createAreaHeightSampler(
-    const Rectangle& area) const {
-    // 矢量贴地专用 → 渲染网格一致采样(与上屏地形面同一分段线性面)。
-    return LoadedTerrainAreaSampler(tileRegistry_.tiles(), area,
-                                    /*renderGridConsistent=*/true);
+    const auto sample = heightService_.sample(
+        lngRad, latRad, TerrainHeightService::Interp::FullResBilinear);
+    if (!sample) {
+        return std::nullopt;
+    }
+    return sample->height;
 }
 
 void Tileset::update(

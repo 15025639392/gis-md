@@ -11,11 +11,17 @@ namespace earth_engine {
 struct TilesetTile;
 class Rectangle;
 
+// ⚠️ 迁移 golden(生产勿用):LoadedTerrainAreaSampler 与
+// LoadedTerrainHeightSampler 的生产调用方已全部迁往 TerrainHeightService
+// (索引化点查询,语义逐点等价)。这两个类仅作对拍守卫的 golden 基准保留
+// (test_terrain_height_service.cpp)——golden 必须是被冻结的旧实现,不能
+// 跟着新实现演化。TerrainAncestorHeightSource 不在此列:它是"整面单一
+// 祖先源"语义(fill 代理网格要一张连续面,不能逐点混档),仍是生产路径。
+//
 // Batched terrain-height sampler over a fixed area. Gathers the candidate
 // loaded-terrain tiles overlapping the area ONCE, then answers many point
 // queries against just that set — avoiding the full-registry scan that
-// sampleHeightOptional does per call. Used to lift the many vertices of a fill
-// proxy (all inside the tile's rectangle) to loaded-terrain height cheaply.
+// sampleHeightOptional does per call.
 class LoadedTerrainAreaSampler {
 public:
     /// @param renderGridConsistent true = 按渲染网格分段线性取高

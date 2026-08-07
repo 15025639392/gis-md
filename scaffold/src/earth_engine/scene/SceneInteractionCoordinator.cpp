@@ -39,8 +39,8 @@ void SceneInteractionCoordinator::configureCameraSurfacePicker(
         });
 
     // 近场探针:区域批量采样(碰撞钳位主路径,单点 TerrainHeightFunc 退为
-    // 无探针回退)+ 数据代次(contentBytesUsed 作变更计数代理,与矢量贴地
-    // SceneRenderPipeline 同一惯用法)。
+    // 无探针回退)+ 数据代次(heightmap 强代次,与矢量贴地
+    // SceneRenderPipeline 同一信号源;替代 contentBytesUsed 弱代理)。
     cameraController.setTerrainAreaSampleFunc(
         [contextProvider](const Vec3& groundEcef,
                           double radiusMeters,
@@ -55,9 +55,8 @@ void SceneInteractionCoordinator::configureCameraSurfacePicker(
         });
     cameraController.setTerrainRevisionFunc(
         [contextProvider]() -> uint64_t {
-            const Tileset* tileset = contextProvider().terrainTileset;
-            return tileset
-                ? static_cast<uint64_t>(tileset->contentBytesUsed())
+            return contextProvider().terrainTileset
+                ? TerrainHeightService::heightmapGeneration()
                 : 0;
         });
 }

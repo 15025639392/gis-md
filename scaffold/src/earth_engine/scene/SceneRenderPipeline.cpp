@@ -477,19 +477,29 @@ void SceneRenderPipeline::buildLayerCommands(
     for (auto& fLayer : context.featureRenderLayers) {
         FeatureTerrainSampling sampling;
         if (terrainForClamp) {
+            // 统一采样服务:cell 索引让逐点查询 O(档数),区域预筛不再必要
+            // (area 参数保留在闭包签名里,矢量层接口不动)。矢量贴地 →
+            // 渲染网格一致采样,与上屏地形面同一分段线性面。
             sampling.makeAreaSampler =
                 [terrainForClamp](const Rectangle& area)
                 -> std::function<std::optional<float>(double, double)> {
-                auto sampler = std::make_shared<LoadedTerrainAreaSampler>(
-                    terrainForClamp->createAreaHeightSampler(area));
-                if (sampler->empty()) return nullptr;
-                return [sampler](double lng, double lat) {
-                    return sampler->sample(lng, lat);
+                (void)area;
+                const TerrainHeightService* heights =
+                    &terrainForClamp->heightService();
+                return [heights](double lng,
+                                 double lat) -> std::optional<float> {
+                    const auto sample = heights->sample(
+                        lng, lat,
+                        TerrainHeightService::Interp::RenderGridConsistent);
+                    if (!sample) {
+                        return std::nullopt;
+                    }
+                    return sample->height;
                 };
             };
-            sampling.revision = [terrainForClamp]() {
-                return static_cast<uint64_t>(
-                    terrainForClamp->contentBytesUsed());
+            // 强代次替代 contentBytesUsed 弱代理(字节数恰好不变会漏失效)。
+            sampling.revision = []() {
+                return TerrainHeightService::heightmapGeneration();
             };
         }
         fLayer->setTerrainSampling(std::move(sampling));
