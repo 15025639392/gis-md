@@ -669,6 +669,7 @@ cesium-native `QuadtreeTilingScheme` equivalent. `Rectangle` + `rootTilesX/Y` + 
 
 ### OctreeTilingScheme.h / .cpp
 
+⚠️ **有意未接线，禁止当死代码删**：本子系统（`TileAvailability` + `OctreeTilingScheme` + `ImplicitTileIdUtilities`，合计 1792 行实现 + 2466 行测试）与生产加载管线**零交叉引用** —— 后者全程只用 `TileKey`，从不构造 `OctreeTileID`。2026-08-07 的废弃分支排查曾把它列为删除候选，用户裁决**保留**：3D Tiles 1.1 隐式瓦片（稀疏三维数据：倾斜摄影/点云/BIM）在规划内。实现完整、测试充分，接线时直接可用。再次扫描到「零引用」时先读这条。
 cesium-native `OctreeTilingScheme` equivalent for 3D voxel/implicit octrees. `OctreeTileID{level,x,y,z}` (.h:10-21). `AxisAlignedBox` + `rootTilesX/Y/Z`. `tileCountX/Y/Z(level) = rootTiles << level` (.cpp:14-24). `positionToTile(Vec3,level)` (.cpp:26-56); `tileToBox(OctreeTileID)` (.cpp:58-77) — note it builds the box from origin-relative sizes (min = size·index).
 
 ### TileBoundingVolume.h / .cpp
@@ -683,6 +684,7 @@ cesium-native `BoundingVolume` variant. `TileBoundingVolumeKind {Region, Sphere,
 
 ### ImplicitTileIdUtilities.h / .cpp
 
+⚠️ **有意未接线，禁止当死代码删**：本子系统（`TileAvailability` + `OctreeTilingScheme` + `ImplicitTileIdUtilities`，合计 1792 行实现 + 2466 行测试）与生产加载管线**零交叉引用** —— 后者全程只用 `TileKey`，从不构造 `OctreeTileID`。2026-08-07 的废弃分支排查曾把它列为删除候选，用户裁决**保留**：3D Tiles 1.1 隐式瓦片（稀疏三维数据：倾斜摄影/点云/BIM）在规划内。实现完整、测试充分，接线时直接可用。再次扫描到「零引用」时先读这条。
 cesium-native `ImplicitTilingUtilities` equivalent (24 KB .cpp). Static-only class (deleted ctor). Overloaded for both `TileKey` (quadtree) and `OctreeTileID` (octree): `children`, `resolveUrl` (`{level}/{x}/{y}[/{z}]` templates), `computeBoundingVolume` (OBB / cylinder / region / S2Cell / `TileBoundingVolume`), `computeRegionBoundingVolume`, `parentId`, `subtreeRootId`, `absoluteTileIdToRelative`, `mortonIndex` / `relativeMortonIndex`, `levelDenominator(level)` (.h:21-85). Morton/subtree math backs 3D-Tiles 1.1 implicit tiling.
 
 ### CrsProfile.h / .cpp
@@ -1182,6 +1184,7 @@ Files read and verified: all listed content-lifecycle files under `/Users/ldy/De
 
 ### TileAvailability.h / .cpp
 
+⚠️ **有意未接线，禁止当死代码删**：本子系统（`TileAvailability` + `OctreeTilingScheme` + `ImplicitTileIdUtilities`，合计 1792 行实现 + 2466 行测试）与生产加载管线**零交叉引用** —— 后者全程只用 `TileKey`，从不构造 `OctreeTileID`。2026-08-07 的废弃分支排查曾把它列为删除候选，用户裁决**保留**：3D Tiles 1.1 隐式瓦片（稀疏三维数据：倾斜摄影/点云/BIM）在规划内。实现完整、测试充分，接线时直接可用。再次扫描到「零引用」时先读这条。
 3D Tiles **implicit tiling** 的可用性位图(740 行)。子树缓冲 + Morton 索引。
 
 | 项 | 行 | 说明 |
