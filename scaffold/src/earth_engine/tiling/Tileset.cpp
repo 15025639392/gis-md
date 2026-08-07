@@ -400,8 +400,12 @@ void Tileset::onSelectionVisitTile(TilesetTile& tile) {
 
 std::optional<float> Tileset::sampleHeightOptional(
     double lngRad, double latRad) const {
+    // 渲染网格一致:本入口的两个消费者(拾取、相机单点兜底)问的都是
+    // "屏幕上那张面"——拾取语义是点到所见地形,相机碰撞是不穿所见地形,
+    // 与探针/矢量贴地同源。全分辨率双线性与渲染面的格内起伏差在这里
+    // 是亚米级误差来源而非精度提升(决策2,2026-08-07)。
     const auto sample = heightService_.sample(
-        lngRad, latRad, TerrainHeightService::Interp::FullResBilinear);
+        lngRad, latRad, TerrainHeightService::Interp::RenderGridConsistent);
     if (!sample) {
         return std::nullopt;
     }
