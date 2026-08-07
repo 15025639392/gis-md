@@ -1831,8 +1831,9 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 | `heightCacheKey` | .cpp:117-128 | 高度纹理缓存键 |
 | `findHeightArray` / `ensureHeightArray` | .cpp:130-134 / :136-162 | 按 gridSize 取/建高度 texture array |
 | `bakeTerrainHeightNormalTexels` | .cpp:164-274 | 烘高度 + **切空间法线到 B/A 通道** |
-| `acquireHeightTexture` | .cpp:277-337 | 取高度纹理层 |
-| `touchHeightTexture` | .cpp:339- | LRU 触碰 |
+| `acquireHeightTexture` | .cpp:278-352 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768) |
+| `updateEdgeLutRows` | .cpp:354-368 | 写本帧边吸附的邻居高度差表(①-1)。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
+| `touchHeightTexture` | .cpp:370- | LRU 触碰 |
 
 ### HeightmapTerrainContentProvider.h / .cpp
 

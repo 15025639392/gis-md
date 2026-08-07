@@ -148,6 +148,46 @@ public:
         int layer = -1;            // 本瓦片高度数据所在层
         uint32_t epoch = 0;        // 该层分配代;层被重分配后旧 epoch 失效
     };
+
+    // 无缝北极星 ①-1:每层在 (gridN+1) 方高度数据**之下**多开 4 行,存边吸附
+    // 的邻居高度表(每边一行,行内第 j 个纹素 = 该边第 j 个吸附节点上「粗邻居
+    // 实际渲染出的高度 − 本瓦片该纹素高度」)。
+    //
+    // 为什么塞进自己这张纹理而不是新建一张:LUT 每边最多 gridN/2+1 个节点
+    // (coarse 33、dense 129),恒 ≤ 层宽 gridN+1 —— 放得下。于是 shader 侧
+    // 零新增 sampler、实例流零改动(hLayer 本来就到得了),batcher 的「同批同
+    // 表」不变量也不必动。代价仅显存 65²→65×69、257²→257×261,合计 +0.47MB。
+    //
+    // ⚠️ 存的是**差值**而非绝对高度:绝对高度要跟着每瓦片的 (minH,range) 反
+    // 量化,而 LUT 的量程与本瓦片高度的量程不是一回事,共用会静默截断。差值
+    // 走下面的固定量程,零传输且失效时天然退化(delta=0 = 改前的自纹理吸附)。
+    static constexpr int kEdgeLutRows = 4;
+    // 差值编码量程 ±kEdgeLutDeltaRangeMeters。16bit / 4096m = 步长 0.0625m,
+    // 优于 Terrain-RGB 的 0.1m 数据步长(否则修掉 ε 又引入同量级新误差)。
+    // 上界取 2048m 是因为实测 fadeDiffer 群体的错位峰值到过 1044m —— 只覆盖
+    // ε(几十米)会让跨 fade 档的边静默截断。
+    static constexpr float kEdgeLutDeltaRangeMeters = 2048.0f;
+    static constexpr int heightLayerRows(int gridSize) {
+        return gridSize + 1 + kEdgeLutRows;
+    }
+    /// 差值 ↔ 16bit 归一化。与 shader 侧 `eeSampleTerrainHeight` 的 RG 反量化
+    /// 同一编码,只是量程换成固定的 ±kEdgeLutDeltaRangeMeters。
+    /// ⚠️ 差值 0 落在量程**中点**(q=32768),不是 0 —— 全零字节会被解成 −2048m。
+    static uint16_t encodeEdgeLutDelta(float deltaMeters) {
+        const float r = kEdgeLutDeltaRangeMeters;
+        const float t = (std::clamp(deltaMeters, -r, r) + r) / (2.0f * r);
+        return static_cast<uint16_t>(t * 65535.0f + 0.5f);
+    }
+    static float decodeEdgeLutDelta(uint16_t q) {
+        const float r = kEdgeLutDeltaRangeMeters;
+        return (static_cast<float>(q) / 65535.0f) * 2.0f * r - r;
+    }
+
+    /// 写入某瓦片本帧的边 LUT 行(①-1)。bytes 为 kEdgeLutRows 行 × (gridSize+1)
+    /// 个 RGBA8 纹素,RG = encodeEdgeLutDelta 的高低字节。
+    /// 该瓦片当前不在该档驻留时返回 false(调用方据此清 lutValid 位)。
+    bool updateEdgeLutRows(const TileKey& key, int gridSize,
+                           const uint8_t* bytes);
     // GLES3.0 GL_MAX_ARRAY_TEXTURE_LAYERS 规范下限 256(Adreno 实测 2048),
     // 按规范下限定容;峰值可见 ~103 层留有余量。65²×4B×256 ≈ 4.3MB。
     static constexpr int kHeightArrayLayers = 256;

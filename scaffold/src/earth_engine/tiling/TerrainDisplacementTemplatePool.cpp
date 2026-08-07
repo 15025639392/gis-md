@@ -141,7 +141,8 @@ TerrainDisplacementTemplatePool::ensureHeightArray(int gridSize) {
     const int layers = layersForGridSize(gridSize);
     TextureDesc desc;
     desc.width = gridSize + 1;
-    desc.height = gridSize + 1;
+    // 末尾多 kEdgeLutRows 行给边吸附的邻居高度差表(①-1),见头文件说明。
+    desc.height = heightLayerRows(gridSize);
     desc.arrayLayers = layers;
     desc.format = TextureDesc::Format::RGBA8;
     desc.mipmap = false;
@@ -324,6 +325,20 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
         arr->layerPool.release(k);
         return nullptr;
     }
+    // ①-1:把本层的边 LUT 行初始化为「差值 0」。层是 LRU 复用的,不初始化就会
+    // 读到上一个租户留下的差值;而 0 恰好等于改前的自纹理吸附,是安全默认。
+    // ⚠️ 全零字节**不是**差值 0 —— 差值走 ±R 的归一化,0 落在量程中点。
+    {
+        std::vector<uint8_t> lut(static_cast<size_t>(n) * kEdgeLutRows * 4, 0);
+        const uint16_t q = encodeEdgeLutDelta(0.0f);
+        for (size_t i = 0; i < lut.size(); i += 4) {
+            lut[i] = static_cast<uint8_t>(q >> 8);
+            lut[i + 1] = static_cast<uint8_t>(q & 0xFF);
+        }
+        device_->updateTextureRegion(arr->texture.get(), 0, n, n, kEdgeLutRows,
+                                     lut.data(), static_cast<size_t>(n) * 4,
+                                     layer);
+    }
 
     HeightTexture view;
     view.texture = arr->texture.get();
@@ -334,6 +349,22 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     view.epoch = arr->layerEpochs[static_cast<size_t>(layer)];
     auto inserted = arr->index.emplace(k, view);
     return &inserted.first->second;
+}
+
+bool TerrainDisplacementTemplatePool::updateEdgeLutRows(const TileKey& key,
+                                                        int gridSize,
+                                                        const uint8_t* bytes) {
+    if (!device_ || !bytes) return false;
+    auto arrIt = heightArrays_.find(gridSize);
+    if (arrIt == heightArrays_.end() || !arrIt->second.texture) return false;
+    HeightArray* arr = &arrIt->second;
+    auto it = arr->index.find(heightCacheKey(key));
+    if (it == arr->index.end() || it->second.layer < 0) return false;
+    const int n = gridSize + 1;
+    return device_->updateTextureRegion(arr->texture.get(), 0, n, n,
+                                        kEdgeLutRows, bytes,
+                                        static_cast<size_t>(n) * 4,
+                                        it->second.layer);
 }
 
 void TerrainDisplacementTemplatePool::touchHeightTexture(const TileKey& key,
