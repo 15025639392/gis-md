@@ -168,6 +168,8 @@ public:
 ///
 /// **LRU 自愈无悬垂**:间接纹理每帧重建 → 淘汰页的 cell 自动因 pages_ 查不到而变 miss;
 /// 淘汰时 erasePageEntry cancel fetch,在途到达经 drain 校验(pages_ 存在 + layer 匹配)丢弃。
+class ThreadPool;
+
 class TerrainPageStore {
 public:
     struct Config {
@@ -176,6 +178,11 @@ public:
         // 512×256²×4 ≈ 128MB VRAM 上限;实际按 LRU 只驻留屏幕可见 ~125-185 页。
         int maxPages = 512;
         int maxUploadsPerFrame = 8;  // 每帧上传层数上限(涓流,勿拖动期冻结)
+        /// 合成(重采样+按源序 alphaOver)下放的 worker 池。真机测得 compose 是
+        /// tick 的支配成本且单帧尖刺 33-37ms(2026-08-07 三段插桩),下放后渲染
+        /// 线程只剩上传+叠画。null = 就地同步合成(host 测试确定性;行为与
+        /// 下放前逐字节一致,只是同帧完成)。
+        ThreadPool* composeWorkers = nullptr;
     };
 
     TerrainPageStore() = default;
@@ -294,13 +301,26 @@ private:
     ///
     /// C-1:`uploaded` 拆成 assembler 的两个状态 —— `hasTexels()`(至少一源已合成上传,
     /// determination 据此判 cell resident)与 `complete()`(全源到齐,可释放缓冲)。
+    struct PageComposeState;  // 定义在 .cpp:worker 侧合成状态(mutex 序列化)
+
     struct PageEntry {
         int layer = -1;
-        PageSourceAssembler assembler;
+        /// 合成状态归 worker 侧(shared_ptr:worker 任务可比页存储活得久;
+        /// 淘汰置 cancelled,迟到结果经 drain 校验丢弃)。
+        std::shared_ptr<PageComposeState> compose;
         std::vector<CancellationToken> fetchTokens;  // 每源一个
         // C-2c:本页的 GPU 叠画是否已完成。每次上传置 false(上传覆盖了叠画结果),
         // decoratePage 成功后置 true;tick 每帧重试未完成的页。
         bool decorated = false;
+        /// **已上传**的合成进度镜像(渲染线程独占,drainReadyUploads 推进)。
+        /// determination 判 resident 必须跟"已上传"走 —— 合成下 worker 后
+        /// "已合成"与"已上传"分离,跟合成走会让间接纹理采到未写入的层。
+        int uploadedSources = 0;
+        int totalSources = 0;
+        bool uploadedTexels() const { return uploadedSources > 0; }
+        bool uploadComplete() const {
+            return totalSources > 0 && uploadedSources >= totalSources;
+        }
     };
 
     /// 每个屏幕可见 capped 瓦片的稀疏间接纹理(gridN×gridN RGBA8)。
@@ -329,6 +349,8 @@ private:
     void kickPageFetches(const TileKey& pageTileKey, uint64_t pageKey, int layer,
                          PageEntry& entry);
     void drainInbox();
+    /// 取走 worker 已合成的页快照,按预算上传 + 叠画(渲染线程)。
+    void drainReadyUploads();
     void erasePageEntry(uint64_t pageKey);
 
     RenderDevice* device_ = nullptr;
@@ -362,6 +384,8 @@ private:
     std::vector<RasterOverlayTileProvider*> providers_;
     std::vector<RasterOverlayTileProvider*> detProvidersScratch_;  // 剔 null 复用
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
+    struct ReadyUploadInbox;  // 定义在 .cpp:worker 合成完毕的快照投递箱
+    std::shared_ptr<ReadyUploadInbox> readyInbox_;   // 同上,存活于 worker 任务
     TerrainPageDecorator* decorator_ = nullptr;      // C-2c:页上传后叠画(不持有)
 
     // 门② determination:子瓦片相对 capped 瓦片的最大细分深度上限

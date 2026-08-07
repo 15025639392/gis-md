@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 
+#include "../core/async/AsyncSystem.h"
 #include "../core/math/OrientedBoundingBox.h"
 #include "../debug/Contracts.h"
 #include "../debug/PerfTimer.h"
@@ -234,6 +235,31 @@ struct TerrainPageStore::PendingInbox {
     };
     std::mutex mutex;
     std::vector<Item> pages;
+};
+
+/// worker 侧合成状态。mutex 序列化同页多源的 accept(alphaOver 不可交换,
+/// stash 兜乱序,故任务执行次序无关紧要);cancelled 由淘汰路径置位,在途
+/// 任务据此早退(迟到快照仍会被 drainReadyUploads 的账本校验丢弃 ——
+/// cancelled 是省功,校验才是安全线)。
+struct TerrainPageStore::PageComposeState {
+    std::mutex mutex;
+    PageSourceAssembler assembler;
+    std::atomic<bool> cancelled{false};
+};
+
+/// worker 合成完毕的页快照投递箱(shared_ptr 持有,worker 任务可比页存储
+/// 活得久)。composeMicros 是 worker 侧合成耗时累计 —— tick60 的 compose 列
+/// 自此计的是 worker 时间,渲染线程成本只剩 upload/decorate 两列。
+struct TerrainPageStore::ReadyUploadInbox {
+    struct Item {
+        uint64_t key = 0;
+        int layer = 0;
+        int composedSources = 0;           // 快照时的合成进度(源数)
+        std::vector<uint8_t> texels;       // side²×4 快照
+    };
+    std::mutex mutex;
+    std::vector<Item> items;
+    std::atomic<uint64_t> composeMicros{0};
 };
 
 void TerrainPageStore::resamplePageSource(const DecodedImage& image, int depth,
@@ -587,12 +613,15 @@ void TerrainPageStore::updateVisiblePages(
                 PageEntry& pe = it->second;
                 if (inserted) {
                     pe.layer = layer;
-                    pe.assembler.configure(static_cast<int>(providers_.size()),
-                                           config_.pageSizeTexels);
+                    pe.compose = std::make_shared<PageComposeState>();
+                    pe.compose->assembler.configure(
+                        static_cast<int>(providers_.size()),
+                        config_.pageSizeTexels);
+                    pe.totalSources = static_cast<int>(providers_.size());
                     kickPageFetches(kc.fetchKey, kc.pageKey, layer, pe);
                 }
                 // C-1:首源合成上传即算 resident(底图先亮),不等最慢的源。
-                if (pe.assembler.hasTexels()) {
+                if (pe.uploadedTexels()) {
                     // 目标页就绪 = 理想 LOD(settled 逐字节=现状精/粗页)。
                     encodeLayerRGBA8(pe.layer, true, kc.d, texel);
                     ++residentCells;
@@ -617,7 +646,7 @@ void TerrainPageStore::updateVisiblePages(
                 aKey.y = subY >> ad;
                 const uint64_t aPageKey = packKey(aKey);
                 const auto ait = pages_.find(aPageKey);
-                if (ait != pages_.end() && ait->second.assembler.hasTexels()) {
+                if (ait != pages_.end() && ait->second.uploadedTexels()) {
                     foundLayer = ait->second.layer;
                     foundD = ad;
                     pool_.touch(aPageKey, frameId_);  // 显示中的祖先页不该被淘汰
@@ -753,9 +782,9 @@ void TerrainPageStore::updateVisiblePages(
         int completePages = 0;
         int partialPages = 0;
         for (const auto& [pageKey, pe] : pages_) {
-            if (pe.assembler.complete()) {
+            if (pe.uploadComplete()) {
                 ++completePages;
-            } else if (pe.assembler.hasTexels()) {
+            } else if (pe.uploadedTexels()) {
                 ++partialPages;
             }
         }
@@ -778,6 +807,9 @@ TerrainPageStore::~TerrainPageStore() {
     for (auto& [pageKey, pe] : pages_) {
         for (CancellationToken& token : pe.fetchTokens) {
             token.cancel();  // 尽力取消在途(回调仍安全:只写 shared inbox)
+        }
+        if (pe.compose) {
+            pe.compose->cancelled.store(true, std::memory_order_release);
         }
     }
 }
@@ -830,6 +862,7 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
     pool_.configure(config_.maxPages, /*blockLayers=*/1);
     indirPool_.configure(kIndirArrayLayers, /*blockLayers=*/1);
     inbox_ = std::make_shared<PendingInbox>();
+    readyInbox_ = std::make_shared<ReadyUploadInbox>();
     return true;
 }
 
@@ -840,6 +873,10 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
     }
     for (CancellationToken& token : it->second.fetchTokens) {
         token.cancel();  // 在途 fetch 全部作废(到达也会被 drain 校验丢弃)
+    }
+    if (it->second.compose) {
+        // 在途合成任务省功早退;迟到快照由 drainReadyUploads 账本校验丢弃。
+        it->second.compose->cancelled.store(true, std::memory_order_release);
     }
     pages_.erase(it);
     if (decorator_) {
@@ -908,12 +945,19 @@ void TerrainPageStore::tick() {
         winDecorateMs_ += perf::nowMs() - decorateStartMs;
         decoratorTickedFrame_ = frameId_;
     }
-    drainInbox();  // fetch 已在 determination 页首次命中时 kick
+    drainInbox();        // 阶段 A:原始影像 → worker 合成任务(或就地跑)
+    drainReadyUploads();  // 阶段 B:worker 快照 → 预算内上传 + 叠画
     {
         const double decorateStartMs = perf::nowMs();
         retryPendingDecorations();
         winDecorateMs_ += perf::nowMs() - decorateStartMs;
     }
+    // compose 列自异步化起计的是 **worker 侧**耗时(判归属用);maxTick 只含
+    // 渲染线程(dispatch+upload+decorate)—— 下放成功的判据就是它塌下来。
+    winComposeMs_ +=
+        static_cast<double>(readyInbox_->composeMicros.exchange(
+            0, std::memory_order_relaxed)) /
+        1000.0;
     winMaxTickMs_ = std::max(winMaxTickMs_, perf::nowMs() - tickStartMs);
     // 220ms 归属拆分:每 60 tick 报窗口累计与单帧峰值。**看的是归属比例**:
     // compose 占大头 → 下 worker;upload 占大头 → 降 maxUploadsPerFrame/换
@@ -948,7 +992,7 @@ void TerrainPageStore::retryPendingDecorations() {
         if (budget <= 0) {
             break;
         }
-        if (pe.decorated || !pe.assembler.hasTexels() || pe.layer < 0) {
+        if (pe.decorated || !pe.uploadedTexels() || pe.layer < 0) {
             continue;
         }
         GE_CONTRACT(contracts::Id::PageDecorateOrdering,
@@ -1006,17 +1050,102 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
 }
 
 void TerrainPageStore::drainInbox() {
-    std::vector<PendingInbox::Item> ready;
+    // 阶段 A(派发):原始解码影像 → worker 合成任务。渲染线程只做账本校验
+    // (页在/层配)与派发;重采样+alphaOver 全在 worker(真机测得 compose 是
+    // tick 支配成本且单帧尖刺 33-37ms)。pool 为空(host 测试)就地跑 ——
+    // 行为与下放前逐字节一致,只是同帧完成。
+    std::vector<PendingInbox::Item> arrived;
     {
         std::lock_guard<std::mutex> lock(inbox_->mutex);
-        ready.swap(inbox_->pages);
+        arrived.swap(inbox_->pages);
+    }
+    const int side = config_.pageSizeTexels;
+    for (auto& item : arrived) {
+        // C-1b:**不再要求源尺寸等于页边长**。resamplePageSource 按 image 自身
+        // 尺寸重采样,任意 tileSize 的 provider 都能进页。旧护栏「非 256² 跳过」
+        // 是静默丢弃 —— 真机踩过:矢量源 tileSize=512,图非空(故不打 NULL 日志)
+        // 却恒被丢,表现为该源在页内完全不存在,且没有任何一条错误日志。
+        DecodedImage* image = item.image.get();
+        if (!image || image->width <= 0 || image->height <= 0 ||
+            image->pixels.empty()) {
+            continue;
+        }
+        // 校验页仍驻留且 layer 匹配(淘汰/换租后 layer 变或页消失 → 丢弃)。
+        // 上传前 drainReadyUploads 会再验一次 —— 这里挡的是白干,那里挡的是写错层。
+        const auto it = pages_.find(item.key);
+        if (it == pages_.end() || it->second.layer != item.layer ||
+            !it->second.compose) {
+            continue;
+        }
+        ++winInboxItems_;
+        // 任务自持有全部状态(shared_ptr):页存储先亡也不悬垂。ThreadPool 的
+        // std::function 需可拷贝 → image 转 shared_ptr。
+        auto compose = it->second.compose;
+        auto readyInbox = readyInbox_;
+        std::shared_ptr<DecodedImage> sharedImage = std::move(item.image);
+        const uint64_t pageKey = item.key;
+        const int layer = item.layer;
+        const int source = item.source;
+        const int depth = item.ancestorDepth;
+        const int subX = item.subX;
+        const int subY = item.subY;
+        auto task = [compose, readyInbox, sharedImage, pageKey, layer, source,
+                     depth, subX, subY, side]() {
+            if (compose->cancelled.load(std::memory_order_acquire)) {
+                return;  // 页已淘汰:省功(安全线在 drainReadyUploads 校验)
+            }
+            const double composeStartMs = perf::nowMs();
+            std::vector<uint8_t> rgba;
+            resamplePageSource(*sharedImage, depth, subX, subY, side, rgba);
+            ReadyUploadInbox::Item out;
+            bool accepted = false;
+            {
+                std::lock_guard<std::mutex> lock(compose->mutex);
+                // C-1:按源序合成;乱序早到进 stash、重复到达幂等丢弃 ——
+                // 多个 worker 线程的执行次序因此无关紧要(mutex 只保原子性,
+                // 次序正确性由 assembler 自身的 stash 语义保证)。
+                accepted = compose->assembler.accept(source, rgba.data());
+                if (accepted) {
+                    out.texels = compose->assembler.texels();  // 快照
+                    out.composedSources = compose->assembler.compositedCount();
+                    if (compose->assembler.complete()) {
+                        compose->assembler.releaseBuffers();  // 稳态零额外内存
+                    }
+                }
+            }
+            readyInbox->composeMicros.fetch_add(
+                static_cast<uint64_t>(
+                    (perf::nowMs() - composeStartMs) * 1000.0),
+                std::memory_order_relaxed);
+            if (!accepted) {
+                return;
+            }
+            out.key = pageKey;
+            out.layer = layer;
+            std::lock_guard<std::mutex> lock(readyInbox->mutex);
+            readyInbox->items.push_back(std::move(out));
+        };
+        if (config_.composeWorkers) {
+            config_.composeWorkers->enqueue(std::move(task));
+        } else {
+            task();
+        }
+    }
+}
+
+void TerrainPageStore::drainReadyUploads() {
+    // 阶段 B(上传+叠画,渲染线程):取 worker 快照,按预算 updateTextureRegion。
+    // uploadedSources 在此推进 —— determination 的 resident 判定跟它走,
+    // 保证间接纹理永远只指向已写入的层。
+    std::vector<ReadyUploadInbox::Item> ready;
+    {
+        std::lock_guard<std::mutex> lock(readyInbox_->mutex);
+        ready.swap(readyInbox_->items);
     }
     if (ready.empty()) {
         return;
     }
     const int side = config_.pageSizeTexels;
-    std::vector<uint8_t> rgba(static_cast<size_t>(side) *
-                              static_cast<size_t>(side) * 4u);
     int uploaded = 0;
     size_t requeueFrom = 0;
     for (size_t idx = 0; idx < ready.size(); ++idx) {
@@ -1026,52 +1155,33 @@ void TerrainPageStore::drainInbox() {
         }
         auto& item = ready[idx];
         requeueFrom = idx + 1;
-        DecodedImage* image = item.image.get();
-        // C-1b:**不再要求源尺寸等于页边长**。resamplePageSource 按 image 自身
-        // 尺寸重采样,任意 tileSize 的 provider 都能进页。旧护栏「非 256² 跳过」
-        // 是静默丢弃 —— 真机踩过:矢量源 tileSize=512,图非空(故不打 NULL 日志)
-        // 却恒被丢,表现为该源在页内完全不存在,且没有任何一条错误日志。
-        if (!image || image->width <= 0 || image->height <= 0 ||
-            image->pixels.empty()) {
-            continue;
-        }
-        // 校验页仍驻留且 layer 匹配(淘汰/换租后 layer 变或页消失 → 丢弃,防写错层)。
+        // 安全线:页仍驻留且 layer 匹配才写(淘汰/换租后的迟到快照丢弃)。
         const auto it = pages_.find(item.key);
         if (it == pages_.end()) {
-            continue;  // 页已淘汰(erasePageEntry)
+            continue;
         }
         PageEntry& pe = it->second;
         if (pe.layer != item.layer) {
-            continue;  // 该 layer 已换租给别的页
+            continue;
         }
-        ++winInboxItems_;
-        const double composeStartMs = perf::nowMs();
-        resamplePageSource(*image, item.ancestorDepth, item.subX, item.subY,
-                           side, rgba);
-        // C-1:按源序合成进 assembler;只有真的推进了合成才上传(乱序早到的源
-        // 先暂存不上传,重复到达幂等丢弃 → 不浪费本帧上传预算)。
-        const bool accepted = pe.assembler.accept(item.source, rgba.data());
-        winComposeMs_ += perf::nowMs() - composeStartMs;
-        if (!accepted) {
+        // 同页多快照乱序到达:进度只前进不后退(旧快照晚到不覆盖新画面)。
+        if (item.composedSources <= pe.uploadedSources) {
             continue;
         }
         const double uploadStartMs = perf::nowMs();
         device_->updateTextureRegion(arrayTexture_.get(), 0, 0, side, side,
-                                     pe.assembler.texels().data(),
+                                     item.texels.data(),
                                      static_cast<size_t>(side) * 4u,
                                      item.layer);
         winUploadMs_ += perf::nowMs() - uploadStartMs;
-        // hasTexels 已为真 → 下帧 determination 重建 indir 时该 cell 变 resident。
-        if (pe.assembler.complete()) {
-            pe.assembler.releaseBuffers();  // 全源到齐:稳态零额外内存
-        }
+        pe.uploadedSources = item.composedSources;
         // C-2c:本次上传覆盖了此前的 GPU 叠画 → 标记未叠画并立刻试一次。
         // 未就绪(源瓦片在路上)时由 retryPendingDecorations 后续帧接着试。
         pe.decorated = false;
         if (decorator_) {
             GE_CONTRACT(contracts::Id::PageDecorateOrdering,
                         decoratorTickedFrame_ == frameId_,
-                        "path=drainInbox frame=%llu tickedFrame=%llu layer=%d",
+                        "path=drainReady frame=%llu tickedFrame=%llu layer=%d",
                         (unsigned long long)frameId_,
                         (unsigned long long)decoratorTickedFrame_,
                         item.layer);
@@ -1084,11 +1194,11 @@ void TerrainPageStore::drainInbox() {
         ++uploadedLayerTotal_;
         ++uploaded;
     }
-    // 未处理完的项(超预算)放回 inbox 下帧继续。
+    // 未处理完的项(超预算)放回下帧继续。
     if (requeueFrom < ready.size()) {
-        std::lock_guard<std::mutex> lock(inbox_->mutex);
+        std::lock_guard<std::mutex> lock(readyInbox_->mutex);
         for (size_t idx = requeueFrom; idx < ready.size(); ++idx) {
-            inbox_->pages.push_back(std::move(ready[idx]));
+            readyInbox_->items.push_back(std::move(ready[idx]));
         }
     }
 }

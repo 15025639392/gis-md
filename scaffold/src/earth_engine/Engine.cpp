@@ -346,7 +346,10 @@ bool Engine::render(double deltaSeconds) {
     if (terrainPageStoreEnabled_ && !terrainPageStoreInitFailed_) {
         if (!terrainPageStore_) {
             auto store = std::make_unique<TerrainPageStore>();
-            if (store->initialize(device_, TerrainPageStore::Config{})) {
+            TerrainPageStore::Config pageStoreConfig;
+            // 合成下 worker(真机 compose 单帧尖刺 33-37ms 的归属定案)。
+            pageStoreConfig.composeWorkers = &AsyncSystem::pool();
+            if (store->initialize(device_, pageStoreConfig)) {
                 terrainPageStore_ = std::move(store);
                 // surface 重建会重建页存储 → 叠画钩子必须重新挂上,否则矢量
                 // 在重建后静默消失(且无任何报错)。

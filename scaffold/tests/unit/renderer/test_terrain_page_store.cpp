@@ -1,8 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <functional>
+#include <mutex>
+#include <thread>
 
+#include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/renderer/TerrainPageStore.h"
 #include "../../helpers/MockRenderDevice.h"
@@ -605,4 +610,63 @@ TEST(TerrainPageDet, EnumerateSubtileKeysNoSubdivision) {
     EXPECT_EQ(out[0].z, 12);
     EXPECT_EQ(out[0].x, 7);
     EXPECT_EQ(out[0].y, 9);
+}
+
+// ---------------------------------------------------------------------------
+// 合成下 worker 的并发正确性:mutex 序列化 + stash 兜乱序,任务执行次序无关。
+// 判据 = 与单线程顺序合成逐字节等价(alphaOver 不可交换,错序会当场翻脸)。
+// 这就是 .cpp 里 PageComposeState 的并发形态(mutex+assembler),在此直接
+// 用同构组合测,不需要 GL 设备夹具。
+// ---------------------------------------------------------------------------
+
+TEST(PageSourceAssembler, ConcurrentOutOfOrderAcceptMatchesSequential) {
+    constexpr int kSide = 16;
+    constexpr int kSources = 4;
+    const size_t bytes = static_cast<size_t>(kSide) * kSide * 4u;
+
+    // 每源一块半透明纯色(alpha 176):层序不同结果必不同 → 等价断言有判别力。
+    std::vector<std::vector<uint8_t>> sources;
+    for (int s = 0; s < kSources; ++s) {
+        std::vector<uint8_t> img(bytes);
+        for (size_t i = 0; i < bytes; i += 4) {
+            img[i + 0] = static_cast<uint8_t>(40 * (s + 1));
+            img[i + 1] = static_cast<uint8_t>(255 - 50 * s);
+            img[i + 2] = static_cast<uint8_t>(17 * (s + 3));
+            img[i + 3] = 176;
+        }
+        sources.push_back(std::move(img));
+    }
+
+    // 基准:单线程按序合成。
+    PageSourceAssembler sequential;
+    sequential.configure(kSources, kSide);
+    for (int s = 0; s < kSources; ++s) {
+        sequential.accept(s, sources[static_cast<size_t>(s)].data());
+    }
+    ASSERT_TRUE(sequential.complete());
+    const std::vector<uint8_t> expected = sequential.texels();
+
+    // 被测:4 worker 乱序并发提交(含重复提交,验幂等),外置 mutex 序列化。
+    for (int round = 0; round < 8; ++round) {
+        PageSourceAssembler shared;
+        shared.configure(kSources, kSide);
+        std::mutex mutex;
+        ThreadPool pool(4);
+        std::atomic<int> pendingTasks{0};
+        const int order[] = {3, 1, 0, 2, 1, 3};  // 乱序 + 两个重复
+        for (int s : order) {
+            pendingTasks.fetch_add(1);
+            pool.enqueue([&shared, &mutex, &sources, &pendingTasks, s]() {
+                std::lock_guard<std::mutex> lock(mutex);
+                shared.accept(s, sources[static_cast<size_t>(s)].data());
+                pendingTasks.fetch_sub(1);
+            });
+        }
+        for (int spin = 0; spin < 2000 && pendingTasks.load() > 0; ++spin) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ASSERT_EQ(0, pendingTasks.load());
+        ASSERT_TRUE(shared.complete());
+        EXPECT_EQ(expected, shared.texels()) << "round=" << round;
+    }
 }

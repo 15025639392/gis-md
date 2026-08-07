@@ -2314,17 +2314,18 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:784-833 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
-| `updateVisiblePages(view, ...)` | .cpp:376-774 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:851-886 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:899-935 | 每帧驱动:`drainInbox` + `retryPendingDecorations` |
-| `drainInbox` / `kickPageFetches` | .cpp:966-1044 / :927-964 | 解码结果回收(上传预算在此生效) / 发起缺页请求 |
-| `retryPendingDecorations` | .cpp:936-968 | 装饰失败重试 |
-| `erasePageEntry` | .cpp:835-849 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
-| `resamplePageSource` | .cpp:238-304 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
-| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:349-354 / :356-374 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
-| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:306-317 / :319-323 / :325-327 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
-| `packKey` / `unpackKey` (static) | .cpp:337-347 / :329-335 | TileKey ↔ uint64 页键 |
+| `initialize(device, Config)` | .cpp:817-868 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
+| `updateVisiblePages(view, ...)` | .cpp:403-805 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:889-925 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:936-979 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传)+ `retryPendingDecorations` |
+| `drainInbox` / `kickPageFetches` | .cpp:1052-1135 / :1013-1051 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1136-1213 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `retryPendingDecorations` | .cpp:980-1012 | 装饰失败重试 |
+| `erasePageEntry` | .cpp:869-888 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `resamplePageSource` | .cpp:265-332 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
+| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:376-382 / :383-402 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
+| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:333-345 / :346-351 / :352-355 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
+| `packKey` / `unpackKey` (static) | .cpp:364-375 / :356-363 | TileKey ↔ uint64 页键 |
 
 **常量**:`kIndirSideTexels`=64、`kIndirArrayLayers`=256 (.h:72-73)。
 
