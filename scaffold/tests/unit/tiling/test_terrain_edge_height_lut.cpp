@@ -8,11 +8,13 @@
 //      编码步长,否则修 ε 的同时引入一个同量级的新误差。
 
 #include "../../../src/earth_engine/tiling/TerrainEdgeHeightLut.h"
+#include "../../../src/earth_engine/tiling/TerrainDisplacementTemplatePool.h"
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
+using earth_engine::TerrainDisplacementTemplatePool;
 using earth_engine::TerrainEdgeHeightLut;
 
 static int gFailures = 0;
@@ -71,48 +73,59 @@ static void testShaderNodePairAlignment() {
     check(j0 == nodes - 1 && j1 == nodes - 1, "末端两节点重合于表尾");
 }
 
-// ③ 编码精度。真实量程:重庆山区一条边的起伏跨度按 2000m 算(远超实测),
-//    16bit 归一化的量化步长必须显著小于 Terrain-RGB 的 0.1m 编码步长 ——
-//    否则修掉 ε 的同时引入一个同量级的新误差,白做。
-static void testEncodePrecision() {
-    const float minH = -50.0f;
-    const float range = 2000.0f;
-    const float step = range / 65535.0f;
-    check(step < 0.05f, "量化步长须显著优于 0.1m 编码步长");
+// ③ 差值编码精度。量程固定 ±2048m,16bit → 步长 0.0625m,必须显著优于
+//    Terrain-RGB 的 0.1m 数据步长 —— 否则修掉 ε 的同时引入一个同量级新误差。
+static void testDeltaEncodePrecision() {
+    const float r = TerrainDisplacementTemplatePool::kEdgeLutDeltaRangeMeters;
+    const float step = 2.0f * r / 65535.0f;
+    check(step < 0.1f, "差值量化步长须优于 0.1m 数据步长");
     double worst = 0.0;
-    for (int i = 0; i <= 1000; ++i) {
-        const float h = minH + range * (static_cast<float>(i) / 1000.0f);
-        const uint16_t q = TerrainEdgeHeightLut::encode(h, minH, range);
-        const float back = TerrainEdgeHeightLut::decode(q, minH, range);
-        worst = std::max(worst, std::fabs(static_cast<double>(back - h)));
+    for (int i = -1000; i <= 1000; ++i) {
+        const float delta = r * (static_cast<float>(i) / 1000.0f);
+        const uint16_t q =
+            TerrainDisplacementTemplatePool::encodeEdgeLutDelta(delta);
+        const float back =
+            TerrainDisplacementTemplatePool::decodeEdgeLutDelta(q);
+        worst = std::max(worst, std::fabs(static_cast<double>(back - delta)));
     }
     check(worst <= step, "往返误差不超过一个量化步长");
 }
 
-// ④ 平坦边(整条边等高)是完全正常的输入,range=0 会让归一化除零。
-static void testFlatEdgeGuard() {
-    const float minH = 500.0f;
-    const uint16_t q = TerrainEdgeHeightLut::encode(500.0f, minH, 0.0f);
-    const float back = TerrainEdgeHeightLut::decode(q, minH, 0.0f);
-    check(std::isfinite(back), "平坦边编码不得产出非有限值");
-    checkNear(back, 500.0, 1e-3, "平坦边往返仍得回原值");
+// ④ ⚠️ 差值 0 必须落在量程**中点**,不是 0。层是 LRU 复用的,acquire 时若把
+//    LUT 行写成全零字节,解出来是 −2048m 的巨大偏置,而不是"无差值"。
+static void testZeroDeltaIsNotZeroBytes() {
+    const uint16_t q = TerrainDisplacementTemplatePool::encodeEdgeLutDelta(0.0f);
+    check(q > 32000 && q < 33600, "差值 0 编码落在量程中点附近");
+    checkNear(TerrainDisplacementTemplatePool::decodeEdgeLutDelta(q), 0.0, 0.07,
+              "差值 0 往返仍为 0");
+    checkNear(TerrainDisplacementTemplatePool::decodeEdgeLutDelta(0),
+              -TerrainDisplacementTemplatePool::kEdgeLutDeltaRangeMeters, 1e-3,
+              "全零字节解出的是量程下界(故必须显式初始化)");
 }
 
-// ⑤ 空记录:没有 tile / 档位非法时必须给出"全边不吸附",而不是半张表。
+// ⑤ 越量程必须饱和而不是回绕 —— 回绕会把一个大错位变成一个反号的大错位。
+static void testDeltaClampSaturates() {
+    const float r = TerrainDisplacementTemplatePool::kEdgeLutDeltaRangeMeters;
+    check(TerrainDisplacementTemplatePool::encodeEdgeLutDelta(r * 10.0f) == 65535,
+          "超上界饱和到顶");
+    check(TerrainDisplacementTemplatePool::encodeEdgeLutDelta(-r * 10.0f) == 0,
+          "超下界饱和到底");
+}
+
+// ⑥ 空记录:没有 tile / 档位非法时必须给出"全边不吸附",而不是半张表。
 static void testEmptyRecord() {
     earth_engine::TileEdgeSnapRecord rec;
     const TerrainEdgeHeightLut::Data d = TerrainEdgeHeightLut::build(rec, 64);
     check(!d.hasAny(), "空记录不得产出任何边");
     check(d.filledEdges() == 0, "空记录 filledEdges = 0");
-    check(d.heightRange >= TerrainEdgeHeightLut::kMinRange,
-          "range 恒有下限保护");
 }
 
 int main() {
     testNodeCount();
     testShaderNodePairAlignment();
-    testEncodePrecision();
-    testFlatEdgeGuard();
+    testDeltaEncodePrecision();
+    testZeroDeltaIsNotZeroBytes();
+    testDeltaClampSaturates();
     testEmptyRecord();
     if (gFailures == 0) {
         std::printf("test_terrain_edge_height_lut: 全部通过\n");

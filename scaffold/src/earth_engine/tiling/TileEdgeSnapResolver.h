@@ -58,8 +58,10 @@ struct TileEdgeSnapResolver {
                 e.selectedTile->selectionFrameState;
             if (!e.selectedThisFrame || e.usesAncestorFallback) {
                 state.edgeSnapPacked = 0.0f;
+                state.edgeSnapRecord = nullptr;
                 continue;
             }
+            state.edgeSnapRecord = nullptr;
             const int own = entryOctave(e);
             const TileKey& k = e.selectedKey;
             // 边序与 shader 解码约定一致:W + 8·E + 64·N + 512·S。
@@ -81,6 +83,13 @@ struct TileEdgeSnapResolver {
             }
             if (rec.hasAnySnap()) {
                 plan.edgeSnapRecords.push_back(rec);
+            }
+        }
+        // 回填必须**等向量填满之后**:填充期的 push_back 会重分配,先前取的
+        // 元素指针全部失效(这类悬垂在真机上表现为偶发错帧,极难定位)。
+        for (const TileEdgeSnapRecord& rec : plan.edgeSnapRecords) {
+            if (rec.tile) {
+                rec.tile->selectionFrameState.edgeSnapRecord = &rec;
             }
         }
     }

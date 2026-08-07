@@ -35,18 +35,14 @@ struct TerrainEdgeHeightLut {
     /// 最大节点数。最密情形 = dense 档(gridN=256)邻居只粗一个八度(step=2)
     /// → 256/2+1 = 129。
     static constexpr int kMaxNodes = 129;
-    /// heightRange 的下限保护。与高度纹理同理:range=0 会让归一化除零,而
-    /// 平坦边(整条边等高)是完全正常的输入。
-    static constexpr float kMinRange = 1e-3f;
-
     struct Data {
-        float height[kEdges][kMaxNodes] = {};
+        /// 存**差值**:邻居在该节点渲染出的高度 − 本瓦片该纹素渲染出的高度。
+        /// shader 侧 `hA/hB` 照旧取自纹理,再加上这里的差 → 两侧于是在共享边上
+        /// 求值同一个函数。差值形式让失效路径天然安全:delta=0 = 改前行为。
+        float delta[kEdges][kMaxNodes] = {};
         /// 0 = 该边不吸附,或邻居数据取不到 → shader 退回自纹理吸附(改前行为,
         /// 不会更差)。
         int nodeCount[kEdges] = {};
-        float minHeight = 0.0f;
-        float heightRange = kMinRange;
-
         bool hasAny() const {
             for (int e = 0; e < kEdges; ++e) {
                 if (nodeCount[e] > 0) return true;
@@ -60,24 +56,19 @@ struct TerrainEdgeHeightLut {
         }
     };
 
-    /// 16bit 归一化编码,与高度纹理 RG 通道同一约定 —— shader 侧可以复用
-    /// `eeSampleTerrainHeight` 的反量化,不必再写一份解码。
-    static uint16_t encode(float h, float minHeight, float range) {
-        const float t = (h - minHeight) / std::max(range, kMinRange);
-        return static_cast<uint16_t>(
-            std::lround(std::clamp(t, 0.0f, 1.0f) * 65535.0f));
-    }
-    static float decode(uint16_t q, float minHeight, float range) {
-        return minHeight + (static_cast<float>(q) / 65535.0f) *
-                               std::max(range, kMinRange);
-    }
-
-    /// 为一个吸附瓦片构建四条边的表。ownGridSize = 该瓦片本帧的位移模板档位。
+    /// 为一个吸附瓦片构建四条边的差值表。ownGridSize = 该瓦片本帧的位移模板
+    /// 档位(从 draw 命令的 terrainHeightGridSize 读真值,不要另猜)。
+    ///
+    /// ⚠️ 「自己这一侧」必须与 shader 取的是同一个数:shader 的吸附分支取的是
+    /// 自纹理该纹素(吸附覆盖了 morph 混合),所以这里也取 fine 档 × fade,
+    /// **不带 morph** —— 带上就等于给差值预置了一个随相机漂移的偏置。
     static Data build(const TileEdgeSnapRecord& rec, int ownGridSize) {
         Data d;
         if (!rec.tile || ownGridSize <= 0) return d;
-        float lo = 0.0f, hi = 0.0f;
-        bool any = false;
+        const DecodedHeightmap* ownHm =
+            rec.tile->content.renderContent.retainedHeightmap();
+        if (!ownHm || !ownHm->valid()) return d;
+        const float ownFade = terrainReliefFade(rec.tile->key.z);
         for (int edge = 0; edge < kEdges; ++edge) {
             const int lg = rec.edgeLog2[edge];
             const TileRenderEntry* nbr = rec.neighbor[edge];
@@ -92,17 +83,14 @@ struct TerrainEdgeHeightLut {
                     static_cast<double>(j * step) / ownGridSize, 1.0);
                 double lon = 0.0, lat = 0.0;
                 terrain_edge::edgePoint(rec.tile->bounds, edge, t, lon, lat);
-                const float h = terrain_edge::renderedHeight(ns, lon, lat);
-                d.height[edge][j] = h;
-                if (!any) { lo = hi = h; any = true; }
-                lo = std::min(lo, h);
-                hi = std::max(hi, h);
+                const float own =
+                    DecodedHeightmapSampler::sampleHeightRenderGrid(
+                        *ownHm, rec.tile->bounds, lon, lat, ownGridSize) *
+                    ownFade;
+                d.delta[edge][j] =
+                    terrain_edge::renderedHeight(ns, lon, lat) - own;
             }
             d.nodeCount[edge] = nodes;
-        }
-        if (any) {
-            d.minHeight = lo;
-            d.heightRange = std::max(hi - lo, kMinRange);
         }
         return d;
     }

@@ -845,6 +845,18 @@ float eeSampleTerrainHeight(
     return mr.x + t * mr.y;
 }
 
+// 无缝北极星 ①-1:边吸附的邻居高度**差值**表。存在每层 (gridN+1) 方高度数据
+// 之下的 4 行里(每边一行,行内第 j 个纹素 = 该边第 j 个吸附节点的差值)。
+// 量程固定 ±2048m(与 TerrainDisplacementTemplatePool::kEdgeLutDeltaRangeMeters
+// 同源,改一处必须改另一处),故不需要每瓦片的 (min,range),零传输改动。
+// ⚠️ 差值 0 落在量程中点,不是纹素 0。
+float eeEdgeLutDelta(highp sampler2DArray tex, int node, int edge, int gridN,
+                     int layer) {
+    vec4 p = texelFetch(tex, ivec3(node, gridN + 1 + edge, layer), 0);
+    float t = (p.r * 255.0 * 256.0 + p.g * 255.0) / 65535.0;
+    return t * 4096.0 - 2048.0;
+}
+
 void main() {
     // cesium-native RTC: tile origin is baked into the MVP matrix (computed in
     // CPU double precision). a_position is relative to the tile center.
@@ -904,7 +916,10 @@ void main() {
         // 线性插值 → 与邻居边几何共线,T-junction 在几何上不存在(残余=
         // 金字塔层间重采样差,裙墙覆盖)。仅常规模式参与(remap 由 CPU 清零)。
         float hOut = mix(hCoarse, hFine, u_geomorphUpFactor.w);
+        // ①-1:高位是「本帧邻居差值表可用」标志(CPU 上传成功才置)。
         float snapPacked = u_terrainLayers.z;
+        float lutValid = floor(snapPacked / 4096.0);
+        snapPacked = snapPacked - lutValid * 4096.0;
         if (snapPacked > 0.5) {
             float eps = 0.5 / gridN;
             float sel = -1.0;
@@ -928,6 +943,17 @@ void main() {
                     float hB = eeSampleTerrainHeight(u_heightTexture,
                         ivec2(vertEdge ? vec2(c, a1) : vec2(a1, c)),
                         hLayer, mr);
+                    // ①-1:加上「粗邻居实际渲染高度 − 本纹素」的差 → 两侧在
+                    // 共享边上求值同一个函数(恒等,而非逼近)。表不可用时
+                    // lutValid=0,退回自纹理吸附 = 改前行为。
+                    if (lutValid > 0.5) {
+                        int e = int(sel);
+                        int gN = int(gridN);
+                        hA += eeEdgeLutDelta(u_heightTexture,
+                            int(a0 / snapStep), e, gN, hLayer);
+                        hB += eeEdgeLutDelta(u_heightTexture,
+                            int(a1 / snapStep), e, gN, hLayer);
+                    }
                     hOut = mix(hA, hB, t);          // 吸附:覆盖 morph 混合
                 }
             }
@@ -1258,6 +1284,14 @@ float eeSampleTerrainHeight(
     return mr.x + t * mr.y;
 }
 
+// ①-1 边吸附邻居差值表(语义同 kTerrainVertexGLSL,量程 ±2048m 固定)。
+float eeEdgeLutDelta(highp sampler2DArray tex, int node, int edge, int gridN,
+                     int layer) {
+    vec4 p = texelFetch(tex, ivec3(node, gridN + 1 + edge, layer), 0);
+    float t = (p.r * 255.0 * 256.0 + p.g * 255.0) / 65535.0;
+    return t * 4096.0 - 2048.0;
+}
+
 void main() {
     float morph = i_dispMorph.z;
     int hLayer = int(i_layers.x + 0.5);
@@ -1271,6 +1305,9 @@ void main() {
     // i_layers.z 打包:clipMode(0/1/2) + 4·snapPacked(见 batcher 注释)。
     float clipMode = mod(i_layers.z, 4.0);
     float snapPacked = floor(i_layers.z * 0.25);
+    // ①-1:高位是「本帧邻居差值表可用」标志(组合后 ≤32767,float 仍精确)。
+    float lutValid = floor(snapPacked / 4096.0);
+    snapPacked = snapPacked - lutValid * 4096.0;
     // remap(clipMode==2,机制 A):模板 UV → 祖先 UV。语义见 kTerrainVertexGLSL。
     vec2 tileUv = a_texcoord01.xy;
     if (clipMode > 1.5) {
@@ -1327,6 +1364,16 @@ void main() {
                     ivec2(vertEdge ? vec2(c, a0) : vec2(a0, c)), hLayer, mr);
                 float hB = eeSampleTerrainHeight(u_heightTexture,
                     ivec2(vertEdge ? vec2(c, a1) : vec2(a1, c)), hLayer, mr);
+                // ①-1:加邻居差值(同 kTerrainVertexGLSL)。表不可用时退回
+                // 自纹理吸附 = 改前行为。
+                if (lutValid > 0.5) {
+                    int e = int(sel);
+                    int gN = int(kGridSize);
+                    hA += eeEdgeLutDelta(u_heightTexture,
+                        int(a0 / snapStep), e, gN, hLayer);
+                    hB += eeEdgeLutDelta(u_heightTexture,
+                        int(a1 / snapStep), e, gN, hLayer);
+                }
                 hOut = mix(hA, hB, t);
             }
         }

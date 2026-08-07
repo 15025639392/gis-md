@@ -27,6 +27,11 @@ struct TileSelectionFrameState {
     // 2^k 间距的自纹理线性插值 → T-junction 在几何上不存在(残余只剩金字塔
     // 层间重采样差 ε,由裙墙覆盖)。逐帧重算天然覆盖"邻居本帧刚换档"暂态。
     float edgeSnapPacked = 0.0f;
+    // ①-1:本帧该瓦片的吸附边记录(邻居来源),供 draw 侧构建边高度差表。
+    // ⚠️ 指向 TilePlan::edgeSnapRecords 的元素,**只在本帧有效** —— 由
+    // TileEdgeSnapResolver 在向量填满后统一回填(填充期 push_back 会让先前
+    // 取的指针失效),不吸附的瓦片每帧显式清空。
+    const TileEdgeSnapRecord* edgeSnapRecord = nullptr;
 
     void updateFrameRenderability(bool complete) {
         completeRenderable = complete;

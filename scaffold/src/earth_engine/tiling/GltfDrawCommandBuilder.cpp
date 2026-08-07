@@ -14,6 +14,7 @@
 #include "TerrainDisplacementTemplatePool.h"
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
+#include "TerrainEdgeHeightLut.h"
 
 #include <algorithm>
 #include <string>
@@ -470,6 +471,45 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
     }
 }
 
+/// ①-1:为本帧吸附的地形瓦片算出四条边的邻居高度差表并写进它自己那层高度
+/// 纹理的末尾 4 行。返回 false = 本帧不可用,调用方据此不置有效位。
+///
+/// ⚠️ 档位取 `cmd.terrainHeightGridSize`(本帧实际 acquire 到的那档)而不是
+/// 由 SSE 再算一遍:层池 dense 预算触顶时 draw 侧会回落 coarse,再算一遍会
+/// 得到 dense,于是表按 256 格排、纹理按 64 格存 —— 整条边的节点全错位。
+bool uploadTerrainEdgeLut(Renderer& renderer, const TilesetTile& tile,
+                          const RenderCommand& cmd) {
+    const TileEdgeSnapRecord* rec = tile.selectionFrameState.edgeSnapRecord;
+    TerrainDisplacementTemplatePool* pool = renderer.terrainDisplacementPool();
+    const int gridSize = cmd.terrainHeightGridSize;
+    if (!rec || !pool || gridSize <= 0) {
+        return false;
+    }
+    const TerrainEdgeHeightLut::Data lut =
+        TerrainEdgeHeightLut::build(*rec, gridSize);
+    if (!lut.hasAny()) {
+        return false;
+    }
+    const int width = gridSize + 1;
+    const int rows = TerrainDisplacementTemplatePool::kEdgeLutRows;
+    // 未填的节点(该边不吸附,或表比行短)一律写差值 0 = 改前行为。
+    const uint16_t zero = TerrainDisplacementTemplatePool::encodeEdgeLutDelta(0.0f);
+    std::vector<uint8_t> bytes(static_cast<size_t>(width) * rows * 4, 0);
+    for (int e = 0; e < rows; ++e) {
+        for (int x = 0; x < width; ++x) {
+            const uint16_t q =
+                (x < lut.nodeCount[e])
+                    ? TerrainDisplacementTemplatePool::encodeEdgeLutDelta(
+                          lut.delta[e][x])
+                    : zero;
+            const size_t o = (static_cast<size_t>(e) * width + x) * 4;
+            bytes[o] = static_cast<uint8_t>(q >> 8);
+            bytes[o + 1] = static_cast<uint8_t>(q & 0xFF);
+        }
+    }
+    return pool->updateEdgeLutRows(tile.key, gridSize, bytes.data());
+}
+
 /// 每帧盖章:frameId/generation、过渡透明度及其 blend 派生态、clip 窗口、
 /// raster overlay 绑定(纹理指针/UV 窗口/透明度随加载逐帧变化)。
 /// 只写帧列表副本;常驻命令保持内容不变式,拷贝出来即处于默认每帧状态。
@@ -496,7 +536,15 @@ void applyPerFrameCommandState(
         u.renderOpacity = 1.0f;
         // 机制 B 边吸附:TileEdgeSnapResolver 每帧算好的 4 边打包步长。
         // terrainLayers.z 原为保留位,uniform 契约零改动。
-        u.terrainLayers[2] = tile.selectionFrameState.edgeSnapPacked;
+        float snapPacked = tile.selectionFrameState.edgeSnapPacked;
+        // ①-1:把「粗邻居在吸附节点处实际渲染出的高度」与本瓦片该纹素的差值
+        // 传上去,shader 加到自纹理吸附值上 → 两侧在共享边上求值同一个函数。
+        // 上传失败(层不在驻留/尺寸不符)时不置有效位,shader 退回自吸附 ——
+        // 差值形式让这条失效路径恰好等于改前行为,不会更差。
+        if (snapPacked > 0.5f && uploadTerrainEdgeLut(renderer, tile, cmd)) {
+            snapPacked += 4096.0f;  // 有效位;组合后 ≤8191,实例流打包仍精确
+        }
+        u.terrainLayers[2] = snapPacked;
     }
     if (cmd.terrainRenderContent && context.surfaceClipUv) {
         // 机制 A(无缝北极星 P1):祖先回退不再"画祖先几何+片元 discard 裁剪"
