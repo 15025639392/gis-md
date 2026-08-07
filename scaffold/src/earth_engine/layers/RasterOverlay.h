@@ -13,8 +13,7 @@ class TileScheme;
 
 enum class RasterOverlayRole {
     BaseImagery,
-    AnnotationOverlay,
-    DataOverlay
+    AnnotationOverlay
 };
 
 enum class RasterOverlayPriority {
@@ -24,9 +23,7 @@ enum class RasterOverlayPriority {
 };
 
 enum class RasterOverlayFallbackPolicy {
-    ExactOrAncestor,
     AncestorOrPlaceholder,
-    PreviousAttached,
     SkipUntilReady
 };
 

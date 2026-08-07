@@ -31,12 +31,6 @@ TEST(CrsProfileTest, WebMercatorRange) {
     EXPECT_NEAR(20037508.34, yr[1], 0.1);
 }
 
-TEST(CrsProfileTest, WebMercatorAxisDirection) {
-    const auto& crs = CrsProfile::webMercator();
-    EXPECT_TRUE(crs.xIncreasesEast());
-    EXPECT_TRUE(crs.yIncreasesNorth());
-}
-
 // ============================================================
 // WGS84 Geographic (EPSG:4326)
 // ============================================================

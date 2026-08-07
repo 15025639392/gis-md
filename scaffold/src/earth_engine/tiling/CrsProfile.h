@@ -35,10 +35,6 @@ public:
     /// 有效纬度/Y 范围（native units）
     virtual std::array<double, 2> yRange() const = 0;
 
-    /// X/Y 轴正方向：true = 东/北递增，false = 西/南递增
-    virtual bool xIncreasesEast() const { return true; }
-    virtual bool yIncreasesNorth() const { return true; }
-
     // ---- 预置 CRS ----
 
     /// EPSG:3857 Web Mercator（米，球面 Mercator 投影）

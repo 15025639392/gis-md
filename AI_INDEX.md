@@ -2653,9 +2653,9 @@ cesium-native `RasterOverlay` equivalent. Pure **config** layer: owns imagery da
 
 | Item | Lines | Description |
 |---|---|---|
-| `RasterOverlayRole` enum | .h:14-18 | BaseImagery / AnnotationOverlay / DataOverlay |
+| `RasterOverlayRole` enum | .h:14-17 | BaseImagery / AnnotationOverlay |
 | `RasterOverlayPriority` enum | .h:20-24 | Low=0 / Normal=1 / High=2 |
-| `RasterOverlayFallbackPolicy` enum | .h:26-31 | ExactOrAncestor / AncestorOrPlaceholder / PreviousAttached / SkipUntilReady |
+| `RasterOverlayFallbackPolicy` enum | .h:25-28 | AncestorOrPlaceholder / SkipUntilReady |
 | `Options` struct | .h:42-72 | see constants below |
 | ctor(provider, scheme, options) | .h:77-79 / .cpp:9-29 | ownership of provider+scheme transferred; `id_` = `provider_->id()` (.cpp:15) |
 | ctor option clamping | .cpp:16-28 | invalid values reset to defaults; opacity `std::clamp` 0..1 |
