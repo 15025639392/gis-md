@@ -133,12 +133,22 @@ public:
     /// @param pageKey 页的 z/x/y(schemeId 不参与页 key 打包,故为缺省值)
     /// @param target  页存储的共享 array 纹理
     /// @param layer   本页占用的层
+    /// @param outDidGpuWork 非空时置为「本次是否真的画了(消耗了 GPU 预算)」。
+    ///        **返回 false 有三种成本截然不同的情形**:真画了、在途等待(零成本)、
+    ///        资源满被拒(零成本)。页存储的每帧预算只该记前者 —— 否则零成本的
+    ///        重试会吃光预算,已就绪的页永远轮不到被画(饥饿死锁,真机实测
+    ///        defer 次数恰好等于每帧预算)。
     /// @return true = 已画(或确认本页无内容可画);false = 未就绪,下帧再叫
     virtual bool decoratePage(const TileKey& pageKey, Texture* target,
-                              int layer) = 0;
+                              int layer, bool* outDidGpuWork = nullptr) = 0;
     /// 每帧一次(渲染线程,drainInbox 之前)。实现方在此把 worker 产出的 CPU
     /// 数据传上 GPU —— 页存储保证它先于本帧的任何 decoratePage 调用。
     virtual void tickDecorator() {}
+    /// 页被 LRU 换租/淘汰时**同步**调用(在页账本移除之后,同一调用路径内)。
+    /// 实现方据此放掉该页占用的资源 —— 没有这条通知,只被换租页引用过的源数据
+    /// 会一直等一个永远不会再来的 decoratePage,占死实现方的缓存槽位(真机实测
+    /// 宽视野 pan 下矢量空窗 ~30s,只能靠帧龄超时兜底回收)。
+    virtual void releasePage(const TileKey& pageKey) { (void)pageKey; }
 };
 
 /// 北极星合成方案「稀疏页存储」(门③ Step B2b + §14.1)。

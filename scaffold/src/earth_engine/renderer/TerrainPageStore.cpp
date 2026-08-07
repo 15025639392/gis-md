@@ -841,6 +841,11 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
         token.cancel();  // 在途 fetch 全部作废(到达也会被 drain 校验丢弃)
     }
     pages_.erase(it);
+    if (decorator_) {
+        // 同步通知:换租与释放必须在同一调用路径内完成,不能推给下一帧的旁路
+        // 清理 —— 否则被换租页引用的源数据成为「等不到消费者」的僵尸。
+        decorator_->releasePage(unpackKey(pageKey));
+    }
 }
 
 void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
@@ -899,6 +904,10 @@ void TerrainPageStore::retryPendingDecorations() {
     }
     // 每帧有上限:叠画是真 draw,不能跟主 pass 抢预算。未轮到的页下帧继续
     // (页存储自己迭代 → 被 LRU 换租的页自然不在表里,不会画进别人的层)。
+    //
+    // ⚠️ 预算只记**真的画了**的那些。在途等待与资源满被拒都是零成本的早退,
+    // 若也扣预算,遍历序靠前的那批未就绪页每帧吃光配额,已就绪的页永远轮不到
+    // (真机实测:defer 次数恰好 = 每帧预算 × 帧数,drawn 恒 0,系统自锁)。
     int budget = config_.maxUploadsPerFrame;
     for (auto& [pageKey, pe] : pages_) {
         if (budget <= 0) {
@@ -907,15 +916,18 @@ void TerrainPageStore::retryPendingDecorations() {
         if (pe.decorated || !pe.assembler.hasTexels() || pe.layer < 0) {
             continue;
         }
-        --budget;
         GE_CONTRACT(contracts::Id::PageDecorateOrdering,
                     decoratorTickedFrame_ == frameId_,
                     "path=retryPending frame=%llu tickedFrame=%llu layer=%d",
                     (unsigned long long)frameId_,
                     (unsigned long long)decoratorTickedFrame_,
                     pe.layer);
-        pe.decorated = decorator_->decoratePage(unpackKey(pageKey),
-                                                arrayTexture_.get(), pe.layer);
+        bool didGpuWork = false;
+        pe.decorated = decorator_->decoratePage(
+            unpackKey(pageKey), arrayTexture_.get(), pe.layer, &didGpuWork);
+        if (didGpuWork) {
+            --budget;
+        }
     }
 }
 

@@ -2321,10 +2321,11 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 |---|---|---|
 | `initialize(device, Config)` | .cpp:784-833 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:376-774 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:846-881 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:883-894 | 每帧驱动:`drainInbox` + `retryPendingDecorations` |
-| `drainInbox` / `kickPageFetches` | .cpp:961-1039 / :922-959 | 解码结果回收(上传预算在此生效) / 发起缺页请求 |
-| `retryPendingDecorations` | .cpp:896-920 | 装饰失败重试 |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:851-886 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:888-899 | 每帧驱动:`drainInbox` + `retryPendingDecorations` |
+| `drainInbox` / `kickPageFetches` | .cpp:966-1044 / :927-964 | 解码结果回收(上传预算在此生效) / 发起缺页请求 |
+| `retryPendingDecorations` | .cpp:901-925 | 装饰失败重试 |
+| `erasePageEntry` | .cpp:835-849 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:238-304 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:349-354 / :356-374 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:306-317 / :319-323 / :325-327 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
@@ -2586,9 +2587,10 @@ Single translation unit defining `STB_IMAGE_IMPLEMENTATION` (avoids multiple-def
 | `makePageOrtho` | .cpp:54-83 | 页局部正交投影矩阵 |
 | `kickFetch` | .cpp:84-117 | 拉取该页覆盖的 MVT 源瓦片 |
 | `tickDecorator` | .cpp:118-184 | 每帧驱动:解码回收 + 触发装饰 |
-| `touch` / `tryEvictOne` | .cpp:185-193 / :194-212 | 源瓦片 LRU touch;淘汰仅限已消费/保护到期(收敛不变量) |
-| `ensureFramebuffer` | .cpp:213-228 | 绑定到页纹理层的 FBO |
-| `decoratePage` | .cpp:229-330 | **把矢量画进页** |
+| `touch` / `tryEvictOne` | .cpp:187-195 / :258-273 | 源瓦片 LRU touch;淘汰仅限已消费/保护到期(收敛不变量) |
+| `bindPage` / `eraseTile` / `releasePage` | .cpp:196-212 / :213-228 / :229-257 | 页↔源瓦片双向绑定(共享祖先时是集合不是计数);换租释放最后一个引用且未消费 → 立即回收 |
+| `ensureFramebuffer` | .cpp:274-289 | 绑定到页纹理层的 FBO |
+| `decoratePage` | .cpp:290-394 | **把矢量画进页** |
 
 ⚠️ E4 根因教训:地形着色器的**页存储采样覆盖了 mappedRaster**,叠加层必须挪到
 页存储之后;同名 uniform 在两个 FS 各有声明,改一半即黑屏。

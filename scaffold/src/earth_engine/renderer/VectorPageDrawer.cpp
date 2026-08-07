@@ -122,13 +122,15 @@ void VectorPageDrawer::tickDecorator() {
     if (++tickCounter_ % 60u == 0u) {
         platformLog(LogLevel::Warning, "VecPage",
                     "cachedTiles=%d ready=%d drawn+=%d fetch+=%d evict=%d "
-                    "defer+=%d",
+                    "defer+=%d zombie+=%d",
                     static_cast<int>(tiles_.size()), readyTiles_,
                     drawnPages_ - lastDrawn_, fetchesKicked_ - lastFetches_,
-                    evictions_, admissionDeferrals_ - lastDeferrals_);
+                    evictions_, admissionDeferrals_ - lastDeferrals_,
+                    zombiesReclaimed_ - lastZombies_);
         lastDrawn_ = drawnPages_;
         lastFetches_ = fetchesKicked_;
         lastDeferrals_ = admissionDeferrals_;
+        lastZombies_ = zombiesReclaimed_;
     }
     std::vector<Inbox::Item> ready;
     {
@@ -191,6 +193,68 @@ void VectorPageDrawer::touch(uint64_t srcPacked) {
     lruPos_[srcPacked] = lru_.begin();
 }
 
+void VectorPageDrawer::bindPage(uint64_t pagePacked, uint64_t srcPacked) {
+    auto it = pageToSrc_.find(pagePacked);
+    if (it != pageToSrc_.end()) {
+        if (it->second == srcPacked) {
+            return;  // 已绑同一源瓦片:幂等,直接返回
+        }
+        auto oldIt = srcToPages_.find(it->second);  // 页改挂了(zoom 变)
+        if (oldIt != srcToPages_.end()) {
+            oldIt->second.erase(pagePacked);
+        }
+        it->second = srcPacked;
+    } else {
+        pageToSrc_[pagePacked] = srcPacked;
+    }
+    srcToPages_[srcPacked].insert(pagePacked);
+}
+
+void VectorPageDrawer::eraseTile(uint64_t srcPacked) {
+    auto sit = srcToPages_.find(srcPacked);
+    if (sit != srcToPages_.end()) {
+        for (const uint64_t pagePacked : sit->second) {
+            pageToSrc_.erase(pagePacked);
+        }
+        srcToPages_.erase(sit);
+    }
+    auto posIt = lruPos_.find(srcPacked);
+    if (posIt != lruPos_.end()) {
+        lru_.erase(posIt->second);
+        lruPos_.erase(posIt);
+    }
+    tiles_.erase(srcPacked);  // GPU buffer 随 unique_ptr 释放
+}
+
+void VectorPageDrawer::releasePage(const TileKey& pageKey) {
+    const uint64_t pagePacked = packTile(pageKey);
+    auto it = pageToSrc_.find(pagePacked);
+    if (it == pageToSrc_.end()) {
+        return;
+    }
+    const uint64_t srcPacked = it->second;
+    pageToSrc_.erase(it);
+    auto sit = srcToPages_.find(srcPacked);
+    if (sit == srcToPages_.end()) {
+        return;
+    }
+    sit->second.erase(pagePacked);
+    if (!sit->second.empty()) {
+        return;  // 还有别的页在用(depth>0 共享祖先瓦片)
+    }
+    srcToPages_.erase(sit);
+    const auto tileIt = tiles_.find(srcPacked);
+    if (tileIt == tiles_.end()) {
+        return;
+    }
+    if (tileIt->second.consumed) {
+        return;  // 服务过:有复用价值,交回普通 LRU 而非立即丢
+    }
+    // 未消费 + 无页引用 = 僵尸:此后不会有任何页来叫它,留着纯占槽位。
+    ++zombiesReclaimed_;
+    eraseTile(srcPacked);
+}
+
 bool VectorPageDrawer::tryEvictOne() {
     for (auto it = lru_.rbegin(); it != lru_.rend(); ++it) {
         const auto tileIt = tiles_.find(*it);
@@ -200,11 +264,8 @@ bool VectorPageDrawer::tryEvictOne() {
         if (!evictable) {
             continue;
         }
-        const uint64_t victim = *it;
-        lru_.erase(std::next(it).base());
-        lruPos_.erase(victim);
-        tiles_.erase(victim);  // GPU buffer 随 unique_ptr 释放
         ++evictions_;
+        eraseTile(*it);  // 索引一并清理(含绑在它上面的页记录)
         return true;
     }
     return false;
@@ -227,7 +288,10 @@ bool VectorPageDrawer::ensureFramebuffer(Texture* target) {
 }
 
 bool VectorPageDrawer::decoratePage(const TileKey& pageKey, Texture* target,
-                                    int layer) {
+                                    int layer, bool* outDidGpuWork) {
+    if (outDidGpuWork) {
+        *outDidGpuWork = false;  // 只有走到最后真发了 draw 才置真
+    }
     if (!device_ || !renderer_ || !target || layer < 0) {
         return true;  // 无从叠画:别让页存储无限重试
     }
@@ -258,9 +322,12 @@ bool VectorPageDrawer::decoratePage(const TileKey& pageKey, Texture* target,
         GpuTile& admitted = tiles_[srcPacked];
         admitted.admittedTick = tickCounter_;
         touch(srcPacked);
+        // 绑定放在准入成功之后:被拒时留下绑定 = 指向不存在条目的悬空记录。
+        bindPage(packTile(pageKey), srcPacked);
         kickFetch(srcKey, srcPacked);
         return false;  // 源在路上,页存储后续帧再叫
     }
+    bindPage(packTile(pageKey), srcPacked);
     touch(srcPacked);
     GpuTile& gpu = it->second;
     switch (gpu.state) {
@@ -324,6 +391,9 @@ bool VectorPageDrawer::decoratePage(const TileKey& pageKey, Texture* target,
     device_->endPass();
     ++drawnPages_;
     gpu.consumed = true;  // 服务过至少一个页,自此可被正常 LRU 换出
+    if (outDidGpuWork) {
+        *outDidGpuWork = true;  // 真发了 draw:计入页存储的每帧叠画预算
+    }
     return true;
 }
 

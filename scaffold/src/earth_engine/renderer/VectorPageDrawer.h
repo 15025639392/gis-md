@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "../data/VectorTileMeshBuilder.h"
@@ -61,12 +62,18 @@ public:
     void tickDecorator() override;
 
     // TerrainPageDecorator
-    bool decoratePage(const TileKey& pageKey, Texture* target,
-                      int layer) override;
+    bool decoratePage(const TileKey& pageKey, Texture* target, int layer,
+                      bool* outDidGpuWork = nullptr) override;
+
+    /// 页被换租:解绑该页对源瓦片的引用。最后一个引用页消失且该瓦片**从未被
+    /// 消费过**时立即回收——它此后不可能再被任何页叫到,留着纯占槽位。
+    /// 已消费过的瓦片不在此回收:它有复用价值,交回普通 LRU。
+    void releasePage(const TileKey& pageKey) override;
 
     // --- 诊断 ---
     int readyTileCount() const { return readyTiles_; }
     int drawnPageCount() const { return drawnPages_; }
+    int cachedTileCount() const { return static_cast<int>(tiles_.size()); }
 
     /// 页在源瓦片内的子矩形 → 正交矩阵(列主序 16 float)。
     /// `flipY` = 目标行 0 在 NDC 的哪一侧:GL 的 FBO 原点在左下(false),
@@ -95,6 +102,11 @@ private:
     struct Inbox;
 
     void kickFetch(const TileKey& srcKey, uint64_t srcPacked);
+    /// 记录「页 P 正在用源瓦片 T」(幂等)。页改挂别的源瓦片(zoom 变)时先解绑旧的。
+    void bindPage(uint64_t pagePacked, uint64_t srcPacked);
+    /// 删除源瓦片条目及其全部索引(GPU buffer 随之释放)。绑在它上面的页记录
+    /// 一并清掉 —— 留着会让那些页下次进来时误判「已绑定」而漏记引用。
+    void eraseTile(uint64_t srcPacked);
     /// LRU touch(移到最近端)。不淘汰 —— 淘汰只发生在准入时的 tryEvictOne。
     void touch(uint64_t srcPacked);
     /// 从最久未用端找第一个可淘汰(已消费或保护到期)的瓦片换出。
@@ -111,6 +123,11 @@ private:
     std::unordered_map<uint64_t, GpuTile> tiles_;
     std::list<uint64_t> lru_;  // 前=最近用
     std::unordered_map<uint64_t, std::list<uint64_t>::iterator> lruPos_;
+    /// 页 → 它当前引用的源瓦片。页存储换租页时靠它找到该放掉谁。
+    std::unordered_map<uint64_t, uint64_t> pageToSrc_;
+    /// 源瓦片 → 引用它的页集合(depth>0 时多页共享一个源瓦片,故是集合不是计数:
+    /// 同一页每帧重复 decoratePage 必须幂等,计数会被重复自增撑大而永不归零)。
+    std::unordered_map<uint64_t, std::unordered_set<uint64_t>> srcToPages_;
     std::shared_ptr<Inbox> inbox_;
 
     std::unique_ptr<Framebuffer> framebuffer_;
@@ -125,10 +142,14 @@ private:
     /// 满员且无可淘汰者时被拒绝的准入次数(页存储下轮再来)。持续 > 0 且
     /// drawn 也在涨 = 正常排队消化;drawn 恒 0 才是异常。
     int admissionDeferrals_ = 0;
+    /// 换租通知回收掉的未消费瓦片数。它与 defer+ 是一对读数:zombie+ 持续 > 0
+    /// 说明换租释放正在干活;若 zombie+ 恒 0 而 defer+ 持续高,说明通知没接上。
+    int zombiesReclaimed_ = 0;
     uint64_t tickCounter_ = 0;
     int lastDrawn_ = 0;
     int lastFetches_ = 0;
     int lastDeferrals_ = 0;
+    int lastZombies_ = 0;
 };
 
 }  // namespace earth_engine

@@ -221,6 +221,9 @@ struct ConvergenceHarness {
     /// 一帧:tick + 预算内轮询未叠画页。轮询起点逐帧旋转 —— 页存储的
     /// pages_ 是 unordered_map,插入/删除会改变迭代序,每帧被轮到的子集
     /// 并不稳定;固定前缀会让旧实现侥幸收敛,测不出真机形态。
+    ///
+    /// 预算记账与 TerrainPageStore::retryPendingDecorations 一致:**只扣真的
+    /// 画了的那些**,在途/被拒的零成本早退不扣。
     void frame(int retryBudget) {
         drawer->tickDecorator();
         int budget = retryBudget;
@@ -228,9 +231,24 @@ struct ConvergenceHarness {
         for (size_t k = 0; k < pages.size() && budget > 0; ++k) {
             const size_t i = (start + k) % pages.size();
             if (decorated[i]) continue;
-            --budget;
-            decorated[i] = drawer->decoratePage(pages[i], target.get(),
-                                                static_cast<int>(i % 64));
+            bool didGpuWork = false;
+            decorated[i] = drawer->decoratePage(
+                pages[i], target.get(), static_cast<int>(i % 64), &didGpuWork);
+            if (didGpuWork) --budget;
+        }
+    }
+
+    /// 同 frame(),但遍历序固定不旋转 —— 复现「占着槽位的页恒排在被拒页之后」
+    /// 这个死锁必要条件(旋转会让它自己解开,测不出来)。
+    void frameFixedOrder(int retryBudget) {
+        drawer->tickDecorator();
+        int budget = retryBudget;
+        for (size_t i = 0; i < pages.size() && budget > 0; ++i) {
+            if (decorated[i]) continue;
+            bool didGpuWork = false;
+            decorated[i] = drawer->decoratePage(
+                pages[i], target.get(), static_cast<int>(i % 64), &didGpuWork);
+            if (didGpuWork) --budget;
         }
     }
     size_t frameIndex_ = 0;
@@ -244,6 +262,17 @@ struct ConvergenceHarness {
             f.done(statusCode, body);  // pool=null → 解码+建网格就地跑
         }
     }
+
+    /// 页存储把 [0,count) 这批页换租掉,换上同样数量的新页(pan 扫过新区域)。
+    /// 复刻真机路径:换租 = 旧页账本消失 + 同步 releasePage 通知。
+    void evictAndReplacePages(int count) {
+        for (int i = 0; i < count && i < static_cast<int>(pages.size()); ++i) {
+            drawer->releasePage(pages[i]);
+            pages[i].x = nextPageX_++;  // 新区域的页,必然是另一块源瓦片
+            decorated[i] = false;
+        }
+    }
+    uint32_t nextPageX_ = 1000;
 };
 
 // **收敛 + 恰好一次 fetch**:页数(30)远超缓存容量(8)时,所有页仍在有限
@@ -290,6 +319,106 @@ TEST(VectorPageDrawerCache, AdmissionDeferredWhileAllTilesInFlight) {
     }
     EXPECT_EQ(0, h.undecoratedCount());
     EXPECT_EQ(5, h.totalFetches);
+}
+
+// ---------------------------------------------------------------------------
+// 换租同步释放(pan 僵尸窗口)
+//
+// 钉住的缺陷:页存储换租一个页时,若不通知 decorator,该页准入的、**还没等到
+// fetch 结果**的源瓦片就成了僵尸 —— 它受未消费保护不可淘汰,而唯一会消费它的
+// 页已经不存在了。反复 pan 会让僵尸占满全部槽位,新区域的页准入持续被拒。
+// 真机表现:defer+ 持续 ~500/窗、矢量空窗 ~30s(只有 600 帧龄兜底能解)。
+// ---------------------------------------------------------------------------
+
+// pan 反复扫过新区域:每轮都在结果到达**之前**换租,旧实现下僵尸单调累积
+// 到占满缓存;修复后新页始终能拿到槽位并最终画出。
+TEST(VectorPageDrawerCache, PanEvictionReleasesUnconsumedTiles) {
+    ConvergenceHarness h(/*maxCachedTiles=*/8, /*pageCount=*/8);
+    const std::vector<uint8_t> body = makeLineTileBytes();
+
+    // 8 轮 pan:每轮让全部 8 个页各准入一块新源瓦片,然后在 fetch 回来之前
+    // 就把它们全换租掉 —— 这正是相机快速扫过时的形态。
+    for (int round = 0; round < 8; ++round) {
+        h.frame(/*retryBudget=*/8);
+        h.evictAndReplacePages(8);
+    }
+    // 缓存里不该留下任何僵尸:所有准入过的瓦片都因换租而回收。
+    EXPECT_EQ(0, h.drawer->cachedTileCount())
+        << "换租后未消费瓦片仍占着槽位";
+
+    // 停手:相机静止,页稳定下来,新一批页必须能正常准入并画完。
+    for (int f = 0; f < 200 && h.undecoratedCount() > 0; ++f) {
+        h.frame(/*retryBudget=*/8);
+        h.completeFetches(2, 200, body);
+    }
+    EXPECT_EQ(0, h.undecoratedCount()) << "pan 停手后仍有页画不出来";
+    EXPECT_EQ(8, h.drawer->drawnPageCount());
+}
+
+// 多页共享同一源瓦片(depth>0,页比数据侧深)时,释放其中一个页**不能**回收
+// 瓦片 —— 另一个页还在等它。搞错会让共享祖先的页永远等不到内容。
+TEST(VectorPageDrawerCache, SharedSourceTileSurvivesPartialRelease) {
+    ConvergenceHarness h(/*maxCachedTiles=*/8, /*pageCount=*/2);
+    // 两个页都比数据侧上限深 1 级且同属一个父瓦片 → 共享同一源瓦片。
+    h.pages[0].z = 15;
+    h.pages[0].x = 8;
+    h.pages[0].y = 0;
+    h.pages[1].z = 15;
+    h.pages[1].x = 9;  // 与 pages[0] 同父(>>1 相同)
+    h.pages[1].y = 0;
+
+    h.frame(/*retryBudget=*/2);
+    EXPECT_EQ(1, h.totalFetches) << "同父的两个页应共享一次拉取";
+    EXPECT_EQ(1, h.drawer->cachedTileCount());
+
+    h.drawer->releasePage(h.pages[0]);  // 只换租其中一个页
+    EXPECT_EQ(1, h.drawer->cachedTileCount())
+        << "还有页在引用,不该回收";
+
+    const std::vector<uint8_t> body = makeLineTileBytes();
+    h.completeFetches(1, 200, body);
+    h.decorated[0] = true;  // 被换租的页不再参与轮询
+    for (int f = 0; f < 50 && !h.decorated[1]; ++f) {
+        h.frame(/*retryBudget=*/2);
+    }
+    EXPECT_TRUE(h.decorated[1]) << "幸存页必须仍能拿到共享瓦片";
+    EXPECT_EQ(1, h.drawer->drawnPageCount());
+}
+
+// ---------------------------------------------------------------------------
+// 每帧叠画预算的记账口径(真机饥饿死锁)
+//
+// 钉住的缺陷:decoratePage 返回 false 有三种成本截然不同的情形——真画了、
+// 在途等待(零成本)、满员被拒(零成本)。页存储若按「尝试次数」扣预算,
+// 遍历序靠前的未就绪页每帧吃光配额,已就绪的页永远轮不到被画;画不上就不算
+// 消费,不消费就不可淘汰,新页继续被拒 —— 系统自锁。真机读数:defer 次数
+// 恰好 = 每帧预算 × 帧数,drawn 恒 0。
+// ---------------------------------------------------------------------------
+
+// 死锁的必要条件有两个,缺一不可:①占满槽位的页排在遍历序**之后**;
+// ②排在前面的页 miss 且因满员被拒。此时若被拒也扣预算,配额全被前面吃光,
+// 后面已就绪的页永远不被消费 → 不消费就不可淘汰 → 前面继续被拒。
+TEST(VectorPageDrawerCache, BudgetIsNotBurnedByZeroCostEarlyOuts) {
+    ConvergenceHarness h(/*maxCachedTiles=*/8, /*pageCount=*/40);
+    const std::vector<uint8_t> body = makeLineTileBytes();
+
+    // 先让**靠后**的 8 个页占满全部槽位(相机移动后新页插到前面的形态)。
+    for (size_t i = 0; i < 32; ++i) h.decorated[i] = true;
+    h.frameFixedOrder(/*retryBudget=*/8);
+    ASSERT_EQ(8, h.drawer->cachedTileCount()) << "靠后的页应已占满缓存";
+    for (size_t i = 0; i < 32; ++i) h.decorated[i] = false;  // 前 32 个页登场
+
+    // 帧数上限刻意小于 kProtectionTicks(600):否则帧龄兜底会把死锁盖住,
+    // 测试变成"最终会好",测不出预算记账这条。
+    int frames = 0;
+    for (; frames < 400 && h.undecoratedCount() > 0; ++frames) {
+        h.frameFixedOrder(/*retryBudget=*/4);
+        h.completeFetches(2, 200, body);
+    }
+
+    EXPECT_EQ(0, h.undecoratedCount())
+        << "预算被零成本早退吃光,系统自锁;frames=" << frames;
+    EXPECT_EQ(40, h.drawer->drawnPageCount());
 }
 
 // 404(数据覆盖外)也算消费:页判「已处理」不再重试,瓦片可被换出,
