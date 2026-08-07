@@ -2467,7 +2467,8 @@ void requestBodyAsync(
     TilesetContentProvider::ContentCallback callback,
     HttpRequestPriority priority,
     std::atomic<int>& requestsCompleted,
-    StashAwareDecodeFn decode) {
+    StashAwareDecodeFn decode,
+    std::shared_ptr<std::atomic<int>> httpPriorityCell = nullptr) {
     auto tokenPtr = std::make_shared<CancellationToken>(std::move(token));
     auto callbackPtr =
         std::make_shared<TilesetContentProvider::ContentCallback>(
@@ -2563,6 +2564,7 @@ void requestBodyAsync(
     // 中止传输/丢弃排队项,不再把废数据下载完才丢结果。
     HttpRequestOptions httpOptions{priority};
     httpOptions.cancelFlag = tokenPtr->sharedFlag();
+    httpOptions.priorityCell = std::move(httpPriorityCell);
     if (bridge) {
         *requestHandle = bridge->get(
             url,
@@ -3612,6 +3614,16 @@ void SingleGltfContentProvider::requestTileContent(
     CancellationToken token,
     ContentCallback callback,
     HttpRequestPriority priority) {
+    requestTileContent(key, std::move(token), std::move(callback), priority,
+                       TileContentRequestOptions{});
+}
+
+void SingleGltfContentProvider::requestTileContent(
+    const TileKey& key,
+    CancellationToken token,
+    ContentCallback callback,
+    HttpRequestPriority priority,
+    TileContentRequestOptions requestOptions) {
     if (!supportsTile(key)) {
         callback(key, TileContentLoadResult::empty());
         return;
@@ -3693,7 +3705,8 @@ void SingleGltfContentProvider::requestTileContent(
                 externalResourceRequestsStarted_,
                 externalResourceRequestsCompleted_,
                 stash);
-        });
+        },
+        std::move(requestOptions.httpPriorityCell));
 }
 
 ProviderRequestDiagnostics SingleGltfContentProvider::requestDiagnostics()
@@ -3848,6 +3861,16 @@ void TilesetJsonContentProvider::requestTileContent(
     CancellationToken token,
     ContentCallback callback,
     HttpRequestPriority priority) {
+    requestTileContent(key, std::move(token), std::move(callback), priority,
+                       TileContentRequestOptions{});
+}
+
+void TilesetJsonContentProvider::requestTileContent(
+    const TileKey& key,
+    CancellationToken token,
+    ContentCallback callback,
+    HttpRequestPriority priority,
+    TileContentRequestOptions requestOptions) {
     TileRecord record;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -3979,7 +4002,8 @@ void TilesetJsonContentProvider::requestTileContent(
                 externalResourceRequestsStarted_,
                 externalResourceRequestsCompleted_,
                 stash);
-        });
+        },
+        std::move(requestOptions.httpPriorityCell));
 }
 
 TileContentLoadResult TilesetJsonContentProvider::decodeContent(

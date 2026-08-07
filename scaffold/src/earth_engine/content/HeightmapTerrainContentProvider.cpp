@@ -219,7 +219,8 @@ void HeightmapTerrainContentProvider::requestTileContent(
             }
             callback(completedKey, std::move(contentResult));
         },
-        priority);
+        priority,
+        std::move(options.httpPriorityCell));
 }
 
 TileContentLoadResult HeightmapTerrainContentProvider::buildContent(

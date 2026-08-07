@@ -87,6 +87,13 @@ public:
                      TerrainCallback callback,
                      HttpRequestPriority priority =
                          HttpRequestPriority::Normal) override;
+    /// 带动态优先级 cell 的重载(promotion 重排,cell 透传 HTTP 层)。基类
+    /// 接口不动 —— 带 HTTP 语义的地形 provider 只有本类,调用方持具体类型。
+    void requestTile(const TileKey& key,
+                     CancellationToken token,
+                     TerrainCallback callback,
+                     HttpRequestPriority priority,
+                     std::shared_ptr<std::atomic<int>> priorityCell);
 
     ProviderRequestDiagnostics requestDiagnostics() const override;
 

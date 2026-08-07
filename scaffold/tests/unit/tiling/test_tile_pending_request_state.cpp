@@ -261,3 +261,22 @@ TEST(TilePendingRequestStateTest, BeginCountsAsFirstFrameMark) {
     // begin 后立刻推进一帧:age=1 未超过滞回(1),不该被误杀。
     EXPECT_TRUE(state.advanceFrameAndCollectStale(1).empty());
 }
+
+TEST(TilePendingRequestStateTest, MarkNeededUpdatesPriorityCell) {
+    TilePendingRequestState state;
+    CancellationToken token;
+    auto cell = std::make_shared<std::atomic<int>>(1);  // Normal
+    ASSERT_TRUE(state.beginContentRequest("tile", token, cell));
+
+    state.markNeeded("tile", 2);  // 升 High
+    EXPECT_EQ(2, cell->load());
+    state.markNeeded("tile", 0);  // 降 Low
+    EXPECT_EQ(0, cell->load());
+    state.markNeeded("tile");     // 缺省 -1 = 只刷帧标,不动 cell
+    EXPECT_EQ(0, cell->load());
+    state.markNeeded("unknown", 2);  // 非在飞 key 忽略
+    EXPECT_EQ(0, cell->load());
+
+    state.completeContentRequest("tile");
+    EXPECT_TRUE(state.empty());
+}

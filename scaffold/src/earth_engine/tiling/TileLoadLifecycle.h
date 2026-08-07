@@ -38,7 +38,8 @@ public:
     void cancelAndEraseCacheKey(const std::string& cacheKey);
 
     /// 帧级"仍被需要"标记(锁内转发 TilePendingRequestState::markNeeded)。
-    void markRequestNeeded(const std::string& cacheKey);
+    /// httpPriority ≥ 0 时同步更新该在飞请求的动态优先级 cell(promotion)。
+    void markRequestNeeded(const std::string& cacheKey, int httpPriority = -1);
     /// 推进帧序,真取消连续 maxAgeFrames 帧无人再要的在飞请求,返回其数量。
     /// token.cancel 经 HttpRequestOptions.cancelFlag 桥接中止 curl 传输。
     size_t sweepStaleRequests(uint64_t maxAgeFrames);

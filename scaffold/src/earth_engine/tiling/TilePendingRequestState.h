@@ -2,6 +2,7 @@
 
 #include "../threading/CancellationToken.h"
 
+#include <atomic>
 #include <cstddef>
 #include <string>
 #include <unordered_map>
@@ -26,10 +27,17 @@ public:
     size_t totalRequestCount() const;
     PendingRequestCounts counts() const;
 
+    /// priorityCell(可空)= 该请求在 HTTP 层的动态优先级 cell,由派发器创建
+    /// 并同时塞进 HttpRequestOptions;markNeeded 随帧写它,curl 工作线程读它
+    /// 搬桶 —— 在飞请求的优先级自此不再冻结(promotion 重排)。
     bool beginTerrainRequest(const std::string& cacheKey,
-                             const CancellationToken& token);
+                             const CancellationToken& token,
+                             std::shared_ptr<std::atomic<int>> priorityCell =
+                                 nullptr);
     bool beginContentRequest(const std::string& cacheKey,
-                             const CancellationToken& token);
+                             const CancellationToken& token,
+                             std::shared_ptr<std::atomic<int>> priorityCell =
+                                 nullptr);
 
     void completeTerrainRequest(const std::string& cacheKey);
     void completeContentRequest(const std::string& cacheKey);
@@ -46,7 +54,9 @@ public:
 
     /// 帧级"仍被需要"标记(请求侧降级/取消欠账)。派发/去重路径对每个本帧
     /// 仍在要的在飞 key 逐帧调用;begin* 视为首帧标记。非在飞 key 忽略。
-    void markNeeded(const std::string& cacheKey);
+    /// httpPriority ≥ 0 时同步写该 key 的动态优先级 cell(promotion 重排:
+    /// curl 层据此把仍在排队的请求搬桶;无 cell 的 key 忽略)。
+    void markNeeded(const std::string& cacheKey, int httpPriority = -1);
 
     /// 推进内部帧序,返回连续 maxAgeFrames 个"推进帧"里都没被 markNeeded
     /// 的在飞 key。只在调度器真的处理了请求的帧被调用 —— reuse/空闲帧不
@@ -63,6 +73,10 @@ private:
     /// key → 最后一次被标记"仍需要"的帧序。恒 ⊆ pendingRequests_
     /// (PendingRequestParity 契约一并看住)。
     std::unordered_map<std::string, uint64_t> lastNeededSeq_;
+    /// key → HTTP 动态优先级 cell(与 curl 层 RequestState 共享)。
+    /// 恒 ⊆ pendingRequests_(同上,parity 一并看住)。
+    std::unordered_map<std::string, std::shared_ptr<std::atomic<int>>>
+        priorityCells_;
     uint64_t neededFrameSeq_ = 0;
     bool destroying_ = false;
 };

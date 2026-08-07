@@ -151,9 +151,14 @@ private:
             }
             if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
                 // The request/pending lifecycle is now the sole owner.
-                // 去重命中 = 本帧仍在要这个在飞 key → 刷新其"仍需要"帧标,
-                // 差集回收据此判陈旧(见 sweepStaleRequests)。
-                input.lifecycle.markRequestNeeded(cacheKey);
+                // 去重命中 = 本帧仍在要这个在飞 key → 刷新其"仍需要"帧标
+                // (差集回收据此判陈旧)+ 把最新 group 写进动态优先级 cell
+                // (promotion 重排:curl 层据此把排队请求搬桶)。
+                input.lifecycle.markRequestNeeded(
+                    cacheKey,
+                    static_cast<int>(
+                        TileLoadRequestDispatcher::toHttpPriority(
+                            request.group)));
                 ++pass.outcome.skippedAlreadyPending;
                 pass.consumed.push_back(requestKey);
                 continue;

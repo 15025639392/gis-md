@@ -68,6 +68,10 @@ public:
         OnIssuedFn&& onIssued,
         TileContentRequestOptions options = {}) {
         CancellationToken token;
+        // 动态优先级 cell:注册进 requestState(markNeeded 随帧写)并透传到
+        // HTTP 层(curl 工作线程读它搬桶)。在飞请求的优先级自此不再冻结。
+        auto priorityCell = std::make_shared<std::atomic<int>>(
+            static_cast<int>(toHttpPriority(group)));
         const int estimatedFanout = provider.estimatedRequestFanout(key);
         const FrameResourceLane requestLane =
             provider.providesTerrainQuadtree()
@@ -84,8 +88,11 @@ public:
             if (requestState.contains(cacheKey) ||
                 pendingLoads.containsCacheKey(cacheKey)) {
                 // 去重命中 = 这个在飞 key 本帧仍被要(上采样源等经由本口
-                // 逐帧重试的路径全靠这行续命,否则 30 帧后被差集回收误杀)。
-                requestState.markNeeded(cacheKey);
+                // 逐帧重试的路径全靠这行续命,否则 30 帧后被差集回收误杀);
+                // 同时把最新 group 写进动态优先级 cell(promotion 重排)。
+                requestState.markNeeded(
+                    cacheKey,
+                    static_cast<int>(toHttpPriority(group)));
                 return TileLoadDispatchResult::Skipped;
             }
             if (!budget.tryIssue(
@@ -94,7 +101,8 @@ public:
                     estimatedFanout)) {
                 return TileLoadDispatchResult::Blocked;
             }
-            if (!requestState.beginContentRequest(cacheKey, token)) {
+            if (!requestState.beginContentRequest(cacheKey, token,
+                                                  priorityCell)) {
                 return TileLoadDispatchResult::Skipped;
             }
         }
@@ -147,6 +155,7 @@ public:
             };
         auto guard = std::make_shared<ContentCompletionGuard>(
             std::move(complete));
+        options.httpPriorityCell = priorityCell;
         provider.requestTileContent(
             key,
             token,
@@ -189,8 +198,11 @@ public:
             if (requestState.contains(cacheKey) ||
                 pendingLoads.containsCacheKey(cacheKey)) {
                 // 去重命中 = 这个在飞 key 本帧仍被要(上采样源等经由本口
-                // 逐帧重试的路径全靠这行续命,否则 30 帧后被差集回收误杀)。
-                requestState.markNeeded(cacheKey);
+                // 逐帧重试的路径全靠这行续命,否则 30 帧后被差集回收误杀);
+                // 同时把最新 group 写进动态优先级 cell(promotion 重排)。
+                requestState.markNeeded(
+                    cacheKey,
+                    static_cast<int>(toHttpPriority(group)));
                 return TileLoadDispatchResult::Skipped;
             }
             if (!tryAcquireUpsampleClipSlot()) {
@@ -251,6 +263,20 @@ public:
                 guard->fire(clip(clipInput));
             });
         return TileLoadDispatchResult::Issued;
+    }
+
+    /// group → HTTP 三档映射。public:调度器去重点/差集回收也要用它
+    /// 更新在飞请求的动态优先级 cell。
+    static HttpRequestPriority toHttpPriority(TileLoadPriorityGroup group) {
+        switch (group) {
+            case TileLoadPriorityGroup::Preload:
+                return HttpRequestPriority::Low;
+            case TileLoadPriorityGroup::Normal:
+                return HttpRequestPriority::Normal;
+            case TileLoadPriorityGroup::Urgent:
+                return HttpRequestPriority::High;
+        }
+        return HttpRequestPriority::Normal;
     }
 
 private:
@@ -359,17 +385,6 @@ private:
         }
     }
 
-    static HttpRequestPriority toHttpPriority(TileLoadPriorityGroup group) {
-        switch (group) {
-            case TileLoadPriorityGroup::Preload:
-                return HttpRequestPriority::Low;
-            case TileLoadPriorityGroup::Normal:
-                return HttpRequestPriority::Normal;
-            case TileLoadPriorityGroup::Urgent:
-                return HttpRequestPriority::High;
-        }
-        return HttpRequestPriority::Normal;
-    }
 };
 
 } // namespace earth_engine

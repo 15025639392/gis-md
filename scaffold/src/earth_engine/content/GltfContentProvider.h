@@ -126,6 +126,8 @@ struct TileContentLoadResult {
 struct TileContentRequestOptions {
     bool generateTerrainRasterOverlayDetails = false;
     std::vector<RasterOverlayProjection> requiredRasterOverlayProjections;
+    /// 动态优先级 cell(透传给 HttpRequestOptions.priorityCell;可空=静态)。
+    std::shared_ptr<std::atomic<int>> httpPriorityCell;
 };
 
 class TilesetContentProvider {
@@ -207,6 +209,11 @@ public:
                             ContentCallback callback,
                             HttpRequestPriority priority =
                                 HttpRequestPriority::Normal) override;
+    void requestTileContent(const TileKey& key,
+                            CancellationToken token,
+                            ContentCallback callback,
+                            HttpRequestPriority priority,
+                            TileContentRequestOptions options) override;
     TileContentLoadResult decodeContent(const uint8_t* data,
                                         size_t size) override;
 
@@ -264,6 +271,11 @@ public:
                             ContentCallback callback,
                             HttpRequestPriority priority =
                                 HttpRequestPriority::Normal) override;
+    void requestTileContent(const TileKey& key,
+                            CancellationToken token,
+                            ContentCallback callback,
+                            HttpRequestPriority priority,
+                            TileContentRequestOptions options) override;
     TileContentLoadResult decodeContent(const uint8_t* data,
                                         size_t size) override;
 

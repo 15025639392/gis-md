@@ -89,9 +89,10 @@ void TileLoadLifecycle::cancelAndEraseCacheKey(
     pendingLoads_.eraseCacheKey(cacheKey);
 }
 
-void TileLoadLifecycle::markRequestNeeded(const std::string& cacheKey) {
+void TileLoadLifecycle::markRequestNeeded(const std::string& cacheKey,
+                                          int httpPriority) {
     std::lock_guard<std::mutex> lock(mutex_);
-    requestState_.markNeeded(cacheKey);
+    requestState_.markNeeded(cacheKey, httpPriority);
 }
 
 size_t TileLoadLifecycle::sweepStaleRequests(uint64_t maxAgeFrames) {

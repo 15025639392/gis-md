@@ -59,6 +59,12 @@ struct HttpRequestOptions {
     /// (以 code=-1 触发)——上层的 retired-token 清账依赖这一点。
     /// 为空 = 该请求不可被外部取消(行为与旧版完全一致)。
     std::shared_ptr<std::atomic<bool>> cancelFlag;
+    /// 动态优先级 cell(值 = HttpRequestPriority 的 int)。上层随帧更新;
+    /// 调度器工作线程每轮 wake 把仍在排队、cell 与所在桶不一致的请求搬到
+    /// 目标桶(promotion 插到 High 即插队,demotion 落到低桶尾)。**只影响
+    /// 未开始的排队项** —— 在飞传输不可抢占(curl 无此语义,cesium-native
+    /// 同样只重排待发队列)。为空 = 静态优先级(行为与旧版一致)。
+    std::shared_ptr<std::atomic<int>> priorityCell;
 };
 
 /// 平台桥接抽象接口。

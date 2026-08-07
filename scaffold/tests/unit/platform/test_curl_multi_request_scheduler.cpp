@@ -805,3 +805,87 @@ TEST(CurlMultiRequestScheduler, ExternalCancelFlagDropsQueuedWithSingleCallback)
     scheduler.shutdown();
     EXPECT_EQ(1, callbacks.load());
 }
+
+// ---------------------------------------------------------------------------
+// priorityCell 动态搬桶(promotion 重排):上层不持句柄,随帧写 cell,工作
+// 线程每轮 wake 把排队项搬到目标桶。只影响未开始的排队项。
+// ---------------------------------------------------------------------------
+
+TEST(CurlMultiRequestScheduler, PriorityCellPromotesQueuedRequestPastEarlierPeer) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler;
+
+    std::vector<std::unique_ptr<HttpRequest>> blockers;
+    const int nonUrgentCapacity = scheduler.maximumActiveRequests() - 2;
+    for (int i = 0; i < nonUrgentCapacity; ++i) {
+        blockers.push_back(scheduler.get(
+            server.url("/hold/promo/" + std::to_string(i)),
+            [](int, std::vector<uint8_t>) {},
+            {HttpRequestPriority::Normal}));
+    }
+    ASSERT_TRUE(server.waitForSeenCount(
+        static_cast<size_t>(nonUrgentCapacity), 3s));
+
+    // 先排 A(Normal,无 cell),再排 B(Normal,带 cell)。FIFO 下 A 先走;
+    // 把 B 升 High 后,B 应借保留槽立刻开走而 A 仍被门控。
+    auto first = scheduler.get(
+        server.url("/queued-first"),
+        [](int, std::vector<uint8_t>) {},
+        {HttpRequestPriority::Normal});
+    auto cell = std::make_shared<std::atomic<int>>(
+        static_cast<int>(HttpRequestPriority::Normal));
+    HttpRequestOptions options{HttpRequestPriority::Normal};
+    options.priorityCell = cell;
+    auto second = scheduler.get(
+        server.url("/queued-promoted"),
+        [](int, std::vector<uint8_t>) {},
+        options);
+
+    cell->store(static_cast<int>(HttpRequestPriority::High),
+                std::memory_order_release);
+    // High 有 2 个保留槽:无需 release 任何 blocker,B 升档后即可开走。
+    ASSERT_TRUE(server.waitForPath("/queued-promoted", 3s))
+        << "升档请求没有插队开走";
+    EXPECT_FALSE(server.hasSeen("/queued-first"))
+        << "未升档的先排请求不该越过门控";
+
+    server.releaseAll();
+    scheduler.shutdown();
+}
+
+TEST(CurlMultiRequestScheduler, PriorityCellDemotesQueuedRequestBehindLaterPeer) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler(1);
+
+    std::atomic<int> holdDone{0};
+    auto hold = scheduler.get(
+        server.url("/hold/demote"),
+        [&](int, std::vector<uint8_t>) { holdDone.fetch_add(1); },
+        {HttpRequestPriority::Normal});
+    ASSERT_TRUE(server.waitForPath("/hold/demote", 3s));
+
+    // A 先排(带 cell),B 后排。把 A 降 Low 后释放唯一槽:B 应先走。
+    auto cell = std::make_shared<std::atomic<int>>(
+        static_cast<int>(HttpRequestPriority::Normal));
+    HttpRequestOptions options{HttpRequestPriority::Normal};
+    options.priorityCell = cell;
+    auto demoted = scheduler.get(
+        server.url("/queued-demoted"),
+        [](int, std::vector<uint8_t>) {},
+        options);
+    auto later = scheduler.get(
+        server.url("/queued-later"),
+        [](int, std::vector<uint8_t>) {},
+        {HttpRequestPriority::Normal});
+
+    cell->store(static_cast<int>(HttpRequestPriority::Low),
+                std::memory_order_release);
+    std::this_thread::sleep_for(200ms);  // 等一轮 propagate(poll ≤50ms)
+    server.releaseOne();
+    ASSERT_TRUE(server.waitForPath("/queued-later", 3s))
+        << "降档后 Normal 后来者应先走";
+    EXPECT_FALSE(server.hasSeen("/queued-demoted"));
+
+    server.releaseAll();
+    scheduler.shutdown();
+}

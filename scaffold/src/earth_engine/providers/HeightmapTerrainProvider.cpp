@@ -79,9 +79,18 @@ std::string HeightmapTerrainProvider::buildUrl(const TileKey& key) const {
 }
 
 void HeightmapTerrainProvider::requestTile(const TileKey& key,
-                                            CancellationToken token,
-                                            TerrainCallback callback,
-                                            HttpRequestPriority priority) {
+                                           CancellationToken token,
+                                           TerrainCallback callback,
+                                           HttpRequestPriority priority) {
+    requestTile(key, std::move(token), std::move(callback), priority, nullptr);
+}
+
+void HeightmapTerrainProvider::requestTile(
+    const TileKey& key,
+    CancellationToken token,
+    TerrainCallback callback,
+    HttpRequestPriority priority,
+    std::shared_ptr<std::atomic<int>> priorityCell) {
     std::string url = buildUrl(key);
     requestsStarted_.fetch_add(1, std::memory_order_relaxed);
     if (platformBridge_) {
@@ -128,6 +137,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
         // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
         HttpRequestOptions httpOptions{priority};
         httpOptions.cancelFlag = token.sharedFlag();
+        httpOptions.priorityCell = priorityCell;
         *requestHandle = platformBridge_->get(
             url,
             [this,
@@ -214,6 +224,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
     // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
     HttpRequestOptions httpOptions{priority};
     httpOptions.cancelFlag = token.sharedFlag();
+    httpOptions.priorityCell = std::move(priorityCell);
     *requestHandle = CurlMultiRequestScheduler::shared().get(
         url,
         [this,

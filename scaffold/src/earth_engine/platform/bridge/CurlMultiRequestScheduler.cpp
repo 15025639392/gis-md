@@ -69,6 +69,9 @@ struct CurlMultiRequestScheduler::Impl {
         /// CancellationToken)。工作线程每轮 wake 传播成 cancelled,复用
         /// 既有取消路径 —— 上层不必持有 RequestHandle 也能真取消。
         std::shared_ptr<std::atomic<bool>> externalCancel;
+        /// 动态优先级 cell(HttpRequestOptions.priorityCell)。propagate 阶段
+        /// 与所在桶比对,不一致则搬桶 —— 上层不持句柄也能升/降档。
+        std::shared_ptr<std::atomic<int>> priorityCell;
         /// 本次取消来自 externalCancel 传播 → active 摘除后必须补一发
         /// callback(-1)(引擎侧 retired-token 清账依赖恰好一次回调)。
         /// 句柄 cancel/shutdown 的旧路径保持不回调的既有契约。
@@ -179,6 +182,7 @@ struct CurlMultiRequestScheduler::Impl {
         state->callback = std::move(callback);
         state->priority = options.priority;
         state->externalCancel = std::move(options.cancelFlag);
+        state->priorityCell = std::move(options.priorityCell);
         state->notifyCallbackOnShutdown = notifyCallbackOnShutdown;
         state->queuedAt = std::chrono::steady_clock::now();
 
@@ -395,6 +399,37 @@ private:
                 request->notifyCancelCallback = true;
                 request->cancelled.store(true, std::memory_order_release);
             }
+        }
+        // 动态优先级搬桶(仅排队项;在飞不可抢占)。逐桶收集再搬,避免遍历中
+        // 改容器;promotion 到高桶尾 = 排在既有高优之后(不越权),demotion 到
+        // 低桶尾。cell 与桶一致时零成本略过。
+        int rebucketed = 0;
+        for (size_t b = 0; b < pending.size(); ++b) {
+            for (auto it = pending[b].begin(); it != pending[b].end();) {
+                auto& request = *it;
+                if (!request->priorityCell) {
+                    ++it;
+                    continue;
+                }
+                const int desiredValue = request->priorityCell->load(
+                    std::memory_order_acquire);
+                const size_t desired = static_cast<size_t>(
+                    desiredValue < 0 ? 0 : (desiredValue > 2 ? 2
+                                                             : desiredValue));
+                if (desired == b) {
+                    ++it;
+                    continue;
+                }
+                request->priority =
+                    static_cast<HttpRequestPriority>(desired);
+                pending[desired].push_back(std::move(request));
+                it = pending[b].erase(it);
+                ++rebucketed;
+            }
+        }
+        if (rebucketed > 0) {
+            platformLog(LogLevel::Info, "HttpSched",
+                        "priorityRebucketed=%d", rebucketed);
         }
     }
 

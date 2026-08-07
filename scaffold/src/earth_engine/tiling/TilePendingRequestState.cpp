@@ -16,11 +16,14 @@ void checkParity(const char* site,
                  size_t pending,
                  size_t content,
                  size_t tokens,
-                 size_t needed) {
+                 size_t needed,
+                 size_t cells) {
     GE_CONTRACT(contracts::Id::PendingRequestParity,
-                pending == tokens && content <= pending && needed <= pending,
-                "site=%s pending=%zu tokens=%zu content=%zu needed=%zu",
-                site, pending, tokens, content, needed);
+                pending == tokens && content <= pending &&
+                    needed <= pending && cells <= pending,
+                "site=%s pending=%zu tokens=%zu content=%zu needed=%zu "
+                "cells=%zu",
+                site, pending, tokens, content, needed, cells);
 }
 
 }  // namespace
@@ -62,23 +65,29 @@ PendingRequestCounts TilePendingRequestState::counts() const {
 
 bool TilePendingRequestState::beginTerrainRequest(
     const std::string& cacheKey,
-    const CancellationToken& token) {
+    const CancellationToken& token,
+    std::shared_ptr<std::atomic<int>> priorityCell) {
     if (destroying_ || cacheKey.empty() || pendingRequests_.count(cacheKey)) {
         return false;
     }
     pendingRequests_.insert(cacheKey);
     pendingRequestTokens_[cacheKey] = token;
     lastNeededSeq_[cacheKey] = neededFrameSeq_;  // begin 即首帧"仍需要"
+    if (priorityCell) {
+        priorityCells_[cacheKey] = std::move(priorityCell);
+    }
     checkParity("beginTerrain", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
                 pendingRequestTokens_.size(),
-                lastNeededSeq_.size());
+                lastNeededSeq_.size(),
+                priorityCells_.size());
     return true;
 }
 
 bool TilePendingRequestState::beginContentRequest(
     const std::string& cacheKey,
-    const CancellationToken& token) {
+    const CancellationToken& token,
+    std::shared_ptr<std::atomic<int>> priorityCell) {
     if (destroying_ || cacheKey.empty() || pendingRequests_.count(cacheKey)) {
         return false;
     }
@@ -86,10 +95,14 @@ bool TilePendingRequestState::beginContentRequest(
     pendingContentRequestKeys_.insert(cacheKey);
     pendingRequestTokens_[cacheKey] = token;
     lastNeededSeq_[cacheKey] = neededFrameSeq_;  // begin 即首帧"仍需要"
+    if (priorityCell) {
+        priorityCells_[cacheKey] = std::move(priorityCell);
+    }
     checkParity("beginContent", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
                 pendingRequestTokens_.size(),
-                lastNeededSeq_.size());
+                lastNeededSeq_.size(),
+                priorityCells_.size());
     return true;
 }
 
@@ -99,10 +112,12 @@ void TilePendingRequestState::completeTerrainRequest(
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
     lastNeededSeq_.erase(cacheKey);
+    priorityCells_.erase(cacheKey);
     checkParity("complete", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
                 pendingRequestTokens_.size(),
-                lastNeededSeq_.size());
+                lastNeededSeq_.size(),
+                priorityCells_.size());
 }
 
 void TilePendingRequestState::completeContentRequest(
@@ -111,10 +126,12 @@ void TilePendingRequestState::completeContentRequest(
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
     lastNeededSeq_.erase(cacheKey);
+    priorityCells_.erase(cacheKey);
     checkParity("complete", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
                 pendingRequestTokens_.size(),
-                lastNeededSeq_.size());
+                lastNeededSeq_.size(),
+                priorityCells_.size());
 }
 
 void TilePendingRequestState::completeTerrainRequest(
@@ -153,17 +170,28 @@ void TilePendingRequestState::cancelAndErase(const std::string& cacheKey) {
     pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
     lastNeededSeq_.erase(cacheKey);
+    priorityCells_.erase(cacheKey);
     checkParity("cancelAndErase", pendingRequests_.size(),
                 pendingContentRequestKeys_.size(),
                 pendingRequestTokens_.size(),
-                lastNeededSeq_.size());
+                lastNeededSeq_.size(),
+                priorityCells_.size());
 }
 
-void TilePendingRequestState::markNeeded(const std::string& cacheKey) {
+void TilePendingRequestState::markNeeded(const std::string& cacheKey,
+                                         int httpPriority) {
     if (cacheKey.empty() || pendingRequests_.count(cacheKey) == 0) {
         return;  // 只标在飞 key,防 lastNeededSeq_ 长成孤儿表
     }
     lastNeededSeq_[cacheKey] = neededFrameSeq_;
+    if (httpPriority >= 0) {
+        // promotion 重排:写动态优先级 cell,curl 工作线程下一轮 wake 据此
+        // 把仍在排队的请求搬桶(升档插队/降档让路)。在飞传输不受影响。
+        const auto it = priorityCells_.find(cacheKey);
+        if (it != priorityCells_.end() && it->second) {
+            it->second->store(httpPriority, std::memory_order_release);
+        }
+    }
 }
 
 std::vector<std::string> TilePendingRequestState::advanceFrameAndCollectStale(
@@ -199,6 +227,7 @@ void TilePendingRequestState::clearAfterCallbacksComplete() {
     pendingRequestTokens_.clear();
     retiredCallbackTokens_.clear();
     lastNeededSeq_.clear();
+    priorityCells_.clear();
     destroying_ = false;
 }
 
