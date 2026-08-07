@@ -23,16 +23,32 @@ namespace earth_engine {
 /// terrainGridSizeForSse,但 draw 侧层池触顶时可能实际回落 coarse,此时
 /// 本瓦片八度被高估 2 → 邻居少吸 2 级,退化为改动前的状态,不会更差。
 struct TileEdgeSnapResolver {
+    /// 邻居探测结果:八度差(clamp 后的 log2 步长)+ 命中的邻居 entry。
+    /// entry 指针供 ①-1 的边高度 LUT 取邻居真实渲染高度用;lg=0 时无意义。
+    struct EdgeNeighbor {
+        int log2Step = 0;
+        const TileRenderEntry* entry = nullptr;
+    };
+
+    /// 渲染集索引的值:该 cell 的八度与产生它的 entry。与 EdgeNeighbor 分开
+    /// 定义是因为两者的 int 含义不同(八度 vs log2 步长),共用一个类型必然
+    /// 有人把八度当步长用。
+    struct CellEntry {
+        int octave = 0;
+        const TileRenderEntry* entry = nullptr;
+    };
+
     static void resolve(TilePlan& plan) {
-        // 渲染集索引:占屏 cell(selectedKey)→ 八度。仅本帧选中条目
+        plan.edgeSnapRecords.clear();
+        // 渲染集索引:占屏 cell(selectedKey)→ (八度, entry)。仅本帧选中条目
         // (fading 条目画在过渡层,不参与边界几何契约)。
-        std::unordered_map<uint64_t, int> octaves;
+        std::unordered_map<uint64_t, CellEntry> octaves;
         octaves.reserve(plan.renderEntries.size() * 2);
         for (const TileRenderEntry& e : plan.renderEntries) {
             if (!e.selectedThisFrame || !e.selectedTile) {
                 continue;
             }
-            octaves[cellKey(e.selectedKey)] = entryOctave(e);
+            octaves[cellKey(e.selectedKey)] = CellEntry{entryOctave(e), &e};
         }
         for (TileRenderEntry& e : plan.renderEntries) {
             if (!e.selectedTile) {
@@ -48,12 +64,24 @@ struct TileEdgeSnapResolver {
             const TileKey& k = e.selectedKey;
             // 边序与 shader 解码约定一致:W + 8·E + 64·N + 512·S。
             // y 轴:v=0 为北 → N 边 = y-1 cell,S 边 = y+1 cell。
-            const int w = edgeSnapLog2(octaves, k, -1, 0, own);
-            const int east = edgeSnapLog2(octaves, k, +1, 0, own);
-            const int n = edgeSnapLog2(octaves, k, 0, -1, own);
-            const int south = edgeSnapLog2(octaves, k, 0, +1, own);
-            state.edgeSnapPacked =
-                static_cast<float>(w + 8 * east + 64 * n + 512 * south);
+            const EdgeNeighbor edges[TileEdgeSnapRecord::kEdgeCount] = {
+                edgeSnapNeighbor(octaves, k, -1, 0, own),
+                edgeSnapNeighbor(octaves, k, +1, 0, own),
+                edgeSnapNeighbor(octaves, k, 0, -1, own),
+                edgeSnapNeighbor(octaves, k, 0, +1, own),
+            };
+            state.edgeSnapPacked = static_cast<float>(
+                edges[0].log2Step + 8 * edges[1].log2Step +
+                64 * edges[2].log2Step + 512 * edges[3].log2Step);
+            TileEdgeSnapRecord rec;
+            rec.tile = e.selectedTile;
+            for (int i = 0; i < TileEdgeSnapRecord::kEdgeCount; ++i) {
+                rec.edgeLog2[i] = edges[i].log2Step;
+                rec.neighbor[i] = edges[i].entry;
+            }
+            if (rec.hasAnySnap()) {
+                plan.edgeSnapRecords.push_back(rec);
+            }
         }
     }
 
@@ -84,22 +112,35 @@ private:
 
     /// 邻居 cell 自本级向上探(邻居更细时本级即 miss → 0,不吸附:细侧
     /// 负责向粗侧吸)。返回 clamp 到 [0,6] 的 log2 步长(coarse 档 64 格,
-    /// 步长上限 2^6)。
-    static int edgeSnapLog2(
-        const std::unordered_map<uint64_t, int>& octaves,
+    /// 步长上限 2^6)与命中的邻居 entry。
+    ///
+    /// ⚠️ log2Step 被 clamp 而 entry 不被 clamp:step 触顶(>6)时几何吸附
+    /// 退化,但 LUT 仍按**未 clamp 的真实间距**去取邻居高度会与 shader 采样
+    /// 位置错位 —— 故 clamp 命中时连 entry 一起丢弃,整条边退回自吸附。
+    static EdgeNeighbor edgeSnapNeighbor(
+        const std::unordered_map<uint64_t, CellEntry>& octaves,
         const TileKey& k, int dx, int dy, int ownOctave) {
         const int tilesAtLevel = 1 << k.z;
         int nx = k.x + dx;
         const int ny = k.y + dy;
         if (ny < 0 || ny >= tilesAtLevel) {
-            return 0;  // 极侧无邻居
+            return {};  // 极侧无邻居
         }
         nx = ((nx % tilesAtLevel) + tilesAtLevel) % tilesAtLevel;  // 经向环绕
         TileKey probe{k.schemeId, k.z, nx, ny};
         for (int up = 0; up <= 8 && probe.z >= 0; ++up) {
             auto it = octaves.find(cellKey(probe));
             if (it != octaves.end()) {
-                return std::clamp(ownOctave - it->second, 0, 6);
+                const int raw = ownOctave - it->second.octave;
+                if (raw <= 0) {
+                    return {};  // 邻居同级或更细:细侧不吸
+                }
+                if (raw > 6) {
+                    // 触顶:几何仍按 2^6 吸附(与改前一致),但不给 LUT 邻居
+                    // (采样位置对不上,给了反而引入新错位)。
+                    return EdgeNeighbor{6, nullptr};
+                }
+                return EdgeNeighbor{raw, it->second.entry};
             }
             if (probe.z == 0) {
                 break;
@@ -107,7 +148,7 @@ private:
             probe = TileKey{probe.schemeId, probe.z - 1, probe.x >> 1,
                             probe.y >> 1};
         }
-        return 0;
+        return {};
     }
 };
 

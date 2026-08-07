@@ -65,6 +65,32 @@ struct TileRenderEntry {
     }
 };
 
+/// 机制 B ①-1:一个吸附瓦片的 4 条边各自的邻居来源。TileEdgeSnapResolver 在
+/// 解析八度差时顺手记下命中的邻居 entry —— 边高度 LUT 需要"邻居实际渲染出来
+/// 的高度",而那要邻居的 heightmap/bounds/档位/morph,只有 entry 能给全。
+///
+/// 条目生存期 = 本帧渲染集(entry 指针指向同一个 renderEntries 向量的元素),
+/// 消费者(TileEdgeHeightLutBuilder)在同帧内跑完即弃,不跨帧持有。
+struct TileEdgeSnapRecord {
+    static constexpr int kEdgeCount = 4;  // W, E, N, S(与 shader 打包序一致)
+
+    TilesetTile* tile = nullptr;
+    // 每边的 log2 吸附步长(0 = 该边不吸附)。冗余于 edgeSnapPacked,但拆开
+    // 存是为了 LUT 构建端不必再解一次打包(解包写两遍必然有一遍会写错)。
+    int edgeLog2[kEdgeCount] = {0, 0, 0, 0};
+    const TileRenderEntry* neighbor[kEdgeCount] = {nullptr, nullptr, nullptr,
+                                                   nullptr};
+
+    bool hasAnySnap() const {
+        for (int i = 0; i < kEdgeCount; ++i) {
+            if (edgeLog2[i] > 0 && neighbor[i]) {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
 enum class TileSelectionState {
     NotVisited,
     Culled,
@@ -135,6 +161,10 @@ struct TilePlan {
     // references protect them through command submission.
     std::vector<TilesetTile*> tilesToRenderThisFrame;
     std::vector<TileRenderEntry> renderEntries;
+    // 机制 B ①-1:本帧有吸附边的瓦片及其邻居来源(TileEdgeSnapResolver 产,
+    // TileEdgeHeightLutBuilder 消费)。renderEntries 定稿后才填,故其中的
+    // entry 指针在本帧内稳定。
+    std::vector<TileEdgeSnapRecord> edgeSnapRecords;
     std::vector<std::string> frameCredits;
     int frameMappedRasterTileCount = 0;
     int frameMappedRasterTileLoadingCount = 0;

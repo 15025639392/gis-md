@@ -5,8 +5,10 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TileRenderPlanFinalizer.h"
+#include "TileEdgeMismatchProbe.h"
 #include "TileEdgeSnapResolver.h"
 #include "TilesetTile.h"
+#include "../debug/PlatformLog.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/ImageryProvider.h"
 #include "../providers/RasterOverlayTile.h"
@@ -21,6 +23,47 @@ namespace {
 
 constexpr int kActiveInteractionRenderPrepBudget = 0;
 constexpr int kRecoveryRenderPrepBudget = 1;
+
+// 跨瓦接边几何错位探针的报告周期(帧)。逐帧跑要几万次双线性,诊断不该自己
+// 变成尖刺;错位是随 LOD 结构变化的量,秒级采样足够看清分布。
+constexpr uint64_t kEdgeMismatchLogPeriod = 60;
+
+/// 把接边错位分布写进日志。分母为 0(本帧无吸附边)时**不打印** —— 打一行
+/// 全零会和"测了、确实是零"长得一模一样。
+void logEdgeMismatch(const TilePlan& plan) {
+    if (plan.frameId == 0 || plan.frameId % kEdgeMismatchLogPeriod != 0) {
+        return;
+    }
+    const TileEdgeMismatchProbe::Stats st = TileEdgeMismatchProbe::measure(plan);
+    if (!st.hasSamples()) {
+        if (st.skippedEdges > 0) {
+            platformLog(LogLevel::Info, "SeamDiag",
+                        "edgeMismatch frame=%llu 无样本 skippedEdges=%d"
+                        "(两侧 heightmap 取不全)",
+                        static_cast<unsigned long long>(plan.frameId),
+                        st.skippedEdges);
+        }
+        return;
+    }
+    // 末桶是"大于最大有限上界"的溢出桶,打它的哨兵值(1e30)只会刷屏 —— 直接
+    // 写成 >25m。
+    const float p95 = st.percentileUpper(0.95);
+    char p95Text[16];
+    const float lastFinite =
+        TileEdgeMismatchProbe::kBucketUpper[TileEdgeMismatchProbe::kBucketCount - 2];
+    if (p95 > lastFinite) {
+        snprintf(p95Text, sizeof(p95Text), ">%.0fm", lastFinite);
+    } else {
+        snprintf(p95Text, sizeof(p95Text), "<=%.1fm", p95);
+    }
+    platformLog(LogLevel::Info, "SeamDiag",
+                "edgeMismatch frame=%llu edges=%d fadeEdges=%d n=%d agree=%.3f "
+                "mean=%.2fm p95%s max=%.2fm skipped=%d",
+                static_cast<unsigned long long>(plan.frameId),
+                st.edges, st.fadeMismatchEdges, st.samples,
+                st.agreementRatio(), st.meanAbs(), p95Text,
+                static_cast<double>(st.maxAbs), st.skippedEdges);
+}
 
 // 去重集合 + 输出 vector 并行维护：vector 保持插入序（展示顺序稳定），
 // set 提供 O(1) 查重——原先逐条 std::find 在瓦片×credit 数上是 O(N²)
@@ -201,6 +244,7 @@ void TileRenderPlanFrameRefresher::refresh(
         });
     // 机制 B:渲染集定稿后解析每瓦片 4 边邻居八度差(边吸附输入)。
     TileEdgeSnapResolver::resolve(tilePlan);
+    logEdgeMismatch(tilePlan);
     refreshFrameCredits(tilePlan, rasterOverlays);
     refreshFrameProgress(tilePlan);
 }
