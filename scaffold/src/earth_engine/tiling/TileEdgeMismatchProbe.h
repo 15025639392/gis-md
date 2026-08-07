@@ -34,10 +34,11 @@ struct TileEdgeMismatchProbe {
     /// 数据本身就表达不出来,不该记成错位。
     static constexpr float kToleranceMeters = 0.1f;
 
-    /// 每边最多取多少节点。满档(dense 邻 dense,step=2)一边有 129 个节点,
-    /// 100 片瓦 × 4 边全采 = 每次 15 万次双线性。诊断不该自己变成尖刺,
-    /// 故按 stride 抽稀 —— 错位是沿边连续的场,抽稀不改变分布形状。
-    static constexpr int kMaxNodesPerEdge = 17;
+    /// 每边最多取多少节点。满档(dense 邻 dense,step=2)一边有 129 个节点;
+    /// 按 stride 抽稀 —— 错位是沿边连续的场,抽稀不改变分布形状。
+    /// 33 是逐帧测量下的实测折中:掠视稳态约 10 条吸附边 × 33 节点 × 3 次
+    /// 双线性 ≈ 1000 次/帧,可忽略。
+    static constexpr int kMaxNodesPerEdge = 33;
 
     /// 直方图桶上界(米)。用直方图而非存全部样本:免掉逐帧几万个 float 的
     /// 分配,且天然可跨帧累积成窗口分布。
@@ -49,8 +50,6 @@ struct TileEdgeMismatchProbe {
         int samples = 0;          // 参与比较的节点数
         int within = 0;           // |Δh| ≤ kToleranceMeters 的节点数
         int edges = 0;            // 参与的吸附边数
-        int fadeMismatchEdges = 0;  // 两侧起伏淡入系数不同的边(z<9 跨档)
-        int skippedEdges = 0;     // 有吸附但取不到两侧 heightmap,无法比较
         double sumAbs = 0.0;
         float maxAbs = 0.0f;
         int buckets[kBucketCount] = {};
@@ -88,11 +87,28 @@ struct TileEdgeMismatchProbe {
         }
 
         void merge(const Stats& o) {
-            samples += o.samples; within += o.within;
-            edges += o.edges; skippedEdges += o.skippedEdges;
-            fadeMismatchEdges += o.fadeMismatchEdges;
+            samples += o.samples; within += o.within; edges += o.edges;
             sumAbs += o.sumAbs; maxAbs = std::max(maxAbs, o.maxAbs);
             for (int b = 0; b < kBucketCount; ++b) buckets[b] += o.buckets[b];
+        }
+    };
+
+    /// 两个群体**必须分开统计**,不能混进一个分布:
+    ///   fadeUniform 两侧 fade 相同 → 差值就是金字塔层间 ε,这是 ①-1 的
+    ///               目标群体,A/B 只看它;
+    ///   fadeDiffer  两侧 fade 不同(跨 z<9 档)→ 粗侧被刻意压平,几十~几百米
+    ///               的台阶是设计使然,①-1 不会也不该改变它。
+    /// 混在一起会让 ①-1 的效果被一个它管不着的、且量级大一个数量级的population
+    /// 稀释掉 —— 那正是"比率不对时先怀疑分母/口径"的同一个坑。
+    struct Result {
+        Stats fadeUniform;
+        Stats fadeDiffer;
+        int skippedEdges = 0;  // 取不到两侧 heightmap,无法比较
+
+        void merge(const Result& o) {
+            fadeUniform.merge(o.fadeUniform);
+            fadeDiffer.merge(o.fadeDiffer);
+            skippedEdges += o.skippedEdges;
         }
     };
 
@@ -160,8 +176,8 @@ struct TileEdgeMismatchProbe {
         }
     }
 
-    static Stats measure(const TilePlan& plan) {
-        Stats st;
+    static Result measure(const TilePlan& plan) {
+        Result out;
         for (const TileEdgeSnapRecord& rec : plan.edgeSnapRecords) {
             if (!rec.tile) continue;
             const DecodedHeightmap* ownHm =
@@ -175,13 +191,13 @@ struct TileEdgeMismatchProbe {
                 if (lg <= 0 || !nbr) continue;
                 const HeightSource ns = sourceOf(*nbr);
                 if (!ownHm || !ownHm->valid() || !ns.valid()) {
-                    ++st.skippedEdges;
+                    ++out.skippedEdges;
                     continue;
                 }
+                Stats& st = (std::fabs(ownFade - ns.fade) > 1e-3f)
+                                ? out.fadeDiffer
+                                : out.fadeUniform;
                 ++st.edges;
-                // fade 差本身就会造成几十~几百米的真实台阶(粗侧被刻意压平),
-                // 那是设计使然、与金字塔 ε 是两回事,单独计数以便分开读。
-                if (std::fabs(ownFade - ns.fade) > 1e-3f) ++st.fadeMismatchEdges;
                 // 吸附节点:自栅格上每 2^lg 一个 → 共 gridN/2^lg + 1 个。
                 const int step = 1 << lg;
                 const int nodes = std::max(1, ownGrid / step) + 1;
@@ -201,7 +217,7 @@ struct TileEdgeMismatchProbe {
                 }
             }
         }
-        return st;
+        return out;
     }
 };
 

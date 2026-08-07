@@ -24,45 +24,73 @@ namespace {
 constexpr int kActiveInteractionRenderPrepBudget = 0;
 constexpr int kRecoveryRenderPrepBudget = 1;
 
-// 跨瓦接边几何错位探针的报告周期(帧)。逐帧跑要几万次双线性,诊断不该自己
-// 变成尖刺;错位是随 LOD 结构变化的量,秒级采样足够看清分布。
+// 接边错位的报告周期(帧)。**逐帧测量、窗口累积、周期报告**:单帧只有 1~2
+// 条 fade 一致的吸附边(n≈17),这个样本量撑不起 A/B 判定;而逐帧累积一秒就是
+// 60 倍样本,还天然覆盖整段运动(LOD 边界最丰富的地方恰恰在运动期)。
+// 逐帧成本:掠视稳态约 10 条边 × 33 节点 × 3 次双线性 ≈ 1000 次/帧,可忽略。
 constexpr uint64_t kEdgeMismatchLogPeriod = 60;
 
-/// 把接边错位分布写进日志。分母为 0(本帧无吸附边)时**不打印** —— 打一行
-/// 全零会和"测了、确实是零"长得一模一样。
-void logEdgeMismatch(const TilePlan& plan) {
-    if (plan.frameId == 0 || plan.frameId % kEdgeMismatchLogPeriod != 0) {
-        return;
-    }
-    const TileEdgeMismatchProbe::Stats st = TileEdgeMismatchProbe::measure(plan);
+/// 把一个群体的分布写成一段文本。末桶是"大于最大有限上界"的溢出桶,打它的
+/// 哨兵值(1e30)只会刷屏 —— 写成 >25m。
+void formatEdgeStats(const TileEdgeMismatchProbe::Stats& st, const char* tag,
+                     char* buf, size_t cap) {
     if (!st.hasSamples()) {
-        if (st.skippedEdges > 0) {
-            platformLog(LogLevel::Info, "SeamDiag",
-                        "edgeMismatch frame=%llu 无样本 skippedEdges=%d"
-                        "(两侧 heightmap 取不全)",
-                        static_cast<unsigned long long>(plan.frameId),
-                        st.skippedEdges);
-        }
+        snprintf(buf, cap, "%s=无样本", tag);
         return;
     }
-    // 末桶是"大于最大有限上界"的溢出桶,打它的哨兵值(1e30)只会刷屏 —— 直接
-    // 写成 >25m。
     const float p95 = st.percentileUpper(0.95);
+    const float lastFinite = TileEdgeMismatchProbe::kBucketUpper
+        [TileEdgeMismatchProbe::kBucketCount - 2];
     char p95Text[16];
-    const float lastFinite =
-        TileEdgeMismatchProbe::kBucketUpper[TileEdgeMismatchProbe::kBucketCount - 2];
     if (p95 > lastFinite) {
         snprintf(p95Text, sizeof(p95Text), ">%.0fm", lastFinite);
     } else {
         snprintf(p95Text, sizeof(p95Text), "<=%.1fm", p95);
     }
+    snprintf(buf, cap,
+             "%s{edges=%d n=%d agree=%.3f mean=%.2fm p95%s max=%.2fm}",
+             tag, st.edges, st.samples, st.agreementRatio(), st.meanAbs(),
+             p95Text, static_cast<double>(st.maxAbs));
+}
+
+/// 逐帧累积接边错位,每 kEdgeMismatchLogPeriod 帧报一次并清窗。
+///
+/// ⚠️ 窗口累积器是**文件级静态**:诊断专用,多 tileset 时会合并成一份。给它
+/// 找个正经宿主要么污染 TilePlan(每帧对象,语义不符)要么给 refresher 加实例
+/// 态(它现在是纯静态类),为一条诊断付这个结构代价不划算。demo 单 tileset。
+void logEdgeMismatch(const TilePlan& plan) {
+    static TileEdgeMismatchProbe::Result window;
+    window.merge(TileEdgeMismatchProbe::measure(plan));
+    if (plan.frameId == 0 || plan.frameId % kEdgeMismatchLogPeriod != 0) {
+        return;
+    }
+    // 两个群体都没样本 = 本窗口没有吸附边(俯视/单档场景),**不打印**。
+    // 打一行全零会和"测了、确实是零"长得一模一样。
+    if (!window.fadeUniform.hasSamples() && !window.fadeDiffer.hasSamples()) {
+        if (window.skippedEdges > 0) {
+            platformLog(LogLevel::Info, "SeamDiag",
+                        "edgeMismatch frame=%llu 无样本 skipped=%d"
+                        "(两侧 heightmap 取不全)",
+                        static_cast<unsigned long long>(plan.frameId),
+                        window.skippedEdges);
+        }
+        window = TileEdgeMismatchProbe::Result{};
+        return;
+    }
+    char uniformText[160];
+    char differText[160];
+    // fadeUniform 是 ①-1 的目标群体,A/B 只看它;fadeDiffer 是设计使然的
+    // 压平台阶,列出来只为佐证"大数字来自它、不是 ε"。
+    formatEdgeStats(window.fadeUniform, "fadeUniform", uniformText,
+                    sizeof(uniformText));
+    formatEdgeStats(window.fadeDiffer, "fadeDiffer", differText,
+                    sizeof(differText));
     platformLog(LogLevel::Info, "SeamDiag",
-                "edgeMismatch frame=%llu edges=%d fadeEdges=%d n=%d agree=%.3f "
-                "mean=%.2fm p95%s max=%.2fm skipped=%d",
+                "edgeMismatch frame=%llu win=%llu %s %s skipped=%d",
                 static_cast<unsigned long long>(plan.frameId),
-                st.edges, st.fadeMismatchEdges, st.samples,
-                st.agreementRatio(), st.meanAbs(), p95Text,
-                static_cast<double>(st.maxAbs), st.skippedEdges);
+                static_cast<unsigned long long>(kEdgeMismatchLogPeriod),
+                uniformText, differText, window.skippedEdges);
+    window = TileEdgeMismatchProbe::Result{};
 }
 
 // 去重集合 + 输出 vector 并行维护：vector 保持插入序（展示顺序稳定），
