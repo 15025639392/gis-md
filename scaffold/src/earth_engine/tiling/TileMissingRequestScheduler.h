@@ -6,7 +6,6 @@
 #include "TilesetTile.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../content/GltfContentProvider.h"
-#include "../terrain/TerrainTile.h"
 
 #include <memory>
 #include <string>

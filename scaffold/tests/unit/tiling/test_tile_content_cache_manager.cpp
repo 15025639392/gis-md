@@ -11,7 +11,6 @@
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTile.h"
-#include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/GpuUploadQueue.h"
 #include "earth_engine/tiling/TileCacheKey.h"

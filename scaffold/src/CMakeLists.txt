@@ -757,8 +757,6 @@ target_sources(earth_engine_core PRIVATE
 # terrain
 # ============================================================
 target_sources(earth_engine_core PRIVATE
-    earth_engine/terrain/TerrainTile.h
-    earth_engine/terrain/TerrainTile.cpp
 )
 
 # ============================================================

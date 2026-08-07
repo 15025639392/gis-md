@@ -4,7 +4,6 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
-#include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileContentUnloadCoordinator.h"
 #include "earth_engine/tiling/TileScheme.h"

@@ -4,7 +4,6 @@
 #include "TileEmptyContentRegistry.h"
 #include "TileUnloadPolicy.h"
 #include "TilesetTile.h"
-#include "../terrain/TerrainTile.h"
 
 #include <memory>
 #include <string>

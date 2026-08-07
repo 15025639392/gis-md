@@ -19,7 +19,7 @@
 7. [tiling — raster overlay mapping](#7-tiling-raster-overlay-mapping)
 8. [tiling — glTF geometry to GPU render prep (+ content loaders)](#8-tiling-gltf-geometry-to-gpu-render-prep-content-loaders)
 9. [providers — imagery + terrain + raster overlay tile providers](#9-providers-imagery-terrain-raster-overlay-tile-providers)
-10. [terrain — TerrainTile, DecodedHeightmap](#10-terrain-terraintile-decodedheightmap)
+10. [terrain — DecodedHeightmap 及历史归档](#10-terrain--decodedheightmap-及历史归档)
 11. [camera — Camera, CameraController](#11-camera-camera-cameracontroller)
 12. [scene — Scene, coordinators, FrameState, Frustum, render pipeline](#12-scene-scene-coordinators-framestate-frustum-render-pipeline)
 13. [renderer — Renderer, RenderDevice, RenderCommand, streaming, texture](#13-renderer-renderer-renderdevice-rendercommand-streaming-texture)
@@ -1905,22 +1905,11 @@ Terrain-RGB heightmap 地形 provider(332 行)。当前**唯一**的真实高程
 (`effectiveNoDataCount()`),不是配置项个数 —— 这个字段本身曾经报错过。
 机器可查契约:`contracts::Id::DemNodataSentinel`。
 
-## 10. terrain — TerrainTile, DecodedHeightmap
+## 10. terrain — DecodedHeightmap 及历史归档
 
-The quantized-mesh terrain path (`QuantizedMeshParser`, `QuantizedMeshAvailability`, `QuantizedMeshContentLoader`, `QuantizedMeshTerrainProvider`) and the Cesium ion terrain integration have been **fully removed**. Heightmap terrain (CPU-baked regular-grid, see `HeightmapTerrainProvider` in §9) is now the only terrain source; `EllipsoidTerrainContentProvider` remains as its ellipsoid fallback. This section now covers only the surviving terrain height-sampling type and the generic quadtree geometric-error helpers (§2, `QuadtreeGeometricError.h/.cpp`).
+The quantized-mesh terrain path (`QuantizedMeshParser`, `QuantizedMeshAvailability`, `QuantizedMeshContentLoader`, `QuantizedMeshTerrainProvider`) and the Cesium ion terrain integration have been **fully removed**. Heightmap terrain (CPU-baked regular-grid, see `HeightmapTerrainProvider` in §9) is now the only terrain source; `EllipsoidTerrainContentProvider` remains as its ellipsoid fallback.
 
-### TerrainTile.h / .cpp
-
-Height-sampling tile wrapping a `DecodedHeightmap` (regular grid, distinct from the QM mesh path). Not part of the glTF render path — used for terrain height queries. UV convention: v north→south (row-major).
-
-| Item | Lines | Description |
-| --- | --- | --- |
-| ctor | .h:19-21 / .cpp:21-26 | takes `TileKey`, `TileScheme` (→ `bounds_` via `tileToRectangle`), owns `DecodedHeightmap` |
-| `key()` / `bounds()` / `heightmap()` / `valid()` | .h:23-26 | accessors; `valid()` = heightmap present and internally valid |
-| `sampleHeight()` | .h:33-34 / .cpp:28-64 | bilinear sample with optional `parentTile` no-data fallback |
-| `clampTileCoordinate()` | .cpp:9-17 | anon helper; rejects outside `[−ε, 1+ε]`, clamps to `[0,1]` |
-
-**`kTileCoordinateEpsilon`** = 1e-12 (.cpp:10) — absorbs ECEF↔cartographic round-trip ulps at tile edges. Sampling detail: u/v from bounds (.cpp:36-37, v = north→south), parent fallback on invalid coord or no-data (.cpp:44-47, :53-60); **OpenGlobus skipPositiveHeights**: parent zoom ≤ 8 with positive height → sea level 0 (.cpp:57-59).
+**`terrain/TerrainTile.{h,cpp}` 已删除**(2026-08-07):OpenGlobus 遗留的第三套高度采样实现(带 `skipPositiveHeights` 规则),全仓从未实例化,仅被两个头文件无谓 include。CPU 侧问高统一走 `TerrainHeightService`(§5),fill 代理走 `TerrainAncestorHeightSource`。考古见 git 历史。
 
 Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknown) previously lived in `terrain/QuantizedMeshAvailability.h`. It was relocated to a neutral header, `tiling/TileAvailabilityState.h`, when the quantized-mesh path (and the availability-update mechanism built around it — `QuantizedMeshAvailabilityUpdate`, `TileAvailabilityUpdateCommitter`) was removed; the enum is still used by the Ellipsoid/Heightmap/Composite terrain providers.
 
