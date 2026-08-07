@@ -191,7 +191,9 @@ public:
 
     /// C-2c:设置页上传后的 GPU 叠画钩子(nullptr = 不叠画,逐字节走现状)。
     /// 生命周期归调用方,须比页存储活得久。
-    void setDecorator(TerrainPageDecorator* decorator) { decorator_ = decorator; }
+    /// 定义在 .cpp:这里同时登记 contracts::Gate::VectorPageDecorator 的实际
+    /// 状态(PageDecorateOrdering 的判定点只在 decorator_ 非空时执行)。
+    void setDecorator(TerrainPageDecorator* decorator);
 
     /// 每帧(渲染线程,determination 之后、render 之前):推进帧号、排空已到达影像
     /// (限 maxUploadsPerFrame)灌对应页 layer 并置 uploaded。fetch 由 determination

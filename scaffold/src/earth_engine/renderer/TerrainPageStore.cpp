@@ -886,6 +886,16 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     cmd.terrainPageStoreFullyResident = ind.fullyResident;
 }
 
+void TerrainPageStore::setDecorator(TerrainPageDecorator* decorator) {
+    decorator_ = decorator;
+    // 登记契约闸的实际状态:PageDecorateOrdering 的判定点在 decoratePage 调用点,
+    // 只在 decorator_ 非空时执行。这里是唯一装配口(Engine 的两处挂载 —— 含
+    // surface 重建后的重挂 —— 都经此),故闸状态天然跟随真实配置,不登记的话
+    // 无 decorator 的 demo 会永远报 dead,常亮警告会训练出「这条可以忽略」的习惯。
+    contracts::setGateActive(contracts::Gate::VectorPageDecorator,
+                             decorator != nullptr);
+}
+
 void TerrainPageStore::tick() {
     if (!arrayTexture_) {
         return;

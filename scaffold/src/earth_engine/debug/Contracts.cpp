@@ -75,7 +75,10 @@ const Gate kGates[] = {
     Gate::Always,                  // DemNodataSentinel:任何地形源都要解码
     Gate::ImageryDrivenUpsample,   // TexcoordNwOrigin:判定点在影像驱动上采样里
     Gate::Always,                  // BatchTemplateGridParity:合批每帧都跑
-    Gate::Always,                  // PageDecorateOrdering:页存储每帧都跑
+    // PageDecorateOrdering 的判定点全在 decoratePage 调用点,decorator_ 为空时
+    // 整条路不跑 —— 页存储本身每帧 tick 不等于这条边每帧被求值。真机对照:
+    // demo 无 decorator → coverage 恒 0(此前登记 Always 导致 DEAD 常亮)。
+    Gate::VectorPageDecorator,     // PageDecorateOrdering
     Gate::Always,                  // SubmitBeforeReleaseRefs:每帧渲染都走
     Gate::Always,                  // LoadsBeforeGpuDrain:每帧 update 都走
     // GpuUploadQueueFifo 与 TexcoordNwOrigin **同因**:异步上传的两个必需字段
@@ -98,6 +101,7 @@ std::atomic<bool> gateDisabled_[static_cast<size_t>(Gate::Count)];
 const char* const kGateNames[] = {
     "always",
     "decoupleImageryFromGeometry=false",
+    "terrainPageDecorator!=nullptr",
 };
 
 // 四张表与枚举同长。⚠️ 数组**不写显式尺寸**是这几条 assert 能真正生效的前提:

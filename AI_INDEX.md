@@ -2317,9 +2317,9 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 | `initialize(device, Config)` | .cpp:784-833 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:376-774 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
 | `applyToTerrainCommand(cmd, tile)` | .cpp:851-886 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:888-899 | 每帧驱动:`drainInbox` + `retryPendingDecorations` |
+| `tick()` | .cpp:899-935 | 每帧驱动:`drainInbox` + `retryPendingDecorations` |
 | `drainInbox` / `kickPageFetches` | .cpp:966-1044 / :927-964 | 解码结果回收(上传预算在此生效) / 发起缺页请求 |
-| `retryPendingDecorations` | .cpp:926-958 | 装饰失败重试 |
+| `retryPendingDecorations` | .cpp:936-968 | 装饰失败重试 |
 | `erasePageEntry` | .cpp:835-849 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:238-304 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:349-354 / :356-374 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
@@ -3321,11 +3321,11 @@ FrameState is mutated during update (tile selection, GPU upload, command build) 
 | 项 | 行 | 说明 |
 |---|---|---|
 | `contracts::Id` | Contracts.h:43- | 8 条边的枚举 |
-| `contracts::Gate` | Contracts.h:108- | 存在条件(`Always` / `ImageryDrivenUpsample`) |
+| `contracts::Gate` | Contracts.h:116- | 存在条件(`Always` / `ImageryDrivenUpsample` / `VectorPageDecorator`) |
 | `contracts::Owners` | Contracts.h:133- | **生产方 / 消费方**归属表 —— 层间契约天然"消费侧检测、生产侧制造",只报判定点会把人送去翻没做错事的模块 |
-| `name` / `gate` / `gateName` | Contracts.cpp:119 / :124 / :129 | |
-| `setGateActive` / `gateActive` | Contracts.cpp:134 / :141 | 由配置装载处登记 |
-| `owners` | Contracts.cpp:148 | |
+| `name` / `gate` / `gateName` | Contracts.cpp:123 / :128 / :133 | |
+| `setGateActive` / `gateActive` | Contracts.cpp:138 / :145 | 由配置装载处登记 |
+| `owners` | Contracts.cpp:152 | |
 | `policy::Id` / `policy::Expectation` | Policies.h:40- / :64- | 9 条比率(含 HeightIndexRegularity 精确 [1,1] 点区间);区间**必须带 rationale + owner**,元守卫只挡 [0,0] 零点退化 |
 | `observe` | Policies.cpp:145 | 记一次观测(**分母 ≤ 0 不计**) |
 | `windowNumerator` / `windowDenominator` | Policies.cpp:155 / :161 | |

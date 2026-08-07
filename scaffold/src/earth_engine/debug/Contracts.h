@@ -118,6 +118,10 @@ enum class Gate : uint8_t {
     Always = 0,
     /// 影像驱动的几何上采样路径,仅 decoupleImageryFromGeometry=false 时存在。
     ImageryDrivenUpsample,
+    /// 页存储的矢量叠画路径,仅装配了 TerrainPageDecorator 时存在
+    /// (PageDecorateOrdering 的判定点在 decoratePage 调用点,decorator 为空时
+    /// 整条路不跑)。由 TerrainPageStore::setDecorator 登记。
+    VectorPageDecorator,
     Count
 };
 
