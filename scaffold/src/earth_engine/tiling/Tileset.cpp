@@ -13,7 +13,6 @@
 #include "../tiling/TileRenderReferenceReleaser.h"
 #include "../tiling/TileRasterOverlayReadinessPolicy.h"
 #include "../tiling/TileSelectionStateResetter.h"
-#include "../tiling/TileSelectionWorker.h"
 #include "../tiling/TileSoftwareOcclusionPolicy.h"
 #include "../tiling/TilesetProviderDiagnosticsCollector.h"
 #include "../tiling/TilesetRenderFrameExecutor.h"

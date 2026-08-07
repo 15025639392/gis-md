@@ -45,10 +45,6 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
     // Register + lazily reset this tile before any selection-state use, so the
     // per-frame reset touches only visited tiles (incremental active-set).
     context.onVisitTile(tile);
-    // ③ 增量捕获:在子树 visit 加入任何 plan/loadQueue 条目之前快照(no-op 当
-    // incremental==nullptr)。退出时记录 [snapshot, 末尾) 净贡献。
-    const TileIncrementalFrontier::Snapshot incrementalSnapshot =
-        context.beginIncrementalSubtree();
     TileSelectionFrameState& selection = tile.selectionFrameState;
     selection.ancestorMeetsSse = ancestorMeetsSse;
     const TileSelectionVisibilityContext visibilityContext{
@@ -85,11 +81,6 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
             preparation.policyMs;
     }
 
-    // 子树内到主阈值的 margin(离翻转最近);子树聚合见 TileIncrementalFrontier。
-    const double tileMargin = std::abs(
-        preparation.inputSummary.screenSpaceError -
-        context.options.maximumScreenSpaceError);
-
     const TileSelectionVisitOutcomePlan visitOutcome =
         TileSelectionVisitPreparation::outcomePlan(preparation);
     const TileSelectionTraversalCounterPlan outcomeCounters =
@@ -111,34 +102,26 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
                 visitOutcome.loadGroup,
                 preparation.inputSummary.priority);
         }
-        return context.recordIncrementalSubtree(
-            tile,
-            incrementalSnapshot,
-            visitOutcome.returnCulledTraversalDetails
-                ? TileSelectionTraversalDetailsBuilder::forCulledTile(
-                      tile,
-                      context.rasterOverlays,
-                      context.options.forbidHoles)
-                : TileTraversalDetails{},
-            tileMargin);
+        return visitOutcome.returnCulledTraversalDetails
+            ? TileSelectionTraversalDetailsBuilder::forCulledTile(
+                  tile,
+                  context.rasterOverlays,
+                  context.options.forbidHoles)
+            : TileTraversalDetails{};
     }
 
     const TileSelectionTraversalCounterPlan visitAcceptedCounters =
         TileSelectionTraversalCounterPolicy::planVisitAccepted();
     context.counters.visited += visitAcceptedCounters.visited;
 
-    return context.recordIncrementalSubtree(
-        tile,
-        incrementalSnapshot,
-        visitTile(context,
-                  tile,
-                  selectorFrame,
-                  depth,
-                  preparation.meetsScreenSpaceError,
-                  ancestorMeetsSse,
-                  preparation.inputSummary.priority,
-                  preparation.inputSummary.screenSpaceError),
-        tileMargin);
+    return visitTile(context,
+                     tile,
+                     selectorFrame,
+                     depth,
+                     preparation.meetsScreenSpaceError,
+                     ancestorMeetsSse,
+                     preparation.inputSummary.priority,
+                     preparation.inputSummary.screenSpaceError);
 }
 
 TileTraversalDetails TileSelectionTraversalExecutor::visitTile(

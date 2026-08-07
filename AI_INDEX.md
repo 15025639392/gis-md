@@ -780,16 +780,13 @@ Post-fan-out decision combining kick + preload. `evaluate` (.cpp:7-43): runs `Ti
 | `TileSelectionFrameBuilder` (24) | `build` (TileSelectionFrameBuilder.cpp:7) | 造 `SelectorFrame` |
 | `TileSelectionFrameFinalizationRunner` (42) | `finalize` (TileSelectionFrameFinalizationRunner.cpp:10) | 帧末收尾 |
 
-### 异步选择 — TileSelectionWorker / TileSelectionShadowRunner / TileSelectionShadowTree
+### 异步选择(已删除,2026-08-07)
 
-选择跑在**影子树**上、离开渲染线程(实测 selector 2ms)。影子树是活注册表的
-只读镜像,避免遍历期与加载写入打架。
-
-| 文件 | 入口 | 说明 |
-|---|---|---|
-| `TileSelectionWorker` (95) | ctor (TileSelectionWorker.cpp:10)、`buildShadow` (TileSelectionWorker.cpp:26)、`dispatch` (TileSelectionWorker.cpp:38)、`tryTakeResult` (TileSelectionWorker.cpp:56) | 派发与回收 |
-| `TileSelectionShadowRunner` (159) | `run` (TileSelectionShadowRunner.cpp:47)、`buildShadow` (TileSelectionShadowRunner.cpp:63)、`selectOnShadow` (TileSelectionShadowRunner.cpp:68);`shadowOnVisitTile` (TileSelectionShadowRunner.cpp:35)、`shadowNotOccluded` (TileSelectionShadowRunner.cpp:41) | 在影子树上跑一遍选择 |
-| `TileSelectionShadowTree` (110) | `mirrorReadSurface` (TileSelectionShadowTree.cpp:11)、`build` (TileSelectionShadowTree.cpp:63) | 镜像活注册表 |
+曾有 TileSelectionWorker / TileSelectionShadowRunner / TileSelectionShadowTree
+(影子树选择下 worker)与 ③ 增量切面(TileIncrementalFrontier)+ §8 等价性
+oracle(TileSelectionEquivalence)。前者自 2026-07-19「release 下 selector
+非瓶颈」后从未在生产启用;后者 2026-07-07 裁决 NO-GO,Layer 2/3 从未建成;
+二者互为唯一存在理由,全链删除。需要时 git 找回(删除提交见 git log)。
 
 ### 瓦片注册与访问 — TilesetTileRegistry / TileContentAccess / TileIndexState / TileEmptyContentRegistry / TilesetTerrainProviders / SchemeId
 

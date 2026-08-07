@@ -33,8 +33,7 @@ TileSelectionTraversalContext TileSelectionTraversalContextBuilder::build(
         binding.occlusionUserData,
         binding.checkOcclusion,
         binding.onVisitTile,
-        binding.onVisitTileUserData,
-        input.incremental};
+        binding.onVisitTileUserData};
 }
 
 } // namespace earth_engine

@@ -132,26 +132,7 @@ struct ScenarioSpec {
     // 尾帧应渲染 z=maxDepth 叶（golden 缺失时的合理性断言）。S4 尾帧是
     // 320km 倾斜相机看地平线，叶层覆盖非场景意图，不作此断言。
     bool expectFinalLeaf = true;
-    // asyncSelection=true 时走影子树选择路径；对同一 golden 逐帧断言，
-    // 证明"影子选择 == 同步选择 == cesium golden"。
-    bool asyncSelection = false;
-    // incrementalSelection=true 时走 ③ 增量切面路径;不与 cesium golden trace
-    // 对拍(load issue-order 可能不同),只靠 runScenario 内每帧 §8 oracle
-    // 断言「增量==全量」验证。
-    bool incrementalSelection = false;
 };
-
-// 返回同场景的 asyncSelection 变体（走影子树 + reconcile 回 live）。
-ScenarioSpec asyncOf(ScenarioSpec scenario) {
-    scenario.asyncSelection = true;
-    return scenario;
-}
-
-// 返回同场景的 ③ 增量变体（走增量路径;§8 oracle 逐帧验证增量==全量）。
-ScenarioSpec incrementalOf(ScenarioSpec scenario) {
-    scenario.incrementalSelection = true;
-    return scenario;
-}
 
 ScenarioSpec makeS1Scenario() {
     return ScenarioSpec{
@@ -190,16 +171,6 @@ ScenarioSpec makeS4Scenario() {
         /*expectFinalLeaf=*/false};
 }
 
-ScenarioSpec makeS5Scenario() {
-    return ScenarioSpec{
-        "s5",
-        selector_diff::kS1Tree,  // S5 复用 S1 树
-        selector_diff::kS5Options,
-        {selector_diff::kS5Frames.begin(), selector_diff::kS5Frames.end()},
-        1,
-        // pan 尾帧相机不在 region 中心正上方,叶层覆盖非场景意图,不作尾叶断言。
-        /*expectFinalLeaf=*/false};
-}
 
 /// 由 QuadtreeSpec 程序化枚举整棵满四叉树的内容 provider
 /// （仿 test_tileset_selection_refinement.cpp 的 SelectionTreeContentProvider，
@@ -379,10 +350,6 @@ struct ScenarioFrameResult {
     std::vector<std::string> renderKeys;
     int visited = 0;
     int fogCulled = 0;
-    // ③ Layer 2 机会测量(仅 incremental 场景):本帧与上帧净贡献逐位相同的
-    // 子树数 / 总捕获子树数。
-    std::size_t stableSubtrees = 0;
-    std::size_t totalSubtrees = 0;
 };
 
 /// 逐帧跑场景，返回逐帧轨迹（traceLine 由 scenarios.h 共享函数拼行）。
@@ -391,11 +358,6 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
     const selector_diff::OptionsSpec& spec = scenario.options;
 
     TilesetOptions tilesetOptions = makeTilesetOptions(spec);
-    tilesetOptions.asyncSelection = scenario.asyncSelection;
-    tilesetOptions.incrementalSelection = scenario.incrementalSelection;
-    // §8 等价性 oracle:sync 场景每帧额外跑一遍全量参考并断言逐位相同
-    // (full==full 自证 oracle 接线正确;async 场景 facade 早退不触发,恒空)。
-    tilesetOptions.verifySelectionEquivalence = true;
     Tileset tileset(
         TileScheme::createGeographicTMS(),
         {},
@@ -468,22 +430,6 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
             camera.position(),
             camera.direction());
         TilesetTestAccess::selectTiles(tileset, frameState);
-        // §8 oracle:sync 场景下 live 全量选择必须与 pre-selection 影子全量
-        // 逐位相同(空=相等)。这把 12 帧×每 sync 场景变成 oracle 自证。
-        EXPECT_TRUE(tileset.selectionEquivalenceMismatch().empty())
-            << "frame " << (frame + 1) << " §8 mismatch: "
-            << tileset.selectionEquivalenceMismatch();
-        // ③ Layer 1:增量路径捕获的子树缓存必须覆盖每个 visibleTile
-        //(每个渲染瓦片都被访问过 → 有 frontier 条目)。证明捕获真跑了、非空。
-        if (scenario.incrementalSelection) {
-            for (const TileKey& key : tileset.tilePlan().visibleTiles) {
-                EXPECT_NE(tileset.incrementalFrontier().find(key), nullptr)
-                    << "frame " << (frame + 1)
-                    << " 增量缓存缺 visibleTile 贡献: "
-                    << selector_diff::tileKeyString(key.z, key.x, key.y);
-            }
-        }
-
         std::vector<std::string> renderKeys;
         for (const TileKey& key : tileset.tilePlan().visibleTiles) {
             renderKeys.push_back(
@@ -535,11 +481,6 @@ std::vector<ScenarioFrameResult> runScenario(const ScenarioSpec& scenario) {
         result.renderKeys = renderKeys;
         result.visited = counters.visited;
         result.fogCulled = counters.fogCulled;
-        if (scenario.incrementalSelection) {
-            result.totalSubtrees = tileset.incrementalFrontier().size();
-            result.stableSubtrees =
-                tileset.incrementalFrontier().stableSubtreeCount();
-        }
         // culled 映射（P3）：cesium tilesCulled 含 fog 剔除，gis-md 的
         // frustum/fog 计数分离 —— trace culled = culled + fogCulled。
         result.traceLine = selector_diff::traceLine(
@@ -674,64 +615,3 @@ TEST(SelectorCesiumGoldenDiffTest, S4TraceMatchesCesiumGolden) {
     runGoldenDiffScenario(makeS4Scenario());
 }
 
-// asyncSelection 变体：走影子树选择 + reconcile 回 live，对同一 cesium
-// golden 逐帧断言 —— 证明影子选择与同步路径逐字一致（golden-by-construction）。
-TEST(SelectorCesiumGoldenDiffTest, S1AsyncShadowMatchesCesiumGolden) {
-    runGoldenDiffScenario(asyncOf(makeS1Scenario()));
-}
-
-TEST(SelectorCesiumGoldenDiffTest, S2AsyncShadowMatchesCesiumGolden) {
-    runGoldenDiffScenario(asyncOf(makeS2Scenario()));
-}
-
-TEST(SelectorCesiumGoldenDiffTest, S3AsyncShadowMatchesCesiumGolden) {
-    runGoldenDiffScenario(asyncOf(makeS3Scenario()));
-}
-
-TEST(SelectorCesiumGoldenDiffTest, S4AsyncShadowMatchesCesiumGolden) {
-    runGoldenDiffScenario(asyncOf(makeS4Scenario()));
-}
-
-// ③ 增量切面:走增量路径,靠 runScenario 内每帧 §8 oracle 断言「增量==全量」。
-// 不与 cesium golden trace 对拍(增量的 load issue-order 可能不同)。S3 含在途
-// 加载时序,是 dirty/剪枝正确性的关键场景。Layer 0 identity → 平凡通过;后续
-// Layer 引入真剪枝后,这里是增量正确性的回归网。
-// ③ Layer 2 机会测量:逐帧打印「与上帧净贡献相同的子树 / 总子树」——这是
-// L3 剪枝的可跳过子树上界,也是 ③ 天花板信号。sanity:stable ≤ total。
-void reportStability(const char* name,
-                     const std::vector<ScenarioFrameResult>& results) {
-    for (std::size_t i = 0; i < results.size(); ++i) {
-        const auto& r = results[i];
-        EXPECT_LE(r.stableSubtrees, r.totalSubtrees);
-        std::cout << "[incr-stability] " << name << " frame " << (i + 1)
-                  << ": stable=" << r.stableSubtrees << "/" << r.totalSubtrees
-                  << (r.totalSubtrees
-                          ? " (" +
-                                std::to_string(100 * r.stableSubtrees /
-                                               r.totalSubtrees) +
-                                "%)"
-                          : "")
-                  << std::endl;
-    }
-}
-
-TEST(SelectorIncrementalTest, S1MatchesFullViaOracle) {
-    const auto results = runScenario(incrementalOf(makeS1Scenario()));
-    EXPECT_FALSE(results.empty());
-    reportStability("S1", results);
-}
-
-TEST(SelectorIncrementalTest, S3MatchesFullViaOracle) {
-    const auto results = runScenario(incrementalOf(makeS3Scenario()));
-    EXPECT_FALSE(results.empty());
-    reportStability("S3", results);
-}
-
-// S5 = 等高横向 pan（真机 orbit-drag 的代理场景）。zoom(S1)=0% stable、
-// still(S3)=100% stable 之间的那个未知数——量化 pan 下可剪枝子树上界,决定
-// ③ L3 剪枝对"拖动 selector 7-12ms"是否真有杠杆。§8 oracle 逐帧验证增量==全量。
-TEST(SelectorIncrementalTest, S5PanMatchesFullViaOracle) {
-    const auto results = runScenario(incrementalOf(makeS5Scenario()));
-    EXPECT_FALSE(results.empty());
-    reportStability("S5", results);
-}

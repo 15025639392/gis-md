@@ -2,7 +2,6 @@
 
 #include "TileLoadTypes.h"
 #include "TileChildFrameMaterializer.h"
-#include "TileIncrementalFrontier.h"
 #include "TileSelectionCounters.h"
 #include "TileSelectionPerformanceTimings.h"
 #include "TileTraversalDetails.h"
@@ -75,30 +74,8 @@ struct TileSelectionTraversalContext {
         }
     }
 
-    // ③ 增量切面缓存(incrementalSelection 开启时非空,否则 nullptr → 捕获全是
     // no-op,全量/影子路径零开销)。子树 visit 期间捕获净贡献,见
     // TileIncrementalFrontier。Layer 1 只捕获不剪枝。
-    TileIncrementalFrontier* incremental = nullptr;
-
-    // 子树 visit 进入前快照(no-op 空快照当 incremental==nullptr)。
-    TileIncrementalFrontier::Snapshot beginIncrementalSubtree() const {
-        if (!incremental) return {};
-        return incremental->snapshot(tilePlan, loadQueue, counters);
-    }
-
-    // 子树 visit 退出时记录净贡献,原样返回 details(便于在 return 处链式调用)。
-    TileTraversalDetails recordIncrementalSubtree(
-        const TilesetTile& tile,
-        const TileIncrementalFrontier::Snapshot& snap,
-        const TileTraversalDetails& details,
-        double tileMargin) const {
-        if (incremental) {
-            incremental->record(
-                tile, snap, tilePlan, loadQueue, counters, details, tileMargin);
-        }
-        return details;
-    }
-
     // Per-view distances scratch, reused across every tile visited in this
     // traversal so summarizeForViews doesn't heap-allocate a fresh vector per
     // tile. Mirrors cesium-native's context scratchDistances. Left out of the

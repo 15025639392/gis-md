@@ -22,7 +22,6 @@
 #include "TileRasterUpsampledChildCoordinator.h"
 #include "TileRenderCommandManager.h"
 #include "TileRenderReferenceReleaser.h"
-#include "TileIncrementalFrontier.h"
 #include "TileSelectionCounters.h"
 #include "TileSelectionMetrics.h"
 #include "TileSelectionReuseState.h"
@@ -54,7 +53,6 @@ struct TilesetTestAccess;
 class TilesetSelectionFrameFacade;
 class TilesetUpdateFrameFacade;
 class TilesetUpdateFrameRuntime;
-class TileSelectionWorker;
 
 /// cesium-native TilesetOptions subset used by the unified terrain tileset.
 /// Defaults intentionally mirror native where the local renderer has the
@@ -95,27 +93,6 @@ struct TilesetOptions {
     bool enableLodTransitionPeriod = false;
     float lodTransitionLength = 1.0f;
     bool kickDescendantsWhileFadingIn = true;
-    // Kill-switch for moving tile selection off the render thread. Default
-    // false → the current synchronous selection path is used unchanged. When
-    // true, the render thread dispatches selection to a dedicated worker and
-    // applies the result. Any regression → set false to fully revert.
-    bool asyncSelection = false;
-    // 在 asyncSelection=true 基础上，把影子选择放到专用 worker 线程真异步跑
-    // （render 不阻塞，结果延迟 ≥1 帧，worker 忙时本帧沿用上次计划）。默认
-    // false = 影子选择在 render 线程同步跑（golden 可逐帧对拍验证选择算法）。
-    // true = 性能模式，靠 TSAN + 真机验证；结果滞后使 golden 无法逐帧对拍。
-    bool asyncSelectionNonBlocking = false;
-    // ③ 增量切面(incremental frontier)总开关。默认 false → 每帧全量遍历
-    // 选择(现状,忠实 cesium)。true → 只重评估「margin 带 ∪ dirty 集」的
-    // 边界瓦片,跳过可证明稳定的内部(设计见
-    // docs/issues/selector-incremental-frontier-design-2026-07-06.md)。
-    // Phase 0:此 flag 已就位但增量路径尚未接线,恒走全量。
-    bool incrementalSelection = false;
-    // §8 等价性基座开关(debug/test-only,默认 false)。true → 每帧在被测
-    // 选择路径之后再跑一遍全量参考选择,断言 visibleTiles/loadQueue/counters
-    // 逐位相同。increment==full 的 oracle;Phase 0 下是 full==full 自证。
-    // release 恒关(零开销)。
-    bool verifySelectionEquivalence = false;
     // 每帧主线程加载时间预算（毫秒）。>0 时 FrameResourceBudget 按实测
     // finalize/上传耗时（recordElapsed）截断当帧后续工作，计数上限退为兜底；
     // 0 = 不设时间闸门（cesium-native 出厂默认，但静止帧一帧可串 20 次
@@ -233,18 +210,6 @@ public:
     /// arrive; return NotOccluded so traversal does not wait forever.
     void setOcclusionCallback(OcclusionCallback callback);
     void clearOcclusionCallback();
-
-    /// §8 等价性 oracle 的上一帧结果(verifySelectionEquivalence 开启时更新)。
-    /// 空 = 增量/被测选择与全量参考逐位相同;否则为第一处差异描述。debug/测试
-    /// 用;flag 关时恒空。
-    const std::string& selectionEquivalenceMismatch() const {
-        return selectionEquivalenceMismatch_;
-    }
-
-    /// ③ 增量切面子树贡献缓存(incrementalSelection 开启时每帧重建)。测试用。
-    const TileIncrementalFrontier& incrementalFrontier() const {
-        return incrementalFrontier_;
-    }
 
     /// 标记内容资源脏(下轮 upload 生命周期重走 prepare)。P5b:Engine 在运行时
     /// 关闭 GPU 位移(pool reset)后调用,让模板活跃期间跳过 per-tile VBO 的
@@ -369,19 +334,10 @@ private:
     bool cameraMoving_ = false;
     TileLoadQueue loadQueue_;
     TileSelectionCounters selectionCounters_;
-    // §8 等价性 oracle 结果(空=相等)。见 selectionEquivalenceMismatch()。
-    std::string selectionEquivalenceMismatch_;
-    // ③ 增量切面缓存(incrementalSelection 开启时用;默认路径不触碰)。
-    TileIncrementalFrontier incrementalFrontier_;
     TileMeshPreparationManager meshPreparation_;
     TileContentRuntime contentRuntime_;
     TileRenderCommandManager renderCommands_;
     std::vector<TileRenderReference> pendingRenderReferences_;
-    // Dedicated off-render-thread selection worker (asyncSelection path only).
-    // Lazily created on first async frame; joined on destruction. Held by
-    // pointer so the sync path pays nothing and Tileset.h needs only a forward
-    // declaration.
-    std::unique_ptr<TileSelectionWorker> selectionWorker_;
 };
 
 } // namespace earth_engine

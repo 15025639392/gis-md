@@ -521,39 +521,6 @@ add_executable(test_tile_selection_history
 target_link_libraries(test_tile_selection_history PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_history COMMAND test_tile_selection_history)
 
-add_executable(test_tile_selection_shadow_tree
-    unit/tiling/test_tile_selection_shadow_tree.cpp
-)
-target_link_libraries(test_tile_selection_shadow_tree PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_tile_selection_shadow_tree COMMAND test_tile_selection_shadow_tree)
-
-add_executable(test_tile_selection_shadow_runner
-    unit/tiling/test_tile_selection_shadow_runner.cpp
-)
-target_link_libraries(test_tile_selection_shadow_runner PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_tile_selection_shadow_runner COMMAND test_tile_selection_shadow_runner)
-
-add_executable(test_tileset_async_selection
-    unit/tiling/test_tileset_async_selection.cpp
-)
-target_link_libraries(test_tileset_async_selection PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_tileset_async_selection COMMAND test_tileset_async_selection)
-
-# ThreadSanitizer async-selection race test. Only built when the TSAN twin lib
-# exists (-DEARTH_ENGINE_ENABLE_TSAN=ON); links the instrumented core and adds
-# the sanitizer flags to the test TU itself.
-if(EARTH_ENGINE_ENABLE_TSAN AND TARGET earth_engine_core_tsan)
-    add_executable(test_async_selection_tsan
-        unit/tiling/test_async_selection_tsan.cpp
-    )
-    target_link_libraries(test_async_selection_tsan
-        PRIVATE earth_engine_core_tsan GTest::gtest_main)
-    target_compile_options(test_async_selection_tsan PRIVATE
-        -fsanitize=thread -fno-omit-frame-pointer -g -O1)
-    target_link_options(test_async_selection_tsan PRIVATE -fsanitize=thread)
-    add_test(NAME test_async_selection_tsan COMMAND test_async_selection_tsan)
-endif()
-
 add_executable(test_tile_selection_plan_appender
     unit/tiling/test_tile_selection_plan_appender.cpp
 )
@@ -667,12 +634,6 @@ add_executable(test_tile_selection_input_metrics
 )
 target_link_libraries(test_tile_selection_input_metrics PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_input_metrics COMMAND test_tile_selection_input_metrics)
-
-add_executable(test_tile_selection_equivalence
-    unit/tiling/test_tile_selection_equivalence.cpp
-)
-target_link_libraries(test_tile_selection_equivalence PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_tile_selection_equivalence COMMAND test_tile_selection_equivalence)
 
 add_executable(test_tile_selection_culling_policy
     unit/tiling/test_tile_selection_culling_policy.cpp
