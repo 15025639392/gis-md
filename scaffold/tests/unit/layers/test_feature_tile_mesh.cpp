@@ -110,3 +110,127 @@ TEST(FeatureTileMeshTest, EmptyInputYieldsNoOrigin) {
     EXPECT_FALSE(mesh.hasOrigin);
     EXPECT_TRUE(mesh.empty());
 }
+
+// ---------------------------------------------------------------------------
+// 贴地(ClampToGround)走区域高度范围,零地形采样
+//
+// 背景:worker 拿不到地形采样器(渲染线程状态),所以 v1 的瓦片桶只能走
+// Absolute。改用「区域 min/max 高度」这一对标量后,worker 能自己建 stencil
+// 挤出体 —— 体只要覆盖住地形高度范围即可,stencil 是像素级判定,不需要每个
+// 顶点贴合精确地面高度(同 cesium ApproximateTerrainHeights 的取舍)。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+FeatureRenderLayer::TessellationContext makeClampContext(
+    const FeatureRenderStyle& style, double minH, double maxH) {
+    FeatureRenderLayer::TessellationContext ctx{
+        style, Ellipsoid::WGS84(), nullptr, nullptr, /*stencil=*/true};
+    ctx.hasTerrainHeightRange = true;
+    ctx.terrainMinHeight = minH;
+    ctx.terrainMaxHeight = maxH;
+    return ctx;
+}
+
+/// 顶点流是 [x,y,z, ...] 每顶点 6 float(位置 + 挤出),取位置到原点的距离
+/// 范围 —— 用它反推体在径向上的跨度。
+std::pair<double, double> radialSpan(const std::vector<float>& verts,
+                                     const Vec3& origin) {
+    double lo = 1e300, hi = -1e300;
+    for (size_t i = 0; i + 2 < verts.size(); i += 6) {
+        const Vec3 p(origin.x() + verts[i], origin.y() + verts[i + 1],
+                     origin.z() + verts[i + 2]);
+        const double r = p.length();
+        lo = std::min(lo, r);
+        hi = std::max(hi, r);
+    }
+    return {lo, hi};
+}
+
+} // namespace
+
+// 核心不变量:贴地镶嵌**一次地形采样都不做**。worker 上没有采样器,所以
+// 这里不是性能优化而是可行性前提 —— 之前正是因为要采样,底图贴地这条路
+// 才走不通(旧 store 路径实测单帧 235s)。
+TEST(FeatureTileMeshTest, ClampedTessellationNeverSamplesTerrain) {
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.fillColor = {0.2f, 0.5f, 0.9f, 0.5f};
+    style.lineColor = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        makeClampContext(style, /*minH=*/200.0, /*maxH=*/1500.0),
+        sampleFeatures());
+
+    // 产物落在 stencil 体里,而不是普通 fill/line 流(两条路互斥)。
+    EXPECT_FALSE(mesh.fillVolumeGroups.empty() && mesh.lineVolumeGroups.empty())
+        << "贴地时应产出 stencil 挤出体";
+    EXPECT_TRUE(mesh.fillIndices.empty())
+        << "走 stencil 就不该再产方案 A 的 fill(同内容画两遍)";
+    EXPECT_TRUE(mesh.lineIndices.empty())
+        << "走 stencil 就不该再产方案 A 的 line ribbon";
+    EXPECT_TRUE(mesh.hasOrigin);
+}
+
+// 体必须**纵向穿透整个地形高度范围**。取窄了体埋在地下或浮在空中,stencil
+// 判定不到任何地形像素 —— 现象是该瓦片的路网整片消失(不是变淡)。
+TEST(FeatureTileMeshTest, ClampVolumeSpansTerrainHeightRange) {
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.lineColor = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    constexpr double kMinH = 200.0;
+    constexpr double kMaxH = 1500.0;
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        makeClampContext(style, kMinH, kMaxH), {makeLine(106.52, 29.61)});
+
+    ASSERT_FALSE(mesh.lineVolumeGroups.empty());
+    const auto& group = mesh.lineVolumeGroups.begin()->second;
+    const auto span = radialSpan(group.verts, mesh.origin);
+    const double spanMeters = span.second - span.first;
+    // 体高至少覆盖 (maxH - minH);margin 让它更高,但不该低于范围本身。
+    EXPECT_GT(spanMeters, kMaxH - kMinH)
+        << "体没穿透地形范围,该区域会整片不显示";
+    // 也不该离谱地高(range + 2×margin 量级),否则是白烧 fill rate。
+    EXPECT_LT(spanMeters, (kMaxH - kMinH) + 1000.0);
+}
+
+// 地形范围随瓦片变化 → 体高度跟着变。恒定体高说明范围没接进来。
+TEST(FeatureTileMeshTest, FlatTerrainYieldsShorterVolumeThanMountainous) {
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.lineColor = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    const auto flat = FeatureRenderLayer::tessellateTileMesh(
+        makeClampContext(style, 0.0, 10.0), {makeLine(106.52, 29.61)});
+    const auto hilly = FeatureRenderLayer::tessellateTileMesh(
+        makeClampContext(style, 0.0, 2000.0), {makeLine(106.52, 29.61)});
+
+    ASSERT_FALSE(flat.lineVolumeGroups.empty());
+    ASSERT_FALSE(hilly.lineVolumeGroups.empty());
+    const double flatSpan = [&] {
+        const auto s = radialSpan(flat.lineVolumeGroups.begin()->second.verts,
+                                  flat.origin);
+        return s.second - s.first;
+    }();
+    const double hillySpan = [&] {
+        const auto s = radialSpan(hilly.lineVolumeGroups.begin()->second.verts,
+                                  hilly.origin);
+        return s.second - s.first;
+    }();
+    EXPECT_GT(hillySpan, flatSpan + 1500.0) << "体高没跟随地形范围";
+}
+
+// 不给范围 = 保持此前行为(Absolute 几何,不产体)。这条守住向后兼容:
+// 既有调用方(demo 的 Absolute 底图)不该因为本次改动而变。
+TEST(FeatureTileMeshTest, WithoutHeightRangeFallsBackToAbsolute) {
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::Absolute;
+    style.heightOffset = 500.0;
+    style.lineColor = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        makeContext(style, nullptr, nullptr), {makeLine(106.52, 29.61)});
+    EXPECT_TRUE(mesh.lineVolumeGroups.empty());
+    EXPECT_FALSE(mesh.lineIndices.empty());
+}

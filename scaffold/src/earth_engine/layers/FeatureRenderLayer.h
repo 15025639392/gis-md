@@ -247,6 +247,19 @@ public:
         /// renderDevice_->supportsStencilClassification(),但那是**静态能力
         /// 位**,不是真要用设备 —— 快照进来,镶嵌器就彻底不持设备指针。
         bool supportsStencilClassification = false;
+        /// 该批要素所在区域的地形高度范围(米,椭球面之上)。**有值时取代
+        /// 逐点地形采样**:stencil 分类是像素级判定,挤出体只需要覆盖住地形
+        /// 的高度范围,不需要贴合每个顶点的精确地面高度。
+        ///
+        /// 这是 worker 路径能贴地的关键 —— worker 拿不到地形采样器(那是
+        /// 渲染线程状态),但拿得到一对标量。同一思路见 cesium 的
+        /// ApproximateTerrainHeights(它也不逐顶点采样)。
+        ///
+        /// ⚠️ 范围取窄了体会穿不透地形 → 线/面成片消失;取宽了只是多画几个
+        /// 片元(体 pass 是深度-only)。**拿不准时往宽取。**
+        bool hasTerrainHeightRange = false;
+        double terrainMinHeight = 0.0;
+        double terrainMaxHeight = 0.0;
     };
 
 
@@ -302,13 +315,8 @@ private:
         std::vector<VolumeGroupGpu> lineVolumeGroups;
     };
 
-    /// stencil 体积的 CPU 侧按色分组(key = RGBA8 打包)。
-    struct VolumeCpuGroup {
-        std::array<float, 4> color{0, 0, 0, 1};
-        std::vector<float> verts;
-        std::vector<uint32_t> indices;
-    };
-    using VolumeCpuGroups = std::map<uint32_t, VolumeCpuGroup>;
+    // VolumeCpuGroup / VolumeCpuGroups 已下沉到 data/FeatureTileMesh.h ——
+    // worker 现在也产出它(贴地瓦片走 stencil),载荷类型必须在下层。
 
     /// 重镶单桶:镶嵌桶内全部要素 → 减原点转 float → 建 buffer。
     /// 桶空/全退化 → 从 buckets_ 移除。预览摘除中的要素跳过。
@@ -350,11 +358,26 @@ public:
 
     /// 取一份镶嵌上下文供 worker 使用:样式已快照、图集置空(线程契约见
     /// TessellationContext)。**必须在渲染线程调用**,产出可交给 worker。
+    ///
+    /// @param terrainMinHeight/terrainMaxHeight 该批要素所在区域的地形高度
+    ///        范围(米)。给了就走 stencil 贴地(体覆盖该范围,零地形采样);
+    ///        缺省 = 不贴地,与此前行为一致。
+    ///        ⚠️ **宁宽勿窄**:窄了体穿不透地形,该区域的线会整片消失。
     TessellationContext workerTessellationContext() const {
-        // stencil 能力位传 false:v1 瓦片桶走 Absolute,clamp 恒 false,该位
-        // 用不到;真要接贴地时再从渲染线程快照进来。
-        return TessellationContext{style_, ellipsoid_, nullptr, nullptr, false};
+        TessellationContext ctx{style_, ellipsoid_, nullptr, nullptr,
+                                stencilClassificationSupported()};
+        return ctx;
     }
+    TessellationContext workerTessellationContext(double terrainMinHeight,
+                                                  double terrainMaxHeight) const {
+        TessellationContext ctx = workerTessellationContext();
+        ctx.hasTerrainHeightRange = terrainMaxHeight >= terrainMinHeight;
+        ctx.terrainMinHeight = terrainMinHeight;
+        ctx.terrainMaxHeight = terrainMaxHeight;
+        return ctx;
+    }
+    /// 后端静态能力位(渲染线程读设备,快照给 worker)。
+    bool stencilClassificationSupported() const;
 
     /// 在 **worker 线程**把一批要素镶嵌成瓦片网格。不触任何成员,全部外部
     /// 状态经 ctx 传入。fill/line 之外的产物(point/label/stencil 体)被

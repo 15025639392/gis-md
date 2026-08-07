@@ -288,6 +288,13 @@ Feature FeatureRenderLayer::prepareClampedFeature(
     double densifyMeters) {
     const double spacing = std::max(1.0, densifyMeters);
     auto clampHeight = [&](double lng, double lat) {
+        // 区域元数据可用时:所有点放在范围**中点**,不采样。挤出体靠
+        // margin(半跨 + 余量)覆盖整个范围,stencil 是像素级判定,顶点在
+        // 哪个高度无所谓,只要体穿透地形。heightOffset 在这条路上无意义
+        // (stencil 染色与抬升无关),故不叠加。
+        if (ctx.hasTerrainHeightRange) {
+            return (ctx.terrainMinHeight + ctx.terrainMaxHeight) * 0.5;
+        }
         // 无数据回落椭球面(对齐 no-fine-data-ellipsoid-fallback 约定)。
         const double ground =
             sample ? static_cast<double>(sample(lng, lat).value_or(0.0f))
@@ -729,10 +736,16 @@ void FeatureRenderLayer::appendFillVolume(
     std::vector<float>& volumeVerts = group.verts;
     std::vector<uint32_t>& volumeIndices = group.indices;
 
-    // ---- 高度范围:环顶点 + 粗内部网格采样 min/max ± margin ----
+    // ---- 高度范围:区域元数据(优先)或环顶点 + 粗内部网格采样 ± margin ----
     double minH = std::numeric_limits<double>::max();
     double maxH = std::numeric_limits<double>::lowest();
+    // 有区域 min/max 元数据时直接用,**整段跳过下面的逐点采样**:那是本函数
+    // 里唯一的 O(要素 × 网格) 成本,也是底图量级下走不通几何贴地的原因。
+    // 元数据本身更保守(覆盖整块瓦片而非单个要素),体会高一些,代价只是
+    // 多画片元 —— 换来的是采样次数归零。
+    const bool useRegionRange = ctx.hasTerrainHeightRange;
     auto probe = [&](double lng, double lat) {
+        if (useRegionRange) return;
         const double h =
             sample ? static_cast<double>(sample(lng, lat).value_or(0.0f))
                    : 0.0;
@@ -768,14 +781,22 @@ void FeatureRenderLayer::appendFillVolume(
         static_cast<int>(std::ceil(lngSpanMeters / spacing)), 1, kMaxGrid);
     const int gridY = std::clamp(
         static_cast<int>(std::ceil(latSpanMeters / spacing)), 1, kMaxGrid);
-    for (int gy = 0; gy <= gridY; ++gy) {
-        for (int gx = 0; gx <= gridX; ++gx) {
-            const double lng =
-                west + (east - west) * gx / gridX;
-            const double lat =
-                south + (north - south) * gy / gridY;
-            if (pointInRings2D(lng, lat, feature.rings)) probe(lng, lat);
+    // 有区域元数据时整个网格探测都省掉:pointInRings2D 是 O(环顶点数),
+    // 64×64 网格下它本身就是大头,只让 probe 空转是省不掉的。
+    if (!useRegionRange) {
+        for (int gy = 0; gy <= gridY; ++gy) {
+            for (int gx = 0; gx <= gridX; ++gx) {
+                const double lng =
+                    west + (east - west) * gx / gridX;
+                const double lat =
+                    south + (north - south) * gy / gridY;
+                if (pointInRings2D(lng, lat, feature.rings)) probe(lng, lat);
+            }
         }
+    }
+    if (useRegionRange) {
+        minH = ctx.terrainMinHeight;
+        maxH = ctx.terrainMaxHeight;
     }
     const double bottom = minH - kVolumeMarginMeters;
     const double top = maxH + kVolumeMarginMeters;
@@ -889,6 +910,15 @@ void FeatureRenderLayer::appendLineVolume(
     }
     if (n < 2) return;
     if (closed && n < 3) closed = false;  // 退化环按开放线处理
+
+    // 体的半高:逐点采样时点已贴合地形,±120m 兜住采样误差就够;走区域
+    // 元数据时点全在范围中点,半高必须**吞下整个范围**(半跨 + 余量),
+    // 否则体穿不透地形 → 该瓦片的线成片消失(不是变淡,是没有)。
+    const double volumeHalfHeight =
+        ctx.hasTerrainHeightRange
+            ? (ctx.terrainMaxHeight - ctx.terrainMinHeight) * 0.5 +
+                  kVolumeMarginMeters
+            : kVolumeMarginMeters;
 
     // ---- 逐点中心/上方向(点高度已含采样 + heightOffset;±margin 吞掉
     // offset 差异,stencil 染色本身与抬升无关) ----
@@ -1008,8 +1038,8 @@ void FeatureRenderLayer::appendLineVolume(
         if (sectionCount < 2) return;
         const uint32_t base = static_cast<uint32_t>(verts.size() / 6);
         for (const SectionSample& sec : secs) {
-            const Vec3 bottom = sec.center - sec.up * kVolumeMarginMeters;
-            const Vec3 top = sec.center + sec.up * kVolumeMarginMeters;
+            const Vec3 bottom = sec.center - sec.up * volumeHalfHeight;
+            const Vec3 top = sec.center + sec.up * volumeHalfHeight;
             if (!hasOrigin) {
                 origin = bottom;
                 hasOrigin = true;
@@ -1275,22 +1305,25 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
 
 // ================= E1:MVT 瓦片桶(worker 全链镶嵌) =================
 
+bool FeatureRenderLayer::stencilClassificationSupported() const {
+    return renderDevice_ && renderDevice_->supportsStencilClassification();
+}
+
 FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
     const TessellationContext& ctx, const std::vector<Feature>& features) {
     TileMeshCpu mesh;
-    // v1 只收 fill/line;point/label/stencil 体的产物接在这些临时容器里,
-    // 出了本函数即丢弃(见头文件 v1 边界说明)。**不能**图省事传同一组
-    // 容器 —— point 顶点混进 fill 流会让 stride 对不上,画出乱码三角。
+    // point/label 的产物接在临时容器里,出了本函数即丢弃(它们要图集,
+    // 必须渲染线程)。**不能**图省事传同一组容器 —— point 顶点混进 fill 流
+    // 会让 stride 对不上,画出乱码三角。
+    // stencil 体不再丢弃:贴地瓦片的内容全在里面。
     std::vector<float> pointVerts;
     std::vector<uint32_t> pointIndices;
     std::vector<float> labelVerts;
     std::vector<uint32_t> labelIndices;
     std::vector<LabelEntry> labelEntries;
-    VolumeCpuGroups volumeGroups;
-    VolumeCpuGroups lineVolumeGroups;
 
-    // 贴地采样器留空:worker 拿不到地形瓦片注册表(那是渲染线程状态),
-    // v1 底图走 Absolute。传空 = 走原几何 + heightOffset。
+    // 贴地采样器恒空:worker 拿不到地形瓦片注册表(那是渲染线程状态)。
+    // 贴地改由 ctx 的区域高度范围驱动 —— 那是一对标量,可安全跨线程。
     const AreaSampleFn noSample;
 
     for (const Feature& feature : features) {
@@ -1298,7 +1331,8 @@ FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
                               mesh.hasOrigin, mesh.fillVerts, mesh.fillIndices,
                               mesh.lineVerts, mesh.lineIndices, pointVerts,
                               pointIndices, labelVerts, labelIndices,
-                              labelEntries, volumeGroups, lineVolumeGroups);
+                              labelEntries, mesh.fillVolumeGroups,
+                              mesh.lineVolumeGroups);
     }
     return mesh;
 }
@@ -1313,11 +1347,11 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     BucketGpu gpu;
     static const std::vector<float> kNoVerts;
     static const std::vector<uint32_t> kNoIndices;
-    VolumeCpuGroups noVolumes;
     if (!uploadBucketGpu(mesh.origin, mesh.fillVerts, mesh.fillIndices,
                          mesh.lineVerts, mesh.lineIndices, kNoVerts, kNoIndices,
                          std::vector<float>(), kNoIndices,
-                         std::vector<LabelEntry>(), noVolumes, noVolumes, gpu)) {
+                         std::vector<LabelEntry>(), mesh.fillVolumeGroups,
+                         mesh.lineVolumeGroups, gpu)) {
         return;
     }
     tileBuckets_[key] = std::move(gpu);
