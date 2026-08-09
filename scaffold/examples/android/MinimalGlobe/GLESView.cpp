@@ -419,9 +419,12 @@ static bool createEngine() {
                 // 贴地体高度范围按**本瓦片矩形**取局部值(拿不到相交地形瓦片
                 // 时退回全屏范围)。宽视野下这是矢量 fill 的主导因子:体高
                 // 直接换算成屏幕覆盖。
+                // kMeasureDisablePerTileRange = A/B 对照组(退回全局范围)。
                 return FeatureRenderLayer::tessellateTileMesh(
-                    layerPtr->workerTessellationContextForArea(
-                        mvtTileRectangle(key)),
+                    minimal_globe_demo::kMeasureDisablePerTileRange
+                        ? layerPtr->workerTessellationContext()
+                        : layerPtr->workerTessellationContextForArea(
+                              mvtTileRectangle(key)),
                     features);
             };
             sinks.commit = [layerPtr](const TileKey& key,

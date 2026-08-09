@@ -123,6 +123,12 @@ constexpr int kMeasureImageryMaxZoom = 18;
 // 生产/交互路径保持 false(默认零影响)。
 constexpr bool kMeasureFreezeCamera = false;
 
+// kMeasureDisablePerTileRange:A/B 对照组 —— true 时贴地体高度范围退回**全屏
+// 全局值**(逐瓦片局部范围改造前的行为)。纯测量开关,只在 MVT 镶嵌钩子那一处
+// 生效。收窄倍率本身由 VectorClamp perTileRange 行报,这个开关量的是收窄换来
+// 的 GPU 毫秒。⚠️先确认那行的 avg 明显 >1 再开 A/B,否则量的是噪声。
+constexpr bool kMeasureDisablePerTileRange = false;
+
 // kMeasureScriptedPan:测量台脚本化确定性平移(净测 §14.1② live 换页 ghost)。
 // true = 相机从初始位姿起,每帧原地偏航固定增量、扫掠 kMeasureScriptedPanFrames
 // 帧后 hold(见 CameraController::setScriptedPan)。方位角持续扫掠把新影像子瓦片
