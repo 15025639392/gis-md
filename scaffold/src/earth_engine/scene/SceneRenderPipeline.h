@@ -91,6 +91,10 @@ private:
     mutable double lastClampMinHeight_ = 0.0;
     mutable double lastClampMaxHeight_ = 0.0;
     mutable bool lastClampRangeApplied_ = false;
+    /// 参与贴地高度汇总的瓦片数:tight = 测得真高度,loose = 占位 -1000/9000。
+    /// 只有一对 clampH 数时,「没有 loose 瓦片」与「loose 判据失效」读数相同。
+    mutable int lastClampTightTiles_ = 0;
+    mutable int lastClampLooseTiles_ = 0;
     PolarCapRenderer polarCap_;
     mutable TerrainInstanceBatcher terrainBatcher_;
     // BatchDet 判因行的节流计数(独立于帧号,与 PageDet 同模式)。

@@ -14,6 +14,7 @@
 #include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/Renderer.h"
+#include "../tiling/TileBoundsMetrics.h"
 #include "../tiling/Tileset.h"
 
 #include <glm/glm.hpp>
@@ -235,7 +236,7 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
     char buildDetail[448];
     std::snprintf(buildDetail, sizeof(buildDetail),
-        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f clampH=%.0f/%.0f batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
+        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f clampH=%.0f/%.0f(t%d/l%d) batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
         skyMs,
         atmosphereMs,
         layerCommandsMs,
@@ -244,6 +245,8 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
         // 蒙对」** —— 相机飞到别的地形该跟着变;恒为 0/0 = 一次都没汇总到。
         lastClampMinHeight_,
         lastClampMaxHeight_,
+        lastClampTightTiles_,
+        lastClampLooseTiles_,
         batchMs,
         context.diagnostics.terrainBatches,
         context.diagnostics.batchedTerrainCommands,
@@ -450,10 +453,27 @@ void SceneRenderPipeline::buildLayerCommands(
     // 能贴地的前提(它拿不到采样器,但拿得到一对标量)。
     //
     // 用可见瓦片而非固定值:平原上范围窄 → 体矮 → fill rate 低;山地自动
-    // 变高。looseFittingHeights 的瓦片范围偏宽,对我们是安全方向(体宁高
-    // 勿矮:矮了穿不透地形,该片区整片不显示)。
+    // 变高。
+    //
+    // ⚠️ **loose 瓦片必须单独成桶,不能并进主汇总**。looseFittingHeights 的
+    // 「范围」根本不是测出来的高度,是 -1000/9000 这对占位常量(见
+    // TileBoundsMetrics::kDefaultTerrainMin/MaximumHeight)。并进来的后果不是
+    // 「偏宽一点」,是**一个未细化的瓦片把全屏的体高钉死在 10km**:每条路都成
+    // 了 10 公里高的幕布。真机实测(GpuPass 逐区间计时,2026-08-09):宽视野下
+    // vec:mvt-basemap 135.16ms/帧,把体半高硬钳到 150m 后 9.31ms —— 14.5×,
+    // 且当帧日志里 clampH 恰是 -1000/9000。正确性方向确实安全,代价此前没人量过。
+    //
+    // 分桶策略:优先用**测得真高度**的瓦片汇总;一个都没有(启动/纯 loose 期)
+    // 才退回 loose 桶 —— 那种情形下宁可要 10km 的体也不能让路网整片消失
+    // (体矮了穿不透地形 = 没有,不是变淡)。
     double clampMinHeight = std::numeric_limits<double>::max();
     double clampMaxHeight = std::numeric_limits<double>::lowest();
+    double looseMinHeight = std::numeric_limits<double>::max();
+    double looseMaxHeight = std::numeric_limits<double>::lowest();
+    // 机制信号:tight/loose 各多少瓦片参与汇总。只看 clampH 那对数分不清
+    // 「本帧真没有 loose 瓦片」和「判据没认出 loose」—— 两者读数一模一样。
+    int clampTightTiles = 0;
+    int clampLooseTiles = 0;
     if (terrainForClamp) {
         for (TilesetTile* tile :
              terrainForClamp->tilePlan().tilesToRenderThisFrame) {
@@ -461,10 +481,35 @@ void SceneRenderPipeline::buildLayerCommands(
             const TileBoundingVolume& bv = *tile->boundingVolume;
             // 只有 Region 的 min/maxHeight 有意义(球/盒的那两个字段是缺省值)。
             if (bv.kind != TileBoundingVolumeKind::Region) continue;
+            // 两条判据缺一不可:占位范围有时带 looseFittingHeights 标志,有时
+            // 只是数值恰为那对常量(与 TileLoadResultMetadataApplicator 的
+            // hasLooseFittingHeights 同款双判)。只判标志会漏掉后者,而漏一个
+            // 就等于没修 —— 全屏体高由最宽的那一个决定。
+            const bool looseHeights =
+                bv.looseFittingHeights ||
+                (std::abs(bv.minimumHeight -
+                          TileBoundsMetrics::kDefaultTerrainMinimumHeight) <=
+                     MathUtils::Epsilon5 &&
+                 std::abs(bv.maximumHeight -
+                          TileBoundsMetrics::kDefaultTerrainMaximumHeight) <=
+                     MathUtils::Epsilon5);
+            if (looseHeights) {
+                ++clampLooseTiles;
+                looseMinHeight = std::min(looseMinHeight, bv.minimumHeight);
+                looseMaxHeight = std::max(looseMaxHeight, bv.maximumHeight);
+                continue;
+            }
+            ++clampTightTiles;
             clampMinHeight = std::min(clampMinHeight, bv.minimumHeight);
             clampMaxHeight = std::max(clampMaxHeight, bv.maximumHeight);
         }
+        if (clampMaxHeight < clampMinHeight && looseMaxHeight >= looseMinHeight) {
+            clampMinHeight = looseMinHeight;
+            clampMaxHeight = looseMaxHeight;
+        }
     }
+    lastClampTightTiles_ = clampTightTiles;
+    lastClampLooseTiles_ = clampLooseTiles;
     lastClampRangeApplied_ = clampMaxHeight >= clampMinHeight;
     lastClampMinHeight_ = lastClampRangeApplied_ ? clampMinHeight : 0.0;
     lastClampMaxHeight_ = lastClampRangeApplied_ ? clampMaxHeight : 0.0;
