@@ -172,6 +172,15 @@ struct RenderCommand {
     // 启用 GL_SAMPLE_ALPHA_TO_COVERAGE 且不开常规 alpha 混合。
     bool alphaToCoverage = false;
     bool cullFace = true;
+    /// cullFace=true 时剔除哪一面。默认 Back(常规实体)。
+    ///
+    /// Front 目前只有一个用途:stencil 分类的**色 pass**。那一 pass 的几何是
+    /// 挤出体、着色的却是 stencil 选中的地形像素,所以覆盖面只要「每个选中像素
+    /// 至少被盖一次」即可 —— 水密体的背面单独就满足,画双面等于把光栅化量翻倍
+    /// 换零收益。取背面而非正面是因为**相机进体内时正面被近平面切掉**,背面
+    /// 永远在。
+    enum class CullMode { Back, Front };
+    CullMode cullMode = CullMode::Back;
     enum class BlendFactor { SrcAlpha, OneMinusSrcAlpha } blendSrc = BlendFactor::SrcAlpha;
     enum class BlendFactorDst { OneMinusSrcAlpha, One } blendDst = BlendFactorDst::OneMinusSrcAlpha;
 

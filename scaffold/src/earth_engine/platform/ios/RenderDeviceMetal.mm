@@ -1198,7 +1198,16 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
             [impl_->currentEncoder setBlendColorRed:1.0 green:1.0 blue:1.0 alpha:1.0];
         }
 
-        [impl_->currentEncoder setCullMode:cmd.cullFace ? MTLCullModeBack : MTLCullModeNone];
+        // 面向随 cmd.cullMode(stencil 分类色 pass 取背面,见 RenderCommand.h)。
+        // Metal 的 front-facing 绕向与 GLES 相反(BackendWindingContract.h),但
+        // 「剔正面/剔背面」的语义是相对各自 winding 定的,故此处直接映射即可。
+        MTLCullMode metalCull = MTLCullModeNone;
+        if (cmd.cullFace) {
+            metalCull = cmd.cullMode == RenderCommand::CullMode::Front
+                            ? MTLCullModeFront
+                            : MTLCullModeBack;
+        }
+        [impl_->currentEncoder setCullMode:metalCull];
 
         // Draw
         MTLPrimitiveType primType = MTLPrimitiveTypeTriangle;

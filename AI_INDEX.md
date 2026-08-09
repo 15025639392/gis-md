@@ -2226,7 +2226,7 @@ Fat, backend-neutral draw descriptor produced by command factories and consumed 
 | `RenderCommandValidationError` | .h:110-112 | `{commandIndex, owner, message}`. |
 | `mvpRenderOrder(kind)` | .h:115, .cpp:108-130 | Draw-order map: Sky 0, SurfaceTile 10, GltfPrimitive(Instanced) 15, Atmosphere 20, VectorOverlay 30, Unknown 100. No GlobeSurface entry remains. |
 | `validateMvpRenderCommands` | .h:119-121, .cpp:118-209 | Hard contract for MVP chain. Returns `optional<...Error>` (empty=valid). Enforces monotonic pass order (.cpp:129-133), color pass, per-kind fixed depth/write/cull/blend, non-zero `generation`, matching `frameId`, back-to-front translucent glTF sort (.cpp:213-230), instanced requires count+buffer+stride (.cpp:177-190). **Terrain-primary exemption**: `owner=="terrain_primary_surface"` overlay allows all-off state (.cpp:123-130,173-183). Contract is enforced by throw at call site `SceneRenderPipeline.cpp:372-375` (`std::runtime_error` on any error). |
-| `sortMvpRenderCommands` | .h:123, .cpp:260-265 | `stable_sort` by `mvpCommandLess`: order → opaque-before-translucent glTF → translucent back-to-front by `translucentSortDepth` (.cpp:81-104). |
+| `sortMvpRenderCommands` | .h:123, .cpp:271-265 | `stable_sort` by `mvpCommandLess`: order → opaque-before-translucent glTF → translucent back-to-front by `translucentSortDepth` (.cpp:81-104). |
 
 ### RenderCommandStreamingSet.h / .cpp
 
@@ -2401,8 +2401,8 @@ OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller own
 | `createFramebuffer` | .cpp:579-688 | Returns `nullptr` (MVP uses default FBO) |
 | `beginFrame` | .cpp:723-726 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:725-725) |
 | `submit` | .cpp:903-1482 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1403-1403). Perf log every 120 submits or ≥25ms (.cpp:1467). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
-| `endFrame` | .cpp:1818-1832 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
-| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:1868-1942 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
+| `endFrame` | .cpp:1831-1845 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
+| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:1881-1955 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
 
 Per-command command-kind counters in `submit` (.cpp:903-1482) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
 
@@ -2445,8 +2445,8 @@ Metal 2 backend (iOS/macOS) via `CAMetalLayer`. PImpl (.mm:62-75). Internal wrap
 | `createShader` | .mm:415-668 | Compiles combined VS+FS MSL source; entry-point sniffing selects 6 `PipelineLayout` variants (Surface/Tile/Gltf/GltfInstanced/Color/DebugLine, .mm:443-443 — **no globe-shader detection**); builds `MTLVertexDescriptor` per layout; emits paired opaque(blend=NO)+blended(blend=YES) PSOs |
 | `beginFrame` | .mm:765-796 | `nextDrawable`; clearColor (0.1,0.3,0.6,1); **reverse-Z `clearDepth=0.0`**; retains drawable via `objc_setAssociatedObject` |
 | `submit` | .mm:919-1267 | Per-command PSO/depth-state select; vertex buffer @0, instance buffer @7; **fixed uniform indices 0..83** (see below); texture+sampler binding 0..kGltfWaterMaskTextureSlot; cull/blend; indexed/instanced draw |
-| `endFrame` | .mm:1247-1262 | End encoding, `presentDrawable`, `CFRelease`, commit |
-| `onSurfaceChanged` | .mm:1272-1286 | Sets `drawableSize`; allocates `Depth32Float` depth texture (RenderTarget, Private) |
+| `endFrame` | .mm:1256-1262 | End encoding, `presentDrawable`, `CFRelease`, commit |
+| `onSurfaceChanged` | .mm:1281-1286 | Sets `drawableSize`; allocates `Depth32Float` depth texture (RenderTarget, Private) |
 
 Vertex descriptors (.mm:325-433): DebugLine stride 8; Tile stride 20 (pos+uv); Color stride 12 (pos); Surface stride 32 (pos+normal+uv); Gltf/GltfInstanced stride 120 (attribs 0-2 + 10-14); GltfInstanced adds bufferIndex-7 attribs 3-9 (`kGltfInstanceMatrixStride`=**100**, `MTLVertexStepFunctionPerInstance`).
 
@@ -2705,8 +2705,8 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `updateLabelPlacement` | .cpp:1544-1623 | 标签避让 + fade + 地平线剔除(P5c) |
 | `appendTerrainOcclusion` | .cpp:1624-1635 | 接地形深度 prepass 做符号遮挡(T2) |
 | `appendBucketCommands` | .cpp:1636-1915 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:1916-1931 / :1932-1938 / :1939-1964 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
-| `pick` | .cpp:2008-2226 | 要素拾取 |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:1925-1931 / :1932-1938 / :1939-1964 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
+| `pick` | .cpp:2017-2226 | 要素拾取 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。

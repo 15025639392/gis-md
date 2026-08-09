@@ -935,6 +935,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     bool alphaToCoverageEnabled = false;
     bool polygonOffsetEnabled = false;
     bool cullFaceEnabled = true;
+    // beginPass 归位到 glCullFace(GL_BACK),缓存初值必须与之一致。
+    GLenum cullFaceApplied = GL_BACK;
     bool depthWriteEnabled = true;
     // P6 stencil 分类:上一 submit 可能停在任意 phase(每帧两次 submit),
     // 入口无条件归位 None 再按命令切换。
@@ -1405,6 +1407,17 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 glDisable(GL_CULL_FACE);
             }
             cullFaceEnabled = cmd.cullFace;
+        }
+        // 剔除面向。缓存与 cullFaceEnabled 分开:关掉再打开 CULL_FACE 并不会
+        // 复位 glCullFace,面向是独立的 GL 状态,跟着 enable 一起缓存会漏发。
+        if (cmd.cullFace) {
+            const GLenum wantCullFace =
+                cmd.cullMode == RenderCommand::CullMode::Front ? GL_FRONT
+                                                               : GL_BACK;
+            if (cullFaceApplied != wantCullFace) {
+                glCullFace(wantCullFace);
+                cullFaceApplied = wantCullFace;
+            }
         }
 
         // ---- Draw ----

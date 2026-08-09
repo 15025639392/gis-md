@@ -223,8 +223,11 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 
             case RenderCommandKind::VectorStencil:
                 // P6 分类两 phase 状态锁死(顺序错/状态错 = 整屏染色或全丢):
-                // 体 pass 深度测开写关(z-fail 计数)、不混合、双面;
-                // 色 pass 关深度测(覆盖面自身别被地形挡)、开混合、双面。
+                // 体 pass 深度测开写关(z-fail 计数)、不混合、**双面**
+                //   (两侧计数是 z-fail 的定义,单面直接失去分类语义);
+                // 色 pass 关深度测(覆盖面自身别被地形挡)、开混合、**只画背面**
+                //   (覆盖只需每个 stencil 选中像素被盖一次,水密体的背面即足够;
+                //    双面是白烧一倍光栅化。取背面因为相机进体内时正面被近平面切掉)。
                 if (!requireColorPass(i, cmd, error)) return error;
                 if (cmd.stencilPhase == StencilPhase::ClassifyVolume) {
                     if (!requireState(i, cmd, true, false, false, false,
@@ -232,8 +235,16 @@ validateMvpRenderCommands(const RenderCommandList& commands,
                         return error;
                     }
                 } else if (cmd.stencilPhase == StencilPhase::ClassifyColor) {
-                    if (!requireState(i, cmd, false, false, false, true,
+                    if (!requireState(i, cmd, false, false, true, true,
                                       "VectorStencil color", error)) {
+                        return error;
+                    }
+                    // 剔正面留背面。写死在校验里:剔错面 = 相机进体内时整片
+                    // 消失,而那是最不容易在静态截图里发现的一类回归。
+                    if (cmd.cullMode != RenderCommand::CullMode::Front) {
+                        fail(i, cmd,
+                             "VectorStencil color must cull front faces "
+                             "(back faces are the cover surface)", error);
                         return error;
                     }
                 } else {

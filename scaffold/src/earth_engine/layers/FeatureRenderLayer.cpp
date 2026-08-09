@@ -1719,6 +1719,11 @@ void FeatureRenderLayer::appendBucketCommands(
             RenderCommand col = vol;
             col.stencilPhase = StencilPhase::ClassifyColor;
             col.depthTest = false;  // 覆盖面自身别被地形挡
+            // 覆盖面只需把 stencil 选中的像素盖一次:水密体的背面单独就覆盖
+            // 整个轮廓,双面是白烧一倍光栅化。取背面而非正面 —— 相机进体内时
+            // 正面被近平面切掉,背面永远在。
+            col.cullFace = true;
+            col.cullMode = RenderCommand::CullMode::Front;
             col.blend = true;
             col.uniforms["u_color"] = {group.color[0], group.color[1],
                                        group.color[2], group.color[3]};
@@ -1770,6 +1775,10 @@ void FeatureRenderLayer::appendBucketCommands(
                 RenderCommand col = vol;
                 col.stencilPhase = StencilPhase::ClassifyColor;
                 col.depthTest = false;
+                // 同 fill 组:墙带同样水密(见 emitStrip 的「任意边恰被 2
+                // 三角引用」),背面即完整覆盖面。
+                col.cullFace = true;
+                col.cullMode = RenderCommand::CullMode::Front;
                 col.blend = true;
                 col.uniforms["u_color"] = {group.color[0], group.color[1],
                                            group.color[2], group.color[3]};

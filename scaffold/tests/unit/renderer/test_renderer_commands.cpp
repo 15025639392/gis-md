@@ -983,3 +983,72 @@ TEST(RendererCommandTest, GltfPrimitiveBlendRejectedWithoutOpacityReason) {
     ASSERT_TRUE(error.has_value());
     EXPECT_EQ("gltf_primitive", error->owner);
 }
+
+// ---- stencil 分类色 pass 的覆盖面契约 ----
+//
+// 色 pass 光栅化的是挤出体、着色的却是 stencil 选中的地形像素,所以覆盖面只需
+// 「每个选中像素被盖到一次」。水密体的背面单独就覆盖整个轮廓 → 画双面是白烧一倍
+// 光栅化。取背面而非正面:相机进体内时正面被近平面切掉,背面永远在 —— 剔错面的
+// 症状是「走进这片区域时它整片消失」,静态截图查不出来,故写死在校验里。
+namespace {
+
+RenderCommand makeStencilVolume() {
+    RenderCommand vol;
+    vol.kind = RenderCommandKind::VectorStencil;
+    vol.stencilPhase = StencilPhase::ClassifyVolume;
+    vol.owner = "stencil";
+    vol.pass = "color";
+    vol.depthTest = true;
+    vol.depthWrite = false;
+    vol.cullFace = false;  // 两侧 z-fail 计数 = 必须双面
+    vol.blend = false;
+    vol.frameId = 42;
+    vol.generation = 1;
+    return vol;
+}
+
+RenderCommand makeStencilColor() {
+    RenderCommand col = makeStencilVolume();
+    col.stencilPhase = StencilPhase::ClassifyColor;
+    col.depthTest = false;
+    col.cullFace = true;
+    col.cullMode = RenderCommand::CullMode::Front;
+    col.blend = true;
+    return col;
+}
+
+}  // namespace
+
+TEST(RendererCommandTest, VectorStencilColorPassCullsFrontFaces) {
+    RenderCommandList commands{makeStencilVolume(), makeStencilColor()};
+    auto error = validateMvpRenderCommands(commands, 42);
+    EXPECT_FALSE(error.has_value());
+}
+
+TEST(RendererCommandTest, VectorStencilColorPassRejectsDoubleSided) {
+    RenderCommand col = makeStencilColor();
+    col.cullFace = false;  // 旧行为:双面全画
+    RenderCommandList commands{makeStencilVolume(), col};
+    auto error = validateMvpRenderCommands(commands, 42);
+    ASSERT_TRUE(error.has_value());
+    EXPECT_NE(error->message.find("cullFace"), std::string::npos);
+}
+
+TEST(RendererCommandTest, VectorStencilColorPassRejectsCullingBackFaces) {
+    RenderCommand col = makeStencilColor();
+    col.cullMode = RenderCommand::CullMode::Back;  // 剔错面
+    RenderCommandList commands{makeStencilVolume(), col};
+    auto error = validateMvpRenderCommands(commands, 42);
+    ASSERT_TRUE(error.has_value());
+    EXPECT_NE(error->message.find("back faces"), std::string::npos);
+}
+
+TEST(RendererCommandTest, VectorStencilVolumePassStaysDoubleSided) {
+    // 体 pass 单面 = 失去 z-fail 分类语义(两侧计数是它的定义)。
+    RenderCommand vol = makeStencilVolume();
+    vol.cullFace = true;
+    RenderCommandList commands{vol, makeStencilColor()};
+    auto error = validateMvpRenderCommands(commands, 42);
+    ASSERT_TRUE(error.has_value());
+    EXPECT_NE(error->message.find("cullFace"), std::string::npos);
+}
