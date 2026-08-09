@@ -1494,3 +1494,62 @@ TEST_F(FeatureRenderLayerTest, ZoomDrivenImageExpressionStripped) {
     EXPECT_FLOAT_EQ(static_cast<float>(static_cast<int>(SymbolShape::Square)),
                     f[8]);
 }
+
+// ---- 逐瓦片贴地高度范围(stencil 体高 → fill 的主导因子) ----
+//
+// 体高直接换算成屏幕覆盖:全屏一个 union 会让平原上的路背着山地的相对高差。
+// 真机实测(GpuPass 逐区间计时)体高 10km→1km 时矢量 GPU 135→19.6ms,故这条
+// 收窄逻辑不是微优化,是主干。
+TEST_F(FeatureRenderLayerTest, PerAreaHeightRangeNarrowsToIntersectingCells) {
+    FeatureRenderLayer layer("t", &device_, Ellipsoid::WGS84());
+    // 全局范围 = 两块瓦片的并集(平地 0..100 + 山地 0..3000)
+    layer.setWorkerTerrainHeightRange(0.0, 3000.0);
+    auto cells =
+        std::make_shared<FeatureRenderLayer::TerrainHeightRangeCells>();
+    cells->push_back({Rectangle(0.0, 0.0, 1.0 * kDeg, 1.0 * kDeg), 0.0, 100.0});
+    cells->push_back({Rectangle(10.0 * kDeg, 0.0, 11.0 * kDeg, 1.0 * kDeg),
+                      0.0, 3000.0});
+    layer.setWorkerTerrainHeightRangeCells(cells);
+
+    // 平地那块:只与第一格相交 → 拿到 0..100,而不是全局的 0..3000
+    const auto flat = layer.workerTessellationContextForArea(
+        Rectangle(0.1 * kDeg, 0.1 * kDeg, 0.2 * kDeg, 0.2 * kDeg));
+    EXPECT_TRUE(flat.hasTerrainHeightRange);
+    EXPECT_DOUBLE_EQ(flat.terrainMinHeight, 0.0);
+    EXPECT_DOUBLE_EQ(flat.terrainMaxHeight, 100.0);
+
+    // 山地那块:仍拿到 3000 —— 收窄只允许发生在真的没有高地形的地方
+    const auto hilly = layer.workerTessellationContextForArea(
+        Rectangle(10.1 * kDeg, 0.1 * kDeg, 10.2 * kDeg, 0.2 * kDeg));
+    EXPECT_DOUBLE_EQ(hilly.terrainMaxHeight, 3000.0);
+
+    // 跨两格:并集,不能只取命中的第一格
+    const auto both = layer.workerTessellationContextForArea(
+        Rectangle(0.5 * kDeg, 0.1 * kDeg, 10.5 * kDeg, 0.2 * kDeg));
+    EXPECT_DOUBLE_EQ(both.terrainMaxHeight, 3000.0);
+}
+
+TEST_F(FeatureRenderLayerTest, PerAreaHeightRangeFallsBackWhenNoCellIntersects) {
+    FeatureRenderLayer layer("t", &device_, Ellipsoid::WGS84());
+    layer.setWorkerTerrainHeightRange(-50.0, 900.0);
+    auto cells =
+        std::make_shared<FeatureRenderLayer::TerrainHeightRangeCells>();
+    cells->push_back({Rectangle(0.0, 0.0, 1.0 * kDeg, 1.0 * kDeg), 0.0, 100.0});
+    layer.setWorkerTerrainHeightRangeCells(cells);
+
+    // 相交不到 → 必须退回全局范围。**绝不能返回"没有范围"或更窄的范围**:
+    // 体穿不透地形是整片消失,不是变淡,比多烧 fill 严重得多。
+    const auto ctx = layer.workerTessellationContextForArea(
+        Rectangle(50.0 * kDeg, 50.0 * kDeg, 51.0 * kDeg, 51.0 * kDeg));
+    EXPECT_TRUE(ctx.hasTerrainHeightRange);
+    EXPECT_DOUBLE_EQ(ctx.terrainMinHeight, -50.0);
+    EXPECT_DOUBLE_EQ(ctx.terrainMaxHeight, 900.0);
+
+    // 快照根本没发布过 → 同样退回全局
+    FeatureRenderLayer bare("b", &device_, Ellipsoid::WGS84());
+    bare.setWorkerTerrainHeightRange(-50.0, 900.0);
+    const auto bareCtx = bare.workerTessellationContextForArea(
+        Rectangle(0.0, 0.0, 1.0 * kDeg, 1.0 * kDeg));
+    EXPECT_TRUE(bareCtx.hasTerrainHeightRange);
+    EXPECT_DOUBLE_EQ(bareCtx.terrainMaxHeight, 900.0);
+}

@@ -5,6 +5,8 @@
 #include "../data/StyleExpression.h"
 #include "../renderer/RenderCommand.h"
 #include "../renderer/SymbolShape.h"
+#include "../core/math/Rectangle.h"
+#include "../debug/PlatformLog.h"
 #include "../core/math/Vec3.h"
 #include "../tiling/TileKey.h"
 #include "LabelPlacement.h"
@@ -12,7 +14,9 @@
 #include <array>
 #include <functional>
 #include <map>
+#include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -380,6 +384,85 @@ public:
         workerTerrainMinHeight_ = minHeight;
         workerTerrainMaxHeight_ = maxHeight;
     }
+    /// 一块地形瓦片的高度范围快照(渲染线程产,worker 读)。
+    struct TerrainHeightRangeCell {
+        Rectangle rect;
+        double minHeight = 0.0;
+        double maxHeight = 0.0;
+    };
+    using TerrainHeightRangeCells = std::vector<TerrainHeightRangeCell>;
+
+    /// **渲染线程**发布逐地形瓦片的高度范围快照。worker 侧
+    /// workerTessellationContextForArea 按自己那块瓦片的矩形取局部范围 ——
+    /// 全屏一个 union 会让平原上的路背着山地的相对高差,而体高直接换算成
+    /// fill(宽视野实测:体高从 10km 降到 1km,矢量 GPU 135→19.6ms)。
+    ///
+    /// 快照按 **shared_ptr 整体替换**发布,worker 用 atomic_load 取:与那对
+    /// 标量"读到上一帧无害"的理由相同(范围本就是保守量),但 vector 不能像
+    /// 标量那样裸读 —— 读到一半被 clear 是撕裂,不是旧值。
+    void setWorkerTerrainHeightRangeCells(
+        std::shared_ptr<const TerrainHeightRangeCells> cells) {
+        std::atomic_store(&workerHeightCells_, std::move(cells));
+    }
+
+    /// 取一份镶嵌上下文,高度范围收窄到 area 覆盖到的那些地形瓦片。
+    /// 快照缺失/无瓦片与 area 相交 → 退回全局范围(即
+    /// workerTessellationContext() 的行为),绝不产出比全局更窄的范围:
+    /// 窄了体穿不透地形 = 该片区整片消失。**worker 线程可调**。
+    TessellationContext workerTessellationContextForArea(
+        const Rectangle& area) const {
+        TessellationContext ctx = workerTessellationContext();
+        const auto cells = std::atomic_load(&workerHeightCells_);
+        if (!cells || cells->empty()) return ctx;
+        double minH = std::numeric_limits<double>::max();
+        double maxH = std::numeric_limits<double>::lowest();
+        for (const TerrainHeightRangeCell& cell : *cells) {
+            if (!cell.rect.intersects(area)) continue;
+            minH = std::min(minH, cell.minHeight);
+            maxH = std::max(maxH, cell.maxHeight);
+        }
+        if (maxH < minH) return ctx;
+        // 机制信号:局部范围 vs 全局范围的收窄倍率。缺了它,「逐瓦片收窄生效
+        // 了」与「快照发布了但块块都退回全局」在任何日志里读数相同 —— 而这两种
+        // 情形的 GPU 账单差一个数量级。
+        //
+        // 报**聚合**而不是抽样单块:镶嵌是按瓦片到达零散发生的,抽样打印会恰好
+        // 命中一块"本来就窄"的瓦片,读出 1.02x,而真正贵的那些块一次都没露面
+        // (第一版就是这么误导人的)。均值 + 最大值才描述得了分布。
+        {
+            const double narrowing =
+                (maxH - minH) > 0.0
+                    ? (ctx.terrainMaxHeight - ctx.terrainMinHeight) /
+                          (maxH - minH)
+                    : 1.0;
+            static std::mutex sStatsMutex;
+            static int sCount = 0;
+            static double sSum = 0.0;
+            static double sMax = 0.0;
+            std::lock_guard<std::mutex> lock(sStatsMutex);
+            ++sCount;
+            sSum += narrowing;
+            sMax = std::max(sMax, narrowing);
+            // 每 16 块一行 **或** 撞见显著收窄就立刻打:定期行描述总体,
+            // 离群行保证"真正贵的那几块"不会被均值淹没 —— 只有定期行时,
+            // 一批本来就窄的瓦片会把读数压成 1.06x,而那批贵的一次没露面。
+            if ((sCount % 16) == 0 || narrowing >= 1.5) {
+                platformLog(LogLevel::Info, "VectorClamp",
+                            "perTileRange tiles=%d narrowing avg=%.2fx "
+                            "max=%.2fx | last local=%.0f/%.0f global=%.0f/%.0f "
+                            "cells=%zu",
+                            sCount, sSum / sCount, sMax,
+                            minH, maxH,
+                            ctx.terrainMinHeight, ctx.terrainMaxHeight,
+                            cells->size());
+            }
+        }
+        ctx.hasTerrainHeightRange = true;
+        ctx.terrainMinHeight = minH;
+        ctx.terrainMaxHeight = maxH;
+        return ctx;
+    }
+
     TessellationContext workerTessellationContext(double terrainMinHeight,
                                                   double terrainMaxHeight) const {
         TessellationContext ctx = workerTessellationContext();
@@ -509,6 +592,9 @@ private:
     bool hasWorkerTerrainRange_ = false;
     double workerTerrainMinHeight_ = 0.0;
     double workerTerrainMaxHeight_ = 0.0;
+    /// 逐地形瓦片高度范围快照。整体替换发布 + atomic_load 读(见
+    /// setWorkerTerrainHeightRangeCells)。
+    std::shared_ptr<const TerrainHeightRangeCells> workerHeightCells_;
     const Ellipsoid& ellipsoid_;
     FeatureRenderStyle style_;
     FeatureStore store_;

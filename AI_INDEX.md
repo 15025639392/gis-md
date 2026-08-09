@@ -2143,9 +2143,9 @@ Render flow in `render()` (.cpp:191-286):
 | 2 | `buildSkyCommands` | .cpp:312-351 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
 | 3 | `buildAtmosphereCommands` | .cpp:352-380 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
 | 4 | `buildLayerCommands` | .cpp:381-552 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
-| 5 | `applyMvpUniforms` | .cpp:608-616 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:617-667 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:557-607 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 5 | `applyMvpUniforms` | .cpp:618-626 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:627-677 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:567-617 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
 | 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:680-699 / :656-699 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
 | 7 | `aggregateDiagnostics` | .cpp:751-778 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
 | 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:780-837 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
@@ -2862,7 +2862,7 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 | `GeoJsonImporter` (39) | `mapType` (GeoJsonImporter.cpp:9)、`importInto` (GeoJsonImporter.cpp:20) | 解析结果 → `FeatureStore` |
 | `MvtVectorSource` (225) | `horizonViewRectangle` (MvtVectorSource.cpp:21)、`update` (MvtVectorSource.cpp:61)、`setLayerRules` (MvtVectorSource.cpp:185)、`ingestInbox` (MvtVectorSource.cpp:201) | MVT 源:按视口拉瓦片 |
 | `VectorTileTree` (209) | `splitAntimeridian` (VectorTileTree.cpp:11)、`zoomForCameraHeight` (VectorTileTree.cpp:31)、`update` (VectorTileTree.cpp:39)、`provide` (VectorTileTree.cpp:149)、`markFailed` (VectorTileTree.cpp:157) | 瓦片树。⚠️ 必须缓存 `MvtTile` 而非网格,否则"重入零重拉取"会丢 |
-| `MvtFeatureConverter` (89) | `mvtToCartographic` (MvtFeatureConverter.cpp:13)、`mvtLayerToFeatures` (MvtFeatureConverter.cpp:25) | MVT → `Feature` |
+| `MvtFeatureConverter` (89) | `mvtToCartographic` (MvtFeatureConverter.cpp:13)、`mvtLayerToFeatures` (MvtFeatureConverter.cpp:34)、`mvtTileRectangle` (MvtFeatureConverter.cpp:26,瓦片地理矩形,贴地高度范围按块取局部值用) | MVT → `Feature` |
 | `VectorTileMeshBuilder` (207) | `pushVertex` (VectorTileMeshBuilder.cpp:23)、`pushQuad` (VectorTileMeshBuilder.cpp:37)、`appendPolygonFill` (VectorTileMeshBuilder.cpp:50)、`appendStrokedPath` (VectorTileMeshBuilder.cpp:101)、`buildVectorTileMesh` (VectorTileMeshBuilder.cpp:139) | 瓦片网格镶嵌(**在 worker 上跑**,E1) |
 
 ## 16. environment — Atmosphere, SkyBox, SkyGradient, Sun, Time

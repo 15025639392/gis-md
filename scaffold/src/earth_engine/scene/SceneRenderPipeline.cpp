@@ -474,6 +474,11 @@ void SceneRenderPipeline::buildLayerCommands(
     // 「本帧真没有 loose 瓦片」和「判据没认出 loose」—— 两者读数一模一样。
     int clampTightTiles = 0;
     int clampLooseTiles = 0;
+    // 逐瓦片快照:worker 侧按自己那块的矩形取局部范围,而不是全屏一个 union
+    // (union 让平原上的路背着山地的相对高差,而体高直接换算成 fill)。
+    // 只放 tight 瓦片 —— loose 的那对是占位常量,进来就等于没收窄。
+    auto clampCells =
+        std::make_shared<FeatureRenderLayer::TerrainHeightRangeCells>();
     if (terrainForClamp) {
         for (TilesetTile* tile :
              terrainForClamp->tilePlan().tilesToRenderThisFrame) {
@@ -502,6 +507,8 @@ void SceneRenderPipeline::buildLayerCommands(
             ++clampTightTiles;
             clampMinHeight = std::min(clampMinHeight, bv.minimumHeight);
             clampMaxHeight = std::max(clampMaxHeight, bv.maximumHeight);
+            clampCells->push_back(FeatureRenderLayer::TerrainHeightRangeCell{
+                bv.region, bv.minimumHeight, bv.maximumHeight});
         }
         if (clampMaxHeight < clampMinHeight && looseMaxHeight >= looseMinHeight) {
             clampMinHeight = looseMinHeight;
@@ -546,6 +553,9 @@ void SceneRenderPipeline::buildLayerCommands(
         // min > max = 「未知」,图层据此退回不贴地,而不是拿一个瞎猜的范围
         // 去建体 —— 后者会把线画在错误高度上,比不贴地更难查。
         fLayer->setWorkerTerrainHeightRange(clampMinHeight, clampMaxHeight);
+        // 逐瓦片快照与全局标量一起发布:worker 取不到相交瓦片时退回标量,
+        // 两者必须描述同一帧,否则局部范围会比"全局"还宽。
+        fLayer->setWorkerTerrainHeightRangeCells(clampCells);
         if (fLayer->visible()) {
             fLayer->buildRenderCommands(
                 context.frameState, context.renderer, context.commands);

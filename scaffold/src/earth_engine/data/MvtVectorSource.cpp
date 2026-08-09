@@ -138,7 +138,7 @@ void MvtVectorSource::update(const Rectangle& viewRect,
                     features.push_back(std::move(f));
                 }
             }
-            FeatureTileMesh mesh = tessellate(std::move(features));
+            FeatureTileMesh mesh = tessellate(key, std::move(features));
             std::lock_guard<std::mutex> lock(inbox->mutex);
             inbox->meshes.emplace_back(key, std::move(mesh), epoch);
         };

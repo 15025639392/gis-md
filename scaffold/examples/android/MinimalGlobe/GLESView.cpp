@@ -29,6 +29,7 @@
 #include "earth_engine/layers/FeatureRenderLayer.h"
 #include "earth_engine/data/FeatureSnapQuery.h"
 #include "earth_engine/core/async/AsyncSystem.h"
+#include "earth_engine/data/MvtFeatureConverter.h"
 #include "earth_engine/data/MvtVectorSource.h"
 #include "earth_engine/data/StyleFilter.h"
 #include "earth_engine/layers/RasterOverlay.h"
@@ -413,9 +414,15 @@ static bool createEngine() {
             // 周期都由 gMvtSource.reset() 先于图层销毁保证。
             FeatureRenderLayer* layerPtr = basemapLayer.get();
             MvtVectorSource::Sinks sinks;
-            sinks.tessellate = [layerPtr](std::vector<Feature>&& features) {
+            sinks.tessellate = [layerPtr](const TileKey& key,
+                                          std::vector<Feature>&& features) {
+                // 贴地体高度范围按**本瓦片矩形**取局部值(拿不到相交地形瓦片
+                // 时退回全屏范围)。宽视野下这是矢量 fill 的主导因子:体高
+                // 直接换算成屏幕覆盖。
                 return FeatureRenderLayer::tessellateTileMesh(
-                    layerPtr->workerTessellationContext(), features);
+                    layerPtr->workerTessellationContextForArea(
+                        mvtTileRectangle(key)),
+                    features);
             };
             sinks.commit = [layerPtr](const TileKey& key,
                                       FeatureTileMesh&& mesh) {

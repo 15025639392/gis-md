@@ -74,8 +74,12 @@ public:
     /// worker 侧镶嵌钩子:把一块瓦片的要素镶成网格。由调用方绑定
     /// (典型:FeatureRenderLayer::tessellateTileMesh + 一份样式快照)。
     /// **必须线程安全且不碰渲染线程状态** —— 它在解码线程上跑。
+    ///
+    /// 带 key:贴地体的高度范围要按**这块瓦片自己的矩形**取(全屏一个 union
+    /// 会让平原上的路背着山地的相对高差,体高直接换算成 fill)。key 是本函数
+    /// 唯一能拿到"我是哪一块"的途径 —— Feature 列表里没有瓦片身份。
     using TessellateFn =
-        std::function<FeatureTileMesh(std::vector<Feature>&&)>;
+        std::function<FeatureTileMesh(const TileKey&, std::vector<Feature>&&)>;
     /// 渲染线程侧网格落地钩子(典型:FeatureRenderLayer::commitTileMesh)。
     using CommitFn = std::function<void(const TileKey&, FeatureTileMesh&&)>;
     /// 渲染线程侧移除钩子(典型:FeatureRenderLayer::dropTileMesh)。

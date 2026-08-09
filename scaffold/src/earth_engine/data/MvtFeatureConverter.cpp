@@ -22,6 +22,15 @@ Cartographic mvtToCartographic(const TileKey& key, uint32_t extent,
     return Cartographic(lng, lat, 0.0);
 }
 
+Rectangle mvtTileRectangle(const TileKey& key) {
+    // 瓦片四角 = 瓦片内归一化坐标 (0,0)-(1,1);extent 取多少都一样,故传 1
+    // 让 p 直接是归一化量。y=0 在北 → 北边界来自 p.y=0。
+    const Cartographic nw = mvtToCartographic(key, 1u, MvtPoint{0, 0});
+    const Cartographic se = mvtToCartographic(key, 1u, MvtPoint{1, 1});
+    return Rectangle(nw.longitude(), se.latitude(),
+                     se.longitude(), nw.latitude());
+}
+
 std::vector<Feature> mvtLayerToFeatures(const MvtLayer& layer,
                                         const TileKey& key) {
     std::vector<Feature> out;

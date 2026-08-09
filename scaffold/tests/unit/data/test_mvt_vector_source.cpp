@@ -108,7 +108,7 @@ struct FakeSinks {
 
     MvtVectorSource::Sinks fn() {
         MvtVectorSource::Sinks s;
-        s.tessellate = [this](std::vector<Feature>&& features) {
+        s.tessellate = [this](const TileKey&, std::vector<Feature>&& features) {
             ++tessellateCalls;
             lastFeatureCount = features.size();
             FeatureTileMesh mesh;
