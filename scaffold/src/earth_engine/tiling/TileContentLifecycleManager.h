@@ -86,6 +86,7 @@ public:
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
         uint32_t smoothedMainThreadUploadLimit,
+        bool terrainSharedTemplateActive,
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
@@ -100,7 +101,8 @@ public:
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
                 currentFrameTimeSeconds,
-                smoothedMainThreadUploadLimit),
+                smoothedMainThreadUploadLimit,
+                terrainSharedTemplateActive),
             budget,
             std::forward<PrepareUpsampleSourceTileFn>(
                 prepareUpsampleSourceTile),
@@ -160,7 +162,8 @@ private:
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
-        uint32_t smoothedMainThreadUploadLimit) {
+        uint32_t smoothedMainThreadUploadLimit,
+        bool terrainSharedTemplateActive) {
         return TilesetContentLifecycleContext{
             loadLifecycle_,
             contentProvider,
@@ -172,7 +175,8 @@ private:
             maximumSimultaneousTileLoads,
             mainThreadLoadingTimeLimit,
             currentFrameTimeSeconds,
-            smoothedMainThreadUploadLimit};
+            smoothedMainThreadUploadLimit,
+            terrainSharedTemplateActive};
     }
 
     TilesetContentUploadContext makeUploadContext(

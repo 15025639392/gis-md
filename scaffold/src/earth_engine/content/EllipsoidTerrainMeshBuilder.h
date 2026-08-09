@@ -74,6 +74,17 @@ public:
         bool computeGeomorphDelta = false,
         bool buildSkirt = false);
 
+    /// 无几何地形模型（摘 glTF 第一级）：只带 rasterOverlayDetails、根节点
+    /// 落位与**一个无顶点 primitive**（见 GltfPrimitive::templateGeometryOnly）。
+    /// 共享位移模板路下 draw 必换模板 VBO，网格造出来只会被扔掉 —— 这条路
+    /// 直接不造，省掉每瓦片一次的 65×65 栅格 + 裙边 + 法线 + ECEF 高低位拆分
+    /// + texcoord 重投影（解码线程上的 O(N²)）。
+    /// gridSize 只用来填顶点/索引计数元数据，不生成任何顶点。
+    static std::unique_ptr<GltfModel> makeTemplateOnlyModel(
+        const Rectangle& geographicRectangle,
+        const std::vector<RasterOverlayProjection>& projections,
+        int gridSize);
+
     /// The RasterOverlayDetails a proxy model of this rectangle/projection
     /// carries (projection list + projected rectangle + NW-V convention).
     static RasterOverlayDetails makeRasterOverlayDetails(

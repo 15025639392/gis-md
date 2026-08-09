@@ -274,16 +274,30 @@ TileContentLoadResult HeightmapTerrainContentProvider::buildContent(
     // 514²,高度纹理与 CPU 高度查询精度不受影响。
     const int gridSize =
         std::min(std::max(1, heightmap.tileSize - 1), kTerrainDisplacementGridSize);
-    const EllipsoidProxyHeightSampler heightSampler =
-        makeHeightSampler(heightmap, bounds);
-    std::unique_ptr<GltfModel> model = EllipsoidTerrainMeshBuilder::makeModel(
-        bounds,
-        projections,
-        gridSize,
-        heightSampler,
-        /*computeGridNormals=*/true,
-        /*computeGeomorphDelta=*/true,
-        /*buildSkirt=*/true);
+    // 摘 glTF 第一级:共享位移模板活跃 + 本瓦片必走模板(有自有高度图、
+    // fade>0)时,**根本不造网格** —— 造出来 draw 也必换模板 VBO,是纯浪费
+    // (每瓦片一次 65×65 栅格 + 裙边 + 法线 + 高低位拆分 + texcoord 重投影,
+    // 全在解码线程上)。判据必须与 GltfDrawCommandBuilder / prepare 侧同源,
+    // 否则会「不造又要画」→ 该瓦片空白。
+    const bool templateOnly =
+        options.terrainSharedTemplateActive &&
+        terrainReliefFade(key.z) > 0.001f;
+    std::unique_ptr<GltfModel> model;
+    if (templateOnly) {
+        model = EllipsoidTerrainMeshBuilder::makeTemplateOnlyModel(
+            bounds, projections, gridSize);
+    } else {
+        const EllipsoidProxyHeightSampler heightSampler =
+            makeHeightSampler(heightmap, bounds);
+        model = EllipsoidTerrainMeshBuilder::makeModel(
+            bounds,
+            projections,
+            gridSize,
+            heightSampler,
+            /*computeGridNormals=*/true,
+            /*computeGeomorphDelta=*/true,
+            /*buildSkirt=*/true);
+    }
     if (!model) {
         return TileContentLoadResult::failed();
     }

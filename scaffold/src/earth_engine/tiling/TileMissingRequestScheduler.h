@@ -23,6 +23,8 @@ struct TileMissingRequestSchedulerInput {
     const TileEmptyContentRegistry& emptyContentRegistry;
     const std::vector<RasterOverlayProjection>*
         requiredRasterOverlayProjections = nullptr;
+    /// 见 TileContentRequestOptions::terrainSharedTemplateActive。
+    bool terrainSharedTemplateActive = false;
 };
 
 class TileMissingRequestScheduler {
@@ -80,7 +82,8 @@ private:
                 input.loadLifecycle,
                 input.budget,
                 input.contentProvider,
-                input.requiredRasterOverlayProjections},
+                input.requiredRasterOverlayProjections,
+                input.terrainSharedTemplateActive},
             terrainCacheKey,
             [&](const TileKey& key,
                 const std::string& cacheKey,

@@ -49,6 +49,8 @@ struct TilesetContentLifecycleContext {
     double mainThreadLoadingTimeLimit = 0.0;
     double currentFrameTimeSeconds = 0.0;
     uint32_t smoothedMainThreadUploadLimit = 1;
+    /// 见 TileContentRequestOptions::terrainSharedTemplateActive。
+    bool terrainSharedTemplateActive = false;
 };
 
 struct TilesetContentUploadContext {
@@ -146,7 +148,8 @@ public:
                 context.contentProvider,
                 context.tiles,
                 context.emptyContentRegistry,
-                &requiredProjections},
+                &requiredProjections,
+                context.terrainSharedTemplateActive},
             [](const TileKey& key) {
                 return TileCacheKey::forTile(key);
             },

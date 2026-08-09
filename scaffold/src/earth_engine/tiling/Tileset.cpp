@@ -211,6 +211,12 @@ void Tileset::accumulateCpuResidentBytes(CpuResidentByteBreakdown& out,
                 TileRenderContentState::estimateHeightmapBytes(*hm);
         }
         if (const GltfModel* model = rc.gltfModelForRead()) {
+            for (const GltfPrimitive& primitive : model->primitives) {
+                if (primitive.templateGeometryOnly) {
+                    ++out.templateOnlyTiles;
+                    break;
+                }
+            }
             const int64_t vertexBefore = out.meshVertexBytes;
             const int64_t indexBefore = out.meshIndexBytes;
             accumulateModel(*model, out.meshVertexBytes, out.meshIndexBytes,
@@ -277,6 +283,11 @@ Tileset::makeContentRuntimeRequestFrame(
     frame.currentFrameTimeSeconds = currentFrameTimeSeconds_;
     frame.smoothedMainThreadUploadLimit =
         static_cast<uint32_t>(kSmoothedMainThreadUploadLimit);
+    // 摘 glTF 第一级:与 prepare/draw 两侧的模板门控同源(都问 Renderer 的
+    // pool 是否存在),让 provider 在「必走模板」时不造网格。
+    frame.terrainSharedTemplateActive =
+        pPrepRenderer != nullptr &&
+        pPrepRenderer->terrainSharedTemplateActive();
     return frame;
 }
 

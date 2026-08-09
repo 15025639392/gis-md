@@ -431,7 +431,28 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWorkFromModel(
     const bool animated = model.hasRuntimeAnimation();
 
     for (const GltfPrimitive& primitive : model.primitives) {
-        if (primitive.vertices.empty() || primitive.indices.empty()) {
+        // 无几何地形 primitive(摘 glTF 第一级):CPU 网格根本没造,顶点/索引
+        // 为空是**有意**的,不能按「空 primitive」跳过 —— 跳过就没有 primitive
+        // 资源、瓦片永远不 ready(症状=地形整片不出且零报错)。
+        if (!primitive.templateGeometryOnly &&
+            (primitive.vertices.empty() || primitive.indices.empty())) {
+            continue;
+        }
+        if (primitive.templateGeometryOnly) {
+            GpuReadyPrimitive templatePrim;
+            templatePrim.metadata.sharedTemplateGeometry = true;
+            templatePrim.vertexStride = sizeof(GltfGpuVertex);
+            templatePrim.vertexCount =
+                static_cast<size_t>(primitive.templateVertexCount);
+            templatePrim.indexCount =
+                static_cast<size_t>(primitive.templateIndexCount);
+            templatePrim.sortCenterEcef = primitive.templateSortCenterEcef;
+            templatePrim.metadata.primitiveMode = primitive.primitiveMode;
+            templatePrim.metadata.doubleSided = primitive.doubleSided;
+            templatePrim.metadata.metallicFactor = primitive.metallicFactor;
+            templatePrim.metadata.roughnessFactor = primitive.roughnessFactor;
+            templatePrim.metadata.unlit = primitive.unlit;
+            ready.primitives.push_back(std::move(templatePrim));
             continue;
         }
 

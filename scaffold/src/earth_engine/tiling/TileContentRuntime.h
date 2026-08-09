@@ -36,6 +36,8 @@ struct TileContentRuntimeRequestFrame {
     double mainThreadLoadingTimeLimit = 0.0;
     double currentFrameTimeSeconds = 0.0;
     uint32_t smoothedMainThreadUploadLimit = 0;
+    /// 见 TileContentRequestOptions::terrainSharedTemplateActive。
+    bool terrainSharedTemplateActive = false;
 };
 
 struct TileContentRuntimeUploadFrame {

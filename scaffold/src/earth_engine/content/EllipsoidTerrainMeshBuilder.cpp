@@ -460,4 +460,57 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     return model;
 }
 
+std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeTemplateOnlyModel(
+    const Rectangle& geographicRectangle,
+    const std::vector<RasterOverlayProjection>& projections,
+    int gridSize) {
+    auto model = std::make_unique<GltfModel>();
+    const Cartographic center = Cartographic::fromRadians(
+        longitudeAt(geographicRectangle, 0.5),
+        (geographicRectangle.south() + geographicRectangle.north()) * 0.5,
+        0.0);
+    const Vec3 localOrigin = Ellipsoid::WGS84().cartographicToCartesian(center);
+    model->preferredLocalOriginEcef = localOrigin;
+    model->rasterOverlayDetails =
+        makeRasterOverlayDetails(geographicRectangle, projections);
+
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(localOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.baseTranslation = {
+        localOrigin.x(),
+        localOrigin.y(),
+        localOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = false;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+
+    GltfPrimitive primitive;
+    primitive.templateGeometryOnly = true;
+    // 计数按「规则栅格 + 四条裙边」算，与 makeModel 造出来的那幅一致 ——
+    // 这两个数只进 metadata 与命令构建，不决定真实绘制量（真实量来自共享
+    // 模板的 VBO/IBO）。口径一致是为了诊断/字节统计读数不跳变。
+    const int n = std::max(1, gridSize) + 1;
+    primitive.templateVertexCount = n * n + 4 * n;
+    primitive.templateIndexCount =
+        (n - 1) * (n - 1) * 6 + 4 * (n - 1) * 6;
+    // 排序中心：正常路径由 primitiveSortCenterEcef 从顶点算，这里没有顶点，
+    // 用瓦片中心（模板落位帧的原点，与真实几何中心同点）。
+    primitive.templateSortCenterEcef = localOrigin;
+    primitive.primitiveMode = GltfPrimitiveMode::Triangles;
+    primitive.doubleSided = false;
+    primitive.metallicFactor = 0.0f;
+    primitive.roughnessFactor = 1.0f;
+    primitive.unlit = false;
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    // rebuildRuntime 对无顶点 primitive 是 no-op（baseVertices 为空时按设计
+    // 早返回），根节点变换已在上面手工建好。
+    return model;
+}
+
 } // namespace earth_engine

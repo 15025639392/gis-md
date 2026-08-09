@@ -217,6 +217,10 @@ public:
         int tileCount = 0;       // 注册表内瓦片总数
         int heightmapTiles = 0;  // 带 retainedHeightmap 的瓦片数
         int ghostTiles = 0;      // 幽灵网格瓦片数
+        // **机制信号**:内容层根本没造网格的瓦片数(templateGeometryOnly)。
+        // 与 ghostTiles 的区别是「没造」vs「造了又释放」—— 两者字节读数完全
+        // 相同,只有这个计数能把它们分开(见"没出问题≠没走到那条路")。
+        int templateOnlyTiles = 0;
     };
     void accumulateCpuResidentBytes(CpuResidentByteBreakdown& out,
                                     bool sharedTemplateActive) const;

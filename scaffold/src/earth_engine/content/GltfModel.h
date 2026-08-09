@@ -134,6 +134,26 @@ struct GltfPrimitive {
     std::vector<GltfInstance> instances;
     GltfPrimitiveRuntime runtime;
     std::optional<SkirtMetadata> skirtMetadata;
+
+    // ── 无几何地形 primitive（摘 glTF 第一级）────────────────────────────────
+    // 共享位移模板路下，地形瓦片的网格从不被绘制：draw 侧必换模板 VBO，
+    // prepare 侧早已跳过上传，摘幽灵网格之后连常驻也没了。既然如此，**先前
+    // 还要把这幅网格造出来再扔掉**（65×65 栅格 + 裙边 + 法线 + ECEF 高低位
+    // 拆分 + texcoord 重投影，每瓦片一次，在解码线程上）就是纯浪费。
+    //
+    // true 时本 primitive **不带任何顶点/索引**，只带下面三项元数据：
+    // 顶点数/索引数（供 metadata 与命令构建填数）与排序中心（供深度排序；
+    // 正常路径由 primitiveSortCenterEcef 从顶点算，这里没有顶点，改由建造方
+    // 按瓦片中心直接给）。
+    //
+    // ⚠️ 与 `GltfPrimitiveRenderResources::sharedTemplateGeometry` 不是同一层：
+    // 那个说的是「GPU buffer 有意为空」，这个说的是「CPU 网格根本没造」。
+    // 前者由后者蕴含，反之不然（旧瓦片仍可能造了网格再被跳过上传）。
+    bool templateGeometryOnly = false;
+    int templateVertexCount = 0;
+    int templateIndexCount = 0;
+    Vec3 templateSortCenterEcef = Vec3::zero();
+
     bool hasTerrainWaterMaskMetadata = false;
     bool terrainOnlyWater = false;
     bool terrainOnlyLand = true;

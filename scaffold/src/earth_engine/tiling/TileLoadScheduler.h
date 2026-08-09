@@ -35,6 +35,8 @@ struct TileLoadSchedulerInput {
     TilesetContentProvider* contentProvider = nullptr;
     const std::vector<RasterOverlayProjection>*
         requiredRasterOverlayProjections = nullptr;
+    /// 见 TileContentRequestOptions::terrainSharedTemplateActive。
+    bool terrainSharedTemplateActive = false;
 };
 
 class TileLoadScheduler {
@@ -392,7 +394,8 @@ private:
                         requestOptionsForTile(
                             *input.contentProvider,
                             tileState,
-                            input.requiredRasterOverlayProjections));
+                            input.requiredRasterOverlayProjections,
+                            input.terrainSharedTemplateActive));
                 if (dispatchResult ==
                     TileLoadDispatchResult::Destroying) {
                     ++pass.outcome.stoppedAtDispatch;
@@ -479,11 +482,13 @@ private:
         const TilesetContentProvider& provider,
         const TilesetTile* tile,
         const std::vector<RasterOverlayProjection>*
-            requiredRasterOverlayProjections) {
+            requiredRasterOverlayProjections,
+        bool terrainSharedTemplateActive) {
         TileContentRequestOptions options;
         if (!provider.providesTerrainQuadtree()) {
             return options;
         }
+        options.terrainSharedTemplateActive = terrainSharedTemplateActive;
         if (requiredRasterOverlayProjections) {
             options.requiredRasterOverlayProjections =
                 *requiredRasterOverlayProjections;

@@ -351,11 +351,12 @@ void Scene::logCpuResidentAccount() {
         return static_cast<double>(bytes) / (1024.0 * 1024.0);
     };
     platformLog(LogLevel::Info, "CpuAcct",
-                "tiles=%d hmTiles=%d ghostTiles=%d | hm=%.1fMB "
+                "tiles=%d hmTiles=%d ghostTiles=%d noMesh=%d | hm=%.1fMB "
                 "meshV=%.1fMB meshI=%.1fMB meshO=%.1fMB ghost=%.1fMB "
                 "texPix=%.1fMB tgv=%.1fMB fill=%.1fMB | acctTotal=%.1fMB "
                 "cacheTotal=%.1fMB",
                 acct.tileCount, acct.heightmapTiles, acct.ghostTiles,
+                acct.templateOnlyTiles,
                 mb(acct.heightmapBytes),
                 mb(acct.meshVertexBytes), mb(acct.meshIndexBytes),
                 mb(acct.meshOtherBytes), mb(acct.ghostMeshBytes),

@@ -33,6 +33,7 @@ TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
         frame.mainThreadLoadingTimeLimit,
         frame.currentFrameTimeSeconds,
         frame.smoothedMainThreadUploadLimit,
+        frame.terrainSharedTemplateActive,
         budget,
         [this, &frame](TilesetTile& tile, double priority) {
             return meshPreparation_.prepareUpsampleSourceTile(
@@ -60,6 +61,7 @@ TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
         frame.mainThreadLoadingTimeLimit,
         frame.currentFrameTimeSeconds,
         frame.smoothedMainThreadUploadLimit,
+        frame.terrainSharedTemplateActive,
         budget,
         [this, &frame](TilesetTile& tile, double priority) {
             return meshPreparation_.prepareUpsampleSourceTile(

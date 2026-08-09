@@ -126,6 +126,13 @@ struct TileContentLoadResult {
 struct TileContentRequestOptions {
     bool generateTerrainRasterOverlayDetails = false;
     std::vector<RasterOverlayProjection> requiredRasterOverlayProjections;
+    /// 共享位移模板池是否活跃(摘 glTF 第一级)。true 时地形 provider 对
+    /// 「必走模板」的瓦片**不造网格**,只产带元数据的无几何 primitive。
+    /// 由 Tileset 从 IPrepareRendererResources::terrainSharedTemplateActive()
+    /// 取,与 prepare/draw 两侧的门控同源;运行时关池会重载地形内容
+    /// (见 Tileset::reloadGhostReleasedTerrainContent),故不会留下
+    /// 「没网格又要按 legacy VBO 画」的瓦片。
+    bool terrainSharedTemplateActive = false;
     /// 动态优先级 cell(透传给 HttpRequestOptions.priorityCell;可空=静态)。
     std::shared_ptr<std::atomic<int>> httpPriorityCell;
 };
