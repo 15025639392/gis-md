@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/scene/SceneRenderDiagnostics.h"
+#include "earth_engine/scene/SceneRenderPipeline.h"
 
 using namespace earth_engine;
 
@@ -254,4 +255,44 @@ TEST(
     EXPECT_EQ(diagnostics.missingGenerationSurfaceCommands, 0);
     EXPECT_EQ(diagnostics.minSurfaceGeneration, 0u);
     EXPECT_EQ(diagnostics.maxSurfaceGeneration, 0u);
+}
+
+// ---- presentation hold 的原子谓词:合批后的地形必须仍算地形 ----
+//
+// 真机事故复现路径:可见地形只有 2 片且都通过合批资格闸 → TerrainInstanceBatcher
+// 把两条 GltfPrimitive 换成一条 GltfPrimitiveInstanced → 旧谓词只认 GltfPrimitive
+// → "本帧一条地形命令都没有" → presentation hold 判 true → 而那条闸当时没有活性
+// 上限 → **整屏永久定格且零报错**。这类错误在截图和计数日志里都看不出来,只能
+// 对着命令形态直接断言。
+TEST(SceneRenderPipelineHoldPredicate, PlainTerrainCommandCounts) {
+    RenderCommand cmd;
+    cmd.kind = RenderCommandKind::GltfPrimitive;
+    cmd.terrainRenderContent = true;
+    EXPECT_TRUE(SceneRenderPipeline::isTerrainSurfaceCommandForTest(cmd));
+}
+
+TEST(SceneRenderPipelineHoldPredicate, BatchedTerrainCommandCounts) {
+    RenderCommand cmd;
+    cmd.kind = RenderCommandKind::GltfPrimitiveInstanced;  // 合批产物
+    cmd.terrainRenderContent = true;
+    EXPECT_TRUE(SceneRenderPipeline::isTerrainSurfaceCommandForTest(cmd))
+        << "合批后的地形仍是地形;判 false 会让全部合批的那一帧永久扣住";
+}
+
+TEST(SceneRenderPipelineHoldPredicate, NonTerrainGltfDoesNotCount) {
+    RenderCommand plain;
+    plain.kind = RenderCommandKind::GltfPrimitive;
+    plain.terrainRenderContent = false;
+    EXPECT_FALSE(SceneRenderPipeline::isTerrainSurfaceCommandForTest(plain));
+
+    RenderCommand instanced;
+    instanced.kind = RenderCommandKind::GltfPrimitiveInstanced;
+    instanced.terrainRenderContent = false;  // i3dm 实例化内容,不是地形
+    EXPECT_FALSE(
+        SceneRenderPipeline::isTerrainSurfaceCommandForTest(instanced));
+
+    RenderCommand vector;
+    vector.kind = RenderCommandKind::VectorStencil;
+    vector.terrainRenderContent = true;  // 字段被误置也不该算
+    EXPECT_FALSE(SceneRenderPipeline::isTerrainSurfaceCommandForTest(vector));
 }

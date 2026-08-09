@@ -30,7 +30,13 @@ namespace earth_engine {
 namespace {
 
 bool isTerrainSurfaceCommand(const RenderCommand& command) {
-    return command.kind == RenderCommandKind::GltfPrimitive &&
+    // **合批后的地形是 GltfPrimitiveInstanced**(TerrainInstanceBatcher 把逐瓦片
+    // 的 GltfPrimitive 换成一条实例化命令),只认 GltfPrimitive 会在"本帧可见地形
+    // 全部合批"时数到 0 —— 这正是 presentation hold 永久挂起的根:可见瓦片少
+    // (实测 2 片)时它们恰好全部合批资格通过,b1/c2,于是"一条地形命令都没有"
+    // → 整帧永久扣住不呈现。判据必须跟着命令形态走。
+    return (command.kind == RenderCommandKind::GltfPrimitive ||
+            command.kind == RenderCommandKind::GltfPrimitiveInstanced) &&
            command.terrainRenderContent;
 }
 
@@ -775,6 +781,11 @@ void SceneRenderPipeline::aggregateDiagnostics(
     diagnosticsMs = perf::nowMs() - startMs;
 }
 
+bool SceneRenderPipeline::isTerrainSurfaceCommandForTest(
+    const RenderCommand& command) {
+    return isTerrainSurfaceCommand(command);
+}
+
 bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
     const Context& context) const {
     const Tileset* terrainTileset = context.terrainTileset;
@@ -805,7 +816,32 @@ bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
             }
         }
     }
-    const bool hold = !hasTerrainSurfaceCommand || firstOffender != nullptr;
+    bool hold = !hasTerrainSurfaceCommand || firstOffender != nullptr;
+
+    // 活性兜底。与 Scene::shouldHoldPresentationFrame 里那条同款、同理由 ——
+    // 这两条闸是一对,当初只给了其中一条出口,这条漏了,于是判据一旦出错
+    // (合批后地形命令数恒 0)整屏就永久定格,而且零报错。闸的本意是压掉
+    // **瞬时**缺口闪烁;缺口不是瞬时的时候,继续扣比露出缺口糟得多。
+    //
+    // 超限后不清零,让后续帧持续放行,直到 hold 条件自己消失——否则退化成
+    // "扣 N 帧、放 1 帧"的抽帧循环。
+    if (!hold) {
+        consecutivePostBuildHeldFrames_ = 0;
+    } else {
+        if (consecutivePostBuildHeldFrames_ <= kMaximumPostBuildHeldFrames) {
+            ++consecutivePostBuildHeldFrames_;
+        }
+        if (consecutivePostBuildHeldFrames_ > kMaximumPostBuildHeldFrames) {
+            static int sReleaseLogCount = 0;
+            if ((sReleaseLogCount++ % 60) == 0) {
+                platformLog(LogLevel::Info, "EarthPerf",
+                            "PostBuildHoldReleasedByCap frames=%d "
+                            "terrainCmds=%d — 缺口非瞬时,照常呈现",
+                            consecutivePostBuildHeldFrames_, terrainCommands);
+            }
+            hold = false;
+        }
+    }
     // hold 会把整帧扣住不 present,而 present 不发生时 frameId 不前进 → 所有
     // %120 的心跳诊断全哑火,现场只剩一块不动的屏幕。所以这里独立限频打印,
     // 不依赖 frameId。

@@ -273,6 +273,13 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
         batch.surfaceGeometryZoom = first.surfaceGeometryZoom;
         batch.surfaceTextureZoom = first.surfaceTextureZoom;
         batch.imageryAncestorLevelDelta = first.imageryAncestorLevelDelta;
+        // 底图影像就绪态同样承自首实例,理由与上面那条完全一样(资格闸保证整批
+        // 共享同一份纹理状态)。**漏了这两个字段会让整帧永久扣住**:presentation
+        // hold 判的是"有没有一条带底图影像的地形命令",批命令带着 0/0 进去就是
+        // 一条永远不合格的地形命令,而 hold 那条闸没有活性上限。
+        batch.gltfRasterOverlayTextureCount = first.gltfRasterOverlayTextureCount;
+        batch.surfaceBaseRasterState = first.surfaceBaseRasterState;
+        batch.surfaceBaseIsMappedRasterTile = first.surfaceBaseIsMappedRasterTile;
         batch.gltfUniforms.baseColor = first.gltfUniforms.baseColor;
         // 批级 params 只留 enabled;cell 网格逐实例给(见 rec.dispMorph[3])。
         batch.gltfUniforms.pageStoreParams = {1.0f, 0.0f, 0.0f, 0.0f};

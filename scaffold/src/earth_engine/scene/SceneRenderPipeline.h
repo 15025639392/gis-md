@@ -63,6 +63,14 @@ public:
 
     Result render(Context context);
 
+    /// 一条命令是否算「地形表面命令」。presentation hold 判据的原子谓词。
+    ///
+    /// 提成公开纯函数是为了**可被单独证伪**:它错一次的代价是整屏永久定格且
+    /// 零报错(合批把地形换成 GltfPrimitiveInstanced 后,只认 GltfPrimitive 的
+    /// 旧版本在"可见地形全部合批"时数到 0),而这个错误在任何截图、任何计数
+    /// 日志里都看不出来 —— 只能靠对着命令形态直接断言。
+    static bool isTerrainSurfaceCommandForTest(const RenderCommand& command);
+
 private:
     void reserveCommands(Context& context) const;
     void buildSkyCommands(Context& context, double& skyMs) const;
@@ -82,6 +90,10 @@ private:
     void runTerrainDepthPrepass(Context& context) const;
     void aggregateDiagnostics(Context& context, double& diagnosticsMs) const;
     bool shouldHoldPresentationAfterCommandBuild(const Context& context) const;
+    /// 命令构建后那条 hold 闸的活性兜底(与 Scene 侧同款上限)。连续扣住超过
+    /// 此数即无条件放行 —— 没有它,判据一旦出错就是整屏永久定格且零报错。
+    static constexpr int kMaximumPostBuildHeldFrames = 60;
+    mutable int consecutivePostBuildHeldFrames_ = 0;
     // presentable 透传给契约判定(hold/跳帧没有需要保活的提交,不参与判定)。
     void releaseRenderReferences(Context& context, bool presentable) const;
 
