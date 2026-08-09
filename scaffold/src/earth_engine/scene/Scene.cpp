@@ -332,6 +332,42 @@ void Scene::auditWorkLedger() const {
     }
 }
 
+void Scene::logCpuResidentAccount() {
+    // 每 300 帧(~5s@60fps)一行,只走主 Tileset —— 内容 Tileset 的字节由
+    // totalMB 与主账之差间接可见,先不单列。O(注册表) 的走账放在限频闸后,
+    // 非采样帧零成本。
+    if (++cpuAcctFrameCounter_ % 300u != 0u) {
+        return;
+    }
+    const Tileset* primaryTileset = tilesets_ ? tilesets_->primary() : nullptr;
+    if (!primaryTileset) {
+        return;
+    }
+    const bool templateActive =
+        renderer_ && renderer_->terrainDisplacementPool() != nullptr;
+    Tileset::CpuResidentByteBreakdown acct;
+    primaryTileset->accumulateCpuResidentBytes(acct, templateActive);
+    const auto mb = [](int64_t bytes) {
+        return static_cast<double>(bytes) / (1024.0 * 1024.0);
+    };
+    platformLog(LogLevel::Info, "CpuAcct",
+                "tiles=%d hmTiles=%d ghostTiles=%d | hm=%.1fMB "
+                "meshV=%.1fMB meshI=%.1fMB meshO=%.1fMB ghost=%.1fMB "
+                "texPix=%.1fMB tgv=%.1fMB fill=%.1fMB | acctTotal=%.1fMB "
+                "cacheTotal=%.1fMB",
+                acct.tileCount, acct.heightmapTiles, acct.ghostTiles,
+                mb(acct.heightmapBytes),
+                mb(acct.meshVertexBytes), mb(acct.meshIndexBytes),
+                mb(acct.meshOtherBytes), mb(acct.ghostMeshBytes),
+                mb(acct.texturePixelBytes), mb(acct.terrainGpuVertexBytes),
+                mb(acct.fillModelBytes),
+                mb(acct.heightmapBytes + acct.meshVertexBytes +
+                   acct.meshIndexBytes + acct.meshOtherBytes +
+                   acct.texturePixelBytes + acct.terrainGpuVertexBytes +
+                   acct.fillModelBytes),
+                mb(primaryTileset->totalBytesUsed()));
+}
+
 bool Scene::shouldHoldPresentationFrame() {
     const Tileset* primaryTileset = tilesets_->primary();
     if (!primaryTileset) {

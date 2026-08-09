@@ -14,6 +14,7 @@
 #include "../tiling/TileRasterOverlayReadinessPolicy.h"
 #include "../tiling/TileSelectionStateResetter.h"
 #include "../tiling/TileSoftwareOcclusionPolicy.h"
+#include "../tiling/TerrainDisplacementTemplatePool.h"
 #include "../tiling/TilesetProviderDiagnosticsCollector.h"
 #include "../tiling/TilesetRenderFrameExecutor.h"
 #include "../tiling/TilesetUpdateFrameFacade.h"
@@ -159,6 +160,78 @@ int64_t Tileset::totalBytesUsed() const {
 
 int64_t Tileset::contentBytesUsed() const {
     return cacheOwnership_.contentBytesUsed();
+}
+
+void Tileset::accumulateCpuResidentBytes(CpuResidentByteBreakdown& out,
+                                         bool sharedTemplateActive) const {
+    // 单个 glTF 模型的 CPU 侧字节按类目累加。与 GltfModel::byteSize() 同一
+    // 枚举范围,只是拆开类目;两者若失散,总和对不上 totalBytesUsed 会立刻暴露。
+    const auto accumulateModel = [](const GltfModel& model,
+                                    int64_t& vertexBytes,
+                                    int64_t& indexBytes,
+                                    int64_t& otherBytes,
+                                    int64_t& texelBytes,
+                                    int64_t& terrainGpuBytes) {
+        for (const GltfPrimitive& primitive : model.primitives) {
+            vertexBytes += static_cast<int64_t>(
+                primitive.vertices.size() * sizeof(SurfaceVertex));
+            vertexBytes += static_cast<int64_t>(
+                primitive.runtime.baseVertices.size() * sizeof(SurfaceVertex));
+            indexBytes += static_cast<int64_t>(
+                primitive.indices.size() * sizeof(uint32_t));
+            terrainGpuBytes += static_cast<int64_t>(
+                primitive.terrainGpuVertexBytes.size());
+            for (const auto& texCoords : primitive.vertexTexCoords) {
+                otherBytes += static_cast<int64_t>(
+                    texCoords.size() * sizeof(std::array<float, 2>));
+            }
+            otherBytes += static_cast<int64_t>(
+                primitive.vertexColors.size() * sizeof(std::array<float, 4>));
+            otherBytes += static_cast<int64_t>(
+                primitive.vertexTangents.size() * sizeof(std::array<float, 4>));
+            otherBytes += static_cast<int64_t>(
+                primitive.featureIds.size() * sizeof(uint32_t));
+            otherBytes += static_cast<int64_t>(
+                primitive.instances.size() * sizeof(GltfInstance));
+        }
+        for (const GltfTexture& texture : model.textures) {
+            texelBytes += static_cast<int64_t>(texture.image.pixels.size());
+        }
+    };
+    for (const auto& entry : tileRegistry_.tiles()) {
+        const TilesetTile* tile = entry.second.get();
+        if (!tile) {
+            continue;
+        }
+        ++out.tileCount;
+        const TileRenderContentState& rc = tile->content.renderContent;
+        if (const DecodedHeightmap* hm = rc.retainedHeightmap()) {
+            ++out.heightmapTiles;
+            out.heightmapBytes +=
+                TileRenderContentState::estimateHeightmapBytes(*hm);
+        }
+        if (const GltfModel* model = rc.gltfModelForRead()) {
+            const int64_t vertexBefore = out.meshVertexBytes;
+            const int64_t indexBefore = out.meshIndexBytes;
+            accumulateModel(*model, out.meshVertexBytes, out.meshIndexBytes,
+                            out.meshOtherBytes, out.texturePixelBytes,
+                            out.terrainGpuVertexBytes);
+            // 幽灵判据 = prepare 侧 skipBakedTerrainGeometry 的镜像
+            // (GltfRenderResourcePreparer.cpp):这些瓦片 draw 时必换共享
+            // 位移模板,其 CPU 网格从不被绘制。
+            const DecodedHeightmap* hm = rc.retainedHeightmap();
+            if (sharedTemplateActive && rc.isTerrainRenderContent() &&
+                hm != nullptr && hm->valid() &&
+                terrainReliefFade(tile->key.z) > 0.001f) {
+                ++out.ghostTiles;
+                out.ghostMeshBytes += (out.meshVertexBytes - vertexBefore) +
+                                      (out.meshIndexBytes - indexBefore);
+            }
+        }
+        if (const GltfModel* fill = rc.fillContent()) {
+            out.fillModelBytes += fill->byteSize();
+        }
+    }
 }
 
 int64_t Tileset::imageryTextureBytesUsed() const {

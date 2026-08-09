@@ -176,6 +176,28 @@ public:
         return n;
     }
 
+    /// 审计用:CPU 常驻字节按类目走账(O(注册表),仅诊断周期调用)。
+    /// 回答"内容层每瓦片 ~1.6MB 常驻推算是否成立"——totalBytesUsed 只有总数,
+    /// 无法区分 heightmap / 幽灵网格 / 纹理像素。GPU buffer/texture 字节
+    /// **不计入**(那是另一本账,见 contentBytesUsed 的混计口径)。
+    struct CpuResidentByteBreakdown {
+        int64_t heightmapBytes = 0;   // retainedHeightmap(float 高度阵)
+        int64_t meshVertexBytes = 0;  // SurfaceVertex 阵(primitive.vertices + runtime.baseVertices)
+        int64_t meshIndexBytes = 0;   // uint32 索引阵
+        int64_t meshOtherBytes = 0;   // texcoords/colors/tangents/featureIds/instances
+        int64_t texturePixelBytes = 0;  // 解码后 CPU 侧纹理像素(GltfTexture.image)
+        int64_t terrainGpuVertexBytes = 0;  // 预建 32B 顶点字节(应稳态 0,clear 后)
+        int64_t fillModelBytes = 0;   // fill 代理 glTF
+        // 幽灵子集:共享模板激活时 draw 必换模板、从不被绘制的地形网格
+        // (镜像 GltfRenderResourcePreparer 的 skipBakedTerrainGeometry 判据)。
+        int64_t ghostMeshBytes = 0;
+        int tileCount = 0;       // 注册表内瓦片总数
+        int heightmapTiles = 0;  // 带 retainedHeightmap 的瓦片数
+        int ghostTiles = 0;      // 幽灵网格瓦片数
+    };
+    void accumulateCpuResidentBytes(CpuResidentByteBreakdown& out,
+                                    bool sharedTemplateActive) const;
+
     bool shouldHoldPresentationFrame() const;
     bool requiresBaseImageryPresentationSurface() const;
     const TileScheme& tileScheme() const { return *tileScheme_; }

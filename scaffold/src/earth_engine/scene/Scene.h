@@ -88,6 +88,10 @@ public:
 
     /// 并行验证期的对拍(见实现注释)。零行为影响,只在不一致时打 ERROR。
     void auditWorkLedger() const;
+
+    /// CPU 常驻账量测:每 300 帧把主 Tileset 的分类目字节打一行 Info
+    /// (tag=CpuAcct)。回答"heightmap/幽灵网格常驻推算是否成立"。
+    void logCpuResidentAccount();
     void setSelectorViewOverride(
         std::vector<SelectorView> selectorViews);
     void clearSelectorViewOverride();
@@ -163,6 +167,9 @@ private:
     Framebuffer* sceneRenderTarget_ = nullptr;
     int sceneSurfaceWidthPixels_ = 0;
     int sceneSurfaceHeightPixels_ = 0;
+
+    // CPU 常驻账量测的限频计数(见 logCpuResidentAccount)
+    uint64_t cpuAcctFrameCounter_ = 0;
 
     // 矢量图层
     std::unique_ptr<SceneLayerCoordinator> layers_;

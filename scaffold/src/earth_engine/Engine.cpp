@@ -249,6 +249,8 @@ bool Engine::needsFrame() {
     // 并行验证期:每帧对拍令牌账与旧判据(见 Scene::auditWorkLedger)。
     // 放在 gating 早退**之前** —— 关掉 gating 时同样要能收集分歧。
     if (scene_) scene_->auditWorkLedger();
+    // CPU 常驻账量测(限频 300 帧一行,tag=CpuAcct)
+    if (scene_) scene_->logCpuResidentAccount();
     if (!frameGatingEnabled_) return true;
 
     // 停帧前的余量帧:子系统"这一帧报干净"与"画面已经稳定"常差一两帧(上传

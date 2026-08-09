@@ -559,15 +559,15 @@ cesium-native `Tileset` equivalent. Owns a unified quadtree of terrain + raster-
 | --- | --- | --- |
 | ctor (scheme, overlays, device, options) | .h:95-98 | Primary ctor; delegates to private ctor with `TilesetTerrainProviders(nullptr)` (.cpp:41-50) |
 | ctor (+ contentProvider) | .h:99-103 | 3D-Tiles content path; wraps provider in `TilesetTerrainProviders` (.cpp:115-126) |
-| `update(FrameState, IPrepareRendererResources*)` | .h:106-107 / .cpp:416-426 | Per-frame entry; delegates to `TilesetUpdateFrameFacade::update`; logs if >5ms |
-| `buildRenderCommands(Renderer&, RenderCommandList&)` | .h:108 / .cpp:428-465 | `++frameNumber_`, `renderCommands_.beginFrame(...)`, then `TilesetRenderFrameExecutor::buildRenderCommands` over `tilePlan_` |
-| `releaseRenderReferences()` | .h:125 / .cpp:567-573 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
+| `update(FrameState, IPrepareRendererResources*)` | .h:106-107 / .cpp:483-494 | Per-frame entry; delegates to `TilesetUpdateFrameFacade::update`; logs if >5ms |
+| `buildRenderCommands(Renderer&, RenderCommandList&)` | .h:108 / .cpp:495-533 | `++frameNumber_`, `renderCommands_.beginFrame(...)`, then `TilesetRenderFrameExecutor::buildRenderCommands` over `tilePlan_` |
+| `releaseRenderReferences()` | .h:125 / .cpp:633-640 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
 | `tilePlan()` / `tileScheme()` | .h:110-111 | Const accessors to the frame selection result |
 | `sampleHeight(lngRad, latRad)` | .h:120 / .cpp:260-265 | Best-loaded terrain height in meters (0 if none); via `LoadedTerrainHeightSampler` |
-| `setOcclusionCallback` / `clearOcclusionCallback` | .h:131-132 / .cpp:173-175 | cesium-native `TileOcclusionRendererProxyPool` input hook |
+| `setOcclusionCallback` / `clearOcclusionCallback` | .h:131-132 / .cpp:241-248 | cesium-native `TileOcclusionRendererProxyPool` input hook |
 | `pendingRequests` / `totalBytesUsed` / `loadDiagnostics` | .h:113-115 / .cpp:153-155 | Diagnostics |
 
-**Private frame plumbing:** `makeContentRuntimeRequestFrame` (.cpp:197-213), `makeContentRuntimeUploadFrame` (.cpp:215-230), `requestMissingContent` (.cpp:209-217), `processPendingLoads` (.cpp:219-229), `drainGpuUploadQueue` (.cpp:231-238 — async CPU→GPU pipeline, called after processPendingLoads each frame), `checkSingleTileOcclusion`/`checkOcclusion` (.cpp:244-258, callback else `TileSoftwareOcclusionPolicy::check`).
+**Private frame plumbing:** `makeContentRuntimeRequestFrame` (.cpp:265-282), `makeContentRuntimeUploadFrame` (.cpp:283-298), `requestMissingContent` (.cpp:300-320), `processPendingLoads` (.cpp:322-334), `drainGpuUploadQueue` (.cpp:335-358 — async CPU→GPU pipeline, called after processPendingLoads each frame), `checkSingleTileOcclusion`/`checkOcclusion` (.cpp:363-390, callback else `TileSoftwareOcclusionPolicy::check`). 诊断走账:`accumulateCpuResidentBytes` (.cpp:165) —— CPU 常驻字节按类目(heightmap/幽灵网格/纹理像素/fill)O(注册表)累加,Scene::logCpuResidentAccount 每 300 帧打一行 tag=CpuAcct。
 
 **`TilesetOptions`** (.h:54-87), cesium-native `TilesetOptions` subset. Key defaults: **`maximumScreenSpaceError`** = 16.0, **`maximumSimultaneousTileLoads`** = 20, **`loadingDescendantLimit`** = 20, **`culledScreenSpaceError`** = 64.0, **`maximumCachedBytes`** = 512 MiB, `enableFrustumCulling`/`enableOcclusionCulling`/`delayRefinementForOcclusion`/`enableFogCulling`/`enforceCulledScreenSpaceError`/`preloadAncestors`/`preloadSiblings`/`renderTilesUnderCamera` = true. (`enableLodTransitionPeriod` and the whole cross-fade chain were deleted 2026-08-07 — geomorph superseded it.) Embeds a 21-entry `fogDensityTable` (.h:74-86). **`kMaximumCachedBytes`** = 512 MiB duplicated as static constexpr (.cpp/.h:180).
 
@@ -2030,8 +2030,8 @@ Reverse-Z projection (.cpp:67-98): maps `z_eye=near(1)→z_ndc=1`, `z_eye=far(1e
 | `setRenderDevice` | .cpp:132-153 | Creates Renderer + SceneRenderPipeline, calls **`renderer_->initialize()` (no-arg)**, inits environment GPU resources; null device tears both down. **No globe mesh built or passed** — `GlobeMesh`/`Globe::createMesh` deleted |
 | `update(dt)` | .cpp:162-177 | Phase 1. Builds `SceneFrameUpdateInput` via `frameRuntime_.makeFrameUpdateInput` and calls `SceneFrameUpdateCoordinator::update` (static) |
 | `render()` | .cpp:213-238 | Phase 2. Guards on `renderer_`/`renderPipeline_`/`isReady()`; builds `SceneRenderPipeline::Context` from frameState + coordinator getters; `beforeSubmit` lambda = `updatePresentationTrace`; feeds result diagnostics back to telemetry |
-| `interactionContext()` | .cpp:481-488 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
-| Tileset API | .cpp:392-418 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
+| `interactionContext()` | .cpp:517-524 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
+| Tileset API | .cpp:428-454 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
 
 No `globeMesh_` member and no `struct GlobeMesh` forward-decl remain (both deleted post-refactor). Two-phase flow: `update(dt)` mutates FrameState + runs tileset selection; `render()` reads the same FrameState, builds ordered RenderCommands, submits. No rendering in update; no selection in render. Behavior change: with no fallback-globe path, nothing is drawn before tiles load (clear color only).
 
@@ -3287,7 +3287,7 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 | Contract | Where | Why |
 |---|---|---|
 | `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | SceneRenderPipeline.cpp:911 then :153 (`releaseRenderReferences` body .cpp:432-439 calls `tileset->releaseRenderReferences()`) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
-| `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :143 | `processPendingLoads` is what pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the GPU upload. Reversing the order does not error — it just makes every upload lag one frame, which reads as "loading is always half a beat late" and gets misattributed to network or device. **Machine-checked**: `contracts::Id::LoadsBeforeGpuDrain` (Tileset.cpp:254). |
+| `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :143 | `processPendingLoads` is what pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the GPU upload. Reversing the order does not error — it just makes every upload lag one frame, which reads as "loading is always half a beat late" and gets misattributed to network or device. **Machine-checked**: `contracts::Id::LoadsBeforeGpuDrain` (Tileset.cpp:347). |
 | Ref-count keep-alive until GPU consumption | GpuUploadQueue.h (deque of `PendingGpuUpload`); drain finalizes via `uploadToGpu` + `finishRenderResourcePreparation` | CPU-prepared vertex/index bytes and tile state must stay alive from enqueue through upload. The claim is `asyncGpuUploadPending` + a retained lifecycle upload key; three sites must release it (`TilePendingUploadCompletion::eraseUpload`) or the tile is pinned forever. Not machine-checked. |
 
 ### GpuUploadQueue FIFO
