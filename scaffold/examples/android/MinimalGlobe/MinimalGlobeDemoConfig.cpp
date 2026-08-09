@@ -276,6 +276,7 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // 生产开销。要查 GPU 时间去哪了就把 header 里那个常量翻 true。
     config.gpuPassTiming = kMeasureGpuPassTiming;
     config.frameGating = kEnableFrameGating;
+    config.shadowVerifyIdle = kShadowVerifyIdle;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;
     if (kEnableInstancedI3dmDemo) {
         // 默认固定时间是宾州凌晨(树在夜侧无光照=全黑),实例化观察改用当地白天

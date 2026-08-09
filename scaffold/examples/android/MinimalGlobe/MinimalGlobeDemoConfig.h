@@ -191,6 +191,17 @@ constexpr bool kMeasureGpuPassTiming = false;
 // 它落地时没人消费。判据与接线见 Engine::setFrameGatingEnabled。
 constexpr bool kEnableFrameGating = true;
 
+// kShadowVerifyIdle:影子渲染自检(方案 C)。gating 判定 idle 后不立刻睡,
+// 继续渲 20 帧比对帧指纹 —— 画面在"应该静止"之后还变 = 有异步产物落地却
+// 没人置脏位。本轮四次"零报错冻屏"里唯一有普适性的守卫(它不关心是哪个
+// 子系统漏了,只看结果)。
+// ⚠️ **默认关,且严禁在性能测量时开启**:自检帧要跑同步 glReadPixels,在
+//    TBDR 上是管线 flush,会污染同一会话里的所有帧时/GPU 读数。
+// ⚠️ 开之前先确认画面**真的**该静止:时钟已由 kFixedSimulationJulianDate
+//    冻住,但任何逐帧抖动/jitter 效果都会让它一直报警 —— 而"一直报警"比
+//    没有守卫更糟,人会学会无视它。
+constexpr bool kShadowVerifyIdle = false;
+
 // 注:北极星 SVT 页存储(terrainPageStore)已随 decouple 升为生产主路径默认开
 // (见 MinimalGlobeDemoConfig.cpp 中 config.terrainPageStore = true 及 §15.3⑤),
 // 不再由灰度常量门控;A/B 测时直接改那行为 false。

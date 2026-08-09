@@ -235,6 +235,19 @@ public:
     // 进入/退出空闲的原因。
 
     /// 开关。关闭时 needsFrame() 恒 true(与接线前逐 vsync 全量重画等价)。
+    /// 影子渲染自检(方案 C):gating 判定 idle 后**不立刻睡**,继续渲
+    /// kShadowVerifyFrames 帧并逐帧比对帧指纹。指纹在"应该静止"之后还变
+    /// = 有异步产物落地却没人置脏位 —— 那正是"画面冻住且零报错"的反面:
+    /// 同一个漏洞,一个表现为该更新的不更新,一个表现为不该变的还在变。
+    ///
+    /// ⚠️ **dev 专用,默认关,严禁在性能测量时开启**:自检帧本身要跑同步
+    ///    回读(TBDR 上是管线 flush),会污染同会话的所有帧时读数。
+    /// ⚠️ 前提是画面**真的**该静止:时钟必须冻住(demo 用
+    ///    kFixedSimulationJulianDate),抖动/jitter 类效果必须关。否则合法的
+    ///    逐帧变化会让它一直报警 —— 而"一直报警"比没有守卫更糟,人会学会无视。
+    void setShadowVerifyEnabled(bool enabled) { shadowVerifyEnabled_ = enabled; }
+    bool shadowVerifyEnabled() const { return shadowVerifyEnabled_; }
+
     void setFrameGatingEnabled(bool enabled);
     bool frameGatingEnabled() const { return frameGatingEnabled_; }
 
@@ -306,6 +319,15 @@ private:
     /// 上一帧是否真的呈现了(false = 被 presentation hold 扣住)。
     bool lastFramePresented_ = true;
     int settleFrames_ = 0;
+    // 影子渲染自检状态(见 setShadowVerifyEnabled)。
+    bool shadowVerifyEnabled_ = false;
+    int shadowVerifyFramesLeft_ = 0;
+    bool shadowVerifyDoneThisIdle_ = false;
+    std::vector<uint8_t> shadowVerifyBaseline_;
+    std::vector<uint8_t> shadowVerifyScratch_;
+    int shadowVerifyMismatches_ = 0;
+    int shadowVerifyWorstPixels_ = 0;
+    int shadowVerifyWorstDelta_ = 0;
     bool wasIdle_ = false;
     uint64_t framesAwake_ = 0;
     uint64_t framesSinceIdleLog_ = 0;

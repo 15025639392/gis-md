@@ -239,6 +239,12 @@ void Engine::requestRender(const char* reason) {
     renderRequested_.store(true, std::memory_order_release);
 }
 
+namespace {
+/// 自检窗口帧数。20 帧 ≈ 0.33s @60fps:够长到能等到"刚落地但慢一步"的产物,
+/// 又短到不会把设备按在满帧率上。
+constexpr int kShadowVerifySampleFrames = 20;
+}  // namespace
+
 bool Engine::needsFrame() {
     // 并行验证期:每帧对拍令牌账与旧判据(见 Scene::auditWorkLedger)。
     // 放在 gating 早退**之前** —— 关掉 gating 时同样要能收集分歧。
@@ -269,9 +275,25 @@ bool Engine::needsFrame() {
     } else if (settleFrames_ > 0) {
         --settleFrames_;
         reason = "settle";
+    } else if (shadowVerifyEnabled_ && !shadowVerifyDoneThisIdle_) {
+        // 影子渲染自检:本该睡了,先多渲几帧看画面还变不变。
+        // 每个 idle 段只做一次(shadowVerifyDoneThisIdle_ 在任何"重新变忙"
+        // 的分支里清掉),否则自检本身会把设备按在 60fps 上。
+        constexpr int kShadowVerifyFrames = kShadowVerifySampleFrames;
+        if (shadowVerifyFramesLeft_ == 0) {
+            shadowVerifyFramesLeft_ = kShadowVerifyFrames;
+            shadowVerifyBaseline_.clear();
+            shadowVerifyMismatches_ = 0;
+        }
+        reason = "shadowVerify";
     } else {
         reason = "idle";
         needs = false;
+    }
+    if (needs && reason && std::strcmp(reason, "shadowVerify") != 0) {
+        // 重新变忙 → 本轮 idle 的自检作废,下次进 idle 再来一次。
+        shadowVerifyDoneThisIdle_ = false;
+        shadowVerifyFramesLeft_ = 0;
     }
     // 进/出空闲各打一行。没有这两行,"停帧了"和"卡死了"在 logcat 里读数完全
     // 相同 —— 都是"什么都不打"。
@@ -654,6 +676,84 @@ bool Engine::render(double deltaSeconds) {
     }
 
     lastFramePresented_ = scenePresented;
+    // 影子渲染自检:在 swap **之前**取帧指纹(见 setShadowVerifyEnabled)。
+    // 只在自检窗口里跑 —— 这一步含同步回读,常开会污染所有帧时读数。
+    if (shadowVerifyFramesLeft_ > 0 && device_) {
+        const int grid = device_->captureFrameSample(shadowVerifyScratch_);
+        --shadowVerifyFramesLeft_;
+        if (grid <= 0) {
+            // 后端不支持/回读失败。**不能当成"没变化"** —— 那会把一个没在
+            // 工作的守卫伪装成绿色(实测踩过:MSAA 格式不匹配导致 blit 静默
+            // 失败,故意把画面改花仍报 0 差异)。
+            shadowVerifyFramesLeft_ = 0;
+            shadowVerifyDoneThisIdle_ = true;
+            platformLog(LogLevel::Info, "ShadowVerify",
+                        "skipped: 帧采样不可用(后端不支持或回读失败)");
+        } else if (shadowVerifyBaseline_.empty()) {
+            shadowVerifyBaseline_ = shadowVerifyScratch_;
+        } else if (shadowVerifyBaseline_.size() ==
+                   shadowVerifyScratch_.size()) {
+            // 报**变化量**而不是"变没变":1 个最低位的舍入噪声与"一块瓦片
+            // 出现了"在二值读数上完全一样,而这两者的处置天差地别。
+            // 噪声门限:实测健康态(时钟已冻、抖动是屏幕位置函数)仍有
+            // 47/65536 像素出现 **delta=1** 的差异 —— MSAA resolve 与线性
+            // 降采样的量化舍入不是逐帧位级确定的。不设门限的话守卫在完全
+            // 正常的画面上也 19/19 全红,而"一直报警"比没有守卫更糟:人会
+            // 学会无视它。代价:全屏幅度 ≤1 LSB 的变化抓不到 —— 那种变化
+            // 肉眼同样看不见,不是这个守卫要防的东西。
+            constexpr int kNoiseDelta = 1;
+            int diffPixels = 0;
+            int maxDelta = 0;
+            const size_t n = shadowVerifyScratch_.size();
+            for (size_t i = 0; i + 3 < n; i += 4) {
+                int pixelDelta = 0;
+                for (size_t c = 0; c < 3; ++c) {
+                    const int d = std::abs(
+                        static_cast<int>(shadowVerifyScratch_[i + c]) -
+                        static_cast<int>(shadowVerifyBaseline_[i + c]));
+                    if (d > pixelDelta) pixelDelta = d;
+                }
+                if (pixelDelta > kNoiseDelta) {
+                    ++diffPixels;
+                    if (pixelDelta > maxDelta) maxDelta = pixelDelta;
+                }
+            }
+            if (diffPixels > 0) {
+                ++shadowVerifyMismatches_;
+                if (diffPixels > shadowVerifyWorstPixels_) {
+                    shadowVerifyWorstPixels_ = diffPixels;
+                }
+                if (maxDelta > shadowVerifyWorstDelta_) {
+                    shadowVerifyWorstDelta_ = maxDelta;
+                }
+                shadowVerifyBaseline_ = shadowVerifyScratch_;
+            }
+        }
+        if (shadowVerifyFramesLeft_ == 0 && !shadowVerifyDoneThisIdle_) {
+            shadowVerifyDoneThisIdle_ = true;
+            const int total = grid > 0 ? grid * grid : 1;
+            if (shadowVerifyMismatches_ > 0) {
+                platformLog(LogLevel::Error, "ShadowVerify",
+                            "判定 idle 之后画面仍在变:changedFrames=%d "
+                            "worstPixels=%d/%d(%.2f%%) worstDelta=%d "
+                            "—— 有异步产物落地却没人置脏位,或有逐帧时变项没关",
+                            shadowVerifyMismatches_, shadowVerifyWorstPixels_,
+                            total,
+                            100.0 * shadowVerifyWorstPixels_ / total,
+                            shadowVerifyWorstDelta_);
+            } else {
+                // 干净也要出行:没有这一行,"自检通过"与"自检根本没跑"
+                // 在日志里读数相同 —— 那正是本守卫要治的病。
+                platformLog(LogLevel::Info, "ShadowVerify",
+                            "窗口干净(%d 帧无变化,门限 delta>%d)",
+                            kShadowVerifySampleFrames, 1);
+            }
+            shadowVerifyBaseline_.clear();
+            shadowVerifyMismatches_ = 0;
+            shadowVerifyWorstPixels_ = 0;
+            shadowVerifyWorstDelta_ = 0;
+        }
+    }
     scene_->finishEngineFrame(perf::nowMs() - frameStartMs);
     const Diagnostics& diag = scene_->diagnostics();
     // 北极星 VT PoC 头行段(仅在 PoC 活跃时追加,默认关时为空 → 零污染):

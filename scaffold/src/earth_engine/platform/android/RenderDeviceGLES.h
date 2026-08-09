@@ -88,6 +88,8 @@ public:
     const GpuFrameTiming* lastGpuFrameTiming() const override {
         return gpuTimer_.lastResult();
     }
+    int captureFrameSample(std::vector<uint8_t>& outPixels) override;
+
     size_t readFramebufferPixels(Framebuffer* source,
                                  int x,
                                  int y,
@@ -189,6 +191,16 @@ private:
     bool gpuTimingEnabled_ = false;
     bool gpuRegionSubdivide_ = true;
     std::string gpuBucketScratch_;
+
+    // 影子渲染自检的降采样目标(见 captureFrameFingerprint)。惰性创建,
+    // 只在开了自检的 dev 构建里存在。
+    unsigned int fingerprintFbo_ = 0;  // GLuint(此头不含 GL 头)
+    unsigned int fingerprintTex_ = 0;
+    // MSAA 中转:默认帧缓冲是多重采样的,不能直接缩放 blit(见 .cpp 注释)。
+    unsigned int fingerprintResolveFbo_ = 0;
+    unsigned int fingerprintResolveTex_ = 0;
+    int fingerprintResolveWidth_ = 0;
+    int fingerprintResolveHeight_ = 0;
 
     int viewportWidth_ = 0;
     int viewportHeight_ = 0;

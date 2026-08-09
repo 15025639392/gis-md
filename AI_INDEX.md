@@ -2437,13 +2437,13 @@ OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller own
 | `createShader` | .cpp:474-550 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
 | `createFramebuffer` | .cpp:579-688 | Returns `nullptr` (MVP uses default FBO) |
 | `beginFrame` | .cpp:723-726 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:725-725) |
-| `submit` | .cpp:903-1482 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1403-1403). Perf log every 120 submits or ≥25ms (.cpp:1467). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
-| `endFrame` | .cpp:1831-1845 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
-| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:1881-1955 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
+| `submit` | .cpp:1015-1639 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1403-1403). Perf log every 120 submits or ≥25ms (.cpp:1467). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
+| `endFrame` | .cpp:1941-1955 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
+| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:1991-2026 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
 
-Per-command command-kind counters in `submit` (.cpp:903-1482) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
+Per-command command-kind counters in `submit` (.cpp:1015-1639) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
 
-**Stride-based vertex-layout dispatch** in `submit` (.cpp:903-1482) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
+**Stride-based vertex-layout dispatch** in `submit` (.cpp:1015-1639) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
 - stride 32 OR glTF (kind `GltfPrimitive[Instanced]` && stride==**120**): attrib0 POSITION, 1 NORMAL, 2 TEXCOORD (4 floats for glTF, else 2); glTF adds attribs 10-14 (COLOR_0/TANGENT/TEXCOORD sets 2-7) (.cpp:476-524)
 - `GltfPrimitiveInstanced` + `instanceStride==kGltfInstanceMatrixStride` (100): attribs 3-9 from `instanceBuffer` with `glVertexAttribDivisor(...,1)` — instance model matrix (4×vec4) + normal matrix (3×vec3) (.cpp:525-575)
 - `GltfPrimitiveInstanced` + `vertexStride==32` + `instanceStride==kTerrainInstanceStride` (96): the **terrain batch** layout — per-vertex attribs 0-3 from the shared template, attribs 4-9 = 6×vec4 per-instance with divisor 1 (rel×3 / dispMorph / clipUv / layers) (.cpp:1047-1051 selects, :1687-1697 sets up)
@@ -3153,20 +3153,20 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:55-64 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:66-71 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:73-109 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:352-782 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:349). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:353-342). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:354-354). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:383-383). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:780-759 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:784-768 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:374-882 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:374). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:374-882). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:374-882). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:383-383). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:883-886 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:887-895 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:851-830 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:859-838 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:954-957 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:962-965 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:880-859 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:983-988 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:866-882 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:928-915 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:936-915 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:809-788, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1031-1038 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1039-1042 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:912-915, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
 Post-refactor: the fallback-globe path is gone. `Renderer::initialize()` no longer builds globe buffers/shader, `SceneRenderPipeline` no longer inserts a fallback-globe command, and `Globe`/`GlobeMesh`/`GlobeVertex` were deleted — before tiles load the frame is clear-color only. The `Diagnostics` globe-fallback counter fields were deleted along with the fallback path.

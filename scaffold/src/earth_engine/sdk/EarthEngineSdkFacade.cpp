@@ -612,6 +612,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     engine_.setTerrainPageStoreEnabled(config_.terrainPageStore);
     engine_.setGpuPassTimingEnabled(config_.gpuPassTiming);
     engine_.setFrameGatingEnabled(config_.frameGating);
+    engine_.setShadowVerifyEnabled(config_.shadowVerifyIdle);
 
     // 环境快照 boot 段:场景装好、开关最终值已定(效果 setter 可能被后端拒绝)
     // 之后打一次。放这里而不是 installScene 开头,是为了让 fxaa/fog 报的是

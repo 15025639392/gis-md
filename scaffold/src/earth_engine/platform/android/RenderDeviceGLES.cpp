@@ -777,6 +777,116 @@ void RenderDeviceGLES::endPass() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+int RenderDeviceGLES::captureFrameSample(std::vector<uint8_t>& outPixels) {
+    // 降采样到 kGrid×kGrid 再回读,而不是整屏回读:1080p RGBA8 是 8MB,
+    // 一次 idle 转换要采 K 帧,整屏回读的传输量会让这个"只在转换时跑"的
+    // 承诺失效。blit 用 GL_LINEAR —— 它只是采样不是正确的 box filter,
+    // 会有走样,**方向是漏报**(小面积变化可能被抹掉),不是误报。
+    // 选 256 而不是 64:64 下一块刚到货的瓦片可能只占不到一个纹素。
+    constexpr int kGrid = 256;
+    if (viewportWidth_ <= 0 || viewportHeight_ <= 0) {
+        return 0;
+    }
+    if (fingerprintFbo_ == 0) {
+        glGenTextures(1, &fingerprintTex_);
+        glBindTexture(GL_TEXTURE_2D, fingerprintTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kGrid, kGrid, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glGenFramebuffers(1, &fingerprintFbo_);
+        glBindFramebuffer(GL_FRAMEBUFFER, fingerprintFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, fingerprintTex_, 0);
+        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            glDeleteFramebuffers(1, &fingerprintFbo_);
+            glDeleteTextures(1, &fingerprintTex_);
+            fingerprintFbo_ = 0;
+            fingerprintTex_ = 0;
+            return 0;
+        }
+    }
+    // 源 = 默认帧缓冲(本函数契约要求在 swap 前调)。
+    // 默认帧缓冲是 4x MSAA(见 onSurfaceCreated 的 EGL 配置)。GLES 规定:
+    // 多重采样源 blit 到单采样目标时,源/目标矩形必须**完全相同**且 filter
+    // 必须是 GL_NEAREST —— 直接缩放 blit 会 GL_INVALID_OPERATION(0x0502),
+    // 而失败是**静默的**:指纹纹理一直停在初始值,哈希恒定,守卫报"画面没变"。
+    // 实测踩过:故意把画面改花仍然 mismatches=0。故拆两步走:
+    //   ① 默认(MSAA) → 同尺寸单采样中转(GL_NEAREST,合法的 resolve)
+    //   ② 中转 → kGrid×kGrid(GL_LINEAR,两端都是单采样,合法)
+    if (fingerprintResolveFbo_ == 0 ||
+        fingerprintResolveWidth_ != viewportWidth_ ||
+        fingerprintResolveHeight_ != viewportHeight_) {
+        if (fingerprintResolveFbo_ != 0) {
+            glDeleteFramebuffers(1, &fingerprintResolveFbo_);
+            glDeleteTextures(1, &fingerprintResolveTex_);
+        }
+        glGenTextures(1, &fingerprintResolveTex_);
+        glBindTexture(GL_TEXTURE_2D, fingerprintResolveTex_);
+        // **必须与默认帧缓冲的内部格式一致**:MSAA→单采样 blit 要求两端
+        // 色彩缓冲内部格式相同。本机默认帧缓冲 a=0(RGB8),用 RGBA8 会
+        // GL_INVALID_OPERATION —— 而且是静默失败(指纹恒定 → 守卫永远绿)。
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, viewportWidth_,
+                     viewportHeight_, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glGenFramebuffers(1, &fingerprintResolveFbo_);
+        glBindFramebuffer(GL_FRAMEBUFFER, fingerprintResolveFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, fingerprintResolveTex_, 0);
+        const GLenum rs = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (rs != GL_FRAMEBUFFER_COMPLETE) {
+            glDeleteFramebuffers(1, &fingerprintResolveFbo_);
+            glDeleteTextures(1, &fingerprintResolveTex_);
+            fingerprintResolveFbo_ = 0;
+            fingerprintResolveTex_ = 0;
+            return 0;
+        }
+        fingerprintResolveWidth_ = viewportWidth_;
+        fingerprintResolveHeight_ = viewportHeight_;
+    }
+    while (glGetError() != GL_NO_ERROR) {
+    }  // 清掉别处遗留的错误,否则下面那次检查会误判
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fingerprintResolveFbo_);
+    glBlitFramebuffer(0, 0, viewportWidth_, viewportHeight_,
+                      0, 0, viewportWidth_, viewportHeight_,
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fingerprintResolveFbo_);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fingerprintFbo_);
+    glBlitFramebuffer(0, 0, viewportWidth_, viewportHeight_,
+                      0, 0, kGrid, kGrid,
+                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    // blit 失败必须变成"不支持"而不是"没变化" —— 后者会让一个根本没在工作
+    // 的守卫读起来永远是绿的。
+    const GLenum blitError = glGetError();
+    if (blitError != GL_NO_ERROR) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        static bool sReported = false;
+        if (!sReported) {
+            sReported = true;
+            platformLog(LogLevel::Error, "ShadowVerify",
+                        "帧指纹 blit 失败 gl=0x%04x —— 自检本轮作废,"
+                        "不得当成'画面没变'",
+                        static_cast<unsigned>(blitError));
+        }
+        return 0;
+    }
+    outPixels.resize(static_cast<size_t>(kGrid) * kGrid * 4u);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fingerprintFbo_);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    // 同步回读:在 TBDR 上这是管线 flush。见头文件里"严禁在性能测量时开启"。
+    glReadPixels(0, 0, kGrid, kGrid, GL_RGBA, GL_UNSIGNED_BYTE,
+                 outPixels.data());
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    return kGrid;
+}
+
 size_t RenderDeviceGLES::readFramebufferPixels(Framebuffer* source,
                                                int x,
                                                int y,
