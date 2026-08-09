@@ -9,7 +9,6 @@
 #include "../content/GltfModel.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
 #include "../core/math/MathUtils.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
@@ -114,21 +113,9 @@ Vec3 worldPositionForVertex(const TileRenderContentState& renderContent,
 
 Vec3 projectPositionForOverlay(const Cartographic& cartographic,
                                RasterOverlayProjection projection) {
-    switch (projection) {
-        case RasterOverlayProjection::Geographic:
-            return Vec3(
-                cartographic.longitude(),
-                cartographic.latitude(),
-                cartographic.height());
-        case RasterOverlayProjection::WebMercator:
-            return projectPosition(
-                WebMercatorProjection(Ellipsoid::WGS84()),
-                cartographic);
-    }
-    return Vec3(
-        cartographic.longitude(),
-        cartographic.latitude(),
-        cartographic.height());
+    return projectWorldPositionForRasterOverlay(
+        cartographic,
+        projection);
 }
 
 Vec3 projectPositionForOverlayClosestToRectangle(
@@ -234,15 +221,9 @@ Rectangle TileRasterOverlayDetailsGenerator::projectRegionRectangle(
     RasterOverlayProjection projection) {
     const Rectangle splitRectangle =
         rectangle.splitAtAntimeridian().first;
-    switch (projection) {
-        case RasterOverlayProjection::Geographic:
-            return splitRectangle;
-        case RasterOverlayProjection::WebMercator:
-            return projectRectangleSimple(
-                WebMercatorProjection(Ellipsoid::WGS84()),
-                splitRectangle);
-    }
-    return splitRectangle;
+    return projectWorldRectangleForRasterOverlay(
+        splitRectangle,
+        projection);
 }
 
 std::optional<BoundingRegionBuilder::BoundingRegion>

@@ -4,16 +4,240 @@
 #include "earth_engine/core/geodesy/BoundingRegionBuilder.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/GeographicProjection.h"
+#include "earth_engine/core/geodesy/Gcj02CoordinateTransform.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/geodesy/WebMercatorProjection.h"
 #include "earth_engine/core/math/AxisAlignedBox.h"
+#include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/core/math/Vec3.h"
+#include "earth_engine/tiling/RasterOverlayProjection.h"
 
+#include <array>
 #include <cmath>
 #include <glm/ext/vector_double2.hpp>
+#include <limits>
 
 using namespace earth_engine;
+
+namespace {
+
+Rectangle xyzTileRectangle(int level, int x, int y) {
+    const double tileCount =
+        static_cast<double>(int64_t{1} << level);
+    const double west =
+        MathUtils::TwoPi * static_cast<double>(x) / tileCount -
+        MathUtils::OnePi;
+    const double east =
+        MathUtils::TwoPi * static_cast<double>(x + 1) / tileCount -
+        MathUtils::OnePi;
+    const double north = std::atan(std::sinh(
+        MathUtils::OnePi *
+        (1.0 - 2.0 * static_cast<double>(y) / tileCount)));
+    const double south = std::atan(std::sinh(
+        MathUtils::OnePi *
+        (1.0 - 2.0 * static_cast<double>(y + 1) / tileCount)));
+    return Rectangle(west, south, east, north);
+}
+
+void expectGcjBoundsContainGrid(const Rectangle& worldBounds,
+                                int longitudeSamples,
+                                int latitudeSamples) {
+    const Rectangle sourceBounds =
+        worldRectangleToRasterSource(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator);
+    const Rectangle projectedBounds =
+        projectWorldRectangleForRasterOverlay(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator);
+    ASSERT_FALSE(sourceBounds.isEmpty());
+    ASSERT_FALSE(projectedBounds.isEmpty());
+
+    for (int y = 0; y < latitudeSamples; ++y) {
+        const double latitudeT = latitudeSamples == 1
+            ? 0.0
+            : static_cast<double>(y) /
+                  static_cast<double>(latitudeSamples - 1);
+        const double latitude =
+            worldBounds.south() +
+            worldBounds.height() * latitudeT;
+        for (int x = 0; x < longitudeSamples; ++x) {
+            const double longitudeT = longitudeSamples == 1
+                ? 0.0
+                : static_cast<double>(x) /
+                      static_cast<double>(longitudeSamples - 1);
+            double longitude =
+                worldBounds.west() +
+                worldBounds.width() * longitudeT;
+            if (longitude > MathUtils::OnePi) {
+                longitude -= MathUtils::TwoPi;
+            }
+            const Cartographic world =
+                Cartographic::fromRadians(longitude, latitude);
+            const Cartographic source =
+                Gcj02CoordinateTransform::fromWgs84(world);
+            const Vec3 projected =
+                projectWorldPositionForRasterOverlay(
+                    world,
+                    RasterOverlayProjection::Gcj02WebMercator);
+
+            EXPECT_TRUE(sourceBounds.contains(
+                source.longitude(),
+                source.latitude()));
+            EXPECT_TRUE(projectedBounds.contains(
+                projected.x(),
+                projected.y()));
+        }
+    }
+}
+
+} // namespace
+
+TEST(Gcj02CoordinateTransformTest, KnownBeijingControlPointMatchesGcj02) {
+    const Cartographic wgs84 =
+        Cartographic::fromDegrees(116.397389, 39.908722, 88.0);
+
+    const Cartographic gcj02 =
+        Gcj02CoordinateTransform::fromWgs84(wgs84);
+
+    EXPECT_NEAR(116.40363255334069, gcj02.longitudeDegrees(), 1e-10);
+    EXPECT_NEAR(39.91012547567846, gcj02.latitudeDegrees(), 1e-10);
+    EXPECT_DOUBLE_EQ(88.0, gcj02.height());
+}
+
+TEST(Gcj02CoordinateTransformTest, OutsideChinaRemainsWgs84) {
+    const Cartographic pennsylvania =
+        Cartographic::fromDegrees(-75.612094, 40.042531, 25.0);
+
+    const Cartographic transformed =
+        Gcj02CoordinateTransform::fromWgs84(pennsylvania);
+
+    EXPECT_EQ(pennsylvania, transformed);
+}
+
+TEST(Gcj02CoordinateTransformTest,
+     OutsideChinaRectangleMatchesStandardWebMercatorExactly) {
+    const Rectangle worldBounds =
+        xyzTileRectangle(18, 76012, 99201);
+
+    EXPECT_EQ(
+        worldBounds,
+        worldRectangleToRasterSource(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator));
+    EXPECT_EQ(
+        projectWorldRectangleForRasterOverlay(
+            worldBounds,
+            RasterOverlayProjection::WebMercator),
+        projectWorldRectangleForRasterOverlay(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator));
+}
+
+TEST(Gcj02CoordinateTransformTest,
+     OutsideChinaAntimeridianRectangleRemainsBitExact) {
+    const Rectangle worldBounds =
+        Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0);
+
+    EXPECT_EQ(
+        worldBounds,
+        worldRectangleToRasterSource(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator));
+    EXPECT_EQ(
+        projectWorldRectangleForRasterOverlay(
+            worldBounds,
+            RasterOverlayProjection::WebMercator),
+        projectWorldRectangleForRasterOverlay(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator));
+}
+
+TEST(Gcj02CoordinateTransformTest,
+     AntimeridianRectangleKeepsWrappedConservativeBounds) {
+    const Rectangle worldBounds =
+        Rectangle::fromDegrees(100.0, 20.0, -170.0, 40.0);
+    const Rectangle sourceBounds =
+        worldRectangleToRasterSource(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator);
+
+    EXPECT_TRUE(sourceBounds.crossesAntimeridian());
+    EXPECT_LT(sourceBounds.width(), MathUtils::OnePi);
+    expectGcjBoundsContainGrid(worldBounds, 257, 65);
+}
+
+TEST(Gcj02CoordinateTransformTest,
+     ConservativeBoundsContainKnownZ4NorthEdgeMiss) {
+    const Rectangle worldBounds =
+        xyzTileRectangle(4, 14, 5);
+    const Rectangle sourceBounds =
+        worldRectangleToRasterSource(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator);
+    const Rectangle projectedBounds =
+        projectWorldRectangleForRasterOverlay(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator);
+
+    for (int i = 0; i <= 4096; ++i) {
+        const double longitude =
+            worldBounds.west() +
+            worldBounds.width() *
+                static_cast<double>(i) / 4096.0;
+        const Cartographic world = Cartographic::fromRadians(
+            longitude,
+            worldBounds.north());
+        const Cartographic source =
+            Gcj02CoordinateTransform::fromWgs84(world);
+        const Vec3 projected =
+            projectWorldPositionForRasterOverlay(
+                world,
+                RasterOverlayProjection::Gcj02WebMercator);
+        EXPECT_LE(source.latitude(), sourceBounds.north());
+        EXPECT_LE(projected.y(), projectedBounds.north());
+    }
+}
+
+TEST(Gcj02CoordinateTransformTest,
+     ConservativeBoundsContainBroadInteriorRectangle) {
+    expectGcjBoundsContainGrid(
+        Rectangle::fromDegrees(100.0, 20.0, 120.0, 40.0),
+        257,
+        257);
+}
+
+TEST(Gcj02CoordinateTransformTest,
+     ConservativeBoundsContainRepresentativeXyzTiles) {
+    const std::array<std::array<int, 3>, 8> keys{{
+        {3, 7, 3},
+        {4, 14, 5},
+        {5, 24, 9},
+        {6, 44, 20},
+        {7, 89, 41},
+        {8, 205, 80},
+        {9, 426, 160},
+        {10, 770, 319}}};
+    for (const auto& key : keys) {
+        expectGcjBoundsContainGrid(
+            xyzTileRectangle(key[0], key[1], key[2]),
+            65,
+            65);
+    }
+}
+
+TEST(Gcj02CoordinateTransformTest,
+     ProjectedRectangleIncludesGcjBoundaryDiscontinuities) {
+    const std::array<Rectangle, 4> crossings{
+        Rectangle::fromDegrees(71.95, 20.0, 72.05, 20.1),
+        Rectangle::fromDegrees(137.80, 20.0, 137.90, 20.1),
+        Rectangle::fromDegrees(100.0, 0.78, 100.1, 0.88),
+        Rectangle::fromDegrees(100.0, 55.78, 100.1, 55.88)};
+    for (const Rectangle& crossing : crossings) {
+        expectGcjBoundsContainGrid(crossing, 129, 129);
+    }
+}
 
 TEST(GeographicProjectionTest, ProjectUsesCesiumNativeLinearRadiansScale) {
     const GeographicProjection projection(Ellipsoid::WGS84());

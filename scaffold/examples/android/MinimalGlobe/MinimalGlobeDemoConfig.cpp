@@ -190,6 +190,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         satellite.priority = RasterOverlayPriority::High;
         satellite.fallbackPolicy = RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
         satellite.blocksCompleteRenderable = true;
+        satellite.georeference =
+            RasterOverlayGeoreference::Gcj02WebMercator;
         config.rasterOverlays.push_back(satellite);
 
         if (kEnableGaodeRoadNetOverlayForDemo) {
@@ -208,6 +210,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
             roadNet.priority = RasterOverlayPriority::Low;
             roadNet.fallbackPolicy = RasterOverlayFallbackPolicy::SkipUntilReady;
             roadNet.blocksCompleteRenderable = false;
+            roadNet.georeference =
+                RasterOverlayGeoreference::Gcj02WebMercator;
             config.rasterOverlays.push_back(roadNet);
         }
     } else {

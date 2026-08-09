@@ -201,6 +201,19 @@ Spherical Web Mercator (EPSG:3857-style). cesium-native `WebMercatorProjection` 
 | `mercatorAngleToGeodeticLatitude` | .cpp:68-71 | `π/2 - 2·atan(e^-angle)` (Gudermannian) |
 | `geodeticLatitudeToMercatorAngle` | .cpp:73-78 | Clamped to ±maxLat; `0.5·ln((1+sin)/(1-sin))` |
 
+### Gcj02CoordinateTransform.h / .cpp
+
+WGS84 cartographic → GCJ-02 transform used only by explicitly georeferenced raster overlays. Inputs/outputs are `Cartographic` radians with height preserved; terrain ECEF, camera, models, picking, and standard overlays stay WGS84.
+
+| Item | Lines | Algorithm |
+|---|---|---|
+| Interval bounds (file-local) | .cpp:31-412 | Outward-rounded interval arithmetic, exact sine extrema, 8×8 subdivision, and identity/transformed region union produce conservative rectangle bounds without fixed padding |
+| `transformLatitude` / `transformLongitude` (file-local) | .cpp:415-451 | Standard GCJ-02 periodic latitude/longitude offset polynomials |
+| `isOutsideChina()` | .cpp:455-461 | Identity outside longitude 72.004..137.8347° or latitude 0.8293..55.8271° |
+| `fromWgs84()` | .cpp:463-499 | Applies Krasovsky-axis/eccentricity correction and returns shifted lon/lat with original height |
+| `boundRectangleFromWgs84()` | .cpp:501-527 | Splits antimeridian rectangles, preserves wholly outside-China rectangles exactly, and conservatively bounds transformed/cross-boundary rectangles without losing wrapped longitude semantics |
+| Constants | .cpp:15-29 | GCJ ellipsoid parameters, hard bounds, radians conversion, and rectangle subdivision count |
+
 ### S2CellID.h / .cpp
 
 64-bit S2 cell identifier: face(3b) + Hilbert position + trailing sentinel bit. cesium-native `CesiumGeospatial::S2CellID` equivalent.
@@ -1295,20 +1308,33 @@ Pure policy helpers for overlay eligibility, required-readiness gating, and prio
 | `requiredOverlaysReady()` | .cpp:21-36 | For every visible overlay with `blocksCompleteRenderable()`, require `hasReadyMapping(i)` |
 | `processingOrder()` | .cpp:160-179 | Stable-sort indices by overlay `priority()` descending (null → `RasterOverlayPriority::Low`) |
 
+### RasterOverlayProjection.h / .cpp
+
+Separates world geometry coordinates from raster-source coordinates. `Gcj02WebMercator` projects WGS84 terrain vertices through WGS84→GCJ-02→WebMercator for sampling, while XYZ source rectangles are already GCJ-02 and receive only ordinary WebMercator projection.
+
+| Item | Lines | Description |
+| --- | --- | --- |
+| `RasterOverlayProjection` / `RasterOverlayGeoreference` | .h:9-18 | Projection identity (`Geographic`, `WebMercator`, `Gcj02WebMercator`) and source configuration (`Standard`, `Gcj02WebMercator`) |
+| `projectWorldPositionForRasterOverlay()` | .cpp:41-64 | WGS84 world position → overlay sampling space; GCJ path transforms per vertex before WebMercator |
+| `projectWorldRectangleForRasterOverlay()` | .cpp:65-77 | WGS84 rectangle → conservative overlay-space bounds via `boundRectangleFromWgs84()` |
+| `projectRasterSourceRectangle()` / `unprojectRasterSourceRectangle()` | .cpp:78-95 | Source-datum lon/lat ↔ source projected rectangle; never reapplies WGS84→GCJ |
+| `worldRectangleToRasterSource()` | .cpp:96-112 | WGS84 coverage rectangle → conservatively bounded source-datum lon/lat, clamped to globe limits |
+| `rasterOverlayProjectionName()` | .cpp:28-39 | `"geo"` / `"merc"` / `"gcj-merc"` — 供 EnvSnap boot 行报**生效**投影 |
+
 ### TileRasterOverlayDetailsGenerator.h / .cpp
 
 Generates `RasterOverlayDetails` (projected rectangles + per-vertex overlay UVs) for a tile's glTF render content, from a bounding region or tight model bounds. This is the geometry side of the geometry↔imagery mapping: it writes glTF TEXCOORD sets consumed later as `geometryUV`.
 
 | Method | Lines | Description |
 | --- | --- | --- |
-| `projectRegionRectangle()` | .cpp:232-246 | Split at antimeridian, then Geographic passthrough or `projectRectangleSimple(WebMercator, ...)` |
-| `computeTightModelBoundingRegion()` | .cpp:249-309 | Iterates glTF primitive vertices (skipping skirt verts via `contributesToComputedBounds`), converts ECEF→cartographic, expands `BoundingRegionBuilder` |
-| `projectEffectiveContentBoundingVolumeRectangle()` | .cpp:312-326 | Projects tile's content/bounding volume Region rectangle (nullopt if not Region kind) |
-| `ensureProjectionDetailsFromRegion()` | .cpp:328-369 | For a Region volume: write texcoords + append projection/rectangle at next texcoord index |
-| `ensureProjectionDetailsFromModelBounds()` | .cpp:371-410 | Same via tight model bounds when no Region volume |
-| `ensureProjectionDetailsFromActiveOverlays()` (2 overloads) | .cpp:412-450 / :451-466 | For each ready provider's projection, generate details from Region or model bounds; returns count generated |
-| `writeGltfOverlayTexCoords()` (file-local) | .cpp:163-218 | Per primitive/vertex: world position → cartographic → `projectPositionForOverlayClosestToRectangle` → clamped `(x-west)/width`,`(y-south)/height` into `vertexTexCoords[texCoordIndex]`. Guarded by **`kGltfMaxTexCoordSets`** = 8 (GltfModel.h:20) |
-| `projectPositionForOverlayClosestToRectangle()` (file-local) | .cpp:131-161 | Antimeridian disambiguation: picks ±2π longitude with smaller `computeSignedDistance` to rectangle (uses `Epsilon5`, `OnePi`, `TwoPi`) |
+| `projectRegionRectangle()` | .cpp:219-227 | Split at antimeridian, then delegate Geographic/WebMercator/GCJ bounds to `projectWorldRectangleForRasterOverlay` |
+| `computeTightModelBoundingRegion()` | .cpp:229-290 | Iterates glTF primitive vertices (skipping skirt verts via `contributesToComputedBounds`), converts ECEF→cartographic, expands `BoundingRegionBuilder` |
+| `projectEffectiveContentBoundingVolumeRectangle()` | .cpp:292-307 | Projects tile's content/bounding volume Region rectangle (nullopt if not Region kind) |
+| `ensureProjectionDetailsFromRegion()` | .cpp:309-350 | For a Region volume: write texcoords + append projection/rectangle at next texcoord index |
+| `ensureProjectionDetailsFromModelBounds()` | .cpp:352-391 | Same via tight model bounds when no Region volume |
+| `ensureProjectionDetailsFromActiveOverlays()` (2 overloads) | .cpp:393-430 / :432-445 | For each ready provider's projection, generate details from model bounds or Region fallback; returns count generated |
+| `writeGltfOverlayTexCoords()` (file-local) | .cpp:153-215 | Per primitive/vertex: world position → cartographic → projection-specific sample position → clamped NW `(u,v)` in `vertexTexCoords[texCoordIndex]`. Guarded by **`kGltfMaxTexCoordSets`** = 8 (GltfModel.h:20) |
+| `projectPositionForOverlayClosestToRectangle()` (file-local) | .cpp:121-151 | Antimeridian disambiguation: picks ±2π longitude with smaller `computeSignedDistance` to rectangle (uses `Epsilon5`, `OnePi`, `TwoPi`) |
 | `applyGeneratedProjectionDetails` / `mergeBoundingRegion` (file-local) | .cpp:55-81 | Merge generated projection+rectangle+invertedV(false)+region into existing details |
 
 ### TileRasterOverlayDetailsDeriver.h
@@ -1317,10 +1343,10 @@ Header-only. Derives child `RasterOverlayDetails` from parent details by remappi
 
 | Method | Lines | Description |
 | --- | --- | --- |
-| `deriveChildFromParent()` | .h:15-83 | Empty parent → `setGeographicRectangle(childBounds)`. Else copy projections/invertedV, and per projection interpolate child rectangle from parent overlay rectangle using `relativeX/relativeY` of projected child bounds within projected parent bounds |
-| `projectBounds()` | .h:86-97 | Geographic passthrough or `projectRectangleSimple(WebMercator)` |
-| `relativeX` / `relativeY` | .h:99-112 | Normalized 0..1 position; `relativeX` adds `TwoPi` across antimeridian |
-| `mixHorizontal()` | .h:118-129 | Longitude lerp with antimeridian wrap + `convertLongitudeRange` for Geographic |
+| `deriveChildFromParent()` | .h:13-87 | Empty parent → Geographic details. Standard projections interpolate the parent rectangle; GCJ recomputes conservative child bounds because the transform is non-linear |
+| `projectBounds()` | .h:90-93 | Delegates Geographic/WebMercator/GCJ bounds to `projectWorldRectangleForRasterOverlay` |
+| `relativeX` / `relativeY` | .h:95-108 | Normalized 0..1 position; `relativeX` adds `TwoPi` across antimeridian |
+| `mixHorizontal()` | .h:114-125 | Longitude lerp with antimeridian wrap + `convertLongitudeRange` for Geographic |
 
 ### TileRasterOverlayFrameProcessor.h
 
@@ -1770,27 +1796,27 @@ Resource-prep boundary: provider owns tile lifecycle + decoded CPU imagery; uplo
 | `RasterTextureUploadOptions` | .h:10-12 | `generateMipmaps` only. |
 | `RasterTextureUploader` iface | .h:25-34 | `maxTextureSize`, `uploadRasterTexture(DecodedImage, options)` → `unique_ptr<Texture>` |
 
-### RasterOverlayTileProvider.h / .cpp (~3700 lines)
+### RasterOverlayTileProvider.h / .cpp (~4700 lines)
 
 cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, async load dispatch, GPU-upload scheduling, throttling, source-tile depot, and frame-based trimming. Maps geometry rectangles → provider quadtree source imagery (cesium-native `mapRasterTilesToGeometryTile`). Provider still stops at CPU imagery; GPU upload delegated to injected `RasterTextureUploader`.
 
 | Method | Lines | Description |
 |---|---|---|
-| ctor / dtor | .h:51-55 / .cpp:2347 | Takes `ImageryProvider&`, `TileScheme&`, optional uploader (null = headless test); dtor drains async state |
-| `getTile` | .cpp:3318-3347 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
-| `mapRasterTilesToGeometryTile` | .cpp:3350... | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
-| `buildQuadtreeSourcePlan` | .cpp:1462... | Choose source zoom (SSE/texture-size driven) + source-key rectangle |
-| `resolveTile` | .cpp:3455-3478 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
-| `loadTile` / `loadTileThrottled` | .cpp:3553-3591 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
-| `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:3622-3718 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
-| `issueMappedSourceImageSet` | .cpp:3986-4053 | Dispatch source-tile requests through shared depot |
-| `composeQuadtreeSourceImagesWithDetails` | .cpp:2469-2503 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
-| `projectedVForLatitude` | .cpp:2505-2510 | Latitude → projected V within bounds |
-| `processPendingUploads` | .cpp:4236-4544 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
-| `hasPendingWork` | .cpp:4570-4584 | HTTP/source-fanout/upload outstanding |
-| `trimUnusedTiles` | .cpp:4629... | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
-| `refreshSourceAssetDepot` | .cpp:3040-3047 | Rebuild shared source-tile depot on option change |
-| `requestDiagnostics` | .cpp:3481... | Aggregates imagery-provider + raster-source request counters |
+| ctor / dtor | .h:51-55 / .cpp:2841-2868 | Takes `ImageryProvider&`, `TileScheme&`, optional uploader (null = headless test); dtor drains async state |
+| `getTile` | .cpp:3358-3389 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
+| `mapRasterTilesToGeometryTile` | .cpp:3390... | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
+| `buildQuadtreeSourcePlan` | .cpp:1497... | Choose source zoom (SSE/texture-size driven) + source-key rectangle |
+| `resolveTile` | .cpp:3495-3520 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
+| `loadTile` / `loadTileThrottled` | .cpp:3593-3661 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
+| `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:3662 / :3783 / :3800 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
+| `issueMappedSourceImageSet` | .cpp:4026-4094 | Dispatch source-tile requests through shared depot |
+| `composeQuadtreeSourceImagesWithDetails` | .cpp:2504-2539 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
+| `projectedVForLatitude` | .cpp:2540-2546 | Latitude → projected V within bounds |
+| `processPendingUploads` | .cpp:4276-4608 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
+| `hasPendingWork` | .cpp:4609-4623 | HTTP/source-fanout/upload outstanding |
+| `trimUnusedTiles` | .cpp:4668-4723 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
+| `refreshSourceAssetDepot` | .cpp:3080-3088 | Rebuild shared source-tile depot on option change |
+| `requestDiagnostics` | .cpp:3521-3547 | Aggregates imagery-provider + raster-source request counters |
 
 | State/struct | Lines | Description |
 |---|---|---|
@@ -2249,15 +2275,16 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:817-868 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
-| `updateVisiblePages(view, ...)` | .cpp:403-805 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:881-916 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:918-950 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:994-1077 / :955-993 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1078-1139 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:869-883 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
-| `resamplePageSource` | .cpp:265-332 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
-| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:376-382 / :383-402 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
+| `initialize(device, Config)` | .cpp:966-1017 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
+| `updateVisiblePages(view, ...)` | .cpp:498-954 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1033-1069 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1070-1103 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1143-1226 / :1104-1142 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1227-1281 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1018-1032 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `resamplePageSource` | .cpp:262-329 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
+| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:373-379 / :477-496 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
+| `placeTileInSourceGrid` (static) | .cpp:380-476 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
 | `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:333-345 / :346-351 / :352-355 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
 | `packKey` / `unpackKey` (static) | .cpp:364-375 / :356-363 | TileKey ↔ uint64 页键 |
 
@@ -2628,7 +2655,8 @@ cesium-native `ActivatedRasterOverlay` equivalent. Wraps a `RasterOverlay&` (mus
 | `setMaximumSimultaneousTileLoads(int)` | .h:52 / .cpp:95-105 | `n>0 ? n : 20`; applies to both providers |
 | `getThrottledTilesCurrentlyLoading` | .h:53 / .cpp:107-110 | forward, 0 if none |
 | `visible` / `opacity` | .h:55-56 / .cpp:112-114 | delegate to `overlay_` |
-| `syncProviderOptionsFromOverlay` (private) | .h:65 / .cpp:120-135 | re-derives throttle from overlay (`>0 ? : 20`), calls `applyOwnerOptions()` on both providers |
+| `getProjection()` | .h:70 / .cpp:122-128 | **生效**采样投影(读 provider,不读 config)。georeference 会被 scheme 闸口拒掉,请求值不可信 |
+| `syncProviderOptionsFromOverlay` (private) | .h:65 / .cpp:129-146 | re-derives throttle from overlay (`>0 ? : 20`), calls `applyOwnerOptions()` on both providers |
 
 Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 
@@ -3101,7 +3129,7 @@ Thin SDK entry point: `installScene(EarthSceneConfig)` builds providers/overlays
 | `installScene(EarthSceneConfig)` | .h:37, .cpp:243-685 | Move-stores config_, `resetCamera()`, clears overlay vectors, builds raster stack, creates unified Tileset, optional glTF Tileset, sets sim time. See per-kind rows below. |
 | `resetCamera()` | .h:39, .cpp:687-762 | Rebuilds camera from `initialCamera` via `Ellipsoid::WGS84().cartographicToCartesian` + `geodeticSurfaceNormal`; `camera().lookAt(camEcef, targetEcef, up)`. No source rebuild. |
 | `config()` | .h:41 | Const accessor for stored `EarthSceneConfig`. |
-| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:752-766 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
+| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:767-783 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
 
 Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:243-685):
 
@@ -3245,6 +3273,8 @@ FrameState is mutated during update (tile selection, GPU upload, command build) 
 | `observe` | Policies.cpp:135 | 记一次观测(**分母 ≤ 0 不计**) |
 | `windowNumerator` / `windowDenominator` | Policies.cpp:145 / :151 | |
 | `logReport` | Policies.cpp:157 | 每窗打印;**越界才升 Warning 并逐条点名** |
+
+环境层(`EnvSnapshot.h`)的 `BootFields.overlayProjection` / `overlayGcj02Count` 同属「报生效值不报请求值」这条纪律:GCJ-02 georeference 只在 scheme 是严格 `EPSG:3857` 时接管,被拒后画面与「没配 GCJ」完全一致(中国境内影像整体偏 ~500m),没有这两个字段就分不开「没配」「配了没生效」「生效了但算错」。拒绝路径本身在 `RasterOverlayTileProvider.cpp:123-144` 的 `projectionForScheme` 打 Warning。
 
 ⚠️ 两条硬教训写在代码里:① 平行表必须写 `T arr[]` 不写 `T arr[kCount]`,
 否则 `static_assert` 是同义反复(曾漏一条 expectation 直到真机报 `owner=(null)`);

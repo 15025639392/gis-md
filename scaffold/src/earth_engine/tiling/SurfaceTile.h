@@ -1,5 +1,6 @@
 #pragma once
 
+#include "RasterOverlayProjection.h"
 #include "../core/geodesy/BoundingRegionBuilder.h"
 #include "../core/math/Rectangle.h"
 #include "../core/math/Vec3.h"
@@ -11,11 +12,6 @@
 #include <vector>
 
 namespace earth_engine {
-
-enum class RasterOverlayProjection {
-    Geographic = 0,
-    WebMercator = 1
-};
 
 struct SurfaceVertex {
     Vec3 positionEcef;

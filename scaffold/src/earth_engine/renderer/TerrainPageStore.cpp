@@ -1,6 +1,7 @@
 #include "TerrainPageStore.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -377,6 +378,103 @@ int TerrainPageStore::subtileGridN(int tileZ, int sourceZoom) {
     return 1 << (sourceZoom - tileZ);
 }
 
+TerrainPageStore::SourceTilePlacement
+TerrainPageStore::placeTileInSourceGrid(
+    const TileScheme& scheme,
+    const Rectangle& detailsRect,
+    RasterOverlayProjection projection,
+    int sourceZoom,
+    int gridN) {
+    SourceTilePlacement placement;
+    const int safeGridN = std::max(1, gridN);
+    const int tilesX = std::max(1, scheme.tileCountX(sourceZoom));
+    const int tilesY = std::max(1, scheme.tileCountY(sourceZoom));
+
+    // detailsRect 在 overlay 采样空间(GCJ 时是 gcj-mercator);源瓦片编址用的是
+    // 源经纬,故先退回源经纬再问 scheme 要 key。
+    const Rectangle sourceRect =
+        unprojectRasterSourceRectangle(detailsRect, projection);
+    if (sourceRect.isEmpty() || !(sourceRect.width() > 0.0) ||
+        !(sourceRect.computeHeight() > 0.0)) {
+        placement.cellsX = safeGridN;
+        placement.cellsY = safeGridN;
+        placement.spanU = static_cast<double>(safeGridN);
+        placement.spanV = static_cast<double>(safeGridN);
+        return placement;
+    }
+
+    // 边界瓦片:east/north 恰落在网格线上时 positionToTile 会返回**下一格**,
+    // 那一格并不被覆盖,却会让 cellsX/cellsY 多出一列一行(多取一圈源瓦片)。
+    // 往内缩一个极小量把闭区间问成半开区间。
+    //
+    // 内缩量必须按**源瓦片**尺度取,不能按 detailsRect 尺度(如 width/gridN 的几分
+    // 之一)—— GCJ 平移只有零点几格,足够大的内缩会把真实越界一并抹掉,覆盖范围
+    // 少算一列 → 屏幕整片错开一整张源瓦片。这条被 UvMapsIntoCoveringRange 抓到过。
+    const TileKey midKey = scheme.positionToTile(
+        0.5 * (sourceRect.west() + sourceRect.east()),
+        0.5 * (sourceRect.south() + sourceRect.north()),
+        sourceZoom);
+    const Rectangle midRect = scheme.tileToRectangle(midKey);
+    const double insetX = 1e-9 * std::abs(midRect.width());
+    const double insetY = 1e-9 * std::abs(midRect.computeHeight());
+    const TileKey nw = scheme.positionToTile(
+        sourceRect.west() + insetX,
+        sourceRect.north() - insetY,
+        sourceZoom);
+    const TileKey se = scheme.positionToTile(
+        sourceRect.east() - insetX,
+        sourceRect.south() + insetY,
+        sourceZoom);
+
+    placement.x0 = std::min(nw.x, se.x);
+    placement.y0 = std::min(nw.y, se.y);
+    const int x1 = std::max(nw.x, se.x);
+    const int y1 = std::max(nw.y, se.y);
+    placement.x0 = std::clamp(placement.x0, 0, tilesX - 1);
+    placement.y0 = std::clamp(placement.y0, 0, tilesY - 1);
+    placement.cellsX =
+        std::clamp(x1, 0, tilesX - 1) - placement.x0 + 1;
+    placement.cellsY =
+        std::clamp(y1, 0, tilesY - 1) - placement.y0 + 1;
+
+    // 覆盖范围在 overlay 采样空间的矩形 = 两个角瓦片矩形的并,再投影。逐字段走
+    // scheme 而不是用 levelResolution 自己乘,是为了让极区/非均匀方案也成立。
+    TileKey cornerNw{scheme.id(), sourceZoom, placement.x0, placement.y0};
+    TileKey cornerSe{scheme.id(), sourceZoom,
+                     placement.x0 + placement.cellsX - 1,
+                     placement.y0 + placement.cellsY - 1};
+    const Rectangle rectNw = projectRasterSourceRectangle(
+        scheme.tileToRectangle(cornerNw), projection);
+    const Rectangle rectSe = projectRasterSourceRectangle(
+        scheme.tileToRectangle(cornerSe), projection);
+    const double rangeWest = std::min(rectNw.west(), rectSe.west());
+    const double rangeEast = std::max(rectNw.east(), rectSe.east());
+    const double rangeSouth = std::min(rectNw.south(), rectSe.south());
+    const double rangeNorth = std::max(rectNw.north(), rectSe.north());
+    const double rangeWidth = rangeEast - rangeWest;
+    const double rangeHeight = rangeNorth - rangeSouth;
+    if (!(rangeWidth > 0.0) || !(rangeHeight > 0.0)) {
+        placement.cellsX = safeGridN;
+        placement.cellsY = safeGridN;
+        placement.spanU = static_cast<double>(safeGridN);
+        placement.spanV = static_cast<double>(safeGridN);
+        return placement;
+    }
+
+    // 单位换成「源瓦片」:片元 t = origin + uv*span → floor 即 cell 下标。
+    // V 走 NW 约定(v=0 在北),与 resamplePageSource/顶点烘焙两端一致。
+    const double cellsXd = static_cast<double>(placement.cellsX);
+    const double cellsYd = static_cast<double>(placement.cellsY);
+    placement.originU =
+        (detailsRect.west() - rangeWest) / rangeWidth * cellsXd;
+    placement.spanU = detailsRect.width() / rangeWidth * cellsXd;
+    placement.originV =
+        (rangeNorth - detailsRect.north()) / rangeHeight * cellsYd;
+    placement.spanV =
+        detailsRect.computeHeight() / rangeHeight * cellsYd;
+    return placement;
+}
+
 void TerrainPageStore::enumerateSubtileKeys(const TileKey& tileKey,
                                             int sourceZoom,
                                             std::vector<TileKey>& out) {
@@ -461,7 +559,7 @@ void TerrainPageStore::updateVisiblePages(
         zoom = std::min(zoom, tile->key.z + kMaxDetDepthLevels);
         zoom = std::max(zoom, tile->key.z);
 
-        const int gridN = subtileGridN(tile->key.z, zoom);
+        int gridN = subtileGridN(tile->key.z, zoom);
         const double minH = TileBoundsMetrics::terrainMinimumHeight(*tile);
         const double maxH = TileBoundsMetrics::terrainMaximumHeight(*tile);
         const uint64_t tileKeyPacked = packKey(tile->key);
@@ -472,8 +570,46 @@ void TerrainPageStore::updateVisiblePages(
         const SchemeId imgSchemeId =
             scheme.positionToTile(cLng, cLat, tile->key.z).schemeId;
 
+        // cell 网格落位:必须用 **details 里的**矩形与 texcoord 下标,不能就地
+        // 重算 —— details 可能来自模型真实包围(见 TileRasterOverlayDetailsGenerator)
+        // 与瓦片声明矩形不等,而逐顶点 UV 正是按 details 归一化的,重算会让 UV 与
+        // cell 网格系统性错开。拿不到 details(尚未生成)时退回几何等分 = 现状。
+        const RasterOverlayProjection projection = provider->getProjection();
+        const RasterOverlayDetails& details =
+            tile->content.renderContent.rasterOverlayDetails();
+        const Rectangle* detailsRect =
+            details.findRectangleForOverlayProjection(projection);
+        const int texCoordSet =
+            details.textureCoordinateIDForProjection(projection);
+        SourceTilePlacement placement;
+        placement.x0 = tile->key.x * gridN;
+        placement.y0 = tile->key.y * gridN;
+        placement.cellsX = gridN;
+        placement.cellsY = gridN;
+        placement.spanU = static_cast<double>(gridN);
+        placement.spanV = static_cast<double>(gridN);
+        if (detailsRect != nullptr && texCoordSet >= 0) {
+            placement = placeTileInSourceGrid(
+                scheme, *detailsRect, projection, zoom, gridN);
+            // 源网格不对齐时覆盖范围会多一列一行,而间接纹理边长固定
+            // kIndirSideTexels(=64)且 gridN 上限恰好也是 64 —— 不设闸就正好在最深
+            // 一级越界写。降一级 zoom 重算(只损失最深那一档的清晰度)。
+            if (placement.cellsX > kIndirSideTexels ||
+                placement.cellsY > kIndirSideTexels) {
+                zoom = std::max(tile->key.z, zoom - 1);
+                gridN = subtileGridN(tile->key.z, zoom);
+                placement = placeTileInSourceGrid(
+                    scheme, *detailsRect, projection, zoom, gridN);
+                placement.cellsX =
+                    std::min(placement.cellsX, kIndirSideTexels);
+                placement.cellsY =
+                    std::min(placement.cellsY, kIndirSideTexels);
+            }
+        }
+
         detParamsScratch_.push_back(
-            {tile, tileKeyPacked, zoom, gridN, minH, maxH, imgSchemeId});
+            {tile, tileKeyPacked, zoom, gridN, minH, maxH, imgSchemeId,
+             placement, texCoordSet >= 0 ? texCoordSet : 0});
         detTilesScratch_.push_back({tileKeyPacked, zoom, minH, maxH});
     }
 
@@ -524,17 +660,30 @@ void TerrainPageStore::updateVisiblePages(
     for (const DetTileParam& p : detParamsScratch_) {
         DetTileCacheEntry& cache = detTileCache_[p.tileKeyPacked];
         // 几何 walk 仅在 miss(或 gridN 变=几何变的保险)时跑。
-        if (!hit || cache.gridN != p.gridN) {
+        // gridN 之外还要比 cell 范围:GCJ 下 gridN 不变而 placement 可能整体平移
+        // (相机移动跨过源网格线),只比 gridN 会把上一格的 kept 当本格用。
+        if (!hit || cache.gridN != p.gridN ||
+            cache.cellsX != p.placement.cellsX ||
+            cache.cellsY != p.placement.cellsY ||
+            cache.cellX0 != p.placement.x0 ||
+            cache.cellY0 != p.placement.y0) {
             cache.gridN = p.gridN;
+            cache.cellsX = p.placement.cellsX;
+            cache.cellsY = p.placement.cellsY;
+            cache.cellX0 = p.placement.x0;
+            cache.cellY0 = p.placement.y0;
             cache.kept.clear();
             cache.sseFloorCulled = 0;
-            for (int dy = 0; dy < p.gridN; ++dy) {
-                for (int dx = 0; dx < p.gridN; ++dx) {
+            // cell 网格 = **源瓦片网格**(D)。标准 overlay 下 placement 退化成
+            // x0=key.x*gridN、cells=gridN,与改造前逐格相同;GCJ 等源网格不对齐的
+            // overlay 才走到偏移后的 range(通常多一列一行)。
+            for (int dy = 0; dy < p.placement.cellsY; ++dy) {
+                for (int dx = 0; dx < p.placement.cellsX; ++dx) {
                     TileKey sub;
                     sub.schemeId = p.tile->key.schemeId;  // 视锥/rect 用 terrain scheme
                     sub.z = p.zoom;
-                    sub.x = p.tile->key.x * p.gridN + dx;
-                    sub.y = p.tile->key.y * p.gridN + dy;
+                    sub.x = p.placement.x0 + dx;
+                    sub.y = p.placement.y0 + dy;
                     const Rectangle subRect = scheme.tileToRectangle(sub);
                     const std::optional<OrientedBoundingBox> obb =
                         TileBoundsMetrics::boundingRegionObb(subRect, p.minH,
@@ -591,11 +740,14 @@ void TerrainPageStore::updateVisiblePages(
         // == gridN² 即「全 cell 驻留」= 合批资格闸(此时 mappedRaster fallback
         // 必不被采样 → 批命令可丢 mappedRaster,见 TerrainInstanceBatcher)。
         indirTexelsScratch_.assign(
-            static_cast<size_t>(p.gridN) * static_cast<size_t>(p.gridN) * 4u, 0);
+            static_cast<size_t>(p.placement.cellsX) *
+                static_cast<size_t>(p.placement.cellsY) * 4u,
+            0);
         int residentCells = 0;
         for (const DetKeptCell& kc : cache.kept) {
-            uint8_t* texel = indirTexelsScratch_.data() +
-                             (static_cast<size_t>(kc.dy) * p.gridN + kc.dx) * 4u;
+            uint8_t* texel =
+                indirTexelsScratch_.data() +
+                (static_cast<size_t>(kc.dy) * p.placement.cellsX + kc.dx) * 4u;
             visiblePagesScratch_.insert(kc.pageKey);  // 去重计数(粗页共享 → 少)
             zMin = std::min(zMin, kc.fetchKey.z);  // 实际页 zoom = Za(渐变后 ≤ Z)
             zMax = std::max(zMax, kc.fetchKey.z);
@@ -630,8 +782,8 @@ void TerrainPageStore::updateVisiblePages(
             // 页,用它 + 其深度 foundD 采样;touch 保活。运动中相邻距离带的祖先常已驻留
             // (gradient 覆盖 + LRU 保留)→ 显略粗/略细一级而非 z12 mappedRaster 悬崖。
             // 全冷(祖先链无驻留)才 A=0 回落 mappedRaster。settled 目标就绪走上分支不进此。
-            const int subX = p.tile->key.x * p.gridN + kc.dx;
-            const int subY = p.tile->key.y * p.gridN + kc.dy;
+            const int subX = p.placement.x0 + kc.dx;
+            const int subY = p.placement.y0 + kc.dy;
             const int maxAd = p.zoom - p.tile->key.z;  // za=Z 到 tileZ 的最大深度
             int foundLayer = -1;
             int foundD = -1;
@@ -716,7 +868,9 @@ void TerrainPageStore::updateVisiblePages(
         policy::observe(policy::Id::CellPageCoverage, residentCells,
                         static_cast<int>(cache.kept.size()) +
                             cache.sseFloorCulled);
-        const int cellsNeeded = p.gridN * p.gridN;
+        // 分母跟 **cell 网格**走,不跟几何等分走:GCJ 下二者不等(源网格多一列
+        // 一行),用 gridN² 会让覆盖率恒 <1 而看不出是分母错还是真没覆盖。
+        const int cellsNeeded = p.placement.cellsX * p.placement.cellsY;
         if (cellsNeeded > 0) {
             const float ratio = static_cast<float>(residentCells) /
                                 static_cast<float>(cellsNeeded);

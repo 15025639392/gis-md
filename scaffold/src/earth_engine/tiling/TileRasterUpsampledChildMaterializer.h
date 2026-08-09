@@ -7,12 +7,33 @@
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
 
+#include <optional>
+
 namespace earth_engine {
 
 class IPrepareRendererResources;
 
 class TileRasterUpsampledChildMaterializer {
 public:
+    static std::optional<RasterOverlayProjection>
+    geometryProjectionForRasterDetail(
+        const RasterOverlayDetails& details,
+        RasterOverlayProjection imageryProjection) {
+        if (imageryProjection !=
+            RasterOverlayProjection::Gcj02WebMercator) {
+            return imageryProjection;
+        }
+        if (details.findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic)) {
+            return RasterOverlayProjection::Geographic;
+        }
+        if (details.findRectangleForOverlayProjection(
+                RasterOverlayProjection::WebMercator)) {
+            return RasterOverlayProjection::WebMercator;
+        }
+        return std::nullopt;
+    }
+
     template <typename EnsureTileFn>
     static bool materialize(
         TilesetTile& tile,
@@ -62,6 +83,14 @@ public:
             return false;
         }
 
+        const std::optional<RasterOverlayProjection> geometryProjection =
+            geometryProjectionForRasterDetail(
+                details,
+                moreDetailProjection);
+        if (!geometryProjection) {
+            return false;
+        }
+
         // Child bounds come from the registry/scheme rectangle, never from
         // the content-derived details rectangle — see
         // TileChildMaterializer::materializeRasterUpsampledChildren.
@@ -70,7 +99,7 @@ public:
             defaultGeometricError,
             ensureTile,
             pPrepRenderer,
-            moreDetailProjection);
+            *geometryProjection);
     }
 };
 

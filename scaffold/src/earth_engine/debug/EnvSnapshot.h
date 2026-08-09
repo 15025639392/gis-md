@@ -86,6 +86,15 @@ struct BootFields {
     int overlayMinZoom = 0;
     int overlayMaxZoom = 0;
     int overlayCount = 0;
+    /// 首个 overlay **实际生效**的采样投影("geo"/"merc"/"gcj-merc")。报生效值
+    /// 而非 config 请求值:GCJ-02 georeference 会被 scheme 闸口拒绝(只认严格
+    /// EPSG:3857),被拒后画面上「没配 GCJ」和「配了但被吃掉」完全一样 —— 都是
+    /// 中国境内影像整体偏 ~500m。有这个字段才能一眼分开「没配」「配了没生效」
+    /// 「生效了但算错」三态,而不是靠肉眼量偏移去猜。
+    const char* overlayProjection = "?";
+    /// 生效为 GCJ-02 的 overlay 个数。overlayProjection 只报第 0 个,多图层
+    /// (卫星 + 路网)时靠这个数确认没有漏配某一层 —— 漏配那层会与其他层错开。
+    int overlayGcj02Count = 0;
     /// 大 flag 档位。A/B 两侧这些值必须逐字段相同,否则比的不是同一个系统。
     bool terrainGpuDisplacement = false;
     bool terrainPageStore = false;
@@ -112,12 +121,15 @@ inline void logBoot(const BootFields& f) {
                 f.fxaa ? 1 : 0,
                 f.aerialFog ? 1 : 0);
     platformLog(LogLevel::Info, "EnvSnap",
-                "boot dem=%s z=%d-%d | overlays=%d overlay0=%s z=%d-%d",
+                "boot dem=%s z=%d-%d | overlays=%d gcj02=%d "
+                "overlay0=%s z=%d-%d proj=%s",
                 f.demUrl[0] != '\0' ? f.demUrl : "(none)",
                 f.demMinZoom, f.demMaxZoom,
                 f.overlayCount,
+                f.overlayGcj02Count,
                 f.overlayUrl[0] != '\0' ? f.overlayUrl : "(none)",
-                f.overlayMinZoom, f.overlayMaxZoom);
+                f.overlayMinZoom, f.overlayMaxZoom,
+                f.overlayProjection);
 }
 
 /// 运行段字段。全部是**每次运行都可能不同**的执行条件。

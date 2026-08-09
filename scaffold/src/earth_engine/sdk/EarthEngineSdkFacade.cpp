@@ -74,6 +74,7 @@ RasterOverlay::Options makeRasterOverlayOptions(
     options.priority = config.priority;
     options.fallbackPolicy = config.fallbackPolicy;
     options.blocksCompleteRenderable = config.blocksCompleteRenderable;
+    options.georeference = config.georeference;
     return options;
 }
 
@@ -643,6 +644,20 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             env.overlayUrl = first.urlTemplate.c_str();
             env.overlayMinZoom = first.minimumZoom;
             env.overlayMaxZoom = first.maximumZoom;
+        }
+        // 投影读**运行期 overlay**(activatedRasterOverlays_)而不是 config:
+        // georeference 是请求值,scheme 闸口可能拒掉它,而被拒后的画面与「没配」
+        // 无法区分。字段语义见 EnvSnapshot.h。
+        if (!activatedRasterOverlays_.empty()) {
+            env.overlayProjection = rasterOverlayProjectionName(
+                activatedRasterOverlays_.front()->getProjection());
+            for (const std::unique_ptr<ActivatedRasterOverlay>& activated :
+                 activatedRasterOverlays_) {
+                if (activated->getProjection() ==
+                    RasterOverlayProjection::Gcj02WebMercator) {
+                    ++env.overlayGcj02Count;
+                }
+            }
         }
         env.terrainGpuDisplacement = engine_.terrainGpuDisplacementEnabled();
         env.terrainPageStore = config_.terrainPageStore;

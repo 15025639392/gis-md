@@ -108,36 +108,48 @@ bool uploadAllowedDuringInteraction(
     return pixels <= kInteractionRasterUploadMaxPixels;
 }
 
-Projection projectionVariant(RasterOverlayProjection projection) {
-    switch (projection) {
-        case RasterOverlayProjection::Geographic:
-            return GeographicProjection(Ellipsoid::WGS84());
-        case RasterOverlayProjection::WebMercator:
-            return WebMercatorProjection(Ellipsoid::WGS84());
-    }
-    return GeographicProjection(Ellipsoid::WGS84());
-}
-
-RasterOverlayProjection projectionForScheme(const TileScheme& scheme) {
+RasterOverlayProjection projectionForSourceScheme(const TileScheme& scheme) {
     return scheme.crsProfile() == "EPSG:3857"
         ? RasterOverlayProjection::WebMercator
         : RasterOverlayProjection::Geographic;
 }
 
+// GCJ-02 偏移只在源瓦片网格是严格 EPSG:3857 时接管。**不匹配时必须出声**:
+// 这条闸口静默降级过一次 —— OpenGlobus-Earth 的 crsProfile 是
+// "EPSG:3857+polar-lonlat"(TileScheme.cpp),配了 Gcj02WebMercator 也会掉回
+// Geographic,而画面上「没生效」和「生效了但算错」长得一模一样,只能靠肉眼量
+// 500m 偏移去猜。要支持极区分组那类方案得另加 Gcj02Geographic 一态(极区组是
+// lon/lat 不是墨卡托),在那之前这里明确拒绝并报警,不要假装接受。
+RasterOverlayProjection projectionForScheme(
+    const TileScheme& scheme,
+    RasterOverlayGeoreference georeference) {
+    if (georeference != RasterOverlayGeoreference::Gcj02WebMercator) {
+        return projectionForSourceScheme(scheme);
+    }
+    if (scheme.crsProfile() == "EPSG:3857") {
+        return RasterOverlayProjection::Gcj02WebMercator;
+    }
+    platformLog(LogLevel::Warning, "RasterOverlay",
+                "GCJ-02 georeference requested but scheme '%s' "
+                "(crs=%s) is not plain EPSG:3857; falling back to %s — "
+                "imagery over China will stay ~500m offset",
+                scheme.id().c_str(),
+                scheme.crsProfile().c_str(),
+                projectionForSourceScheme(scheme) ==
+                        RasterOverlayProjection::WebMercator
+                    ? "WebMercator"
+                    : "Geographic");
+    return projectionForSourceScheme(scheme);
+}
+
 Rectangle projectGeographicToProvider(const Rectangle& rectangle,
                                       RasterOverlayProjection projection) {
-    if (projection == RasterOverlayProjection::Geographic) {
-        return rectangle;
-    }
-    return projectRectangleSimple(projectionVariant(projection), rectangle);
+    return projectRasterSourceRectangle(rectangle, projection);
 }
 
 Rectangle unprojectProviderToGeographic(const Rectangle& rectangle,
                                         RasterOverlayProjection projection) {
-    if (projection == RasterOverlayProjection::Geographic) {
-        return rectangle;
-    }
-    return unprojectRectangleSimple(projectionVariant(projection), rectangle);
+    return unprojectRasterSourceRectangle(rectangle, projection);
 }
 
 int maximumCombinedTextureSize(const RasterTextureUploader* uploader,
@@ -416,10 +428,31 @@ bool isWebMercatorScheme(const TileScheme& scheme) {
 }
 
 bool rectanglesOverlapWithArea(const Rectangle& a, const Rectangle& b) {
-    std::optional<Rectangle> intersection = a.computeIntersection(b);
-    return intersection &&
-           intersection->width() > 1e-15 &&
-           intersection->height() > 1e-15;
+    const auto overlapsNonCrossing = [](const Rectangle& lhs,
+                                        const Rectangle& rhs) {
+        const std::optional<Rectangle> intersection =
+            lhs.computeIntersection(rhs);
+        return intersection &&
+               intersection->width() > 1e-15 &&
+               intersection->height() > 1e-15;
+    };
+    const auto aParts = a.splitAtAntimeridian();
+    const auto bParts = b.splitAtAntimeridian();
+
+    if (overlapsNonCrossing(aParts.first, bParts.first)) {
+        return true;
+    }
+    if (aParts.second &&
+        overlapsNonCrossing(*aParts.second, bParts.first)) {
+        return true;
+    }
+    if (bParts.second &&
+        overlapsNonCrossing(aParts.first, *bParts.second)) {
+        return true;
+    }
+    return aParts.second &&
+           bParts.second &&
+           overlapsNonCrossing(*aParts.second, *bParts.second);
 }
 
 double inwardSampleEpsilon(double span) {
@@ -1300,7 +1333,8 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
 
     // cesium-native: project ALL rectangles to provider projection space at
     // the pipeline entry boundary so that X and Y are symmetric throughout.
-    const RasterOverlayProjection projType = projectionForScheme(scheme);
+    const RasterOverlayProjection projType =
+        projectionForSourceScheme(scheme);
     const Rectangle projectedTarget = projectGeographicToProvider(targetBounds, projType);
 
     double projectedWidthPerPixel = std::numeric_limits<double>::max();
@@ -2806,11 +2840,14 @@ void RasterOverlayTileProvider::compactActiveMappedSourceSetOrderLocked(
 
 RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
                                                      const TileScheme& scheme,
-                                                     std::unique_ptr<RasterTextureUploader> textureUploader)
+                                                     std::unique_ptr<RasterTextureUploader> textureUploader,
+                                                     RasterOverlayGeoreference georeference)
     : provider_(provider)
     , scheme_(scheme)
-    , projection_(projectionForScheme(scheme))
+    , projection_(projectionForScheme(scheme, georeference))
     , textureUploader_(std::move(textureUploader)) {
+    sourceCoverageRectangle_ =
+        worldRectangleToRasterSource(coverageRectangle_, projection_);
     refreshSourceAssetDepot();
 }
 
@@ -2956,8 +2993,10 @@ void RasterOverlayTileProvider::setCoverageRectangle(
         return;
     }
     coverageRectangle_ = coverageRectangle;
+    sourceCoverageRectangle_ =
+        worldRectangleToRasterSource(coverageRectangle_, projection_);
     const Rectangle effectiveCoverage =
-        effectiveCoverageRectangle(scheme_, coverageRectangle_);
+        effectiveCoverageRectangle(scheme_, sourceCoverageRectangle_);
     invalidateSourceAssetDepotCache();
     for (auto it = tiles_.begin(); it != tiles_.end();) {
         if (it->first.rfind("mapped-raster/", 0) == 0 || !it->second) {
@@ -3327,7 +3366,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     if (!provider_.supportsTile(key)) return nullptr;
     Rectangle geographicBounds = scheme_.tileToRectangle(key);
     const Rectangle effectiveCoverage =
-        effectiveCoverageRectangle(scheme_, coverageRectangle_);
+        effectiveCoverageRectangle(scheme_, sourceCoverageRectangle_);
     if (!geographicBounds.computeIntersection(effectiveCoverage)) return nullptr;
     Rectangle bounds =
         projectGeographicToProvider(geographicBounds, projection_);
@@ -3359,7 +3398,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     const Rectangle geometryBounds =
         unprojectProviderToGeographic(providerGeometryBounds, projection_);
     const Rectangle effectiveCoverage =
-        effectiveCoverageRectangle(scheme_, coverageRectangle_);
+        effectiveCoverageRectangle(scheme_, sourceCoverageRectangle_);
     const std::optional<Rectangle> sourceBounds =
         mapGeometryBoundsToImageryCoverage(
             geometryBounds,
@@ -3645,7 +3684,7 @@ bool RasterOverlayTileProvider::loadMappedRasterTile(
         unprojectProviderToGeographic(outputBounds, projection_);
     RasterSourceTileMapping sourceTiles;
     const Rectangle effectiveCoverage =
-        effectiveCoverageRectangle(scheme_, coverageRectangle_);
+        effectiveCoverageRectangle(scheme_, sourceCoverageRectangle_);
     if (tile.hasMappedSourceList() &&
         tile.getMappedSourceBounds().computeIntersection(
             effectiveCoverage)) {

@@ -9,6 +9,7 @@
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Gcj02CoordinateTransform.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/debug/Policies.h"
@@ -363,7 +364,32 @@ public:
             callback(key, nullptr);
             return;
         }
-        callback(key, makeImage(256, 256, static_cast<uint8_t>(key.z)));
+        if (!encodeQuadrants) {
+            callback(key, makeImage(256, 256, static_cast<uint8_t>(key.z)));
+            return;
+        }
+
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 256;
+        image->height = 256;
+        image->channels = 4;
+        image->pixels.resize(256u * 256u * 4u);
+        for (int y = 0; y < image->height; ++y) {
+            for (int x = 0; x < image->width; ++x) {
+                const size_t offset =
+                    (static_cast<size_t>(y) * 256u +
+                     static_cast<size_t>(x)) *
+                    4u;
+                image->pixels[offset + 0] =
+                    static_cast<uint8_t>(key.z);
+                image->pixels[offset + 1] =
+                    static_cast<uint8_t>(x >= 128);
+                image->pixels[offset + 2] =
+                    static_cast<uint8_t>(y >= 128);
+                image->pixels[offset + 3] = 255;
+            }
+        }
+        callback(key, std::move(image));
     }
     std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t*, size_t) override {
@@ -376,6 +402,7 @@ public:
     std::string schemeIdValue = "XYZ-WebMercator";
     int tileWidthValue = 256;
     int tileHeightValue = 256;
+    bool encodeQuadrants = false;
     std::vector<TileKey> requestedKeys;
 };
 
@@ -797,6 +824,209 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomFollowsCesiumTargetScreenPixe
     ASSERT_NE(nullptr, maxClampedTile);
     EXPECT_FALSE(maxClampedTile->isMappedRasterTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxClampedTile->getTileID());
+}
+
+// GCJ-02 只在源网格是严格 EPSG:3857 时接管。这条钉的是**拒绝要可见**:
+// OpenGlobus-Earth 的 crsProfile 是 "EPSG:3857+polar-lonlat",配了 GCJ 也会掉回
+// 非 GCJ 投影,而屏幕上「没配」和「配了被吃掉」都是中国境内偏 ~500m,分不开。
+// getProjection() 是唯一的生效判据(EnvSnap boot 的 proj= 字段就读它),所以它
+// 必须真的报出降级后的值,而不是回显请求值。
+TEST(RasterOverlayLifecycleTest,
+     Gcj02WebMercatorRejectedOnNonPlainWebMercatorScheme) {
+    ConfigurableImageryProvider imagery;
+    auto openGlobus = TileScheme::createOpenGlobusEarth();
+    ASSERT_NE("EPSG:3857", openGlobus->crsProfile());
+    RasterOverlayTileProvider rejected(
+        imagery,
+        *openGlobus,
+        nullptr,
+        RasterOverlayGeoreference::Gcj02WebMercator);
+    EXPECT_NE(
+        RasterOverlayProjection::Gcj02WebMercator,
+        rejected.getProjection());
+
+    // 同一 georeference 在严格 EPSG:3857 上必须接管 —— 否则上面的 EXPECT_NE
+    // 会在「GCJ 整体失效」时也变绿,守卫自己就成了同义反复。
+    auto xyz = TileScheme::createXYZWebMercator();
+    ASSERT_EQ("EPSG:3857", xyz->crsProfile());
+    RasterOverlayTileProvider accepted(
+        imagery,
+        *xyz,
+        nullptr,
+        RasterOverlayGeoreference::Gcj02WebMercator);
+    EXPECT_EQ(
+        RasterOverlayProjection::Gcj02WebMercator,
+        accepted.getProjection());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     Gcj02WebMercatorPlansSourceTilesInGcjCoordinates) {
+    ConfigurableImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *scheme,
+        nullptr,
+        RasterOverlayGeoreference::Gcj02WebMercator);
+    ASSERT_EQ(
+        RasterOverlayProjection::Gcj02WebMercator,
+        provider.getProjection());
+
+    const Rectangle worldBounds =
+        Rectangle::fromDegrees(106.5065, 29.6155, 106.5095, 29.6185);
+    const Rectangle projectedBounds =
+        projectWorldRectangleForRasterOverlay(
+            worldBounds,
+            RasterOverlayProjection::Gcj02WebMercator);
+    auto mapping = provider.mapRasterTilesToGeometryTile(
+        projectedBounds,
+        1024.0,
+        1024.0);
+
+    ASSERT_NE(nullptr, mapping.tile);
+    ASSERT_FALSE(mapping.sourceTiles.empty());
+    EXPECT_GE(mapping.sourceTiles.sourceZoom, 16);
+    const Cartographic worldCenter =
+        Cartographic::fromDegrees(106.508, 29.617);
+    const Cartographic sourceCenter =
+        Gcj02CoordinateTransform::fromWgs84(worldCenter);
+    const TileKey expectedSourceKey = scheme->positionToTile(
+        sourceCenter.longitude(),
+        sourceCenter.latitude(),
+        mapping.sourceTiles.sourceZoom);
+    const TileKey unshiftedKey = scheme->positionToTile(
+        worldCenter.longitude(),
+        worldCenter.latitude(),
+        mapping.sourceTiles.sourceZoom);
+
+    EXPECT_NE(expectedSourceKey, unshiftedKey);
+    EXPECT_NE(
+        mapping.sourceTiles.sourceKeys.end(),
+        std::find(
+            mapping.sourceTiles.sourceKeys.begin(),
+            mapping.sourceTiles.sourceKeys.end(),
+            expectedSourceKey));
+}
+
+TEST(RasterOverlayLifecycleTest,
+     Gcj02WebMercatorKeepsOutsideChinaExactTileDirect) {
+    ConfigurableImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *scheme,
+        nullptr,
+        RasterOverlayGeoreference::Gcj02WebMercator);
+    const TileKey key{scheme->id(), 18, 76012, 99201};
+    const Rectangle worldBounds = scheme->tileToRectangle(key);
+
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectWorldRectangleForRasterOverlay(
+                worldBounds,
+                RasterOverlayProjection::Gcj02WebMercator),
+            512.0,
+            512.0);
+
+    ASSERT_NE(nullptr, mapping.tile);
+    EXPECT_TRUE(mapping.directTile);
+    EXPECT_FALSE(mapping.tile->isMappedRasterTile());
+    EXPECT_EQ(key, mapping.tile->getTileID());
+    ASSERT_EQ(1u, mapping.sourceTiles.sourceKeys.size());
+    EXPECT_EQ(key, mapping.sourceTiles.sourceKeys.front());
+    EXPECT_TRUE(
+        worldBounds.equalsEpsilon(
+            mapping.sourceTiles.sourceBounds,
+            1e-14));
+}
+
+TEST(RasterOverlayLifecycleTest,
+     Gcj02WebMercatorKeepsAntimeridianSourcePlanWrapped) {
+    ConfigurableImageryProvider imagery;
+    imagery.minZoomValue = 3;
+    imagery.maxZoomValue = 3;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *scheme,
+        nullptr,
+        RasterOverlayGeoreference::Gcj02WebMercator);
+    const Rectangle worldBounds =
+        Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0);
+
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectWorldRectangleForRasterOverlay(
+                worldBounds,
+                RasterOverlayProjection::Gcj02WebMercator),
+            256.0,
+            256.0);
+
+    ASSERT_NE(nullptr, mapping.tile);
+    EXPECT_TRUE(mapping.sourceTiles.sourceBounds.crossesAntimeridian());
+    ASSERT_EQ(4u, mapping.sourceTiles.sourceKeys.size());
+    for (const TileKey& sourceKey : mapping.sourceTiles.sourceKeys) {
+        EXPECT_EQ(3, sourceKey.z);
+        EXPECT_TRUE(sourceKey.x == 0 || sourceKey.x == 7);
+        EXPECT_TRUE(sourceKey.y == 3 || sourceKey.y == 4);
+    }
+}
+
+TEST(RasterOverlayLifecycleTest,
+     Gcj02WebMercatorComposesAncestorFallbackInSourceCoordinates) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *scheme,
+        std::move(uploader),
+        RasterOverlayGeoreference::Gcj02WebMercator);
+
+    const Rectangle worldBounds =
+        Rectangle::fromDegrees(106.30, 29.30, 106.80, 29.80);
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectWorldRectangleForRasterOverlay(
+                worldBounds,
+                RasterOverlayProjection::Gcj02WebMercator),
+            1024.0,
+            1024.0);
+
+    ASSERT_NE(nullptr, mapping.tile);
+    ASSERT_TRUE(mapping.tile->isMappedRasterTile());
+    ASSERT_GT(mapping.sourceTiles.sourceKeys.size(), 1u);
+    imagery.failingKey = mapping.sourceTiles.sourceKeys.back();
+    imagery.encodeQuadrants = true;
+    const int sourceZoom = mapping.sourceTiles.sourceZoom;
+
+    ASSERT_TRUE(provider.loadTile(*mapping.tile));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    ASSERT_EQ(RasterOverlayTile::LoadState::Loaded,
+              mapping.tile->getState());
+    ASSERT_EQ(1, uploaderPtr->uploadCount);
+
+    const DecodedImage& image = uploaderPtr->lastUpload;
+    ASSERT_GT(image.width, 0);
+    ASSERT_GT(image.height, 0);
+    bool hasParentLevelPixel = false;
+    bool hasSourceLevelPixel = false;
+    for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        if (image.pixels[i] == sourceZoom - 1) {
+            hasParentLevelPixel = true;
+            EXPECT_EQ(
+                static_cast<uint8_t>(imagery.failingKey.x & 1),
+                image.pixels[i + 1]);
+            EXPECT_EQ(
+                static_cast<uint8_t>(imagery.failingKey.y & 1),
+                image.pixels[i + 2]);
+        }
+        hasSourceLevelPixel =
+            hasSourceLevelPixel || image.pixels[i] == sourceZoom;
+    }
+    EXPECT_TRUE(hasParentLevelPixel);
+    EXPECT_TRUE(hasSourceLevelPixel);
 }
 
 TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayLevelRange) {

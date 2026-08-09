@@ -11,7 +11,8 @@ ActivatedRasterOverlay::ActivatedRasterOverlay(RasterOverlay& overlay)
     , placeholderProvider_(std::make_unique<RasterOverlayTileProvider>(
           overlay.getProvider(),
           overlay.getTileScheme(),
-          nullptr))
+          nullptr,
+          overlay.getOptions().georeference))
     , maximumSimultaneousTileLoads_(overlay.getOptions().maximumSimultaneousTileLoads) {
     placeholderProvider_->setOwner(&overlay_);
     placeholderProvider_->maximumSimultaneousTileLoads =
@@ -33,7 +34,8 @@ RasterOverlayTileProvider* ActivatedRasterOverlay::ensureTileProvider(
         tileProvider_ = std::make_unique<RasterOverlayTileProvider>(
             overlay_.getProvider(),
             overlay_.getTileScheme(),
-            std::move(textureUploader));
+            std::move(textureUploader),
+            overlay_.getOptions().georeference);
         tileProvider_->setOwner(&overlay_);
         tileProvider_->maximumSimultaneousTileLoads =
             maximumSimultaneousTileLoads_;
@@ -115,6 +117,13 @@ bool ActivatedRasterOverlay::visible() const {
 
 float ActivatedRasterOverlay::opacity() const {
     return overlay_.opacity();
+}
+
+RasterOverlayProjection ActivatedRasterOverlay::getProjection() const {
+    // 两个 provider 用同一 scheme + 同一 georeference 构造,投影必然一致;
+    // placeholder 永远存在,所以启动段(真 provider 尚未 ensure)也读得到。
+    return tileProvider_ ? tileProvider_->getProjection()
+                         : placeholderProvider_->getProjection();
 }
 
 void ActivatedRasterOverlay::syncProviderOptionsFromOverlay() {

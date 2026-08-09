@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "../core/math/Rectangle.h"
+#include "../tiling/RasterOverlayProjection.h"
 
 namespace earth_engine {
 
@@ -66,6 +67,11 @@ public:
         RasterOverlayFallbackPolicy fallbackPolicy =
             RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
         bool blocksCompleteRenderable = true;
+
+        /// Source coordinate semantics. This changes imagery addressing and
+        /// sampling only; terrain, camera, models, and picking remain WGS84.
+        RasterOverlayGeoreference georeference =
+            RasterOverlayGeoreference::Standard;
 
     };
 

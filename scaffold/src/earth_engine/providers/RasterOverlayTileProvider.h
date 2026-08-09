@@ -53,7 +53,9 @@ public:
     RasterOverlayTileProvider(ImageryProvider& provider,
                               const TileScheme& scheme,
                               std::unique_ptr<RasterTextureUploader> textureUploader =
-                                  nullptr);
+                                  nullptr,
+                              RasterOverlayGeoreference georeference =
+                                  RasterOverlayGeoreference::Standard);
     ~RasterOverlayTileProvider();
 
     RasterOverlayTileProvider(const RasterOverlayTileProvider&) = delete;
@@ -404,6 +406,7 @@ private:
     std::unique_ptr<RasterTextureUploader> textureUploader_;
     class RasterOverlay* owner_ = nullptr;
     Rectangle coverageRectangle_ = Rectangle::MAXIMUM;
+    Rectangle sourceCoverageRectangle_ = Rectangle::MAXIMUM;
 
     /// All cached tiles retained by this provider (key → shared_ptr).
     TileCache tiles_;

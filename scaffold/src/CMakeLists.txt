@@ -73,6 +73,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/geodesy/Ellipsoid.cpp
     earth_engine/core/geodesy/GeographicProjection.h
     earth_engine/core/geodesy/GeographicProjection.cpp
+    earth_engine/core/geodesy/Gcj02CoordinateTransform.h
+    earth_engine/core/geodesy/Gcj02CoordinateTransform.cpp
     earth_engine/core/geodesy/WebMercatorProjection.h
     earth_engine/core/geodesy/WebMercatorProjection.cpp
     earth_engine/core/geodesy/Projection.h
@@ -291,6 +293,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileBoundingVolume.cpp
     earth_engine/tiling/TileScheme.h
     earth_engine/tiling/TileScheme.cpp
+    earth_engine/tiling/RasterOverlayProjection.h
+    earth_engine/tiling/RasterOverlayProjection.cpp
     earth_engine/tiling/SurfaceTile.h
     earth_engine/tiling/SurfaceRasterBinding.h
     earth_engine/tiling/SurfaceRasterBinding.cpp

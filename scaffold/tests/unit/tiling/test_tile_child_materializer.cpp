@@ -11,6 +11,7 @@
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/RasterOverlayProjection.h"
 #include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
 #include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
@@ -2209,6 +2210,139 @@ TEST(TileChildMaterializerTest, RasterUpsampledChildrenKeepSchemeBoundsAndRemain
         EXPECT_DOUBLE_EQ(
             25.0,
             child->content.renderContent.terrainMaximumHeight());
+    }
+}
+
+TEST(TileRasterUpsampledChildMaterializerTest,
+     GcjImageryUsesStableWorldProjectionForGeometrySubdivision) {
+    RasterOverlayDetails geographicDetails;
+    geographicDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::Gcj02WebMercator,
+        RasterOverlayProjection::Geographic};
+    geographicDetails.rasterOverlayRectangles = {
+        Rectangle(1.0, 2.0, 3.0, 4.0),
+        Rectangle::fromDegrees(100.0, 20.0, 110.0, 30.0)};
+    EXPECT_EQ(
+        RasterOverlayProjection::Geographic,
+        TileRasterUpsampledChildMaterializer::
+            geometryProjectionForRasterDetail(
+                geographicDetails,
+                RasterOverlayProjection::Gcj02WebMercator));
+
+    RasterOverlayDetails webMercatorDetails;
+    webMercatorDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::Gcj02WebMercator,
+        RasterOverlayProjection::WebMercator};
+    webMercatorDetails.rasterOverlayRectangles = {
+        Rectangle(1.0, 2.0, 3.0, 4.0),
+        Rectangle(5.0, 6.0, 7.0, 8.0)};
+    EXPECT_EQ(
+        RasterOverlayProjection::WebMercator,
+        TileRasterUpsampledChildMaterializer::
+            geometryProjectionForRasterDetail(
+                webMercatorDetails,
+                RasterOverlayProjection::Gcj02WebMercator));
+
+    RasterOverlayDetails gcjOnlyDetails;
+    gcjOnlyDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::Gcj02WebMercator};
+    gcjOnlyDetails.rasterOverlayRectangles = {
+        Rectangle(1.0, 2.0, 3.0, 4.0)};
+    EXPECT_FALSE(
+        TileRasterUpsampledChildMaterializer::
+            geometryProjectionForRasterDetail(
+                gcjOnlyDetails,
+                RasterOverlayProjection::Gcj02WebMercator));
+}
+
+TEST(TileRasterUpsampledChildMaterializerTest,
+     GcjMoreDetailMaterializesChildrenInStableWorldProjection) {
+    DebugImageryProvider imagery;
+    auto overlayScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *overlayScheme,
+        nullptr,
+        RasterOverlayGeoreference::Gcj02WebMercator);
+    auto terrainScheme = TileScheme::createGeographicTMS();
+    TilesetTile parent(
+        TileKey{terrainScheme->id(), 0, 0, 0},
+        Rectangle::fromDegrees(106.30, 29.30, 106.80, 29.80));
+    parent.geometricError = 100.0;
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds),
+        Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    parent.content.renderContent.markRenderContentReady();
+    parent.content.renderContent.setTerrainHeightRange(-20.0, 120.0);
+
+    RasterOverlayDetails* details =
+        parent.content.renderContent.mutableRasterOverlayDetails();
+    details->rasterOverlayProjections = {
+        RasterOverlayProjection::Gcj02WebMercator,
+        RasterOverlayProjection::Geographic};
+    details->rasterOverlayRectangles = {
+        projectWorldRectangleForRasterOverlay(
+            parent.bounds,
+            RasterOverlayProjection::Gcj02WebMercator),
+        parent.bounds};
+    details->boundingRegion = {parent.bounds, -20.0, 120.0};
+
+    RasterMappedToTilesetTile& mapped =
+        parent.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        parent.key,
+        parent.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missingProjections);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Yes,
+        mapped.update(
+            parent.key,
+            parent.content.renderContent.rasterOverlayDetails(),
+            256.0,
+            256.0,
+            provider,
+            nullptr,
+            missingProjections));
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure =
+        [&tiles, &terrainScheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    terrainScheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+
+    ASSERT_TRUE(TileRasterUpsampledChildMaterializer::materialize(
+        parent,
+        100.0,
+        ensure));
+    ASSERT_EQ(4u, parent.children.size());
+    for (TilesetTile* child : parent.children) {
+        ASSERT_NE(nullptr, child);
+        EXPECT_EQ(terrainScheme->tileToRectangle(child->key), child->bounds);
+        EXPECT_TRUE(child->content.isRasterDetailUpsample());
+        EXPECT_TRUE(child->content.derivesTerrainFromParent());
     }
 }
 

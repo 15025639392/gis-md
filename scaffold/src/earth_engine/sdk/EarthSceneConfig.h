@@ -127,6 +127,8 @@ struct RasterOverlaySourceConfig {
     RasterOverlayFallbackPolicy fallbackPolicy =
         RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
     bool blocksCompleteRenderable = true;
+    RasterOverlayGeoreference georeference =
+        RasterOverlayGeoreference::Standard;
     std::string wmsVersion = "1.3.0";
     std::string wmsLayers;
     std::string wmsFormat = "image/png";

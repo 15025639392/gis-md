@@ -1,7 +1,5 @@
 #pragma once
 
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
 #include "../core/math/MathUtils.h"
 #include "SurfaceTile.h"
 
@@ -52,6 +50,12 @@ public:
                 parentDetails.rasterOverlayRectangles[i];
             const RasterOverlayProjection projection =
                 parentDetails.rasterOverlayProjections[i];
+            if (projection ==
+                RasterOverlayProjection::Gcj02WebMercator) {
+                childDetails.rasterOverlayRectangles.push_back(
+                    projectBounds(childBounds, projection));
+                continue;
+            }
             const Rectangle projectedParentBounds =
                 projectBounds(parentBounds, projection);
             const Rectangle projectedChildBounds =
@@ -85,15 +89,7 @@ public:
 private:
     static Rectangle projectBounds(const Rectangle& bounds,
                                    RasterOverlayProjection projection) {
-        switch (projection) {
-            case RasterOverlayProjection::Geographic:
-                return bounds;
-            case RasterOverlayProjection::WebMercator:
-                return projectRectangleSimple(
-                    WebMercatorProjection(Ellipsoid::WGS84()),
-                    bounds);
-        }
-        return bounds;
+        return projectWorldRectangleForRasterOverlay(bounds, projection);
     }
 
     static double relativeX(const Rectangle& parentBounds, double x) {

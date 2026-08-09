@@ -7,6 +7,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/RasterOverlayProjection.h"
 #include "earth_engine/tiling/TileFillProxyPreparer.h"
 #include "earth_engine/tiling/TilesetTile.h"
 #include "../../helpers/MockRenderDevice.h"
@@ -104,6 +105,51 @@ TEST(EllipsoidTerrainMeshBuilderTest,
     EXPECT_NEAR(1.0f, uv[sw][1], 1e-5f);
     EXPECT_NEAR(1.0f, uv[se][0], 1e-5f);
     EXPECT_NEAR(1.0f, uv[se][1], 1e-5f);
+}
+
+TEST(EllipsoidTerrainMeshBuilderTest,
+     Gcj02WebMercatorBuildsDistinctPerVertexOverlayTexcoords) {
+    const Rectangle bounds =
+        Rectangle::fromDegrees(106.50, 29.55, 106.60, 29.65);
+    const int gridSize = 4;
+    auto model = EllipsoidTerrainMeshBuilder::makeModel(
+        bounds,
+        std::vector<RasterOverlayProjection>{
+            RasterOverlayProjection::WebMercator,
+            RasterOverlayProjection::Gcj02WebMercator},
+        gridSize);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    ASSERT_EQ(2u, model->rasterOverlayDetails.rasterOverlayRectangles.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[1].size());
+
+    const size_t centerIndex = 2u * 5u + 2u;
+    const auto standardUv = primitive.vertexTexCoords[0][centerIndex];
+    const auto gcjUv = primitive.vertexTexCoords[1][centerIndex];
+    EXPECT_GT(
+        std::abs(static_cast<double>(standardUv[0] - gcjUv[0])) +
+            std::abs(static_cast<double>(standardUv[1] - gcjUv[1])),
+        1e-7);
+
+    const Rectangle& projectedBounds =
+        model->rasterOverlayDetails.rasterOverlayRectangles[1];
+    for (int y = 0; y <= 20; ++y) {
+        for (int x = 0; x <= 20; ++x) {
+            const Cartographic sample = Cartographic::fromDegrees(
+                106.50 + 0.10 * static_cast<double>(x) / 20.0,
+                29.55 + 0.10 * static_cast<double>(y) / 20.0);
+            const Vec3 projected = projectWorldPositionForRasterOverlay(
+                sample,
+                RasterOverlayProjection::Gcj02WebMercator);
+            EXPECT_GE(projected.x(), projectedBounds.west());
+            EXPECT_LE(projected.x(), projectedBounds.east());
+            EXPECT_GE(projected.y(), projectedBounds.south());
+            EXPECT_LE(projected.y(), projectedBounds.north());
+        }
+    }
 }
 
 TEST(EllipsoidTerrainMeshBuilderTest,

@@ -9,6 +9,7 @@
 
 #include "../core/math/Rectangle.h"
 #include "../threading/CancellationToken.h"
+#include "../tiling/RasterOverlayProjection.h"
 #include "../tiling/TileKey.h"
 
 namespace earth_engine {
@@ -17,6 +18,7 @@ class RenderDevice;
 class Texture;
 class ActivatedRasterOverlay;
 class RasterOverlayTileProvider;
+class TileScheme;
 struct DecodedImage;
 struct RenderCommand;
 struct SelectorView;
@@ -181,6 +183,57 @@ public:
     /// 同 XYZ web-mercator 分块,§前序已证 aligned)。纯函数,可单测(勿用 lat 均分)。
     static void enumerateSubtileKeys(const TileKey& tileKey, int sourceZoom,
                                      std::vector<TileKey>& out);
+
+    /// 一个几何瓦片在**影像源瓦片空间**中的落位。
+    ///
+    /// 页存储原本把几何瓦片网格当影像瓦片网格用(`enumerateSubtileKeys` 的
+    /// `x = tileKey.x*gridN+dx` 就是这个假设的写照)。标准 WebMercator 底图下二者
+    /// 恰好重合,所以一直没暴露;GCJ-02 底图的源瓦片以偏移后的坐标编址,重合被打破
+    /// —— 几何瓦片的覆盖范围落在源网格的**非整数**位置上。
+    ///
+    /// 这里把 cell 网格重新定义成**源瓦片网格**:每个 cell 仍恰好是一张源瓦片
+    /// (页内容逐字节不变、compose 不需要重采样),错位改由 origin/span 承载。
+    ///
+    /// 单位是**源瓦片**:片元的 `t = origin + uv*span` → `cell=floor(t)`、
+    /// `sampleUv=t-cell`。标准 overlay 退化为 `origin=(0,0)`、`span=(gridN,gridN)`,
+    /// 表达式与改造前逐字符相同 = 零回归判据(见 degenerate 断言)。
+    struct SourceTilePlacement {
+        int x0 = 0;          ///< 覆盖范围最小源瓦片 x
+        int y0 = 0;          ///< 覆盖范围最小源瓦片 y(NW:y 随南增)
+        int cellsX = 1;      ///< 覆盖范围宽(源瓦片数)
+        int cellsY = 1;      ///< 覆盖范围高(源瓦片数)
+        double originU = 0.0;  ///< 瓦片 UV 原点在覆盖范围内的位置(单位:源瓦片)
+        double originV = 0.0;
+        double spanU = 1.0;    ///< 瓦片 UV 跨度(单位:源瓦片)
+        double spanV = 1.0;
+
+        /// 是否退化成「几何格 == 源格」——标准 overlay 必须为 true,
+        /// 否则说明改造在不该生效的地方生效了。
+        bool isDegenerate(int gridN) const {
+            return cellsX == gridN && cellsY == gridN &&
+                   originU == 0.0 && originV == 0.0 &&
+                   spanU == static_cast<double>(gridN) &&
+                   spanV == static_cast<double>(gridN);
+        }
+    };
+
+    /// 求 `detailsRect`(几何瓦片在 overlay 采样空间的矩形,即逐顶点 UV 归一化所用
+    /// 的那个矩形)在 `sourceZoom` 源瓦片网格中的落位。
+    ///
+    /// @param scheme      影像源的分块方案(决定源瓦片编址)
+    /// @param detailsRect 瓦片的 overlay 采样空间矩形。**必须**取自
+    ///                    `RasterOverlayDetails`,不要就地重算 —— details 可能来自
+    ///                    模型真实包围(见 TileRasterOverlayDetailsGenerator 的注释),
+    ///                    与瓦片声明矩形不等,重算会让 UV 与 cell 网格错开。
+    /// @param projection  overlay 生效投影(决定 detailsRect 与源经纬的换算)
+    /// @param sourceZoom  源瓦片层级
+    /// @param gridN       几何等分数,仅用于退化断言
+    static SourceTilePlacement placeTileInSourceGrid(
+        const TileScheme& scheme,
+        const Rectangle& detailsRect,
+        RasterOverlayProjection projection,
+        int sourceZoom,
+        int gridN);
 
     /// 对本帧可见瓦片跑门② determination + 插桩(见类顶注释)。overlay 为空 /
     /// provider 为空 / 无可见瓦片 → no-op。在 Engine tick() 之前、每帧调一次。
@@ -374,6 +427,12 @@ private:
     };
     struct DetTileCacheEntry {
         int gridN = 1;
+        // cell 范围(源瓦片网格)。与 gridN 分开存:GCJ 下 gridN 不变而范围可能
+        // 整体平移,只比 gridN 会把上一格的 kept 当本格用 = 屏幕错开一整张源瓦片。
+        int cellsX = 0;
+        int cellsY = 0;
+        int cellX0 = 0;
+        int cellY0 = 0;
         uint64_t lastFrame = 0;  // 访问帧;sweep 清非本帧可见瓦片(同 tileIndirs_)
         std::vector<DetKeptCell> kept;
         // 本瓦片被 SSE 地板剔掉的 cell 数(合批资格用,见 fullyResident)。
@@ -394,6 +453,12 @@ private:
         double minH = 0.0;
         double maxH = 0.0;
         SchemeId imgSchemeId;  // 影像 provider 的 schemeId(interned handle)
+        // 瓦片在**源瓦片网格**中的落位。标准 overlay 恒退化成几何等分
+        // (isDegenerate),GCJ 等源网格不对齐的 overlay 才非平凡。
+        SourceTilePlacement placement;
+        // 片元该用哪套 texcoord 定位 cell。页存储原本硬编码 set 0 = 地形 scheme
+        // 的投影;GCJ 的 UV 烘在另一套里,取错就等于这个特性没生效。
+        int texCoordSet = 0;
     };
     std::unordered_map<uint64_t, DetTileCacheEntry> detTileCache_;  // tileKey→几何缓存
     std::vector<DetTileParam> detParamsScratch_;

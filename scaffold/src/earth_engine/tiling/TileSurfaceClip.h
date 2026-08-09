@@ -3,10 +3,6 @@
 #include "TileFillGeometrySignature.h"
 #include "TilesetTile.h"
 
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
-#include "../core/geodesy/WebMercatorProjection.h"
-
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -29,11 +25,9 @@ struct TileSurfaceClip {
             fillSignature) {
             projection = fillSignature->projection;
             texcoordRect =
-                projection == RasterOverlayProjection::WebMercator
-                ? projectRectangleSimple(
-                      WebMercatorProjection(Ellipsoid::WGS84()),
-                      fillSignature->bounds.splitAtAntimeridian().first)
-                : fillSignature->bounds;
+                projectWorldRectangleForRasterOverlay(
+                    fillSignature->bounds.splitAtAntimeridian().first,
+                    projection);
         } else if (
             commandTile.content.renderContent
                 .hasRasterOverlayDetailsContent()) {
@@ -48,11 +42,9 @@ struct TileSurfaceClip {
         }
 
         const Rectangle descendantProjected =
-            projection == RasterOverlayProjection::WebMercator
-                ? projectRectangleSimple(
-                      WebMercatorProjection(Ellipsoid::WGS84()),
-                      descendantBounds.splitAtAntimeridian().first)
-                : descendantBounds;
+            projectWorldRectangleForRasterOverlay(
+                descendantBounds.splitAtAntimeridian().first,
+                projection);
 
         const double ancestorWidth = texcoordRect.width();
         const double ancestorHeight = texcoordRect.computeHeight();

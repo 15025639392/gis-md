@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../tiling/RasterOverlayProjection.h"
 #include "../tiling/TileRasterOverlayUploadResult.h"
 
 #include <cstdint>
@@ -64,6 +65,10 @@ public:
     /// The overlay configuration.
     RasterOverlay& getOverlay() { return overlay_; }
     const RasterOverlay& getOverlay() const { return overlay_; }
+
+    /// **生效**的采样投影(不是配置请求值)。georeference 会被 scheme 闸口拒绝,
+    /// 请求 GCJ 而落成 merc/geo 时画面上与「没配」无法区分,所以诊断必须读这个。
+    RasterOverlayProjection getProjection() const;
 
 private:
     void syncProviderOptionsFromOverlay();

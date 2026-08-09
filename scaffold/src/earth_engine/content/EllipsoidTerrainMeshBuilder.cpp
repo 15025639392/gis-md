@@ -3,9 +3,7 @@
 #include "GltfModel.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
 #include "../core/geodesy/QuadtreeGeometricError.h"
-#include "../core/geodesy/WebMercatorProjection.h"
 #include "../core/math/MathUtils.h"
 
 #include <algorithm>
@@ -44,12 +42,9 @@ void setLocalPosition(SurfaceVertex& vertex, const Vec3& localPosition) {
 
 Rectangle projectRasterRectangle(const Rectangle& geographicRectangle,
                                  RasterOverlayProjection projection) {
-    if (projection == RasterOverlayProjection::WebMercator) {
-        return projectRectangleSimple(
-            WebMercatorProjection(Ellipsoid::WGS84()),
-            geographicRectangle);
-    }
-    return geographicRectangle;
+    return projectWorldRectangleForRasterOverlay(
+        geographicRectangle,
+        projection);
 }
 
 void rewriteProjectionTexCoords(GltfPrimitive& primitive,
@@ -68,7 +63,6 @@ void rewriteProjectionTexCoords(GltfPrimitive& primitive,
     const double width = projectedRectangle.width();
     const double height = projectedRectangle.height();
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
-    WebMercatorProjection webMercator(ellipsoid);
     for (const SurfaceVertex& vertex : primitive.vertices) {
         const std::optional<Cartographic> cartographic =
             ellipsoid.tryCartesianToCartographic(vertex.positionEcef);
@@ -76,12 +70,8 @@ void rewriteProjectionTexCoords(GltfPrimitive& primitive,
             texCoords.push_back({0.0f, 0.0f});
             continue;
         }
-        const Vec3 projected = projection == RasterOverlayProjection::WebMercator
-            ? projectPosition(webMercator, *cartographic)
-            : Vec3(
-                  cartographic->longitude(),
-                  cartographic->latitude(),
-                  cartographic->height());
+        const Vec3 projected =
+            projectWorldPositionForRasterOverlay(*cartographic, projection);
         double projectedX = projected.x();
         if (projection == RasterOverlayProjection::Geographic &&
             projectedRectangle.crossesAntimeridian() &&

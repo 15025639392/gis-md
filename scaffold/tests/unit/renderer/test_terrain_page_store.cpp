@@ -10,6 +10,8 @@
 #include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/renderer/TerrainPageStore.h"
+#include "earth_engine/tiling/RasterOverlayProjection.h"
+#include "earth_engine/tiling/TileScheme.h"
 #include "../../helpers/MockRenderDevice.h"
 
 using namespace earth_engine;
@@ -668,5 +670,136 @@ TEST(PageSourceAssembler, ConcurrentOutOfOrderAcceptMatchesSequential) {
         ASSERT_EQ(0, pendingTasks.load());
         ASSERT_TRUE(shared.complete());
         EXPECT_EQ(expected, shared.texels()) << "round=" << round;
+    }
+}
+
+// ───────── D 方案:cell 网格 = 影像源瓦片网格 ─────────
+//
+// 页存储原本用 `tileKey.x*gridN+dx` 直接推源瓦片 key,等于假设几何网格 == 源网格。
+// GCJ-02 底图的源瓦片以偏移坐标编址,这个假设破裂 —— 真机上表现为高德影像完全不被
+// 校正(20× 放大偏移屏幕仍逐像素不变)。placeTileInSourceGrid 把 cell 网格重定义成
+// 源瓦片网格,错位由 origin/span 承载。
+
+namespace {
+
+Rectangle mercatorTileRect(const TileScheme& scheme, int z, int x, int y) {
+    return projectRasterSourceRectangle(
+        scheme.tileToRectangle(TileKey{scheme.id(), z, x, y}),
+        RasterOverlayProjection::WebMercator);
+}
+
+} // namespace
+
+// 标准 overlay 必须逐字段退化成改造前的 `uv*gridN`。这条是零回归判据:
+// 它红 = D 改动漏进了本不该生效的路径。
+TEST(TerrainPageStorePlacement, StandardOverlayDegeneratesToGeometryGrid) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    for (int depth = 0; depth <= 3; ++depth) {
+        const int gridN = 1 << depth;
+        const int tileZ = 12;
+        const int tileX = 3260;
+        const int tileY = 1694;
+        const Rectangle details = mercatorTileRect(*scheme, tileZ, tileX, tileY);
+        const TerrainPageStore::SourceTilePlacement placement =
+            TerrainPageStore::placeTileInSourceGrid(
+                *scheme,
+                details,
+                RasterOverlayProjection::WebMercator,
+                tileZ + depth,
+                gridN);
+
+        EXPECT_TRUE(placement.isDegenerate(gridN))
+            << "depth=" << depth
+            << " cells=" << placement.cellsX << "x" << placement.cellsY
+            << " origin=" << placement.originU << "," << placement.originV
+            << " span=" << placement.spanU << "," << placement.spanV;
+        EXPECT_EQ(tileX * gridN, placement.x0) << "depth=" << depth;
+        EXPECT_EQ(tileY * gridN, placement.y0) << "depth=" << depth;
+    }
+}
+
+// GCJ 下几何瓦片落在源网格的非整数位置 → 必须多取一列一行,且 origin 非零。
+TEST(TerrainPageStorePlacement, Gcj02ShiftsOntoNonIntegerSourcePosition) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const int tileZ = 12;
+    const int tileX = 3260;   // 重庆
+    const int tileY = 1694;
+    const int gridN = 4;
+    const Rectangle worldRect =
+        scheme->tileToRectangle(TileKey{scheme->id(), tileZ, tileX, tileY});
+    const Rectangle details = projectWorldRectangleForRasterOverlay(
+        worldRect, RasterOverlayProjection::Gcj02WebMercator);
+
+    const TerrainPageStore::SourceTilePlacement placement =
+        TerrainPageStore::placeTileInSourceGrid(
+            *scheme,
+            details,
+            RasterOverlayProjection::Gcj02WebMercator,
+            tileZ + 2,
+            gridN);
+
+    EXPECT_FALSE(placement.isDegenerate(gridN));
+    // 平移不足一格 → 覆盖范围恰好多一列一行(不是 4 倍)。
+    EXPECT_EQ(gridN + 1, placement.cellsX);
+    EXPECT_EQ(gridN + 1, placement.cellsY);
+    EXPECT_GT(placement.originU, 0.0);
+    EXPECT_GT(placement.originV, 0.0);
+    EXPECT_LT(placement.originU, 1.0);
+    EXPECT_LT(placement.originV, 1.0);
+}
+
+// 核心不变量:片元 t = origin + uv*span 必须落在 [0, cells] 内,且 uv 端点对应的
+// 源瓦片就是覆盖 detailsRect 端点的那一张。错一格 = 屏幕上整片错位一整张瓦片。
+TEST(TerrainPageStorePlacement, UvMapsIntoCoveringRangeForBothProjections) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const int tileZ = 12;
+    const int tileY = 1694;
+    const RasterOverlayProjection projections[] = {
+        RasterOverlayProjection::WebMercator,
+        RasterOverlayProjection::Gcj02WebMercator};
+
+    for (RasterOverlayProjection projection : projections) {
+        for (int tileX : {3259, 3260, 3261}) {
+            const Rectangle worldRect = scheme->tileToRectangle(
+                TileKey{scheme->id(), tileZ, tileX, tileY});
+            const Rectangle details =
+                projectWorldRectangleForRasterOverlay(worldRect, projection);
+            const int gridN = 4;
+            const TerrainPageStore::SourceTilePlacement p =
+                TerrainPageStore::placeTileInSourceGrid(
+                    *scheme, details, projection, tileZ + 2, gridN);
+
+            // uv=0 与 uv=1 两端都必须留在覆盖范围内(含边界)。
+            EXPECT_GE(p.originU, -1e-9);
+            EXPECT_GE(p.originV, -1e-9);
+            EXPECT_LE(p.originU + p.spanU,
+                      static_cast<double>(p.cellsX) + 1e-9);
+            EXPECT_LE(p.originV + p.spanV,
+                      static_cast<double>(p.cellsY) + 1e-9);
+
+            // 片元 uv → cell,必须就是覆盖该 uv 对应地面点的那张源瓦片。
+            // 采样比例避开 0.5:gridN 为偶数时瓦片中点恰压在 cell 边界上,
+            // floor 与 positionToTile 会各走一边 —— 那是采样点选得差,不是错位。
+            const Rectangle sourceRect =
+                unprojectRasterSourceRectangle(details, projection);
+            for (double frac : {0.3, 0.55, 0.8}) {
+                const double tU = p.originU + frac * p.spanU;
+                const double tV = p.originV + frac * p.spanV;
+                const int cellX = p.x0 + static_cast<int>(std::floor(tU));
+                const int cellY = p.y0 + static_cast<int>(std::floor(tV));
+                // uv 在源经纬空间对应的点(V 走 NW:frac=0 在北)。
+                const TileKey expected = scheme->positionToTile(
+                    sourceRect.west() + frac * sourceRect.width(),
+                    sourceRect.north() -
+                        frac * sourceRect.computeHeight(),
+                    tileZ + 2);
+                EXPECT_EQ(expected.x, cellX)
+                    << "proj=" << static_cast<int>(projection)
+                    << " x=" << tileX << " frac=" << frac;
+                EXPECT_EQ(expected.y, cellY)
+                    << "proj=" << static_cast<int>(projection)
+                    << " x=" << tileX << " frac=" << frac;
+            }
+        }
     }
 }

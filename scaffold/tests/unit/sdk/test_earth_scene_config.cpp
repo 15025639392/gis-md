@@ -37,6 +37,8 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
     imagery.priority = RasterOverlayPriority::Low;
     imagery.fallbackPolicy = RasterOverlayFallbackPolicy::SkipUntilReady;
     imagery.blocksCompleteRenderable = false;
+    imagery.georeference =
+        RasterOverlayGeoreference::Gcj02WebMercator;
     config.rasterOverlays.push_back(imagery);
     config.fixedSimulationJulianDate = 2461188.75;
 
@@ -53,6 +55,9 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
     EXPECT_EQ(copied.rasterOverlays[0].fallbackPolicy,
               RasterOverlayFallbackPolicy::SkipUntilReady);
     EXPECT_FALSE(copied.rasterOverlays[0].blocksCompleteRenderable);
+    EXPECT_EQ(
+        RasterOverlayGeoreference::Gcj02WebMercator,
+        copied.rasterOverlays[0].georeference);
     EXPECT_DOUBLE_EQ(copied.fixedSimulationJulianDate, 2461188.75);
 }
 
