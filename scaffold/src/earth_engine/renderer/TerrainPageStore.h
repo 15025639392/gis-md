@@ -249,14 +249,44 @@ public:
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
 
-    /// 是否还有页在等 fetch / 合成 / 上传。帧级按需渲染据此判「还不能停帧」——
-    /// 影像是异步到达的,停帧就没人跑 drainReadyUploads,到货永远灌不进 array,
-    /// 表现为该片区**永久停在粗页**且没有任何报错。
+    /// 停滞多少帧之后,一个未完成的页不再算"在途"。
+    ///
+    /// 判据必须有**终止态**:页可以长期停在 partial(某个源在该 key 上根本没有
+    /// 数据 —— `partialPages` 本就是被当作稳态统计的),而"任何一页未完成"这种
+    /// 写法在那种页可见期间恒真,于是渲染循环永远停不下来。失效方向是良性的
+    /// (不冻屏、只是白烧),但白烧正是这套 gating 要消灭的东西 —— 一个没有终止
+    /// 条件的判据等于把开关焊死在"开"。
+    /// 与 pan 惯性那个 bug 同源:判据没有终止条件,而消费侧有。
+    static constexpr uint64_t kStalledPageFrames = 180;  // ~3s @60fps
+
+    /// 是否还有页在等 fetch / 合成 / 上传(**近期仍在推进的**)。帧级按需渲染
+    /// 据此判「还不能停帧」—— 影像是异步到达的,停帧就没人跑 drainReadyUploads,
+    /// 到货永远灌不进 array,表现为该片区永久停在粗页且没有任何报错。
+    ///
+    /// 停滞超过 kStalledPageFrames 的页不计入:它不会因为"再画一帧"而变化,
+    /// 真到货时 fetch 回调会把页推进、下一次 determination 自然再置进度。
     bool hasWorkInFlight() const {
         for (const auto& entry : pages_) {
-            if (!entry.second.uploadComplete()) return true;
+            const PageEntry& pe = entry.second;
+            if (pageCountsAsInFlight(pe.uploadComplete(), frameId_,
+                                     pe.lastProgressFrame)) {
+                return true;
+            }
         }
         return false;
+    }
+
+    /// 单页的在途判定。提成公开纯函数是为了**可被单独证伪** —— 驱动整个页存储
+    /// 需要真 GL 上下文,而这条规则一旦没有终止态,症状是"永远停不下来白烧电",
+    /// 在任何截图和帧率读数里都看不出来。
+    static bool pageCountsAsInFlight(bool uploadComplete,
+                                     uint64_t frameId,
+                                     uint64_t lastProgressFrame) {
+        if (uploadComplete) return false;
+        // 无符号相减:lastProgressFrame 永远 ≤ frameId(同一渲染线程写),
+        // 但 surface 重建会把 frameId_ 归零 —— 那时旧页也已随存储一起销毁。
+        if (frameId < lastProgressFrame) return true;  // 防御:视作刚有进度
+        return (frameId - lastProgressFrame) <= kStalledPageFrames;
     }
 
     /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用(**无相机,只 bind**):
@@ -336,6 +366,9 @@ private:
         /// "已合成"与"已上传"分离,跟合成走会让间接纹理采到未写入的层。
         int uploadedSources = 0;
         int totalSources = 0;
+        /// 最近一次"上传进度前进"的帧号(建页时初始化为当帧)。
+        /// **只服务于帧级按需渲染的在途判定**,不参与 resident/合成任何逻辑。
+        uint64_t lastProgressFrame = 0;
         bool uploadedTexels() const { return uploadedSources > 0; }
         bool uploadComplete() const {
             return totalSources > 0 && uploadedSources >= totalSources;

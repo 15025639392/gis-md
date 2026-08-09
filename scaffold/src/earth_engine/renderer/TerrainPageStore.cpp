@@ -807,6 +807,7 @@ void TerrainPageStore::updateVisiblePages(
                         static_cast<int>(providers_.size()),
                         config_.pageSizeTexels);
                     pe.totalSources = static_cast<int>(providers_.size());
+                    pe.lastProgressFrame = frameId_;  // 建页即算一次进度
                     kickPageFetches(kc.fetchKey, kc.pageKey, layer, pe);
                 }
                 // C-1:首源合成上传即算 resident(底图先亮),不等最慢的源。
@@ -1337,6 +1338,7 @@ void TerrainPageStore::drainReadyUploads() {
                                      item.layer);
         winUploadMs_ += perf::nowMs() - uploadStartMs;
         pe.uploadedSources = item.composedSources;
+        pe.lastProgressFrame = frameId_;  // 上传推进 = 进度(见 kStalledPageFrames)
         ++uploadedLayerTotal_;
         ++uploaded;
     }

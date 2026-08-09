@@ -272,6 +272,17 @@ bool Engine::needsFrame() {
     }
     // 进/出空闲各打一行。没有这两行,"停帧了"和"卡死了"在 logcat 里读数完全
     // 相同 —— 都是"什么都不打"。
+    // 醒着时也要周期性报 reason。只在转换时打行,"忙着所以醒着"与"某个判据卡住
+    // 所以醒着"在日志里读数完全相同(都是没有新行)—— 而后者是 gating 收益被
+    // 悄悄吃掉的唯一形态。~2 秒一行,静止期本就不会触发(空闲不进这条)。
+    if (needs) {
+        if ((framesAwake_++ % 120) == 0) {
+            platformLog(LogLevel::Info, "FrameGate", "awake reason=%s",
+                        reason ? reason : "?");
+        }
+    } else {
+        framesAwake_ = 0;
+    }
     if (!needs && !wasIdle_) {
         platformLog(LogLevel::Info, "FrameGate",
                     "idle after frame=%llu",

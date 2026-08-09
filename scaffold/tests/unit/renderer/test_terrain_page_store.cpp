@@ -803,3 +803,33 @@ TEST(TerrainPageStorePlacement, UvMapsIntoCoveringRangeForBothProjections) {
         }
     }
 }
+
+// ---- 在途判定必须有终止态 ----
+//
+// 帧级按需渲染拿这条判"还不能停帧"。页可以长期停在 partial(某个源在该 key 上
+// 根本没有数据,partialPages 本就是稳态统计项),"任何一页未完成"那种写法在这类
+// 页可见期间恒真 → 渲染循环永远停不下来。失效方向良性(不冻屏、只白烧),但白烧
+// 正是 gating 要消灭的东西:没有终止条件的判据 = 把开关焊死在"开"。
+// 与 pan 惯性那个 bug 同源。
+TEST(TerrainPageStoreInFlight, CompletedPageNeverCountsAsInFlight) {
+    EXPECT_FALSE(TerrainPageStore::pageCountsAsInFlight(
+        /*uploadComplete=*/true, /*frameId=*/1000, /*lastProgressFrame=*/0));
+}
+
+TEST(TerrainPageStoreInFlight, RecentlyProgressingPageCountsAsInFlight) {
+    EXPECT_TRUE(TerrainPageStore::pageCountsAsInFlight(false, 1000, 1000));
+    EXPECT_TRUE(TerrainPageStore::pageCountsAsInFlight(
+        false, 1000, 1000 - TerrainPageStore::kStalledPageFrames));
+}
+
+TEST(TerrainPageStoreInFlight, StalledPageStopsCountingAsInFlight) {
+    // 这条红了就意味着"某个源永远不到货的页"会把渲染循环永久顶住。
+    EXPECT_FALSE(TerrainPageStore::pageCountsAsInFlight(
+        false, 1000, 1000 - TerrainPageStore::kStalledPageFrames - 1));
+    EXPECT_FALSE(TerrainPageStore::pageCountsAsInFlight(false, 100000, 0));
+}
+
+TEST(TerrainPageStoreInFlight, FrameCounterResetIsTreatedAsProgress) {
+    // surface 重建把 frameId_ 归零。保守侧:当作刚有进度,宁可多画一帧。
+    EXPECT_TRUE(TerrainPageStore::pageCountsAsInFlight(false, 0, 5000));
+}

@@ -307,6 +307,7 @@ private:
     bool lastFramePresented_ = true;
     int settleFrames_ = 0;
     bool wasIdle_ = false;
+    uint64_t framesAwake_ = 0;
     uint64_t framesSinceIdleLog_ = 0;
 
     // 北极星 合成方案 门③ Step3 页存储原型开关 + 短路。
