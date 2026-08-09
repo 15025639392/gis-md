@@ -12,6 +12,7 @@
 #include "../content/TerrainDisplacementTemplate.h"
 #include "../providers/TerrainProvider.h"  // DecodedHeightmap
 #include "TerrainDisplacementTemplatePool.h"
+#include "TerrainTemplateEligibility.h"
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
 #include "TerrainEdgeHeightLut.h"
@@ -368,11 +369,18 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                  TerrainSurfaceCommandSource::RealTerrain)
                 ? terrainReliefFade(tile.key.z)
                 : 0.0f;
-        if (reliefFade > 0.001f &&
-            cmd.terrainSurfaceSource ==
-                TerrainSurfaceCommandSource::RealTerrain) {
-            if (TerrainDisplacementTemplatePool* pool =
-                    renderer.terrainDisplacementPool()) {
+        // 判据走 TerrainTemplateEligibility(与内容层「造不造网格」、prepare 侧
+        // 「建不建 VBO」同一处产地)。此处 pool 非空即「模板池活跃」,与另两处
+        // 经 IPrepareRendererResources 问到的是同一个 pool。
+        TerrainDisplacementTemplatePool* pool =
+            renderer.terrainDisplacementPool();
+        if (TerrainTemplateEligibility::forLoadedTile(
+                pool != nullptr,
+                tile.key.z,
+                cmd.terrainSurfaceSource ==
+                    TerrainSurfaceCommandSource::RealTerrain,
+                tile.content.renderContent.retainedHeightmap() != nullptr)) {
+            {
                 const DecodedHeightmap* hm =
                     tile.content.renderContent.retainedHeightmap();
                 // 自适应几何密度(单一事实源 terrainGridSizeForSse):几何 cap 在

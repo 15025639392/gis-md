@@ -1,4 +1,5 @@
 #include "GltfRenderResourcePreparer.h"
+#include "TerrainTemplateEligibility.h"
 
 #include "GltfRenderGeometryBuilder.h"
 #include "GpuReadyData.h"
@@ -405,10 +406,11 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
     const DecodedHeightmap* heightmap =
         tile.content.renderContent.retainedHeightmap();
     const bool skipBakedTerrainGeometry =
-        sharedTemplateGeometryActive &&
-        tile.content.renderContent.isTerrainRenderContent() &&
-        heightmap != nullptr && heightmap->valid() &&
-        terrainReliefFade(tile.key.z) > 0.001f;
+        TerrainTemplateEligibility::forLoadedTile(
+            sharedTemplateGeometryActive,
+            tile.key.z,
+            tile.content.renderContent.isTerrainRenderContent(),
+            heightmap != nullptr && heightmap->valid());
     return prepareCpuWorkFromModel(
         *model,
         transform,

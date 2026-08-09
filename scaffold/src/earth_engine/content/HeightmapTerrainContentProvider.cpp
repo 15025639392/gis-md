@@ -1,6 +1,7 @@
 #include "HeightmapTerrainContentProvider.h"
 
 #include "EllipsoidTerrainMeshBuilder.h"
+#include "../tiling/TerrainTemplateEligibility.h"
 #include "GltfModel.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -279,9 +280,8 @@ TileContentLoadResult HeightmapTerrainContentProvider::buildContent(
     // (每瓦片一次 65×65 栅格 + 裙边 + 法线 + 高低位拆分 + texcoord 重投影,
     // 全在解码线程上)。判据必须与 GltfDrawCommandBuilder / prepare 侧同源,
     // 否则会「不造又要画」→ 该瓦片空白。
-    const bool templateOnly =
-        options.terrainSharedTemplateActive &&
-        terrainReliefFade(key.z) > 0.001f;
+    const bool templateOnly = TerrainTemplateEligibility::byZoomAndPool(
+        options.terrainSharedTemplateActive, key.z);
     std::unique_ptr<GltfModel> model;
     if (templateOnly) {
         model = EllipsoidTerrainMeshBuilder::makeTemplateOnlyModel(
