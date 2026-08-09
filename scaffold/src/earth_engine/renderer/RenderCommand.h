@@ -35,7 +35,7 @@ static constexpr int kGltfInstanceMatrixStride = 100;
 // frame0)+ dispMorph(minH·fade,range·fade,morphFactor,gridN)+ clipUv +
 // layers(heightLayer,indirLayer,clipEnabled,_)。与 kGltfInstanceMatrixStride
 // 不同值 → 后端据此分派 Terrain32Instanced 布局(非 Gltf/Surface 实例布局)。
-static constexpr int kTerrainInstanceStride = 96;
+static constexpr int kTerrainInstanceStride = 128;
 
 /// 固定容量纹理槽表（inline 存储，无堆分配）。
 /// 命令拷贝是每帧热路径——常驻缓存命令逐可见瓦片拷进帧列表，vector 版本

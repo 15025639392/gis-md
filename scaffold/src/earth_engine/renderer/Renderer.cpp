@@ -214,6 +214,7 @@ uniform highp sampler2DArray u_pageStore;
 // 左上 gridN² 区),层号由 u_terrainLayers.y 给出,texelFetch 整数寻址。
 uniform highp sampler2DArray u_pageStoreIndir;
 uniform vec4 u_pageStoreParams;
+uniform vec4 u_pageStoreUv;
 uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
 
 out vec4 fragColor;
@@ -473,10 +474,21 @@ void main() {
     // fetch 定位共享 array 层 → 覆盖 mappedRaster 显更细影像。cell resident(A=1)才
     // 覆盖,miss(A=0)保留 mappedRaster(决策② 共存优雅降级)。UV 复用 set 0 mercator。
     if (u_pageStoreParams.x > 0.5) {
-        vec2 psUv = uvFromSet(0.0);
-        float gridN = max(u_pageStoreParams.y, 1.0);
-        vec2 g = clamp(psUv, 0.0, 1.0) * gridN;
-        vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
+        // cell 网格 = **影像源瓦片网格**(单位:源瓦片),不是几何瓦片等分。
+        // t = origin + uv*span → floor 即 cell 下标。标准 overlay 恒为
+        // origin=0/span=gridN,整段退化成改造前的 uv*gridN(零回归判据)。
+        // UV 取 u_pageStoreParams.w 指定的 texcoord 集:地形 set 0 是地形 scheme
+        // 的投影,GCJ 的 UV 烘在另一套里,硬编码 0 等于这个特性没生效。
+        // params.w 打包 texCoordSet(低 3 位)+ 祖先寻址相位(x/y 各 6 位)。
+        // 相位把局部 cell 下标还原成全局源瓦片下标的低位 —— 祖先子区原点必须在
+        // 全局下标上算,否则 d>0 的 cell 采错子区(块状棋盘格)。
+        float psPack = u_pageStoreParams.w;
+        vec2 psPhase = vec2(mod(floor(psPack / 8.0), 64.0),
+                            floor(psPack / 512.0));
+        vec2 psUv = uvFromSet(mod(psPack, 8.0));
+        vec2 cells = max(u_pageStoreParams.yz, vec2(1.0));
+        vec2 g = u_pageStoreUv.xy + clamp(psUv, 0.0, 1.0) * u_pageStoreUv.zw;
+        vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
         vec4 e = texelFetch(
             u_pageStoreIndir,
             ivec3(ivec2(cell), int(u_terrainLayers.y + 0.5)), 0);
@@ -486,8 +498,10 @@ void main() {
         // d=0:span=1、origin=cell → sampleUv=g-cell(逐字节=现状精页,无回归)。
         float d = floor(e.b * 255.0 + 0.5);
         vec2 span = vec2(exp2(d));
-        vec2 origin = floor(cell / span) * span;
-        vec2 sampleUv = (g - origin) / span;
+        // 祖先子区在**全局**源瓦片下标上定位(见 params.w 相位注释)。
+        vec2 gGlobal = g + psPhase;
+        vec2 origin = floor(gGlobal / span) * span;
+        vec2 sampleUv = (gGlobal - origin) / span;
         base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
@@ -1023,6 +1037,7 @@ uniform float u_clipEnabled;
 // 纹理承载,shader 不再用)w=保留。
 uniform highp sampler2DArray u_pageStore;
 uniform vec4 u_pageStoreParams;
+uniform vec4 u_pageStoreUv;
 // 稀疏虚拟纹理(Step B1):间接纹理(RGBA8 编 layer 索引)。合批 Step 2:搬共享
 // texture2DArray(固定 64² 每层,texel 写左上 gridN² 区),层号 u_terrainLayers.y。
 uniform highp sampler2DArray u_pageStoreIndir;
@@ -1188,9 +1203,21 @@ void main() {
     // gridN×gridN 页,mesh UV 落格算 layer + 层内局部 UV,单次索引 + 单次采样;
     // 层间不插值 + 每层 CLAMP_TO_EDGE 天然无页缝(§13.1)。enabled=0 恒不进。
     if (u_pageStoreParams.x > 0.5) {
-        float gridN = max(u_pageStoreParams.y, 1.0);
-        vec2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
-        vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
+        // 见 glTF 变体注释。terrainUv 是 set 0,页存储可能要另一套 → 单独取。
+        float psPack = u_pageStoreParams.w;
+        vec2 psPhase = vec2(mod(floor(psPack / 8.0), 64.0),
+                            floor(psPack / 512.0));
+        vec2 psUv = uvFromSet(mod(psPack, 8.0));
+        // set 0 在 VS 里已被祖先模板的 scale-bias 重映射(clipMode>1.5 那支),
+        // 其余 set 是原始 ancestor UV —— 不补同一个 scale-bias 就会整片错位一
+        // 个 LOD 窗口(一阶误差,远大于 GCJ 本身)。GCJ 空间的精确 scale-bias 与
+        // mercator 的略有差异,但 warp 在单瓦片内近似仿射,二阶量可忽略。
+        if (mod(psPack, 8.0) > 0.5 && u_clipEnabled > 1.5) {
+            psUv = u_clipUV.xy + psUv * u_clipUV.zw;
+        }
+        vec2 cells = max(u_pageStoreParams.yz, vec2(1.0));
+        vec2 g = u_pageStoreUv.xy + clamp(psUv, 0.0, 1.0) * u_pageStoreUv.zw;
+        vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
         // Step B1:经间接纹理单次 fetch 定位层(替代闭式 layerBase+…)。
         // RGBA8 解码 R+G*256(floor(x*255+0.5) 从 unorm 取回整数字节)。
         // 合批 Step 2:texelFetch 整数寻址 array 层(texel 在左上 gridN² 区)。
@@ -1201,8 +1228,10 @@ void main() {
         // per-cell 渐变 LOD(§16.3,镜像 gltf):d>0 采粗祖先页;d=0=现状精页。
         float d = floor(e.b * 255.0 + 0.5);
         vec2 span = vec2(exp2(d));
-        vec2 origin = floor(cell / span) * span;
-        vec2 sampleUv = (g - origin) / span;
+        // 祖先子区在**全局**源瓦片下标上定位(见 params.w 相位注释)。
+        vec2 gGlobal = g + psPhase;
+        vec2 origin = floor(gGlobal / span) * span;
+        vec2 sampleUv = (gGlobal - origin) / span;
         base = alphaOver(
             base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
     }
@@ -1262,6 +1291,8 @@ layout(location = 6) in vec4 i_relRow2;
 layout(location = 7) in vec4 i_dispMorph;  // minH·fade, range·fade, morph, gridN
 layout(location = 8) in vec4 i_clipUv;
 layout(location = 9) in vec4 i_layers;     // heightLayer, indirLayer, clipEn, gridN
+layout(location = 10) in vec4 i_pageUv;    // 页 cell 定位:originU,V,spanU,V
+layout(location = 11) in vec4 i_pageAux;   // 祖先寻址相位:phaseX, phaseY, _, _
 
 uniform mat4 u_modelViewProjection;  // = viewProj · frame0
 uniform highp sampler2DArray u_heightTexture;
@@ -1271,7 +1302,9 @@ out vec3 v_position;
 out vec4 v_texcoord01;
 out float v_skirt;            // 1=裙顶点(片元据此跳过法线场,见 terrainShader 注释)
 flat out float v_heightLayer; // 高度纹理层号(片元读 B/A 法线要用)
-flat out vec4 v_pageParams;   // x=pageGridN y=indirLayer z=clipEnabled w=模板 gridN
+flat out vec4 v_pageParams;   // x=pageCellDesc y=indirLayer z=clipEnabled w=模板 gridN
+flat out vec4 v_pageUv;       // 页 cell 定位(单位=源瓦片):origin.xy, span.zw
+flat out vec4 v_pageAux;      // 祖先寻址相位:phase.xy
 flat out vec4 v_clipUv;
 
 // 模板栅格边长逐实例给(i_layers.w):自适应密度后不再是常量,coarse=64、
@@ -1392,6 +1425,8 @@ void main() {
     v_skirt = skirt;
     v_heightLayer = i_layers.x;
     v_pageParams = vec4(i_dispMorph.w, i_layers.y, clipMode, kGridSize);
+    v_pageUv = i_pageUv;
+    v_pageAux = i_pageAux;
     v_clipUv = i_clipUv;
     gl_Position = u_modelViewProjection * vec4(world, 1.0);
 }
@@ -1422,7 +1457,9 @@ in vec3 v_position;
 in vec4 v_texcoord01;
 in float v_skirt;
 flat in float v_heightLayer;
-flat in vec4 v_pageParams;  // x=pageGridN y=indirLayer z=clipEnabled w=模板 gridN
+flat in vec4 v_pageParams;  // x=pageCellDesc y=indirLayer z=clipEnabled w=模板 gridN
+flat in vec4 v_pageUv;      // 页 cell 定位(单位=源瓦片):origin.xy, span.zw
+flat in vec4 v_pageAux;     // 祖先寻址相位:phase.xy
 flat in vec4 v_clipUv;
 
 uniform vec3 u_lightDir;
@@ -1504,16 +1541,33 @@ void main() {
 
     vec4 base = u_baseColor;
     // 页存储:资格闸保证全 cell 驻留 → 直接覆盖(无 mappedRaster fallback)。
-    float gridN = max(v_pageParams.x, 1.0);
+    // cell 网格 = 影像源瓦片网格。cellsX/cellsY/texCoordSet 打包在 v_pageParams.x
+    // (逐实例只剩一个槽,见 TerrainInstanceBatcher::packPageCellDescriptor)。
+    float packed = v_pageParams.x;
+    vec2 cells = max(vec2(mod(packed, 128.0),
+                          mod(floor(packed / 128.0), 128.0)), vec2(1.0));
+    float psSet = floor(packed / 16384.0);
     int indirLayer = int(v_pageParams.y + 0.5);
-    vec2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
-    vec2 cell = clamp(floor(g), vec2(0.0), vec2(gridN - 1.0));
+    // 实例化地形顶点只带 texcoord01 两套;set 0 是地形 scheme 的投影,GCJ 的
+    // UV 烘在 set 1。硬编码 set 0 = 该特性静默失效。
+    vec2 psUv = psSet > 0.5 ? v_texcoord01.zw : v_texcoord01.xy;
+    // set 0 在 VS 里已被祖先模板的 scale-bias 重映射(clipMode>1.5 那支),
+    // 其余 set 是原始 ancestor UV —— 不补同一个 scale-bias 就会整片错位一
+    // 个 LOD 窗口(一阶误差,远大于 GCJ 本身)。GCJ 空间的精确 scale-bias 与
+    // mercator 的略有差异,但 warp 在单瓦片内近似仿射,二阶量可忽略。
+    if (psSet > 0.5 && v_pageParams.z > 1.5) {
+        psUv = v_clipUv.xy + psUv * v_clipUv.zw;
+    }
+    vec2 g = v_pageUv.xy + clamp(psUv, 0.0, 1.0) * v_pageUv.zw;
+    vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
     vec4 e = texelFetch(u_pageStoreIndir, ivec3(ivec2(cell), indirLayer), 0);
     float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
     float d = floor(e.b * 255.0 + 0.5);
     vec2 span = vec2(exp2(d));
-    vec2 origin = floor(cell / span) * span;
-    vec2 sampleUv = (g - origin) / span;
+    // 祖先子区在**全局**源瓦片下标上定位(见非实例变体的相位注释)。
+    vec2 gGlobal = g + v_pageAux.xy;
+    vec2 origin = floor(gGlobal / span) * span;
+    vec2 sampleUv = (gGlobal - origin) / span;
     base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
 
     // GE 式半球光照(与 terrainShader 一致;系数来源与不用 smoothstep 的理由
@@ -2568,6 +2622,7 @@ struct GltfUniforms {
     packed_float4 clipUV;
     float clipEnabled;
     packed_float4 pageStoreParams;
+    packed_float4 pageStoreUv;
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
 };
@@ -2895,18 +2950,30 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     // SVT(Step B2b,镜像 GLSL):per-tile 间接纹理单次 NEAREST fetch 定位 array 层
     // 覆盖 mappedRaster;A 通道 resident 标志,miss 保留 mappedRaster(决策② 共存)。
     if (u.pageStoreParams.x > 0.5) {
-        float gridN = max(u.pageStoreParams.y, 1.0);
-        float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
-        float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
-        // 合批 Step 2:read() 整数寻址 array 层(texel 在左上 gridN² 区)。
+        // 镜像 GLSL:cell 网格 = 影像源瓦片网格(单位=源瓦片),
+        // t = origin + uv*span。标准 overlay 退化成 uv*gridN(零回归)。
+        // 见 GLSL 侧 params.w 相位注释。
+        float psPack = u.pageStoreParams.w;
+        float2 psPhase = float2(fmod(floor(psPack / 8.0), 64.0),
+                                floor(psPack / 512.0));
+        float2 psUv = gltfUvFromSet(in, fmod(psPack, 8.0));
+        float2 cells = max(float2(u.pageStoreParams.y, u.pageStoreParams.z),
+                           float2(1.0));
+        float2 g = float2(u.pageStoreUv.x, u.pageStoreUv.y) +
+                   clamp(psUv, 0.0, 1.0) *
+                       float2(u.pageStoreUv.z, u.pageStoreUv.w);
+        float2 cell = clamp(floor(g), float2(0.0), cells - float2(1.0));
+        // 合批 Step 2:read() 整数寻址 array 层。
         float4 e = u_pageStoreIndir.read(
             uint2(cell), uint(u.terrainLayers.y + 0.5), 0);
         float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
         // per-cell 渐变 LOD(§16.3,镜像 GLSL):d>0 采粗祖先页;d=0=现状精页。
         float d = floor(e.b * 255.0 + 0.5);
         float2 span = float2(exp2(d));
-        float2 origin = floor(cell / span) * span;
-        float2 sampleUv = (g - origin) / span;
+        // 祖先子区在**全局**源瓦片下标上定位(见 params.w 相位注释)。
+        float2 gGlobal = g + psPhase;
+        float2 origin = floor(gGlobal / span) * span;
+        float2 sampleUv = (gGlobal - origin) / span;
         base = gltfAlphaOver(
             base,
             u_pageStore.sample(u_tileSharedSampler, sampleUv, uint(layer)),
@@ -3364,6 +3431,7 @@ struct GltfUniforms {
     packed_float4 clipUV;
     float clipEnabled;
     packed_float4 pageStoreParams;
+    packed_float4 pageStoreUv;
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
 };
@@ -3502,9 +3570,25 @@ fragment float4 terrainFragment(
     // 合成方案页存储(Step 3,镜像 GLSL 侧):目标 capped 瓦片改采页存储,
     // 覆盖上采样 mappedRaster → 真实高清影像。enabled=0 恒不进,零回归。
     if (u.pageStoreParams.x > 0.5) {
-        float gridN = max(u.pageStoreParams.y, 1.0);
-        float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
-        float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
+        // 镜像 GLSL。terrainUv 是 set 0,页存储可能要另一套 → 按 params.w 单独取。
+        float psPack = u.pageStoreParams.w;
+        float2 psPhase = float2(fmod(floor(psPack / 8.0), 64.0),
+                                floor(psPack / 512.0));
+        float2 psUv = terrainUvFromSet(in, fmod(psPack, 8.0));
+        // set 0 在 VS 里已被祖先模板的 scale-bias 重映射(clipMode>1.5 那支),
+        // 其余 set 是原始 ancestor UV —— 不补同一个 scale-bias 就会整片错位一
+        // 个 LOD 窗口(一阶误差,远大于 GCJ 本身)。GCJ 空间的精确 scale-bias 与
+        // mercator 的略有差异,但 warp 在单瓦片内近似仿射,二阶量可忽略。
+        if (fmod(psPack, 8.0) > 0.5 && u.clipEnabled > 1.5) {
+            psUv = float2(u.clipUv.x, u.clipUv.y) +
+                   psUv * float2(u.clipUv.z, u.clipUv.w);
+        }
+        float2 cells = max(float2(u.pageStoreParams.y, u.pageStoreParams.z),
+                           float2(1.0));
+        float2 g = float2(u.pageStoreUv.x, u.pageStoreUv.y) +
+                   clamp(psUv, 0.0, 1.0) *
+                       float2(u.pageStoreUv.z, u.pageStoreUv.w);
+        float2 cell = clamp(floor(g), float2(0.0), cells - float2(1.0));
         // Step B1(镜像 GLSL):经间接纹理单次 fetch 定位层;RGBA8 解码 R+G*256。
         // 合批 Step 2:read() 整数寻址 array 层(texel 在左上 gridN² 区)。
         float4 e = u_pageStoreIndir.read(
@@ -3513,8 +3597,10 @@ fragment float4 terrainFragment(
         // per-cell 渐变 LOD(§16.3,镜像 GLSL):d>0 采粗祖先页;d=0=现状精页。
         float d = floor(e.b * 255.0 + 0.5);
         float2 span = float2(exp2(d));
-        float2 origin = floor(cell / span) * span;
-        float2 sampleUv = (g - origin) / span;
+        // 祖先子区在**全局**源瓦片下标上定位(见 params.w 相位注释)。
+        float2 gGlobal = g + psPhase;
+        float2 origin = floor(gGlobal / span) * span;
+        float2 sampleUv = (gGlobal - origin) / span;
         // B2b(镜像 GLSL):factor = e.a(resident 标志)。miss=0 保留 mappedRaster。
         base = terrainAlphaOver(
             base,
@@ -3632,9 +3718,11 @@ struct TerrainInstancedVertexIn {
     float4 relRow0    [[attribute(4)]];
     float4 relRow1    [[attribute(5)]];
     float4 relRow2    [[attribute(6)]];
-    float4 dispMorph  [[attribute(7)]];  // minH·fade, range·fade, morph, gridN
+    float4 dispMorph  [[attribute(7)]];  // minH·fade, range·fade, morph, pageCellDesc
     float4 clipUv     [[attribute(8)]];
-    float4 layers     [[attribute(9)]];  // heightLayer, indirLayer, clipEn, _
+    float4 layers     [[attribute(9)]];  // heightLayer, indirLayer, clipEn, 模板 gridN
+    float4 pageUv     [[attribute(10)]]; // 页 cell 定位:originU,V,spanU,V
+    float4 pageAux    [[attribute(11)]]; // 祖先寻址相位:phaseX, phaseY
 };
 
 struct TerrainInstancedVertexOut {
@@ -3642,7 +3730,9 @@ struct TerrainInstancedVertexOut {
     float3 normal;
     float3 localPosition;
     float4 texcoord01;
-    float4 pageParams [[flat]];  // x=gridN y=indirLayer z=clipEnabled w=_
+    float4 pageParams [[flat]];  // x=pageCellDesc y=indirLayer z=clipEnabled w=_
+    float4 pageUv [[flat]];      // 页 cell 定位(单位=源瓦片):origin.xy, span.zw
+    float4 pageAux [[flat]];     // 祖先寻址相位:phase.xy
     float4 clipUv [[flat]];
 };
 
@@ -3692,6 +3782,8 @@ vertex TerrainInstancedVertexOut terrainInstancedVertex(
     out.localPosition = world;
     out.texcoord01 = in.texcoord01;
     out.pageParams = float4(in.dispMorph.w, in.layers.y, in.layers.z, 0.0);
+    out.pageUv = in.pageUv;
+    out.pageAux = in.pageAux;
     out.clipUv = in.clipUv;
     return out;
 }
@@ -3707,6 +3799,8 @@ struct TerrainInstancedVertexOut {
     float3 localPosition;
     float4 texcoord01;
     float4 pageParams [[flat]];
+    float4 pageUv [[flat]];
+    float4 pageAux [[flat]];
     float4 clipUv [[flat]];
 };
 
@@ -3751,16 +3845,26 @@ fragment float4 terrainInstancedFragment(
     float NdotL = max(dot(N, L), 0.0);
 
     float4 base = float4(u.baseColor);
-    float gridN = max(in.pageParams.x, 1.0);
+    // 镜像 GLSL 实例化:cellsX/cellsY/texCoordSet 打包在 pageParams.x
+    // (见 TerrainInstanceBatcher::packPageCellDescriptor)。
+    float packed = in.pageParams.x;
+    float2 cells = max(float2(fmod(packed, 128.0),
+                              fmod(floor(packed / 128.0), 128.0)),
+                       float2(1.0));
+    float psSet = floor(packed / 16384.0);
     uint indirLayer = uint(in.pageParams.y + 0.5);
-    float2 g = clamp(terrainUv, 0.0, 1.0) * gridN;
-    float2 cell = clamp(floor(g), float2(0.0), float2(gridN - 1.0));
+    float2 psUv = psSet > 0.5 ? in.texcoord01.zw : in.texcoord01.xy;
+    float2 g = float2(in.pageUv.x, in.pageUv.y) +
+               clamp(psUv, 0.0, 1.0) * float2(in.pageUv.z, in.pageUv.w);
+    float2 cell = clamp(floor(g), float2(0.0), cells - float2(1.0));
     float4 e = u_pageStoreIndir.read(uint2(cell), indirLayer, 0);
     float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
     float d = floor(e.b * 255.0 + 0.5);
     float2 span = float2(exp2(d));
-    float2 origin = floor(cell / span) * span;
-    float2 sampleUv = (g - origin) / span;
+    // 祖先子区在**全局**源瓦片下标上定位。
+    float2 gGlobal = g + float2(in.pageAux.x, in.pageAux.y);
+    float2 origin = floor(gGlobal / span) * span;
+    float2 sampleUv = (gGlobal - origin) / span;
     base = tiAlphaOver(
         base, u_pageStore.sample(u_pageSampler, sampleUv, uint(layer)), e.a);
 

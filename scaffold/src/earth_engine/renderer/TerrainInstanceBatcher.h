@@ -34,18 +34,41 @@ class Buffer;
 /// 实例缓冲池按 batch 槽复用(grow-only,glId 稳定 → VAO 缓存不失效)。
 class TerrainInstanceBatcher {
 public:
-    /// per-instance 记录:96B,与 kTerrainInstanceStride / 实例化 shader 属性
-    /// 布局逐字节一致(loc 4-9 = 6× vec4)。rel 三行 = 相对 frame0 的刚体帧
+    /// per-instance 记录:112B,与 kTerrainInstanceStride / 实例化 shader 属性
+    /// 布局逐字节一致(loc 4-10 = 7× vec4)。rel 三行 = 相对 frame0 的刚体帧
     /// (行主序上三行,第 4 行恒 0001,shader 点积重建 world 局部位置)。
     struct InstanceRecord {
         float relRow0[4];   // rel_i 行 0
         float relRow1[4];   // rel_i 行 1
         float relRow2[4];   // rel_i 行 2
-        float dispMorph[4]; // minH·fade, range·fade, morphFactor, gridN
+        // w 原本是页存储 gridN(几何等分)。cell 网格改成源瓦片网格后要带
+        // cellsX/cellsY/texCoordSet 三个值,而逐实例只剩这一个槽(layers.w 是
+        // 位移模板边长,在用),故打包进同一个 float,见 packPageCellDescriptor。
+        float dispMorph[4]; // minH·fade, range·fade, morphFactor, pageCellDesc
         float clipUv[4];    // clip 窗口(x,y,w,h)
-        float layers[4];    // heightLayer, indirLayer, clipEnabled, 保留
+        float layers[4];    // heightLayer, indirLayer, clipEnabled, 模板 gridN
+        // 页存储 cell 定位(单位:源瓦片)。标准 overlay 恒为 (0,0,gridN,gridN),
+        // 片元表达式退化成改造前的 uv*gridN = 零回归判据。
+        float pageUv[4];    // originU, originV, spanU, spanV
+        // 祖先寻址相位(x0/y0 mod 2^kMaxDetDepthLevels)+ 2 个保留。
+        // 单独占一个 vec4 而不是继续往 dispMorph[3] 里挤:那个 float 已经装了
+        // cellsX+128·cellsY+16384·texSet(上限 122944),再乘 131072 进相位会越过
+        // float32 的精确整数上限 2^24,静默丢位 —— 而丢位的表现是屏幕块状错乱,
+        // 与"没生效"长得一样,查起来很贵。16B/实例换确定性,值。
+        float pageAux[4];   // phaseX, phaseY, 保留, 保留
     };
-    static_assert(sizeof(InstanceRecord) == 96, "matches kTerrainInstanceStride");
+    static_assert(sizeof(InstanceRecord) == 128,
+                  "matches kTerrainInstanceStride");
+
+    /// 把 (cellsX, cellsY, texCoordSet) 压进一个 float,逐实例只剩一个槽。
+    /// cellsX/cellsY ≤ 64(间接纹理边长上限),texCoordSet ≤ 7 → 最大 122944,
+    /// float32 精确可表示(< 2^24),不丢位。
+    static constexpr float packPageCellDescriptor(int cellsX, int cellsY,
+                                                  int texCoordSet) {
+        return static_cast<float>(cellsX) +
+               128.0f * static_cast<float>(cellsY) +
+               16384.0f * static_cast<float>(texCoordSet);
+    }
 
     /// 批内位移模板栅格边长(layers[3])是否全部一致。
     ///

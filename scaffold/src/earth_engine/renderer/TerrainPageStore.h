@@ -345,6 +345,11 @@ private:
     struct TileIndir {
         int layer = -1;
         int gridN = 1;
+        // cell 网格落位(源瓦片单位)+ 片元该用的 texcoord 集。determination 算好,
+        // applyToTerrainCommand 原样搬进 uniform —— 命令构建侧不得自行推导,
+        // 否则就又出现两个「几何格 == 源格」的独立假设。
+        SourceTilePlacement placement;
+        int texCoordSet = 0;
         bool fullyResident = false;  // 全 cell 高清页驻留 = 合批资格(丢 mappedRaster)
         uint64_t lastFrame = 0;  // determination 里 touch;sweep 清非本帧可见瓦片
     };
@@ -392,6 +397,9 @@ private:
     // 门② determination:子瓦片相对 capped 瓦片的最大细分深度上限
     // (屏幕驱动一般 ≤5;cap 防远景/病态 zoom 枚举爆量,gridN ≤ 1<<cap)。
     static constexpr int kMaxDetDepthLevels = 6;
+    /// 祖先寻址相位的模数 = 最大 span(2^kMaxDetDepthLevels)。也是间接纹理边长
+    /// 上限,两者相等不是巧合:cell 网格最宽就是这么多格。
+    static constexpr int kMaxDetSpan = 1 << kMaxDetDepthLevels;
     std::unordered_set<uint64_t> visiblePagesScratch_;  // 每次 determination 复用(dedup/计数)
     std::vector<uint8_t> indirTexelsScratch_;           // 间接纹理上传复用缓冲
     // 合批资格判因:全 cell 驻留是唯一卡点,只有布尔结果时"差一点"与"根本达不到"
@@ -459,6 +467,16 @@ private:
         // 片元该用哪套 texcoord 定位 cell。页存储原本硬编码 set 0 = 地形 scheme
         // 的投影;GCJ 的 UV 烘在另一套里,取错就等于这个特性没生效。
         int texCoordSet = 0;
+        // 源坐标 → 世界坐标的平移量(瓦片中心处求值,弧度)。
+        //
+        // cell 网格搬进源网格后,`scheme.tileToRectangle(sourceKey)` 给的是**源
+        // 坐标系**的矩形;直接拿它做视锥剔除/测距,等于把 cell 的位置整体挪了一个
+        // δ(~500m),视锥边缘的 cell 因此被误剔 —— 真机上表现为东侧一整片空洞
+        // (heading=0 时屏幕右侧,与 GCJ 偏东一致)。编址归源空间,剔除/测距归世界
+        // 空间,两件事必须分开。δ 在单瓦片内变化可忽略,故每瓦片求一次即可。
+        // 标准 overlay 恒为 0 → 逐字节等价于改造前。
+        double worldOffsetLng = 0.0;
+        double worldOffsetLat = 0.0;
     };
     std::unordered_map<uint64_t, DetTileCacheEntry> detTileCache_;  // tileKey→几何缓存
     std::vector<DetTileParam> detParamsScratch_;

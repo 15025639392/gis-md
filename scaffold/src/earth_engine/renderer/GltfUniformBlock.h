@@ -137,12 +137,26 @@ struct alignas(16) GltfUniformBlock {
 
     // 北极星合成方案页存储采样(Step 3):
     //   x = enabled(0=走原 mappedRaster 路径,不动;>0.5=改采 sampler2DArray 页存储)
-    //   y = gridN(瓦片被规则切成 gridN×gridN 页;layer = base + row*gridN + col)
-    //   z = layerBase(本瓦片首页在 array 中的层号)
-    //   w = 保留(补齐 vec4;后续接不透明度/LOD)
+    //   y = cellsX(cell 网格宽,单位=源瓦片)
+    //   z = cellsY(cell 网格高)
+    //   w = texCoordSet(片元用哪套 texcoord 定位 cell)
     // 仅目标 capped 瓦片被 GltfDrawCommandBuilder 置 enabled=1,其余瓦片恒 0
     // → 非目标瓦片逐字节走现状路径,零回归。
-    std::array<float, 4> pageStoreParams{0.0f, 1.0f, 0.0f, 0.0f};
+    //
+    // cell 网格 = **影像源瓦片网格**,不是几何瓦片的等分。二者在标准 WebMercator
+    // 底图下恰好重合,GCJ-02 这类源坐标带偏移的底图会把它们掰开(源瓦片落在几何
+    // 网格的非整数位置)。texCoordSet 也因此不能再硬编码 0 —— 地形 set 0 是地形
+    // scheme 的投影,GCJ 的 UV 烘在另一套里,取错等于这个特性没生效。
+    std::array<float, 4> pageStoreParams{0.0f, 1.0f, 1.0f, 0.0f};
+
+    // 页存储 cell 定位(单位:**源瓦片**):
+    //   xy = origin(瓦片 UV 原点在 cell 网格中的位置)
+    //   zw = span  (瓦片 UV 跨度)
+    // 片元 `t = origin + uv*span` → `cell=floor(t)`、`sampleUv=t-cell`。
+    // 标准 overlay 恒为 origin=(0,0)、span=(gridN,gridN),表达式退化成改造前的
+    // `uv*gridN` —— 逐字符相同,是这条改动的零回归判据
+    // (见 TerrainPageStore::SourceTilePlacement::isDegenerate)。
+    std::array<float, 4> pageStoreUv{0.0f, 0.0f, 1.0f, 1.0f};
 
     // 北极星 Phase 2c Stage B 地形 GPU 位移(顶点阶段消费):
     //   x = minHeight(米)  y = heightRange = maxHeight−minHeight
@@ -204,7 +218,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 91> table = {{
+    static const std::array<GltfUniformTableEntry, 92> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -289,6 +303,7 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_clipUV", clipUv, 4),
         EE_GLTF_ENTRY("u_clipEnabled", clipEnabled, 1),
         EE_GLTF_ENTRY("u_pageStoreParams", pageStoreParams, 4),
+        EE_GLTF_ENTRY("u_pageStoreUv", pageStoreUv, 4),
         EE_GLTF_ENTRY("u_heightDisplace", heightDisplace, 4),
         EE_GLTF_ENTRY("u_terrainLayers", terrainLayers, 4),
     }};

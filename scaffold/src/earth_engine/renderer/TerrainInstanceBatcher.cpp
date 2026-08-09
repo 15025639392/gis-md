@@ -190,11 +190,28 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
             rec.dispMorph[0] = m.gltfUniforms.heightDisplace[0];  // minH·fade
             rec.dispMorph[1] = m.gltfUniforms.heightDisplace[1];  // range·fade
             rec.dispMorph[2] = m.gltfUniforms.geomorphUpFactor[3];  // morph
-            rec.dispMorph[3] = m.gltfUniforms.pageStoreParams[1];   // gridN
+            // cell 网格描述符(cellsX/cellsY/texCoordSet 打包)。逐实例只剩这一个
+            // 槽,故打包;解包在实例化 shader 里,见 packPageCellDescriptor。
+            rec.dispMorph[3] = packPageCellDescriptor(
+                static_cast<int>(m.gltfUniforms.pageStoreParams[1] + 0.5f),
+                static_cast<int>(m.gltfUniforms.pageStoreParams[2] + 0.5f),
+                static_cast<int>(m.gltfUniforms.pageStoreParams[3]) % 8);
             rec.clipUv[0] = m.gltfUniforms.clipUv[0];
             rec.clipUv[1] = m.gltfUniforms.clipUv[1];
             rec.clipUv[2] = m.gltfUniforms.clipUv[2];
             rec.clipUv[3] = m.gltfUniforms.clipUv[3];
+            // params.w 打包了 texSet + 相位,实例侧拆开存(见 pageAux 注释)。
+            {
+                const float packed = m.gltfUniforms.pageStoreParams[3];
+                rec.pageAux[0] = std::fmod(std::floor(packed / 8.0f), 64.0f);
+                rec.pageAux[1] = std::floor(packed / 512.0f);
+                rec.pageAux[2] = 0.0f;
+                rec.pageAux[3] = 0.0f;
+            }
+            rec.pageUv[0] = m.gltfUniforms.pageStoreUv[0];   // originU
+            rec.pageUv[1] = m.gltfUniforms.pageStoreUv[1];   // originV
+            rec.pageUv[2] = m.gltfUniforms.pageStoreUv[2];   // spanU
+            rec.pageUv[3] = m.gltfUniforms.pageStoreUv[3];   // spanV
             rec.layers[0] = m.gltfUniforms.terrainLayers[0];  // heightLayer
             rec.layers[1] = m.gltfUniforms.terrainLayers[1];  // indirLayer
             // clipMode(0/1/2)与边吸附打包共存:z = clipMode + 4·snapPacked
@@ -257,6 +274,7 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
         batch.surfaceTextureZoom = first.surfaceTextureZoom;
         batch.imageryAncestorLevelDelta = first.imageryAncestorLevelDelta;
         batch.gltfUniforms.baseColor = first.gltfUniforms.baseColor;
+        // 批级 params 只留 enabled;cell 网格逐实例给(见 rec.dispMorph[3])。
         batch.gltfUniforms.pageStoreParams = {1.0f, 0.0f, 0.0f, 0.0f};
         batch.hasWorldSortCenter = first.hasWorldSortCenter;
         batch.worldSortCenter = first.worldSortCenter;

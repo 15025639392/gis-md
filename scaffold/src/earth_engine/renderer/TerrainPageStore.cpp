@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../core/async/AsyncSystem.h"
+#include "../core/geodesy/Gcj02CoordinateTransform.h"
 #include "../core/math/OrientedBoundingBox.h"
 #include "../debug/Contracts.h"
 #include "../debug/PerfTimer.h"
@@ -607,9 +608,22 @@ void TerrainPageStore::updateVisiblePages(
             }
         }
 
+        // 源坐标 → 世界坐标的平移量。standard 时 fromWgs84 是恒等 → 恒 0。
+        double worldOffsetLng = 0.0;
+        double worldOffsetLat = 0.0;
+        if (projection == RasterOverlayProjection::Gcj02WebMercator) {
+            const Cartographic center =
+                Cartographic::fromRadians(cLng, cLat);
+            const Cartographic shifted =
+                Gcj02CoordinateTransform::fromWgs84(center);
+            worldOffsetLng = shifted.longitude() - center.longitude();
+            worldOffsetLat = shifted.latitude() - center.latitude();
+        }
+
         detParamsScratch_.push_back(
             {tile, tileKeyPacked, zoom, gridN, minH, maxH, imgSchemeId,
-             placement, texCoordSet >= 0 ? texCoordSet : 0});
+             placement, texCoordSet >= 0 ? texCoordSet : 0,
+             worldOffsetLng, worldOffsetLat});
         detTilesScratch_.push_back({tileKeyPacked, zoom, minH, maxH});
     }
 
@@ -684,7 +698,33 @@ void TerrainPageStore::updateVisiblePages(
                     sub.z = p.zoom;
                     sub.x = p.placement.x0 + dx;
                     sub.y = p.placement.y0 + dy;
-                    const Rectangle subRect = scheme.tileToRectangle(sub);
+                    // 覆盖范围可能比瓦片宽一格:完全不压在本瓦片上的 cell 不产生
+                    // 片元,给它取页纯属浪费(且会拉高 fetch 量)。标准 overlay 下
+                    // 恒相交 → 逐格等价于改造前。
+                    const double cellLo = static_cast<double>(dx);
+                    const double cellHi = cellLo + 1.0;
+                    const double tileLo = p.placement.originU;
+                    const double tileHi = tileLo + p.placement.spanU;
+                    const double cellLoV = static_cast<double>(dy);
+                    const double cellHiV = cellLoV + 1.0;
+                    const double tileLoV = p.placement.originV;
+                    const double tileHiV = tileLoV + p.placement.spanV;
+                    if (std::min(cellHi, tileHi) <= std::max(cellLo, tileLo) ||
+                        std::min(cellHiV, tileHiV) <=
+                            std::max(cellLoV, tileLoV)) {
+                        continue;
+                    }
+                    // 编址在源空间,剔除/测距在世界空间 —— 见 DetTileParam
+                    // 的 worldOffset 注释(混用会在视锥边缘误剔出一片空洞)。
+                    const Rectangle sourceRect = scheme.tileToRectangle(sub);
+                    const Rectangle subRect =
+                        (p.worldOffsetLng == 0.0 && p.worldOffsetLat == 0.0)
+                            ? sourceRect
+                            : Rectangle(
+                                  sourceRect.west() - p.worldOffsetLng,
+                                  sourceRect.south() - p.worldOffsetLat,
+                                  sourceRect.east() - p.worldOffsetLng,
+                                  sourceRect.north() - p.worldOffsetLat);
                     const std::optional<OrientedBoundingBox> obb =
                         TileBoundsMetrics::boundingRegionObb(subRect, p.minH,
                                                              p.maxH);
@@ -833,12 +873,18 @@ void TerrainPageStore::updateVisiblePages(
             indirPool_.touch(p.tileKeyPacked, frameId_);
         }
         if (ind.layer >= 0) {
+            // 尺寸与行距必须跟 **cell 网格**走。写成 gridN 而缓冲按 cellsX 排,
+            // 行距差一格 → 每行递进错位 → 屏幕大片读到未初始化 texel(A=0)只剩
+            // 零星正确块。真机截图立刻现形,host 测试看不到(不走纹理上传)。
             device_->updateTextureRegion(
-                indirArrayTexture_.get(), 0, 0, p.gridN, p.gridN,
+                indirArrayTexture_.get(), 0, 0,
+                p.placement.cellsX, p.placement.cellsY,
                 indirTexelsScratch_.data(),
-                static_cast<size_t>(p.gridN) * 4u, ind.layer);
+                static_cast<size_t>(p.placement.cellsX) * 4u, ind.layer);
         }
         ind.gridN = p.gridN;
+        ind.placement = p.placement;
+        ind.texCoordSet = p.texCoordSet;
         // 全 cell 驻留(含被 frustum/SSE 剔除的 cell 未 kept → 不计 → 达不到
         // gridN²,该瓦片留逐 draw = 保守但安全,决不丢影像)= 合批资格。
         // 合批资格 = 「**所有会产生片元的 cell 都有页**」。
@@ -1061,10 +1107,33 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     // 间接纹理 array 绑 slot21,片元经层号 fetch 定位 layer + 读 A 通道作 miss
     // 回退 factor。
     cmd.textures[kGltfPageStoreIndirTextureSlot] = indirArrayTexture_.get();
-    // enabled=1、gridN → 片元采页存储。layer 由间接纹理 RG 承载,resident/miss 由
-    // 其 A 承载;pageStoreParams.z/.w 不再用(留 0)。
-    cmd.gltfUniforms.pageStoreParams = {1.0f, static_cast<float>(ind.gridN),
-                                        0.0f, 0.0f};
+    // enabled=1 + cell 网格(单位=源瓦片)+ texcoord 集 → 片元采页存储。
+    // layer 由间接纹理 RG 承载,resident/miss 由其 A 承载。
+    //
+    // 这里原样搬 determination 算好的 placement,**不重新推导**:cell 网格是不是
+    // 几何等分,只有 determination 知道(它才见得到 overlay 的生效投影与 details
+    // 矩形)。命令构建侧自己算 = 又一个「几何格 == 源格」的独立假设,而这正是
+    // GCJ 底图整条特性静默失效的根。
+    // w 打包 texCoordSet + 祖先寻址相位。相位 = x0/y0 对 2^kMaxDetDepthLevels
+    // 取模:per-cell 渐变 LOD 的祖先子区原点 floor(cell/2^d)*2^d 必须在**全局源
+    // 瓦片下标**上算,而片元只有局部 cell 下标。改造前 x0=key.x*gridN 恒是 2^d
+    // 的倍数(代码里那句「右移无进位污染」),局部=全局所以没人发现;搬进源网格后
+    // x0 成了任意整数,d>0 的 cell 会采到祖先页里错的子区 —— 真机上是块状明暗
+    // 棋盘格。标准 overlay 下 span | gridN | x0 → 相位对 span 取模恒 0,逐字节不变。
+    const int phaseX = ind.placement.x0 & (kMaxDetSpan - 1);
+    const int phaseY = ind.placement.y0 & (kMaxDetSpan - 1);
+    cmd.gltfUniforms.pageStoreParams = {
+        1.0f,
+        static_cast<float>(ind.placement.cellsX),
+        static_cast<float>(ind.placement.cellsY),
+        static_cast<float>(ind.texCoordSet) +
+            8.0f * static_cast<float>(phaseX) +
+            512.0f * static_cast<float>(phaseY)};
+    cmd.gltfUniforms.pageStoreUv = {
+        static_cast<float>(ind.placement.originU),
+        static_cast<float>(ind.placement.originV),
+        static_cast<float>(ind.placement.spanU),
+        static_cast<float>(ind.placement.spanV)};
     cmd.gltfUniforms.terrainLayers[1] = static_cast<float>(ind.layer);
     cmd.terrainPageStoreFullyResident = ind.fullyResident;
 }

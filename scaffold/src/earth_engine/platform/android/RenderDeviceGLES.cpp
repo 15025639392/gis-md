@@ -1684,11 +1684,11 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glVertexAttribDivisor(7 + i, 1);
         }
     } else if (key.layout == VertexLayoutKind::TerrainCompact32Instanced) {
-        // 合批 Step3 per-instance 属性:attrib 4-9 = 6× vec4(96B 流),逐
+        // 合批 Step3 per-instance 属性:attrib 4-11 = 8× vec4(128B 流),逐
         // instance 前进(divisor=1)。4/5/6=rel 三行,7=dispMorph,8=clipUv,
-        // 9=layers。逐顶点 attr 0-3 已由上方 case 设好。
+        // 9=layers,10=pageUv,11=pageAux。逐顶点 attr 0-3 已由上方 case 设好。
         glBindBuffer(GL_ARRAY_BUFFER, key.instanceBuffer);
-        for (GLuint i = 0; i < 6; ++i) {
+        for (GLuint i = 0; i < 8; ++i) {
             glEnableVertexAttribArray(4 + i);
             glVertexAttribPointer(
                 4 + i, 4, GL_FLOAT, GL_FALSE, kTerrainInstanceStride,
