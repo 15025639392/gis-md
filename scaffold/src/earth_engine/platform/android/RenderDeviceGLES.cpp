@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <array>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace earth_engine {
 namespace {
@@ -908,6 +910,10 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     int instancedCommands = 0;  // [I3DMDIAG] GltfPrimitiveInstanced 命令数
     int totalInstances = 0;     // [I3DMDIAG] 所有实例化命令的实例总数
     int vectorCommands = 0;
+    // 逐 owner(图层 id)统计矢量命令。诊断「MVT 底图与演示层共存时近场路网
+    // 消失」:命令总数反而涨了(244→256),但看不出是底图少发了还是底图发了
+    // 却没出像素 —— 不按 owner 拆开,这两种情形的读数完全一样。
+    std::vector<std::pair<std::string, int>> vectorByOwner;
     int environmentCommands = 0;
 
     // 先消化自上次 submit 以来析构的 GLBuffer：删除引用其 id 的 VAO，
@@ -962,6 +968,17 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             case RenderCommandKind::VectorLabel:
             case RenderCommandKind::VectorStencil:
                 ++vectorCommands;
+                {
+                    bool counted = false;
+                    for (auto& entry : vectorByOwner) {
+                        if (entry.first == cmd.owner) {
+                            ++entry.second;
+                            counted = true;
+                            break;
+                        }
+                    }
+                    if (!counted) vectorByOwner.emplace_back(cmd.owner, 1);
+                }
                 break;
             case RenderCommandKind::SkyBackground:
             case RenderCommandKind::AtmosphereBackground:
@@ -1427,6 +1444,18 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             vectorCommands,
             environmentCommands,
             err);
+        if (!vectorByOwner.empty()) {
+            std::string ownerLine;
+            for (const auto& entry : vectorByOwner) {
+                if (!ownerLine.empty()) ownerLine += " ";
+                ownerLine += entry.first.empty() ? "(none)" : entry.first;
+                ownerLine += "=";
+                ownerLine += std::to_string(entry.second);
+            }
+            __android_log_print(ANDROID_LOG_INFO, "GLES",
+                                "submit #%d vectorByOwner: %s",
+                                submitCount, ownerLine.c_str());
+        }
     }
 }
 
