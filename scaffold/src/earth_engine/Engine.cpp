@@ -185,6 +185,48 @@ void Engine::setVtIndirectionSamplePocEnabled(bool enabled) {
     }
 }
 
+bool Engine::setGpuPassTimingEnabled(bool enabled) {
+    if (!device_) {
+        gpuPassTimingEnabled_ = false;
+        return false;
+    }
+    // 后端返回的是**实际**状态:扩展缺失时请求开也是关。两者症状相同(日志里
+    // 一行 GpuPass 都没有),不把这个区别落到返回值/日志上就只能靠猜。
+    gpuPassTimingEnabled_ = device_->setGpuTimingEnabled(enabled);
+    if (enabled && !gpuPassTimingEnabled_) {
+        platformLog(LogLevel::Warning, "GpuPass",
+                    "GPU 区间计时请求开启,但后端不支持 → 保持关闭");
+    }
+    return gpuPassTimingEnabled_;
+}
+
+void Engine::logGpuPassTiming() {
+    if (!gpuPassTimingEnabled_ || !device_) return;
+    const GpuFrameTiming* timing = device_->lastGpuFrameTiming();
+    if (!timing || timing->frameId == lastLoggedGpuFrameId_) return;
+    lastLoggedGpuFrameId_ = timing->frameId;
+    // 回读滞后数帧,每帧都有新结果;按结果计数节流到 ~1 秒一行。
+    if ((++gpuPassResultCount_ % 60) != 1) return;
+    if (timing->disjoint) {
+        platformLog(LogLevel::Info, "GpuPass",
+                    "frame=%llu DISJOINT(GPU 被抢占/调频,本帧读数已作废)",
+                    static_cast<unsigned long long>(timing->frameId));
+        return;
+    }
+    char line[512];
+    int written = std::snprintf(line, sizeof(line),
+        "frame=%llu total=%.2fms dropped=%d |",
+        static_cast<unsigned long long>(timing->frameId),
+        timing->totalMs,
+        timing->droppedRegions);
+    for (const GpuFrameTiming::Region& r : timing->regions) {
+        if (written < 0 || written >= static_cast<int>(sizeof(line))) break;
+        written += std::snprintf(line + written, sizeof(line) - written,
+                                 " %s=%.2f(x%d)", r.name.c_str(), r.ms, r.count);
+    }
+    platformLog(LogLevel::Info, "GpuPass", "%s", line);
+}
+
 void Engine::setTerrainPageStoreEnabled(bool enabled) {
     terrainPageStoreEnabled_ = enabled;
     terrainPageStoreInitFailed_ = false;
@@ -407,6 +449,9 @@ bool Engine::render(double deltaSeconds) {
         getClearColor(clearR, clearG, clearB, clearA);
         device_->setClearColor(clearR, clearG, clearB, clearA);
         device_->beginFrame();
+        if (gpuPassTimingEnabled_) {
+            device_->beginGpuFrame(scene_->frameState().frameId);
+        }
         // 离屏后处理(flag ON 且资源可用时):场景 pass 的目标换成离屏
         // FBO,场景后追加全屏后处理 pass 上屏;任何一环失败都回落直绘。
         // 优先级:AerialFog > FXAA > passthrough 调试直通。
@@ -440,6 +485,13 @@ bool Engine::render(double deltaSeconds) {
         // 场景 pass(离屏或直绘主 pass)。beginFrame 只做帧获取,pass 的
         // clear + 状态设置在 beginPass 里;跳帧时返回 false,submit 自身
         // 对无 encoder 空判,scene->render() 的 CPU 侧工作照常推进。
+        // 场景 pass 区间在 beginPass **之前**开:这样 clear(MSAA 下是 4× 采样的
+        // 清屏,本身就是笔实打实的带宽)落在 "pass.scene.clear" 名下,而不是被
+        // 摊进第一个命令桶(那会让 env 或 terrain 平白背上一笔清屏账)。
+        // submit() 里第一个命令桶开始时,本区间自动结束——区间平铺不嵌套。
+        if (gpuPassTimingEnabled_) {
+            device_->beginGpuRegion("pass.scene.clear");
+        }
         offscreenPassActive_ =
             offscreenTarget && device_->beginPass(offscreenTarget);
         if (!offscreenPassActive_) {
@@ -494,7 +546,14 @@ bool Engine::render(double deltaSeconds) {
             // 密度高度衰减用的星球半径:椭球赤道半径(近似,雾密度对此不敏感)。
             params.planetRadius = 6378137.0f;
             if (device_->beginPass(nullptr)) {
+                // 后处理是单命令全屏 pass,没有可分的桶 → 整段一个区间。
+                if (gpuPassTimingEnabled_) {
+                    device_->beginGpuRegion("pass.postProcess", false);
+                }
                 device_->submit({offscreenPostProcess_->buildCommand(params)});
+                if (gpuPassTimingEnabled_) {
+                    device_->endGpuRegion();
+                }
                 device_->endPass();
             }
             static int postDiagCounter = 0;
@@ -571,6 +630,8 @@ bool Engine::render(double deltaSeconds) {
                     "Engine.render.total",
                     diag.engineFrameCpuMs,
                     detail);
+
+    logGpuPassTiming();
 
     // 环境快照 runtime 段:每帧喂帧耗时,内部满周期(600 帧)才打一行。
     // 报的是**执行条件**而非性能数字本身——落在哪个核、缓存冷热、这一窗口的

@@ -138,6 +138,7 @@ target_sources(earth_engine_core PRIVATE
 # renderer
 # ============================================================
 target_sources(earth_engine_core PRIVATE
+    earth_engine/renderer/GpuFrameTiming.h
     earth_engine/renderer/RenderDevice.h
     earth_engine/renderer/RenderCommand.h
     earth_engine/renderer/RenderCommand.cpp
@@ -603,6 +604,8 @@ if(ANDROID)
     target_sources(earth_engine_core PRIVATE
         earth_engine/platform/android/RenderDeviceGLES.h
         earth_engine/platform/android/RenderDeviceGLES.cpp
+        earth_engine/platform/android/GpuRegionTimerGles.h
+        earth_engine/platform/android/GpuRegionTimerGles.cpp
         earth_engine/platform/android/AndroidPlatformBridge.h
         earth_engine/platform/android/AndroidPlatformBridge.cpp
         earth_engine/platform/android/RenderThreadPlacementAndroid.cpp

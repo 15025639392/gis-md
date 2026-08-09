@@ -168,6 +168,16 @@ constexpr bool kMeasureTileCompositeBakePoC = false;
 // 与 B fill 同量级)→ 目标形态定合成方案;过不了 → 退 Option-lite。纯旁路测量。
 constexpr bool kMeasureVtIndirectionSamplePoC = false;
 
+// kMeasureGpuPassTiming:GPU 逐区间计时(GL_EXT_disjoint_timer_query)。
+// true = 每秒一行 `GpuPass` 打进 logcat,把一帧 GPU 时间线切成
+// pass.scene.clear / pass.terrainDepthPrepass / env / terrain / vec:<图层> /
+// pass.postProcess 若干段。
+// **这是"整机 GPU busy 86% 花在哪"唯一的直接证据来源** —— EarthPerf 头行量的
+// 是提交命令的 CPU 成本,对 GPU 侧完全盲目,两者可以差一个数量级且互不预示。
+// 判读的三条边界(TBDR 段边界不精确 / MSAA resolve 不在任何段内 / disjoint 帧
+// 作废)见 renderer/GpuFrameTiming.h —— 不读那三条,这些数会被用来下错结论。
+constexpr bool kMeasureGpuPassTiming = true;
+
 // 注:北极星 SVT 页存储(terrainPageStore)已随 decouple 升为生产主路径默认开
 // (见 MinimalGlobeDemoConfig.cpp 中 config.terrainPageStore = true 及 §15.3⑤),
 // 不再由灰度常量门控;A/B 测时直接改那行为 false。

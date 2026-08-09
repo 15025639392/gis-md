@@ -223,6 +223,11 @@ struct EarthSceneConfig {
     /// 挂到一个 capped 真实地形瓦片,terrain 片元按页表 layer 采样。Step3a 合成
     /// 图案(隔离渲染路径),Step3b 换真实高清影像。生产渲染路径,非旁路测量台。
     bool terrainPageStore = false;
+    /// GPU 逐区间计时(默认关,测量台专用):把一帧 GPU 时间线切成 pass/命令桶
+    /// 若干段,每秒一行 `GpuPass` 进 logcat。开销 = 每段一个 timer query,静态
+    /// 场景下 ~8 段/帧。仅 GLES(Metal 后端为 no-op)。判读边界见
+    /// renderer/GpuFrameTiming.h。
+    bool gpuPassTiming = false;
 };
 
 } // namespace earth_engine

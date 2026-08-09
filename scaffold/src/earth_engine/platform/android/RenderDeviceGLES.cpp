@@ -950,8 +950,53 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     double drawMs = 0.0;
     uint64_t uniformCalls = 0;
 
+    // GPU 区间计时:按命令桶把这一 submit 的时间线切段。桶 = 环境 / 地形 /
+    // 其它 glTF / 矢量(逐 owner)。**桶键变化才开新段**,同名段在回读时合并。
+    //
+    // 为什么 stencil 的 volume/color 两相不拆开:它们逐条交替(体→色→体→色),
+    // 拆开就是每条命令一个查询对象——244 条矢量命令 = 244 个查询,驱动侧的命令
+    // 流开销本身就成了被测对象。要拆到那个粒度,正确工具是关掉一相做整帧 A/B,
+    // 不是把计时器插得更密。
+    std::string bucket;
+    bool bucketOpen = false;
+    const bool bucketing = gpuTimingEnabled_ && gpuRegionSubdivide_;
+
     for (const auto& cmd : commands) {
         const double iterStartMs = perf::nowMs();
+        if (bucketing) {
+            gpuBucketScratch_.clear();
+            switch (cmd.kind) {
+                case RenderCommandKind::SkyBackground:
+                case RenderCommandKind::AtmosphereBackground:
+                    gpuBucketScratch_ = "env";
+                    break;
+                case RenderCommandKind::GltfPrimitive:
+                case RenderCommandKind::GltfPrimitiveInstanced:
+                    gpuBucketScratch_ =
+                        cmd.terrainSurfaceSource ==
+                                TerrainSurfaceCommandSource::Unknown
+                            ? "gltf"
+                            : "terrain";
+                    break;
+                case RenderCommandKind::VectorOverlay:
+                case RenderCommandKind::VectorFill:
+                case RenderCommandKind::VectorLine:
+                case RenderCommandKind::VectorPoint:
+                case RenderCommandKind::VectorLabel:
+                case RenderCommandKind::VectorStencil:
+                    gpuBucketScratch_ = "vec:";
+                    gpuBucketScratch_ += cmd.owner.empty() ? "(none)" : cmd.owner;
+                    break;
+                case RenderCommandKind::Unknown:
+                    gpuBucketScratch_ = "other";
+                    break;
+            }
+            if (!bucketOpen || gpuBucketScratch_ != bucket) {
+                bucket = gpuBucketScratch_;
+                bucketOpen = true;
+                gpuTimer_.beginRegion(bucket);
+            }
+        }
         switch (cmd.kind) {
             case RenderCommandKind::GltfPrimitive:
                 ++gltfCommands;
@@ -1412,6 +1457,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     // 属性启用/divisor/element buffer 状态都封在各 VAO 内部：这里只需解绑
     // VAO，不再逐属性拆除（也绝不能在 VAO 绑定状态下去改全局属性状态，
     // 否则会破坏该 VAO 录制的布局）。
+    // 桶区间在命令流走完就收尾:后面的解绑/纹理归零不属于任何桶,让它落在
+    // 调用方的 pass 区间里(或不计),别摊进最后一个桶。
+    if (bucketOpen) {
+        gpuTimer_.endRegion();
+    }
+
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     // 此时作用于默认 VAO(0) 的 element 绑定，与旧行为一致。
@@ -1765,9 +1816,49 @@ void RenderDeviceGLES::dropVaoCache(bool deleteGlObjects) {
 }
 
 void RenderDeviceGLES::endFrame() {
+    // GPU 区间计时收尾必须在 swap **之前**:swap 之后再 endQuery,查询会跨帧,
+    // 结果里混进 compositor 的等待。
+    if (gpuTimingEnabled_) {
+        gpuTimer_.endFrame();
+    }
     // EGL swap 由外部调用者处理（eglSwapBuffers）
     // eglSwapBuffers() 会隐式等待 GPU 完成，不需要显式 glFlush()
     // 移除 glFlush() 避免阻塞 CPU→GPU 并行
+}
+
+// ============================================================
+// GPU 区间计时(测量台)
+// ============================================================
+
+bool RenderDeviceGLES::setGpuTimingEnabled(bool enabled) {
+    if (!enabled) {
+        if (gpuTimingEnabled_) {
+            gpuTimer_.shutdown();
+        }
+        gpuTimingEnabled_ = false;
+        return false;
+    }
+    if (gpuTimingEnabled_) return true;
+    gpuTimingEnabled_ = gpuTimer_.initialize();
+    return gpuTimingEnabled_;
+}
+
+void RenderDeviceGLES::beginGpuFrame(uint64_t frameId) {
+    if (!gpuTimingEnabled_) return;
+    gpuRegionSubdivide_ = true;
+    gpuTimer_.beginFrame(frameId);
+}
+
+void RenderDeviceGLES::beginGpuRegion(const char* name, bool subdividable) {
+    if (!gpuTimingEnabled_ || !name) return;
+    gpuRegionSubdivide_ = subdividable;
+    gpuTimer_.beginRegion(name);
+}
+
+void RenderDeviceGLES::endGpuRegion() {
+    if (!gpuTimingEnabled_) return;
+    gpuTimer_.endRegion();
+    gpuRegionSubdivide_ = true;
 }
 
 // ============================================================

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../renderer/RenderDevice.h"
+#include "GpuRegionTimerGles.h"
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -78,6 +79,15 @@ public:
     void endPass() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;
+
+    bool setGpuTimingEnabled(bool enabled) override;
+    bool gpuTimingEnabled() const override { return gpuTimingEnabled_; }
+    void beginGpuFrame(uint64_t frameId) override;
+    void beginGpuRegion(const char* name, bool subdividable = true) override;
+    void endGpuRegion() override;
+    const GpuFrameTiming* lastGpuFrameTiming() const override {
+        return gpuTimer_.lastResult();
+    }
     size_t readFramebufferPixels(Framebuffer* source,
                                  int x,
                                  int y,
@@ -172,6 +182,13 @@ private:
     };
     ReadbackSlot readbackSlots_[kReadbackRing];
     uint64_t nextReadbackTicket_ = 1;
+
+    // GPU 区间计时(测量台,默认关)。gpuRegionSubdivide_ 为假时 submit() 不按
+    // 命令桶再切分 —— 深度 prepass 那种"整段一个数"的场景用。
+    GpuRegionTimerGles gpuTimer_;
+    bool gpuTimingEnabled_ = false;
+    bool gpuRegionSubdivide_ = true;
+    std::string gpuBucketScratch_;
 
     int viewportWidth_ = 0;
     int viewportHeight_ = 0;

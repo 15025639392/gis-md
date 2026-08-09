@@ -671,7 +671,12 @@ void SceneRenderPipeline::runTerrainDepthPrepass(Context& context) const {
         context.renderDevice->beginPass(context.sceneTarget);
         return;
     }
+    // subdividable=false:prepass 里全是地形命令,若按桶再切分,它会和主 pass 的
+    // 地形命令合进同一个 "terrain" 名字 —— 半分辨率 depth-only 与全分辨率带片元
+    // 着色是两笔性质完全不同的成本,合成一个数就问不出"prepass 到底值不值"。
+    context.renderDevice->beginGpuRegion("pass.terrainDepthPrepass", false);
     context.renderer.submit(depthCommands);
+    context.renderDevice->endGpuRegion();
     context.renderDevice->beginPass(context.sceneTarget);
 
     // 机制信号:通路是否真的在跑。观感 A/B 出现"零变化"时,必须能区分

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "GpuFrameTiming.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -109,6 +111,26 @@ public:
     virtual void endPass() {}
     virtual void submit(const RenderCommandList& commands) = 0;
     virtual void endFrame() = 0;
+
+    // ---- GPU 区间计时(测量台;默认关) ----
+    // 语义与三条读数边界见 GpuFrameTiming.h。区间**平铺不嵌套**:beginGpuRegion
+    // 会先关掉上一个还开着的区间。后端不支持时全部退化为 no-op,调用方无需分支。
+
+    /// 开关。返回开启后的实际状态——扩展缺失/查询对象创建失败时返回 false,
+    /// 调用方据此判断"没打开"而不是"打开了但没数"(两者症状相同,必须分开)。
+    virtual bool setGpuTimingEnabled(bool /*enabled*/) { return false; }
+    virtual bool gpuTimingEnabled() const { return false; }
+    /// 计时帧边界。由引擎在 beginFrame() 之后调用并带上真实 frameId ——
+    /// 设备自己数帧会和引擎 frameId 漂移(hold 帧引擎计数、设备不计),漂移过的
+    /// 帧号贴在 GPU 读数上,比没有帧号更坏。
+    virtual void beginGpuFrame(uint64_t /*frameId*/) {}
+    /// subdividable=false:抑制 submit() 内部按命令桶的再切分,整段算一个区间。
+    /// 深度 prepass 用它 —— 否则 prepass 里的地形命令会和主 pass 的地形命令
+    /// 并进同一个 "terrain" 名字,两个性质完全不同的成本被加成一个数。
+    virtual void beginGpuRegion(const char* /*name*/, bool /*subdividable*/ = true) {}
+    virtual void endGpuRegion() {}
+    /// 最近一帧**已完成回读**的结果(滞后数帧,不 stall);无结果时 nullptr。
+    virtual const GpuFrameTiming* lastGpuFrameTiming() const { return nullptr; }
 
     /// GPU→CPU 回读:把离屏 framebuffer 的 color attachment(RGBA8)读进 CPU 缓冲。
     /// 北极星 Phase 2b 虚拟纹理 PoC 的 feedback 通路要量的**固定开销**就在这里——

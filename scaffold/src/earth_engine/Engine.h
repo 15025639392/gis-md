@@ -209,6 +209,15 @@ public:
     /// 页存储,挂到一个 capped 真实地形瓦片,terrain 片元按页表 layer 采样。
     /// Step3a = 合成图案(隔离渲染路径),Step3b 换真实高清影像。
     void setTerrainPageStoreEnabled(bool enabled);
+
+    /// GPU 逐区间计时(测量台,默认关):把一帧的 GPU 时间线切成 pass / 命令桶
+    /// 若干段,每秒一行 GpuPass 打进 logcat。回答的是"86% GPU busy 花在哪"这类
+    /// 问题 —— CPU 侧 EarthPerf 头行对此完全盲目(它只量提交命令的 CPU 成本)。
+    /// 返回**实际**开启状态:GLES 无 GL_EXT_disjoint_timer_query 时返回 false。
+    /// 读数的三条边界(TBDR 段边界不精确 / MSAA resolve 不在段内 / disjoint 帧
+    /// 作废)见 renderer/GpuFrameTiming.h,下结论前必须读。
+    bool setGpuPassTimingEnabled(bool enabled);
+    bool gpuPassTimingEnabled() const { return gpuPassTimingEnabled_; }
     /// C-2c:页上传后的 GPU 叠画钩子(矢量走这条)。页存储可能因 surface 重建而
     /// 重新创建,故指针存在 Engine 上、每次建store时重新挂上。不持有。
     /// C-2c:渲染器(叠画方拿着色器用)。场景未就绪时为 nullptr。
@@ -253,6 +262,13 @@ private:
     // 北极星 合成方案 门① 原型开关 + 短路。
     bool vtIndirectionSamplePocEnabled_ = false;
     bool vtIndirectionSamplePocInitFailed_ = false;
+    // GPU 逐区间计时(测量台)。lastLoggedGpuFrameId_ 防同一帧结果重复打行
+    // (回读滞后数帧,同一份结果会被连续几帧看到)。
+    void logGpuPassTiming();
+    bool gpuPassTimingEnabled_ = false;
+    uint64_t lastLoggedGpuFrameId_ = 0;
+    uint64_t gpuPassResultCount_ = 0;
+
     // 北极星 合成方案 门③ Step3 页存储原型开关 + 短路。
     bool terrainPageStoreEnabled_ = false;
     bool terrainPageStoreInitFailed_ = false;
