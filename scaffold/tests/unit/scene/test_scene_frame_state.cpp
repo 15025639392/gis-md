@@ -63,7 +63,8 @@ struct TilesetTestAccess {
         // 生产上传路径(TileContentUploadPolicy)那样两者都给。
         auto heightmap = std::make_unique<DecodedHeightmap>();
         heightmap->tileSize = 2;
-        heightmap->heights.assign(4, static_cast<float>(heightMeters));
+        heightmap->stagedHeights.assign(4, static_cast<float>(heightMeters));
+        heightmap->assignHeights();
         heightmap->minHeight = static_cast<float>(heightMeters);
         heightmap->maxHeight = static_cast<float>(heightMeters);
         tile.content.renderContent.setRetainedHeightmap(std::move(heightmap));
@@ -255,11 +256,12 @@ Camera makeCameraFromCenterPitchHeading(
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 2;
-    heightmap->heights = {
+    heightmap->stagedHeights = {
         heightMeters,
         heightMeters,
         heightMeters,
         heightMeters};
+    heightmap->assignHeights();
     heightmap->minHeight = heightMeters;
     heightmap->maxHeight = heightMeters;
     return heightmap;

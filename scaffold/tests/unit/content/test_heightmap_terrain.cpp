@@ -159,9 +159,10 @@ TEST(HeightmapTerrainDecode, MapboxTerrainRgbRoundTrip) {
                 -50.0f + 100.0f * static_cast<float>(col) +
                 10.0f * static_cast<float>(row);
             const float actual =
-                hm->heights[static_cast<size_t>(row * 5 + col)];
-            // 0.1 m encode step → <0.05 m rounding error.
-            EXPECT_NEAR(actual, expected, 0.06f)
+                hm->heightAt(static_cast<size_t>(row * 5 + col));
+            // 两级量化叠加:Terrain-RGB 源 0.1m 编码步长(<0.05m)+ 本地
+            // 16bit 格点 kQuantStep=0.125m(<0.0625m)→ 合计 <0.12m。
+            EXPECT_NEAR(actual, expected, 0.12f)
                 << "col=" << col << " row=" << row;
         }
     }

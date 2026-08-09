@@ -659,7 +659,7 @@ public:
     static int64_t estimateHeightmapBytes(const DecodedHeightmap& heightmap) {
         int64_t bytes = 0;
         bytes += static_cast<int64_t>(
-            heightmap.heights.size() * sizeof(float));
+            heightmap.quantizedHeights.size() * sizeof(uint16_t));
         bytes += static_cast<int64_t>(
             heightmap.noDataValues.size() * sizeof(float));
         return bytes;

@@ -26,9 +26,66 @@ class TilesetContentProvider;
 /// 网格为 tileSize×tileSize 的 regular grid。
 struct DecodedHeightmap {
     int tileSize = 0;                  // 每边采样数（如 256）
-    std::vector<float> heights;        // tileSize × tileSize，行优先（北→南）
+
+    /// tileSize × tileSize，行优先（北→南）的 **16bit 量化**高度。
+    /// 码 0 保留给 no-data；码 1..65535 表示到 `quantBase` 的格点偏移。
+    ///
+    /// 为什么量化：514² 的 float32 是 1.06MB/瓦片，近景 ~90 个驻留瓦片就是
+    /// 91MB CPU 常驻，与 192MB 内容缓存预算同量级（见 CpuAcct 走账）。
+    ///
+    /// ⚠️ **为什么是全局固定格点而不是逐瓦片 min/range**：逐瓦片量化会让同一个
+    /// 物理高度在相邻两瓦片里落到不同的量化区间，解出来的 float 不再逐位相等 ——
+    /// 而 borderInset=0.5 半像素内缩买到的正是「相邻瓦片边界采样值完全一致」
+    /// 这条无缝不变量（真机对拍 maxdiff=0，见 borderInset 注释）。实测逐瓦片
+    /// 量化把它打破到 0.012~0.028m。改成 `h = (quantBase + code) · kQuantStep`
+    /// 后，同一物理高度在任何瓦片里都取到同一个整数格点 → 解码结果逐位相同，
+    /// 不变量恢复。
+    ///
+    /// 步长 1/8 m 是二进制精确值（0.1m 不是），乘法无舍入分歧；量程
+    /// 65534 × 0.125 = 8191.75m，覆盖任何真实瓦片的**瓦内**起伏。
+    ///
+    /// ⚠️ 码 0 = no-data 是**保留码**，不是"高度 0"。全零字节 = 整片 no-data，
+    /// 不是整片海平面（同类坑见 TerrainDisplacementTemplatePool 的边 LUT）。
+    std::vector<uint16_t> quantizedHeights;
+    int32_t quantBase = 0;  // 格点原点（单位 = kQuantStep）
     float minHeight = 0.0f;
     float maxHeight = 0.0f;
+
+    /// 量化步长（米）。二进制精确，跨瓦片共享 —— 见 quantizedHeights 注释。
+    static constexpr float kQuantStep = 0.125f;
+    static constexpr int32_t kMaxQuantCode = 65535;
+
+    /// 采样返回的 no-data 高度。必须 >50000 以触发 isNoData 的快路径。
+    static constexpr float kNoDataHeight = 1.0e6f;
+
+    /// 按线性下标取高度（no-data 返回 kNoDataHeight）。
+    float heightAt(size_t index) const {
+        const uint16_t code = quantizedHeights[index];
+        return code == 0
+            ? kNoDataHeight
+            : static_cast<float>(quantBase + static_cast<int32_t>(code)) *
+                  kQuantStep;
+    }
+
+    /// **仅构造期**的 float 暂存缓冲。解码/测试往这里写原始高度，写完调
+    /// `assignHeights()` 量化进 `quantizedHeights` 并把本缓冲释放掉 —— 因此
+    /// 它不占稳态内存。未定型的高度图 `valid()` 恒 false（读不到高度会立刻
+    /// 表现为该瓦片无地形，而不是静默读到 0 米海平面）。
+    std::vector<float> stagedHeights;
+
+    /// 把 `stagedHeights` 量化进 16bit 存储（**保留**暂存，可继续编辑后重新
+    /// 定型 —— 增量构造用）。扫出**排除 no-data 的** min/max 定量化区间 ——
+    /// 调用前必须先设好 `noDataValues`（判据要用）。这里是 minHeight/maxHeight
+    /// 的**唯一**产地：此前两个解码分支各自抄了一遍扫描逻辑，改量化时极易只
+    /// 改一处。
+    void assignHeights();
+
+    /// 释放构造期暂存。定型后不再编辑时调 —— **生产解码路径必调**，留着就等于
+    /// float32 与 16bit 各存一份 = 量化白做。
+    void releaseStagedHeights();
+
+    /// 一次性版本：填暂存 → 定型 → 释放暂存。生产解码走这条。
+    void assignHeights(const std::vector<float>& rawHeights);
 
     /// 无效高度哨兵值列表（OpenGlobus noDataValues）
     std::vector<float> noDataValues;
@@ -45,7 +102,7 @@ struct DecodedHeightmap {
     ///        边界采样值完全一致 → 无缝（已真机对拍验证 maxdiff=0）。
     float borderInset = 0.0f;
 
-    bool valid() const { return tileSize > 0 && heights.size() == static_cast<size_t>(tileSize * tileSize); }
+    bool valid() const { return tileSize > 0 && quantizedHeights.size() == static_cast<size_t>(tileSize * tileSize); }
 
     /// 检查高度是否为无效值（哨兵值匹配 或 值 > 50000）
     bool isNoData(float height) const;

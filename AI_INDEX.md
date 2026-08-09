@@ -1769,9 +1769,10 @@ Abstract terrain interface + `DecodedHeightmap`. cesium-native terrain data-sour
 
 | Item | Lines | Description |
 |---|---|---|
-| `DecodedHeightmap` | .h:27-53 | tileSize, `heights` (row-major N→S), min/max, `noDataValues`, `heightFactor` |
-| `isNoData` | .cpp:7-15 | `height > 50000` (OpenGlobus RgbTerrain) or sentinel match |
-| `sampleBilinear` | .cpp:24-28 | Bilinear over regular grid; clamps u,v to [0,1] |
+| `DecodedHeightmap` | .h:27-73 | tileSize、`quantizedHeights`(row-major N→S 的 **16bit 量化**高度,码 0 保留给 no-data)、`quantBase`、min/max、`noDataValues`、`heightFactor`。⚠️ 量化用**全局固定格点** `h=(quantBase+code)·kQuantStep`(step=1/8m,二进制精确)而非逐瓦片 min/range —— 逐瓦片会让同一物理高度在相邻瓦片解出不同 float,打破 borderInset=0.5 买到的「边界采样逐位相等」无缝不变量(实测破坏到 0.012~0.028m) |
+| `isNoData` | .cpp:8-16 | `height > 50000` (OpenGlobus RgbTerrain) or sentinel match |
+| `assignHeights` / `releaseStagedHeights` | .cpp:18-23 / :24-28 / :29-69 | 一次性版(填暂存→定型→释放)/ 释放构造期暂存 / 定型(量化)。**minHeight/maxHeight 的唯一产地**,min/max 只统计非 no-data 样本 |
+| `sampleBilinear` | .cpp:77-81 | Bilinear over regular grid; clamps u,v to [0,1] |
 | `TerrainTileLoadResult` | .h:55-91 | status + heightmap; `successWithHeightmap`/`empty`/`retryLater`/`failed`/`cancelled` factories |
 | `TerrainProvider` iface | .h:95-166 | `id`, `schemeId`, zoom, `tileSize`, `buildUrl`, `requestTile` (`TerrainCallback`), `decodeTile` |
 | `availabilityState` (default) | .h:127-134 | cesium-native `tileIsAvailableInLayer` equivalent: Available/Unknown/NotAvailable |

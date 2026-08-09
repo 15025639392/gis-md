@@ -1,6 +1,7 @@
 #include "TerrainProvider.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace earth_engine {
 
@@ -13,6 +14,58 @@ bool DecodedHeightmap::isNoData(float height) const {
     }
     return false;
 }
+
+void DecodedHeightmap::assignHeights(const std::vector<float>& rawHeights) {
+    stagedHeights = rawHeights;
+    assignHeights();
+    releaseStagedHeights();
+}
+
+void DecodedHeightmap::releaseStagedHeights() {
+    stagedHeights.clear();
+    stagedHeights.shrink_to_fit();
+}
+
+void DecodedHeightmap::assignHeights() {
+    const std::vector<float>& rawHeights = stagedHeights;
+    quantizedHeights.clear();
+    quantizedHeights.reserve(rawHeights.size());
+
+    // min/max **只统计有效高度**:nodata(Terrain-RGB 为 -10000m)混进来会把
+    // 量化原点拉到 -10000,量程白白吃掉一大截。
+    float minH = 1e30f;
+    float maxH = -1e30f;
+    for (float h : rawHeights) {
+        if (isNoData(h)) continue;
+        if (h < minH) minH = h;
+        if (h > maxH) maxH = h;
+    }
+    const bool hasValid = minH <= maxH;
+    minHeight = hasValid ? minH : 0.0f;
+    maxHeight = hasValid ? maxH : 0.0f;
+
+    // 全局固定格点:格点下标 n = round(h / kQuantStep) 与瓦片无关,故同一物理
+    // 高度在相邻瓦片解出**逐位相同**的 float(无缝不变量,见头文件注释)。
+    // quantBase 只是把 n 平移进 [1, 65535] 的存储窗口,不影响 n 本身。
+    const int64_t minNode = hasValid
+        ? static_cast<int64_t>(std::floor(minHeight / kQuantStep))
+        : 0;
+    quantBase = static_cast<int32_t>(minNode - 1);
+
+    for (float h : rawHeights) {
+        if (isNoData(h)) {
+            quantizedHeights.push_back(0);  // 保留码
+            continue;
+        }
+        const int64_t node =
+            static_cast<int64_t>(std::llround(h / kQuantStep));
+        int64_t code = node - static_cast<int64_t>(quantBase);
+        // 瓦内起伏超过 8191.75m 才会触顶(现实瓦片不会);钳住而不是回绕。
+        code = std::max<int64_t>(1, std::min<int64_t>(kMaxQuantCode, code));
+        quantizedHeights.push_back(static_cast<uint16_t>(code));
+    }
+}
+
 
 float DecodedHeightmap::overscanReach() const {
     if (!valid() || borderInset <= 0.0f) return 0.0f;
@@ -52,10 +105,10 @@ float DecodedHeightmap::sampleBilinearUnclamped(float u, float v) const {
     x1 = std::max(0, x1);
     y1 = std::max(0, y1);
 
-    const float h00 = heights[static_cast<size_t>(y0 * tileSize + x0)];
-    const float h10 = heights[static_cast<size_t>(y0 * tileSize + x1)];
-    const float h01 = heights[static_cast<size_t>(y1 * tileSize + x0)];
-    const float h11 = heights[static_cast<size_t>(y1 * tileSize + x1)];
+    const float h00 = heightAt(static_cast<size_t>(y0 * tileSize + x0));
+    const float h10 = heightAt(static_cast<size_t>(y0 * tileSize + x1));
+    const float h01 = heightAt(static_cast<size_t>(y1 * tileSize + x0));
+    const float h11 = heightAt(static_cast<size_t>(y1 * tileSize + x1));
 
     // Exclude no-data corners from the blend. A raw bilinear mix of a no-data
     // sentinel (e.g. 65535) with valid corners yields a mid-range value (e.g.

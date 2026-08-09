@@ -52,7 +52,7 @@ DecodedHeightmap makeRingHeightmap(const Rectangle& bounds,
     DecodedHeightmap hm;
     hm.tileSize = kTileSize;
     hm.borderInset = kInset;
-    hm.heights.resize(static_cast<size_t>(kTileSize) * kTileSize);
+    hm.stagedHeights.resize(static_cast<size_t>(kTileSize) * kTileSize);
 
     float minH = 1e30f;
     float maxH = -1e30f;
@@ -63,11 +63,12 @@ DecodedHeightmap makeRingHeightmap(const Rectangle& bounds,
             const double u = (static_cast<double>(px) - kInset) / span;
             const double lon = bounds.west() + u * bounds.width();
             const float h = static_cast<float>(field(lon, lat));
-            hm.heights[static_cast<size_t>(py) * kTileSize + px] = h;
+            hm.stagedHeights[static_cast<size_t>(py) * kTileSize + px] = h;
             minH = std::min(minH, h);
             maxH = std::max(maxH, h);
         }
     }
+    hm.assignHeights();
     hm.minHeight = minH;
     hm.maxHeight = maxH;
     return hm;
@@ -221,8 +222,9 @@ TEST(TerrainEdgeNormalSeamTest, RingOnlyAffectsBoundaryNodes) {
     const int ts = poisoned.tileSize;
     for (int p = 0; p < ts; ++p) {
         for (int q : {0, ts - 1}) {
-            poisoned.heights[static_cast<size_t>(q) * ts + p] = -1234.0f;
-            poisoned.heights[static_cast<size_t>(p) * ts + q] = -1234.0f;
+            poisoned.stagedHeights[static_cast<size_t>(q) * ts + p] = -1234.0f;
+            poisoned.stagedHeights[static_cast<size_t>(p) * ts + q] = -1234.0f;
+            poisoned.assignHeights();
         }
     }
     // minHeight/maxHeight 保持 clean 的,否则高度量化整体位移、比较失去意义。

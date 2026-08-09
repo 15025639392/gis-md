@@ -21,7 +21,8 @@ Rectangle rootBounds() {
 TEST(DecodedHeightmapSamplerTest, SamplesUniformHeight) {
     DecodedHeightmap heightmap;
     heightmap.tileSize = 2;
-    heightmap.heights = {42.0f, 42.0f, 42.0f, 42.0f};
+    heightmap.stagedHeights = {42.0f, 42.0f, 42.0f, 42.0f};
+    heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
     const double lon = bounds.west() + bounds.width() * 0.5;
@@ -39,7 +40,8 @@ TEST(DecodedHeightmapSamplerTest, BilinearInterpolatesGradient) {
     // bilinear blend is 17.5.
     DecodedHeightmap heightmap;
     heightmap.tileSize = 2;
-    heightmap.heights = {30.0f, 40.0f, 10.0f, 20.0f};
+    heightmap.stagedHeights = {30.0f, 40.0f, 10.0f, 20.0f};
+    heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
     const double lon = bounds.west() + bounds.width() * 0.25;
@@ -52,7 +54,8 @@ TEST(DecodedHeightmapSamplerTest, BilinearInterpolatesGradient) {
 TEST(DecodedHeightmapSamplerTest, ReturnsZeroOutsideBounds) {
     DecodedHeightmap heightmap;
     heightmap.tileSize = 2;
-    heightmap.heights = {50.0f, 50.0f, 50.0f, 50.0f};
+    heightmap.stagedHeights = {50.0f, 50.0f, 50.0f, 50.0f};
+    heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
     // A longitude well east of the rectangle's east edge → out of bounds → 0.
@@ -68,7 +71,8 @@ TEST(DecodedHeightmapSamplerTest, ReturnsZeroForNoData) {
     // level) rather than a spurious huge height.
     DecodedHeightmap heightmap;
     heightmap.tileSize = 2;
-    heightmap.heights = {65535.0f, 65535.0f, 65535.0f, 65535.0f};
+    heightmap.stagedHeights = {65535.0f, 65535.0f, 65535.0f, 65535.0f};
+    heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
     const double lon = bounds.west() + bounds.width() * 0.5;
@@ -98,17 +102,19 @@ TEST(DecodedHeightmapSamplerTest, BorderInsetHalfPixelSeamless) {
     DecodedHeightmap west;
     west.tileSize = 4;
     west.borderInset = 0.5f;
-    west.heights.clear();
+    west.stagedHeights.clear();
     for (int r = 0; r < 4; ++r)
-        for (float x : {-0.5f, 0.5f, 1.5f, 2.5f}) west.heights.push_back(x);
+        for (float x : {-0.5f, 0.5f, 1.5f, 2.5f}) west.stagedHeights.push_back(x);
+    west.assignHeights();
     // 东片覆盖世界 [2,4]:内部 cell 中心 x=2.5,3.5;重叠列 x=1.5(西邻),4.5(东邻)
     DecodedHeightmap east;
     east.tileSize = 4;
     east.borderInset = 0.5f;
-    east.heights.clear();
+    east.stagedHeights.clear();
     for (int r = 0; r < 4; ++r)
-        for (float x : {1.5f, 2.5f, 3.5f, 4.5f}) east.heights.push_back(x);
+        for (float x : {1.5f, 2.5f, 3.5f, 4.5f}) east.stagedHeights.push_back(x);
 
+    east.assignHeights();
     const float westEast = west.sampleBilinear(1.0f, 0.5f);  // 西片东边界 → x=2.0
     const float eastWest = east.sampleBilinear(0.0f, 0.5f);  // 东片西边界 → x=2.0
     EXPECT_NEAR(2.0f, westEast, 1e-4f);
@@ -122,7 +128,8 @@ TEST(DecodedHeightmapSamplerTest, BorderInsetZeroPreservesVertexGrid) {
     DecodedHeightmap hm;
     hm.tileSize = 3;
     hm.borderInset = 0.0f;
-    hm.heights = {0, 10, 20, 0, 10, 20, 0, 10, 20};  // 每行 0,10,20
+    hm.stagedHeights = {0, 10, 20, 0, 10, 20, 0, 10, 20};  // 每行 0,10,20
+    hm.assignHeights();
     EXPECT_NEAR(0.0f, hm.sampleBilinear(0.0f, 0.5f), 1e-4f);   // 像素 0
     EXPECT_NEAR(20.0f, hm.sampleBilinear(1.0f, 0.5f), 1e-4f);  // 像素 2
     EXPECT_NEAR(10.0f, hm.sampleBilinear(0.5f, 0.5f), 1e-4f);  // 像素 1
@@ -138,8 +145,9 @@ TEST(DecodedHeightmapSamplerTest, RenderGridIgnoresIntraCellSpike) {
     // (渲染面就是看不见它 —— 贴地几何必须跟渲染面同源,否则结构性穿插)。
     DecodedHeightmap heightmap;
     heightmap.tileSize = 129;
-    heightmap.heights.assign(129 * 129, 0.0f);
-    heightmap.heights[static_cast<size_t>(65) * 129 + 65] = 500.0f;  // 奇数格
+    heightmap.stagedHeights.assign(129 * 129, 0.0f);
+    heightmap.stagedHeights[static_cast<size_t>(65) * 129 + 65] = 500.0f;  // 奇数格
+    heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
     // 尖峰所在位置(u = 65/128, v = 65/128 → 北南翻转的纬度)
@@ -159,8 +167,9 @@ TEST(DecodedHeightmapSamplerTest, RenderGridMatchesFullResAtGridNodes) {
     // 节点上两种采样必须一致(渲染面经过节点)。
     DecodedHeightmap heightmap;
     heightmap.tileSize = 129;
-    heightmap.heights.assign(129 * 129, 0.0f);
-    heightmap.heights[static_cast<size_t>(64) * 129 + 64] = 300.0f;  // 偶数格=节点
+    heightmap.stagedHeights.assign(129 * 129, 0.0f);
+    heightmap.stagedHeights[static_cast<size_t>(64) * 129 + 64] = 300.0f;  // 偶数格=节点
+    heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
     const double lon = bounds.west() + bounds.width() * (64.0 / 128.0);
@@ -178,8 +187,9 @@ TEST(DecodedHeightmapSamplerTest, RenderGridSmallSourceEqualsFullRes) {
     // 源 ≤ 65:渲染格 = 源格,两种采样恒等。
     DecodedHeightmap heightmap;
     heightmap.tileSize = 5;
-    heightmap.heights.assign(25, 0.0f);
-    heightmap.heights[12] = 100.0f;  // 中心
+    heightmap.stagedHeights.assign(25, 0.0f);
+    heightmap.stagedHeights[12] = 100.0f;  // 中心
+    heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
     for (double f : {0.1, 0.37, 0.5, 0.73, 0.9}) {
@@ -220,9 +230,10 @@ TEST(DecodedHeightmapSamplerTest, DenseGridResolvesDetailCoarseGridMisses) {
     // 源上限 128)则能取到。即"8 倍高程细节留在 CPU 从未上 GPU"的可测形式。
     DecodedHeightmap heightmap;
     heightmap.tileSize = 129;
-    heightmap.heights.assign(129 * 129, 0.0f);
+    heightmap.stagedHeights.assign(129 * 129, 0.0f);
     // 奇数格点(65,65):coarse 的节点在偶数格,取不到;dense 的节点覆盖每个源像素。
-    heightmap.heights[static_cast<size_t>(65) * 129 + 65] = 400.0f;
+    heightmap.stagedHeights[static_cast<size_t>(65) * 129 + 65] = 400.0f;
+    heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
     const double lon = bounds.west() + bounds.width() * (65.0 / 128.0);
@@ -262,18 +273,19 @@ DecodedHeightmap makeOverlapTile514(int tx, int ty) {
     DecodedHeightmap hm;
     hm.tileSize = 514;
     hm.borderInset = 0.5f;
-    hm.heights.resize(514 * 514);
+    hm.stagedHeights.resize(514 * 514);
     float mn = 1e9f, mx = -1e9f;
     for (int py = 0; py < 514; ++py) {
         const double wy = ty * 512.0 + (py - 1) + 0.5;
         for (int px = 0; px < 514; ++px) {
             const double wx = tx * 512.0 + (px - 1) + 0.5;
             const float h = worldHeight(wx, wy);
-            hm.heights[static_cast<size_t>(py) * 514 + px] = h;
+            hm.stagedHeights[static_cast<size_t>(py) * 514 + px] = h;
             mn = std::min(mn, h);
             mx = std::max(mx, h);
         }
     }
+    hm.assignHeights();
     hm.minHeight = mn;
     hm.maxHeight = mx;
     return hm;
@@ -355,7 +367,8 @@ TEST(SeamNorthstarNoDataTest, NoDataRingExcludedFromEdgeBilinear) {
     DecodedHeightmap hm = makeOverlapTile514(0, 0);
     hm.noDataValues.push_back(-10000.0f);
     for (int py = 0; py < 514; ++py) {
-        hm.heights[static_cast<size_t>(py) * 514 + 0] = -10000.0f;
+        hm.stagedHeights[static_cast<size_t>(py) * 514 + 0] = -10000.0f;
+        hm.assignHeights();
     }
     for (int j = 0; j <= 64; ++j) {
         const float v = static_cast<float>(j) / 64.0f;
@@ -368,7 +381,8 @@ TEST(SeamNorthstarNoDataTest, NoDataRingExcludedFromEdgeBilinear) {
 TEST(SeamNorthstarNoDataTest, AllNoDataCornersPropagateSentinel) {
     DecodedHeightmap hm;
     hm.tileSize = 2;
-    hm.heights = {-10000.0f, -10000.0f, -10000.0f, -10000.0f};
+    hm.stagedHeights = {-10000.0f, -10000.0f, -10000.0f, -10000.0f};
+        hm.assignHeights();
     hm.noDataValues.push_back(-10000.0f);
     EXPECT_TRUE(hm.isNoData(hm.sampleBilinear(0.5f, 0.5f)));
 }

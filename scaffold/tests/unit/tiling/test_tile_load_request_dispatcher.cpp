@@ -180,7 +180,8 @@ public:
         callbackSawIssued = issuedBeforeCallback_;
         auto heightmap = std::make_unique<DecodedHeightmap>();
         heightmap->tileSize = 2;
-        heightmap->heights = {0.0f, 0.0f, 0.0f, 0.0f};
+        heightmap->stagedHeights = {0.0f, 0.0f, 0.0f, 0.0f};
+        heightmap->assignHeights();
         callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
     }
     std::unique_ptr<DecodedHeightmap> decodeTile(

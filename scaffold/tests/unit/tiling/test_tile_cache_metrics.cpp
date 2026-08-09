@@ -330,11 +330,14 @@ TEST(TileCacheMetricsTest, DeferredCpuReleaseFallsBackInlineAboveBound) {
 
 TEST(TileCacheMetricsTest, CountsHeightmapAndRetainedTilePayloads) {
     DecodedHeightmap heightmap;
-    heightmap.heights.resize(3);
+    heightmap.stagedHeights.resize(3);
+    heightmap.assignHeights();
     heightmap.noDataValues.resize(2);
 
+    // 高度阵是 16bit 量化的(见 DecodedHeightmap::quantizedHeights);
+    // noDataValues 仍是 float 哨兵列表。
     const int64_t expectedHeightmapBytes =
-        static_cast<int64_t>(3 * sizeof(float)) +
+        static_cast<int64_t>(3 * sizeof(uint16_t)) +
         static_cast<int64_t>(2 * sizeof(float));
     EXPECT_EQ(expectedHeightmapBytes,
               TileCacheMetrics::estimateHeightmapBytes(heightmap));
@@ -373,9 +376,11 @@ TEST(TileCacheMetricsTest, TotalsTileAndTerrainCachePayloads) {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->heights.resize(1);
+    heightmap->stagedHeights.resize(1);
+    heightmap->assignHeights();
+    // 高度阵已是 16bit 量化(见 DecodedHeightmap::quantizedHeights)。
     const int64_t expectedHeightmapBytes =
-        static_cast<int64_t>(sizeof(float));
+        static_cast<int64_t>(sizeof(uint16_t));
     terrainCache["terrain"] = std::move(heightmap);
     terrainCache["null-terrain"] = nullptr;
 

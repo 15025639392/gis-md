@@ -333,9 +333,9 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
         }
 
         size_t count = static_cast<size_t>(img->width * img->height);
-        hm->heights.reserve(count);
+        std::vector<float> rawHeights;
+        rawHeights.reserve(count);
 
-        float minH = 1e30f, maxH = -1e30f;
         for (size_t i = 0; i < count; ++i) {
             size_t off = i * static_cast<size_t>(img->channels);
             float r = static_cast<float>(img->pixels[off]);
@@ -348,16 +348,10 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
                 h = r * 256.0f + g + b / 256.0f - 32768.0f;
             }
             h *= heightFactor_;  // OpenGlobus _heightFactor
-            hm->heights.push_back(h);
-            // min/max 只统计有效高度:nodata 混入会把量化区间拉到 -10000,
-            // 16bit 高度精度被吃掉 2/3。
-            if (!hm->isNoData(h)) {
-                if (h < minH) minH = h;
-                if (h > maxH) maxH = h;
-            }
+            rawHeights.push_back(h);
         }
-        hm->minHeight = minH <= maxH ? minH : 0.0f;
-        hm->maxHeight = minH <= maxH ? maxH : 0.0f;
+        // min/max 扫描 + 16bit 量化都在 assignHeights 里(唯一产地)。
+        hm->assignHeights(rawHeights);
         return hm;
     }
 
@@ -378,9 +372,9 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
     }
 
     size_t count = static_cast<size_t>(w * h);
-    hm->heights.reserve(count);
+    std::vector<float> rawHeights;
+    rawHeights.reserve(count);
 
-    float minH = 1e30f, maxH = -1e30f;
     for (size_t i = 0; i < count; ++i) {
         size_t off = i * 3;
         float r = static_cast<float>(pixels[off]);
@@ -393,14 +387,10 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
             elev = r * 256.0f + g + b / 256.0f - 32768.0f;
         }
         elev *= heightFactor_;  // OpenGlobus _heightFactor
-        hm->heights.push_back(elev);
-        if (!hm->isNoData(elev)) {
-            if (elev < minH) minH = elev;
-            if (elev > maxH) maxH = elev;
-        }
+        rawHeights.push_back(elev);
     }
-    hm->minHeight = minH <= maxH ? minH : 0.0f;
-    hm->maxHeight = minH <= maxH ? maxH : 0.0f;
+    // min/max 扫描 + 16bit 量化都在 assignHeights 里(唯一产地)。
+    hm->assignHeights(rawHeights);
     stbi_image_free(pixels);
     return hm;
 #else

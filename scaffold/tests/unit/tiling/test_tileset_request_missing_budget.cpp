@@ -925,7 +925,8 @@ public:
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 2;
-    heightmap->heights = {heightMeters, heightMeters, heightMeters, heightMeters};
+    heightmap->stagedHeights = {heightMeters, heightMeters, heightMeters, heightMeters};
+    heightmap->assignHeights();
     heightmap->minHeight = heightMeters;
     heightmap->maxHeight = heightMeters;
     return heightmap;

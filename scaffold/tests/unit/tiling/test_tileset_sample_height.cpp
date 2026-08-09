@@ -31,13 +31,12 @@ namespace {
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 2;
-    heightmap->heights = {
+    heightmap->stagedHeights = {
         heightMeters,
         heightMeters,
         heightMeters,
         heightMeters};
-    heightmap->minHeight = heightMeters;
-    heightmap->maxHeight = heightMeters;
+    heightmap->assignHeights();
     return heightmap;
 }
 
@@ -46,7 +45,8 @@ std::unique_ptr<DecodedHeightmap> makeCornerHeightmap(
     float nw, float ne, float sw, float se) {
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 2;
-    heightmap->heights = {nw, ne, sw, se};
+    heightmap->stagedHeights = {nw, ne, sw, se};
+    heightmap->assignHeights();
     heightmap->minHeight = std::min({nw, ne, sw, se});
     heightmap->maxHeight = std::max({nw, ne, sw, se});
     return heightmap;

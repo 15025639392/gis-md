@@ -4845,7 +4845,8 @@ private:
     static std::unique_ptr<DecodedHeightmap> makeHeightmap() {
         auto hm = std::make_unique<DecodedHeightmap>();
         hm->tileSize = 2;
-        hm->heights = {0.0f, 0.0f, 0.0f, 0.0f};
+        hm->stagedHeights = {0.0f, 0.0f, 0.0f, 0.0f};
+        hm->assignHeights();
         return hm;
     }
     TileLoadStatus status_;
@@ -5107,7 +5108,8 @@ private:
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     auto hm = std::make_unique<DecodedHeightmap>();
     hm->tileSize = 2;
-    hm->heights = {heightMeters, heightMeters, heightMeters, heightMeters};
+    hm->stagedHeights = {heightMeters, heightMeters, heightMeters, heightMeters};
+    hm->assignHeights();
     hm->minHeight = heightMeters;
     hm->maxHeight = heightMeters;
     return hm;
@@ -13530,7 +13532,8 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
     }
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
-    cachedHeightmap->heights = {5.0f, 6.0f, 7.0f, 8.0f};
+    cachedHeightmap->stagedHeights = {5.0f, 6.0f, 7.0f, 8.0f};
+    cachedHeightmap->assignHeights();
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;

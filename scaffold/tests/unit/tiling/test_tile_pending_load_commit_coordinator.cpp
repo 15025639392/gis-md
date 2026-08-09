@@ -3466,7 +3466,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
-    cachedHeightmap->heights = {5.0f, 6.0f, 7.0f, 8.0f};
+    cachedHeightmap->stagedHeights = {5.0f, 6.0f, 7.0f, 8.0f};
+    cachedHeightmap->assignHeights();
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;

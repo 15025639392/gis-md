@@ -30,7 +30,8 @@ constexpr const char* kScheme = "Geographic-TMS";
 std::unique_ptr<DecodedHeightmap> makeUniformHeightmap(float height) {
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 2;
-    heightmap->heights = {height, height, height, height};
+    heightmap->stagedHeights = {height, height, height, height};
+    heightmap->assignHeights();
     heightmap->minHeight = height;
     heightmap->maxHeight = height;
     return heightmap;
